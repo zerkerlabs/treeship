@@ -34,8 +34,8 @@ def _get_client():
     """Get or create the global Treeship client."""
     global _client
     if _client is None:
-        from .client import TreshipClient
-        _client = TreshipClient()
+        from .client import Treeship
+        _client = Treeship()
     return _client
 
 

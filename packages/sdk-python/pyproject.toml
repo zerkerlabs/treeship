@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "treeship-sdk"
-version = "1.0.0"
+version = "0.2.0"
 description = "Treeship Python SDK — cryptographic verification for AI agents"
 readme = "README.md"
 license = "MIT"
@@ -41,4 +41,4 @@ Repository = "https://github.com/zerker-ai/treeship"
 Documentation = "https://docs.treeship.dev"
 
 [tool.hatch.build.targets.wheel]
-packages = ["treeship"]
+packages = ["treeship_sdk"]

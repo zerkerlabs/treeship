@@ -11,24 +11,24 @@ pip install treeship-sdk
 ## Quick Start
 
 ```python
-from treeship import TreshipClient
+from treeship_sdk import Treeship
 
-client = TreshipClient()  # reads TREESHIP_API_KEY from env
+ts = Treeship()  # reads TREESHIP_API_KEY, TREESHIP_AGENT from env
 
-result = client.attest(
+result = ts.attest(
     action="User document summarized",
-    inputs={"user_id": "u123", "doc": "contract.pdf"}  # hashed, never sent
+    inputs_hash=ts.hash({"user_id": "u123", "doc": "contract.pdf"})
 )
 
-print(result.url)  # https://treeship.dev/verify/ts_abc123
+print(result.url)  # https://treeship.dev/verify/my-agent/abc123
 ```
 
-## Decorator-Based Usage
+## Decorator-Based Usage (v0.2.0+)
 
 For common patterns, use decorators instead of manual attestation:
 
 ```python
-from treeship import attest_reasoning, attest_memory, attest_performance
+from treeship_sdk import attest_reasoning, attest_memory, attest_performance
 
 @attest_reasoning
 def make_decision(context: dict) -> dict:
@@ -49,103 +49,90 @@ def process_document(doc: str) -> dict:
     return {"summary": "..."}
 ```
 
-## Client Methods
+## API
 
-### attest()
+### Treeship
+
+```python
+ts = Treeship(
+    api_key='your_key',        # or TREESHIP_API_KEY env
+    agent='my-agent',          # or TREESHIP_AGENT env
+    api_url='https://...',     # optional, for self-hosted
+)
+```
+
+### ts.attest()
 
 Create an attestation.
 
 ```python
-result = client.attest(
-    action="Document processed",      # Required: what happened
-    inputs={"doc_id": "123"},         # Optional: hashed locally, never sent
-    agent="my-agent",                 # Optional: override default agent
-    metadata={"version": "1.0"}       # Optional: additional metadata
+result = ts.attest(
+    action="User request processed",  # required
+    inputs_hash=ts.hash(data),        # optional, hashes data locally
+    agent="custom-agent",             # optional, overrides default
+    metadata={"version": "1.0"},      # optional
 )
 
-if result.attested:
-    print(f"Verified: {result.url}")
-else:
-    print(f"Failed: {result.error}")
+print(result.url)           # verification URL
+print(result.attestation_id)  # attestation ID
+print(result.signature)     # Ed25519 signature
 ```
 
-### verify()
+### ts.hash()
+
+Hash any data for use as inputs_hash.
+
+```python
+# Dict
+hash1 = ts.hash({"user_id": "123", "action": "summarize"})
+
+# String
+hash2 = ts.hash("some content")
+
+# Bytes
+hash3 = ts.hash(b"binary data")
+```
+
+### ts.verify()
 
 Verify an attestation.
 
 ```python
-result = client.verify("ts_abc123")
-
-if result.valid:
-    print(f"Valid! Agent: {result.attestation['agent_slug']}")
-else:
-    print(f"Invalid: {result.error}")
+result = ts.verify("abc123-def456")
+print(result["valid"])  # True/False
 ```
 
 ### Async Support
 
 ```python
-import asyncio
-from treeship import TreshipClient
+from treeship_sdk import AsyncTreeship
 
-async def main():
-    client = TreshipClient()
-    result = await client.attest_async(
-        action="Async operation completed",
-        inputs={"task_id": "456"}
+async with AsyncTreeship() as ts:
+    result = await ts.attest(
+        action="Async task completed",
+        inputs_hash=ts.hash({"task_id": "456"})
     )
     print(result.url)
-
-asyncio.run(main())
 ```
 
 ## Privacy
 
-With default settings, inputs are hashed locally:
+Inputs are hashed locally with SHA-256. Raw content never leaves your server.
 
 | Sent to Treeship | Stays Local |
 |-----------------|-------------|
 | Action description | Raw inputs |
-| SHA-256 hash of inputs | User data |
+| SHA-256 hash | User data |
 | Timestamp | Documents |
 | Agent slug | API keys |
 
-## Configuration
-
-### Environment Variables
+## Environment Variables
 
 ```bash
-export TREESHIP_API_KEY="your_api_key"
+export TREESHIP_API_KEY="your_key"
 export TREESHIP_AGENT="my-agent"
 export TREESHIP_API_URL="https://api.treeship.dev"  # optional
 ```
-
-### Client Options
-
-```python
-client = TreshipClient(
-    api_key="your_api_key",      # or TREESHIP_API_KEY env var
-    api_url="https://...",        # optional, for self-hosted
-    agent="my-agent",             # default agent slug
-    timeout=10.0,                 # request timeout in seconds
-    hash_only=True,               # hash inputs locally (default)
-)
-```
-
-## Error Handling
-
-The SDK never raises exceptions for attestation failures:
-
-```python
-result = client.attest(action="Something")
-
-# Always check result.attested
-if not result.attested:
-    # Attestation failed, but your code continues
-    logger.warning(f"Attestation failed: {result.error}")
-```
-
-This ensures attestation never blocks your agent's primary work.
 
 ## License
 

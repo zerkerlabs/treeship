@@ -1,6 +1,6 @@
 {
-  "name": "@treeship/cli",
-  "version": "1.0.0",
+  "name": "treeship-cli",
+  "version": "0.2.0",
   "description": "Treeship CLI — cryptographic verification for AI agents",
   "main": "dist/index.js",
   "bin": {

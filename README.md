@@ -13,24 +13,36 @@ compliance teams, regulators, and clients who have no reason to trust the builde
 
 ## Quick Start (Python)
 
+```bash
+pip install treeship-sdk
+```
+
 ```python
-# pip install treeship-sdk  # coming soon — for now, install from source
-from treeship import TreshipClient
+from treeship_sdk import Treeship
 
-client = TreshipClient(api_key="your_key", agent="my-agent")
+ts = Treeship()  # reads TREESHIP_API_KEY, TREESHIP_AGENT from env
 
-# Create an attestation (inputs are hashed locally, never sent)
-result = client.attest(
+result = ts.attest(
     action="Document processed",
-    inputs={"doc_id": "123", "user": "alice"}
+    inputs_hash=ts.hash({"doc_id": "123", "user": "alice"})  # hashed locally
 )
 
-print(result.url)  # https://treeship.dev/verify/ts_abc123
+print(result.url)  # https://treeship.dev/verify/my-agent/abc123
+```
+
+## Quick Start (CLI)
+
+```bash
+npm install -g treeship-cli
+
+treeship attest --action "My agent processed a request" --agent my-agent --inputs-hash abc123
+# → https://treeship.dev/verify/my-agent/abc123
+
+treeship verify abc123
+# ✓ Signature valid
 ```
 
 That's it. Your agent now has a permanent, tamper-proof audit trail.
-
-> **Note:** Packages are coming soon to npm/PyPI. For now, install from source or use the [Docker sidecar](packages/sidecar/).
 
 ## How It Works
 
@@ -58,7 +70,17 @@ Treeship never sees content. It sees proofs that content was processed.
 
 ## Installation
 
-### From Source (Current)
+### Package Managers (Recommended)
+
+```bash
+# CLI (npm)
+npm install -g treeship-cli
+
+# Python SDK (PyPI)
+pip install treeship-sdk
+```
+
+### From Source
 
 ```bash
 # Python SDK
@@ -69,16 +91,6 @@ pip install -e .
 # CLI (requires Node.js 18+)
 cd treeship/packages/cli
 npm install && npm link
-```
-
-### From Package Managers (Coming Soon)
-
-```bash
-# CLI
-npm install -g @treeship/cli
-
-# Python SDK
-pip install treeship-sdk
 ```
 
 ### Docker Sidecar
@@ -172,12 +184,11 @@ We're honest about this.
 
 ## Packages
 
-| Package | Description | Status |
-|---------|-------------|--------|
-| [@treeship/cli](packages/cli/) | Command-line interface | 🚧 Coming soon |
-| [treeship-sdk](packages/sdk-python/) | Python SDK | 🚧 Coming soon |
-| [@treeship/sdk](packages/sdk-js/) | JavaScript/TypeScript SDK | 🚧 Coming soon |
-| [treeship-sidecar](packages/sidecar/) | Docker sidecar | 🚧 Coming soon |
+| Package | Description | Install |
+|---------|-------------|---------|
+| [treeship-cli](packages/cli/) | Command-line interface | `npm i -g treeship-cli` |
+| [treeship-sdk](packages/sdk-python/) | Python SDK | `pip install treeship-sdk` |
+| [treeship-sidecar](packages/sidecar/) | Docker sidecar | `docker pull zerker/treeship-sidecar` |
 
 ## Contributing
 
