@@ -1,0 +1,51 @@
+name: Bug Report
+description: Report a bug in Treeship
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which component is affected?
+      options:
+        - CLI (@treeship/cli)
+        - Python SDK (treeship-sdk)
+        - Sidecar (Docker)
+        - Protocol
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: What happened? What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Minimal steps to reproduce the bug
+      placeholder: |
+        1. Install treeship-sdk
+        2. Run `client.attest(...)`
+        3. See error
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python/Node version, package version
+      placeholder: |
+        - OS: macOS 14.0
+        - Python: 3.12
+        - treeship-sdk: 1.0.0
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Logs
+      description: Any error messages or logs
+      render: shell

@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://treeship.dev/schemas/attestation.json",
+  "title": "Treeship Attestation",
+  "description": "A cryptographically signed attestation of an AI agent action",
+  "type": "object",
+  "required": ["id", "agent", "version", "action", "inputs_hash", "timestamp", "signature", "public_key"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^ts_[a-z0-9]+$",
+      "description": "Unique attestation identifier"
+    },
+    "agent": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "Agent slug identifier"
+    },
+    "version": {
+      "type": "string",
+      "enum": ["1.0"],
+      "description": "Protocol version"
+    },
+    "action": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "description": "Human-readable description of the action"
+    },
+    "inputs_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 hex digest of the inputs"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the attestation was created"
+    },
+    "signature": {
+      "type": "string",
+      "description": "Base64url-encoded Ed25519 signature"
+    },
+    "public_key": {
+      "type": "string",
+      "description": "Base64url-encoded Ed25519 public key"
+    },
+    "url": {
+      "type": "string",
+      "format": "uri",
+      "description": "Public verification URL"
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Optional additional metadata"
+    }
+  },
+  "additionalProperties": false
+}

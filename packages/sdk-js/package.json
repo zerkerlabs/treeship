@@ -1,0 +1,47 @@
+{
+  "name": "@treeship/sdk",
+  "version": "1.0.0",
+  "description": "Treeship JavaScript/TypeScript SDK",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "test": "vitest",
+    "lint": "eslint src/"
+  },
+  "keywords": [
+    "treeship",
+    "ai",
+    "agents",
+    "verification",
+    "attestation"
+  ],
+  "author": "Zerker AI",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zerker-ai/treeship.git",
+    "directory": "packages/sdk-js"
+  },
+  "dependencies": {
+    "@noble/ed25519": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^1.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

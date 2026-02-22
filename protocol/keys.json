@@ -1,0 +1,18 @@
+{
+  "1.0": {
+    "production": {
+      "key_id": "treeship_prod_2026",
+      "public_key": "PLACEHOLDER_REPLACE_WITH_REAL_KEY",
+      "public_key_pem": "-----BEGIN PUBLIC KEY-----\nPLACEHOLDER\n-----END PUBLIC KEY-----",
+      "effective": "2026-01-01T00:00:00Z",
+      "note": "Replace with actual production public key before release"
+    },
+    "staging": {
+      "key_id": "treeship_staging_2026",
+      "public_key": "PLACEHOLDER_REPLACE_WITH_REAL_KEY",
+      "public_key_pem": "-----BEGIN PUBLIC KEY-----\nPLACEHOLDER\n-----END PUBLIC KEY-----",
+      "effective": "2026-01-01T00:00:00Z",
+      "note": "Replace with actual staging public key before release"
+    }
+  }
+}
