@@ -2,10 +2,8 @@
 
 **Open source cryptographic verification for AI agents.**
 
-[![npm version](https://img.shields.io/npm/v/@treeship/cli.svg)](https://www.npmjs.com/package/@treeship/cli)
-[![PyPI version](https://img.shields.io/pypi/v/treeship-sdk.svg)](https://pypi.org/project/treeship-sdk/)
-[![Docker Pulls](https://img.shields.io/docker/pulls/zerker/treeship-sidecar.svg)](https://hub.docker.com/r/zerker/treeship-sidecar)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![GitHub](https://img.shields.io/github/stars/zerkerlabs/treeship?style=social)](https://github.com/zerkerlabs/treeship)
 
 Treeship proves what your AI agent did — cryptographically, without exposing any content.
 
@@ -13,25 +11,26 @@ This is not monitoring. Monitoring tells you what happened from inside the syste
 Treeship proves what happened to **anyone outside the system** — including enterprise
 compliance teams, regulators, and clients who have no reason to trust the builder.
 
-## Quick Start
+## Quick Start (Python)
 
-```bash
-# 1. Install
-npm install -g @treeship/cli
+```python
+# pip install treeship-sdk  # coming soon — for now, install from source
+from treeship import TreshipClient
 
-# 2. Get a free API key (30 seconds)
-treeship init
+client = TreshipClient(api_key="your_key", agent="my-agent")
 
-# 3. Attest your first action
-treeship attest --action "My agent processed a request"
-# → https://treeship.dev/verify/ts_abc123
+# Create an attestation (inputs are hashed locally, never sent)
+result = client.attest(
+    action="Document processed",
+    inputs={"doc_id": "123", "user": "alice"}
+)
 
-# 4. Anyone can verify — no account needed
-treeship verify ts_abc123
-# ✓ Signature valid. Signed by Treeship at 2026-02-22T14:23:01Z
+print(result.url)  # https://treeship.dev/verify/ts_abc123
 ```
 
 That's it. Your agent now has a permanent, tamper-proof audit trail.
+
+> **Note:** Packages are coming soon to npm/PyPI. For now, install from source or use the [Docker sidecar](packages/sidecar/).
 
 ## How It Works
 
@@ -59,28 +58,27 @@ Treeship never sees content. It sees proofs that content was processed.
 
 ## Installation
 
-### CLI
+### From Source (Current)
 
 ```bash
+# Python SDK
+git clone https://github.com/zerkerlabs/treeship.git
+cd treeship/packages/sdk-python
+pip install -e .
+
+# CLI (requires Node.js 18+)
+cd treeship/packages/cli
+npm install && npm link
+```
+
+### From Package Managers (Coming Soon)
+
+```bash
+# CLI
 npm install -g @treeship/cli
-```
 
-### Python SDK
-
-```bash
+# Python SDK
 pip install treeship-sdk
-```
-
-```python
-from treeship import TreshipClient
-
-client = TreshipClient()  # reads TREESHIP_API_KEY from env
-
-result = client.attest(
-    action="User document summarized",
-    inputs={"user_id": "u123", "doc": "contract.pdf"}  # hashed, never sent
-)
-print(result.url)  # https://treeship.dev/verify/ts_abc123
 ```
 
 ### Docker Sidecar
@@ -107,7 +105,6 @@ Your agent calls `http://treeship-sidecar:2019/attest` — that's it.
 | Framework | Integration | Status |
 |-----------|-------------|--------|
 | [OpenClaw](integrations/openclaw/) | SKILL.md | ✅ Ready |
-| [Nanobot HKUDS](integrations/nanobot-hkuds/) | Python skill | ✅ Ready |
 | [Nanobot.ai](integrations/nanobot-ai/) | MCP config | ✅ Ready |
 | [LangChain](integrations/langchain/) | Callback handler | ✅ Ready |
 | CrewAI | Agent tool | Planned |
@@ -164,7 +161,7 @@ If Zerker disappears, you can run everything yourself.
 - **Decision quality** — Was it the right decision? Requires external ground truth.
 - **Content accuracy** — Treeship proves content was processed, not that it's correct.
 
-We're honest about this. See [Technical Feasibility](docs/technical-feasibility.md).
+We're honest about this.
 
 ## Documentation
 
@@ -172,16 +169,15 @@ We're honest about this. See [Technical Feasibility](docs/technical-feasibility.
 - [Protocol Specification](protocol/SPEC.md)
 - [Privacy Model](docs/privacy.md)
 - [Self-Hosting Guide](docs/self-hosting.md)
-- [API Reference](docs/api-reference.md)
 
 ## Packages
 
-| Package | Description | Install |
-|---------|-------------|---------|
-| [@treeship/cli](packages/cli/) | Command-line interface | `npm i -g @treeship/cli` |
-| [treeship-sdk](packages/sdk-python/) | Python SDK | `pip install treeship-sdk` |
-| [@treeship/sdk](packages/sdk-js/) | JavaScript/TypeScript SDK | `npm i @treeship/sdk` |
-| [treeship-sidecar](packages/sidecar/) | Docker sidecar | `docker pull zerker/treeship-sidecar` |
+| Package | Description | Status |
+|---------|-------------|--------|
+| [@treeship/cli](packages/cli/) | Command-line interface | 🚧 Coming soon |
+| [treeship-sdk](packages/sdk-python/) | Python SDK | 🚧 Coming soon |
+| [@treeship/sdk](packages/sdk-js/) | JavaScript/TypeScript SDK | 🚧 Coming soon |
+| [treeship-sidecar](packages/sidecar/) | Docker sidecar | 🚧 Coming soon |
 
 ## Contributing
 
