@@ -11,6 +11,22 @@ This is not monitoring. Monitoring tells you what happened from inside the syste
 Treeship proves what happened to **anyone outside the system** — including enterprise
 compliance teams, regulators, and clients who have no reason to trust the builder.
 
+## Get Your API Key
+
+```bash
+# Get a free key (1,000 attestations/day)
+curl -X POST https://api.treeship.dev/v1/keys \
+  -H "Content-Type: application/json" \
+  -d '{"email": "you@example.com"}'
+
+# Or visit https://treeship.dev and click "Get API Key"
+```
+
+Save it:
+```bash
+export TREESHIP_API_KEY=ts_live_your_key_here
+```
+
 ## Quick Start (Python)
 
 ```bash
