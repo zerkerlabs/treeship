@@ -1,10 +1,10 @@
 # Contributing to Treeship
 
-Thanks for your interest in contributing! This document provides guidelines.
+Thank you for your interest in contributing to the Treeship Protocol. This document outlines the process for contributing code, documentation, and protocol improvements.
 
 ## Code of Conduct
 
-Be respectful. We're all here to build something useful.
+Contributors are expected to maintain a professional and respectful environment. Focus on technical merit and constructive feedback.
 
 ## Getting Started
 
@@ -19,7 +19,7 @@ Be respectful. We're all here to build something useful.
 
 ```bash
 # Clone
-git clone https://github.com/zerker-ai/treeship.git
+git clone https://github.com/zerkerlabs/treeship.git
 cd treeship
 
 # CLI
@@ -58,10 +58,10 @@ cd packages/sidecar && pytest
 ```
 treeship/
 ├── packages/
-│   ├── cli/           # @treeship/cli (npm)
+│   ├── cli/           # treeship-cli (npm)
 │   ├── sidecar/       # Docker sidecar
 │   ├── sdk-python/    # treeship-sdk (PyPI)
-│   └── sdk-js/        # @treeship/sdk (npm)
+│   └── sdk-js/        # treeship (npm)
 ├── protocol/          # Protocol specification
 ├── integrations/      # Framework integrations
 ├── examples/          # Example projects

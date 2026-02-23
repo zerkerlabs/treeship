@@ -268,7 +268,7 @@ Get the current signing public key.
 
 Production public keys are published at:
 - `https://api.treeship.dev/v1/pubkey`
-- `https://github.com/zerker-ai/treeship/blob/main/protocol/keys.json`
+- `https://github.com/zerkerlabs/treeship/blob/main/protocol/keys.json`
 
 ### keys.json Format
 
