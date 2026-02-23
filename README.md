@@ -100,6 +100,42 @@ You decide what's in the action description. Sensitive data never leaves your in
 
 ---
 
+## Integrations
+
+Works with popular AI agent frameworks:
+
+| Framework | Documentation |
+|-----------|---------------|
+| Claude Code | [docs.treeship.dev/integrations/claude-code](https://docs.treeship.dev/integrations/claude-code) |
+| OpenClaw | [docs.treeship.dev/integrations/openclaw](https://docs.treeship.dev/integrations/openclaw) |
+| Nanobot | [docs.treeship.dev/integrations/nanobot](https://docs.treeship.dev/integrations/nanobot) |
+| LangChain | [docs.treeship.dev/integrations/langchain](https://docs.treeship.dev/integrations/langchain) |
+
+Don't see your framework? The SDK works with any Python code.
+
+---
+
+## Examples
+
+### Demo Agent
+
+A deployable loan processing agent with built-in verification:
+
+```bash
+cd examples/demo-agent
+pip install -r requirements.txt
+python agent.py
+
+# Test it
+curl http://localhost:8000/process \
+  -H "Content-Type: application/json" \
+  -d '{"applicant": "Jane", "amount": 50000}'
+```
+
+Returns a verification URL for each decision. See [examples/demo-agent](examples/demo-agent).
+
+---
+
 ## Independent Verification
 
 Anyone can verify without trusting Treeship:
