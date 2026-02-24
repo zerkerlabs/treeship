@@ -8,7 +8,7 @@
 [![PyPI](https://img.shields.io/pypi/v/treeship-sdk)](https://pypi.org/project/treeship-sdk/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-[Documentation](https://docs.treeship.dev) · [Get API Key](https://treeship.dev) · [Verify](https://treeship.dev/verify)
+[Documentation](https://docs.treeship.dev) · [Get API Key](https://treeship.dev) · [Verify](https://treeship.dev/verify) · [llms.txt](https://docs.treeship.dev/llms.txt)
 
 </div>
 
@@ -32,6 +32,27 @@ Your Agent → Treeship → https://treeship.dev/verify/your-agent/abc123 → An
 
 ## Quick Start
 
+### MCP Server (recommended for Claude Code, Cursor)
+
+Add to your MCP config:
+
+```json
+{
+  "mcpServers": {
+    "treeship": {
+      "command": "treeship-mcp",
+      "env": {
+        "TREESHIP_API_KEY": "ts_live_..."
+      }
+    }
+  }
+}
+```
+
+Your agent automatically discovers `treeship_attest` and `treeship_verify` tools.
+
+### Python SDK
+
 ```bash
 pip install treeship-sdk
 ```
@@ -51,6 +72,17 @@ print(result.verify_url)
 # → https://treeship.dev/verify/loan-processor/abc123
 ```
 
+### CLI
+
+```bash
+npx treeship-cli attest \
+  --agent my-agent \
+  --action "Processed order #12345"
+
+# → ✓ Attestation created
+# → treeship.dev/verify/my-agent/a8f3b2c1
+```
+
 That's it. Your customer can verify at that URL.
 
 ---
@@ -63,6 +95,40 @@ That's it. Your customer can verify at that URL.
 4. **Anyone verifies** — share the URL. Customers verify with one click.
 
 No changes to your agent logic. No new infrastructure. One API call.
+
+---
+
+## Dashboard & Multi-Agent Workflows
+
+The [Treeship dashboard](https://treeship.dev/dashboard) gives you:
+
+- **Overview** — total agents, attestation counts, recent activity with ZK/human/tool badges
+- **Multi-agent workflows** — link attestations into chains with `previous_attestation_id` and `workflow_id` for full audit trails across agent handoffs
+- **Agent identity scores** — cryptographic keypair, domain verification, tool manifests, and code hash registration scored out of 100
+- **Tool authorization** — whitelist which tools each agent can use
+
+### Workflow chains
+
+```python
+# Step 1: First agent
+step1 = ts.attest(
+    agent="code-reviewer",
+    action="Reviewed PR #891: 0 critical issues",
+    workflow_id="deploy-v2.1.0",
+    workflow_step=1
+)
+
+# Step 2: Second agent links to step 1
+step2 = ts.attest(
+    agent="deploy-agent",
+    action="Deployed v2.1.0 to production",
+    previous_attestation_id=step1.id,
+    workflow_id="deploy-v2.1.0",
+    workflow_step=2
+)
+```
+
+Each step is cryptographically linked — tamper-proof audit trail for multi-agent operations.
 
 ---
 
@@ -97,6 +163,7 @@ You decide what's in the action description. Sensitive data never leaves your in
 |---------|---------|
 | Python SDK | `pip install treeship-sdk` |
 | CLI | `npm install -g treeship-cli` |
+| MCP Server | `treeship-mcp` ([GitHub](https://github.com/zerkerlabs/treeship-mcp)) |
 
 ---
 
@@ -107,11 +174,23 @@ Works with popular AI agent frameworks:
 | Framework | Documentation |
 |-----------|---------------|
 | Claude Code | [docs.treeship.dev/integrations/claude-code](https://docs.treeship.dev/integrations/claude-code) |
+| Cursor | [docs.treeship.dev/guides/cursor-mcp-setup](https://docs.treeship.dev/guides/cursor-mcp-setup) |
 | OpenClaw | [docs.treeship.dev/integrations/openclaw](https://docs.treeship.dev/integrations/openclaw) |
 | Nanobot | [docs.treeship.dev/integrations/nanobot](https://docs.treeship.dev/integrations/nanobot) |
 | LangChain | [docs.treeship.dev/integrations/langchain](https://docs.treeship.dev/integrations/langchain) |
 
 Don't see your framework? The SDK works with any Python code.
+
+---
+
+## AI Context
+
+Treeship documentation is available in machine-readable format for AI agents:
+
+- **llms.txt** — [docs.treeship.dev/llms.txt](https://docs.treeship.dev/llms.txt)
+- **Full docs** — [docs.treeship.dev/llms-full.txt](https://docs.treeship.dev/llms-full.txt)
+
+These are automatically maintained by our docs platform and always up to date.
 
 ---
 
@@ -144,7 +223,7 @@ Anyone can verify without trusting Treeship:
 # Get the public key
 curl https://api.treeship.dev/v1/pubkey
 
-# Get attestation data  
+# Get attestation data
 curl https://api.treeship.dev/v1/verify/abc123
 
 # Verify Ed25519 signature with OpenSSL
