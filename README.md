@@ -34,7 +34,7 @@ Your Agent → Treeship → https://treeship.dev/verify/your-agent/abc123 → An
 
 ### MCP Server (recommended for Claude Code, Cursor)
 
-Add to your MCP config:
+If you're using Cursor, see the dedicated setup guide at [docs.treeship.dev/guides/cursor-mcp-setup](https://docs.treeship.dev/guides/cursor-mcp-setup) for IDE-specific instructions. Then add Treeship to your MCP config:
 
 ```json
 {
