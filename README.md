@@ -1,277 +1,197 @@
-<div align="center">
-
 # Treeship
 
-### Your AI agents need a permanent record.
+**Portable trust receipts for agent workflows.**
 
-[![npm](https://img.shields.io/npm/v/treeship-cli)](https://www.npmjs.com/package/treeship-cli)
-[![PyPI](https://img.shields.io/pypi/v/treeship-sdk)](https://pypi.org/project/treeship-sdk/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+Treeship is an open-source, local-first trust layer that creates and verifies signed receipts for agent actions, handoffs, approvals, and dependencies. It works offline, requires no central server, and produces portable evidence bundles that anyone can verify independently.
 
-[Documentation](https://docs.treeship.dev) · [Get API Key](https://treeship.dev) · [Verify](https://treeship.dev/verify) · [llms.txt](https://docs.treeship.dev/llms.txt)
+Before you trust an agent's output, verify its receipts.
 
-</div>
+## Why
 
----
+AI agents are being deployed into workflows where no one can verify what actually happened. Traditional logs are mutable, vendor-locked, and break across trust domains. Treeship fills the gap between "tool authorization" and "verifiable proof of what occurred."
 
-## The Problem
-
-Your AI agent approves loans, processes orders, makes decisions. But when a customer asks **"how do I know it actually analyzed my data?"** — what do you show them?
-
-Logs can be modified. Screenshots can be faked. Trust isn't enough.
-
-## The Solution
-
-Treeship creates tamper-proof records of every action. Each gets a verification URL that anyone can check — without trusting you or Treeship.
-
-```
-Your Agent → Treeship → https://treeship.dev/verify/your-agent/abc123 → Anyone verifies
-```
-
----
+- **Actions**: Signed receipts for every tool call, API request, or agent decision
+- **Approvals**: Cryptographic proof that a human or authority approved an intent
+- **Handoffs**: Tamper-evident records when work moves between agents or humans
+- **Endorsements**: Third-party assertions of compliance or validation
+- **Bundles**: Portable packages containing everything needed for offline verification
 
 ## Quick Start
 
-### MCP Server (recommended for Claude Code, Cursor)
-
-Add to your MCP config:
-
-```json
-{
-  "mcpServers": {
-    "treeship": {
-      "command": "treeship-mcp",
-      "env": {
-        "TREESHIP_API_KEY": "ts_live_..."
-      }
-    }
-  }
-}
-```
-
-Your agent automatically discovers `treeship_attest` and `treeship_verify` tools.
-
-### Python SDK
-
 ```bash
-pip install treeship-sdk
+# Initialize a local Treeship
+treeship init
+
+# Issue action receipts as your agents work
+treeship issue action \
+  --actor agent://researcher \
+  --action-name search.web \
+  --inputs '{"query":"AI safety papers"}' \
+  --outputs '{"results":["paper1","paper2"]}'
+
+treeship issue action \
+  --actor agent://checkout \
+  --action-name payments.create \
+  --inputs '{"amount":1200}' \
+  --outputs '{"payment_id":"pay_123"}'
+
+# Record a human approval
+treeship issue approval \
+  --approver human://ops-manager \
+  --action-hash <hash-from-above>
+
+# Record an agent-to-agent handoff
+treeship issue handoff \
+  --from agent://researcher \
+  --to agent://checkout \
+  --task "purchase laptop under budget"
+
+# Create a checkpoint (signed Merkle root)
+treeship checkpoint
+
+# Export a portable bundle
+treeship bundle --out workflow.treeship.json
+
+# Verify the bundle (works offline, no server needed)
+treeship verify workflow.treeship.json
+
+# View the receipt log
+treeship log
 ```
-
-```python
-from treeship_sdk import Treeship
-
-ts = Treeship()  # uses TREESHIP_API_KEY env var
-
-result = ts.attest(
-    agent="loan-processor",
-    action="Approved application #12345",
-    inputs_hash=ts.hash(application_data)
-)
-
-print(result.verify_url)
-# → https://treeship.dev/verify/loan-processor/abc123
-```
-
-### CLI
-
-```bash
-npx treeship-cli attest \
-  --agent my-agent \
-  --action "Processed order #12345"
-
-# → ✓ Attestation created
-# → treeship.dev/verify/my-agent/a8f3b2c1
-```
-
-That's it. Your customer can verify at that URL.
-
----
 
 ## How It Works
 
-1. **Your agent does something** — approves a loan, processes an order, whatever.
-2. **You call `ts.attest()`** — pass the action description and a hash of the inputs.
-3. **Treeship signs it** — creates a cryptographic signature with timestamp. Impossible to forge.
-4. **Anyone verifies** — share the URL. Customers verify with one click.
-
-No changes to your agent logic. No new infrastructure. One API call.
-
----
-
-## Dashboard & Multi-Agent Workflows
-
-The [Treeship dashboard](https://treeship.dev/dashboard) gives you:
-
-- **Overview** — total agents, attestation counts, recent activity with ZK/human/tool badges
-- **Multi-agent workflows** — link attestations into chains with `previous_attestation_id` and `workflow_id` for full audit trails across agent handoffs
-- **Agent identity scores** — cryptographic keypair, domain verification, tool manifests, and code hash registration scored out of 100
-- **Tool authorization** — whitelist which tools each agent can use
-
-### Workflow chains
-
-```python
-# Step 1: First agent
-step1 = ts.attest(
-    agent="code-reviewer",
-    action="Reviewed PR #891: 0 critical issues",
-    workflow_id="deploy-v2.1.0",
-    workflow_step=1
-)
-
-# Step 2: Second agent links to step 1
-step2 = ts.attest(
-    agent="deploy-agent",
-    action="Deployed v2.1.0 to production",
-    previous_attestation_id=step1.id,
-    workflow_id="deploy-v2.1.0",
-    workflow_step=2
-)
+```
+Agent / Human Action
+        |
+        v
+  Treeship Core
+        |
+        +--> Canonicalize payload (RFC 8785)
+        +--> Hash inputs/outputs (SHA-256)
+        +--> Link to previous receipt
+        +--> Sign with Ed25519
+        +--> Append to Merkle log
+        |
+        v
+  Local Receipt Store
+        |
+        +--> Bundle Builder
+        +--> Checkpoint (signed Merkle root)
+        +--> Verifier
+        +--> Optional: Dock to Hub
 ```
 
-Each step is cryptographically linked — tamper-proof audit trail for multi-agent operations.
+### Verification checks
 
----
+When you verify a bundle, Treeship runs:
 
-## Why This Matters
+1. **Signature verification** on each receipt (Ed25519 via DSSE envelope)
+2. **Chain integrity** (each receipt links to the hash of the previous one)
+3. **Merkle inclusion proofs** (each receipt is in the tree)
+4. **Checkpoint verification** (signed snapshot of tree state)
+5. **Policy evaluation** (optional local trust rules)
 
-We're betting that enterprise clients will start requiring a verification link before deploying AI agents. When that happens:
+All checks work offline. No server callback required.
 
-- **The URL becomes a requirement** — like SSL for websites
-- **Your audit trail locks you in** — migrating means a gap regulators notice
-- **Demand flows from clients to builders** — enterprises require it, builders add it
-- **Open source builds trust** — security teams can audit the protocol
+## Architecture
 
-Once clients expect a `treeship.dev/verify/` link, that expectation becomes the standard.
+### Core Primitives
 
----
+| Primitive | Purpose |
+|-----------|---------|
+| **Receipt** | Signed record of one action, approval, handoff, or endorsement |
+| **DSSE Envelope** | Minimal signed container (Dead Simple Signing Envelope) |
+| **Merkle Tree** | Append-only log with inclusion proofs |
+| **Checkpoint** | Signed snapshot of tree state (anchoring point) |
+| **Bundle** | Portable package for cross-system verification |
+| **Policy** | Local trust rules (who to trust, what checks to require) |
 
-## Privacy
+### Trust Model
 
-| Sent to Treeship | Stays on your server |
-|------------------|----------------------|
-| Action description (you control) | Actual content |
-| SHA-256 hash of inputs | Raw data, files, PII |
-| Timestamp | Everything else |
+Treeship does not decide trust globally. Each verifier decides trust using local policy.
 
-You decide what's in the action description. Sensitive data never leaves your infrastructure — only a hash that proves it existed.
+- **Local-first**: All signing and verification works offline
+- **No central authority**: Trust comes from keys and policy, not a Treeship server
+- **Portable**: Bundles are self-contained -- verify anywhere
+- **Privacy-aware**: Default to input/output hashes, not raw content
+- **Optional docking**: Connect to treeship.dev Hub for visibility and sharing
 
----
+### Statement Types
+
+```
+treeship/action/v1       -- an agent or human did something
+treeship/approval/v1     -- someone approved an intent or action
+treeship/handoff/v1      -- work moved between actors
+treeship/endorsement/v1  -- third-party asserts compliance
+```
+
+## SDK Usage
+
+```typescript
+import { Ship } from "@treeship/core";
+
+// Initialize or load a Treeship
+const ship = await Ship.init("./.treeship", "my-agent");
+
+// Attest an action
+const { receipt, receiptHash } = ship.attestAction({
+  actor: { type: "agent", id: "agent://researcher" },
+  actionType: "tool.call",
+  actionName: "search.web",
+  inputs: JSON.stringify({ query: "AI safety" }),
+  outputs: JSON.stringify({ results: ["paper1"] }),
+});
+
+// Attest a handoff
+ship.attestHandoff({
+  fromActor: { type: "agent", id: "agent://researcher" },
+  toActor: { type: "agent", id: "agent://executor" },
+  taskCommitment: "complete-purchase",
+});
+
+// Create checkpoint and export bundle
+ship.createCheckpoint();
+const bundle = ship.createBundle("Research workflow");
+
+// Save state
+await ship.save();
+```
 
 ## Packages
 
-| Package | Install |
-|---------|---------|
-| Python SDK | `pip install treeship-sdk` |
-| CLI | `npm install -g treeship-cli` |
-| MCP Server | `treeship-mcp` ([GitHub](https://github.com/zerkerlabs/treeship-mcp)) |
+| Package | Description |
+|---------|-------------|
+| `@treeship/core` | Receipt engine, signing, Merkle tree, verification |
+| `treeship` (CLI) | Developer CLI for issuing, bundling, and verifying |
 
----
+## Standards
 
-## Integrations
+Treeship builds on existing standards rather than inventing cryptography:
 
-Works with popular AI agent frameworks:
+- **RFC 8785** (JSON Canonicalization Scheme) for deterministic signing
+- **Ed25519** (RFC 8032) for signatures
+- **DSSE** for signed envelopes (compatible with Sigstore/in-toto ecosystem)
+- **SHA-256** for content addressing and Merkle tree
+- **RATS/EAT** concepts for attestation roles (future)
+- **SCITT** patterns for optional transparency anchoring (future)
 
-| Framework | Documentation |
-|-----------|---------------|
-| Claude Code | [docs.treeship.dev/integrations/claude-code](https://docs.treeship.dev/integrations/claude-code) |
-| Cursor | [docs.treeship.dev/guides/cursor-mcp-setup](https://docs.treeship.dev/guides/cursor-mcp-setup) |
-| OpenClaw | [docs.treeship.dev/integrations/openclaw](https://docs.treeship.dev/integrations/openclaw) |
-| Nanobot | [docs.treeship.dev/integrations/nanobot](https://docs.treeship.dev/integrations/nanobot) |
-| LangChain | [docs.treeship.dev/integrations/langchain](https://docs.treeship.dev/integrations/langchain) |
+## Roadmap
 
-Don't see your framework? The SDK works with any Python code.
-
----
-
-## AI Context
-
-Treeship documentation is available in machine-readable format for AI agents:
-
-- **llms.txt** — [docs.treeship.dev/llms.txt](https://docs.treeship.dev/llms.txt)
-- **Full docs** — [docs.treeship.dev/llms-full.txt](https://docs.treeship.dev/llms-full.txt)
-
-These are automatically maintained by our docs platform and always up to date.
-
----
-
-## Examples
-
-### Demo Agent
-
-A deployable loan processing agent with built-in verification:
-
-```bash
-cd examples/demo-agent
-pip install -r requirements.txt
-python agent.py
-
-# Test it
-curl http://localhost:8000/process \
-  -H "Content-Type: application/json" \
-  -d '{"applicant": "Jane", "amount": 50000}'
-```
-
-Returns a verification URL for each decision. See [examples/demo-agent](examples/demo-agent).
-
----
-
-## Independent Verification
-
-Anyone can verify without trusting Treeship:
-
-```bash
-# Get the public key
-curl https://api.treeship.dev/v1/pubkey
-
-# Get attestation data
-curl https://api.treeship.dev/v1/verify/abc123
-
-# Verify Ed25519 signature with OpenSSL
-openssl pkeyutl -verify -pubin -inkey pubkey.pem -sigfile sig.bin -in payload.txt
-```
-
-Signatures use Ed25519 (RFC 8032). Any implementation can verify.
-
-See [protocol/SPEC.md](protocol/SPEC.md) for the full specification.
-
----
-
-## Self-Hosting
-
-Run your own instance with your own signing keys:
-
-```bash
-# Generate Ed25519 keypair
-openssl genpkey -algorithm Ed25519 -out private.pem
-openssl pkey -in private.pem -pubout -out public.pem
-
-# Deploy
-docker run -d \
-  -e TREESHIP_SIGNING_KEY="$(base64 < private.pem)" \
-  -p 8000:8000 \
-  ghcr.io/zerkerlabs/treeship-api:latest
-```
-
-See [docs/self-hosting.md](docs/self-hosting.md) for details.
-
----
-
-## Contributing
-
-We welcome contributions. See [CONTRIBUTING.md](CONTRIBUTING.md).
-
----
+- [x] Core receipt engine and verification
+- [x] CLI for local operations
+- [x] DSSE envelope support
+- [x] Merkle tree with inclusion proofs
+- [x] Signed checkpoints
+- [x] Policy evaluation
+- [ ] Capture adapters (shell, file, HTTP, MCP, A2A)
+- [ ] Dock to treeship.dev Hub
+- [ ] Anchoring adapters (OTS/Bitcoin, Solana)
+- [ ] Selective disclosure
+- [ ] Rust core + WASM verifier
 
 ## License
 
-MIT — [LICENSE](LICENSE)
+Apache License 2.0. See [LICENSE](LICENSE).
 
----
-
-<div align="center">
-
-**Treeship** · Verification for AI agents
-
-[Website](https://treeship.dev) · [Docs](https://docs.treeship.dev) · [GitHub](https://github.com/zerkerlabs/treeship)
-
-</div>
+Copyright 2025-2026 Zerker Labs, Inc.
