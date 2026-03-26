@@ -1,0 +1,512 @@
+mod printer;
+mod config;
+mod ctx;
+mod commands;
+
+use clap::{Parser, Subcommand, Args};
+use printer::{Format, Printer};
+
+/// Portable trust receipts for agent workflows.
+///
+/// Treeship signs every action, approval, and handoff in your agent workflow
+/// and gives you a verifiable proof chain you can share as a URL.
+///
+/// Quick start:
+///   treeship init
+///   treeship wrap -- npm test
+///   treeship status
+#[derive(Parser)]
+#[command(
+    name    = "treeship",
+    version = env!("CARGO_PKG_VERSION"),
+    about   = "Portable trust receipts for agent workflows",
+    after_help = "Docs: https://treeship.dev/docs   Dock: treeship dock login",
+)]
+struct Cli {
+    /// Config file (default: ~/.treeship/config.json)
+    #[arg(long, global = true, value_name = "PATH")]
+    config: Option<String>,
+
+    /// Output format: text (default) or json
+    #[arg(long, global = true, default_value = "text", value_name = "FORMAT")]
+    format: String,
+
+    /// Suppress all output except errors
+    #[arg(long, global = true, default_value_t = false)]
+    quiet: bool,
+
+    /// Disable color output
+    #[arg(long, global = true, default_value_t = false)]
+    no_color: bool,
+
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Set up a new Treeship -- generates a keypair and config
+    ///
+    /// Run this once on each machine. Your signing key is encrypted at
+    /// rest and tied to this machine's identity.
+    ///
+    /// Examples:
+    ///   treeship init
+    ///   treeship init --name my-agent-server
+    ///   treeship init --config /opt/myapp/.treeship/config.json
+    Init(InitArgs),
+
+    /// Show ship state: keys, recent artifacts, dock status
+    ///
+    /// Examples:
+    ///   treeship status
+    Status,
+
+    /// Wrap any command -- run it and attest the execution
+    ///
+    /// The wrapped command's stdin/stdout/stderr pass through unchanged.
+    /// An action artifact is signed after it completes, capturing the
+    /// actor, command, exit code, and elapsed time.
+    ///
+    /// Examples:
+    ///   treeship wrap -- npm test
+    ///   treeship wrap -- go build ./...
+    ///   treeship wrap --actor agent://ci -- pytest tests/
+    ///   treeship wrap --push -- cargo test
+    Wrap(WrapArgs),
+
+    /// Sign an attestation artifact
+    ///
+    /// Examples:
+    ///   treeship attest action --actor agent://me --action tool.call
+    ///   treeship attest approval --approver human://rezo --description "ok to purchase"
+    ///   treeship attest handoff --from agent://a --to agent://b --artifacts art_abc,art_def
+    #[command(subcommand)]
+    Attest(AttestCommand),
+
+    /// Verify an artifact or its full parent chain
+    ///
+    /// Walks every artifact in the chain back to its root, checks each
+    /// Ed25519 signature, re-derives content-addressed IDs, and enforces
+    /// approval nonce binding.
+    ///
+    /// Exit code 0 = pass, 1 = fail.
+    ///
+    /// Examples:
+    ///   treeship verify art_a1b2c3d4e5f6a1b2
+    ///   treeship verify art_a1b2c3d4e5f6a1b2 --no-chain
+    ///   treeship verify ./export.treeship
+    Verify(VerifyArgs),
+
+    /// Create, export, and import artifact bundles
+    ///
+    /// Bundles group artifacts into a signed, portable package.
+    /// Export as a .treeship file to share proof chains.
+    ///
+    /// Examples:
+    ///   treeship bundle create --artifacts art_a1b2,art_c3d4 --tag v1.0
+    ///   treeship bundle export art_e5f6 --out release.treeship
+    ///   treeship bundle import release.treeship
+    #[command(subcommand)]
+    Bundle(BundleCommand),
+
+    /// Manage signing keys
+    ///
+    /// Examples:
+    ///   treeship keys list
+    #[command(subcommand)]
+    Keys(KeysCommand),
+
+    /// Print version and build info
+    Version,
+}
+
+// --- init -------------------------------------------------------------------
+
+#[derive(Args)]
+struct InitArgs {
+    /// Human-readable name for this ship (optional)
+    #[arg(long, value_name = "NAME")]
+    name: Option<String>,
+
+    /// Overwrite an existing config
+    #[arg(long, default_value_t = false)]
+    force: bool,
+}
+
+// --- wrap -------------------------------------------------------------------
+
+#[derive(Args)]
+struct WrapArgs {
+    /// Actor URI (default: ship://<your-ship-id>)
+    ///
+    /// Examples: agent://researcher  human://rezo  ship://my-server
+    #[arg(long, value_name = "URI")]
+    actor: Option<String>,
+
+    /// Action label (default: executable name)
+    ///
+    /// Examples: test.run  build.cargo  deploy.production
+    #[arg(long, value_name = "LABEL")]
+    action: Option<String>,
+
+    /// Parent artifact ID -- links this into a chain
+    #[arg(long, value_name = "ID")]
+    parent: Option<String>,
+
+    /// Push the artifact to Hub immediately after attesting
+    #[arg(long, default_value_t = false)]
+    push: bool,
+
+    /// The command to run (everything after --)
+    #[arg(last = true, required = true, value_name = "CMD")]
+    cmd: Vec<String>,
+}
+
+// --- attest -----------------------------------------------------------------
+
+#[derive(Subcommand)]
+enum AttestCommand {
+    /// Record that an actor performed an action
+    ///
+    /// Examples:
+    ///   treeship attest action --actor agent://researcher --action tool.call
+    ///   treeship attest action --actor agent://checkout --action stripe.charge.create \
+    ///     --input-digest sha256:abc123 --output-digest sha256:def456 \
+    ///     --parent art_a1b2c3d4 --approval-nonce abc123xyz
+    Action(AttestActionArgs),
+
+    /// Record that an approver authorized an intent
+    ///
+    /// A random nonce is generated automatically. The consuming action
+    /// must echo this nonce in --approval-nonce to prevent approval reuse.
+    ///
+    /// Examples:
+    ///   treeship attest approval --approver human://rezo \
+    ///     --description "approve laptop purchase < $1500" --expires 2026-03-26T11:00:00Z
+    Approval(AttestApprovalArgs),
+
+    /// Record a work handoff between actors
+    ///
+    /// Examples:
+    ///   treeship attest handoff --from agent://researcher --to agent://checkout \
+    ///     --artifacts art_a1b2,art_c3d4 --approvals art_e5f6
+    Handoff(AttestHandoffArgs),
+
+    /// Record an external system receipt (webhook, timestamp, confirmation)
+    ///
+    /// Examples:
+    ///   treeship attest receipt --system system://stripe-webhook \
+    ///     --kind confirmation --subject art_a1b2 \
+    ///     --payload '{"eventId":"evt_abc","status":"succeeded"}'
+    Receipt(AttestReceiptArgs),
+}
+
+#[derive(Args)]
+struct AttestActionArgs {
+    /// Actor URI -- who performed the action
+    #[arg(long, required = true, value_name = "URI")]
+    actor: String,
+
+    /// Action label -- what was done
+    #[arg(long, required = true, value_name = "LABEL")]
+    action: String,
+
+    /// SHA-256 digest of the input consumed
+    #[arg(long, value_name = "sha256:HEX")]
+    input_digest: Option<String>,
+
+    /// SHA-256 digest of the output produced
+    #[arg(long, value_name = "sha256:HEX")]
+    output_digest: Option<String>,
+
+    /// URI to referenced content (for large/external payloads)
+    #[arg(long, value_name = "URI")]
+    content_uri: Option<String>,
+
+    /// Parent artifact ID -- links this into a chain
+    #[arg(long, value_name = "ID")]
+    parent: Option<String>,
+
+    /// Must match the nonce on the approval authorising this action
+    #[arg(long, value_name = "NONCE")]
+    approval_nonce: Option<String>,
+
+    /// Extra metadata as a JSON object
+    #[arg(long, value_name = r#"'{"key":"val"}'"#)]
+    meta: Option<String>,
+
+    /// Write the raw DSSE envelope to a file (- for stdout)
+    #[arg(long, value_name = "PATH")]
+    out: Option<String>,
+}
+
+#[derive(Args)]
+struct AttestApprovalArgs {
+    /// Approver URI
+    #[arg(long, required = true, value_name = "URI")]
+    approver: String,
+
+    /// Artifact ID being approved
+    #[arg(long, value_name = "ID")]
+    subject: Option<String>,
+
+    /// Human-readable description of what was approved
+    #[arg(long, value_name = "TEXT")]
+    description: Option<String>,
+
+    /// Expiry as ISO 8601 timestamp
+    #[arg(long, value_name = "TIMESTAMP")]
+    expires: Option<String>,
+}
+
+#[derive(Args)]
+struct AttestHandoffArgs {
+    /// Source actor URI
+    #[arg(long, required = true, value_name = "URI")]
+    from: String,
+
+    /// Destination actor URI
+    #[arg(long, required = true, value_name = "URI")]
+    to: String,
+
+    /// Comma-separated artifact IDs being transferred
+    #[arg(long, required = true, value_delimiter = ',', value_name = "IDS")]
+    artifacts: Vec<String>,
+
+    /// Comma-separated approval IDs the receiver inherits
+    #[arg(long, value_delimiter = ',', value_name = "IDS")]
+    approvals: Vec<String>,
+
+    /// Comma-separated obligations the receiver must satisfy
+    #[arg(long, value_delimiter = ',', value_name = "TEXT")]
+    obligations: Vec<String>,
+}
+
+#[derive(Args)]
+struct AttestReceiptArgs {
+    /// System URI -- who produced this receipt
+    #[arg(long, required = true, value_name = "URI")]
+    system: String,
+
+    /// Receipt kind: confirmation | timestamp | inclusion | webhook
+    #[arg(long, required = true, value_name = "KIND")]
+    kind: String,
+
+    /// Subject artifact ID
+    #[arg(long, value_name = "ID")]
+    subject: Option<String>,
+
+    /// Receipt payload as a JSON object
+    #[arg(long, value_name = r#"'{"key":"val"}'"#)]
+    payload: Option<String>,
+}
+
+// --- bundle -----------------------------------------------------------------
+
+#[derive(Subcommand)]
+enum BundleCommand {
+    /// Create a bundle from a list of artifacts
+    ///
+    /// Examples:
+    ///   treeship bundle create --artifacts art_a1b2,art_c3d4
+    ///   treeship bundle create --artifacts art_a1b2,art_c3d4 --tag v1.0
+    Create(BundleCreateArgs),
+
+    /// Export a bundle to a portable .treeship file
+    ///
+    /// Examples:
+    ///   treeship bundle export art_e5f6 --out release.treeship
+    Export(BundleExportArgs),
+
+    /// Import a .treeship file into local storage
+    ///
+    /// Examples:
+    ///   treeship bundle import release.treeship
+    Import(BundleImportArgs),
+}
+
+#[derive(Args)]
+struct BundleCreateArgs {
+    /// Comma-separated artifact IDs to include
+    #[arg(long, required = true, value_delimiter = ',', value_name = "IDS")]
+    artifacts: Vec<String>,
+
+    /// Human-readable tag for this bundle
+    #[arg(long, value_name = "TAG")]
+    tag: Option<String>,
+
+    /// Description of what this bundle contains
+    #[arg(long, value_name = "TEXT")]
+    description: Option<String>,
+}
+
+#[derive(Args)]
+struct BundleExportArgs {
+    /// Bundle artifact ID to export
+    bundle_id: String,
+
+    /// Output file path
+    #[arg(long, required = true, value_name = "PATH")]
+    out: String,
+}
+
+#[derive(Args)]
+struct BundleImportArgs {
+    /// Path to .treeship file
+    file: String,
+}
+
+// --- verify -----------------------------------------------------------------
+
+#[derive(Args)]
+struct VerifyArgs {
+    /// Artifact ID or path to a .treeship bundle file
+    target: String,
+
+    /// Verify only this artifact, do not walk the parent chain
+    #[arg(long, default_value_t = false)]
+    no_chain: bool,
+
+    /// Maximum chain depth to walk (default: 20)
+    #[arg(long, default_value_t = 20, value_name = "N")]
+    max_depth: usize,
+}
+
+// --- keys -------------------------------------------------------------------
+
+#[derive(Subcommand)]
+enum KeysCommand {
+    /// List all signing keys
+    List,
+}
+
+// --- main -------------------------------------------------------------------
+
+fn main() {
+    let cli = Cli::parse();
+
+    let format  = Format::from_str(&cli.format);
+    let printer = Printer::new(format, cli.quiet, cli.no_color);
+
+    if let Err(e) = dispatch(&cli, &printer) {
+        printer.failure(&e.to_string(), &[]);
+        std::process::exit(exit_code(&e.to_string()));
+    }
+}
+
+fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
+    match &cli.command {
+
+        Command::Version => {
+            println!("treeship {} (rust)", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
+
+        Command::Init(a) => commands::init::run(
+            a.name.clone(), cli.config.clone(), a.force, printer,
+        ),
+
+        Command::Status => commands::status::run(cli.config.as_deref(), printer),
+
+        Command::Wrap(a) => commands::wrap::run(
+            a.actor.clone(),
+            a.action.clone(),
+            a.parent.clone(),
+            a.push,
+            cli.config.as_deref(),
+            &a.cmd,
+            printer,
+        ),
+
+        Command::Attest(sub) => match sub {
+            AttestCommand::Action(a) => {
+                commands::attest::action(commands::attest::ActionArgs {
+                    actor:          a.actor.clone(),
+                    action:         a.action.clone(),
+                    input_digest:   a.input_digest.clone(),
+                    output_digest:  a.output_digest.clone(),
+                    content_uri:    a.content_uri.clone(),
+                    parent_id:      a.parent.clone(),
+                    approval_nonce: a.approval_nonce.clone(),
+                    meta:           a.meta.clone(),
+                    out:            a.out.clone(),
+                    config:         cli.config.clone(),
+                }, printer)?;
+                Ok(())
+            }
+            AttestCommand::Approval(a) => commands::attest::approval(
+                commands::attest::ApprovalArgs {
+                    approver:    a.approver.clone(),
+                    subject_id:  a.subject.clone(),
+                    description: a.description.clone(),
+                    expires:     a.expires.clone(),
+                    config:      cli.config.clone(),
+                },
+                printer,
+            ),
+            AttestCommand::Handoff(a) => commands::attest::handoff(
+                commands::attest::HandoffArgs {
+                    from:        a.from.clone(),
+                    to:          a.to.clone(),
+                    artifacts:   a.artifacts.clone(),
+                    approvals:   a.approvals.clone(),
+                    obligations: a.obligations.clone(),
+                    config:      cli.config.clone(),
+                },
+                printer,
+            ),
+            AttestCommand::Receipt(a) => commands::attest::receipt(
+                commands::attest::ReceiptArgs {
+                    system:     a.system.clone(),
+                    kind:       a.kind.clone(),
+                    subject_id: a.subject.clone(),
+                    payload:    a.payload.clone(),
+                    config:     cli.config.clone(),
+                },
+                printer,
+            ),
+        },
+
+        Command::Bundle(sub) => match sub {
+            BundleCommand::Create(a) => commands::bundle::create(
+                commands::bundle::CreateArgs {
+                    artifacts:   a.artifacts.clone(),
+                    tag:         a.tag.clone(),
+                    description: a.description.clone(),
+                    config:      cli.config.clone(),
+                },
+                printer,
+            ),
+            BundleCommand::Export(a) => commands::bundle::export(
+                commands::bundle::ExportArgs {
+                    bundle_id: a.bundle_id.clone(),
+                    out:       a.out.clone(),
+                    config:    cli.config.clone(),
+                },
+                printer,
+            ),
+            BundleCommand::Import(a) => commands::bundle::import(
+                commands::bundle::ImportArgs {
+                    file:   a.file.clone(),
+                    config: cli.config.clone(),
+                },
+                printer,
+            ),
+        },
+
+        Command::Verify(a) => commands::verify::run(
+            &a.target, a.no_chain, a.max_depth, cli.config.as_deref(), printer,
+        ),
+
+        Command::Keys(sub) => match sub {
+            KeysCommand::List => commands::keys::list(cli.config.as_deref(), printer),
+        },
+    }
+}
+
+fn exit_code(msg: &str) -> i32 {
+    if msg.contains("not initialized") || msg.contains("treeship init") { 3 }
+    else if msg.contains("required") || msg.contains("no command given") { 4 }
+    else { 1 }
+}
