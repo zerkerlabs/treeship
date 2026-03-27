@@ -66,7 +66,7 @@ func main() {
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if origin == "https://treeship.dev" || origin == "http://localhost:3000" {
+		if origin == "https://treeship.dev" || origin == "https://www.treeship.dev" || origin == "http://localhost:3000" {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
