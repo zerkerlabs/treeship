@@ -1,7 +1,10 @@
 ---
 title: treeship init
 description: Commission a new Treeship trust domain.
+icon: Plus
 ---
+
+import { Callout } from 'fumadocs-ui/components/callout';
 
 ## Usage
 
@@ -16,7 +19,9 @@ Creates a new Treeship with:
 - A captain identity (human URI)
 - A new Ed25519 keypair, encrypted at rest
 
-No account, no email, no network connection required.
+<Callout type="info">
+No account, no email, no network connection required. Everything is generated locally.
+</Callout>
 
 ## Example
 

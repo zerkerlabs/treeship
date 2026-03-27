@@ -1,8 +1,14 @@
 ---
 title: treeship attest
 description: Manually attest any event -- actions, warrants, passages, endorsements.
+icon: Stamp
 ---
 
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+<Tabs items={['action', 'warrant', 'passage', 'endorsement']}>
+<Tab value="action">
 ## treeship attest action
 
 Attest any event with full control over what gets captured.
@@ -26,9 +32,11 @@ treeship attest action \
 | `--subject-uri <uri>` | Content reference URI |
 | `--meta <json>` | Arbitrary JSON metadata |
 
-### Privacy-preserving attestation
+<Callout type="info">
+Use `--subject-digest` to attest that an action occurred on a specific document without revealing the document itself. The digest proves which content was processed. The content never enters the artifact.
+</Callout>
 
-To attest that an action occurred on a specific document without revealing the document:
+### Privacy-preserving attestation
 
 ```bash
 treeship attest action \
@@ -37,11 +45,8 @@ treeship attest action \
   --subject-digest sha256:e3b0c44298fc1c149afb4c8996fb924 \
   --subject-uri ehr://patient/94821/note/2026-03-26
 ```
-
-The digest proves which document was processed. The content never enters the artifact.
-
----
-
+</Tab>
+<Tab value="warrant">
 ## treeship attest warrant
 
 Issue a warrant authorizing a specific agent action.
@@ -55,8 +60,11 @@ treeship attest warrant \
 
 Returns the warrant artifact ID and the nonce to pass to the agent.
 
----
-
+<Callout type="warn">
+Warrants are single-use by default. If the same nonce is used twice, the second action will fail verification. This is enforced in the Rust core and cannot be bypassed.
+</Callout>
+</Tab>
+<Tab value="passage">
 ## treeship attest passage
 
 Seal a passage recording the transfer of work.
@@ -67,9 +75,8 @@ treeship attest passage \
   --to agent://executor \
   --artifacts art_a1b2,art_c3d4
 ```
-
----
-
+</Tab>
+<Tab value="endorsement">
 ## treeship attest endorsement
 
 A second party signs that they have verified another artifact.
@@ -80,3 +87,5 @@ treeship attest endorsement \
   --subject art_code_output_abc \
   --description "reviewed -- no critical issues found"
 ```
+</Tab>
+</Tabs>

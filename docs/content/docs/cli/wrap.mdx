@@ -1,7 +1,11 @@
 ---
 title: treeship wrap
 description: Attest any command execution automatically.
+icon: Terminal
 ---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
 `treeship wrap` runs a command as a subprocess and produces a signed log entry recording what happened.
 
@@ -25,26 +29,34 @@ treeship wrap [OPTIONS] -- <command> [args...]
 
 ## Examples
 
+<Tabs items={['Basic', 'With Warrant', 'In a Mission']}>
+<Tab value="Basic">
 ```bash
-# Basic wrap
 treeship wrap -- npm test
+```
 
-# With actor
+```bash
 treeship wrap --actor agent://ci-runner -- cargo build --release
-
-# Bound to a warrant
+```
+</Tab>
+<Tab value="With Warrant">
+```bash
 treeship wrap \
   --actor agent://deployer \
   --warrant-nonce nce_7f8e9d0a \
   -- kubectl apply -f deploy.yaml
-
-# In a mission (auto-linked via TREESHIP_MISSION env var)
+```
+</Tab>
+<Tab value="In a Mission">
+```bash
 treeship mission start --name deploy-v1.2
 treeship wrap -- npm run build
 treeship wrap -- npm test
 treeship wrap --warrant-nonce nce_xxx -- ./deploy.sh
 treeship mission close
 ```
+</Tab>
+</Tabs>
 
 ## Options
 
@@ -56,6 +68,6 @@ treeship mission close
 | `--meta <json>` | Additional metadata as JSON |
 | `--format json` | Output artifact record as JSON |
 
-## Notes
-
+<Callout type="info">
 `treeship wrap` always propagates the subprocess exit code. If your command exits 1, `treeship wrap` exits 1. The log entry is still signed and stored -- even failed runs are attested.
+</Callout>

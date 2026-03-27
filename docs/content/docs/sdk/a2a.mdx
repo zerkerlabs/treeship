@@ -1,9 +1,14 @@
 ---
 title: "@treeship/a2a"
 description: Agent-to-Agent protocol bridge with built-in attestation.
+icon: Network
 ---
 
-> The A2A bridge is currently in development. Track progress at github.com/zerkerlabs/treeship.
+import { Callout } from 'fumadocs-ui/components/callout';
+
+<Callout type="warn">
+The A2A bridge is currently in development. Track progress at github.com/zerkerlabs/treeship.
+</Callout>
 
 ## Overview
 
@@ -43,4 +48,6 @@ Every `delegate` call produces a passage artifact recording:
 - A timestamp
 - The Ed25519 signature
 
-The receiving agent can verify the passage before acting on the work.
+<Callout type="info">
+The receiving agent can verify the passage before acting on the work. This creates an auditable chain of custody across multi-agent workflows.
+</Callout>

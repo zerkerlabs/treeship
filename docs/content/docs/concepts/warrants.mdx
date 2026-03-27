@@ -1,7 +1,10 @@
 ---
 title: Warrants
 description: A warrant is a captain's cryptographic authorization for one specific agent action.
+icon: FileCheck
 ---
+
+import { Callout } from 'fumadocs-ui/components/callout';
 
 A warrant is the answer to "who authorized this?" -- signed, scoped, single-use, and verifiable.
 
@@ -39,7 +42,9 @@ At verification time, the verifier enforces:
 action.approvalNonce == warrant.nonce
 ```
 
-This check is in the Rust core and cannot be skipped. If the nonces don't match, verification fails. If the warrant has expired, verification fails. If the same nonce is used twice, verification fails -- the second action has no matching warrant to link to.
+<Callout type="warn" title="Nonce binding is mandatory">
+This check is in the Rust core and cannot be skipped. If the nonces do not match, verification fails. If the warrant has expired, verification fails. If the same nonce is used twice, verification fails -- the second action has no matching warrant to link to.
+</Callout>
 
 ## Warrant fields
 

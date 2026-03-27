@@ -1,9 +1,14 @@
 ---
 title: "@treeship/mcp"
 description: Drop-in MCP client replacement. Every tool call receipted automatically.
+icon: Plug
 ---
 
-> The MCP bridge is currently in development. Track progress at github.com/zerkerlabs/treeship.
+import { Callout } from 'fumadocs-ui/components/callout';
+
+<Callout type="warn">
+The MCP bridge is currently in development. Track progress at github.com/zerkerlabs/treeship.
+</Callout>
 
 ## Install
 
@@ -38,7 +43,9 @@ For every `callTool` call, `@treeship/mcp` produces two log entries:
 1. **Intent** (before the call) -- proves what was about to happen
 2. **Receipt** (after the call) -- proves what came back
 
-Arguments and results are never stored directly -- only their SHA-256 digests.
+<Callout type="info">
+Arguments and results are never stored directly -- only their SHA-256 digests. The digest proves what data was involved without exposing the data itself.
+</Callout>
 
 ## Environment variables
 

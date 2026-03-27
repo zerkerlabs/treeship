@@ -1,7 +1,11 @@
 ---
 title: What is Treeship
 description: Treeship is a portable cryptographic trust layer for human-agent workflows.
+icon: BookOpen
 ---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Card, Cards } from 'fumadocs-ui/components/card';
 
 Treeship keeps a signed record of every action your agents take, every warrant your team issues, and every passage of work between systems.
 
@@ -20,22 +24,19 @@ Treeship produces cryptographic receipts that answer all four.
 
 ## What Treeship is not
 
-- Not a scanner or EDR
-- Not a SIEM or observability dashboard
-- Not an orchestration framework
-- Not a centralized trust authority
-
-Treeship is the **evidence layer**. Other tools find problems. Treeship signs what happened.
+<Callout type="warn">
+Treeship is not a scanner, EDR, SIEM, orchestration framework, or centralized trust authority. It is the **evidence layer**. Other tools find problems. Treeship signs what happened.
+</Callout>
 
 ## Core properties
 
-| Property | Meaning |
-|----------|---------|
-| Local-first | Everything works offline by default |
-| Self-contained | A ship's log verifies without the Harbor |
-| Deterministic | Same content always produces the same artifact ID |
-| Portable | Works across orgs, clouds, and protocols |
-| Open | MIT licensed, verifiable without Treeship |
+<Cards>
+<Card title="Local-first" description="Every operation works offline. The Harbor adds shareability, never trust." />
+<Card title="Self-contained" description="A signed artifact is a JSON file. It verifies without a database, API, or account." />
+<Card title="Deterministic" description="Same content always produces the same artifact ID." />
+<Card title="Portable" description="Works across orgs, clouds, and protocols with no shared infrastructure." />
+<Card title="Open" description="MIT licensed. The verifier is open source. Anyone can verify without trusting Treeship." />
+</Cards>
 
 ## How it fits with other tools
 

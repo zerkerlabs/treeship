@@ -1,11 +1,17 @@
 ---
 title: How it works
 description: The four-step flow from first command to shareable proof URL.
+icon: Workflow
 ---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
 
 ## The flow
 
-### 1. Commission
+<Steps>
+<Step>
+### Commission
 
 Create a Treeship -- a trust domain with a name, a captain identity, and an Ed25519 keypair.
 
@@ -14,8 +20,9 @@ treeship init
 ```
 
 One Treeship covers your entire workflow. Many agents, many missions, one set of keys and one governance model.
-
-### 2. Bring crew aboard
+</Step>
+<Step>
+### Bring crew aboard
 
 Register the agents and humans who will operate within this Treeship.
 
@@ -24,8 +31,9 @@ treeship crew add agent://researcher
 treeship crew add agent://coder
 treeship crew add human://sarah.chen
 ```
-
-### 3. Run your workflow
+</Step>
+<Step>
+### Run your workflow
 
 Wrap any command or attest any action. Issue warrants before sensitive steps.
 
@@ -36,8 +44,9 @@ treeship wrap --warrant-nonce nce_xxx -- node pay.js
 ```
 
 Every step produces a signed log entry linked to the previous one via a content-addressed parent ID.
-
-### 4. Share the proof
+</Step>
+<Step>
+### Share the proof
 
 Seal your mission and push the ship's log to the Harbor.
 
@@ -46,6 +55,8 @@ treeship mission close
 treeship berth push mission-2026-03-26.treeship
 # → https://treeship.dev/verify/msn_xxx
 ```
+</Step>
+</Steps>
 
 ## What gets signed
 
@@ -73,6 +84,10 @@ DSSE envelope
 ```bash
 treeship verify art_f7e6d5c4
 ```
+
+<Callout type="info">
+The verifier is deterministic and runs entirely on your machine. No network call, no server trust required.
+</Callout>
 
 The verifier:
 1. Derives the expected artifact ID from `sha256(PAE_bytes)[..16]`

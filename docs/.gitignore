@@ -1,3 +1,6 @@
 node_modules/
 .next/
 .source/
+package-lock.json
+next-env.d.ts
+.source/

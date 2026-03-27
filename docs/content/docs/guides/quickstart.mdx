@@ -1,21 +1,33 @@
 ---
 title: Quickstart
 description: From zero to a verified artifact URL in under five minutes.
+icon: Rocket
 ---
 
-## Install
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+<Callout type="info">
+No account, email, or API key required. Everything runs locally on your machine.
+</Callout>
+
+<Steps>
+<Step>
+### Install
 
 ```bash
 cargo install treeship
 ```
-
-## Commission your Treeship
+</Step>
+<Step>
+### Commission your Treeship
 
 ```bash
 treeship init
 ```
 
-You will be asked for a name and captain identity. A new Ed25519 keypair is generated and encrypted at rest. No account or email required.
+You will be asked for a name and captain identity. A new Ed25519 keypair is generated and encrypted at rest.
 
 ```
 ? What is this Treeship for?  > Personal workspace
@@ -27,8 +39,9 @@ You will be asked for a name and captain identity. A new Ed25519 keypair is gene
   captain: human://rezo
   key:     key_9f8e7d6c (ed25519 · encrypted at rest)
 ```
-
-## Wrap a command
+</Step>
+<Step>
+### Wrap a command
 
 ```bash
 treeship wrap -- echo "first log entry"
@@ -44,8 +57,9 @@ This produces a signed log entry with your captain identity, the action, exit co
   exit:    0
   elapsed: 12ms
 ```
-
-## Verify it
+</Step>
+<Step>
+### Verify it
 
 ```bash
 treeship verify art_f7e6d5c4
@@ -56,8 +70,9 @@ treeship verify art_f7e6d5c4
   chain:  1 artifact · intact
   signed: human://rezo · 2026-03-26T21:00:00Z
 ```
-
-## Issue a warrant and bind an action
+</Step>
+<Step>
+### Issue a warrant and bind an action
 
 ```bash
 # Captain issues a warrant
@@ -86,8 +101,9 @@ treeship verify $TREESHIP_LAST
   actor:    agent://deployer
   chain:    2 artifacts · intact
 ```
-
-## Push to the Harbor
+</Step>
+<Step>
+### Push to the Harbor
 
 ```bash
 treeship berth login
@@ -99,3 +115,5 @@ treeship berth push $TREESHIP_LAST
 ```
 
 Anyone can open that URL and verify the chain. No account, no install, no trust in Treeship's infrastructure.
+</Step>
+</Steps>

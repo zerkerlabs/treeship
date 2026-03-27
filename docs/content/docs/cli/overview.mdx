@@ -1,7 +1,10 @@
 ---
 title: CLI overview
 description: Full command surface for the treeship CLI.
+icon: SquareTerminal
 ---
+
+import { Callout } from 'fumadocs-ui/components/callout';
 
 ## Installation
 
@@ -71,6 +74,10 @@ treeship fleet use <name>               # switch active Treeship context
 | `TREESHIP_DISABLE` | Set to `1` to disable all attestation (passthrough) |
 | `TREESHIP_DEBUG` | Set to `1` to log all activity to stderr |
 | `NO_COLOR` | Disable color output |
+
+<Callout type="info">
+`TREESHIP_LAST` is updated after every operation. Use it to chain commands without manually tracking artifact IDs.
+</Callout>
 
 ## Exit codes
 

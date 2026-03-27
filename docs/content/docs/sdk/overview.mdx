@@ -1,9 +1,15 @@
 ---
 title: "@treeship/sdk"
 description: TypeScript SDK for Treeship. Embeds WASM core, zero subprocess.
+icon: Code
 ---
 
-> The SDK is currently in development. Track progress at github.com/zerkerlabs/treeship.
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Card, Cards } from 'fumadocs-ui/components/card';
+
+<Callout type="warn">
+The SDK is currently in development. Track progress at github.com/zerkerlabs/treeship.
+</Callout>
 
 ## Install
 
@@ -35,7 +41,9 @@ console.log(hubUrl); // https://treeship.dev/verify/art_xxx
 
 ## Key design rules
 
-- **Zero subprocess** -- embeds `@treeship/core-wasm`, no `child_process.execFile`
-- **Works everywhere** -- Node, Deno, Bun, browser
-- **Never stores sensitive content** -- hash payloads, not content
-- **Graceful degradation** -- Treeship failures never surface as errors to your code
+<Cards>
+<Card title="Zero subprocess" description="Embeds @treeship/core-wasm. No child_process.execFile." />
+<Card title="Works everywhere" description="Node, Deno, Bun, and browser environments." />
+<Card title="Never stores sensitive content" description="Hash payloads, not content." />
+<Card title="Graceful degradation" description="Treeship failures never surface as errors to your code." />
+</Cards>

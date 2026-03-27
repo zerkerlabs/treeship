@@ -8,7 +8,7 @@ export default function Layout({ children }: { children: ReactNode }) {
       tree={source.pageTree}
       nav={{
         title: (
-          <span style={{ fontFamily: 'Georgia, serif', fontSize: '20px', color: '#3ECF6E' }}>
+          <span className="font-serif text-xl text-fd-primary">
             Treeship
           </span>
         ),
@@ -19,7 +19,7 @@ export default function Layout({ children }: { children: ReactNode }) {
               href="https://github.com/zerkerlabs/treeship"
               target="_blank"
               rel="noopener noreferrer"
-              style={{ fontSize: '13px', color: '#8FA88F' }}
+              className="text-xs text-fd-muted-foreground hover:text-fd-primary transition-colors"
             >
               GitHub
             </a>
@@ -27,7 +27,7 @@ export default function Layout({ children }: { children: ReactNode }) {
               href="https://treeship.dev"
               target="_blank"
               rel="noopener noreferrer"
-              style={{ fontSize: '13px', color: '#8FA88F' }}
+              className="text-xs text-fd-muted-foreground hover:text-fd-primary transition-colors"
             >
               treeship.dev
             </a>
@@ -36,15 +36,7 @@ export default function Layout({ children }: { children: ReactNode }) {
       }}
       sidebar={{
         banner: (
-          <div style={{
-            background: 'rgba(62,207,110,0.08)',
-            border: '0.5px solid rgba(62,207,110,0.2)',
-            borderRadius: '7px',
-            padding: '10px 12px',
-            fontSize: '12px',
-            color: '#8FA88F',
-            fontFamily: 'monospace',
-          }}>
+          <div className="sidebar-install-banner rounded-lg px-3 py-2.5 text-xs font-mono text-fd-muted-foreground">
             cargo install treeship
           </div>
         ),

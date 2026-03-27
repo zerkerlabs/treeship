@@ -1,7 +1,10 @@
 ---
 title: Trust model
 description: Treeship trust is rooted in cryptographic signatures, not infrastructure.
+icon: Lock
 ---
+
+import { Callout } from 'fumadocs-ui/components/callout';
 
 Treeship's trust model has one axiom: the signatures are the trust.
 
@@ -14,7 +17,9 @@ A Treeship artifact is valid if its Ed25519 signature verifies against a known p
 - Any certificate authority
 - Any token or session
 
+<Callout type="info">
 The Hub (Harbor) is convenience infrastructure for sharing and discovery. It cannot forge a passing verification result.
+</Callout>
 
 ## Key hierarchy
 
@@ -48,4 +53,6 @@ This is enforced in the Rust core. There is no way to skip the check.
 treeship verify mission.treeship
 ```
 
+<Callout type="success">
 This works on an airplane, in a secure facility, or on a machine that has never connected to the internet. The .treeship bundle contains everything needed: artifacts, signatures, and the public key.
+</Callout>

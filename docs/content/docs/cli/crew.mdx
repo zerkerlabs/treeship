@@ -1,7 +1,10 @@
 ---
 title: treeship crew
 description: Manage the humans and agents aboard your Treeship.
+icon: Users
 ---
+
+import { Callout } from 'fumadocs-ui/components/callout';
 
 ## treeship crew add
 
@@ -50,3 +53,7 @@ Remove a crew member. Existing artifacts remain valid.
 ```bash
 treeship crew remove agent://deprecated-bot
 ```
+
+<Callout type="info">
+Removal prevents future attestations under that identity. Artifacts already signed by a removed crew member remain cryptographically valid and verifiable.
+</Callout>

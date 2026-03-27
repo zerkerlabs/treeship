@@ -1,8 +1,15 @@
 @import 'tailwindcss';
 @import 'fumadocs-ui/css/preset.css';
 
-/* Treeship dark green theme */
+/* ── Treeship color tokens ─────────────────────────────── */
 @theme {
+  --color-treeship-green: hsl(142, 65%, 57%);
+  --color-treeship-green-dim: hsla(142, 65%, 57%, 0.08);
+  --color-treeship-green-border: hsla(142, 65%, 57%, 0.2);
+  --color-treeship-green-code: hsla(142, 65%, 57%, 0.09);
+  --color-treeship-text: hsl(140, 20%, 88%);
+  --color-treeship-muted: hsl(140, 10%, 55%);
+
   --color-fd-background: hsl(141, 15%, 6%);
   --color-fd-foreground: hsl(140, 20%, 88%);
   --color-fd-muted: hsl(140, 10%, 14%);
@@ -19,12 +26,13 @@
   --color-fd-accent: hsla(142, 65%, 57%, 30%);
   --color-fd-accent-foreground: hsl(141, 15%, 6%);
   --color-fd-ring: hsl(142, 65%, 57%);
+
   --fd-sidebar-width: 260px;
   --font-sans: 'Geist', system-ui, sans-serif;
   --font-mono: 'Geist Mono', monospace;
 }
 
-/* Force dark mode -- Treeship is always dark */
+/* ── Force dark mode ───────────────────────────────────── */
 .dark {
   --color-fd-background: hsl(141, 15%, 6%);
   --color-fd-foreground: hsl(140, 20%, 88%);
@@ -48,29 +56,76 @@ html {
   color-scheme: dark;
 }
 
+/* ── Base ──────────────────────────────────────────────── */
 @layer base {
   body {
     @apply flex flex-col min-h-screen;
   }
 }
 
-/* Code blocks */
-pre {
-  border: 0.5px solid rgba(62, 207, 110, 0.12) !important;
-  border-radius: 8px !important;
+/* ── Headings ──────────────────────────────────────────── */
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4 {
+  color: var(--color-treeship-text);
+  font-weight: 500;
 }
 
-/* Inline code */
+.prose h2 {
+  border-bottom: 1px solid var(--color-treeship-green-border);
+  padding-bottom: 0.4em;
+}
+
+/* ── Links ─────────────────────────────────────────────── */
+.prose a {
+  color: var(--color-treeship-green);
+  text-decoration: none;
+  transition: opacity 0.15s ease;
+}
+
+.prose a:hover {
+  opacity: 0.8;
+  text-decoration: underline;
+}
+
+/* ── Code blocks ───────────────────────────────────────── */
+pre {
+  border: 0.5px solid var(--color-treeship-green-border);
+  border-radius: 8px;
+}
+
+/* ── Inline code ───────────────────────────────────────── */
 :not(pre) > code {
-  background: rgba(62, 207, 110, 0.09) !important;
-  color: #3ECF6E !important;
+  background: var(--color-treeship-green-code);
+  color: var(--color-treeship-green);
   border-radius: 4px;
   padding: 1px 6px;
   font-size: 0.84em;
 }
 
-/* Active sidebar link */
+/* ── Blockquotes ───────────────────────────────────────── */
+blockquote {
+  border-left: 3px solid var(--color-treeship-green);
+  padding-left: 1em;
+  color: var(--color-treeship-muted);
+  font-style: normal;
+}
+
+/* ── Active sidebar link ───────────────────────────────── */
 [data-active='true'] {
-  color: #3ECF6E !important;
-  background: rgba(62, 207, 110, 0.08) !important;
+  color: var(--color-treeship-green);
+  background: var(--color-treeship-green-dim);
+}
+
+/* ── Sidebar install banner ────────────────────────────── */
+.sidebar-install-banner {
+  background: var(--color-treeship-green-dim);
+  border: 0.5px solid var(--color-treeship-green-border);
+}
+
+/* ── Tables ────────────────────────────────────────────── */
+.prose table th {
+  color: var(--color-treeship-text);
+  font-weight: 500;
 }

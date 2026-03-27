@@ -1,25 +1,49 @@
 ---
 title: treeship berth
 description: Connect to the Harbor, push and pull artifacts.
+icon: Anchor
 ---
 
-## treeship berth login
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
 
-Authenticate to the Harbor using the RFC 8628 device authorization flow.
+## Login flow
+
+<Steps>
+<Step>
+### Start authentication
 
 ```bash
 treeship berth login
 ```
 
+This initiates the RFC 8628 device authorization flow.
+</Step>
+<Step>
+### Activate in your browser
+
+Visit the URL shown and enter the code:
+
 ```
 → Visit https://treeship.dev/dock/activate
 → Enter code: ABCD-1234
 → Waiting for approval...
+```
+</Step>
+<Step>
+### Berth established
 
+```
 ✓ Berth established
   dock_id: dck_9f8e7d6c
   harbor:  api.treeship.dev
 ```
+</Step>
+</Steps>
+
+<Callout type="warn" title="DPoP Security">
+All Harbor requests use RFC 9449 DPoP proof-of-possession. Every request carries a DPoP JWT signed by the dock key. Stolen credentials are useless without the private key.
+</Callout>
 
 ## treeship berth push
 
@@ -63,7 +87,3 @@ Disconnect from the Harbor.
 ```bash
 treeship berth cast-off
 ```
-
-## DPoP authentication
-
-All Harbor requests use RFC 9449 DPoP proof-of-possession. Every request carries a DPoP JWT signed by the dock key. Stolen credentials are useless without the private key.

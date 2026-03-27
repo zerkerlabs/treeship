@@ -1,19 +1,28 @@
 ---
 title: Missions
 description: A mission is a named unit of work with a start, checkpoints, and a sealed ship's log.
+icon: Target
 ---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
 
 Missions group related artifacts into a single, portable bundle.
 
-## Starting a mission
+## Mission lifecycle
+
+<Steps>
+<Step>
+### Start a mission
 
 ```bash
 treeship mission start --name deploy-v1.2
 ```
 
 This sets `TREESHIP_MISSION` in the environment. All subsequent attestations are automatically linked to this mission.
-
-## Working within a mission
+</Step>
+<Step>
+### Work within the mission
 
 ```bash
 treeship wrap -- npm run build
@@ -23,6 +32,17 @@ treeship wrap --warrant-nonce nce_xxx -- ./deploy.sh
 ```
 
 Each step chains to the previous via `parentId`. The mission collects them all.
+</Step>
+<Step>
+### Seal the mission
+
+```bash
+treeship mission close
+```
+
+This produces a `.treeship` bundle file (the ship's log) containing every artifact in the mission, all signatures, and the public key. The bundle is self-verifying.
+</Step>
+</Steps>
 
 ## Checking mission status
 
@@ -42,14 +62,6 @@ STARTED: 2026-03-26T20:00:00Z
   4. art_g7h8  wrap     ./deploy.sh          agent://deployer
 ```
 
-## Sealing a mission
-
-```bash
-treeship mission close
-```
-
-This produces a `.treeship` bundle file (the ship's log) containing every artifact in the mission, all signatures, and the public key. The bundle is self-verifying.
-
 ## Listing past missions
 
 ```bash
@@ -62,3 +74,7 @@ deploy-v1.2       4        2026-03-26T21:00:00Z
 audit-q1-2026     12       2026-03-25T18:00:00Z
 onboard-sarah     3        2026-03-21T10:00:00Z
 ```
+
+<Callout type="info">
+Sealed missions are immutable. Once closed, the ship's log cannot be modified without breaking the chain signatures.
+</Callout>

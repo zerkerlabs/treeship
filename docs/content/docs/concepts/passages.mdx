@@ -1,9 +1,21 @@
 ---
 title: Passages
 description: A passage is the signed transfer of work between crew members or across Treeships.
+icon: ArrowLeftRight
 ---
 
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Card, Cards } from 'fumadocs-ui/components/card';
+
 A passage records the chain of custody when work moves between agents, between humans and agents, or between organizations.
+
+## Passage scenarios
+
+<Cards>
+<Card title="Agent to Agent" description="One agent hands off research results to another agent for execution, with a signed transfer record." />
+<Card title="Agent to Human" description="An agent produces output that a human needs to review. The passage proves what was delivered and when." />
+<Card title="Cross-Treeship" description="Work moves between organizations. Each side has its own keys. The passage bridges trust domains." />
+</Cards>
 
 ## Same-Treeship passage
 
@@ -56,7 +68,9 @@ treeship verify art_passage_xyz --trusted-key ./company-a-public.pem
 #   chain: intact
 ```
 
-No shared infrastructure required. The signature is the trust.
+<Callout type="info">
+No shared infrastructure required. The signature is the trust. Company B does not need to trust the Harbor or any third party -- only the public key of Company A.
+</Callout>
 
 ## What a passage captures
 

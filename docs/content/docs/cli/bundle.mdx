@@ -1,7 +1,10 @@
 ---
 title: treeship bundle
 description: Create, export, and import .treeship bundle files (ship's logs).
+icon: Package
 ---
+
+import { Callout } from 'fumadocs-ui/components/callout';
 
 ## treeship bundle create
 
@@ -46,4 +49,6 @@ bundle.treeship
 └── signature           # Ed25519 signature over manifest
 ```
 
+<Callout type="info">
 Bundles verify offline. No network, no Harbor, no Treeship installation required beyond the verifier binary or WASM module.
+</Callout>

@@ -1,7 +1,10 @@
 ---
 title: Security
 description: Treeship's security properties and threat model.
+icon: Shield
 ---
+
+import { Callout } from 'fumadocs-ui/components/callout';
 
 ## Cryptographic primitives
 
@@ -20,6 +23,10 @@ description: Treeship's security properties and threat model.
 - Key never leaves the local machine unless the captain exports it
 - No key escrow, no key recovery service
 
+<Callout type="warn">
+Root access to the machine breaks all guarantees. The trust boundary is the machine itself. If someone has your private key and passphrase, they can forge artifacts.
+</Callout>
+
 ## What Treeship does not protect against
 
 - A compromised captain key (if someone steals your private key and passphrase, they can forge artifacts)
@@ -27,6 +34,10 @@ description: Treeship's security properties and threat model.
 - Content confidentiality (Treeship signs metadata and digests, not content, but metadata can still be sensitive)
 
 ## What Treeship does protect against
+
+<Callout type="success">
+Treeship provides strong guarantees against retroactive tampering, unauthorized agent actions, broken chains of custody, and replay attacks.
+</Callout>
 
 - Retroactive tampering of action records
 - Unauthorized agent actions (missing or expired warrant)

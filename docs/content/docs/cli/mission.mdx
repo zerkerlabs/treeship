@@ -1,7 +1,10 @@
 ---
 title: treeship mission
 description: Group related artifacts into named missions with sealed ship's logs.
+icon: Target
 ---
+
+import { Callout } from 'fumadocs-ui/components/callout';
 
 ## treeship mission start
 
@@ -47,6 +50,10 @@ treeship mission close
   entries:   4
   bundle:    deploy-v1.2.treeship
 ```
+
+<Callout type="info">
+Once sealed, the ship's log is immutable. Any modification breaks the chain signatures.
+</Callout>
 
 ## treeship mission list
 

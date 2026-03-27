@@ -1,7 +1,11 @@
 ---
 title: treeship verify
 description: Verify a log entry or ship's log chain. Exit 0 = clean. Exit 1 = failed.
+icon: CheckCircle
 ---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
 ## Usage
 
@@ -21,22 +25,13 @@ treeship verify <artifact-id> [OPTIONS]
 
 ## Examples
 
+<Tabs items={['Simple', 'JSON output', 'Cross-org', 'Bundle']}>
+<Tab value="Simple">
 ```bash
-# Simple verify
 treeship verify art_f7e6d5c4
-
-# Machine-readable output for CI
-treeship verify art_f7e6d5c4 --format json
-
-# With trusted key (cross-org)
-treeship verify art_passage_xyz --trusted-key ./company-a.pem
-
-# Verify a bundle file
-treeship verify mission.treeship
 ```
-
-## JSON output
-
+</Tab>
+<Tab value="JSON output">
 ```bash
 treeship verify art_f7e6d5c4 --format json
 ```
@@ -56,6 +51,22 @@ treeship verify art_f7e6d5c4 --format json
   ]
 }
 ```
+</Tab>
+<Tab value="Cross-org">
+```bash
+treeship verify art_passage_xyz --trusted-key ./company-a.pem
+```
+</Tab>
+<Tab value="Bundle">
+```bash
+treeship verify mission.treeship
+```
+</Tab>
+</Tabs>
+
+<Callout type="info">
+Use `--format json` in CI pipelines. Pipe the output to `jq -e '.outcome == "pass"'` for a clean pass/fail gate.
+</Callout>
 
 ## Use in CI
 
