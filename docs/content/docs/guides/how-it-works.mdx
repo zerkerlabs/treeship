@@ -1,0 +1,86 @@
+---
+title: How it works
+description: The four-step flow from first command to shareable proof URL.
+---
+
+## The flow
+
+### 1. Commission
+
+Create a Treeship -- a trust domain with a name, a captain identity, and an Ed25519 keypair.
+
+```bash
+treeship init
+```
+
+One Treeship covers your entire workflow. Many agents, many missions, one set of keys and one governance model.
+
+### 2. Bring crew aboard
+
+Register the agents and humans who will operate within this Treeship.
+
+```bash
+treeship crew add agent://researcher
+treeship crew add agent://coder
+treeship crew add human://sarah.chen
+```
+
+### 3. Run your workflow
+
+Wrap any command or attest any action. Issue warrants before sensitive steps.
+
+```bash
+treeship wrap -- python agent.py
+treeship attest warrant --captain human://rezo --description "approve payment"
+treeship wrap --warrant-nonce nce_xxx -- node pay.js
+```
+
+Every step produces a signed log entry linked to the previous one via a content-addressed parent ID.
+
+### 4. Share the proof
+
+Seal your mission and push the ship's log to the Harbor.
+
+```bash
+treeship mission close
+treeship berth push mission-2026-03-26.treeship
+# → https://treeship.dev/verify/msn_xxx
+```
+
+## What gets signed
+
+Every log entry is a DSSE envelope containing a Treeship statement:
+
+```
+DSSE envelope
+└── payloadType: application/vnd.treeship.action.v1+json
+└── payload (base64):
+    {
+      type:          "treeship/action/v1",
+      timestamp:     "2026-03-26T21:00:00Z",
+      actor:         "agent://researcher",
+      action:        "document.analyze",
+      parentId:      "art_previousstep",
+      approvalNonce: "nce_7f8e9d0a",    ← must match warrant.nonce
+      meta:          { ... }
+    }
+└── signatures:
+    [{ keyid: "key_9f8e7d6c", sig: "base64url(ed25519_sig)" }]
+```
+
+## How verification works
+
+```bash
+treeship verify art_f7e6d5c4
+```
+
+The verifier:
+1. Derives the expected artifact ID from `sha256(PAE_bytes)[..16]`
+2. Compares against the stored ID -- tampered content fails immediately
+3. Verifies the Ed25519 signature
+4. Validates the statement schema
+5. Walks the parent chain recursively
+6. Checks `action.approvalNonce == warrant.nonce` if present
+7. Returns pass / fail with reasons
+
+Exit 0 = clean chain. Exit 1 = something failed.

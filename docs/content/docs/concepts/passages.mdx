@@ -1,0 +1,69 @@
+---
+title: Passages
+description: A passage is the signed transfer of work between crew members or across Treeships.
+---
+
+A passage records the chain of custody when work moves between agents, between humans and agents, or between organizations.
+
+## Same-Treeship passage
+
+```bash
+treeship attest passage \
+  --from agent://researcher \
+  --to agent://executor \
+  --artifacts art_research_001,art_validate_002
+```
+
+```
+✓ passage sealed
+  id:   art_passage_xyz
+  from: agent://researcher
+  to:   agent://executor
+  artifacts: 2 transferred
+```
+
+The executor can now verify the passage before acting:
+
+```bash
+treeship verify art_passage_xyz
+# ✓ passage verified · chain intact · 2 artifacts transferred
+```
+
+## Cross-Treeship passage (cross-org)
+
+When work moves between organizations, each side has its own Treeship and keys.
+
+```bash
+# Company A -- seal a passage
+treeship attest passage \
+  --from agent://company-a/researcher \
+  --to agent://company-b/legal-review \
+  --artifacts art_output_123
+
+treeship berth push art_passage_xyz
+# → https://treeship.dev/verify/art_passage_xyz
+# Share this URL with Company B
+```
+
+```bash
+# Company B -- verify before acting
+treeship berth pull art_passage_xyz
+treeship verify art_passage_xyz --trusted-key ./company-a-public.pem
+
+# ✓ passage verified
+#   from:  agent://company-a/researcher
+#   cargo: 1 artifact
+#   chain: intact
+```
+
+No shared infrastructure required. The signature is the trust.
+
+## What a passage captures
+
+| Field | Description |
+|-------|-------------|
+| `from` | Actor URI of the sender |
+| `to` | Actor URI of the receiver |
+| `artifacts` | List of artifact IDs being transferred |
+| `approval_ids` | Warrants the receiver inherits |
+| `timestamp` | When the passage was sealed |

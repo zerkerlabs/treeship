@@ -1,0 +1,64 @@
+---
+title: Missions
+description: A mission is a named unit of work with a start, checkpoints, and a sealed ship's log.
+---
+
+Missions group related artifacts into a single, portable bundle.
+
+## Starting a mission
+
+```bash
+treeship mission start --name deploy-v1.2
+```
+
+This sets `TREESHIP_MISSION` in the environment. All subsequent attestations are automatically linked to this mission.
+
+## Working within a mission
+
+```bash
+treeship wrap -- npm run build
+treeship wrap -- npm test
+treeship attest warrant --captain human://rezo --description "approve deploy"
+treeship wrap --warrant-nonce nce_xxx -- ./deploy.sh
+```
+
+Each step chains to the previous via `parentId`. The mission collects them all.
+
+## Checking mission status
+
+```bash
+treeship mission status
+```
+
+```
+MISSION: deploy-v1.2
+STATUS:  active
+ENTRIES: 4
+STARTED: 2026-03-26T20:00:00Z
+
+  1. art_a1b2  wrap     npm run build        human://rezo
+  2. art_c3d4  wrap     npm test             human://rezo
+  3. art_e5f6  warrant  approve deploy       human://rezo
+  4. art_g7h8  wrap     ./deploy.sh          agent://deployer
+```
+
+## Sealing a mission
+
+```bash
+treeship mission close
+```
+
+This produces a `.treeship` bundle file (the ship's log) containing every artifact in the mission, all signatures, and the public key. The bundle is self-verifying.
+
+## Listing past missions
+
+```bash
+treeship mission list
+```
+
+```
+NAME              ENTRIES  SEALED
+deploy-v1.2       4        2026-03-26T21:00:00Z
+audit-q1-2026     12       2026-03-25T18:00:00Z
+onboard-sarah     3        2026-03-21T10:00:00Z
+```

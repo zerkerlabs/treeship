@@ -1,0 +1,82 @@
+---
+title: treeship attest
+description: Manually attest any event -- actions, warrants, passages, endorsements.
+---
+
+## treeship attest action
+
+Attest any event with full control over what gets captured.
+
+```bash
+treeship attest action \
+  --actor agent://researcher \
+  --action openai.chat.completion \
+  --meta '{"model":"gpt-4o","tokens":1247,"prompt_hash":"sha256:abc..."}'
+```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--actor <uri>` | Who performed the action |
+| `--action <string>` | What action occurred |
+| `--parent <id>` | Parent artifact ID |
+| `--warrant-nonce <nonce>` | Nonce from an existing warrant |
+| `--subject-digest <hash>` | Content hash (privacy-preserving) |
+| `--subject-uri <uri>` | Content reference URI |
+| `--meta <json>` | Arbitrary JSON metadata |
+
+### Privacy-preserving attestation
+
+To attest that an action occurred on a specific document without revealing the document:
+
+```bash
+treeship attest action \
+  --actor agent://clinical-ai \
+  --action clinical.note.summarize \
+  --subject-digest sha256:e3b0c44298fc1c149afb4c8996fb924 \
+  --subject-uri ehr://patient/94821/note/2026-03-26
+```
+
+The digest proves which document was processed. The content never enters the artifact.
+
+---
+
+## treeship attest warrant
+
+Issue a warrant authorizing a specific agent action.
+
+```bash
+treeship attest warrant \
+  --captain human://rezo \
+  --description "approve stripe charge max $500 to acme" \
+  --expires 2026-03-26T18:00:00Z
+```
+
+Returns the warrant artifact ID and the nonce to pass to the agent.
+
+---
+
+## treeship attest passage
+
+Seal a passage recording the transfer of work.
+
+```bash
+treeship attest passage \
+  --from agent://researcher \
+  --to agent://executor \
+  --artifacts art_a1b2,art_c3d4
+```
+
+---
+
+## treeship attest endorsement
+
+A second party signs that they have verified another artifact.
+
+```bash
+treeship attest endorsement \
+  --endorser human://security-reviewer \
+  --subject art_code_output_abc \
+  --description "reviewed -- no critical issues found"
+```

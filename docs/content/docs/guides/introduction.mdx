@@ -1,0 +1,47 @@
+---
+title: What is Treeship
+description: Treeship is a portable cryptographic trust layer for human-agent workflows.
+---
+
+Treeship keeps a signed record of every action your agents take, every warrant your team issues, and every passage of work between systems.
+
+The record is self-contained. It verifies offline. It crosses organizational boundaries. It does not depend on Treeship's servers to be valid -- the signatures are the trust.
+
+## The problem
+
+When AI agents take consequential actions -- moving money, modifying code, executing contracts -- there is no receipt. Logs show API calls happened. They do not show:
+
+- Who authorized the action
+- What scope the authorization covered
+- Whether the chain of custody is intact
+- Whether the warrant was used once or many times
+
+Treeship produces cryptographic receipts that answer all four.
+
+## What Treeship is not
+
+- Not a scanner or EDR
+- Not a SIEM or observability dashboard
+- Not an orchestration framework
+- Not a centralized trust authority
+
+Treeship is the **evidence layer**. Other tools find problems. Treeship signs what happened.
+
+## Core properties
+
+| Property | Meaning |
+|----------|---------|
+| Local-first | Everything works offline by default |
+| Self-contained | A ship's log verifies without the Harbor |
+| Deterministic | Same content always produces the same artifact ID |
+| Portable | Works across orgs, clouds, and protocols |
+| Open | MIT licensed, verifiable without Treeship |
+
+## How it fits with other tools
+
+| Tool | What it does | Treeship's role |
+|------|-------------|-----------------|
+| Trivy | Finds vulnerabilities | Treeship signs the evidence Trivy produces |
+| Falco | Detects runtime anomalies | Treeship attests that Falco ran and what it found |
+| Langfuse | Traces agent behavior | Treeship signs the authorization chain |
+| Sigstore | Signs software artifacts | Treeship applies the same model to agent actions |

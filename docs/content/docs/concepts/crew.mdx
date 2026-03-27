@@ -1,0 +1,51 @@
+---
+title: Crew
+description: Crew members are the humans and agents aboard a Treeship.
+---
+
+A Treeship's crew is the set of humans and agents authorized to operate within that trust domain.
+
+## Adding crew
+
+```bash
+treeship crew add agent://researcher
+treeship crew add agent://deployer
+treeship crew add human://sarah.chen
+```
+
+## Actor URIs
+
+Every crew member is identified by a URI:
+
+| Prefix | Meaning | Example |
+|--------|---------|---------|
+| `human://` | A human identity | `human://rezo` |
+| `agent://` | An AI agent or automation | `agent://deployer` |
+
+URIs are freeform after the prefix. Use whatever naming convention fits your organization.
+
+## Listing crew
+
+```bash
+treeship crew list
+```
+
+```
+ACTOR                    ADDED
+human://rezo             2026-03-20T10:00:00Z (captain)
+agent://researcher       2026-03-20T10:01:00Z
+agent://deployer         2026-03-20T10:01:00Z
+human://sarah.chen       2026-03-21T09:00:00Z
+```
+
+## Crew and warrants
+
+Being on the crew does not grant permission to act. Crew membership means an agent is recognized within the Treeship. To take a sensitive action, an agent still needs a warrant from the captain.
+
+## Removing crew
+
+```bash
+treeship crew remove agent://deprecated-bot
+```
+
+Artifacts already signed by a removed crew member remain valid. Removal prevents future attestations under that identity.

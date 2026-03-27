@@ -1,0 +1,46 @@
+---
+title: "@treeship/a2a"
+description: Agent-to-Agent protocol bridge with built-in attestation.
+---
+
+> The A2A bridge is currently in development. Track progress at github.com/zerkerlabs/treeship.
+
+## Overview
+
+`@treeship/a2a` wraps agent-to-agent communication with automatic passage attestation. When agents exchange work, Treeship signs the transfer.
+
+## Install
+
+```bash
+npm install @treeship/a2a
+```
+
+## Usage
+
+```ts
+import { A2AClient } from '@treeship/a2a';
+
+const client = new A2AClient({
+  actor: 'agent://coordinator',
+});
+
+// Send work to another agent -- passage attested automatically
+const result = await client.delegate({
+  to: 'agent://researcher',
+  task: 'analyze quarterly earnings',
+  artifacts: ['art_input_001'],
+});
+
+// result._treeship.passage = "art_passage_xyz"
+```
+
+## What gets attested
+
+Every `delegate` call produces a passage artifact recording:
+
+- The sender and receiver agent URIs
+- The artifact IDs being transferred
+- A timestamp
+- The Ed25519 signature
+
+The receiving agent can verify the passage before acting on the work.

@@ -1,0 +1,64 @@
+---
+title: treeship mission
+description: Group related artifacts into named missions with sealed ship's logs.
+---
+
+## treeship mission start
+
+Begin a new mission. Sets `TREESHIP_MISSION` in the environment.
+
+```bash
+treeship mission start --name deploy-v1.2
+```
+
+All subsequent attestations are automatically linked to this mission.
+
+## treeship mission status
+
+Show the active mission and its entries.
+
+```bash
+treeship mission status
+```
+
+```
+MISSION: deploy-v1.2
+STATUS:  active
+ENTRIES: 4
+STARTED: 2026-03-26T20:00:00Z
+
+  1. art_a1b2  wrap     npm run build        human://rezo
+  2. art_c3d4  wrap     npm test             human://rezo
+  3. art_e5f6  warrant  approve deploy       human://rezo
+  4. art_g7h8  wrap     ./deploy.sh          agent://deployer
+```
+
+## treeship mission close
+
+Seal the mission and produce a .treeship bundle (ship's log).
+
+```bash
+treeship mission close
+```
+
+```
+✓ mission sealed
+  name:      deploy-v1.2
+  entries:   4
+  bundle:    deploy-v1.2.treeship
+```
+
+## treeship mission list
+
+List all past missions.
+
+```bash
+treeship mission list
+```
+
+```
+NAME              ENTRIES  SEALED
+deploy-v1.2       4        2026-03-26T21:00:00Z
+audit-q1-2026     12       2026-03-25T18:00:00Z
+onboard-sarah     3        2026-03-21T10:00:00Z
+```

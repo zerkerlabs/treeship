@@ -1,0 +1,49 @@
+---
+title: treeship bundle
+description: Create, export, and import .treeship bundle files (ship's logs).
+---
+
+## treeship bundle create
+
+Create a .treeship bundle manually from the current artifact store.
+
+```bash
+treeship bundle create --output my-bundle.treeship
+```
+
+## treeship bundle export
+
+Export a specific artifact chain as a portable bundle.
+
+```bash
+treeship bundle export art_f7e6d5c4 --output chain.treeship
+```
+
+The bundle contains every artifact in the chain, all signatures, and the public key. It is self-verifying.
+
+## treeship bundle import
+
+Import a bundle into your local artifact store.
+
+```bash
+treeship bundle import chain.treeship
+```
+
+```
+✓ imported 4 artifacts from chain.treeship
+  chain integrity: verified
+```
+
+## Bundle format
+
+A `.treeship` file is a signed, self-contained archive:
+
+```
+bundle.treeship
+├── manifest.json      # Artifact list, chain order, metadata
+├── artifacts/         # All DSSE envelopes
+├── public_key.pem     # Ship's public key
+└── signature           # Ed25519 signature over manifest
+```
+
+Bundles verify offline. No network, no Harbor, no Treeship installation required beyond the verifier binary or WASM module.

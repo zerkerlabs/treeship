@@ -1,0 +1,41 @@
+---
+title: "@treeship/sdk"
+description: TypeScript SDK for Treeship. Embeds WASM core, zero subprocess.
+---
+
+> The SDK is currently in development. Track progress at github.com/zerkerlabs/treeship.
+
+## Install
+
+```bash
+npm install @treeship/sdk
+```
+
+## Usage
+
+```ts
+import { ship } from '@treeship/sdk';
+
+const s = await ship();
+
+// Attest any action
+const { artifactId } = await s.attest.action({
+  action: 'openai.chat.completion',
+  meta: { model: 'gpt-4o', tokens: 1247 },
+});
+
+// Verify it
+const result = await s.verify.verify(artifactId);
+console.log(result.outcome); // "pass"
+
+// Push to Harbor
+const { hubUrl } = await s.dock.push(artifactId);
+console.log(hubUrl); // https://treeship.dev/verify/art_xxx
+```
+
+## Key design rules
+
+- **Zero subprocess** -- embeds `@treeship/core-wasm`, no `child_process.execFile`
+- **Works everywhere** -- Node, Deno, Bun, browser
+- **Never stores sensitive content** -- hash payloads, not content
+- **Graceful degradation** -- Treeship failures never surface as errors to your code

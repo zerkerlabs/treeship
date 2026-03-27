@@ -1,0 +1,49 @@
+---
+title: "@treeship/mcp"
+description: Drop-in MCP client replacement. Every tool call receipted automatically.
+---
+
+> The MCP bridge is currently in development. Track progress at github.com/zerkerlabs/treeship.
+
+## Install
+
+```bash
+npm install @treeship/mcp
+```
+
+## Usage
+
+One import change. Zero other changes.
+
+```ts
+// Before
+import { Client } from '@modelcontextprotocol/sdk';
+
+// After -- full attestation, nothing else changes
+import { Client } from '@treeship/mcp';
+
+const client = new Client({ name: 'my-agent', version: '1.0' }, { capabilities: {} });
+await client.connect(transport);
+
+const result = await client.callTool({ name: 'search', arguments: { q: 'treeship' } });
+
+// Result now carries artifact IDs:
+// { content: [...], _treeship: { intent: "art_xxx", tool: "search" } }
+```
+
+## What gets attested
+
+For every `callTool` call, `@treeship/mcp` produces two log entries:
+
+1. **Intent** (before the call) -- proves what was about to happen
+2. **Receipt** (after the call) -- proves what came back
+
+Arguments and results are never stored directly -- only their SHA-256 digests.
+
+## Environment variables
+
+| Variable | Effect |
+|----------|--------|
+| `TREESHIP_DISABLE=1` | Disable all attestation, pure passthrough |
+| `TREESHIP_ACTOR` | Override default actor URI |
+| `TREESHIP_PARENT` | Set parent chain link |

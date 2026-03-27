@@ -1,0 +1,182 @@
+openapi: 3.1.0
+info:
+  title: Treeship Hub API
+  version: 1.0.0
+  description: |
+    The Hub API is optional infrastructure.
+    Artifact validity never depends on the Hub.
+    The signatures are the trust.
+
+servers:
+  - url: https://api.treeship.dev
+    description: Production Harbor
+
+security:
+  - DPoP: []
+
+components:
+  securitySchemes:
+    DPoP:
+      type: http
+      scheme: DPoP
+      description: |
+        RFC 9449 DPoP proof-of-possession.
+        Every request carries a DPoP JWT signed by the dock key.
+        Stolen credentials are useless without the private key.
+
+paths:
+  /v1/dock/challenge:
+    get:
+      summary: Start device flow
+      description: Returns a device_code and nonce to begin the RFC 8628 device authorization flow.
+      operationId: dockChallenge
+      security: []
+      responses:
+        '200':
+          description: Challenge issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  device_code: { type: string, example: "dvc_a1b2c3d4" }
+                  nonce:       { type: string, example: "nce_7f8e9d0a" }
+                  expires_at:  { type: integer, example: 1711494000 }
+                  verify_url:  { type: string, example: "https://treeship.dev/dock/activate" }
+
+  /v1/dock/authorized:
+    get:
+      summary: Poll for device flow completion
+      description: Poll after the captain has approved at treeship.dev/dock/activate.
+      operationId: dockAuthorized
+      security: []
+      parameters:
+        - name: device_code
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Approved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dock_id: { type: string, example: "dck_9f8e7d6c" }
+        '202':
+          description: Pending -- captain has not approved yet
+
+  /v1/dock/authorize:
+    post:
+      summary: Complete device flow authorization
+      description: Called by treeship.dev when the captain approves. Stores the keypair binding.
+      operationId: dockAuthorize
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [device_code, ship_public_key, dock_public_key]
+              properties:
+                device_code:      { type: string }
+                ship_public_key:  { type: string, description: "hex-encoded Ed25519 public key" }
+                dock_public_key:  { type: string, description: "hex-encoded Ed25519 public key" }
+      responses:
+        '200':
+          description: Berth established
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dock_id: { type: string }
+
+  /v1/artifacts:
+    post:
+      summary: Push a log entry to the Harbor
+      description: |
+        DPoP authenticated. Stores the artifact and optionally anchors to Rekor.
+        The Hub never validates trust -- it stores and serves.
+      operationId: pushArtifact
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [artifact_id, payload_type, envelope_json, digest, signed_at]
+              properties:
+                artifact_id:   { type: string, example: "art_f7e6d5c4b3a2f7e6" }
+                payload_type:  { type: string, example: "application/vnd.treeship.action.v1+json" }
+                envelope_json: { type: string, description: "Full DSSE envelope JSON" }
+                digest:        { type: string, example: "sha256:abc123..." }
+                signed_at:     { type: integer, description: "Unix timestamp" }
+                parent_id:     { type: string, nullable: true }
+      responses:
+        '201':
+          description: Artifact stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  artifact_id:  { type: string }
+                  hub_url:      { type: string, example: "https://treeship.dev/verify/art_f7e6d5c4b3a2f7e6" }
+                  rekor_index:  { type: integer, nullable: true }
+
+  /v1/artifacts/{id}:
+    get:
+      summary: Fetch a log entry
+      description: Returns the artifact record. No auth required.
+      operationId: getArtifact
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Artifact record
+        '404':
+          description: Not found
+
+  /v1/verify/{id}:
+    get:
+      summary: Verify a chain
+      description: |
+        Runs treeship verify on the artifact chain server-side.
+        The /verify/:id page also runs the WASM verifier client-side independently --
+        the Hub cannot forge a passing result.
+      operationId: verifyChain
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  outcome:  { type: string, enum: [pass, fail, error] }
+                  chain:    { type: integer, description: "Number of artifacts in chain" }
+                  approver: { type: string, nullable: true }
+                  checks:   { type: array, items: { type: object } }
+
+  /.well-known/treeship/revoked.json:
+    get:
+      summary: Revocation list
+      description: Signed JSON list of revoked artifact IDs and key fingerprints.
+      operationId: revocationList
+      security: []
+      responses:
+        '200':
+          description: Revocation list

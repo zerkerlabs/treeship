@@ -1,0 +1,62 @@
+---
+title: treeship init
+description: Commission a new Treeship trust domain.
+---
+
+## Usage
+
+```bash
+treeship init [OPTIONS]
+```
+
+## What it does
+
+Creates a new Treeship with:
+- A name
+- A captain identity (human URI)
+- A new Ed25519 keypair, encrypted at rest
+
+No account, no email, no network connection required.
+
+## Example
+
+```bash
+treeship init
+```
+
+```
+? What is this Treeship for?  > Personal workspace
+? Name this Treeship: rezo-personal
+? Captain: human://rezo
+
+✓ Treeship commissioned
+  name:    rezo-personal
+  captain: human://rezo
+  key:     key_9f8e7d6c (ed25519 · encrypted at rest)
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `--name <name>` | Treeship name (skips prompt) |
+| `--captain <uri>` | Captain identity URI (skips prompt) |
+| `--non-interactive` | Use defaults, no prompts |
+
+## Non-interactive
+
+```bash
+treeship init --name ci-ship --captain human://ci-admin --non-interactive
+```
+
+Useful for CI environments where interactive prompts are not available.
+
+## What gets created
+
+```
+~/.treeship/
+└── <name>/
+    ├── config.json       # Treeship configuration
+    ├── keystore/         # Encrypted Ed25519 keypair
+    └── artifacts/        # Local artifact store
+```

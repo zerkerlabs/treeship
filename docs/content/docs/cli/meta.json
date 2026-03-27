@@ -1,0 +1,14 @@
+{
+  "title": "CLI reference",
+  "pages": [
+    "overview",
+    "init",
+    "wrap",
+    "attest",
+    "verify",
+    "bundle",
+    "crew",
+    "mission",
+    "berth"
+  ]
+}

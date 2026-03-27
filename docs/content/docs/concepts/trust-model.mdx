@@ -1,0 +1,51 @@
+---
+title: Trust model
+description: Treeship trust is rooted in cryptographic signatures, not infrastructure.
+---
+
+Treeship's trust model has one axiom: the signatures are the trust.
+
+## No trusted third party
+
+A Treeship artifact is valid if its Ed25519 signature verifies against a known public key. Validity does not depend on:
+
+- Treeship's servers being online
+- The Harbor being reachable
+- Any certificate authority
+- Any token or session
+
+The Hub (Harbor) is convenience infrastructure for sharing and discovery. It cannot forge a passing verification result.
+
+## Key hierarchy
+
+```
+Captain (human)
+└── Ship key (Ed25519)
+    └── Signs all artifacts
+    └── Signs warrants
+    └── Signs passages
+```
+
+One keypair per Treeship. The captain holds the private key, encrypted at rest with a passphrase.
+
+## Chain integrity
+
+Every artifact contains a `parentId` field pointing to the previous artifact in the chain. Verification walks this chain recursively. A broken link (missing parent, tampered content) causes the entire chain to fail.
+
+## Warrant binding
+
+Warrants use a nonce-binding model. The captain signs a warrant containing a random nonce. The agent includes that nonce in its action. At verification time, the verifier checks:
+
+```
+action.approvalNonce == warrant.nonce
+```
+
+This is enforced in the Rust core. There is no way to skip the check.
+
+## Offline verification
+
+```bash
+treeship verify mission.treeship
+```
+
+This works on an airplane, in a secure facility, or on a machine that has never connected to the internet. The .treeship bundle contains everything needed: artifacts, signatures, and the public key.

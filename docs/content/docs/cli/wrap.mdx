@@ -1,0 +1,61 @@
+---
+title: treeship wrap
+description: Attest any command execution automatically.
+---
+
+`treeship wrap` runs a command as a subprocess and produces a signed log entry recording what happened.
+
+## Usage
+
+```bash
+treeship wrap [OPTIONS] -- <command> [args...]
+```
+
+## What gets captured automatically
+
+| Field | Value |
+|-------|-------|
+| actor | From `--actor` flag or `TREESHIP_ACTOR` env var |
+| action | The binary name of the command |
+| exit_code | The subprocess exit code |
+| elapsed_ms | Elapsed time in milliseconds |
+| timestamp | RFC 3339 at the moment of signing |
+| parent_id | From `--parent` flag or `TREESHIP_PARENT` |
+| warrant_nonce | From `--warrant-nonce` flag |
+
+## Examples
+
+```bash
+# Basic wrap
+treeship wrap -- npm test
+
+# With actor
+treeship wrap --actor agent://ci-runner -- cargo build --release
+
+# Bound to a warrant
+treeship wrap \
+  --actor agent://deployer \
+  --warrant-nonce nce_7f8e9d0a \
+  -- kubectl apply -f deploy.yaml
+
+# In a mission (auto-linked via TREESHIP_MISSION env var)
+treeship mission start --name deploy-v1.2
+treeship wrap -- npm run build
+treeship wrap -- npm test
+treeship wrap --warrant-nonce nce_xxx -- ./deploy.sh
+treeship mission close
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `--actor <uri>` | Override default actor |
+| `--parent <id>` | Parent artifact ID for chain linking |
+| `--warrant-nonce <nonce>` | Bind to an existing warrant |
+| `--meta <json>` | Additional metadata as JSON |
+| `--format json` | Output artifact record as JSON |
+
+## Notes
+
+`treeship wrap` always propagates the subprocess exit code. If your command exits 1, `treeship wrap` exits 1. The log entry is still signed and stored -- even failed runs are attested.

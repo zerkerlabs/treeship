@@ -1,0 +1,10 @@
+{
+  "title": "Treeship",
+  "pages": [
+    "guides",
+    "concepts",
+    "cli",
+    "sdk",
+    "api"
+  ]
+}

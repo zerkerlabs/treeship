@@ -1,0 +1,69 @@
+---
+title: treeship berth
+description: Connect to the Harbor, push and pull artifacts.
+---
+
+## treeship berth login
+
+Authenticate to the Harbor using the RFC 8628 device authorization flow.
+
+```bash
+treeship berth login
+```
+
+```
+→ Visit https://treeship.dev/dock/activate
+→ Enter code: ABCD-1234
+→ Waiting for approval...
+
+✓ Berth established
+  dock_id: dck_9f8e7d6c
+  harbor:  api.treeship.dev
+```
+
+## treeship berth push
+
+Push an artifact or ship's log to the Harbor.
+
+```bash
+treeship berth push art_f7e6d5c4
+# → https://treeship.dev/verify/art_f7e6d5c4
+
+treeship berth push deploy-v1.2.treeship
+# → https://treeship.dev/verify/msn_xxx
+```
+
+## treeship berth pull
+
+Pull an artifact from the Harbor into your local store.
+
+```bash
+treeship berth pull art_f7e6d5c4
+```
+
+## treeship berth status
+
+Show the current berth connection.
+
+```bash
+treeship berth status
+```
+
+```
+BERTH:   connected
+DOCK_ID: dck_9f8e7d6c
+HARBOR:  api.treeship.dev
+SINCE:   2026-03-20T10:00:00Z
+```
+
+## treeship berth cast-off
+
+Disconnect from the Harbor.
+
+```bash
+treeship berth cast-off
+```
+
+## DPoP authentication
+
+All Harbor requests use RFC 9449 DPoP proof-of-possession. Every request carries a DPoP JWT signed by the dock key. Stolen credentials are useless without the private key.
