@@ -28,6 +28,9 @@ func main() {
 
 	r := chi.NewRouter()
 
+	// CORS — allow treeship.dev frontend to call the API.
+	r.Use(corsMiddleware)
+
 	// Log every request.
 	r.Use(middleware.RequestID)
 	r.Use(requestLogger)
@@ -57,6 +60,25 @@ func main() {
 	if err := http.ListenAndServe(":"+port, r); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
+}
+
+// corsMiddleware allows the treeship.dev frontend to call the API.
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin == "https://treeship.dev" || origin == "http://localhost:3000" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+		}
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, DPoP")
+		w.Header().Set("Access-Control-Max-Age", "86400")
+
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // requestLogger logs method, path, status, and duration for every request.

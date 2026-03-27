@@ -88,10 +88,14 @@ func InsertChallenge(db *sql.DB, deviceCode, nonce string, expiresAt int64) erro
 }
 
 func GetChallenge(db *sql.DB, deviceCode string) (*Challenge, error) {
-	row := db.QueryRow(
-		`SELECT device_code, nonce, expires_at, approved FROM dock_challenges WHERE device_code = ?`,
-		deviceCode,
-	)
+	// Support both full code (16 chars, from CLI polling) and short code (8 chars, from browser).
+	query := `SELECT device_code, nonce, expires_at, approved FROM dock_challenges WHERE device_code = ?`
+	args := []interface{}{deviceCode}
+	if len(deviceCode) < 16 {
+		query = `SELECT device_code, nonce, expires_at, approved FROM dock_challenges WHERE device_code LIKE ? ORDER BY expires_at DESC LIMIT 1`
+		args = []interface{}{deviceCode + "%"}
+	}
+	row := db.QueryRow(query, args...)
 	c := &Challenge{}
 	var approved int
 	if err := row.Scan(&c.DeviceCode, &c.Nonce, &c.ExpiresAt, &approved); err != nil {
@@ -102,10 +106,14 @@ func GetChallenge(db *sql.DB, deviceCode string) (*Challenge, error) {
 }
 
 func ApproveChallenge(db *sql.DB, deviceCode string, shipPubKey, dockPubKey []byte) error {
-	_, err := db.Exec(
-		`UPDATE dock_challenges SET approved = 1, ship_public_key = ?, dock_public_key = ? WHERE device_code = ?`,
-		shipPubKey, dockPubKey, deviceCode,
-	)
+	// Support short code prefix match.
+	query := `UPDATE dock_challenges SET approved = 1, ship_public_key = ?, dock_public_key = ? WHERE device_code = ?`
+	args := []interface{}{shipPubKey, dockPubKey, deviceCode}
+	if len(deviceCode) < 16 {
+		query = `UPDATE dock_challenges SET approved = 1, ship_public_key = ?, dock_public_key = ? WHERE device_code LIKE ?`
+		args = []interface{}{shipPubKey, dockPubKey, deviceCode + "%"}
+	}
+	_, err := db.Exec(query, args...)
 	return err
 }
 

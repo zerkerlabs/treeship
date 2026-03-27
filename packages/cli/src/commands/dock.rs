@@ -58,7 +58,7 @@ pub fn login(
     let start = SystemTime::now();
     let timeout_secs = 300;
 
-    let dock_id = loop {
+    loop {
         let elapsed = start.elapsed().unwrap_or_default().as_secs();
         if elapsed > timeout_secs {
             return Err("dock login timed out after 5 minutes".into());
@@ -72,9 +72,10 @@ pub fn login(
                 let status_code = r.status();
                 let body: serde_json::Value = r.into_json()?;
                 if status_code == 200 {
-                    if let Some(id) = body["dock_id"].as_str() {
-                        break id.to_string();
-                    }
+                    // 200 means approved (by browser or CLI).
+                    // Either has dock_id (CLI already called authorize) or just "approved".
+                    // In both cases, break and proceed to POST authorize with our keys.
+                    break;
                 }
                 // 202 = pending, keep polling
             }
@@ -104,7 +105,7 @@ pub fn login(
 
     let final_dock_id = auth_resp["dock_id"]
         .as_str()
-        .unwrap_or(&dock_id)
+        .unwrap_or("unknown")
         .to_string();
 
     // 6. Save to config

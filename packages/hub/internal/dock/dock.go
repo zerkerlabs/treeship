@@ -65,21 +65,23 @@ func (h *Handlers) Authorized(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Look up the dock_id from ships table that was created during authorize.
+	// Challenge is approved. Return 200 with status "approved".
+	// The CLI will then POST /v1/dock/authorize with real keys to get a dock_id.
+	// If a ships row already exists (CLI already called authorize), include dock_id.
+	w.Header().Set("Content-Type", "application/json")
+
 	row := h.DB.QueryRow(
 		`SELECT s.dock_id FROM ships s
 		 JOIN dock_challenges dc ON dc.ship_public_key = s.ship_public_key AND dc.dock_public_key = s.dock_public_key
-		 WHERE dc.device_code = ?`, deviceCode,
+		 WHERE dc.device_code = ?`, challenge.DeviceCode,
 	)
 	var dockID string
 	if err := row.Scan(&dockID); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "dock_id lookup failed"})
+		// No ships row yet -- browser approved but CLI hasn't sent keys
+		json.NewEncoder(w).Encode(map[string]string{"status": "approved"})
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"dock_id": dockID})
 }
 
@@ -97,8 +99,8 @@ func (h *Handlers) Authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.DeviceCode == "" || req.ShipPublicKey == "" || req.DockPublicKey == "" {
-		http.Error(w, `{"error":"missing required fields"}`, http.StatusBadRequest)
+	if req.DeviceCode == "" {
+		http.Error(w, `{"error":"missing device_code"}`, http.StatusBadRequest)
 		return
 	}
 
@@ -117,28 +119,38 @@ func (h *Handlers) Authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shipPubKey, err := hex.DecodeString(req.ShipPublicKey)
-	if err != nil {
-		http.Error(w, `{"error":"invalid ship_public_key hex"}`, http.StatusBadRequest)
-		return
+	// Keys are optional for browser-initiated approval.
+	// The CLI sends real keys in its own POST after polling detects approval.
+	var shipPubKey, dockPubKey []byte
+	if req.ShipPublicKey != "" {
+		shipPubKey, err = hex.DecodeString(req.ShipPublicKey)
+		if err != nil {
+			http.Error(w, `{"error":"invalid ship_public_key hex"}`, http.StatusBadRequest)
+			return
+		}
 	}
-	dockPubKey, err := hex.DecodeString(req.DockPublicKey)
-	if err != nil {
-		http.Error(w, `{"error":"invalid dock_public_key hex"}`, http.StatusBadRequest)
-		return
+	if req.DockPublicKey != "" {
+		dockPubKey, err = hex.DecodeString(req.DockPublicKey)
+		if err != nil {
+			http.Error(w, `{"error":"invalid dock_public_key hex"}`, http.StatusBadRequest)
+			return
+		}
 	}
 
-	dockID := "dck_" + randomHex(8)
-	now := time.Now().Unix()
-
-	if err := db.InsertShip(h.DB, dockID, shipPubKey, dockPubKey, now); err != nil {
-		http.Error(w, `{"error":"failed to create ship"}`, http.StatusInternalServerError)
-		return
-	}
-
-	if err := db.ApproveChallenge(h.DB, req.DeviceCode, shipPubKey, dockPubKey); err != nil {
+	// Mark the challenge as approved. The CLI will then POST with real keys.
+	if err := db.ApproveChallenge(h.DB, challenge.DeviceCode, shipPubKey, dockPubKey); err != nil {
 		http.Error(w, `{"error":"failed to approve challenge"}`, http.StatusInternalServerError)
 		return
+	}
+
+	// Only create a ship record if keys were provided (CLI flow).
+	dockID := "dck_" + randomHex(8)
+	if len(shipPubKey) > 0 && len(dockPubKey) > 0 {
+		now := time.Now().Unix()
+		if err := db.InsertShip(h.DB, dockID, shipPubKey, dockPubKey, now); err != nil {
+			http.Error(w, `{"error":"failed to create ship"}`, http.StatusInternalServerError)
+			return
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
