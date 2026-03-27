@@ -1,6 +1,5 @@
 {
   "title": "CLI reference",
-  "icon": "Terminal",
   "pages": [
     "overview",
     "init",

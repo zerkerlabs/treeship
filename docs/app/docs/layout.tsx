@@ -13,27 +13,19 @@ export default function Layout({ children }: { children: ReactNode }) {
           </span>
         ),
         url: '/',
-        children: (
-          <>
-            <a
-              href="https://github.com/zerkerlabs/treeship"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-xs text-fd-muted-foreground hover:text-fd-primary transition-colors"
-            >
-              GitHub
-            </a>
-            <a
-              href="https://treeship.dev"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-xs text-fd-muted-foreground hover:text-fd-primary transition-colors"
-            >
-              treeship.dev
-            </a>
-          </>
-        ),
       }}
+      links={[
+        {
+          text: 'GitHub',
+          url: 'https://github.com/zerkerlabs/treeship',
+          external: true,
+        },
+        {
+          text: 'treeship.dev',
+          url: 'https://treeship.dev',
+          external: true,
+        },
+      ]}
       sidebar={{
         banner: (
           <div className="sidebar-install-banner rounded-lg px-3 py-2.5 text-xs font-mono text-fd-muted-foreground">
