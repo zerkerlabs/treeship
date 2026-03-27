@@ -117,6 +117,17 @@ enum Command {
     #[command(subcommand)]
     Keys(KeysCommand),
 
+    /// Connect to treeship.dev Hub -- push, pull, and share artifacts
+    ///
+    /// Examples:
+    ///   treeship dock login
+    ///   treeship dock push art_a1b2c3d4e5f6a1b2
+    ///   treeship dock pull art_a1b2c3d4e5f6a1b2
+    ///   treeship dock status
+    ///   treeship dock undock
+    #[command(subcommand)]
+    Dock(DockCommand),
+
     /// Print version and build info
     Version,
 }
@@ -381,6 +392,73 @@ enum KeysCommand {
     List,
 }
 
+// --- dock -------------------------------------------------------------------
+
+#[derive(Subcommand)]
+enum DockCommand {
+    /// Authenticate with treeship.dev Hub using device flow
+    ///
+    /// Generates a fresh Ed25519 dock keypair and links this ship to
+    /// the Hub. No session tokens are stored -- every request uses a
+    /// DPoP proof signed by the dock key.
+    ///
+    /// Examples:
+    ///   treeship dock login
+    ///   treeship dock login --endpoint http://localhost:8080
+    Login(DockLoginArgs),
+
+    /// Push a signed artifact to treeship.dev Hub
+    ///
+    /// Sends the artifact with a DPoP-authenticated request. Returns
+    /// a shareable URL and optional Rekor transparency log index.
+    ///
+    /// Examples:
+    ///   treeship dock push art_a1b2c3d4e5f6a1b2
+    Push(DockPushArgs),
+
+    /// Pull an artifact from treeship.dev Hub into local storage
+    ///
+    /// No authentication required -- artifacts are public.
+    ///
+    /// Examples:
+    ///   treeship dock pull art_a1b2c3d4e5f6a1b2
+    Pull(DockPullArgs),
+
+    /// Show current dock connection status
+    ///
+    /// Examples:
+    ///   treeship dock status
+    Status,
+
+    /// Disconnect from treeship.dev Hub
+    ///
+    /// Clears dock credentials from config. Does not revoke the dock
+    /// keypair on the Hub.
+    ///
+    /// Examples:
+    ///   treeship dock undock
+    Undock,
+}
+
+#[derive(Args)]
+struct DockLoginArgs {
+    /// Hub API endpoint (default: https://api.treeship.dev)
+    #[arg(long, value_name = "URL")]
+    endpoint: Option<String>,
+}
+
+#[derive(Args)]
+struct DockPushArgs {
+    /// Artifact ID to push
+    id: String,
+}
+
+#[derive(Args)]
+struct DockPullArgs {
+    /// Artifact ID to pull
+    id: String,
+}
+
 // --- main -------------------------------------------------------------------
 
 fn main() {
@@ -501,6 +579,33 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
 
         Command::Keys(sub) => match sub {
             KeysCommand::List => commands::keys::list(cli.config.as_deref(), printer),
+        },
+
+        Command::Dock(sub) => match sub {
+            DockCommand::Login(a) => commands::dock::login(
+                a.endpoint.clone(),
+                cli.config.as_deref(),
+                printer,
+            ),
+            DockCommand::Push(a) => commands::dock::push(
+                &a.id,
+                cli.config.as_deref(),
+                printer,
+            ),
+            DockCommand::Pull(a) => commands::dock::pull(
+                &a.id,
+                None,
+                cli.config.as_deref(),
+                printer,
+            ),
+            DockCommand::Status => commands::dock::status(
+                cli.config.as_deref(),
+                printer,
+            ),
+            DockCommand::Undock => commands::dock::undock(
+                cli.config.as_deref(),
+                printer,
+            ),
         },
     }
 }

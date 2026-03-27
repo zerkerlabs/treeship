@@ -13,21 +13,27 @@ pub struct Config {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HubConfig {
-    pub status:       String,   // "docked" | "undocked"
-    pub endpoint:     Option<String>,
-    pub workspace_id: Option<String>,
-    pub dock_id:      Option<String>,
-    pub sync_mode:    Option<String>,
+    pub status:          String,   // "docked" | "undocked"
+    pub endpoint:        Option<String>,
+    pub workspace_id:    Option<String>,
+    pub dock_id:         Option<String>,
+    pub sync_mode:       Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dock_public_key: Option<String>,  // hex encoded
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dock_secret_key: Option<String>,  // hex encoded
 }
 
 impl Default for HubConfig {
     fn default() -> Self {
         Self {
-            status:       "undocked".into(),
-            endpoint:     None,
-            workspace_id: None,
-            dock_id:      None,
-            sync_mode:    None,
+            status:          "undocked".into(),
+            endpoint:        None,
+            workspace_id:    None,
+            dock_id:         None,
+            sync_mode:       None,
+            dock_public_key: None,
+            dock_secret_key: None,
         }
     }
 }
