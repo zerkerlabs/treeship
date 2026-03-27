@@ -42,7 +42,13 @@ pub fn login(
     // 3. Print activation instructions
     let formatted_code = format_device_code(&device_code);
     printer.blank();
-    printer.info(&format!("visit {}/dock/activate", endpoint));
+    // Activation page lives on the website, not the API
+    let site_url = if endpoint.contains("localhost") || endpoint.contains("127.0.0.1") {
+        endpoint.clone()
+    } else {
+        "https://treeship.dev".to_string()
+    };
+    printer.info(&format!("visit {}/dock/activate", site_url));
     printer.info(&format!("code: {}", printer.bold(&formatted_code)));
     printer.dim_info("waiting...");
     printer.blank();
