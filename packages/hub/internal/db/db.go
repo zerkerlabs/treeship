@@ -172,6 +172,42 @@ func GetArtifact(db *sql.DB, artifactID string) (*Artifact, error) {
 	return a, nil
 }
 
+// --- ships (query) ---
+
+type Ship struct {
+	DockID    string
+	CreatedAt int64
+}
+
+func GetShip(db *sql.DB, dockID string) (*Ship, error) {
+	row := db.QueryRow(`SELECT dock_id, created_at FROM ships WHERE dock_id = ?`, dockID)
+	s := &Ship{}
+	if err := row.Scan(&s.DockID, &s.CreatedAt); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+func ListArtifactsByDock(db *sql.DB, dockID string) ([]Artifact, error) {
+	rows, err := db.Query(
+		`SELECT artifact_id, payload_type, envelope_json, digest, signed_at, parent_id, hub_url, rekor_index, dock_id
+		 FROM artifacts WHERE dock_id = ? ORDER BY signed_at DESC`, dockID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Artifact
+	for rows.Next() {
+		var a Artifact
+		if err := rows.Scan(&a.ArtifactID, &a.PayloadType, &a.EnvelopeJSON, &a.Digest, &a.SignedAt, &a.ParentID, &a.HubURL, &a.RekorIndex, &a.DockID); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 func SetRekorIndex(db *sql.DB, artifactID string, logIndex int64) error {
 	_, err := db.Exec(`UPDATE artifacts SET rekor_index = ? WHERE artifact_id = ?`, logIndex, artifactID)
 	return err

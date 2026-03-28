@@ -111,6 +111,65 @@ func (h *Handlers) Push(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+// Workspace handles GET /v1/workspace/{dockId}
+func (h *Handlers) Workspace(w http.ResponseWriter, r *http.Request) {
+	dockID := chi.URLParam(r, "dockId")
+	if dockID == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "missing dock id"})
+		return
+	}
+
+	ship, err := db.GetShip(h.DB, dockID)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "ship not found"})
+		return
+	}
+
+	artifacts, err := db.ListArtifactsByDock(h.DB, dockID)
+	if err != nil {
+		log.Printf("list artifacts error: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "failed to list artifacts"})
+		return
+	}
+
+	type artifactSummary struct {
+		ArtifactID  string  `json:"artifact_id"`
+		PayloadType string  `json:"payload_type"`
+		Digest      string  `json:"digest"`
+		SignedAt    int64   `json:"signed_at"`
+		ParentID    *string `json:"parent_id"`
+		HubURL      string  `json:"hub_url"`
+		RekorIndex  *int64  `json:"rekor_index"`
+	}
+
+	summaries := make([]artifactSummary, len(artifacts))
+	for i, a := range artifacts {
+		summaries[i] = artifactSummary{
+			ArtifactID:  a.ArtifactID,
+			PayloadType: a.PayloadType,
+			Digest:      a.Digest,
+			SignedAt:     a.SignedAt,
+			ParentID:    a.ParentID,
+			HubURL:      a.HubURL,
+			RekorIndex:  a.RekorIndex,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"dock_id":        dockID,
+		"created_at":     ship.CreatedAt,
+		"artifact_count": len(summaries),
+		"artifacts":      summaries,
+	})
+}
+
 // Pull handles GET /v1/artifacts/:id
 func (h *Handlers) Pull(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")

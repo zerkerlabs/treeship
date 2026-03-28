@@ -45,6 +45,9 @@ func main() {
 	r.Post("/v1/artifacts", artifactHandlers.Push)
 	r.Get("/v1/artifacts/{id}", artifactHandlers.Pull)
 
+	// Workspace endpoint.
+	r.Get("/v1/workspace/{dockId}", artifactHandlers.Workspace)
+
 	// Verify endpoint.
 	r.Get("/v1/verify/{id}", verifyHandlers.Verify)
 
