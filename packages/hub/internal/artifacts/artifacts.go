@@ -188,6 +188,26 @@ func (h *Handlers) Pull(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Include the ship's public key so browsers can do full Ed25519 verification
+	resp := map[string]interface{}{
+		"artifact_id":   artifact.ArtifactID,
+		"payload_type":  artifact.PayloadType,
+		"envelope_json": artifact.EnvelopeJSON,
+		"digest":        artifact.Digest,
+		"signed_at":     artifact.SignedAt,
+		"parent_id":     artifact.ParentID,
+		"hub_url":       artifact.HubURL,
+		"rekor_index":   artifact.RekorIndex,
+		"dock_id":       artifact.DockID,
+	}
+
+	if artifact.DockID != nil {
+		shipPubKey, err := db.GetShipPublicKey(h.DB, *artifact.DockID)
+		if err == nil && shipPubKey != "" {
+			resp["ship_public_key"] = shipPubKey
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(artifact)
+	json.NewEncoder(w).Encode(resp)
 }

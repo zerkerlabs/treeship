@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"os"
 
@@ -186,6 +187,15 @@ func GetShip(db *sql.DB, dockID string) (*Ship, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+func GetShipPublicKey(db *sql.DB, dockID string) (string, error) {
+	var pubKey []byte
+	err := db.QueryRow(`SELECT ship_public_key FROM ships WHERE dock_id = ?`, dockID).Scan(&pubKey)
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(pubKey), nil
 }
 
 func ListArtifactsByDock(db *sql.DB, dockID string) ([]Artifact, error) {
