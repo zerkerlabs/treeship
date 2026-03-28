@@ -1,0 +1,109 @@
+---
+title: dock
+description: Connect to the treeship.dev Hub to push, pull, and share artifacts.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+## Login flow
+
+<Steps>
+<Step>
+### Start authentication
+
+```bash
+treeship dock login
+```
+
+This initiates the RFC 8628 device authorization flow. A fresh Ed25519 dock keypair is generated locally.
+</Step>
+<Step>
+### Activate in your browser
+
+Visit the URL shown and enter the code:
+
+```
+> visit https://treeship.dev/dock/activate
+> code: ABCD-1234
+> waiting...
+```
+</Step>
+<Step>
+### Docked
+
+```
+✓ docked
+  dock id:  dck_9f8e7d6c
+  endpoint: https://api.treeship.dev
+```
+</Step>
+</Steps>
+
+<Callout type="warn" title="DPoP Security">
+All Hub requests use RFC 9449 DPoP proof-of-possession. Every request carries a DPoP JWT signed by the dock key. Stolen credentials are useless without the private key.
+</Callout>
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--endpoint <url>` | Hub API endpoint (default: `https://api.treeship.dev`) |
+
+## treeship dock push
+
+Push an artifact to the treeship.dev Hub.
+
+```bash
+treeship dock push art_f7e6d5c4
+```
+
+Returns a shareable URL and an optional Rekor transparency log index.
+
+```
+✓ pushed
+  url:   https://treeship.dev/verify/art_f7e6d5c4
+  rekor: rekor.sigstore.dev #12345
+```
+
+## treeship dock pull
+
+Pull an artifact from the Hub into your local store. No authentication required -- artifacts are public.
+
+```bash
+treeship dock pull art_f7e6d5c4
+```
+
+```
+✓ pulled
+  id: art_f7e6d5c4
+```
+
+## treeship dock status
+
+Show the current dock connection.
+
+```bash
+treeship dock status
+```
+
+```
+● docked
+  endpoint:  https://api.treeship.dev
+  dock id:   dck_9f8e7d6c
+```
+
+If not connected:
+
+```
+○ undocked
+  hint: treeship dock login
+```
+
+## treeship dock undock
+
+Disconnect from the Hub. Clears dock credentials from local config. Does not revoke the dock keypair on the Hub.
+
+```bash
+treeship dock undock
+```

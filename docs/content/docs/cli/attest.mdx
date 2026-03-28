@@ -1,16 +1,16 @@
 ---
 title: attest
-description: Manually attest any event -- actions, warrants, passages, endorsements.
+description: Sign attestation artifacts -- actions, approvals, handoffs, endorsements, receipts.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-<Tabs items={['action', 'warrant', 'passage', 'endorsement']}>
+<Tabs items={['action', 'approval', 'handoff', 'endorsement', 'receipt']}>
 <Tab value="action">
 ## treeship attest action
 
-Attest any event with full control over what gets captured.
+Record that an actor performed an action.
 
 ```bash
 treeship attest action \
@@ -23,16 +23,18 @@ treeship attest action \
 
 | Option | Description |
 |--------|-------------|
-| `--actor <uri>` | Who performed the action |
-| `--action <string>` | What action occurred |
-| `--parent <id>` | Parent artifact ID |
-| `--warrant-nonce <nonce>` | Nonce from an existing warrant |
-| `--subject-digest <hash>` | Content hash (privacy-preserving) |
-| `--subject-uri <uri>` | Content reference URI |
+| `--actor <uri>` | Who performed the action (required) |
+| `--action <label>` | What action occurred (required) |
+| `--parent <id>` | Parent artifact ID for chain linking |
+| `--approval-nonce <nonce>` | Nonce from an existing approval |
+| `--input-digest <sha256:hex>` | SHA-256 digest of the input consumed |
+| `--output-digest <sha256:hex>` | SHA-256 digest of the output produced |
+| `--content-uri <uri>` | URI to referenced content |
 | `--meta <json>` | Arbitrary JSON metadata |
+| `--out <path>` | Write raw DSSE envelope to file (use `-` for stdout) |
 
 <Callout type="info">
-Use `--subject-digest` to attest that an action occurred on a specific document without revealing the document itself. The digest proves which content was processed. The content never enters the artifact.
+Use `--input-digest` to attest that an action occurred on specific content without revealing the content itself. The digest proves which data was processed. The content never enters the artifact.
 </Callout>
 
 ### Privacy-preserving attestation
@@ -41,39 +43,58 @@ Use `--subject-digest` to attest that an action occurred on a specific document 
 treeship attest action \
   --actor agent://clinical-ai \
   --action clinical.note.summarize \
-  --subject-digest sha256:e3b0c44298fc1c149afb4c8996fb924 \
-  --subject-uri ehr://patient/94821/note/2026-03-26
+  --input-digest sha256:e3b0c44298fc1c149afb4c8996fb924 \
+  --content-uri ehr://patient/94821/note/2026-03-26
 ```
 </Tab>
-<Tab value="warrant">
-## treeship attest warrant
+<Tab value="approval">
+## treeship attest approval
 
-Issue a warrant authorizing a specific agent action.
+Record that an approver authorized an intent. A random nonce is generated automatically.
 
 ```bash
-treeship attest warrant \
-  --captain human://rezo \
+treeship attest approval \
+  --approver human://rezo \
   --description "approve stripe charge max $500 to acme" \
   --expires 2026-03-26T18:00:00Z
 ```
 
-Returns the warrant artifact ID and the nonce to pass to the agent.
+Returns the approval artifact ID and the nonce. Pass the nonce to the agent so it can echo it in `--approval-nonce` when attesting the action.
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--approver <uri>` | Approver identity URI (required) |
+| `--subject <id>` | Artifact ID being approved |
+| `--description <text>` | Plain text scope of what is authorized |
+| `--expires <timestamp>` | RFC 3339 expiry time |
 
 <Callout type="warn">
-Warrants are single-use by default. If the same nonce is used twice, the second action will fail verification. This is enforced in the Rust core and cannot be bypassed.
+Approvals are single-use by default. If the same nonce is used twice, the second action will fail verification. This is enforced in the Rust core and cannot be bypassed.
 </Callout>
 </Tab>
-<Tab value="passage">
-## treeship attest passage
+<Tab value="handoff">
+## treeship attest handoff
 
-Seal a passage recording the transfer of work.
+Record a transfer of work between actors.
 
 ```bash
-treeship attest passage \
+treeship attest handoff \
   --from agent://researcher \
   --to agent://executor \
   --artifacts art_a1b2,art_c3d4
 ```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--from <uri>` | Source actor URI (required) |
+| `--to <uri>` | Destination actor URI (required) |
+| `--artifacts <ids>` | Comma-separated artifact IDs being transferred (required) |
+| `--approvals <ids>` | Comma-separated approval IDs the receiver inherits |
+| `--obligations <text>` | Comma-separated obligations the receiver must satisfy |
 </Tab>
 <Tab value="endorsement">
 ## treeship attest endorsement
@@ -86,5 +107,27 @@ treeship attest endorsement \
   --subject art_code_output_abc \
   --description "reviewed -- no critical issues found"
 ```
+</Tab>
+<Tab value="receipt">
+## treeship attest receipt
+
+Record an external system confirmation (webhook, timestamp, inclusion proof).
+
+```bash
+treeship attest receipt \
+  --system system://stripe-webhook \
+  --kind confirmation \
+  --subject art_a1b2 \
+  --payload '{"eventId":"evt_abc","status":"succeeded"}'
+```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--system <uri>` | System that produced the receipt (required) |
+| `--kind <type>` | Receipt kind: confirmation, timestamp, inclusion, webhook (required) |
+| `--subject <id>` | Subject artifact ID |
+| `--payload <json>` | Receipt payload as a JSON object |
 </Tab>
 </Tabs>

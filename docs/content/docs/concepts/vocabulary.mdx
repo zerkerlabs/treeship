@@ -1,36 +1,25 @@
 ---
 title: Vocabulary
-description: Every term in Treeship maps directly to architecture. Nothing is decorative.
+description: Every term in Treeship maps directly to the code. Nothing is decorative.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
 <Callout type="info">
-Treeship uses nautical vocabulary deliberately. Every term maps to a concrete technical concept -- nothing is decorative.
+Every term below maps to a concrete type or command in the CLI and Rust core.
 </Callout>
 
-| Term | Definition | Technical equivalent |
-|------|-----------|---------------------|
+| Term | Definition | In the code |
+|------|-----------|-------------|
+| **Action** | A signed record of an agent or human performing something | `ActionStatement` / `treeship attest action` |
+| **Approval** | Cryptographic authorization for an action, with nonce binding | `ApprovalStatement` / `treeship attest approval` |
+| **Handoff** | Signed transfer of work between actors | `HandoffStatement` / `treeship attest handoff` |
+| **Endorsement** | Third-party validation of another artifact | `EndorsementStatement` / `treeship attest endorsement` |
+| **Receipt** | External system confirmation (webhook, timestamp, inclusion proof) | `ReceiptStatement` / `treeship attest receipt` |
+| **Artifact** | A single signed DSSE envelope with a content-addressed `art_` ID | `Record` in local storage |
+| **Bundle** | Portable package of artifacts, self-verifying | `.treeship` file / `treeship bundle` |
 | **Treeship** | A sovereign trust domain | Ed25519 keypair + config + local artifact store |
-| **Captain** | Root human identity, warrant authority | The human who holds the ship key |
-| **Crew** | Humans and agents aboard a Treeship | Actor URI registry in config.json |
-| **Warrant** | Cryptographic authorization for one agent action | ApprovalStatement + nonce binding |
-| **Passage** | Signed transfer of work between crew or Treeships | HandoffStatement |
-| **Endorsement** | Second party verifies another artifact | EndorsementStatement |
-| **Log entry** | A single signed record of something that happened | ActionStatement |
-| **Ship's log** | Portable sealed record of a mission | .treeship bundle file |
-| **Mission** | Named unit of work with start, checkpoints, sealed log | Bundle session + TREESHIP_MISSION env var |
-| **Harbor** | Hosted infrastructure where Treeships dock and share | treeship.dev Hub + trust federation |
-| **Fleet** | Collection of Treeships under one organization | Multi-Treeship context on one machine |
-| **Berth** | Authenticated connection to the Harbor | dock_id + DPoP keypair |
-
-## Backward compatibility
-
-Old commands still work as aliases:
-
-| Old | New | Both work |
-|-----|-----|-----------|
-| `treeship attest action` | `treeship attest log` | Yes |
-| `treeship attest approval` | `treeship attest warrant` | Yes |
-| `treeship dock login` | `treeship berth login` | Yes |
-| `treeship dock push` | `treeship berth push` | Yes |
+| **Actor** | Any human or agent identified by a URI | `human://` or `agent://` prefix |
+| **Approver** | The human or identity that signs an approval | `--approver` flag |
+| **Dock** | Authenticated connection to the treeship.dev Hub | `dock_id` + DPoP keypair / `treeship dock` |
+| **Hub** | Hosted infrastructure where Treeships dock and share artifacts | treeship.dev API |

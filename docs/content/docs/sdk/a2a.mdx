@@ -11,7 +11,7 @@ The A2A bridge is currently in development. Track progress at github.com/zerkerl
 
 ## Overview
 
-`@treeship/a2a` wraps agent-to-agent communication with automatic passage attestation. When agents exchange work, Treeship signs the transfer.
+`@treeship/a2a` wraps agent-to-agent communication with automatic handoff attestation. When agents exchange work, Treeship signs the transfer.
 
 ## Install
 
@@ -28,19 +28,19 @@ const client = new A2AClient({
   actor: 'agent://coordinator',
 });
 
-// Send work to another agent -- passage attested automatically
+// Send work to another agent -- handoff attested automatically
 const result = await client.delegate({
   to: 'agent://researcher',
   task: 'analyze quarterly earnings',
   artifacts: ['art_input_001'],
 });
 
-// result._treeship.passage = "art_passage_xyz"
+// result._treeship.handoff = "art_handoff_xyz"
 ```
 
 ## What gets attested
 
-Every `delegate` call produces a passage artifact recording:
+Every `delegate` call produces a handoff artifact recording:
 
 - The sender and receiver agent URIs
 - The artifact IDs being transferred
@@ -48,5 +48,5 @@ Every `delegate` call produces a passage artifact recording:
 - The Ed25519 signature
 
 <Callout type="info">
-The receiving agent can verify the passage before acting on the work. This creates an auditable chain of custody across multi-agent workflows.
+The receiving agent can verify the handoff before acting on the work. This creates an auditable chain of custody across multi-agent workflows.
 </Callout>

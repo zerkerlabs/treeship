@@ -1,0 +1,66 @@
+---
+title: Approvals
+description: An approval is a cryptographic authorization for a specific action, bound by a single-use nonce.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+An approval answers "who authorized this?" -- signed, scoped, single-use, and verifiable.
+
+## How approvals work
+
+```bash
+# Approver issues an approval
+treeship attest approval \
+  --approver human://rezo \
+  --description "approve stripe charge max $500 to acme-corp" \
+  --expires 2026-03-26T18:00:00Z
+
+# Returns:
+# ✓ approval attested
+#   id:    art_approval_abc123
+#   nonce: nce_7f8e9d0a1b2c3d4e
+```
+
+The nonce is a one-time token. Pass it to your agent.
+
+```bash
+# Agent acts under the approval
+treeship attest action \
+  --actor agent://payments \
+  --action stripe.charge.create \
+  --approval-nonce nce_7f8e9d0a1b2c3d4e \
+  --meta '{"amount":450,"vendor":"acme-corp"}'
+```
+
+## What makes it binding
+
+At verification time, the verifier enforces:
+
+```
+action.approvalNonce == approval.nonce
+```
+
+<Callout type="warn" title="Nonce binding is mandatory">
+This check is in the Rust core and cannot be skipped. If the nonces do not match, verification fails. If the approval has expired, verification fails. If the same nonce is used twice, the second action has no matching approval to link to.
+</Callout>
+
+## Approval flags
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--approver <uri>` | Yes | Human or identity URI, e.g. `human://rezo` |
+| `--description <text>` | No | Plain text scope of what is authorized |
+| `--expires <timestamp>` | No | RFC 3339 expiry time |
+| `--subject <id>` | No | Artifact ID being approved |
+
+## Verifying an approved action
+
+```bash
+treeship verify art_charge --format json | jq '{outcome, approver, approval_description}'
+# {
+#   "outcome": "pass",
+#   "approver": "human://rezo",
+#   "approval_description": "approve stripe charge max $500 to acme-corp"
+# }
+```

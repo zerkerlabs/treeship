@@ -1,0 +1,82 @@
+---
+title: Handoffs
+description: A handoff is a signed transfer of work between actors or across Treeships.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Card, Cards } from 'fumadocs-ui/components/card';
+
+A handoff records the chain of custody when work moves between agents, between humans and agents, or between organizations.
+
+## Handoff scenarios
+
+<Cards>
+<Card title="Agent to Agent" description="One agent hands off research results to another agent for execution, with a signed transfer record." />
+<Card title="Agent to Human" description="An agent produces output that a human needs to review. The handoff proves what was delivered and when." />
+<Card title="Cross-Treeship" description="Work moves between organizations. Each side has its own keys. The handoff bridges trust domains." />
+</Cards>
+
+## Same-Treeship handoff
+
+```bash
+treeship attest handoff \
+  --from agent://researcher \
+  --to agent://executor \
+  --artifacts art_research_001,art_validate_002
+```
+
+```
+✓ handoff attested
+  id:        art_handoff_xyz
+  from:      agent://researcher
+  to:        agent://executor
+  artifacts: art_research_001, art_validate_002
+```
+
+The receiver can verify the handoff before acting:
+
+```bash
+treeship verify art_handoff_xyz
+# ✓ verified -- chain intact, 2 artifacts transferred
+```
+
+## Cross-Treeship handoff (cross-org)
+
+When work moves between organizations, each side has its own Treeship and keys.
+
+```bash
+# Company A -- attest a handoff
+treeship attest handoff \
+  --from agent://company-a/researcher \
+  --to agent://company-b/legal-review \
+  --artifacts art_output_123
+
+treeship dock push art_handoff_xyz
+# -> https://treeship.dev/verify/art_handoff_xyz
+# Share this URL with Company B
+```
+
+```bash
+# Company B -- verify before acting
+treeship dock pull art_handoff_xyz
+treeship verify art_handoff_xyz --trusted-key ./company-a-public.pem
+
+# ✓ verified
+#   from:      agent://company-a/researcher
+#   artifacts: 1 transferred
+#   chain:     intact
+```
+
+<Callout type="info">
+No shared infrastructure required. The signature is the trust. Company B does not need to trust the Hub or any third party -- only the public key of Company A.
+</Callout>
+
+## Handoff flags
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--from <uri>` | Yes | Actor URI of the sender |
+| `--to <uri>` | Yes | Actor URI of the receiver |
+| `--artifacts <ids>` | Yes | Comma-separated artifact IDs being transferred |
+| `--approvals <ids>` | No | Approval IDs the receiver inherits |
+| `--obligations <text>` | No | Obligations the receiver must satisfy |

@@ -1,0 +1,76 @@
+---
+title: Workflows
+description: A workflow is a sequence of attested actions, approvals, and handoffs linked by parent IDs.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+A workflow is any sequence of Treeship artifacts chained together by parent IDs. Each step links to the previous one, forming a verifiable chain.
+
+## Workflow structure
+
+<Steps>
+<Step>
+### Start work
+
+```bash
+treeship wrap -- npm run build
+```
+
+This produces the first artifact in the chain.
+</Step>
+<Step>
+### Continue the chain
+
+```bash
+treeship wrap --parent $TREESHIP_LAST -- npm test
+```
+
+Each step chains to the previous via `--parent` or the `TREESHIP_PARENT` env var. `TREESHIP_LAST` is set automatically after every operation.
+</Step>
+<Step>
+### Approve a sensitive step
+
+```bash
+treeship attest approval \
+  --approver human://rezo \
+  --description "approve deploy to production"
+
+# Pass the nonce to the agent
+treeship wrap --parent $TREESHIP_LAST -- ./deploy.sh
+```
+</Step>
+<Step>
+### Bundle the chain
+
+```bash
+treeship bundle create --artifacts art_a1b2,art_c3d4,art_e5f6 --tag deploy-v1.2
+treeship bundle export art_bundle_id --out deploy-v1.2.treeship
+```
+
+The bundle is a portable, self-verifying package of the entire workflow.
+</Step>
+</Steps>
+
+## Verifying a workflow
+
+```bash
+treeship verify art_last_step
+```
+
+The verifier walks the parent chain recursively, checking every signature, every content-addressed ID, and every approval nonce binding.
+
+<Callout type="info">
+Bundles verify offline. Share a `.treeship` file and the recipient can verify the entire workflow without network access, without an account, and without trusting Treeship's infrastructure.
+</Callout>
+
+## Pushing to the Hub
+
+```bash
+treeship dock login
+treeship dock push art_last_step
+# -> https://treeship.dev/verify/art_xxx
+```
+
+Anyone can open that URL and verify the chain.

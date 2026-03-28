@@ -15,52 +15,46 @@ cargo install treeship
 
 ```bash
 # Identity
-treeship init                           # commission a new Treeship
-treeship status                         # show state, crew, mission, berth
-
-# Crew
-treeship crew add <uri>                 # bring a crew member aboard
-treeship crew list                      # see who is aboard
-treeship crew remove <uri>              # remove a crew member
-treeship crew show <uri>                # detail for one crew member
+treeship init                           # set up a new Treeship
+treeship status                         # show state, keys, dock status
 
 # Attestation
 treeship wrap -- <cmd>                  # attest any command execution
-treeship attest action                  # attest a log entry manually
-treeship attest warrant                 # issue a warrant
-treeship attest passage                 # seal a passage
-treeship attest endorsement             # attest an endorsement
-treeship attest receipt                 # attest a receipt
+treeship attest action                  # record an action
+treeship attest approval                # record an approval
+treeship attest handoff                 # record a handoff
+treeship attest endorsement             # record an endorsement
+treeship attest receipt                 # record a receipt
 
 # Verification
-treeship verify <id>                    # verify a chain, exit 0/1
-treeship verify <id> --format json      # machine-readable ChainResult
+treeship verify <id>                    # verify an artifact or chain, exit 0/1
+treeship verify <id> --format json      # machine-readable output
+treeship verify <id> --no-chain         # verify single artifact, skip chain walk
 
-# Mission
-treeship mission start                  # begin a named mission
-treeship mission status                 # show active mission + entries
-treeship mission close                  # seal the ship's log
-treeship mission list                   # list past missions
+# Bundle
+treeship bundle create                  # create a bundle from artifacts
+treeship bundle export <id>             # export a chain as a .treeship file
+treeship bundle import <file>           # import a .treeship file locally
 
-# Bundle / ship's log
-treeship bundle create                  # create a .treeship bundle manually
-treeship bundle export <id>             # export a chain as bundle
-treeship bundle import <file>           # import a bundle locally
-
-# Harbor (berth)
-treeship berth login                    # authenticate to the Harbor
-treeship berth push <id>                # push an artifact or log
-treeship berth pull <id>                # pull from Harbor
-treeship berth status                   # show berth connection
-treeship berth cast-off                 # disconnect from Harbor
+# Dock (treeship.dev Hub)
+treeship dock login                     # authenticate to the Hub
+treeship dock push <id>                 # push an artifact to the Hub
+treeship dock pull <id>                 # pull an artifact from the Hub
+treeship dock status                    # show dock connection
+treeship dock undock                    # disconnect from the Hub
 
 # Keys
 treeship keys list                      # show key fingerprints
-
-# Fleet
-treeship fleet list                     # list all Treeships on this machine
-treeship fleet use <name>               # switch active Treeship context
 ```
+
+## Global flags
+
+| Flag | Description |
+|------|-------------|
+| `--config <path>` | Config file (default: `~/.treeship/config.json`) |
+| `--format <text\|json>` | Output format (default: `text`) |
+| `--quiet` | Suppress all output except errors |
+| `--no-color` | Disable color output |
 
 ## Environment variables
 
@@ -68,8 +62,7 @@ treeship fleet use <name>               # switch active Treeship context
 |----------|-------------|
 | `TREESHIP_ACTOR` | Default actor URI for all attestations |
 | `TREESHIP_PARENT` | Default parent artifact ID for chain linking |
-| `TREESHIP_MISSION` | Active mission ID -- auto-set by `mission start` |
-| `TREESHIP_LAST` | Most recent artifact ID -- set after every operation |
+| `TREESHIP_LAST` | Most recent artifact ID, set after every operation |
 | `TREESHIP_DISABLE` | Set to `1` to disable all attestation (passthrough) |
 | `TREESHIP_DEBUG` | Set to `1` to log all activity to stderr |
 | `NO_COLOR` | Disable color output |

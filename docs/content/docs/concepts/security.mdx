@@ -13,13 +13,13 @@ import { Callout } from 'fumadocs-ui/components/callout';
 | SHA-256 | Content-addressed artifact IDs, subject digests |
 | DSSE | Envelope format for all signed statements |
 | PAE | Pre-Authentication Encoding for deterministic signing |
-| DPoP (RFC 9449) | Proof-of-possession for Harbor authentication |
+| DPoP (RFC 9449) | Proof-of-possession for Hub authentication |
 
 ## Key management
 
 - One Ed25519 keypair per Treeship
-- Private key encrypted at rest with a passphrase
-- Key never leaves the local machine unless the captain exports it
+- Private key encrypted at rest
+- Key never leaves the local machine unless explicitly exported
 - No key escrow, no key recovery service
 
 <Callout type="warn">
@@ -28,7 +28,7 @@ Root access to the machine breaks all guarantees. The trust boundary is the mach
 
 ## What Treeship does not protect against
 
-- A compromised captain key (if someone steals your private key and passphrase, they can forge artifacts)
+- A compromised signing key (if someone steals your private key and passphrase, they can forge artifacts)
 - Actions taken outside of Treeship (unwrapped commands leave no trace)
 - Content confidentiality (Treeship signs metadata and digests, not content, but metadata can still be sensitive)
 
@@ -39,14 +39,14 @@ Treeship provides strong guarantees against retroactive tampering, unauthorized 
 </Callout>
 
 - Retroactive tampering of action records
-- Unauthorized agent actions (missing or expired warrant)
+- Unauthorized agent actions (missing or expired approval)
 - Broken chain of custody (missing parent links)
 - Replay attacks (nonce binding, content-addressed IDs)
 - Forged verification results (client-side WASM verifier runs independently of the Hub)
 
 ## Revocation
 
-The Harbor publishes a signed revocation list at:
+The Hub publishes a signed revocation list at:
 
 ```
 GET /.well-known/treeship/revoked.json
@@ -70,7 +70,7 @@ To attest an action on sensitive data without revealing the data:
 treeship attest action \
   --actor agent://clinical-ai \
   --action clinical.note.summarize \
-  --subject-digest sha256:e3b0c44298fc1c149afb4c8996fb924
+  --input-digest sha256:e3b0c44298fc1c149afb4c8996fb924
 ```
 
 The digest proves which document was processed. The content never enters the artifact.

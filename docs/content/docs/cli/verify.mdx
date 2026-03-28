@@ -1,6 +1,6 @@
 ---
 title: verify
-description: Verify a log entry or ship's log chain. Exit 0 = clean. Exit 1 = failed.
+description: Verify an artifact or its full parent chain. Exit 0 = clean. Exit 1 = failed.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -19,8 +19,16 @@ treeship verify <artifact-id> [OPTIONS]
 3. Verifies Ed25519 signature
 4. Validates statement schema
 5. Walks parent chain recursively
-6. Enforces `action.approvalNonce == warrant.nonce` if present
-7. Checks warrant expiry
+6. Enforces `action.approvalNonce == approval.nonce` if present
+7. Checks approval expiry
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `--no-chain` | Verify only this artifact, do not walk the parent chain |
+| `--max-depth <n>` | Maximum chain depth to walk (default: 20) |
+| `--format <text\|json>` | Output format |
 
 ## Examples
 
@@ -40,25 +48,25 @@ treeship verify art_f7e6d5c4 --format json
   "outcome": "pass",
   "chain": 3,
   "approver": "human://rezo",
-  "warrant_description": "approve stripe charge max $500",
+  "approval_description": "approve stripe charge max $500",
   "checks": [
     { "name": "signature", "outcome": "pass" },
     { "name": "content_id", "outcome": "pass" },
     { "name": "schema", "outcome": "pass" },
     { "name": "nonce_binding", "outcome": "pass" },
-    { "name": "warrant_expiry", "outcome": "pass" }
+    { "name": "approval_expiry", "outcome": "pass" }
   ]
 }
 ```
 </Tab>
 <Tab value="Cross-org">
 ```bash
-treeship verify art_passage_xyz --trusted-key ./company-a.pem
+treeship verify art_handoff_xyz --trusted-key ./company-a.pem
 ```
 </Tab>
 <Tab value="Bundle">
 ```bash
-treeship verify mission.treeship
+treeship verify release.treeship
 ```
 </Tab>
 </Tabs>

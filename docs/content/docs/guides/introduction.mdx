@@ -6,7 +6,7 @@ description: Treeship is a portable cryptographic trust layer for human-agent wo
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Card, Cards } from 'fumadocs-ui/components/card';
 
-Treeship keeps a signed record of every action your agents take, every warrant your team issues, and every passage of work between systems.
+Treeship keeps a signed record of every action your agents take, every approval your team issues, and every handoff of work between systems.
 
 The record is self-contained. It verifies offline. It crosses organizational boundaries. It does not depend on Treeship's servers to be valid -- the signatures are the trust.
 
@@ -17,7 +17,7 @@ When AI agents take consequential actions -- moving money, modifying code, execu
 - Who authorized the action
 - What scope the authorization covered
 - Whether the chain of custody is intact
-- Whether the warrant was used once or many times
+- Whether the approval was used once or many times
 
 Treeship produces cryptographic receipts that answer all four.
 
@@ -30,7 +30,7 @@ Treeship is not a scanner, EDR, SIEM, orchestration framework, or centralized tr
 ## Core properties
 
 <Cards>
-<Card title="Local-first" description="Every operation works offline. The Harbor adds shareability, never trust." />
+<Card title="Local-first" description="Every operation works offline. The Hub adds shareability, never trust." />
 <Card title="Self-contained" description="A signed artifact is a JSON file. It verifies without a database, API, or account." />
 <Card title="Deterministic" description="Same content always produces the same artifact ID." />
 <Card title="Portable" description="Works across orgs, clouds, and protocols with no shared infrastructure." />

@@ -33,7 +33,7 @@ const { artifactId } = await s.attest.action({
 const result = await s.verify.verify(artifactId);
 console.log(result.outcome); // "pass"
 
-// Push to Harbor
+// Push to Hub
 const { hubUrl } = await s.dock.push(artifactId);
 console.log(hubUrl); // https://treeship.dev/verify/art_xxx
 ```

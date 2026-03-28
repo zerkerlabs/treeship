@@ -3,10 +3,10 @@
   "pages": [
     "trust-model",
     "vocabulary",
-    "crew",
-    "warrants",
-    "passages",
-    "missions",
+    "actors",
+    "approvals",
+    "handoffs",
+    "workflows",
     "security"
   ]
 }

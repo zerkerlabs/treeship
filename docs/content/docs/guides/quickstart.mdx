@@ -20,36 +20,31 @@ cargo install treeship
 ```
 </Step>
 <Step>
-### Commission your Treeship
+### Initialize your Treeship
 
 ```bash
 treeship init
 ```
 
-You will be asked for a name and captain identity. A new Ed25519 keypair is generated and encrypted at rest.
+You will be asked for a name. A new Ed25519 keypair is generated and encrypted at rest.
 
 ```
-? What is this Treeship for?  > Personal workspace
-? Name this Treeship: rezo-personal
-? Captain: human://rezo
-
-✓ Treeship commissioned
-  name:    rezo-personal
-  captain: human://rezo
-  key:     key_9f8e7d6c (ed25519 · encrypted at rest)
+✓ Treeship initialized
+  name: rezo-personal
+  key:  key_9f8e7d6c (ed25519, encrypted at rest)
 ```
 </Step>
 <Step>
 ### Wrap a command
 
 ```bash
-treeship wrap -- echo "first log entry"
+treeship wrap -- echo "first artifact"
 ```
 
-This produces a signed log entry with your captain identity, the action, exit code, elapsed time, and timestamp.
+This produces a signed artifact with the actor, action, exit code, elapsed time, and timestamp.
 
 ```
-✓ log entry sealed
+✓ action attested
   id:      art_f7e6d5c4
   actor:   human://rezo
   action:  echo
@@ -66,27 +61,27 @@ treeship verify art_f7e6d5c4
 
 ```
 ✓ verified
-  chain:  1 artifact · intact
-  signed: human://rezo · 2026-03-26T21:00:00Z
+  chain:  1 artifact, intact
+  signed: human://rezo, 2026-03-26T21:00:00Z
 ```
 </Step>
 <Step>
-### Issue a warrant and bind an action
+### Issue an approval and bind an action
 
 ```bash
-# Captain issues a warrant
-treeship attest warrant \
-  --captain human://rezo \
+# Approver issues an approval
+treeship attest approval \
+  --approver human://rezo \
   --description "approve deploy to staging" \
   --expires 2026-03-26T23:00:00Z
 
 # Returns: nonce: nce_7f8e9d0a
 
-# Agent acts under the warrant
+# Agent acts under the approval
 treeship attest action \
   --actor agent://deployer \
   --action deploy.staging \
-  --warrant-nonce nce_7f8e9d0a
+  --approval-nonce nce_7f8e9d0a
 
 # Verify the chain
 treeship verify $TREESHIP_LAST
@@ -94,23 +89,23 @@ treeship verify $TREESHIP_LAST
 
 ```
 ✓ verified
-  captain:  human://rezo
-  warrant:  approve deploy to staging
-  nonce:    matched · single use enforced
+  approver: human://rezo
+  approval: approve deploy to staging
+  nonce:    matched, single use enforced
   actor:    agent://deployer
-  chain:    2 artifacts · intact
+  chain:    2 artifacts, intact
 ```
 </Step>
 <Step>
-### Push to the Harbor
+### Push to the Hub
 
 ```bash
-treeship berth login
+treeship dock login
 # Visit https://treeship.dev/dock/activate
 # Type the code, click Approve
 
-treeship berth push $TREESHIP_LAST
-# → https://treeship.dev/verify/art_xxx
+treeship dock push $TREESHIP_LAST
+# -> https://treeship.dev/verify/art_xxx
 ```
 
 Anyone can open that URL and verify the chain. No account, no install, no trust in Treeship's infrastructure.

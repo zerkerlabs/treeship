@@ -1,6 +1,6 @@
 ---
 title: init
-description: Commission a new Treeship trust domain.
+description: Set up a new Treeship trust domain.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -14,8 +14,7 @@ treeship init [OPTIONS]
 ## What it does
 
 Creates a new Treeship with:
-- A name
-- A captain identity (human URI)
+- An optional name
 - A new Ed25519 keypair, encrypted at rest
 
 <Callout type="info">
@@ -29,28 +28,23 @@ treeship init
 ```
 
 ```
-? What is this Treeship for?  > Personal workspace
-? Name this Treeship: rezo-personal
-? Captain: human://rezo
-
-✓ Treeship commissioned
-  name:    rezo-personal
-  captain: human://rezo
-  key:     key_9f8e7d6c (ed25519 · encrypted at rest)
+✓ Treeship initialized
+  name: rezo-personal
+  key:  key_9f8e7d6c (ed25519, encrypted at rest)
 ```
 
 ## Options
 
 | Option | Description |
 |--------|-------------|
-| `--name <name>` | Treeship name (skips prompt) |
-| `--captain <uri>` | Captain identity URI (skips prompt) |
-| `--non-interactive` | Use defaults, no prompts |
+| `--name <name>` | Treeship name (optional) |
+| `--force` | Overwrite an existing config |
+| `--config <path>` | Config file path |
 
 ## Non-interactive
 
 ```bash
-treeship init --name ci-ship --captain human://ci-admin --non-interactive
+treeship init --name ci-ship
 ```
 
 Useful for CI environments where interactive prompts are not available.
@@ -59,8 +53,7 @@ Useful for CI environments where interactive prompts are not available.
 
 ```
 ~/.treeship/
-└── <name>/
-    ├── config.json       # Treeship configuration
-    ├── keystore/         # Encrypted Ed25519 keypair
-    └── artifacts/        # Local artifact store
+└── config.json       # Treeship configuration
+└── keystore/         # Encrypted Ed25519 keypair
+└── artifacts/        # Local artifact store
 ```

@@ -9,7 +9,7 @@ info:
 
 servers:
   - url: https://api.treeship.dev
-    description: Production Harbor
+    description: Production Hub
 
 security:
   - DPoP: []
@@ -47,7 +47,7 @@ paths:
   /v1/dock/authorized:
     get:
       summary: Poll for device flow completion
-      description: Poll after the captain has approved at treeship.dev/dock/activate.
+      description: Poll after the user has approved at treeship.dev/dock/activate.
       operationId: dockAuthorized
       security: []
       parameters:
@@ -65,12 +65,12 @@ paths:
                 properties:
                   dock_id: { type: string, example: "dck_9f8e7d6c" }
         '202':
-          description: Pending -- captain has not approved yet
+          description: Pending -- user has not approved yet
 
   /v1/dock/authorize:
     post:
       summary: Complete device flow authorization
-      description: Called by treeship.dev when the captain approves. Stores the keypair binding.
+      description: Called by treeship.dev when the user approves. Stores the keypair binding.
       operationId: dockAuthorize
       security: []
       requestBody:
@@ -86,7 +86,7 @@ paths:
                 dock_public_key:  { type: string, description: "hex-encoded Ed25519 public key" }
       responses:
         '200':
-          description: Berth established
+          description: Docked
           content:
             application/json:
               schema:
@@ -96,7 +96,7 @@ paths:
 
   /v1/artifacts:
     post:
-      summary: Push a log entry to the Harbor
+      summary: Push an artifact to the Hub
       description: |
         DPoP authenticated. Stores the artifact and optionally anchors to Rekor.
         The Hub never validates trust -- it stores and serves.
@@ -129,7 +129,7 @@ paths:
 
   /v1/artifacts/{id}:
     get:
-      summary: Fetch a log entry
+      summary: Fetch an artifact
       description: Returns the artifact record. No auth required.
       operationId: getArtifact
       security: []

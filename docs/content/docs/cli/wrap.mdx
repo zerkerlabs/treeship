@@ -6,7 +6,7 @@ description: Attest any command execution automatically.
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-`treeship wrap` runs a command as a subprocess and produces a signed log entry recording what happened.
+`treeship wrap` runs a command as a subprocess and produces a signed artifact recording what happened.
 
 ## Usage
 
@@ -19,16 +19,15 @@ treeship wrap [OPTIONS] -- <command> [args...]
 | Field | Value |
 |-------|-------|
 | actor | From `--actor` flag or `TREESHIP_ACTOR` env var |
-| action | The binary name of the command |
+| action | The binary name of the command (or `--action` override) |
 | exit_code | The subprocess exit code |
 | elapsed_ms | Elapsed time in milliseconds |
 | timestamp | RFC 3339 at the moment of signing |
 | parent_id | From `--parent` flag or `TREESHIP_PARENT` |
-| warrant_nonce | From `--warrant-nonce` flag |
 
 ## Examples
 
-<Tabs items={['Basic', 'With Warrant', 'In a Mission']}>
+<Tabs items={['Basic', 'With approval', 'With auto-push']}>
 <Tab value="Basic">
 ```bash
 treeship wrap -- npm test
@@ -38,22 +37,20 @@ treeship wrap -- npm test
 treeship wrap --actor agent://ci-runner -- cargo build --release
 ```
 </Tab>
-<Tab value="With Warrant">
+<Tab value="With approval">
 ```bash
 treeship wrap \
   --actor agent://deployer \
-  --warrant-nonce nce_7f8e9d0a \
+  --parent art_previous \
   -- kubectl apply -f deploy.yaml
 ```
 </Tab>
-<Tab value="In a Mission">
+<Tab value="With auto-push">
 ```bash
-treeship mission start --name deploy-v1.2
-treeship wrap -- npm run build
-treeship wrap -- npm test
-treeship wrap --warrant-nonce nce_xxx -- ./deploy.sh
-treeship mission close
+treeship wrap --push -- npm test
 ```
+
+The `--push` flag pushes the artifact to the Hub immediately after attesting.
 </Tab>
 </Tabs>
 
@@ -62,11 +59,10 @@ treeship mission close
 | Option | Description |
 |--------|-------------|
 | `--actor <uri>` | Override default actor |
+| `--action <label>` | Override action label (default: executable name) |
 | `--parent <id>` | Parent artifact ID for chain linking |
-| `--warrant-nonce <nonce>` | Bind to an existing warrant |
-| `--meta <json>` | Additional metadata as JSON |
-| `--format json` | Output artifact record as JSON |
+| `--push` | Push to Hub immediately after attesting |
 
 <Callout type="info">
-`treeship wrap` always propagates the subprocess exit code. If your command exits 1, `treeship wrap` exits 1. The log entry is still signed and stored -- even failed runs are attested.
+`treeship wrap` always propagates the subprocess exit code. If your command exits 1, `treeship wrap` exits 1. The artifact is still signed and stored -- even failed runs are attested.
 </Callout>
