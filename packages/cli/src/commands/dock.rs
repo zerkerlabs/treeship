@@ -46,7 +46,7 @@ pub fn login(
     let site_url = if endpoint.contains("localhost") || endpoint.contains("127.0.0.1") {
         endpoint.clone()
     } else {
-        "https://treeship.dev".to_string()
+        "https://www.treeship.dev".to_string()
     };
     printer.info(&format!("visit {}/dock/activate", site_url));
     printer.info(&format!("code: {}", printer.bold(&formatted_code)));
