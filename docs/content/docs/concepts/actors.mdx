@@ -13,7 +13,7 @@ Every actor is identified by a URI:
 
 | Prefix | Meaning | Example |
 |--------|---------|---------|
-| `human://` | A human identity | `human://rezo` |
+| `human://` | A human identity | `human://alice` |
 | `agent://` | An AI agent or automation | `agent://deployer` |
 | `system://` | An external system (used in receipts) | `system://stripe-webhook` |
 
@@ -41,7 +41,7 @@ Being referenced as an actor does not grant permission to act. To take a sensiti
 ```bash
 # A human approves
 treeship attest approval \
-  --approver human://rezo \
+  --approver human://alice \
   --description "approve deployment"
 
 # An agent acts under that approval

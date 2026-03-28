@@ -30,7 +30,7 @@ You will be asked for a name. A new Ed25519 keypair is generated and encrypted a
 
 ```
 ✓ Treeship initialized
-  name: rezo-personal
+  name: my-workspace
   key:  key_9f8e7d6c (ed25519, encrypted at rest)
 ```
 </Step>
@@ -46,7 +46,7 @@ This produces a signed artifact with the actor, action, exit code, elapsed time,
 ```
 ✓ action attested
   id:      art_f7e6d5c4
-  actor:   human://rezo
+  actor:   human://alice
   action:  echo
   exit:    0
   elapsed: 12ms
@@ -62,7 +62,7 @@ treeship verify art_f7e6d5c4
 ```
 ✓ verified
   chain:  1 artifact, intact
-  signed: human://rezo, 2026-03-26T21:00:00Z
+  signed: human://alice, 2026-03-26T21:00:00Z
 ```
 </Step>
 <Step>
@@ -71,7 +71,7 @@ treeship verify art_f7e6d5c4
 ```bash
 # Approver issues an approval
 treeship attest approval \
-  --approver human://rezo \
+  --approver human://alice \
   --description "approve deploy to staging" \
   --expires 2026-03-26T23:00:00Z
 
@@ -89,7 +89,7 @@ treeship verify $TREESHIP_LAST
 
 ```
 ✓ verified
-  approver: human://rezo
+  approver: human://alice
   approval: approve deploy to staging
   nonce:    matched, single use enforced
   actor:    agent://deployer

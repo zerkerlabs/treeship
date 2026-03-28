@@ -16,6 +16,10 @@ export default function Layout({ children }: { children: ReactNode }) {
       }}
       links={[
         {
+          text: 'Blog',
+          url: '/blog',
+        },
+        {
           text: 'GitHub',
           url: 'https://github.com/zerkerlabs/treeship',
           external: true,

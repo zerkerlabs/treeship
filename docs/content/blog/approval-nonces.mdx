@@ -1,0 +1,93 @@
+---
+title: "Approval Nonces and Why a Single Field Prevents an Entire Attack Class"
+description: "The approvalNonce field in Treeship's ActionStatement is doing a lot of work. Here's the full attack class it prevents and why the design is correct."
+date: 2025-10-07
+tags: ["security", "cryptography"]
+readTime: "7 min read"
+---
+
+Approval reuse is subtle. An agent gets permission to perform one action, and -- without cryptographic binding -- nothing stops that approval from being used again. The nonce is the fix, and it's six characters of schema design.
+
+Imagine you're designing an agent that can charge customer credit cards. The agent needs human approval before making each charge. You build an approval system: a human reviews a proposed charge, approves it, and the agent proceeds.
+
+Now imagine the following attack. A malicious agent gets one legitimate approval for a $50 charge. It then reuses that same approval to make 47 more $50 charges. By the time anyone notices, $2,350 has been moved. The approvals all look valid -- because they are valid. They're just being used more times than the approver intended.
+
+This is approval reuse. It's not hypothetical. It's the natural consequence of any system where approvals are checked for existence but not for exclusivity.
+
+## Why it happens
+
+The naive approval model looks like this: an approval record exists in the database, the action checks that a valid approval exists, the action proceeds. Nothing in this model prevents the same approval from being checked against multiple actions.
+
+You could solve this by marking approvals as "consumed" after use. But now you have a race condition: two agents could both check the approval, see it as unconsumed, and both proceed before either marks it consumed. And you've introduced mutable state that creates its own problems in distributed systems.
+
+The deeper issue is that the action and the approval are separate records with no cryptographic link between them. The approval doesn't know which action it authorizes. The action doesn't know which approval covers it. The only thing binding them together is the application code that checks one against the other.
+
+## Nonce binding: the cryptographic solution
+
+In Treeship, every `ApprovalStatement` contains a `nonce` field -- a random value generated when the approval is created. Every `ActionStatement` that claims to be authorized by an approval must include the same nonce in its `approvalNonce` field.
+
+// The approval -- signed by the human approver
+{
+"type": "treeship/approval/v1",
+"approver": "human://approver",
+"nonce": "nce_7f8e9d0a1b2c3d4e",
+"scope": { "maxActions": 1, "allowedActions": ["stripe.charge.create"] },
+"expiresAt": "2025-10-07T15:00:00Z"
+}
+
+// The action -- must echo the nonce to prove authorization
+{
+"type": "treeship/action/v1",
+"actor": "agent://payments",
+"action": "stripe.charge.create",
+"approvalNonce": "nce_7f8e9d0a1b2c3d4e"
+}
+
+The verifier then checks: **does action.approvalNonce equal the nonce in the approval artifact that's in this chain?** If the nonces don't match, verification fails. If the approval is used twice, the second action can only include the same nonce -- and the verifier can detect that the nonce has already been consumed by a previous action in the chain.
+
+## What the nonce actually prevents
+
+**Direct reuse.** An agent that copies a valid approval and uses it for a second action will produce an action with a valid nonce -- but the verifier will find that nonce already used in the chain. The chain fails.
+
+**Out-of-scope reuse.** An agent that uses an approval for a different action type than the one approved will fail both the nonce check (if the scope is checked) and the allowed-actions check.
+
+**Expired approval reuse.** An agent that saves an approval and tries to use it after expiry will fail the expiry check. The nonce is still valid cryptographically, but the approval is expired. Both checks run.
+
+**Cross-chain contamination.** An agent that takes an approval from one chain and tries to use it in a different chain will fail because the parent chain doesn't contain the referenced approval artifact. The nonce might match, but the approval ID won't be in the parent chain.
+
+## Nonces are not tokens
+
+There's a subtle distinction worth making. A nonce in this context is not a bearer token -- it doesn't grant permission on its own. Knowing the nonce doesn't let you perform the approved action. You still have to:
+
+Sign the action with a key that's trusted in the chain
+
+- Include a valid parent chain that contains the approval artifact
+
+- Act within the scope and timing constraints of the approval
+
+The nonce's job is to bind one specific action to one specific approval. It's a link, not a credential.
+
+>
+A nonce proves that this action and this approval are the same transaction. It doesn't prove the action is authorized -- the approval, the signature, and the scope constraints do that. The nonce just ensures you can't split one authorization into many uses.
+
+## How nonces are generated
+
+When you run `treeship attest approval`, Treeship generates a cryptographically random 16-byte nonce automatically. You don't specify it -- you just get it back:
+
+$ treeship attest approval \
+--approver human://approver \
+--description "approve stripe charge $50 to acme" \
+--expires 2025-10-07T15:00:00Z
+
+✓ approval attested
+id:      art_e5f6a7b8c9d0e5f6
+nonce:   nce_7f8e9d0a1b2c3d4e
+→ pass nonce to the agent as --approval-nonce nce_7f8e9d0a1b2c3d4e
+
+The approver gives the nonce to the agent as part of the approval handoff. The agent includes it in its action attestation. The verifier checks the binding. This is the complete protocol.
+
+## Six characters in the schema, one attack class eliminated
+
+The `nonce` field in `ApprovalStatement` and the `approvalNonce` field in `ActionStatement` together add about 60 characters to the JSON schema definition. That's what it costs to make approval reuse cryptographically impossible.
+
+This is the pattern that security design should aspire to: small, precise additions that eliminate entire attack classes rather than large, complex systems that try to detect attacks after the fact.

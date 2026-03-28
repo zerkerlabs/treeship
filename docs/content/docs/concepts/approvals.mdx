@@ -12,7 +12,7 @@ An approval answers "who authorized this?" -- signed, scoped, single-use, and ve
 ```bash
 # Approver issues an approval
 treeship attest approval \
-  --approver human://rezo \
+  --approver human://alice \
   --description "approve stripe charge max $500 to acme-corp" \
   --expires 2026-03-26T18:00:00Z
 
@@ -49,7 +49,7 @@ This check is in the Rust core and cannot be skipped. If the nonces do not match
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--approver <uri>` | Yes | Human or identity URI, e.g. `human://rezo` |
+| `--approver <uri>` | Yes | Human or identity URI, e.g. `human://alice` |
 | `--description <text>` | No | Plain text scope of what is authorized |
 | `--expires <timestamp>` | No | RFC 3339 expiry time |
 | `--subject <id>` | No | Artifact ID being approved |
@@ -60,7 +60,7 @@ This check is in the Rust core and cannot be skipped. If the nonces do not match
 treeship verify art_charge --format json | jq '{outcome, approver, approval_description}'
 # {
 #   "outcome": "pass",
-#   "approver": "human://rezo",
+#   "approver": "human://alice",
 #   "approval_description": "approve stripe charge max $500 to acme-corp"
 # }
 ```
