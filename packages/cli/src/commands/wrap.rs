@@ -1,5 +1,9 @@
+use std::io::{BufRead, BufReader};
 use std::process;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
+
+use sha2::{Sha256, Digest};
 
 use treeship_core::{
     attestation::sign,
@@ -13,7 +17,7 @@ pub fn run(
     actor:     Option<String>,
     action:    Option<String>,
     parent_id: Option<String>,
-    _push:     bool,
+    push:      bool,
     config:    Option<&str>,
     args:      &[String],     // everything after --
     printer:   &Printer,
@@ -37,30 +41,143 @@ pub fn run(
     });
     let actor_uri = actor.unwrap_or_else(|| format!("ship://{}", ctx.config.ship_id));
 
-    // Run the subprocess -- stdin/stdout/stderr pass through unchanged
-    let start  = Instant::now();
-    let status = process::Command::new(&args[0])
+    // ── 2. Auto-chaining: resolve parent_id ────────────────────────────
+    let parent_id = resolve_parent(&ctx, parent_id);
+
+    // ── 3. File diff: snapshot git state before ─────────────────────────
+    let git_before = git_head_sha();
+    let files_before = file_mtimes(".");
+
+    // ── 1. Output digest: capture stdout/stderr while streaming ────────
+    let start = Instant::now();
+
+    let mut child = process::Command::new(&args[0])
         .args(&args[1..])
         .stdin(process::Stdio::inherit())
-        .stdout(process::Stdio::inherit())
-        .stderr(process::Stdio::inherit())
-        .status();
+        .stdout(process::Stdio::piped())
+        .stderr(process::Stdio::piped())
+        .spawn()?;
 
-    let elapsed_ms = start.elapsed().as_millis();
+    // Accumulate output in a shared buffer while printing in real time
+    let stdout_buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    let stderr_buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+
+    let stdout_pipe = child.stdout.take();
+    let stderr_pipe = child.stderr.take();
+
+    let sb = Arc::clone(&stdout_buf);
+    let stdout_thread = std::thread::spawn(move || {
+        if let Some(pipe) = stdout_pipe {
+            let reader = BufReader::new(pipe);
+            for line in reader.lines() {
+                if let Ok(l) = line {
+                    println!("{}", l);
+                    let mut buf = sb.lock().unwrap();
+                    buf.extend_from_slice(l.as_bytes());
+                    buf.push(b'\n');
+                }
+            }
+        }
+    });
+
+    let eb = Arc::clone(&stderr_buf);
+    let stderr_thread = std::thread::spawn(move || {
+        if let Some(pipe) = stderr_pipe {
+            let reader = BufReader::new(pipe);
+            for line in reader.lines() {
+                if let Ok(l) = line {
+                    eprintln!("{}", l);
+                    let mut buf = eb.lock().unwrap();
+                    buf.extend_from_slice(l.as_bytes());
+                    buf.push(b'\n');
+                }
+            }
+        }
+    });
+
+    let status = child.wait();
+    let _ = stdout_thread.join();
+    let _ = stderr_thread.join();
+
+    let elapsed = start.elapsed();
+    let elapsed_ms = elapsed.as_millis() as u64;
 
     let (exit_code, succeeded) = match &status {
         Ok(s)  => (s.code().unwrap_or(-1), s.success()),
         Err(_) => (-1, false),
     };
 
-    // Attest regardless of exit code -- the fact it ran is what we record
+    // Compute output digest (SHA-256 of stdout + stderr)
+    let stdout_data = stdout_buf.lock().unwrap();
+    let stderr_data = stderr_buf.lock().unwrap();
+
+    let mut hasher = Sha256::new();
+    hasher.update(&*stdout_data);
+    hasher.update(&*stderr_data);
+    let output_hash = format!("sha256:{}", hex::encode(hasher.finalize()));
+
+    let output_lines = bytecount_lines(&stdout_data) + bytecount_lines(&stderr_data);
+    let output_summary = last_nonempty_line(&stdout_data);
+
+    // ── 3. File diff: detect what changed ──────────────────────────────
+    let git_after = git_head_sha();
+    let files_after = file_mtimes(".");
+    let changed_files = diff_files(&files_before, &files_after);
+    let files_changed_count = changed_files.len();
+
+    let files_modified: Vec<serde_json::Value> = changed_files.iter().map(|path| {
+        let digest = file_sha256(path).unwrap_or_default();
+        serde_json::json!({ "path": path, "digest": digest })
+    }).collect();
+
+    // Short summary of changed dirs for display
+    let files_summary = if changed_files.is_empty() {
+        String::new()
+    } else {
+        let dirs: Vec<String> = changed_files.iter()
+            .take(3)
+            .map(|p| {
+                let path = std::path::Path::new(p);
+                path.parent()
+                    .and_then(|d| d.file_name())
+                    .and_then(|n| n.to_str())
+                    .map(|s| format!("{}/", s))
+                    .unwrap_or_else(|| p.clone())
+            })
+            .collect();
+        let unique: Vec<String> = {
+            let mut seen = std::collections::HashSet::new();
+            dirs.into_iter().filter(|d| seen.insert(d.clone())).collect()
+        };
+        format!("({})", unique.join(", "))
+    };
+
+    // ── Build meta and sign ────────────────────────────────────────────
+    let mut meta = serde_json::json!({
+        "command":        args.join(" "),
+        "exitCode":       exit_code,
+        "elapsedMs":      elapsed_ms,
+        "output_digest":  output_hash,
+        "output_lines":   output_lines,
+    });
+
+    if !output_summary.is_empty() {
+        meta["output_summary"] = serde_json::Value::String(output_summary.clone());
+    }
+    if files_changed_count > 0 {
+        meta["files_changed"] = serde_json::json!(files_changed_count);
+        meta["files_modified"] = serde_json::json!(files_modified);
+    }
+    if let Some(ref gb) = git_before {
+        meta["git_before"] = serde_json::Value::String(gb.clone());
+    }
+    if let Some(ref ga) = git_after {
+        meta["git_after"] = serde_json::Value::String(ga.clone());
+    }
+
     let mut stmt = ActionStatement::new(&actor_uri, &action_label);
     stmt.parent_id = parent_id.clone();
-    stmt.meta = Some(serde_json::json!({
-        "command":  args.join(" "),
-        "exitCode": exit_code,
-        "elapsedMs": elapsed_ms,
-    }));
+    stmt.meta = Some(meta);
 
     let signer = ctx.keys.default_signer()?;
     let pt     = payload_type("action");
@@ -72,31 +189,104 @@ pub fn run(
         payload_type: pt,
         key_id:       signer.key_id().to_string(),
         signed_at:    stmt.timestamp.clone(),
-        parent_id,
+        parent_id:    parent_id.clone(),
         envelope:     result.envelope,
         hub_url:      None,
     })?;
 
-    // Print below the subprocess output, separated by a blank line
-    printer.blank();
+    // ── 2. Auto-chaining: write .last ──────────────────────────────────
+    write_last(&ctx.config.storage_dir, &result.artifact_id);
 
-    if succeeded {
-        printer.success("attested", &[
-            ("id",      &result.artifact_id),
-            ("action",  &action_label),
-            ("exit",    "0"),
-            ("elapsed", &format!("{}ms", elapsed_ms)),
-        ]);
-    } else {
-        printer.warn("attested (non-zero exit)", &[
-            ("id",      &result.artifact_id),
-            ("action",  &action_label),
-            ("exit",    &exit_code.to_string()),
-            ("elapsed", &format!("{}ms", elapsed_ms)),
-        ]);
+    // ── 4. Wire --push ─────────────────────────────────────────────────
+    let mut hub_url: Option<String> = None;
+    if push {
+        if ctx.config.hub.status == "docked" {
+            match super::dock::push_artifact(&ctx, &result.artifact_id) {
+                Ok(pr) => {
+                    if !pr.hub_url.is_empty() {
+                        hub_url = Some(pr.hub_url);
+                    }
+                }
+                Err(e) => {
+                    printer.warn("push failed", &[("error", &e.to_string())]);
+                }
+            }
+        } else {
+            printer.warn("not docked, skipping push", &[]);
+        }
     }
 
+    // ── 5. Rich CLI output ─────────────────────────────────────────────
+    printer.blank();
+
+    let short_id = &result.artifact_id;
+    let short_hash = if output_hash.len() > 18 {
+        &output_hash[..18]
+    } else {
+        &output_hash
+    };
+    let key_id_short = signer.key_id();
+
+    let exit_label = if succeeded {
+        "0  passed".to_string()
+    } else {
+        format!("{}  failed", exit_code)
+    };
+
+    let elapsed_str = format_elapsed(elapsed);
+
+    // Output line
+    let output_line = if output_summary.is_empty() {
+        format!("{}  ({} lines)", short_hash, output_lines)
+    } else {
+        format!("{}  ({})", short_hash, output_summary)
+    };
+
+    // Chain line
+    let chain_line = match &parent_id {
+        Some(pid) => {
+            let step = chain_depth(&ctx, pid);
+            let pid_short = if pid.len() > 14 { &pid[..14] } else { pid };
+            let aid_short = if short_id.len() > 14 { &short_id[..14] } else { short_id };
+            format!("{} -> {}  (step {})", pid_short, aid_short, step)
+        }
+        None => "root".to_string(),
+    };
+
+    // Files line
+    let files_line = if files_changed_count > 0 {
+        format!("{} modified  {}", files_changed_count, files_summary)
+    } else {
+        "none detected".to_string()
+    };
+
+    let separator = "  ----------------------------------------";
+
+    if succeeded {
+        printer.info(&printer.green("+ receipt sealed"));
+    } else {
+        printer.info(&printer.yellow("+ receipt sealed (non-zero exit)"));
+    }
+
+    printer.dim_info(separator);
+    printer.info(&format!("  id:       {}", short_id));
+    printer.info(&format!("  command:  {}", args.join(" ")));
+    printer.info(&format!("  exit:     {}", exit_label));
+    printer.info(&format!("  elapsed:  {}", elapsed_str));
+    printer.info(&format!("  output:   {}", output_line));
+    printer.info(&format!("  files:    {}", files_line));
+    printer.info(&format!("  chain:    {}", chain_line));
+    printer.info(&format!("  signed:   {}  (ed25519)", key_id_short));
+
+    if let Some(ref url) = hub_url {
+        printer.info(&format!("  hub:      {}", url));
+    }
+
+    printer.dim_info(separator);
     printer.hint(&format!("treeship verify {}", result.artifact_id));
+    if hub_url.is_none() && !push {
+        printer.hint(&format!("treeship dock push {}", result.artifact_id));
+    }
     printer.blank();
 
     // Propagate the subprocess exit code
@@ -109,4 +299,146 @@ pub fn run(
     }
 
     Ok(())
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+/// Resolve parent_id with priority: explicit flag > TREESHIP_PARENT env > .last file
+fn resolve_parent(ctx: &ctx::Ctx, explicit: Option<String>) -> Option<String> {
+    if explicit.is_some() {
+        return explicit;
+    }
+    // Check TREESHIP_PARENT env var
+    if let Ok(env_parent) = std::env::var("TREESHIP_PARENT") {
+        if !env_parent.is_empty() {
+            return Some(env_parent);
+        }
+    }
+    // Read .last file from storage dir
+    let last_path = std::path::Path::new(&ctx.config.storage_dir).join(".last");
+    if let Ok(contents) = std::fs::read_to_string(&last_path) {
+        let trimmed = contents.trim().to_string();
+        if !trimmed.is_empty() {
+            return Some(trimmed);
+        }
+    }
+    None
+}
+
+/// Write the artifact_id to {storage_dir}/.last for auto-chaining.
+fn write_last(storage_dir: &str, artifact_id: &str) {
+    let last_path = std::path::Path::new(storage_dir).join(".last");
+    let _ = std::fs::write(&last_path, artifact_id);
+}
+
+/// Get the current git HEAD sha (short), if in a git repo.
+fn git_head_sha() -> Option<String> {
+    let output = process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .stdout(process::Stdio::piped())
+        .stderr(process::Stdio::null())
+        .output()
+        .ok()?;
+    if output.status.success() {
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        None
+    }
+}
+
+/// Snapshot file modification times in a directory (non-recursive, top-level only).
+fn file_mtimes(dir: &str) -> std::collections::HashMap<String, std::time::SystemTime> {
+    let mut map = std::collections::HashMap::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            if let Ok(meta) = entry.metadata() {
+                if let Ok(mtime) = meta.modified() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    // Skip hidden files and the .treeship directory
+                    if !name.starts_with('.') {
+                        map.insert(name, mtime);
+                    }
+                }
+            }
+        }
+    }
+    map
+}
+
+/// Diff two file mtime snapshots, returning paths that are new or changed.
+fn diff_files(
+    before: &std::collections::HashMap<String, std::time::SystemTime>,
+    after:  &std::collections::HashMap<String, std::time::SystemTime>,
+) -> Vec<String> {
+    let mut changed = Vec::new();
+    for (path, mtime) in after {
+        match before.get(path) {
+            Some(old_mtime) if old_mtime == mtime => {}
+            _ => changed.push(path.clone()),
+        }
+    }
+    changed.sort();
+    changed
+}
+
+/// SHA-256 hash of a file, returned as "sha256:<hex>".
+fn file_sha256(path: &str) -> Option<String> {
+    let data = std::fs::read(path).ok()?;
+    let mut hasher = Sha256::new();
+    hasher.update(&data);
+    Some(format!("sha256:{}", hex::encode(hasher.finalize())))
+}
+
+/// Count newlines in a byte buffer.
+fn bytecount_lines(data: &[u8]) -> usize {
+    data.iter().filter(|&&b| b == b'\n').count()
+}
+
+/// Get the last non-empty line from a buffer (useful for test summaries).
+fn last_nonempty_line(data: &[u8]) -> String {
+    let text = String::from_utf8_lossy(data);
+    text.lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
+/// Walk the parent chain to determine what step number this artifact is.
+fn chain_depth(ctx: &ctx::Ctx, parent_id: &str) -> usize {
+    let mut depth = 2; // this artifact is step 2 if it has a parent
+    let mut current = parent_id.to_string();
+    for _ in 0..20 {
+        match ctx.storage.read(&current) {
+            Ok(record) => {
+                match record.parent_id {
+                    Some(pid) => {
+                        depth += 1;
+                        current = pid;
+                    }
+                    None => break,
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    depth
+}
+
+/// Format a Duration as a human-readable elapsed time string.
+fn format_elapsed(d: std::time::Duration) -> String {
+    let ms = d.as_millis();
+    if ms < 1000 {
+        format!("{}ms", ms)
+    } else {
+        let secs = d.as_secs_f64();
+        if secs < 60.0 {
+            format!("{:.1}s", secs)
+        } else {
+            let mins = secs as u64 / 60;
+            let rem  = secs as u64 % 60;
+            format!("{}m{}s", mins, rem)
+        }
+    }
 }

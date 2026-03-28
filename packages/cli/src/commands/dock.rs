@@ -128,16 +128,22 @@ pub fn login(
     Ok(())
 }
 
-pub fn push(
-    id:      &str,
-    config:  Option<&str>,
-    printer: &Printer,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let ctx = ctx::open(config)?;
+/// Result of a successful push to Hub.
+pub struct PushResult {
+    pub hub_url:     String,
+    pub rekor_index: Option<u64>,
+}
+
+/// Shared push logic: pushes a record to the Hub. Used by both `dock push` and `wrap --push`.
+/// The caller must ensure the ctx is docked.
+pub fn push_artifact(
+    ctx: &crate::ctx::Ctx,
+    id:  &str,
+) -> Result<PushResult, Box<dyn std::error::Error>> {
     let hub = &ctx.config.hub;
 
     if hub.status != "docked" {
-        return Err("not docked\n  run: treeship dock login".into());
+        return Err("not docked -- run: treeship dock login".into());
     }
 
     let endpoint = hub.endpoint.as_deref().unwrap_or("https://api.treeship.dev");
@@ -170,26 +176,37 @@ pub fn push(
         .send_json(&body)?
         .into_json()?;
 
-    let hub_url     = resp["hub_url"].as_str().unwrap_or("");
+    let hub_url     = resp["hub_url"].as_str().unwrap_or("").to_string();
     let rekor_index = resp["rekor_index"].as_u64();
 
     // 4. Update local record with hub_url
     if !hub_url.is_empty() {
-        ctx.storage.set_hub_url(id, hub_url)?;
+        ctx.storage.set_hub_url(id, &hub_url)?;
     }
 
-    // 5. Print
-    let rekor_str = match rekor_index {
+    Ok(PushResult { hub_url, rekor_index })
+}
+
+pub fn push(
+    id:      &str,
+    config:  Option<&str>,
+    printer: &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = ctx::open(config)?;
+
+    let result = push_artifact(&ctx, id)?;
+
+    let rekor_str = match result.rekor_index {
         Some(idx) => format!("rekor.sigstore.dev #{}", idx),
         None      => "pending".into(),
     };
 
     printer.success("pushed", &[
-        ("url",   hub_url),
+        ("url",   &result.hub_url),
         ("rekor", &rekor_str),
     ]);
-    if !hub_url.is_empty() {
-        printer.hint(&format!("treeship open {}", hub_url));
+    if !result.hub_url.is_empty() {
+        printer.hint(&format!("treeship open {}", result.hub_url));
     }
     printer.blank();
 
