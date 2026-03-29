@@ -1,6 +1,8 @@
+use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::PathBuf;
 
 use treeship_core::keys::Store as KeyStore;
+use treeship_core::rules::ProjectConfig;
 use treeship_core::storage::Store as ArtifactStore;
 
 use crate::{
@@ -27,6 +29,8 @@ pub fn run(
         ).into());
     }
 
+    // ---- 1. Generate keypair (existing behavior) ----
+
     let keys_dir = config_path.parent()
         .unwrap_or(&config_path)
         .join("keys");
@@ -40,27 +44,167 @@ pub fn run(
 
     ArtifactStore::open(&cfg.storage_dir)?;
 
-    // --- output ---
-
     printer.blank();
-    printer.success("treeship initialized", &[
-        ("ship",    &ship_id),
-        ("key",     &format!("{} (ed25519)", key_info.id)),
-        ("config",  &config_path.to_string_lossy()),
-        ("storage", &cfg.storage_dir),
+    printer.success("Keypair generated", &[
+        ("Ship ID", &ship_id),
+        ("Key ID",  &format!("{} (ed25519)", key_info.id)),
     ]);
 
+    let interactive = io::stdin().is_terminal();
+
+    if !interactive {
+        // Non-interactive: use defaults, skip prompts
+        let project_config = ProjectConfig::default_for("general", "agent://my-agent");
+        write_project_config(&project_config)?;
+
+        printer.blank();
+        printer.success("Configuration saved to .treeship/config.yaml", &[]);
+        printer.blank();
+        printer.hint("treeship wrap -- <command>  to create your first receipt");
+        printer.hint("treeship install  to set up shell hooks");
+        printer.blank();
+        return Ok(());
+    }
+
+    // ---- 2. Interactive setup ----
+
     printer.blank();
-    printer.dim_info("your keys are encrypted at rest and tied to this machine.");
+    printer.dim_info("Setting up automatic attestation...");
     printer.blank();
 
-    // Show three concrete next steps
-    printer.dim_info("next steps:");
-    printer.hint("treeship attest action --actor agent://me --action tool.call");
-    printer.hint("treeship wrap -- <any command>");
-    printer.hint("treeship status");
+    // Project type
+    printer.info("What kind of project?");
+    printer.info("  [1] Agent workflow  [2] CI/CD  [3] General");
+    let project_choice = prompt("  (default: 1): ");
+    let project_type = match project_choice.trim() {
+        "2" => "cicd",
+        "3" => "general",
+        _   => "agent",
+    };
+
+    // Detect language from cwd
+    let lang = detect_language();
 
     printer.blank();
+
+    // Actor URI
+    let default_actor = match project_type {
+        "agent" => "agent://my-agent",
+        "cicd"  => "agent://ci",
+        _       => "agent://dev",
+    };
+    let actor_input = prompt(&format!("Agent actor URI (default: {}): ", default_actor));
+    let actor = if actor_input.trim().is_empty() {
+        default_actor.to_string()
+    } else {
+        actor_input.trim().to_string()
+    };
+
+    printer.blank();
+
+    // Auto-push
+    let push_input = prompt("Auto-push receipts to Hub? [y/N]: ");
+    let auto_push = matches!(push_input.trim().to_lowercase().as_str(), "y" | "yes");
+
+    // Build project config
+    let core_type = match (project_type, lang.as_str()) {
+        (_, "node")   => "node",
+        (_, "rust")   => "rust",
+        (_, "python") => "python",
+        _             => "general",
+    };
+
+    let mut project_config = ProjectConfig::default_for(core_type, &actor);
+    project_config.session.auto_push = auto_push;
+
+    if auto_push {
+        project_config.hub = Some(treeship_core::rules::HubConfig {
+            endpoint: Some("https://api.treeship.dev".into()),
+            auto_push: true,
+            push_on: vec!["session_close".into()],
+        });
+    }
+
+    // Write .treeship/config.yaml
+    write_project_config(&project_config)?;
+
+    printer.blank();
+    printer.success("Configuration saved to .treeship/config.yaml", &[]);
+
+    // Offer to install shell hooks
+    printer.blank();
+    let hook_input = prompt("Install shell hooks for automatic attestation? [Y/n]: ");
+    let install_hooks = !matches!(hook_input.trim().to_lowercase().as_str(), "n" | "no");
+
+    if install_hooks {
+        match super::install::install(printer) {
+            Ok(()) => {},
+            Err(e) => {
+                printer.warn("Could not install hooks", &[("error", &e.to_string())]);
+            }
+        }
+    }
+
+    // Final summary
+    printer.blank();
+    printer.info("From now on:");
+
+    // Show a few example commands that will be attested
+    for rule in project_config.attest.commands.iter().take(3) {
+        let action = if rule.require_approval {
+            "blocked until approved"
+        } else {
+            "automatically attested"
+        };
+        // Show a short version of the pattern
+        let cmd = rule.pattern.trim_end_matches('*');
+        printer.info(&format!("  {}  ->  {}", cmd, action));
+    }
+
+    printer.blank();
+    printer.hint("treeship log --follow  to watch receipts");
+    printer.hint("treeship status  to check your Treeship");
+    printer.blank();
+
+    Ok(())
+}
+
+// ---- helpers ---------------------------------------------------------------
+
+fn prompt(msg: &str) -> String {
+    print!("{}", msg);
+    let _ = io::stdout().flush();
+    let mut line = String::new();
+    let _ = io::stdin().lock().read_line(&mut line);
+    line
+}
+
+fn detect_language() -> String {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    if cwd.join("package.json").exists() || cwd.join("node_modules").exists() {
+        "node".into()
+    } else if cwd.join("Cargo.toml").exists() {
+        "rust".into()
+    } else if cwd.join("pyproject.toml").exists()
+        || cwd.join("setup.py").exists()
+        || cwd.join("requirements.txt").exists()
+    {
+        "python".into()
+    } else {
+        "general".into()
+    }
+}
+
+fn write_project_config(
+    project_config: &ProjectConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let cwd = std::env::current_dir()?;
+    let ts_dir = cwd.join(".treeship");
+    std::fs::create_dir_all(&ts_dir)?;
+
+    let yaml = serde_yaml::to_string(project_config)?;
+    let config_path = ts_dir.join("config.yaml");
+    std::fs::write(&config_path, yaml)?;
 
     Ok(())
 }

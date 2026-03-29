@@ -128,6 +128,36 @@ enum Command {
     #[command(subcommand)]
     Dock(DockCommand),
 
+    /// Install shell hooks for automatic attestation
+    ///
+    /// Detects your shell (zsh, bash, fish) and appends hooks to
+    /// your shell config. After install, matching commands are
+    /// attested automatically.
+    ///
+    /// Examples:
+    ///   treeship install
+    Install,
+
+    /// Remove shell hooks
+    ///
+    /// Examples:
+    ///   treeship uninstall
+    Uninstall,
+
+    /// Shell hook handler (called by shell hooks, not by users directly)
+    #[command(hide = true)]
+    Hook(HookArgs),
+
+    /// View receipt log
+    ///
+    /// Lists recent receipts from local storage.
+    ///
+    /// Examples:
+    ///   treeship log
+    ///   treeship log --tail 50
+    ///   treeship log --follow
+    Log(LogArgs),
+
     /// Print version and build info
     Version,
 }
@@ -143,6 +173,43 @@ struct InitArgs {
     /// Overwrite an existing config
     #[arg(long, default_value_t = false)]
     force: bool,
+}
+
+// --- hook -------------------------------------------------------------------
+
+#[derive(Args)]
+struct HookArgs {
+    #[command(subcommand)]
+    command: HookCommand,
+}
+
+#[derive(Subcommand)]
+enum HookCommand {
+    /// Pre-execution hook (called before command runs)
+    Pre {
+        /// The command about to run
+        command: String,
+    },
+    /// Post-execution hook (called after command completes)
+    Post {
+        /// Exit code of the completed command
+        exit_code: i32,
+        /// The command that ran (optional)
+        command: Option<String>,
+    },
+}
+
+// --- log --------------------------------------------------------------------
+
+#[derive(Args)]
+struct LogArgs {
+    /// Watch for new receipts in real time
+    #[arg(long, default_value_t = false)]
+    follow: bool,
+
+    /// Number of recent receipts to show
+    #[arg(long, default_value_t = 20)]
+    tail: usize,
 }
 
 // --- wrap -------------------------------------------------------------------
@@ -498,6 +565,27 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             a.push,
             cli.config.as_deref(),
             &a.cmd,
+            printer,
+        ),
+
+        Command::Install => commands::install::install(printer),
+
+        Command::Uninstall => commands::install::uninstall(printer),
+
+        Command::Hook(a) => match &a.command {
+            HookCommand::Pre { command } => commands::hook::pre(command, printer),
+            HookCommand::Post { exit_code, command } => commands::hook::post(
+                *exit_code,
+                command.as_deref(),
+                cli.config.as_deref(),
+                printer,
+            ),
+        },
+
+        Command::Log(a) => commands::log::run(
+            a.follow,
+            a.tail,
+            cli.config.as_deref(),
             printer,
         ),
 

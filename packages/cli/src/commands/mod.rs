@@ -6,3 +6,6 @@ pub mod status;
 pub mod wrap;
 pub mod bundle;
 pub mod dock;
+pub mod hook;
+pub mod install;
+pub mod log;
