@@ -382,6 +382,10 @@ struct VerifyArgs {
     /// Maximum chain depth to walk (default: 20)
     #[arg(long, default_value_t = 20, value_name = "N")]
     max_depth: usize,
+
+    /// Show full chain timeline with box-drawn cards
+    #[arg(long, default_value_t = false)]
+    full: bool,
 }
 
 // --- keys -------------------------------------------------------------------
@@ -574,7 +578,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
         },
 
         Command::Verify(a) => commands::verify::run(
-            &a.target, a.no_chain, a.max_depth, cli.config.as_deref(), printer,
+            &a.target, a.no_chain, a.max_depth, a.full, cli.config.as_deref(), printer,
         ),
 
         Command::Keys(sub) => match sub {
