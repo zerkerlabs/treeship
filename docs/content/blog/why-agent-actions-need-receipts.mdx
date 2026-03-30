@@ -1,0 +1,104 @@
+---
+title: "Why Agent Actions Need Receipts"
+description: "When a human takes an action, there's context: intent, memory, accountability. When an agent takes an action, there's just a log line. That asymmetry is the problem Treeship solves."
+date: 2025-07-14
+tags: ["agents", "trust"]
+readTime: "8 min read"
+---
+
+When a human takes an action, there's context: intent, memory, accountability. When an agent takes an action, there's just a log line. That asymmetry is the problem Treeship solves.
+
+Last year, a financial services company ran an agent experiment. The agent had access to a set of approved vendor contracts, a payments API, and a budget. Over three weeks, it made 847 API calls, moved $240,000, and renegotiated two vendor agreements. At the end, compliance asked a simple question: **which human approved the payment to vendor X?**
+
+Nobody knew. The logs showed the API call. They didn't show the decision chain that led to it.
+
+This isn't a failure of the agent. It's a failure of infrastructure. The agent did exactly what it was designed to do -- but the scaffolding around it had no concept of accountability. There was no receipt.
+
+## The human accountability gap
+
+When a human employee makes a decision, accountability is implicit. They have a job title. They have a manager. They approved something in a system that records their identity. They can explain their reasoning. They can be held responsible.
+
+When an agent makes a decision, accountability is missing by default. The agent doesn't have intent in the human sense. It doesn't have a manager. It made a decision based on a prompt, some context, and a set of available tools -- and nothing about that process was recorded in a form that answers the compliance question *who authorized this and why?*
+
+Logs are not accountability. A log line saying `POST /v1/payments body={amount:5000,vendor:"acme"}` tells you that the call happened. It doesn't tell you that a human approved it, what scope that approval covered, whether the action was within the approved policy, or whether the chain of decisions that led there was intact.
+
+## Receipts are not logs
+
+A receipt is different from a log in two important ways.
+
+**A receipt is signed.** A log can be modified by anyone with access to the logging infrastructure. A receipt, signed by a specific key, cannot be modified without invalidating the signature. The content of the receipt is cryptographically bound to its claimed author.
+
+**A receipt travels with the artifact.** A log lives in a centralized system. A receipt is self-contained -- it's a JSON document that can be verified by anyone with the public key, in any environment, with no network dependency.
+
+This distinction matters enormously in multi-agent systems. When an agent receives work from another agent, it needs to verify the provenance of that work before acting on it. A log in a remote system doesn't help. A signed receipt does.
+
+## What a receipt actually contains
+
+In Treeship, every action produces an `ActionStatement`: a typed JSON payload signed with Ed25519, wrapped in a DSSE envelope, and stored with a content-addressed ID. Here's what that looks like for the vendor payment scenario:
+
+```json
+{
+  "type": "treeship/action/v1",
+  "actor": "agent://payments-v2",
+  "action": "stripe.payment_intent.create",
+  "subject": {
+    "digest": "sha256:a1b2c3d4..."
+  },
+  "approvalNonce": "nonce_xyz789",
+  "parentId": "art_e5f6a7b8c9d0e5f6",
+  "timestamp": "2025-07-14T10:23:41Z",
+  "meta": {
+    "amount": 5000,
+    "vendor": "acme-corp",
+    "currency": "usd"
+  }
+}
+```
+
+The `approvalNonce` is what makes this genuinely accountable. It cryptographically links this action to a specific approval artifact -- one signed by a human approver with a specific scope and expiry. The verifier checks that `action.approvalNonce == approval.nonce` before the chain passes. You can't produce a valid receipt without a valid approval.
+
+>
+A log tells you what happened. A receipt proves who authorized it, what scope covered it, and that the chain leading to it was intact.
+
+## The compliance answer
+
+Back to the financial services company. With Treeship in place, the compliance question *which human approved the payment to vendor X?* has a different answer.
+
+You run `treeship verify art_f7e6d5c4`. The verifier walks the chain backwards from the payment action, finds the approval artifact signed by `human://approver`, checks that the approval nonce matches, verifies the scope covered the payment amount, and confirms the approval hadn't expired at the time of the payment. The chain passes or it fails. There's no ambiguity.
+
+```bash
+$ treeship verify art_f7e6d5c4b3a2 --format json
+```
+
+```json
+{
+  "outcome": "pass",
+  "chain": 4,
+  "checks": [
+    { "name": "signature_valid",      "outcome": "pass" },
+    { "name": "approval_nonce",       "outcome": "pass" },
+    { "name": "approval_scope",       "outcome": "pass" },
+    { "name": "approval_not_expired", "outcome": "pass" }
+  ],
+  "approver": "human://approver",
+  "approved_at": "2025-07-14T09:58:12Z"
+}
+```
+
+## Receipts change agent design
+
+Here's the thing that surprised us: once you design for receipts, agent architectures start to look different.
+
+When an agent knows it will produce a receipt, it has to know its actor identity. It has to know whether it has a valid approval for the action it's about to take. It has to be able to reference the chain it's operating within. These constraints push agents toward better design -- explicit identity, explicit authorization, explicit parent context.
+
+This isn't bureaucracy. This is what the physical world calls chain of custody. It's what software engineering calls accountability. It's what compliance calls an audit trail. And it's what agents have been missing.
+
+Try it
+
+Two commands to get your first agent action receipt. `treeship init` creates your keypair. `treeship wrap -- your-agent-command` attests whatever that command does. You get a signed artifact ID you can verify locally or share as a URL.
+
+## What comes next
+
+Receipts are the atomic unit. But the real value is in the chain. When every action in an agent workflow has a receipt, and those receipts are cryptographically linked to approvals, handoffs, and parent actions, you get something that didn't exist before: a verifiable history of exactly what happened and who authorized it.
+
+That's the chain of custody problem. It's what financial services, healthcare, legal, and defense workflows have needed from AI agents from the beginning. And it's solvable today, with tools you can install in the next five minutes.

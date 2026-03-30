@@ -1,0 +1,133 @@
+---
+title: "DSSE: Dead Simple Signing Explained"
+description: "DSSE is the signing envelope Treeship uses for every artifact. Here's why we chose it over JWS and what the PAE construction actually does."
+date: 2025-11-03
+tags: ["cryptography", "dsse"]
+readTime: "9 min read"
+---
+
+DSSE is what happens when you strip JWT down to the signing part and stop trying to build auth on top of it. It's 40 lines of spec. Here's why it's exactly the right primitive for agent attestation.
+
+When you need to sign something in software, the obvious choice is JWT. Everyone uses it. Libraries exist in every language. Developers know it. So when we were designing Treeship's attestation layer, JWT was the first thing we evaluated.
+
+We rejected it. Here's why, and what we used instead.
+
+## The JWT problem
+
+JWT has two jobs: it carries a payload, and it proves the payload is authentic. For auth tokens, these two jobs fit together naturally -- you want to know who the user is (payload) and that the token came from your auth server (authentication).
+
+For attestation, these jobs pull in opposite directions. An attestation payload needs to be rich -- it needs to describe an actor, an action, a subject, timestamps, parent chains, approval nonces. JWT's payload format is flat key-value pairs. You can put a nested JSON blob in a claim, but you're fighting the format.
+
+More importantly, JWT's signing process has a subtle trap. The signed bytes in a JWT are `base64url(header).base64url(payload)`. This means the algorithm is encoded inside the signed bytes -- and if you're not extremely careful about verification, an attacker can swap the algorithm in the header and forge signatures. The `alg: "none"` attack is the most famous example, but the underlying problem is that the signing algorithm participates in the signed content.
+
+## What DSSE does differently
+
+DSSE -- Dead Simple Signing Envelope -- solves this with Pre-Authentication Encoding (PAE). Instead of signing the raw payload, you sign a deterministic encoding that includes the payload *and* its type, with their lengths explicitly encoded:
+
+```text
+PAE(payloadType, payload) =
+  "DSSEv1" SP LEN(payloadType) SP payloadType
+  SP LEN(payload) SP payload
+
+# Concrete example:
+PAE("application/vnd.treeship.action.v1+json", payload_bytes)
+
+= "DSSEv1 39 application/vnd.treeship.action.v1+json 247 {...}"
+```
+
+This single construction eliminates two entire attack classes.
+
+**Type confusion attacks.** An attacker cannot take a payload signed as type A and claim it's type B. The payloadType is inside the signed bytes. Changing the declared type breaks the signature.
+
+**Truncation attacks.** An attacker cannot truncate a payload and claim the signature is over the truncated version. The length of the payload is inside the signed bytes. Changing the payload changes the PAE, which breaks the signature.
+
+The algorithm confusion problem doesn't exist because DSSE doesn't put algorithm information inside the signed content at all. The algorithm is specified by the verifier's expectations, not by the envelope.
+
+## The envelope format
+
+The DSSE envelope itself is simple:
+
+```json
+{
+  "payload": "base64url(payload_bytes)",
+  "payloadType": "application/vnd.treeship.action.v1+json",
+  "signatures": [
+    {
+      "keyid": "key_a1b2c3d4e5f6a1b2",
+      "sig": "base64url(ed25519_signature_over_PAE)"
+    }
+  ]
+}
+```
+
+That's it. The outer JSON is never signed -- only the PAE bytes are signed. This is intentional: you can add fields to the envelope (routing metadata, storage hints, timestamps) without invalidating signatures.
+
+## Why Ed25519 specifically
+
+We chose Ed25519 over RSA and ECDSA for three reasons.
+
+**Deterministic signatures.** Ed25519 signatures are deterministic -- signing the same message with the same key always produces the same signature. ECDSA signatures are randomized; a weak random number generator can leak the private key. This is not a theoretical concern: the Sony PlayStation 3 private key was extracted this way. For agent infrastructure where signing is happening at scale in potentially constrained environments, determinism is a safety property.
+
+**Constant-time operations.** The `ed25519-dalek` library we use is NCC Group audited and uses the `subtle` crate throughout for constant-time scalar operations. Side-channel attacks via timing analysis are not a theoretical concern in cryptographic library implementation. Choosing an audited, constant-time implementation is the right call for any signing key material.
+
+**Small key sizes.** An Ed25519 private key is 32 bytes. A public key is 32 bytes. A signature is 64 bytes. Compare to RSA-2048: 256-byte signature, 1,190-byte public key. For systems that embed keys and signatures in every artifact, this matters.
+
+## Content-addressed IDs
+
+One design choice we made beyond the DSSE spec: artifact IDs are derived from the PAE bytes, not stored inside the payload.
+
+```text
+# Artifact ID derivation
+pae_bytes = PAE(payloadType, payload_bytes)
+artifact_id = "art_" + hex(sha256(pae_bytes)[:16])
+
+# Example:
+artifact_id = "art_f7e6d5c4b3a2f7e6"
+```
+
+This gives us three properties for free. Same content always produces the same ID -- content-addressed storage is naturally deduplicated. Tampered content produces a different ID -- you can detect tampering by comparing the stored ID to the re-derived ID. The ID doesn't have to be inside the payload -- we avoid the circular dependency where the payload needs to know its own hash before it's hashed.
+
+>
+The ID is not a name given to an artifact. It's a fingerprint derived from the artifact's content. You don't assign it; you discover it.
+
+## The verification algorithm in full
+
+Verification is five steps:
+
+Decode the payload from base64url
+
+- Reconstruct `PAE(payloadType, decoded_payload)`
+
+- For each signature: decode the sig from base64url, look up the public key by keyid, verify Ed25519 signature over PAE bytes
+
+- Re-derive the artifact ID from the PAE bytes; compare to the stored ID
+
+- Parse the decoded payload as the declared payloadType; validate schema
+
+Steps 1-3 are pure cryptography. Steps 4-5 are Treeship-specific extensions that add content integrity and schema validation on top of the DSSE base.
+
+The entire verification path has no network calls. No database lookups. No shared state. It's a pure function from (envelope, trusted_keys) to (result). This is what makes it portable.
+
+## Compared to alternatives
+
+We evaluated several alternatives before settling on DSSE + Ed25519.
+
+**JWS (JSON Web Signatures)** -- the standards-track version of JWT signing. Suffers the same algorithm confusion problem as JWT. Payload format is less flexible.
+
+**XML DSIG** -- used in SAML, broadly supported in enterprise contexts. Canonicalization rules are complex enough that subtle bugs are common. Not developer-friendly.
+
+**OpenPGP** -- well-understood, widely deployed for document signing. Key management is notoriously painful. Binary format is opaque to debugging. The web of trust model doesn't fit agent infrastructure.
+
+**Sigstore / cosign** -- excellent for container images and software artifacts, built on top of DSSE. Adds OIDC keyless signing and Rekor transparency logging. Treeship uses Rekor for anchoring, and the core is compatible with the Sigstore ecosystem. We're not reinventing it -- we're extending it for the agent use case.
+
+Compatibility note
+
+A Treeship artifact is a valid DSSE envelope. Any code that can verify DSSE signatures can verify the cryptographic integrity of a Treeship artifact. The Treeship schema layer (statement types, nonce binding, chain verification) is built on top of, not instead of, the DSSE base.
+
+## What simplicity buys you
+
+The DSSE spec is about 400 words. The PAE construction is one paragraph. The signing algorithm is a straightforward application of the Ed25519 spec. The envelope format is three JSON fields.
+
+This simplicity is not a compromise -- it's the design goal. A signing format that can be understood, audited, and implemented correctly in an afternoon is a better foundation for security infrastructure than one that requires months of study and still has subtle edge cases.
+
+The best cryptographic protocols are the ones where the security argument is obvious. DSSE's security argument is: the attacker cannot forge a signature without the private key, and the attacker cannot substitute a different payload or type because they're both inside the signed bytes. That's it.

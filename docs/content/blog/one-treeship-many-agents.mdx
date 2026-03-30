@@ -1,0 +1,76 @@
+---
+title: "The Key Management Nightmare Hiding Inside Agent Attestation"
+description: "Teams adopting cryptographic attestation for agents keep hitting the same wall: one keypair per agent sounds right until you have forty agents and no coherent governance. Here's the model that actually works."
+date: 2026-03-27
+tags: ["architecture", "trust", "agents", "key-management"]
+readTime: "9 min read"
+---
+
+A team at a mid-sized fintech was six months into their agent attestation rollout when the audit came. They had done everything right, technically. Every agent action was signed. Every tool call had a receipt. The cryptography was solid.
+
+The auditor asked one question: show me every action that touched customer payment data, who authorized each one, and prove the authorization chain is intact.
+
+The team spent two weeks on the answer. They had forty-three agents. Each had its own keypair. Each had its own configuration. The researcher agent's authorization chain had nothing to do with the validator agent's chain, even though both were part of the same workflow. The handoffs between them were signed separately, by different keys, with no shared governance model connecting them.
+
+The attestation was technically correct. The audit trail was a disaster.
+
+## The mistake everyone makes first
+
+The intuition that creates this problem is reasonable: each agent is a distinct actor, so each agent should have its own trust instance. Separate keys, separate configuration, separate everything. This feels like good security hygiene.
+
+It produces the opposite.
+
+When you give every agent its own root keypair, you've distributed governance to the edges. There's no shared policy for what requires human authorization. There's no single place to see what your agents are doing. Every handoff between agents becomes a cross-domain operation that requires trust federation even when both agents belong to the same team running the same workflow.
+
+You end up with forty-three disconnected attestation silos. Forty-three sets of keys to rotate. Forty-three configurations to keep in sync. And when the auditor asks about a workflow that touched six agents, you're reconstructing the chain from six different sources.
+
+## The right unit: the trust domain
+
+A trust domain is the boundary inside which identities, policies, approvals, storage, and verification assumptions are shared.
+
+That definition doesn't map to individual agents. It maps to teams, projects, customers, regulatory environments -- the things that actually have coherent governance requirements.
+
+One trust domain (one Treeship) can contain many agents and many humans. The coder agent, the reviewer agent, the deployer agent, and the human release manager all operate within the same governed environment. They share root keys. They inherit the same default policy -- what requires human authorization, what's permitted, what's logged. Handoffs between them are internal operations, not cross-domain federation.
+
+The audit answer becomes: here's the Treeship that ran this workflow. Here are all the agents in the workflow it. Here's the approval the release manager issued before the deploy. Here's the full chain from research through validation through execution, verified in one command.
+
+```bash
+treeship verify art_final_step
+# ✓ verified
+# chain: 6 artifacts · intact
+# approver: human://release-manager
+# approval: approve deploy v2.4.1 to production
+# actors: agent://researcher, agent://validator, agent://deployer
+```
+
+## When you should create separate trust domains
+
+The rule is precise: create a new trust domain when the trust boundary itself changes.
+
+**Different organization.** When work moves from Company A's agents to Company B's agents, that's a handoff across a real boundary. Company B should verify the work against Company A's public key before acting on it. They don't share governance. They shouldn't share a trust instance.
+
+**Different customer.** Multi-tenant products need per-customer isolation. Customer A's agent workflows must not commingle with Customer B's -- not their data, not their approval chains, not their audit trails.
+
+**Different regulatory environment.** Clinical workflows that touch patient data need stricter policy than internal product work. The key management, the approval requirements, the storage policy -- all different. A single trust domain can't express that cleanly.
+
+**Different owner.** If an external contractor is running agents on your behalf, their agents should have their own trust domain. Their keys, their liability, their audit trail. The work they deliver to you arrives as a signed handoff you verify against their public key.
+
+Everything else -- multiple agents on the same team, subagents spawned dynamically, tool-calling agents within one product -- belongs in one trust domain.
+
+## The subagent question
+
+The sharpest test of this model is dynamic subagent spawning. When a coder agent creates a frontend subagent, a backend subagent, and a test runner, should each get its own trust domain?
+
+No -- and the reason is practical. If each spawned subagent requires provisioning a new keypair, defining policy, and establishing trust links, you've added thirty seconds of overhead to every agent spawn. For subagents that exist for an hour to complete a task, this is wrong.
+
+The right model: subagents are child identities within the parent's trust domain. They get a unique actor URI, a parent reference, and inherited policy. They attest their own work with their own actor identity. But they share the governance environment of their parent, and the workflow graph shows them as connected nodes rather than isolated actors.
+
+Spawning stays cheap. The workflow stays coherent. The audit trail stays intact.
+
+## The governance you actually get
+
+When the model is right -- one trust domain per governance boundary, many agents within it -- the operational story changes:
+
+One place to see what all your agents are doing. One policy to maintain. One set of keys to rotate. One view of pending authorizations. One command to verify any workflow, however many agents contributed to it.
+
+The fintech team rebuilt their model on this approach. Six months later, the next audit took an afternoon.

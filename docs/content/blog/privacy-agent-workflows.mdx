@@ -1,0 +1,76 @@
+---
+title: "Privacy in Agent Workflows: Attestation Without Exposure"
+description: "Attestation and privacy aren't opposites. You can prove an agent acted correctly without revealing what it acted on."
+date: 2025-11-18
+tags: ["privacy", "enterprise"]
+readTime: "8 min read"
+---
+
+Attestation and privacy aren't opposites. You can prove an agent acted correctly without revealing what it acted on. Digest-based attestation, selective disclosure, and what this means for enterprise deployments.
+
+Here's a tension that comes up immediately when enterprises evaluate agent attestation: they want to prove their agents behaved correctly, but they don't want to expose the data the agents processed. A healthcare company wants to attest that their clinical summarization agent ran the approved model on an approved input -- but the input is patient data and cannot leave the compliance boundary.
+
+The naive approach to attestation breaks here. If you sign the payload and store it, you've stored the sensitive data. If you share the artifact for verification, you've shared the sensitive data.
+
+## Digests instead of payloads
+
+Treeship's `SubjectRef` field separates the question "what was the subject of this action?" from the question "where is the subject's content?" You attest a digest of the content, not the content itself:
+
+```json
+{
+  "type": "treeship/action/v1",
+  "actor": "agent://clinical-summarizer-v2",
+  "action": "clinical.note.summarize",
+  "subject": {
+    "digest": "sha256:e3b0c44298fc1c149afb...",
+    "uri": "ehr://patient/94821/note/2025-11-18"
+  },
+  "approvalNonce": "nce_clinical_approved"
+}
+```
+
+The digest is a one-way function of the content. Anyone with access to the original content can verify that the agent processed exactly that content by computing the digest and comparing. Anyone without access to the content can verify that the agent *committed to processing a specific document* without being able to reconstruct what the document was.
+
+## Three privacy levels in practice
+
+**Level 1: Digest only.** Store the SHA-256 digest in the subject field, leave the URI blank. The artifact proves an action happened on a specific document without revealing anything about the document. Suitable for highly sensitive content where even the identifier is sensitive.
+
+**Level 2: Digest + URI.** Store both the digest and a URI. The URI might be an internal EHR reference, a private S3 path, or a database record ID. External verifiers can see that an action happened on a referenced document; they can't access the document without separate authorization.
+
+**Level 3: Digest + URI + embedded payload.** For content that can be shared, embed the full payload in the action metadata. Full disclosure -- the artifact is self-contained and verifiable without any external reference.
+
+The enterprise deployment pattern: use Level 1 or 2 internally for sensitive workflows. Use Level 3 for artifacts that need to be shared across organizational boundaries where the content is non-sensitive.
+
+## Selective disclosure for audit
+
+Enterprise compliance workflows often need to prove that specific checks happened without exposing the underlying data to the auditor. A healthcare compliance officer needs to verify that HIPAA-required human review happened before data was shared. They don't need to read the patient records to confirm the review happened.
+
+With digest-based attestation, the workflow looks like this: the review agent produces an `EndorsementStatement` on the processing action, signed by the reviewer's key. The compliance officer verifies the chain: processing action → human review endorsement → data sharing action. The chain proves the workflow was followed. The patient data never leaves the compliance boundary.
+
+```bash
+$ treeship verify art_compliance_chain --format json | jq '.checks'
+```
+
+```json
+[
+  { "name": "signature_valid",      "outcome": "pass" },
+  { "name": "human_review_present", "outcome": "pass",
+    "reviewer": "human://dr.chen" },
+  { "name": "review_before_share",  "outcome": "pass" }
+]
+```
+
+## What Treeship does not do
+
+Treeship does not provide zero-knowledge proofs in v1. If you need to prove that a value satisfies a constraint without revealing the value -- "the payment was under $10,000" without revealing the amount -- that requires ZK circuits, which are in the v2 roadmap via Sindri and arkworks.
+
+Treeship also does not encrypt payload content. The artifact payload is signed, not encrypted. If you need the payload itself to be confidential, keep it out of the artifact (use digest-only) or encrypt it before embedding and decrypt in the verifier. The signing layer and the encryption layer are intentionally separate.
+
+>
+Privacy in Treeship is about what you put into the artifact, not what the artifact does to protect it. Design your attestation artifacts to contain only what you're comfortable sharing at the verification boundary.
+
+## Data residency compliance
+
+The local-first design matters here too. An agent running in an EU-region data center can attest its actions, verify chains, and generate bundles entirely without any data crossing the Atlantic. Hub is optional -- and if it's used, you push only the metadata you're comfortable externalizing. The patient data never moves.
+
+This is the architecture that enterprise legal teams can actually approve: attestation infrastructure that proves workflow compliance without creating a new data exfiltration path.

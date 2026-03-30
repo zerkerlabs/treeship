@@ -1,0 +1,115 @@
+---
+title: "Every MCP Tool Call Your Agent Makes Right Now Has No Receipt"
+description: "The Model Context Protocol specification is explicit: tool calls are arbitrary code execution and hosts are responsible for authorization. Most MCP implementations have no answer to this. Here's what closing that gap looks like."
+date: 2026-03-27
+tags: ["mcp", "agents", "security", "attestation"]
+readTime: "10 min read"
+---
+
+The Model Context Protocol specification contains a sentence that most teams skip past:
+
+> "Hosts must obtain explicit user consent before connecting to servers, before sending sensitive data to servers, and when tools are invoked that could have significant consequences."
+
+Read that again. MCP is explicitly telling you that tool invocations can have significant consequences and that obtaining consent is your responsibility as the host. The protocol handles the plumbing -- request routing, capability negotiation, message formatting. What happens before a tool runs, and what evidence exists that it was authorized, is entirely up to you.
+
+For most teams running MCP-based agents today, the honest answer to "what evidence exists that this tool call was authorized?" is: none.
+
+## What actually happens when your agent calls a tool
+
+The sequence is straightforward. Your agent code calls `client.callTool()`. The MCP client sends the request to the tool server. The tool executes. The response returns.
+
+What exists after this sequence: a log line, maybe. An entry in whatever observability stack you're running, probably. A cryptographic receipt proving who authorized the call, what scope covered it, and whether the chain of decisions that led to it was intact: no.
+
+This matters more for some tool calls than others. Searching a database is low stakes. Sending an email on behalf of a customer is not. Writing to a production codebase is not. Executing a payment is not. The higher the stakes, the more the absence of a receipt costs you when something goes wrong -- or when compliance asks.
+
+## The one-import solution
+
+The `@treeship/mcp` bridge is a drop-in replacement for `@modelcontextprotocol/sdk`. The import changes. Nothing else does.
+
+```typescript
+// Before
+import { Client } from '@modelcontextprotocol/sdk'
+
+// After -- full attestation on every tool call
+import { Client } from '@treeship/mcp'
+
+const client = new Client({ name: 'my-agent', version: '1.0' }, {})
+await client.connect(transport)
+
+// This call is now attested automatically
+const result = await client.callTool({
+  name: 'stripe_charge',
+  arguments: { amount: 500, vendor: 'acme-corp' }
+})
+```
+
+Every `callTool` invocation produces two signed artifacts:
+
+**Before the call** -- an intent artifact proving what was about to happen, which agent initiated it, and under what authorization. Signed with Ed25519. Content-addressed.
+
+**After the call** -- a receipt artifact proving what came back, whether it succeeded, and linked to the intent via the parent chain.
+
+The agent code doesn't change. The tool server doesn't change. The artifacts appear in the local store and surface in the response under `_treeship`.
+
+```typescript
+console.log(result._treeship)
+// { intent: "art_aaa", receipt: "art_bbb", tool: "stripe_charge" }
+```
+
+## Tying authorization to specific actions
+
+The real power is combining the bridge with approval-based authorization. Before any tool call with significant consequences, the authorizing human issues an approval:
+
+```bash
+treeship attest approval \
+  --approver human://approver \
+  --description "authorize stripe charge max $500 to acme-corp" \
+  --expires 2026-03-26T18:00:00Z
+# nonce: nce_7f8e9d0a
+```
+
+The agent receives the nonce. The bridge picks it up from the environment and binds it to the intent artifact. The verifier then enforces that the action is cryptographically linked to the specific approval that authorized it.
+
+```bash
+treeship verify art_bbb --format json | jq .
+# {
+#   "outcome": "pass",
+#   "approver": "human://approver",
+#   "approval_description": "authorize stripe charge max $500 to acme-corp",
+#   "nonce_status": "matched · single use enforced"
+# }
+```
+
+That's the answer to "who authorized this tool call?" It's not "a user with valid credentials ran the agent." It's a specific named human, with a specific approval, cryptographically bound to this specific action, verified to have been used exactly once.
+
+## What never enters a receipt
+
+Sensitive data doesn't live in Treeship artifacts. The bridge hashes all content before signing.
+
+```
+args_digest:   sha256:e3b0c44...   ← hash of arguments, not the arguments
+result_digest: sha256:a1b2c3...   ← hash of response, not the response
+```
+
+An agent processing customer records, API credentials, or any sensitive content produces receipts that prove the processing happened without storing what was processed. Attestation without exposure.
+
+## Designed to never fail the underlying call
+
+The bridge is built on one constraint: it cannot break the tool call it's wrapping.
+
+If Treeship fails for any reason -- the local store is unavailable, the key isn't accessible, any error at all -- the tool call proceeds normally. The attestation failure is logged in debug mode. The agent never sees it.
+
+```bash
+TREESHIP_DISABLE=1 node agent.js  # full passthrough for testing
+TREESHIP_DEBUG=1 node agent.js    # log attestation activity to stderr
+```
+
+This is correct behavior for an evidence layer. The mission is the tool call. The evidence is the receipt. The receipt cannot be allowed to block the mission.
+
+## The window is now
+
+MCP is converging as the default protocol for agent tool use. The agent frameworks, the hosted services, the developer tooling -- it's all moving toward MCP. The patterns that get established in the next few months will be the patterns that production deployments are built on.
+
+Adding attestation after the fact -- once a compliance incident happens, once an audit reveals a gap, once something goes wrong with a high-stakes tool call -- is the expensive path. Adding it at the protocol layer, with one import change, before any of that happens, is the cheap path.
+
+Every tool call your agent makes right now has no receipt. That's the problem. This is what fixing it looks like.

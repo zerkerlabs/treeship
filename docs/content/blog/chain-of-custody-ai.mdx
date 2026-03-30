@@ -1,0 +1,116 @@
+---
+title: "Chain of Custody for AI Agents: What Software Can Learn from Physical Evidence Handling"
+description: "Physical evidence handling has solved chain of custody over centuries. AI agent workflows need exactly this."
+date: 2026-02-12
+tags: ["chain-of-custody", "agents", "compliance"]
+readTime: "12 min read"
+---
+
+Physical evidence handling has solved chain of custody over centuries. Every handoff is documented, every handler signs for what they received, and the integrity of the chain is what makes evidence admissible. AI agent workflows need exactly this.
+
+In 1993, a crucial piece of evidence in a murder trial was thrown out -- not because the evidence itself was compromised, but because the chain of custody documentation had a gap. No one could prove who had access to the evidence between two specific dates. The court ruled the evidence inadmissible. The gap wasn't a crime. It was a documentation failure. But documentation failures, in contexts where integrity matters, have the same consequence as actual tampering.
+
+AI agent workflows are heading toward a similar reckoning. As agents take consequential actions -- moving money, modifying medical records, executing contracts -- the question "how do we know this happened correctly?" will move from an engineering concern to a legal and regulatory one. And the answer, when it arrives, will look a lot like what physical evidence handling has already worked out.
+
+## What chain of custody means in physical contexts
+
+Physical evidence chain of custody has four requirements:
+
+**Continuous documentation.** Every transfer of the evidence is recorded -- who had it, when they received it, when they transferred it, and who they transferred it to.
+
+- **Signed acknowledgment.** Each handler signs to acknowledge receipt. The signature is the binding: it proves this specific person, at this specific time, held this specific item.
+
+- **Tamper-evident storage.** Evidence is sealed in a way that makes tampering visible. Breaking the seal doesn't necessarily mean the evidence was tampered with, but it creates an obligation to explain the break.
+
+- **Traceability to origin.** The chain can be traced back to the moment of collection. An unexplained gap anywhere in the chain compromises the entire chain.
+
+These requirements exist because physical evidence, by itself, cannot prove its own integrity. A fingerprint on a piece of glass cannot prove it's the same piece of glass that was collected at the crime scene. The chain of custody documentation provides that proof.
+
+## The AI agent version of the same problem
+
+An AI agent output, by itself, cannot prove its own integrity. A JSON blob returned by an API call cannot prove it was produced by the specific model version that was approved for production, processing the specific input that was authorized, with the specific approval that covers the scope of the output.
+
+Without chain of custody, you have the same problem the evidence room has without documentation: you know what exists, but you can't prove how it got there.
+
+Consider a multi-agent document processing pipeline:
+
+- An extraction agent processes a raw document and produces structured data
+
+- A validation agent checks the structured data against business rules
+
+- An enrichment agent adds context from external sources
+
+- A review agent presents the enriched output to a human
+
+- The human approves, and the output is used to trigger a downstream action
+
+At step 5, the human is approving an output they can read. But what they cannot verify -- without explicit chain of custody infrastructure -- is whether the output at step 4 faithfully represents what the extraction agent produced at step 1, or whether something in the pipeline modified it.
+
+## Treeship as chain of custody infrastructure
+
+The Treeship statement types map almost directly to the physical evidence custody concepts.
+
+**`ActionStatement` = the handling record.** Every agent action produces a signed statement describing who performed the action, what was done, what the subject was (by digest), and when. This is the equivalent of the evidence log entry: "Agent Martinez received exhibit A at 14:32 on October 7th."
+
+**`HandoffStatement` = the transfer receipt.** When work moves from one agent to another, a handoff statement records the transfer: from which agent, to which agent, which artifacts were transferred, which approvals were inherited. Both the sending agent and the context of the transfer are captured.
+
+**`ApprovalStatement` = the judicial authorization.** Before an agent can perform a high-stakes action, a human (or authorized system) signs an approval with a specific scope, expiry, and nonce. This is the equivalent of the search approval that authorizes evidence collection.
+
+**`EndorsementStatement` = the expert attestation.** A second party reviewing an agent's output and signing that they've verified it is equivalent to an expert witness signing that they've examined the evidence and found it consistent with the collection documentation.
+
+```text
+// The complete chain for a document processing workflow
+
+// Step 1: Extraction
+art_a1 = ActionStatement { actor: "agent://extractor-v2",
+  action: "document.extract",
+  subject: { digest: "sha256:..." } }
+
+// Step 2: Validation
+art_b2 = ActionStatement { actor: "agent://validator-v1",
+  action: "data.validate",
+  parentId: art_a1 }
+
+// Step 3: Human review
+art_c3 = ApprovalStatement { approver: "human://approver",
+  nonce: "nce_xyz" }
+
+// Step 4: Downstream action -- chain verified
+art_d4 = ActionStatement { actor: "agent://processor-v1",
+  action: "contract.execute",
+  approvalNonce: "nce_xyz",
+  parentId: art_b2 }
+
+# The chain is intact. The contract execution is authorized.
+$ treeship verify art_d4
+✓ verified · 4 artifacts · chain intact
+  human://approver approved · nonce bound · scope valid
+```
+
+## The forensic value of a complete chain
+
+When something goes wrong in an agent workflow -- and eventually, something will -- the question isn't just "what happened?" but "why did it happen?" and "who is responsible?"
+
+With a complete Treeship chain, these questions have answers. You can walk backwards from the problematic output: what agent produced it, what input it processed, what approval it claimed to be acting under, whether that approval was valid, whether the agent's scope covered the action it took. Each step is cryptographically bound to the previous one.
+
+This is forensically richer than any log. Logs can be modified. Logs don't prove who wrote them. Logs don't prove the relationship between entries. A Treeship chain, where each artifact's ID is derived from its content and each artifact references its parent by content-addressed ID, cannot be modified without breaking the chain in a detectable way.
+
+## Where the analogy breaks down
+
+Physical evidence is a unique physical object. An AI artifact is reproducible -- you can produce the same output many times. This means the chain of custody model needs to be adapted: Treeship attests that a specific agent, with a specific key, produced an artifact with a specific content digest, at a specific time, under a specific approval. The focus shifts from "this is the artifact" to "this is the process that produced the artifact."
+
+Physical evidence can only be transferred once at a time. AI artifacts can be sent to multiple recipients simultaneously. The handoff model handles this: a HandoffStatement can reference multiple receiving agents and specify which approvals each inherits.
+
+Physical evidence chains are closed once the case is resolved. AI agent chains are ongoing -- new actions extend the chain, and the chain grows indefinitely. Treeship's content-addressed ID system handles this naturally: each new artifact references its parent, and the chain can be walked backward from any point.
+
+## The regulatory direction of travel
+
+EU's AI Act requires documentation of high-risk AI system decisions. The SEC has proposed guidance on AI use in financial services. HIPAA already implies accountability requirements for AI processing of patient data. None of these regulations yet specify exactly what technical controls are required. But they all point in the same direction: agents that take consequential actions need to be accountable, and accountability requires documentation.
+
+Chain of custody infrastructure for AI agents is not a compliance checkbox. It's the foundation that makes accountability possible. The organizations building this infrastructure now, before the regulations arrive, will be better positioned than those scrambling to retrofit it afterward.
+
+Physical evidence handling learned this lesson over a century of courtroom experience. AI workflows are going to learn it too. The only question is whether they learn it proactively or reactively.
+
+## Start building chain of custody today
+
+Every agent action in your workflow can have a receipt. `treeship init` creates your ship's keypair. `treeship wrap -- your-agent` attests any agent execution. `treeship verify` walks the chain. The infrastructure exists. The question is whether you use it.

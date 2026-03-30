@@ -1,0 +1,103 @@
+---
+title: "From Subprocess to WASM: Eliminating the Subprocess Attack Surface"
+description: "When your TypeScript SDK spawns a Rust binary, you've introduced a $PATH dependency, a binary substitution attack surface, and an IPC channel. All three go away when you compile to WASM."
+date: 2026-01-08
+tags: ["wasm", "security", "engineering"]
+readTime: "8 min read"
+---
+
+When your TypeScript SDK spawns a Rust binary, you've introduced a $PATH dependency, a binary substitution attack surface, and an IPC channel. All three go away when you compile to WASM.
+
+The obvious way to give a TypeScript SDK access to Rust cryptography is to shell out to a Rust binary. Call `child_process.exec`, pass JSON over stdin, read JSON from stdout. Lots of tools work this way. It's simple to implement and easy to understand.
+
+It's also a security problem in three different ways.
+
+## Problem 1: $PATH as an attack surface
+
+When you `exec("treeship sign")`, the OS resolves `treeship` by searching `$PATH`. An attacker who can modify `$PATH` -- by compromising any script in the shell initialization chain, or by placing a malicious binary earlier in the path -- can substitute a different binary. Your TypeScript code calls what it thinks is `treeship`, but it's actually calling the attacker's binary.
+
+This attack is real and documented in the supply chain security literature. `npm run scripts` that modify `$PATH`, malicious packages that place binaries in `node_modules/.bin`, compromised CI runners -- all of these can trigger it.
+
+## Problem 2: Binary substitution on disk
+
+Even if `$PATH` is clean, the binary on disk might not be. The agent reads `/usr/local/bin/treeship`. What guarantees that file is the binary published by the Treeship project and not something that replaced it?
+
+The standard answer is checksum verification -- compare the binary's hash against a known-good value before executing it. But where is that known-good value stored? If it's on the same filesystem, an attacker who can replace the binary can replace the checksum too. You need an out-of-band anchor, like a hardware security module or a signed release published to a transparency log.
+
+This is solvable, but it requires infrastructure and discipline. Most deployments don't do it.
+
+## Problem 3: IPC as an injection point
+
+JSON passed over stdin is, in principle, safe if you control the serialization. In practice, IPC channels introduce parsing complexity, error handling edge cases, and subtle trust questions. Can the subprocess be tricked into misinterpreting the input? Can a malicious agent inject extra fields that affect the signing behavior?
+
+The answer is usually no, with careful implementation. But "careful implementation of IPC parsing" is work that needs to be done, tested, and maintained.
+
+## The WASM solution
+
+WebAssembly eliminates all three problems by changing the deployment model. Instead of a separate binary, the cryptographic code is a WASM module embedded inside the npm package. Instead of a subprocess, the SDK calls WASM functions directly in the Node process.
+
+```js
+// Before: subprocess
+const result = await exec(
+  `treeship sign --payload '${json}'`
+);
+
+// After: WASM function call
+import { sign } from '@treeship/core-wasm';
+const result = sign(payloadType, statementBytes, signerKey);
+```
+
+**$PATH attack eliminated.** There's no executable to resolve. The WASM module is a file in `node_modules/@treeship/core-wasm/`, resolved by the Node module system, not by the OS path resolution. An attacker who modifies `$PATH` cannot affect WASM module loading.
+
+**Binary substitution addressed.** The WASM module's hash is published to Sigstore Rekor at release time and embedded in the CLI binary. The SDK can verify the WASM hash before calling any functions. A substituted WASM module produces a different hash and gets rejected before execution.
+
+```js
+// SDK verifies WASM integrity at init time
+import { init, EXPECTED_HASH } from '@treeship/core-wasm';
+
+await init({
+  verifyHash: true,
+  expectedHash: EXPECTED_HASH,  // embedded at build time
+});
+```
+
+**IPC eliminated.** There's no IPC channel. The function call is direct -- typed arguments in, typed return value out. No serialization, no parsing, no injection surface. The TypeScript type system ensures the arguments are the right types before the call reaches WASM.
+
+## Memory isolation in WASM
+
+WASM runs in a sandboxed memory environment. The WASM module has its own linear memory, separate from the JavaScript heap. This matters for key material: private key bytes held in WASM memory are not accessible to JavaScript code (without explicit WASM memory reads), cannot be swept by the JavaScript garbage collector, and are zeroed by the Rust `Zeroizing` wrapper when the signing key is dropped.
+
+This is not perfect isolation -- the JavaScript runtime can still read WASM memory through the `WebAssembly.Memory` buffer. But it's meaningfully better than holding key material in a JavaScript `Buffer` or `Uint8Array` where it's visible to any other JavaScript code running in the same process.
+
+## Performance: the non-tradeoff
+
+The assumption is that WASM is slower than native. For compute-bound cryptography, this is true -- WASM typically runs at 60-90% of native speed. For Ed25519 signing, this is irrelevant: an Ed25519 signature takes under 100 microseconds in WASM. An agent workflow that produces 1,000 signatures per second is not bottlenecked on signing time.
+
+The WASM module size is 350KB compressed. It loads once at SDK initialization. Subsequent signing calls have no module-loading overhead.
+
+## The build pipeline
+
+```bash
+# Rust source → WASM module → npm package
+$ wasm-pack build packages/core-wasm \
+    --target bundler \
+    --out-dir packages/core-wasm/pkg
+
+# Output structure:
+# packages/core-wasm/pkg/
+#   treeship_core_wasm.js      # JS glue code
+#   treeship_core_wasm_bg.wasm # the compiled WASM
+#   treeship_core_wasm.d.ts    # TypeScript types
+#   package.json
+```
+
+```json
+// The @treeship/sdk package.json:
+{
+  "dependencies": {
+    "@treeship/core-wasm": "^0.1.0"
+  }
+}
+```
+
+The same Rust crate that builds the CLI binary builds the WASM module. Different targets, same code, same tests, same security properties.

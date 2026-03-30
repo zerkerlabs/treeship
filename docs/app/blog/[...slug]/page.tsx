@@ -4,10 +4,10 @@ import defaultMdxComponents from 'fumadocs-ui/mdx';
 import Link from 'next/link';
 
 export default async function BlogPost(props: {
-  params: Promise<{ slug: string }>;
+  params: Promise<{ slug: string[] }>;
 }) {
   const { slug } = await props.params;
-  const post = blogSource.getPage([slug]);
+  const post = blogSource.getPage(slug);
   if (!post) notFound();
 
   const MDX = post.data.body;
@@ -59,19 +59,18 @@ export default async function BlogPost(props: {
 
 export function generateStaticParams() {
   return blogSource.getPages().map((page) => ({
-    slug: page.slugs[0],
+    slug: page.slugs,
   }));
 }
 
-export function generateMetadata(props: {
-  params: Promise<{ slug: string }>;
+export async function generateMetadata(props: {
+  params: Promise<{ slug: string[] }>;
 }) {
-  return props.params.then(({ slug }) => {
-    const post = blogSource.getPage([slug]);
-    if (!post) return {};
-    return {
-      title: post.data.title,
-      description: post.data.description,
-    };
-  });
+  const { slug } = await props.params;
+  const post = blogSource.getPage(slug);
+  if (!post) return {};
+  return {
+    title: post.data.title,
+    description: post.data.description,
+  };
 }

@@ -1,0 +1,125 @@
+---
+title: "The Replay Attack Your Authorization System Doesn't Prevent"
+description: "Most authorization systems for AI agents share a subtle flaw: approvals can be reused. An agent that captures an approval token can replay it. Here's the attack and how approval-based authorization prevents it by construction."
+date: 2026-03-27
+tags: ["security", "authorization", "cryptography", "agents"]
+readTime: "8 min read"
+---
+
+Imagine your agent needs human authorization before executing a payment. You've built an approval flow: the human clicks Approve in a UI, a token is generated and passed to the agent, the agent includes the token in its action record, and downstream systems can verify the token was present.
+
+This is better than no authorization. But it has a vulnerability that's easy to miss.
+
+The token, once generated, can be reused. If your agent runs the payment flow again with the same token -- whether by bug, by design, or by an attacker who captured the token -- the downstream verifier sees a valid token and passes it. The human approved once. The action executed twice, or ten times, or for a different amount than the human ever saw.
+
+This is the replay attack. And it's endemic to approval systems that treat authorization as a boolean flag rather than a cryptographic binding.
+
+## Why most approval flows are vulnerable
+
+The typical agent authorization flow looks like this:
+
+```
+human approves → token generated → token passed to agent → agent acts → token logged
+```
+
+The token is evidence that approval happened. But it's not bound to a specific action, a specific scope, or a specific execution. It's a bearer credential. Anyone who has it can use it.
+
+For low-stakes actions this might be acceptable. For anything consequential -- payments, data mutations, external communications, code deployments -- bearer credentials for authorization are a serious risk.
+
+The vulnerabilities are:
+- **Replay**: same token used for multiple actions
+- **Scope creep**: token used for a different action than the human approved
+- **Theft**: intercepted token used by an attacker
+- **Forwarding**: token passed between agents, each using it to authorize their own actions
+
+None of these require sophisticated attacks. They require the normal messiness of distributed systems running autonomous agents.
+
+## The approval model
+
+An approval is not a token. It's a cryptographic commitment from an authorizing human to a specific action by a specific agent within a specific scope.
+
+```bash
+treeship attest approval \
+  --approver human://approver \
+  --description "authorize stripe charge $450 to acme-corp invoice INV-2847" \
+  --expires 2026-03-26T17:00:00Z \
+  --scope '{"allowed_actions":["stripe.charge.create"],"max_amount":450,"max_actions":1}'
+```
+
+This produces an ApprovalStatement signed with the approver's Ed25519 key. The statement contains a random nonce -- a one-time value that appears nowhere else.
+
+When the agent takes the authorized action, it includes that nonce:
+
+```bash
+treeship attest action \
+  --actor agent://payments \
+  --action stripe.charge.create \
+  --approval-nonce nce_7f8e9d0a \
+  --meta '{"amount":450,"vendor":"acme-corp","invoice":"INV-2847"}'
+```
+
+The verifier then enforces:
+
+```
+action.approvalNonce == approval.nonce
+```
+
+This check is in the Rust core. It cannot be bypassed. And because the nonce is tied to exactly one approval and exactly one action, every vulnerability in the bearer token model is closed:
+
+**Replay** -- the nonce can appear in exactly one action. A second action with the same nonce finds no matching approval (the first action consumed it) and fails verification.
+
+**Scope creep** -- the verifier checks the scope fields. A charge for $600 fails when the approval specifies max_amount 450. A different action type fails when the approval specifies allowed_actions.
+
+**Theft** -- a stolen nonce authorizes exactly the action the human intended, for the amount they specified, with the vendor they named. The attacker can't use it for anything else.
+
+**Forwarding** -- each agent in a chain needs its own approval for its own actions. A nonce passed between agents doesn't authorize the second agent's actions because it's bound to the first agent's actor URI.
+
+## Seeing the difference in practice
+
+Here's what an approval-style authorization looks like versus approval-style:
+
+```bash
+# Approval style -- broad, reusable
+# "approve payment workflows today"
+# Token: bearer_abc123
+# Any action can claim this token
+
+# Approval style -- specific, single-use
+treeship attest approval \
+  --approver human://approver \
+  --description "stripe charge $450 to acme-corp INV-2847" \
+  --expires 2026-03-26T17:00:00Z
+# Nonce: nce_7f8e9d0a
+# Only stripe.charge.create for ≤$450 to acme-corp can use this nonce
+# Only once
+```
+
+The approval is not less convenient for the human -- it's one approval action that produces one nonce. The difference is precision: the human is approving a specific thing, not a broad category.
+
+## The audit answer
+
+When something goes wrong -- or when nothing has gone wrong but compliance needs to prove it -- approval-based authorization produces a different quality of evidence.
+
+```bash
+treeship verify art_charge --format json | jq '{
+  outcome,
+  approver: .approver,
+  approval: .warrant_description,
+  nonce_status: .nonce_binding,
+  scope: .scope_valid
+}'
+
+# {
+#   "outcome": "pass",
+#   "approver": "human://approver",
+#   "approval_description": "stripe charge $450 to acme-corp INV-2847",
+#   "nonce_status": "matched · single use verified",
+#   "scope": true
+# }
+```
+
+This isn't "a valid authorization token was present." It's a specific named human, approving a specific action, with cryptographic proof the authorization was used exactly once, for exactly the amount and vendor specified, before the expiry time.
+
+The replay attack fails here not because of access controls or rate limiting or session management. It fails because the cryptographic structure makes it impossible. The nonce was used. The approval is spent. There is nothing to replay.
+
+That's the kind of authorization AI agents taking consequential actions actually need.

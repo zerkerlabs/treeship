@@ -1,0 +1,89 @@
+---
+title: "Why We Chose Rust for the Trust Layer"
+description: "The ZK proof ecosystem is Rust-first and Rust-only in any production-ready form. Here's the complete case for Rust as the foundation of cryptographic agent infrastructure."
+date: 2025-12-02
+tags: ["rust", "engineering"]
+readTime: "9 min read"
+---
+
+The ZK proof ecosystem is Rust-first and Rust-only in any production-ready form. But that's not the only reason. Here's the complete case for Rust as the foundation of cryptographic agent infrastructure.
+
+Language choices for a new project are usually overdetermined -- there are good reasons in every direction and the final call comes down to team familiarity and ecosystem fit. Treeship's Rust choice was different. There were specific, concrete technical requirements where Rust was not just preferable but the only viable option.
+
+## The ZK proof requirement
+
+Treeship's v1 trust model uses Ed25519 signatures. Our v2 roadmap adds zero-knowledge proofs for privacy-preserving policy verification -- proving that an agent acted within policy constraints without revealing the specific values. This requires ZK circuits, constraint systems, and proof generation libraries.
+
+The entire production-ready ZK ecosystem is Rust-first:
+
+**arkworks** -- the canonical Rust ZK algebra library suite, used by every serious ZK project
+
+- **bellman** -- Zcash's Groth16 implementation, the most widely deployed ZK proof system
+
+- **halo2** -- the proving system used by Scroll, zkSync, and Polygon zkEVM
+
+- **ark-groth16** -- the implementation we'll use for Treeship policy proofs
+
+None of these exist in Go. None exist in TypeScript. You can call them via FFI or subprocess, which introduces attack surface and deployment complexity. Or you write your cryptographic core in Rust and compile it everywhere.
+
+## WASM as the distribution model
+
+The second requirement that pointed to Rust: we needed the same cryptographic core to run natively (in the CLI), in Node (in the TypeScript SDK), and in the browser (in the verification page). The traditional approach to this is three implementations: one per environment. The maintenance burden is one reason why cryptographic implementations diverge, and divergence is how subtle bugs appear.
+
+Rust's `wasm-pack` tool compiles a Rust crate to a WASM module with TypeScript bindings automatically. The same code that runs in the CLI binary runs in the TypeScript SDK. The same code that signs artifacts in the server runs in the browser verifier. One implementation, three deployment targets.
+
+```bash
+# Build the WASM module from the same Rust source
+$ wasm-pack build packages/core-wasm --target bundler
+
+# Output: pkg/ directory, publishable to npm
+# TypeScript SDK imports it directly:
+```
+
+```ts
+import { sign, verify } from '@treeship/core-wasm'
+```
+
+## The audited cryptography argument
+
+The most important crate in our dependency tree is `ed25519-dalek`. It has been audited by NCC Group. It uses the `subtle` crate throughout for constant-time operations -- scalar multiplications, comparisons, and conditionals that don't leak timing information. The audit is public and the issues found were fixed before publication.
+
+Go's `crypto/ed25519` in the standard library is correct but has not been independently audited to the same standard. More importantly, the constant-time guarantees are less explicitly documented. For a signing library that will handle private keys at scale, "correct" is not enough -- you also need "audited" and "constant-time throughout."
+
+The Rust cryptography ecosystem has invested heavily in both. The RustCrypto organization maintains audited implementations of essentially every primitive. This is not accidental -- Rust's memory safety model and the culture of the ecosystem have attracted cryptographic library developers who care about these properties.
+
+## Memory safety without garbage collection
+
+Cryptographic code handles private key material. A garbage collector that might scan heap memory, a buffer that gets reused before being zeroed, a string that gets copied and left in memory -- these are the kinds of issues that make cryptographic implementations leak key material.
+
+Rust's ownership model means that data is zero'd when it goes out of scope (if you use zeroizing types). The `zeroize` crate provides `Zeroizing<T>` wrappers that guarantee memory is wiped when the value drops. Ed25519 private keys in Treeship are held in `Zeroizing` wrappers -- the key material is wiped from memory when the signer is dropped.
+
+This is not something you can get from a garbage-collected language without careful discipline and a lot of unsafe code. In Rust, it's the default.
+
+## Single static binary for the CLI
+
+The Treeship CLI compiles to a single static binary with no runtime dependencies. No JVM, no Node, no Python interpreter. This matters for CI integration (copy one binary, done), for air-gapped environments (one file to transfer), and for distribution (one artifact to sign and publish).
+
+```bash
+# Cross-compile for Linux from macOS
+$ cargo build --release --target x86_64-unknown-linux-musl
+
+# Result: a single statically-linked binary
+# No dynamic dependencies beyond the OS kernel
+$ ldd target/x86_64-unknown-linux-musl/release/treeship
+# not a dynamic executable
+```
+
+## Performance at scale
+
+This one is less critical than the others -- Ed25519 signature verification is fast in any language, and most agent workflows aren't signing millions of artifacts per second. But it's worth noting: signing and verifying in Rust is measurably faster than in Go or Python, and significantly faster than in JavaScript (even with WASM, the overhead is minimal compared to Node's JS engine).
+
+For the Hub verification endpoint that might be verifying thousands of chains per minute, this matters. For a developer running `treeship verify` on their laptop, it doesn't. Both use the same binary.
+
+## The honest tradeoff
+
+Rust has real costs. The learning curve is genuine. Compile times are longer than Go. Hiring Rust engineers is harder than hiring Go or Python engineers. The borrow checker will make you reconsider your data structures.
+
+For Treeship's use case -- cryptographic infrastructure that needs to be correct, auditable, and deployable in any environment from CLI to browser -- these costs are worth it. For most application code, they probably aren't.
+
+We made this choice deliberately, and we'll live with the tradeoffs. The correctness and auditability properties are not negotiable for a security-critical library. Everything else is engineering.

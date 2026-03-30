@@ -26,22 +26,26 @@ The deeper issue is that the action and the approval are separate records with n
 
 In Treeship, every `ApprovalStatement` contains a `nonce` field -- a random value generated when the approval is created. Every `ActionStatement` that claims to be authorized by an approval must include the same nonce in its `approvalNonce` field.
 
+```json
 // The approval -- signed by the human approver
 {
-"type": "treeship/approval/v1",
-"approver": "human://approver",
-"nonce": "nce_7f8e9d0a1b2c3d4e",
-"scope": { "maxActions": 1, "allowedActions": ["stripe.charge.create"] },
-"expiresAt": "2025-10-07T15:00:00Z"
+  "type": "treeship/approval/v1",
+  "approver": "human://approver",
+  "nonce": "nce_7f8e9d0a1b2c3d4e",
+  "scope": { "maxActions": 1, "allowedActions": ["stripe.charge.create"] },
+  "expiresAt": "2025-10-07T15:00:00Z"
 }
+```
 
+```json
 // The action -- must echo the nonce to prove authorization
 {
-"type": "treeship/action/v1",
-"actor": "agent://payments",
-"action": "stripe.charge.create",
-"approvalNonce": "nce_7f8e9d0a1b2c3d4e"
+  "type": "treeship/action/v1",
+  "actor": "agent://payments",
+  "action": "stripe.charge.create",
+  "approvalNonce": "nce_7f8e9d0a1b2c3d4e"
 }
+```
 
 The verifier then checks: **does action.approvalNonce equal the nonce in the approval artifact that's in this chain?** If the nonces don't match, verification fails. If the approval is used twice, the second action can only include the same nonce -- and the verifier can detect that the nonce has already been consumed by a previous action in the chain.
 
@@ -74,15 +78,17 @@ A nonce proves that this action and this approval are the same transaction. It d
 
 When you run `treeship attest approval`, Treeship generates a cryptographically random 16-byte nonce automatically. You don't specify it -- you just get it back:
 
+```bash
 $ treeship attest approval \
---approver human://approver \
---description "approve stripe charge $50 to acme" \
---expires 2025-10-07T15:00:00Z
+  --approver human://approver \
+  --description "approve stripe charge $50 to acme" \
+  --expires 2025-10-07T15:00:00Z
 
-✓ approval attested
-id:      art_e5f6a7b8c9d0e5f6
-nonce:   nce_7f8e9d0a1b2c3d4e
-→ pass nonce to the agent as --approval-nonce nce_7f8e9d0a1b2c3d4e
+# ✓ approval attested
+# id:      art_e5f6a7b8c9d0e5f6
+# nonce:   nce_7f8e9d0a1b2c3d4e
+# → pass nonce to the agent as --approval-nonce nce_7f8e9d0a1b2c3d4e
+```
 
 The approver gives the nonce to the agent as part of the approval handoff. The agent includes it in its action attestation. The verifier checks the binding. This is the complete protocol.
 

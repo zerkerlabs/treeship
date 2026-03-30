@@ -1,0 +1,89 @@
+---
+title: "The Case for Portable Trust"
+description: "Why trust artifacts need to travel with the work, not stay locked in the platform that produced them."
+date: 2025-09-15
+tags: ["trust", "architecture"]
+readTime: "7 min read"
+---
+
+Trust that only works inside one platform isn't trust -- it's permission. What agent workflows actually need is cryptographic proof that travels with the artifact, not with the infrastructure.
+
+There's a pattern that repeats across every generation of enterprise software: a new capability gets built inside a platform, the platform adds access controls, and those access controls get called "trust." The platform knows who you are. The platform decides what you can do. The platform generates the audit trail. And all of that only works if you stay inside the platform.
+
+Agent workflows are heading down the same road. AI providers are building attestation into their platforms. That's good. But platform-native attestation has a structural problem: the proof only means something to someone who trusts the platform.
+
+## Platform trust vs. cryptographic trust
+
+When OpenAI logs that `gpt-4o` made a function call, that log is evidence in a legal sense -- assuming you trust OpenAI's infrastructure, their logging pipeline, their tamper protection, and their access controls. If any link in that chain is questionable, the evidence is questionable.
+
+This is trust by assertion. The platform asserts that something happened. You trust the assertion because you trust the platform.
+
+Cryptographic trust is different. When a key signs a statement, the signature is evidence in a mathematical sense. You don't need to trust any infrastructure. You verify the signature yourself, against the public key, right now, in your own process. If the verification passes, the statement is authentic -- not because you trust anyone, but because the math says so.
+
+>
+Platform attestation asks you to trust the platform. Cryptographic attestation asks you to verify the math. Only one of these works across organizational boundaries.
+
+## The multi-org problem
+
+Here's where portability becomes essential. Consider a real enterprise AI workflow:
+
+A research agent at company A processes a dataset and produces a summary
+
+- That summary gets handed to a legal review agent at company B
+
+- Legal review produces an endorsement that the summary is accurate
+
+- That endorsement unlocks a procurement action at company C
+
+Each company uses different AI infrastructure. Company A is on AWS Bedrock. Company B uses Azure OpenAI. Company C has an on-premise LLM. None of them shares an audit system.
+
+Platform attestation completely fails here. Company A's logs are meaningless to company B, because company B doesn't trust company A's logging infrastructure. Company B has no way to verify that the summary it received is the same one company A's agent actually produced.
+
+With Treeship, company A's research agent signs its output. The signed artifact travels with the data -- it's just a JSON document. Company B's legal agent verifies the signature against company A's published public key before accepting the input. Company C verifies the full chain before triggering the procurement action. Nobody needs to trust anyone's infrastructure. The math does the work.
+
+## What "portable" actually means
+
+Portability in Treeship has three dimensions.
+
+**No infrastructure dependency for verification.** A Treeship artifact is a self-contained JSON document. The DSSE envelope carries the payload, the payloadType, and the signatures. Verifying it requires only the signed bytes, the claimed public key, and an Ed25519 verify function. You can implement that in 30 lines in any language. No database, no API, no Hub required.
+
+**Content-addressed identity.** Every artifact has an ID derived from its content -- `art_` + the first 16 bytes of SHA-256 over the PAE-encoded payload. Same content always produces the same ID. This means an artifact can travel across systems without losing its identity. Company B can reference the artifact by ID in its own attestation, and anyone can verify that the referenced artifact has the correct content.
+
+**Open verification tooling.** The verifier is open source. The DSSE spec is public. The Ed25519 signature scheme is standardized. A company with no relationship to Treeship can write their own verifier and verify Treeship artifacts. This is what "open standard" means in practice: independence from any particular implementation.
+
+# Verify an artifact from a completely different organization
+# All you need is the artifact file and their public key
+$ treeship verify ./company-a-artifact.json \
+--trusted-key ./company-a-public.pem
+
+✓ verified
+id:       art_a1b2c3d4e5f6a1b2
+actor:    agent://company-a/research-v1
+signed:   2025-08-05T14:22:11Z
+key:      key_f9e8d7c6b5a4f9e8 (ed25519)
+
+## The local-first property
+
+Portability and local-first are two sides of the same design decision. If your trust infrastructure requires a network call to verify an artifact, you've made two mistakes: you've created a network dependency, and you've created a trust dependency on whoever runs the network endpoint.
+
+Every Treeship operation works offline. `treeship init` generates your keypair locally. `treeship attest` signs the statement locally. `treeship verify` checks the signature locally. Hub is additive -- it gives you a URL to share, a place to push artifacts so others can pull them. But it's never required for the core trust model to function.
+
+An air-gapped military network, a hospital with strict data residency requirements, a manufacturing floor with no internet connectivity -- all of these environments can use the full Treeship trust model without any external dependency.
+
+## Trust as a protocol, not a platform
+
+The analogy that feels most accurate is email vs. Slack. Slack is a much better communication experience than email. But if you want to send a message to someone at a different company, you can't use Slack channels -- you have to use email. Email works across organizational boundaries because it's a protocol, not a platform.
+
+Platform attestation is Slack. Cryptographic attestation is email. Both have their place. But only one works when the parties don't share infrastructure.
+
+The goal of Treeship isn't to replace platform attestation -- it's to provide the portable layer that works where platform attestation can't. Use your AI provider's native logging inside your organization. Use Treeship when artifacts need to travel across trust boundaries.
+
+The artifact as passport
+
+Think of a Treeship artifact as a passport for an agent action. A passport proves your identity independently of the country you're visiting. A signed artifact proves the action's provenance independently of the infrastructure the recipient uses.
+
+## What this means for AI infrastructure
+
+We're in the early days of what agent infrastructure looks like. The patterns that get established now will define the ecosystem for the next decade. The question isn't just "can AI agents do useful work?" -- it's "can we verify that the work they did is what we think it is?"
+
+Portable, cryptographic trust is the answer to that question. Not because it's theoretically elegant (though it is), but because it's the only form of trust that actually works at the boundaries where the interesting work happens.
