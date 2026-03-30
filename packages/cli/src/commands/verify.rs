@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use ed25519_dalek::VerifyingKey;
 use treeship_core::{
     attestation::{Envelope, Verifier},
-    statements::{ActionStatement, ApprovalStatement, HandoffStatement, ReceiptStatement, payload_type},
+    statements::{ActionStatement, ApprovalStatement, DecisionStatement, HandoffStatement, ReceiptStatement, payload_type},
     storage::Store,
 };
 
@@ -47,6 +47,12 @@ struct StepInfo {
     parent_id:      Option<String>,
     // Approval nonce on action
     approval_nonce: Option<String>,
+    // Decision info
+    decision_model:      Option<String>,
+    decision_tokens_in:  Option<u64>,
+    decision_tokens_out: Option<u64>,
+    decision_summary:    Option<String>,
+    decision_confidence: Option<f64>,
 }
 
 pub fn run(
@@ -179,6 +185,12 @@ pub fn run(
             } else if let Ok(receipt) = env.unmarshal_statement::<ReceiptStatement>() {
                 fields.push(("system", receipt.system.clone()));
                 fields.push(("time", receipt.timestamp.clone()));
+            } else if let Ok(decision) = env.unmarshal_statement::<DecisionStatement>() {
+                fields.push(("actor", decision.actor.clone()));
+                if let Some(ref model) = decision.model {
+                    fields.push(("model", model.clone()));
+                }
+                fields.push(("time", decision.timestamp.clone()));
             }
 
             // Print fields with alignment
@@ -348,7 +360,9 @@ fn print_step_card(step: &StepInfo, printer: &Printer) {
     ));
 
     // Actor + action line
-    let actor_action = if step.payload_type.contains("approval") {
+    let actor_action = if step.payload_type.contains("decision") {
+        format!("{} . decision", step.actor)
+    } else if step.payload_type.contains("approval") {
         format!(
             "{} . approval",
             step.actor
@@ -412,6 +426,29 @@ fn print_step_card(step: &StepInfo, printer: &Printer) {
             desc.clone()
         };
         print_box_line(&format!("desc: {}", truncated), printer);
+    }
+
+    // Decision info (model, tokens, summary, confidence)
+    if step.decision_model.is_some() || step.decision_tokens_in.is_some() {
+        let model_str = step.decision_model.as_deref().unwrap_or("--");
+        let tokens_str = match (step.decision_tokens_in, step.decision_tokens_out) {
+            (Some(ti), Some(to)) => format!("  .  {} -> {} tokens", format_num(ti), format_num(to)),
+            (Some(ti), None) => format!("  .  {} tokens in", format_num(ti)),
+            (None, Some(to)) => format!("  .  {} tokens out", format_num(to)),
+            (None, None) => String::new(),
+        };
+        print_box_line(&format!("model: {}{}", model_str, tokens_str), printer);
+    }
+    if let Some(ref summary) = step.decision_summary {
+        let truncated = if summary.len() > 44 {
+            format!("\"{}...\"", &summary[..41])
+        } else {
+            format!("\"{}\"", summary)
+        };
+        print_box_line(&truncated, printer);
+    }
+    if let Some(conf) = step.decision_confidence {
+        print_box_line(&format!("confidence: {}%", (conf * 100.0) as u32), printer);
     }
 
     // Timestamp + elapsed
@@ -494,6 +531,11 @@ fn extract_step_info(index: usize, id: &str, env: &Envelope, storage: &Store) ->
         handoff_to: None,
         parent_id: None,
         approval_nonce: None,
+        decision_model: None,
+        decision_tokens_in: None,
+        decision_tokens_out: None,
+        decision_summary: None,
+        decision_confidence: None,
     };
 
     // Try action statement
@@ -554,6 +596,20 @@ fn extract_step_info(index: usize, id: &str, env: &Envelope, storage: &Store) ->
         info.actor = receipt.system;
         info.action = receipt.kind;
         info.timestamp = receipt.timestamp;
+        return info;
+    }
+
+    // Try decision statement
+    if let Ok(decision) = env.unmarshal_statement::<DecisionStatement>() {
+        info.actor = decision.actor;
+        info.action = "decision".into();
+        info.timestamp = decision.timestamp;
+        info.parent_id = decision.parent_id;
+        info.decision_model = decision.model;
+        info.decision_tokens_in = decision.tokens_in;
+        info.decision_tokens_out = decision.tokens_out;
+        info.decision_summary = decision.summary;
+        info.decision_confidence = decision.confidence;
         return info;
     }
 
@@ -630,6 +686,20 @@ fn extract_meta_fields(info: &mut StepInfo, meta: &serde_json::Value) {
             }
         }
     }
+}
+
+/// Format a number with comma separators (e.g. 8432 -> "8,432").
+fn format_num(n: u64) -> String {
+    let s = n.to_string();
+    let bytes = s.as_bytes();
+    let mut result = String::with_capacity(s.len() + s.len() / 3);
+    for (i, &b) in bytes.iter().enumerate() {
+        if i > 0 && (bytes.len() - i) % 3 == 0 {
+            result.push(',');
+        }
+        result.push(b as char);
+    }
+    result
 }
 
 fn short_id(id: &str) -> String {
@@ -831,6 +901,9 @@ fn extract_actor(envelope: &Envelope) -> String {
     }
     if let Ok(s) = envelope.unmarshal_statement::<ReceiptStatement>() {
         return s.system;
+    }
+    if let Ok(s) = envelope.unmarshal_statement::<DecisionStatement>() {
+        return s.actor;
     }
     "\u{2014}".into()
 }

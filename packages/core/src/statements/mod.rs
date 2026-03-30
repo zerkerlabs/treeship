@@ -17,6 +17,7 @@ pub const TYPE_HANDOFF:     &str = "treeship/handoff/v1";
 pub const TYPE_ENDORSEMENT: &str = "treeship/endorsement/v1";
 pub const TYPE_RECEIPT:     &str = "treeship/receipt/v1";
 pub const TYPE_BUNDLE:      &str = "treeship/bundle/v1";
+pub const TYPE_DECISION:    &str = "treeship/decision/v1";
 
 use serde::{Deserialize, Serialize};
 
@@ -270,6 +271,63 @@ pub struct BundleStatement {
     pub meta: Option<serde_json::Value>,
 }
 
+/// Records an agent's reasoning and decision context.
+///
+/// This is the "why" layer -- agents provide this explicitly to explain
+/// inference decisions, model usage, and confidence levels.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecisionStatement {
+    /// Always `TYPE_DECISION`
+    #[serde(rename = "type")]
+    pub type_: String,
+
+    /// RFC 3339 timestamp, set at sign time.
+    pub timestamp: String,
+
+    /// DID-style actor URI. e.g. "agent://analyst"
+    pub actor: String,
+
+    /// Links this artifact to its parent in the chain.
+    #[serde(rename = "parentId", skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+
+    /// Model used for inference. e.g. "claude-opus-4"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+
+    /// Model version if known.
+    #[serde(rename = "modelVersion", skip_serializing_if = "Option::is_none")]
+    pub model_version: Option<String>,
+
+    /// Number of input tokens consumed.
+    #[serde(rename = "tokensIn", skip_serializing_if = "Option::is_none")]
+    pub tokens_in: Option<u64>,
+
+    /// Number of output tokens produced.
+    #[serde(rename = "tokensOut", skip_serializing_if = "Option::is_none")]
+    pub tokens_out: Option<u64>,
+
+    /// SHA-256 digest of the full prompt (not the prompt itself).
+    #[serde(rename = "promptDigest", skip_serializing_if = "Option::is_none")]
+    pub prompt_digest: Option<String>,
+
+    /// Human-readable summary of the decision.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+
+    /// Confidence level 0.0-1.0 if the agent provides it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f64>,
+
+    /// Other options the agent considered.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alternatives: Option<Vec<String>>,
+
+    /// Arbitrary additional metadata.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meta: Option<serde_json::Value>,
+}
+
 // Helpers for skip_serializing_if
 fn is_empty_subject(s: &SubjectRef) -> bool {
     s.digest.is_none() && s.uri.is_none() && s.artifact_id.is_none()
@@ -344,6 +402,26 @@ impl ReceiptStatement {
             payload: None,
             payload_digest: None,
             policy_ref: None,
+            meta: None,
+        }
+    }
+}
+
+impl DecisionStatement {
+    pub fn new(actor: impl Into<String>) -> Self {
+        Self {
+            type_: TYPE_DECISION.into(),
+            timestamp: now_rfc3339(),
+            actor: actor.into(),
+            parent_id: None,
+            model: None,
+            model_version: None,
+            tokens_in: None,
+            tokens_out: None,
+            prompt_digest: None,
+            summary: None,
+            confidence: None,
+            alternatives: None,
             meta: None,
         }
     }
@@ -519,6 +597,37 @@ mod tests {
 
         let decoded: ApprovalStatement = signed.envelope.unmarshal_statement().unwrap();
         assert_eq!(decoded.nonce, "secure_nonce_xyz", "nonce must survive serialization");
+    }
+
+    #[test]
+    fn decision_statement_sign_verify() {
+        let signer = Ed25519Signer::generate("key_test").unwrap();
+        let verifier = Verifier::from_signer(&signer);
+
+        let mut stmt = DecisionStatement::new("agent://analyst");
+        stmt.model = Some("claude-opus-4".into());
+        stmt.tokens_in = Some(8432);
+        stmt.tokens_out = Some(1247);
+        stmt.summary = Some("Contract looks standard.".into());
+        stmt.confidence = Some(0.91);
+
+        let pt = payload_type("decision");
+        let result = sign(&pt, &stmt, &signer).unwrap();
+
+        assert!(result.artifact_id.starts_with("art_"));
+
+        let vr = verifier.verify(&result.envelope).unwrap();
+        assert_eq!(vr.artifact_id, result.artifact_id);
+
+        // Decode and check the payload survived serialization
+        let decoded: DecisionStatement = result.envelope.unmarshal_statement().unwrap();
+        assert_eq!(decoded.actor, "agent://analyst");
+        assert_eq!(decoded.model, Some("claude-opus-4".into()));
+        assert_eq!(decoded.tokens_in, Some(8432));
+        assert_eq!(decoded.tokens_out, Some(1247));
+        assert_eq!(decoded.summary, Some("Contract looks standard.".into()));
+        assert_eq!(decoded.confidence, Some(0.91));
+        assert_eq!(decoded.type_, TYPE_DECISION);
     }
 
     #[test]

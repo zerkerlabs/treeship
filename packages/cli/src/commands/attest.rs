@@ -1,7 +1,7 @@
 use serde_json::Value;
 use treeship_core::{
     attestation::sign,
-    statements::{ActionStatement, ApprovalStatement, HandoffStatement, ReceiptStatement, payload_type, SubjectRef},
+    statements::{ActionStatement, ApprovalStatement, DecisionStatement, HandoffStatement, ReceiptStatement, payload_type, SubjectRef},
     storage::Record,
 };
 
@@ -244,4 +244,102 @@ pub fn receipt(args: ReceiptArgs, printer: &Printer) -> Result<(), Box<dyn std::
     printer.hint(&format!("treeship verify {}", result.artifact_id));
     printer.blank();
     Ok(())
+}
+
+// --- decision ---------------------------------------------------------------
+
+pub struct DecisionArgs {
+    pub actor:         String,
+    pub model:         Option<String>,
+    pub model_version: Option<String>,
+    pub tokens_in:     Option<u64>,
+    pub tokens_out:    Option<u64>,
+    pub prompt_digest: Option<String>,
+    pub summary:       Option<String>,
+    pub confidence:    Option<f64>,
+    pub parent_id:     Option<String>,
+    pub config:        Option<String>,
+}
+
+pub fn decision(args: DecisionArgs, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = ctx::open(args.config.as_deref())?;
+    let signer = ctx.keys.default_signer()?;
+
+    let mut stmt = DecisionStatement::new(&args.actor);
+    stmt.model = args.model.clone();
+    stmt.model_version = args.model_version.clone();
+    stmt.tokens_in = args.tokens_in;
+    stmt.tokens_out = args.tokens_out;
+    stmt.prompt_digest = args.prompt_digest.clone();
+    stmt.summary = args.summary.clone();
+    stmt.confidence = args.confidence;
+
+    // Auto-chain: resolve parent from explicit flag > TREESHIP_PARENT env > .last file
+    let parent = resolve_parent(&ctx, args.parent_id.clone());
+    stmt.parent_id = parent.clone();
+
+    let pt = payload_type("decision");
+    let result = sign(&pt, &stmt, signer.as_ref())?;
+
+    ctx.storage.write(&Record {
+        artifact_id:  result.artifact_id.clone(),
+        digest:       result.digest.clone(),
+        payload_type: pt,
+        key_id:       signer.key_id().to_string(),
+        signed_at:    stmt.timestamp.clone(),
+        parent_id:    parent,
+        envelope:     result.envelope,
+        hub_url:      None,
+    })?;
+
+    // Write .last for auto-chaining
+    write_last(&ctx.config.storage_dir, &result.artifact_id);
+
+    printer.success("decision attested", &[
+        ("id",    &result.artifact_id),
+        ("actor", &args.actor),
+        ("model", args.model.as_deref().unwrap_or("not specified")),
+    ]);
+    if let Some(ref summary) = args.summary {
+        printer.dim_info(&format!("  summary: {}", summary));
+    }
+    if let Some(conf) = args.confidence {
+        printer.dim_info(&format!("  confidence: {}%", (conf * 100.0) as u32));
+    }
+    printer.hint(&format!("treeship verify {}", result.artifact_id));
+    printer.blank();
+    Ok(())
+}
+
+// --- helpers ----------------------------------------------------------------
+
+/// Resolve parent_id with priority: explicit flag > TREESHIP_PARENT env > .last file
+fn resolve_parent(ctx: &ctx::Ctx, explicit: Option<String>) -> Option<String> {
+    if explicit.is_some() {
+        return explicit;
+    }
+    if let Ok(env_parent) = std::env::var("TREESHIP_PARENT") {
+        if !env_parent.is_empty() {
+            return Some(env_parent);
+        }
+    }
+    let last_path = std::path::Path::new(&ctx.config.storage_dir).join(".last");
+    if let Ok(contents) = std::fs::read_to_string(&last_path) {
+        let trimmed = contents.trim().to_string();
+        if !trimmed.is_empty() {
+            return Some(trimmed);
+        }
+    }
+    None
+}
+
+/// Write the artifact_id to {storage_dir}/.last for auto-chaining.
+fn write_last(storage_dir: &str, artifact_id: &str) {
+    let last_path = std::path::Path::new(storage_dir).join(".last");
+    let _ = std::fs::write(&last_path, artifact_id);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&last_path, std::fs::Permissions::from_mode(0o600));
+    }
 }

@@ -414,6 +414,14 @@ enum AttestCommand {
     ///     --kind confirmation --subject art_a1b2 \
     ///     --payload '{"eventId":"evt_abc","status":"succeeded"}'
     Receipt(AttestReceiptArgs),
+
+    /// Record an agent's reasoning and decision context
+    ///
+    /// Examples:
+    ///   treeship attest decision --actor agent://analyst --model claude-opus-4 \
+    ///     --tokens-in 8432 --tokens-out 1247 \
+    ///     --summary "Contract analysis complete. Standard terms." --confidence 0.91
+    Decision(AttestDecisionArgs),
 }
 
 #[derive(Args)]
@@ -514,6 +522,45 @@ struct AttestReceiptArgs {
     /// Receipt payload as a JSON object
     #[arg(long, value_name = r#"'{"key":"val"}'"#)]
     payload: Option<String>,
+}
+
+#[derive(Args)]
+struct AttestDecisionArgs {
+    /// Actor URI -- who made the decision
+    #[arg(long, required = true, value_name = "URI")]
+    actor: String,
+
+    /// Model used for inference (e.g. claude-opus-4)
+    #[arg(long, value_name = "MODEL")]
+    model: Option<String>,
+
+    /// Model version if known
+    #[arg(long, value_name = "VERSION")]
+    model_version: Option<String>,
+
+    /// Number of input tokens consumed
+    #[arg(long, value_name = "N")]
+    tokens_in: Option<u64>,
+
+    /// Number of output tokens produced
+    #[arg(long, value_name = "N")]
+    tokens_out: Option<u64>,
+
+    /// SHA-256 digest of the full prompt
+    #[arg(long, value_name = "sha256:HEX")]
+    prompt_digest: Option<String>,
+
+    /// Human-readable summary of the decision
+    #[arg(long, value_name = "TEXT")]
+    summary: Option<String>,
+
+    /// Confidence level 0.0-1.0
+    #[arg(long, value_name = "FLOAT")]
+    confidence: Option<f64>,
+
+    /// Parent artifact ID -- links this into a chain
+    #[arg(long, value_name = "ID")]
+    parent: Option<String>,
 }
 
 // --- bundle -----------------------------------------------------------------
@@ -814,6 +861,21 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                     subject_id: a.subject.clone(),
                     payload:    a.payload.clone(),
                     config:     cli.config.clone(),
+                },
+                printer,
+            ),
+            AttestCommand::Decision(a) => commands::attest::decision(
+                commands::attest::DecisionArgs {
+                    actor:         a.actor.clone(),
+                    model:         a.model.clone(),
+                    model_version: a.model_version.clone(),
+                    tokens_in:     a.tokens_in,
+                    tokens_out:    a.tokens_out,
+                    prompt_digest: a.prompt_digest.clone(),
+                    summary:       a.summary.clone(),
+                    confidence:    a.confidence,
+                    parent_id:     a.parent.clone(),
+                    config:        cli.config.clone(),
                 },
                 printer,
             ),
