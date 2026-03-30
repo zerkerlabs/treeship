@@ -8,6 +8,18 @@ use treeship_core::{
 
 use crate::{ctx, printer::Printer};
 
+/// Set file permissions to 0600 (owner read/write only) on Unix.
+#[cfg(unix)]
+fn set_restrictive_permissions(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+}
+
+#[cfg(not(unix))]
+fn set_restrictive_permissions(_path: &Path) {
+    // No-op on non-unix platforms
+}
+
 // ---------------------------------------------------------------------------
 // Session manifest (persisted as .treeship/session.json)
 // ---------------------------------------------------------------------------
@@ -96,6 +108,7 @@ pub fn load_session() -> Option<SessionManifest> {
 fn write_last(storage_dir: &str, artifact_id: &str) {
     let last_path = Path::new(storage_dir).join(".last");
     let _ = std::fs::write(&last_path, artifact_id);
+    set_restrictive_permissions(&last_path);
 }
 
 fn resolve_last(storage_dir: &str) -> Option<String> {
@@ -219,6 +232,7 @@ pub fn start(
     let session_path = ts_dir.join("session.json");
     let json = serde_json::to_string_pretty(&manifest)?;
     std::fs::write(&session_path, &json)?;
+    set_restrictive_permissions(&session_path);
 
     // Print output
     printer.blank();
@@ -258,10 +272,28 @@ pub fn status(
 
     let ctx = ctx::open(config)?;
 
+    // Verify the root artifact actually exists in storage
+    let root_verified = if let Some(ref root_id) = manifest.root_artifact_id {
+        ctx.storage.read(root_id).is_ok()
+    } else {
+        false
+    };
+
+    // Don't trust session.json counts -- verify from artifact chain
     let artifact_count = match &manifest.root_artifact_id {
         Some(root_id) => count_chain_artifacts(&ctx, root_id),
         None => 0,
     };
+
+    if !root_verified {
+        if manifest.root_artifact_id.is_some() {
+            printer.warn("session root artifact not found in storage (file may have been modified)", &[]);
+        }
+    }
+
+    if artifact_count != manifest.artifact_count && manifest.artifact_count != 0 {
+        printer.warn("session artifact count mismatch (file may have been modified)", &[]);
+    }
 
     let elapsed_ms = epoch_ms().saturating_sub(manifest.started_at_ms);
     let elapsed_str = format_duration_ms(elapsed_ms);
@@ -274,7 +306,7 @@ pub fn status(
     }
     printer.info(&format!("  actor:     {}", manifest.actor));
     printer.info(&format!("  started:   {} ({} ago)", manifest.started_at, elapsed_str));
-    printer.info(&format!("  receipts:  {}", artifact_count));
+    printer.info(&format!("  receipts:  {} (verified from chain)", artifact_count));
     printer.blank();
     printer.hint("treeship session close --summary \"what was done\"");
     printer.blank();
@@ -300,10 +332,22 @@ pub fn close(
 
     let ctx = ctx::open(config)?;
 
+    // Verify the root artifact actually exists in storage
+    if let Some(ref root_id) = manifest.root_artifact_id {
+        if ctx.storage.read(root_id).is_err() {
+            printer.warn("session root artifact not found in storage (file may have been modified)", &[]);
+        }
+    }
+
+    // Don't trust session.json counts -- verify from artifact chain
     let artifact_count = match &manifest.root_artifact_id {
         Some(root_id) => count_chain_artifacts(&ctx, root_id),
         None => 0,
     };
+
+    if artifact_count != manifest.artifact_count && manifest.artifact_count != 0 {
+        printer.warn("session artifact count mismatch (file may have been modified)", &[]);
+    }
 
     let elapsed_ms = epoch_ms().saturating_sub(manifest.started_at_ms);
 

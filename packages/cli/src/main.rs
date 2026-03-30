@@ -230,6 +230,9 @@ enum DaemonCommand {
         /// Run in foreground (don't background)
         #[arg(long, default_value_t = false)]
         foreground: bool,
+        /// Disable auto-push to Hub (overrides config)
+        #[arg(long, default_value_t = false)]
+        no_push: bool,
     },
     /// Stop the background daemon
     Stop,
@@ -755,9 +758,10 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
         ),
 
         Command::Daemon(sub) => match sub {
-            DaemonCommand::Start { foreground } => commands::daemon::start(
+            DaemonCommand::Start { foreground, no_push } => commands::daemon::start(
                 cli.config.as_deref(),
                 *foreground,
+                *no_push,
                 printer,
             ),
             DaemonCommand::Stop => commands::daemon::stop(printer),

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use treeship_core::{
     attestation::sign,
@@ -7,6 +7,18 @@ use treeship_core::{
 };
 
 use crate::{ctx, printer::Printer};
+
+/// Set file permissions to 0600 (owner read/write only) on Unix.
+#[cfg(unix)]
+fn set_restrictive_permissions(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+}
+
+#[cfg(not(unix))]
+fn set_restrictive_permissions(_path: &Path) {
+    // No-op on non-unix platforms
+}
 
 // ---------------------------------------------------------------------------
 // Pending approval file format
@@ -156,10 +168,13 @@ pub fn write_pending(
 
     let json = serde_json::to_string_pretty(&pending)?;
     std::fs::write(&path, &json)?;
+    set_restrictive_permissions(&path);
     Ok(path)
 }
 
 /// Check if a command has been approved (look for matching .approved file).
+/// Cross-checks the approval nonce against the artifact store to prevent
+/// tampering with the pending JSON file.
 pub fn check_approved(command: &str) -> Option<String> {
     let dir = pending_dir()?;
     if !dir.exists() {
@@ -173,6 +188,20 @@ pub fn check_approved(command: &str) -> Option<String> {
                 if let Ok(data) = std::fs::read_to_string(&path) {
                     if let Ok(pending) = serde_json::from_str::<PendingApproval>(&data) {
                         if pending.approved && pending.command == command {
+                            // Cross-check: verify an approval artifact with this nonce
+                            // exists in storage. Don't trust the pending file alone.
+                            if let Some(ref nonce) = pending.nonce {
+                                if !verify_approval_artifact_exists(nonce) {
+                                    // Approval file says approved but no matching artifact
+                                    // exists -- possible tampering
+                                    let _ = std::fs::remove_file(&path);
+                                    continue;
+                                }
+                            } else {
+                                // No nonce in approval -- invalid
+                                let _ = std::fs::remove_file(&path);
+                                continue;
+                            }
                             let nonce = pending.nonce.clone();
                             // Consume the approval (single-use)
                             let _ = std::fs::remove_file(&path);
@@ -184,6 +213,38 @@ pub fn check_approved(command: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Verify that an approval artifact with the given nonce exists in storage.
+fn verify_approval_artifact_exists(nonce: &str) -> bool {
+    // Walk the storage directory looking for an approval artifact that
+    // contains this nonce. This is a simple scan -- acceptable for the
+    // typical number of artifacts in a local store.
+    let ts_dir = match pending_dir() {
+        Some(d) => d.parent().map(|p| p.to_path_buf()),
+        None => None,
+    };
+    let storage_dir = match ts_dir {
+        Some(ref ts) => ts.join("artifacts"),
+        None => return false,
+    };
+    if !storage_dir.exists() {
+        return false;
+    }
+    if let Ok(entries) = std::fs::read_dir(&storage_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("json") {
+                if let Ok(data) = std::fs::read_to_string(&path) {
+                    // Check if this artifact contains the nonce
+                    if data.contains(nonce) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
 }
 
 // ---------------------------------------------------------------------------
@@ -285,6 +346,7 @@ pub fn approve(
     pa.nonce = Some(nonce.clone());
     let json = serde_json::to_string_pretty(&pa)?;
     std::fs::write(&path, &json)?;
+    set_restrictive_permissions(&path);
 
     // Print
     printer.blank();

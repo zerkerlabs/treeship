@@ -13,6 +13,48 @@ use treeship_core::{
 use crate::{ctx, printer::Printer};
 
 // ---------------------------------------------------------------------------
+// PID file locking
+// ---------------------------------------------------------------------------
+
+/// Acquire an exclusive lock on the PID file. Returns the open file handle
+/// which must be held for the lifetime of the daemon process. The lock is
+/// automatically released when the process exits or crashes.
+fn acquire_pid_lock(pid_path: &Path) -> Result<std::fs::File, Box<dyn std::error::Error>> {
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(pid_path)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+        let fd = file.as_raw_fd();
+        let ret = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
+        if ret != 0 {
+            return Err("daemon already running (PID file locked)".into());
+        }
+    }
+
+    // Set restrictive permissions on PID file
+    set_restrictive_permissions(pid_path);
+
+    Ok(file)
+}
+
+/// Set file permissions to 0600 (owner read/write only) on Unix.
+#[cfg(unix)]
+fn set_restrictive_permissions(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+}
+
+#[cfg(not(unix))]
+fn set_restrictive_permissions(_path: &Path) {
+    // No-op on non-unix platforms
+}
+
+// ---------------------------------------------------------------------------
 // Paths
 // ---------------------------------------------------------------------------
 
@@ -261,6 +303,7 @@ fn resolve_last(storage_dir: &str) -> Option<String> {
 fn write_last(storage_dir: &str, artifact_id: &str) {
     let last_path = Path::new(storage_dir).join(".last");
     let _ = std::fs::write(&last_path, artifact_id);
+    set_restrictive_permissions(&last_path);
 }
 
 fn epoch_secs() -> u64 {
@@ -294,6 +337,7 @@ fn format_uptime(secs: u64) -> String {
 pub fn start(
     config: Option<&str>,
     foreground: bool,
+    no_push: bool,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ts = ts_dir().ok_or("no .treeship directory found -- run treeship init first")?;
@@ -308,21 +352,37 @@ pub fn start(
         return Err("no .treeship/config.yaml found -- run treeship init first".into());
     }
 
+    // Only load config.yaml from trusted locations (must have config.json)
+    let config_json = ts.join("config.json");
+    if !config_json.exists() {
+        return Err("untrusted .treeship directory: config.yaml found without config.json\n\n  Run treeship init to create a trusted configuration.".into());
+    }
+
     // Validate config.yaml is parseable before starting
     let _project = ProjectConfig::load(&config_yaml)?;
 
     // Open context (loads keys + storage)
     let ctx = ctx::open(config)?;
 
-    // Write PID file (pid + start epoch)
+    // Acquire exclusive lock on PID file before writing
     let pid = std::process::id();
     let start_epoch = epoch_secs();
+    let _pid_lock = acquire_pid_lock(&pid_path(&ts))?;
+
+    // Write PID + start epoch to the locked file
     std::fs::write(pid_path(&ts), format!("{} {}", pid, start_epoch))?;
 
     daemon_log(&ts, &format!("daemon started (pid {})", pid));
 
+    if no_push {
+        daemon_log(&ts, "auto-push disabled via --no-push flag");
+    }
+
     printer.blank();
     printer.success("daemon started", &[("pid", &pid.to_string())]);
+    if no_push {
+        printer.dim_info("  auto-push disabled (--no-push)");
+    }
     printer.blank();
 
     if !foreground {
@@ -369,12 +429,13 @@ pub fn start(
 
         file_snapshot = new_snapshot;
 
-        // Auto-push if configured
-        if should_auto_push(&project) {
+        // Auto-push if configured (unless --no-push flag is set)
+        if !no_push && should_auto_push(&project) {
             auto_push_new_artifacts(&ctx, &ts);
         }
     }
 
+    // _pid_lock is dropped here, releasing the file lock
     printer.info("  daemon stopped");
     Ok(())
 }

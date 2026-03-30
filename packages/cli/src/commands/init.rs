@@ -36,6 +36,16 @@ pub fn run(
         .join("keys");
 
     let key_store = KeyStore::open(&keys_dir)?;
+
+    // Set restrictive permissions on keys directory (0700 -- owner only)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if keys_dir.exists() {
+            let _ = std::fs::set_permissions(&keys_dir, std::fs::Permissions::from_mode(0o700));
+        }
+    }
+
     let key_info  = key_store.generate(true)?;
     let ship_id   = format!("ship_{}", key_info.fingerprint);
 
@@ -202,9 +212,23 @@ fn write_project_config(
     let ts_dir = cwd.join(".treeship");
     std::fs::create_dir_all(&ts_dir)?;
 
+    // Set restrictive permissions on .treeship directory (0700 -- owner only)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&ts_dir, std::fs::Permissions::from_mode(0o700));
+    }
+
     let yaml = serde_yaml::to_string(project_config)?;
     let config_path = ts_dir.join("config.yaml");
     std::fs::write(&config_path, yaml)?;
+
+    // Set restrictive permissions on config.yaml
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o600));
+    }
 
     Ok(())
 }

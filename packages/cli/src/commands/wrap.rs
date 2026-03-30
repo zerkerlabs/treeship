@@ -13,6 +13,29 @@ use treeship_core::{
 
 use crate::{ctx, printer::Printer};
 
+/// Sanitize a command string by redacting tokens, keys, passwords, and other
+/// sensitive values that appear as inline environment variables or flags.
+fn sanitize_command(cmd: &str) -> String {
+    let sensitive_patterns = [
+        "KEY=", "TOKEN=", "SECRET=", "PASSWORD=", "PASSWD=", "AUTH=",
+        "API_KEY=", "STRIPE_KEY=", "OPENAI_API_KEY=", "CREDENTIAL=",
+        "AWS_SECRET", "PRIVATE_KEY=", "ACCESS_KEY=",
+        "--api-key=", "--token=", "--secret=", "--password=", "--auth=",
+        "--api_key=", "--apikey=",
+    ];
+    let parts: Vec<&str> = cmd.split_whitespace().collect();
+    let sanitized: Vec<String> = parts.iter().map(|part| {
+        let upper = part.to_uppercase();
+        for pattern in &sensitive_patterns {
+            if upper.contains(pattern) {
+                return "[REDACTED]".to_string();
+            }
+        }
+        part.to_string()
+    }).collect();
+    sanitized.join(" ")
+}
+
 pub fn run(
     actor:     Option<String>,
     action:    Option<String>,
@@ -153,8 +176,10 @@ pub fn run(
     };
 
     // ── Build meta and sign ────────────────────────────────────────────
+    let raw_command = args.join(" ");
+    let safe_command = sanitize_command(&raw_command);
     let mut meta = serde_json::json!({
-        "command":        args.join(" "),
+        "command":        safe_command,
         "exitCode":       exit_code,
         "elapsedMs":      elapsed_ms,
         "output_digest":  output_hash,
@@ -329,6 +354,11 @@ fn resolve_parent(ctx: &ctx::Ctx, explicit: Option<String>) -> Option<String> {
 fn write_last(storage_dir: &str, artifact_id: &str) {
     let last_path = std::path::Path::new(storage_dir).join(".last");
     let _ = std::fs::write(&last_path, artifact_id);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&last_path, std::fs::Permissions::from_mode(0o600));
+    }
 }
 
 /// Get the current git HEAD sha (short), if in a git repo.

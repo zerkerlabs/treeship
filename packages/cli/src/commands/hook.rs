@@ -10,17 +10,58 @@ use treeship_core::{
 use crate::{ctx, printer::Printer};
 
 /// Find .treeship/config.yaml by walking up from cwd.
+/// Only trusts config.yaml from directories that also contain config.json
+/// (indicating treeship was explicitly initialized there). This prevents
+/// a malicious .treeship/config.yaml in a cloned repo from being loaded.
 fn find_project_config() -> Option<PathBuf> {
     let mut dir = std::env::current_dir().ok()?;
     loop {
-        let candidate = dir.join(".treeship").join("config.yaml");
-        if candidate.exists() {
-            return Some(candidate);
+        let config_yaml = dir.join(".treeship").join("config.yaml");
+        let config_json = dir.join(".treeship").join("config.json");
+        // Only trust config.yaml if there's also a config.json (initialized treeship)
+        if config_yaml.exists() && config_json.exists() {
+            return Some(config_yaml);
         }
         if !dir.pop() {
             return None;
         }
     }
+}
+
+/// Sanitize a command string by redacting tokens, keys, passwords, and other
+/// sensitive values that appear as inline environment variables or flags.
+/// Uses simple string matching (no regex crate dependency).
+fn sanitize_command(cmd: &str) -> String {
+    let sensitive_patterns = [
+        "KEY=", "TOKEN=", "SECRET=", "PASSWORD=", "PASSWD=", "AUTH=",
+        "API_KEY=", "STRIPE_KEY=", "OPENAI_API_KEY=", "CREDENTIAL=",
+        "AWS_SECRET", "PRIVATE_KEY=", "ACCESS_KEY=",
+        "--api-key=", "--token=", "--secret=", "--password=", "--auth=",
+        "--api_key=", "--apikey=",
+    ];
+    let parts: Vec<&str> = cmd.split_whitespace().collect();
+    let sanitized: Vec<String> = parts.iter().map(|part| {
+        let upper = part.to_uppercase();
+        for pattern in &sensitive_patterns {
+            if upper.contains(pattern) {
+                return "[REDACTED]".to_string();
+            }
+        }
+        part.to_string()
+    }).collect();
+    sanitized.join(" ")
+}
+
+/// Set file permissions to 0600 (owner read/write only) on Unix.
+#[cfg(unix)]
+fn set_restrictive_permissions(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+}
+
+#[cfg(not(unix))]
+fn set_restrictive_permissions(_path: &Path) {
+    // No-op on non-unix platforms
 }
 
 /// Pre-hook: called before a command runs.
@@ -70,9 +111,12 @@ pub fn pre(command: &str, printer: &Printer) -> Result<(), Box<dyn std::error::E
         }
     }
 
+    // Sanitize the command before storing to prevent leaking secrets
+    let safe_command = sanitize_command(command);
+
     // Store pre-execution state for post-hook
     let pending_hook = serde_json::json!({
-        "command": command,
+        "command": safe_command,
         "label": matched.label,
         "timestamp": now_rfc3339(),
         "git_head": git_head_sha(),
@@ -81,6 +125,7 @@ pub fn pre(command: &str, printer: &Printer) -> Result<(), Box<dyn std::error::E
 
     let pending_path = ts_dir.join(".pending_hook");
     std::fs::write(&pending_path, serde_json::to_string(&pending_hook)?)?;
+    set_restrictive_permissions(&pending_path);
 
     Ok(())
 }
@@ -219,6 +264,7 @@ fn resolve_last(storage_dir: &str) -> Option<String> {
 fn write_last(storage_dir: &str, artifact_id: &str) {
     let last_path = Path::new(storage_dir).join(".last");
     let _ = std::fs::write(&last_path, artifact_id);
+    set_restrictive_permissions(&last_path);
 }
 
 fn git_head_sha() -> Option<String> {

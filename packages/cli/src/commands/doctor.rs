@@ -12,6 +12,7 @@ use treeship_core::rules::ProjectConfig;
 enum CheckStatus {
     Pass,
     Fail,
+    Warn,
     Info,
 }
 
@@ -35,6 +36,15 @@ impl Check {
     fn fail(label: &str, detail: &str, suggestion: &str) -> Self {
         Self {
             status: CheckStatus::Fail,
+            label: label.to_string(),
+            detail: detail.to_string(),
+            suggestion: Some(suggestion.to_string()),
+        }
+    }
+
+    fn warn(label: &str, detail: &str, suggestion: &str) -> Self {
+        Self {
+            status: CheckStatus::Warn,
             label: label.to_string(),
             detail: detail.to_string(),
             suggestion: Some(suggestion.to_string()),
@@ -321,7 +331,68 @@ pub fn run(
         ));
     }
 
-    // 9. Is there an active session?
+    // ---- Security checks ----
+
+    // 9. Check .treeship directory permissions
+    if let Some(ref ts_path) = ts {
+        check_directory_permissions(ts_path, &mut checks);
+    }
+
+    // 10. Check keys/ directory permissions
+    if let Some(ref ts_path) = ts {
+        let keys_dir = ts_path.join("keys");
+        if keys_dir.exists() {
+            check_keys_directory_permissions(&keys_dir, &mut checks);
+        }
+    }
+
+    // 11. Check for untrusted config (config.yaml without config.json)
+    if let Some(ref ts_path) = ts {
+        let config_yaml = ts_path.join("config.yaml");
+        let config_json = ts_path.join("config.json");
+        if config_yaml.exists() && !config_json.exists() {
+            checks.push(Check::warn(
+                "untrusted config detected",
+                "config.yaml found without matching config.json",
+                "treeship init",
+            ));
+        }
+    }
+
+    // 12. Show auto-push status
+    if let Some(ref ts_path) = ts {
+        let config_yaml = ts_path.join("config.yaml");
+        if config_yaml.exists() {
+            if let Ok(project) = ProjectConfig::load(&config_yaml) {
+                if let Some(ref hub) = project.hub {
+                    if hub.auto_push {
+                        checks.push(Check::info(
+                            "auto-push enabled",
+                            "artifacts pushed to Hub automatically",
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    // 13. Verify PID file has valid, running process (stale PID check)
+    if !daemon_running {
+        if let Some(ref ts_path) = ts {
+            let pid_file = ts_path.join("daemon.pid");
+            if pid_file.exists() {
+                checks.push(Check::warn(
+                    "stale PID file",
+                    "daemon.pid exists but process is not running",
+                    "treeship daemon start",
+                ));
+                // Clean up stale PID file
+                let _ = std::fs::remove_file(&pid_file);
+            }
+        }
+    }
+
+    // 14. Is there an active session?
     if let Some(manifest) = super::session::load_session() {
         let elapsed_ms = epoch_ms().saturating_sub(manifest.started_at_ms);
         let elapsed_str = format_duration_ms(elapsed_ms);
@@ -351,6 +422,7 @@ pub fn run(
     // Print all checks
     let mut pass_count = 0usize;
     let mut fail_count = 0usize;
+    let mut warn_count = 0usize;
     let mut suggestions: Vec<String> = Vec::new();
 
     for check in &checks {
@@ -365,6 +437,13 @@ pub fn run(
                     suggestions.push(sug.clone());
                 }
                 ("✗", Box::new(|p: &Printer, s: &str| p.red(s)))
+            }
+            CheckStatus::Warn => {
+                warn_count += 1;
+                if let Some(ref sug) = check.suggestion {
+                    suggestions.push(sug.clone());
+                }
+                ("!", Box::new(|p: &Printer, s: &str| p.yellow(s)))
             }
             CheckStatus::Info => {
                 ("·", Box::new(|p: &Printer, s: &str| p.dim(s)))
@@ -385,18 +464,28 @@ pub fn run(
     printer.dim_info(separator);
 
     // Summary
-    if fail_count == 0 {
+    if fail_count == 0 && warn_count == 0 {
         printer.info(&format!(
             "  {} passed, all good",
             printer.green(&pass_count.to_string()),
         ));
     } else {
-        printer.info(&format!(
-            "  {} passed, {} {}",
-            printer.green(&pass_count.to_string()),
-            printer.red(&fail_count.to_string()),
-            if fail_count == 1 { "issue found" } else { "issues found" },
-        ));
+        let mut summary_parts = vec![format!("{} passed", printer.green(&pass_count.to_string()))];
+        if fail_count > 0 {
+            summary_parts.push(format!(
+                "{} {}",
+                printer.red(&fail_count.to_string()),
+                if fail_count == 1 { "issue" } else { "issues" },
+            ));
+        }
+        if warn_count > 0 {
+            summary_parts.push(format!(
+                "{} {}",
+                printer.yellow(&warn_count.to_string()),
+                if warn_count == 1 { "warning" } else { "warnings" },
+            ));
+        }
+        printer.info(&format!("  {}", summary_parts.join(", ")));
     }
 
     // Suggestions
@@ -461,6 +550,65 @@ fn format_uptime_secs(secs: u64) -> String {
         let m = (secs % 3600) / 60;
         format!("{}h {}m", h, m)
     }
+}
+
+/// Check .treeship directory permissions and warn if world-readable.
+#[cfg(unix)]
+fn check_directory_permissions(ts_path: &Path, checks: &mut Vec<Check>) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Ok(meta) = std::fs::metadata(ts_path) {
+        let mode = meta.permissions().mode();
+        // Check if others have read or write access (o+rw)
+        if mode & 0o077 != 0 {
+            checks.push(Check::warn(
+                ".treeship permissions",
+                &format!("directory is accessible by other users (mode {:o})", mode & 0o777),
+                "chmod 700 .treeship",
+            ));
+        } else {
+            checks.push(Check::pass(
+                ".treeship permissions",
+                &format!("restricted (mode {:o})", mode & 0o777),
+            ));
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn check_directory_permissions(_ts_path: &Path, checks: &mut Vec<Check>) {
+    checks.push(Check::info(
+        ".treeship permissions",
+        "permission check not available on this platform",
+    ));
+}
+
+/// Check keys/ directory permissions (should be 0700).
+#[cfg(unix)]
+fn check_keys_directory_permissions(keys_dir: &Path, checks: &mut Vec<Check>) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Ok(meta) = std::fs::metadata(keys_dir) {
+        let mode = meta.permissions().mode();
+        if mode & 0o077 != 0 {
+            checks.push(Check::warn(
+                "keys/ permissions",
+                &format!("key directory accessible by other users (mode {:o})", mode & 0o777),
+                "chmod 700 .treeship/keys",
+            ));
+        } else {
+            checks.push(Check::pass(
+                "keys/ permissions",
+                &format!("restricted (mode {:o})", mode & 0o777),
+            ));
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn check_keys_directory_permissions(_keys_dir: &Path, checks: &mut Vec<Check>) {
+    checks.push(Check::info(
+        "keys/ permissions",
+        "permission check not available on this platform",
+    ));
 }
 
 /// Count artifacts in chain from .last back to root_id.

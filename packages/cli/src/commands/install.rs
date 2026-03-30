@@ -5,37 +5,62 @@ use crate::printer::Printer;
 const MARKER_START: &str = "# Treeship shell hook -- installed by treeship install";
 const MARKER_END: &str = "# End Treeship shell hook";
 
-const ZSH_HOOK: &str = r#"# Treeship shell hook -- installed by treeship install
-treeship_preexec() {
-  treeship hook pre "$1" 2>/dev/null
+/// Resolve the absolute path to the current treeship binary for use in
+/// shell hooks. Using an absolute path prevents PATH hijacking attacks
+/// where a malicious binary could intercept all attested commands.
+fn treeship_binary_path() -> String {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.to_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| "treeship".to_string())
 }
+
+fn zsh_hook(bin: &str) -> String {
+    format!(
+        r#"# Treeship shell hook -- installed by treeship install
+treeship_preexec() {{
+  {bin} hook pre "$1" 2>/dev/null
+}}
 autoload -Uz add-zsh-hook
 add-zsh-hook preexec treeship_preexec
 
-treeship_precmd() {
-  treeship hook post "$?" 2>/dev/null
-}
+treeship_precmd() {{
+  {bin} hook post "$?" 2>/dev/null
+}}
 add-zsh-hook precmd treeship_precmd
-# End Treeship shell hook"#;
-
-const BASH_HOOK: &str = r#"# Treeship shell hook -- installed by treeship install
-treeship_preexec() {
-  treeship hook pre "$BASH_COMMAND" 2>/dev/null
+# End Treeship shell hook"#,
+        bin = bin
+    )
 }
+
+fn bash_hook(bin: &str) -> String {
+    format!(
+        r#"# Treeship shell hook -- installed by treeship install
+treeship_preexec() {{
+  {bin} hook pre "$BASH_COMMAND" 2>/dev/null
+}}
 trap 'treeship_preexec' DEBUG
 
-PROMPT_COMMAND="treeship hook post \$? 2>/dev/null; ${PROMPT_COMMAND}"
-# End Treeship shell hook"#;
+PROMPT_COMMAND="{bin} hook post \$? 2>/dev/null; ${{PROMPT_COMMAND}}"
+# End Treeship shell hook"#,
+        bin = bin
+    )
+}
 
-const FISH_HOOK: &str = r#"# Treeship shell hook -- installed by treeship install
+fn fish_hook(bin: &str) -> String {
+    format!(
+        r#"# Treeship shell hook -- installed by treeship install
 function treeship_preexec --on-event fish_preexec
-  treeship hook pre "$argv" 2>/dev/null
+  {bin} hook pre "$argv" 2>/dev/null
 end
 
 function treeship_postexec --on-event fish_postexec
-  treeship hook post $status 2>/dev/null
+  {bin} hook post $status 2>/dev/null
 end
-# End Treeship shell hook"#;
+# End Treeship shell hook"#,
+        bin = bin
+    )
+}
 
 #[derive(Debug, Clone, Copy)]
 enum Shell {
@@ -75,11 +100,11 @@ impl Shell {
         })
     }
 
-    fn hook_text(&self) -> &'static str {
+    fn hook_text(&self, bin_path: &str) -> String {
         match self {
-            Shell::Zsh => ZSH_HOOK,
-            Shell::Bash => BASH_HOOK,
-            Shell::Fish => FISH_HOOK,
+            Shell::Zsh => zsh_hook(bin_path),
+            Shell::Bash => bash_hook(bin_path),
+            Shell::Fish => fish_hook(bin_path),
         }
     }
 }
@@ -149,6 +174,9 @@ pub fn install(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
         std::fs::create_dir_all(parent)?;
     }
 
+    // Use absolute path to the treeship binary to prevent PATH hijacking
+    let bin_path = treeship_binary_path();
+
     // Append hook to shell config
     let mut contents = if config_path.exists() {
         std::fs::read_to_string(&config_path)?
@@ -160,7 +188,7 @@ pub fn install(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
         contents.push('\n');
     }
     contents.push('\n');
-    contents.push_str(shell.hook_text());
+    contents.push_str(&shell.hook_text(&bin_path));
     contents.push('\n');
 
     std::fs::write(&config_path, &contents)?;
