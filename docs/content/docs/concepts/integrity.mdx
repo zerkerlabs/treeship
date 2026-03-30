@@ -1,0 +1,114 @@
+---
+title: Chain integrity
+description: How Treeship ensures your receipt chain is tamper-evident and complete.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Treeship receipt chains are tamper-evident by construction. Every artifact is content-addressed, signed, and linked to the previous artifact. Breaking any link changes all subsequent IDs. This page explains each layer of the integrity model.
+
+## Hash chaining
+
+Every receipt references the previous receipt's artifact ID via `parent_id`. This creates an ordered, append-only chain.
+
+```
+art_a1b2c3... (approval)
+  <- art_d4e5f6... (action, parent_id = art_a1b2c3...)
+    <- art_g7h8i9... (confirmation, parent_id = art_d4e5f6...)
+```
+
+If someone modifies the approval artifact, its ID changes. The action artifact still references the old ID. The chain breaks. `treeship verify` catches this immediately.
+
+## Content-addressed IDs
+
+Artifact IDs are derived from the artifact's content:
+
+```
+art_ + hex(sha256(PAE bytes)[:16])
+```
+
+The ID is not assigned. It is computed. Change one byte of the artifact and the ID changes. There is no way to modify an artifact while preserving its ID.
+
+<Callout type="info">
+PAE (Pre-Authentication Encoding) is the DSSE standard for encoding payload type and payload before signing. The ID is derived from the same bytes that are signed.
+</Callout>
+
+This means verification is simple: recompute the ID from the content and compare. If they match, the content has not been modified.
+
+## DSSE signatures
+
+Every receipt is wrapped in a Dead Simple Signing Envelope (DSSE). The signature covers PAE-encoded bytes:
+
+```
+PAE(payloadType, payload)
+```
+
+The signing key is Ed25519. Verification requires only the public key and the envelope. No network call, no certificate chain, no token exchange.
+
+```bash
+# Verify all signatures in the chain
+treeship verify --full
+```
+
+The verify page at treeship.dev performs the same verification client-side via WASM. The same Rust code that signs artifacts in the CLI verifies them in the browser.
+
+## Approval nonce binding
+
+Single-use nonces prevent approval reuse. The approval artifact contains a nonce. The action artifact must echo that nonce. Verification checks the match.
+
+```bash
+# Approval creates the nonce
+treeship attest approval \
+  --approver human://alice \
+  --description "approve deployment to staging"
+# Output includes: nonce = "n_8f3a..."
+
+# Action must echo the nonce
+treeship wrap \
+  --approval-nonce n_8f3a... \
+  -- kubectl apply -f staging.yaml
+```
+
+If an agent tries to reuse a nonce, verification fails. One approval, one action. No replay.
+
+## Rekor anchoring
+
+When docked to the Hub, receipts are optionally anchored to Sigstore's Rekor transparency log. This provides a public, immutable timestamp: proof the receipt existed before a certain time.
+
+Rekor anchoring adds a property that local hash chaining cannot provide on its own: third-party proof of time. A local chain proves ordering (A before B before C). A Rekor entry proves "A existed before 2026-03-28T14:30:00Z" according to a public log that Treeship does not control.
+
+```bash
+treeship verify --full
+```
+
+Output with Rekor anchoring:
+
+```
+Chain integrity .............. PASS
+Signature verification ....... PASS (3/3 artifacts)
+Nonce binding ................ PASS
+Rekor anchor ................. PASS (entry 24658012, 2026-03-28T14:30:00Z)
+```
+
+## Checkpoints (future)
+
+The next step beyond hash chaining: signed Merkle roots over batches of artifacts. A checkpoint proves a receipt was in the log at a specific point in time, even if the full log is not available.
+
+Checkpoints will provide:
+- **Batch integrity**: a single signature covers thousands of artifacts
+- **Inclusion proofs**: prove a specific artifact was in the batch without revealing other artifacts
+- **Consistency proofs**: prove the log only grows, never rewrites
+
+This is not yet implemented. The hash chaining and Rekor anchoring layers provide strong integrity guarantees today. Checkpoints will add scalability and privacy properties when they ship.
+
+## Verification summary
+
+When you run `treeship verify --full`, these are the checks:
+
+| Check | What it proves |
+|-------|---------------|
+| Hash chain | Artifacts are ordered and unmodified |
+| Content-addressed IDs | No artifact has been tampered with |
+| DSSE signatures | Each artifact was signed by the claimed key |
+| Nonce binding | Each action was authorized by a specific approval |
+| Rekor anchor | The chain existed before a public timestamp |

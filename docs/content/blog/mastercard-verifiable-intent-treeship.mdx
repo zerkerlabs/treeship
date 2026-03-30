@@ -1,0 +1,77 @@
+---
+title: "Mastercard Verifiable Intent and Treeship"
+description: "How Treeship's approval receipts align with Mastercard's open standard for agent commerce."
+date: 2026-03-24
+tags: ["standards", "commerce"]
+readTime: "5 min read"
+---
+
+Mastercard's [Verifiable Intent](https://verifiableintent.dev/) is an open standard for proving an agent was authorized to make a purchase. It addresses the same problem Treeship solves: how do you prove intent and authorization in agent commerce?
+
+The two systems approach this from different angles but converge on the same core primitive: a signed authorization that binds to a specific action.
+
+## The alignment
+
+Verifiable Intent proves: "this agent was allowed to buy this thing."
+
+Treeship proves: "this human approved, this agent acted, here is the cryptographic evidence."
+
+Both start from the same assumption: bearer tokens are not enough. A token proves the agent has access. It does not prove the agent was authorized for a specific action. Authorization needs to be scoped, signed, and verifiable.
+
+## How Treeship maps to Verifiable Intent
+
+The concepts translate directly:
+
+| Treeship | Verifiable Intent | What it does |
+|----------|-------------------|--------------|
+| Approval artifact | Intent credential | Proves authorization was granted |
+| Nonce binding | Authorization binding | Links authorization to a specific action |
+| Verify page / CLI | Verification endpoint | Confirms the chain is valid |
+| Receipt chain | Audit trail | Full history from intent to execution |
+
+The mapping is not accidental. Both systems are solving for the same threat model: an agent acting without authorization and no one being able to prove it after the fact.
+
+## A concrete example
+
+An agent purchasing cloud compute credits:
+
+### Treeship side
+
+```bash
+# Human approves
+treeship attest approval \
+  --approver human://devops-lead \
+  --description "approve up to $200 for cloud compute credits"
+
+# Agent acts
+treeship wrap \
+  --approval-nonce nonce_x7k9 \
+  -- curl -X POST https://api.cloudvendor.com/v1/credits \
+    -d '{"amount": 150, "currency": "USD"}'
+
+# Verify
+treeship verify --full
+```
+
+### Verifiable Intent side
+
+The approval receipt from Treeship contains the same information a Verifiable Intent credential needs: who approved, what was approved, the scope, the binding to a specific action.
+
+## The bridge
+
+A Treeship approval receipt can be translated into a Verifiable Intent credential. The fields map:
+
+- **Approver identity** -> Verifiable Intent issuer
+- **Approval scope** -> Verifiable Intent authorization constraints
+- **Nonce** -> Verifiable Intent binding reference
+- **Ed25519 signature** -> Verifiable Intent proof
+
+The translation is mechanical. The cryptographic foundation (Ed25519 signatures, content-addressed IDs) is compatible with Verifiable Intent's requirements.
+
+## Future
+
+Treeship could emit Verifiable Intent-compatible credentials alongside its native receipts. A single `treeship attest approval` could produce both a Treeship artifact and a Verifiable Intent credential, letting the agent present whichever format the counterparty expects.
+
+This is not built yet. The foundation is in place: the signature scheme, the approval model, the nonce binding. The credential format translation is engineering work, not a design change.
+
+For now, Treeship receipts and Verifiable Intent credentials solve the same problem with compatible approaches. As agent commerce matures, the standards will converge. Treeship will be ready.

@@ -1,0 +1,88 @@
+---
+title: "Agent Payments: Lobster.cash + Treeship"
+description: "Lobster.cash handles wallet and settlement. Treeship proves what happened."
+date: 2026-03-26
+tags: ["integrations", "commerce"]
+readTime: "5 min read"
+---
+
+[Lobster.cash](https://www.lobster.cash/) (by Crossmint) gives agents a payment layer: wallet provisioning, transaction signing, settlement. Treeship adds the verification layer: every transaction gets a signed receipt.
+
+Together, they solve both halves of the agent payment problem. Lobster.cash answers "how does the agent pay?" Treeship answers "can anyone prove the agent was authorized to pay?"
+
+## Separation of concerns
+
+The two systems own different things:
+
+| Layer | Owner | Responsibility |
+|-------|-------|----------------|
+| Wallets, signing, settlement | Lobster.cash | Move the money |
+| Approval, attestation, verification | Treeship | Prove what happened |
+| Intent and business logic | The agent | Decide what to do |
+
+This separation matters. Payment infrastructure and trust infrastructure have different threat models. Combining them creates a single point of failure. Keeping them separate means each system can be audited, upgraded, and secured independently.
+
+## The flow
+
+### 1. Agent gets human approval
+
+```bash
+treeship attest approval \
+  --approver human://ops \
+  --description "approve $49.99 USDC for API credits"
+```
+
+### 2. Agent calls Lobster.cash to execute payment
+
+The agent calls the Lobster.cash API to send USDC. This is a standard API call, nothing Treeship-specific.
+
+### 3. Agent attests the result
+
+Option A: Wrap the API call directly.
+
+```bash
+treeship wrap \
+  --approval-nonce abc123def456 \
+  -- curl -X POST https://api.lobster.cash/v1/payments \
+    -H "Authorization: Bearer $LOBSTER_TOKEN" \
+    -d '{"amount": "49.99", "currency": "USDC", "recipient": "0x..."}'
+```
+
+Option B: Attest the result after the fact.
+
+```bash
+treeship attest action \
+  --actor agent://payments \
+  --action lobster.payment.create \
+  --approval-nonce abc123def456 \
+  --meta '{"tx_id": "7f2a...", "amount_usdc": 49.99, "recipient": "0x..."}'
+```
+
+Both produce a signed receipt that binds the payment to the approval.
+
+### 4. The receipt chain is complete
+
+The chain now proves:
+
+```
+human://ops approved "$49.99 USDC for API credits"
+  -> agent://payments intended lobster.payment.create
+    -> Lobster.cash executed tx 7f2a...
+      -> receipt signed and chained
+```
+
+### 5. Anyone can verify
+
+```bash
+treeship verify --full
+```
+
+The receipt travels with the transaction. Verification happens offline, client-side. No callback to Treeship or Lobster.cash required.
+
+## Why this pairing works
+
+Lobster.cash solves the hard problem of agent wallets: provisioning, key management, transaction signing, settlement finality. Building this from scratch is months of work and a significant security surface.
+
+Treeship solves the hard problem of provable authorization: who approved, what was approved, did the action match the approval. Building this from scratch is also months of work and a different security surface.
+
+An agent using both gets wallet infrastructure and trust infrastructure without building either. The receipts from Treeship and the transaction confirmations from Lobster.cash form a complete audit trail from human intent to settled payment.
