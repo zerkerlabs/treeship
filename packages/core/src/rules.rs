@@ -94,6 +94,17 @@ pub struct MatchResult {
 }
 
 // ---------------------------------------------------------------------------
+// Path match result
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PathMatchResult {
+    pub label: String,
+    pub alert: bool,
+    pub on: String,
+}
+
+// ---------------------------------------------------------------------------
 // Simple wildcard matching
 // ---------------------------------------------------------------------------
 
@@ -120,6 +131,23 @@ fn wildcard_match(pattern: &str, value: &str) -> bool {
         // exact match
         pattern == value
     }
+}
+
+/// Match a file path against a path pattern.
+///
+/// Supports:
+///   "src/**"       -- matches anything under src/
+///   "*lock*"       -- matches any path containing "lock"
+///   "*.env*"       -- matches any path containing ".env"
+///   "Cargo.toml"   -- exact match
+fn path_matches(pattern: &str, path: &str) -> bool {
+    // Handle directory glob: "src/**" matches "src/foo.rs", "src/bar/baz.ts"
+    if pattern.ends_with("/**") {
+        let prefix = &pattern[..pattern.len() - 3];
+        return path.starts_with(prefix);
+    }
+    // Fall through to general wildcard matching
+    wildcard_match(pattern, path)
 }
 
 // ---------------------------------------------------------------------------
@@ -195,6 +223,23 @@ impl ProjectConfig {
             approvals: Some(approvals),
             hub: None,
         }
+    }
+
+    /// Match a file path against the configured path rules.
+    ///
+    /// Returns `Some(PathMatchResult)` when the path matches a rule,
+    /// `None` when no rule matches.
+    pub fn match_path(&self, path: &str) -> Option<PathMatchResult> {
+        for rule in &self.attest.paths {
+            if path_matches(&rule.path, path) {
+                return Some(PathMatchResult {
+                    label: rule.label.clone().unwrap_or_else(|| "file change".to_string()),
+                    alert: rule.alert,
+                    on: rule.on.clone(),
+                });
+            }
+        }
+        None
     }
 
     /// Match a command string against the configured rules.
@@ -540,5 +585,67 @@ attest:
         assert_eq!(env_rule.on, "access");
         assert!(env_rule.alert);
         assert_eq!(env_rule.label.as_deref(), Some("env file access"));
+    }
+
+    #[test]
+    fn test_path_match_directory_glob() {
+        let cfg = load_sample();
+        let m = cfg.match_path("src/foo.rs").expect("should match src/**");
+        assert_eq!(m.label, "file change"); // no label set for src/**
+        assert_eq!(m.on, "write");
+    }
+
+    #[test]
+    fn test_path_match_directory_glob_nested() {
+        let cfg = load_sample();
+        let m = cfg.match_path("src/bar/baz.ts").expect("should match src/**");
+        assert_eq!(m.on, "write");
+    }
+
+    #[test]
+    fn test_path_match_lock_wildcard() {
+        let cfg = load_sample();
+        let m = cfg.match_path("package-lock.json").expect("should match *lock*");
+        assert_eq!(m.label, "dependency change");
+        assert_eq!(m.on, "change");
+    }
+
+    #[test]
+    fn test_path_match_cargo_lock() {
+        let cfg = load_sample();
+        let m = cfg.match_path("Cargo.lock").expect("should match *lock*");
+        assert_eq!(m.label, "dependency change");
+    }
+
+    #[test]
+    fn test_path_match_env_file() {
+        let cfg = load_sample();
+        let m = cfg.match_path(".env").expect("should match *.env*");
+        assert_eq!(m.label, "env file access");
+        assert!(m.alert);
+        assert_eq!(m.on, "access");
+    }
+
+    #[test]
+    fn test_path_match_env_local() {
+        let cfg = load_sample();
+        let m = cfg.match_path(".env.local").expect("should match *.env*");
+        assert_eq!(m.label, "env file access");
+        assert!(m.alert);
+    }
+
+    #[test]
+    fn test_path_no_match() {
+        let cfg = load_sample();
+        assert!(cfg.match_path("README.md").is_none());
+        assert!(cfg.match_path("docs/intro.txt").is_none());
+    }
+
+    #[test]
+    fn test_path_match_first_rule_wins() {
+        // src/foo.rs matches "src/**" first
+        let cfg = load_sample();
+        let m = cfg.match_path("src/foo.rs").unwrap();
+        assert_eq!(m.on, "write");
     }
 }

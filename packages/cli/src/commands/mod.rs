@@ -11,3 +11,5 @@ pub mod install;
 pub mod log;
 pub mod session;
 pub mod approve;
+pub mod daemon;
+pub mod doctor;

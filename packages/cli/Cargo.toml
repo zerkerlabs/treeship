@@ -20,3 +20,6 @@ hex = "0.4"
 ureq = { version = "2", features = ["json"] }
 sha2 = "0.10"
 serde_yaml = "0.9"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

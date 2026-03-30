@@ -80,6 +80,26 @@ pub fn run(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::e
     }
     printer.blank();
 
+    // Daemon status
+    printer.section("daemon");
+    let (daemon_running, daemon_pid, daemon_uptime) = super::daemon::daemon_info();
+    if daemon_running {
+        let pid = daemon_pid.unwrap_or(0);
+        let uptime_str = daemon_uptime
+            .map(|s| format_duration_ms(s * 1000))
+            .unwrap_or_else(|| "unknown".to_string());
+        printer.info(&format!(
+            "  {} running  pid {}  (uptime: {})",
+            printer.green("●"),
+            pid,
+            uptime_str,
+        ));
+    } else {
+        printer.info(&format!("  {} stopped", printer.dim("○")));
+        printer.hint("treeship daemon start");
+    }
+    printer.blank();
+
     // Hub status
     printer.section("hub");
     match cfg.hub.status.as_str() {

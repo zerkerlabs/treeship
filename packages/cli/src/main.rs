@@ -197,8 +197,44 @@ enum Command {
     ///   treeship deny 2
     Deny(DenyArgs),
 
+    /// Background daemon for automatic file watching
+    ///
+    /// The daemon watches your project for file changes and automatically
+    /// creates signed receipts for changes matching your rules.
+    ///
+    /// Examples:
+    ///   treeship daemon start
+    ///   treeship daemon start --foreground
+    ///   treeship daemon stop
+    ///   treeship daemon status
+    #[command(subcommand)]
+    Daemon(DaemonCommand),
+
+    /// Diagnostic check -- verify everything is working
+    ///
+    /// Checks initialization, keys, config, shell hooks, daemon,
+    /// Hub connection, storage, and active sessions.
+    ///
+    /// Examples:
+    ///   treeship doctor
+    Doctor,
+
     /// Print version and build info
     Version,
+}
+
+#[derive(Subcommand)]
+enum DaemonCommand {
+    /// Start the background daemon
+    Start {
+        /// Run in foreground (don't background)
+        #[arg(long, default_value_t = false)]
+        foreground: bool,
+    },
+    /// Stop the background daemon
+    Stop,
+    /// Check daemon status
+    Status,
 }
 
 // --- init -------------------------------------------------------------------
@@ -717,6 +753,18 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             cli.config.as_deref(),
             printer,
         ),
+
+        Command::Daemon(sub) => match sub {
+            DaemonCommand::Start { foreground } => commands::daemon::start(
+                cli.config.as_deref(),
+                *foreground,
+                printer,
+            ),
+            DaemonCommand::Stop => commands::daemon::stop(printer),
+            DaemonCommand::Status => commands::daemon::status(printer),
+        },
+
+        Command::Doctor => commands::doctor::run(cli.config.as_deref(), printer),
 
         Command::Attest(sub) => match sub {
             AttestCommand::Action(a) => {
