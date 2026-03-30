@@ -1,0 +1,66 @@
+---
+title: session
+description: Manage attestation sessions -- start, inspect, and close.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+A session groups related attestations together. All artifacts created while a session is active are linked to that session automatically.
+
+## treeship session start
+
+Start a new session.
+
+```bash
+treeship session start
+treeship session start --name "deploy-v2.3"
+treeship session start --actor agent://deployer
+```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--name <text>` | Human-readable session name |
+| `--actor <uri>` | Default actor URI for all attestations in this session |
+
+Once started, the session ID is printed to stdout and stored in `~/.treeship/session.json`. All subsequent `treeship attest` commands inherit the session context until it is closed.
+
+## treeship session status
+
+Show the current session state.
+
+```bash
+treeship session status
+```
+
+Outputs the session ID, name, actor, start time, and artifact count.
+
+```
+Session: ses_a1b2c3d4
+Name:    deploy-v2.3
+Actor:   agent://deployer
+Started: 2026-03-30T14:22:01Z
+Artifacts: 12
+```
+
+If no session is active, exits with code 1.
+
+## treeship session close
+
+Close the active session.
+
+```bash
+treeship session close
+treeship session close --summary "Deployed v2.3 to production, 12 artifacts"
+```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--summary <text>` | Plain-text summary of what the session accomplished |
+
+<Callout type="info">
+Closing a session creates a final session-close artifact that seals the chain. After closing, new attestations start a fresh chain unless another session is opened.
+</Callout>

@@ -1,0 +1,45 @@
+---
+title: log
+description: View recent attestation receipts.
+---
+
+## treeship log
+
+List recent receipts from the local store.
+
+```bash
+treeship log
+treeship log --tail 20
+```
+
+Output:
+
+```
+art_a1b2c3  2026-03-30T14:22:01Z  action    agent://deployer    deploy.start
+art_d4e5f6  2026-03-30T14:22:03Z  decision  agent://analyst     contract review
+art_g7h8i9  2026-03-30T14:22:05Z  approval  human://alice       approve payment
+```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--tail <N>` | Show the last N receipts (default: 10) |
+| `--follow` | Stream new receipts as they arrive |
+| `--format <text\|json>` | Output format (default: `text`) |
+| `--session <id>` | Filter by session ID |
+| `--actor <uri>` | Filter by actor URI |
+
+## treeship log --follow
+
+Stream receipts in real time. Useful for monitoring agent activity during a session.
+
+```bash
+treeship log --follow
+```
+
+Press `Ctrl+C` to stop. Pairs well with `--format json` for piping into other tools:
+
+```bash
+treeship log --follow --format json | jq '.action'
+```

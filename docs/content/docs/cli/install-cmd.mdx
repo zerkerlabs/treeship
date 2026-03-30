@@ -1,0 +1,47 @@
+---
+title: install / uninstall
+description: Install and remove shell hooks for automatic attestation.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+## treeship install
+
+Install shell hooks that automatically attest matching commands.
+
+```bash
+treeship install
+```
+
+This appends a hook to your shell profile (`.bashrc`, `.zshrc`, or `.config/fish/config.fish`). The hook intercepts commands that match your configured path rules and wraps them with `treeship wrap` automatically.
+
+After installing, restart your shell or source your profile:
+
+```bash
+source ~/.zshrc
+```
+
+### What the hooks do
+
+When a command matches a configured pattern, the hook:
+
+1. Creates an intent artifact before the command runs
+2. Executes the command normally
+3. Creates a receipt artifact after the command completes
+4. Links both artifacts to the active session (if one exists)
+
+You configure which commands get attested in `~/.treeship/config.json` under the `hooks.patterns` key.
+
+## treeship uninstall
+
+Remove shell hooks.
+
+```bash
+treeship uninstall
+```
+
+This removes the Treeship hook block from your shell profile. Existing attestations are not affected.
+
+<Callout type="info">
+The hooks only attest commands that match your configured patterns. They do not capture or store command arguments or output -- only their SHA-256 digests.
+</Callout>

@@ -18,18 +18,33 @@ cargo install treeship
 treeship init                           # set up a new Treeship
 treeship status                         # show state, keys, dock status
 
+# Sessions
+treeship session start [--name NAME]    # start a new session
+treeship session status                 # show current session state
+treeship session close [--summary TEXT] # close the active session
+
 # Attestation
 treeship wrap -- <cmd>                  # attest any command execution
 treeship attest action                  # record an action
+treeship attest decision                # record an LLM decision
 treeship attest approval                # record an approval
 treeship attest handoff                 # record a handoff
 treeship attest endorsement             # record an endorsement
 treeship attest receipt                 # record a receipt
 
+# Approvals
+treeship pending                        # list pending approval requests
+treeship approve [N]                    # approve a pending request
+treeship deny [N]                       # deny a pending request
+
 # Verification
 treeship verify <id>                    # verify an artifact or chain, exit 0/1
 treeship verify <id> --format json      # machine-readable output
 treeship verify <id> --no-chain         # verify single artifact, skip chain walk
+
+# Log
+treeship log [--tail N]                 # list recent receipts
+treeship log --follow                   # stream receipts in real time
 
 # Bundle
 treeship bundle create                  # create a bundle from artifacts
@@ -43,8 +58,20 @@ treeship dock pull <id>                 # pull an artifact from the Hub
 treeship dock status                    # show dock connection
 treeship dock undock                    # disconnect from the Hub
 
+# Daemon
+treeship daemon start [--foreground]    # start the background watcher
+treeship daemon stop                    # stop the daemon
+treeship daemon status                  # check daemon state
+
+# Shell hooks
+treeship install                        # install shell hooks
+treeship uninstall                      # remove shell hooks
+
 # Keys
 treeship keys list                      # show key fingerprints
+
+# Diagnostics
+treeship doctor                         # run 9 health checks
 ```
 
 ## Global flags

@@ -1,14 +1,10 @@
 ---
 title: "@treeship/sdk"
-description: TypeScript SDK for Treeship. Embeds WASM core, zero subprocess.
+description: TypeScript SDK for Treeship. Wraps the CLI binary for signing, verification, and docking.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Card, Cards } from 'fumadocs-ui/components/card';
-
-<Callout type="warn">
-The SDK is currently in development. Track progress at github.com/zerkerlabs/treeship.
-</Callout>
 
 ## Install
 
@@ -16,17 +12,21 @@ The SDK is currently in development. Track progress at github.com/zerkerlabs/tre
 npm install @treeship/sdk
 ```
 
-## Usage
+<Callout type="info">
+The SDK shells out to the `treeship` CLI binary. The CLI must be installed and initialized (`treeship init`) before using the SDK. WASM-based signing is planned for a future version.
+</Callout>
+
+## Quick start
 
 ```ts
 import { ship } from '@treeship/sdk';
 
-const s = await ship();
+const s = ship();
 
-// Attest any action
+// Attest an action
 const { artifactId } = await s.attest.action({
-  action: 'openai.chat.completion',
-  meta: { model: 'gpt-4o', tokens: 1247 },
+  actor: 'agent://my-agent',
+  action: 'tool.call',
 });
 
 // Verify it
@@ -38,11 +38,169 @@ const { hubUrl } = await s.dock.push(artifactId);
 console.log(hubUrl); // https://treeship.dev/verify/art_xxx
 ```
 
-## Key design rules
+## Attest module
+
+All attestation methods live under `s.attest`.
+
+### `s.attest.action(params)`
+
+Record that an actor performed an action.
+
+```ts
+const { artifactId } = await s.attest.action({
+  actor: 'agent://my-agent',
+  action: 'tool.call',
+  meta: { model: 'gpt-4o', tokens: 1247 },
+});
+```
+
+**Params: `ActionParams`**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `actor` | `string` | Yes | Actor URI, e.g. `agent://my-agent` |
+| `action` | `string` | Yes | Label for the action performed |
+| `parentId` | `string` | No | Parent artifact ID for chain linking |
+| `approvalNonce` | `string` | No | Nonce from an existing approval |
+| `meta` | `Record<string, unknown>` | No | Arbitrary metadata attached to the artifact |
+
+**Returns: `ActionResult`** -- `{ artifactId: string }`
+
+### `s.attest.decision(params)`
+
+Record an LLM inference decision with token usage and confidence scoring.
+
+```ts
+await s.attest.decision({
+  actor: 'agent://analyst',
+  model: 'claude-opus-4',
+  tokensIn: 8432,
+  tokensOut: 1247,
+  summary: 'Contract looks standard.',
+  confidence: 0.91,
+});
+```
+
+**Params: `DecisionParams`**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `actor` | `string` | Yes | Actor URI |
+| `model` | `string` | No | Model identifier |
+| `modelVersion` | `string` | No | Specific model version string |
+| `tokensIn` | `number` | No | Input token count |
+| `tokensOut` | `number` | No | Output token count |
+| `promptDigest` | `string` | No | SHA-256 digest of the prompt |
+| `summary` | `string` | No | Plain-text summary of the decision |
+| `confidence` | `number` | No | Confidence score between 0 and 1 |
+| `parentId` | `string` | No | Parent artifact ID for chain linking |
+
+**Returns: `ActionResult`** -- `{ artifactId: string }`
+
+### `s.attest.approval(params)`
+
+Record that an approver authorized an intent. Returns a nonce that can be echoed back when attesting the approved action.
+
+```ts
+const { artifactId, nonce } = await s.attest.approval({
+  approver: 'human://alice',
+  description: 'approve payment max $500',
+});
+```
+
+**Params: `ApprovalParams`**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `approver` | `string` | Yes | Approver identity URI |
+| `description` | `string` | Yes | Plain-text scope of what is authorized |
+| `expiresIn` | `string` | No | Relative expiry, e.g. `"1h"`, `"30m"` |
+| `scope` | `string` | No | Optional scope label |
+
+**Returns: `ApprovalResult`** -- `{ artifactId: string, nonce: string }`
+
+### `s.attest.handoff(params)`
+
+Record a transfer of work between actors.
+
+```ts
+await s.attest.handoff({
+  from: 'agent://researcher',
+  to: 'agent://executor',
+  artifacts: ['art_abc123'],
+});
+```
+
+**Params: `HandoffParams`**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `from` | `string` | Yes | Source actor URI |
+| `to` | `string` | Yes | Destination actor URI |
+| `artifacts` | `string[]` | Yes | Artifact IDs being transferred |
+| `approvals` | `string[]` | No | Approval IDs the receiver inherits |
+| `obligations` | `string[]` | No | Obligations the receiver must satisfy |
+
+**Returns: `ActionResult`** -- `{ artifactId: string }`
+
+## Verify module
+
+### `s.verify.verify(artifactId)`
+
+Verify an artifact and walk its chain.
+
+```ts
+const result = await s.verify.verify('art_abc123');
+// { outcome: 'pass', chain: 3, target: 'art_abc123' }
+```
+
+**Returns: `VerifyResult`**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `outcome` | `'pass' \| 'fail' \| 'error'` | Verification result |
+| `chain` | `number` | Number of artifacts in the chain |
+| `target` | `string` | The artifact ID that was verified |
+
+## Dock module
+
+### `s.dock.push(artifactId)`
+
+Push an artifact to the Treeship Hub.
+
+```ts
+const { hubUrl } = await s.dock.push('art_abc123');
+// https://treeship.dev/verify/art_abc123
+```
+
+**Returns: `PushResult`**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `hubUrl` | `string` | Public URL for the artifact on the Hub |
+| `rekorIndex` | `number \| undefined` | Rekor transparency log index, if available |
+
+## Error handling
+
+The SDK throws `TreeshipError` when the CLI exits with a non-zero code.
+
+```ts
+import { TreeshipError } from '@treeship/sdk';
+
+try {
+  await s.attest.action({ actor: 'agent://x', action: 'test' });
+} catch (e) {
+  if (e instanceof TreeshipError) {
+    console.error('CLI failed:', e.message);
+    console.error('Args:', e.args);
+  }
+}
+```
+
+## Design rules
 
 <Cards>
-<Card title="Zero subprocess" description="Embeds @treeship/core-wasm. No child_process.execFile." />
-<Card title="Works everywhere" description="Node, Deno, Bun, and browser environments." />
+<Card title="CLI-backed" description="Shells out to the treeship binary. No native crypto in the SDK yet." />
 <Card title="Never stores sensitive content" description="Hash payloads, not content." />
-<Card title="Graceful degradation" description="Treeship failures never surface as errors to your code." />
+<Card title="Graceful degradation" description="Treeship failures never surface as errors to your code unless you explicitly catch TreeshipError." />
 </Cards>

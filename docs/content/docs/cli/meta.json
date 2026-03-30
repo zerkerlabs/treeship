@@ -7,6 +7,12 @@
     "attest",
     "verify",
     "bundle",
-    "dock"
+    "dock",
+    "session",
+    "approve",
+    "install-cmd",
+    "log",
+    "daemon",
+    "doctor"
   ]
 }

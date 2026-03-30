@@ -1,12 +1,12 @@
 ---
 title: attest
-description: Sign attestation artifacts -- actions, approvals, handoffs, endorsements, receipts.
+description: Sign attestation artifacts -- actions, decisions, approvals, handoffs, endorsements, receipts.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-<Tabs items={['action', 'approval', 'handoff', 'endorsement', 'receipt']}>
+<Tabs items={['action', 'decision', 'approval', 'handoff', 'endorsement', 'receipt']}>
 <Tab value="action">
 ## treeship attest action
 
@@ -46,6 +46,38 @@ treeship attest action \
   --input-digest sha256:e3b0c44298fc1c149afb4c8996fb924 \
   --content-uri ehr://patient/94821/note/2026-03-26
 ```
+</Tab>
+<Tab value="decision">
+## treeship attest decision
+
+Record an LLM inference decision with model, token usage, and confidence metadata.
+
+```bash
+treeship attest decision \
+  --actor agent://analyst \
+  --model claude-opus-4 \
+  --tokens-in 8432 \
+  --tokens-out 1247 \
+  --summary "Contract analysis complete." \
+  --confidence 0.91
+```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--actor <uri>` | Who made the decision (required) |
+| `--model <name>` | Model identifier, e.g. `claude-opus-4`, `gpt-4o` |
+| `--tokens-in <n>` | Input token count |
+| `--tokens-out <n>` | Output token count |
+| `--prompt-digest <sha256:hex>` | SHA-256 digest of the prompt |
+| `--summary <text>` | Plain-text summary of the decision |
+| `--confidence <0-1>` | Confidence score between 0 and 1 |
+| `--parent <id>` | Parent artifact ID for chain linking |
+
+<Callout type="info">
+Decision attestations are designed for LLM audit trails. They record which model was used, how many tokens were consumed, and what the model concluded, without storing the prompt or response content.
+</Callout>
 </Tab>
 <Tab value="approval">
 ## treeship attest approval

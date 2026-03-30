@@ -1,0 +1,54 @@
+---
+title: approve / deny
+description: Review and act on pending approval requests.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+## treeship pending
+
+List all pending approval requests.
+
+```bash
+treeship pending
+```
+
+Output:
+
+```
+# | Actor              | Description                    | Expires
+1 | agent://executor   | deploy to prod                 | 2026-03-30T18:00:00Z
+2 | agent://billing    | charge customer acme $500      | 2026-03-30T19:30:00Z
+```
+
+Use the `#` column value to approve or deny a specific request.
+
+## treeship approve
+
+Approve a pending request by number.
+
+```bash
+treeship approve 1
+```
+
+This creates an approval artifact, generates a single-use nonce, and passes it back to the requesting agent. The agent can then include the nonce in its action attestation to prove it had authorization.
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--comment <text>` | Optional comment attached to the approval artifact |
+
+## treeship deny
+
+Deny a pending request by number.
+
+```bash
+treeship deny 2
+```
+
+This creates a denial artifact. The requesting agent receives the denial and should not proceed with the action.
+
+<Callout type="info">
+Approvals are single-use. If the same nonce is used in two action attestations, the second one will fail verification. This is enforced in the Rust core and cannot be bypassed.
+</Callout>

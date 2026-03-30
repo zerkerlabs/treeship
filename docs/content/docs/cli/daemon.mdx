@@ -1,0 +1,62 @@
+---
+title: daemon
+description: Background process that watches file changes and auto-attests.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+## treeship daemon start
+
+Start the background daemon.
+
+```bash
+treeship daemon start
+treeship daemon start --foreground
+treeship daemon start --no-push
+```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--foreground` | Run in the foreground instead of backgrounding |
+| `--no-push` | Create local artifacts only, do not push to the Hub |
+
+The daemon watches for file changes matching path rules configured in `~/.treeship/config.json`. When a matching file changes, it automatically creates an action attestation.
+
+This is useful for monitoring build outputs, deployment artifacts, or any directory where changes should be tracked without manual `treeship attest` calls.
+
+## treeship daemon stop
+
+Stop the background daemon.
+
+```bash
+treeship daemon stop
+```
+
+## treeship daemon status
+
+Check whether the daemon is running.
+
+```bash
+treeship daemon status
+```
+
+Output when running:
+
+```
+Daemon: running (PID 48201)
+Watching: 3 path rules
+Artifacts created: 47
+Uptime: 2h 14m
+```
+
+Output when stopped:
+
+```
+Daemon: not running
+```
+
+<Callout type="info">
+The daemon respects `TREESHIP_DISABLE=1`. If set, the daemon starts but skips all attestation, which is useful for testing path rules without generating artifacts.
+</Callout>

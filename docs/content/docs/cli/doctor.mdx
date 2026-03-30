@@ -1,0 +1,44 @@
+---
+title: doctor
+description: Run diagnostic checks on your Treeship installation.
+---
+
+## treeship doctor
+
+Run 9 diagnostic checks to verify your Treeship setup is healthy.
+
+```bash
+treeship doctor
+```
+
+Output:
+
+```
+[pass] init        -- Treeship is initialized
+[pass] keypair     -- Ed25519 keypair found
+[pass] config      -- Config file valid
+[pass] hooks       -- Shell hooks installed
+[pass] daemon      -- Daemon is running
+[pass] hub         -- Hub connection active
+[pass] storage     -- Local store readable and writable
+[pass] permissions -- Key file permissions correct (0600)
+[pass] session     -- Active session found
+
+9/9 checks passed
+```
+
+## What it checks
+
+| Check | What it verifies |
+|-------|-----------------|
+| `init` | `~/.treeship` directory exists and contains required files |
+| `keypair` | Ed25519 signing key is present and loadable |
+| `config` | `config.json` parses without errors |
+| `hooks` | Shell hooks are installed in your profile |
+| `daemon` | Background daemon process is running |
+| `hub` | Can reach treeship.dev and authenticate |
+| `storage` | Local artifact store is readable and writable |
+| `permissions` | Private key file has mode `0600` (not world-readable) |
+| `session` | Reports whether an active session exists (informational, does not fail) |
+
+If any check fails, `treeship doctor` prints the issue and a suggested fix. Exit code is 0 if all checks pass, 1 if any fail.
