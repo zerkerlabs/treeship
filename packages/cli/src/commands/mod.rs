@@ -9,3 +9,5 @@ pub mod dock;
 pub mod hook;
 pub mod install;
 pub mod log;
+pub mod session;
+pub mod approve;

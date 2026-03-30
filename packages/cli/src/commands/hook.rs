@@ -40,26 +40,34 @@ pub fn pre(command: &str, printer: &Printer) -> Result<(), Box<dyn std::error::E
         None => return Ok(()), // no rule matched
     };
 
-    // If approval is required, check for an existing approval file
+    // If approval is required, check for an existing approval or block
     let ts_dir = config_path.parent().unwrap_or(Path::new(".treeship"));
     if matched.require_approval {
-        let pending_path = ts_dir.join(".pending_approval");
-        // Write what's pending so `treeship approve` can pick it up
-        let pending = serde_json::json!({
-            "command": command,
-            "label": matched.label,
-            "timestamp": now_rfc3339(),
-        });
-        std::fs::write(&pending_path, serde_json::to_string_pretty(&pending)?)?;
+        // Check if this command was already approved
+        if let Some(_nonce) = super::approve::check_approved(command) {
+            // Approved -- fall through to normal attestation
+        } else {
+            // Not yet approved -- write pending file and block
+            let _ = super::approve::write_pending(
+                command,
+                &matched.label,
+                None,
+            );
 
-        printer.info(&format!(
-            "  {} {} requires approval",
-            printer.yellow("!"),
-            matched.label,
-        ));
-        printer.info(&format!("    run: treeship approve"));
-        // Exit with code 1 to block the command
-        std::process::exit(1);
+            printer.blank();
+            printer.warn(
+                &format!("Approval required for: {}", truncate_command(command, 50)),
+                &[],
+            );
+            printer.info(&format!("  label: {}", matched.label));
+            printer.blank();
+            printer.hint("treeship approve    to allow this action");
+            printer.hint("treeship deny       to block it");
+            printer.hint("treeship pending    to see all pending");
+            printer.blank();
+            // Exit with code 1 to block the command
+            std::process::exit(1);
+        }
     }
 
     // Store pre-execution state for post-hook

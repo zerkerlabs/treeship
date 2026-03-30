@@ -158,6 +158,45 @@ enum Command {
     ///   treeship log --follow
     Log(LogArgs),
 
+    /// Manage work sessions
+    ///
+    /// Sessions group a run of agent work into a single unit with a
+    /// start artifact, accumulated receipts, and a close artifact.
+    ///
+    /// Examples:
+    ///   treeship session start --name "fix auth bug"
+    ///   treeship session status
+    ///   treeship session close --summary "fixed JWT expiry"
+    #[command(subcommand)]
+    Session(SessionCommand),
+
+    /// List pending approvals
+    ///
+    /// Shows actions that are blocked waiting for human approval.
+    ///
+    /// Examples:
+    ///   treeship pending
+    Pending,
+
+    /// Approve a pending action
+    ///
+    /// Approves the Nth pending action (or the first one if N is omitted).
+    /// Creates an ApprovalStatement artifact with a single-use nonce.
+    ///
+    /// Examples:
+    ///   treeship approve
+    ///   treeship approve 2
+    Approve(ApproveArgs),
+
+    /// Deny a pending action
+    ///
+    /// Denies the Nth pending action (or the first one if N is omitted).
+    ///
+    /// Examples:
+    ///   treeship deny
+    ///   treeship deny 2
+    Deny(DenyArgs),
+
     /// Print version and build info
     Version,
 }
@@ -210,6 +249,64 @@ struct LogArgs {
     /// Number of recent receipts to show
     #[arg(long, default_value_t = 20)]
     tail: usize,
+}
+
+// --- session ----------------------------------------------------------------
+
+#[derive(Subcommand)]
+enum SessionCommand {
+    /// Start a new work session
+    ///
+    /// Creates a session manifest and a session-start artifact.
+    ///
+    /// Examples:
+    ///   treeship session start
+    ///   treeship session start --name "fix auth bug" --actor agent://coder
+    Start(SessionStartArgs),
+
+    /// Show active session info
+    Status,
+
+    /// Close the active session
+    ///
+    /// Examples:
+    ///   treeship session close
+    ///   treeship session close --summary "fixed JWT expiry bug"
+    Close(SessionCloseArgs),
+}
+
+#[derive(Args)]
+struct SessionStartArgs {
+    /// Human-readable name for this session
+    #[arg(long, value_name = "NAME")]
+    name: Option<String>,
+
+    /// Actor URI (default: ship://<your-ship-id>)
+    #[arg(long, value_name = "URI")]
+    actor: Option<String>,
+}
+
+#[derive(Args)]
+struct SessionCloseArgs {
+    /// Summary of what was accomplished
+    #[arg(long, value_name = "TEXT")]
+    summary: Option<String>,
+}
+
+// --- approve / deny ---------------------------------------------------------
+
+#[derive(Args)]
+struct ApproveArgs {
+    /// Index of the pending approval to approve (default: 1)
+    #[arg(value_name = "N")]
+    n: Option<usize>,
+}
+
+#[derive(Args)]
+struct DenyArgs {
+    /// Index of the pending approval to deny (default: 1)
+    #[arg(value_name = "N")]
+    n: Option<usize>,
 }
 
 // --- wrap -------------------------------------------------------------------
@@ -585,6 +682,38 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
         Command::Log(a) => commands::log::run(
             a.follow,
             a.tail,
+            cli.config.as_deref(),
+            printer,
+        ),
+
+        Command::Session(sub) => match sub {
+            SessionCommand::Start(a) => commands::session::start(
+                a.name.clone(),
+                a.actor.clone(),
+                cli.config.as_deref(),
+                printer,
+            ),
+            SessionCommand::Status => commands::session::status(
+                cli.config.as_deref(),
+                printer,
+            ),
+            SessionCommand::Close(a) => commands::session::close(
+                a.summary.clone(),
+                cli.config.as_deref(),
+                printer,
+            ),
+        },
+
+        Command::Pending => commands::approve::pending(printer),
+
+        Command::Approve(a) => commands::approve::approve(
+            a.n,
+            cli.config.as_deref(),
+            printer,
+        ),
+
+        Command::Deny(a) => commands::approve::deny(
+            a.n,
             cli.config.as_deref(),
             printer,
         ),
