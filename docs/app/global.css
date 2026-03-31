@@ -92,67 +92,96 @@ html {
 /* ── Code blocks ───────────────────────────────────────── */
 pre {
   background: #0d1117 !important;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
+  padding: 1.25em !important;
 }
 
 pre code {
-  color: #e6edf3 !important;
+  color: #f0f0f0 !important;
   font-size: 0.875rem;
-  line-height: 1.7;
+  line-height: 1.8;
 }
 
-/* Syntax highlighting overrides for readability */
+/* High contrast syntax highlighting */
+pre code span[style*="color:#"],
+pre code span {
+  font-weight: inherit;
+}
+
+/* Comments: clearly dimmed */
+pre [data-line] .comment,
 pre .token.comment,
 pre .token.prolog,
-pre .token.doctype,
 pre .token.cdata {
-  color: #8b949e !important;
+  color: #6e7681 !important;
+  font-style: italic;
 }
 
+/* Keywords: bright coral, stands out */
 pre .token.keyword,
-pre .token.property {
+pre .token.property,
+pre .token.important {
   color: #ff7b72 !important;
+  font-weight: 500;
 }
 
+/* Strings: warm orange-yellow, high visibility */
 pre .token.string,
-pre .token.attr-value {
-  color: #a5d6ff !important;
+pre .token.attr-value,
+pre .token.template-string {
+  color: #ffa657 !important;
 }
 
+/* Functions and commands: bright white, boldest */
 pre .token.function,
-pre .token.class-name {
-  color: #d2a8ff !important;
+pre .token.class-name,
+pre .token.command {
+  color: #ffffff !important;
+  font-weight: 500;
 }
 
+/* Numbers: cyan blue */
 pre .token.number,
-pre .token.boolean {
-  color: #79c0ff !important;
+pre .token.boolean,
+pre .token.constant {
+  color: #56d4dd !important;
 }
 
+/* Operators and punctuation: light gray, not distracting */
 pre .token.operator,
 pre .token.punctuation {
-  color: #c9d1d9 !important;
+  color: #b0b0b0 !important;
 }
 
+/* Tags and builtins: green */
 pre .token.builtin,
-pre .token.tag {
+pre .token.tag,
+pre .token.symbol {
   color: #7ee787 !important;
 }
 
-/* Ensure code inside pre has good contrast even without syntax highlighting */
-pre code span {
-  color: inherit;
+/* Variables and parameters: light blue */
+pre .token.variable,
+pre .token.parameter,
+pre .token.attr-name {
+  color: #79c0ff !important;
+}
+
+/* Shell/bash specific: make the command bright, flags distinct */
+pre code .line {
+  color: #f0f0f0;
 }
 
 /* ── Inline code ───────────────────────────────────────── */
 :not(pre) > code {
-  background: rgba(255, 255, 255, 0.08);
-  color: #e6edf3;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 4px;
-  padding: 2px 6px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #f0f0f0;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 5px;
+  padding: 2px 7px;
   font-size: 0.84em;
+  font-weight: 450;
 }
 
 /* ── Blockquotes ───────────────────────────────────────── */

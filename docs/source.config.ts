@@ -16,6 +16,11 @@ export const blog = defineDocs({
 
 export default defineConfig({
   mdxOptions: {
-    // rehype and remark plugins if needed
+    rehypeCodeOptions: {
+      themes: {
+        light: 'github-dark',
+        dark: 'github-dark',
+      },
+    },
   },
 });
