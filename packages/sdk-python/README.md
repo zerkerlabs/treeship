@@ -1,0 +1,84 @@
+# treeship-sdk
+
+Python SDK for [Treeship](https://treeship.dev) -- portable trust receipts for agent workflows.
+
+## Install
+
+```bash
+pip install treeship-sdk
+```
+
+Requires the `treeship` CLI binary in PATH:
+
+```bash
+curl -fsSL treeship.dev/install | sh
+treeship init
+```
+
+## Usage
+
+```python
+from treeship_sdk import Treeship
+
+ts = Treeship()
+
+# Attest an action
+result = ts.attest_action(actor="agent://my-agent", action="tool.call")
+print(result.artifact_id)  # art_abc123...
+
+# Attest a decision (LLM reasoning)
+ts.attest_decision(
+    actor="agent://analyst",
+    model="claude-opus-4",
+    tokens_in=8432,
+    tokens_out=1247,
+    summary="Contract looks standard.",
+    confidence=0.91,
+)
+
+# Attest an approval
+approval = ts.attest_approval(
+    approver="human://alice",
+    description="approve payment max $500",
+)
+print(approval.nonce)  # single-use nonce
+
+# Attest with approval binding
+ts.attest_action(
+    actor="agent://executor",
+    action="stripe.charge.create",
+    approval_nonce=approval.nonce,
+)
+
+# Verify
+result = ts.verify("art_abc123")
+print(result.outcome)  # "pass"
+
+# Push to Hub
+push = ts.dock_push("art_abc123")
+print(push.hub_url)  # https://treeship.dev/verify/art_abc123
+
+# Wrap a command
+result = ts.wrap("npm test", actor="agent://ci")
+print(result.artifact_id)
+```
+
+## API
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `attest_action(actor, action, ...)` | `ActionResult` | Sign an action receipt |
+| `attest_approval(approver, description, ...)` | `ApprovalResult` | Sign an approval with nonce |
+| `attest_handoff(from_actor, to_actor, artifacts)` | `ActionResult` | Sign a handoff receipt |
+| `attest_decision(actor, model, ...)` | `ActionResult` | Sign a decision receipt |
+| `verify(artifact_id)` | `VerifyResult` | Verify an artifact chain |
+| `dock_push(artifact_id)` | `PushResult` | Push to Hub |
+| `wrap(command, actor)` | `ActionResult` | Wrap a shell command |
+
+## How it works
+
+The SDK calls the `treeship` CLI binary via `subprocess`. All signing happens in the Rust binary. The Python SDK is a thin wrapper.
+
+## License
+
+Apache-2.0
