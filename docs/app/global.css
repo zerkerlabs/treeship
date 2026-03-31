@@ -89,99 +89,34 @@ html {
   text-decoration: underline;
 }
 
-/* ── Code blocks ───────────────────────────────────────── */
+/* ── Code blocks (Mintlify-style) ─────────────────────── */
 pre {
-  background: #0d1117 !important;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: #1e1e1e !important;
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
-  padding: 1.25em !important;
+  padding: 1.2em 1.4em !important;
 }
 
 pre code {
-  color: #f0f0f0 !important;
+  color: #d4d4d4 !important;
   font-size: 0.875rem;
-  line-height: 1.8;
+  line-height: 1.75;
+  font-family: var(--font-mono);
 }
 
-/* High contrast syntax highlighting */
-pre code span[style*="color:#"],
-pre code span {
-  font-weight: inherit;
+/* Code block copy button area */
+pre:hover {
+  border-color: rgba(255, 255, 255, 0.15);
 }
 
-/* Comments: clearly dimmed */
-pre [data-line] .comment,
-pre .token.comment,
-pre .token.prolog,
-pre .token.cdata {
-  color: #6e7681 !important;
-  font-style: italic;
-}
-
-/* Keywords: bright coral, stands out */
-pre .token.keyword,
-pre .token.property,
-pre .token.important {
-  color: #ff7b72 !important;
-  font-weight: 500;
-}
-
-/* Strings: warm orange-yellow, high visibility */
-pre .token.string,
-pre .token.attr-value,
-pre .token.template-string {
-  color: #ffa657 !important;
-}
-
-/* Functions and commands: bright white, boldest */
-pre .token.function,
-pre .token.class-name,
-pre .token.command {
-  color: #ffffff !important;
-  font-weight: 500;
-}
-
-/* Numbers: cyan blue */
-pre .token.number,
-pre .token.boolean,
-pre .token.constant {
-  color: #56d4dd !important;
-}
-
-/* Operators and punctuation: light gray, not distracting */
-pre .token.operator,
-pre .token.punctuation {
-  color: #b0b0b0 !important;
-}
-
-/* Tags and builtins: green */
-pre .token.builtin,
-pre .token.tag,
-pre .token.symbol {
-  color: #7ee787 !important;
-}
-
-/* Variables and parameters: light blue */
-pre .token.variable,
-pre .token.parameter,
-pre .token.attr-name {
-  color: #79c0ff !important;
-}
-
-/* Shell/bash specific: make the command bright, flags distinct */
-pre code .line {
-  color: #f0f0f0;
-}
-
-/* ── Inline code ───────────────────────────────────────── */
+/* ── Inline code (Mintlify-style) ─────────────────────── */
 :not(pre) > code {
-  background: rgba(255, 255, 255, 0.1);
-  color: #f0f0f0;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 5px;
-  padding: 2px 7px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #e8e8e8;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  padding: 2px 6px;
   font-size: 0.84em;
-  font-weight: 450;
 }
 
 /* ── Blockquotes ───────────────────────────────────────── */
