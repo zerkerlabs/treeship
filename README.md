@@ -160,10 +160,14 @@ await ship.save();
 
 ## Packages
 
-| Package | Description |
-|---------|-------------|
-| `@treeship/core` | Receipt engine, signing, Merkle tree, verification |
-| `treeship` (CLI) | Developer CLI for issuing, bundling, and verifying |
+| Package | Location | Description |
+|---------|----------|-------------|
+| `treeship` (Rust core) | `packages/core/` | Receipt engine, signing, Merkle tree, verification |
+| `treeship` (CLI) | `packages/cli/` | 25+ commands for issuing, bundling, verifying, docking |
+| Hub server (Go) | `packages/hub/` | 12-endpoint API for treeship.dev |
+| `@treeship/core-wasm` | `packages/core-wasm/` | 241KB WASM verifier (Merkle + Ed25519) |
+| `@treeship/sdk` | `packages/sdk-ts/` | TypeScript SDK wrapping the WASM verifier |
+| `@treeship/mcp` | `bridges/mcp/` | MCP bridge for agent tool integration |
 
 ## Standards
 
@@ -178,17 +182,25 @@ Treeship builds on existing standards rather than inventing cryptography:
 
 ## Roadmap
 
-- [x] Core receipt engine and verification
-- [x] CLI for local operations
+- [x] Rust core receipt engine and verification (120 tests)
+- [x] CLI with 25+ commands
 - [x] DSSE envelope support
-- [x] Merkle tree with inclusion proofs
-- [x] Signed checkpoints
-- [x] Policy evaluation
-- [ ] Capture adapters (shell, file, HTTP, MCP, A2A)
-- [ ] Dock to treeship.dev Hub
+- [x] Merkle tree with inclusion proofs and checkpoints
+- [x] Policy and rules engine
+- [x] Go Hub server (12 API endpoints)
+- [x] Dock authentication (DPoP, device flow)
+- [x] WASM verifier (241KB, browser-ready)
+- [x] TypeScript SDK (@treeship/sdk)
+- [x] MCP bridge (@treeship/mcp)
+- [x] Fumadocs site (45 pages)
+- [ ] ZK TLS (TLSNotary) -- specced, feature-flagged, waiting on TLSNotary alpha
+- [ ] `treeship attach claude/cursor` -- agent process detection
+- [ ] npm/crates.io publishing
+- [ ] Install script (`curl treeship.dev/install | sh`)
+- [ ] Hub Merkle Rekor anchoring
+- [ ] Capture adapters (shell, file, HTTP, A2A)
 - [ ] Anchoring adapters (OTS/Bitcoin, Solana)
 - [ ] Selective disclosure
-- [ ] Rust core + WASM verifier
 
 ## License
 

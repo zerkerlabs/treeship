@@ -1,15 +1,15 @@
-# TREESHIP — AGENT INSTRUCTIONS
+# TREESHIP --AGENT INSTRUCTIONS
 
 > **Read this file first. Every time. It is the single source of truth.**
-> Last updated: March 2026 · 83 tests passing · CLI shipped · Hub is next.
+> Last updated: March 2026 · 120 tests passing · CLI + Hub + SDK + MCP shipped.
 
 ---
 
 ## 1. WHAT TREESHIP IS
 
-Treeship is a portable trust layer for AI agent workflows. Every action, approval, and handoff gets a **cryptographically signed artifact** — a tamper-proof receipt verifiable by anyone, anywhere, without trusting any infrastructure.
+Treeship is a portable trust layer for AI agent workflows. Every action, approval, and handoff gets a **cryptographically signed artifact** --a tamper-proof receipt verifiable by anyone, anywhere, without trusting any infrastructure.
 
-**The loop:** `treeship wrap -- your-agent-command` → signed artifact → `treeship dock push` → `https://treeship.dev/verify/art_xxx` — shareable proof that something happened.
+**The loop:** `treeship wrap -- your-agent-command` → signed artifact → `treeship dock push` → `https://treeship.dev/verify/art_xxx` --shareable proof that something happened.
 
 **Four properties that never change:**
 - **Local-first.** Every operation works offline. Hub adds shareability, never trust.
@@ -25,21 +25,22 @@ Treeship is a portable trust layer for AI agent workflows. Every action, approva
 
 | Component | Location | Status |
 |-----------|----------|--------|
-| Rust core library | `packages/core/` | ✅ 83 tests passing |
-| Rust CLI binary | `packages/cli/` | ✅ Shipped on feature/treeship-verify-v1 |
-| Landing page | `treeship-website/` | ✅ Next.js 15 + Tailwind, not yet deployed |
-| ZK proof engine | `proof-engine-core/` | ✅ Exists, 90% functional |
-| Docs site | `docs/` | ✅ Mintlify, 26 sections, needs Rust rewrite update |
+| Rust core library | `packages/core/` | 120 tests passing |
+| Rust CLI binary | `packages/cli/` | 25+ commands |
+| Go Hub server | `packages/hub/` | 12 API endpoints |
+| WASM verifier | `packages/core-wasm/` | 241KB, Merkle + Ed25519 verify |
+| TypeScript SDK | `packages/sdk-ts/` | @treeship/sdk, 5 tests |
+| MCP bridge | `bridges/mcp/` | @treeship/mcp, 3 tests |
+| Fumadocs site | `docs/` | 45 pages |
+| Website | (separate repo) | 8 pages |
 
-### What is NOT built yet (in priority order)
+### What is NOT built yet
 
-1. `packages/hub/` — Go HTTP server (build now)
-2. `packages/cli/src/commands/dock.rs` — dock CLI commands (build now)
-3. `/verify/:id` page on treeship.dev
-4. `packages/core-wasm/` — WASM build for browser + TypeScript SDK
-5. `@treeship/sdk` — TypeScript SDK
-6. `@treeship/mcp` — MCP bridge
-7. `web/` — Next.js Hub workspace UI
+1. **ZK TLS (TLSNotary)** -- fully specced, feature-flagged, TLSNotary still alpha
+2. **`treeship attach claude/cursor`** -- agent process detection
+3. **npm/crates.io publishing** -- packages ready, not yet published
+4. **Install script** -- `curl treeship.dev/install | sh` not yet wired
+5. **Hub Merkle Rekor anchoring** -- Rekor integration is best-effort, not yet live
 
 ---
 
@@ -52,16 +53,18 @@ treeship/                           # monorepo root
 ├── AGENTS.md                       # this file
 │
 ├── packages/
-│   ├── core/                       # ✅ DONE — Rust library
+│   ├── core/                       # Rust library (120 tests)
 │   │   └── src/
 │   │       ├── attestation/        # DSSE, PAE, Ed25519, content-addressed IDs
 │   │       ├── statements/         # 6 statement types, nonce binding
 │   │       ├── keys/               # AES-256-CTR + HMAC encrypted keystore
 │   │       ├── storage/            # local artifact store
 │   │       ├── bundle/             # pack/export/import .treeship files
+│   │       ├── merkle/             # tree, checkpoint, proof
+│   │       ├── rules.rs            # rules engine
 │   │       └── verifier/           # chain verification, TrustPolicy
 │   │
-│   ├── cli/                        # ✅ DONE — Rust binary
+│   ├── cli/                        # Rust binary (25+ commands)
 │   │   └── src/
 │   │       ├── main.rs             # clap command tree
 │   │       ├── config.rs           # ~/.treeship/config.json
@@ -75,9 +78,17 @@ treeship/                           # monorepo root
 │   │           ├── status.rs       # treeship status
 │   │           ├── wrap.rs         # treeship wrap -- <cmd>
 │   │           ├── keys.rs         # treeship keys list
-│   │           └── dock.rs         # 🔴 BUILD NOW
+│   │           ├── session.rs      # treeship session start|status|close
+│   │           ├── approve.rs      # treeship approve|deny|pending
+│   │           ├── hook.rs         # treeship hook (shell integration)
+│   │           ├── install.rs      # treeship install|uninstall
+│   │           ├── log.rs          # treeship log [--tail N] [--follow]
+│   │           ├── daemon.rs       # treeship daemon start|stop|status
+│   │           ├── doctor.rs       # treeship doctor
+│   │           ├── merkle.rs       # treeship checkpoint, merkle proof|verify|status|publish
+│   │           └── dock.rs         # treeship dock login|push|pull|status|undock
 │   │
-│   ├── hub/                        # 🔴 BUILD NOW — Go HTTP server
+│   ├── hub/                        # Go HTTP server (12 endpoints)
 │   │   ├── main.go
 │   │   ├── go.mod
 │   │   └── internal/
@@ -86,16 +97,18 @@ treeship/                           # monorepo root
 │   │       ├── artifacts/          # push/pull handlers
 │   │       ├── verify/             # runs treeship verify subprocess
 │   │       ├── dpop/               # DPoP JWT verification middleware
-│   │       └── rekor/              # Rekor anchoring
+│   │       ├── merkle/             # Merkle checkpoint + proof endpoints
+│   │       └── rekor/              # Rekor anchoring (best-effort)
 │   │
-│   ├── core-wasm/                  # ⏳ NEXT — wasm-pack build
-│   └── sdk-ts/                     # ⏳ AFTER WASM — @treeship/sdk
+│   ├── core-wasm/                  # WASM verifier (241KB, Merkle + Ed25519)
+│   └── sdk-ts/                     # @treeship/sdk (5 tests)
 │
 ├── bridges/
-│   ├── mcp/                        # ⏳ @treeship/mcp
-│   └── openai/                     # ⏳ @treeship/openai
+│   └── mcp/                        # @treeship/mcp (3 tests)
 │
-└── web/                            # ⏳ Next.js — hub.treeship.dev
+├── docs/                           # Fumadocs site (45 pages)
+│
+└── web/                            # Next.js -- hub.treeship.dev
     └── app/
         ├── verify/[id]/            # public artifact verification page
         ├── dock/activate/          # device flow auth page
@@ -106,10 +119,10 @@ treeship/                           # monorepo root
 
 ```
 treeship-dev/
-├── treeship/           # monorepo above — all code
-└── treeship-site/      # static site — marketing, blog, docs
+├── treeship/           # monorepo above -- all code
+└── treeship-site/      # static site -- marketing, blog, docs
     ├── index.html      # landing page
-    ├── blog/           # 8 posts Jul 2025 → Feb 2026
+    ├── blog/           # 8 posts Jul 2025 -> Feb 2026
     └── architecture/   # visual posters
 ```
 
@@ -119,17 +132,17 @@ treeship-dev/
 
 | Domain | What | Hosting |
 |--------|------|---------|
-| `treeship.dev` | Marketing site + public /verify/:id | Vercel — treeship-site repo |
-| `hub.treeship.dev` | Next.js workspace app | Server — web/ in monorepo |
-| `api.treeship.dev` | Go Hub API | Server — packages/hub/ in monorepo |
+| `treeship.dev` | Marketing site + public /verify/:id | Vercel --treeship-site repo |
+| `hub.treeship.dev` | Next.js workspace app | Server --web/ in monorepo |
+| `api.treeship.dev` | Go Hub API | Server --packages/hub/ in monorepo |
 
-The `/verify/:id` public page lives at `treeship.dev/verify/:id` and calls `api.treeship.dev` for artifact data. The WASM verifier runs client-side in the browser — Hub cannot forge a passing result.
+The `/verify/:id` public page lives at `treeship.dev/verify/:id` and calls `api.treeship.dev` for artifact data. The WASM verifier runs client-side in the browser --Hub cannot forge a passing result.
 
 ---
 
-## 5. CRYPTOGRAPHIC INVARIANTS — NEVER CHANGE THESE
+## 5. CRYPTOGRAPHIC INVARIANTS --NEVER CHANGE THESE
 
-### PAE format (DSSE spec — exactly this)
+### PAE format (DSSE spec --exactly this)
 ```
 "DSSEv1" SP LEN(payloadType) SP payloadType SP LEN(payload) SP payload
 ```
@@ -141,7 +154,7 @@ The trailing space before the payload is required.
 artifact_id = "art_" + hex(sha256(PAE_bytes)[..16])
 ```
 - Derived from PAE bytes, NOT stored inside the statement struct
-- `id` field does NOT exist in statement structs — lives on `Record` and `SignResult` only
+- `id` field does NOT exist in statement structs --lives on `Record` and `SignResult` only
 - Same content → same ID always
 
 ### payloadType MIME strings
@@ -164,7 +177,7 @@ treeship/receipt/v1
 treeship/bundle/v1
 ```
 
-### Envelope JSON (camelCase — DSSE spec)
+### Envelope JSON (camelCase --DSSE spec)
 ```json
 {
   "payload":     "base64url(statement_bytes)",
@@ -192,15 +205,15 @@ rand          = "0.8"
 
 ---
 
-## 6. BUILD NOW — DOCK + HUB FULL SPEC
+## 6. DOCK + HUB SPEC (BUILT)
 
-### 6.1 packages/hub/ — Go HTTP server
+### 6.1 packages/hub/ -- Go HTTP server
 
 **Language:** Go
 **Module:** `github.com/treeship/hub`
 **Dependencies:** `github.com/go-chi/chi/v5 v5.0.12`, `modernc.org/sqlite v1.29.5`
 
-**SQLite file:** `/var/lib/treeship/hub.db` — chmod 600, owned by process user.
+**SQLite file:** `/var/lib/treeship/hub.db` --chmod 600, owned by process user.
 
 **Tables:**
 ```sql
@@ -275,6 +288,27 @@ GET /v1/verify/:id
   Return the JSON output directly
   If treeship binary not found: { "outcome": "error", "message": "verifier unavailable" }
 
+GET /v1/workspace
+  List artifacts for the authenticated dock. DPoP required.
+  Return: { "artifacts": [...] }
+
+POST /v1/merkle/checkpoint  [DPoP authenticated]
+  Body: { checkpoint_json, signature }
+  Store signed Merkle checkpoint.
+
+GET /v1/merkle/checkpoint/:id
+  Return a stored checkpoint by ID.
+
+POST /v1/merkle/proof  [DPoP authenticated]
+  Body: { artifact_id, proof_json }
+  Store an inclusion proof for an artifact.
+
+GET /v1/merkle/proof/:artifact_id
+  Return inclusion proof for an artifact.
+
+GET /v1/merkle/latest
+  Return the latest checkpoint for the authenticated dock.
+
 GET /.well-known/treeship/revoked.json
   Return: { "revoked": [], "signed_at": "...", "version": "1" }
   Cache-Control: max-age=86400
@@ -313,7 +347,7 @@ Body:
   }
 }
 On success: store logIndex in artifacts.rekor_index
-On failure: log error, continue — Rekor is best-effort
+On failure: log error, continue --Rekor is best-effort
 ```
 
 **main.go:** chi router, all routes wired, DB init on startup, listen on :8080 (PORT env var), log every request.
@@ -374,7 +408,7 @@ Default endpoint: https://api.treeship.dev
 
 **treeship dock pull <id>**
 ```
-GET {endpoint}/v1/artifacts/{id}   (no auth — public artifacts)
+GET {endpoint}/v1/artifacts/{id}   (no auth --public artifacts)
 Store to local storage
 Print: ✓ pulled  {id}
 ```
@@ -398,10 +432,10 @@ Print: ✓ undocked
 ### 6.3 Test the full loop locally
 
 ```bash
-# Terminal 1 — start Hub
+# Terminal 1 --start Hub
 cd packages/hub && go run . &
 
-# Terminal 2 — test
+# Terminal 2 --test
 treeship dock login --endpoint http://localhost:8080
 # (for local testing, manually approve via curl:)
 curl -X POST http://localhost:8080/v1/dock/authorize \
@@ -416,15 +450,15 @@ curl http://localhost:8080/v1/verify/art_xxxxx
 
 ---
 
-## 7. SECURITY MODEL — NON-NEGOTIABLE
+## 7. SECURITY MODEL --NON-NEGOTIABLE
 
-### DPoP — no session tokens ever
+### DPoP --no session tokens ever
 - Dock keypair is SEPARATE from ship signing keypair
-- `config.json` stores `dock_id` only — never a session token
+- `config.json` stores `dock_id` only --never a session token
 - Every API request carries a fresh DPoP proof JWT signed by dock key
 - Stolen `config.json` is useless without the encrypted dock private key
 
-### Rekor anchoring — default ON
+### Rekor anchoring --default ON
 - Every `treeship dock push` anchors to Rekor automatically
 - The anchor receipt is stored as `treeship/receipt/v1` locally
 - Hub cannot retroactively modify anchored chains
@@ -432,21 +466,21 @@ curl http://localhost:8080/v1/verify/art_xxxxx
 ### SQLite security
 - File at `/var/lib/treeship/hub.db`
 - chmod 600, owned by process user
-- No passwords or private keys in the database — only public keys and signed JSON
+- No passwords or private keys in the database --only public keys and signed JSON
 - Clean `dpop_jtis` older than 5 minutes on every request
 
 ### Revocation
-- `GET /.well-known/treeship/revoked.json` — signed list of revoked key fingerprints
+- `GET /.well-known/treeship/revoked.json` --signed list of revoked key fingerprints
 - Verifiers fetch and cache 24h
 
 ### Honest boundary
 - Trust root is the machine. Root access breaks all guarantees.
 - YubiKey/Secure Enclave support in v1.5 via the existing `Signer` trait.
-- Document this clearly — don't pretend the chain is unconditionally unforgeable.
+- Document this clearly --don't pretend the chain is unconditionally unforgeable.
 
 ---
 
-## 8. CLI UX RULES — FOLLOW IN EVERY COMMAND
+## 8. CLI UX RULES --FOLLOW IN EVERY COMMAND
 
 - Every success prints a dim hint: `→ treeship <next-logical-command>`
 - Errors include the fix: `treeship not initialized\n  run: treeship init`
@@ -459,12 +493,12 @@ curl http://localhost:8080/v1/verify/art_xxxxx
 
 ---
 
-## 9. STATEMENT TYPES — FIELD REFERENCE
+## 9. STATEMENT TYPES --FIELD REFERENCE
 
 All signed via `attestation::sign()`. The `id` field does NOT exist in statement structs.
 
 ```rust
-// ActionStatement — the most common type
+// ActionStatement --the most common type
 pub struct ActionStatement {
     pub type_:          String,         // "treeship/action/v1"
     pub timestamp:      String,         // RFC 3339
@@ -476,18 +510,18 @@ pub struct ActionStatement {
     pub meta:           Option<serde_json::Value>,
 }
 
-// ApprovalStatement — gates actions via nonce
+// ApprovalStatement --gates actions via nonce
 pub struct ApprovalStatement {
     pub type_:       String,   // "treeship/approval/v1"
     pub timestamp:   String,
-    pub approver:    String,   // "human://rezo"
-    pub nonce:       String,   // random — must be echoed in action.approval_nonce
+    pub approver:    String,   // "human://alice"
+    pub nonce:       String,   // random --must be echoed in action.approval_nonce
     pub expires_at:  Option<String>,
     pub delegatable: bool,
     pub scope:       Option<ApprovalScope>,
 }
 
-// HandoffStatement — agent-to-agent transfer
+// HandoffStatement --agent-to-agent transfer
 pub struct HandoffStatement {
     pub type_:        String,
     pub timestamp:    String,
@@ -500,29 +534,29 @@ pub struct HandoffStatement {
 
 ---
 
-## 10. FIXED BUGS — DO NOT REINTRODUCE
+## 10. FIXED BUGS --DO NOT REINTRODUCE
 
-1. **Double-sign circular dependency** — Statement structs have NO `id` field. Sign once. ID lives on `Record` and `SignResult` only.
+1. **Double-sign circular dependency** --Statement structs have NO `id` field. Sign once. ID lives on `Record` and `SignResult` only.
 
-2. **Nonce binding not enforced** — `verify.rs` checks `action.approval_nonce == approval.nonce`. Do not remove or skip this.
+2. **Nonce binding not enforced** --`verify.rs` checks `action.approval_nonce == approval.nonce`. Do not remove or skip this.
 
-3. **Session token in config** — `config.json` stores `dock_id` only. No tokens. DPoP proofs generated on-the-fly.
+3. **Session token in config** --`config.json` stores `dock_id` only. No tokens. DPoP proofs generated on-the-fly.
 
-4. **Subprocess attack surface** — TypeScript SDK embeds `@treeship/core-wasm` directly. Does NOT spawn `treeship` as subprocess.
+4. **Subprocess attack surface** --TypeScript SDK embeds `@treeship/core-wasm` directly. Does NOT spawn `treeship` as subprocess.
 
-5. **WASM binary trust** — CLI embeds expected WASM hash at compile time. Browser verifies before executing. Do not skip the hash check.
+5. **WASM binary trust** --CLI embeds expected WASM hash at compile time. Browser verifies before executing. Do not skip the hash check.
 
 ---
 
 ## 11. WHAT TO READ IN THE CODEBASE FIRST
 
 Read in this order:
-1. `packages/core/src/attestation/pae.rs` — the PAE format
-2. `packages/core/src/attestation/sign.rs` — how an artifact is created
-3. `packages/core/src/attestation/verify.rs` — how an artifact is verified
-4. `packages/core/src/statements/mod.rs` — all statement types
-5. `packages/cli/src/main.rs` — command structure
-6. `packages/cli/src/commands/wrap.rs` — the most important user command
+1. `packages/core/src/attestation/pae.rs` --the PAE format
+2. `packages/core/src/attestation/sign.rs` --how an artifact is created
+3. `packages/core/src/attestation/verify.rs` --how an artifact is verified
+4. `packages/core/src/statements/mod.rs` --all statement types
+5. `packages/cli/src/main.rs` --command structure
+6. `packages/cli/src/commands/wrap.rs` --the most important user command
 
 ---
 
@@ -530,9 +564,9 @@ Read in this order:
 
 1. Read this file first, every time, before writing any code.
 2. Never write to files outside your assigned scope.
-3. The only inter-agent coupling is JSON schemas — agree on those first.
+3. The only inter-agent coupling is JSON schemas --agree on those first.
 4. Revaz reviews and merges each wave before the next starts.
-5. When in doubt about a design decision, check the cryptographic invariants in §5 — if it breaks those, don't do it.
+5. When in doubt about a design decision, check the cryptographic invariants in §5 --if it breaks those, don't do it.
 
 ---
 
@@ -541,4 +575,4 @@ Read in this order:
 - **Zerker** is the company. **Treeship** is the open-source protocol and CLI. **treeship.dev Hub** is the hosted service.
 - **SRI International and DARPA** are aligned research partners.
 - Writing style: no em dashes, direct and concise, no corporate phrasing.
-- The feature branch `feature/treeship-verify-v1` has the Rust rewrite — push and merge to main before any new agent work.
+- The feature branch `feature/treeship-verify-v1` has the Rust rewrite --push and merge to main before any new agent work.

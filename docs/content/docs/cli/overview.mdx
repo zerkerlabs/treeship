@@ -63,6 +63,13 @@ treeship daemon start [--foreground]    # start the background watcher
 treeship daemon stop                    # stop the daemon
 treeship daemon status                  # check daemon state
 
+# Merkle tree
+treeship checkpoint                     # seal a signed Merkle root
+treeship merkle proof <id>              # generate inclusion proof
+treeship merkle verify <proof.json>     # verify proof offline
+treeship merkle status                  # tree state and checkpoints
+treeship merkle publish                 # push checkpoint + proofs to Hub
+
 # Shell hooks
 treeship install                        # install shell hooks
 treeship uninstall                      # remove shell hooks
