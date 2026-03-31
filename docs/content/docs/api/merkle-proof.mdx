@@ -1,0 +1,78 @@
+---
+title: GET /v1/merkle/:artifactId
+description: Retrieve a self-contained Merkle inclusion proof for an artifact.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+<Callout type="warn">
+Merkle proofs are a new addition. The endpoint is live but the response format may evolve before stabilizing.
+</Callout>
+
+## Request
+
+```
+GET /v1/merkle/:artifactId
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `:artifactId` | string | The artifact ID (e.g., `art_f7e6d5c4b3a2f7e6`) |
+
+No authentication required.
+
+## Response
+
+Returns a self-contained ProofFile JSON. This includes everything needed to verify that the artifact is included in a specific Merkle tree checkpoint without contacting Hub again.
+
+```json
+{
+  "artifact_id": "art_f7e6d5c4b3a2f7e6",
+  "leaf_hash": "sha256:9d2f...",
+  "tree_size": 4096,
+  "tree_root": "sha256:7e3a...",
+  "checkpoint_id": "chk_a1b2c3d4",
+  "proof": [
+    "sha256:1a2b...",
+    "sha256:3c4d...",
+    "sha256:5e6f..."
+  ],
+  "leaf_index": 2048
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `artifact_id` | string | The artifact this proof covers |
+| `leaf_hash` | string | SHA-256 hash of the artifact's leaf entry |
+| `tree_size` | integer | Number of leaves in the tree at proof time |
+| `tree_root` | string | Root hash of the Merkle tree |
+| `checkpoint_id` | string | ID of the checkpoint this proof references |
+| `proof` | string[] | Sibling hashes forming the inclusion path from leaf to root |
+| `leaf_index` | integer | Position of the artifact in the tree |
+
+## How to verify
+
+The proof is self-contained. To verify locally:
+
+1. Recompute the leaf hash from the artifact digest
+2. Walk the `proof` array from leaf to root, combining hashes at each level
+3. Compare the computed root against `tree_root`
+4. Optionally, fetch the checkpoint and confirm `tree_root` matches
+
+```bash
+treeship verify --merkle art_f7e6d5c4b3a2f7e6
+```
+
+## Errors
+
+| Status | Body | Cause |
+|--------|------|-------|
+| `404` | `{"error": "artifact not found"}` | No artifact with this ID |
+| `404` | `{"error": "no proof available"}` | Artifact exists but has not been included in a checkpoint yet |
+
+## Example
+
+```bash
+curl https://api.treeship.dev/v1/merkle/art_f7e6d5c4b3a2f7e6
+```

@@ -1,0 +1,103 @@
+---
+title: Agentic Commerce
+description: How Treeship applies to agent-driven commerce, payments, and transaction verification.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Treeship's artifact system applies naturally to commerce workflows where AI agents execute transactions, manage procurement, or handle payments. The core mechanism is the **approval receipt with nonce binding** -- a signed proof that a specific human authorized a specific action before it happened.
+
+## The problem
+
+When an AI agent makes a purchase or executes a payment, how do you prove after the fact that a human actually approved it? Emails and Slack messages are not cryptographically verifiable. Treeship's approval artifacts are.
+
+## How it works
+
+Every step of a commerce workflow produces a signed, chained artifact:
+
+```bash
+# Agent receives a purchase request
+treeship attest action \
+  --actor agent://procurement \
+  --action order.received \
+  --subject '{"order_id": "ord_123", "total": 5000}'
+
+# Human approves the purchase
+treeship attest approval \
+  --approver human://alice \
+  --scope "procurement.approve" \
+  --expires 1h
+
+# Agent executes the purchase with the approval nonce
+treeship attest action \
+  --actor agent://procurement \
+  --action payment.execute \
+  --approval-nonce <nonce> \
+  --parent art_order123
+
+# Record the handoff to fulfillment
+treeship attest handoff \
+  --from agent://procurement \
+  --to agent://fulfillment \
+  --artifacts art_payment456
+```
+
+Each step is signed, chained, and independently verifiable.
+
+## What this gives you
+
+- **Audit trail.** Every transaction step has a tamper-proof receipt.
+- **Approval binding.** The payment cannot execute without a valid approval nonce. The nonce is single-use -- it cannot be reused for multiple purchases.
+- **Chain verification.** Anyone can walk the chain from fulfillment back to the original order.
+- **Offline verification.** No API call needed to verify the receipts.
+
+## Commerce patterns
+
+### Budget enforcement
+
+Create an approval with a scope that limits what the agent can do:
+
+```bash
+treeship attest approval \
+  --approver human://alice \
+  --scope "procurement.approve" \
+  --expires 24h
+```
+
+The approval nonce binds to exactly one action. The agent cannot reuse it for multiple purchases.
+
+### Multi-party transactions
+
+Use handoff artifacts to track work across organizations:
+
+```bash
+# Buyer's Treeship
+treeship attest action --actor agent://buyer --action order.place
+
+# Seller's Treeship (separate trust domain)
+treeship attest action --actor agent://seller --action order.fulfill
+
+# Both push to Hub for cross-organization visibility
+treeship dock push art_buyer_order
+treeship dock push art_seller_fulfill
+```
+
+### Endorsements
+
+Use endorsement artifacts for third-party compliance assertions about transactions:
+
+```bash
+treeship attest endorsement \
+  --endorser auditor://compliance-firm \
+  --target art_transaction123 \
+  --claim "SOX compliant"
+```
+
+## Related reading
+
+- [Payment Proofs](/docs/commerce/payment-proofs) -- step-by-step payment verification flow
+- [Compliance](/docs/commerce/compliance) -- audit trails, export bundles, and regulatory patterns
+
+<Callout type="info">
+ZK proof integration (planned for v2) will add privacy-preserving commerce capabilities. Agents will be able to prove budget compliance and vendor authorization without revealing transaction details.
+</Callout>

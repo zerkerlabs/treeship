@@ -1,0 +1,62 @@
+---
+title: GET /v1/artifacts/:id
+description: Retrieve a signed artifact from Hub. No authentication required.
+---
+
+## Request
+
+```
+GET /v1/artifacts/:id
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `:id` | string | The artifact ID (e.g., `art_f7e6d5c4b3a2f7e6`) |
+
+No authentication required. All artifacts on Hub are publicly readable.
+
+## Response
+
+```json
+{
+  "artifact_id": "art_f7e6d5c4b3a2f7e6",
+  "payload_type": "application/vnd.treeship.action.v1+json",
+  "envelope_json": "{\"payload\":\"...\",\"payloadType\":\"...\",\"signatures\":[...]}",
+  "digest": "sha256:abc123...",
+  "signed_at": 1711500000,
+  "parent_id": "art_previous123",
+  "hub_url": "https://treeship.dev/verify/art_f7e6d5c4b3a2f7e6",
+  "rekor_index": 12345,
+  "dock_id": "dck_9f8e7d6c"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `artifact_id` | string | Content-addressed artifact ID |
+| `payload_type` | string | DSSE payload type MIME string |
+| `envelope_json` | string | The complete DSSE envelope, including signed payload and signatures |
+| `digest` | string | SHA-256 digest of the PAE bytes |
+| `signed_at` | integer | Unix timestamp of when the artifact was signed |
+| `parent_id` | string or null | Parent artifact ID |
+| `hub_url` | string | Public verification URL |
+| `rekor_index` | integer or null | Sigstore Rekor log index |
+| `dock_id` | string | The dock that pushed this artifact |
+
+## Errors
+
+| Status | Body | Cause |
+|--------|------|-------|
+| `404` | `{"error": "artifact not found"}` | No artifact exists with this ID |
+
+## Example
+
+```bash
+curl https://api.treeship.dev/v1/artifacts/art_f7e6d5c4b3a2f7e6
+```
+
+## Notes
+
+- The `envelope_json` field contains the full DSSE envelope. You can verify it locally after importing it with `treeship dock pull`.
+- The response includes `dock_id`, which identifies which device pushed the artifact. This is not a secret -- it is a public identifier.
+- Use `treeship dock pull <id>` from the CLI to download an artifact into your local store.

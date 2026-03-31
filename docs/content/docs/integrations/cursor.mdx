@@ -1,0 +1,58 @@
+---
+title: Cursor
+description: Add Treeship to Cursor agent. Signed receipts for every action.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+## Quick setup
+
+<Steps>
+<Step>
+### Install Treeship
+
+```bash
+cargo install --git https://github.com/zerkerlabs/treeship treeship-cli
+treeship init
+treeship install
+```
+</Step>
+<Step>
+### Add .cursorrules to your project
+
+Create a `.cursorrules` file in your project root. Cursor reads this automatically.
+
+```
+# Treeship Integration
+
+This project uses Treeship for signed receipts of all agent actions.
+
+Rules:
+1. Wrap all shell commands with treeship:
+   - Use: treeship wrap -- <command>
+   - Example: treeship wrap -- npm test
+   - Example: treeship wrap -- git push
+
+2. Before making changes that need approval, check:
+   - Run: treeship pending
+   - If approval is needed: treeship approve
+
+3. After completing a task:
+   - Run: treeship session close --summary "what was done"
+
+4. Never skip treeship wrapping. Every command gets a receipt.
+```
+</Step>
+<Step>
+### Verify it works
+
+```bash
+treeship log --tail 5
+```
+</Step>
+</Steps>
+
+<Callout type="info">
+Shell hooks (from `treeship install`) will automatically attest matching commands even if Cursor doesn't use `treeship wrap` explicitly.
+</Callout>

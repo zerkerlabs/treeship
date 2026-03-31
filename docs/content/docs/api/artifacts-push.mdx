@@ -1,0 +1,93 @@
+---
+title: POST /v1/artifacts
+description: Push a signed artifact to Hub. DPoP authenticated.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+## Request
+
+```
+POST /v1/artifacts
+Authorization: DPoP dck_9f8e7d6c
+DPoP: eyJhbGciOiJFZERTQSIsInR5cCI6ImRwb3Arand0In0...
+Content-Type: application/json
+```
+
+```json
+{
+  "artifact_id": "art_f7e6d5c4b3a2f7e6",
+  "payload_type": "application/vnd.treeship.action.v1+json",
+  "envelope_json": "{\"payload\":\"...\",\"payloadType\":\"...\",\"signatures\":[...]}",
+  "digest": "sha256:abc123...",
+  "signed_at": 1711500000,
+  "parent_id": null
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `artifact_id` | string | Yes | Content-addressed artifact ID |
+| `payload_type` | string | Yes | DSSE payload type MIME string |
+| `envelope_json` | string | Yes | The complete DSSE envelope as a JSON string |
+| `digest` | string | Yes | SHA-256 digest of the PAE bytes, prefixed with `sha256:` |
+| `signed_at` | integer | Yes | Unix timestamp of when the artifact was signed |
+| `parent_id` | string or null | No | Parent artifact ID for chain linking |
+
+## Authentication
+
+This endpoint requires DPoP authentication. The `Authorization` header must be `DPoP {dock_id}`, and the `DPoP` header must be a valid JWT signed by the dock private key with:
+
+- `htm: "POST"` matching the HTTP method
+- `htu: "https://api.treeship.dev/v1/artifacts"` matching the endpoint URL
+
+See the [Hub API overview](/docs/api/overview) for full DPoP details.
+
+## Response
+
+```json
+{
+  "artifact_id": "art_f7e6d5c4b3a2f7e6",
+  "hub_url": "https://treeship.dev/verify/art_f7e6d5c4b3a2f7e6",
+  "rekor_index": 12345
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `artifact_id` | string | Echoed artifact ID |
+| `hub_url` | string | Public verification URL |
+| `rekor_index` | integer or null | Sigstore Rekor log index (null if anchoring was skipped or failed) |
+
+## Errors
+
+| Status | Body | Cause |
+|--------|------|-------|
+| `401` | `{"error": "invalid DPoP proof"}` | DPoP JWT invalid or expired |
+| `401` | `{"error": "dock not found"}` | Unknown dock ID |
+| `400` | `{"error": "missing required field: artifact_id"}` | Incomplete request body |
+
+## Rekor anchoring
+
+Hub automatically anchors each pushed artifact to [Sigstore Rekor](https://rekor.sigstore.dev). This creates a permanent, publicly auditable record in the transparency log. If Rekor is unavailable, the push succeeds but `rekor_index` returns null.
+
+## Example
+
+```bash
+curl -X POST https://api.treeship.dev/v1/artifacts \
+  -H "Authorization: DPoP dck_9f8e7d6c" \
+  -H "DPoP: eyJhbGciOiJFZERTQSJ9..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "artifact_id": "art_f7e6d5c4b3a2f7e6",
+    "payload_type": "application/vnd.treeship.action.v1+json",
+    "envelope_json": "{...}",
+    "digest": "sha256:abc123...",
+    "signed_at": 1711500000,
+    "parent_id": null
+  }'
+```
+
+<Callout type="info">
+In practice, you do not call this endpoint directly. The CLI handles artifact construction, signing, and pushing when you run `treeship dock push`.
+</Callout>

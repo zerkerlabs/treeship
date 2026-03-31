@@ -1,0 +1,81 @@
+---
+title: GET /v1/merkle/checkpoint
+description: Retrieve Merkle tree checkpoints by ID or get the latest checkpoint.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+<Callout type="warn">
+Merkle checkpoints are a new addition. The endpoint is live but the response format may evolve before stabilizing.
+</Callout>
+
+## Get a specific checkpoint
+
+```
+GET /v1/merkle/checkpoint/:id
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `:id` | string | The checkpoint ID (e.g., `chk_a1b2c3d4`) |
+
+No authentication required.
+
+## Get the latest checkpoint
+
+```
+GET /v1/merkle/checkpoint/latest
+```
+
+No parameters. Returns the most recent checkpoint.
+
+## Response
+
+Both endpoints return the same format:
+
+```json
+{
+  "checkpoint_id": "chk_a1b2c3d4",
+  "tree_size": 4096,
+  "tree_root": "sha256:7e3a...",
+  "created_at": 1711500000,
+  "previous_checkpoint_id": "chk_9f8e7d6c",
+  "signature": "ed25519:..."
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `checkpoint_id` | string | Unique identifier for this checkpoint |
+| `tree_size` | integer | Number of leaves in the Merkle tree at this checkpoint |
+| `tree_root` | string | SHA-256 root hash of the tree |
+| `created_at` | integer | Unix timestamp of checkpoint creation |
+| `previous_checkpoint_id` | string or null | Previous checkpoint for chaining (null for the first checkpoint) |
+| `signature` | string | Hub's Ed25519 signature over the checkpoint data |
+
+## How checkpoints work
+
+Hub periodically batches newly pushed artifacts into a Merkle tree and creates a checkpoint. Each checkpoint is signed by Hub's key and chains to the previous checkpoint, forming an append-only log.
+
+You can verify that:
+1. A checkpoint signature is valid
+2. The tree root matches the claimed tree size
+3. The checkpoint chain is unbroken back to the genesis checkpoint
+4. An artifact's Merkle proof resolves against a specific checkpoint's root
+
+## Errors
+
+| Status | Body | Cause |
+|--------|------|-------|
+| `404` | `{"error": "checkpoint not found"}` | No checkpoint with this ID |
+| `404` | `{"error": "no checkpoints yet"}` | No checkpoints have been created (empty tree) |
+
+## Examples
+
+```bash
+# Get a specific checkpoint
+curl https://api.treeship.dev/v1/merkle/checkpoint/chk_a1b2c3d4
+
+# Get the latest checkpoint
+curl https://api.treeship.dev/v1/merkle/checkpoint/latest
+```

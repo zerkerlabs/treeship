@@ -1,0 +1,98 @@
+---
+title: Payment Proofs
+description: Creating verifiable payment receipts with Treeship artifacts and approval nonces.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Payment proofs in Treeship are standard artifacts that record payment events with signed, verifiable receipts. The key mechanism is the approval nonce -- a cryptographic binding that proves a human authorized the payment before it happened.
+
+## Recording a payment
+
+Use action artifacts to record each payment step:
+
+```bash
+# Record payment initiation
+treeship attest action \
+  --actor agent://payment-processor \
+  --action payment.initiate \
+  --subject '{"amount": 5000, "currency": "USD", "recipient": "vendor_abc"}'
+
+# Record payment confirmation, chained to initiation
+treeship attest action \
+  --actor agent://payment-processor \
+  --action payment.confirm \
+  --parent art_initiate123 \
+  --subject '{"transaction_id": "tx_789", "status": "completed"}'
+```
+
+## Verification
+
+Anyone with the artifact can verify that:
+
+1. The payment record was signed by the expected key
+2. The content has not been modified since signing
+3. The chain from initiation to confirmation is unbroken
+
+```bash
+treeship verify art_confirm456
+```
+
+## Payments with approval
+
+For payments that require human authorization:
+
+```bash
+# Finance director creates an approval
+treeship attest approval \
+  --approver human://alice \
+  --scope "payment.execute" \
+  --expires 1h
+
+# The approval returns a nonce
+# nonce: nce_a1b2c3d4e5f6
+
+# Payment agent uses the approval nonce
+treeship attest action \
+  --actor agent://payment-processor \
+  --action payment.execute \
+  --approval-nonce nce_a1b2c3d4e5f6
+```
+
+The verifier confirms that the approval nonce matches a valid approval artifact, proving the payment was authorized. The nonce is single-use -- it cannot be replayed for a second payment.
+
+## Using treeship wrap
+
+For payments executed as shell commands, `treeship wrap` captures the entire operation:
+
+```bash
+# Approve the payment
+treeship attest approval \
+  --approver human://alice \
+  --scope "payment.execute" \
+  --expires 1h
+
+# Wrap the payment execution with the approval nonce
+treeship wrap \
+  --actor agent://payment-processor \
+  --action payment.execute \
+  --approval-nonce nce_a1b2c3d4e5f6 \
+  -- python execute_payment.py --order ord_123
+```
+
+The wrap captures the exit code, timing, and binds it all to the approval in a single signed artifact.
+
+## Sharing payment proof
+
+Push to Hub for a shareable verification URL:
+
+```bash
+treeship dock push art_confirm456
+# hub_url: https://treeship.dev/verify/art_confirm456
+```
+
+Share the URL with counterparties, auditors, or compliance teams. They can verify the receipt in their browser without installing Treeship.
+
+<Callout type="info">
+Treeship v2 will add ZK proofs for payment verification, allowing you to prove properties like "payment was under $10,000" or "recipient is on the approved vendor list" without revealing the actual values.
+</Callout>

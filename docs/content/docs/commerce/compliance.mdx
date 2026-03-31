@@ -1,0 +1,112 @@
+---
+title: Compliance
+description: Using Treeship artifacts for regulatory compliance, audit trails, and human-in-the-loop gating.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Treeship artifacts provide a tamper-proof audit trail that supports regulatory compliance. Each action, approval, and handoff is signed and chained, creating evidence that auditors and regulators can independently verify.
+
+## What Treeship provides
+
+- **Immutable records.** Signed artifacts cannot be modified after creation. Tampering changes the content-addressed ID and breaks verification.
+- **Approval chains.** Nonce-bound approvals prove that specific humans authorized specific actions.
+- **Verifiable handoffs.** When work moves between agents or organizations, the handoff is recorded with a signed artifact.
+- **Independent verification.** Auditors verify artifacts locally without trusting the organization that created them.
+
+## Human-in-the-loop gating
+
+Treeship approvals enforce that an agent cannot proceed without human authorization:
+
+```bash
+# Human creates a time-limited approval
+treeship attest approval \
+  --approver human://alice \
+  --scope "financial.approve" \
+  --expires 1h
+
+# Agent uses the nonce -- without it, the action has no approval binding
+treeship attest action \
+  --actor agent://filing-system \
+  --action report.file \
+  --approval-nonce <nonce>
+```
+
+The approval nonce is single-use. The agent cannot reuse it for a second action. Verifiers can confirm that the nonce was valid at the time of use.
+
+## Compliance patterns
+
+### SOX compliance
+
+For financial reporting, create artifacts that prove the review and approval chain:
+
+```bash
+# Agent generates financial report
+treeship attest action \
+  --actor agent://financial-reporting \
+  --action report.generate \
+  --subject '{"period": "Q1-2026", "type": "10-Q"}'
+
+# Controller reviews
+treeship attest approval \
+  --approver human://alice \
+  --scope "financial.review"
+
+# CFO signs off
+treeship attest approval \
+  --approver human://bob \
+  --scope "financial.approve"
+
+# Final action with approval nonce
+treeship attest action \
+  --actor agent://filing-system \
+  --action report.file \
+  --approval-nonce <cfo-nonce> \
+  --parent art_review
+```
+
+### GDPR data processing
+
+Record data processing activities with artifacts:
+
+```bash
+treeship attest action \
+  --actor agent://data-processor \
+  --action data.process \
+  --subject '{"purpose": "analytics", "legal_basis": "consent", "data_types": ["usage_metrics"]}'
+```
+
+### Endorsement artifacts
+
+Third-party compliance attestations use endorsement artifacts:
+
+```bash
+treeship attest endorsement \
+  --endorser auditor://compliance-firm \
+  --target art_process123 \
+  --claim "Reviewed and found SOC 2 Type II compliant"
+```
+
+The endorsement is a separate signed artifact that references the original. Both can be verified independently.
+
+## Exportable proof bundles
+
+Bundle all relevant artifacts and share with auditors:
+
+```bash
+treeship bundle create --name "q1-2026-audit"
+treeship bundle export --out q1-audit.treeship
+```
+
+The auditor imports the bundle and verifies every artifact independently:
+
+```bash
+treeship bundle import q1-audit.treeship
+treeship verify art_bundle_id
+```
+
+The bundle is self-contained. The auditor does not need access to Hub or any external service to verify the artifacts.
+
+<Callout type="info">
+Treeship v2 will add ZK proofs for privacy-preserving compliance verification. Organizations will be able to prove regulatory compliance without exposing underlying data.
+</Callout>

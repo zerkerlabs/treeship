@@ -1,7 +1,6 @@
 {
-  "title": "SDK & Bridges",
+  "title": "SDK",
   "pages": [
-    "overview",
-    "mcp"
+    "overview"
   ]
 }

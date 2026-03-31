@@ -1,0 +1,65 @@
+---
+title: POST /v1/dock/authorize
+description: Complete the device flow and register dock keys with Hub.
+---
+
+## Request
+
+```
+POST /v1/dock/authorize
+Content-Type: application/json
+```
+
+```json
+{
+  "device_code": "dvc_a1b2c3d4",
+  "ship_public_key": "3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29",
+  "dock_public_key": "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `device_code` | string | Yes | The device code from the challenge |
+| `ship_public_key` | string | Yes | Hex-encoded Ed25519 public key used for signing artifacts |
+| `dock_public_key` | string | Yes | Hex-encoded Ed25519 public key used for DPoP authentication |
+
+No authentication required. This endpoint is called from the browser or CLI after the user approves the device code.
+
+## Response
+
+```json
+{
+  "dock_id": "dck_9f8e7d6c"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `dock_id` | string | Unique identifier for this docking connection |
+
+## Errors
+
+| Status | Body | Cause |
+|--------|------|-------|
+| `404` | `{"error": "challenge not found or expired"}` | Invalid or expired device code |
+| `400` | `{"error": "challenge not yet approved"}` | User has not entered the code in the browser yet |
+
+## Example
+
+```bash
+curl -X POST https://api.treeship.dev/v1/dock/authorize \
+  -H "Content-Type: application/json" \
+  -d '{
+    "device_code": "dvc_a1b2c3d4",
+    "ship_public_key": "3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29",
+    "dock_public_key": "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025"
+  }'
+```
+
+## Notes
+
+- The ship public key and dock public key must be different Ed25519 keys
+- The ship key is stored for identification only. Hub never receives any private key
+- The dock key is used to verify DPoP JWT signatures on subsequent API requests
+- Each device code can only be authorized once

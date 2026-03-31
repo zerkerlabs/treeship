@@ -1,0 +1,85 @@
+---
+title: GET /v1/verify/:id
+description: Run server-side verification of an artifact and its chain.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+## Request
+
+```
+GET /v1/verify/:id
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `:id` | string | The artifact ID (e.g., `art_f7e6d5c4b3a2f7e6`) |
+
+No authentication required.
+
+## Response (passing)
+
+```json
+{
+  "outcome": "pass",
+  "artifact_id": "art_f7e6d5c4b3a2f7e6",
+  "payload_type": "application/vnd.treeship.action.v1+json",
+  "signed_by": "key_8a3f...",
+  "chain_length": 3,
+  "chain_valid": true,
+  "checks": [
+    { "name": "signature", "result": "pass" },
+    { "name": "id_derivation", "result": "pass" },
+    { "name": "chain_integrity", "result": "pass" }
+  ]
+}
+```
+
+## Response (failing)
+
+```json
+{
+  "outcome": "fail",
+  "artifact_id": "art_f7e6d5c4b3a2f7e6",
+  "checks": [
+    { "name": "signature", "result": "fail", "reason": "signature does not match public key" },
+    { "name": "id_derivation", "result": "pass" },
+    { "name": "chain_integrity", "result": "skip" }
+  ]
+}
+```
+
+## Response (verifier unavailable)
+
+```json
+{
+  "outcome": "error",
+  "message": "verifier unavailable"
+}
+```
+
+This happens if the `treeship` binary is not installed on the Hub server.
+
+## Checks performed
+
+| Check | What it verifies |
+|-------|-----------------|
+| `signature` | The Ed25519 signature matches the public key embedded in the artifact |
+| `id_derivation` | The artifact ID was correctly derived from the content hash |
+| `chain_integrity` | Every parent reference in the chain is valid and unbroken |
+
+## Errors
+
+| Status | Body | Cause |
+|--------|------|-------|
+| `404` | `{"error": "artifact not found"}` | No artifact exists with this ID |
+
+## Example
+
+```bash
+curl https://api.treeship.dev/v1/verify/art_f7e6d5c4b3a2f7e6
+```
+
+<Callout type="info">
+For trustless verification, use the WASM verifier at `treeship.dev/verify/:id` which runs entirely client-side in the browser. The server-side endpoint runs the same open-source verification code, but you are trusting Hub to report the result honestly.
+</Callout>

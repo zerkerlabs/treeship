@@ -1,0 +1,4 @@
+{
+  "title": "Hub API",
+  "pages": ["overview", "dock-challenge", "dock-authorize", "artifacts-push", "artifacts-get", "verify", "merkle-proof", "merkle-checkpoint"]
+}

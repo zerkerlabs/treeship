@@ -1,0 +1,83 @@
+---
+title: Claude Code
+description: Add Treeship to Claude Code in 2 minutes. Every tool call gets a signed receipt.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+## Quick setup
+
+<Steps>
+<Step>
+### Install Treeship
+
+```bash
+cargo install --git https://github.com/zerkerlabs/treeship treeship-cli
+treeship init
+treeship install
+```
+</Step>
+<Step>
+### Add CLAUDE.md to your project
+
+Create a `CLAUDE.md` file in your project root. Claude Code reads this automatically.
+
+```markdown
+# Treeship
+
+This project uses Treeship for signed receipts of all agent actions.
+
+## Instructions for Claude Code
+
+Before running any shell command, wrap it with treeship:
+- Use `treeship wrap -- <command>` instead of running commands directly
+- Example: `treeship wrap -- npm test` instead of `npm test`
+- Example: `treeship wrap -- git commit -m "fix bug"` instead of `git commit`
+
+After completing a task, close the session:
+- Run `treeship session close --summary "description of what was done"`
+
+To check what's been attested:
+- Run `treeship log --tail 10`
+- Run `treeship verify <artifact-id> --full` to see the chain
+
+Do NOT disable or skip treeship wrapping. Every command matters.
+```
+</Step>
+<Step>
+### Verify it works
+
+Run Claude Code on any task. Check the receipt log:
+
+```bash
+treeship log --tail 5
+treeship verify last --full
+```
+</Step>
+</Steps>
+
+<Callout type="info">
+With shell hooks installed (`treeship install`), matching commands are attested automatically even without `treeship wrap`. The CLAUDE.md instructions are a belt-and-suspenders approach.
+</Callout>
+
+## What gets captured
+
+Every `treeship wrap` call records:
+- The command that ran
+- Exit code and elapsed time
+- SHA-256 digest of stdout/stderr
+- Files modified (paths + content hashes)
+- Git state before/after
+- Auto-chained to the previous receipt
+
+## Session workflow
+
+For longer Claude Code sessions, use sessions to group receipts:
+
+```bash
+treeship session start --name "fix auth bug" --actor agent://claude-code
+# ... Claude Code works ...
+treeship session close --summary "Fixed JWT expiry in auth.ts"
+```

@@ -1,0 +1,4 @@
+{
+  "title": "Integrations",
+  "pages": ["claude-code", "cursor", "openclaw", "langchain", "mcp"]
+}

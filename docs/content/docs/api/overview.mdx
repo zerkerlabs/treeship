@@ -1,0 +1,93 @@
+---
+title: Hub API Overview
+description: API reference for the Treeship Hub at api.treeship.dev. Authentication, endpoints, and error format.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+## Base URL
+
+```
+https://api.treeship.dev
+```
+
+All endpoints are prefixed with `/v1/`.
+
+## What Hub does
+
+Hub is optional infrastructure. Artifact validity never depends on it -- the signatures are the trust. Hub provides three things:
+
+1. **Artifact storage** for signed envelopes pushed from local Treeships
+2. **Shareable verification URLs** at `treeship.dev/verify/{artifact_id}`
+3. **Transparency log anchoring** via Sigstore Rekor
+
+Hub does not sign, modify, or interpret artifacts. It stores and serves the DSSE envelopes created locally. The WASM verifier on the verification page runs client-side, so Hub cannot forge a passing result.
+
+## Authentication
+
+Hub uses DPoP (Demonstration of Proof-of-Possession) for write endpoints. There are no API keys, session tokens, or bearer tokens.
+
+**Authenticated requests require two headers:**
+
+| Header | Value |
+|--------|-------|
+| `Authorization` | `DPoP {dock_id}` |
+| `DPoP` | A fresh JWT signed by the dock private key |
+
+The DPoP JWT contains:
+
+```json
+{
+  "iat": 1711500000,
+  "jti": "unique-random-hex",
+  "htm": "POST",
+  "htu": "https://api.treeship.dev/v1/artifacts"
+}
+```
+
+Hub verifies:
+- `iat` is within 60 seconds of the current time
+- `jti` has not been seen before (replay protection)
+- `htm` matches the HTTP method of the request
+- `htu` matches the request URL
+- The JWT signature matches the dock public key stored during login
+
+**Read endpoints** require no authentication.
+
+## Endpoints
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/v1/dock/challenge` | None | Start device flow login |
+| `POST` | `/v1/dock/authorize` | None | Complete device flow login |
+| `POST` | `/v1/artifacts` | DPoP | Push a signed artifact |
+| `GET` | `/v1/artifacts/:id` | None | Retrieve an artifact |
+| `GET` | `/v1/verify/:id` | None | Verify an artifact server-side |
+| `GET` | `/v1/merkle/:artifactId` | None | Get a Merkle inclusion proof |
+| `GET` | `/v1/merkle/checkpoint/:id` | None | Get a specific Merkle checkpoint |
+| `GET` | `/v1/merkle/checkpoint/latest` | None | Get the latest Merkle checkpoint |
+| `GET` | `/v1/dock/authorized` | None | Poll device flow status |
+| `GET` | `/.well-known/treeship/revoked.json` | None | Revoked key list |
+
+## Error format
+
+All errors return JSON:
+
+```json
+{
+  "error": "artifact not found"
+}
+```
+
+HTTP status codes:
+- `200` -- Success
+- `201` -- Created (artifact stored)
+- `202` -- Accepted (pending, used during device flow polling)
+- `400` -- Bad request
+- `401` -- Authentication failed (DPoP invalid)
+- `404` -- Not found
+- `500` -- Server error
+
+## OpenAPI spec
+
+The full OpenAPI 3.1 spec is available at [hub-openapi.yaml](/docs/api/hub-openapi.yaml) for code generation and tooling.

@@ -1,0 +1,99 @@
+---
+title: "@treeship/mcp"
+description: Drop-in MCP client replacement. Every tool call receipted automatically.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+## Install
+
+```bash
+npm install @treeship/mcp
+```
+
+## Usage
+
+One import change. Zero other code changes.
+
+```ts
+// Before (no attestation):
+import { Client } from '@modelcontextprotocol/sdk';
+
+// After (every tool call attested):
+import { Client } from '@treeship/mcp';
+```
+
+Everything else stays the same. The wrapped `Client` class extends the original MCP `Client` and re-exports all other symbols unchanged.
+
+```ts
+import { Client } from '@treeship/mcp';
+
+const client = new Client(
+  { name: 'my-agent', version: '1.0' },
+  { capabilities: {} },
+);
+await client.connect(transport);
+
+const result = await client.callTool({
+  name: 'search',
+  arguments: { q: 'treeship' },
+});
+
+// Result now carries attestation metadata:
+// result._treeship = { intent: "art_xxx", tool: "search", actor: "agent://mcp-my-agent" }
+```
+
+## What gets attested
+
+For every `callTool()` invocation, the bridge produces two attestations:
+
+1. **Intent** (before the call, awaited) -- proves what was about to happen. The tool name and a SHA-256 digest of the arguments are recorded.
+2. **Receipt** (after the call, fire-and-forget) -- proves what came back. Records elapsed time, exit status, and a digest of the output. The receipt is never awaited, so it never blocks the response.
+
+<Callout type="info">
+Arguments and results are never stored directly. Only their SHA-256 digests enter the artifact. The digest proves which data was involved without exposing the data itself.
+</Callout>
+
+If attestation fails for any reason (CLI not installed, network issue, signing error), the tool call still completes normally. Treeship never breaks your MCP workflow.
+
+## Result metadata
+
+When attestation succeeds, the result object includes a `_treeship` field:
+
+```ts
+interface ToolReceipt {
+  intent: string;   // artifact ID of the intent attestation
+  tool: string;     // tool name, e.g. "search"
+  actor: string;    // actor URI used for both attestations
+}
+```
+
+## Environment variables
+
+| Variable | Effect |
+|----------|--------|
+| `TREESHIP_DISABLE=1` | Disable all attestation. Pure passthrough to the upstream MCP client. |
+| `TREESHIP_ACTOR` | Override the default actor URI (default: `agent://mcp-{clientName}`) |
+| `TREESHIP_APPROVAL_NONCE` | Attach an approval nonce to intent attestations |
+| `TREESHIP_DEBUG=1` | Log all attestation activity to stderr |
+
+## Actor naming
+
+By default, the actor URI is derived from the `name` field in your `Implementation` object:
+
+```ts
+new Client({ name: 'my-agent', version: '1.0' }, { capabilities: {} });
+// Default actor: agent://mcp-my-agent
+```
+
+Override it with the `TREESHIP_ACTOR` environment variable when you need a specific identity.
+
+## Approval flow
+
+To attest that a human approved a tool call before it happened, set the `TREESHIP_APPROVAL_NONCE` environment variable. The nonce is included in the intent attestation and links back to the approval artifact.
+
+```bash
+export TREESHIP_APPROVAL_NONCE=abc123
+```
+
+This is useful when a human reviews and approves a planned action before the agent executes it.

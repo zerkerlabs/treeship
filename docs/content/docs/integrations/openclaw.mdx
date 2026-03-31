@@ -1,0 +1,111 @@
+---
+title: OpenClaw
+description: Add Treeship as an OpenClaw skill. Every agent action gets a signed receipt.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+## Quick setup
+
+<Steps>
+<Step>
+### Install Treeship
+
+```bash
+cargo install --git https://github.com/zerkerlabs/treeship treeship-cli
+treeship init
+treeship install
+```
+</Step>
+<Step>
+### Add the Treeship skill
+
+Create a `treeship.skill.md` file in your OpenClaw skills directory:
+
+````markdown
+# treeship
+
+Treeship creates signed receipts for agent actions. Use this skill
+to attest important actions, get approvals, and create verifiable
+proof of what happened.
+
+## Commands
+
+### Attest an action
+```bash
+treeship wrap -- <command>
+```
+Wraps any shell command. Captures output digest, file changes, git state,
+exit code, and elapsed time. Signs everything with Ed25519.
+
+### Get approval before a risky action
+```bash
+treeship attest approval --approver human://alice --description "approve deployment"
+```
+Returns a nonce. Pass it to the action:
+```bash
+treeship wrap --approval-nonce <nonce> -- kubectl apply -f deploy.yaml
+```
+
+### Record a decision
+```bash
+treeship attest decision --actor agent://openclaw --model claude-opus-4 \
+  --summary "Analyzed contract. Standard terms." --confidence 0.91
+```
+
+### Check what's been attested
+```bash
+treeship log --tail 10
+```
+
+### Verify the chain
+```bash
+treeship verify last --full
+```
+
+### Push to Hub for a shareable URL
+```bash
+treeship dock push <artifact-id>
+```
+
+## Rules
+- Always use `treeship wrap -- <command>` for shell commands
+- Use `treeship attest decision` after LLM inference that leads to an action
+- Check `treeship pending` before risky operations
+- Never skip attestation. Every action matters for the audit trail.
+````
+</Step>
+<Step>
+### Verify it works
+
+Run your OpenClaw agent, then check:
+
+```bash
+treeship log --tail 10
+treeship verify last --full
+```
+</Step>
+</Steps>
+
+<Callout type="info">
+OpenClaw agents can read the skill file and call treeship commands directly. No SDK or library import needed.
+</Callout>
+
+## Subagent support
+
+If your OpenClaw agent spawns subagents, each subagent should use a different `--actor` URI:
+
+```bash
+# Main agent
+treeship wrap --actor agent://openclaw-main -- research "topic"
+
+# Subagent
+treeship wrap --actor agent://openclaw-researcher -- fetch "papers"
+
+# Handoff between agents
+treeship attest handoff --from agent://openclaw-researcher --to agent://openclaw-main \
+  --artifacts art_abc123
+```
+
+All receipts chain together automatically via the `.last` file.

@@ -1,0 +1,61 @@
+---
+title: GET /v1/dock/challenge
+description: Start the device flow login by requesting a challenge nonce and device code.
+---
+
+## Request
+
+```
+GET /v1/dock/challenge
+```
+
+No authentication required. No request body.
+
+## Response
+
+```json
+{
+  "device_code": "dvc_a1b2c3d4",
+  "nonce": "nce_7f8e9d0a",
+  "expires_at": 1711494000,
+  "verify_url": "https://treeship.dev/dock/activate"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `device_code` | string | Random device code, displayed to the user |
+| `nonce` | string | Cryptographic nonce for internal binding |
+| `expires_at` | integer | Unix timestamp, 5 minutes from creation |
+| `verify_url` | string | URL where the user enters the device code |
+
+## Flow
+
+1. CLI calls `GET /v1/dock/challenge`
+2. CLI displays the `device_code` and opens `verify_url` in the browser
+3. User enters the code at `treeship.dev/dock/activate` and approves
+4. CLI polls `GET /v1/dock/authorized?device_code=XXX` until approved or expired
+5. CLI calls `POST /v1/dock/authorize` with its public keys to complete registration
+
+This follows the RFC 8628 device authorization grant pattern.
+
+## Example
+
+```bash
+curl https://api.treeship.dev/v1/dock/challenge
+```
+
+```json
+{
+  "device_code": "dvc_a1b2c3d4",
+  "nonce": "nce_7f8e9d0a",
+  "expires_at": 1711494000,
+  "verify_url": "https://treeship.dev/dock/activate"
+}
+```
+
+## Notes
+
+- Challenges expire after 5 minutes
+- Each challenge can only be used once
+- The nonce is used internally for cryptographic binding and is not displayed to the user

@@ -1,0 +1,71 @@
+---
+title: LangChain
+description: Add Treeship to LangChain agents. Receipts for every chain and tool call.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+## Two approaches
+
+<Tabs items={['SDK (TypeScript)', 'CLI (any language)']}>
+<Tab value="SDK (TypeScript)">
+
+If your LangChain agent is in TypeScript:
+
+```typescript
+import { ship } from '@treeship/sdk'
+
+const s = ship()
+
+// Before the chain runs
+const { artifactId: intentId } = await s.attest.action({
+  actor: 'agent://langchain',
+  action: 'chain.invoke',
+  meta: { chain: 'research-chain', input_digest: sha256(input) },
+})
+
+// Run the chain
+const result = await chain.invoke(input)
+
+// After the chain completes
+await s.attest.action({
+  actor: 'agent://langchain',
+  action: 'chain.result',
+  parentId: intentId,
+  meta: { output_digest: sha256(JSON.stringify(result)) },
+})
+```
+</Tab>
+<Tab value="CLI (any language)">
+
+Wrap the agent script itself:
+
+```bash
+treeship wrap --actor agent://langchain -- python agent.py
+```
+
+Or from within Python, call treeship via subprocess:
+
+```python
+import subprocess, json
+
+def attest(action, meta=None):
+    args = ["treeship", "attest", "action",
+            "--actor", "agent://langchain",
+            "--action", action,
+            "--format", "json"]
+    if meta:
+        args += ["--meta", json.dumps(meta)]
+    result = subprocess.run(args, capture_output=True, text=True)
+    return json.loads(result.stdout) if result.returncode == 0 else None
+
+# Use it
+attest("chain.invoke", {"chain": "research", "query": "AI safety"})
+```
+</Tab>
+</Tabs>
+
+<Callout type="info">
+The CLI approach works with any language. The SDK approach gives you tighter integration but requires the treeship binary in PATH.
+</Callout>

@@ -4,6 +4,9 @@
     "guides",
     "concepts",
     "cli",
-    "sdk"
+    "sdk",
+    "integrations",
+    "api",
+    "commerce"
   ]
 }
