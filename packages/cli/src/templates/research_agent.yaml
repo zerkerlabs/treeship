@@ -1,0 +1,44 @@
+name: research-agent
+version: 1
+description: >
+  Multi-step research workflow with full source provenance.
+  Proves which sources informed which conclusion, in what order.
+tags: [research, agents, provenance]
+audience: [developer, researcher]
+
+session:
+  actor: agent://researcher
+  auto_start: true
+  auto_push: true
+
+attest:
+  commands:
+    - pattern: "curl*"
+      label: source fetch
+    - pattern: "wget*"
+      label: source fetch
+
+capture:
+  output_digest: true
+  file_changes: true
+  git_state: false
+  lockfile_changes: false
+  model_metadata: true
+
+hub:
+  auto_push: true
+  push_on: [session_close]
+
+onboarding: |
+  Treeship is tracking your research session.
+
+  Every source fetch and analysis step is attested.
+  When your session closes, the full research chain is verifiable:
+
+    sources fetched -> analysis steps -> conclusion
+
+  Close your session with a summary:
+    treeship session close --summary "what you found"
+
+  Share the provenance chain:
+    treeship share last

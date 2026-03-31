@@ -1,0 +1,70 @@
+name: ci-cd-pipeline
+version: 1
+description: >
+  Software delivery chain attestation.
+  Proves test -> build -> deploy in verified sequence.
+tags: [development, ci, cd, devops]
+audience: [developer, devops]
+
+session:
+  actor: agent://ci
+  auto_start: true
+  auto_push: true
+
+attest:
+  commands:
+    - pattern: "npm test*"
+      label: test suite
+    - pattern: "cargo test*"
+      label: test suite
+    - pattern: "pytest*"
+      label: test suite
+    - pattern: "docker build*"
+      label: build
+    - pattern: "npm run build*"
+      label: build
+    - pattern: "cargo build*"
+      label: build
+    - pattern: "kubectl apply*"
+      label: deploy
+      require_approval: true
+    - pattern: "fly deploy*"
+      label: deploy
+      require_approval: true
+    - pattern: "railway up*"
+      label: deploy
+      require_approval: true
+    - pattern: "vercel --prod*"
+      label: deploy
+      require_approval: true
+
+capture:
+  output_digest: true
+  file_changes: true
+  git_state: true
+  lockfile_changes: true
+  environment: true
+
+approvals:
+  require_for:
+    - label: deploy
+
+hub:
+  auto_push: true
+  push_on: [session_close, approval_required]
+
+onboarding: |
+  Treeship is tracking your delivery pipeline.
+
+  Every step is attested automatically:
+    test   -> signed receipt with output hash
+    build  -> signed receipt with artifact hash
+    deploy -> blocked until approved, then signed
+
+  Approve a deploy:
+    treeship approve
+
+  The full chain proves:
+    - which test run authorized this build
+    - which build authorized this deploy
+    - who approved the deploy and when

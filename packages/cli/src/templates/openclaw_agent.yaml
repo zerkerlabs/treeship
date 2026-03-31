@@ -1,0 +1,49 @@
+name: openclaw-agent
+version: 1
+description: >
+  OpenClaw workflow attestation for contract analysis and negotiation.
+  Proves every analysis step and approval in the legal AI pipeline.
+tags: [openclaw, legal, agents, contracts]
+audience: [developer, legal-ops]
+
+session:
+  actor: agent://openclaw
+  auto_start: true
+  auto_push: true
+
+attest:
+  commands:
+    - pattern: "openclaw*"
+      label: openclaw action
+    - pattern: "curl*"
+      label: api call
+
+capture:
+  output_digest: true
+  file_changes: false
+  git_state: false
+  lockfile_changes: false
+
+approvals:
+  require_for:
+    - label: contract execution
+
+hub:
+  auto_push: true
+  push_on: [session_close, approval_required]
+
+onboarding: |
+  OpenClaw workflow attestation configured.
+
+  Every OpenClaw action is attested automatically.
+  Contract executions require human approval:
+
+    treeship attest approval \
+      --approver human://attorney \
+      --description "approve contract execution for Acme Corp NDA"
+
+  The chain proves:
+    - which documents were analyzed
+    - what the AI recommended
+    - who approved the final action
+    - full sequence from analysis to execution

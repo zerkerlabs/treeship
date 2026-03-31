@@ -1,0 +1,44 @@
+name: mcp-agent
+version: 1
+description: >
+  Automatic attestation for every MCP tool call.
+  Drop-in via @treeship/mcp -- one import change, zero other changes.
+tags: [mcp, agents, tools]
+audience: [developer]
+
+session:
+  actor: agent://mcp
+  auto_start: true
+  auto_push: true
+
+# MCP bridge handles attestation -- no shell command rules needed.
+# Install: npm install @treeship/mcp
+# Change: import { Client } from '@treeship/mcp'
+attest:
+  commands: []
+
+capture:
+  output_digest: true
+  model_metadata: false
+
+hub:
+  auto_push: true
+  push_on: [session_close]
+
+onboarding: |
+  Install the MCP bridge:
+    npm install @treeship/mcp
+
+  Change one import:
+    // Before:
+    import { Client } from '@modelcontextprotocol/sdk'
+
+    // After:
+    import { Client } from '@treeship/mcp'
+
+  Every tool call is now attested automatically.
+  Results include: result._treeship.intent, result._treeship.receipt
+
+  Set an approval nonce for sensitive calls:
+    treeship attest approval --approver human://you --description "..."
+    export TREESHIP_APPROVAL_NONCE=nce_xxx

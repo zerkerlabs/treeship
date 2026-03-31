@@ -14,6 +14,7 @@ pub fn run(
     name:        Option<String>,
     config_path: Option<String>,
     force:       bool,
+    template:    Option<String>,
     printer:     &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
 
@@ -59,6 +60,43 @@ pub fn run(
         ("Ship ID", &ship_id),
         ("Key ID",  &format!("{} (ed25519)", key_info.id)),
     ]);
+
+    // ---- Template path ----
+    if let Some(ref tmpl_name) = template {
+        let (project_config, onboarding) = super::template::apply_for_init(tmpl_name)?;
+        write_project_config(&project_config)?;
+
+        printer.blank();
+        printer.success("Configuration saved to .treeship/config.yaml", &[
+            ("Template", tmpl_name),
+        ]);
+
+        // Show onboarding message
+        if let Some(ref msg) = onboarding {
+            printer.blank();
+            for line in msg.lines() {
+                printer.info(line);
+            }
+        }
+
+        // Offer to install shell hooks if auto_start
+        if project_config.session.auto_start {
+            printer.blank();
+            let hook_input = prompt("Install shell hooks for automatic attestation? [Y/n]: ");
+            let install_hooks = !matches!(hook_input.trim().to_lowercase().as_str(), "n" | "no");
+            if install_hooks {
+                match super::install::install(printer) {
+                    Ok(()) => {},
+                    Err(e) => {
+                        printer.warn("Could not install hooks", &[("error", &e.to_string())]);
+                    }
+                }
+            }
+        }
+
+        printer.blank();
+        return Ok(());
+    }
 
     let interactive = io::stdin().is_terminal();
 

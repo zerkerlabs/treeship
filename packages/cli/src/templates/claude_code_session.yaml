@@ -1,0 +1,50 @@
+name: claude-code-session
+version: 1
+description: >
+  Complete audit trail of a Claude Code AI coding session.
+  Every command, every file change, every git operation.
+tags: [ai, coding, claude, audit]
+audience: [developer, team-lead]
+
+session:
+  actor: agent://claude-code
+  auto_start: true
+  auto_push: true
+
+attest:
+  commands:
+    - pattern: "*"
+      label: shell command
+  paths:
+    - path: "src/**"
+      on: write
+      label: source file write
+    - path: "*.md"
+      on: write
+      label: doc write
+    - path: "*lock*"
+      on: change
+      label: lockfile changed
+
+capture:
+  output_digest: true
+  file_changes: true
+  git_state: true
+  lockfile_changes: true
+  environment: true
+
+hub:
+  auto_push: true
+  push_on: [session_close]
+
+onboarding: |
+  Add to your project's CLAUDE.md:
+
+    ## Treeship
+    This project uses Treeship for session attestation.
+    When completing a task, run:
+      treeship session close --summary "what you did"
+    Include the verify URL in your response to the user.
+
+  The full session -- every command, every file change --
+  is verifiable at one URL.

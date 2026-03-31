@@ -1,0 +1,57 @@
+name: github-contributor
+version: 1
+description: >
+  Commit and test provenance for open source contributors.
+  Proves tests passed before commit, lockfile untouched.
+tags: [development, oss, git]
+audience: [developer]
+
+session:
+  actor: agent://contributor
+  auto_start: true
+  auto_push: true
+
+attest:
+  commands:
+    - pattern: "npm test*"
+      label: test suite
+    - pattern: "cargo test*"
+      label: test suite
+    - pattern: "pytest*"
+      label: test suite
+    - pattern: "git commit*"
+      label: code commit
+    - pattern: "git push*"
+      label: code push
+    - pattern: "npm install*"
+      label: dependency install
+    - pattern: "cargo add*"
+      label: dependency add
+  paths:
+    - path: "*lock*"
+      on: change
+      label: lockfile changed
+
+capture:
+  output_digest: true
+  file_changes: true
+  git_state: true
+  lockfile_changes: true
+
+hub:
+  auto_push: true
+  push_on: [git_push]
+
+onboarding: |
+  Treeship is tracking your contribution history.
+
+  Automatic attestation:
+    npm test    -> test results with output hash
+    git commit  -> signed commit receipt
+    git push    -> push receipt linked to preceding tests
+
+  Add to your PR description:
+    treeship share last
+    -> https://treeship.dev/verify/art_xxx
+
+  Proves: tests ran before commit, lockfile clean, signed by your key.

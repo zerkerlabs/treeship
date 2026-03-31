@@ -4,6 +4,7 @@ mod ctx;
 mod commands;
 mod tui;
 mod otel;
+mod templates;
 
 use clap::{Parser, Subcommand, Args};
 use printer::{Format, Printer};
@@ -266,8 +267,67 @@ enum Command {
     #[command(subcommand)]
     Otel(OtelCommand),
 
+    /// List available trust templates
+    ///
+    /// Shows all official templates grouped by category.
+    /// Templates are pre-built attestation configurations for common workflows.
+    ///
+    /// Examples:
+    ///   treeship templates
+    Templates,
+
+    /// Template management -- preview, apply, validate, save
+    ///
+    /// Examples:
+    ///   treeship template preview github-contributor
+    ///   treeship template apply ci-cd-pipeline
+    ///   treeship template validate my-template.yaml
+    ///   treeship template save --name my-workflow
+    #[command(subcommand)]
+    Template(TemplateCommand),
+
     /// Print version and build info
     Version,
+}
+
+#[derive(Subcommand)]
+enum TemplateCommand {
+    /// Preview what a template does without applying it
+    ///
+    /// Examples:
+    ///   treeship template preview github-contributor
+    Preview {
+        /// Template name
+        name: String,
+    },
+    /// Apply a template to the current project
+    ///
+    /// Examples:
+    ///   treeship template apply ci-cd-pipeline
+    Apply {
+        /// Template name
+        name: String,
+    },
+    /// Validate a custom template YAML file
+    ///
+    /// Examples:
+    ///   treeship template validate my-template.yaml
+    Validate {
+        /// Path to template YAML file
+        file: String,
+    },
+    /// Save the current project config as a reusable template
+    ///
+    /// Examples:
+    ///   treeship template save --name my-workflow
+    Save(TemplateSaveArgs),
+}
+
+#[derive(Args)]
+struct TemplateSaveArgs {
+    /// Template name (slug)
+    #[arg(long, value_name = "NAME")]
+    name: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -319,6 +379,10 @@ struct InitArgs {
     /// Human-readable name for this ship (optional)
     #[arg(long, value_name = "NAME")]
     name: Option<String>,
+
+    /// Apply a trust template (name or file path)
+    #[arg(long, value_name = "TEMPLATE")]
+    template: Option<String>,
 
     /// Overwrite an existing config
     #[arg(long, default_value_t = false)]
@@ -879,13 +943,25 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             Ok(())
         }
 
+        Command::Templates => {
+            commands::template::list(printer);
+            Ok(())
+        }
+
+        Command::Template(sub) => match sub {
+            TemplateCommand::Preview { name } => commands::template::preview(name, printer),
+            TemplateCommand::Apply { name } => commands::template::apply(name, printer),
+            TemplateCommand::Validate { file } => commands::template::validate(file, printer),
+            TemplateCommand::Save(a) => commands::template::save(a.name.clone(), printer),
+        },
+
         Command::Version => {
             println!("treeship {} (rust)", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
 
         Command::Init(a) => commands::init::run(
-            a.name.clone(), cli.config.clone(), a.force, printer,
+            a.name.clone(), cli.config.clone(), a.force, a.template.clone(), printer,
         ),
 
         Command::Status => commands::status::run(cli.config.as_deref(), printer),
