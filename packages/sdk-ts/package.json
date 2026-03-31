@@ -1,6 +1,6 @@
 {
   "name": "@treeship/sdk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "TypeScript SDK for Treeship - portable trust receipts for agent workflows",
   "license": "Apache-2.0",
   "repository": {
@@ -20,7 +20,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "scripts": {
     "build": "tsc",
