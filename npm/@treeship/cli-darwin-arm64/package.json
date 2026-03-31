@@ -1,0 +1,11 @@
+{
+  "name": "@treeship/cli-darwin-arm64",
+  "version": "0.1.0",
+  "description": "Treeship CLI binary for darwin arm64",
+  "os": ["darwin"],
+  "cpu": ["arm64"],
+  "license": "Apache-2.0",
+  "scripts": {
+    "postinstall": "node postinstall.js"
+  }
+}

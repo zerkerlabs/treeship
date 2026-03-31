@@ -1,0 +1,11 @@
+{
+  "name": "@treeship/cli-linux-x64",
+  "version": "0.1.0",
+  "description": "Treeship CLI binary for linux x64",
+  "os": ["linux"],
+  "cpu": ["x64"],
+  "license": "Apache-2.0",
+  "scripts": {
+    "postinstall": "node postinstall.js"
+  }
+}
