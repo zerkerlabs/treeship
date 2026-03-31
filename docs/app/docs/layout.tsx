@@ -1,6 +1,7 @@
 import { DocsLayout } from 'fumadocs-ui/layouts/docs';
 import type { ReactNode } from 'react';
 import { source } from '@/lib/source';
+import { CopyInstall } from '@/components/copy-install';
 
 export default function Layout({ children }: { children: ReactNode }) {
   return (
@@ -31,11 +32,7 @@ export default function Layout({ children }: { children: ReactNode }) {
         },
       ]}
       sidebar={{
-        banner: (
-          <div className="sidebar-install-banner rounded-lg px-3 py-2.5 text-xs font-mono text-fd-muted-foreground">
-            cargo install treeship
-          </div>
-        ),
+        banner: <CopyInstall />,
       }}
     >
       {children}

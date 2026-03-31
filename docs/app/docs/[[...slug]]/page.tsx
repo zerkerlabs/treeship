@@ -30,7 +30,16 @@ export default async function Page(props: {
   const MDX = data.body;
 
   return (
-    <DocsPage toc={data.toc} full={data.full}>
+    <DocsPage
+      toc={data.toc}
+      full={data.full}
+      editOnGithub={{
+        owner: 'zerkerlabs',
+        repo: 'treeship',
+        sha: 'main',
+        path: `docs/content/docs/${page.path}`,
+      }}
+    >
       <DocsTitle>{data.title}</DocsTitle>
       <DocsDescription>{data.description}</DocsDescription>
       <DocsBody>
@@ -54,7 +63,7 @@ export async function generateMetadata(props: {
   const data = page.data as unknown as DocPageData;
 
   return {
-    title: `${data.title} — Treeship`,
+    title: `${data.title} -- Treeship`,
     description: data.description,
   };
 }
