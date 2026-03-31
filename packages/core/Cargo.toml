@@ -2,6 +2,12 @@
 name = "treeship-core"
 version = "0.1.0"
 edition = "2021"
+description = "Portable trust receipts for agent workflows - core library"
+license = "Apache-2.0"
+repository = "https://github.com/zerkerlabs/treeship"
+homepage = "https://treeship.dev"
+keywords = ["treeship", "attestation", "trust", "agents", "cryptography"]
+categories = ["cryptography", "authentication"]
 
 [dependencies]
 ed25519-dalek = { version = "2", features = ["rand_core"] }

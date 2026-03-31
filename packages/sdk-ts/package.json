@@ -2,6 +2,14 @@
   "name": "@treeship/sdk",
   "version": "0.1.0",
   "description": "TypeScript SDK for Treeship - portable trust receipts for agent workflows",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zerkerlabs/treeship",
+    "directory": "packages/sdk-ts"
+  },
+  "homepage": "https://treeship.dev",
+  "keywords": ["treeship", "attestation", "trust", "agents", "verification", "receipts"],
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
