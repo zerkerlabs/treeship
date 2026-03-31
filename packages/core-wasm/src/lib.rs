@@ -126,6 +126,58 @@ fn decode_inner(envelope_json: &str) -> Result<String, String> {
         .map_err(|e| format!("payload is not UTF-8: {}", e))
 }
 
+/// Verify a Merkle inclusion proof JSON.
+/// Returns JSON: { "valid": true/false, "message": "...", "artifact_id": "...",
+///   "leaf_index": N, "checkpoint_index": N, "checkpoint_root": "...",
+///   "signed_at": "...", "signer": "..." }
+#[wasm_bindgen]
+pub fn verify_merkle_proof(proof_json: &str) -> String {
+    match verify_merkle_inner(proof_json) {
+        Ok(result) => result,
+        Err(e) => serde_json::json!({
+            "valid": false,
+            "message": e,
+        }).to_string(),
+    }
+}
+
+fn verify_merkle_inner(proof_json: &str) -> Result<String, String> {
+    let proof_file: treeship_core::merkle::ProofFile = serde_json::from_str(proof_json)
+        .map_err(|e| format!("invalid proof JSON: {}", e))?;
+
+    // 1. Verify checkpoint signature
+    if !proof_file.checkpoint.verify() {
+        return Ok(serde_json::json!({
+            "valid": false,
+            "message": "checkpoint signature invalid",
+            "artifact_id": proof_file.artifact_id,
+            "checkpoint_index": proof_file.checkpoint.index,
+        }).to_string());
+    }
+
+    // 2. Verify inclusion proof
+    let root = proof_file.checkpoint.root
+        .strip_prefix("sha256:")
+        .unwrap_or(&proof_file.checkpoint.root);
+
+    let valid = treeship_core::merkle::MerkleTree::verify_proof(
+        root,
+        &proof_file.artifact_id,
+        &proof_file.inclusion_proof,
+    );
+
+    Ok(serde_json::json!({
+        "valid": valid,
+        "message": if valid { "inclusion verified" } else { "proof invalid" },
+        "artifact_id": proof_file.artifact_id,
+        "leaf_index": proof_file.inclusion_proof.leaf_index,
+        "checkpoint_index": proof_file.checkpoint.index,
+        "checkpoint_root": proof_file.checkpoint.root,
+        "signed_at": proof_file.checkpoint.signed_at,
+        "signer": proof_file.checkpoint.signer,
+    }).to_string())
+}
+
 /// Version string for the WASM module.
 #[wasm_bindgen]
 pub fn version() -> String {
