@@ -219,8 +219,48 @@ enum Command {
     ///   treeship doctor
     Doctor,
 
+    /// Create a signed checkpoint of the Merkle tree
+    ///
+    /// Rebuilds the Merkle tree from all local artifacts, signs the
+    /// current root, and stores the checkpoint.
+    ///
+    /// Examples:
+    ///   treeship checkpoint
+    Checkpoint,
+
+    /// Merkle tree operations
+    ///
+    /// Generate inclusion proofs, verify proofs offline, and check
+    /// the status of the local Merkle tree.
+    ///
+    /// Examples:
+    ///   treeship merkle proof art_abc123
+    ///   treeship merkle verify proof.json
+    ///   treeship merkle status
+    #[command(subcommand)]
+    Merkle(MerkleCommand),
+
     /// Print version and build info
     Version,
+}
+
+#[derive(Subcommand)]
+enum MerkleCommand {
+    /// Generate an inclusion proof for an artifact
+    ///
+    /// Examples:
+    ///   treeship merkle proof art_abc123
+    Proof(MerkleProofArgs),
+
+    /// Verify an inclusion proof (fully offline)
+    ///
+    /// Examples:
+    ///   treeship merkle verify proof.json
+    ///   treeship merkle verify sha256:7f3a... proof.json
+    Verify(MerkleVerifyArgs),
+
+    /// Show Merkle tree status
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -713,6 +753,23 @@ struct DockPullArgs {
     id: String,
 }
 
+// --- merkle -----------------------------------------------------------------
+
+#[derive(Args)]
+struct MerkleProofArgs {
+    /// Artifact ID to generate proof for
+    artifact_id: String,
+}
+
+#[derive(Args)]
+struct MerkleVerifyArgs {
+    /// Path to proof.json file (or expected root hash followed by path)
+    ///
+    /// If two arguments: first is expected root hash, second is proof file.
+    /// If one argument: just the proof file (root taken from proof itself).
+    args: Vec<String>,
+}
+
 // --- main -------------------------------------------------------------------
 
 fn main() {
@@ -938,6 +995,33 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 printer,
             ),
             DockCommand::Undock => commands::dock::undock(
+                cli.config.as_deref(),
+                printer,
+            ),
+        },
+
+        Command::Checkpoint => commands::merkle::checkpoint(
+            cli.config.as_deref(),
+            printer,
+        ),
+
+        Command::Merkle(sub) => match sub {
+            MerkleCommand::Proof(a) => commands::merkle::proof(
+                &a.artifact_id,
+                cli.config.as_deref(),
+                printer,
+            ),
+            MerkleCommand::Verify(a) => {
+                let (root, path) = if a.args.len() == 2 {
+                    (Some(a.args[0].as_str()), a.args[1].as_str())
+                } else if a.args.len() == 1 {
+                    (None, a.args[0].as_str())
+                } else {
+                    return Err("usage: treeship merkle verify [root] <proof.json>".into());
+                };
+                commands::merkle::verify(root, path, printer)
+            },
+            MerkleCommand::Status => commands::merkle::status(
                 cli.config.as_deref(),
                 printer,
             ),

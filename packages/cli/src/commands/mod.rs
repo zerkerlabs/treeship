@@ -13,3 +13,4 @@ pub mod session;
 pub mod approve;
 pub mod daemon;
 pub mod doctor;
+pub mod merkle;
