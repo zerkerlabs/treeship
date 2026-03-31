@@ -2,6 +2,7 @@ mod printer;
 mod config;
 mod ctx;
 mod commands;
+mod tui;
 
 use clap::{Parser, Subcommand, Args};
 use printer::{Format, Printer};
@@ -239,6 +240,15 @@ enum Command {
     ///   treeship merkle status
     #[command(subcommand)]
     Merkle(MerkleCommand),
+
+    /// Interactive terminal dashboard
+    ///
+    /// Opens a full-screen TUI showing session status, recent artifacts,
+    /// pending approvals, and dock status. Reads only from local storage.
+    ///
+    /// Examples:
+    ///   treeship ui
+    Ui,
 
     /// Print version and build info
     Version,
@@ -792,6 +802,8 @@ fn main() {
 
 fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     match &cli.command {
+
+        Command::Ui => tui::run(cli.config.as_deref()),
 
         Command::Version => {
             println!("treeship {} (rust)", env!("CARGO_PKG_VERSION"));
