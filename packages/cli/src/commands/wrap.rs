@@ -222,6 +222,19 @@ pub fn run(
     // ── 2. Auto-chaining: write .last ──────────────────────────────────
     write_last(&ctx.config.storage_dir, &result.artifact_id);
 
+    // ── OTel export (best-effort, never fails the wrap) ─────────────
+    #[cfg(feature = "otel")]
+    {
+        if let Some(otel_config) = crate::otel::config::OtelConfig::from_env() {
+            let record = ctx.storage.read(&result.artifact_id);
+            if let Ok(ref rec) = record {
+                if let Err(e) = crate::otel::exporter::export_artifact(&otel_config, rec) {
+                    printer.dim_info(&format!("  otel: {}", e));
+                }
+            }
+        }
+    }
+
     // ── 4. Wire --push ─────────────────────────────────────────────────
     let mut hub_url: Option<String> = None;
     if push {

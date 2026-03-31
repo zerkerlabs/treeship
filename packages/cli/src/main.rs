@@ -3,6 +3,7 @@ mod config;
 mod ctx;
 mod commands;
 mod tui;
+mod otel;
 
 use clap::{Parser, Subcommand, Args};
 use printer::{Format, Printer};
@@ -249,6 +250,21 @@ enum Command {
     /// Examples:
     ///   treeship ui
     Ui,
+
+    /// OpenTelemetry export -- send artifacts as OTel spans
+    ///
+    /// Requires the `otel` feature flag at build time.
+    /// Configure via environment variables:
+    ///   TREESHIP_OTEL_ENDPOINT=http://localhost:4318
+    ///   TREESHIP_OTEL_AUTH=Bearer sk-...
+    ///   TREESHIP_OTEL_SERVICE=my-agent
+    ///
+    /// Examples:
+    ///   treeship otel test
+    ///   treeship otel status
+    ///   treeship otel export art_abc123
+    #[command(subcommand)]
+    Otel(OtelCommand),
 
     /// Print version and build info
     Version,
@@ -786,6 +802,41 @@ struct MerkleVerifyArgs {
     args: Vec<String>,
 }
 
+// --- otel -------------------------------------------------------------------
+
+#[derive(Subcommand)]
+enum OtelCommand {
+    /// Test OTel connectivity -- sends a single test span
+    ///
+    /// Examples:
+    ///   treeship otel test
+    Test,
+
+    /// Show current OTel configuration
+    ///
+    /// Examples:
+    ///   treeship otel status
+    Status,
+
+    /// Export a specific artifact to OTel
+    ///
+    /// Examples:
+    ///   treeship otel export art_abc123
+    Export(OtelExportArgs),
+
+    /// Show how to enable OTel export
+    Enable,
+
+    /// Show how to disable OTel export
+    Disable,
+}
+
+#[derive(Args)]
+struct OtelExportArgs {
+    /// Artifact ID to export
+    id: String,
+}
+
 // --- main -------------------------------------------------------------------
 
 fn main() {
@@ -804,6 +855,29 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
     match &cli.command {
 
         Command::Ui => tui::run(cli.config.as_deref()),
+
+        Command::Otel(sub) => {
+            #[cfg(feature = "otel")]
+            {
+                match sub {
+                    OtelCommand::Test => commands::otel::test_connection(
+                        cli.config.as_deref(), printer,
+                    )?,
+                    OtelCommand::Status => commands::otel::status(printer),
+                    OtelCommand::Export(a) => commands::otel::export_artifact(
+                        &a.id, cli.config.as_deref(), printer,
+                    )?,
+                    OtelCommand::Enable => commands::otel::enable(printer),
+                    OtelCommand::Disable => commands::otel::disable(printer),
+                }
+            }
+            #[cfg(not(feature = "otel"))]
+            {
+                let _ = sub; // suppress unused warning
+                commands::otel::not_available(printer);
+            }
+            Ok(())
+        }
 
         Command::Version => {
             println!("treeship {} (rust)", env!("CARGO_PKG_VERSION"));

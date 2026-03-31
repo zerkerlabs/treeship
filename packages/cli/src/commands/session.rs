@@ -383,6 +383,17 @@ pub fn close(
 
     write_last(&ctx.config.storage_dir, &result.artifact_id);
 
+    // ── OTel export (best-effort, never fails the close) ────────────
+    #[cfg(feature = "otel")]
+    {
+        if let Some(otel_config) = crate::otel::config::OtelConfig::from_env() {
+            let record = ctx.storage.read(&result.artifact_id);
+            if let Ok(ref rec) = record {
+                let _ = crate::otel::exporter::export_artifact(&otel_config, rec);
+            }
+        }
+    }
+
     // Remove session.json
     if let Some(path) = session_path() {
         let _ = std::fs::remove_file(&path);

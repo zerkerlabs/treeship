@@ -7,6 +7,10 @@ edition = "2021"
 name = "treeship"
 path = "src/main.rs"
 
+[features]
+default = []
+otel = []  # No extra deps -- uses ureq + serde_json already available
+
 [dependencies]
 treeship-core = { path = "../core" }
 clap = { version = "4", features = ["derive"] }
