@@ -71,7 +71,7 @@ pub struct ActionStatement {
     /// RFC 3339 timestamp, set at sign time.
     pub timestamp: String,
 
-    /// DID-style actor URI. e.g. "agent://researcher", "human://rezo"
+    /// DID-style actor URI. e.g. "agent://researcher", "human://alice"
     pub actor: String,
 
     /// Dot-namespaced action label. e.g. "tool.call", "stripe.charge.create"
@@ -109,7 +109,7 @@ pub struct ApprovalStatement {
     pub type_: String,
     pub timestamp: String,
 
-    /// DID-style approver URI. e.g. "human://rezo"
+    /// DID-style approver URI. e.g. "human://alice"
     pub approver: String,
 
     #[serde(default, skip_serializing_if = "is_empty_subject")]
@@ -531,7 +531,7 @@ mod tests {
     fn approval_statement_with_nonce() {
         let signer = Ed25519Signer::generate("key_human").unwrap();
 
-        let mut approval = ApprovalStatement::new("human://rezo", "nonce_abc123");
+        let mut approval = ApprovalStatement::new("human://alice", "nonce_abc123");
         approval.description = Some("approve laptop purchase < $1500".into());
         approval.scope = Some(ApprovalScope {
             max_actions: Some(1),
@@ -591,7 +591,7 @@ mod tests {
 
         // The nonce in the approval must survive a sign→verify→decode round-trip.
         // The verifier checks that action.approval_nonce == approval.nonce.
-        let approval = ApprovalStatement::new("human://rezo", "secure_nonce_xyz");
+        let approval = ApprovalStatement::new("human://alice", "secure_nonce_xyz");
         let pt       = payload_type("approval");
         let signed   = sign(&pt, &approval, &signer).unwrap();
 

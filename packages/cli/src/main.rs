@@ -81,7 +81,7 @@ enum Command {
     ///
     /// Examples:
     ///   treeship attest action --actor agent://me --action tool.call
-    ///   treeship attest approval --approver human://rezo --description "ok to purchase"
+    ///   treeship attest approval --approver human://alice --description "ok to purchase"
     ///   treeship attest handoff --from agent://a --to agent://b --artifacts art_abc,art_def
     #[command(subcommand)]
     Attest(AttestCommand),
@@ -426,7 +426,7 @@ struct DenyArgs {
 struct WrapArgs {
     /// Actor URI (default: ship://<your-ship-id>)
     ///
-    /// Examples: agent://researcher  human://rezo  ship://my-server
+    /// Examples: agent://researcher  human://alice  ship://my-server
     #[arg(long, value_name = "URI")]
     actor: Option<String>,
 
@@ -468,7 +468,7 @@ enum AttestCommand {
     /// must echo this nonce in --approval-nonce to prevent approval reuse.
     ///
     /// Examples:
-    ///   treeship attest approval --approver human://rezo \
+    ///   treeship attest approval --approver human://alice \
     ///     --description "approve laptop purchase < $1500" --expires 2026-03-26T11:00:00Z
     Approval(AttestApprovalArgs),
 
