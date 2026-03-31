@@ -91,17 +91,67 @@ html {
 
 /* ── Code blocks ───────────────────────────────────────── */
 pre {
-  background: #111611 !important;
-  border: 0.5px solid var(--color-treeship-green-border);
+  background: #0d1117 !important;
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
+}
+
+pre code {
+  color: #e6edf3 !important;
+  font-size: 0.875rem;
+  line-height: 1.7;
+}
+
+/* Syntax highlighting overrides for readability */
+pre .token.comment,
+pre .token.prolog,
+pre .token.doctype,
+pre .token.cdata {
+  color: #8b949e !important;
+}
+
+pre .token.keyword,
+pre .token.property {
+  color: #ff7b72 !important;
+}
+
+pre .token.string,
+pre .token.attr-value {
+  color: #a5d6ff !important;
+}
+
+pre .token.function,
+pre .token.class-name {
+  color: #d2a8ff !important;
+}
+
+pre .token.number,
+pre .token.boolean {
+  color: #79c0ff !important;
+}
+
+pre .token.operator,
+pre .token.punctuation {
+  color: #c9d1d9 !important;
+}
+
+pre .token.builtin,
+pre .token.tag {
+  color: #7ee787 !important;
+}
+
+/* Ensure code inside pre has good contrast even without syntax highlighting */
+pre code span {
+  color: inherit;
 }
 
 /* ── Inline code ───────────────────────────────────────── */
 :not(pre) > code {
-  background: var(--color-treeship-green-code);
-  color: var(--color-treeship-green);
+  background: rgba(255, 255, 255, 0.08);
+  color: #e6edf3;
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 4px;
-  padding: 1px 6px;
+  padding: 2px 6px;
   font-size: 0.84em;
 }
 
