@@ -1,5 +1,11 @@
 # Treeship
 
+[![Crates.io](https://img.shields.io/crates/v/treeship-cli.svg)](https://crates.io/crates/treeship-cli)
+[![npm](https://img.shields.io/npm/v/@treeship/sdk.svg)](https://www.npmjs.com/package/@treeship/sdk)
+[![PyPI](https://img.shields.io/pypi/v/treeship-sdk.svg)](https://pypi.org/project/treeship-sdk/)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![CI](https://github.com/zerkerlabs/treeship/actions/workflows/ci.yml/badge.svg)](https://github.com/zerkerlabs/treeship/actions/workflows/ci.yml)
+
 **Portable trust receipts for agent workflows.**
 
 Treeship is an open-source, local-first trust layer that creates and verifies signed receipts for agent actions, handoffs, approvals, and dependencies. It works offline, requires no central server, and produces portable evidence bundles that anyone can verify independently.
