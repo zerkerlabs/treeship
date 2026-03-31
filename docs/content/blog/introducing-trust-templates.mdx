@@ -1,0 +1,208 @@
+---
+title: "Introducing Trust Templates: Configure Once, Prove Everything"
+description: "Trust templates give any workflow — a Solidity audit, a clinical AI system, an ML training pipeline — a complete attestation setup in one command. Build your own, share with your team, or publish to the community."
+date: 2026-03-27
+tags: ["templates", "attestation", "workflows", "release"]
+readTime: "8 min read"
+---
+
+The most common question we hear from developers trying Treeship is a version of the same thing: "I understand what it does, but how do I know what to attest in *my* workflow?"
+
+It's the right question. Treeship gives you the primitives — wrap a command, attest an action, issue an approval, verify a chain. But a CI/CD pipeline has different meaningful moments than a clinical AI system, which has different meaningful moments than a smart contract audit. Figuring out what to capture, and when, requires thinking about your specific workflow before you write a single line of config.
+
+Today we're shipping trust templates to answer that question before you have to ask it.
+
+---
+
+## What a trust template is
+
+A trust template is a pre-built `.treeship/config.yaml` for a specific workflow. It answers three questions:
+
+**What triggers an attestation?** Which commands, file writes, or HTTP calls are the meaningful moments in this workflow.
+
+**What gets captured in each receipt?** Output digests, file changes, git state, environment fingerprints — the right set for this context.
+
+**How does the chain get structured?** Session boundaries, auto-chaining, when to push to Hub.
+
+That's the whole thing. Templates are YAML files. They're not approval policies or billing configurations. They're attestation setups for known workflow patterns.
+
+Apply one in a single command:
+
+```bash
+treeship init --template github-contributor
+```
+
+From that point on, Treeship runs silently. The right things get attested at the right moments. You don't think about it again.
+
+---
+
+## The templates shipping today
+
+We're shipping 14 templates across three categories.
+
+### Development templates
+
+**`github-contributor`** — For open source contributors. Attests test runs, commits, and pushes. Proves tests passed before the commit, the lockfile wasn't silently modified, and the sequence happened in the right order. Add the verify URL to your PR description and reviewers can confirm independently.
+
+**`ci-cd-pipeline`** — Software delivery from test to deploy. Every step in the pipeline produces a linked receipt. The chain proves the exact binary that passed tests is what got deployed, and that a human authorized the production push.
+
+**`research-agent`** — Multi-step research with source provenance. Every URL fetched, every analysis step, every output — linked into a verifiable chain from sources to conclusion.
+
+**`mcp-agent`** — One import change in your MCP client, every tool call receipted. No other code changes. Works with any MCP server.
+
+**`claude-code-session`** — Full audit trail of an AI coding session. Every command, every file change, every git operation, linked into one verifiable session.
+
+**`code-review`** — PR review and merge authorization. Proves the reviewer ran tests on the specific commit, reviewed the code, and authorized the merge.
+
+### Vertical templates
+
+**`clinical-ai`** — HIPAA-compliant. Input and output are digests only — content never enters an artifact. Approval required before any clinical action. Designed so PHI cannot appear anywhere in the receipt chain.
+
+**`legal-workflow`** — Contract review and attorney authorization chain. Proves document was reviewed by AI (document digest, not content), attorney approved, action taken in sequence.
+
+**`financial-agent`** — Payment workflow with authorization gates and ZK TLS on payment confirmations. The ZK proof is the one place where "the server actually returned this" needs to be provable independently of the agent.
+
+**`data-pipeline`** — ETL and ML lineage. Input data digest → each transform step's output digest → final output. Proves what input produced what output through what sequence of transforms.
+
+**`security-audit`** — Vulnerability scan and remediation chain. Proves scan ran, findings were addressed, re-scan confirmed the fix, security lead authorized the deploy.
+
+**`content-creation`** — Journalism and content provenance. Sources → research → drafts → editorial review → publication, all linked. Pairs with Zerker for synthetic media detection.
+
+**`customer-support`** — Support agent action trail for dispute resolution. Every action on a customer account signed and auditable. Supervisor approval required for refunds and sensitive modifications.
+
+### Commerce templates
+
+**`agent-purchase`**, **`a2a-payment`**, **`recurring-authorization`**, and **`verifiable-intent`** — the building blocks for agent commerce. Human authorization before agent spending, work receipts before payment, recurring scope limits with running spend tracking.
+
+---
+
+## Build your own in four questions
+
+The templates we ship cover common patterns. Your workflow is specific. You should build your own.
+
+Before writing any YAML, answer four questions:
+
+**What are the meaningful moments in this workflow?**
+Not what Treeship does — what *happens* in the workflow. Write them as a list.
+
+**For each moment, what proves it actually happened?**
+Output digest, file content digest, git state, environment fingerprint — pick what's relevant.
+
+**Which moments need a human to authorize before proceeding?**
+Anything consequential. Deployments, payments, clinical decisions, publications.
+
+**Does any moment need ZK TLS?**
+Only if the verifier doesn't trust the agent, the server's exact response is legally significant, and the domain is a REST JSON API. Most workflows: no.
+
+Once you've answered those, the YAML writes itself.
+
+```yaml
+name: solidity-audit
+version: 1
+description: >
+  Smart contract security audit trail.
+
+session:
+  actor: agent://auditor
+  auto_start: true
+
+attest:
+  commands:
+    - pattern: "slither*"
+      label: static analysis
+      capture_output_digest: true
+    - pattern: "forge test*"
+      label: foundry tests
+      capture_output_digest: true
+
+capture:
+  output_digest: true
+  git_state: true
+  environment: true
+
+approvals:
+  require_for:
+    - label: audit report
+
+onboarding: |
+  Your onboarding message here.
+```
+
+---
+
+## Save from a live config
+
+If you've been running Treeship on a project, your config already reflects your real workflow. You don't need to write a template from scratch — save what you have.
+
+```bash
+treeship template save
+```
+
+This strips project-specific fields (ship ID, dock credentials), prompts for a name and description, and writes a clean reusable YAML to `~/.treeship/templates/`. Apply it to any new project with `treeship init --template your-name`.
+
+---
+
+## Share with your team
+
+Templates are plain YAML files. You don't need the community registry to share them.
+
+Commit the template to your repo:
+
+```bash
+git add .treeship/templates/solidity-audit.yaml
+git commit -m "add treeship template"
+```
+
+Team members apply it:
+
+```bash
+treeship init --template .treeship/templates/solidity-audit.yaml
+```
+
+Or install from a URL:
+
+```bash
+treeship template install https://raw.githubusercontent.com/org/repo/main/template.yaml
+```
+
+---
+
+## Publish to the community registry
+
+If your template is useful beyond your team, publish it.
+
+```bash
+treeship template publish solidity-audit.yaml
+```
+
+Published templates go through automated validation — schema check, no credentials in YAML, MIT license, onboarding message present. No human review required. Templates are YAML, not executable code.
+
+Community templates are versioned. When you ship improvements, users get `treeship template check-updates` notifications and can review the diff before applying.
+
+---
+
+## What templates don't do
+
+Templates configure what gets attested. They don't make decisions about your agent behavior, alter how your tools run, or add dependencies to your project. The YAML is read by Treeship's runtime. Your code is untouched.
+
+Templates also don't configure trust policy for verifiers. What a template captures is what the receipt contains. What a verifier chooses to trust is a separate decision made by the verifier against their own policy. Treeship produces evidence. Templates configure what evidence gets collected.
+
+---
+
+## The underlying idea
+
+Every meaningful workflow has a handful of moments where something provable happens: a test passes, a human approves, a payment confirms, a commit is made. The receipt for that moment — signed, content-addressed, chained to the previous — is what Treeship produces.
+
+Templates make it easier to identify those moments for your specific context and configure the capture correctly the first time. The 14 templates we're shipping represent the workflows we've seen most often. The build-your-own path handles everything else.
+
+A Solidity audit, a clinical AI system, an ML training pipeline, and a CI/CD delivery chain all have completely different meaningful moments. But the underlying structure is the same: actor did thing, at time, producing output, authorized by whom, in what sequence. Templates are just the mapping from "my workflow" to that structure.
+
+We'll keep adding templates as new patterns emerge. If you build something worth sharing, publish it.
+
+```bash
+treeship templates
+```
+
+---
+
+*Templates are available now. Run `treeship templates` to see the full list. Documentation at [docs.treeship.dev](https://docs.treeship.dev).*

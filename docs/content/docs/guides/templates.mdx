@@ -1,0 +1,159 @@
+---
+title: Trust Templates
+description: Pre-built attestation configs for common workflows. Apply in one command.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+A trust template is a pre-built `.treeship/config.yaml` for a specific workflow. It answers three questions: what triggers an attestation, what gets captured in each receipt, and how the chain gets structured.
+
+```bash
+treeship init --template github-contributor
+```
+
+From that point, Treeship runs silently. The right things get attested at the right moments.
+
+## Available templates
+
+### Development
+| Template | What it does |
+|----------|-------------|
+| `github-contributor` | Test runs, commits, pushes. Verify URL for PRs. |
+| `ci-cd-pipeline` | Full delivery from test to deploy with approval gates. |
+| `research-agent` | Multi-step research with source provenance. |
+| `mcp-agent` | One import change, every MCP tool call receipted. |
+| `claude-code-session` | Full audit trail of AI coding sessions. |
+| `code-review` | PR review, test, and merge authorization. |
+
+### Vertical
+| Template | What it does |
+|----------|-------------|
+| `clinical-ai` | HIPAA-compliant. Digests only, no content in artifacts. |
+| `legal-workflow` | Contract review and attorney authorization chain. |
+| `financial-agent` | Payment workflow with approval gates. |
+| `data-pipeline` | ETL and ML lineage from input to output. |
+| `security-audit` | Scan, remediate, re-scan, authorize deploy. |
+| `content-creation` | Source to publication with editorial review. |
+| `customer-support` | Agent action trail for dispute resolution. |
+
+### Commerce
+| Template | What it does |
+|----------|-------------|
+| `agent-purchase` | Human authorization before agent spending. |
+
+## Build your own
+
+<Steps>
+<Step>
+### Answer four questions
+
+1. **What are the meaningful moments?** Not what Treeship does, what happens in the workflow.
+2. **What proves each moment happened?** Output digest, file changes, git state, approval.
+3. **Which moments need human approval?** Deployments, payments, publications.
+4. **Does any moment need ZK TLS?** Only if the verifier doesn't trust the agent AND the server response is legally significant.
+</Step>
+<Step>
+### Write the YAML
+
+```yaml
+name: my-workflow
+version: 1
+description: What this workflow does.
+tags: [development]
+
+session:
+  actor: agent://my-agent
+  auto_start: true
+
+attest:
+  commands:
+    - pattern: "npm test*"
+      label: test suite
+      capture_output_digest: true
+    - pattern: "git push*"
+      label: code push
+
+  paths:
+    - path: "src/**"
+      on: write
+      label: source change
+
+capture:
+  output_digest: true
+  file_changes: true
+  git_state: true
+
+approvals:
+  require_for:
+    - label: deploy
+
+hub:
+  auto_push: true
+  push_on: [session_close]
+
+onboarding: |
+  Your workflow is configured.
+  Run normally. Everything matching the rules gets attested.
+```
+</Step>
+<Step>
+### Apply and test
+
+```bash
+treeship init --template my-workflow.yaml
+treeship wrap -- echo "test"
+treeship verify last --full
+```
+</Step>
+</Steps>
+
+## Save from a live config
+
+If you've been using Treeship, save your current config as a reusable template:
+
+```bash
+treeship template save --name my-workflow
+```
+
+This strips project-specific fields (ship ID, dock credentials) and writes a clean reusable YAML to `~/.treeship/templates/`.
+
+## Share templates
+
+Templates are plain YAML files. Share them however you want:
+
+```bash
+# Via git
+git add .treeship/templates/my-template.yaml
+
+# Via URL
+treeship template install https://raw.githubusercontent.com/org/repo/main/template.yaml
+
+# Via file path
+treeship init --template ./template.yaml
+```
+
+## Field reference
+
+| Section | Field | What it does |
+|---------|-------|-------------|
+| `session.actor` | Default actor URI for all artifacts |
+| `session.auto_start` | Start session when matching activity begins |
+| `session.auto_push` | Push to Hub after session closes |
+| `attest.commands[].pattern` | Shell glob to match commands |
+| `attest.commands[].label` | Human-readable label for receipts |
+| `attest.commands[].require_approval` | Block until `treeship approve` |
+| `attest.paths[].path` | File glob to watch |
+| `attest.paths[].on` | Trigger on: write, change, create, delete |
+| `capture.output_digest` | Hash stdout+stderr |
+| `capture.file_changes` | Track modified files with content hashes |
+| `capture.git_state` | Git HEAD before/after each command |
+| `capture.environment` | OS, runtime version fingerprint |
+| `approvals.require_for` | Labels that need human approval |
+| `hub.push_on` | When to push: session_close, approval_required, git_push |
+| `onboarding` | Message shown after `treeship init --template` |
+
+<Callout type="info">
+Templates configure what gets attested. They don't alter how your tools run or add dependencies to your project.
+</Callout>
