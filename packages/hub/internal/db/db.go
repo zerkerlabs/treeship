@@ -42,6 +42,29 @@ CREATE TABLE IF NOT EXISTS dpop_jtis (
   jti      TEXT PRIMARY KEY,
   seen_at  INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS merkle_checkpoints (
+  id              INTEGER PRIMARY KEY,
+  root_hex        TEXT NOT NULL,
+  tree_size       INTEGER NOT NULL,
+  height          INTEGER NOT NULL,
+  signed_at       TEXT NOT NULL,
+  signer_key_id   TEXT NOT NULL,
+  signature_b64   TEXT NOT NULL,
+  public_key_b64  TEXT NOT NULL,
+  rekor_index     INTEGER,
+  dock_id         TEXT REFERENCES ships(dock_id)
+);
+
+CREATE TABLE IF NOT EXISTS merkle_proofs (
+  artifact_id     TEXT NOT NULL,
+  checkpoint_id   INTEGER NOT NULL REFERENCES merkle_checkpoints(id),
+  leaf_index      INTEGER NOT NULL,
+  leaf_hash       TEXT NOT NULL,
+  proof_json      TEXT NOT NULL,
+  dock_id         TEXT REFERENCES ships(dock_id),
+  PRIMARY KEY (artifact_id, checkpoint_id)
+);
 `
 
 // Open opens (or creates) the SQLite database and applies the schema.
@@ -242,4 +265,105 @@ func JTIExists(db *sql.DB, jti string) (bool, error) {
 func CleanExpiredJTIs(db *sql.DB, before int64) error {
 	_, err := db.Exec(`DELETE FROM dpop_jtis WHERE seen_at < ?`, before)
 	return err
+}
+
+// --- merkle_checkpoints ---
+
+type MerkleCheckpoint struct {
+	ID            int64   `json:"id"`
+	RootHex       string  `json:"root"`
+	TreeSize      int64   `json:"tree_size"`
+	Height        int     `json:"height"`
+	SignedAt      string  `json:"signed_at"`
+	SignerKeyID   string  `json:"signer"`
+	SignatureB64  string  `json:"signature"`
+	PublicKeyB64  string  `json:"public_key"`
+	RekorIndex    *int64  `json:"rekor_index"`
+	DockID        *string `json:"dock_id"`
+}
+
+func InsertCheckpoint(database *sql.DB, cp *MerkleCheckpoint, dockID string) (int64, error) {
+	res, err := database.Exec(
+		`INSERT INTO merkle_checkpoints (root_hex, tree_size, height, signed_at, signer_key_id, signature_b64, public_key_b64, rekor_index, dock_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		cp.RootHex, cp.TreeSize, cp.Height, cp.SignedAt, cp.SignerKeyID, cp.SignatureB64, cp.PublicKeyB64, cp.RekorIndex, dockID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func GetCheckpoint(database *sql.DB, id int64) (*MerkleCheckpoint, error) {
+	row := database.QueryRow(
+		`SELECT id, root_hex, tree_size, height, signed_at, signer_key_id, signature_b64, public_key_b64, rekor_index, dock_id
+		 FROM merkle_checkpoints WHERE id = ?`, id,
+	)
+	cp := &MerkleCheckpoint{}
+	if err := row.Scan(&cp.ID, &cp.RootHex, &cp.TreeSize, &cp.Height, &cp.SignedAt, &cp.SignerKeyID, &cp.SignatureB64, &cp.PublicKeyB64, &cp.RekorIndex, &cp.DockID); err != nil {
+		return nil, err
+	}
+	return cp, nil
+}
+
+func GetLatestCheckpoint(database *sql.DB, dockID string) (*MerkleCheckpoint, error) {
+	var row *sql.Row
+	if dockID != "" {
+		row = database.QueryRow(
+			`SELECT id, root_hex, tree_size, height, signed_at, signer_key_id, signature_b64, public_key_b64, rekor_index, dock_id
+			 FROM merkle_checkpoints WHERE dock_id = ? ORDER BY id DESC LIMIT 1`, dockID,
+		)
+	} else {
+		row = database.QueryRow(
+			`SELECT id, root_hex, tree_size, height, signed_at, signer_key_id, signature_b64, public_key_b64, rekor_index, dock_id
+			 FROM merkle_checkpoints ORDER BY id DESC LIMIT 1`,
+		)
+	}
+	cp := &MerkleCheckpoint{}
+	if err := row.Scan(&cp.ID, &cp.RootHex, &cp.TreeSize, &cp.Height, &cp.SignedAt, &cp.SignerKeyID, &cp.SignatureB64, &cp.PublicKeyB64, &cp.RekorIndex, &cp.DockID); err != nil {
+		return nil, err
+	}
+	return cp, nil
+}
+
+// --- merkle_proofs ---
+
+type MerkleProof struct {
+	ArtifactID   string `json:"artifact_id"`
+	CheckpointID int64  `json:"checkpoint_id"`
+	LeafIndex    int64  `json:"leaf_index"`
+	LeafHash     string `json:"leaf_hash"`
+	ProofJSON    string `json:"proof_json"`
+	DockID       *string `json:"dock_id"`
+}
+
+func InsertProof(database *sql.DB, artifactID string, checkpointID int64, leafIndex int64, leafHash string, proofJSON string, dockID string) error {
+	_, err := database.Exec(
+		`INSERT OR REPLACE INTO merkle_proofs (artifact_id, checkpoint_id, leaf_index, leaf_hash, proof_json, dock_id)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		artifactID, checkpointID, leafIndex, leafHash, proofJSON, dockID,
+	)
+	return err
+}
+
+// GetProof looks up the proof for an artifact, joining with its checkpoint.
+// Returns the full proof JSON (self-contained ProofFile) and the associated checkpoint.
+func GetProof(database *sql.DB, artifactID string) (*MerkleProof, *MerkleCheckpoint, error) {
+	row := database.QueryRow(
+		`SELECT p.artifact_id, p.checkpoint_id, p.leaf_index, p.leaf_hash, p.proof_json, p.dock_id,
+		        c.id, c.root_hex, c.tree_size, c.height, c.signed_at, c.signer_key_id, c.signature_b64, c.public_key_b64, c.rekor_index, c.dock_id
+		 FROM merkle_proofs p
+		 JOIN merkle_checkpoints c ON c.id = p.checkpoint_id
+		 WHERE p.artifact_id = ?
+		 ORDER BY p.checkpoint_id DESC LIMIT 1`, artifactID,
+	)
+	p := &MerkleProof{}
+	cp := &MerkleCheckpoint{}
+	if err := row.Scan(
+		&p.ArtifactID, &p.CheckpointID, &p.LeafIndex, &p.LeafHash, &p.ProofJSON, &p.DockID,
+		&cp.ID, &cp.RootHex, &cp.TreeSize, &cp.Height, &cp.SignedAt, &cp.SignerKeyID, &cp.SignatureB64, &cp.PublicKeyB64, &cp.RekorIndex, &cp.DockID,
+	); err != nil {
+		return nil, nil, err
+	}
+	return p, cp, nil
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/treeship/hub/internal/artifacts"
 	"github.com/treeship/hub/internal/db"
 	"github.com/treeship/hub/internal/dock"
+	"github.com/treeship/hub/internal/merkle"
 	"github.com/treeship/hub/internal/verify"
 )
 
@@ -25,6 +26,7 @@ func main() {
 	dockHandlers := &dock.Handlers{DB: database}
 	artifactHandlers := &artifacts.Handlers{DB: database}
 	verifyHandlers := &verify.Handlers{DB: database}
+	merkleHandlers := &merkle.Handlers{DB: database}
 
 	r := chi.NewRouter()
 
@@ -50,6 +52,13 @@ func main() {
 
 	// Verify endpoint.
 	r.Get("/v1/verify/{id}", verifyHandlers.Verify)
+
+	// Merkle endpoints.
+	r.Post("/v1/merkle/checkpoint", merkleHandlers.PublishCheckpoint)
+	r.Post("/v1/merkle/proof", merkleHandlers.PublishProof)
+	r.Get("/v1/merkle/checkpoint/latest", merkleHandlers.GetLatestCheckpoint)
+	r.Get("/v1/merkle/checkpoint/{id}", merkleHandlers.GetCheckpoint)
+	r.Get("/v1/merkle/{artifactId}", merkleHandlers.GetProof)
 
 	// Well-known revocation list.
 	r.Get("/.well-known/treeship/revoked.json", revokedHandler)

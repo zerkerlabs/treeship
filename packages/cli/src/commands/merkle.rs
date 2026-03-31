@@ -3,7 +3,11 @@ use std::{
     path::PathBuf,
 };
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use ed25519_dalek::{SigningKey, Signer};
+use rand::RngCore;
 use sha2::{Sha256, Digest};
+use std::time::{SystemTime, UNIX_EPOCH};
 use treeship_core::merkle::{
     ArtifactSummary, Checkpoint, MerkleTree, ProofFile,
 };
@@ -392,4 +396,171 @@ pub fn status(
     }
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// treeship merkle publish
+// ---------------------------------------------------------------------------
+
+pub fn publish(
+    config: Option<&str>,
+    printer: &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = ctx::open(config)?;
+    let hub = &ctx.config.hub;
+
+    if hub.status != "docked" {
+        return Err("not docked -- run: treeship dock login".into());
+    }
+
+    let endpoint = hub.endpoint.as_deref().unwrap_or("https://api.treeship.dev");
+    let dock_id = hub.dock_id.as_deref().ok_or("no dock_id in config")?;
+    let dock_secret_hex = hub.dock_secret_key.as_deref()
+        .ok_or("no dock_secret_key in config -- run: treeship dock login")?;
+
+    // 1. Load latest checkpoint
+    let checkpoint = load_latest_checkpoint()?
+        .ok_or("no checkpoints found -- run: treeship checkpoint")?;
+
+    let cp_index = format!("{:04}", checkpoint.index);
+    printer.blank();
+    printer.info(&format!("Publishing checkpoint #{} to Hub...", cp_index));
+
+    // 2. POST checkpoint to Hub
+    let checkpoint_url = format!("{}/v1/merkle/checkpoint", endpoint);
+    let dpop_jwt = build_dpop_jwt(dock_secret_hex, "POST", &checkpoint_url)?;
+
+    let cp_body = serde_json::json!({
+        "root":       checkpoint.root,
+        "tree_size":  checkpoint.tree_size,
+        "height":     checkpoint.height,
+        "signed_at":  checkpoint.signed_at,
+        "signer":     checkpoint.signer,
+        "signature":  checkpoint.signature,
+        "public_key": checkpoint.public_key,
+        "index":      checkpoint.index,
+    });
+
+    let cp_resp: serde_json::Value = ureq::post(&checkpoint_url)
+        .set("Authorization", &format!("DPoP {}", dock_id))
+        .set("DPoP", &dpop_jwt)
+        .send_json(&cp_body)?
+        .into_json()?;
+
+    let hub_checkpoint_id = cp_resp["id"].as_i64()
+        .ok_or("Hub did not return checkpoint id")?;
+
+    printer.info(&format!("  {} checkpoint received (hub id: {})", printer.green("ok"), hub_checkpoint_id));
+
+    // 3. Find and publish all proofs for this checkpoint
+    let (tree, artifact_ids) = build_tree(&ctx)?;
+    let proof_url = format!("{}/v1/merkle/proof", endpoint);
+    let mut published_count = 0u64;
+
+    for (leaf_index, artifact_id) in artifact_ids.iter().enumerate() {
+        // Only publish proofs for artifacts within this checkpoint's tree_size
+        if leaf_index >= checkpoint.tree_size {
+            break;
+        }
+
+        let inclusion_proof = match tree.inclusion_proof(leaf_index) {
+            Some(p) => p,
+            None => continue,
+        };
+
+        // Load artifact record for summary
+        let record = match ctx.storage.read(artifact_id) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+
+        let short_type = record.payload_type
+            .strip_prefix("application/vnd.treeship.")
+            .and_then(|s| s.strip_suffix(".v1+json"))
+            .unwrap_or(&record.payload_type);
+
+        let proof_file = ProofFile {
+            artifact_id: artifact_id.clone(),
+            artifact_summary: ArtifactSummary {
+                actor: short_type.to_string(),
+                action: short_type.to_string(),
+                timestamp: record.signed_at.clone(),
+                key_id: record.key_id.clone(),
+            },
+            inclusion_proof: inclusion_proof.clone(),
+            checkpoint: checkpoint.clone(),
+        };
+
+        let proof_json_str = serde_json::to_string(&proof_file)?;
+
+        let dpop_jwt = build_dpop_jwt(dock_secret_hex, "POST", &proof_url)?;
+
+        let proof_body = serde_json::json!({
+            "artifact_id":   artifact_id,
+            "checkpoint_id": hub_checkpoint_id,
+            "leaf_index":    leaf_index,
+            "leaf_hash":     inclusion_proof.leaf_hash,
+            "proof_json":    proof_json_str,
+        });
+
+        ureq::post(&proof_url)
+            .set("Authorization", &format!("DPoP {}", dock_id))
+            .set("DPoP", &dpop_jwt)
+            .send_json(&proof_body)?;
+
+        published_count += 1;
+    }
+
+    printer.info(&format!("  {} {} proofs published", printer.green("ok"), published_count));
+    printer.blank();
+
+    if let Some(first_id) = artifact_ids.first() {
+        printer.hint(&format!("treeship.dev/merkle?id={}  (any artifact is now verifiable via Hub)", first_id));
+    }
+    printer.blank();
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// DPoP JWT builder (mirrors dock.rs)
+// ---------------------------------------------------------------------------
+
+fn build_dpop_jwt(
+    dock_secret_hex: &str,
+    method: &str,
+    url: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let secret_bytes = hex::decode(dock_secret_hex)?;
+    let secret_arr: [u8; 32] = secret_bytes.try_into()
+        .map_err(|_| "dock secret key must be 32 bytes")?;
+    let signing_key = SigningKey::from_bytes(&secret_arr);
+
+    let header = serde_json::json!({
+        "alg": "EdDSA",
+        "typ": "dpop+jwt",
+    });
+    let header_b64 = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&header)?);
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)?
+        .as_secs();
+
+    let mut jti_bytes = [0u8; 16];
+    rand::thread_rng().fill_bytes(&mut jti_bytes);
+    let jti = hex::encode(jti_bytes);
+
+    let payload = serde_json::json!({
+        "iat": now,
+        "jti": jti,
+        "htm": method,
+        "htu": url,
+    });
+    let payload_b64 = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload)?);
+
+    let message = format!("{}.{}", header_b64, payload_b64);
+    let signature = signing_key.sign(message.as_bytes());
+    let sig_b64 = URL_SAFE_NO_PAD.encode(signature.to_bytes());
+
+    Ok(format!("{}.{}.{}", header_b64, payload_b64, sig_b64))
 }

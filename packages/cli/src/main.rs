@@ -261,6 +261,12 @@ enum MerkleCommand {
 
     /// Show Merkle tree status
     Status,
+
+    /// Publish checkpoint and proofs to Hub
+    ///
+    /// Examples:
+    ///   treeship merkle publish
+    Publish,
 }
 
 #[derive(Subcommand)]
@@ -1022,6 +1028,10 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 commands::merkle::verify(root, path, printer)
             },
             MerkleCommand::Status => commands::merkle::status(
+                cli.config.as_deref(),
+                printer,
+            ),
+            MerkleCommand::Publish => commands::merkle::publish(
                 cli.config.as_deref(),
                 printer,
             ),
