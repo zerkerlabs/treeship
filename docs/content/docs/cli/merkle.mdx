@@ -1,0 +1,129 @@
+---
+title: merkle
+description: Merkle tree operations for batch integrity and inclusion proofs.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Treeship maintains a local Merkle tree over all artifacts. Checkpoints seal a signed root, and inclusion proofs let anyone verify that a specific artifact was part of the tree at a given point in time.
+
+## Why Merkle proofs
+
+- **Batch integrity.** A single signed root covers all artifacts. Tampering with any artifact invalidates the root.
+- **Compact proofs.** An inclusion proof is O(log N) hashes, not the full tree. A tree with 1 million artifacts produces a proof under 1KB.
+- **Tamper detection.** If an artifact is modified or removed after checkpointing, the proof fails.
+- **Privacy-preserving audit.** Share a proof for one artifact without revealing any other artifacts in the tree.
+
+## Commands
+
+### treeship checkpoint
+
+Seal a signed Merkle root over all current artifacts. The checkpoint is stored locally and can be published to the Hub.
+
+```bash
+treeship checkpoint
+```
+
+```
+→ sealing checkpoint over 47 artifacts...
+[pass] checkpoint created
+  root:       sha256:e3b0c44298fc1c14...
+  height:     6
+  artifacts:  47
+  signed at:  2026-03-31T14:25:00Z
+→ treeship merkle status
+```
+
+### treeship merkle proof \<id\>
+
+Generate an inclusion proof for a specific artifact. Exports a `.proof.json` file.
+
+```bash
+treeship merkle proof art_f8e2a1b3c4d5e6f7
+```
+
+```
+→ generating inclusion proof...
+[pass] proof generated
+  artifact:   art_f8e2a1b3c4d5e6f7
+  root:       sha256:e3b0c44298fc1c14...
+  path depth: 6
+  file:       art_f8e2a1b3c4d5e6f7.proof.json
+→ treeship merkle verify art_f8e2a1b3c4d5e6f7.proof.json
+```
+
+The proof file contains:
+
+```json
+{
+  "artifact_id": "art_f8e2a1b3c4d5e6f7",
+  "root": "sha256:e3b0c44298fc1c14...",
+  "leaf_hash": "sha256:a1b2c3d4...",
+  "path": [
+    { "hash": "sha256:...", "position": "left" },
+    { "hash": "sha256:...", "position": "right" },
+    { "hash": "sha256:...", "position": "left" }
+  ],
+  "checkpoint_signature": "base64url(...)",
+  "signed_at": "2026-03-31T14:25:00Z"
+}
+```
+
+### treeship merkle verify \<proof.json\>
+
+Verify an inclusion proof offline. Walks the hash path step by step and checks the root signature.
+
+```bash
+treeship merkle verify art_f8e2a1b3c4d5e6f7.proof.json
+```
+
+```
+→ verifying inclusion proof...
+  step 1: sha256:a1b2... + sha256:c3d4... = sha256:e5f6...
+  step 2: sha256:e5f6... + sha256:a7b8... = sha256:c9d0...
+  step 3: sha256:1234... + sha256:c9d0... = sha256:e3b0c442...
+[pass] root matches checkpoint
+[pass] checkpoint signature valid
+→ artifact art_f8e2a1b3c4d5e6f7 is in the tree
+```
+
+### treeship merkle status
+
+Show tree state, checkpoints, and how many artifacts have been added since the last checkpoint.
+
+```bash
+treeship merkle status
+```
+
+```
+Merkle tree:
+  total artifacts:    47
+  tree height:        6
+  checkpoints:        3
+  last checkpoint:    2026-03-31T14:25:00Z (root: sha256:e3b0c442...)
+  uncheckpointed:     0
+```
+
+### treeship merkle publish
+
+Push the latest checkpoint and all associated proofs to the Hub.
+
+```bash
+treeship merkle publish
+```
+
+```
+→ publishing checkpoint to hub...
+[pass] checkpoint pushed
+[pass] 47 proofs pushed
+  hub url: https://treeship.dev/merkle/chk_a1b2c3d4
+→ treeship dock status
+```
+
+## Web verification
+
+Visit [treeship.dev/merkle](https://treeship.dev/merkle) to verify a proof in the browser. Paste the contents of a `.proof.json` file and the WASM verifier checks the hash path and root signature client-side. No data leaves your browser.
+
+<Callout type="info">
+Checkpoints are additive. Each new checkpoint covers all artifacts, including those covered by previous checkpoints. You can checkpoint as often as you like.
+</Callout>

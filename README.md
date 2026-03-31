@@ -168,6 +168,7 @@ await ship.save();
 | `@treeship/core-wasm` | `packages/core-wasm/` | 241KB WASM verifier (Merkle + Ed25519) |
 | `@treeship/sdk` | `packages/sdk-ts/` | TypeScript SDK wrapping the WASM verifier |
 | `@treeship/mcp` | `bridges/mcp/` | MCP bridge for agent tool integration |
+| TUI | `packages/cli/` | Interactive terminal dashboard (Ratatui) |
 
 ## Standards
 
@@ -193,6 +194,9 @@ Treeship builds on existing standards rather than inventing cryptography:
 - [x] TypeScript SDK (@treeship/sdk)
 - [x] MCP bridge (@treeship/mcp)
 - [x] Fumadocs site (45 pages)
+- [x] Terminal UI (`treeship ui` -- Ratatui interactive dashboard)
+- [x] OpenTelemetry export (feature-flagged, works with Jaeger/Datadog/Langfuse)
+- [x] Merkle tree (checkpoint, proof, verify, publish)
 - [ ] ZK TLS (TLSNotary) -- specced, feature-flagged, waiting on TLSNotary alpha
 - [ ] `treeship attach claude/cursor` -- agent process detection
 - [ ] npm/crates.io publishing

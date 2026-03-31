@@ -1,0 +1,110 @@
+---
+title: ui
+description: Interactive terminal dashboard for monitoring your Treeship.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`treeship ui` launches a Ratatui-based terminal dashboard for browsing artifacts, watching live activity, and approving pending requests -- all without leaving the terminal.
+
+## Usage
+
+```bash
+treeship ui
+```
+
+## Views
+
+The dashboard has four views. Switch between them with a single key.
+
+### Dashboard (press `d`)
+
+The default view. Shows a summary of your Treeship state.
+
+```
+┌─ Dashboard ─────────────────────────────────────────────────┐
+│ Ship:    ship_a1b2c3d4e5f6                                  │
+│ Session: sess_20260331_142000 (active, 12 artifacts)        │
+│ Dock:    ● docked to api.treeship.dev                       │
+│ Pending: 2 approvals waiting                                │
+│                                                             │
+│ Recent artifacts:                                           │
+│  art_f8e2a1b3  action     agent://ci-runner  3s ago         │
+│  art_c4d5e6f7  approval   human://alice      1m ago         │
+│  art_a1b2c3d4  handoff    agent://deployer   5m ago         │
+│  art_e5f6a7b8  action     agent://researcher 12m ago        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Log (press `l`)
+
+A live feed of artifacts as they are created. Refreshes every 2 seconds.
+
+```
+┌─ Log ───────────────────────────────────────────────────────┐
+│ 14:20:03  art_f8e2a1b3  action     npm test (exit 0)       │
+│ 14:19:58  art_c4d5e6f7  approval   human://alice            │
+│ 14:18:42  art_a1b2c3d4  handoff    researcher -> deployer   │
+│ 14:15:10  art_e5f6a7b8  action     cargo build (exit 0)    │
+│ 14:12:00  art_b9c0d1e2  action     search.web               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Artifact Detail (press `Enter` on any artifact)
+
+Shows all fields for a selected artifact, including chain position and verification status.
+
+```
+┌─ Artifact Detail ───────────────────────────────────────────┐
+│ ID:         art_f8e2a1b3c4d5e6f7                            │
+│ Type:       treeship/action/v1                               │
+│ Actor:      agent://ci-runner                                │
+│ Action:     npm test                                         │
+│ Exit code:  0                                                │
+│ Elapsed:    3204ms                                           │
+│ Signed at:  2026-03-31T14:20:03Z                             │
+│ Parent:     art_c4d5e6f7a1b2c3d4                             │
+│ Digest:     sha256:a1b2c3d4...                               │
+│ Chain:      position 12/12                                   │
+│ Verified:   [pass]                                           │
+│ Hub URL:    https://treeship.dev/verify/art_f8e2a1b3c4d5e6f7│
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Approve (press `a`)
+
+Lists pending approval requests. Approve or deny with a single key.
+
+```
+┌─ Pending Approvals ─────────────────────────────────────────┐
+│ [1] agent://deployer wants to run kubectl apply -f deploy   │
+│     nonce: abc123    requested: 2m ago                      │
+│                                                             │
+│ [2] agent://ci-runner wants to run npm publish              │
+│     nonce: def456    requested: 5m ago                      │
+│                                                             │
+│ Press Y to approve, N to deny, arrows to navigate           │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Key Bindings
+
+| Key | Action |
+|-----|--------|
+| `q` | Quit the dashboard |
+| `d` | Switch to Dashboard view |
+| `l` | Switch to Log view |
+| `a` | Switch to Approve view |
+| `Up` / `Down` | Navigate list items |
+| `Enter` | Open Artifact Detail for the selected item |
+| `Y` | Approve the selected pending request (Approve view) |
+| `N` | Deny the selected pending request (Approve view) |
+| `Esc` | Go back to the previous view |
+
+## Data source
+
+The TUI reads only from the local artifact store (`~/.treeship/`). It makes no network requests. Data refreshes every 2 seconds by re-reading the local store.
+
+<Callout type="info">
+The TUI requires a terminal that supports 256 colors. If colors look wrong, check that your `TERM` environment variable is set correctly (e.g., `xterm-256color`).
+</Callout>

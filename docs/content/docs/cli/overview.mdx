@@ -70,12 +70,22 @@ treeship merkle verify <proof.json>     # verify proof offline
 treeship merkle status                  # tree state and checkpoints
 treeship merkle publish                 # push checkpoint + proofs to Hub
 
+# Terminal UI
+treeship ui                             # interactive dashboard
+
 # Shell hooks
 treeship install                        # install shell hooks
 treeship uninstall                      # remove shell hooks
 
 # Keys
 treeship keys list                      # show key fingerprints
+
+# OpenTelemetry (requires --features otel)
+treeship otel test                      # verify OTLP connectivity
+treeship otel status                    # show OTel config
+treeship otel export <id>              # export artifact as span
+treeship otel enable                    # enable export
+treeship otel disable                   # disable export
 
 # Diagnostics
 treeship doctor                         # run 9 health checks

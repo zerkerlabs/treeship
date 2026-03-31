@@ -27,6 +27,8 @@ Treeship is a portable trust layer for AI agent workflows. Every action, approva
 |-----------|----------|--------|
 | Rust core library | `packages/core/` | 120 tests passing |
 | Rust CLI binary | `packages/cli/` | 25+ commands |
+| TUI (Ratatui) | `packages/cli/` | Interactive terminal dashboard (`treeship ui`) |
+| OTel export | `packages/cli/` | OpenTelemetry span export (feature-flagged) |
 | Go Hub server | `packages/hub/` | 12 API endpoints |
 | WASM verifier | `packages/core-wasm/` | 241KB, Merkle + Ed25519 verify |
 | TypeScript SDK | `packages/sdk-ts/` | @treeship/sdk, 5 tests |
@@ -86,7 +88,9 @@ treeship/                           # monorepo root
 │   │           ├── daemon.rs       # treeship daemon start|stop|status
 │   │           ├── doctor.rs       # treeship doctor
 │   │           ├── merkle.rs       # treeship checkpoint, merkle proof|verify|status|publish
-│   │           └── dock.rs         # treeship dock login|push|pull|status|undock
+│   │           ├── dock.rs         # treeship dock login|push|pull|status|undock
+│   │           ├── ui.rs           # treeship ui (Ratatui interactive dashboard)
+│   │           └── otel.rs         # treeship otel test|status|export|enable|disable (feature-flagged)
 │   │
 │   ├── hub/                        # Go HTTP server (12 endpoints)
 │   │   ├── main.go

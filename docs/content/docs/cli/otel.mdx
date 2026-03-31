@@ -1,0 +1,160 @@
+---
+title: otel
+description: Export Treeship artifacts as OpenTelemetry spans.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Treeship can export every artifact as an OpenTelemetry (OTLP) span, letting you visualize agent workflows in any observability tool that speaks OTLP.
+
+## Feature flag
+
+OpenTelemetry support is behind a compile-time feature flag to keep the default binary lean.
+
+```bash
+# Build from source with OTel enabled
+cargo build --features otel
+
+# Or install with the flag
+cargo install treeship-cli --features otel
+```
+
+Without the feature flag, all `treeship otel` commands print a rebuild hint:
+
+```
+OpenTelemetry support is not compiled in.
+Rebuild with: cargo install treeship-cli --features otel
+```
+
+## Commands
+
+### treeship otel test
+
+Verify OTLP connectivity by sending a test span to the configured endpoint.
+
+```bash
+treeship otel test
+```
+
+```
+→ sending test span to http://localhost:4318...
+[pass] span accepted
+→ treeship otel status
+```
+
+### treeship otel status
+
+Show the current OpenTelemetry configuration.
+
+```bash
+treeship otel status
+```
+
+```
+OTel export:   enabled
+Endpoint:      http://localhost:4318
+Service name:  treeship
+Auth:          (none)
+Spans sent:    42
+Last export:   2026-03-31T14:20:03Z
+```
+
+### treeship otel export \<id\>
+
+Export a single artifact as an OTLP span.
+
+```bash
+treeship otel export art_f8e2a1b3c4d5e6f7
+```
+
+```
+→ exported art_f8e2a1b3c4d5e6f7 as span
+  trace_id:  4bf92f3577b34da6a3ce929d0e0e4736
+  span_id:   00f067aa0ba902b7
+→ treeship otel status
+```
+
+### treeship otel enable
+
+Enable automatic span export. When enabled, `treeship wrap` and `treeship session close` automatically export spans.
+
+```bash
+treeship otel enable
+```
+
+### treeship otel disable
+
+Disable automatic span export.
+
+```bash
+treeship otel disable
+```
+
+## Auto-export behavior
+
+When OTel export is enabled:
+
+- `treeship wrap -- <cmd>` exports a span after the command finishes
+- `treeship session close` exports spans for all artifacts in the session
+- Each span includes all artifact fields as span attributes
+
+## Environment variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `TREESHIP_OTEL_ENDPOINT` | OTLP HTTP endpoint (must support `/v1/traces`) | `http://localhost:4318` |
+| `TREESHIP_OTEL_AUTH` | Bearer token for authenticated endpoints | (none) |
+| `TREESHIP_OTEL_SERVICE` | Service name attached to all spans | `treeship` |
+| `TREESHIP_OTEL_ENABLED` | Set to `1` to enable, `0` to disable | `0` |
+
+## Span attributes
+
+Every exported span includes these attributes:
+
+| Attribute | Example |
+|-----------|---------|
+| `treeship.artifact_id` | `art_f8e2a1b3c4d5e6f7` |
+| `treeship.actor` | `agent://ci-runner` |
+| `treeship.type` | `treeship/action/v1` |
+| `treeship.action` | `npm test` |
+| `treeship.exit_code` | `0` |
+| `treeship.elapsed_ms` | `3204` |
+| `treeship.output_digest` | `sha256:a1b2c3d4...` |
+| `treeship.parent_id` | `art_c4d5e6f7a1b2c3d4` |
+| `treeship.verify_url` | `https://treeship.dev/verify/art_f8e2a1b3c4d5e6f7` |
+| `treeship.session_id` | `sess_20260331_142000` |
+
+## Compatible backends
+
+Works with any backend that accepts OTLP over HTTP:
+
+- **Jaeger** (local development)
+- **Honeycomb**
+- **Datadog**
+- **Langfuse** (LLM observability)
+- **Arize Phoenix** (LLM tracing)
+- **Grafana Tempo**
+
+## Quick start with local Jaeger
+
+```bash
+# Start Jaeger with OTLP support
+docker run -d -p 4318:4318 -p 16686:16686 jaegertracing/all-in-one
+
+# Point Treeship at it
+export TREESHIP_OTEL_ENDPOINT=http://localhost:4318
+
+# Verify connectivity
+treeship otel test
+
+# Run a command -- span is exported automatically
+treeship otel enable
+treeship wrap -- npm test
+
+# Open Jaeger UI to see the span
+# http://localhost:16686
+```
+
+<Callout type="info">
+For Honeycomb or Datadog, set `TREESHIP_OTEL_AUTH` to your API key and `TREESHIP_OTEL_ENDPOINT` to the vendor's OTLP ingest URL.
+</Callout>

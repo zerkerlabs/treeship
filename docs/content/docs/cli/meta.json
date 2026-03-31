@@ -13,6 +13,9 @@
     "install-cmd",
     "log",
     "daemon",
-    "doctor"
+    "doctor",
+    "ui",
+    "otel",
+    "merkle"
   ]
 }
