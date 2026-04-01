@@ -5,7 +5,7 @@ import {
   DocsDescription,
   DocsTitle,
 } from 'fumadocs-ui/page';
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import defaultMdxComponents from 'fumadocs-ui/mdx';
 import type { FC } from 'react';
 import type { MDXProps } from 'mdx/types';
@@ -23,6 +23,9 @@ export default async function Page(props: {
   params: Promise<{ slug?: string[] }>;
 }) {
   const params = await props.params;
+  if (!params.slug || params.slug.length === 0) {
+    redirect('/guides/introduction');
+  }
   const page = source.getPage(params.slug);
   if (!page) notFound();
 
@@ -57,6 +60,9 @@ export async function generateMetadata(props: {
   params: Promise<{ slug?: string[] }>;
 }) {
   const params = await props.params;
+  if (!params.slug || params.slug.length === 0) {
+    return { title: 'Treeship Docs' };
+  }
   const page = source.getPage(params.slug);
   if (!page) notFound();
 
