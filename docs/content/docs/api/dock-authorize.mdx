@@ -3,7 +3,48 @@ title: POST /v1/dock/authorize
 description: Complete the device flow and register dock keys with Hub.
 ---
 
-## Request
+This endpoint has two calling modes depending on whether keys are provided. The browser calls it after the user approves the device code. The CLI calls it with keys to complete the dock creation.
+
+## Browser-only call (no keys)
+
+When the browser confirms approval without providing keys, the response signals approval status only. No dock or ship record is created yet.
+
+### Request
+
+```
+POST /v1/dock/authorize
+Content-Type: application/json
+```
+
+```json
+{
+  "device_code": "dvc_a1b2c3d4"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `device_code` | string | Yes | The device code from the challenge |
+
+### Response
+
+```json
+{
+  "status": "approved"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | string | Approval status. Always `"approved"` on success. |
+
+No dock_id is returned. The browser's job is just to approve -- the CLI completes registration in the next step.
+
+## CLI call (with keys)
+
+When the CLI polls this endpoint and includes ship and dock public keys, Hub creates the ship record (if new) and returns a dock_id.
+
+### Request
 
 ```
 POST /v1/dock/authorize
@@ -24,9 +65,7 @@ Content-Type: application/json
 | `ship_public_key` | string | Yes | Hex-encoded Ed25519 public key used for signing artifacts |
 | `dock_public_key` | string | Yes | Hex-encoded Ed25519 public key used for DPoP authentication |
 
-No authentication required. This endpoint is called from the browser or CLI after the user approves the device code.
-
-## Response
+### Response
 
 ```json
 {
@@ -36,16 +75,28 @@ No authentication required. This endpoint is called from the browser or CLI afte
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `dock_id` | string | Unique identifier for this docking connection |
+| `dock_id` | string | Unique identifier for this dock connection |
 
 ## Errors
 
 | Status | Body | Cause |
 |--------|------|-------|
 | `404` | `{"error": "challenge not found or expired"}` | Invalid or expired device code |
-| `400` | `{"error": "challenge not yet approved"}` | User has not entered the code in the browser yet |
+| `400` | `{"error": "challenge not yet approved"}` | User has not entered the code in the browser yet (CLI is polling before browser approval) |
 
-## Example
+## Examples
+
+### Browser approval (no keys)
+
+```bash
+curl -X POST https://api.treeship.dev/v1/dock/authorize \
+  -H "Content-Type: application/json" \
+  -d '{
+    "device_code": "dvc_a1b2c3d4"
+  }'
+```
+
+### CLI registration (with keys)
 
 ```bash
 curl -X POST https://api.treeship.dev/v1/dock/authorize \
@@ -63,3 +114,4 @@ curl -X POST https://api.treeship.dev/v1/dock/authorize \
 - The ship key is stored for identification only. Hub never receives any private key
 - The dock key is used to verify DPoP JWT signatures on subsequent API requests
 - Each device code can only be authorized once
+- If the ship_public_key already exists on Hub, the existing ship record is reused and a new dock is attached to it

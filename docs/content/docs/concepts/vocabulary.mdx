@@ -18,8 +18,12 @@ Every term below maps to a concrete type or command in the CLI and Rust core.
 | **Receipt** | External system confirmation (webhook, timestamp, inclusion proof) | `ReceiptStatement` / `treeship attest receipt` |
 | **Artifact** | A single signed DSSE envelope with a content-addressed `art_` ID | `Record` in local storage |
 | **Bundle** | Portable package of artifacts, self-verifying | `.treeship` file / `treeship bundle` |
-| **Treeship** | A sovereign trust domain | Ed25519 keypair + config + local artifact store |
-| **Actor** | Any human or agent identified by a URI | `human://` or `agent://` prefix |
+| **Ship** | A sovereign trust domain -- one keypair, one artifact store | Ed25519 keypair + config + local artifact store |
+| **Agent** | Any human or AI actor within a ship, identified by a URI | `human://alice` or `agent://coder` prefix |
+| **Actor** | Synonym for agent -- the entity that performs an action | `human://` or `agent://` prefix |
 | **Approver** | The human or identity that signs an approval | `--approver` flag |
-| **Docking** | The process of connecting your Treeship to Hub | `treeship dock login` / DPoP keypair |
-| **Hub** | Hosted infrastructure where Treeships connect via docking | treeship.dev API |
+| **Dock** | A named push destination from your ship to a Hub workspace -- like a git remote | `treeship dock login` / DPoP keypair |
+| **Active dock** | The dock that receives pushes by default when no `--dock` flag is specified | `treeship dock use <name>` |
+| **Workspace** | A Hub-side container where pushed artifacts appear, associated with a dock | `treeship dock workspace` |
+| **Docking** | The process of connecting your ship to Hub by creating a dock | `treeship dock login` |
+| **Hub** | Hosted infrastructure where ships connect via docks | treeship.dev API |

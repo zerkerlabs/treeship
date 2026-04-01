@@ -100,14 +100,23 @@ treeship verify $TREESHIP_LAST
 ### Push to the Hub
 
 ```bash
+# Connect your ship to Hub (creates your default dock)
 treeship dock login
 # Visit https://treeship.dev/dock/activate
 # Type the code, click Approve
 
+# Push the artifact to your active dock
 treeship dock push $TREESHIP_LAST
 # -> https://treeship.dev/verify/art_xxx
+
+# Disconnect when you're done (keeps your keys intact)
+treeship dock logout
 ```
 
 Anyone can open that URL and verify the chain. No account, no install, no trust in Treeship's infrastructure.
+
+<Callout type="info">
+Most developers only need one dock. If you work across multiple organizations, you can create named docks with `treeship dock login --name acme-corp` and switch between them with `treeship dock use acme-corp`. See the [trust model](/docs/concepts/trust-model) for details.
+</Callout>
 </Step>
 </Steps>
