@@ -76,6 +76,9 @@ jobs:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
 
+      - name: Clear auth token for OIDC provenance
+        run: npm config set //registry.npmjs.org/:_authToken ""
+
       - name: Build and publish @treeship/sdk
         working-directory: packages/sdk-ts
         run: |
