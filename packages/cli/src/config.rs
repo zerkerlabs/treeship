@@ -75,7 +75,13 @@ pub fn load(path: &Path) -> Result<Config, ConfigError> {
 }
 
 pub fn save(cfg: &Config, path: &Path) -> Result<(), ConfigError> {
-    fs::create_dir_all(path.parent().unwrap_or(path))?;
+    let dir = path.parent().unwrap_or(path);
+    fs::create_dir_all(dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(dir, fs::Permissions::from_mode(0o700));
+    }
     let json = serde_json::to_vec_pretty(cfg)?;
     fs::write(path, &json)?;
     #[cfg(unix)]

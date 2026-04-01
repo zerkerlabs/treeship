@@ -67,6 +67,8 @@ Hub verifies:
 | `GET` | `/v1/merkle/checkpoint/:id` | None | Get a specific Merkle checkpoint |
 | `GET` | `/v1/merkle/checkpoint/latest` | None | Get the latest Merkle checkpoint |
 | `GET` | `/v1/dock/authorized` | None | Poll device flow status |
+| `GET` | `/v1/workspace/:dock_id` | None | List artifacts in a workspace |
+| `POST` | `/v1/merkle/proof` | DPoP | Request a Merkle inclusion proof |
 | `GET` | `/.well-known/treeship/revoked.json` | None | Revoked key list |
 
 ## Error format

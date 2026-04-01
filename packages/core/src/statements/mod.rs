@@ -208,6 +208,22 @@ pub struct EndorsementStatement {
     pub meta: Option<serde_json::Value>,
 }
 
+impl EndorsementStatement {
+    pub fn new(endorser: impl Into<String>, kind: impl Into<String>) -> Self {
+        Self {
+            type_: TYPE_ENDORSEMENT.into(),
+            timestamp: now_rfc3339(),
+            endorser: endorser.into(),
+            subject: SubjectRef::default(),
+            kind: kind.into(),
+            rationale: None,
+            expires_at: None,
+            policy_ref: None,
+            meta: None,
+        }
+    }
+}
+
 /// Records that an external system observed or confirmed an event.
 ///
 /// Used for Stripe webhooks, RFC 3161 timestamps, inclusion proofs.

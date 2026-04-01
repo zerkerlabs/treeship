@@ -24,6 +24,10 @@ treeship wrap [OPTIONS] -- <command> [args...]
 | elapsed_ms | Elapsed time in milliseconds |
 | timestamp | RFC 3339 at the moment of signing |
 | parent_id | From `--parent` flag or `TREESHIP_PARENT` |
+| output_digest | SHA-256 hash of stdout + stderr |
+| output_summary | Last non-empty line of stdout (secrets are redacted) |
+| chain | Shows `parent -> current` artifact IDs when auto-chaining |
+| signed_key | Key ID used to sign the artifact |
 
 ## Examples
 

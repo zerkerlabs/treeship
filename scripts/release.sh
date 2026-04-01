@@ -40,11 +40,11 @@ sed -i '' "s/treeship-core = { version = \".*\"/treeship-core = { version = \"${
 
 # TypeScript SDK
 echo "Bumping @treeship/sdk..."
-cd packages/sdk-ts && npm version "$VERSION" --no-git-tag-version && cd ../..
+npm version "$VERSION" --no-git-tag-version --allow-same-version --prefix packages/sdk-ts
 
 # MCP bridge
 echo "Bumping @treeship/mcp..."
-cd bridges/mcp && npm version "$VERSION" --no-git-tag-version && cd ../..
+npm version "$VERSION" --no-git-tag-version --allow-same-version --prefix bridges/mcp
 
 # Python SDK
 echo "Bumping treeship-sdk (Python)..."
@@ -53,9 +53,9 @@ sed -i '' "s/__version__ = \".*\"/__version__ = \"${VERSION}\"/" packages/sdk-py
 
 # npm binary wrapper + platform packages
 echo "Bumping npm wrapper..."
-cd npm/treeship && npm version "$VERSION" --no-git-tag-version && cd ../..
+npm version "$VERSION" --no-git-tag-version --allow-same-version --prefix npm/treeship
 for pkg in cli-darwin-arm64 cli-darwin-x64 cli-linux-x64; do
-  cd "npm/@treeship/$pkg" && npm version "$VERSION" --no-git-tag-version && cd ../../..
+  npm version "$VERSION" --no-git-tag-version --allow-same-version --prefix "npm/@treeship/$pkg"
 done
 
 # Update optionalDependencies in wrapper to match
@@ -103,5 +103,4 @@ echo "  2. Create GitHub Release with binaries"
 echo "  3. Publish to npm (if NPM_TOKEN secret is set)"
 echo "  4. Publish to crates.io (if CARGO_TOKEN secret is set)"
 echo ""
-echo "After the release, manually publish Python:"
-echo "  cd packages/sdk-python && python3 -m build && twine upload dist/*"
+echo "  5. Publish to PyPI (if PYPI_TOKEN secret is set)"

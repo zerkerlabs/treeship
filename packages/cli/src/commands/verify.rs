@@ -65,6 +65,18 @@ pub fn run(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
 
+    // Resolve "last" keyword to the most recent artifact ID.
+    let resolved_target = if target == "last" {
+        let last_path = std::path::Path::new(&ctx.config.storage_dir).join(".last");
+        std::fs::read_to_string(&last_path)
+            .map_err(|_| "no recent artifact found -- run 'treeship wrap' first")?
+            .trim()
+            .to_string()
+    } else {
+        target.to_string()
+    };
+    let target = resolved_target.as_str();
+
     // Build a Verifier from every known public key in the keystore.
     let verifier = build_verifier(&ctx.keys)?;
 

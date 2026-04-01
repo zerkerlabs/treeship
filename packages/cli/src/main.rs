@@ -558,6 +558,17 @@ enum AttestCommand {
     ///     --tokens-in 8432 --tokens-out 1247 \
     ///     --summary "Contract analysis complete. Standard terms." --confidence 0.91
     Decision(AttestDecisionArgs),
+
+    /// Record an endorsement of an existing artifact
+    ///
+    /// Used for post-hoc validation, compliance sign-off, countersignatures.
+    ///
+    /// Examples:
+    ///   treeship attest endorsement --endorser human://auditor --subject art_a1b2 --kind validation
+    ///   treeship attest endorsement --endorser human://compliance --subject art_c3d4 \
+    ///     --kind compliance --rationale "Meets SOC-2 requirements" \
+    ///     --expires 2026-12-31T00:00:00Z --policy-ref https://example.com/policy
+    Endorsement(AttestEndorsementArgs),
 }
 
 #[derive(Args)]
@@ -697,6 +708,45 @@ struct AttestDecisionArgs {
     /// Parent artifact ID -- links this into a chain
     #[arg(long, value_name = "ID")]
     parent: Option<String>,
+}
+
+#[derive(Args)]
+struct AttestEndorsementArgs {
+    /// Endorser URI -- who is endorsing
+    #[arg(long, required = true, value_name = "URI")]
+    endorser: String,
+
+    /// Subject artifact ID being endorsed
+    #[arg(long, required = true, value_name = "ID")]
+    subject: String,
+
+    /// Endorsement kind: validation, compliance, countersignature, review
+    #[arg(long, required = true, value_name = "KIND")]
+    kind: String,
+
+    /// Human-readable rationale for the endorsement
+    #[arg(long, value_name = "TEXT")]
+    rationale: Option<String>,
+
+    /// Expiration timestamp (RFC 3339)
+    #[arg(long, value_name = "TIMESTAMP")]
+    expires: Option<String>,
+
+    /// URI to the governing policy document
+    #[arg(long, value_name = "URI")]
+    policy_ref: Option<String>,
+
+    /// Extra metadata as a JSON object
+    #[arg(long, value_name = r#"'{"key":"val"}'"#)]
+    meta: Option<String>,
+
+    /// Parent artifact ID -- links this into a chain
+    #[arg(long, value_name = "ID")]
+    parent: Option<String>,
+
+    /// Write the raw DSSE envelope to a file (- for stdout)
+    #[arg(long, value_name = "PATH")]
+    out: Option<String>,
 }
 
 // --- bundle -----------------------------------------------------------------
@@ -1101,6 +1151,21 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                     confidence:    a.confidence,
                     parent_id:     a.parent.clone(),
                     config:        cli.config.clone(),
+                },
+                printer,
+            ),
+            AttestCommand::Endorsement(a) => commands::attest::endorsement(
+                commands::attest::EndorsementArgs {
+                    endorser:   a.endorser.clone(),
+                    subject_id: a.subject.clone(),
+                    kind:       a.kind.clone(),
+                    rationale:  a.rationale.clone(),
+                    expires:    a.expires.clone(),
+                    policy_ref: a.policy_ref.clone(),
+                    meta:       a.meta.clone(),
+                    parent_id:  a.parent.clone(),
+                    out:        a.out.clone(),
+                    config:     cli.config.clone(),
                 },
                 printer,
             ),

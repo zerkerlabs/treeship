@@ -268,5 +268,22 @@ fn write_project_config(
         let _ = std::fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o600));
     }
 
+    // Write a config.json marker so the daemon trust check passes.
+    // The daemon requires both config.yaml and config.json to exist in .treeship/.
+    let global_config = crate::config::default_config_path()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let marker = serde_json::json!({
+        "extends": global_config,
+        "project": true,
+    });
+    let marker_path = ts_dir.join("config.json");
+    std::fs::write(&marker_path, serde_json::to_vec_pretty(&marker)?)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&marker_path, std::fs::Permissions::from_mode(0o600));
+    }
+
     Ok(())
 }

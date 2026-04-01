@@ -1,7 +1,7 @@
 use serde_json::Value;
 use treeship_core::{
     attestation::sign,
-    statements::{ActionStatement, ApprovalStatement, DecisionStatement, HandoffStatement, ReceiptStatement, payload_type, SubjectRef},
+    statements::{ActionStatement, ApprovalStatement, DecisionStatement, EndorsementStatement, HandoffStatement, ReceiptStatement, payload_type, SubjectRef},
     storage::Record,
 };
 
@@ -58,6 +58,7 @@ pub fn action(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std
         hub_url:      None,
     };
     ctx.storage.write(&record)?;
+    write_last(&ctx.config.storage_dir, &result.artifact_id);
 
     // Optional: write raw DSSE envelope to file or stdout.
     if let Some(path) = &args.out {
@@ -136,6 +137,7 @@ pub fn approval(args: ApprovalArgs, printer: &Printer) -> Result<(), Box<dyn std
         envelope:     result.envelope,
         hub_url:      None,
     })?;
+    write_last(&ctx.config.storage_dir, &result.artifact_id);
 
     printer.success("approval attested", &[
         ("id",       &result.artifact_id),
@@ -180,6 +182,7 @@ pub fn handoff(args: HandoffArgs, printer: &Printer) -> Result<(), Box<dyn std::
         envelope:     result.envelope,
         hub_url:      None,
     })?;
+    write_last(&ctx.config.storage_dir, &result.artifact_id);
 
     printer.success("handoff attested", &[
         ("id",        &result.artifact_id),
@@ -234,6 +237,7 @@ pub fn receipt(args: ReceiptArgs, printer: &Printer) -> Result<(), Box<dyn std::
         envelope:     result.envelope,
         hub_url:      None,
     })?;
+    write_last(&ctx.config.storage_dir, &result.artifact_id);
 
     printer.success("receipt attested", &[
         ("id",     &result.artifact_id),
@@ -305,6 +309,83 @@ pub fn decision(args: DecisionArgs, printer: &Printer) -> Result<(), Box<dyn std
     }
     if let Some(conf) = args.confidence {
         printer.dim_info(&format!("  confidence: {}%", (conf * 100.0) as u32));
+    }
+    printer.hint(&format!("treeship verify {}", result.artifact_id));
+    printer.blank();
+    Ok(())
+}
+
+// --- endorsement -----------------------------------------------------------
+
+pub struct EndorsementArgs {
+    pub endorser:   String,
+    pub subject_id: String,
+    pub kind:       String,
+    pub rationale:  Option<String>,
+    pub expires:    Option<String>,
+    pub policy_ref: Option<String>,
+    pub meta:       Option<String>,
+    pub parent_id:  Option<String>,
+    pub out:        Option<String>,
+    pub config:     Option<String>,
+}
+
+pub fn endorsement(args: EndorsementArgs, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = ctx::open(args.config.as_deref())?;
+
+    let meta: Option<Value> = args.meta.as_deref()
+        .map(|m| serde_json::from_str(m))
+        .transpose()
+        .map_err(|e| format!("--meta is not valid JSON: {e}"))?;
+
+    let parent = resolve_parent(&ctx, args.parent_id.clone());
+
+    let mut stmt = EndorsementStatement::new(&args.endorser, &args.kind);
+    stmt.subject = SubjectRef {
+        artifact_id: Some(args.subject_id.clone()),
+        digest: None,
+        uri: None,
+    };
+    stmt.rationale  = args.rationale.clone();
+    stmt.expires_at = args.expires.clone();
+    stmt.policy_ref = args.policy_ref.clone();
+    stmt.meta       = meta;
+
+    let signer = ctx.keys.default_signer()?;
+    let pt     = payload_type("endorsement");
+    let result = sign(&pt, &stmt, signer.as_ref())?;
+
+    ctx.storage.write(&Record {
+        artifact_id:  result.artifact_id.clone(),
+        digest:       result.digest.clone(),
+        payload_type: pt,
+        key_id:       signer.key_id().to_string(),
+        signed_at:    stmt.timestamp.clone(),
+        parent_id:    parent,
+        envelope:     result.envelope.clone(),
+        hub_url:      None,
+    })?;
+
+    // Write .last for auto-chaining
+    write_last(&ctx.config.storage_dir, &result.artifact_id);
+
+    if let Some(path) = &args.out {
+        let json = result.envelope.to_json()?;
+        if path == "-" {
+            println!("{}", String::from_utf8_lossy(&json));
+        } else {
+            std::fs::write(path, &json)?;
+        }
+    }
+
+    printer.success("endorsement attested", &[
+        ("id",       &result.artifact_id),
+        ("endorser", &args.endorser),
+        ("subject",  &args.subject_id),
+        ("kind",     &args.kind),
+    ]);
+    if let Some(ref rationale) = args.rationale {
+        printer.dim_info(&format!("  rationale: {}", rationale));
     }
     printer.hint(&format!("treeship verify {}", result.artifact_id));
     printer.blank();

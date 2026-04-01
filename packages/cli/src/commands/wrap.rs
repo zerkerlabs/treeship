@@ -187,7 +187,7 @@ pub fn run(
     });
 
     if !output_summary.is_empty() {
-        meta["output_summary"] = serde_json::Value::String(output_summary.clone());
+        meta["output_summary"] = serde_json::Value::String(sanitize_command(&output_summary));
     }
     if files_changed_count > 0 {
         meta["files_changed"] = serde_json::json!(files_changed_count);
