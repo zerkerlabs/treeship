@@ -58,7 +58,7 @@ pub fn login(
         .as_str()
         .ok_or("missing device_code in challenge response")?
         .to_string();
-    let _nonce = resp["nonce"]
+    let nonce = resp["nonce"]
         .as_str()
         .ok_or("missing nonce in challenge response")?
         .to_string();
@@ -128,6 +128,7 @@ pub fn login(
         "ship_public_key": ship_public_hex,
         "dock_public_key": dock_public_hex,
         "device_code":     device_code,
+        "nonce":           nonce,
     });
 
     let auth_resp: serde_json::Value = ureq::post(&authorize_url)

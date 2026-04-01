@@ -89,6 +89,7 @@ type authorizeRequest struct {
 	ShipPublicKey string `json:"ship_public_key"`
 	DockPublicKey string `json:"dock_public_key"`
 	DeviceCode    string `json:"device_code"`
+	Nonce         string `json:"nonce"`
 }
 
 // Authorize handles POST /v1/dock/authorize
@@ -119,45 +120,54 @@ func (h *Handlers) Authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Keys are optional for browser-initiated approval.
-	// The CLI sends real keys in its own POST after polling detects approval.
-	var shipPubKey, dockPubKey []byte
-	if req.ShipPublicKey != "" {
-		shipPubKey, err = hex.DecodeString(req.ShipPublicKey)
-		if err != nil {
-			http.Error(w, `{"error":"invalid ship_public_key hex"}`, http.StatusBadRequest)
+	// Browser-only approval (no keys): just mark as approved and return.
+	if req.ShipPublicKey == "" || req.DockPublicKey == "" {
+		if err := db.ApproveChallenge(h.DB, challenge.DeviceCode, nil, nil); err != nil {
+			http.Error(w, `{"error":"failed to approve challenge"}`, http.StatusInternalServerError)
 			return
 		}
-	}
-	if req.DockPublicKey != "" {
-		dockPubKey, err = hex.DecodeString(req.DockPublicKey)
-		if err != nil {
-			http.Error(w, `{"error":"invalid dock_public_key hex"}`, http.StatusBadRequest)
-			return
-		}
-	}
-
-	// Mark the challenge as approved. The CLI will then POST with real keys.
-	if err := db.ApproveChallenge(h.DB, challenge.DeviceCode, shipPubKey, dockPubKey); err != nil {
-		http.Error(w, `{"error":"failed to approve challenge"}`, http.StatusInternalServerError)
-		return
-	}
-
-	// Browser-only approval (no keys): just return approved status.
-	// The CLI will call authorize again with real keys to get a dock_id.
-	if len(shipPubKey) == 0 || len(dockPubKey) == 0 {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"status": "approved"})
 		return
 	}
 
-	// CLI flow: keys provided, create the ship record.
+	// CLI flow: keys provided. Challenge MUST already be approved by browser.
+	if !challenge.Approved {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]string{"error": "challenge not yet approved -- complete browser activation first"})
+		return
+	}
+
+	// Verify nonce matches (binds CLI finalization to the browser approval).
+	if req.Nonce != "" && req.Nonce != challenge.Nonce {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]string{"error": "nonce mismatch"})
+		return
+	}
+
+	shipPubKey, err := hex.DecodeString(req.ShipPublicKey)
+	if err != nil {
+		http.Error(w, `{"error":"invalid ship_public_key hex"}`, http.StatusBadRequest)
+		return
+	}
+	dockPubKey, err := hex.DecodeString(req.DockPublicKey)
+	if err != nil {
+		http.Error(w, `{"error":"invalid dock_public_key hex"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Create the ship record.
 	dockID := "dck_" + randomHex(16)
 	now := time.Now().Unix()
 	if err := db.InsertShip(h.DB, dockID, shipPubKey, dockPubKey, now); err != nil {
 		http.Error(w, `{"error":"failed to create ship"}`, http.StatusInternalServerError)
 		return
 	}
+
+	// Invalidate the challenge so it cannot be reused.
+	_ = db.DeleteChallenge(h.DB, challenge.DeviceCode)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"dock_id": dockID})

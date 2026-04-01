@@ -112,12 +112,24 @@ func (h *Handlers) Push(w http.ResponseWriter, r *http.Request) {
 }
 
 // Workspace handles GET /v1/workspace/{dockId}
+// Requires DPoP authentication. The authenticated dock must match the requested dock.
 func (h *Handlers) Workspace(w http.ResponseWriter, r *http.Request) {
+	// Authenticate via DPoP.
+	authedDockID := dpop.Verify(h.DB, w, r)
+	if authedDockID == "" {
+		return // dpop.Verify already wrote the 401 response
+	}
+
 	dockID := chi.URLParam(r, "dockId")
 	if dockID == "" {
+		dockID = authedDockID // default to the authenticated dock
+	}
+
+	// Only allow access to your own workspace.
+	if dockID != authedDockID {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "missing dock id"})
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]string{"error": "dock id mismatch: you can only access your own workspace"})
 		return
 	}
 
