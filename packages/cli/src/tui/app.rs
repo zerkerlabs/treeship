@@ -72,12 +72,9 @@ impl App {
             artifacts: Vec::new(),
             selected: 0,
             session: None,
-            dock_status: ctx.config.hub.status.clone(),
-            dock_endpoint: ctx
-                .config
-                .hub
-                .endpoint
-                .clone()
+            dock_status: if ctx.config.is_docked() { "docked".into() } else { "undocked".into() },
+            dock_endpoint: ctx.config.active_dock_entry()
+                .map(|(_, e)| e.endpoint.clone())
                 .unwrap_or_else(|| "treeship.dev".into()),
             ship_id: ctx.config.ship_id.clone(),
             key_id: ctx.config.default_key_id.clone(),

@@ -143,14 +143,20 @@ func (h *Handlers) Authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Only create a ship record if keys were provided (CLI flow).
-	dockID := "dck_" + randomHex(8)
-	if len(shipPubKey) > 0 && len(dockPubKey) > 0 {
-		now := time.Now().Unix()
-		if err := db.InsertShip(h.DB, dockID, shipPubKey, dockPubKey, now); err != nil {
-			http.Error(w, `{"error":"failed to create ship"}`, http.StatusInternalServerError)
-			return
-		}
+	// Browser-only approval (no keys): just return approved status.
+	// The CLI will call authorize again with real keys to get a dock_id.
+	if len(shipPubKey) == 0 || len(dockPubKey) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "approved"})
+		return
+	}
+
+	// CLI flow: keys provided, create the ship record.
+	dockID := "dck_" + randomHex(16)
+	now := time.Now().Unix()
+	if err := db.InsertShip(h.DB, dockID, shipPubKey, dockPubKey, now); err != nil {
+		http.Error(w, `{"error":"failed to create ship"}`, http.StatusInternalServerError)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")

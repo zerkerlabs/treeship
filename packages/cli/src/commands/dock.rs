@@ -4,19 +4,51 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use ed25519_dalek::{SigningKey, Signer, VerifyingKey};
 use rand::RngCore;
 
-use crate::{config, ctx, printer::Printer};
+use crate::{config::{self, DockEntry}, ctx, printer::Printer};
 
 // ---------------------------------------------------------------------------
-// Subcommand dispatch
+// Result type for push
+// ---------------------------------------------------------------------------
+
+/// Result of a successful push to Hub.
+pub struct PushResult {
+    pub hub_url:     String,
+    pub rekor_index: Option<u64>,
+}
+
+// ---------------------------------------------------------------------------
+// login
 // ---------------------------------------------------------------------------
 
 pub fn login(
-    endpoint: Option<String>,
+    name:     Option<&str>,
+    endpoint: Option<&str>,
     config:   Option<&str>,
     printer:  &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx      = ctx::open(config)?;
-    let endpoint = endpoint.unwrap_or_else(|| "https://api.treeship.dev".into());
+    let dock_name = name.unwrap_or("default");
+    let endpoint  = endpoint.unwrap_or("https://api.treeship.dev").to_string();
+
+    // If dock name already exists with keys, reconnect
+    if let Some(existing) = ctx.config.docks.get(dock_name) {
+        if existing.dock_secret_key.is_some() {
+            let mut cfg = ctx.config.clone();
+            cfg.active_dock = Some(dock_name.to_string());
+            config::save(&cfg, &ctx.config_path)?;
+
+            printer.success("reconnected", &[
+                ("dock", dock_name),
+                ("dock id", &existing.dock_id),
+            ]);
+            printer.hint(&format!(
+                "workspace: https://treeship.dev/workspace/{}",
+                existing.dock_id
+            ));
+            printer.blank();
+            return Ok(());
+        }
+    }
 
     // 1. GET challenge
     let challenge_url = format!("{}/v1/dock/challenge", endpoint);
@@ -31,18 +63,17 @@ pub fn login(
         .ok_or("missing nonce in challenge response")?
         .to_string();
 
-    // 2. Generate fresh Ed25519 dock keypair (separate from ship signing key)
+    // 2. Generate fresh Ed25519 dock keypair
     let mut csprng = rand::thread_rng();
     let dock_signing_key = SigningKey::generate(&mut csprng);
     let dock_verifying_key: VerifyingKey = (&dock_signing_key).into();
 
-    let dock_public_hex  = hex::encode(dock_verifying_key.as_bytes());
-    let dock_secret_hex  = hex::encode(dock_signing_key.to_bytes());
+    let dock_public_hex = hex::encode(dock_verifying_key.as_bytes());
+    let dock_secret_hex = hex::encode(dock_signing_key.to_bytes());
 
     // 3. Print activation instructions
     let formatted_code = format_device_code(&device_code);
     printer.blank();
-    // Activation page lives on the website, not the API
     let site_url = if endpoint.contains("localhost") || endpoint.contains("127.0.0.1") {
         endpoint.clone()
     } else {
@@ -54,7 +85,10 @@ pub fn login(
     printer.blank();
 
     // 4. Poll for authorization -- timeout after 5 minutes
-    let poll_url = format!("{}/v1/dock/authorized?device_code={}", endpoint, device_code);
+    let poll_url = format!(
+        "{}/v1/dock/authorized?device_code={}",
+        endpoint, device_code
+    );
     let start = SystemTime::now();
     let timeout_secs = 300;
 
@@ -70,11 +104,8 @@ pub fn login(
         match poll_resp {
             Ok(r) => {
                 let status_code = r.status();
-                let body: serde_json::Value = r.into_json()?;
+                let _body: serde_json::Value = r.into_json()?;
                 if status_code == 200 {
-                    // 200 means approved (by browser or CLI).
-                    // Either has dock_id (CLI already called authorize) or just "approved".
-                    // In both cases, break and proceed to POST authorize with our keys.
                     break;
                 }
                 // 202 = pending, keep polling
@@ -86,7 +117,7 @@ pub fn login(
                 return Err(format!("polling error: {e}").into());
             }
         }
-    };
+    }
 
     // 5. POST authorize with keys
     let ship_public_key = ctx.keys.public_key(&ctx.config.default_key_id)?;
@@ -108,123 +139,246 @@ pub fn login(
         .unwrap_or("unknown")
         .to_string();
 
-    // 6. Save to config
+    // 6. Build timestamp
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let created_at = format!("{}Z", now);
+
+    // 7. Save to config
     let mut cfg = ctx.config.clone();
-    cfg.hub.status          = "docked".into();
-    cfg.hub.endpoint        = Some(endpoint.clone());
-    cfg.hub.dock_id         = Some(final_dock_id.clone());
-    cfg.hub.dock_public_key = Some(dock_public_hex);
-    cfg.hub.dock_secret_key = Some(dock_secret_hex);
+    cfg.docks.insert(
+        dock_name.to_string(),
+        DockEntry {
+            dock_id:         final_dock_id.clone(),
+            key_id:          ctx.config.default_key_id.clone(),
+            endpoint:        endpoint.clone(),
+            created_at,
+            last_push:       None,
+            dock_public_key: Some(dock_public_hex),
+            dock_secret_key: Some(dock_secret_hex),
+        },
+    );
+    cfg.active_dock = Some(dock_name.to_string());
     config::save(&cfg, &ctx.config_path)?;
 
-    // 7. Print success
+    // 8. Print success
     printer.success("docked", &[
+        ("name",     dock_name),
         ("dock id",  &final_dock_id),
         ("endpoint", &endpoint),
     ]);
-    printer.hint("treeship dock push <artifact-id>");
+    printer.hint(&format!(
+        "workspace: https://treeship.dev/workspace/{}",
+        final_dock_id
+    ));
     printer.blank();
 
     Ok(())
 }
 
-/// Result of a successful push to Hub.
-pub struct PushResult {
-    pub hub_url:     String,
-    pub rekor_index: Option<u64>,
-}
+// ---------------------------------------------------------------------------
+// logout
+// ---------------------------------------------------------------------------
 
-/// Shared push logic: pushes a record to the Hub. Used by both `dock push` and `wrap --push`.
-/// The caller must ensure the ctx is docked.
-pub fn push_artifact(
-    ctx: &crate::ctx::Ctx,
-    id:  &str,
-) -> Result<PushResult, Box<dyn std::error::Error>> {
-    let hub = &ctx.config.hub;
-
-    if hub.status != "docked" {
-        return Err("not docked -- run: treeship dock login".into());
-    }
-
-    let endpoint = hub.endpoint.as_deref().unwrap_or("https://api.treeship.dev");
-    let dock_id  = hub.dock_id.as_deref().ok_or("no dock_id in config")?;
-
-    let dock_secret_hex = hub.dock_secret_key.as_deref()
-        .ok_or("no dock_secret_key in config -- run: treeship dock login")?;
-
-    // 1. Load artifact from local storage
-    let record = ctx.storage.read(id)?;
-
-    // 2. Build DPoP proof JWT
-    let artifacts_url = format!("{}/v1/artifacts", endpoint);
-    let dpop_jwt = build_dpop_jwt(dock_secret_hex, "POST", &artifacts_url)?;
-
-    // 3. POST to Hub
-    let envelope_json = serde_json::to_string(&record.envelope)?;
-    let body = serde_json::json!({
-        "artifact_id":  record.artifact_id,
-        "payload_type": record.payload_type,
-        "envelope_json": envelope_json,
-        "digest":       record.digest,
-        "signed_at":    record.signed_at,
-        "parent_id":    record.parent_id,
-    });
-
-    let resp: serde_json::Value = ureq::post(&artifacts_url)
-        .set("Authorization", &format!("DPoP {}", dock_id))
-        .set("DPoP", &dpop_jwt)
-        .send_json(&body)?
-        .into_json()?;
-
-    let hub_url     = resp["hub_url"].as_str().unwrap_or("").to_string();
-    let rekor_index = resp["rekor_index"].as_u64();
-
-    // 4. Update local record with hub_url
-    if !hub_url.is_empty() {
-        ctx.storage.set_hub_url(id, &hub_url)?;
-    }
-
-    Ok(PushResult { hub_url, rekor_index })
-}
-
-pub fn push(
-    id:      &str,
+pub fn logout(
     config:  Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
 
-    let result = push_artifact(&ctx, id)?;
+    let dock_name = ctx.config.active_dock.as_deref()
+        .unwrap_or("(none)")
+        .to_string();
 
-    let rekor_str = match result.rekor_index {
-        Some(idx) => format!("rekor.sigstore.dev #{}", idx),
-        None      => "pending".into(),
-    };
+    let mut cfg = ctx.config.clone();
+    cfg.active_dock = None;
+    config::save(&cfg, &ctx.config_path)?;
 
-    printer.success("pushed", &[
-        ("url",   &result.hub_url),
-        ("rekor", &rekor_str),
-    ]);
-    if !result.hub_url.is_empty() {
-        printer.hint(&format!("treeship open {}", result.hub_url));
-    }
+    printer.success("logged out", &[("dock", dock_name.as_str())]);
+    printer.info("keys preserved");
+    printer.hint(&format!("reconnect: treeship dock use {}", dock_name));
     printer.blank();
 
     Ok(())
 }
 
-pub fn pull(
-    id:       &str,
-    endpoint: Option<&str>,
-    config:   Option<&str>,
-    printer:  &Printer,
+// ---------------------------------------------------------------------------
+// ls
+// ---------------------------------------------------------------------------
+
+pub fn ls(
+    config:  Option<&str>,
+    printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
 
-    let endpoint = endpoint
-        .map(|s| s.to_string())
-        .or_else(|| ctx.config.hub.endpoint.clone())
-        .unwrap_or_else(|| "https://api.treeship.dev".into());
+    printer.blank();
+
+    if ctx.config.docks.is_empty() {
+        printer.info("no docks configured");
+        printer.hint("treeship dock login");
+        printer.blank();
+        return Ok(());
+    }
+
+    // Header
+    printer.info(&format!(
+        "{:<16} {:<24} {:<32} {}",
+        "NAME", "DOCK ID", "ENDPOINT", "STATUS"
+    ));
+    printer.info(&format!("{}", "-".repeat(80)));
+
+    let active = ctx.config.active_dock.as_deref();
+
+    // Sort by name for stable output
+    let mut names: Vec<&String> = ctx.config.docks.keys().collect();
+    names.sort();
+
+    for name in names {
+        let entry = &ctx.config.docks[name];
+        let status = if active == Some(name.as_str()) {
+            "active"
+        } else {
+            "inactive"
+        };
+        let short_id = if entry.dock_id.len() > 20 {
+            &entry.dock_id[..20]
+        } else {
+            &entry.dock_id
+        };
+        printer.info(&format!(
+            "{:<16} {:<24} {:<32} {}",
+            name, short_id, entry.endpoint, status
+        ));
+    }
+
+    printer.blank();
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// status
+// ---------------------------------------------------------------------------
+
+pub fn status(
+    config:  Option<&str>,
+    printer: &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = ctx::open(config)?;
+
+    printer.blank();
+
+    if let Some((name, entry)) = ctx.config.active_dock_entry() {
+        printer.info(&printer.green("● docked"));
+        printer.info(&format!("  name:      {}", name));
+        printer.info(&format!("  dock id:   {}", entry.dock_id));
+        printer.info(&format!("  key:       {}", entry.key_id));
+        printer.info(&format!("  endpoint:  {}", entry.endpoint));
+        printer.info(&format!(
+            "  workspace: https://treeship.dev/workspace/{}",
+            entry.dock_id
+        ));
+    } else {
+        printer.info(&printer.dim("○ not docked"));
+        printer.hint("treeship dock login");
+    }
+
+    printer.blank();
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// use_dock
+// ---------------------------------------------------------------------------
+
+pub fn use_dock(
+    name_or_id: &str,
+    config:     Option<&str>,
+    printer:    &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = ctx::open(config)?;
+
+    // Resolve by name first, then by dock_id
+    let resolved_name = if ctx.config.docks.contains_key(name_or_id) {
+        name_or_id.to_string()
+    } else {
+        ctx.config
+            .docks
+            .iter()
+            .find(|(_, v)| v.dock_id == name_or_id)
+            .map(|(k, _)| k.clone())
+            .ok_or_else(|| format!("dock {:?} not found\n  Run: treeship dock ls", name_or_id))?
+    };
+
+    let mut cfg = ctx.config.clone();
+    cfg.active_dock = Some(resolved_name.clone());
+    config::save(&cfg, &ctx.config_path)?;
+
+    let entry = &ctx.config.docks[&resolved_name];
+    printer.success("switched", &[
+        ("dock", resolved_name.as_str()),
+        ("dock id", &entry.dock_id),
+    ]);
+    printer.blank();
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// push
+// ---------------------------------------------------------------------------
+
+pub fn push(
+    id:      &str,
+    dock:    Option<&str>,
+    all:     bool,
+    config:  Option<&str>,
+    printer: &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = ctx::open(config)?;
+
+    // Resolve "last" to the most recent artifact id
+    let resolved_id = resolve_artifact_id(&ctx, id)?;
+
+    if all {
+        // Push to every dock in config
+        if ctx.config.docks.is_empty() {
+            return Err("no docks configured -- run: treeship dock login".into());
+        }
+        let names: Vec<String> = ctx.config.docks.keys().cloned().collect();
+        for name in &names {
+            let entry = &ctx.config.docks[name];
+            printer.info(&format!("pushing to dock {:?}...", name));
+            let result = push_artifact_to_dock(&ctx, &resolved_id, entry)?;
+            print_push_result(printer, name, &result);
+        }
+    } else {
+        let (name, entry) = ctx.config.resolve_dock(dock)
+            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+        let result = push_artifact_to_dock(&ctx, &resolved_id, entry)?;
+        print_push_result(printer, name, &result);
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// pull
+// ---------------------------------------------------------------------------
+
+pub fn pull(
+    id:      &str,
+    dock:    Option<&str>,
+    config:  Option<&str>,
+    printer: &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = ctx::open(config)?;
+
+    let (_name, entry) = ctx.config.resolve_dock(dock)
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    let endpoint = &entry.endpoint;
 
     // GET artifact (no auth -- public)
     let url = format!("{}/v1/artifacts/{}", endpoint, id);
@@ -253,56 +407,190 @@ pub fn pull(
 
     ctx.storage.write(&record)?;
 
-    printer.success("pulled", &[
-        ("id", id),
-    ]);
+    printer.success("pulled", &[("id", id)]);
     printer.hint(&format!("treeship verify {}", id));
     printer.blank();
 
     Ok(())
 }
 
-pub fn status(
+// ---------------------------------------------------------------------------
+// workspace
+// ---------------------------------------------------------------------------
+
+pub fn workspace(
+    dock:    Option<&str>,
+    no_open: bool,
     config:  Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
-    let hub = &ctx.config.hub;
+
+    let (_name, entry) = ctx.config.resolve_dock(dock)
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+
+    let url = format!("https://treeship.dev/workspace/{}", entry.dock_id);
 
     printer.blank();
-    if hub.status == "docked" {
-        let endpoint = hub.endpoint.as_deref().unwrap_or("unknown");
-        let dock_id  = hub.dock_id.as_deref().unwrap_or("unknown");
-        printer.info(&printer.green("● docked"));
-        printer.info(&format!("  endpoint:  {}", endpoint));
-        printer.info(&format!("  dock id:   {}", dock_id));
-    } else {
-        printer.info(&printer.dim("○ undocked"));
-        printer.hint("treeship dock login");
+    printer.info(&url);
+    printer.blank();
+
+    if !no_open {
+        #[cfg(target_os = "macos")]
+        { let _ = std::process::Command::new("open").arg(&url).spawn(); }
+        #[cfg(target_os = "linux")]
+        { let _ = std::process::Command::new("xdg-open").arg(&url).spawn(); }
     }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// rm
+// ---------------------------------------------------------------------------
+
+pub fn rm(
+    name:    &str,
+    force:   bool,
+    config:  Option<&str>,
+    printer: &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = ctx::open(config)?;
+
+    if !ctx.config.docks.contains_key(name) {
+        return Err(format!("dock {:?} not found\n  Run: treeship dock ls", name).into());
+    }
+
+    if !force {
+        // Prompt for confirmation
+        printer.info(&format!("remove dock {:?}? this deletes the local keys.", name));
+        printer.info("pass --force to skip this prompt");
+
+        eprint!("confirm [y/N]: ");
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        if !input.trim().eq_ignore_ascii_case("y") {
+            printer.info("cancelled");
+            return Ok(());
+        }
+    }
+
+    let mut cfg = ctx.config.clone();
+
+    // If removing the active dock, clear active_dock
+    if cfg.active_dock.as_deref() == Some(name) {
+        cfg.active_dock = None;
+    }
+
+    cfg.docks.remove(name);
+    config::save(&cfg, &ctx.config_path)?;
+
+    printer.success("removed", &[("dock", name)]);
     printer.blank();
 
     Ok(())
 }
 
-pub fn undock(
-    config:  Option<&str>,
-    printer: &Printer,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let ctx = ctx::open(config)?;
+// ---------------------------------------------------------------------------
+// push_artifact  (backward-compatible for wrap --push)
+// ---------------------------------------------------------------------------
 
-    let mut cfg = ctx.config.clone();
-    cfg.hub.status          = "undocked".into();
-    cfg.hub.endpoint        = None;
-    cfg.hub.dock_id         = None;
-    cfg.hub.dock_public_key = None;
-    cfg.hub.dock_secret_key = None;
-    config::save(&cfg, &ctx.config_path)?;
+/// Shared push logic used by `wrap --push`. Uses the active dock from config.
+pub fn push_artifact(
+    ctx: &crate::ctx::Ctx,
+    id:  &str,
+) -> Result<PushResult, Box<dyn std::error::Error>> {
+    let (_name, entry) = ctx.config.resolve_dock(None)
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
-    printer.success("undocked", &[]);
+    push_artifact_to_dock(ctx, id, entry)
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/// Push a single artifact to a specific dock.
+fn push_artifact_to_dock(
+    ctx:   &crate::ctx::Ctx,
+    id:    &str,
+    entry: &DockEntry,
+) -> Result<PushResult, Box<dyn std::error::Error>> {
+    let dock_secret_hex = entry
+        .dock_secret_key
+        .as_deref()
+        .ok_or("no dock_secret_key -- run: treeship dock login")?;
+
+    // 1. Load artifact from local storage
+    let record = ctx.storage.read(id)?;
+
+    // 2. Build DPoP proof JWT
+    let artifacts_url = format!("{}/v1/artifacts", entry.endpoint);
+    let dpop_jwt = build_dpop_jwt(dock_secret_hex, "POST", &artifacts_url)?;
+
+    // 3. POST to Hub
+    let envelope_json = serde_json::to_string(&record.envelope)?;
+    let body = serde_json::json!({
+        "artifact_id":   record.artifact_id,
+        "payload_type":  record.payload_type,
+        "envelope_json": envelope_json,
+        "digest":        record.digest,
+        "signed_at":     record.signed_at,
+        "parent_id":     record.parent_id,
+    });
+
+    let resp: serde_json::Value = ureq::post(&artifacts_url)
+        .set("Authorization", &format!("DPoP {}", entry.dock_id))
+        .set("DPoP", &dpop_jwt)
+        .send_json(&body)?
+        .into_json()?;
+
+    let hub_url     = resp["hub_url"].as_str().unwrap_or("").to_string();
+    let rekor_index = resp["rekor_index"].as_u64();
+
+    // 4. Update local record with hub_url
+    if !hub_url.is_empty() {
+        ctx.storage.set_hub_url(id, &hub_url)?;
+    }
+
+    Ok(PushResult { hub_url, rekor_index })
+}
+
+/// Print push result for a given dock.
+fn print_push_result(printer: &Printer, dock_name: &str, result: &PushResult) {
+    let rekor_str = match result.rekor_index {
+        Some(idx) => format!("rekor.sigstore.dev #{}", idx),
+        None      => "pending".into(),
+    };
+
+    printer.success("pushed", &[
+        ("dock",  dock_name),
+        ("url",   &result.hub_url),
+        ("rekor", &rekor_str),
+    ]);
+    if !result.hub_url.is_empty() {
+        printer.hint(&format!("treeship open {}", result.hub_url));
+    }
     printer.blank();
+}
 
-    Ok(())
+/// Resolve "last" to the actual artifact id from the .last file.
+fn resolve_artifact_id(
+    ctx: &crate::ctx::Ctx,
+    id:  &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    if id == "last" {
+        let last_path = std::path::Path::new(&ctx.config.storage_dir).join(".last");
+        let content = std::fs::read_to_string(&last_path)
+            .map_err(|_| "no .last artifact found -- attest or wrap something first")?;
+        let resolved = content.trim().to_string();
+        if resolved.is_empty() {
+            return Err("empty .last file".into());
+        }
+        Ok(resolved)
+    } else {
+        Ok(id.to_string())
+    }
 }
 
 // ---------------------------------------------------------------------------

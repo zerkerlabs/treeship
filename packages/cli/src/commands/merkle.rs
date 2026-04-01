@@ -407,15 +407,13 @@ pub fn publish(
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
-    let hub = &ctx.config.hub;
 
-    if hub.status != "docked" {
-        return Err("not docked -- run: treeship dock login".into());
-    }
+    let (_dock_name, dock_entry) = ctx.config.resolve_dock(None)
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
-    let endpoint = hub.endpoint.as_deref().unwrap_or("https://api.treeship.dev");
-    let dock_id = hub.dock_id.as_deref().ok_or("no dock_id in config")?;
-    let dock_secret_hex = hub.dock_secret_key.as_deref()
+    let endpoint = &dock_entry.endpoint;
+    let dock_id = &dock_entry.dock_id;
+    let dock_secret_hex = dock_entry.dock_secret_key.as_deref()
         .ok_or("no dock_secret_key in config -- run: treeship dock login")?;
 
     // 1. Load latest checkpoint

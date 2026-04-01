@@ -52,11 +52,18 @@ treeship bundle export <id>             # export a chain as a .treeship file
 treeship bundle import <file>           # import a .treeship file locally
 
 # Docking (treeship.dev Hub)
-treeship dock login                     # authenticate to the Hub
-treeship dock push <id>                 # push an artifact to the Hub
-treeship dock pull <id>                 # pull an artifact from the Hub
-treeship dock status                    # show dock connection
-treeship dock undock                    # disconnect from the Hub
+treeship dock login                     # connect to Hub (or reconnect)
+treeship dock login --name acme-corp    # named dock for separate workspace
+treeship dock logout                    # disconnect active dock (keeps keys)
+treeship dock ls                        # list all known docks
+treeship dock status                    # show active dock details
+treeship dock use <name>                # switch active dock
+treeship dock push <id>                 # push artifact to active dock
+treeship dock push <id> --dock <name>   # push to specific dock
+treeship dock push <id> --all           # push to all docks
+treeship dock pull <id>                 # pull artifact from Hub
+treeship dock workspace                 # open workspace in browser
+treeship dock rm <name>                 # remove a dock
 
 # Daemon
 treeship daemon start [--foreground]    # start the background watcher

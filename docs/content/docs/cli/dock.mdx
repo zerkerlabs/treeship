@@ -1,109 +1,219 @@
 ---
 title: dock
-description: Connect to the treeship.dev Hub to push, pull, and share artifacts.
+description: Named workspace connections for pushing, pulling, and sharing artifacts on Hub.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
-import { Steps, Step } from 'fumadocs-ui/components/steps';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-## Login flow
+A dock is a named connection between your local Treeship and a workspace on Hub. You push receipts to it. Other people verify them there. Think of docks like git remotes -- named push destinations from the same trust domain.
 
-<Steps>
-<Step>
-### Start authentication
+Most developers need exactly one dock. Multiple docks exist when receipts need to go to separate workspaces (personal vs work, your company vs a client).
 
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `treeship dock login` | Connect to Hub (creates new or reconnects) |
+| `treeship dock logout` | Disconnect active dock (keeps keys) |
+| `treeship dock ls` | List all known docks |
+| `treeship dock status` | Show active dock details |
+| `treeship dock use <name>` | Switch active dock |
+| `treeship dock push <id>` | Push artifact to active dock |
+| `treeship dock pull <id>` | Pull artifact from Hub |
+| `treeship dock workspace` | Open workspace in browser |
+| `treeship dock rm <name>` | Remove a dock |
+
+## treeship dock login
+
+Connects to Hub. If the dock name already exists locally with keys, reconnects without re-authenticating. If new, runs the device flow.
+
+<Tabs items={['Basic', 'Named', 'Reconnect']}>
+<Tab value="Basic">
 ```bash
 treeship dock login
 ```
 
-This initiates the RFC 8628 device authorization flow. A fresh Ed25519 dock keypair is generated locally.
-</Step>
-<Step>
-### Activate in your browser
+```
+  visit treeship.dev/dock/activate
+  code: 4b0a-6d36
 
-Visit the URL shown and enter the code:
+docked
+  name:      default
+  dock id:   dck_661e5463912d
+  endpoint:  api.treeship.dev
+  workspace: treeship.dev/workspace/dck_661e5463912d
+```
+</Tab>
+<Tab value="Named">
+```bash
+treeship dock login --name acme-corp
+```
+
+Creates a dock named "acme-corp" pointing at a separate workspace.
+</Tab>
+<Tab value="Reconnect">
+```bash
+treeship dock login --name acme-corp
+```
+
+If "acme-corp" already exists with keys, reconnects instantly without the browser flow.
 
 ```
-> visit https://treeship.dev/dock/activate
-> code: ABCD-1234
-> waiting...
+reconnected
+  dock:     acme-corp
+  dock id:  dck_f7e6d5c4b3a2
 ```
-</Step>
-<Step>
-### Docked
+</Tab>
+</Tabs>
 
-```
-✓ docked
-  dock id:  dck_9f8e7d6c
-  endpoint: https://api.treeship.dev
-```
-</Step>
-</Steps>
+| Option | Description |
+|--------|-------------|
+| `--name <name>` | Dock name (default: "default") |
+| `--endpoint <url>` | Hub API endpoint (default: `https://api.treeship.dev`) |
 
 <Callout type="warn" title="DPoP Security">
 All Hub requests use RFC 9449 DPoP proof-of-possession. Every request carries a DPoP JWT signed by the dock key. Stolen credentials are useless without the private key.
 </Callout>
 
-### Options
+## treeship dock logout
 
-| Option | Description |
-|--------|-------------|
-| `--endpoint <url>` | Hub API endpoint (default: `https://api.treeship.dev`) |
-
-## treeship dock push
-
-Push an artifact to the treeship.dev Hub.
+Disconnects the active dock. Keys are preserved locally so you can reconnect later.
 
 ```bash
-treeship dock push art_f7e6d5c4
+treeship dock logout
 ```
 
-Returns a shareable URL and an optional Rekor transparency log index.
-
 ```
-✓ pushed
-  url:   https://treeship.dev/verify/art_f7e6d5c4
-  rekor: rekor.sigstore.dev #12345
+logged out of acme-corp
+  keys preserved
+  reconnect: treeship dock use acme-corp
 ```
 
-## treeship dock pull
+## treeship dock ls
 
-Pull an artifact from the Hub into your local store. No authentication required -- artifacts are public.
+Lists all known docks.
 
 ```bash
-treeship dock pull art_f7e6d5c4
+treeship dock ls
 ```
 
 ```
-✓ pulled
-  id: art_f7e6d5c4
+NAME             DOCK ID                  ENDPOINT                         STATUS
+--------------------------------------------------------------------------------
+default          dck_661e5463912d         api.treeship.dev                 active
+work             dck_a2b3c4d5e6f7         api.treeship.dev
+acme-corp        dck_f7e6d5c4b3a2         api.treeship.dev
 ```
 
 ## treeship dock status
 
-Show the current dock connection.
+Shows the currently active dock with details.
 
 ```bash
 treeship dock status
 ```
 
 ```
-● docked
-  endpoint:  https://api.treeship.dev
-  dock id:   dck_9f8e7d6c
+dock:      default
+dock id:   dck_661e5463912d
+key:       key_9f8e7d6c (ed25519)
+endpoint:  api.treeship.dev
+workspace: treeship.dev/workspace/dck_661e5463912d
 ```
 
-If not connected:
+## treeship dock use
 
-```
-○ undocked
-  hint: treeship dock login
-```
-
-## treeship dock undock
-
-Disconnect from the Hub. Clears dock credentials from local config. Does not revoke the dock keypair on the Hub.
+Switches the active dock without re-authenticating. Accepts name or dock ID.
 
 ```bash
-treeship dock undock
+treeship dock use work
+treeship dock use dck_a2b3c4d5e6f7
 ```
+
+## treeship dock push
+
+Push an artifact to Hub. Returns a shareable verify URL.
+
+<Tabs items={['Active dock', 'Specific dock', 'All docks']}>
+<Tab value="Active dock">
+```bash
+treeship dock push art_f7e6d5c4
+treeship dock push last
+```
+</Tab>
+<Tab value="Specific dock">
+```bash
+treeship dock push art_f7e6d5c4 --dock acme-corp
+treeship dock push last --dock work
+```
+</Tab>
+<Tab value="All docks">
+```bash
+treeship dock push art_f7e6d5c4 --all
+```
+
+Pushes to every known dock. The verify URL is the same across all docks -- artifacts are content-addressed.
+</Tab>
+</Tabs>
+
+| Option | Description |
+|--------|-------------|
+| `--dock <name\|id>` | Push to a specific dock |
+| `--all` | Push to all known docks |
+
+## treeship dock pull
+
+Pull an artifact from Hub into local storage. No authentication required.
+
+```bash
+treeship dock pull art_f7e6d5c4
+treeship dock pull art_f7e6d5c4 --dock acme-corp
+```
+
+## treeship dock workspace
+
+Opens the active workspace in the browser. Prints the URL regardless.
+
+```bash
+treeship dock workspace
+treeship dock workspace --dock acme-corp
+treeship dock workspace --no-open
+```
+
+## treeship dock rm
+
+Removes a dock from local config. Prompts for confirmation.
+
+```bash
+treeship dock rm acme-corp
+treeship dock rm acme-corp --force
+```
+
+Artifacts already pushed to Hub remain there -- they are content-addressed and independently verifiable. Only the ability to push new artifacts to that workspace is removed.
+
+## Config
+
+Dock connections are stored in `~/.treeship/config.json`:
+
+```json
+{
+  "docks": {
+    "default": {
+      "dock_id": "dck_661e5463912d",
+      "key_id": "key_9f8e7d6c",
+      "endpoint": "api.treeship.dev"
+    },
+    "work": {
+      "dock_id": "dck_a2b3c4d5e6f7",
+      "key_id": "key_9f8e7d6c",
+      "endpoint": "api.treeship.dev"
+    }
+  },
+  "active_dock": "default"
+}
+```
+
+<Callout type="info">
+Configs from v0.1/v0.2 (flat `hub` object) are automatically migrated to the new `docks` format on first run. No manual action required.
+</Callout>

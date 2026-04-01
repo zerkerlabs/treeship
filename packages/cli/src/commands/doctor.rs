@@ -288,37 +288,32 @@ pub fn run(
 
     // 6. Is Hub docked?
     if let Ok(ref ctx) = ctx_result {
-        match ctx.config.hub.status.as_str() {
-            "docked" => {
-                let endpoint = ctx.config.hub.endpoint.as_deref().unwrap_or("treeship.dev");
-                let dock_id = ctx.config.hub.dock_id.as_deref().unwrap_or("-");
-                let short_dock = if dock_id.len() > 12 { &dock_id[..12] } else { dock_id };
-                checks.push(Check::pass(
-                    "hub docked",
-                    &format!("{} ({})", endpoint, short_dock),
-                ));
+        if let Some((name, entry)) = ctx.config.active_dock_entry() {
+            let short_dock = if entry.dock_id.len() > 12 { &entry.dock_id[..12] } else { &entry.dock_id };
+            checks.push(Check::pass(
+                "hub docked",
+                &format!("{} ({}, {})", entry.endpoint, name, short_dock),
+            ));
 
-                // 7. Is Hub reachable? (only check if docked)
-                let reachable = check_hub_reachable(endpoint);
-                if reachable {
-                    checks.push(Check::pass(
-                        "hub reachable",
-                        endpoint,
-                    ));
-                } else {
-                    checks.push(Check::fail(
-                        "hub unreachable",
-                        &format!("could not reach {}", endpoint),
-                        "check network",
-                    ));
-                }
-            }
-            _ => {
-                checks.push(Check::info(
-                    "hub undocked",
-                    "not connected to treeship.dev",
+            // 7. Is Hub reachable? (only check if docked)
+            let reachable = check_hub_reachable(&entry.endpoint);
+            if reachable {
+                checks.push(Check::pass(
+                    "hub reachable",
+                    &entry.endpoint,
+                ));
+            } else {
+                checks.push(Check::fail(
+                    "hub unreachable",
+                    &format!("could not reach {}", entry.endpoint),
+                    "check network",
                 ));
             }
+        } else {
+            checks.push(Check::info(
+                "hub undocked",
+                "not connected to treeship.dev",
+            ));
         }
     }
 

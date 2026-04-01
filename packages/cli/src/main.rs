@@ -836,67 +836,128 @@ enum KeysCommand {
 
 #[derive(Subcommand)]
 enum DockCommand {
-    /// Authenticate with treeship.dev Hub using device flow
-    ///
-    /// Generates a fresh Ed25519 dock keypair and links this ship to
-    /// the Hub. No session tokens are stored -- every request uses a
-    /// DPoP proof signed by the dock key.
+    /// Connect to Hub (creates new dock or reconnects to existing)
     ///
     /// Examples:
     ///   treeship dock login
+    ///   treeship dock login --name acme-corp
     ///   treeship dock login --endpoint http://localhost:8080
     Login(DockLoginArgs),
 
-    /// Push a signed artifact to treeship.dev Hub
-    ///
-    /// Sends the artifact with a DPoP-authenticated request. Returns
-    /// a shareable URL and optional Rekor transparency log index.
+    /// Disconnect active dock (keeps keys for reconnect)
     ///
     /// Examples:
-    ///   treeship dock push art_a1b2c3d4e5f6a1b2
-    Push(DockPushArgs),
+    ///   treeship dock logout
+    Logout,
 
-    /// Pull an artifact from treeship.dev Hub into local storage
-    ///
-    /// No authentication required -- artifacts are public.
+    /// List all known docks
     ///
     /// Examples:
-    ///   treeship dock pull art_a1b2c3d4e5f6a1b2
-    Pull(DockPullArgs),
+    ///   treeship dock ls
+    Ls,
 
-    /// Show current dock connection status
+    /// Show active dock connection status
     ///
     /// Examples:
     ///   treeship dock status
     Status,
 
-    /// Disconnect from treeship.dev Hub
-    ///
-    /// Clears dock credentials from config. Does not revoke the dock
-    /// keypair on the Hub.
+    /// Switch active dock
     ///
     /// Examples:
-    ///   treeship dock undock
-    Undock,
+    ///   treeship dock use work
+    ///   treeship dock use dck_a2b3c4d5e6f7
+    Use(DockUseArgs),
+
+    /// Push a signed artifact to Hub
+    ///
+    /// Examples:
+    ///   treeship dock push art_a1b2c3d4
+    ///   treeship dock push last --dock acme-corp
+    ///   treeship dock push art_a1b2c3d4 --all
+    Push(DockPushArgs),
+
+    /// Pull an artifact from Hub into local storage
+    ///
+    /// Examples:
+    ///   treeship dock pull art_a1b2c3d4
+    ///   treeship dock pull art_a1b2c3d4 --dock acme-corp
+    Pull(DockPullArgs),
+
+    /// Open workspace in browser
+    ///
+    /// Examples:
+    ///   treeship dock workspace
+    ///   treeship dock workspace --dock acme-corp
+    Workspace(DockWorkspaceArgs),
+
+    /// Remove a dock (revokes + deletes local keys)
+    ///
+    /// Examples:
+    ///   treeship dock rm acme-corp
+    Rm(DockRmArgs),
 }
 
 #[derive(Args)]
 struct DockLoginArgs {
+    /// Name for this dock (default: "default")
+    #[arg(long, value_name = "NAME")]
+    name: Option<String>,
+
     /// Hub API endpoint (default: https://api.treeship.dev)
     #[arg(long, value_name = "URL")]
     endpoint: Option<String>,
 }
 
 #[derive(Args)]
+struct DockUseArgs {
+    /// Dock name or dock ID to switch to
+    name_or_id: String,
+}
+
+#[derive(Args)]
 struct DockPushArgs {
-    /// Artifact ID to push
+    /// Artifact ID to push (or "last" for most recent)
     id: String,
+
+    /// Push to a specific dock by name or ID
+    #[arg(long, value_name = "NAME|ID")]
+    dock: Option<String>,
+
+    /// Push to all known docks
+    #[arg(long)]
+    all: bool,
 }
 
 #[derive(Args)]
 struct DockPullArgs {
     /// Artifact ID to pull
     id: String,
+
+    /// Pull from a specific dock by name or ID
+    #[arg(long, value_name = "NAME|ID")]
+    dock: Option<String>,
+}
+
+#[derive(Args)]
+struct DockWorkspaceArgs {
+    /// Open workspace for a specific dock
+    #[arg(long, value_name = "NAME|ID")]
+    dock: Option<String>,
+
+    /// Print URL only, don't open browser
+    #[arg(long)]
+    no_open: bool,
+}
+
+#[derive(Args)]
+struct DockRmArgs {
+    /// Dock name to remove
+    name: String,
+
+    /// Skip confirmation prompt
+    #[arg(long)]
+    force: bool,
 }
 
 // --- merkle -----------------------------------------------------------------
@@ -1208,18 +1269,16 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
 
         Command::Dock(sub) => match sub {
             DockCommand::Login(a) => commands::dock::login(
-                a.endpoint.clone(),
+                a.name.as_deref(),
+                a.endpoint.as_deref(),
                 cli.config.as_deref(),
                 printer,
             ),
-            DockCommand::Push(a) => commands::dock::push(
-                &a.id,
+            DockCommand::Logout => commands::dock::logout(
                 cli.config.as_deref(),
                 printer,
             ),
-            DockCommand::Pull(a) => commands::dock::pull(
-                &a.id,
-                None,
+            DockCommand::Ls => commands::dock::ls(
                 cli.config.as_deref(),
                 printer,
             ),
@@ -1227,7 +1286,33 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 cli.config.as_deref(),
                 printer,
             ),
-            DockCommand::Undock => commands::dock::undock(
+            DockCommand::Use(a) => commands::dock::use_dock(
+                &a.name_or_id,
+                cli.config.as_deref(),
+                printer,
+            ),
+            DockCommand::Push(a) => commands::dock::push(
+                &a.id,
+                a.dock.as_deref(),
+                a.all,
+                cli.config.as_deref(),
+                printer,
+            ),
+            DockCommand::Pull(a) => commands::dock::pull(
+                &a.id,
+                a.dock.as_deref(),
+                cli.config.as_deref(),
+                printer,
+            ),
+            DockCommand::Workspace(a) => commands::dock::workspace(
+                a.dock.as_deref(),
+                a.no_open,
+                cli.config.as_deref(),
+                printer,
+            ),
+            DockCommand::Rm(a) => commands::dock::rm(
+                &a.name,
+                a.force,
                 cli.config.as_deref(),
                 printer,
             ),

@@ -100,20 +100,17 @@ pub fn run(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::e
     }
     printer.blank();
 
-    // Hub status
-    printer.section("hub");
-    match cfg.hub.status.as_str() {
-        "docked" => {
-            let endpoint = cfg.hub.endpoint.as_deref().unwrap_or("treeship.dev");
-            let ws = cfg.hub.workspace_id.as_deref().unwrap_or("-");
-            printer.info(&format!("  {} docked to {}", printer.green("●"), endpoint));
-            printer.dim_info(&format!("  workspace  {ws}"));
-        }
-        _ => {
-            printer.info(&format!("  {} undocked", printer.dim("○")));
-            printer.blank();
-            printer.hint("treeship dock login");
-        }
+    // Dock status
+    printer.section("docks");
+    if let Some((name, entry)) = cfg.active_dock_entry() {
+        printer.info(&format!("  {} {} ({})", printer.green("●"), name, entry.dock_id));
+        printer.dim_info(&format!("  endpoint  {}", entry.endpoint));
+    } else if cfg.docks.is_empty() {
+        printer.info(&format!("  {} no docks", printer.dim("○")));
+        printer.hint("treeship dock login");
+    } else {
+        printer.info(&format!("  {} {} docks, none active", printer.dim("○"), cfg.docks.len()));
+        printer.hint("treeship dock use <name>");
     }
     printer.blank();
 

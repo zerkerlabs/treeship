@@ -238,7 +238,7 @@ pub fn run(
     // ── 4. Wire --push ─────────────────────────────────────────────────
     let mut hub_url: Option<String> = None;
     if push {
-        if ctx.config.hub.status == "docked" {
+        if ctx.config.is_docked() {
             match super::dock::push_artifact(&ctx, &result.artifact_id) {
                 Ok(pr) => {
                     if !pr.hub_url.is_empty() {
