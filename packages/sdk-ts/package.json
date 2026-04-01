@@ -9,7 +9,14 @@
     "directory": "packages/sdk-ts"
   },
   "homepage": "https://treeship.dev",
-  "keywords": ["treeship", "attestation", "trust", "agents", "verification", "receipts"],
+  "keywords": [
+    "treeship",
+    "attestation",
+    "trust",
+    "agents",
+    "verification",
+    "receipts"
+  ],
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

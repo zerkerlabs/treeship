@@ -1,6 +1,6 @@
 {
   "name": "@treeship/mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Drop-in Treeship attestation for MCP tool calls",
   "license": "Apache-2.0",
   "repository": {
@@ -9,8 +9,16 @@
     "directory": "bridges/mcp"
   },
   "homepage": "https://treeship.dev",
-  "keywords": ["treeship", "mcp", "attestation", "agents", "tool-calls"],
-  "files": ["dist"],
+  "keywords": [
+    "treeship",
+    "mcp",
+    "attestation",
+    "agents",
+    "tool-calls"
+  ],
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
