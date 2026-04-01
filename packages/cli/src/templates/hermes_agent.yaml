@@ -1,0 +1,64 @@
+name: hermes-agent
+version: 1
+description: >
+  Hermes Agent workflow attestation. Creates signed receipts for
+  every tool call, subagent spawn, and skill execution across
+  Telegram, Discord, Slack, CLI, and other gateways.
+tags: [hermes, nous-research, agents, autonomous]
+audience: [developer, devops]
+
+session:
+  actor: agent://hermes
+  auto_start: true
+  auto_push: true
+
+attest:
+  commands:
+    - pattern: "hermes*"
+      label: hermes action
+    - pattern: "curl*"
+      label: api call
+    - pattern: "python*"
+      label: script execution
+    - pattern: "npm*"
+      label: package operation
+    - pattern: "docker*"
+      label: container operation
+
+capture:
+  output_digest: true
+  file_changes: true
+  git_state: false
+  lockfile_changes: false
+
+approvals:
+  require_for:
+    - label: production deployment
+    - label: credential access
+
+hub:
+  auto_push: true
+  push_on: [session_close, approval_required]
+
+onboarding: |
+  Hermes Agent attestation configured.
+
+  Every tool call and skill execution is attested automatically.
+  Production deployments and credential access require approval:
+
+    treeship attest approval \
+      --approver human://ops \
+      --description "approve production deployment"
+
+  Subagent attestation:
+
+    treeship wrap --actor agent://hermes-researcher -- hermes run research
+    treeship wrap --actor agent://hermes-coder -- hermes run implement
+    treeship attest handoff --from agent://hermes-researcher --to agent://hermes-coder \
+      --artifacts art_abc123
+
+  The chain proves:
+    - which tools were called and what they returned
+    - which skills were invoked and by which subagent
+    - who approved risky operations
+    - full sequence across all gateways

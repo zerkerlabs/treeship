@@ -47,6 +47,12 @@ static TEMPLATES: &[Template] = &[
         category: "Development",
         yaml: include_str!("openclaw_agent.yaml"),
     },
+    Template {
+        name: "hermes-agent",
+        description: "Hermes Agent autonomous workflow attestation",
+        category: "Development",
+        yaml: include_str!("hermes_agent.yaml"),
+    },
 ];
 
 /// List all available templates.

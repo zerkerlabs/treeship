@@ -17,7 +17,7 @@ Initial release.
 - 30+ commands: init, wrap, attest, verify, session, approve, dock, merkle, ui, otel
 - Rich wrap receipts: output digest, file changes, git state, auto-chaining
 - Shell hooks for automatic attestation
-- Trust templates (6 official: github-contributor, ci-cd, mcp-agent, claude-code, openclaw, research)
+- Trust templates (7 official: github-contributor, ci-cd, mcp-agent, claude-code, openclaw, hermes, research)
 - Interactive TUI dashboard (Ratatui)
 - OpenTelemetry export (feature-flagged)
 - Background daemon for file watching
