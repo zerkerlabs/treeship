@@ -74,15 +74,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
 
       - name: Build and publish @treeship/sdk
         working-directory: packages/sdk-ts
         run: |
           npm install
           npm run build
-          npm publish --access public --provenance
+          npm publish --access public
         env:
-          NPM_CONFIG_PROVENANCE: true
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Build and publish @treeship/mcp
         working-directory: bridges/mcp
@@ -91,31 +92,31 @@ jobs:
           npm run build
           npm publish --access public --provenance
         env:
-          NPM_CONFIG_PROVENANCE: true
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @treeship/cli-linux-x64
         working-directory: npm/@treeship/cli-linux-x64
         run: npm publish --access public --provenance
         env:
-          NPM_CONFIG_PROVENANCE: true
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @treeship/cli-darwin-arm64
         working-directory: npm/@treeship/cli-darwin-arm64
         run: npm publish --access public --provenance
         env:
-          NPM_CONFIG_PROVENANCE: true
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @treeship/cli-darwin-x64
         working-directory: npm/@treeship/cli-darwin-x64
         run: npm publish --access public --provenance
         env:
-          NPM_CONFIG_PROVENANCE: true
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish treeship (main wrapper)
         working-directory: npm/treeship
         run: npm publish --access public --provenance
         env:
-          NPM_CONFIG_PROVENANCE: true
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   publish-crates:
     needs: release
