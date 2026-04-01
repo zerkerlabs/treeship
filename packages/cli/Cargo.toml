@@ -18,7 +18,7 @@ default = []
 otel = []  # No extra deps -- uses ureq + serde_json already available
 
 [dependencies]
-treeship-core = { version = "0.1.1" }
+treeship-core = { version = "0.1.1", path = "../core" }
 clap = { version = "4", features = ["derive"] }
 serde         = { version = "1", features = ["derive"] }
 serde_json = "1"

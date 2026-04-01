@@ -36,7 +36,7 @@ echo "Bumping Rust crates..."
 sed -i '' "s/^version = \".*\"/version = \"${VERSION}\"/" packages/core/Cargo.toml
 sed -i '' "s/^version = \".*\"/version = \"${VERSION}\"/" packages/cli/Cargo.toml
 sed -i '' "s/^version = \".*\"/version = \"${VERSION}\"/" packages/core-wasm/Cargo.toml
-sed -i '' "s/treeship-core = { version = \".*\"/treeship-core = { version = \"${VERSION}\"/" packages/cli/Cargo.toml
+sed -i '' "s/treeship-core = { version = \"[^\"]*\"/treeship-core = { version = \"${VERSION}\"/" packages/cli/Cargo.toml
 
 # TypeScript SDK
 echo "Bumping @treeship/sdk..."
