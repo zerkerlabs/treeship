@@ -90,16 +90,79 @@ Nonce binding ................ PASS
 Rekor anchor ................. PASS (entry 24658012, 2026-03-28T14:30:00Z)
 ```
 
-## Checkpoints (future)
+## Merkle checkpoints
 
-The next step beyond hash chaining: signed Merkle roots over batches of artifacts. A checkpoint proves a receipt was in the log at a specific point in time, even if the full log is not available.
+Merkle checkpoints sign a batch of artifacts into a single tree root. A checkpoint proves a receipt was in the log at a specific point in time, even if the full log is not available.
 
-Checkpoints will provide:
-- **Batch integrity**: a single signature covers thousands of artifacts
+### What checkpoints provide
+
+- **Batch integrity**: a single Ed25519 signature covers thousands of artifacts
 - **Inclusion proofs**: prove a specific artifact was in the batch without revealing other artifacts
-- **Consistency proofs**: prove the log only grows, never rewrites
+- **Offline verification**: the proof file is self-contained -- no Hub access needed to verify
 
-This is not yet implemented. The hash chaining and Rekor anchoring layers provide strong integrity guarantees today. Checkpoints will add scalability and privacy properties when they ship.
+### Creating checkpoints
+
+```bash
+# Create a signed checkpoint of the current tree
+treeship checkpoint
+
+# Check the current tree status
+treeship merkle status
+```
+
+A checkpoint captures the tree root, tree size, height, timestamp, and signer key ID. The canonical form for signing is:
+
+```
+{index}|{root}|{tree_size}|{height}|{signer}|{signed_at}
+```
+
+The signature is Ed25519 over this canonical string. Both the public key and signature are base64url-encoded in the checkpoint JSON.
+
+### Generating and verifying proofs
+
+```bash
+# Generate an inclusion proof for an artifact
+treeship merkle proof art_f7e6d5c4b3a2f7e6
+
+# Verify a proof file offline
+treeship merkle verify proof.json
+
+# Publish a checkpoint to Hub
+treeship merkle publish
+```
+
+### Algorithm versioning
+
+The Merkle tree implementation tracks algorithm versions for forward compatibility:
+
+| Algorithm | Identifier | Behavior |
+|-----------|------------|----------|
+| v1 (legacy) | `sha256-duplicate-last` | Odd leaf counts are handled by duplicating the last leaf |
+| v2 (current) | `sha256-rfc9162` | Odd leaf counts promote the unpaired node without hashing, matching RFC 9162 (Certificate Transparency) |
+
+New checkpoints use `sha256-rfc9162` by default. The verifier accepts both algorithms and rejects unknown values. If the `algorithm` field is missing from a proof or checkpoint, it is treated as v1 for backward compatibility.
+
+### Checkpoint verification
+
+Verification checks three things:
+
+1. **Leaf hash**: `sha256(artifact_id)` matches `inclusion_proof.leaf_hash`
+2. **Root recomputation**: walking the proof path from leaf to root produces `checkpoint.root`
+3. **Signature**: the Ed25519 signature over the canonical checkpoint string is valid
+
+```bash
+treeship verify --full
+```
+
+Output with Merkle verification:
+
+```
+Chain integrity .............. PASS
+Signature verification ....... PASS (3/3 artifacts)
+Nonce binding ................ PASS
+Rekor anchor ................. PASS (entry 24658012, 2026-03-28T14:30:00Z)
+Merkle checkpoint ............ PASS (tree_size=4096, root=sha256:7e3a...)
+```
 
 ## Verification summary
 
@@ -112,3 +175,4 @@ When you run `treeship verify --full`, these are the checks:
 | DSSE signatures | Each artifact was signed by the claimed key |
 | Nonce binding | Each action was authorized by a specific approval |
 | Rekor anchor | The chain existed before a public timestamp |
+| Merkle checkpoint | The artifact was included in a signed tree at a specific point in time |

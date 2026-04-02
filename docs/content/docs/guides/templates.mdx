@@ -17,31 +17,52 @@ From that point, Treeship runs silently. The right things get attested at the ri
 
 ## Available templates
 
-### Development
+All seven templates ship inside the CLI binary. No network access required.
+
 | Template | What it does |
 |----------|-------------|
-| `github-contributor` | Test runs, commits, pushes. Verify URL for PRs. |
-| `ci-cd-pipeline` | Full delivery from test to deploy with approval gates. |
+| `github-contributor` | Commit and test provenance for OSS contributors. Proves tests passed before commit and lockfile was untouched. |
+| `ci-cd-pipeline` | Software delivery chain -- test, build, deploy -- with approval gates on deploys. |
 | `research-agent` | Multi-step research with source provenance. |
-| `mcp-agent` | One import change, every MCP tool call receipted. |
+| `mcp-agent` | One import change, every MCP tool call receipted via `@treeship/mcp`. |
 | `claude-code-session` | Full audit trail of AI coding sessions. |
-| `code-review` | PR review, test, and merge authorization. |
+| `openclaw-agent` | OpenClaw workflow attestation. |
+| `hermes-agent` | Hermes Agent autonomous workflow attestation. |
 
-### Vertical
-| Template | What it does |
-|----------|-------------|
-| `clinical-ai` | HIPAA-compliant. Digests only, no content in artifacts. |
-| `legal-workflow` | Contract review and attorney authorization chain. |
-| `financial-agent` | Payment workflow with approval gates. |
-| `data-pipeline` | ETL and ML lineage from input to output. |
-| `security-audit` | Scan, remediate, re-scan, authorize deploy. |
-| `content-creation` | Source to publication with editorial review. |
-| `customer-support` | Agent action trail for dispute resolution. |
+## Template commands
 
-### Commerce
-| Template | What it does |
-|----------|-------------|
-| `agent-purchase` | Human authorization before agent spending. |
+| Command | What it does |
+|---------|-------------|
+| `treeship templates` | List all available templates grouped by category |
+| `treeship template preview <name>` | Preview what a template does without applying it |
+| `treeship template apply <name>` | Apply a template to the current project |
+| `treeship template validate <file>` | Validate a custom template YAML file |
+| `treeship template save --name <name>` | Save the current config as a reusable template |
+| `treeship init --template <name>` | Initialize a new project with a template |
+
+### Preview before applying
+
+```bash
+treeship template preview ci-cd-pipeline
+```
+
+This prints the triggers, watched paths, capture settings, approval requirements, and Hub push behavior without writing any files.
+
+### Apply to an existing project
+
+```bash
+treeship template apply github-contributor
+```
+
+This writes `.treeship/config.yaml` in the current directory, converting the template into a project config.
+
+### Validate a custom template
+
+```bash
+treeship template validate my-template.yaml
+```
+
+Runs a series of checks: valid YAML, required fields present (`name`, `description`, `session.actor`), version >= 1, and successful conversion to a ProjectConfig.
 
 ## Build your own
 
@@ -52,7 +73,7 @@ From that point, Treeship runs silently. The right things get attested at the ri
 1. **What are the meaningful moments?** Not what Treeship does, what happens in the workflow.
 2. **What proves each moment happened?** Output digest, file changes, git state, approval.
 3. **Which moments need human approval?** Deployments, payments, publications.
-4. **Does any moment need ZK TLS?** Only if the verifier doesn't trust the agent AND the server response is legally significant.
+4. **Does any moment need ZK TLS?** Only if the verifier does not trust the agent AND the server response is legally significant.
 </Step>
 <Step>
 ### Write the YAML
@@ -60,12 +81,16 @@ From that point, Treeship runs silently. The right things get attested at the ri
 ```yaml
 name: my-workflow
 version: 1
-description: What this workflow does.
+description: >
+  What this workflow does.
 tags: [development]
+audience: [developer]
 
 session:
   actor: agent://my-agent
   auto_start: true
+  auto_checkpoint: false
+  auto_push: false
 
 attest:
   commands:
@@ -74,16 +99,23 @@ attest:
       capture_output_digest: true
     - pattern: "git push*"
       label: code push
+    - pattern: "kubectl apply*"
+      label: deploy
+      require_approval: true
 
   paths:
     - path: "src/**"
       on: write
       label: source change
+      alert: false
 
 capture:
   output_digest: true
   file_changes: true
   git_state: true
+  lockfile_changes: false
+  environment: false
+  model_metadata: false
 
 approvals:
   require_for:
@@ -92,6 +124,7 @@ approvals:
 hub:
   auto_push: true
   push_on: [session_close]
+  endpoint: https://api.treeship.dev
 
 onboarding: |
   Your workflow is configured.
@@ -102,7 +135,13 @@ onboarding: |
 ### Apply and test
 
 ```bash
-treeship init --template my-workflow.yaml
+# Apply from a file path
+treeship init --template ./my-workflow.yaml
+
+# Or validate first
+treeship template validate my-workflow.yaml
+
+# Test it
 treeship wrap -- echo "test"
 treeship verify last --full
 ```
@@ -111,13 +150,13 @@ treeship verify last --full
 
 ## Save from a live config
 
-If you've been using Treeship, save your current config as a reusable template:
+If you have been using Treeship, save your current config as a reusable template:
 
 ```bash
 treeship template save --name my-workflow
 ```
 
-This strips project-specific fields (ship ID, dock credentials) and writes a clean reusable YAML to `~/.treeship/templates/`.
+This strips project-specific fields (ship ID, dock credentials, workspace ID) and writes a clean reusable YAML to `~/.treeship/templates/my-workflow.yaml`.
 
 ## Share templates
 
@@ -131,37 +170,78 @@ git add .treeship/templates/my-template.yaml
 treeship init --template ./template.yaml
 ```
 
-### Template commands
+## YAML schema reference
 
-| Command | What it does |
-|---------|-------------|
-| `treeship templates` | List all available templates grouped by category |
-| `treeship template preview <name>` | Preview what a template does without applying it |
-| `treeship template apply <name>` | Apply a template to the current project |
-| `treeship template validate <file>` | Validate a custom template YAML file |
-| `treeship template save --name <name>` | Save the current config as a reusable template |
-| `treeship init --template <name>` | Initialize a new project with a template |
+The full template YAML schema accepted by the CLI:
 
-## Field reference
+### Top-level fields
 
-| Section | Field | What it does |
-|---------|-------|-------------|
-| `session.actor` | Default actor URI for all artifacts |
-| `session.auto_start` | Start session when matching activity begins |
-| `session.auto_push` | Push to Hub after session closes |
-| `attest.commands[].pattern` | Shell glob to match commands |
-| `attest.commands[].label` | Human-readable label for receipts |
-| `attest.commands[].require_approval` | Block until `treeship approve` |
-| `attest.paths[].path` | File glob to watch |
-| `attest.paths[].on` | Trigger on: write, change, create, delete |
-| `capture.output_digest` | Hash stdout+stderr |
-| `capture.file_changes` | Track modified files with content hashes |
-| `capture.git_state` | Git HEAD before/after each command |
-| `capture.environment` | OS, runtime version fingerprint |
-| `approvals.require_for` | Labels that need human approval |
-| `hub.push_on` | When to push: session_close, approval_required, git_push |
-| `onboarding` | Message shown after `treeship init --template` |
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | yes | Template slug (e.g., `my-workflow`) |
+| `version` | integer | recommended | Schema version, should be >= 1 |
+| `description` | string | yes | What this template does |
+| `tags` | string[] | no | Categorization tags (e.g., `[development, ci]`) |
+| `audience` | string[] | no | Who this template is for (e.g., `[developer, devops]`) |
+| `session` | object | yes | Session configuration |
+| `attest` | object | yes | What triggers attestation |
+| `capture` | object | no | What data to capture in each receipt |
+| `approvals` | object | no | Which labels require human approval |
+| `hub` | object | no | Hub push behavior |
+| `onboarding` | string | no | Message shown after `treeship init --template` |
+
+### session
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `actor` | string | `agent://default` | Default actor URI for all artifacts |
+| `auto_start` | bool | false | Start session when matching activity begins |
+| `auto_checkpoint` | bool | false | Automatically create Merkle checkpoints |
+| `auto_push` | bool | false | Push to Hub after session closes |
+
+### attest.commands[]
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `pattern` | string | required | Shell glob to match commands (e.g., `npm test*`) |
+| `label` | string | required | Human-readable label for receipts |
+| `require_approval` | bool | false | Block until `treeship approve` |
+| `capture_output_digest` | bool | false | Hash stdout+stderr for this command |
+
+### attest.paths[]
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `path` | string | required | File glob to watch (e.g., `src/**`) |
+| `on` | string | required | Trigger on: write, change, create, delete |
+| `label` | string | none | Human-readable label for the attestation |
+| `alert` | bool | false | Raise an alert when triggered |
+
+### capture
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `output_digest` | bool | false | Hash stdout+stderr |
+| `file_changes` | bool | false | Track modified files with content hashes |
+| `git_state` | bool | false | Git HEAD before/after each command |
+| `lockfile_changes` | bool | false | Detect lockfile modifications |
+| `environment` | bool | false | OS and runtime version fingerprint |
+| `model_metadata` | bool | false | Capture AI model info (name, provider) |
+
+### approvals
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `require_for` | object[] | List of `{ label: "..." }` entries matching command labels that need approval |
+
+### hub
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `auto_push` | bool | false | Push artifacts to Hub automatically |
+| `push_on` | string[] | [] | When to push: `session_close`, `approval_required`, `git_push` |
+| `endpoint` | string | none | Custom Hub endpoint URL |
 
 <Callout type="info">
-Templates configure what gets attested. They don't alter how your tools run or add dependencies to your project.
+Templates configure what gets attested. They do not alter how your tools run or add dependencies to your project.
 </Callout>

@@ -131,14 +131,42 @@ treeship attest handoff \
 <Tab value="endorsement">
 ## treeship attest endorsement
 
-A second party signs that they have verified another artifact.
+Record an endorsement of an existing artifact. Used for post-hoc validation, compliance sign-off, and countersignatures.
 
 ```bash
 treeship attest endorsement \
-  --endorser human://security-reviewer \
-  --subject art_code_output_abc \
-  --description "reviewed -- no critical issues found"
+  --endorser human://auditor \
+  --subject art_a1b2 \
+  --kind validation
 ```
+
+```bash
+treeship attest endorsement \
+  --endorser human://compliance \
+  --subject art_c3d4 \
+  --kind compliance \
+  --rationale "Meets SOC-2 requirements" \
+  --expires 2026-12-31T00:00:00Z \
+  --policy-ref https://example.com/policy
+```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--endorser <uri>` | Endorser identity URI (required) |
+| `--subject <id>` | Artifact ID being endorsed (required) |
+| `--kind <type>` | Endorsement kind: validation, compliance, countersignature, review (required) |
+| `--rationale <text>` | Human-readable rationale for the endorsement |
+| `--expires <timestamp>` | Expiration timestamp (RFC 3339) |
+| `--policy-ref <uri>` | URI to the governing policy document |
+| `--meta <json>` | Extra metadata as a JSON object |
+| `--parent <id>` | Parent artifact ID for chain linking |
+| `--out <path>` | Write raw DSSE envelope to file (use `-` for stdout) |
+
+<Callout type="info">
+Endorsements are separate artifacts that reference the subject via `--subject`. They form their own chain and can be verified independently. Use `--policy-ref` to link to the policy or checklist that was followed during review.
+</Callout>
 </Tab>
 <Tab value="receipt">
 ## treeship attest receipt

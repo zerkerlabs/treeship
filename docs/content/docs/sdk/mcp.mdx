@@ -58,15 +58,36 @@ If attestation fails for any reason (CLI not installed, network issue, signing e
 
 ## Result metadata
 
-When attestation succeeds, the result object includes a `_treeship` field:
+When attestation succeeds, the result object includes a `_treeship` field with the full `ToolReceipt` shape:
 
 ```ts
 interface ToolReceipt {
-  intent: string;   // artifact ID of the intent attestation
-  tool: string;     // tool name, e.g. "search"
-  actor: string;    // actor URI used for both attestations
+  intent?: string;                        // artifact ID of the intent attestation
+  receipt?: string;                       // artifact ID of the receipt (undefined until async attestation completes)
+  receiptReady?: Promise<string | undefined>;  // resolves when receipt attestation finishes
+  tool: string;                           // tool name, e.g. "search"
+  actor: string;                          // actor URI used for both attestations
 }
 ```
+
+### Async receipt contract
+
+The `receipt` field starts as `undefined` because receipt attestation happens off the critical path (fire-and-forget). This means the tool call returns immediately without waiting for the receipt to be signed and stored.
+
+If you need the receipt artifact ID -- for example, to chain it as a parent in a subsequent attestation -- await the `receiptReady` promise:
+
+```ts
+const result = await client.callTool({ name: "search", arguments: {} });
+
+// receipt is undefined right after the call returns
+console.log(result._treeship?.receipt); // undefined
+
+// await receiptReady to get the receipt artifact ID
+const receiptId = await result._treeship?.receiptReady;
+console.log(receiptId); // "art_xyz..." or undefined if attestation failed
+```
+
+If receipt attestation fails (CLI not installed, signing error, network issue), `receiptReady` resolves to `undefined` rather than rejecting. This keeps the error-handling contract simple: the promise never throws.
 
 ## Environment variables
 

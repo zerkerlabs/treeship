@@ -38,6 +38,29 @@ const { hubUrl } = await s.dock.push(artifactId);
 console.log(hubUrl); // https://treeship.dev/verify/art_xxx
 ```
 
+## Ship class
+
+### `Ship.checkCli()`
+
+Static method that checks whether the `treeship` CLI binary is installed and available on PATH. Returns the version string (e.g. `"0.4.1"`). Throws a descriptive error if the binary is not found.
+
+```ts
+import { Ship } from '@treeship/sdk';
+
+const version = await Ship.checkCli();
+console.log(`Treeship CLI version: ${version}`);
+```
+
+Call this early in your startup sequence to fail fast if the CLI is missing, rather than getting a confusing error on the first attestation call.
+
+### Instance properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `attest` | `AttestModule` | Attestation methods (action, decision, approval, handoff) |
+| `verify` | `VerifyModule` | Verification methods |
+| `dock` | `DockModule` | Hub push/pull and connection status |
+
 ## Attest module
 
 All attestation methods live under `s.attest`.
@@ -181,9 +204,142 @@ const { hubUrl } = await s.dock.push('art_abc123');
 | `hubUrl` | `string` | Public URL for the artifact on the Hub |
 | `rekorIndex` | `number \| undefined` | Rekor transparency log index, if available |
 
+### `s.dock.pull(id)`
+
+Pull an artifact from the Treeship Hub to the local store.
+
+```ts
+await s.dock.pull('art_abc123');
+```
+
+Returns `void`. Throws if the artifact is not found or the network request fails.
+
+### `s.dock.status()`
+
+Check the current dock connection status.
+
+```ts
+const status = await s.dock.status();
+if (status.docked) {
+  console.log(`Connected to ${status.endpoint}`);
+}
+```
+
+**Returns:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `docked` | `boolean` | Whether the dock is currently connected |
+| `endpoint` | `string \| undefined` | Hub endpoint URL, if connected |
+| `dockId` | `string \| undefined` | Dock identifier, if connected |
+
+If the status check fails for any reason (CLI not installed, no config), returns `{ docked: false }` instead of throwing.
+
+## Exported types
+
+All types are re-exported from the top-level `@treeship/sdk` import.
+
+### `ActionParams`
+
+```ts
+interface ActionParams {
+  actor: string;
+  action: string;
+  parentId?: string;
+  approvalNonce?: string;
+  meta?: Record<string, unknown>;
+}
+```
+
+### `ApprovalParams`
+
+```ts
+interface ApprovalParams {
+  approver: string;
+  description: string;
+  expires?: string;   // ISO-8601 timestamp
+  subject?: string;   // artifact ID being approved
+}
+```
+
+### `HandoffParams`
+
+```ts
+interface HandoffParams {
+  from: string;
+  to: string;
+  artifacts: string[];
+  approvals?: string[];
+  obligations?: string[];
+}
+```
+
+### `DecisionParams`
+
+```ts
+interface DecisionParams {
+  actor: string;
+  model?: string;
+  modelVersion?: string;
+  tokensIn?: number;
+  tokensOut?: number;
+  promptDigest?: string;
+  summary?: string;
+  confidence?: number;
+  parentId?: string;
+}
+```
+
+### `ActionResult`
+
+```ts
+interface ActionResult {
+  artifactId: string;
+}
+```
+
+### `ApprovalResult`
+
+```ts
+interface ApprovalResult {
+  artifactId: string;
+  nonce: string;
+}
+```
+
+### `VerifyResult`
+
+```ts
+interface VerifyResult {
+  outcome: "pass" | "fail" | "error";
+  chain: number;
+  target: string;
+}
+```
+
+### `PushResult`
+
+```ts
+interface PushResult {
+  hubUrl: string;
+  rekorIndex?: number;
+}
+```
+
 ## Error handling
 
 The SDK throws `TreeshipError` when the CLI exits with a non-zero code.
+
+### `TreeshipError`
+
+```ts
+class TreeshipError extends Error {
+  readonly args: string[];  // the CLI arguments that were passed
+  readonly name: "TreeshipError";
+}
+```
+
+`TreeshipError` extends the standard `Error` class. The `args` property contains the exact CLI arguments that were passed, which is useful for debugging. The `message` property contains the stderr output from the CLI.
 
 ```ts
 import { TreeshipError } from '@treeship/sdk';

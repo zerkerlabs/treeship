@@ -171,6 +171,225 @@ paths:
                   approver: { type: string, nullable: true }
                   checks:   { type: array, items: { type: object } }
 
+  /v1/workspace/{dockId}:
+    get:
+      summary: Fetch workspace artifacts
+      description: Returns all artifacts associated with a dock. Requires DPoP authentication.
+      operationId: getWorkspace
+      parameters:
+        - name: dockId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Workspace artifacts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dock_id: { type: string }
+                  artifacts: { type: array, items: { type: object } }
+        '401':
+          description: DPoP authentication failed
+        '404':
+          description: Dock not found
+
+  /v1/merkle/checkpoint:
+    post:
+      summary: Publish a signed Merkle checkpoint
+      description: |
+        DPoP authenticated. Stores a signed checkpoint of the Merkle tree state.
+        The checkpoint contains the tree root, size, height, signer key, and Ed25519 signature.
+      operationId: publishCheckpoint
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [root, tree_size, signed_at, signer, signature, public_key]
+              properties:
+                root:         { type: string, description: "Root hash in sha256:hex format" }
+                tree_size:    { type: integer, description: "Number of leaves in the tree" }
+                height:       { type: integer, description: "Tree height" }
+                signed_at:    { type: string, description: "RFC 3339 timestamp" }
+                signer:       { type: string, description: "Key ID of the signer" }
+                signature:    { type: string, description: "Base64url-encoded Ed25519 signature" }
+                public_key:   { type: string, description: "Base64url-encoded Ed25519 public key" }
+                rekor_index:  { type: integer, nullable: true, description: "Rekor transparency log index, if anchored" }
+                index:        { type: integer, description: "Checkpoint sequence number" }
+      responses:
+        '200':
+          description: Checkpoint stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:               { type: integer }
+                  root:             { type: string }
+                  hub_received_at:  { type: string, format: date-time }
+        '400':
+          description: Invalid or missing required fields
+        '401':
+          description: DPoP authentication failed
+
+  /v1/merkle/proof:
+    post:
+      summary: Publish a Merkle inclusion proof
+      description: |
+        DPoP authenticated. Stores an inclusion proof linking an artifact to a checkpoint.
+        The proof_json field contains the full self-contained ProofFile.
+      operationId: publishProof
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [artifact_id, checkpoint_id, proof_json]
+              properties:
+                artifact_id:    { type: string, description: "Artifact ID this proof covers" }
+                checkpoint_id:  { type: integer, description: "ID of the checkpoint this proof references" }
+                leaf_index:     { type: integer, description: "Position of the artifact in the tree" }
+                leaf_hash:      { type: string, description: "Hex-encoded SHA-256 hash of the artifact ID" }
+                proof_json:     { type: string, description: "Full ProofFile JSON serialized as a string" }
+      responses:
+        '200':
+          description: Proof stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  artifact_id: { type: string }
+                  stored:      { type: boolean }
+        '400':
+          description: Invalid or missing required fields
+        '401':
+          description: DPoP authentication failed
+
+  /v1/merkle/checkpoint/latest:
+    get:
+      summary: Fetch the latest Merkle checkpoint
+      description: Returns the most recent checkpoint. Optionally filter by dock_id query parameter.
+      operationId: getLatestCheckpoint
+      security: []
+      parameters:
+        - name: dock_id
+          in: query
+          required: false
+          schema: { type: string }
+          description: Filter by dock ID
+      responses:
+        '200':
+          description: Latest checkpoint
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:          { type: integer }
+                  root_hex:    { type: string }
+                  tree_size:   { type: integer }
+                  height:      { type: integer }
+                  signed_at:   { type: string }
+                  signer_key_id:  { type: string }
+                  signature_b64:  { type: string }
+                  public_key_b64: { type: string }
+                  rekor_index: { type: integer, nullable: true }
+        '404':
+          description: No checkpoints found
+
+  /v1/merkle/checkpoint/{id}:
+    get:
+      summary: Fetch a Merkle checkpoint by ID
+      description: Returns a specific checkpoint record.
+      operationId: getCheckpoint
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Checkpoint record
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:          { type: integer }
+                  root_hex:    { type: string }
+                  tree_size:   { type: integer }
+                  height:      { type: integer }
+                  signed_at:   { type: string }
+                  signer_key_id:  { type: string }
+                  signature_b64:  { type: string }
+                  public_key_b64: { type: string }
+                  rekor_index: { type: integer, nullable: true }
+        '400':
+          description: Invalid checkpoint ID
+        '404':
+          description: Checkpoint not found
+
+  /v1/merkle/{artifactId}:
+    get:
+      summary: Fetch a Merkle inclusion proof
+      description: |
+        Returns a self-contained ProofFile JSON for the given artifact.
+        Includes the inclusion proof path, artifact summary, and the checkpoint
+        it was included in. No authentication required.
+      operationId: getMerkleProof
+      security: []
+      parameters:
+        - name: artifactId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Self-contained ProofFile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  artifact_id:      { type: string }
+                  artifact_summary:
+                    type: object
+                    properties:
+                      actor:     { type: string }
+                      action:    { type: string }
+                      timestamp: { type: string }
+                      key_id:    { type: string }
+                  inclusion_proof:
+                    type: object
+                    properties:
+                      leaf_index: { type: integer }
+                      leaf_hash:  { type: string }
+                      path:       { type: array, items: { type: object, properties: { direction: { type: string }, hash: { type: string } } } }
+                      algorithm:  { type: string }
+                  checkpoint:
+                    type: object
+                    properties:
+                      index:      { type: integer }
+                      root:       { type: string }
+                      tree_size:  { type: integer }
+                      height:     { type: integer }
+                      signed_at:  { type: string }
+                      signer:     { type: string }
+                      public_key: { type: string }
+                      signature:  { type: string }
+                      algorithm:  { type: string }
+        '400':
+          description: Missing artifact ID
+        '404':
+          description: Proof not found
+
   /.well-known/treeship/revoked.json:
     get:
       summary: Revocation list
