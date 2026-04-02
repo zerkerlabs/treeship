@@ -127,12 +127,20 @@ Templates are plain YAML files. Share them however you want:
 # Via git
 git add .treeship/templates/my-template.yaml
 
-# Via URL
-treeship template install https://raw.githubusercontent.com/org/repo/main/template.yaml
-
 # Via file path
 treeship init --template ./template.yaml
 ```
+
+### Template commands
+
+| Command | What it does |
+|---------|-------------|
+| `treeship templates` | List all available templates grouped by category |
+| `treeship template preview <name>` | Preview what a template does without applying it |
+| `treeship template apply <name>` | Apply a template to the current project |
+| `treeship template validate <file>` | Validate a custom template YAML file |
+| `treeship template save --name <name>` | Save the current config as a reusable template |
+| `treeship init --template <name>` | Initialize a new project with a template |
 
 ## Field reference
 

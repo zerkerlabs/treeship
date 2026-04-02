@@ -16,12 +16,18 @@ treeship pending
 Output:
 
 ```
-# | Actor              | Description                    | Expires
-1 | agent://executor   | deploy to prod                 | 2026-03-30T18:00:00Z
-2 | agent://billing    | charge customer acme $500      | 2026-03-30T19:30:00Z
+Pending approvals (2)
+
+  1. kubectl apply -f deploy.yaml
+     label: deploy to prod  |  requested 2m ago
+     hint: treeship approve 1
+
+  2. stripe charge --amount 500
+     label: charge customer acme  |  requested 5m ago
+     hint: treeship approve 2
 ```
 
-Use the `#` column value to approve or deny a specific request.
+Use the numbered index to approve or deny a specific request.
 
 ## treeship approve
 
@@ -32,12 +38,6 @@ treeship approve 1
 ```
 
 This creates an approval artifact, generates a single-use nonce, and passes it back to the requesting agent. The agent can then include the nonce in its action attestation to prove it had authorization.
-
-### Options
-
-| Option | Description |
-|--------|-------------|
-| `--comment <text>` | Optional comment attached to the approval artifact |
 
 ## treeship deny
 

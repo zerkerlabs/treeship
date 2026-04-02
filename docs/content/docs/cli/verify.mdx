@@ -27,15 +27,21 @@ treeship verify <artifact-id> [OPTIONS]
 | Option | Description |
 |--------|-------------|
 | `--no-chain` | Verify only this artifact, do not walk the parent chain |
-| `--max-depth <n>` | Maximum chain depth to walk (default: 20) |
-| `--format <text\|json>` | Output format |
+| `--max-depth <N>` | Maximum chain depth to walk (default: 20) |
+| `--full` | Show full chain timeline with box-drawn cards |
+| `--format json` | Global flag. Output as JSON instead of text |
 
 ## Examples
 
-<Tabs items={['Simple', 'JSON output', 'Cross-org', 'Bundle']}>
+<Tabs items={['Simple', 'Full chain', 'JSON output', 'Bundle']}>
 <Tab value="Simple">
 ```bash
 treeship verify art_f7e6d5c4
+```
+</Tab>
+<Tab value="Full chain">
+```bash
+treeship verify art_f7e6d5c4 --full
 ```
 </Tab>
 <Tab value="JSON output">
@@ -46,22 +52,15 @@ treeship verify art_f7e6d5c4 --format json
 ```json
 {
   "outcome": "pass",
-  "chain": 3,
-  "approver": "human://alice",
-  "approval_description": "approve stripe charge max $500",
+  "total": 3,
+  "passed": 3,
+  "failed": 0,
   "checks": [
-    { "name": "signature", "outcome": "pass" },
-    { "name": "content_id", "outcome": "pass" },
-    { "name": "schema", "outcome": "pass" },
-    { "name": "nonce_binding", "outcome": "pass" },
-    { "name": "approval_expiry", "outcome": "pass" }
+    { "id": "art_a1b2c3d4", "outcome": "pass", "reason": null },
+    { "id": "art_e5f6a7b8", "outcome": "pass", "reason": null },
+    { "id": "art_f7e6d5c4", "outcome": "pass", "reason": null }
   ]
 }
-```
-</Tab>
-<Tab value="Cross-org">
-```bash
-treeship verify art_handoff_xyz --trusted-key ./company-a.pem
 ```
 </Tab>
 <Tab value="Bundle">

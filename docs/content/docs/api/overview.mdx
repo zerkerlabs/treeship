@@ -60,15 +60,16 @@ Hub verifies:
 |--------|------|------|-------------|
 | `GET` | `/v1/dock/challenge` | None | Start device flow login |
 | `POST` | `/v1/dock/authorize` | None | Complete device flow login |
+| `GET` | `/v1/dock/authorized` | None | Poll device flow status |
 | `POST` | `/v1/artifacts` | DPoP | Push a signed artifact |
 | `GET` | `/v1/artifacts/:id` | None | Retrieve an artifact |
+| `GET` | `/v1/workspace/:dock_id` | DPoP | List artifacts in a workspace |
 | `GET` | `/v1/verify/:id` | None | Verify an artifact server-side |
-| `GET` | `/v1/merkle/:artifactId` | None | Get a Merkle inclusion proof |
-| `GET` | `/v1/merkle/checkpoint/:id` | None | Get a specific Merkle checkpoint |
+| `POST` | `/v1/merkle/checkpoint` | DPoP | Publish a Merkle checkpoint |
+| `POST` | `/v1/merkle/proof` | DPoP | Publish a Merkle inclusion proof |
 | `GET` | `/v1/merkle/checkpoint/latest` | None | Get the latest Merkle checkpoint |
-| `GET` | `/v1/dock/authorized` | None | Poll device flow status |
-| `GET` | `/v1/workspace/:dock_id` | None | List artifacts in a workspace |
-| `POST` | `/v1/merkle/proof` | DPoP | Request a Merkle inclusion proof |
+| `GET` | `/v1/merkle/checkpoint/:id` | None | Get a specific Merkle checkpoint |
+| `GET` | `/v1/merkle/:artifactId` | None | Get a Merkle inclusion proof |
 | `GET` | `/.well-known/treeship/revoked.json` | None | Revoked key list |
 
 ## Error format

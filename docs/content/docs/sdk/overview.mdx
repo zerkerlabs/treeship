@@ -87,13 +87,14 @@ await s.attest.decision({
 |-------|------|----------|-------------|
 | `actor` | `string` | Yes | Actor URI |
 | `model` | `string` | No | Model identifier |
-| `modelVersion` | `string` | No | Specific model version string |
 | `tokensIn` | `number` | No | Input token count |
 | `tokensOut` | `number` | No | Output token count |
 | `promptDigest` | `string` | No | SHA-256 digest of the prompt |
 | `summary` | `string` | No | Plain-text summary of the decision |
 | `confidence` | `number` | No | Confidence score between 0 and 1 |
 | `parentId` | `string` | No | Parent artifact ID for chain linking |
+
+Note: The `modelVersion` field exists in the TypeScript type but is not currently forwarded to the CLI. Use the `model` field to identify the model and version together (e.g., `"claude-opus-4-20260301"`).
 
 **Returns: `ActionResult`** -- `{ artifactId: string }`
 
@@ -113,9 +114,9 @@ const { artifactId, nonce } = await s.attest.approval({
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `approver` | `string` | Yes | Approver identity URI |
-| `description` | `string` | Yes | Plain-text scope of what is authorized |
-| `expiresIn` | `string` | No | Relative expiry, e.g. `"1h"`, `"30m"` |
-| `scope` | `string` | No | Optional scope label |
+| `description` | `string` | Yes | Plain-text description of what is authorized |
+| `expires` | `string` | No | ISO-8601 timestamp when the approval expires, e.g. `"2026-12-31T00:00:00Z"` |
+| `subject` | `string` | No | Artifact ID being approved -- maps to the CLI `--subject` flag |
 
 **Returns: `ApprovalResult`** -- `{ artifactId: string, nonce: string }`
 
@@ -202,5 +203,5 @@ try {
 <Cards>
 <Card title="CLI-backed" description="Shells out to the treeship binary. No native crypto in the SDK yet." />
 <Card title="Never stores sensitive content" description="Hash payloads, not content." />
-<Card title="Graceful degradation" description="Treeship failures never surface as errors to your code unless you explicitly catch TreeshipError." />
+<Card title="Explicit errors" description="CLI failures throw TreeshipError. Verify returns a typed VerifyResult with an outcome field instead of throwing." />
 </Cards>

@@ -7,7 +7,7 @@ This endpoint has two calling modes depending on whether keys are provided. The 
 
 ## Browser-only call (no keys)
 
-When the browser confirms approval without providing keys, the response signals approval status only. No dock or ship record is created yet.
+When the browser confirms approval without providing ship/dock keys, Hub marks the challenge as approved and returns a status. No dock or ship record is created yet.
 
 ### Request
 
@@ -42,7 +42,9 @@ No dock_id is returned. The browser's job is just to approve -- the CLI complete
 
 ## CLI call (with keys)
 
-When the CLI polls this endpoint and includes ship and dock public keys, Hub creates the ship record (if new) and returns a dock_id.
+When the CLI calls this endpoint with ship and dock public keys, Hub verifies the challenge is already browser-approved, validates the nonce, atomically consumes the challenge, creates the ship record (if new), and returns a dock_id.
+
+The challenge **must** already be approved by the browser before the CLI calls this endpoint. The CLI must also provide the `nonce` that was returned by `GET /v1/dock/challenge`.
 
 ### Request
 
@@ -55,7 +57,8 @@ Content-Type: application/json
 {
   "device_code": "dvc_a1b2c3d4",
   "ship_public_key": "3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29",
-  "dock_public_key": "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025"
+  "dock_public_key": "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025",
+  "nonce": "e4f8a2c1b7d9306f5e1a9c4b8d7f2e0a"
 }
 ```
 
@@ -64,6 +67,7 @@ Content-Type: application/json
 | `device_code` | string | Yes | The device code from the challenge |
 | `ship_public_key` | string | Yes | Hex-encoded Ed25519 public key used for signing artifacts |
 | `dock_public_key` | string | Yes | Hex-encoded Ed25519 public key used for DPoP authentication |
+| `nonce` | string | Yes | The nonce returned by `GET /v1/dock/challenge` -- must match exactly |
 
 ### Response
 
@@ -75,14 +79,21 @@ Content-Type: application/json
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `dock_id` | string | Unique identifier for this dock connection |
+| `dock_id` | string | Unique identifier for this dock connection (format: `dck_` + 32 hex chars) |
 
 ## Errors
 
 | Status | Body | Cause |
 |--------|------|-------|
-| `404` | `{"error": "challenge not found or expired"}` | Invalid or expired device code |
-| `400` | `{"error": "challenge not yet approved"}` | User has not entered the code in the browser yet (CLI is polling before browser approval) |
+| `400` | `{"error": "missing device_code"}` | Request body is missing the `device_code` field |
+| `400` | `{"error": "missing nonce -- required for dock finalization"}` | CLI sent keys but omitted the `nonce` field |
+| `400` | `{"error": "invalid ship_public_key hex"}` | `ship_public_key` is not valid hex |
+| `400` | `{"error": "invalid dock_public_key hex"}` | `dock_public_key` is not valid hex |
+| `403` | `{"error": "challenge not yet approved -- complete browser activation first"}` | Keys were sent but the browser has not approved the challenge yet |
+| `403` | `{"error": "nonce mismatch"}` | The `nonce` does not match the one stored with the challenge |
+| `404` | `{"error": "device_code not found"}` | No challenge exists for this device code |
+| `409` | `{"error": "challenge already consumed"}` | Another request already consumed this challenge (prevents double-registration) |
+| `410` | `{"error": "device_code expired"}` | The challenge has passed its 5-minute expiry window |
 
 ## Examples
 
@@ -104,7 +115,8 @@ curl -X POST https://api.treeship.dev/v1/dock/authorize \
   -d '{
     "device_code": "dvc_a1b2c3d4",
     "ship_public_key": "3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29",
-    "dock_public_key": "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025"
+    "dock_public_key": "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025",
+    "nonce": "e4f8a2c1b7d9306f5e1a9c4b8d7f2e0a"
   }'
 ```
 
@@ -113,5 +125,6 @@ curl -X POST https://api.treeship.dev/v1/dock/authorize \
 - The ship public key and dock public key must be different Ed25519 keys
 - The ship key is stored for identification only. Hub never receives any private key
 - The dock key is used to verify DPoP JWT signatures on subsequent API requests
-- Each device code can only be authorized once
-- If the ship_public_key already exists on Hub, the existing ship record is reused and a new dock is attached to it
+- Each device code can only be authorized once -- the nonce is atomically consumed on success
+- If the `ship_public_key` already exists on Hub, the existing ship record is reused and a new dock is attached to it
+- The `nonce` field prevents replay attacks and binds the CLI request to the specific challenge session

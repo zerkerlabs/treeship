@@ -22,8 +22,9 @@ Treeship approvals enforce that an agent cannot proceed without human authorizat
 # Human creates a time-limited approval
 treeship attest approval \
   --approver human://alice \
-  --scope "financial.approve" \
-  --expires 1h
+  --description "approve financial filing" \
+  --subject art_pending123 \
+  --expires 2026-04-01T12:00:00Z
 
 # Agent uses the nonce -- without it, the action has no approval binding
 treeship attest action \
@@ -45,24 +46,28 @@ For financial reporting, create artifacts that prove the review and approval cha
 treeship attest action \
   --actor agent://financial-reporting \
   --action report.generate \
-  --subject '{"period": "Q1-2026", "type": "10-Q"}'
+  --input-digest sha256:abc123 \
+  --content-uri s3://reports/q1-2026-10q.pdf \
+  --meta '{"period": "Q1-2026", "type": "10-Q"}'
 
 # Controller reviews
 treeship attest approval \
   --approver human://alice \
-  --scope "financial.review"
+  --description "reviewed Q1 10-Q financials" \
+  --subject art_report123
 
 # CFO signs off
 treeship attest approval \
   --approver human://bob \
-  --scope "financial.approve"
+  --description "approve Q1 10-Q filing" \
+  --subject art_report123
 
 # Final action with approval nonce
 treeship attest action \
   --actor agent://filing-system \
   --action report.file \
   --approval-nonce <cfo-nonce> \
-  --parent art_review
+  --parent art_report123
 ```
 
 ### GDPR data processing
@@ -73,7 +78,8 @@ Record data processing activities with artifacts:
 treeship attest action \
   --actor agent://data-processor \
   --action data.process \
-  --subject '{"purpose": "analytics", "legal_basis": "consent", "data_types": ["usage_metrics"]}'
+  --input-digest sha256:def456 \
+  --meta '{"purpose": "analytics", "legal_basis": "consent", "data_types": ["usage_metrics"]}'
 ```
 
 ### Endorsement artifacts
@@ -83,8 +89,9 @@ Third-party compliance attestations use endorsement artifacts:
 ```bash
 treeship attest endorsement \
   --endorser auditor://compliance-firm \
-  --target art_process123 \
-  --claim "Reviewed and found SOC 2 Type II compliant"
+  --subject art_process123 \
+  --kind compliance \
+  --rationale "Reviewed and found SOC 2 Type II compliant"
 ```
 
 The endorsement is a separate signed artifact that references the original. Both can be verified independently.
@@ -94,8 +101,8 @@ The endorsement is a separate signed artifact that references the original. Both
 Bundle all relevant artifacts and share with auditors:
 
 ```bash
-treeship bundle create --name "q1-2026-audit"
-treeship bundle export --out q1-audit.treeship
+treeship bundle create --artifacts art_report123,art_approval456,art_signoff789 --tag q1-2026-audit
+treeship bundle export art_bundle_id --out q1-audit.treeship
 ```
 
 The auditor imports the bundle and verifies every artifact independently:

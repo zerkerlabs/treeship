@@ -1,6 +1,6 @@
 ---
-title: GET /v1/merkle/checkpoint
-description: Retrieve Merkle tree checkpoints by ID or get the latest checkpoint.
+title: Merkle Checkpoints
+description: Retrieve and publish Merkle tree checkpoints. Checkpoints are signed snapshots of the append-only artifact tree.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -17,7 +17,7 @@ GET /v1/merkle/checkpoint/:id
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `:id` | string | The checkpoint ID (e.g., `chk_a1b2c3d4`) |
+| `:id` | integer | The checkpoint ID (auto-incrementing integer, e.g., `42`) |
 
 No authentication required.
 
@@ -27,55 +27,118 @@ No authentication required.
 GET /v1/merkle/checkpoint/latest
 ```
 
-No parameters. Returns the most recent checkpoint.
+Accepts an optional `dock_id` query parameter to scope the result to a specific dock.
 
-## Response
+```
+GET /v1/merkle/checkpoint/latest?dock_id=dck_abc123
+```
 
-Both endpoints return the same format:
+## Publish a checkpoint
+
+```
+POST /v1/merkle/checkpoint
+```
+
+Requires DPoP authentication. The CLI publishes a locally-signed checkpoint to Hub.
+
+### Request body
 
 ```json
 {
-  "checkpoint_id": "chk_a1b2c3d4",
+  "root": "sha256:7e3a...",
   "tree_size": 4096,
-  "tree_root": "sha256:7e3a...",
-  "created_at": 1711500000,
-  "previous_checkpoint_id": "chk_9f8e7d6c",
-  "signature": "ed25519:..."
+  "height": 12,
+  "signed_at": "2026-03-25T10:00:00Z",
+  "signer": "ship_abc123",
+  "signature": "base64url-encoded-ed25519-signature",
+  "public_key": "base64url-encoded-public-key",
+  "rekor_index": 12345,
+  "index": 3
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `root` | string | Yes | SHA-256 root hash of the tree in `sha256:<hex>` format |
+| `tree_size` | integer | Yes | Number of leaves in the Merkle tree at this checkpoint |
+| `height` | integer | No | Height of the Merkle tree |
+| `signed_at` | string | Yes | RFC 3339 timestamp of when the checkpoint was signed |
+| `signer` | string | Yes | Key ID of the signer |
+| `signature` | string | Yes | Base64url-encoded Ed25519 signature of the canonical form |
+| `public_key` | string | Yes | Base64url-encoded public key bytes |
+| `rekor_index` | integer or null | No | Rekor transparency log index, if anchored |
+| `index` | integer | No | Checkpoint sequence number |
+
+### Publish response
+
+```json
+{
+  "id": 42,
+  "root": "sha256:7e3a...",
+  "hub_received_at": "2026-03-25T10:00:01Z"
+}
+```
+
+## GET response
+
+Both GET endpoints return the same format -- the `MerkleCheckpoint` object stored by Hub:
+
+```json
+{
+  "id": 42,
+  "root": "sha256:7e3a...",
+  "tree_size": 4096,
+  "height": 12,
+  "signed_at": "2026-03-25T10:00:00Z",
+  "signer": "ship_abc123",
+  "signature": "base64url-encoded-ed25519-signature",
+  "public_key": "base64url-encoded-public-key",
+  "rekor_index": 12345,
+  "dock_id": "dck_abc123"
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `checkpoint_id` | string | Unique identifier for this checkpoint |
+| `id` | integer | Auto-incrementing checkpoint ID |
+| `root` | string | SHA-256 root hash of the tree in `sha256:<hex>` format |
 | `tree_size` | integer | Number of leaves in the Merkle tree at this checkpoint |
-| `tree_root` | string | SHA-256 root hash of the tree |
-| `created_at` | integer | Unix timestamp of checkpoint creation |
-| `previous_checkpoint_id` | string or null | Previous checkpoint for chaining (null for the first checkpoint) |
-| `signature` | string | Hub's Ed25519 signature over the checkpoint data |
+| `height` | integer | Height of the Merkle tree |
+| `signed_at` | string | RFC 3339 timestamp of when the checkpoint was signed |
+| `signer` | string | Key ID of the signer |
+| `signature` | string | Base64url-encoded Ed25519 signature over the canonical form |
+| `public_key` | string | Base64url-encoded public key bytes |
+| `rekor_index` | integer or null | Rekor transparency log index (null if not anchored) |
+| `dock_id` | string or null | Dock that published this checkpoint |
 
 ## How checkpoints work
 
-Hub periodically batches newly pushed artifacts into a Merkle tree and creates a checkpoint. Each checkpoint is signed by Hub's key and chains to the previous checkpoint, forming an append-only log.
+The CLI builds a local Merkle tree from all artifacts, signs a checkpoint over the root, and publishes it to Hub via `POST /v1/merkle/checkpoint`. The canonical form signed is: `{index}|{root}|{tree_size}|{height}|{signer}|{signed_at}`.
 
 You can verify that:
-1. A checkpoint signature is valid
+1. A checkpoint signature is valid using the included `public_key`
 2. The tree root matches the claimed tree size
-3. The checkpoint chain is unbroken back to the genesis checkpoint
-4. An artifact's Merkle proof resolves against a specific checkpoint's root
+3. An artifact's Merkle proof resolves against a specific checkpoint's root
 
 ## Errors
 
 | Status | Body | Cause |
 |--------|------|-------|
+| `400` | `{"error": "invalid checkpoint id"}` | The `:id` parameter is not a valid integer |
+| `400` | `{"error": "missing required checkpoint fields"}` | POST request is missing `root`, `tree_size`, `signed_at`, `signer`, `signature`, or `public_key` |
+| `401` | DPoP error | POST request failed DPoP authentication |
 | `404` | `{"error": "checkpoint not found"}` | No checkpoint with this ID |
-| `404` | `{"error": "no checkpoints yet"}` | No checkpoints have been created (empty tree) |
+| `404` | `{"error": "no checkpoints found"}` | No checkpoints have been created yet |
 
 ## Examples
 
 ```bash
-# Get a specific checkpoint
-curl https://api.treeship.dev/v1/merkle/checkpoint/chk_a1b2c3d4
+# Get a specific checkpoint by integer ID
+curl https://api.treeship.dev/v1/merkle/checkpoint/42
 
 # Get the latest checkpoint
 curl https://api.treeship.dev/v1/merkle/checkpoint/latest
+
+# Get the latest checkpoint for a specific dock
+curl "https://api.treeship.dev/v1/merkle/checkpoint/latest?dock_id=dck_abc123"
 ```
