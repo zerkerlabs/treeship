@@ -1,46 +1,46 @@
 ---
-title: Ships
-description: A ship is your trust domain -- one Ed25519 keypair, one artifact store, one identity boundary.
+title: Treeships
+description: A Treeship is your trust domain -- one Ed25519 keypair, one artifact store, one identity boundary.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-A ship is the core trust domain in Treeship. It consists of a single Ed25519 keypair and a local artifact store. Every artifact signed within a ship shares the same root of trust.
+A Treeship is the core trust domain. It consists of a single Ed25519 keypair and a local artifact store. Every artifact signed within a Treeship shares the same root of trust.
 
-## What a ship is
+## What a Treeship is
 
-A ship is three things:
+A Treeship is three things:
 
 1. **A keypair.** One Ed25519 private key (encrypted at rest) and one public key. The private key signs every artifact. The public key is how verifiers confirm your signatures.
 2. **An artifact store.** A local directory (`~/.treeship/`) containing all signed artifacts, the Merkle tree, and configuration.
-3. **An identity boundary.** Everything signed by this ship shares the same trust root. If you trust the ship's public key, you trust every artifact it signed.
+3. **An identity boundary.** Everything signed by your Treeship shares the same trust root. If you trust the Treeship's public key, you trust every artifact it signed.
 
 ```bash
 treeship init
 ```
 
 ```
-Ship initialized
+Treeship initialized
   name: my-workspace
   key:  key_9f8e7d6c (ed25519, encrypted at rest)
 ```
 
-## One ship, many agents
+## One Treeship, many agents
 
-A ship can have many agents working inside it. Each agent is identified by a URI (`human://alice`, `agent://deployer`), but agents do not hold their own keys. They all act under the ship's key.
+A Treeship can have many agents working inside it. Each agent is identified by a URI (`human://alice`, `agent://deployer`), but agents do not hold their own keys. They all act under the Treeship key.
 
 ```
 Owner (human)
-+-- Ship key (Ed25519)
-    |-- agent://researcher  -- signs artifacts with ship key
-    |-- agent://deployer    -- signs artifacts with ship key
-    |-- human://alice       -- signs artifacts with ship key
-    +-- human://bob         -- signs artifacts with ship key
++-- Treeship key (Ed25519)
+    |-- agent://researcher  -- signs artifacts with Treeship key
+    |-- agent://deployer    -- signs artifacts with Treeship key
+    |-- human://alice       -- signs artifacts with Treeship key
+    +-- human://bob         -- signs artifacts with Treeship key
 ```
 
-This means every artifact from this ship can be verified with a single public key, regardless of which agent created it. The agent URI tells you who acted. The ship key tells you the artifact is authentic.
+This means every artifact from your Treeship can be verified with a single public key, regardless of which agent created it. The agent URI tells you who acted. The Treeship key tells you the artifact is authentic.
 
-## When to create a new ship vs. add a hub connection
+## When to create a new Treeship vs. add a hub connection
 
 This is the key decision most users face:
 
@@ -51,24 +51,24 @@ Use cases for adding a hub connection:
 - Sharing artifacts with a client through their workspace
 - Maintaining separate public and internal workspaces
 
-**Create a new ship** when you need a completely separate identity with its own keypair. The two ships share nothing -- different keys, different artifact stores, different trust roots.
+**Create a new Treeship** when you need a completely separate identity with its own keypair. The two Treeships share nothing -- different keys, different artifact stores, different trust roots.
 
-Use cases for creating a new ship:
+Use cases for creating a new Treeship:
 - Personal projects vs. work projects that should not share a trust root
 - Separate organizations or companies
 - Isolated environments where cross-contamination of trust is unacceptable
 
 <Callout type="info">
-A good rule of thumb: if you would use the same SSH key, use the same ship. If you would use different SSH keys, use different ships.
+A good rule of thumb: if you would use the same SSH key, use the same Treeship. If you would use different SSH keys, use different Treeships.
 </Callout>
 
-## Ship identity on Hub
+## Treeship identity on Hub
 
-When you attach to Hub, your ship's public key is registered. If the same public key appears in multiple hub connections, Hub knows they belong to the same ship. This is how Hub links workspaces to identities without requiring accounts or emails.
+When you attach to Hub, your Treeship's public key is registered. If the same public key appears in multiple hub connections, Hub knows they belong to the same Treeship. This is how Hub links workspaces to identities without requiring accounts or emails.
 
 ## Key management
 
-The ship's private key is encrypted at rest using the system keychain (macOS Keychain, Linux Secret Service, or a passphrase fallback). The key never leaves your machine. Hub never receives any private key -- only the public key is transmitted during the device flow.
+The Treeship's private key is encrypted at rest using the system keychain (macOS Keychain, Linux Secret Service, or a passphrase fallback). The key never leaves your machine. Hub never receives any private key -- only the public key is transmitted during the device flow.
 
 ```bash
 treeship keys list

@@ -27,8 +27,8 @@ AI agents are being deployed into workflows where no one can verify what actuall
 | Layer | What it is |
 |-------|------------|
 | **Agents** | Actors (humans or AI) that produce receipts for their actions |
-| **Ships** | Trust domains that hold receipts, keys, and Merkle trees |
-| **Hub connections** | Workspace links that connect a local ship to a remote hub for sharing and visibility |
+| **Treeships** | Trust domains that hold receipts, keys, and Merkle trees |
+| **Hub connections** | Workspace links that connect a local Treeship to a remote hub for sharing and visibility |
 
 ## Quick Start
 
@@ -37,7 +37,7 @@ AI agents are being deployed into workflows where no one can verify what actuall
 npm install -g treeship
 cargo install treeship-cli
 
-# Initialize a local ship
+# Initialize a local Treeship
 treeship init
 
 # Wrap a command and capture a trust receipt
@@ -46,7 +46,7 @@ treeship wrap -- npm test
 # Verify the last receipt
 treeship verify last
 
-# Attach to a hub (connects your ship to treeship.dev)
+# Attach to a hub (connects your Treeship to treeship.dev)
 treeship hub attach
 
 # Push the last receipt to the hub
@@ -55,7 +55,7 @@ treeship hub push last
 
 ### Multi-hub setup
 
-You can connect a single ship to multiple hubs at once.
+You can connect a single Treeship to multiple hubs at once.
 
 ```bash
 # Attach a named hub connection
@@ -121,7 +121,7 @@ Treeship does not decide trust globally. Each verifier decides trust using local
 - **No central authority**: Trust comes from keys and policy, not a Treeship server
 - **Portable**: Bundles are self-contained -- verify anywhere
 - **Privacy-aware**: Default to input/output hashes, not raw content
-- **Optional hub connections**: Connect to treeship.dev for visibility and sharing
+- **Optional hub connections**: Connect your Treeship to treeship.dev for visibility and sharing
 
 ### Statement Types
 

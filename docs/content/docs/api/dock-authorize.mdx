@@ -3,11 +3,11 @@ title: POST /v1/hub/authorize
 description: Complete the device flow and register hub keys with Hub.
 ---
 
-This endpoint has two calling modes depending on whether keys are provided. The browser calls it after the user approves the device code. The CLI calls it with keys to complete the hub connection creation.
+This endpoint has two calling modes depending on whether keys are provided. The browser calls it after the user approves the device code. The CLI calls it with keys to complete hub connection creation.
 
 ## Browser-only call (no keys)
 
-When the browser confirms approval without providing ship/hub keys, Hub marks the challenge as approved and returns a status. No hub connection or ship record is created yet.
+When the browser confirms approval without providing Treeship/hub keys, Hub marks the challenge as approved and returns a status. No hub connection or Treeship record is created yet.
 
 ### Request
 
@@ -42,7 +42,7 @@ No hub_id is returned. The browser's job is just to approve -- the CLI completes
 
 ## CLI call (with keys)
 
-When the CLI calls this endpoint with ship and hub public keys, Hub verifies the challenge is already browser-approved, validates the nonce, atomically consumes the challenge, creates the ship record (if new), and returns a hub_id.
+When the CLI calls this endpoint with Treeship and hub public keys, Hub verifies the challenge is already browser-approved, validates the nonce, atomically consumes the challenge, creates the Treeship record (if new), and returns a hub_id.
 
 The challenge **must** already be approved by the browser before the CLI calls this endpoint. The CLI must also provide the `nonce` that was returned by `GET /v1/hub/challenge`.
 
@@ -122,9 +122,9 @@ curl -X POST https://api.treeship.dev/v1/hub/authorize \
 
 ## Notes
 
-- The ship public key and hub public key must be different Ed25519 keys
-- The ship key is stored for identification only. Hub never receives any private key
+- The Treeship public key and hub public key must be different Ed25519 keys
+- The Treeship key is stored for identification only. Hub never receives any private key
 - The hub key is used to verify DPoP JWT signatures on subsequent API requests
 - Each device code can only be authorized once -- the nonce is atomically consumed on success
-- If the `ship_public_key` already exists on Hub, the existing ship record is reused and a new hub connection is attached to it
+- If the `ship_public_key` already exists on Hub, the existing Treeship record is reused and a new hub connection is attached to it
 - The `nonce` field prevents replay attacks and binds the CLI request to the specific challenge session

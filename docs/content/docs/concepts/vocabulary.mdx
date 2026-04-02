@@ -18,12 +18,12 @@ Every term below maps to a concrete type or command in the CLI and Rust core.
 | **Receipt** | External system confirmation (webhook, timestamp, inclusion proof) | `ReceiptStatement` / `treeship attest receipt` |
 | **Artifact** | A single signed DSSE envelope with a content-addressed `art_` ID | `Record` in local storage |
 | **Bundle** | Portable package of artifacts, self-verifying | `.treeship` file / `treeship bundle` |
-| **Ship** | A sovereign trust domain -- one keypair, one artifact store | Ed25519 keypair + config + local artifact store |
-| **Agent** | Any human or AI actor within a ship, identified by a URI | `human://alice` or `agent://coder` prefix |
+| **Treeship** | A sovereign trust domain -- one keypair, one artifact store | Ed25519 keypair + config + local artifact store |
+| **Agent** | Any human or AI actor within a Treeship, identified by a URI | `human://alice` or `agent://coder` prefix |
 | **Actor** | Synonym for agent -- the entity that performs an action | `human://` or `agent://` prefix |
 | **Approver** | The human or identity that signs an approval | `--approver` flag |
-| **Hub connection** | A named link from your ship to a Hub workspace -- like a tmux session | `treeship hub attach` / DPoP keypair |
+| **Hub connection** | A named link from your Treeship to a Hub workspace -- like a tmux session | `treeship hub attach` / DPoP keypair |
 | **Active hub connection** | The hub connection that receives pushes by default when no `--hub` flag is specified | `treeship hub use <name>` |
 | **Workspace** | A Hub-side container where pushed artifacts appear, associated with a hub connection | `treeship hub open` |
-| **Attaching** | The process of connecting your ship to Hub by creating a hub connection | `treeship hub attach` |
-| **Hub** | Hosted infrastructure where ships connect via hub connections | treeship.dev API |
+| **Attaching** | The process of connecting your Treeship to Hub by creating a hub connection | `treeship hub attach` |
+| **Hub** | Hosted infrastructure where Treeships connect via hub connections | treeship.dev API |

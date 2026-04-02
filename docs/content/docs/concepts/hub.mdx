@@ -1,15 +1,15 @@
 ---
 title: Hub connections
-description: Named links from your ship to Hub workspaces. Attach, detach, and kill independently.
+description: Named links from your Treeship to Hub workspaces. Attach, detach, and kill independently.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-A hub connection is a named link between your local Treeship (the ship) and a workspace on Hub. You push receipts through it. Other people verify them there.
+A hub connection is a named link between your local Treeship and a workspace on Hub. You push receipts through it. Other people verify them there.
 
 ## The tmux model
 
-Hub connections work like tmux sessions. You can attach, detach, and kill them independently. The ship (your trust domain) stays the same regardless of how many hub connections exist.
+Hub connections work like tmux sessions. You can attach, detach, and kill them independently. Your Treeship (the trust domain) stays the same regardless of how many hub connections exist.
 
 | tmux | Treeship | What it does |
 |------|----------|-------------|
@@ -33,10 +33,10 @@ Hub connections are about audiences, not environments. You would create multiple
 - Your company's workspace and a client's workspace
 - An open-source project workspace and an internal workspace
 
-The ship key stays the same across all hub connections. Artifacts never change. Hub connections only control where artifacts appear on Hub.
+The Treeship key stays the same across all hub connections. Artifacts never change. Hub connections only control where artifacts appear on Hub.
 
 ```
-Ship (one keypair, one artifact store)
+Treeship (one keypair, one artifact store)
  |-- hub: default  -> hub.treeship.dev/alice/personal
  |-- hub: acme     -> hub.treeship.dev/acme-corp/projects
  +-- hub: client-x -> hub.treeship.dev/clientx/deliverables
@@ -83,7 +83,7 @@ Hub connections are stored in `~/.treeship/config.json`:
 }
 ```
 
-Each hub connection has its own DPoP keypair for authenticating with Hub. Adding or removing a hub connection never changes your ship key.
+Each hub connection has its own DPoP keypair for authenticating with Hub. Adding or removing a hub connection never changes your Treeship key.
 
 <Callout type="info">
 Configs from earlier versions (flat `hub` object or `docks` format) are automatically migrated to the `hub_connections` format on first run. No manual action required.
