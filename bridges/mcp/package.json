@@ -1,6 +1,6 @@
 {
   "name": "@treeship/mcp",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Drop-in Treeship attestation for MCP tool calls",
   "license": "Apache-2.0",
   "repository": {

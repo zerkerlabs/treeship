@@ -17,4 +17,4 @@ Requires the treeship CLI: curl -fsSL treeship.dev/install | sh
 from treeship_sdk.client import Treeship, TreeshipError
 
 __all__ = ["Treeship", "TreeshipError"]
-__version__ = "0.3.0"
+__version__ = "0.3.1"
