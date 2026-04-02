@@ -58,7 +58,7 @@ treeship/                           # monorepo root
 │   ├── core/                       # Rust library (120 tests)
 │   │   └── src/
 │   │       ├── attestation/        # DSSE, PAE, Ed25519, content-addressed IDs
-│   │       ├── statements/         # 6 statement types, nonce binding
+│   │       ├── statements/         # 8 statement types (action, approval, handoff, endorsement, receipt, bundle, decision, declaration), nonce binding
 │   │       ├── keys/               # AES-256-CTR + HMAC encrypted keystore
 │   │       ├── storage/            # local artifact store
 │   │       ├── bundle/             # pack/export/import .treeship files

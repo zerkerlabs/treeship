@@ -7,7 +7,7 @@ import type {
 } from '@modelcontextprotocol/sdk/types.js';
 import type { RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import type { ClientOptions } from '@modelcontextprotocol/sdk/client/index.js';
-import { attestAction } from './attest.js';
+import { attestAction, attestReceipt } from './attest.js';
 import { hashPayload } from './utils.js';
 import type { ToolReceipt } from './types.js';
 
@@ -44,17 +44,18 @@ export class TreeshipMCPClient extends Client {
       throw e;
     } finally {
       const elapsedMs = Date.now() - startMs;
-      // Attest RECEIPT after the call (fire-and-forget -- never blocks response)
-      this._attestReceipt(params, result, intentId, elapsedMs, error).catch(() => {});
-    }
+      // Attest RECEIPT after the call -- await so we can surface the artifact ID
+      const receiptId = await this._attestReceipt(params, result, intentId, elapsedMs, error);
 
-    // Attach treeship metadata to result
-    if (intentId && result) {
-      result._treeship = {
-        intent: intentId,
-        tool: params.name,
-        actor: this._actor,
-      } as ToolReceipt;
+      // Attach treeship metadata to result
+      if (result) {
+        result._treeship = {
+          intent: intentId,
+          receipt: receiptId,
+          tool: params.name,
+          actor: this._actor,
+        } as ToolReceipt;
+      }
     }
 
     return result;
@@ -64,11 +65,11 @@ export class TreeshipMCPClient extends Client {
     return attestAction({
       actor: this._actor,
       action: `mcp.tool.${params.name}.intent`,
+      approvalNonce: process.env.TREESHIP_APPROVAL_NONCE || undefined,
       meta: {
         tool: params.name,
         server: 'mcp',
         args_digest: hashPayload(JSON.stringify(params.arguments ?? {})),
-        approval_nonce: process.env.TREESHIP_APPROVAL_NONCE || undefined,
       },
     });
   }
@@ -79,21 +80,28 @@ export class TreeshipMCPClient extends Client {
     intentId: string | undefined,
     elapsedMs: number,
     error?: Error,
-  ): Promise<void> {
-    await attestAction({
-      actor: this._actor,
-      action: `mcp.tool.${params.name}.receipt`,
-      parentId: intentId,
-      meta: {
-        tool: params.name,
-        elapsed_ms: elapsedMs,
-        exit_code: error ? 1 : 0,
-        is_error: result?.isError ?? !!error,
-        output_digest: result
-          ? hashPayload(JSON.stringify(result.content ?? result))
-          : undefined,
-        error_message: error?.message,
-      },
-    }).catch(() => {});
+  ): Promise<string | undefined> {
+    try {
+      return await attestReceipt({
+        system: this._actor,
+        kind: 'tool.result',
+        subject: intentId,
+        payload: {
+          tool: params.name,
+          elapsed_ms: elapsedMs,
+          exit_code: error ? 1 : 0,
+          is_error: result?.isError ?? !!error,
+          output_digest: result
+            ? hashPayload(JSON.stringify(result.content ?? result))
+            : undefined,
+          error_message: error?.message,
+        },
+      });
+    } catch (e) {
+      process.stderr.write(
+        `[treeship] attestReceipt failed for ${params.name}: ${(e as Error).message}\n`,
+      );
+      return undefined;
+    }
   }
 }

@@ -195,10 +195,9 @@ pub fn verify_with_key(
     key_id:   &str,
     pub_key:  VerifyingKey,
 ) -> Result<VerifyResult, VerifyError> {
-    let v = Verifier::from_signer(&Ed25519Signer::from_bytes(
-        key_id,
-        pub_key.as_bytes(),
-    ).map_err(|e| VerifyError::InvalidSignature(e.to_string()))?);
+    let mut keys = HashMap::new();
+    keys.insert(key_id.to_string(), pub_key);
+    let v = Verifier::new(keys);
     v.verify_any(envelope)
 }
 

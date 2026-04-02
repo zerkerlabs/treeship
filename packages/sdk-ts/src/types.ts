@@ -9,8 +9,10 @@ export interface ActionParams {
 export interface ApprovalParams {
   approver: string;
   description: string;
-  expiresIn?: string;  // "1h", "30m"
-  scope?: string;
+  /** ISO-8601 timestamp when the approval expires (e.g. "2026-12-31T00:00:00Z"). */
+  expires?: string;
+  /** Maps to the CLI --subject flag. Identifies what this approval covers. */
+  subject?: string;
 }
 
 export interface HandoffParams {

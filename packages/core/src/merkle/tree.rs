@@ -27,9 +27,9 @@ pub struct InclusionProof {
 
 /// An append-only binary Merkle tree.
 ///
-/// Leaves are `sha256(artifact_id)`. Odd leaf counts are padded by
-/// duplicating the last leaf. This matches the RFC 9162 (Certificate
-/// Transparency) construction.
+/// Leaves are `sha256(artifact_id)`. Odd leaf counts are handled by
+/// promoting the unpaired node to the next level without hashing,
+/// matching the RFC 9162 (Certificate Transparency) construction.
 pub struct MerkleTree {
     /// All leaf hashes in insertion order.
     leaves: Vec<[u8; 32]>,
@@ -84,33 +84,37 @@ impl MerkleTree {
         let mut level: Vec<[u8; 32]> = self.leaves.clone();
 
         while level.len() > 1 {
-            // Pad to even length by duplicating last leaf
-            if level.len() % 2 != 0 {
-                level.push(*level.last().unwrap());
+            // RFC 9162: if idx has a sibling, add it to the proof path.
+            // If idx is the unpaired last node, it promotes without a sibling step.
+            if idx + 1 < level.len() && idx % 2 == 0 {
+                // Sibling is to the right
+                path.push(ProofStep {
+                    direction: Direction::Right,
+                    hash: hex::encode(level[idx + 1]),
+                });
+            } else if idx % 2 == 1 {
+                // Sibling is to the left
+                path.push(ProofStep {
+                    direction: Direction::Left,
+                    hash: hex::encode(level[idx - 1]),
+                });
             }
+            // else: unpaired last node, no sibling step needed
 
-            let sibling_idx = if idx % 2 == 0 { idx + 1 } else { idx - 1 };
-            let direction = if idx % 2 == 0 {
-                Direction::Right // sibling is to the right
-            } else {
-                Direction::Left // sibling is to the left
-            };
-
-            path.push(ProofStep {
-                direction,
-                hash: hex::encode(level[sibling_idx]),
-            });
-
-            // Move up: compute parent hashes
-            level = level
-                .chunks(2)
-                .map(|pair| {
-                    let mut h = Sha256::new();
-                    h.update(pair[0]);
-                    h.update(pair[1]);
-                    h.finalize().into()
-                })
-                .collect();
+            // Move up: compute parent hashes (RFC 9162 promotion)
+            let mut next_level = Vec::with_capacity((level.len() + 1) / 2);
+            let mut i = 0;
+            while i + 1 < level.len() {
+                let mut h = Sha256::new();
+                h.update(level[i]);
+                h.update(level[i + 1]);
+                next_level.push(h.finalize().into());
+                i += 2;
+            }
+            if i < level.len() {
+                next_level.push(level[i]);
+            }
+            level = next_level;
 
             idx /= 2;
         }
@@ -166,24 +170,27 @@ impl MerkleTree {
     }
 
     /// Internal: compute root from a slice of leaf hashes.
+    /// RFC 9162 construction: odd nodes are promoted without hashing.
     fn compute_root(&self, leaves: &[[u8; 32]]) -> [u8; 32] {
         if leaves.len() == 1 {
             return leaves[0];
         }
         let mut level = leaves.to_vec();
         while level.len() > 1 {
-            if level.len() % 2 != 0 {
-                level.push(*level.last().unwrap());
+            let mut next_level = Vec::with_capacity((level.len() + 1) / 2);
+            let mut i = 0;
+            while i + 1 < level.len() {
+                let mut h = Sha256::new();
+                h.update(level[i]);
+                h.update(level[i + 1]);
+                next_level.push(h.finalize().into());
+                i += 2;
             }
-            level = level
-                .chunks(2)
-                .map(|pair| {
-                    let mut h = Sha256::new();
-                    h.update(pair[0]);
-                    h.update(pair[1]);
-                    h.finalize().into()
-                })
-                .collect();
+            // RFC 9162: promote unpaired node without hashing
+            if i < level.len() {
+                next_level.push(level[i]);
+            }
+            level = next_level;
         }
         level[0]
     }

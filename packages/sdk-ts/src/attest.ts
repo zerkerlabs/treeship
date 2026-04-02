@@ -13,7 +13,8 @@ export class AttestModule {
 
   async approval(params: ApprovalParams): Promise<ApprovalResult> {
     const args = ["attest", "approval", "--approver", params.approver, "--description", params.description, "--format", "json"];
-    if (params.expiresIn) args.push("--expires", params.expiresIn);
+    if (params.expires) args.push("--expires", params.expires);
+    if (params.subject) args.push("--subject", params.subject);
     const result = await runTreeship(args);
     return { artifactId: (result.id || result.artifact_id) as string, nonce: result.nonce as string };
   }

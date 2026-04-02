@@ -66,7 +66,7 @@ impl Checkpoint {
             .as_secs();
         let signed_at = unix_to_rfc3339(secs);
 
-        let canonical = format!("{}|{}|{}", root, tree.len(), signed_at);
+        let canonical = format!("{}|{}|{}|{}|{}|{}", index, root, tree.len(), tree.height(), signer.key_id(), signed_at);
         let sig_bytes = signer.sign(canonical.as_bytes())?;
         let signature = URL_SAFE_NO_PAD.encode(&sig_bytes);
         let public_key = URL_SAFE_NO_PAD.encode(signer.public_key_bytes());
@@ -99,7 +99,7 @@ impl Checkpoint {
             Err(_) => return false,
         };
 
-        let canonical = format!("{}|{}|{}", self.root, self.tree_size, self.signed_at);
+        let canonical = format!("{}|{}|{}|{}|{}|{}", self.index, self.root, self.tree_size, self.height, self.signer, self.signed_at);
 
         let sig_bytes = match URL_SAFE_NO_PAD.decode(&self.signature) {
             Ok(b) => b,
