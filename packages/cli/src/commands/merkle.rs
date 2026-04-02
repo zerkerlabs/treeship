@@ -408,13 +408,13 @@ pub fn publish(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
 
-    let (_dock_name, dock_entry) = ctx.config.resolve_dock(None)
+    let (_hub_name, hub_entry) = ctx.config.resolve_hub(None)
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
-    let endpoint = &dock_entry.endpoint;
-    let dock_id = &dock_entry.dock_id;
-    let dock_secret_hex = dock_entry.dock_secret_key.as_deref()
-        .ok_or("no dock_secret_key in config -- run: treeship dock login")?;
+    let endpoint = &hub_entry.endpoint;
+    let hub_id = &hub_entry.hub_id;
+    let hub_secret_hex = hub_entry.hub_secret_key.as_deref()
+        .ok_or("no hub_secret_key in config -- run: treeship hub attach")?;
 
     // 1. Load latest checkpoint
     let checkpoint = load_latest_checkpoint()?
@@ -426,7 +426,7 @@ pub fn publish(
 
     // 2. POST checkpoint to Hub
     let checkpoint_url = format!("{}/v1/merkle/checkpoint", endpoint);
-    let dpop_jwt = build_dpop_jwt(dock_secret_hex, "POST", &checkpoint_url)?;
+    let dpop_jwt = build_dpop_jwt(hub_secret_hex, "POST", &checkpoint_url)?;
 
     let cp_body = serde_json::json!({
         "root":       checkpoint.root,
@@ -440,7 +440,7 @@ pub fn publish(
     });
 
     let cp_resp: serde_json::Value = ureq::post(&checkpoint_url)
-        .set("Authorization", &format!("DPoP {}", dock_id))
+        .set("Authorization", &format!("DPoP {}", hub_id))
         .set("DPoP", &dpop_jwt)
         .send_json(&cp_body)?
         .into_json()?;
@@ -491,7 +491,7 @@ pub fn publish(
 
         let proof_json_str = serde_json::to_string(&proof_file)?;
 
-        let dpop_jwt = build_dpop_jwt(dock_secret_hex, "POST", &proof_url)?;
+        let dpop_jwt = build_dpop_jwt(hub_secret_hex, "POST", &proof_url)?;
 
         let proof_body = serde_json::json!({
             "artifact_id":   artifact_id,
@@ -502,7 +502,7 @@ pub fn publish(
         });
 
         ureq::post(&proof_url)
-            .set("Authorization", &format!("DPoP {}", dock_id))
+            .set("Authorization", &format!("DPoP {}", hub_id))
             .set("DPoP", &dpop_jwt)
             .send_json(&proof_body)?;
 
@@ -521,17 +521,17 @@ pub fn publish(
 }
 
 // ---------------------------------------------------------------------------
-// DPoP JWT builder (mirrors dock.rs)
+// DPoP JWT builder (mirrors hub.rs)
 // ---------------------------------------------------------------------------
 
 fn build_dpop_jwt(
-    dock_secret_hex: &str,
+    hub_secret_hex: &str,
     method: &str,
     url: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let secret_bytes = hex::decode(dock_secret_hex)?;
+    let secret_bytes = hex::decode(hub_secret_hex)?;
     let secret_arr: [u8; 32] = secret_bytes.try_into()
-        .map_err(|_| "dock secret key must be 32 bytes")?;
+        .map_err(|_| "hub secret key must be 32 bytes")?;
     let signing_key = SigningKey::from_bytes(&secret_arr);
 
     let header = serde_json::json!({

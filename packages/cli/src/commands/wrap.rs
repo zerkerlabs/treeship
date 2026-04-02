@@ -238,8 +238,8 @@ pub fn run(
     // ── 4. Wire --push ─────────────────────────────────────────────────
     let mut hub_url: Option<String> = None;
     if push {
-        if ctx.config.is_docked() {
-            match super::dock::push_artifact(&ctx, &result.artifact_id) {
+        if ctx.config.is_attached() {
+            match super::hub::push_artifact(&ctx, &result.artifact_id) {
                 Ok(pr) => {
                     if !pr.hub_url.is_empty() {
                         hub_url = Some(pr.hub_url);
@@ -250,7 +250,7 @@ pub fn run(
                 }
             }
         } else {
-            printer.warn("not docked, skipping push", &[]);
+            printer.warn("not attached, skipping push", &[]);
         }
     }
 
@@ -323,7 +323,7 @@ pub fn run(
     printer.dim_info(separator);
     printer.hint(&format!("treeship verify {}", result.artifact_id));
     if hub_url.is_none() && !push {
-        printer.hint(&format!("treeship dock push {}", result.artifact_id));
+        printer.hint(&format!("treeship hub push {}", result.artifact_id));
     }
     printer.blank();
 

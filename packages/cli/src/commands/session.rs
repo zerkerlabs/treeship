@@ -409,7 +409,7 @@ pub fn close(
     printer.info(&format!("  receipts: {}", artifact_count));
     printer.blank();
     printer.hint(&format!("treeship verify {} --full  to see the chain", result.artifact_id));
-    printer.hint(&format!("treeship dock push {}      to share", result.artifact_id));
+    printer.hint(&format!("treeship hub push {}      to share", result.artifact_id));
     printer.blank();
 
     Ok(())

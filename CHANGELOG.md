@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.4.0
+
+- Terminology: dock -> hub, login -> attach, logout -> detach, rm -> kill, workspace -> open
+- Config: docks -> hub_connections, active_dock -> active_hub, dock_id -> hub_id
+- New hub ID prefix: hub_ (backward compat with dck_)
+- serde aliases for backward-compatible config deserialization
+- All docs updated with new terminology
+- New concept pages: ships, hub connections
+
+## 0.3.1
+
+- Fix: Remove print statement causing JSONDecodeError in synthetic_media_detector workflow
+- Minor stability improvements
+
+## 0.3.0
+
+- Wrap command captures output digest, file changes, and git state
+- Trust templates: 7 official templates (github-contributor, ci-cd, mcp-agent, claude-code, openclaw, hermes, research)
+- Shell hooks for automatic attestation
+- Background daemon for file watching
+- Doctor diagnostic (9 checks)
+
+## 0.2.1
+
+- Hotfix for encrypted keystore path resolution on Linux
+- Improved error messages for missing keys
+
 ## 0.1.0 (2026-03-31)
 
 Initial release.
@@ -14,7 +41,7 @@ Initial release.
 - 120+ tests
 
 ### CLI
-- 30+ commands: init, wrap, attest, verify, session, approve, dock, merkle, ui, otel
+- 30+ commands: init, wrap, attest, verify, session, approve, hub, merkle, ui, otel
 - Rich wrap receipts: output digest, file changes, git state, auto-chaining
 - Shell hooks for automatic attestation
 - Trust templates (7 official: github-contributor, ci-cd, mcp-agent, claude-code, openclaw, hermes, research)
@@ -38,7 +65,7 @@ Initial release.
 - npm binary wrapper (treeship, platform packages)
 
 ### Website
-- treeship.dev: landing page, /verify, /merkle, /connect, /dock/activate, /workspace
+- treeship.dev: landing page, /verify, /merkle, /connect, /hub/activate, /open
 - docs.treeship.dev: 67 pages (Fumadocs), search, VS Code theme
 
 ### Security

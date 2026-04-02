@@ -100,17 +100,17 @@ pub fn run(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::e
     }
     printer.blank();
 
-    // Dock status
-    printer.section("docks");
-    if let Some((name, entry)) = cfg.active_dock_entry() {
-        printer.info(&format!("  {} {} ({})", printer.green("●"), name, entry.dock_id));
+    // Hub status
+    printer.section("hub");
+    if let Some((name, entry)) = cfg.active_hub_connection() {
+        printer.info(&format!("  {} {} ({})", printer.green("●"), name, entry.hub_id));
         printer.dim_info(&format!("  endpoint  {}", entry.endpoint));
-    } else if cfg.docks.is_empty() {
-        printer.info(&format!("  {} no docks", printer.dim("○")));
-        printer.hint("treeship dock login");
+    } else if cfg.hub_connections.is_empty() {
+        printer.info(&format!("  {} no hub connections", printer.dim("○")));
+        printer.hint("treeship hub attach");
     } else {
-        printer.info(&format!("  {} {} docks, none active", printer.dim("○"), cfg.docks.len()));
-        printer.hint("treeship dock use <name>");
+        printer.info(&format!("  {} {} hub connections, none active", printer.dim("○"), cfg.hub_connections.len()));
+        printer.hint("treeship hub use <name>");
     }
     printer.blank();
 

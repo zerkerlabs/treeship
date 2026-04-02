@@ -51,14 +51,14 @@ treeship attest handoff \
   --to agent://company-b/legal-review \
   --artifacts art_output_123
 
-treeship dock push art_handoff_xyz
+treeship hub push art_handoff_xyz
 # -> https://treeship.dev/verify/art_handoff_xyz
 # Share this URL with Company B
 ```
 
 ```bash
 # Company B -- verify before acting
-treeship dock pull art_handoff_xyz
+treeship hub pull art_handoff_xyz
 treeship verify art_handoff_xyz --trusted-key ./company-a-public.pem
 
 # ✓ verified

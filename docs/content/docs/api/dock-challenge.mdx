@@ -1,12 +1,12 @@
 ---
-title: GET /v1/dock/challenge
+title: GET /v1/hub/challenge
 description: Start the device flow login by requesting a challenge nonce and device code.
 ---
 
 ## Request
 
 ```
-GET /v1/dock/challenge
+GET /v1/hub/challenge
 ```
 
 No authentication required. No request body.
@@ -18,7 +18,7 @@ No authentication required. No request body.
   "device_code": "dvc_a1b2c3d4",
   "nonce": "nce_7f8e9d0a",
   "expires_at": 1711494000,
-  "verify_url": "https://treeship.dev/dock/activate"
+  "verify_url": "https://treeship.dev/hub/activate"
 }
 ```
 
@@ -31,18 +31,18 @@ No authentication required. No request body.
 
 ## Flow
 
-1. CLI calls `GET /v1/dock/challenge`
+1. CLI calls `GET /v1/hub/challenge`
 2. CLI displays the `device_code` and opens `verify_url` in the browser
-3. User enters the code at `treeship.dev/dock/activate` and approves
-4. CLI polls `GET /v1/dock/authorized?device_code=XXX` until approved or expired
-5. CLI calls `POST /v1/dock/authorize` with its public keys to complete registration
+3. User enters the code at `treeship.dev/hub/activate` and approves
+4. CLI polls `GET /v1/hub/authorized?device_code=XXX` until approved or expired
+5. CLI calls `POST /v1/hub/authorize` with its public keys to complete registration
 
 This follows the RFC 8628 device authorization grant pattern.
 
 ## Example
 
 ```bash
-curl https://api.treeship.dev/v1/dock/challenge
+curl https://api.treeship.dev/v1/hub/challenge
 ```
 
 ```json
@@ -50,7 +50,7 @@ curl https://api.treeship.dev/v1/dock/challenge
   "device_code": "dvc_a1b2c3d4",
   "nonce": "nce_7f8e9d0a",
   "expires_at": 1711494000,
-  "verify_url": "https://treeship.dev/dock/activate"
+  "verify_url": "https://treeship.dev/hub/activate"
 }
 ```
 

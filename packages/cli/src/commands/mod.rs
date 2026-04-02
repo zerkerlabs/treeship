@@ -5,7 +5,7 @@ pub mod keys;
 pub mod status;
 pub mod wrap;
 pub mod bundle;
-pub mod dock;
+pub mod hub;
 pub mod hook;
 pub mod install;
 pub mod log;

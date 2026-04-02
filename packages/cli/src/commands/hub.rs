@@ -4,7 +4,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use ed25519_dalek::{SigningKey, Signer, VerifyingKey};
 use rand::RngCore;
 
-use crate::{config::{self, DockEntry}, ctx, printer::Printer};
+use crate::{config::{self, HubConnection}, ctx, printer::Printer};
 
 // ---------------------------------------------------------------------------
 // Result type for push
@@ -17,33 +17,33 @@ pub struct PushResult {
 }
 
 // ---------------------------------------------------------------------------
-// login
+// attach
 // ---------------------------------------------------------------------------
 
-pub fn login(
+pub fn attach(
     name:     Option<&str>,
     endpoint: Option<&str>,
     config:   Option<&str>,
     printer:  &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx      = ctx::open(config)?;
-    let dock_name = name.unwrap_or("default");
+    let hub_name = name.unwrap_or("default");
     let endpoint  = endpoint.unwrap_or("https://api.treeship.dev").to_string();
 
-    // If dock name already exists with keys, reconnect
-    if let Some(existing) = ctx.config.docks.get(dock_name) {
-        if existing.dock_secret_key.is_some() {
+    // If hub connection name already exists with keys, reconnect
+    if let Some(existing) = ctx.config.hub_connections.get(hub_name) {
+        if existing.hub_secret_key.is_some() {
             let mut cfg = ctx.config.clone();
-            cfg.active_dock = Some(dock_name.to_string());
+            cfg.active_hub = Some(hub_name.to_string());
             config::save(&cfg, &ctx.config_path)?;
 
             printer.success("reconnected", &[
-                ("dock", dock_name),
-                ("dock id", &existing.dock_id),
+                ("hub", hub_name),
+                ("hub id", &existing.hub_id),
             ]);
             printer.hint(&format!(
                 "workspace: https://treeship.dev/workspace/{}",
-                existing.dock_id
+                existing.hub_id
             ));
             printer.blank();
             return Ok(());
@@ -63,13 +63,13 @@ pub fn login(
         .ok_or("missing nonce in challenge response")?
         .to_string();
 
-    // 2. Generate fresh Ed25519 dock keypair
+    // 2. Generate fresh Ed25519 hub keypair
     let mut csprng = rand::thread_rng();
-    let dock_signing_key = SigningKey::generate(&mut csprng);
-    let dock_verifying_key: VerifyingKey = (&dock_signing_key).into();
+    let hub_signing_key = SigningKey::generate(&mut csprng);
+    let hub_verifying_key: VerifyingKey = (&hub_signing_key).into();
 
-    let dock_public_hex = hex::encode(dock_verifying_key.as_bytes());
-    let dock_secret_hex = hex::encode(dock_signing_key.to_bytes());
+    let hub_public_hex = hex::encode(hub_verifying_key.as_bytes());
+    let hub_secret_hex = hex::encode(hub_signing_key.to_bytes());
 
     // 3. Print activation instructions
     let formatted_code = format_device_code(&device_code);
@@ -79,7 +79,7 @@ pub fn login(
     } else {
         "https://www.treeship.dev".to_string()
     };
-    printer.info(&format!("visit {}/dock/activate", site_url));
+    printer.info(&format!("visit {}/hub/activate", site_url));
     printer.info(&format!("code: {}", printer.bold(&formatted_code)));
     printer.dim_info("waiting...");
     printer.blank();
@@ -95,7 +95,7 @@ pub fn login(
     loop {
         let elapsed = start.elapsed().unwrap_or_default().as_secs();
         if elapsed > timeout_secs {
-            return Err("dock login timed out after 5 minutes".into());
+            return Err("hub attach timed out after 5 minutes".into());
         }
 
         std::thread::sleep(std::time::Duration::from_secs(2));
@@ -126,7 +126,7 @@ pub fn login(
     let authorize_url = format!("{}/v1/dock/authorize", endpoint);
     let auth_body = serde_json::json!({
         "ship_public_key": ship_public_hex,
-        "dock_public_key": dock_public_hex,
+        "dock_public_key": hub_public_hex,
         "device_code":     device_code,
         "nonce":           nonce,
     });
@@ -135,7 +135,7 @@ pub fn login(
         .send_json(&auth_body)?
         .into_json()?;
 
-    let final_dock_id = auth_resp["dock_id"]
+    let final_hub_id = auth_resp["dock_id"]
         .as_str()
         .unwrap_or("unknown")
         .to_string();
@@ -149,30 +149,30 @@ pub fn login(
 
     // 7. Save to config
     let mut cfg = ctx.config.clone();
-    cfg.docks.insert(
-        dock_name.to_string(),
-        DockEntry {
-            dock_id:         final_dock_id.clone(),
+    cfg.hub_connections.insert(
+        hub_name.to_string(),
+        HubConnection {
+            hub_id:         final_hub_id.clone(),
             key_id:          ctx.config.default_key_id.clone(),
             endpoint:        endpoint.clone(),
             created_at,
             last_push:       None,
-            dock_public_key: Some(dock_public_hex),
-            dock_secret_key: Some(dock_secret_hex),
+            hub_public_key: Some(hub_public_hex),
+            hub_secret_key: Some(hub_secret_hex),
         },
     );
-    cfg.active_dock = Some(dock_name.to_string());
+    cfg.active_hub = Some(hub_name.to_string());
     config::save(&cfg, &ctx.config_path)?;
 
     // 8. Print success
-    printer.success("docked", &[
-        ("name",     dock_name),
-        ("dock id",  &final_dock_id),
+    printer.success("attached", &[
+        ("name",     hub_name),
+        ("hub id",   &final_hub_id),
         ("endpoint", &endpoint),
     ]);
     printer.hint(&format!(
         "workspace: https://treeship.dev/workspace/{}",
-        final_dock_id
+        final_hub_id
     ));
     printer.blank();
 
@@ -180,26 +180,26 @@ pub fn login(
 }
 
 // ---------------------------------------------------------------------------
-// logout
+// detach
 // ---------------------------------------------------------------------------
 
-pub fn logout(
+pub fn detach(
     config:  Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
 
-    let dock_name = ctx.config.active_dock.as_deref()
+    let hub_name = ctx.config.active_hub.as_deref()
         .unwrap_or("(none)")
         .to_string();
 
     let mut cfg = ctx.config.clone();
-    cfg.active_dock = None;
+    cfg.active_hub = None;
     config::save(&cfg, &ctx.config_path)?;
 
-    printer.success("logged out", &[("dock", dock_name.as_str())]);
+    printer.success("detached", &[("hub", hub_name.as_str())]);
     printer.info("keys preserved");
-    printer.hint(&format!("reconnect: treeship dock use {}", dock_name));
+    printer.hint(&format!("reconnect: treeship hub use {}", hub_name));
     printer.blank();
 
     Ok(())
@@ -217,9 +217,9 @@ pub fn ls(
 
     printer.blank();
 
-    if ctx.config.docks.is_empty() {
-        printer.info("no docks configured");
-        printer.hint("treeship dock login");
+    if ctx.config.hub_connections.is_empty() {
+        printer.info("no hub connections configured");
+        printer.hint("treeship hub attach");
         printer.blank();
         return Ok(());
     }
@@ -227,27 +227,27 @@ pub fn ls(
     // Header
     printer.info(&format!(
         "{:<16} {:<24} {:<32} {}",
-        "NAME", "DOCK ID", "ENDPOINT", "STATUS"
+        "NAME", "HUB ID", "ENDPOINT", "STATUS"
     ));
     printer.info(&format!("{}", "-".repeat(80)));
 
-    let active = ctx.config.active_dock.as_deref();
+    let active = ctx.config.active_hub.as_deref();
 
     // Sort by name for stable output
-    let mut names: Vec<&String> = ctx.config.docks.keys().collect();
+    let mut names: Vec<&String> = ctx.config.hub_connections.keys().collect();
     names.sort();
 
     for name in names {
-        let entry = &ctx.config.docks[name];
+        let entry = &ctx.config.hub_connections[name];
         let status = if active == Some(name.as_str()) {
             "active"
         } else {
             "inactive"
         };
-        let short_id = if entry.dock_id.len() > 20 {
-            &entry.dock_id[..20]
+        let short_id = if entry.hub_id.len() > 20 {
+            &entry.hub_id[..20]
         } else {
-            &entry.dock_id
+            &entry.hub_id
         };
         printer.info(&format!(
             "{:<16} {:<24} {:<32} {}",
@@ -271,19 +271,19 @@ pub fn status(
 
     printer.blank();
 
-    if let Some((name, entry)) = ctx.config.active_dock_entry() {
-        printer.info(&printer.green("● docked"));
+    if let Some((name, entry)) = ctx.config.active_hub_connection() {
+        printer.info(&printer.green("● attached"));
         printer.info(&format!("  name:      {}", name));
-        printer.info(&format!("  dock id:   {}", entry.dock_id));
+        printer.info(&format!("  hub id:    {}", entry.hub_id));
         printer.info(&format!("  key:       {}", entry.key_id));
         printer.info(&format!("  endpoint:  {}", entry.endpoint));
         printer.info(&format!(
             "  workspace: https://treeship.dev/workspace/{}",
-            entry.dock_id
+            entry.hub_id
         ));
     } else {
-        printer.info(&printer.dim("○ not docked"));
-        printer.hint("treeship dock login");
+        printer.info(&printer.dim("○ not attached"));
+        printer.hint("treeship hub attach");
     }
 
     printer.blank();
@@ -291,36 +291,36 @@ pub fn status(
 }
 
 // ---------------------------------------------------------------------------
-// use_dock
+// use_hub
 // ---------------------------------------------------------------------------
 
-pub fn use_dock(
+pub fn use_hub(
     name_or_id: &str,
     config:     Option<&str>,
     printer:    &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
 
-    // Resolve by name first, then by dock_id
-    let resolved_name = if ctx.config.docks.contains_key(name_or_id) {
+    // Resolve by name first, then by hub_id
+    let resolved_name = if ctx.config.hub_connections.contains_key(name_or_id) {
         name_or_id.to_string()
     } else {
         ctx.config
-            .docks
+            .hub_connections
             .iter()
-            .find(|(_, v)| v.dock_id == name_or_id)
+            .find(|(_, v)| v.hub_id == name_or_id)
             .map(|(k, _)| k.clone())
-            .ok_or_else(|| format!("dock {:?} not found\n  Run: treeship dock ls", name_or_id))?
+            .ok_or_else(|| format!("hub connection {:?} not found\n  Run: treeship hub ls", name_or_id))?
     };
 
     let mut cfg = ctx.config.clone();
-    cfg.active_dock = Some(resolved_name.clone());
+    cfg.active_hub = Some(resolved_name.clone());
     config::save(&cfg, &ctx.config_path)?;
 
-    let entry = &ctx.config.docks[&resolved_name];
+    let entry = &ctx.config.hub_connections[&resolved_name];
     printer.success("switched", &[
-        ("dock", resolved_name.as_str()),
-        ("dock id", &entry.dock_id),
+        ("hub", resolved_name.as_str()),
+        ("hub id", &entry.hub_id),
     ]);
     printer.blank();
 
@@ -333,7 +333,7 @@ pub fn use_dock(
 
 pub fn push(
     id:      &str,
-    dock:    Option<&str>,
+    hub:     Option<&str>,
     all:     bool,
     config:  Option<&str>,
     printer: &Printer,
@@ -344,21 +344,21 @@ pub fn push(
     let resolved_id = resolve_artifact_id(&ctx, id)?;
 
     if all {
-        // Push to every dock in config
-        if ctx.config.docks.is_empty() {
-            return Err("no docks configured -- run: treeship dock login".into());
+        // Push to every hub connection in config
+        if ctx.config.hub_connections.is_empty() {
+            return Err("no hub connections configured -- run: treeship hub attach".into());
         }
-        let names: Vec<String> = ctx.config.docks.keys().cloned().collect();
+        let names: Vec<String> = ctx.config.hub_connections.keys().cloned().collect();
         for name in &names {
-            let entry = &ctx.config.docks[name];
-            printer.info(&format!("pushing to dock {:?}...", name));
-            let result = push_artifact_to_dock(&ctx, &resolved_id, entry)?;
+            let entry = &ctx.config.hub_connections[name];
+            printer.info(&format!("pushing to hub connection {:?}...", name));
+            let result = push_artifact_to_hub(&ctx, &resolved_id, entry)?;
             print_push_result(printer, name, &result);
         }
     } else {
-        let (name, entry) = ctx.config.resolve_dock(dock)
+        let (name, entry) = ctx.config.resolve_hub(hub)
             .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
-        let result = push_artifact_to_dock(&ctx, &resolved_id, entry)?;
+        let result = push_artifact_to_hub(&ctx, &resolved_id, entry)?;
         print_push_result(printer, name, &result);
     }
 
@@ -371,13 +371,13 @@ pub fn push(
 
 pub fn pull(
     id:      &str,
-    dock:    Option<&str>,
+    hub:     Option<&str>,
     config:  Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
 
-    let (_name, entry) = ctx.config.resolve_dock(dock)
+    let (_name, entry) = ctx.config.resolve_hub(hub)
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
     let endpoint = &entry.endpoint;
 
@@ -416,21 +416,21 @@ pub fn pull(
 }
 
 // ---------------------------------------------------------------------------
-// workspace
+// open
 // ---------------------------------------------------------------------------
 
-pub fn workspace(
-    dock:    Option<&str>,
+pub fn open(
+    hub:     Option<&str>,
     no_open: bool,
     config:  Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
 
-    let (_name, entry) = ctx.config.resolve_dock(dock)
+    let (_name, entry) = ctx.config.resolve_hub(hub)
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
-    let url = format!("https://treeship.dev/workspace/{}", entry.dock_id);
+    let url = format!("https://treeship.dev/workspace/{}", entry.hub_id);
 
     printer.blank();
     printer.info(&url);
@@ -447,10 +447,10 @@ pub fn workspace(
 }
 
 // ---------------------------------------------------------------------------
-// rm
+// kill
 // ---------------------------------------------------------------------------
 
-pub fn rm(
+pub fn kill(
     name:    &str,
     force:   bool,
     config:  Option<&str>,
@@ -458,13 +458,13 @@ pub fn rm(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
 
-    if !ctx.config.docks.contains_key(name) {
-        return Err(format!("dock {:?} not found\n  Run: treeship dock ls", name).into());
+    if !ctx.config.hub_connections.contains_key(name) {
+        return Err(format!("hub connection {:?} not found\n  Run: treeship hub ls", name).into());
     }
 
     if !force {
         // Prompt for confirmation
-        printer.info(&format!("remove dock {:?}? this deletes the local keys.", name));
+        printer.info(&format!("remove hub connection {:?}? this deletes the local keys.", name));
         printer.info("pass --force to skip this prompt");
 
         eprint!("confirm [y/N]: ");
@@ -478,15 +478,15 @@ pub fn rm(
 
     let mut cfg = ctx.config.clone();
 
-    // If removing the active dock, clear active_dock
-    if cfg.active_dock.as_deref() == Some(name) {
-        cfg.active_dock = None;
+    // If removing the active hub, clear active_hub
+    if cfg.active_hub.as_deref() == Some(name) {
+        cfg.active_hub = None;
     }
 
-    cfg.docks.remove(name);
+    cfg.hub_connections.remove(name);
     config::save(&cfg, &ctx.config_path)?;
 
-    printer.success("removed", &[("dock", name)]);
+    printer.success("removed", &[("hub", name)]);
     printer.blank();
 
     Ok(())
@@ -496,38 +496,38 @@ pub fn rm(
 // push_artifact  (backward-compatible for wrap --push)
 // ---------------------------------------------------------------------------
 
-/// Shared push logic used by `wrap --push`. Uses the active dock from config.
+/// Shared push logic used by `wrap --push`. Uses the active hub from config.
 pub fn push_artifact(
     ctx: &crate::ctx::Ctx,
     id:  &str,
 ) -> Result<PushResult, Box<dyn std::error::Error>> {
-    let (_name, entry) = ctx.config.resolve_dock(None)
+    let (_name, entry) = ctx.config.resolve_hub(None)
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
-    push_artifact_to_dock(ctx, id, entry)
+    push_artifact_to_hub(ctx, id, entry)
 }
 
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/// Push a single artifact to a specific dock.
-fn push_artifact_to_dock(
+/// Push a single artifact to a specific hub connection.
+fn push_artifact_to_hub(
     ctx:   &crate::ctx::Ctx,
     id:    &str,
-    entry: &DockEntry,
+    entry: &HubConnection,
 ) -> Result<PushResult, Box<dyn std::error::Error>> {
-    let dock_secret_hex = entry
-        .dock_secret_key
+    let hub_secret_hex = entry
+        .hub_secret_key
         .as_deref()
-        .ok_or("no dock_secret_key -- run: treeship dock login")?;
+        .ok_or("no hub_secret_key -- run: treeship hub attach")?;
 
     // 1. Load artifact from local storage
     let record = ctx.storage.read(id)?;
 
     // 2. Build DPoP proof JWT
     let artifacts_url = format!("{}/v1/artifacts", entry.endpoint);
-    let dpop_jwt = build_dpop_jwt(dock_secret_hex, "POST", &artifacts_url)?;
+    let dpop_jwt = build_dpop_jwt(hub_secret_hex, "POST", &artifacts_url)?;
 
     // 3. POST to Hub
     let envelope_json = serde_json::to_string(&record.envelope)?;
@@ -541,7 +541,7 @@ fn push_artifact_to_dock(
     });
 
     let resp: serde_json::Value = ureq::post(&artifacts_url)
-        .set("Authorization", &format!("DPoP {}", entry.dock_id))
+        .set("Authorization", &format!("DPoP {}", entry.hub_id))
         .set("DPoP", &dpop_jwt)
         .send_json(&body)?
         .into_json()?;
@@ -557,15 +557,15 @@ fn push_artifact_to_dock(
     Ok(PushResult { hub_url, rekor_index })
 }
 
-/// Print push result for a given dock.
-fn print_push_result(printer: &Printer, dock_name: &str, result: &PushResult) {
+/// Print push result for a given hub connection.
+fn print_push_result(printer: &Printer, hub_name: &str, result: &PushResult) {
     let rekor_str = match result.rekor_index {
         Some(idx) => format!("rekor.sigstore.dev #{}", idx),
         None      => "pending".into(),
     };
 
     printer.success("pushed", &[
-        ("dock",  dock_name),
+        ("hub",   hub_name),
         ("url",   &result.hub_url),
         ("rekor", &rekor_str),
     ]);
@@ -599,14 +599,14 @@ fn resolve_artifact_id(
 // ---------------------------------------------------------------------------
 
 fn build_dpop_jwt(
-    dock_secret_hex: &str,
+    hub_secret_hex: &str,
     method:          &str,
     url:             &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    // Decode the dock secret key from hex
-    let secret_bytes = hex::decode(dock_secret_hex)?;
+    // Decode the hub secret key from hex
+    let secret_bytes = hex::decode(hub_secret_hex)?;
     let secret_arr: [u8; 32] = secret_bytes.try_into()
-        .map_err(|_| "dock secret key must be 32 bytes")?;
+        .map_err(|_| "hub secret key must be 32 bytes")?;
     let signing_key = SigningKey::from_bytes(&secret_arr);
 
     // Header

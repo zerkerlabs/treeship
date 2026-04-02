@@ -16,7 +16,7 @@ cargo install treeship
 ```bash
 # Identity
 treeship init                           # set up a new Treeship
-treeship status                         # show state, keys, dock status
+treeship status                         # show state, keys, hub status
 
 # Sessions
 treeship session start [--name NAME]    # start a new session
@@ -51,19 +51,19 @@ treeship bundle create                  # create a bundle from artifacts
 treeship bundle export <id>             # export a chain as a .treeship file
 treeship bundle import <file>           # import a .treeship file locally
 
-# Docking (treeship.dev Hub)
-treeship dock login                     # connect to Hub (or reconnect)
-treeship dock login --name acme-corp    # named dock for separate workspace
-treeship dock logout                    # disconnect active dock (keeps keys)
-treeship dock ls                        # list all known docks
-treeship dock status                    # show active dock details
-treeship dock use <name>                # switch active dock
-treeship dock push <id>                 # push artifact to active dock
-treeship dock push <id> --dock <name>   # push to specific dock
-treeship dock push <id> --all           # push to all docks
-treeship dock pull <id>                 # pull artifact from Hub
-treeship dock workspace                 # open workspace in browser
-treeship dock rm <name>                 # remove a dock
+# Hub connections (treeship.dev Hub)
+treeship hub attach                     # connect to Hub (or reconnect)
+treeship hub attach --name acme-corp    # named hub for separate workspace
+treeship hub detach                     # disconnect active hub (keeps keys)
+treeship hub ls                         # list all known hub connections
+treeship hub status                     # show active hub details
+treeship hub use <name>                 # switch active hub connection
+treeship hub push <id>                  # push artifact to active hub
+treeship hub push <id> --hub <name>     # push to specific hub
+treeship hub push <id> --all            # push to all hubs
+treeship hub pull <id>                  # pull artifact from Hub
+treeship hub open                       # open workspace in browser
+treeship hub kill <name>                # remove a hub connection
 
 # Daemon
 treeship daemon start [--foreground]    # start the background watcher

@@ -1,6 +1,6 @@
 ---
 title: "@treeship/sdk"
-description: TypeScript SDK for Treeship. Wraps the CLI binary for signing, verification, and docking.
+description: TypeScript SDK for Treeship. Wraps the CLI binary for signing, verification, and hub connections.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -34,7 +34,7 @@ const result = await s.verify.verify(artifactId);
 console.log(result.outcome); // "pass"
 
 // Push to Hub
-const { hubUrl } = await s.dock.push(artifactId);
+const { hubUrl } = await s.hub.push(artifactId);
 console.log(hubUrl); // https://treeship.dev/verify/art_xxx
 ```
 
@@ -59,7 +59,7 @@ Call this early in your startup sequence to fail fast if the CLI is missing, rat
 |----------|------|-------------|
 | `attest` | `AttestModule` | Attestation methods (action, decision, approval, handoff) |
 | `verify` | `VerifyModule` | Verification methods |
-| `dock` | `DockModule` | Hub push/pull and connection status |
+| `hub` | `HubModule` | Hub push/pull and connection status |
 
 ## Attest module
 
@@ -186,14 +186,14 @@ const result = await s.verify.verify('art_abc123');
 | `chain` | `number` | Number of artifacts in the chain |
 | `target` | `string` | The artifact ID that was verified |
 
-## Dock module
+## Hub module
 
-### `s.dock.push(artifactId)`
+### `s.hub.push(artifactId)`
 
 Push an artifact to the Treeship Hub.
 
 ```ts
-const { hubUrl } = await s.dock.push('art_abc123');
+const { hubUrl } = await s.hub.push('art_abc123');
 // https://treeship.dev/verify/art_abc123
 ```
 
@@ -204,23 +204,23 @@ const { hubUrl } = await s.dock.push('art_abc123');
 | `hubUrl` | `string` | Public URL for the artifact on the Hub |
 | `rekorIndex` | `number \| undefined` | Rekor transparency log index, if available |
 
-### `s.dock.pull(id)`
+### `s.hub.pull(id)`
 
 Pull an artifact from the Treeship Hub to the local store.
 
 ```ts
-await s.dock.pull('art_abc123');
+await s.hub.pull('art_abc123');
 ```
 
 Returns `void`. Throws if the artifact is not found or the network request fails.
 
-### `s.dock.status()`
+### `s.hub.status()`
 
-Check the current dock connection status.
+Check the current hub connection status.
 
 ```ts
-const status = await s.dock.status();
-if (status.docked) {
+const status = await s.hub.status();
+if (status.attached) {
   console.log(`Connected to ${status.endpoint}`);
 }
 ```
@@ -229,11 +229,11 @@ if (status.docked) {
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `docked` | `boolean` | Whether the dock is currently connected |
+| `attached` | `boolean` | Whether the hub connection is currently active |
 | `endpoint` | `string \| undefined` | Hub endpoint URL, if connected |
-| `dockId` | `string \| undefined` | Dock identifier, if connected |
+| `hubId` | `string \| undefined` | Hub connection identifier, if connected |
 
-If the status check fails for any reason (CLI not installed, no config), returns `{ docked: false }` instead of throwing.
+If the status check fails for any reason (CLI not installed, no config), returns `{ attached: false }` instead of throwing.
 
 ## Exported types
 

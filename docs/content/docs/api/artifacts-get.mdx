@@ -27,7 +27,7 @@ No authentication required. All artifacts on Hub are publicly readable.
   "parent_id": "art_previous123",
   "hub_url": "https://treeship.dev/verify/art_f7e6d5c4b3a2f7e6",
   "rekor_index": 12345,
-  "dock_id": "dck_9f8e7d6c"
+  "hub_id": "hub_9f8e7d6c"
 }
 ```
 
@@ -41,7 +41,7 @@ No authentication required. All artifacts on Hub are publicly readable.
 | `parent_id` | string or null | Parent artifact ID |
 | `hub_url` | string | Public verification URL |
 | `rekor_index` | integer or null | Sigstore Rekor log index |
-| `dock_id` | string | The dock that pushed this artifact |
+| `hub_id` | string | The hub connection that pushed this artifact |
 
 ## Errors
 
@@ -57,6 +57,6 @@ curl https://api.treeship.dev/v1/artifacts/art_f7e6d5c4b3a2f7e6
 
 ## Notes
 
-- The `envelope_json` field contains the full DSSE envelope. You can verify it locally after importing it with `treeship dock pull`.
-- The response includes `dock_id`, which identifies which device pushed the artifact. This is not a secret -- it is a public identifier.
-- Use `treeship dock pull <id>` from the CLI to download an artifact into your local store.
+- The `envelope_json` field contains the full DSSE envelope. You can verify it locally after importing it with `treeship hub pull`.
+- The response includes `hub_id`, which identifies which device pushed the artifact. This is not a secret -- it is a public identifier.
+- Use `treeship hub pull <id>` from the CLI to download an artifact into your local store.

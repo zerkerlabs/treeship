@@ -55,8 +55,8 @@ pub struct App {
     pub artifacts: Vec<ArtifactEntry>,
     pub selected: usize,
     pub session: Option<SessionInfo>,
-    pub dock_status: String,
-    pub dock_endpoint: String,
+    pub hub_status: String,
+    pub hub_endpoint: String,
     pub ship_id: String,
     pub key_id: String,
     pub pending: Vec<PendingEntry>,
@@ -72,8 +72,8 @@ impl App {
             artifacts: Vec::new(),
             selected: 0,
             session: None,
-            dock_status: if ctx.config.is_docked() { "docked".into() } else { "undocked".into() },
-            dock_endpoint: ctx.config.active_dock_entry()
+            hub_status: if ctx.config.is_attached() { "attached".into() } else { "not attached".into() },
+            hub_endpoint: ctx.config.active_hub_connection()
                 .map(|(_, e)| e.endpoint.clone())
                 .unwrap_or_else(|| "treeship.dev".into()),
             ship_id: ctx.config.ship_id.clone(),

@@ -22,47 +22,47 @@ AI agents are being deployed into workflows where no one can verify what actuall
 - **Endorsements**: Third-party assertions of compliance or validation
 - **Bundles**: Portable packages containing everything needed for offline verification
 
+## Three Layers
+
+| Layer | What it is |
+|-------|------------|
+| **Agents** | Actors (humans or AI) that produce receipts for their actions |
+| **Ships** | Trust domains that hold receipts, keys, and Merkle trees |
+| **Hub connections** | Workspace links that connect a local ship to a remote hub for sharing and visibility |
+
 ## Quick Start
 
 ```bash
-# Initialize a local Treeship
+# Install (pick one)
+npm install -g treeship
+cargo install treeship-cli
+
+# Initialize a local ship
 treeship init
 
-# Issue action receipts as your agents work
-treeship issue action \
-  --actor agent://researcher \
-  --action-name search.web \
-  --inputs '{"query":"AI safety papers"}' \
-  --outputs '{"results":["paper1","paper2"]}'
+# Wrap a command and capture a trust receipt
+treeship wrap -- npm test
 
-treeship issue action \
-  --actor agent://checkout \
-  --action-name payments.create \
-  --inputs '{"amount":1200}' \
-  --outputs '{"payment_id":"pay_123"}'
+# Verify the last receipt
+treeship verify last
 
-# Record a human approval
-treeship issue approval \
-  --approver human://ops-manager \
-  --action-hash <hash-from-above>
+# Attach to a hub (connects your ship to treeship.dev)
+treeship hub attach
 
-# Record an agent-to-agent handoff
-treeship issue handoff \
-  --from agent://researcher \
-  --to agent://checkout \
-  --task "purchase laptop under budget"
+# Push the last receipt to the hub
+treeship hub push last
+```
 
-# Create a checkpoint (signed Merkle root)
-treeship checkpoint
+### Multi-hub setup
 
-# Export a portable bundle
-treeship bundle --out workflow.treeship.json
+You can connect a single ship to multiple hubs at once.
 
-# Verify the bundle (works offline, no server needed)
-treeship verify workflow.treeship.json
+```bash
+# Attach a named hub connection
+treeship hub attach --name work
 
-# View the receipt log
-treeship log
+# Push to a specific hub
+treeship hub push last --hub work
 ```
 
 ## How It Works
@@ -85,7 +85,7 @@ Agent / Human Action
         +--> Bundle Builder
         +--> Checkpoint (signed Merkle root)
         +--> Verifier
-        +--> Optional: Dock to Hub
+        +--> Optional: Hub connection
 ```
 
 ### Verification checks
@@ -121,7 +121,7 @@ Treeship does not decide trust globally. Each verifier decides trust using local
 - **No central authority**: Trust comes from keys and policy, not a Treeship server
 - **Portable**: Bundles are self-contained -- verify anywhere
 - **Privacy-aware**: Default to input/output hashes, not raw content
-- **Optional docking**: Connect to treeship.dev Hub for visibility and sharing
+- **Optional hub connections**: Connect to treeship.dev for visibility and sharing
 
 ### Statement Types
 
@@ -135,9 +135,9 @@ treeship/endorsement/v1  -- third-party asserts compliance
 ## SDK Usage
 
 ```typescript
-import { Ship } from "@treeship/core";
+import { Ship } from "@treeship/sdk";
 
-// Initialize or load a Treeship
+// Initialize or load a ship
 const ship = await Ship.init("./.treeship", "my-agent");
 
 // Attest an action
@@ -169,11 +169,12 @@ await ship.save();
 | Package | Location | Description |
 |---------|----------|-------------|
 | `treeship` (Rust core) | `packages/core/` | Receipt engine, signing, Merkle tree, verification |
-| `treeship` (CLI) | `packages/cli/` | 25+ commands for issuing, bundling, verifying, docking |
+| `treeship` (CLI) | `packages/cli/` | 25+ commands for issuing, bundling, verifying, hub connections |
 | Hub server (Go) | `packages/hub/` | 12-endpoint API for treeship.dev |
 | `@treeship/core-wasm` | `packages/core-wasm/` | 241KB WASM verifier (Merkle + Ed25519) |
 | `@treeship/sdk` | `packages/sdk-ts/` | TypeScript SDK wrapping the WASM verifier |
 | `@treeship/mcp` | `bridges/mcp/` | MCP bridge for agent tool integration |
+| `treeship-sdk` | `packages/sdk-py/` | Python SDK |
 | TUI | `packages/cli/` | Interactive terminal dashboard (Ratatui) |
 
 ## Standards
@@ -195,7 +196,7 @@ Treeship builds on existing standards rather than inventing cryptography:
 - [x] Merkle tree with inclusion proofs and checkpoints
 - [x] Policy and rules engine
 - [x] Go Hub server (12 API endpoints)
-- [x] Dock authentication (DPoP, device flow)
+- [x] Hub authentication (DPoP, device flow)
 - [x] WASM verifier (241KB, browser-ready)
 - [x] TypeScript SDK (@treeship/sdk)
 - [x] MCP bridge (@treeship/mcp)

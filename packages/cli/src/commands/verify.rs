@@ -82,7 +82,7 @@ pub fn run(
 
     // Resolve starting artifact.
     let _root_record = ctx.storage.read(target)
-        .map_err(|_| format!("artifact not found locally: {target}\n  Run 'treeship dock pull {target}' to fetch from Hub"))?;
+        .map_err(|_| format!("artifact not found locally: {target}\n  Run 'treeship hub pull {target}' to fetch from Hub"))?;
 
     let mut checks: Vec<ArtifactCheck> = Vec::new();
     let _current_id = Some(target.to_string());

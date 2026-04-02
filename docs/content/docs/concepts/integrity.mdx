@@ -73,7 +73,7 @@ If an agent tries to reuse a nonce, verification fails. One approval, one action
 
 ## Rekor anchoring
 
-When docked to the Hub, receipts are optionally anchored to Sigstore's Rekor transparency log. This provides a public, immutable timestamp: proof the receipt existed before a certain time.
+When attached to the Hub, receipts are optionally anchored to Sigstore's Rekor transparency log. This provides a public, immutable timestamp: proof the receipt existed before a certain time.
 
 Rekor anchoring adds a property that local hash chaining cannot provide on its own: third-party proof of time. A local chain proves ordering (A before B before C). A Rekor entry proves "A existed before 2026-03-28T14:30:00Z" according to a public log that Treeship does not control.
 

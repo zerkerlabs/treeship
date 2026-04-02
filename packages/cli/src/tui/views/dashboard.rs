@@ -33,13 +33,13 @@ pub fn render(frame: &mut Frame, app: &App) {
 }
 
 fn render_header(frame: &mut Frame, area: Rect, app: &App) {
-    let dock_indicator = if app.dock_status == "docked" {
-        Span::styled("docked", Style::default().fg(GREEN))
+    let hub_indicator = if app.hub_status == "attached" {
+        Span::styled("attached", Style::default().fg(GREEN))
     } else {
-        Span::styled("undocked", Style::default().fg(DIM))
+        Span::styled("not attached", Style::default().fg(DIM))
     };
 
-    let dot = if app.dock_status == "docked" {
+    let dot = if app.hub_status == "attached" {
         Span::styled(" * ", Style::default().fg(GREEN))
     } else {
         Span::styled(" o ", Style::default().fg(DIM))
@@ -52,7 +52,7 @@ fn render_header(frame: &mut Frame, area: Rect, app: &App) {
         Span::styled(app::short_id(&app.key_id), Style::default().fg(WHITE)),
         Span::styled("  | ", Style::default().fg(DIM)),
         dot,
-        dock_indicator,
+        hub_indicator,
     ]);
 
     let block = Block::default()
@@ -76,7 +76,7 @@ fn render_body(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_left_panel(frame: &mut Frame, area: Rect, app: &App) {
-    // Split left panel into: session, pending, dock
+    // Split left panel into: session, pending, hub
     let sections = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -153,26 +153,26 @@ fn render_left_panel(frame: &mut Frame, area: Rect, app: &App) {
         frame.render_widget(para, sections[1]);
     }
 
-    // Dock status
+    // Hub status
     {
         let block = Block::default()
-            .title(" DOCK ")
+            .title(" HUB ")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(DIM));
 
-        let lines = if app.dock_status == "docked" {
+        let lines = if app.hub_status == "attached" {
             vec![
                 Line::from(vec![
                     Span::styled("* ", Style::default().fg(GREEN)),
-                    Span::styled(&app.dock_endpoint, Style::default().fg(WHITE)),
+                    Span::styled(&app.hub_endpoint, Style::default().fg(WHITE)),
                 ]),
-                Line::from(Span::styled("docked", Style::default().fg(GREEN))),
+                Line::from(Span::styled("attached", Style::default().fg(GREEN))),
             ]
         } else {
             vec![
-                Line::from(Span::styled("o undocked", Style::default().fg(DIM))),
+                Line::from(Span::styled("o not attached", Style::default().fg(DIM))),
                 Line::from(Span::styled(
-                    "treeship dock login",
+                    "treeship hub attach",
                     Style::default().fg(DIM),
                 )),
             ]

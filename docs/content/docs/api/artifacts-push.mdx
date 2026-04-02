@@ -9,7 +9,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 ```
 POST /v1/artifacts
-Authorization: DPoP dck_9f8e7d6c
+Authorization: DPoP hub_9f8e7d6c
 DPoP: eyJhbGciOiJFZERTQSIsInR5cCI6ImRwb3Arand0In0...
 Content-Type: application/json
 ```
@@ -36,7 +36,7 @@ Content-Type: application/json
 
 ## Authentication
 
-This endpoint requires DPoP authentication. The `Authorization` header must be `DPoP {dock_id}`, and the `DPoP` header must be a valid JWT signed by the dock private key with:
+This endpoint requires DPoP authentication. The `Authorization` header must be `DPoP {hub_id}`, and the `DPoP` header must be a valid JWT signed by the hub private key with:
 
 - `htm: "POST"` matching the HTTP method
 - `htu: "https://api.treeship.dev/v1/artifacts"` matching the endpoint URL
@@ -64,7 +64,7 @@ See the [Hub API overview](/docs/api/overview) for full DPoP details.
 | Status | Body | Cause |
 |--------|------|-------|
 | `401` | `{"error": "invalid DPoP proof"}` | DPoP JWT invalid or expired |
-| `401` | `{"error": "dock not found"}` | Unknown dock ID |
+| `401` | `{"error": "hub not found"}` | Unknown hub ID |
 | `400` | `{"error": "missing required field: artifact_id"}` | Incomplete request body |
 
 ## Rekor anchoring
@@ -75,7 +75,7 @@ Hub automatically anchors each pushed artifact to [Sigstore Rekor](https://rekor
 
 ```bash
 curl -X POST https://api.treeship.dev/v1/artifacts \
-  -H "Authorization: DPoP dck_9f8e7d6c" \
+  -H "Authorization: DPoP hub_9f8e7d6c" \
   -H "DPoP: eyJhbGciOiJFZERTQSJ9..." \
   -H "Content-Type: application/json" \
   -d '{
@@ -89,5 +89,5 @@ curl -X POST https://api.treeship.dev/v1/artifacts \
 ```
 
 <Callout type="info">
-In practice, you do not call this endpoint directly. The CLI handles artifact construction, signing, and pushing when you run `treeship dock push`.
+In practice, you do not call this endpoint directly. The CLI handles artifact construction, signing, and pushing when you run `treeship hub push`.
 </Callout>

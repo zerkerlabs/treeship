@@ -20,7 +20,7 @@ A Treeship artifact is valid if its Ed25519 signature verifies against a known p
 The Hub is convenience infrastructure for sharing and discovery. It cannot forge a passing verification result.
 </Callout>
 
-## Ships, agents, and docks
+## Ships, agents, and hub connections
 
 Treeship's trust architecture has three layers:
 
@@ -48,29 +48,29 @@ Owner (human)
 
 The owner holds the private key, encrypted at rest.
 
-### Layer 3: Docks
+### Layer 3: Hub connections
 
-A dock is a named push destination from your ship to a Hub workspace. Docks are how your trust domain connects to the outside world.
+A hub connection is a named link from your ship to a Hub workspace. Hub connections are how your trust domain connects to the outside world.
 
-Think of docks like git remotes. Your local repository (the ship) stays the same. Remotes (docks) just control where you push.
+Think of hub connections like tmux sessions. Your local ship stays the same. Hub connections just control where you push and which workspace your artifacts appear in.
 
 ```
 Ship (one keypair, one artifact store)
-├── dock: default  -> hub.treeship.dev/alice/personal
-├── dock: acme     -> hub.treeship.dev/acme-corp/projects
-└── dock: client-x -> hub.treeship.dev/clientx/deliverables
+├── hub: default  -> hub.treeship.dev/alice/personal
+├── hub: acme     -> hub.treeship.dev/acme-corp/projects
+└── hub: client-x -> hub.treeship.dev/clientx/deliverables
 ```
 
-Key properties of docks:
+Key properties of hub connections:
 
-- Adding or removing a dock never changes your ship key
-- Artifacts are identical regardless of which dock you push them through
-- Each dock has its own DPoP keypair for authenticating with Hub
-- Most developers only need one dock
+- Adding or removing a hub connection never changes your ship key
+- Artifacts are identical regardless of which hub connection you push them through
+- Each hub connection has its own DPoP keypair for authenticating with Hub
+- Most developers only need one hub connection
 
-### When to create a new ship vs. add a dock
+### When to create a new ship vs. add a hub connection
 
-**Add a dock** when you want the same identity to publish artifacts to a different Hub workspace. Your artifacts carry the same signature either way -- docks just control visibility.
+**Add a hub connection** when you want the same identity to publish artifacts to a different Hub workspace. Your artifacts carry the same signature either way -- hub connections just control visibility.
 
 **Create a new ship** when you need a separate identity with its own keypair. For example, a personal ship and a work ship, or separate ships for separate projects that should not share a trust root.
 

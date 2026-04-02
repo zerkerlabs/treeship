@@ -31,8 +31,8 @@ Hub uses DPoP (Demonstration of Proof-of-Possession) for write endpoints. There 
 
 | Header | Value |
 |--------|-------|
-| `Authorization` | `DPoP {dock_id}` |
-| `DPoP` | A fresh JWT signed by the dock private key |
+| `Authorization` | `DPoP {hub_id}` |
+| `DPoP` | A fresh JWT signed by the hub private key |
 
 The DPoP JWT contains:
 
@@ -50,7 +50,7 @@ Hub verifies:
 - `jti` has not been seen before (replay protection)
 - `htm` matches the HTTP method of the request
 - `htu` matches the request URL
-- The JWT signature matches the dock public key stored during login
+- The JWT signature matches the hub public key stored during login
 
 **Read endpoints** require no authentication.
 
@@ -58,12 +58,12 @@ Hub verifies:
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| `GET` | `/v1/dock/challenge` | None | Start device flow login |
-| `POST` | `/v1/dock/authorize` | None | Complete device flow login |
-| `GET` | `/v1/dock/authorized` | None | Poll device flow status |
+| `GET` | `/v1/hub/challenge` | None | Start device flow login |
+| `POST` | `/v1/hub/authorize` | None | Complete device flow login |
+| `GET` | `/v1/hub/authorized` | None | Poll device flow status |
 | `POST` | `/v1/artifacts` | DPoP | Push a signed artifact |
 | `GET` | `/v1/artifacts/:id` | None | Retrieve an artifact |
-| `GET` | `/v1/workspace/:dock_id` | DPoP | List artifacts in a workspace |
+| `GET` | `/v1/workspace/:hub_id` | DPoP | List artifacts in a workspace |
 | `GET` | `/v1/verify/:id` | None | Verify an artifact server-side |
 | `POST` | `/v1/merkle/checkpoint` | DPoP | Publish a Merkle checkpoint |
 | `POST` | `/v1/merkle/proof` | DPoP | Publish a Merkle inclusion proof |

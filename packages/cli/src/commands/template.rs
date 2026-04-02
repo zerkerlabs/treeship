@@ -281,7 +281,7 @@ pub fn save(
         "name: {slug}\nversion: 1\ndescription: >\n  Custom template saved from project config.\n\n"
     );
 
-    // Strip ship_id lines and dock credentials from the YAML
+    // Strip ship_id lines and hub/dock credentials from the YAML
     let cleaned: String = contents
         .lines()
         .filter(|line| {
@@ -290,6 +290,9 @@ pub fn save(
                 && !trimmed.starts_with("dock_public_key:")
                 && !trimmed.starts_with("dock_secret_key:")
                 && !trimmed.starts_with("dock_id:")
+                && !trimmed.starts_with("hub_public_key:")
+                && !trimmed.starts_with("hub_secret_key:")
+                && !trimmed.starts_with("hub_id:")
                 && !trimmed.starts_with("workspace_id:")
         })
         .collect::<Vec<&str>>()

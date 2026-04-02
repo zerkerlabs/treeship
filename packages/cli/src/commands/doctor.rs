@@ -286,16 +286,16 @@ pub fn run(
         ));
     }
 
-    // 6. Is Hub docked?
+    // 6. Is Hub attached?
     if let Ok(ref ctx) = ctx_result {
-        if let Some((name, entry)) = ctx.config.active_dock_entry() {
-            let short_dock = if entry.dock_id.len() > 12 { &entry.dock_id[..12] } else { &entry.dock_id };
+        if let Some((name, entry)) = ctx.config.active_hub_connection() {
+            let short_hub = if entry.hub_id.len() > 12 { &entry.hub_id[..12] } else { &entry.hub_id };
             checks.push(Check::pass(
-                "hub docked",
-                &format!("{} ({}, {})", entry.endpoint, name, short_dock),
+                "hub attached",
+                &format!("{} ({}, {})", entry.endpoint, name, short_hub),
             ));
 
-            // 7. Is Hub reachable? (only check if docked)
+            // 7. Is Hub reachable? (only check if attached)
             let reachable = check_hub_reachable(&entry.endpoint);
             if reachable {
                 checks.push(Check::pass(
@@ -311,7 +311,7 @@ pub fn run(
             }
         } else {
             checks.push(Check::info(
-                "hub undocked",
+                "hub not attached",
                 "not connected to treeship.dev",
             ));
         }

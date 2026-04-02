@@ -21,15 +21,15 @@ components:
       scheme: DPoP
       description: |
         RFC 9449 DPoP proof-of-possession.
-        Every request carries a DPoP JWT signed by the hub key.
+        Every request carries a DPoP JWT signed by the dock key.
         Stolen credentials are useless without the private key.
 
 paths:
-  /v1/hub/challenge:
+  /v1/dock/challenge:
     get:
       summary: Start device flow
       description: Returns a device_code and nonce to begin the RFC 8628 device authorization flow.
-      operationId: hubChallenge
+      operationId: dockChallenge
       security: []
       responses:
         '200':
@@ -42,13 +42,13 @@ paths:
                   device_code: { type: string, example: "dvc_a1b2c3d4" }
                   nonce:       { type: string, example: "nce_7f8e9d0a" }
                   expires_at:  { type: integer, example: 1711494000 }
-                  verify_url:  { type: string, example: "https://treeship.dev/hub/activate" }
+                  verify_url:  { type: string, example: "https://treeship.dev/dock/activate" }
 
-  /v1/hub/authorized:
+  /v1/dock/authorized:
     get:
       summary: Poll for device flow completion
-      description: Poll after the user has approved at treeship.dev/hub/activate.
-      operationId: hubAuthorized
+      description: Poll after the user has approved at treeship.dev/dock/activate.
+      operationId: dockAuthorized
       security: []
       parameters:
         - name: device_code
@@ -63,15 +63,15 @@ paths:
               schema:
                 type: object
                 properties:
-                  hub_id: { type: string, example: "hub_9f8e7d6c" }
+                  dock_id: { type: string, example: "dck_9f8e7d6c" }
         '202':
           description: Pending -- user has not approved yet
 
-  /v1/hub/authorize:
+  /v1/dock/authorize:
     post:
       summary: Complete device flow authorization
       description: Called by treeship.dev when the user approves. Stores the keypair binding.
-      operationId: hubAuthorize
+      operationId: dockAuthorize
       security: []
       requestBody:
         required: true
@@ -79,20 +79,20 @@ paths:
           application/json:
             schema:
               type: object
-              required: [device_code, ship_public_key, hub_public_key]
+              required: [device_code, ship_public_key, dock_public_key]
               properties:
                 device_code:      { type: string }
                 ship_public_key:  { type: string, description: "hex-encoded Ed25519 public key" }
-                hub_public_key:   { type: string, description: "hex-encoded Ed25519 public key" }
+                dock_public_key:  { type: string, description: "hex-encoded Ed25519 public key" }
       responses:
         '200':
-          description: Attached
+          description: Docked
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  hub_id: { type: string }
+                  dock_id: { type: string }
 
   /v1/artifacts:
     post:
@@ -171,13 +171,13 @@ paths:
                   approver: { type: string, nullable: true }
                   checks:   { type: array, items: { type: object } }
 
-  /v1/workspace/{hubId}:
+  /v1/workspace/{dockId}:
     get:
       summary: Fetch workspace artifacts
-      description: Returns all artifacts associated with a hub connection. Requires DPoP authentication.
+      description: Returns all artifacts associated with a dock. Requires DPoP authentication.
       operationId: getWorkspace
       parameters:
-        - name: hubId
+        - name: dockId
           in: path
           required: true
           schema: { type: string }
@@ -189,12 +189,12 @@ paths:
               schema:
                 type: object
                 properties:
-                  hub_id: { type: string }
+                  dock_id: { type: string }
                   artifacts: { type: array, items: { type: object } }
         '401':
           description: DPoP authentication failed
         '404':
-          description: Hub connection not found
+          description: Dock not found
 
   /v1/merkle/checkpoint:
     post:
@@ -274,15 +274,15 @@ paths:
   /v1/merkle/checkpoint/latest:
     get:
       summary: Fetch the latest Merkle checkpoint
-      description: Returns the most recent checkpoint. Optionally filter by hub_id query parameter.
+      description: Returns the most recent checkpoint. Optionally filter by dock_id query parameter.
       operationId: getLatestCheckpoint
       security: []
       parameters:
-        - name: hub_id
+        - name: dock_id
           in: query
           required: false
           schema: { type: string }
-          description: Filter by hub ID
+          description: Filter by dock ID
       responses:
         '200':
           description: Latest checkpoint

@@ -27,7 +27,7 @@ Treeship produces cryptographic receipts that answer all four.
 Treeship is not a scanner, EDR, SIEM, orchestration framework, or centralized trust authority. It is the **evidence layer**. Other tools find problems. Treeship signs what happened.
 </Callout>
 
-## Architecture: agents, ships, and docks
+## Architecture: agents, ships, and hub connections
 
 Treeship is organized in three layers:
 
@@ -35,9 +35,9 @@ Treeship is organized in three layers:
 
 **Layer 2: Ships** -- the trust domain itself. One ship equals one Ed25519 keypair and one local artifact store. A ship is your identity boundary. All artifacts signed by a ship share the same root of trust.
 
-**Layer 3: Docks** -- how a ship connects to the outside world. A dock is a named push destination to a Hub workspace. Think of docks like git remotes -- named connections from the same repository to different servers.
+**Layer 3: Hub connections** -- how a ship connects to the outside world. A hub connection is a named link from your ship to a Hub workspace. Think of hub connections like tmux sessions -- named connections you can attach, detach, and kill independently.
 
-Most developers need exactly one dock. You would create multiple docks if you publish artifacts to separate audiences -- for example, one dock for your personal workspace and another for a client's workspace. The ship key stays the same across all docks, and your artifacts never change. Docks only control where artifacts appear on Hub.
+Most developers need exactly one hub connection. You would create multiple connections if you publish artifacts to separate audiences -- for example, one connection for your personal workspace and another for a client's workspace. The ship key stays the same across all connections, and your artifacts never change. Hub connections only control where artifacts appear on Hub.
 
 ## Core properties
 

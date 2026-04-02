@@ -23,7 +23,7 @@ use printer::{Format, Printer};
     name    = "treeship",
     version = env!("CARGO_PKG_VERSION"),
     about   = "Portable trust receipts for agent workflows",
-    after_help = "Docs: https://treeship.dev/docs   Dock: treeship dock login",
+    after_help = "Docs: https://treeship.dev/docs   Hub: treeship hub attach",
 )]
 struct Cli {
     /// Config file (default: ~/.treeship/config.json)
@@ -59,7 +59,7 @@ enum Command {
     ///   treeship init --config /opt/myapp/.treeship/config.json
     Init(InitArgs),
 
-    /// Show ship state: keys, recent artifacts, dock status
+    /// Show ship state: keys, recent artifacts, hub status
     ///
     /// Examples:
     ///   treeship status
@@ -123,13 +123,13 @@ enum Command {
     /// Connect to treeship.dev Hub -- push, pull, and share artifacts
     ///
     /// Examples:
-    ///   treeship dock login
-    ///   treeship dock push art_a1b2c3d4e5f6a1b2
-    ///   treeship dock pull art_a1b2c3d4e5f6a1b2
-    ///   treeship dock status
-    ///   treeship dock undock
+    ///   treeship hub attach
+    ///   treeship hub push art_a1b2c3d4e5f6a1b2
+    ///   treeship hub pull art_a1b2c3d4e5f6a1b2
+    ///   treeship hub status
+    ///   treeship hub detach
     #[command(subcommand)]
-    Dock(DockCommand),
+    Hub(HubCommand),
 
     /// Install shell hooks for automatic attestation
     ///
@@ -246,7 +246,7 @@ enum Command {
     /// Interactive terminal dashboard
     ///
     /// Opens a full-screen TUI showing session status, recent artifacts,
-    /// pending approvals, and dock status. Reads only from local storage.
+    /// pending approvals, and hub status. Reads only from local storage.
     ///
     /// Examples:
     ///   treeship ui
@@ -832,75 +832,75 @@ enum KeysCommand {
     List,
 }
 
-// --- dock -------------------------------------------------------------------
+// --- hub --------------------------------------------------------------------
 
 #[derive(Subcommand)]
-enum DockCommand {
-    /// Connect to Hub (creates new dock or reconnects to existing)
+enum HubCommand {
+    /// Attach to Hub (creates new hub connection or reconnects to existing)
     ///
     /// Examples:
-    ///   treeship dock login
-    ///   treeship dock login --name acme-corp
-    ///   treeship dock login --endpoint http://localhost:8080
-    Login(DockLoginArgs),
+    ///   treeship hub attach
+    ///   treeship hub attach --name acme-corp
+    ///   treeship hub attach --endpoint http://localhost:8080
+    Attach(HubAttachArgs),
 
-    /// Disconnect active dock (keeps keys for reconnect)
+    /// Detach active hub connection (keeps keys for reconnect)
     ///
     /// Examples:
-    ///   treeship dock logout
-    Logout,
+    ///   treeship hub detach
+    Detach,
 
-    /// List all known docks
+    /// List all known hub connections
     ///
     /// Examples:
-    ///   treeship dock ls
+    ///   treeship hub ls
     Ls,
 
-    /// Show active dock connection status
+    /// Show active hub connection status
     ///
     /// Examples:
-    ///   treeship dock status
+    ///   treeship hub status
     Status,
 
-    /// Switch active dock
+    /// Switch active hub connection
     ///
     /// Examples:
-    ///   treeship dock use work
-    ///   treeship dock use dck_a2b3c4d5e6f7
-    Use(DockUseArgs),
+    ///   treeship hub use work
+    ///   treeship hub use hub_a2b3c4d5e6f7
+    Use(HubUseArgs),
 
     /// Push a signed artifact to Hub
     ///
     /// Examples:
-    ///   treeship dock push art_a1b2c3d4
-    ///   treeship dock push last --dock acme-corp
-    ///   treeship dock push art_a1b2c3d4 --all
-    Push(DockPushArgs),
+    ///   treeship hub push art_a1b2c3d4
+    ///   treeship hub push last --hub acme-corp
+    ///   treeship hub push art_a1b2c3d4 --all
+    Push(HubPushArgs),
 
     /// Pull an artifact from Hub into local storage
     ///
     /// Examples:
-    ///   treeship dock pull art_a1b2c3d4
-    ///   treeship dock pull art_a1b2c3d4 --dock acme-corp
-    Pull(DockPullArgs),
+    ///   treeship hub pull art_a1b2c3d4
+    ///   treeship hub pull art_a1b2c3d4 --hub acme-corp
+    Pull(HubPullArgs),
 
     /// Open workspace in browser
     ///
     /// Examples:
-    ///   treeship dock workspace
-    ///   treeship dock workspace --dock acme-corp
-    Workspace(DockWorkspaceArgs),
+    ///   treeship hub open
+    ///   treeship hub open --hub acme-corp
+    Open(HubOpenArgs),
 
-    /// Remove a dock (revokes + deletes local keys)
+    /// Remove a hub connection (revokes + deletes local keys)
     ///
     /// Examples:
-    ///   treeship dock rm acme-corp
-    Rm(DockRmArgs),
+    ///   treeship hub kill acme-corp
+    Kill(HubKillArgs),
 }
 
 #[derive(Args)]
-struct DockLoginArgs {
-    /// Name for this dock (default: "default")
+struct HubAttachArgs {
+    /// Name for this hub connection (default: "default")
     #[arg(long, value_name = "NAME")]
     name: Option<String>,
 
@@ -910,40 +910,40 @@ struct DockLoginArgs {
 }
 
 #[derive(Args)]
-struct DockUseArgs {
-    /// Dock name or dock ID to switch to
+struct HubUseArgs {
+    /// Hub connection name or hub ID to switch to
     name_or_id: String,
 }
 
 #[derive(Args)]
-struct DockPushArgs {
+struct HubPushArgs {
     /// Artifact ID to push (or "last" for most recent)
     id: String,
 
-    /// Push to a specific dock by name or ID
+    /// Push to a specific hub connection by name or ID
     #[arg(long, value_name = "NAME|ID")]
-    dock: Option<String>,
+    hub: Option<String>,
 
-    /// Push to all known docks
+    /// Push to all known hub connections
     #[arg(long)]
     all: bool,
 }
 
 #[derive(Args)]
-struct DockPullArgs {
+struct HubPullArgs {
     /// Artifact ID to pull
     id: String,
 
-    /// Pull from a specific dock by name or ID
+    /// Pull from a specific hub connection by name or ID
     #[arg(long, value_name = "NAME|ID")]
-    dock: Option<String>,
+    hub: Option<String>,
 }
 
 #[derive(Args)]
-struct DockWorkspaceArgs {
-    /// Open workspace for a specific dock
+struct HubOpenArgs {
+    /// Open workspace for a specific hub connection
     #[arg(long, value_name = "NAME|ID")]
-    dock: Option<String>,
+    hub: Option<String>,
 
     /// Print URL only, don't open browser
     #[arg(long)]
@@ -951,8 +951,8 @@ struct DockWorkspaceArgs {
 }
 
 #[derive(Args)]
-struct DockRmArgs {
-    /// Dock name to remove
+struct HubKillArgs {
+    /// Hub connection name to remove
     name: String,
 
     /// Skip confirmation prompt
@@ -1267,50 +1267,50 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             KeysCommand::List => commands::keys::list(cli.config.as_deref(), printer),
         },
 
-        Command::Dock(sub) => match sub {
-            DockCommand::Login(a) => commands::dock::login(
+        Command::Hub(sub) => match sub {
+            HubCommand::Attach(a) => commands::hub::attach(
                 a.name.as_deref(),
                 a.endpoint.as_deref(),
                 cli.config.as_deref(),
                 printer,
             ),
-            DockCommand::Logout => commands::dock::logout(
+            HubCommand::Detach => commands::hub::detach(
                 cli.config.as_deref(),
                 printer,
             ),
-            DockCommand::Ls => commands::dock::ls(
+            HubCommand::Ls => commands::hub::ls(
                 cli.config.as_deref(),
                 printer,
             ),
-            DockCommand::Status => commands::dock::status(
+            HubCommand::Status => commands::hub::status(
                 cli.config.as_deref(),
                 printer,
             ),
-            DockCommand::Use(a) => commands::dock::use_dock(
+            HubCommand::Use(a) => commands::hub::use_hub(
                 &a.name_or_id,
                 cli.config.as_deref(),
                 printer,
             ),
-            DockCommand::Push(a) => commands::dock::push(
+            HubCommand::Push(a) => commands::hub::push(
                 &a.id,
-                a.dock.as_deref(),
+                a.hub.as_deref(),
                 a.all,
                 cli.config.as_deref(),
                 printer,
             ),
-            DockCommand::Pull(a) => commands::dock::pull(
+            HubCommand::Pull(a) => commands::hub::pull(
                 &a.id,
-                a.dock.as_deref(),
+                a.hub.as_deref(),
                 cli.config.as_deref(),
                 printer,
             ),
-            DockCommand::Workspace(a) => commands::dock::workspace(
-                a.dock.as_deref(),
+            HubCommand::Open(a) => commands::hub::open(
+                a.hub.as_deref(),
                 a.no_open,
                 cli.config.as_deref(),
                 printer,
             ),
-            DockCommand::Rm(a) => commands::dock::rm(
+            HubCommand::Kill(a) => commands::hub::kill(
                 &a.name,
                 a.force,
                 cli.config.as_deref(),

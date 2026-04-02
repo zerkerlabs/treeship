@@ -1,6 +1,8 @@
 {
   "title": "Concepts",
   "pages": [
+    "ships",
+    "hub",
     "trust-model",
     "vocabulary",
     "actors",

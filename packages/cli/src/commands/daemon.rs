@@ -281,7 +281,7 @@ fn auto_push_new_artifacts(
     ts: &Path,
 ) {
     // For v1: just log that auto-push would happen.
-    // Actual push requires the dock module; we note it and move on.
+    // Actual push requires the hub module; we note it and move on.
     daemon_log(ts, "auto-push: would push new artifacts (not implemented in v1)");
 }
 

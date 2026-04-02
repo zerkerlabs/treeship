@@ -27,10 +27,10 @@ No authentication required.
 GET /v1/merkle/checkpoint/latest
 ```
 
-Accepts an optional `dock_id` query parameter to scope the result to a specific dock.
+Accepts an optional `hub_id` query parameter to scope the result to a specific hub connection.
 
 ```
-GET /v1/merkle/checkpoint/latest?dock_id=dck_abc123
+GET /v1/merkle/checkpoint/latest?hub_id=hub_abc123
 ```
 
 ## Publish a checkpoint
@@ -94,7 +94,7 @@ Both GET endpoints return the same format -- the `MerkleCheckpoint` object store
   "signature": "base64url-encoded-ed25519-signature",
   "public_key": "base64url-encoded-public-key",
   "rekor_index": 12345,
-  "dock_id": "dck_abc123"
+  "hub_id": "hub_abc123"
 }
 ```
 
@@ -109,7 +109,7 @@ Both GET endpoints return the same format -- the `MerkleCheckpoint` object store
 | `signature` | string | Base64url-encoded Ed25519 signature over the canonical form |
 | `public_key` | string | Base64url-encoded public key bytes |
 | `rekor_index` | integer or null | Rekor transparency log index (null if not anchored) |
-| `dock_id` | string or null | Dock that published this checkpoint |
+| `hub_id` | string or null | Hub connection that published this checkpoint |
 
 ## How checkpoints work
 
@@ -139,6 +139,6 @@ curl https://api.treeship.dev/v1/merkle/checkpoint/42
 # Get the latest checkpoint
 curl https://api.treeship.dev/v1/merkle/checkpoint/latest
 
-# Get the latest checkpoint for a specific dock
-curl "https://api.treeship.dev/v1/merkle/checkpoint/latest?dock_id=dck_abc123"
+# Get the latest checkpoint for a specific hub connection
+curl "https://api.treeship.dev/v1/merkle/checkpoint/latest?hub_id=hub_abc123"
 ```
