@@ -138,11 +138,20 @@ impl MerkleTree {
     ///
     /// Recomputes the root from `artifact_id` + the proof path and checks
     /// that it matches `root_hex`. Fully offline, no tree state needed.
+    ///
+    /// Supports both v1 (sha256-duplicate-last) and v2 (sha256-rfc9162) proofs.
+    /// Rejects unknown algorithm values.
     pub fn verify_proof(
         root_hex: &str,
         artifact_id: &str,
         proof: &InclusionProof,
     ) -> bool {
+        // Validate algorithm field. Missing = v1 (legacy), known values accepted.
+        let algo = proof.algorithm.as_deref().unwrap_or(MERKLE_ALGORITHM_V1);
+        if algo != MERKLE_ALGORITHM_V1 && algo != MERKLE_ALGORITHM_V2 {
+            return false; // unknown algorithm -- reject
+        }
+
         let current: [u8; 32] = Sha256::digest(artifact_id.as_bytes()).into();
         // Verify leaf hash matches artifact
         if hex::encode(current) != proof.leaf_hash {

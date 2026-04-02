@@ -153,6 +153,15 @@ func (h *Handlers) Authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Atomically consume the challenge so concurrent requests cannot reuse it.
+	consumed, err := db.ConsumeChallenge(h.DB, challenge.DeviceCode, challenge.Nonce)
+	if err != nil || !consumed {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{"error": "challenge already consumed"})
+		return
+	}
+
 	shipPubKey, err := hex.DecodeString(req.ShipPublicKey)
 	if err != nil {
 		http.Error(w, `{"error":"invalid ship_public_key hex"}`, http.StatusBadRequest)
@@ -171,9 +180,6 @@ func (h *Handlers) Authorize(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"failed to create ship"}`, http.StatusInternalServerError)
 		return
 	}
-
-	// Invalidate the challenge so it cannot be reused.
-	_ = db.DeleteChallenge(h.DB, challenge.DeviceCode)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"dock_id": dockID})

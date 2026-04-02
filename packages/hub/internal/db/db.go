@@ -138,6 +138,23 @@ func DeleteChallenge(db *sql.DB, deviceCode string) error {
 	return err
 }
 
+// ConsumeChallenge atomically deletes a challenge by device_code + nonce.
+// Returns true if exactly one row was deleted (single-use guarantee).
+func ConsumeChallenge(db *sql.DB, deviceCode string, nonce string) (bool, error) {
+	result, err := db.Exec(
+		`DELETE FROM dock_challenges WHERE device_code = ? AND nonce = ? AND approved = 1`,
+		deviceCode, nonce,
+	)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rows == 1, nil
+}
+
 // --- ships ---
 
 func InsertShip(db *sql.DB, dockID string, shipPubKey, dockPubKey []byte, createdAt int64) error {
