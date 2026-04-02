@@ -16,6 +16,10 @@ pub struct ProofStep {
     pub hash: String,
 }
 
+/// Merkle tree algorithm identifier for forward/backward compatibility.
+pub const MERKLE_ALGORITHM_V1: &str = "sha256-duplicate-last";
+pub const MERKLE_ALGORITHM_V2: &str = "sha256-rfc9162";
+
 /// An inclusion proof: the sibling path from a leaf to the root.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InclusionProof {
@@ -23,6 +27,9 @@ pub struct InclusionProof {
     /// Hex-encoded leaf hash.
     pub leaf_hash: String,
     pub path: Vec<ProofStep>,
+    /// Algorithm used to build this proof. Missing = v1 (duplicate-last).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub algorithm: Option<String>,
 }
 
 /// An append-only binary Merkle tree.
@@ -123,6 +130,7 @@ impl MerkleTree {
             leaf_index,
             leaf_hash: hex::encode(self.leaves[leaf_index]),
             path,
+            algorithm: Some(MERKLE_ALGORITHM_V2.to_string()),
         })
     }
 

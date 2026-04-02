@@ -1,33 +1,64 @@
-import { runTreeship } from "./exec.js";
-import { TreeshipError, type VerifyResult } from "./types.js";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import type { VerifyResult } from "./types.js";
+
+const exec = promisify(execFile);
 
 export class VerifyModule {
   async verify(id: string): Promise<VerifyResult> {
+    let stdout = "";
+    let stderr = "";
+
     try {
-      const result = await runTreeship(["verify", id, "--format", "json"]);
-      return {
-        outcome: (result.outcome as string) === "pass" ? "pass" : (result.outcome as string) === "error" ? "error" : "fail",
-        chain: (result.total || result.chain || 1) as number,
-        target: id,
-      };
+      const result = await exec("treeship", ["verify", id, "--format", "json"], {
+        timeout: 10_000,
+        env: { ...process.env },
+      });
+      stdout = result.stdout;
     } catch (err: unknown) {
-      // Non-zero exit from the CLI means verification failure, not a
-      // transport/runtime error.  Only re-throw when the binary itself
-      // is missing or some other OS-level problem occurred.
-      if (isBinaryNotFound(err)) {
+      // Binary not found -- re-throw as operational error
+      if (err instanceof Error && (err.message.includes("ENOENT") || err.message.includes("not found"))) {
         throw err;
       }
 
-      // The CLI exited non-zero -- treat as a verification "fail".
-      return { outcome: "fail", target: id, chain: 0 };
+      // Non-zero exit: try to parse stdout/stderr for structured output.
+      // The CLI writes JSON to stdout even on verification failure.
+      const execErr = err as { stdout?: string; stderr?: string };
+      stdout = execErr.stdout || "";
+      stderr = execErr.stderr || "";
+
+      if (!stdout) {
+        // No JSON output at all -- this is an operational error, not a verification failure.
+        throw new Error(
+          `treeship verify failed: ${stderr || (err instanceof Error ? err.message : String(err))}`
+        );
+      }
+    }
+
+    // Parse the JSON output from the CLI.
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(stdout);
+    } catch {
+      throw new Error(`treeship verify returned invalid JSON: ${stdout.slice(0, 200)}`);
+    }
+
+    const outcome = parsed.outcome as string;
+    if (outcome === "pass") {
+      return {
+        outcome: "pass",
+        chain: (parsed.passed || parsed.total || 1) as number,
+        target: id,
+      };
+    } else if (outcome === "fail") {
+      return {
+        outcome: "fail",
+        chain: (parsed.failed || 0) as number,
+        target: id,
+      };
+    } else {
+      // outcome: "error" or unknown -- propagate as operational error
+      throw new Error(`treeship verify error: ${parsed.message || JSON.stringify(parsed)}`);
     }
   }
-}
-
-/** Returns true when the error indicates the treeship binary is not on PATH. */
-function isBinaryNotFound(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  const msg = err.message;
-  // Node's child_process surfaces ENOENT when the binary doesn't exist.
-  return msg.includes("ENOENT") || msg.includes("not found");
 }

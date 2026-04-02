@@ -1,6 +1,8 @@
 export interface ToolReceipt {
   intent?: string;
   receipt?: string;
+  /** Resolves with the receipt artifact ID once attestation completes (async). */
+  receiptReady?: Promise<string | undefined>;
   tool: string;
   actor: string;
 }

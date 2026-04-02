@@ -139,8 +139,14 @@ func (h *Handlers) Authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify nonce matches (binds CLI finalization to the browser approval).
-	if req.Nonce != "" && req.Nonce != challenge.Nonce {
+	// Nonce is mandatory for key-bearing finalization.
+	if req.Nonce == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "missing nonce -- required for dock finalization"})
+		return
+	}
+	if req.Nonce != challenge.Nonce {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
 		json.NewEncoder(w).Encode(map[string]string{"error": "nonce mismatch"})

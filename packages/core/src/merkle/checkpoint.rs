@@ -23,6 +23,9 @@ pub struct Checkpoint {
     pub public_key: String,
     /// Base64url-encoded Ed25519 signature of the canonical form.
     pub signature: String,
+    /// Merkle algorithm used. Missing = v1 (sha256-duplicate-last).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub algorithm: Option<String>,
 }
 
 /// Errors from checkpoint creation.
@@ -80,6 +83,7 @@ impl Checkpoint {
             signer: signer.key_id().to_string(),
             public_key,
             signature,
+            algorithm: Some(super::tree::MERKLE_ALGORITHM_V2.to_string()),
         })
     }
 
