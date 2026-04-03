@@ -1,0 +1,138 @@
+---
+title: Zero-knowledge proofs
+description: Four layers of proof -- signatures, Merkle, Circom, RISC Zero -- each answering different questions about your agent workflows.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Treeship stacks four ZK-adjacent layers. Each one answers a different question, and each one has different performance characteristics. You pick the layers you need; Ed25519 signatures are always on.
+
+## The four layers
+
+### Layer 1: Ed25519 signatures (always on)
+
+Every artifact is signed the moment it's created. This is not optional and adds no measurable latency.
+
+**What it proves:** this artifact was created by this Treeship and has not been modified since.
+
+**What it does not prove:** anything about the artifact's contents, timing relative to other artifacts, or policy compliance.
+
+### Layer 2: Merkle audit log (instant)
+
+Every artifact hash is appended to a local Merkle tree. The tree is append-only and tamper-evident. Generating a Merkle inclusion proof is instant because it's a tree traversal, not a computation.
+
+**What it proves:** this artifact existed at this position in the log, and no artifacts before it have been removed or reordered.
+
+**What it does not prove:** anything about what the artifact contains or whether it complied with policy.
+
+### Layer 3: Circom (seconds, per-artifact)
+
+A Circom circuit takes an artifact's content and a policy, and produces a zero-knowledge proof that the artifact satisfies the policy without revealing the artifact's content.
+
+**What it proves:** this artifact satisfies this policy. The verifier learns the policy was met but does not learn the artifact's contents.
+
+**What it does not prove:** anything about the sequence of artifacts or the overall session integrity.
+
+**Performance:** proof generation takes 1-5 seconds depending on circuit complexity. Verification is under 100ms.
+
+### Layer 4: RISC Zero (minutes, per-session, background)
+
+A RISC Zero proof covers an entire session: a sequence of artifacts, their Merkle positions, their Circom proofs, and the session's causal chain. This is the most expensive layer and runs in the background.
+
+**What it proves:** the entire session -- every artifact, every policy check, every ordering constraint -- is valid. A single proof covers the whole chain.
+
+**What it does not prove:** anything about network interactions or external API responses (that's TLSNotary's job).
+
+**Performance:** proof generation takes 2-10 minutes depending on session length. This runs in the background and does not block your workflow. Verification is under 200ms.
+
+## How layers compose
+
+Each layer builds on the ones below it. A fully-proved session looks like this:
+
+```json
+{
+  "artifact": {
+    "content_hash": "sha256:abc123...",
+    "ed25519_signature": "sig:...",
+    "merkle_proof": {
+      "root": "0xdef...",
+      "path": ["0x1a...", "0x2b...", "0x3c..."],
+      "index": 42
+    },
+    "circom_proof": {
+      "policy": "budget_under_10k",
+      "proof": "base64:...",
+      "public_signals": ["1"]
+    }
+  },
+  "session_proof": {
+    "risc_zero_receipt": "base64:...",
+    "session_id": "session:...",
+    "artifact_count": 47
+  }
+}
+```
+
+You don't need all layers for every use case. A simple audit trail needs only layers 1 and 2. Policy compliance adds layer 3. Full session integrity adds layer 4.
+
+## Verification commands
+
+Verify an artifact's signature:
+
+```bash
+treeship verify artifact.json
+```
+
+Verify a Merkle inclusion proof:
+
+```bash
+treeship verify --merkle artifact.json
+```
+
+Verify a Circom policy proof:
+
+```bash
+treeship verify --zk artifact.json
+```
+
+Verify a full session proof:
+
+```bash
+treeship verify --session session_proof.json
+```
+
+Verify everything at once:
+
+```bash
+treeship verify --all session_proof.json
+```
+
+## TLSNotary (commerce only)
+
+TLSNotary proves that a specific HTTPS request and response occurred between an agent and an external API. This is useful for commerce workflows where you need to prove that a payment API returned a specific confirmation, or that a price quote was real.
+
+TLSNotary requires a notary server. Treeship will run a public notary for commerce use cases, but you can also run your own.
+
+<Callout type="info">
+TLSNotary is scoped to commerce workflows. Most agent attestation use cases do not need it.
+</Callout>
+
+## Status
+
+| Layer | Status | Since |
+|---|---|---|
+| Ed25519 signatures | Stable | v0.1.0 |
+| Merkle audit log | Stable | v0.2.0 |
+| Circom proofs | Beta | v0.5.0 |
+| RISC Zero proofs | Alpha | v0.6.0 |
+| TLSNotary | Alpha | v0.7.0 |
+
+## Build flag
+
+ZK layers (Circom and RISC Zero) are behind a feature flag to keep the default binary small. To build with ZK support:
+
+```bash
+cargo build --features zk
+```
+
+The Ed25519 and Merkle layers are always included.

@@ -1,4 +1,4 @@
 {
   "title": "Concepts",
-  "pages": ["trust-model", "artifacts", "glossary", "security"]
+  "pages": ["trust-model", "artifacts", "zero-knowledge", "glossary", "security"]
 }

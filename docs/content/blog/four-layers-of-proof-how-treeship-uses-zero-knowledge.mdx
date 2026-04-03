@@ -1,0 +1,113 @@
+---
+title: "Four layers of proof: how Treeship uses zero-knowledge"
+description: "Signatures prove authenticity. Merkle proofs prove timing. Circom proves policy. RISC Zero proves the entire chain. Here's how they fit together."
+date: 2026-04-02
+tags: ["zero-knowledge", "merkle", "cryptography"]
+readTime: "8 min read"
+---
+
+Signatures prove authenticity. Merkle proofs prove timing. Circom proves policy. RISC Zero proves the entire chain. Here's how they fit together, and why no single layer is enough.
+
+## Why four layers
+
+The honest answer is that each layer has tradeoffs, and no single proof system covers everything an agent workflow needs.
+
+Ed25519 signatures are fast and universally supported, but they only prove authorship. They don't prove timing, ordering, or policy compliance. A signed artifact could have been created at any time, in any order, with any content.
+
+Merkle trees prove ordering and tamper-evidence, but they don't prove anything about what's inside the artifacts. You know the log hasn't been tampered with. You don't know whether the artifacts in it followed the rules.
+
+Circom proofs prove policy compliance without revealing content, but they operate on individual artifacts. A Circom proof can tell you that artifact #42 stayed under a $10,000 budget. It can't tell you that the entire session of 47 artifacts was coherent and causally connected.
+
+RISC Zero proofs can prove the entire session, but they take minutes to generate. You can't block a real-time agent workflow on a 5-minute proof.
+
+So you layer them. Each layer covers what the others can't, and each layer has performance characteristics that match its use case.
+
+## Layer 1: Ed25519 signatures
+
+Every artifact gets signed the moment it's created. This is not optional, not configurable, and adds no measurable latency. The signature binds the artifact's content to a specific Treeship identity.
+
+This is the foundation. Without it, nothing else matters. A Merkle proof over unsigned data proves that unsigned data existed in a specific order -- which isn't useful. A Circom proof over unsigned data proves that unsigned data met a policy -- which also isn't useful. Signatures come first.
+
+## Layer 2: Merkle audit log
+
+Every artifact hash gets appended to a local, append-only Merkle tree. The tree is tamper-evident: if anyone removes, modifies, or reorders an entry, the root hash changes and all downstream proofs break.
+
+Merkle proofs are instant because they're tree traversals, not computations. Generating one means walking from a leaf to the root and collecting sibling hashes along the way. This is why the Merkle layer is the right answer for "prove this artifact existed before that one" -- you need that answer immediately, not in five minutes.
+
+The Merkle log also gives you something that signatures alone can't: proof of absence. If an artifact's hash is not in the tree, it was not part of the attested workflow. This matters when someone asks "did the agent do anything outside its approved scope?" The Merkle log can answer "no, and here's the proof."
+
+## Layer 3: Circom
+
+Circom is where zero-knowledge actually enters the picture. Layers 1 and 2 are cryptographic, but they're not zero-knowledge -- the verifier sees the artifact content (or at least its hash).
+
+A Circom proof lets you prove a statement about an artifact without revealing the artifact. "This artifact represents a payment under $10,000" is provable without showing the payment amount, the recipient, or any other field. The verifier learns one bit of information: the policy was satisfied.
+
+This matters for compliance workflows where the auditor needs to verify policy adherence but shouldn't have access to the underlying data. The agent handled sensitive information, the proof covers the compliance question, and the auditor never sees the sensitive information.
+
+**Tradeoffs:** Circom proofs take 1-5 seconds to generate. That's fast enough for per-artifact proving but too slow for anything that needs to happen inline with every API call. Circom circuits are also artifact-scoped -- they prove statements about individual artifacts, not about sessions or sequences.
+
+## Layer 4: RISC Zero
+
+RISC Zero is a zkVM -- a zero-knowledge virtual machine. Instead of writing a custom circuit for each statement you want to prove (as with Circom), you write a normal Rust program and RISC Zero proves that the program executed correctly on a given input.
+
+For Treeship, the RISC Zero program takes an entire session as input: all artifacts, their signatures, their Merkle positions, their Circom proofs, and the causal chain connecting them. It outputs a single proof that covers everything.
+
+This is the "seal the envelope" layer. When a session is complete, RISC Zero runs in the background and produces a receipt that proves the whole session was valid. A compliance team can verify the receipt without replaying the session, without accessing any artifact contents, and without trusting Treeship's infrastructure.
+
+**Tradeoffs:** RISC Zero proofs take 2-10 minutes to generate depending on session length. This is why they run in the background and why they cover sessions rather than individual artifacts. You don't want to wait 5 minutes to prove each artifact -- you prove each artifact with Circom in seconds, then prove the entire session with RISC Zero after the work is done.
+
+Verification is fast (under 200ms) regardless of how long generation took.
+
+## TLSNotary: the network layer
+
+TLSNotary is separate from the four layers because it solves a different problem. The four layers prove things about artifacts and their relationships. TLSNotary proves things about network interactions.
+
+When an agent makes an API call to a payment provider, TLSNotary can prove that the request and response actually happened as claimed. The agent didn't fabricate the API response. The price quote was real. The payment confirmation came from the actual payment provider.
+
+TLSNotary requires a notary server -- a third party that participates in the TLS handshake. This is an intentional tradeoff: you get proof of network interactions, but you need a notary to get it. For most agent attestation use cases, the four layers are sufficient. TLSNotary is scoped to commerce workflows where proving external interactions matters.
+
+## The compliance export
+
+When all layers are combined, a compliance export is a single file that contains:
+
+- The Merkle root (proving the log's integrity)
+- A ZK chain proof (proving every artifact in the session was signed, ordered, and policy-compliant)
+- The RISC Zero receipt (proving the chain proof itself is valid)
+
+An auditor can verify this file without access to any artifact contents, without access to Treeship infrastructure, and without trusting anyone except the mathematics.
+
+```
+compliance_export.treeship
++-- merkle_root: 0xabc...
++-- chain_proof: base64:...
++-- risc_zero_receipt: base64:...
++-- metadata:
+    +-- session_id: session:...
+    +-- artifact_count: 47
+    +-- policy: "vendor_payments_q1"
+    +-- timestamp_range: [2026-01-01, 2026-03-31]
+```
+
+One file. One verification command. Full coverage.
+
+```bash
+treeship verify --compliance compliance_export.treeship
+```
+
+## What's shipping when
+
+Ed25519 signatures and Merkle proofs are stable and shipping today. They've been in every Treeship release since the beginning.
+
+Circom proofs are in beta as of v0.5.0. The circuit library covers the most common policy patterns: budget limits, allowed-action lists, and scope constraints. Custom circuits are possible but not yet documented.
+
+RISC Zero session proofs are in alpha as of v0.6.0. They work, but generation times are longer than we'd like and the session size limit is conservative. We're optimizing both.
+
+TLSNotary integration is in alpha as of v0.7.0, scoped to commerce workflows. The notary infrastructure is not yet public.
+
+All ZK layers (Circom and RISC Zero) are behind the `--features zk` build flag. The default Treeship binary includes Ed25519 and Merkle only, keeping it small and dependency-light.
+
+## The layered approach
+
+The reason for four layers instead of one is that trust questions come in different shapes and at different speeds. "Who created this?" needs an instant answer. "Was the whole session valid?" can wait ten minutes. Trying to answer both questions with the same proof system means either the fast answer is too expensive or the thorough answer is too shallow.
+
+Four layers, four tradeoffs, four sets of guarantees. Use what you need.
