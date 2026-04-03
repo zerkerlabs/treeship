@@ -255,6 +255,90 @@ pub fn verify_proof(
     Ok(())
 }
 
+/// Prove an entire session chain using RISC Zero (background, slow).
+#[cfg(feature = "zk")]
+pub fn prove_chain(
+    session_id: &str,
+    config:     Option<&str>,
+    printer:    &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = ctx::open(config)?;
+
+    printer.blank();
+    printer.info(&format!("Proving chain for session {}...", session_id));
+    printer.info("  This may take several minutes (local proving).");
+    printer.info("  Consider running in background: treeship daemon handles this automatically.");
+    printer.blank();
+
+    // Load all artifacts for this session
+    // For now, load all artifacts from storage (session filtering TODO)
+    let artifacts_dir = std::path::Path::new(&ctx.config.storage_dir);
+    let mut artifacts = Vec::new();
+
+    if let Ok(entries) = std::fs::read_dir(artifacts_dir) {
+        for entry in entries.flatten() {
+            if entry.path().extension().map_or(false, |e| e == "json") {
+                if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                    if let Ok(record) = serde_json::from_str::<serde_json::Value>(&content) {
+                        let chain_artifact = treeship_zk_risc0::ChainArtifact {
+                            artifact_id: record["artifact_id"].as_str().unwrap_or("").to_string(),
+                            digest: record["digest"].as_str().unwrap_or("").to_string(),
+                            payload_type: record["payload_type"].as_str().unwrap_or("").to_string(),
+                            signed_at: record["signed_at"].as_str().unwrap_or("").to_string(),
+                            parent_id: record["parent_id"].as_str().map(|s| s.to_string()),
+                            signature: record["envelope"]["signatures"][0]["sig"].as_str().unwrap_or("").to_string(),
+                            pae_message: Vec::new(), // TODO: reconstruct PAE
+                        };
+                        artifacts.push(chain_artifact);
+                    }
+                }
+            }
+        }
+    }
+
+    if artifacts.is_empty() {
+        return Err("no artifacts found for proving".into());
+    }
+
+    let public_key = ctx.keys.public_key(&ctx.config.default_key_id)?;
+    let pub_key_arr: [u8; 32] = public_key.try_into()
+        .map_err(|_| "invalid public key length")?;
+
+    let prover = treeship_zk_risc0::RiscZeroProver::new(Default::default());
+    let start = std::time::Instant::now();
+    let result = prover.prove_chain(&artifacts, pub_key_arr)?;
+    let elapsed = start.elapsed();
+
+    // Save proof
+    let proof_filename = format!("{}.chain.zkproof", session_id);
+    let proof_path = std::path::PathBuf::from(&proof_filename);
+    treeship_zk_risc0::RiscZeroProver::save_proof(&result, &proof_path)?;
+
+    printer.success("chain proof generated", &[
+        ("session", session_id),
+        ("artifacts", &result.artifact_count.to_string()),
+        ("signatures", if result.all_signatures_valid { "all valid" } else { "INVALID" }),
+        ("chain", if result.chain_intact { "intact" } else { "BROKEN" }),
+        ("time", &format!("{:.1}s", elapsed.as_secs_f64())),
+        ("output", &proof_filename),
+    ]);
+    printer.blank();
+
+    Ok(())
+}
+
+/// Stub for non-zk builds
+#[cfg(not(feature = "zk"))]
+pub fn prove_chain(
+    _session_id: &str, _config: Option<&str>, printer: &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    printer.blank();
+    printer.warn("ZK features not enabled in this build", &[]);
+    printer.hint("rebuild with: cargo build -p treeship-cli --features zk");
+    printer.blank();
+    Ok(())
+}
+
 // -- Helpers ------------------------------------------------------------------
 
 fn find_circuits_dir() -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {

@@ -296,6 +296,12 @@ enum Command {
     ///   treeship prove --circuit input-output-binding --artifact art_xxx
     Prove(ProveArgs),
 
+    /// Prove an entire session chain (RISC Zero, background)
+    ///
+    /// Examples:
+    ///   treeship prove-chain ssn_abc123
+    ProveChain(ProveChainArgs),
+
     /// Verify a zero-knowledge proof file
     ///
     /// Examples:
@@ -325,6 +331,12 @@ struct ProveArgs {
     /// Policy file (JSON array of allowed actions) -- required for policy-checker
     #[arg(long, value_name = "PATH")]
     policy: Option<String>,
+}
+
+#[derive(Args)]
+struct ProveChainArgs {
+    /// Session ID to prove
+    session_id: String,
 }
 
 #[derive(Args)]
@@ -1113,6 +1125,12 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             &a.circuit,
             &a.artifact,
             a.policy.as_deref(),
+            cli.config.as_deref(),
+            printer,
+        ),
+
+        Command::ProveChain(a) => commands::prove::prove_chain(
+            &a.session_id,
             cli.config.as_deref(),
             printer,
         ),

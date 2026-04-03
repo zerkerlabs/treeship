@@ -1,0 +1,17 @@
+[package]
+name = "treeship-zk-risc0"
+version = "0.5.0"
+edition = "2021"
+description = "RISC Zero chain-level ZK proofs for Treeship"
+license = "Apache-2.0"
+
+[features]
+default = []
+zk-bonsai = []  # Enable Bonsai hosted proving
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+hex = "0.4"
+# risc0-zkvm = { version = "1.2" }  # Uncomment when rzup toolchain is in CI

@@ -1357,6 +1357,7 @@ dependencies = [
  "sha2",
  "treeship-core",
  "treeship-zk-circom",
+ "treeship-zk-risc0",
  "ureq",
 ]
 
@@ -1401,6 +1402,16 @@ dependencies = [
  "sha2",
  "tempfile",
  "thiserror",
+]
+
+[[package]]
+name = "treeship-zk-risc0"
+version = "0.5.0"
+dependencies = [
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]

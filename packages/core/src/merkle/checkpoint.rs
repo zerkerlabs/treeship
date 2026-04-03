@@ -26,6 +26,21 @@ pub struct Checkpoint {
     /// Merkle algorithm used. Missing = v1 (sha256-duplicate-last).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub algorithm: Option<String>,
+    /// Optional ZK chain proof result (added when proof is ready).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zk_proof: Option<ChainProofSummary>,
+}
+
+/// Summary of a RISC Zero chain proof, embedded in a Merkle checkpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChainProofSummary {
+    pub image_id: String,
+    pub all_signatures_valid: bool,
+    pub chain_intact: bool,
+    pub approval_nonces_matched: bool,
+    pub artifact_count: u64,
+    pub public_key_digest: String,
+    pub proved_at: String,
 }
 
 /// Errors from checkpoint creation.
@@ -84,6 +99,7 @@ impl Checkpoint {
             public_key,
             signature,
             algorithm: Some(super::tree::MERKLE_ALGORITHM_V2.to_string()),
+            zk_proof: None,
         })
     }
 

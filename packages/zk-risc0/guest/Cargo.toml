@@ -1,0 +1,14 @@
+[package]
+name = "treeship-chain-verifier-guest"
+version = "0.5.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+risc0-zkvm = { version = "1.2", default-features = false, features = ["guest"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+hex = "0.4"
+ed25519-dalek = { version = "2", default-features = false, features = ["alloc"] }
