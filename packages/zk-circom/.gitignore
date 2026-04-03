@@ -1,0 +1,4 @@
+ptau/
+node_modules/
+# Intermediate zkeys (regeneratable from ptau)
+*_0000.zkey
