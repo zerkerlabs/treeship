@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use ed25519_dalek::VerifyingKey;
 
+mod zk;
+
 use treeship_core::attestation::{
     pae, artifact_id_from_pae, digest_from_pae,
     Envelope, Verifier, VerifyResult,
@@ -213,45 +215,8 @@ fn verify_zk_inner(proof_json: &str) -> Result<String, String> {
 }
 
 fn verify_circom_proof_inner(proof: &serde_json::Value) -> Result<String, String> {
-    // Validate proof structure
-    let circuit = proof.get("circuit")
-        .and_then(|c| c.as_str())
-        .ok_or("missing circuit field")?;
-
-    let proof_data = proof.get("proof")
-        .ok_or("missing proof field")?;
-
-    // Validate proof points exist
-    let _pi_a = proof_data.get("pi_a")
-        .ok_or("missing pi_a in proof")?;
-    let _pi_b = proof_data.get("pi_b")
-        .ok_or("missing pi_b in proof")?;
-    let _pi_c = proof_data.get("pi_c")
-        .ok_or("missing pi_c in proof")?;
-
-    let public_signals = proof.get("public_signals")
-        .and_then(|s| s.as_array())
-        .map(|a| a.len())
-        .unwrap_or(0);
-
-    let artifact_id = proof.get("artifact_id")
-        .and_then(|a| a.as_str())
-        .unwrap_or("unknown");
-
-    // Note: Full Groth16 verification requires the verification key
-    // and pairing math. For WASM, we validate structure and report
-    // the proof details. Full verification uses the CLI or native path.
-    Ok(serde_json::json!({
-        "valid": true,
-        "system": "circom-groth16",
-        "circuit": circuit,
-        "artifact_id": artifact_id,
-        "public_signals_count": public_signals,
-        "protocol": proof_data.get("protocol").and_then(|p| p.as_str()).unwrap_or("groth16"),
-        "curve": proof_data.get("curve").and_then(|c| c.as_str()).unwrap_or("bn128"),
-        "proved_at": proof.get("proved_at").and_then(|p| p.as_str()).unwrap_or("unknown"),
-        "note": "structure validated; full pairing verification available via CLI",
-    }).to_string())
+    // Real Groth16 pairing verification via ark-groth16
+    zk::verify_circom_proof(proof)
 }
 
 fn verify_risc0_proof_inner(proof: &serde_json::Value) -> Result<String, String> {
