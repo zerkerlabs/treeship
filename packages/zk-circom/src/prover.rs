@@ -73,50 +73,67 @@ impl CircomProver {
 
     /// Prove that a given action is present in a list of allowed actions.
     /// Returns a policy-checker circuit proof.
+    ///
+    /// Circuit signals (policy_checker.circom, MAX_ACTIONS=16):
+    ///   public:  artifact_id_hash, policy_digest
+    ///   private: action_hash, allowed[16], n_allowed
     pub fn prove_policy(
         &self,
         action: &str,
         allowed_actions: &[String],
+        artifact_id: &str,
     ) -> Result<CircomProof> {
-        let action_field = FieldUtils::string_to_field(action);
+        const MAX_ACTIONS: usize = 16;
 
-        // Build a simple binary mask: 1 for each allowed slot, 0 otherwise
-        let mask_size = 8;
-        let mut privacy_mask = vec![0u8; mask_size];
-        for (i, a) in allowed_actions.iter().enumerate() {
-            if i < mask_size && a == action {
-                privacy_mask[i] = 1;
-            }
+        let artifact_id_hash = FieldUtils::string_to_field(artifact_id);
+        let action_hash = FieldUtils::string_to_field(action);
+
+        // Pad allowed list to MAX_ACTIONS with zeros
+        let mut allowed: Vec<String> = allowed_actions
+            .iter()
+            .take(MAX_ACTIONS)
+            .map(|a| FieldUtils::string_to_field(a))
+            .collect();
+        while allowed.len() < MAX_ACTIONS {
+            allowed.push("0".to_string());
         }
 
-        let merkle_root = FieldUtils::string_to_field("root");
-        let api_hash = FieldUtils::string_to_field(action);
-        let api_proof: Vec<String> = (0..mask_size)
-            .map(|i| FieldUtils::string_to_field(&format!("sibling_{}", i)))
-            .collect();
+        let n_allowed = allowed_actions.len().min(MAX_ACTIONS).to_string();
+
+        // policy_digest is computed by the circuit as Poseidon(allowed[0..16]),
+        // but we must supply the public input that the circuit will constrain
+        // against. Compute it the same way snarkjs would expect it.
+        let policy_digest = FieldUtils::poseidon_hash_fields(&allowed);
 
         let inputs = serde_json::json!({
-            "data_hash": action_field,
-            "privacy_mask": privacy_mask,
-            "api_call_proof": api_proof,
-            "api_call_hash": api_hash,
-            "api_whitelist_merkle_root": merkle_root,
+            "artifact_id_hash": artifact_id_hash,
+            "policy_digest": policy_digest,
+            "action_hash": action_hash,
+            "allowed": allowed,
+            "n_allowed": n_allowed,
         });
 
         self.generate_proof("policy_checker", &inputs)
     }
 
     /// Prove an input/output binding given two 32-byte digests.
+    ///
+    /// Circuit signals (input_output_binding.circom):
+    ///   public:  artifact_id_hash, input_hash, output_hash
+    ///   private: nonce
     pub fn prove_io_binding(
         &self,
         input_digest: &[u8; 32],
         output_digest: &[u8; 32],
+        artifact_id: &str,
     ) -> Result<CircomProof> {
+        let artifact_id_hash = FieldUtils::string_to_field(artifact_id);
         let input_field = FieldUtils::hash_to_field(input_digest);
         let output_field = FieldUtils::hash_to_field(output_digest);
         let nonce = crate::utils::CircuitUtils::generate_nonce();
 
         let inputs = serde_json::json!({
+            "artifact_id_hash": artifact_id_hash,
             "input_hash": input_field,
             "output_hash": output_field,
             "nonce": nonce,
@@ -126,15 +143,22 @@ impl CircomProver {
     }
 
     /// Prove a prompt/template binding given two 32-byte digests.
+    ///
+    /// Circuit signals (prompt_template_binding.circom):
+    ///   public:  artifact_id_hash, template_hash
+    ///   private: parameters_hash
     pub fn prove_prompt_template(
         &self,
         prompt_digest: &[u8; 32],
         template_digest: &[u8; 32],
+        artifact_id: &str,
     ) -> Result<CircomProof> {
+        let artifact_id_hash = FieldUtils::string_to_field(artifact_id);
         let template_field = FieldUtils::hash_to_field(template_digest);
         let params_field = FieldUtils::hash_to_field(prompt_digest);
 
         let inputs = serde_json::json!({
+            "artifact_id_hash": artifact_id_hash,
             "template_hash": template_field,
             "parameters_hash": params_field,
         });

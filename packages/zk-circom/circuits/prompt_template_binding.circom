@@ -9,12 +9,14 @@ include "../node_modules/circomlib/circuits/comparators.circom";
  * Proves: a system prompt matched a declared template digest.
  * Without revealing: the system prompt itself.
  *
- * Public inputs: template_hash
+ * Public inputs: artifact_id_hash, template_hash
  * Private inputs: parameters_hash
  * Output: prompt_hash (Poseidon(template_hash, parameters_hash))
  */
+// TODO: re-run trusted setup after circuit change
 template PromptTemplateBinding() {
     // Public inputs
+    signal input artifact_id_hash;
     signal input template_hash;
 
     // Private inputs
@@ -33,4 +35,4 @@ template PromptTemplateBinding() {
     verified_template_hash <== template_hash;
 }
 
-component main { public [template_hash] } = PromptTemplateBinding();
+component main { public [artifact_id_hash, template_hash] } = PromptTemplateBinding();

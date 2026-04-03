@@ -54,12 +54,12 @@ mod tests {
     }
 
     #[test]
-    fn prover_handles_empty_chain() {
+    fn prover_returns_not_implemented_error() {
         let prover = RiscZeroProver::new(ProverMode::default());
         let result = prover.prove_chain(&[], [0u8; 32]);
-        assert!(result.is_ok());
-        let proof = result.unwrap();
-        assert_eq!(proof.artifact_count, 0);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("not yet available"), "expected 'not yet available' error, got: {}", err);
     }
 
     #[test]

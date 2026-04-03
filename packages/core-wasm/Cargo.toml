@@ -18,12 +18,16 @@ ed25519-dalek = { version = "2", features = ["rand_core"] }
 base64        = "0.22"
 getrandom     = { version = "0.2", features = ["js"] }
 
-# ZK Groth16 verification
-ark-groth16   = "0.4"
-ark-bn254     = "0.4"
-ark-serialize = "0.4"
-ark-ec        = "0.4"
-ark-ff        = "0.4"
+# ZK Groth16 verification (feature-gated)
+ark-groth16   = { version = "0.4", optional = true }
+ark-bn254     = { version = "0.4", optional = true }
+ark-serialize = { version = "0.4", optional = true }
+ark-ec        = { version = "0.4", optional = true }
+ark-ff        = { version = "0.4", optional = true }
+
+[features]
+default = []
+zk = ["ark-groth16", "ark-bn254", "ark-serialize", "ark-ec", "ark-ff"]
 
 [profile.release]
 opt-level = "s"

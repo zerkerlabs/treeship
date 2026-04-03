@@ -31,6 +31,23 @@ impl FieldUtils {
         Self::hash_to_field(&hash.into())
     }
 
+    /// Hash a list of field element strings using SHA-256 and reduce to a field
+    /// element. This is a stand-in for the Poseidon hash used on-circuit; we use
+    /// it to compute the expected public input that the circuit will constrain.
+    ///
+    /// NOTE: In production the off-chain code should use a native Poseidon
+    /// implementation (e.g. circomlibjs) so the digest matches exactly. This
+    /// SHA-256-based placeholder works for development and tests.
+    pub fn poseidon_hash_fields(fields: &[String]) -> String {
+        let mut hasher = Sha256::new();
+        for f in fields {
+            hasher.update(f.as_bytes());
+            hasher.update(b",");
+        }
+        let hash: [u8; 32] = hasher.finalize().into();
+        Self::hash_to_field(&hash)
+    }
+
     /// Check whether a decimal string represents a valid BN254 field element.
     pub fn is_valid_field_element(element: &str) -> bool {
         if let Some(value) = BigUint::parse_bytes(element.as_bytes(), 10) {
@@ -107,14 +124,14 @@ impl CircuitUtils {
         inputs: &serde_json::Value,
     ) -> std::result::Result<(), String> {
         let required_fields: Vec<&str> = match circuit_name {
-            "input_output_binding" => vec!["input_hash", "output_hash", "nonce"],
-            "prompt_template_binding" => vec!["template_hash", "parameters_hash"],
+            "input_output_binding" => vec!["artifact_id_hash", "input_hash", "output_hash", "nonce"],
+            "prompt_template_binding" => vec!["artifact_id_hash", "template_hash", "parameters_hash"],
             "policy_checker" => vec![
-                "data_hash",
-                "privacy_mask",
-                "api_call_proof",
-                "api_call_hash",
-                "api_whitelist_merkle_root",
+                "artifact_id_hash",
+                "policy_digest",
+                "action_hash",
+                "allowed",
+                "n_allowed",
             ],
             _ => return Err(format!("Unknown circuit: {}", circuit_name)),
         };
@@ -175,6 +192,7 @@ mod tests {
     #[test]
     fn test_validate_inputs_io_binding() {
         let inputs = serde_json::json!({
+            "artifact_id_hash": "999",
             "input_hash": "123",
             "output_hash": "456",
             "nonce": "789",

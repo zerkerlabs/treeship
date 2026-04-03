@@ -251,17 +251,24 @@ pub fn run(
                             .filter_map(|a| a.as_str().map(|s| s.to_string()))
                             .collect();
                         if !allowed.is_empty() {
-                            match super::prove::prove_circuit(
-                                "policy-checker",
-                                &result.artifact_id,
-                                None, // policy loaded from declaration
-                                config,
-                                printer,
-                            ) {
-                                Ok(()) => {}
-                                Err(e) => {
-                                    printer.dim_info(&format!("  zk proof: {}", e));
-                                }
+                            // Write bounded_actions to a temp file so prove_circuit
+                            // can load it as the policy path.
+                            let policy_result = (|| -> std::result::Result<(), Box<dyn std::error::Error>> {
+                                let tmp_dir = tempfile::tempdir()?;
+                                let policy_path = tmp_dir.path().join("policy.json");
+                                let policy_json = serde_json::to_vec_pretty(&allowed)?;
+                                std::fs::write(&policy_path, &policy_json)?;
+                                super::prove::prove_circuit(
+                                    "policy-checker",
+                                    &result.artifact_id,
+                                    policy_path.to_str(),
+                                    config,
+                                    printer,
+                                )?;
+                                Ok(())
+                            })();
+                            if let Err(e) = policy_result {
+                                printer.dim_info(&format!("  zk proof: {}", e));
                             }
                         }
                     }

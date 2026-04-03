@@ -92,19 +92,13 @@ treeship verify --merkle artifact.json
 Verify a Circom policy proof:
 
 ```bash
-treeship verify --zk artifact.json
+treeship verify-proof <file>
 ```
 
-Verify a full session proof:
+Prove a full session chain:
 
 ```bash
-treeship verify --session session_proof.json
-```
-
-Verify everything at once:
-
-```bash
-treeship verify --all session_proof.json
+treeship prove-chain <session_id>
 ```
 
 ## TLSNotary (commerce only)
@@ -124,8 +118,8 @@ TLSNotary is scoped to commerce workflows. Most agent attestation use cases do n
 | Ed25519 signatures | Stable | v0.1.0 |
 | Merkle audit log | Stable | v0.2.0 |
 | Circom proofs | Beta | v0.5.0 |
-| RISC Zero proofs | Alpha | v0.6.0 |
-| TLSNotary | Alpha | v0.7.0 |
+| RISC Zero proofs | Coming | v0.6.0 (planned) |
+| TLSNotary | Coming | v0.7.0 (planned) |
 
 ## Build flag
 

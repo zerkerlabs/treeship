@@ -67,7 +67,7 @@ pub fn prove_circuit(
             let action = extract_action_from_envelope(&envelope_str)
                 .unwrap_or_else(|| "unknown".to_string());
 
-            prover.prove_policy(&action, &allowed)?
+            prover.prove_policy(&action, &allowed, &artifact_id)?
         }
         "input_output_binding" => {
             // Extract input and output digests from artifact metadata
@@ -78,7 +78,7 @@ pub fn prove_circuit(
             let input_hash = sha256_bytes(&input_digest);
             let output_hash = sha256_bytes(&output_digest);
 
-            prover.prove_io_binding(&input_hash, &output_hash)?
+            prover.prove_io_binding(&input_hash, &output_hash, &artifact_id)?
         }
         "prompt_template_binding" => {
             let envelope_json = record.envelope.to_json()?;
@@ -91,7 +91,7 @@ pub fn prove_circuit(
             let prompt_hash = sha256_bytes(&prompt_digest);
             let template_hash = sha256_bytes(&template_digest);
 
-            prover.prove_prompt_template(&prompt_hash, &template_hash)?
+            prover.prove_prompt_template(&prompt_hash, &template_hash, &artifact_id)?
         }
         _ => unreachable!(),
     };
@@ -270,8 +270,16 @@ pub fn prove_chain(
     printer.info("  Consider running in background: treeship daemon handles this automatically.");
     printer.blank();
 
-    // Load all artifacts for this session
-    // For now, load all artifacts from storage (session filtering TODO)
+    // TODO: filter artifacts by session_id instead of loading everything.
+    // Currently loads all JSON files in the storage directory, which means
+    // artifacts from other sessions will be included in the proof input.
+    // This does not affect correctness (the proof covers whatever is passed)
+    // but it is wasteful and may include unrelated data.
+    printer.warn(
+        "session filtering not yet implemented: loading all artifacts from storage",
+        &[("session", session_id)],
+    );
+
     let artifacts_dir = std::path::Path::new(&ctx.config.storage_dir);
     let mut artifacts = Vec::new();
 

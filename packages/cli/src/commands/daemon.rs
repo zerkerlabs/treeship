@@ -544,21 +544,41 @@ fn process_proof_queue(ts: &std::path::Path, ctx: &crate::ctx::Ctx) {
             continue;
         }
 
+        // Lock file prevents concurrent processing of the same job.
+        // If a previous daemon cycle crashed mid-proof, the lock file
+        // will be stale. We skip any job that has an active lock.
+        let lock_path = path.with_extension("lock");
+        if lock_path.exists() {
+            // Lock already held; skip this job for now
+            continue;
+        }
+
+        // Create lock file before processing
+        if std::fs::write(&lock_path, format!("{}", std::process::id())).is_err() {
+            continue;
+        }
+
         // Read the proof job
         let content = match std::fs::read_to_string(&path) {
             Ok(c) => c,
-            Err(_) => continue,
+            Err(_) => {
+                let _ = std::fs::remove_file(&lock_path);
+                continue;
+            }
         };
 
         let job: serde_json::Value = match serde_json::from_str(&content) {
             Ok(j) => j,
-            Err(_) => continue,
+            Err(_) => {
+                let _ = std::fs::remove_file(&lock_path);
+                continue;
+            }
         };
 
         let session_id = job["session_id"].as_str().unwrap_or("unknown");
         daemon_log(ts, &format!("proving chain for session {}", session_id));
 
-        // Run the proof (this is the slow part -- minutes on local)
+        // Run the proof (this is the slow part, can take minutes on local hardware)
         let silent_printer = crate::printer::Printer::new(crate::printer::Format::Text, true, true);
         match super::prove::prove_chain(session_id, None, &silent_printer) {
             Ok(()) => {
@@ -576,8 +596,9 @@ fn process_proof_queue(ts: &std::path::Path, ctx: &crate::ctx::Ctx) {
             }
         }
 
-        // Remove the job from the queue (whether it succeeded or failed)
+        // Remove the job and its lock (whether it succeeded or failed)
         let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&lock_path);
     }
 }
 
