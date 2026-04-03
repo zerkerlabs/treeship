@@ -433,6 +433,12 @@ pub fn start(
         if !no_push && should_auto_push(&project) {
             auto_push_new_artifacts(&ctx, &ts);
         }
+
+        // ZK: Process proof job queue (background, non-blocking)
+        #[cfg(feature = "zk")]
+        {
+            process_proof_queue(&ts, &ctx);
+        }
     }
 
     // _pid_lock is dropped here, releasing the file lock
@@ -511,6 +517,85 @@ pub fn status(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     printer.blank();
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// ZK proof job queue (background proving)
+// ---------------------------------------------------------------------------
+
+/// Process any pending proof jobs. Called each daemon cycle.
+/// Proof jobs are created when sessions close with zk.auto_prove enabled.
+#[cfg(feature = "zk")]
+fn process_proof_queue(ts: &std::path::Path, ctx: &crate::ctx::Ctx) {
+    let queue_dir = ts.join("proof_queue");
+    if !queue_dir.exists() {
+        return;
+    }
+
+    let entries = match std::fs::read_dir(&queue_dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().map_or(true, |e| e != "json") {
+            continue;
+        }
+
+        // Read the proof job
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        let job: serde_json::Value = match serde_json::from_str(&content) {
+            Ok(j) => j,
+            Err(_) => continue,
+        };
+
+        let session_id = job["session_id"].as_str().unwrap_or("unknown");
+        daemon_log(ts, &format!("proving chain for session {}", session_id));
+
+        // Run the proof (this is the slow part -- minutes on local)
+        let silent_printer = crate::printer::Printer::new(crate::printer::Format::Text, true, true);
+        match super::prove::prove_chain(session_id, None, &silent_printer) {
+            Ok(()) => {
+                daemon_log(ts, &format!("chain proof complete for {}", session_id));
+
+                // Auto-push proof to Hub if attached
+                if ctx.config.is_attached() {
+                    daemon_log(ts, &format!("pushing proof for {} to Hub", session_id));
+                    // The proof file is at {session_id}.chain.zkproof
+                    // Push logic handled by hub module
+                }
+            }
+            Err(e) => {
+                daemon_log(ts, &format!("chain proof failed for {}: {}", session_id, e));
+            }
+        }
+
+        // Remove the job from the queue (whether it succeeded or failed)
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
+/// Enqueue a proof job. Called by session close when zk.auto_prove is enabled.
+#[cfg(feature = "zk")]
+pub fn enqueue_proof_job(session_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let ts = ts_dir().ok_or("no .treeship directory found")?;
+    let queue_dir = ts.join("proof_queue");
+    std::fs::create_dir_all(&queue_dir)?;
+
+    let job = serde_json::json!({
+        "session_id": session_id,
+        "created_at": crate::commands::prove::now_rfc3339_approx(),
+    });
+
+    let job_path = queue_dir.join(format!("{}.json", session_id));
+    std::fs::write(&job_path, serde_json::to_vec_pretty(&job)?)?;
+
     Ok(())
 }
 

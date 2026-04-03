@@ -341,6 +341,16 @@ pub fn prove_chain(
 
 // -- Helpers ------------------------------------------------------------------
 
+/// Approximate RFC 3339 timestamp (used for proof job metadata).
+pub fn now_rfc3339_approx() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    format!("{}Z", secs)
+}
+
 fn find_circuits_dir() -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
     // Check common locations for circuits
     let candidates = [

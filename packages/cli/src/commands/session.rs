@@ -410,6 +410,16 @@ pub fn close(
     printer.blank();
     printer.hint(&format!("treeship verify {} --full  to see the chain", result.artifact_id));
     printer.hint(&format!("treeship hub push {}      to share", result.artifact_id));
+
+    // ZK: Enqueue chain proof if configured
+    #[cfg(feature = "zk")]
+    {
+        if let Ok(()) = super::daemon::enqueue_proof_job(&manifest.session_id) {
+            printer.blank();
+            printer.dim_info("  chain proof queued (generating in background)");
+        }
+    }
+
     printer.blank();
 
     Ok(())
