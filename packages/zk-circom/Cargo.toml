@@ -5,6 +5,11 @@ edition = "2021"
 description = "Zero-knowledge proof circuits for Treeship"
 license = "Apache-2.0"
 
+[features]
+default = []
+# native = ["ark-circom", "ark-bn254", "ark-groth16", "ark-serialize", "ark-std"]
+# TODO: Enable once ark version alignment is resolved
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -14,3 +19,10 @@ thiserror = "1"
 num-bigint = "0.4"
 rand = "0.8"
 tempfile = "3"
+
+# Native Groth16 proving -- uncomment when ark versions align
+# ark-circom = { version = "0.5", optional = true }
+# ark-bn254 = { version = "0.5", optional = true }
+# ark-groth16 = { version = "0.5", optional = true }
+# ark-serialize = { version = "0.5", optional = true }
+# ark-std = { version = "0.5", optional = true }
