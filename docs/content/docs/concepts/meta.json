@@ -1,15 +1,4 @@
 {
   "title": "Concepts",
-  "pages": [
-    "ships",
-    "hub",
-    "trust-model",
-    "vocabulary",
-    "actors",
-    "approvals",
-    "handoffs",
-    "workflows",
-    "security",
-    "integrity"
-  ]
+  "pages": ["trust-model", "artifacts", "glossary", "security"]
 }

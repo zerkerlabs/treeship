@@ -1,6 +1,6 @@
 ---
 title: Quickstart
-description: From zero to a verified artifact URL in under five minutes.
+description: From zero to a verified artifact URL in under two minutes.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -8,7 +8,7 @@ import { Steps, Step } from 'fumadocs-ui/components/steps';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
 <Callout type="info">
-No account, email, or API key required. Everything runs locally on your machine.
+No account, email, or API key required. Everything runs locally.
 </Callout>
 
 <Steps>
@@ -29,13 +29,11 @@ cargo install treeship-cli
 </Tabs>
 </Step>
 <Step>
-### Initialize your Treeship
+### Initialize
 
 ```bash
 treeship init
 ```
-
-You will be asked for a name. A new Ed25519 keypair is generated and encrypted at rest.
 
 ```
 ✓ Treeship initialized
@@ -47,25 +45,23 @@ You will be asked for a name. A new Ed25519 keypair is generated and encrypted a
 ### Wrap a command
 
 ```bash
-treeship wrap -- echo "first artifact"
+treeship wrap -- npm test
 ```
-
-This produces a signed artifact with the actor, action, exit code, elapsed time, and timestamp.
 
 ```
 ✓ action attested
   id:      art_f7e6d5c4
   actor:   human://alice
-  action:  echo
+  action:  npm test
   exit:    0
-  elapsed: 12ms
+  elapsed: 1.4s
 ```
 </Step>
 <Step>
-### Verify it
+### Verify
 
 ```bash
-treeship verify art_f7e6d5c4
+treeship verify last
 ```
 
 ```
@@ -75,57 +71,27 @@ treeship verify art_f7e6d5c4
 ```
 </Step>
 <Step>
-### Issue an approval and bind an action
+### Share
 
 ```bash
-# Approver issues an approval
-treeship attest approval \
-  --approver human://alice \
-  --description "approve deploy to staging" \
-  --expires 2026-03-26T23:00:00Z
-
-# Returns: nonce: nce_7f8e9d0a
-
-# Agent acts under the approval
-treeship attest action \
-  --actor agent://deployer \
-  --action deploy.staging \
-  --approval-nonce nce_7f8e9d0a
-
-# Verify the chain
-treeship verify $TREESHIP_LAST
-```
-
-```
-✓ verified
-  approver: human://alice
-  approval: approve deploy to staging
-  nonce:    matched, single use enforced
-  actor:    agent://deployer
-  chain:    2 artifacts, intact
-```
-</Step>
-<Step>
-### Push to the Hub
-
-```bash
-# Connect your ship to Hub (creates your default hub connection)
 treeship hub attach
-# Visit https://treeship.dev/hub/activate
-# Type the code, click Approve
+# Visit the URL shown, enter the code, click Approve
 
-# Push the artifact to your active hub connection
-treeship hub push $TREESHIP_LAST
-# -> https://treeship.dev/verify/art_xxx
-
-# Disconnect when you're done (keeps your keys intact)
-treeship hub detach
+treeship hub push last
+# -> https://treeship.dev/verify/art_f7e6d5c4
 ```
 
-Anyone can open that URL and verify the chain. No account, no install, no trust in Treeship's infrastructure.
-
-<Callout type="info">
-Most developers only need one hub connection. If you work across multiple organizations, you can create named connections with `treeship hub attach --name acme-corp` and switch between them with `treeship hub use acme-corp`. See the [trust model](/docs/concepts/trust-model) for details.
-</Callout>
+Anyone with that URL can verify the full chain. No account or install needed.
 </Step>
 </Steps>
+
+## What's next
+
+<Callout type="info">
+The quickstart covers the simplest path. These guides go deeper:
+</Callout>
+
+- **[How it works](/docs/guides/how-it-works)** / Signing, chaining, verification, and Merkle proofs explained
+- **[Approvals](/docs/guides/approvals)** / Issue time-limited approvals and bind agent actions to them
+- **[Multiple actors](/docs/guides/actors)** / Add human and agent actors to your Treeship
+- **[Hub connections](/docs/guides/hub-connections)** / Attach to multiple workspaces, switch between them, and manage access

@@ -1,0 +1,20 @@
+---
+title: Glossary
+description: Essential Treeship terms. Every term maps directly to the code.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+<Callout type="info">
+Every term below maps to a concrete type or command in the CLI and Rust core.
+</Callout>
+
+| Term | Definition | In the code |
+|------|-----------|-------------|
+| **Treeship** | A local proof system: one Ed25519 keypair, one artifact store, one identity boundary | Ed25519 keypair + config + local artifact store |
+| **Actor** | A human or AI that does work, identified by a URI | `human://alice` or `agent://coder` prefix |
+| **Artifact** | A signed DSSE envelope with a content-addressed `art_` ID. Artifacts chain via `parent_id`. | `Record` in local storage |
+| **Approval** | Cryptographic authorization for an action, bound by a single-use nonce | `ApprovalStatement` / `treeship attest approval` |
+| **Hub** | Hosted infrastructure where Treeships share artifacts | treeship.dev API |
+| **Hub connection** | A named link from your Treeship to a Hub workspace. You can attach, detach, and kill connections independently. | `treeship hub attach` / DPoP keypair |
+| **Chain** | A linked sequence of artifacts with a common root, connected through `parent_id` references | `treeship verify` walks the chain recursively |

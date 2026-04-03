@@ -1,59 +1,50 @@
 ---
 title: What is Treeship
-description: Treeship is a portable cryptographic trust layer for human-agent workflows.
+description: Treeship is a local-first, portable proof system for agent workflows.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Card, Cards } from 'fumadocs-ui/components/card';
 
-Treeship keeps a signed record of every action your agents take, every approval your team issues, and every handoff of work between systems.
+Treeship wraps the commands your agents run, signs the results, and produces portable proof that the work happened exactly the way you say it did.
 
-The record is self-contained. It verifies offline. It crosses organizational boundaries. It does not depend on Treeship's servers to be valid -- the signatures are the trust.
+## Wrap, verify, share
 
-## The problem
+```
+1. treeship wrap -- npm test        # sign what happened
+2. treeship verify last             # check the chain offline
+3. treeship hub push last           # share a verify URL
+```
 
-When AI agents take consequential actions -- moving money, modifying code, executing contracts -- there is no receipt. Logs show API calls happened. They do not show:
+That is the entire core loop. Everything else builds on it.
 
-- Who authorized the action
-- What scope the authorization covered
-- Whether the chain of custody is intact
-- Whether the approval was used once or many times
-
-Treeship produces cryptographic receipts that answer all four.
-
-## What Treeship is not
-
-<Callout type="warn">
-Treeship is not a scanner, EDR, SIEM, orchestration framework, or centralized trust authority. It is the **evidence layer**. Other tools find problems. Treeship signs what happened.
-</Callout>
-
-## Architecture: agents, Treeships, and hub connections
-
-Treeship is organized in three layers:
-
-**Layer 1: Agents** -- the actors within a trust domain. Every human or AI that performs work is identified by a URI like `human://alice` or `agent://deployer`. Agents create and sign artifacts.
-
-**Layer 2: Treeships** -- the trust domain itself. One Treeship equals one Ed25519 keypair and one local artifact store. A Treeship is your identity boundary. All artifacts signed by a Treeship share the same root of trust.
-
-**Layer 3: Hub connections** -- how a Treeship connects to the outside world. A hub connection is a named link from your Treeship to a Hub workspace. Think of hub connections like tmux sessions -- named connections you can attach, detach, and kill independently.
-
-Most developers need exactly one hub connection. You would create multiple connections if you publish artifacts to separate audiences -- for example, one connection for your personal workspace and another for a client's workspace. The Treeship key stays the same across all connections, and your artifacts never change. Hub connections only control where artifacts appear on Hub.
-
-## Core properties
+## What you get
 
 <Cards>
-<Card title="Local-first" description="Every operation works offline. The Hub adds shareability, never trust." />
-<Card title="Self-contained" description="A signed artifact is a JSON file. It verifies without a database, API, or account." />
-<Card title="Deterministic" description="Same content always produces the same artifact ID." />
-<Card title="Portable" description="Works across orgs, clouds, and protocols with no shared infrastructure." />
+<Card title="Local-first" description="Every operation works offline. No server, no account, no API key required." />
+<Card title="Portable" description="A signed artifact is a self-contained JSON file. It verifies anywhere, across orgs, clouds, and protocols." />
+<Card title="Offline verification" description="The verifier is deterministic and runs on your machine. No network call needed." />
+<Card title="Signed chain" description="Every artifact links to its parent by content hash. Tamper with one step and the whole chain fails." />
 <Card title="Open" description="MIT licensed. The verifier is open source. Anyone can verify without trusting Treeship." />
 </Cards>
 
-## How it fits with other tools
+## How it works
 
-| Tool | What it does | Treeship's role |
-|------|-------------|-----------------|
-| Trivy | Finds vulnerabilities | Treeship signs the evidence Trivy produces |
-| Falco | Detects runtime anomalies | Treeship attests that Falco ran and what it found |
-| Langfuse | Traces agent behavior | Treeship signs the authorization chain |
-| Sigstore | Signs software artifacts | Treeship applies the same model to agent actions |
+**One key signs everything.** When you run `treeship init`, Treeship generates an Ed25519 keypair and encrypts it at rest. This key is your identity boundary.
+
+**Actors are humans and AI.** Every person or agent that performs work is identified by a URI like `human://alice` or `agent://deployer`. All actors sign under the same Treeship key.
+
+**Artifacts chain together.** Each artifact references its parent by content-addressed ID. The result is an ordered, tamper-evident chain of everything that happened in your workflow.
+
+## Hub
+
+Hub is optional. It adds shareability, never trust.
+
+When you run `treeship hub push`, your artifact gets a public verify URL that anyone can open to check the chain. No install, no account, no trust in Treeship's infrastructure required on the verifier's side.
+
+You can attach and detach from Hub at any time. Your keys and artifacts stay local regardless.
+
+<Cards>
+<Card title="Quickstart" href="/docs/guides/quickstart" description="Zero to a shareable verify URL in under two minutes." />
+<Card title="How it works" href="/docs/guides/how-it-works" description="Signing, chaining, verification, and Merkle proofs explained." />
+</Cards>

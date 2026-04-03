@@ -1,9 +1,4 @@
 {
   "title": "Get started",
-  "pages": [
-    "introduction",
-    "quickstart",
-    "how-it-works",
-    "templates"
-  ]
+  "pages": ["introduction", "quickstart", "how-it-works", "templates", "approvals", "handoffs", "workflows", "merkle-proofs"]
 }

@@ -1,0 +1,88 @@
+---
+title: Artifacts
+description: What artifacts are, the eight types, how they chain, and content addressing.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+An artifact is a single signed record in Treeship. Every artifact is a DSSE envelope containing a structured statement, signed with your Treeship's Ed25519 key, and identified by a content-addressed `art_` ID.
+
+## Content-addressed IDs
+
+Artifact IDs are derived from the artifact's content:
+
+```
+art_ + hex(sha256(PAE bytes)[:16])
+```
+
+The ID is not assigned. It is computed. Change one byte of the artifact and the ID changes. There is no way to modify an artifact while preserving its ID.
+
+<Callout type="info">
+PAE (Pre-Authentication Encoding) is the DSSE standard for encoding payload type and payload before signing. The ID is derived from the same bytes that are signed.
+</Callout>
+
+## Chaining
+
+Every artifact contains a `parentId` field pointing to the previous artifact in the chain. This creates an ordered, append-only sequence.
+
+```
+art_a1b2c3... (approval)
+  <- art_d4e5f6... (action, parent_id = art_a1b2c3...)
+    <- art_g7h8i9... (confirmation, parent_id = art_d4e5f6...)
+```
+
+If someone modifies an artifact, its ID changes. Downstream artifacts still reference the old ID. The chain breaks. `treeship verify` catches this immediately.
+
+This gives you two properties:
+
+1. **Ordering.** You can walk the chain from any artifact back to the first one.
+2. **Tamper evidence.** Modifying, inserting, or removing any artifact breaks the chain for every artifact that follows it.
+
+## The eight artifact types
+
+| Type | What it records | CLI command |
+|------|----------------|-------------|
+| **Action** | A signed record of an agent or human performing something | `treeship attest action` |
+| **Approval** | Cryptographic authorization for an action, with nonce binding | `treeship attest approval` |
+| **Handoff** | Signed transfer of work between actors | `treeship attest handoff` |
+| **Endorsement** | Third-party validation of another artifact | `treeship attest endorsement` |
+| **Receipt** | External system confirmation (webhook, timestamp, inclusion proof) | `treeship attest receipt` |
+| **Bundle** | Portable package of artifacts, self-verifying | `treeship bundle create` |
+| **Checkpoint** | Merkle tree root signing a batch of artifacts | `treeship checkpoint` |
+| **Revocation** | Invalidation of a previously issued artifact or key | Published via Hub revocation list |
+
+## DSSE envelope format
+
+Every artifact is wrapped in a Dead Simple Signing Envelope (DSSE). The signature covers PAE-encoded bytes:
+
+```
+DSSE envelope
++-- payloadType: application/vnd.treeship.action.v1+json
++-- payload (base64-encoded JSON):
+|   {
+|     type:          "treeship/action/v1",
+|     timestamp:     "2026-03-26T21:00:00Z",
+|     actor:         "agent://researcher",
+|     action:        "document.analyze",
+|     parentId:      "art_previousstep",
+|     approvalNonce: "nce_7f8e9d0a",
+|     meta:          { ... }
+|   }
++-- signatures:
+    [{ keyid: "key_9f8e7d6c", sig: "base64url(ed25519_sig)" }]
+```
+
+The signing key is Ed25519. Verification requires only the public key and the envelope. No network call, no certificate chain, no token exchange.
+
+## Bundles
+
+A bundle is a portable, self-verifying package of artifacts exported as a `.treeship` file. Bundles contain everything needed to verify a chain: the artifacts, signatures, and the public key.
+
+```bash
+treeship bundle create --artifacts art_a1b2,art_c3d4 --tag deploy-v1.2
+treeship bundle export art_bundle_id --out deploy-v1.2.treeship
+```
+
+<Callout type="success">
+Bundles verify offline. Share a `.treeship` file and the recipient can verify the entire workflow without network access, without an account, and without trusting Treeship's infrastructure.
+</Callout>

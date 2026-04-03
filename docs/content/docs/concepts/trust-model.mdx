@@ -20,73 +20,46 @@ A Treeship artifact is valid if its Ed25519 signature verifies against a known p
 The Hub is convenience infrastructure for sharing and discovery. It cannot forge a passing verification result.
 </Callout>
 
-## Treeships, agents, and hub connections
+## Key hierarchy
 
-Treeship's trust architecture has three layers:
-
-### Layer 1: Agents
-
-Agents are the actors that perform work inside a Treeship. Each agent is identified by a URI:
-
-- `human://alice` -- a person
-- `agent://coder` -- an AI agent
-- `human://approver` -- someone who issues approvals
-
-Agents do not hold their own keys. They act under the Treeship's key.
-
-### Layer 2: Treeships
-
-A Treeship is the trust domain. One Treeship means one Ed25519 keypair and one local artifact store. Every artifact created within a Treeship is signed by the same key, regardless of which agent created it.
+A Treeship is the trust domain: one Ed25519 keypair, one local artifact store, one identity boundary. Every artifact signed within a Treeship shares the same root of trust.
 
 ```
 Owner (human)
-└── Treeship key (Ed25519)
-    ├── Signs all artifacts
-    ├── Signs approvals
-    └── Signs handoffs
++-- Treeship key (Ed25519)
+    |-- Signs all artifacts
+    |-- Signs approvals
+    +-- Signs handoffs
 ```
 
-The owner holds the private key, encrypted at rest.
+The owner holds the private key, encrypted at rest. The key never leaves the local machine unless explicitly exported. There is no key escrow or recovery service.
 
-### Layer 3: Hub connections
+Actors (humans and AI agents) work inside a Treeship but do not hold their own keys. They are identified by URIs like `human://alice` or `agent://coder`, and every artifact they create is signed by the Treeship key. The actor URI tells you who acted. The Treeship key tells you the artifact is authentic.
 
-A hub connection is a named link from your Treeship to a Hub workspace. Hub connections are how your trust domain connects to the outside world.
+<Callout type="info">
+A good rule of thumb: if you would use the same SSH key, use the same Treeship. If you would use different SSH keys, use different Treeships.
+</Callout>
 
-Think of hub connections like tmux sessions. Your local Treeship stays the same. Hub connections just control where you push and which workspace your artifacts appear in.
+## What "verified" means
 
-```
-Treeship (one keypair, one artifact store)
-├── hub: default  -> hub.treeship.dev/alice/personal
-├── hub: acme     -> hub.treeship.dev/acme-corp/projects
-└── hub: client-x -> hub.treeship.dev/clientx/deliverables
-```
+When you run `treeship verify`, the verifier checks:
 
-Key properties of hub connections:
+1. **Content-addressed ID** matches the artifact content (tampered content fails immediately)
+2. **Ed25519 signature** is valid for the claimed key
+3. **Parent chain** is intact (no missing or modified links)
+4. **Approval nonce binding** matches if the action references an approval
 
-- Adding or removing a hub connection never changes your Treeship key
-- Artifacts are identical regardless of which hub connection you push them through
-- Each hub connection has its own DPoP keypair for authenticating with Hub
-- Most developers only need one hub connection
+Exit 0 means clean chain. Exit 1 means something failed. The verifier is deterministic and runs entirely on your machine.
 
-### When to create a new Treeship vs. add a hub connection
+## Cross-Treeship trust
 
-**Add a hub connection** when you want the same identity to publish artifacts to a different Hub workspace. Your artifacts carry the same signature either way -- hub connections just control visibility.
+When work moves between organizations, each side has its own Treeship and keys. Trust is established by exchanging public keys, not by sharing infrastructure. Company B verifies Company A's artifacts using Company A's public key directly.
 
-**Create a new Treeship** when you need a separate identity with its own keypair. For example, a personal Treeship and a work Treeship, or separate Treeships for separate projects that should not share a trust root.
-
-## Chain integrity
-
-Every artifact contains a `parentId` field pointing to the previous artifact in the chain. Verification walks this chain recursively. A broken link (missing parent, tampered content) causes the entire chain to fail.
-
-## Approval binding
-
-Approvals use a nonce-binding model. The approver signs an approval containing a random nonce. The agent includes that nonce in its action. At verification time, the verifier checks:
-
-```
-action.approvalNonce == approval.nonce
+```bash
+treeship verify art_handoff_xyz --trusted-key ./company-a-public.pem
 ```
 
-This is enforced in the Rust core. There is no way to skip the check.
+No shared infrastructure required. The signature is the trust.
 
 ## Offline verification
 

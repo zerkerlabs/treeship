@@ -1,89 +1,250 @@
 ---
 title: How it works
-description: The four-step flow from first command to shareable proof URL.
+description: Signing, chaining, actors, verification, Hub, and Merkle proofs explained.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Steps, Step } from 'fumadocs-ui/components/steps';
 
-## The flow
+This page explains the mechanics behind Treeship. If you have not run the [quickstart](/docs/guides/quickstart) yet, start there. Come back here when you want to understand what is happening under the hood.
 
-<Steps>
-<Step>
-### Initialize
+## Signing
 
-Create a Treeship -- a trust domain with a name and an Ed25519 keypair.
+Every artifact Treeship produces is an Ed25519 signature over a structured payload.
 
-```bash
-treeship init
-```
+When you run `treeship init`, a new Ed25519 keypair is generated and encrypted at rest on your machine. This key never leaves your device unless you explicitly export it. Every artifact your Treeship produces is signed with this key, which means anyone with access to your public key can verify any artifact you have ever created.
 
-One Treeship covers your entire workflow. Many agents, many workflows, one set of keys and one governance model.
-</Step>
-<Step>
-### Run your workflow
-
-Wrap any command or attest any action. Issue approvals before sensitive steps.
-
-```bash
-treeship wrap -- python agent.py
-treeship attest approval --approver human://alice --description "approve payment"
-treeship wrap -- node pay.js
-```
-
-Every step produces a signed artifact linked to the previous one via a content-addressed parent ID.
-</Step>
-<Step>
-### Share the proof
-
-Bundle your artifacts and push to the Hub.
-
-```bash
-treeship bundle create --artifacts art_a1b2,art_c3d4 --tag deploy-v1.2
-treeship hub push art_bundle_id
-# -> https://treeship.dev/verify/art_xxx
-```
-</Step>
-</Steps>
-
-## What gets signed
-
-Every artifact is a DSSE envelope containing a Treeship statement:
+The signature format follows [DSSE (Dead Simple Signing Envelope)](https://github.com/secure-systems-lab/dsse):
 
 ```
 DSSE envelope
-└── payloadType: application/vnd.treeship.action.v1+json
-└── payload (base64):
-    {
-      type:          "treeship/action/v1",
-      timestamp:     "2026-03-26T21:00:00Z",
-      actor:         "agent://researcher",
-      action:        "document.analyze",
-      parentId:      "art_previousstep",
-      approvalNonce: "nce_7f8e9d0a",    <- must match approval.nonce
-      meta:          { ... }
-    }
+├── payloadType: application/vnd.treeship.action.v1+json
+├── payload (base64-encoded JSON):
+│   {
+│     type:          "treeship/action/v1",
+│     timestamp:     "2026-03-26T21:00:00Z",
+│     actor:         "agent://researcher",
+│     action:        "document.analyze",
+│     parentId:      "art_previousstep",
+│     approvalNonce: "nce_7f8e9d0a",
+│     meta:          { ... }
+│   }
 └── signatures:
     [{ keyid: "key_9f8e7d6c", sig: "base64url(ed25519_sig)" }]
 ```
 
-## How verification works
+The signature is computed over `PAE(payloadType, payload)` (Pre-Authentication Encoding), which prevents type confusion attacks where a valid signature for one payload type could be reused for another.
+
+## Chaining
+
+Artifacts form an ordered chain through `parentId` references.
+
+When you create a new artifact, Treeship automatically sets its `parentId` to the ID of the most recent artifact in your local store. The artifact ID itself is derived from `sha256(PAE_bytes)[..16]`, which means the ID is a content hash. If anyone tampers with the payload, the ID no longer matches and verification fails.
+
+This gives you two properties:
+
+1. **Ordering.** You can walk the chain from any artifact back to the first one.
+2. **Tamper evidence.** Modifying, inserting, or removing any artifact breaks the chain for every artifact that follows it.
+
+## Actors
+
+An actor is any entity that performs work inside your Treeship. Actors are identified by URI:
+
+| Prefix | Meaning | Example |
+|--------|---------|---------|
+| `human://` | A human identity | `human://alice` |
+| `agent://` | An AI agent or automation | `agent://deployer` |
+| `system://` | An external system (used in receipts) | `system://stripe-webhook` |
+
+URIs are freeform after the prefix. Use whatever naming convention fits your organization.
+
+All actors sign under the same Treeship key. The actor URI identifies *who* performed the action; the Treeship key proves *which trust domain* the action belongs to. This separation matters because a single Treeship often has multiple actors (a developer, a CI bot, and several AI agents) all contributing to the same chain of work.
+
+Actors do not have their own keys. The Treeship key is the root of trust, and the actor URI is metadata within the signed payload. This keeps the key management surface small: one key to protect, one key to rotate, one key to verify against.
+
+Actors appear in different roles depending on the attestation type:
+
+| Attestation | Flag | Role |
+|-------------|------|------|
+| Action | `--actor` | Who performed the action |
+| Approval | `--approver` | Who authorized the action |
+| Handoff | `--from` / `--to` | Sender and receiver of work |
+| Receipt | `--system` | External system producing the receipt |
+
+<Callout type="info">
+Being referenced as an actor does not grant permission to act. To take a sensitive action, an agent still needs an approval from an authorized approver.
+</Callout>
+
+## Verification
+
+Verification is fully offline and deterministic. No network call, no server, no account.
 
 ```bash
 treeship verify art_f7e6d5c4
 ```
 
+The verifier performs the following checks:
+
+<Steps>
+<Step>
+### Recompute the artifact ID
+
+Derive the expected ID from `sha256(PAE_bytes)[..16]` and compare it to the stored ID. If they do not match, the payload has been tampered with.
+</Step>
+<Step>
+### Check the Ed25519 signature
+
+Verify the signature in the DSSE envelope against the Treeship's public key. A bad signature means the artifact was not produced by the claimed Treeship.
+</Step>
+<Step>
+### Validate the statement schema
+
+Confirm the payload conforms to the expected Treeship statement schema for its declared type.
+</Step>
+<Step>
+### Walk the parent chain
+
+Follow `parentId` links recursively, verifying each ancestor artifact the same way. A broken link at any point fails the entire chain.
+</Step>
+<Step>
+### Check approval binding (if present)
+
+If the artifact references an `approvalNonce`, confirm that a matching approval artifact exists in the chain with a valid nonce that has not been reused.
+</Step>
+<Step>
+### Return the result
+
+Exit 0 means the full chain is intact. Exit 1 means something failed, with reasons printed.
+</Step>
+</Steps>
+
 <Callout type="info">
-The verifier is deterministic and runs entirely on your machine. No network call, no server trust required.
+The verifier is open source and MIT licensed. You can audit it, embed it in CI, or run it in a browser. Trust the math, not the infrastructure.
 </Callout>
 
-The verifier:
-1. Derives the expected artifact ID from `sha256(PAE_bytes)[..16]`
-2. Compares against the stored ID -- tampered content fails immediately
-3. Verifies the Ed25519 signature
-4. Validates the statement schema
-5. Walks the parent chain recursively
-6. Checks `action.approvalNonce == approval.nonce` if present
-7. Returns pass / fail with reasons
+## Hub
 
-Exit 0 = clean chain. Exit 1 = something failed.
+Hub is the optional sharing layer. It adds discoverability and public verify URLs, but it never adds trust. The signatures are the trust.
+
+### Hub connections
+
+A hub connection is a named link between your local Treeship and a workspace on Hub. Hub connections work like tmux sessions: you can attach, detach, and kill them independently. Your Treeship stays the same regardless of how many hub connections exist.
+
+| tmux | Treeship | What it does |
+|------|----------|-------------|
+| `tmux new -s work` | `treeship hub attach --name work` | Create a new named connection |
+| `tmux attach -t work` | `treeship hub use work` | Switch to an existing connection |
+| `tmux detach` | `treeship hub detach` | Disconnect without destroying (keys preserved) |
+| `tmux kill-session -t work` | `treeship hub kill work` | Remove the connection permanently |
+| `tmux ls` | `treeship hub ls` | List all connections |
+
+Hub connections are about audiences, not environments. The Treeship key stays the same across all hub connections. Artifacts never change. Hub connections only control where artifacts appear on Hub.
+
+```
+Treeship (one keypair, one artifact store)
+ |-- hub: default  -> hub.treeship.dev/alice/personal
+ |-- hub: acme     -> hub.treeship.dev/acme-corp/projects
+ +-- hub: client-x -> hub.treeship.dev/clientx/deliverables
+```
+
+Most developers need exactly one hub connection.
+
+When you attach to Hub, your Treeship's public key is registered. If the same public key appears in multiple hub connections, Hub knows they belong to the same Treeship. This is how Hub links workspaces to identities without requiring accounts or emails.
+
+### Attach and detach
+
+Hub uses a device-authorization flow. When you run `treeship hub attach`, the CLI prints a URL and a short code. You visit the URL in a browser, enter the code, and approve the connection. From that point on, the CLI can push artifacts to your Hub workspace.
+
+**Detach** disconnects the active hub connection but preserves all keys locally. You can re-attach later without re-authenticating.
+
+**Kill** removes the hub connection from local config permanently. Artifacts already pushed to Hub remain there: they are content-addressed and independently verifiable.
+
+### DPoP authentication
+
+Hub connections use DPoP (Demonstration of Proof-of-Possession) tokens. Each API request includes a proof that the caller holds the private key associated with the connection. This prevents token theft: a stolen access token is useless without the corresponding private key.
+
+### Hub connection commands
+
+| Command | Description |
+|---------|-------------|
+| `treeship hub attach` | Connect to Hub (creates new or reconnects) |
+| `treeship hub attach --name <name>` | Create or reconnect a named hub connection |
+| `treeship hub detach` | Disconnect active hub connection (keeps keys) |
+| `treeship hub ls` | List all known hub connections |
+| `treeship hub status` | Show active hub connection details |
+| `treeship hub use <name>` | Switch active hub connection |
+| `treeship hub push <id>` | Push artifact to active hub connection |
+| `treeship hub push <id> --hub <name>` | Push to a specific hub connection |
+| `treeship hub push <id> --all` | Push to all hub connections |
+| `treeship hub pull <id>` | Pull artifact from Hub |
+| `treeship hub open` | Open workspace in browser |
+| `treeship hub kill <name>` | Remove a hub connection |
+
+### Hub connection config
+
+Hub connections are stored in `~/.treeship/config.json`:
+
+```json
+{
+  "hub_connections": {
+    "default": {
+      "hub_id": "hub_661e5463912d",
+      "key_id": "key_9f8e7d6c",
+      "endpoint": "api.treeship.dev"
+    },
+    "work": {
+      "hub_id": "hub_a2b3c4d5e6f7",
+      "key_id": "key_9f8e7d6c",
+      "endpoint": "api.treeship.dev"
+    }
+  },
+  "active_hub": "default"
+}
+```
+
+Each hub connection has its own DPoP keypair for authenticating with Hub. Adding or removing a hub connection never changes your Treeship key.
+
+<Callout type="info">
+Configs from earlier versions (flat `hub` object or `docks` format) are automatically migrated to the `hub_connections` format on first run. No manual action required.
+</Callout>
+
+### Workspace URLs
+
+When you push an artifact to Hub, it gets a public URL:
+
+```
+https://treeship.dev/verify/art_f7e6d5c4
+```
+
+Anyone who opens that URL can verify the full artifact chain in their browser. No account, no install, no CLI required. The browser-based verifier runs the same checks as the CLI verifier described above.
+
+## Merkle proofs
+
+Hub periodically creates Merkle tree checkpoints over all artifacts in a workspace. These checkpoints enable two additional guarantees:
+
+### Inclusion proofs
+
+Given an artifact and a checkpoint, anyone can verify that the artifact was included in the checkpoint's Merkle tree. This proves the artifact existed at the time the checkpoint was created, even if Hub later tries to deny it.
+
+### Anti-backdating
+
+Because checkpoints are published at known intervals, you can prove that an artifact existed *before* a certain time. If your artifact appears in checkpoint N, and checkpoint N was published at time T, then the artifact must have been pushed before T. This prevents anyone (including Hub) from inserting artifacts after the fact and claiming they were always there.
+
+### How it works in practice
+
+You do not need to interact with Merkle proofs directly. Hub creates checkpoints automatically, and the browser verifier checks inclusion proofs when they are available. The guarantees are there whether or not you think about them.
+
+If you want to verify a proof manually:
+
+```bash
+treeship hub verify-inclusion art_f7e6d5c4
+```
+
+```
+✓ inclusion verified
+  checkpoint: cp_20260326_2100
+  root:       sha256:a1b2c3...
+  proof:      3 intermediate hashes
+```
+
+This confirms the artifact was included in the specified checkpoint and that the Merkle path is valid from the artifact's leaf node to the checkpoint root.
