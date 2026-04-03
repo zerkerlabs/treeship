@@ -43,6 +43,7 @@ treeship verify last --full
 
 # Push to Hub for a shareable link
 treeship dock login
+
 treeship dock push <artifact-id>
 ```
 

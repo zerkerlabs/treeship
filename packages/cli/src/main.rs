@@ -286,8 +286,51 @@ enum Command {
     #[command(subcommand)]
     Template(TemplateCommand),
 
+    /// Generate a zero-knowledge proof for an artifact
+    ///
+    /// Circom circuits prove properties of artifacts without revealing data.
+    /// Requires: --features zk build flag, snarkjs installed.
+    ///
+    /// Examples:
+    ///   treeship prove --circuit policy-checker --artifact art_xxx --policy ./policy.json
+    ///   treeship prove --circuit input-output-binding --artifact art_xxx
+    Prove(ProveArgs),
+
+    /// Verify a zero-knowledge proof file
+    ///
+    /// Examples:
+    ///   treeship verify-proof art_xxx.policy-checker.zkproof
+    VerifyProof(VerifyProofArgs),
+
+    /// Show ZK proof system status
+    ///
+    /// Examples:
+    ///   treeship zk-status
+    ZkStatus,
+
     /// Print version and build info
     Version,
+}
+
+#[derive(Args)]
+struct ProveArgs {
+    /// Circuit to use: policy-checker, input-output-binding, prompt-template
+    #[arg(long, required = true)]
+    circuit: String,
+
+    /// Artifact ID to prove (or "last" for most recent)
+    #[arg(long, required = true)]
+    artifact: String,
+
+    /// Policy file (JSON array of allowed actions) -- required for policy-checker
+    #[arg(long, value_name = "PATH")]
+    policy: Option<String>,
+}
+
+#[derive(Args)]
+struct VerifyProofArgs {
+    /// Path to the .zkproof file
+    file: String,
 }
 
 #[derive(Subcommand)]
@@ -1065,6 +1108,21 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             TemplateCommand::Validate { file } => commands::template::validate(file, printer),
             TemplateCommand::Save(a) => commands::template::save(a.name.clone(), printer),
         },
+
+        Command::Prove(a) => commands::prove::prove_circuit(
+            &a.circuit,
+            &a.artifact,
+            a.policy.as_deref(),
+            cli.config.as_deref(),
+            printer,
+        ),
+
+        Command::VerifyProof(a) => commands::prove::verify_proof(
+            &a.file,
+            printer,
+        ),
+
+        Command::ZkStatus => commands::prove::zk_status(printer),
 
         Command::Version => {
             println!("treeship {} (rust)", env!("CARGO_PKG_VERSION"));
