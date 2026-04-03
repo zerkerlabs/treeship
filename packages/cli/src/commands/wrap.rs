@@ -235,6 +235,41 @@ pub fn run(
         }
     }
 
+    // ── ZK auto-prove (when declaration is active) ──────────────────
+    #[cfg(feature = "zk")]
+    {
+        // Check if there's a .treeship/declaration.json with bounded_actions
+        let decl_path = std::path::Path::new(&ctx.config.storage_dir)
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .join("declaration.json");
+        if decl_path.exists() {
+            if let Ok(decl_content) = std::fs::read_to_string(&decl_path) {
+                if let Ok(decl) = serde_json::from_str::<serde_json::Value>(&decl_content) {
+                    if let Some(actions) = decl.get("bounded_actions").and_then(|a| a.as_array()) {
+                        let allowed: Vec<String> = actions.iter()
+                            .filter_map(|a| a.as_str().map(|s| s.to_string()))
+                            .collect();
+                        if !allowed.is_empty() {
+                            match super::prove::prove_circuit(
+                                "policy-checker",
+                                &result.artifact_id,
+                                None, // policy loaded from declaration
+                                config,
+                                printer,
+                            ) {
+                                Ok(()) => {}
+                                Err(e) => {
+                                    printer.dim_info(&format!("  zk proof: {}", e));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // ── 4. Wire --push ─────────────────────────────────────────────────
     let mut hub_url: Option<String> = None;
     if push {
