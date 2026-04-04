@@ -1,0 +1,33 @@
+{
+  "name": "Lobster Cash",
+  "slug": "lobster-cash",
+  "version": "0.1.0",
+  "description": "Cryptographic attestation for every payment made through lobster.cash",
+  "author": {
+    "name": "Zerker Labs",
+    "website": "https://zerker.dev"
+  },
+  "website": "https://lobster.cash",
+  "github": "https://github.com/zerker-labs/treeship/tree/main/packages/skills/lobster-cash",
+  "compatible_wallets": [
+    "lobster.cash"
+  ],
+  "tags": [
+    "payments",
+    "attestation",
+    "wallet",
+    "zk",
+    "lobster-cash",
+    "commerce"
+  ],
+  "install": "treeship skill install lobster-cash",
+  "wording_compliance": {
+    "wallet_name": "lobster.cash",
+    "attestation_layer": "Treeship",
+    "no_em_dashes": true,
+    "no_private_key_prompts": true,
+    "no_seed_phrase_prompts": true,
+    "no_card_detail_prompts": true,
+    "delegation_language": "delegates wallet operations to lobster.cash"
+  }
+}

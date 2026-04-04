@@ -1,0 +1,48 @@
+trust_template:
+  name: lobster-cash
+  version: 0.1.0
+
+  bounded_actions:
+    - lobster.balance.check
+    - lobster.wallet.setup
+    - lobster.send
+    - lobster.tx.create
+    - lobster.tx.approve
+    - lobster.tx.status
+    - lobster.card.request
+    - lobster.x402.fetch
+    - http.get
+    - file.read
+
+  escalation_required:
+    - lobster.send
+    - lobster.card.request
+    - lobster.x402.fetch
+
+  forbidden:
+    - lobster.wallet.create
+    - store_credentials
+    - store_private_keys
+    - request_private_keys
+    - request_card_details
+    - request_seed_phrases
+
+  limits:
+    max_spend_usd: 1000
+    killswitch: true
+    expires: 4h
+
+  actors:
+    - agent://lobster-commerce
+    - human://approver
+
+  zk:
+    auto_prove: true
+    on: every_action
+
+  session:
+    auto_start: true
+
+  hub:
+    auto_push: true
+    on: session_close
