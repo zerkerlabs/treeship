@@ -54,7 +54,7 @@ impl ViKeypair {
         let stored: StoredKey = serde_json::from_str(&data)?;
 
         let bytes = if stored.encrypted {
-            let machine_key = treeship_core::keys::derive_machine_key(dir)
+            let machine_key = treeship_core::keys::derive_machine_key_stable(dir)
                 .map_err(|e| format!("failed to derive machine key: {}", e))?;
             let enc_bytes = hex::decode(&stored.private_hex)?;
             let nonce = stored.nonce_hex
@@ -90,7 +90,7 @@ impl ViKeypair {
         let path = dir.join(KEY_FILENAME);
 
         // Encrypt the private key using the machine-derived key
-        let machine_key = treeship_core::keys::derive_machine_key(dir)
+        let machine_key = treeship_core::keys::derive_machine_key_stable(dir)
             .map_err(|e| format!("failed to derive machine key: {}", e))?;
         let plaintext = self.signing_key.to_bytes();
         let (enc_bytes, nonce) = treeship_core::keys::aes_gcm_encrypt(&machine_key, plaintext.as_slice())

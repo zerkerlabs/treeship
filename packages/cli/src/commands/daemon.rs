@@ -545,12 +545,27 @@ fn process_proof_queue(ts: &std::path::Path, ctx: &crate::ctx::Ctx) {
         }
 
         // Lock file prevents concurrent processing of the same job.
-        // If a previous daemon cycle crashed mid-proof, the lock file
-        // will be stale. We skip any job that has an active lock.
+        // Stale locks (>30 min) from crashed daemons are cleaned up.
         let lock_path = path.with_extension("lock");
         if lock_path.exists() {
-            // Lock already held; skip this job for now
-            continue;
+            // Check if lock is stale (older than 30 minutes)
+            if let Ok(metadata) = std::fs::metadata(&lock_path) {
+                if let Ok(modified) = metadata.modified() {
+                    let age = std::time::SystemTime::now()
+                        .duration_since(modified)
+                        .unwrap_or_default();
+                    if age.as_secs() > 1800 {
+                        daemon_log(ts, &format!("removing stale lock: {:?}", lock_path));
+                        let _ = std::fs::remove_file(&lock_path);
+                    } else {
+                        continue; // Lock is fresh, skip
+                    }
+                } else {
+                    continue;
+                }
+            } else {
+                continue;
+            }
         }
 
         // Create lock file before processing
@@ -595,14 +610,31 @@ fn process_proof_queue(ts: &std::path::Path, ctx: &crate::ctx::Ctx) {
                 if ctx.config.is_attached() {
                     daemon_log(ts, &format!("pushing proof for {} to Hub", session_id));
                 }
+
+                // Success: remove the job
+                let _ = std::fs::remove_file(&path);
             }
             Err(e) => {
                 daemon_log(ts, &format!("chain proof failed for {}: {}", session_id, e));
+                // Keep the job for retry. Increment attempt counter.
+                let attempts = job["attempts"].as_u64().unwrap_or(0) + 1;
+                if attempts >= 3 {
+                    // Move to dead-letter after 3 attempts
+                    daemon_log(ts, &format!("moving failed job {} to dead-letter (3 attempts)", session_id));
+                    let dead_dir = ts.join("proof_queue").join("dead");
+                    let _ = std::fs::create_dir_all(&dead_dir);
+                    let _ = std::fs::rename(&path, dead_dir.join(path.file_name().unwrap_or_default()));
+                } else {
+                    // Update attempts counter, keep for retry
+                    let mut updated = job.clone();
+                    updated["attempts"] = serde_json::json!(attempts);
+                    updated["last_error"] = serde_json::json!(e.to_string());
+                    let _ = std::fs::write(&path, serde_json::to_vec_pretty(&updated).unwrap_or_default());
+                }
             }
         }
 
-        // Remove the job and its lock (whether it succeeded or failed)
-        let _ = std::fs::remove_file(&path);
+        // Remove lock (always). Job only removed on success.
         let _ = std::fs::remove_file(&lock_path);
     }
 }

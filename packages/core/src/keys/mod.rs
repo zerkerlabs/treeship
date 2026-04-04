@@ -453,6 +453,86 @@ pub fn derive_machine_key(store_dir: &Path) -> Result<[u8; 32], KeyError> {
     Ok(h.finalize().into())
 }
 
+/// Stable machine key derivation for NEW keys (VI P-256, etc).
+/// Uses hardware identifiers that survive hostname/user changes.
+/// For legacy ship Ed25519 keys, use `derive_machine_key()` instead.
+pub fn derive_machine_key_stable(store_dir: &Path) -> Result<[u8; 32], KeyError> {
+    // 1. Linux: /etc/machine-id
+    if let Ok(id) = fs::read_to_string("/etc/machine-id") {
+        let trimmed = id.trim();
+        if !trimmed.is_empty() {
+            let mut h = Sha256::new();
+            h.update(b"treeship-machine-key-v2:");
+            h.update(trimmed.as_bytes());
+            h.update(b":");
+            h.update(store_dir.to_string_lossy().as_bytes());
+            return Ok(h.finalize().into());
+        }
+    }
+
+    // 2. macOS: IOPlatformSerialNumber (hardware serial, stable across
+    //    hostname changes, user renames, non-interactive shells)
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(output) = std::process::Command::new("ioreg")
+            .args(["-rd1", "-c", "IOPlatformExpertDevice"])
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                if line.contains("IOPlatformSerialNumber") {
+                    if let Some(serial) = line.split('"').nth(3) {
+                        if !serial.is_empty() {
+                            let mut h = Sha256::new();
+                            h.update(b"treeship-machine-key-v2:");
+                            h.update(serial.as_bytes());
+                            h.update(b":");
+                            h.update(store_dir.to_string_lossy().as_bytes());
+                            return Ok(h.finalize().into());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Fallback: persistent random seed in ~/.treeship/.internal/
+    //    Separate from key material. Mode 0600.
+    let home = std::env::var("HOME")
+        .map(std::path::PathBuf::from)
+        .map_err(|_| KeyError::Crypto("HOME not set".to_string()))?;
+    let seed_dir = home.join(".treeship").join(".internal");
+    let _ = fs::create_dir_all(&seed_dir);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&seed_dir, fs::Permissions::from_mode(0o700));
+    }
+
+    let seed_path = seed_dir.join("machine_seed_v2");
+    let seed = if seed_path.exists() {
+        fs::read_to_string(&seed_path).map_err(KeyError::Io)?
+    } else {
+        let mut bytes = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut bytes);
+        let seed_hex = hex_encode(&bytes);
+        fs::write(&seed_path, &seed_hex).map_err(KeyError::Io)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&seed_path, fs::Permissions::from_mode(0o600));
+        }
+        seed_hex
+    };
+
+    let mut h = Sha256::new();
+    h.update(b"treeship-machine-key-v2-fallback:");
+    h.update(seed.trim().as_bytes());
+    h.update(b":");
+    h.update(store_dir.to_string_lossy().as_bytes());
+    Ok(h.finalize().into())
+}
+
 // --- Utility ---
 
 fn new_key_id() -> KeyId {
