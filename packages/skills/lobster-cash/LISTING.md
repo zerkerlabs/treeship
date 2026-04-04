@@ -1,84 +1,66 @@
 # Treeship -- Lobster Cash Ecosystem Listing
 
-## Card copy (for lobster.cash/skills directory)
+## Card (for lobster.cash/skills directory)
 
 **Treeship**
 
-Cryptographic proof for every agent payment. ZK-verifiable audit trails.
+Cryptographic proof of what your agent did.
+Attestations for every payment. Privacy-preserving
+ZK proofs for what you can't disclose.
 
 **Includes**
 
-- Signed receipts for every agent action, approval, and payment
-- Zero-knowledge proof that payments stayed within declared limits
-- Tamper-evident Merkle-anchored audit trail anyone can verify at a URL
+- Signed receipt for every lobster.cash payment
+- Tamper-evident chain of custody
+- ZK proof: policy complied with (policy stays private)
+- ZK proof: amount within limits (amount stays private)
+- Verify anything at treeship.dev/verify
 
 **Visit website**: https://treeship.dev
 
 ---
 
-## Extended description (for detail page)
+## Positioning
 
-Treeship adds cryptographic attestation to every Lobster Cash payment.
-Every agent action is signed (Ed25519), Merkle-anchored for tamper-evident
-ordering, and ZK-proved for policy compliance and spend limits.
+Every skill on the lobster.cash page executes payments.
+Treeship is what proves they happened correctly.
 
-The full audit trail verifies at treeship.dev/verify -- in the browser
-via WebAssembly, no server trust required, no Treeship account needed.
+Not competing with BlockRun, ClawCredit, Jupiter, or Purch.
+Treeship makes all of them auditable.
 
-### What Treeship proves
+What each skill gets from Treeship:
 
-| Proof | What it shows | ZK system |
-|-------|---------------|-----------|
-| Action attestation | Agent performed this action | Ed25519 signature |
-| Policy compliance | Action was within declared scope | Circom Groth16 |
-| Spend limit | Payment was within declared max | Circom Groth16 |
-| Chain integrity | Full session is unmodified | RISC Zero |
-| Temporal ordering | Artifacts existed before checkpoint | Merkle (RFC 9162) |
-
-### Delegation boundary
-
-Treeship owns: attestation, ZK proofs, audit trail, scope enforcement
-lobster.cash owns: wallet provisioning, transaction signing, payment execution, settlement
-
-### Install
-
-```bash
-npm install -g treeship @crossmint/lobster-cli
-treeship init --template lobster-cash-commerce
-```
-
-### Links
-
-- Integration docs: https://docs.treeship.dev/integrations/lobster-cash
-- GitHub: https://github.com/zerkerlabs/treeship
-- Skill files: https://github.com/zerkerlabs/treeship/tree/main/packages/skills/lobster-cash
-- Demo: Run `./packages/skills/lobster-cash/demo.sh` for a complete workflow
-
-### Compatible wallets
-
-- lobster.cash (tested and certified)
-
-### Built by
-
-Zerker Labs -- https://zerker.ai
+| Skill | What Treeship adds |
+|-------|-------------------|
+| BlockRun | Prove agent used only approved models, within budget |
+| ClawCredit | Prove credit used for declared purposes, chain intact |
+| Clawpay | Prove human approval happened before payment, nonce-bound |
+| Jupiter | Prove swap within declared slippage and token list |
+| Purch | Prove purchase from approved merchants, within price range |
 
 ---
 
 ## Message to Fede
 
-Hey Fede -- I'm building Treeship, a cryptographic attestation layer for
-agent workflows. We built a Lobster Cash compatible skill and want to
-get listed in the ecosystem directory.
+Hey Fede -- I'm building Treeship, a cryptographic attestation layer
+for agent workflows. We built a Lobster Cash compatible skill and
+want to get listed in the ecosystem directory.
 
-What makes it different: every Lobster Cash payment gets a ZK-provable
-audit trail. The agent's declared scope, every action it took, and a
-proof that the payment was within authorized limits -- all verifiable
-at a URL without trusting any server.
+Every skill on your page executes payments. Treeship is what proves
+they happened correctly -- signed receipts for every action, ZK proofs
+for when you can't disclose the policy or the amount.
+
+What's live:
+- Signed receipt for every agent action (Ed25519, always on)
+- ZK proof of policy compliance (Circom Groth16, proves without revealing)
+- ZK proof of spend limits (proves amount within max without disclosing either)
+- Full chain integrity proof (RISC Zero, background)
+- One URL to verify everything: treeship.dev/verify/[session]
 
 Integration docs: https://docs.treeship.dev/integrations/lobster-cash
 GitHub: https://github.com/zerkerlabs/treeship/tree/main/packages/skills/lobster-cash
-Demo verification: treeship.dev/verify/[session-id]
+Blog: https://docs.treeship.dev/blog/lobster-cash-treeship-agent-payments
 
-Would love to sync when you're ready to review.
+Would love to sync when you're ready to review the skill.
 
 -- Amit, Zerker Labs

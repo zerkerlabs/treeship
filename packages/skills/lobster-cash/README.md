@@ -1,63 +1,62 @@
-# Lobster Cash Skill
+# Treeship
 
 [![lobster.cash compatible](https://img.shields.io/badge/lobster.cash-compatible-ff6600)](https://lobster.cash)
 
-Cryptographic attestation for every payment made through lobster.cash. Every wallet action is wrapped, proved, and pushed to the Treeship hub so you have a verifiable audit trail from intent to settlement.
+Cryptographic proof of what your agent did.
 
-## What It Does
+Every other skill executes payments. Treeship proves they happened correctly -- signed receipts for every action, privacy-preserving ZK proofs for what you can't disclose.
 
-This skill sits between the agent and the lobster.cash wallet. It does not execute transactions itself. Instead, it wraps each wallet operation with a Treeship attestation so every step is independently verifiable.
+## Includes
 
-- Agent requests a payment
-- Treeship records the intent, gets human approval, and wraps the execution call
-- lobster.cash handles the actual transaction
-- Treeship records the result and pushes the full attestation bundle to the hub
+- Signed receipt for every agent action (always on, zero config)
+- Tamper-evident chain of custody -- permanent, verifiable offline
+- ZK proof: policy compliance -- proved without revealing the policy
+- ZK proof: spend within limits -- proved without revealing the amount
+- One URL to verify everything: treeship.dev/verify/[session]
+
+## How it works with lobster.cash
+
+Treeship doesn't execute payments. lobster.cash does that. Treeship wraps every step with cryptographic attestation so anyone can verify the agent acted correctly.
+
+| Step | What happens | What Treeship proves |
+|------|-------------|---------------------|
+| Wallet check | Agent checks lobster.cash balance | Action attested (Ed25519) |
+| Human approval | User authorizes the payment | Nonce-bound approval (single-use) |
+| Payment | lobster.cash executes the transfer | Policy compliance + spend limit (Circom ZK) |
+| Confirmation | lobster.cash confirms status | Receipt attested |
+| Session close | Workflow complete | Full chain proof (RISC Zero) |
+
+The verification URL works in any browser via WebAssembly. No account, no install, no trust in Treeship's servers.
 
 ## Install
 
 ```bash
-treeship skill install lobster-cash
+npm install -g treeship @crossmint/lobster-cli
+treeship init --template lobster-cash-commerce
 ```
 
-### Prerequisites
-
-| Dependency    | Install                          |
-|---------------|----------------------------------|
-| treeship      | `npm i -g @treeship/cli`         |
-| lobstercash   | See https://lobster.cash/docs    |
-
-## Attestation Table
-
-| Step               | Action Attested                | Actor              |
-|--------------------|--------------------------------|--------------------|
-| Session start      | session.start                  | agent              |
-| Balance check      | lobster.balance.check          | agent              |
-| Intent declared    | lobster.tx.create              | agent              |
-| Approval granted   | lobster.tx.approve             | human://approver   |
-| Payment executed   | lobster.send / lobster.card.request / lobster.x402.fetch | agent              |
-| Status confirmed   | lobster.tx.status              | agent              |
-| Session closed     | session.close                  | agent              |
-| Hub push           | hub.push                       | agent              |
-
-## Delegation Boundary
-
-| Treeship Owns                        | lobster.cash Owns                    |
-|--------------------------------------|--------------------------------------|
-| Session lifecycle                    | Wallet provisioning                  |
-| Attestation wrapping                 | Key management                       |
-| Approval gating                      | Transaction signing                  |
-| Audit trail and hub push             | Network broadcast and confirmation   |
-| Trust template enforcement           | Balance and account state            |
-
-Treeship never touches private keys, seed phrases, or card details. All sensitive operations are delegated to lobster.cash.
-
-## Run the Demo
+## Demo
 
 ```bash
-chmod +x demo.sh
-./demo.sh
+./packages/skills/lobster-cash/demo.sh
 ```
 
-## Built By
+Produces a verification URL showing all proof panels.
 
-[Zerker Labs](https://zerker.dev)
+## Delegation boundary
+
+**Treeship owns:** attestation, ZK proofs, audit trail, scope enforcement
+
+**lobster.cash owns:** wallet provisioning, transaction signing, payment execution, settlement
+
+Treeship never touches private keys, seed phrases, or card details.
+
+## Links
+
+- Integration docs: [docs.treeship.dev/integrations/lobster-cash](https://docs.treeship.dev/integrations/lobster-cash)
+- Blog: [Agent Payments: Lobster.cash + Treeship](https://docs.treeship.dev/blog/lobster-cash-treeship-agent-payments)
+- GitHub: [github.com/zerkerlabs/treeship](https://github.com/zerkerlabs/treeship)
+
+## Built by
+
+[Zerker Labs](https://zerker.ai) -- builders of Treeship, the trust layer for agent workflows.

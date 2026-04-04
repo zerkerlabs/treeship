@@ -1,33 +1,41 @@
 {
-  "name": "Lobster Cash",
-  "slug": "lobster-cash",
-  "version": "0.1.0",
-  "description": "Cryptographic attestation for every payment made through lobster.cash",
+  "name": "Treeship",
+  "slug": "treeship",
+  "version": "0.6.0",
+  "headline": "Cryptographic proof of what your agent did.",
+  "description": "Signed receipts for every action, privacy-preserving ZK proofs for policy compliance and spend limits, tamper-evident audit trail verifiable at a URL. Every other skill executes payments. Treeship proves they happened correctly.",
   "author": {
     "name": "Zerker Labs",
-    "website": "https://zerker.dev"
+    "website": "https://zerker.ai"
   },
-  "website": "https://lobster.cash",
-  "github": "https://github.com/zerker-labs/treeship/tree/main/packages/skills/lobster-cash",
+  "website": "https://treeship.dev",
+  "github": "https://github.com/zerkerlabs/treeship",
+  "docs": "https://docs.treeship.dev/integrations/lobster-cash",
   "compatible_wallets": [
     "lobster.cash"
   ],
+  "includes": [
+    "Signed receipt for every agent action (always on, zero config)",
+    "Tamper-evident chain of custody -- permanent, verifiable offline",
+    "ZK proof: policy compliance -- proved without revealing the policy",
+    "ZK proof: spend within limits -- proved without revealing the amount",
+    "One URL to verify everything: treeship.dev/verify/[session]"
+  ],
   "tags": [
-    "payments",
     "attestation",
-    "wallet",
-    "zk",
-    "lobster-cash",
+    "zk-proofs",
+    "trust",
+    "compliance",
+    "audit-trail",
+    "privacy",
     "commerce"
   ],
-  "install": "treeship skill install lobster-cash",
+  "install": "npm install -g treeship @crossmint/lobster-cli && treeship init --template lobster-cash-commerce",
   "wording_compliance": {
-    "wallet_name": "lobster.cash",
-    "attestation_layer": "Treeship",
-    "no_em_dashes": true,
-    "no_private_key_prompts": true,
-    "no_seed_phrase_prompts": true,
-    "no_card_detail_prompts": true,
-    "delegation_language": "delegates wallet operations to lobster.cash"
+    "delegates_to_lobster": true,
+    "no_private_key_requests": true,
+    "no_wallet_creation": true,
+    "no_hardcoded_action_names": true,
+    "lobster_listed_as_compatible": true
   }
 }
