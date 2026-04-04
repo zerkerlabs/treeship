@@ -64,6 +64,15 @@ impl ViKeypair {
     }
 
     /// Save the keypair to `dir/vi_key.json` with mode 0600.
+    ///
+    /// WARNING: The private key is currently stored as plaintext hex on disk.
+    /// File permissions (0600) provide minimal protection, but the key is NOT
+    /// encrypted at rest. This should be migrated to the encrypted keystore
+    /// used by the ship package (KDF from a machine-specific secret) before
+    /// any production deployment. Do not add a half-baked XOR or home-rolled
+    /// cipher here; that would give false confidence without real security.
+    ///
+    /// Tracked for resolution before GA.
     pub fn save(&self, dir: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
         fs::create_dir_all(dir)?;
         let path = dir.join(KEY_FILENAME);

@@ -19,6 +19,9 @@ const INPUT_OUTPUT_BINDING_VK: &[u8] =
 const PROMPT_TEMPLATE_VK: &[u8] =
     include_bytes!("../../zk-circom/zkeys/pt_vk.json");
 
+const SPEND_LIMIT_CHECKER_VK: &[u8] =
+    include_bytes!("../../zk-circom/zkeys/slc_vk.json");
+
 /// Run actual Groth16 pairing verification on a Circom proof.
 pub fn verify_circom_proof(proof_json: &serde_json::Value) -> Result<String, String> {
     let circuit = proof_json.get("circuit")
@@ -30,6 +33,7 @@ pub fn verify_circom_proof(proof_json: &serde_json::Value) -> Result<String, Str
         "policy-checker" => POLICY_CHECKER_VK,
         "input-output-binding" => INPUT_OUTPUT_BINDING_VK,
         "prompt-template" => PROMPT_TEMPLATE_VK,
+        "spend-limit-checker" => SPEND_LIMIT_CHECKER_VK,
         other => return Err(format!("unknown circuit: {}", other)),
     };
 
@@ -184,6 +188,9 @@ mod tests {
 
         let result = load_vk(PROMPT_TEMPLATE_VK);
         assert!(result.is_ok(), "prompt template vk failed: {:?}", result.err());
+
+        let result = load_vk(SPEND_LIMIT_CHECKER_VK);
+        assert!(result.is_ok(), "spend limit checker vk failed: {:?}", result.err());
     }
 
     #[test]

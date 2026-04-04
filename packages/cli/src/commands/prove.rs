@@ -307,12 +307,47 @@ pub fn prove_chain(
     printer.info("  Consider running in background: treeship daemon handles this automatically.");
     printer.blank();
 
-    // Walk the chain: start from the .last artifact and follow parent_id links
-    // back to the root. This gives us exactly the session's chain, not all artifacts.
+    // Walk the chain from .last backwards via parent_id links.
+    // If a session manifest exists for session_id, use its root_artifact_id
+    // as the stop point so we only include artifacts from this session.
     let last_path = std::path::Path::new(&ctx.config.storage_dir).join(".last");
     let tip_id = std::fs::read_to_string(&last_path)
         .map(|s| s.trim().to_string())
         .map_err(|_| "no recent artifact -- run 'treeship wrap' first")?;
+
+    // Try to resolve the session's root artifact as a chain boundary
+    let session_root_id: Option<String> = {
+        let session_manifest = super::session::load_session();
+        if let Some(ref manifest) = session_manifest {
+            if manifest.session_id == session_id {
+                if let Some(ref root_id) = manifest.root_artifact_id {
+                    printer.info(&format!("  session root: {}", root_id));
+                    Some(root_id.clone())
+                } else {
+                    printer.warn("session manifest has no root_artifact_id, proving full chain", &[]);
+                    None
+                }
+            } else {
+                printer.warn(
+                    &format!(
+                        "active session is {}, not {}; proving full chain from .last",
+                        manifest.session_id, session_id
+                    ),
+                    &[],
+                );
+                None
+            }
+        } else {
+            printer.warn(
+                &format!(
+                    "no session manifest on disk for {}; proving full chain from .last",
+                    session_id
+                ),
+                &[],
+            );
+            None
+        }
+    };
 
     let mut chain: Vec<treeship_zk_risc0::ChainArtifact> = Vec::new();
     let mut current_id = Some(tip_id);
@@ -326,6 +361,8 @@ pub fn prove_chain(
                     .map(|s| s.sig.clone())
                     .unwrap_or_default();
 
+                let is_session_root = session_root_id.as_deref() == Some(&record.artifact_id);
+
                 chain.push(treeship_zk_risc0::ChainArtifact {
                     artifact_id: record.artifact_id.clone(),
                     digest: record.digest.clone(),
@@ -336,7 +373,12 @@ pub fn prove_chain(
                     pae_message: envelope_json,
                 });
 
-                current_id = record.parent_id.clone();
+                // Stop walking once we reach the session's root artifact
+                if is_session_root {
+                    current_id = None;
+                } else {
+                    current_id = record.parent_id.clone();
+                }
             }
             Err(_) => {
                 // Can't find parent -- chain ends here

@@ -4,44 +4,43 @@ include "../node_modules/circomlib/circuits/comparators.circom";
 include "../node_modules/circomlib/circuits/poseidon.circom";
 
 /**
- * Spend Limit Checker Circuit (Treeship v0.6.0)
+ * Spend Limit Checker Circuit (Treeship v0.6.1)
  *
  * Proves: actual_amount_cents <= max_spend_cents
  * Without revealing: the actual amount or the limit
  *
- * Public inputs: artifact_id (2 field elements), limit_digest (2 field elements)
+ * Public inputs: artifact_id[2]
  * Private inputs: actual_amount_cents, max_spend_cents
- * Output: valid (1 if amount <= max_spend, 0 otherwise)
+ * Outputs: valid (1 if amount <= max_spend), limit_commitment
+ *
+ * The limit_commitment output lets verifiers confirm the proof
+ * was generated against a specific declared limit without the
+ * prover needing to pre-compute Poseidon.
  */
 template SpendLimitChecker() {
-    // Public inputs
+    // Public inputs -- bind to a specific artifact
     signal input artifact_id[2];
-    signal input limit_digest[2];
 
-    // Private inputs
+    // Private inputs -- the actual values being proved
     signal input actual_amount_cents;
     signal input max_spend_cents;
 
-    // Output
+    // Outputs
     signal output valid;
+    signal output limit_commitment;
 
     // Constraint 1: actual_amount_cents <= max_spend_cents
-    // LessEqThan(64) handles amounts up to 2^64 cents (~$184 trillion)
     component lte = LessEqThan(64);
     lte.in[0] <== actual_amount_cents;
     lte.in[1] <== max_spend_cents;
-
-    // Constraint 2: limit_digest commits to max_spend_cents
-    // This binds the public limit_digest to the private limit value
-    component limit_hash = Poseidon(1);
-    limit_hash.inputs[0] <== max_spend_cents;
-
-    // Verify limit_digest[0] matches hash of max_spend_cents
-    limit_digest[0] === limit_hash.out;
-    // limit_digest[1] binds proof to this artifact
-    limit_digest[1] === artifact_id[0];
-
     valid <== lte.out;
+
+    // Constraint 2: commit to the limit value so verifiers can
+    // check it matches the declared limit from the declaration
+    component limit_hash = Poseidon(2);
+    limit_hash.inputs[0] <== max_spend_cents;
+    limit_hash.inputs[1] <== artifact_id[0];
+    limit_commitment <== limit_hash.out;
 }
 
-component main { public [artifact_id, limit_digest] } = SpendLimitChecker();
+component main { public [artifact_id] } = SpendLimitChecker();

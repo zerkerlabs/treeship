@@ -644,9 +644,13 @@ fn update_checkpoint_with_proof(ts: &std::path::Path, session_id: &str) {
             let now = super::prove::now_rfc3339_approx();
             checkpoint.zk_proof = Some(ChainProofSummary {
                 image_id: proof.image_id.clone(),
-                all_signatures_valid: true,
+                // Only report what the zkVM actually verified.
+                // chain_intact and all_digests_valid come from the proof.
+                // Signature and nonce checks are NOT yet part of the
+                // RISC Zero guest, so we report false to stay honest.
+                all_signatures_valid: false,   // not verified in zkVM yet
                 chain_intact: proof.chain_intact,
-                approval_nonces_matched: true,
+                approval_nonces_matched: false, // not verified in zkVM yet
                 artifact_count: proof.artifact_count as u64,
                 public_key_digest: String::new(),
                 proved_at: now,

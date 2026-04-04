@@ -194,15 +194,10 @@ impl CircomProver {
     ) -> Result<CircomProof> {
         let artifact_id_hash = FieldUtils::string_to_field(artifact_id);
 
-        // limit_digest[0] = poseidon(max_spend_cents) -- computed by circuit
-        // limit_digest[1] = artifact_id_field -- binds proof to artifact
-        // We pass max_spend_cents as private input; circuit computes and constrains
-        let limit_digest_0 = max_spend_cents.to_string(); // circuit hashes internally
-        let limit_digest_1 = artifact_id_hash.clone();
-
+        // Circuit computes limit_commitment = Poseidon(max_spend_cents, artifact_id[0])
+        // as an output. Prover only needs to supply the private values.
         let inputs = serde_json::json!({
-            "artifact_id": [artifact_id_hash.clone(), "0"],
-            "limit_digest": [limit_digest_0, limit_digest_1],
+            "artifact_id": [artifact_id_hash, "0"],
             "actual_amount_cents": actual_amount_cents.to_string(),
             "max_spend_cents": max_spend_cents.to_string(),
         });
