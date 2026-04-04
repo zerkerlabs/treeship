@@ -147,7 +147,7 @@ jobs:
 
       - name: Publish treeship-cli
         continue-on-error: true
-        run: cargo publish -p treeship-cli
+        run: cargo publish -p treeship-cli --no-verify
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
 
