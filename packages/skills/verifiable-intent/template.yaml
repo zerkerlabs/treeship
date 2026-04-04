@@ -1,0 +1,45 @@
+trust_template:
+  name: verifiable-intent
+  version: 0.6.0
+
+  bounded_actions:
+    - vi.mandate.receive
+    - vi.mandate.verify
+    - vi.constraint.check
+    - vi.l3a.build
+    - vi.l3b.build
+    - vi.attestation.create
+    - vi.key.load
+    - vi.key.generate
+
+  escalation_required:
+    - vi.l3a.build
+    - vi.l3b.build
+    - vi.attestation.create
+
+  forbidden:
+    - vi.mandate.forge
+    - vi.constraint.bypass
+    - store_private_keys
+    - request_private_keys
+    - exceed_mandate_bounds
+
+  limits:
+    max_spend_usd: 1000
+    killswitch: true
+    expires: 4h
+
+  actors:
+    - agent://vi-commerce
+    - human://approver
+
+  zk:
+    auto_prove: true
+    on: constraint_satisfaction
+
+  session:
+    auto_start: true
+
+  hub:
+    auto_push: true
+    on: session_close
