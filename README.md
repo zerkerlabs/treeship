@@ -34,8 +34,10 @@ AI agents are being deployed into workflows where no one can verify what actuall
 
 ```bash
 # Install (pick one)
-npm install -g treeship
-cargo install treeship-cli
+npm install -g treeship                    # recommended, prebuilt binary
+cargo install treeship-cli                 # core CLI from crates.io
+# For full ZK features (treeship prove):
+# cargo install --git https://github.com/zerkerlabs/treeship treeship-cli
 
 # Initialize a local Treeship
 treeship init
