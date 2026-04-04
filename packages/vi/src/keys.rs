@@ -123,7 +123,7 @@ mod tests {
         let kp = ViKeypair::generate();
         assert!(!kp.kid.is_empty());
 
-        let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("vi_key_test");
+        let dir = std::env::temp_dir().join("treeship_vi_key_test");
         kp.save(&dir).expect("save failed");
 
         let loaded = ViKeypair::load(&dir).expect("load failed");
