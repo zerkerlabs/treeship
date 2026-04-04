@@ -393,29 +393,33 @@ pub fn derive_machine_key(store_dir: &Path) -> Result<[u8; 32], KeyError> {
         }
     }
 
-    // 2. macOS: IOPlatformSerialNumber (hardware serial, stable across
-    //    hostname changes, user changes, reboots, no entitlements needed)
+    // 2. macOS: hostname + username derivation (v1, backward compatible).
+    //
+    // TODO(v0.7.0): Migrate to IOPlatformSerialNumber-based derivation.
+    // The serial number is more stable (survives hostname and username
+    // changes), but switching now would silently invalidate all existing
+    // keys on macOS. A proper migration needs to:
+    //   1. Try the new derivation first.
+    //   2. On decryption failure, fall back to hostname+username.
+    //   3. If legacy succeeds, re-encrypt with the new key and save.
+    // Until that migration tooling is in place, keep hostname+username
+    // as the primary derivation so existing users are not locked out.
     #[cfg(target_os = "macos")]
     {
-        if let Ok(output) = std::process::Command::new("ioreg")
-            .args(["-rd1", "-c", "IOPlatformExpertDevice"])
+        let hostname = std::process::Command::new("hostname")
             .output()
-        {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines() {
-                if line.contains("IOPlatformSerialNumber") {
-                    if let Some(serial) = line.split('"').nth(3) {
-                        if !serial.is_empty() {
-                            let mut h = Sha256::new();
-                            h.update(b"treeship-machine-key-v2:");
-                            h.update(serial.as_bytes());
-                            h.update(b":");
-                            h.update(store_dir.to_string_lossy().as_bytes());
-                            return Ok(h.finalize().into());
-                        }
-                    }
-                }
-            }
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+        let username = std::env::var("USER").unwrap_or_default();
+        if !hostname.is_empty() && !username.is_empty() {
+            let mut h = Sha256::new();
+            h.update(b"treeship-machine-key:");
+            h.update(hostname.as_bytes());
+            h.update(b":");
+            h.update(username.as_bytes());
+            h.update(b":");
+            h.update(store_dir.to_string_lossy().as_bytes());
+            return Ok(h.finalize().into());
         }
     }
 

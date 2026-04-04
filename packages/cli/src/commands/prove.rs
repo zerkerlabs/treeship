@@ -310,15 +310,20 @@ pub fn prove_chain(
     config:     Option<&str>,
     printer:    &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    prove_chain_with_root(session_id, None, config, printer)
+    prove_chain_with_root(session_id, None, None, config, printer)
 }
 
-/// Prove a session chain with an explicit root_artifact_id boundary.
-/// Used by the daemon when session.json has already been deleted.
+/// Prove a session chain with an explicit root_artifact_id boundary and
+/// optional tip. Used by the daemon when session.json has already been
+/// deleted and .last may have advanced past the session's final artifact.
+///
+/// If `explicit_tip` is provided it is used as the chain head instead of
+/// reading `.last`, ensuring the prover walks the exact session chain.
 #[cfg(feature = "zk")]
 pub fn prove_chain_with_root(
     session_id: &str,
     explicit_root: Option<&str>,
+    explicit_tip: Option<&str>,
     config:     Option<&str>,
     printer:    &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -330,13 +335,17 @@ pub fn prove_chain_with_root(
     printer.info("  Consider running in background: treeship daemon handles this automatically.");
     printer.blank();
 
-    // Walk the chain from .last backwards via parent_id links.
-    // If a session manifest exists for session_id, use its root_artifact_id
-    // as the stop point so we only include artifacts from this session.
-    let last_path = std::path::Path::new(&ctx.config.storage_dir).join(".last");
-    let tip_id = std::fs::read_to_string(&last_path)
-        .map(|s| s.trim().to_string())
-        .map_err(|_| "no recent artifact -- run 'treeship wrap' first")?;
+    // Resolve the chain tip. If an explicit tip was persisted in the proof
+    // job, use that. Otherwise fall back to .last on disk.
+    let tip_id = if let Some(tip) = explicit_tip {
+        printer.info(&format!("  session tip (from job): {}", tip));
+        tip.to_string()
+    } else {
+        let last_path = std::path::Path::new(&ctx.config.storage_dir).join(".last");
+        std::fs::read_to_string(&last_path)
+            .map(|s| s.trim().to_string())
+            .map_err(|_| "no recent artifact; run 'treeship wrap' first")?
+    };
 
     // Try to resolve the session's root artifact as a chain boundary.
     // Priority: explicit_root (from daemon job) > session manifest > full chain
@@ -378,6 +387,7 @@ pub fn prove_chain_with_root(
 
     let mut chain: Vec<treeship_zk_risc0::ChainArtifact> = Vec::new();
     let mut current_id = Some(tip_id);
+    let mut found_root = false;
 
     while let Some(id) = current_id {
         match ctx.storage.read(&id) {
@@ -410,16 +420,23 @@ pub fn prove_chain_with_root(
 
                 // Stop walking once we reach the session's root artifact
                 if is_session_root {
+                    found_root = true;
                     current_id = None;
                 } else {
                     current_id = record.parent_id.clone();
                 }
             }
             Err(_) => {
-                // Can't find parent -- chain ends here
+                // Can't find parent; chain ends here
                 current_id = None;
             }
         }
+    }
+
+    // If a root was specified but never encountered during the walk, the
+    // chain is broken or the root ID is wrong. Fail explicitly.
+    if session_root_id.is_some() && !found_root {
+        return Err("session root not found in chain".into());
     }
 
     // Reverse so chain goes root -> tip (oldest first)
@@ -473,7 +490,8 @@ pub fn prove_chain(
 
 #[cfg(not(feature = "zk"))]
 pub fn prove_chain_with_root(
-    _session_id: &str, _root: Option<&str>, _config: Option<&str>, printer: &Printer,
+    _session_id: &str, _root: Option<&str>, _tip: Option<&str>,
+    _config: Option<&str>, printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     prove_chain(_session_id, _config, printer)
 }

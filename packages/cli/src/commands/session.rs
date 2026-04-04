@@ -408,11 +408,15 @@ pub fn close(
 
     // ZK: Enqueue chain proof BEFORE deleting session.json so the proof
     // job captures root_artifact_id (the daemon needs it to bound the chain).
+    // Also capture the current tip (.last) so the prover walks the correct
+    // chain even if new artifacts are appended after session close.
     #[cfg(feature = "zk")]
     {
+        let tip_id = resolve_last(&ctx.config.storage_dir);
         if let Ok(()) = super::daemon::enqueue_proof_job_with_root(
             &manifest.session_id,
             manifest.root_artifact_id.as_deref(),
+            tip_id.as_deref(),
         ) {
             printer.dim_info("  chain proof queued (generating in background)");
         }

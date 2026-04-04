@@ -577,12 +577,14 @@ fn process_proof_queue(ts: &std::path::Path, ctx: &crate::ctx::Ctx) {
 
         let session_id = job["session_id"].as_str().unwrap_or("unknown");
         let root_id = job["root_artifact_id"].as_str().map(|s| s.to_string());
-        daemon_log(ts, &format!("proving chain for session {} (root: {:?})", session_id, root_id));
+        let tip_id = job["tip_artifact_id"].as_str().map(|s| s.to_string());
+        daemon_log(ts, &format!("proving chain for session {} (root: {:?}, tip: {:?})", session_id, root_id, tip_id));
 
-        // Run the proof. Pass root_artifact_id from the job so the prover
-        // knows where the session boundary is (session.json is already deleted).
+        // Run the proof. Pass root_artifact_id and tip_artifact_id from the
+        // job so the prover knows the exact session boundaries (session.json
+        // is already deleted and .last may have advanced).
         let silent_printer = crate::printer::Printer::new(crate::printer::Format::Text, true, true);
-        match super::prove::prove_chain_with_root(session_id, root_id.as_deref(), None, &silent_printer) {
+        match super::prove::prove_chain_with_root(session_id, root_id.as_deref(), tip_id.as_deref(), None, &silent_printer) {
             Ok(()) => {
                 daemon_log(ts, &format!("chain proof complete for {}", session_id));
 
@@ -670,16 +672,18 @@ fn update_checkpoint_with_proof(ts: &std::path::Path, session_id: &str) {
 /// Enqueue a proof job. Called by session close when zk.auto_prove is enabled.
 #[cfg(feature = "zk")]
 pub fn enqueue_proof_job(session_id: &str) -> Result<(), Box<dyn std::error::Error>> {
-    enqueue_proof_job_with_root(session_id, None)
+    enqueue_proof_job_with_root(session_id, None, None)
 }
 
-/// Enqueue a proof job with the session's root_artifact_id preserved.
+/// Enqueue a proof job with the session's root_artifact_id and tip preserved.
 /// The root ID is needed by the daemon to know where the chain starts,
-/// since session.json is deleted after this call.
+/// and the tip ID captures the chain head at session close time, since
+/// session.json and .last may change after this call.
 #[cfg(feature = "zk")]
 pub fn enqueue_proof_job_with_root(
     session_id: &str,
     root_artifact_id: Option<&str>,
+    tip_artifact_id: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ts = ts_dir().ok_or("no .treeship directory found")?;
     let queue_dir = ts.join("proof_queue");
@@ -688,6 +692,7 @@ pub fn enqueue_proof_job_with_root(
     let job = serde_json::json!({
         "session_id": session_id,
         "root_artifact_id": root_artifact_id,
+        "tip_artifact_id": tip_artifact_id,
         "created_at": crate::commands::prove::now_rfc3339_approx(),
     });
 
