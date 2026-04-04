@@ -130,3 +130,28 @@ cargo build --features zk
 ```
 
 The Ed25519 and Merkle layers are always included.
+
+## Trust model
+
+Every ZK layer in Treeship is designed to work locally without external services.
+
+**Fully local, no external trust:**
+- Ed25519 signatures -- your key, your machine
+- Merkle proofs -- your key, your machine, self-contained proof file
+- Circom proving -- runs on your CPU via ark-circom (pure Rust, no Node.js)
+- Circom verification -- your machine or browser WASM (ark-groth16 pairing math)
+- RISC Zero verification -- your machine, hardcoded image ID
+
+**One-time trust assumption (acceptable):**
+- Groth16 trusted setup uses the Hermez powers-of-tau ceremony (thousands of participants). This is done once by Treeship maintainers and the zkeys are committed to the repo. Users never run the ceremony.
+
+**Optional external service (opt-in only):**
+- RISC Zero Bonsai (v0.6.0): set `BONSAI_API_KEY` environment variable to use RISC Zero's hosted prover for faster chain proofs. Artifact content is sent to RISC Zero's servers. The proof output is cryptographically identical to local proving. **Bonsai is never the default.** If no API key is set, local CPU proving is used automatically.
+
+**Verify offline with no server trust:**
+
+```bash
+treeship verify-proof art_xxx.policy-checker.zkproof
+```
+
+This works air-gapped. The verification key is embedded in the binary. No network call. No Treeship server. The browser verification at treeship.dev/verify runs the same math via WASM -- Hub cannot forge a passing result.

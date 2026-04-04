@@ -218,6 +218,23 @@ pub fn zk_status(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
         } else {
             printer.dim_info("  - circom compiler not found (not needed for proving, only for circuit development)");
         }
+
+        // Show verification key hashes for transparency
+        printer.blank();
+        printer.info("  verification key hashes (sha256):");
+        for (name, vk_content) in [
+            ("policy-checker", include_bytes!("../../../zk-circom/zkeys/pc_vk.json").as_slice()),
+            ("input-output-binding", include_bytes!("../../../zk-circom/zkeys/iob_vk.json").as_slice()),
+            ("prompt-template", include_bytes!("../../../zk-circom/zkeys/pt_vk.json").as_slice()),
+        ] {
+            use sha2::{Sha256, Digest};
+            let hash = hex::encode(Sha256::digest(vk_content));
+            printer.info(&format!("    {} {}", name, &hash[..16]));
+        }
+
+        // RISC Zero status
+        printer.blank();
+        printer.dim_info("  RISC Zero: coming in v0.6.0 (guest compiled, prover not yet wired)");
     }
 
     #[cfg(not(feature = "zk"))]

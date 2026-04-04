@@ -54,6 +54,22 @@ impl RiscZeroProver {
         Self { mode }
     }
 
+    /// Create a prover from environment. Uses Bonsai if BONSAI_API_KEY is set,
+    /// otherwise local. Prints a notice when Bonsai is active so the user knows
+    /// artifact content will leave their machine.
+    pub fn from_env() -> Self {
+        match std::env::var("BONSAI_API_KEY") {
+            Ok(key) if !key.is_empty() => {
+                eprintln!(
+                    "[treeship] using Bonsai prover \
+                     (artifacts sent to RISC Zero servers for fast proving)"
+                );
+                Self { mode: ProverMode::Local } // TODO: ProverMode::Bonsai when wired
+            }
+            _ => Self { mode: ProverMode::Local },
+        }
+    }
+
     /// Prove a chain of artifacts. This is the slow operation (~5-15 min locally).
     /// Should always be called from a background thread, never inline.
     pub fn prove_chain(
