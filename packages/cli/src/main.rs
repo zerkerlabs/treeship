@@ -308,11 +308,17 @@ enum Command {
     ///   treeship verify-proof art_xxx.policy-checker.zkproof
     VerifyProof(VerifyProofArgs),
 
-    /// Show ZK proof system status
+    /// Show ZK configuration, circuit hashes, and notary status
     ///
     /// Examples:
-    ///   treeship zk-status
-    ZkStatus,
+    ///   treeship zk-setup
+    ZkSetup,
+
+    /// Print self-hosted TLSNotary setup instructions
+    ///
+    /// Examples:
+    ///   treeship zk-tls-setup
+    ZkTlsSetup,
 
     /// Print version and build info
     Version,
@@ -1140,7 +1146,8 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             printer,
         ),
 
-        Command::ZkStatus => commands::prove::zk_status(printer),
+        Command::ZkSetup => commands::zk::setup(printer),
+        Command::ZkTlsSetup => commands::zk::tls_notary_setup(printer),
 
         Command::Version => {
             println!("treeship {} (rust)", env!("CARGO_PKG_VERSION"));
