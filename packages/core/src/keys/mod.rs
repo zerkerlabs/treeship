@@ -283,7 +283,7 @@ impl Store {
 
 /// AES-256-GCM encryption.
 /// Returns (ciphertext, nonce).
-fn aes_gcm_encrypt(key: &[u8; 32], plaintext: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
+pub fn aes_gcm_encrypt(key: &[u8; 32], plaintext: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
     // Pure-Rust AES-256-GCM using the block-cipher and GCM construction
     // from the RustCrypto project. We inline a minimal version here to
     // avoid pulling in aes-gcm 0.10 which pulls in base64ct ≥ 1.7.
@@ -333,7 +333,7 @@ fn aes_gcm_encrypt(key: &[u8; 32], plaintext: &[u8]) -> Result<(Vec<u8>, Vec<u8>
     Ok((out, nonce.to_vec()))
 }
 
-fn aes_gcm_decrypt(key: &[u8; 32], enc_data: &[u8], _nonce_unused: &[u8]) -> Result<Vec<u8>, String> {
+pub fn aes_gcm_decrypt(key: &[u8; 32], enc_data: &[u8], _nonce_unused: &[u8]) -> Result<Vec<u8>, String> {
     if enc_data.len() < 44 {
         return Err("ciphertext too short".into());
     }
@@ -381,7 +381,7 @@ fn aes_gcm_decrypt(key: &[u8; 32], enc_data: &[u8], _nonce_unused: &[u8]) -> Res
 
 // --- Machine key derivation ---
 
-fn derive_machine_key(store_dir: &Path) -> Result<[u8; 32], KeyError> {
+pub fn derive_machine_key(store_dir: &Path) -> Result<[u8; 32], KeyError> {
     let mut seed = Vec::new();
 
     // Try /etc/machine-id first (Linux standard).

@@ -24,8 +24,12 @@ pub struct ViKeypair {
 #[derive(Serialize, Deserialize)]
 struct StoredKey {
     kid: String,
-    /// Hex-encoded private scalar
+    /// Hex-encoded private scalar (encrypted when encrypted=true)
     private_hex: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    nonce_hex: Option<String>,
+    #[serde(default)]
+    encrypted: bool,
 }
 
 const KEY_FILENAME: &str = "vi_key.json";
@@ -43,12 +47,27 @@ impl ViKeypair {
         }
     }
 
-    /// Load a keypair from `dir/vi_key.json`.
+    /// Load a keypair from `dir/vi_key.json`. Decrypts if encrypted.
     pub fn load(dir: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         let path = dir.join(KEY_FILENAME);
         let data = fs::read_to_string(&path)?;
         let stored: StoredKey = serde_json::from_str(&data)?;
-        let bytes = hex::decode(&stored.private_hex)?;
+
+        let bytes = if stored.encrypted {
+            let machine_key = treeship_core::keys::derive_machine_key(dir)
+                .map_err(|e| format!("failed to derive machine key: {}", e))?;
+            let enc_bytes = hex::decode(&stored.private_hex)?;
+            let nonce = stored.nonce_hex
+                .as_deref()
+                .map(hex::decode)
+                .transpose()?
+                .unwrap_or_default();
+            treeship_core::keys::aes_gcm_decrypt(&machine_key, &enc_bytes, &nonce)
+                .map_err(|e| format!("decryption failed: {}", e))?
+        } else {
+            // Legacy plaintext format
+            hex::decode(&stored.private_hex)?
+        };
         let signing_key = SigningKey::from_slice(&bytes)?;
         let verifying_key = *signing_key.verifying_key();
         let kid = Self::compute_kid(&verifying_key);
@@ -64,21 +83,24 @@ impl ViKeypair {
     }
 
     /// Save the keypair to `dir/vi_key.json` with mode 0600.
-    ///
-    /// WARNING: The private key is currently stored as plaintext hex on disk.
-    /// File permissions (0600) provide minimal protection, but the key is NOT
-    /// encrypted at rest. This should be migrated to the encrypted keystore
-    /// used by the ship package (KDF from a machine-specific secret) before
-    /// any production deployment. Do not add a half-baked XOR or home-rolled
-    /// cipher here; that would give false confidence without real security.
-    ///
-    /// Tracked for resolution before GA.
+    /// Private key is encrypted at rest using the same machine-derived key
+    /// as the Ed25519 ship keystore.
     pub fn save(&self, dir: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
         fs::create_dir_all(dir)?;
         let path = dir.join(KEY_FILENAME);
+
+        // Encrypt the private key using the machine-derived key
+        let machine_key = treeship_core::keys::derive_machine_key(dir)
+            .map_err(|e| format!("failed to derive machine key: {}", e))?;
+        let plaintext = self.signing_key.to_bytes();
+        let (enc_bytes, nonce) = treeship_core::keys::aes_gcm_encrypt(&machine_key, plaintext.as_slice())
+            .map_err(|e| format!("encryption failed: {}", e))?;
+
         let stored = StoredKey {
             kid: self.kid.clone(),
-            private_hex: hex::encode(self.signing_key.to_bytes()),
+            private_hex: hex::encode(&enc_bytes),
+            nonce_hex: Some(hex::encode(&nonce)),
+            encrypted: true,
         };
         let json = serde_json::to_string_pretty(&stored)?;
         fs::write(&path, &json)?;

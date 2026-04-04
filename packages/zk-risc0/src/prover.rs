@@ -13,6 +13,8 @@ pub struct ChainProofResult {
     pub artifact_count: usize,
     pub chain_intact: bool,
     pub all_digests_valid: bool,
+    pub all_signatures_valid: bool,
+    pub public_key_digest: String,
     pub proved_at: String,
     pub prover_mode: String,
     /// Serialized RISC Zero receipt for offline verification.
@@ -57,6 +59,8 @@ struct GuestOutput {
     artifact_count: usize,
     chain_intact: bool,
     all_digests_valid: bool,
+    all_signatures_valid: bool,
+    public_key_digest: String,
 }
 
 /// RISC Zero chain prover.
@@ -136,6 +140,8 @@ impl RiscZeroProver {
             artifact_count: output.artifact_count,
             chain_intact: output.chain_intact,
             all_digests_valid: output.all_digests_valid,
+            all_signatures_valid: output.all_signatures_valid,
+            public_key_digest: output.public_key_digest,
             proved_at: now,
             prover_mode: format!("{:?}", self.mode),
             receipt_bytes,
@@ -152,7 +158,7 @@ impl RiscZeroProver {
         receipt.verify(TREESHIP_CHAIN_VERIFIER_ID)?;
 
         let output: GuestOutput = receipt.journal.decode()?;
-        Ok(output.chain_intact && output.all_digests_valid)
+        Ok(output.chain_intact && output.all_digests_valid && output.all_signatures_valid)
     }
 
     pub fn save_proof(proof: &ChainProofResult, path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
