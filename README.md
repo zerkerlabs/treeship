@@ -48,13 +48,13 @@ AI agents are being deployed into workflows where no one can verify what actuall
 ### Install
 
 ```bash
-# npm (recommended) - prebuilt binary, includes WASM verifier
+# npm (recommended) -- prebuilt binary, no Rust required
 npm install -g treeship
 
-# crates.io - core CLI only (no ZK deps)
-cargo install treeship-cli
+# Shell script -- auto-detects platform
+curl -fsSL treeship.dev/install | sh
 
-# git - full build with ZK proof support
+# From source (Rust engineers) -- full ZK support
 cargo install --git https://github.com/zerkerlabs/treeship treeship-cli --features zk
 ```
 

@@ -10,10 +10,10 @@ Command-line interface for creating, verifying, and managing Treeship supply-cha
 npm install -g treeship
 ```
 
-**From source (via Cargo):**
+**From source (full ZK support):**
 
 ```sh
-cargo install treeship-cli
+cargo install --git https://github.com/zerkerlabs/treeship treeship-cli --features zk
 ```
 
 ## Commands

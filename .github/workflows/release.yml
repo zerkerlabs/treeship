@@ -145,17 +145,10 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
 
-      - name: Publish treeship-cli
-        continue-on-error: true
-        run: |
-          # Strip path-only ZK deps before publishing (they're optional, not on crates.io)
-          sed -i 's/treeship-zk-circom = .*/# treeship-zk-circom removed for crates.io publish/' packages/cli/Cargo.toml
-          sed -i 's/treeship-zk-risc0 = .*/# treeship-zk-risc0 removed for crates.io publish/' packages/cli/Cargo.toml
-          sed -i 's/zk = \[.*\]/zk = []/' packages/cli/Cargo.toml
-          sed -i 's/zk-bonsai = .*/# zk-bonsai removed for crates.io publish/' packages/cli/Cargo.toml
-          cargo publish -p treeship-cli --allow-dirty
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
+      # treeship-cli is NOT published to crates.io.
+      # It's a binary tool with ZK deps that can't satisfy crates.io requirements.
+      # Install via: npm install -g treeship (prebuilt binary)
+      # Or from source: cargo install --git https://github.com/zerkerlabs/treeship treeship-cli
 
   publish-pypi:
     needs: release
