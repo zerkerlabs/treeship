@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.5.0 (2026-04-04)
+
+### Zero-Knowledge Proofs
+
+- Circom Groth16 proofs: 3 circuits (policy-checker, input-output-binding, prompt-template)
+- Trusted setup complete with Hermez powers-of-tau ceremony
+- Real Groth16 WASM verification via ark-groth16 pairing math
+- Verification keys embedded in WASM binary at compile time
+- `treeship prove --circuit`, `treeship verify-proof`, `treeship zk-status` commands
+- Auto-prove on declaration (when `bounded_actions` configured)
+- Feature-flagged: `--features zk` (default build has zero ZK deps)
+
+### RISC Zero Chain Proofs
+
+- Guest program compiled for riscv32im target via rzup
+- Real receipt-based proving and verification
+- Background daemon proof queue with lock file safety
+- Composite checkpoint: Merkle root + ChainProofSummary
+- `treeship prove-chain` command
+- Bonsai detection via `BONSAI_API_KEY` (local CPU default)
+
+### Trust Model
+
+- Documented Hermez ceremony trust assumption
+- Bonsai marked as opt-in only (API key = consent)
+- Offline verification documented for all proof types
+
+### Release Pipeline
+
+- npm: Pure OIDC via trusted publisher (no token)
+- crates.io: ZK deps stripped for publish (full ZK via git install)
+- All packages at 0.5.0 across npm, crates.io, PyPI
+
 ## 0.4.0
 
 - Terminology: dock -> hub, login -> attach, logout -> detach, rm -> kill, workspace -> open

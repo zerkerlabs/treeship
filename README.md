@@ -1,4 +1,8 @@
+<div align="center">
+
 # Treeship
+
+**Portable trust receipts for agent workflows.**
 
 [![Crates.io](https://img.shields.io/crates/v/treeship-cli.svg)](https://crates.io/crates/treeship-cli)
 [![npm](https://img.shields.io/npm/v/@treeship/sdk.svg)](https://www.npmjs.com/package/@treeship/sdk)
@@ -6,9 +10,13 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![CI](https://github.com/zerkerlabs/treeship/actions/workflows/ci.yml/badge.svg)](https://github.com/zerkerlabs/treeship/actions/workflows/ci.yml)
 
-**Portable trust receipts for agent workflows.**
+An open-source, local-first trust layer that creates and verifies signed receipts
+for agent actions, handoffs, approvals, and dependencies.
+Works offline. No central server. Portable evidence bundles anyone can verify.
 
-Treeship is an open-source, local-first trust layer that creates and verifies signed receipts for agent actions, handoffs, approvals, and dependencies. It works offline, requires no central server, and produces portable evidence bundles that anyone can verify independently.
+</div>
+
+---
 
 Before you trust an agent's output, verify its receipts.
 
@@ -30,15 +38,29 @@ AI agents are being deployed into workflows where no one can verify what actuall
 | **Treeships** | Trust domains that hold receipts, keys, and Merkle trees |
 | **Hub connections** | Workspace links that connect a local Treeship to a remote hub for sharing and visibility |
 
+## Prerequisites
+
+- **Node.js 18+** (for npm install) or **Rust 1.75+** (for cargo install)
+- Works on macOS, Linux, and Windows (WSL)
+
 ## Quick Start
 
-```bash
-# Install (pick one)
-npm install -g treeship                    # recommended, prebuilt binary
-cargo install treeship-cli                 # core CLI from crates.io
-# For full ZK features (treeship prove):
-# cargo install --git https://github.com/zerkerlabs/treeship treeship-cli
+### Install
 
+```bash
+# npm (recommended) - prebuilt binary, includes WASM verifier
+npm install -g treeship
+
+# crates.io - core CLI only (no ZK deps)
+cargo install treeship-cli
+
+# git - full build with ZK proof support
+cargo install --git https://github.com/zerkerlabs/treeship treeship-cli --features zk
+```
+
+### First receipt in 60 seconds
+
+```bash
 # Initialize a local Treeship
 treeship init
 
@@ -179,6 +201,10 @@ await ship.save();
 | `treeship-sdk` | `packages/sdk-py/` | Python SDK |
 | TUI | `packages/cli/` | Interactive terminal dashboard (Ratatui) |
 
+## Documentation
+
+Full documentation is available at **[docs.treeship.dev](https://docs.treeship.dev)**.
+
 ## Standards
 
 Treeship builds on existing standards rather than inventing cryptography:
@@ -206,9 +232,9 @@ Treeship builds on existing standards rather than inventing cryptography:
 - [x] Terminal UI (`treeship ui` -- Ratatui interactive dashboard)
 - [x] OpenTelemetry export (feature-flagged, works with Jaeger/Datadog/Langfuse)
 - [x] Merkle tree (checkpoint, proof, verify, publish)
+- [x] Zero-knowledge proofs (Circom Groth16, RISC Zero chain proofs)
 - [ ] ZK TLS (TLSNotary) -- specced, feature-flagged, waiting on TLSNotary alpha
 - [ ] `treeship attach claude/cursor` -- agent process detection
-- [ ] npm/crates.io publishing
 - [ ] Install script (`curl treeship.dev/install | sh`)
 - [ ] Hub Merkle Rekor anchoring
 - [ ] Capture adapters (shell, file, HTTP, A2A)
