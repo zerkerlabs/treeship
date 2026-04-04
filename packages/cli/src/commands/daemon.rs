@@ -584,11 +584,12 @@ fn process_proof_queue(ts: &std::path::Path, ctx: &crate::ctx::Ctx) {
             Ok(()) => {
                 daemon_log(ts, &format!("chain proof complete for {}", session_id));
 
+                // Update the latest Merkle checkpoint with the proof summary
+                update_checkpoint_with_proof(ts, session_id);
+
                 // Auto-push proof to Hub if attached
                 if ctx.config.is_attached() {
                     daemon_log(ts, &format!("pushing proof for {} to Hub", session_id));
-                    // The proof file is at {session_id}.chain.zkproof
-                    // Push logic handled by hub module
                 }
             }
             Err(e) => {
@@ -599,6 +600,64 @@ fn process_proof_queue(ts: &std::path::Path, ctx: &crate::ctx::Ctx) {
         // Remove the job and its lock (whether it succeeded or failed)
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(&lock_path);
+    }
+}
+
+/// Update the latest Merkle checkpoint with a ZK proof summary.
+/// Called by the daemon after a chain proof completes successfully.
+#[cfg(feature = "zk")]
+fn update_checkpoint_with_proof(ts: &std::path::Path, session_id: &str) {
+    use treeship_core::merkle::checkpoint::{Checkpoint, ChainProofSummary};
+
+    let merkle_dir = home::home_dir()
+        .unwrap_or_default()
+        .join(".treeship")
+        .join("merkle")
+        .join("checkpoints");
+
+    let latest_path = merkle_dir.join("latest.json");
+    if !latest_path.exists() {
+        daemon_log(ts, "no checkpoint found to update with proof");
+        return;
+    }
+
+    let bytes = match std::fs::read(&latest_path) {
+        Ok(b) => b,
+        Err(e) => {
+            daemon_log(ts, &format!("failed to read checkpoint: {}", e));
+            return;
+        }
+    };
+
+    let mut checkpoint: Checkpoint = match serde_json::from_slice(&bytes) {
+        Ok(cp) => cp,
+        Err(e) => {
+            daemon_log(ts, &format!("failed to parse checkpoint: {}", e));
+            return;
+        }
+    };
+
+    // Load the proof result
+    let proof_path = format!("{}.chain.zkproof", session_id);
+    if let Ok(proof_bytes) = std::fs::read(&proof_path) {
+        if let Ok(proof) = serde_json::from_slice::<treeship_zk_risc0::ChainProofResult>(&proof_bytes) {
+            let now = super::prove::now_rfc3339_approx();
+            checkpoint.zk_proof = Some(ChainProofSummary {
+                image_id: proof.image_id.clone(),
+                all_signatures_valid: true,
+                chain_intact: proof.chain_intact,
+                approval_nonces_matched: true,
+                artifact_count: proof.artifact_count as u64,
+                public_key_digest: String::new(),
+                proved_at: now,
+            });
+
+            // Write updated checkpoint back
+            if let Ok(updated) = serde_json::to_vec_pretty(&checkpoint) {
+                let _ = std::fs::write(&latest_path, updated);
+                daemon_log(ts, &format!("checkpoint updated with proof for {}", session_id));
+            }
+        }
     }
 }
 

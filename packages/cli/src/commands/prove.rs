@@ -287,43 +287,53 @@ pub fn prove_chain(
     printer.info("  Consider running in background: treeship daemon handles this automatically.");
     printer.blank();
 
-    // TODO: filter artifacts by session_id instead of loading everything.
-    // Currently loads all JSON files in the storage directory, which means
-    // artifacts from other sessions will be included in the proof input.
-    // This does not affect correctness (the proof covers whatever is passed)
-    // but it is wasteful and may include unrelated data.
-    printer.warn(
-        "session filtering not yet implemented: loading all artifacts from storage",
-        &[("session", session_id)],
-    );
+    // Walk the chain: start from the .last artifact and follow parent_id links
+    // back to the root. This gives us exactly the session's chain, not all artifacts.
+    let last_path = std::path::Path::new(&ctx.config.storage_dir).join(".last");
+    let tip_id = std::fs::read_to_string(&last_path)
+        .map(|s| s.trim().to_string())
+        .map_err(|_| "no recent artifact -- run 'treeship wrap' first")?;
 
-    let artifacts_dir = std::path::Path::new(&ctx.config.storage_dir);
-    let mut artifacts = Vec::new();
+    let mut chain: Vec<treeship_zk_risc0::ChainArtifact> = Vec::new();
+    let mut current_id = Some(tip_id);
 
-    if let Ok(entries) = std::fs::read_dir(artifacts_dir) {
-        for entry in entries.flatten() {
-            if entry.path().extension().map_or(false, |e| e == "json") {
-                if let Ok(content) = std::fs::read_to_string(entry.path()) {
-                    if let Ok(record) = serde_json::from_str::<serde_json::Value>(&content) {
-                        let chain_artifact = treeship_zk_risc0::ChainArtifact {
-                            artifact_id: record["artifact_id"].as_str().unwrap_or("").to_string(),
-                            digest: record["digest"].as_str().unwrap_or("").to_string(),
-                            payload_type: record["payload_type"].as_str().unwrap_or("").to_string(),
-                            signed_at: record["signed_at"].as_str().unwrap_or("").to_string(),
-                            parent_id: record["parent_id"].as_str().map(|s| s.to_string()),
-                            signature: record["envelope"]["signatures"][0]["sig"].as_str().unwrap_or("").to_string(),
-                            pae_message: Vec::new(), // TODO: reconstruct PAE
-                        };
-                        artifacts.push(chain_artifact);
-                    }
-                }
+    while let Some(id) = current_id {
+        match ctx.storage.read(&id) {
+            Ok(record) => {
+                let envelope_json = record.envelope.to_json()
+                    .unwrap_or_default();
+                let sig = record.envelope.signatures.first()
+                    .map(|s| s.sig.clone())
+                    .unwrap_or_default();
+
+                chain.push(treeship_zk_risc0::ChainArtifact {
+                    artifact_id: record.artifact_id.clone(),
+                    digest: record.digest.clone(),
+                    payload_type: record.payload_type.clone(),
+                    signed_at: record.signed_at.clone(),
+                    parent_id: record.parent_id.clone(),
+                    signature: sig,
+                    pae_message: envelope_json,
+                });
+
+                current_id = record.parent_id.clone();
+            }
+            Err(_) => {
+                // Can't find parent -- chain ends here
+                current_id = None;
             }
         }
     }
 
+    // Reverse so chain goes root -> tip (oldest first)
+    chain.reverse();
+    let artifacts = chain;
+
     if artifacts.is_empty() {
-        return Err("no artifacts found for proving".into());
+        return Err("no artifacts found in chain".into());
     }
+
+    printer.info(&format!("  chain: {} artifacts (root -> tip)", artifacts.len()));
 
     let public_key = ctx.keys.public_key(&ctx.config.default_key_id)?;
     let pub_key_arr: [u8; 32] = public_key.try_into()
@@ -342,7 +352,7 @@ pub fn prove_chain(
     printer.success("chain proof generated", &[
         ("session", session_id),
         ("artifacts", &result.artifact_count.to_string()),
-        ("signatures", if result.all_signatures_valid { "all valid" } else { "INVALID" }),
+        ("digests", if result.all_digests_valid { "all valid" } else { "INVALID" }),
         ("chain", if result.chain_intact { "intact" } else { "BROKEN" }),
         ("time", &format!("{:.1}s", elapsed.as_secs_f64())),
         ("output", &proof_filename),
