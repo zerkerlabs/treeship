@@ -181,6 +181,35 @@ impl CircomProver {
         Ok(true)
     }
 
+    /// Prove a payment amount is within declared spend limit.
+    ///
+    /// Circuit signals (spend_limit_checker.circom):
+    ///   public:  artifact_id[2], limit_digest[2]
+    ///   private: actual_amount_cents, max_spend_cents
+    pub fn prove_spend_limit(
+        &self,
+        artifact_id: &str,
+        actual_amount_cents: u64,
+        max_spend_cents: u64,
+    ) -> Result<CircomProof> {
+        let artifact_id_hash = FieldUtils::string_to_field(artifact_id);
+
+        // limit_digest[0] = poseidon(max_spend_cents) -- computed by circuit
+        // limit_digest[1] = artifact_id_field -- binds proof to artifact
+        // We pass max_spend_cents as private input; circuit computes and constrains
+        let limit_digest_0 = max_spend_cents.to_string(); // circuit hashes internally
+        let limit_digest_1 = artifact_id_hash.clone();
+
+        let inputs = serde_json::json!({
+            "artifact_id": [artifact_id_hash.clone(), "0"],
+            "limit_digest": [limit_digest_0, limit_digest_1],
+            "actual_amount_cents": actual_amount_cents.to_string(),
+            "max_spend_cents": max_spend_cents.to_string(),
+        });
+
+        self.generate_proof("spend_limit_checker", &inputs)
+    }
+
     // ---------------------------------------------------------------
     // Internal proof generation / verification
     // ---------------------------------------------------------------
@@ -293,6 +322,7 @@ impl CircomProver {
             "input_output_binding",
             "prompt_template_binding",
             "policy_checker",
+            "spend_limit_checker",
         ];
 
         for circuit_name in &circuit_names {

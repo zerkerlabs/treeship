@@ -4,7 +4,7 @@ use crate::{ctx, printer::Printer};
 use treeship_zk_circom::{CircomProver, ZkProof};
 
 /// Available circuit names.
-pub const CIRCUITS: &[&str] = &["policy-checker", "input-output-binding", "prompt-template"];
+pub const CIRCUITS: &[&str] = &["policy-checker", "input-output-binding", "prompt-template", "spend-limit-checker"];
 
 /// Generate a ZK proof for an artifact using a specific circuit.
 #[cfg(feature = "zk")]
@@ -36,6 +36,7 @@ pub fn prove_circuit(
         "policy-checker" => "policy_checker",
         "input-output-binding" => "input_output_binding",
         "prompt-template" => "prompt_template_binding",
+        "spend-limit-checker" => "spend_limit_checker",
         _ => return Err(format!("unknown circuit: {}\n  Available: {}", circuit, CIRCUITS.join(", ")).into()),
     };
 
@@ -92,6 +93,25 @@ pub fn prove_circuit(
             let template_hash = sha256_bytes(&template_digest);
 
             prover.prove_prompt_template(&prompt_hash, &template_hash, &artifact_id)?
+        }
+        "spend_limit_checker" => {
+            // Extract amount and limit from CLI args or artifact meta
+            let envelope_json = record.envelope.to_json()?;
+            let envelope_str = String::from_utf8_lossy(&envelope_json);
+
+            let amount_cents = extract_field_from_envelope(&envelope_str, "amount_cents")
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(0);
+
+            let max_spend_cents = extract_field_from_envelope(&envelope_str, "max_spend_cents")
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(0);
+
+            if amount_cents == 0 || max_spend_cents == 0 {
+                return Err("spend-limit-checker requires amount_cents and max_spend_cents in artifact meta\n  Use --meta '{\"amount_cents\": 4500, \"max_spend_cents\": 100000}'".into());
+            }
+
+            prover.prove_spend_limit(&artifact_id, amount_cents, max_spend_cents)?
         }
         _ => unreachable!(),
     };
