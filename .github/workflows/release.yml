@@ -83,8 +83,8 @@ jobs:
           npm install
           npm run build
           npm publish --access public
-        # env:
-        #   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Build and publish @treeship/mcp
         continue-on-error: true
@@ -94,29 +94,29 @@ jobs:
           npm run build
           sleep 5
           npm publish --access public
-        # env:
-        #   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @treeship/cli-linux-x64
         continue-on-error: true
         working-directory: npm/@treeship/cli-linux-x64
         run: npm publish --access public
-        # env:
-        #   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @treeship/cli-darwin-arm64
         continue-on-error: true
         working-directory: npm/@treeship/cli-darwin-arm64
         run: npm publish --access public
-        # env:
-        #   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @treeship/cli-darwin-x64
         continue-on-error: true
         working-directory: npm/@treeship/cli-darwin-x64
         run: npm publish --access public
-        # env:
-        #   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish treeship (main wrapper)
         continue-on-error: true
@@ -124,8 +124,8 @@ jobs:
         run: |
           sleep 5
           npm publish --access public
-        # env:
-        #   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   publish-crates:
     needs: release

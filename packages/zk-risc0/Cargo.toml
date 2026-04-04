@@ -4,6 +4,7 @@ version = "0.5.0"
 edition = "2021"
 description = "RISC Zero chain-level ZK proofs for Treeship"
 license = "Apache-2.0"
+publish = false  # Not published to crates.io yet
 
 [features]
 default = []
