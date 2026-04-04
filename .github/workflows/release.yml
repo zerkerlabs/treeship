@@ -145,11 +145,9 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
 
-      - name: Publish treeship-cli
-        continue-on-error: true
-        run: cargo publish -p treeship-cli --no-verify
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
+      # treeship-cli not published to crates.io (ZK path-only deps).
+      # Install via: npm install -g treeship
+      # Or:          cargo install --git https://github.com/zerkerlabs/treeship treeship-cli
 
   publish-pypi:
     needs: release
