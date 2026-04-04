@@ -11,5 +11,9 @@
   "license": "Apache-2.0",
   "scripts": {
     "postinstall": "node postinstall.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zerkerlabs/treeship"
   }
 }
