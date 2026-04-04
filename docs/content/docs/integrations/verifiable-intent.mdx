@@ -1,0 +1,131 @@
+---
+title: Verifiable Intent
+description: Treeship as the agent_attestation scheme for Verifiable Intent credentials
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+[Verifiable Intent](https://verifiableintent.dev/) is an open credential standard for agent commerce. It defines a three-layer credential chain that proves an agent was authorized to act on a user's behalf. Treeship provides the `agent_attestation` field in Layer 3 credentials, supplying the cryptographic proof that the agent executed correctly.
+
+## The credential chain
+
+Verifiable Intent credentials flow through three layers:
+
+```
+L1: Issuer credential
+    The payment network or merchant issues a credential that defines
+    what actions are possible (accepted payment methods, limits, terms).
+
+    |
+    v
+
+L2: User mandate
+    The user (or their wallet) issues a credential that delegates
+    authority to a specific agent. Scoped to an action, amount, and
+    time window.
+
+    |
+    v
+
+L3: Agent execution
+    The agent acts and produces a credential that proves it followed
+    the mandate. This is where Treeship lives.
+```
+
+## How Treeship integrates
+
+The L3 credential includes an `agent_attestation` field. Treeship populates this field with four components:
+
+| Field | What it contains |
+|-------|-----------------|
+| `declaration` | The agent's stated intent before execution (what it planned to do) |
+| `session` | The full Treeship session ID linking to the receipt chain |
+| `merkle_root` | The Merkle root of all attested steps in the session |
+| `zk_proofs` | Zero-knowledge proofs of policy compliance and spend-limit adherence |
+
+Together, these fields let any verifier confirm the agent acted within scope, followed policy, and did not exceed limits, without needing access to the full session log.
+
+## The trust stack
+
+```
+┌─────────────────────────────────────────┐
+│  L1: Issuer credential                  │
+│  (payment network / merchant)           │
+├─────────────────────────────────────────┤
+│  L2: User mandate                       │
+│  (user delegates to agent)              │
+├─────────────────────────────────────────┤
+│  L3: Agent execution                    │
+│  ┌───────────────────────────────────┐  │
+│  │  agent_attestation (Treeship)     │  │
+│  │  - declaration                    │  │
+│  │  - session                        │  │
+│  │  - merkle_root                    │  │
+│  │  - zk_proofs                      │  │
+│  └───────────────────────────────────┘  │
+└─────────────────────────────────────────┘
+```
+
+Treeship is embedded inside L3. It does not replace the Verifiable Intent credential; it provides the cryptographic evidence that makes the L3 credential trustworthy.
+
+## Key management
+
+Verifiable Intent uses P-256 (secp256r1) for credential signatures. Treeship can generate and manage P-256 keys alongside its default Ed25519 keys:
+
+```bash
+treeship vi keygen
+```
+
+This generates a P-256 keypair stored in your Treeship keyring. The key is used when signing `agent_attestation` fields for VI credentials.
+
+<Steps>
+<Step>
+### Generate a VI signing key
+
+```bash
+treeship vi keygen
+```
+</Step>
+<Step>
+### Verify the key is registered
+
+```bash
+treeship vi keys list
+```
+</Step>
+<Step>
+### Sign an L3 attestation
+
+```bash
+treeship vi attest \
+  --session <session-id> \
+  --mandate <l2-credential-id>
+```
+
+This produces the `agent_attestation` payload ready to embed in the L3 credential.
+</Step>
+</Steps>
+
+## Status
+
+| Version | Capability |
+|---------|-----------|
+| v0.6.0 | Foundation: P-256 keygen, session linking, basic `agent_attestation` field generation |
+| v0.7.0 | Full L3 builder: complete credential assembly, ZK proof embedding, mandate validation |
+
+## Compatible with Lobster Cash
+
+Verifiable Intent credentials and Lobster Cash payments work together. The flow is:
+
+1. L2 mandate delegates payment authority to the agent
+2. Treeship attests each step (intent, approval, execution)
+3. Lobster Cash executes the payment
+4. Treeship produces the `agent_attestation` for the L3 credential
+5. The L3 credential, the Treeship receipt chain, and the Lobster Cash settlement form a complete proof
+
+See the [Lobster Cash integration](/docs/integrations/lobster-cash) for the payment-specific workflow.
+
+<Callout type="warn">
+Mastercard-specific integration details (network rules, merchant onboarding, credential exchange protocols) are separate from this technical implementation. This page covers the open Verifiable Intent standard only.
+</Callout>

@@ -1,0 +1,98 @@
+---
+title: "Verifiable Intent: how Treeship becomes the agent's proof of work"
+description: "Agent attestation in Verifiable Intent credentials: how Treeship proves an agent acted correctly, privately, and within scope."
+date: 2026-04-04
+tags: ["verifiable-intent", "commerce", "mastercard", "zk"]
+readTime: "6 min read"
+---
+
+A user tells an agent to buy something. The agent has a wallet, API keys, and a mandate. It makes the purchase. The transaction settles.
+
+Now someone asks: how do you know the agent was authorized? How do you know it followed the rules? How do you know the amount was within the approved limit?
+
+The transaction log says "payment succeeded." It does not say "the agent was supposed to do this."
+
+## The gap between access and authorization
+
+Most agent payment systems solve for access. The agent gets a token, a wallet, or a session key. It can make API calls. It can sign transactions.
+
+Access is necessary but not sufficient. A bearer token proves the agent can pay. It does not prove the agent should pay, that the user approved this specific purchase, or that the amount fell within the approved range.
+
+This is the gap Verifiable Intent addresses.
+
+## What Verifiable Intent is
+
+[Verifiable Intent](https://verifiableintent.dev/) defines a three-layer credential chain:
+
+**Layer 1 (Issuer):** A payment network or merchant issues a credential that defines what is possible. Accepted methods, amount limits, terms.
+
+**Layer 2 (User mandate):** The user delegates authority to an agent. This credential is scoped: a specific action, a maximum amount, a time window. It is signed by the user's key.
+
+**Layer 3 (Agent execution):** The agent acts and produces a credential that proves it followed the mandate. This is the layer that needs proof, not just a claim.
+
+The L3 credential includes a field called `agent_attestation`. This is where Treeship lives.
+
+## What Treeship proves
+
+The `agent_attestation` field contains four components:
+
+**Declaration scope.** Before executing, the agent declares what it intends to do. Treeship records this declaration and signs it. If the agent later does something different, the mismatch is detectable.
+
+**Policy compliance.** Treeship checks the action against configured policies (allowed recipients, permitted categories, time-of-day restrictions) and attests that the action passed all checks. The attestation includes a proof, not just a boolean.
+
+**Spend limits.** The `spend-limit-checker` ZK circuit proves the payment amount falls within the approved limit. The proof is valid without revealing the exact threshold. A verifier learns "this payment was within bounds" without learning what the bounds are.
+
+**Chain integrity.** Every attested step in the session (wallet check, intent declaration, approval, payment execution) chains together via Merkle hashing. The `merkle_root` in the attestation lets a verifier confirm nothing was inserted, removed, or reordered after the fact.
+
+## Why ZK proofs matter here
+
+Privacy is not optional in commerce. A merchant does not need to know the user's spending limit. A payment network does not need to see the agent's full policy configuration. A third-party auditor does not need access to every transaction in the session.
+
+Zero-knowledge proofs let Treeship prove compliance without revealing the underlying data:
+
+- "The amount was within the approved limit" without revealing the limit
+- "The recipient was on the allowed list" without revealing the full list
+- "The policy was satisfied" without revealing the policy rules
+
+This is the difference between an audit log (which exposes everything) and a proof (which exposes only the conclusion).
+
+## The complete picture
+
+When all three systems work together, the proof chain is:
+
+```
+VI L1 credential (issuer)
+  defines what is possible
+
+VI L2 credential (user mandate)
+  delegates authority to the agent
+
+VI L3 credential (agent execution)
+  └─ agent_attestation (Treeship)
+     ├─ declaration: what the agent intended
+     ├─ session: link to full receipt chain
+     ├─ merkle_root: integrity of the session
+     └─ zk_proofs: privacy-preserving compliance
+
+Lobster Cash (payment execution)
+  wallet provisioning, transaction signing, settlement
+```
+
+The VI credential chain proves authorization. The Treeship attestation chain proves execution. Lobster Cash handles the money. Each system is independently verifiable. No single point of failure spans all three.
+
+## What this means in practice
+
+A verifier (merchant, network, auditor) receives the L3 credential. They can:
+
+1. Check the L2 mandate to confirm the user delegated authority
+2. Check the `agent_attestation` to confirm the agent acted within scope
+3. Verify the Merkle root against the session to confirm chain integrity
+4. Validate the ZK proofs to confirm compliance without seeing private data
+
+All of this happens without contacting Treeship, the agent, or the user. The proofs are self-contained.
+
+## Status
+
+The foundation for Verifiable Intent support shipped in Treeship v0.6.0: P-256 key generation, session linking, and basic `agent_attestation` field generation. Full L3 credential assembly, including ZK proof embedding and mandate validation, is coming in v0.7.0.
+
+See the [Verifiable Intent integration docs](/docs/integrations/verifiable-intent) for setup instructions and the [Lobster Cash integration](/docs/integrations/lobster-cash) for the payment execution side.

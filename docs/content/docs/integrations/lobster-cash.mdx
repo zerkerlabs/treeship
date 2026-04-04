@@ -1,0 +1,148 @@
+---
+title: Lobster Cash
+description: Cryptographic attestation for every Lobster Cash payment
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+Treeship provides the attestation layer for [Lobster Cash](https://www.lobster.cash/) (by Crossmint) payment workflows. Treeship attests every step of the payment lifecycle. Lobster Cash executes the payment. The result is a complete, cryptographically verifiable record from human intent to settled transaction.
+
+## Install
+
+```bash
+npm install -g treeship @crossmint/lobster-cli
+```
+
+## Setup
+
+<Steps>
+<Step>
+### Initialize the Lobster Cash commerce template
+
+```bash
+treeship init --template lobster-cash-commerce
+```
+
+This scaffolds a project with preconfigured policies, spend limits, and the `lobster-cash` skill.
+</Step>
+<Step>
+### Verify the installation
+
+```bash
+treeship doctor
+lobster --version
+```
+</Step>
+</Steps>
+
+## Workflow overview
+
+Every Lobster Cash payment flows through five attested steps:
+
+<Steps>
+<Step>
+### 1. Wallet check
+
+The agent verifies it has access to a funded wallet before proceeding.
+
+```bash
+treeship wrap --actor agent://payments -- lobster wallet status
+```
+</Step>
+<Step>
+### 2. Intent declaration
+
+The agent declares what it intends to purchase, the amount, and the recipient.
+
+```bash
+treeship attest decision \
+  --actor agent://payments \
+  --summary "Purchase 500 API credits for $49.99 USDC" \
+  --confidence 0.95
+```
+</Step>
+<Step>
+### 3. Approval
+
+A human (or policy engine) approves the spend. The approval binds to the intent via a nonce.
+
+```bash
+treeship attest approval \
+  --approver human://ops \
+  --description "approve $49.99 USDC for 500 API credits"
+```
+</Step>
+<Step>
+### 4. Delegate to Lobster Cash
+
+The agent calls Lobster Cash to execute the payment. Treeship wraps the call and binds it to the approval nonce.
+
+```bash
+treeship wrap \
+  --approval-nonce <nonce> \
+  -- lobster pay --amount 49.99 --currency USDC --to 0x...
+```
+</Step>
+<Step>
+### 5. Verify
+
+Anyone can verify the full chain: wallet check, intent, approval, payment, and settlement.
+
+```bash
+treeship verify --full
+```
+</Step>
+</Steps>
+
+## What gets attested
+
+Each step in the workflow produces a distinct attestation with its own proof type:
+
+| Step | Attestation type | What it proves |
+|------|-----------------|----------------|
+| Wallet check | Ed25519 signature | The agent had access to a funded wallet at the time of the check |
+| Approval | Nonce binding | The human approved a specific action, bound to a unique nonce |
+| Payment execution | Policy + spend-limit proof | The payment complied with the configured policy and did not exceed the spend limit |
+| Session | Chain proof | Every step in the session chains together with Merkle integrity |
+
+The spend-limit proof uses the `spend-limit-checker` ZK circuit. This proves the payment amount falls within the approved limit without revealing the exact policy threshold to third-party verifiers.
+
+## The delegation boundary
+
+Treeship and Lobster Cash own different parts of the workflow:
+
+| Responsibility | Owner |
+|---------------|-------|
+| Attestation, approval, verification, chain integrity | **Treeship** |
+| Wallet provisioning, transaction signing, settlement | **Lobster Cash** |
+
+This separation is intentional. Payment infrastructure and trust infrastructure have different threat models. Keeping them independent means each system can be audited, upgraded, and secured on its own.
+
+## Demo
+
+Run the end-to-end demo to see the full workflow:
+
+```bash
+./packages/skills/lobster-cash/demo.sh
+```
+
+The demo walks through all five steps with a test wallet and prints the receipt chain at the end.
+
+## Verification
+
+After a payment session, anyone can verify the full chain at:
+
+```
+treeship.dev/verify/[session-id]
+```
+
+Or via the CLI:
+
+```bash
+treeship verify --session <session-id> --full
+```
+
+<Callout type="info">
+The Lobster Cash skill source is available on GitHub at [`packages/skills/lobster-cash`](https://github.com/zerkerlabs/treeship/tree/main/packages/skills/lobster-cash).
+</Callout>

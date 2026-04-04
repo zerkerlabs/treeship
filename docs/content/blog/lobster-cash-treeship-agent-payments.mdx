@@ -60,6 +60,10 @@ treeship attest action \
 
 Both produce a signed receipt that binds the payment to the approval.
 
+### 3b. Spend-limit proof (automatic)
+
+When a payment is attested, Treeship runs the `spend-limit-checker` ZK circuit. This produces a zero-knowledge proof that the amount falls within the approved spend limit, without revealing the exact threshold to third-party verifiers. The proof is embedded in the receipt automatically.
+
 ### 4. The receipt chain is complete
 
 The chain now proves:
@@ -86,3 +90,9 @@ Lobster.cash solves the hard problem of agent wallets: provisioning, key managem
 Treeship solves the hard problem of provable authorization: who approved, what was approved, did the action match the approval. Building this from scratch is also months of work and a different security surface.
 
 An agent using both gets wallet infrastructure and trust infrastructure without building either. The receipts from Treeship and the transaction confirmations from Lobster.cash form a complete audit trail from human intent to settled payment.
+
+## Integration docs and Verifiable Intent
+
+For a step-by-step setup guide, see the [Lobster Cash integration page](/docs/integrations/lobster-cash).
+
+Lobster Cash payments are also compatible with [Verifiable Intent](/docs/integrations/verifiable-intent) credentials. When both are configured, Treeship produces the `agent_attestation` field for VI Layer 3 credentials, giving the payment a standards-compliant proof chain on top of the Treeship receipt chain.
