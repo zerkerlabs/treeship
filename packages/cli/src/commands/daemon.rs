@@ -576,11 +576,13 @@ fn process_proof_queue(ts: &std::path::Path, ctx: &crate::ctx::Ctx) {
         };
 
         let session_id = job["session_id"].as_str().unwrap_or("unknown");
-        daemon_log(ts, &format!("proving chain for session {}", session_id));
+        let root_id = job["root_artifact_id"].as_str().map(|s| s.to_string());
+        daemon_log(ts, &format!("proving chain for session {} (root: {:?})", session_id, root_id));
 
-        // Run the proof (this is the slow part, can take minutes on local hardware)
+        // Run the proof. Pass root_artifact_id from the job so the prover
+        // knows where the session boundary is (session.json is already deleted).
         let silent_printer = crate::printer::Printer::new(crate::printer::Format::Text, true, true);
-        match super::prove::prove_chain(session_id, None, &silent_printer) {
+        match super::prove::prove_chain_with_root(session_id, root_id.as_deref(), None, &silent_printer) {
             Ok(()) => {
                 daemon_log(ts, &format!("chain proof complete for {}", session_id));
 

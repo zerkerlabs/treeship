@@ -310,6 +310,18 @@ pub fn prove_chain(
     config:     Option<&str>,
     printer:    &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    prove_chain_with_root(session_id, None, config, printer)
+}
+
+/// Prove a session chain with an explicit root_artifact_id boundary.
+/// Used by the daemon when session.json has already been deleted.
+#[cfg(feature = "zk")]
+pub fn prove_chain_with_root(
+    session_id: &str,
+    explicit_root: Option<&str>,
+    config:     Option<&str>,
+    printer:    &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
 
     printer.blank();
@@ -326,8 +338,12 @@ pub fn prove_chain(
         .map(|s| s.trim().to_string())
         .map_err(|_| "no recent artifact -- run 'treeship wrap' first")?;
 
-    // Try to resolve the session's root artifact as a chain boundary
-    let session_root_id: Option<String> = {
+    // Try to resolve the session's root artifact as a chain boundary.
+    // Priority: explicit_root (from daemon job) > session manifest > full chain
+    let session_root_id: Option<String> = if let Some(root) = explicit_root {
+        printer.info(&format!("  session root (from job): {}", root));
+        Some(root.to_string())
+    } else {
         let session_manifest = super::session::load_session();
         if let Some(ref manifest) = session_manifest {
             if manifest.session_id == session_id {
@@ -366,8 +382,16 @@ pub fn prove_chain(
     while let Some(id) = current_id {
         match ctx.storage.read(&id) {
             Ok(record) => {
-                let envelope_json = record.envelope.to_json()
-                    .unwrap_or_default();
+                // Compute actual PAE bytes (what was signed)
+                let payload_bytes = base64::Engine::decode(
+                    &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+                    &record.envelope.payload,
+                ).unwrap_or_default();
+                let pae_bytes = treeship_core::attestation::pae(
+                    &record.envelope.payload_type,
+                    &payload_bytes,
+                );
+
                 let sig = record.envelope.signatures.first()
                     .map(|s| s.sig.clone())
                     .unwrap_or_default();
@@ -381,7 +405,7 @@ pub fn prove_chain(
                     signed_at: record.signed_at.clone(),
                     parent_id: record.parent_id.clone(),
                     signature: sig,
-                    pae_message: envelope_json,
+                    pae_message: pae_bytes,
                 });
 
                 // Stop walking once we reach the session's root artifact
@@ -445,6 +469,13 @@ pub fn prove_chain(
     printer.hint("rebuild with: cargo build -p treeship-cli --features zk");
     printer.blank();
     Ok(())
+}
+
+#[cfg(not(feature = "zk"))]
+pub fn prove_chain_with_root(
+    _session_id: &str, _root: Option<&str>, _config: Option<&str>, printer: &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    prove_chain(_session_id, _config, printer)
 }
 
 // -- Helpers ------------------------------------------------------------------

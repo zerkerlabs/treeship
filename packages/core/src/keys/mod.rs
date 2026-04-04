@@ -382,30 +382,68 @@ pub fn aes_gcm_decrypt(key: &[u8; 32], enc_data: &[u8], _nonce_unused: &[u8]) ->
 // --- Machine key derivation ---
 
 pub fn derive_machine_key(store_dir: &Path) -> Result<[u8; 32], KeyError> {
-    // Try /etc/machine-id first (Linux standard).
+    // 1. Linux: /etc/machine-id (stable across reboots)
     if let Ok(id) = fs::read_to_string("/etc/machine-id") {
-        let mut h = Sha256::new();
-        h.update(id.trim().as_bytes());
-        h.update(store_dir.to_string_lossy().as_bytes());
-        return Ok(h.finalize().into());
+        let trimmed = id.trim();
+        if !trimmed.is_empty() {
+            let mut h = Sha256::new();
+            h.update(trimmed.as_bytes());
+            h.update(store_dir.to_string_lossy().as_bytes());
+            return Ok(h.finalize().into());
+        }
     }
 
-    // macOS / other: derive from hostname + username.
-    // No seed file is written next to the encrypted data, since that
-    // would let anyone who copies the store directory also decrypt it.
-    let hostname = std::process::Command::new("hostname")
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_else(|_| "unknown-host".to_string());
+    // 2. macOS: IOPlatformSerialNumber (hardware serial, stable across
+    //    hostname changes, user changes, reboots, no entitlements needed)
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(output) = std::process::Command::new("ioreg")
+            .args(["-rd1", "-c", "IOPlatformExpertDevice"])
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                if line.contains("IOPlatformSerialNumber") {
+                    if let Some(serial) = line.split('"').nth(3) {
+                        if !serial.is_empty() {
+                            let mut h = Sha256::new();
+                            h.update(b"treeship-machine-key-v2:");
+                            h.update(serial.as_bytes());
+                            h.update(b":");
+                            h.update(store_dir.to_string_lossy().as_bytes());
+                            return Ok(h.finalize().into());
+                        }
+                    }
+                }
+            }
+        }
+    }
 
-    let username = std::env::var("USER")
-        .unwrap_or_else(|_| "unknown-user".to_string());
+    // 3. Fallback: random seed in ~/.treeship/machine_seed
+    //    Stored separately from key material (not in store_dir)
+    let home = std::env::var("HOME")
+        .map(std::path::PathBuf::from)
+        .map_err(|_| KeyError::Crypto("HOME not set".to_string()))?;
+    let seed_path = home.join(".treeship").join("machine_seed");
+    let seed = if seed_path.exists() {
+        fs::read_to_string(&seed_path).map_err(KeyError::Io)?
+    } else {
+        let mut bytes = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut bytes);
+        let seed_hex = hex_encode(&bytes);
+        let _ = fs::create_dir_all(seed_path.parent().unwrap_or(Path::new(".")));
+        fs::write(&seed_path, &seed_hex).map_err(KeyError::Io)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&seed_path, fs::Permissions::from_mode(0o600));
+        }
+        seed_hex
+    };
 
     let mut h = Sha256::new();
-    h.update(b"treeship-machine-key-v1:");
-    h.update(hostname.as_bytes());
-    h.update(b":");
-    h.update(username.as_bytes());
+    h.update(b"treeship-machine-key-fallback:");
+    h.update(seed.trim().as_bytes());
     h.update(b":");
     h.update(store_dir.to_string_lossy().as_bytes());
     Ok(h.finalize().into())
