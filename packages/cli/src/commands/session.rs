@@ -394,11 +394,6 @@ pub fn close(
         }
     }
 
-    // Remove session.json
-    if let Some(path) = session_path() {
-        let _ = std::fs::remove_file(&path);
-    }
-
     // Print output
     let elapsed_str = format_duration_ms(elapsed_ms);
 
@@ -411,13 +406,21 @@ pub fn close(
     printer.hint(&format!("treeship verify {} --full  to see the chain", result.artifact_id));
     printer.hint(&format!("treeship hub push {}      to share", result.artifact_id));
 
-    // ZK: Enqueue chain proof if configured
+    // ZK: Enqueue chain proof BEFORE deleting session.json so the proof
+    // job captures root_artifact_id (the daemon needs it to bound the chain).
     #[cfg(feature = "zk")]
     {
-        if let Ok(()) = super::daemon::enqueue_proof_job(&manifest.session_id) {
-            printer.blank();
+        if let Ok(()) = super::daemon::enqueue_proof_job_with_root(
+            &manifest.session_id,
+            manifest.root_artifact_id.as_deref(),
+        ) {
             printer.dim_info("  chain proof queued (generating in background)");
         }
+    }
+
+    // Now safe to delete session.json
+    if let Some(path) = session_path() {
+        let _ = std::fs::remove_file(&path);
     }
 
     printer.blank();

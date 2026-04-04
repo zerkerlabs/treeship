@@ -382,30 +382,33 @@ pub fn aes_gcm_decrypt(key: &[u8; 32], enc_data: &[u8], _nonce_unused: &[u8]) ->
 // --- Machine key derivation ---
 
 pub fn derive_machine_key(store_dir: &Path) -> Result<[u8; 32], KeyError> {
-    let mut seed = Vec::new();
-
     // Try /etc/machine-id first (Linux standard).
-    if let Ok(id) = fs::read("/etc/machine-id") {
-        seed.extend_from_slice(&id);
-    } else {
-        // Fallback: stable seed file inside the store directory.
-        let seed_path = store_dir.join(".machineseed");
-        if seed_path.exists() {
-            seed = fs::read(&seed_path)?;
-        } else {
-            let mut s = vec![0u8; 32];
-            rand::thread_rng().fill_bytes(&mut s);
-            write_file_600(&seed_path, &s)?;
-            seed = s;
-        }
+    if let Ok(id) = fs::read_to_string("/etc/machine-id") {
+        let mut h = Sha256::new();
+        h.update(id.trim().as_bytes());
+        h.update(store_dir.to_string_lossy().as_bytes());
+        return Ok(h.finalize().into());
     }
 
-    // Mix in the store directory path so the same machine-id can't open
-    // a store that was copied from another path.
-    seed.extend_from_slice(store_dir.to_string_lossy().as_bytes());
+    // macOS / other: derive from hostname + username.
+    // No seed file is written next to the encrypted data, since that
+    // would let anyone who copies the store directory also decrypt it.
+    let hostname = std::process::Command::new("hostname")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|_| "unknown-host".to_string());
 
-    let h = Sha256::digest(&seed);
-    Ok(h.into())
+    let username = std::env::var("USER")
+        .unwrap_or_else(|_| "unknown-user".to_string());
+
+    let mut h = Sha256::new();
+    h.update(b"treeship-machine-key-v1:");
+    h.update(hostname.as_bytes());
+    h.update(b":");
+    h.update(username.as_bytes());
+    h.update(b":");
+    h.update(store_dir.to_string_lossy().as_bytes());
+    Ok(h.finalize().into())
 }
 
 // --- Utility ---

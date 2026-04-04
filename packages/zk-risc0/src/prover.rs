@@ -45,12 +45,18 @@ pub struct ChainArtifact {
     pub pae_message: Vec<u8>,
 }
 
-/// Minimal artifact for the guest (matches guest's ChainArtifact).
+/// Matches guest's ChainArtifact exactly -- same field names, same types.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct GuestArtifact {
     artifact_id: String,
     digest: String,
     parent_id: Option<String>,
+    /// Raw content bytes for digest verification
+    content: Vec<u8>,
+    /// Ed25519 signature bytes (64 bytes)
+    signature_bytes: Vec<u8>,
+    /// The message that was signed (PAE bytes)
+    signed_message: Vec<u8>,
 }
 
 /// Guest output (matches guest's ChainProofOutput).
@@ -90,21 +96,31 @@ impl RiscZeroProver {
     pub fn prove_chain(
         &self,
         artifacts: &[ChainArtifact],
-        _public_key_bytes: [u8; 32],
+        public_key_bytes: [u8; 32],
     ) -> Result<ChainProofResult, Box<dyn std::error::Error>> {
         eprintln!(
             "[treeship] proving chain of {} artifacts locally...",
             artifacts.len()
         );
 
-        let guest_artifacts: Vec<GuestArtifact> = artifacts.iter().map(|a| GuestArtifact {
-            artifact_id: a.artifact_id.clone(),
-            digest: a.digest.clone(),
-            parent_id: a.parent_id.clone(),
+        // Build guest-compatible artifacts with full content + signatures
+        let guest_artifacts: Vec<GuestArtifact> = artifacts.iter().map(|a| {
+            // Decode base64url signature to raw bytes
+            let sig_bytes = base64_decode_sig(&a.signature);
+            GuestArtifact {
+                artifact_id: a.artifact_id.clone(),
+                digest: a.digest.clone(),
+                parent_id: a.parent_id.clone(),
+                content: a.pae_message.clone(), // PAE bytes used for digest
+                signature_bytes: sig_bytes,
+                signed_message: a.pae_message.clone(), // PAE is the signed message
+            }
         }).collect();
 
+        // Write both inputs matching the guest's two env::read() calls
         let env = risc0_zkvm::ExecutorEnv::builder()
             .write(&guest_artifacts)?
+            .write(&public_key_bytes)?
             .build()?;
 
         let receipt = risc0_zkvm::default_prover()
@@ -172,4 +188,44 @@ impl RiscZeroProver {
         let proof: ChainProofResult = serde_json::from_slice(&bytes)?;
         Ok(proof)
     }
+}
+
+/// Decode a base64url signature string to raw bytes.
+fn base64_decode_sig(input: &str) -> Vec<u8> {
+    // Simple base64url decode
+    let standard: String = input.chars().map(|c| match c {
+        '-' => '+',
+        '_' => '/',
+        other => other,
+    }).collect();
+
+    let padded = match standard.len() % 4 {
+        2 => format!("{}==", standard),
+        3 => format!("{}=", standard),
+        _ => standard,
+    };
+
+    base64_simple_decode(&padded)
+}
+
+fn base64_simple_decode(input: &str) -> Vec<u8> {
+    let chars: Vec<u8> = input.bytes().map(|b| match b {
+        b'A'..=b'Z' => b - b'A',
+        b'a'..=b'z' => b - b'a' + 26,
+        b'0'..=b'9' => b - b'0' + 52,
+        b'+' => 62,
+        b'/' => 63,
+        _ => 0,
+    }).collect();
+
+    let mut output = Vec::new();
+    for chunk in chars.chunks(4) {
+        if chunk.len() < 4 { break; }
+        let n = ((chunk[0] as u32) << 18) | ((chunk[1] as u32) << 12)
+            | ((chunk[2] as u32) << 6) | (chunk[3] as u32);
+        output.push((n >> 16) as u8);
+        output.push((n >> 8) as u8);
+        output.push(n as u8);
+    }
+    output
 }

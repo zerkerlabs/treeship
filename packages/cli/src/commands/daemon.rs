@@ -668,12 +668,24 @@ fn update_checkpoint_with_proof(ts: &std::path::Path, session_id: &str) {
 /// Enqueue a proof job. Called by session close when zk.auto_prove is enabled.
 #[cfg(feature = "zk")]
 pub fn enqueue_proof_job(session_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    enqueue_proof_job_with_root(session_id, None)
+}
+
+/// Enqueue a proof job with the session's root_artifact_id preserved.
+/// The root ID is needed by the daemon to know where the chain starts,
+/// since session.json is deleted after this call.
+#[cfg(feature = "zk")]
+pub fn enqueue_proof_job_with_root(
+    session_id: &str,
+    root_artifact_id: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let ts = ts_dir().ok_or("no .treeship directory found")?;
     let queue_dir = ts.join("proof_queue");
     std::fs::create_dir_all(&queue_dir)?;
 
     let job = serde_json::json!({
         "session_id": session_id,
+        "root_artifact_id": root_artifact_id,
         "created_at": crate::commands::prove::now_rfc3339_approx(),
     });
 

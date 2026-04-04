@@ -95,7 +95,13 @@ pub fn prove_circuit(
             prover.prove_prompt_template(&prompt_hash, &template_hash, &artifact_id)?
         }
         "spend_limit_checker" => {
-            // Extract amount and limit from CLI args or artifact meta
+            // Extract amount and limit from artifact metadata.
+            //
+            // IMPORTANT (v0.7.0 TODO): The max_spend_cents limit should come
+            // from a signed declaration artifact rather than user-supplied
+            // metadata. Until then, this proof only shows that the amount was
+            // under a limit that the user themselves provided. It does not
+            // bind to an externally-authorized spending cap.
             let envelope_json = record.envelope.to_json()?;
             let envelope_str = String::from_utf8_lossy(&envelope_json);
 
@@ -110,6 +116,11 @@ pub fn prove_circuit(
             if amount_cents == 0 || max_spend_cents == 0 {
                 return Err("spend-limit-checker requires amount_cents and max_spend_cents in artifact meta\n  Use --meta '{\"amount_cents\": 4500, \"max_spend_cents\": 100000}'".into());
             }
+
+            printer.warn(
+                "spend limit is user-supplied, not yet bound to a signed declaration",
+                &[("tracking", "v0.7.0 will bind limits to declaration artifacts")],
+            );
 
             prover.prove_spend_limit(&artifact_id, amount_cents, max_spend_cents)?
         }
