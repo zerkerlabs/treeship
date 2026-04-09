@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -111,13 +112,28 @@ func corsMiddleware(next http.Handler) http.Handler {
 }
 
 // requestLogger logs method, path, status, and duration for every request.
+// Query parameters are included but the `session` value (a short-lived
+// workspace share token) is redacted so it never lands in access logs.
 func requestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 		next.ServeHTTP(ww, r)
-		log.Printf("%s %s %d %s", r.Method, r.URL.Path, ww.Status(), time.Since(start))
+		log.Printf("%s %s %d %s", r.Method, redactPath(r.URL), ww.Status(), time.Since(start))
 	})
+}
+
+// redactPath returns "/path?query" with the value of any `session` query
+// parameter replaced by "REDACTED".
+func redactPath(u *url.URL) string {
+	if u.RawQuery == "" {
+		return u.Path
+	}
+	q := u.Query()
+	if q.Get("session") != "" {
+		q.Set("session", "REDACTED")
+	}
+	return u.Path + "?" + q.Encode()
 }
 
 // revokedHandler serves GET /.well-known/treeship/revoked.json
