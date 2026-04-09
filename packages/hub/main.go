@@ -13,6 +13,8 @@ import (
 	"github.com/treeship/hub/internal/db"
 	"github.com/treeship/hub/internal/dock"
 	"github.com/treeship/hub/internal/merkle"
+	"github.com/treeship/hub/internal/receipts"
+	"github.com/treeship/hub/internal/ship"
 	"github.com/treeship/hub/internal/verify"
 )
 
@@ -27,6 +29,8 @@ func main() {
 	artifactHandlers := &artifacts.Handlers{DB: database}
 	verifyHandlers := &verify.Handlers{DB: database}
 	merkleHandlers := &merkle.Handlers{DB: database}
+	receiptHandlers := &receipts.Handlers{DB: database}
+	shipHandlers := &ship.Handlers{DB: database}
 
 	r := chi.NewRouter()
 
@@ -64,6 +68,15 @@ func main() {
 	r.Get("/v1/merkle/checkpoint/{id}", merkleHandlers.GetCheckpoint)
 	r.Get("/v1/merkle/{artifactId}", merkleHandlers.GetProof)
 
+	// Session receipt endpoints.
+	// PUT is DPoP-authenticated; GET is fully public and the URL is permanent.
+	r.Put("/v1/receipt/{session_id}", receiptHandlers.PutReceipt)
+	r.Get("/v1/receipt/{session_id}", receiptHandlers.GetReceipt)
+
+	// Per-ship registry endpoints (DPoP-authenticated).
+	r.Get("/v1/ship/agents", shipHandlers.ListAgents)
+	r.Get("/v1/ship/sessions", shipHandlers.ListSessions)
+
 	// Well-known revocation list.
 	r.Get("/.well-known/treeship/revoked.json", revokedHandler)
 
@@ -85,7 +98,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 		if origin == "https://treeship.dev" || origin == "https://www.treeship.dev" || origin == "http://localhost:3000" {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 		}
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, DPoP")
 		w.Header().Set("Access-Control-Max-Age", "86400")
 
