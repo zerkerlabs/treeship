@@ -591,3 +591,137 @@ fn collect_artifact_entries(
     collected.reverse();
     collected
 }
+
+// ---------------------------------------------------------------------------
+// session report -- upload a session receipt to the configured hub
+// ---------------------------------------------------------------------------
+
+/// Locate the most recently modified `.treeship` package directory under
+/// `.treeship/sessions/`. Returns the package path and the session_id parsed
+/// from its directory name.
+fn find_latest_package() -> Option<(PathBuf, String)> {
+    let ts_dir = session_dir()?;
+    let sessions_root = ts_dir.join("sessions");
+    if !sessions_root.is_dir() {
+        return None;
+    }
+
+    let mut latest: Option<(PathBuf, String, std::time::SystemTime)> = None;
+    for entry in std::fs::read_dir(&sessions_root).ok()?.flatten() {
+        let path = entry.path();
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy().to_string();
+        if !path.is_dir() || !name_str.ends_with(".treeship") {
+            continue;
+        }
+        let session_id = name_str.trim_end_matches(".treeship").to_string();
+        let receipt_path = path.join("receipt.json");
+        if !receipt_path.exists() {
+            continue;
+        }
+        let mtime = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::UNIX_EPOCH);
+        match &latest {
+            None => latest = Some((path.clone(), session_id, mtime)),
+            Some((_, _, prev_mtime)) if mtime > *prev_mtime => {
+                latest = Some((path.clone(), session_id, mtime));
+            }
+            _ => {}
+        }
+    }
+    latest.map(|(p, id, _)| (p, id))
+}
+
+/// Locate the package directory for an explicit session_id.
+fn find_package_for_session(session_id: &str) -> Option<PathBuf> {
+    let ts_dir = session_dir()?;
+    let pkg = ts_dir.join("sessions").join(format!("{session_id}.treeship"));
+    if pkg.join("receipt.json").exists() {
+        Some(pkg)
+    } else {
+        None
+    }
+}
+
+pub fn report(
+    session_id: Option<String>,
+    config: Option<&str>,
+    printer: &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // 1. Resolve which package to upload.
+    let (pkg_dir, resolved_id) = match session_id {
+        Some(id) => {
+            let pkg = find_package_for_session(&id)
+                .ok_or_else(|| format!(
+                    "no .treeship package found for session {id}\n\n  expected: .treeship/sessions/{id}.treeship/receipt.json"
+                ))?;
+            (pkg, id)
+        }
+        None => find_latest_package().ok_or(
+            "no closed sessions found -- run `treeship session close` first",
+        )?,
+    };
+
+    // 2. Read receipt.json bytes (we PUT them verbatim so the digest is preserved).
+    let receipt_path = pkg_dir.join("receipt.json");
+    let receipt_bytes = std::fs::read(&receipt_path)
+        .map_err(|e| format!("failed to read {}: {e}", receipt_path.display()))?;
+
+    // 3. Resolve the active hub connection.
+    let ctx = ctx::open(config)?;
+    let (hub_name, hub_entry) = ctx
+        .config
+        .resolve_hub(None)
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+
+    let hub_secret_hex = hub_entry
+        .hub_secret_key
+        .as_deref()
+        .ok_or("no hub_secret_key -- run: treeship hub attach")?;
+
+    // 4. Build the PUT URL and DPoP proof.
+    let put_url = format!("{}/v1/receipt/{}", hub_entry.endpoint, resolved_id);
+    let dpop_jwt = super::hub::build_dpop_jwt(hub_secret_hex, "PUT", &put_url)?;
+
+    // 5. Send the receipt body verbatim with content-type application/json.
+    let resp = ureq::put(&put_url)
+        .set("Authorization", &format!("DPoP {}", hub_entry.hub_id))
+        .set("DPoP", &dpop_jwt)
+        .set("Content-Type", "application/json")
+        .send_bytes(&receipt_bytes);
+
+    let resp_json: serde_json::Value = match resp {
+        Ok(r) => r.into_json()?,
+        Err(ureq::Error::Status(code, r)) => {
+            let detail: serde_json::Value = r
+                .into_json()
+                .unwrap_or_else(|_| serde_json::json!({"error": "unknown"}));
+            let msg = detail["error"].as_str().unwrap_or("unknown error");
+            return Err(format!("hub returned {code}: {msg}").into());
+        }
+        Err(e) => return Err(format!("failed to upload receipt: {e}").into()),
+    };
+
+    let receipt_url = resp_json["receipt_url"]
+        .as_str()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("https://treeship.dev/receipt/{resolved_id}"));
+    let agents = resp_json["agents"].as_u64().unwrap_or(0);
+    let events = resp_json["events"].as_u64().unwrap_or(0);
+
+    printer.blank();
+    printer.success("session receipt uploaded", &[]);
+    printer.info(&format!("  hub:      {}", hub_name));
+    printer.info(&format!("  session:  {}", resolved_id));
+    printer.info(&format!("  agents:   {}", agents));
+    printer.info(&format!("  events:   {}", events));
+    printer.blank();
+    printer.info(&format!("  receipt:  {}", receipt_url));
+    printer.blank();
+    printer.hint("share this URL freely -- it never expires and needs no auth");
+    printer.blank();
+
+    Ok(())
+}

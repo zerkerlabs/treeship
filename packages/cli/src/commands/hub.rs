@@ -614,7 +614,7 @@ fn resolve_artifact_id(
 // DPoP JWT builder
 // ---------------------------------------------------------------------------
 
-fn build_dpop_jwt(
+pub(crate) fn build_dpop_jwt(
     hub_secret_hex: &str,
     method:          &str,
     url:             &str,
