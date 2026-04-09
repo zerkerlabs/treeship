@@ -16,5 +16,6 @@ pub mod doctor;
 pub mod merkle;
 pub mod otel;
 pub mod template;
+pub mod package;
 pub mod prove;
 pub mod zk;

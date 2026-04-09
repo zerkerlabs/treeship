@@ -173,6 +173,17 @@ enum Command {
     #[command(subcommand)]
     Session(SessionCommand),
 
+    /// Inspect and verify .treeship session packages
+    ///
+    /// Session packages contain a complete Session Receipt with
+    /// Merkle proofs, timeline, and agent graph.
+    ///
+    /// Examples:
+    ///   treeship package inspect .treeship/sessions/ssn_abc.treeship
+    ///   treeship package verify .treeship/sessions/ssn_abc.treeship
+    #[command(subcommand)]
+    Package(PackageCommand),
+
     /// List pending approvals
     ///
     /// Shows actions that are blocked waiting for human approval.
@@ -527,6 +538,35 @@ struct SessionCloseArgs {
     /// Summary of what was accomplished
     #[arg(long, value_name = "TEXT")]
     summary: Option<String>,
+}
+
+// --- package ---------------------------------------------------------------
+
+#[derive(Subcommand)]
+enum PackageCommand {
+    /// Inspect a .treeship session package
+    ///
+    /// Shows the full Session Receipt contents: participants, agent graph,
+    /// timeline, side effects, and Merkle proof status.
+    ///
+    /// Examples:
+    ///   treeship package inspect .treeship/sessions/ssn_abc.treeship
+    Inspect(PackagePathArgs),
+
+    /// Verify a .treeship session package
+    ///
+    /// Runs local verification checks: receipt parsing, Merkle root
+    /// recomputation, inclusion proof validation, and timeline ordering.
+    ///
+    /// Examples:
+    ///   treeship package verify .treeship/sessions/ssn_abc.treeship
+    Verify(PackagePathArgs),
+}
+
+#[derive(Args)]
+struct PackagePathArgs {
+    /// Path to the .treeship package directory
+    path: std::path::PathBuf,
 }
 
 // --- approve / deny ---------------------------------------------------------
@@ -1205,6 +1245,17 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             SessionCommand::Close(a) => commands::session::close(
                 a.summary.clone(),
                 cli.config.as_deref(),
+                printer,
+            ),
+        },
+
+        Command::Package(sub) => match sub {
+            PackageCommand::Inspect(a) => commands::package::inspect(
+                a.path.clone(),
+                printer,
+            ),
+            PackageCommand::Verify(a) => commands::package::verify(
+                a.path.clone(),
                 printer,
             ),
         },

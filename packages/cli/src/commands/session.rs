@@ -2,9 +2,17 @@ use std::path::{Path, PathBuf};
 
 use treeship_core::{
     attestation::sign,
+    session::{
+        self, EventLog, EventType, SessionEvent, ReceiptComposer,
+        build_package,
+        event::{generate_event_id, generate_span_id, generate_trace_id},
+    },
     statements::{ActionStatement, payload_type},
     storage::Record,
 };
+
+// Re-export the core SessionManifest so status.rs and others keep working.
+pub use treeship_core::session::SessionManifest;
 
 use crate::{ctx, printer::Printer};
 
@@ -18,21 +26,6 @@ fn set_restrictive_permissions(path: &Path) {
 #[cfg(not(unix))]
 fn set_restrictive_permissions(_path: &Path) {
     // No-op on non-unix platforms
-}
-
-// ---------------------------------------------------------------------------
-// Session manifest (persisted as .treeship/session.json)
-// ---------------------------------------------------------------------------
-
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
-pub struct SessionManifest {
-    pub session_id: String,
-    pub name: Option<String>,
-    pub actor: String,
-    pub started_at: String,
-    pub started_at_ms: u64,
-    pub artifact_count: u64,
-    pub root_artifact_id: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -59,6 +52,10 @@ fn session_path() -> Option<PathBuf> {
 
 fn session_dir() -> Option<PathBuf> {
     session_path().and_then(|p| p.parent().map(|d| d.to_path_buf()))
+}
+
+fn sessions_dir() -> Option<PathBuf> {
+    session_dir().map(|d| d.join("sessions"))
 }
 
 fn generate_session_id() -> String {
@@ -157,6 +154,49 @@ fn count_chain_artifacts(ctx: &ctx::Ctx, root_id: &str) -> u64 {
     count
 }
 
+/// Get the host ID for the current machine.
+fn local_host_id() -> String {
+    // Use PropagationContext's approach: read from env or derive from hostname
+    std::env::var("TREESHIP_HOST_ID").unwrap_or_else(|_| {
+        std::process::Command::new("hostname")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|h| format!("host_{}", h.trim().replace('.', "_")))
+            .unwrap_or_else(|| "host_unknown".into())
+    })
+}
+
+/// Create a base SessionEvent for this session.
+fn base_event(
+    session_id: &str,
+    agent_id: &str,
+    agent_instance_id: &str,
+    agent_name: &str,
+    trace_id: &str,
+    host_id: &str,
+    event_type: EventType,
+) -> SessionEvent {
+    SessionEvent {
+        session_id: session_id.into(),
+        event_id: generate_event_id(),
+        timestamp: now_rfc3339(),
+        sequence_no: 0, // Set by EventLog::append
+        trace_id: trace_id.into(),
+        span_id: generate_span_id(),
+        parent_span_id: None,
+        agent_id: agent_id.into(),
+        agent_instance_id: agent_instance_id.into(),
+        agent_name: agent_name.into(),
+        agent_role: Some("operator".into()),
+        host_id: host_id.into(),
+        tool_runtime_id: None,
+        event_type,
+        artifact_ref: None,
+        meta: None,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // session start
 // ---------------------------------------------------------------------------
@@ -187,6 +227,8 @@ pub fn start(
     let actor_uri = actor.unwrap_or_else(|| format!("ship://{}", ctx.config.ship_id));
     let now = now_rfc3339();
     let now_ms = epoch_ms();
+    let trace_id = generate_trace_id();
+    let host_id = local_host_id();
 
     // Create the session-start action artifact
     let parent_id = resolve_last(&ctx.config.storage_dir);
@@ -218,21 +260,30 @@ pub fn start(
 
     write_last(&ctx.config.storage_dir, &result.artifact_id);
 
-    // Write session manifest
-    let manifest = SessionManifest {
-        session_id: session_id.clone(),
-        name: name.clone(),
-        actor: actor_uri.clone(),
-        started_at: now.clone(),
-        started_at_ms: now_ms,
-        artifact_count: 0,
-        root_artifact_id: Some(result.artifact_id.clone()),
-    };
+    // Write session manifest (using core SessionManifest)
+    let manifest = SessionManifest::new(
+        session_id.clone(),
+        actor_uri.clone(),
+        now.clone(),
+        now_ms,
+    );
+    let mut manifest = manifest;
+    manifest.name = name.clone();
+    manifest.root_artifact_id = Some(result.artifact_id.clone());
 
     let session_path = ts_dir.join("session.json");
     let json = serde_json::to_string_pretty(&manifest)?;
     std::fs::write(&session_path, &json)?;
     set_restrictive_permissions(&session_path);
+
+    // Initialize event log and write session.started event
+    let evt_dir = ts_dir.join("sessions").join(&session_id);
+    let event_log = EventLog::open(&evt_dir)?;
+    let mut evt = base_event(
+        &session_id, &actor_uri, "operator", "treeship-cli",
+        &trace_id, &host_id, EventType::SessionStarted,
+    );
+    event_log.append(&mut evt)?;
 
     // Print output
     printer.blank();
@@ -298,6 +349,14 @@ pub fn status(
     let elapsed_ms = epoch_ms().saturating_sub(manifest.started_at_ms);
     let elapsed_str = format_duration_ms(elapsed_ms);
 
+    // Check event log
+    let evt_dir = session_dir()
+        .map(|d| d.join("sessions").join(&manifest.session_id));
+    let event_count = evt_dir
+        .and_then(|d| EventLog::open(&d).ok())
+        .map(|log| log.event_count())
+        .unwrap_or(0);
+
     printer.blank();
     printer.section("session");
     printer.info(&format!("  id:        {}", manifest.session_id));
@@ -307,6 +366,7 @@ pub fn status(
     printer.info(&format!("  actor:     {}", manifest.actor));
     printer.info(&format!("  started:   {} ({} ago)", manifest.started_at, elapsed_str));
     printer.info(&format!("  receipts:  {} (verified from chain)", artifact_count));
+    printer.info(&format!("  events:    {}", event_count));
     printer.blank();
     printer.hint("treeship session close --summary \"what was done\"");
     printer.blank();
@@ -350,6 +410,23 @@ pub fn close(
     }
 
     let elapsed_ms = epoch_ms().saturating_sub(manifest.started_at_ms);
+    let trace_id = generate_trace_id();
+    let host_id = local_host_id();
+
+    // Write session.closed event to the event log
+    let ts_dir = session_dir().ok_or("no .treeship directory found")?;
+    let evt_dir = ts_dir.join("sessions").join(&manifest.session_id);
+    let event_log = EventLog::open(&evt_dir)?;
+
+    let mut close_evt = base_event(
+        &manifest.session_id, &manifest.actor, "operator", "treeship-cli",
+        &trace_id, &host_id,
+        EventType::SessionClosed {
+            summary: summary.clone(),
+            duration_ms: Some(elapsed_ms),
+        },
+    );
+    event_log.append(&mut close_evt)?;
 
     // Create session-close action artifact
     let parent_id = resolve_last(&ctx.config.storage_dir);
@@ -383,6 +460,40 @@ pub fn close(
 
     write_last(&ctx.config.storage_dir, &result.artifact_id);
 
+    // ── Compose Session Receipt and build .treeship package ─────────
+    let events = event_log.read_all().unwrap_or_default();
+
+    // Build artifact entries from the chain
+    let artifact_entries: Vec<session::receipt::ArtifactEntry> = collect_artifact_entries(&ctx, &manifest);
+
+    // Update manifest for receipt composition
+    let mut receipt_manifest = manifest.clone();
+    receipt_manifest.status = session::SessionStatus::Completed;
+    receipt_manifest.closed_at = Some(now_rfc3339());
+    receipt_manifest.summary = summary.clone();
+
+    let receipt = ReceiptComposer::compose(&receipt_manifest, &events, artifact_entries);
+
+    // Build the .treeship package
+    let pkg_dir = ts_dir.join("sessions");
+    std::fs::create_dir_all(&pkg_dir)?;
+
+    match build_package(&receipt, &pkg_dir) {
+        Ok(pkg_output) => {
+            printer.blank();
+            printer.success("session receipt composed", &[]);
+            printer.info(&format!("  package:   {}", pkg_output.path.display()));
+            printer.info(&format!("  digest:    {}", pkg_output.receipt_digest));
+            if let Some(ref root) = pkg_output.merkle_root {
+                printer.info(&format!("  merkle:    {}", root));
+            }
+            printer.info(&format!("  files:     {}", pkg_output.file_count));
+        }
+        Err(e) => {
+            printer.warn(&format!("failed to build .treeship package: {e}"), &[]);
+        }
+    }
+
     // ── OTel export (best-effort, never fails the close) ────────────
     #[cfg(feature = "otel")]
     {
@@ -402,6 +513,7 @@ pub fn close(
     printer.info(&format!("  id:       {}", manifest.session_id));
     printer.info(&format!("  duration: {}", elapsed_str));
     printer.info(&format!("  receipts: {}", artifact_count));
+    printer.info(&format!("  events:   {}", event_log.event_count()));
     printer.blank();
     printer.hint(&format!("treeship verify {} --full  to see the chain", result.artifact_id));
     printer.hint(&format!("treeship hub push {}      to share", result.artifact_id));
@@ -430,4 +542,52 @@ pub fn close(
     printer.blank();
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Collect artifact entries from the chain for receipt composition
+// ---------------------------------------------------------------------------
+
+fn collect_artifact_entries(
+    ctx: &ctx::Ctx,
+    manifest: &SessionManifest,
+) -> Vec<session::receipt::ArtifactEntry> {
+    let root_id = match &manifest.root_artifact_id {
+        Some(id) => id.clone(),
+        None => return Vec::new(),
+    };
+
+    // Walk chain from .last back to root
+    let last_path = Path::new(&ctx.config.storage_dir).join(".last");
+    let current_id = match std::fs::read_to_string(&last_path) {
+        Ok(s) => s.trim().to_string(),
+        Err(_) => return Vec::new(),
+    };
+
+    let mut cursor = current_id;
+    let mut collected = Vec::new();
+    for _ in 0..1000 {
+        match ctx.storage.read(&cursor) {
+            Ok(record) => {
+                collected.push(session::receipt::ArtifactEntry {
+                    artifact_id: record.artifact_id.clone(),
+                    payload_type: record.payload_type.clone(),
+                    digest: Some(record.digest.clone()),
+                    signed_at: Some(record.signed_at.clone()),
+                });
+                if cursor == root_id {
+                    break;
+                }
+                match record.parent_id {
+                    Some(pid) => cursor = pid,
+                    None => break,
+                }
+            }
+            Err(_) => break,
+        }
+    }
+
+    // Reverse so entries are in chronological order (root first)
+    collected.reverse();
+    collected
 }
