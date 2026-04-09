@@ -41,10 +41,7 @@ pub fn attach(
                 ("hub", hub_name),
                 ("hub id", &existing.hub_id),
             ]);
-            printer.hint(&format!(
-                "workspace: https://treeship.dev/workspace/{}",
-                existing.hub_id
-            ));
+            printer.hint("view your workspace: treeship hub open");
             printer.blank();
             return Ok(());
         }
@@ -170,10 +167,7 @@ pub fn attach(
         ("hub id",   &final_hub_id),
         ("endpoint", &endpoint),
     ]);
-    printer.hint(&format!(
-        "workspace: https://treeship.dev/workspace/{}",
-        final_hub_id
-    ));
+    printer.hint("view your workspace: treeship hub open");
     printer.blank();
 
     Ok(())
@@ -277,10 +271,7 @@ pub fn status(
         printer.info(&format!("  hub id:    {}", entry.hub_id));
         printer.info(&format!("  key:       {}", entry.key_id));
         printer.info(&format!("  endpoint:  {}", entry.endpoint));
-        printer.info(&format!(
-            "  workspace: https://treeship.dev/workspace/{}",
-            entry.hub_id
-        ));
+        printer.info("  workspace: treeship hub open");
     } else {
         printer.info(&printer.dim("○ not attached"));
         printer.hint("treeship hub attach");
@@ -430,10 +421,35 @@ pub fn open(
     let (_name, entry) = ctx.config.resolve_hub(hub)
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
-    let url = format!("https://treeship.dev/workspace/{}", entry.hub_id);
+    // We need the dock's private key to DPoP-sign the session mint request.
+    let hub_secret_hex = entry.hub_secret_key.as_deref()
+        .ok_or("this hub connection has no private key on disk; re-run `treeship hub attach`")?;
+
+    // 1. Mint a short-lived share token from the Hub. This is the only call
+    //    that needs the dock's private key — the browser then uses the opaque
+    //    token (no private key involved).
+    let session_url = format!("{}/v1/session", entry.endpoint.trim_end_matches('/'));
+    let dpop_jwt = build_dpop_jwt(hub_secret_hex, "POST", &session_url)?;
+
+    let resp: serde_json::Value = ureq::post(&session_url)
+        .set("Authorization", &format!("DPoP {}", entry.hub_id))
+        .set("DPoP", &dpop_jwt)
+        .send_json(&serde_json::json!({}))?
+        .into_json()?;
+
+    let token = resp["token"].as_str()
+        .ok_or("hub did not return a session token")?;
+
+    // 2. Build the browser URL. The workspace UI lives on treeship.dev
+    //    regardless of which Hub endpoint minted the token.
+    let url = format!(
+        "https://treeship.dev/workspace/{}?session={}",
+        entry.hub_id, token,
+    );
 
     printer.blank();
     printer.info(&url);
+    printer.hint("link is valid for 15 minutes");
     printer.blank();
 
     if !no_open {
