@@ -95,3 +95,34 @@ then the wrapper.
 - The CLI-missing warning is gated by a one-time latch (`cliMissingWarned`)
   with a test-only `__resetCliMissingWarning()` reset. Do not export the
   reset from `index.ts`.
+
+## Deferred to a later release (tracked, not started)
+
+### WASM core migration for TS SDK + A2A bridge
+
+Both `@treeship/sdk` and `@treeship/a2a` currently spawn the `treeship`
+CLI as a subprocess for every attestation on the hot path. That works
+but adds process fork overhead to every task lifecycle event and
+breaks in restricted JS runtimes (edge workers, sandboxed CI, lambdas
+without shell access).
+
+The fix is to wire the hot path through `packages/core-wasm/`, which
+already ships Groth16 verification and has the signing primitives in
+place. Keep the CLI subprocess path only for stateful operations that
+truly need the full binary (hub push/pull/attach, session close,
+daemon).
+
+Scope:
+
+- Audit what `packages/core-wasm/src/` currently exports.
+- Add WASM-backed `attestAction`, `attestReceipt`, `attestHandoff`,
+  and digest helpers that match the TS shapes.
+- Migrate `bridges/a2a/src/attest.ts` and `packages/sdk-ts/src/` to
+  prefer the WASM path, fall back to subprocess when WASM is
+  unavailable, and drop the subprocess path entirely a release later
+  once telemetry shows nobody hits it.
+- Do the SDK and A2A bridge migrations TOGETHER, not separately. They
+  share the same attestation surface and diverging would force two
+  rounds of dogfooding.
+
+Do not start this in the 0.7.0 window. It is 0.8.0-scope.
