@@ -5,3 +5,4 @@ pub mod storage;
 pub mod bundle;
 pub mod rules;
 pub mod merkle;
+pub mod session;
