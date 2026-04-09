@@ -1,0 +1,518 @@
+---
+title: "A2A Makes Agents Interoperable. Treeship Makes That Interoperability Trustworthy."
+description: "Google's Agent2Agent protocol gives every agent a way to talk to every other agent. It does not give you a way to verify what any of them actually did. Here is how @treeship/a2a closes that gap, with worked examples you can run end-to-end."
+date: 2026-04-07
+tags: ["a2a", "agent2agent", "agents", "attestation", "trust", "interoperability"]
+readTime: "16 min read"
+---
+
+In April 2025 Google launched Agent2Agent, A2A, as an open protocol for letting AI agents talk to each other across vendors and frameworks. It is now under the Linux Foundation with 150+ organizations behind it, including Anthropic, Salesforce, PayPal, SAP, Workday, and every major systems integrator. Version 1.0 is current. The framing the maintainers settled on is the cleanest one-liner in the agent space:
+
+> **MCP for tools. A2A for agents.**
+
+If you have ever tried to make a Claude Code session delegate something to a Cursor agent, then have that Cursor agent kick a security scan over to a self-hosted scanner running on a VPS, then collect the results and pipe them through a documentation checker before merging, you have lived the problem A2A solves. Without A2A, every pair of agents needs a custom integration. With A2A, every agent publishes an `AgentCard`, every agent speaks the same task lifecycle, and any agent that knows the protocol can collaborate with any other.
+
+But A2A only solves *how* agents communicate. The harder question, *what evidence exists that any of them did what they claimed?*, is the gap `@treeship/a2a` is built to close. This post walks through that gap, the design we shipped to fix it, and three end-to-end examples you can read top to bottom and follow.
+
+## The five-second version of A2A
+
+To make the rest of this post legible to readers who haven't written A2A code yet, here are the five primitives you actually need.
+
+**AgentCard.** A JSON document an agent publishes at `/.well-known/agent.json`. It declares the agent's name, version, URL, capabilities (streaming, push notifications), the skills it offers, and any extensions it supports. This is how peers discover each other.
+
+**Task.** The unit of work. Has a defined lifecycle: `submitted` → `working` → `completed | failed | cancelled`. Tasks can be long-running. The output is an Artifact.
+
+**Artifact.** What a completed task returns. Made of Parts (text, file, structured data). Artifacts are what travel between agents.
+
+**Message.** The communication unit agents exchange to negotiate, hand off context, and report progress. Messages contain Parts.
+
+**Streaming and push notifications.** Tasks can stream updates over SSE or push status to a client-registered URL. Critical for long-running multi-agent pipelines.
+
+That is it. If you can serve `GET /.well-known/agent.json` and `POST /a2a/tasks`, you can be an A2A agent.
+
+## The trust gap, made concrete
+
+Imagine the simplest possible A2A interaction. Agent A is a project orchestrator. Agent B is a research agent. Agent A sends an A2A task: *"Find five comparable implementations of Merkle Mountain Ranges in Rust."* Agent B does the work and returns an Artifact whose first text part begins, *"I found these five implementations..."*
+
+Now ask yourself the questions an auditor would ask:
+
+- Did Agent B actually search the web, or did it hallucinate the answer?
+- Which sources did it look at? Did any of them require credentials?
+- Did it call any tool that was outside its declared scope?
+- How long did the work take? How many tokens did it cost?
+- If the results turn out to be wrong, who is responsible?
+
+The Artifact answers none of those questions. Everything Agent B reports about itself is self-reported. There is no signed audit trail, no proof the task stayed inside declared bounds, and no third party an auditor can ask. The Artifact is just a payload.
+
+This is the gap. A2A standardized the messaging layer; it left the trust layer to individual implementers. Most implementers solved it by writing log lines.
+
+## What `@treeship/a2a` does, in one sentence
+
+Every A2A task receipt, completion, and handoff becomes a signed Treeship artifact, and every outbound A2A artifact carries a receipt URL the receiving agent can fetch and verify before trusting the work.
+
+That sentence has four moving parts. Let's pull them apart.
+
+### Part 1: The AgentCard publishes a Treeship identity
+
+A Treeship-enabled agent publishes its AgentCard with a `treeship.dev/extensions/attestation/v1` extension attached. Any peer that fetches the card learns: this agent is Treeship-attested, here is its `ship_id`, here is where receipts live, and here is the Ed25519 verification key for offline proof checking.
+
+The package gives you a one-line builder:
+
+```ts
+import { buildAgentCard } from '@treeship/a2a';
+
+app.get('/.well-known/agent.json', (_req, res) => {
+  res.json(
+    buildAgentCard(
+      {
+        name: 'OpenClaw Research Agent',
+        version: '1.2.0',
+        url: 'https://openclaw.example/a2a',
+        capabilities: { streaming: true, pushNotifications: true },
+        skills: [
+          { id: 'web-research', name: 'Web Research', description: 'Deep web research with source attribution' },
+        ],
+      },
+      {
+        ship_id: process.env.TREESHIP_SHIP_ID!,
+        verification_key: 'ed25519:abc123...',
+      },
+    ),
+  );
+});
+```
+
+The card a peer pulls down looks like this:
+
+```json
+{
+  "name": "OpenClaw Research Agent",
+  "version": "1.2.0",
+  "url": "https://openclaw.example/a2a",
+  "capabilities": { "streaming": true, "pushNotifications": true },
+  "skills": [
+    { "id": "web-research", "name": "Web Research", "description": "Deep web research with source attribution" }
+  ],
+  "extensions": [
+    {
+      "uri": "treeship.dev/extensions/attestation/v1",
+      "required": false,
+      "params": {
+        "ship_id": "shp_4a9f2c1d",
+        "receipt_endpoint": "https://treeship.dev/receipt",
+        "verification_key": "ed25519:abc123..."
+      }
+    }
+  ]
+}
+```
+
+A peer that requires Treeship attestation can refuse to delegate to any agent whose card lacks this extension. Your orchestrator can check it in three lines:
+
+```ts
+import { fetchAgentCard, hasTreeshipExtension } from '@treeship/a2a';
+
+const card = await fetchAgentCard('https://partner-agent.example');
+if (!hasTreeshipExtension(card)) {
+  throw new Error('Refusing to delegate: peer is not Treeship-attested');
+}
+```
+
+### Part 2: The middleware attests the task lifecycle
+
+`TreeshipA2AMiddleware` wraps the handler that runs your agent. It exposes three hooks, `onTaskReceived`, `onTaskCompleted`, `onHandoff`, and one decorator, `decorateArtifact`, that stamps the receipt URL into the artifact you return.
+
+Here is a complete handler. Read it once carefully; the rest of the post builds on this shape.
+
+```ts
+import express from 'express';
+import { TreeshipA2AMiddleware } from '@treeship/a2a';
+
+const treeship = new TreeshipA2AMiddleware({
+  shipId: process.env.TREESHIP_SHIP_ID!,
+  receiptBaseUrl: 'https://treeship.dev/receipt',
+});
+
+const app = express();
+app.use(express.json());
+
+app.post('/a2a/tasks', async (req, res) => {
+  const { taskId, skill, from, messageId } = req.body;
+
+  // 1. Awaited intent: prove what was about to happen.
+  await treeship.onTaskReceived({
+    taskId,
+    skill,
+    fromAgent: from,
+    messageId,
+  });
+
+  const start = Date.now();
+  let status: 'completed' | 'failed' = 'completed';
+  let artifact;
+  try {
+    artifact = await runMyAgent(req.body);
+  } catch (e) {
+    status = 'failed';
+    throw e;
+  } finally {
+    // 2. Receipt: prove what came back, chained to the intent.
+    const result = await treeship.onTaskCompleted({
+      taskId,
+      elapsedMs: Date.now() - start,
+      status,
+      artifactDigest: artifact ? TreeshipA2AMiddleware.digestArtifact(artifact) : undefined,
+    });
+
+    // 3. Stamp the receipt URL into the outbound artifact.
+    if (artifact) artifact = treeship.decorateArtifact(artifact, result);
+  }
+
+  res.json(artifact);
+});
+
+app.listen(3000);
+```
+
+Three things to notice:
+
+- **`onTaskReceived` is awaited.** The intent artifact must exist *before* the agent runs, otherwise the proof "we were about to do X" is unfalsifiable. Treeship's MCP bridge made the same call for the same reason.
+- **`onTaskCompleted` runs inside the `finally`** so the receipt is created whether the agent succeeded, failed, or threw. The receipt records the status as part of the payload, failed receipts are first-class.
+- **`decorateArtifact` does not mutate.** It returns a new artifact with the Treeship metadata merged in. This makes the function safe to call inside a stream of async middleware.
+
+The artifact your peer receives is just a normal A2A artifact with some extra metadata fields:
+
+```json
+{
+  "artifactId": "research-output-001",
+  "parts": [{ "kind": "text", "text": "I found these five implementations..." }],
+  "metadata": {
+    "treeship_artifact_id": "art_7f8e9d0a1b2c3d4e",
+    "treeship_receipt_url": "https://treeship.dev/receipt/ssn_01HR9W2D4Q4M7A0C",
+    "treeship_session_id": "ssn_01HR9W2D4Q4M7A0C",
+    "treeship_ship_id": "shp_4a9f2c1d"
+  }
+}
+```
+
+That `treeship_receipt_url` is the entire trust layer condensed into one string. Anyone, your orchestrator, an auditor, the developer reviewing the PR three months from now, can fetch it and see what actually happened.
+
+### Part 3: Handoffs are first-class artifacts
+
+When your agent delegates a task to another A2A agent, that delegation is the most interesting moment in the entire collaboration. It is the boundary where one agent stops being responsible and another agent starts. Treeship records it as a signed handoff:
+
+```ts
+await treeship.onHandoff({
+  toAgent: 'agent://openclaw',
+  taskId: 'a2a-task-7f8e9d',
+  context: 'Research phase delegated: find comparable Merkle MMR implementations',
+  messageId: 'msg_abc123',
+});
+```
+
+This is the same artifact `treeship attest handoff` produces from the CLI, so a session that mixes CLI-driven and SDK-driven handoffs ends up with one consistent delegation graph. The parent session's receipt shows every handoff as a node in that graph, with timing and context attached.
+
+### Part 4: Verifying the work before you accept it
+
+Receiving an artifact with a Treeship receipt URL is only useful if you actually look at the receipt. The package gives you two helpers for that.
+
+```ts
+import { verifyArtifact, verifyReceipt } from '@treeship/a2a';
+
+// Pass the artifact metadata directly:
+const summary = await verifyArtifact(remoteArtifact.metadata);
+
+// Or pass a URL you got from somewhere else:
+const summary2 = await verifyReceipt('https://treeship.dev/receipt/ssn_01HR9W');
+
+if (!summary || !summary.withinDeclaredBounds) {
+  throw new Error('Peer artifact failed Treeship verification');
+}
+```
+
+The summary tells you the session ID, ship ID, digest, event count, artifact count, and whether the session stayed inside the declared bounds the agent published. For the cryptographic Merkle and Ed25519 verification, shell out to `treeship verify-receipt`, the network helper is intended for fast policy decisions in the A2A hot path.
+
+That is the entire surface area. Now let's run it through three examples that exercise it end-to-end.
+
+## Example 1: Verified multi-agent code review
+
+The setup: a developer pushes a PR. Their orchestrator agent is Claude Code. Claude Code delegates security to a self-hosted OpenClaw agent on a VPS, syntax review to a Cursor agent, and documentation checks to a Hermes agent. All four speak A2A.
+
+Without Treeship the developer ends up with four "looks good" messages and zero proof anyone actually checked anything. With Treeship the entire pipeline produces one shareable receipt URL that goes in the PR comment.
+
+Here is what each agent in the chain does. Claude Code starts the session at the CLI:
+
+```bash
+treeship session start --name "pr-247-review"
+treeship wrap -- git diff origin/main HEAD
+```
+
+Then in code, Claude Code's orchestrator delegates to OpenClaw:
+
+```ts
+import { fetchAgentCard, hasTreeshipExtension } from '@treeship/a2a';
+import { TreeshipA2AMiddleware } from '@treeship/a2a';
+
+const treeship = new TreeshipA2AMiddleware({ shipId: 'shp_claude_code' });
+
+const openclawCard = await fetchAgentCard('https://openclaw.example');
+if (!hasTreeshipExtension(openclawCard)) {
+  throw new Error('OpenClaw is not Treeship-attested; refusing to delegate');
+}
+
+await treeship.onHandoff({
+  toAgent: 'agent://openclaw',
+  taskId: 'pr-247-security-scan',
+  context: 'Run semgrep + npm audit against PR diff',
+});
+
+const securityArtifact = await sendA2ATask('https://openclaw.example/a2a', {
+  taskId: 'pr-247-security-scan',
+  skill: 'security-scan',
+  from: 'agent://claude-code',
+  payload: { diff: prDiff },
+});
+```
+
+OpenClaw, on the other side, runs its scanners and returns an artifact:
+
+```ts
+// Inside OpenClaw's A2A server
+app.post('/a2a/tasks', async (req, res) => {
+  await treeship.onTaskReceived({
+    taskId: req.body.taskId,
+    skill: req.body.skill,
+    fromAgent: req.body.from,
+  });
+
+  const start = Date.now();
+  // The shell commands themselves are wrapped by treeship CLI:
+  //   treeship wrap -- semgrep scan .
+  //   treeship wrap -- npm audit --json
+  const findings = await runScanners(req.body.payload);
+
+  const artifact = {
+    artifactId: 'security-scan-' + req.body.taskId,
+    parts: [{ kind: 'data', data: findings }],
+    metadata: {},
+  };
+
+  const result = await treeship.onTaskCompleted({
+    taskId: req.body.taskId,
+    elapsedMs: Date.now() - start,
+    status: 'completed',
+    artifactDigest: TreeshipA2AMiddleware.digestArtifact(artifact),
+  });
+
+  res.json(treeship.decorateArtifact(artifact, result));
+});
+```
+
+Claude Code receives the artifact and immediately verifies it before incorporating the findings:
+
+```ts
+import { verifyArtifact } from '@treeship/a2a';
+
+const verification = await verifyArtifact(securityArtifact.metadata);
+if (!verification?.withinDeclaredBounds) {
+  throw new Error('OpenClaw scan exceeded its declared bounds; aborting review');
+}
+```
+
+Claude Code repeats the same dance with the Cursor and Hermes agents, then gates the merge on a human approval:
+
+```bash
+treeship attest approval --approver human://senior-engineer
+treeship session close --report
+```
+
+The session closes and emits a single URL: `treeship.dev/receipt/ssn_pr247`. Posted as a PR comment, that URL takes any reviewer to a page showing the full delegation graph: which agent ran, when, what they checked, what artifacts they returned, the digest of each artifact, the human approval that fired, and a cryptographic proof the chain is intact.
+
+The viral moment isn't the security scan. It is other developers seeing that PR comment and wanting the same audit trail for their own reviews.
+
+## Example 2: Agentic commerce with verifiable spend authorization
+
+Now imagine an autonomous shopping agent that buys cloud compute credits across vendors via A2A seller agents. The owner has set a hard $500 cap and an auto-approve threshold of $100. The orchestrator needs to discover vendor agents, get pricing, choose the cheapest, and pay, all without human intervention for purchases under the threshold.
+
+Without Treeship, the auditor's question, "who authorized this $87 spend?", has no answer. With Treeship, every step of the authorization is its own signed artifact.
+
+The owner declares the policy first:
+
+```bash
+treeship declare \
+  --bounded-actions "purchase_compute,purchase_storage" \
+  --max-spend 500 \
+  --requires-approval-above 100 \
+  --killswitch-enabled
+```
+
+The shopping agent starts a Treeship session and discovers vendors:
+
+```ts
+import { fetchAgentCard, hasTreeshipExtension, getTreeshipExtension } from '@treeship/a2a';
+import { verifyReceipt } from '@treeship/a2a';
+
+const vendors = [
+  'https://aws-compute-agent.example',
+  'https://gcp-compute-agent.example',
+  'https://hetzner-agent.example',
+];
+
+const trusted = [];
+for (const url of vendors) {
+  const card = await fetchAgentCard(url);
+  if (!hasTreeshipExtension(card)) continue;
+
+  // Pull the vendor's most recent receipt and check it stayed within bounds.
+  const ext = getTreeshipExtension(card)!;
+  const lastReceiptUrl = `${ext.receipt_endpoint}/last/${ext.ship_id}`;
+  const summary = await verifyReceipt(lastReceiptUrl);
+  if (summary?.withinDeclaredBounds) trusted.push({ url, ext });
+}
+```
+
+Notice what just happened: the shopping agent refused to even talk to vendors that don't publish a Treeship extension, *and* refused to trust ones whose recent receipts show policy violations. This is not a marketing claim; it is three function calls.
+
+The agent then sends pricing tasks to each trusted vendor:
+
+```ts
+const quotes = await Promise.all(trusted.map(async (vendor) => {
+  const taskId = crypto.randomUUID();
+
+  await treeship.onHandoff({
+    toAgent: vendor.ext.ship_id,
+    taskId,
+    context: 'Get quote: 32-core, 128GB, 30 days',
+  });
+
+  return sendA2ATask(vendor.url + '/a2a', {
+    taskId,
+    skill: 'get-pricing',
+    from: 'agent://shopping-agent',
+    payload: { cores: 32, ramGb: 128, days: 30 },
+  });
+}));
+```
+
+Each returned artifact has its own Treeship receipt URL. The agent picks the cheapest:
+
+```ts
+const cheapest = quotes.sort((a, b) => a.price - b.price)[0];
+// Hetzner: $87
+```
+
+Because $87 is under the $100 auto-approve threshold, the agent pays directly:
+
+```bash
+treeship wrap -- lobster-cash pay --vendor hetzner --amount 87
+treeship session close --report
+```
+
+The session receipt now records:
+
+- The ship IDs of every vendor that was contacted, and which were rejected for missing the Treeship extension
+- The verification result for every vendor's prior session
+- The quotes returned by each trusted vendor (with full agent attribution)
+- The selection logic and the chosen vendor
+- A zero-knowledge proof that the spend ($87) was less than or equal to the cap ($500), without revealing either number on-chain
+- A proof that the spend was under the auto-approve threshold so no human approval was required, and a record of that fact
+
+If an auditor ever asks "who authorized this $87 charge?" the answer is the receipt URL. Months later. Years later.
+
+## Example 3: Cross-organization research with trust verification
+
+A consulting firm runs an orchestrator agent that needs to delegate market research to client-side agents at three companies, each on a different framework, LangGraph, CrewAI, ADK. The consulting firm has never collaborated with two of the three before. They need to verify each agent stayed inside its declared bounds, and they need a provenance chain they can hand back to the client at the end.
+
+The orchestrator discovers the three client agents:
+
+```ts
+const clients = ['clientA.example', 'clientB.example', 'clientC.example'];
+const eligible = [];
+
+for (const host of clients) {
+  const card = await fetchAgentCard(`https://${host}`);
+  if (!hasTreeshipExtension(card)) {
+    console.log(`${host} excluded, no Treeship extension`);
+    continue;
+  }
+  eligible.push({ host, card });
+}
+
+// Result: clientA and clientB are in. clientC is automatically excluded.
+```
+
+The orchestrator delegates the eligible regions to the eligible agents:
+
+```ts
+const tasks = [
+  { host: eligible[0].host, region: 'EU', topic: 'market sizing 2026' },
+  { host: eligible[1].host, region: 'APAC', topic: 'competitive landscape' },
+];
+
+const artifacts = await Promise.all(tasks.map(async (t) => {
+  const taskId = crypto.randomUUID();
+  await treeship.onHandoff({
+    toAgent: `agent://${t.host}`,
+    taskId,
+    context: `Research delegated: ${t.region} ${t.topic}`,
+  });
+  return sendA2ATask(`https://${t.host}/a2a`, {
+    taskId,
+    skill: 'research',
+    from: 'agent://consulting-orchestrator',
+    payload: t,
+  });
+}));
+```
+
+When the artifacts come back, the orchestrator verifies each one before incorporating it into the deliverable:
+
+```ts
+import { verifyArtifact } from '@treeship/a2a';
+
+for (const artifact of artifacts) {
+  const v = await verifyArtifact(artifact.metadata);
+  if (!v) throw new Error(`Missing Treeship receipt for ${artifact.artifactId}`);
+  if (!v.withinDeclaredBounds) {
+    throw new Error(`Client agent exceeded declared bounds: ${artifact.artifactId}`);
+  }
+  if (v.events < 1 || v.artifacts < 1) {
+    throw new Error(`Suspicious: empty session receipt for ${artifact.artifactId}`);
+  }
+}
+```
+
+The final deliverable includes both the research and the receipt URLs as a provenance chain. The client doesn't have to trust any single agent. They can fetch every receipt themselves, see which sources were touched, confirm no unauthorized external calls were made, and confirm the consulting firm didn't make anything up. This is enterprise-grade multi-organization agent collaboration that no existing tool provides.
+
+## What this unlocks (and what it does not)
+
+What it unlocks:
+
+- **Trust scores from receipts, not reviews.** A marketplace of A2A agents can rank entries by their actual receipt history, no external API calls, no policy violations, low cost variance, instead of self-reported star ratings.
+- **CI/CD provenance that satisfies SLSA and EO 14028.** A pipeline whose stages are A2A agents can produce a single session receipt that doubles as the SLSA build provenance document.
+- **Discovery that filters on attestation.** A Hub-side `GET /v1/agents/search?skill=web-research&verified=true` that only returns Treeship-attested agents.
+- **Pre-delegation verification at line speed.** Three function calls (`fetchAgentCard`, `hasTreeshipExtension`, `verifyArtifact`) before any task crosses an organizational boundary.
+
+What it does not do:
+
+- It does not replace MCP. MCP is still the right answer for tool calls inside a single agent. Treeship has a separate bridge (`@treeship/mcp`) for that. The two compose: an A2A task that uses MCP tools internally produces both A2A artifacts and MCP tool receipts in the same session.
+- It does not inspect the *content* of the work. Treeship attests *that* an agent did something within its declared bounds. Whether the research was *correct* is a separate question for a separate evaluator.
+- It does not require any specific A2A SDK. The middleware is hook-based on purpose. If you switch from `a2a-server` to a hand-rolled Express handler tomorrow, your Treeship integration does not move.
+
+## Try it
+
+```bash
+npm install @treeship/a2a
+curl -fsSL treeship.dev/install | sh
+treeship init
+```
+
+Then wire the middleware into the A2A server you already run, publish your AgentCard with `buildAgentCard`, and watch the receipt URLs start showing up in your artifacts.
+
+The integration docs live at [/docs/integrations/a2a](/docs/integrations/a2a). The package is open source under Apache-2.0 in the Treeship monorepo at `bridges/a2a`.
+
+A2A made agent-to-agent interoperability real. Treeship makes it auditable. The receipt URL is how that proof travels, between agents, between organizations, between the developer who shipped it and the auditor who has to vouch for it next year.
+
+---
+
+*Published April 2026. A2A protocol version: 1.0 (Linux Foundation). `@treeship/a2a` version: 0.6.1.*

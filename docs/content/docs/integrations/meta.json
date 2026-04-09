@@ -1,4 +1,4 @@
 {
   "title": "Integrations",
-  "pages": ["claude-code", "cursor", "openclaw", "hermes", "langchain", "mcp", "lobster-cash", "verifiable-intent"]
+  "pages": ["claude-code", "cursor", "openclaw", "hermes", "langchain", "mcp", "a2a", "lobster-cash", "verifiable-intent"]
 }

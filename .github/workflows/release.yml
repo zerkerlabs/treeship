@@ -101,6 +101,17 @@ jobs:
         # env:
         #   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      - name: Build and publish @treeship/a2a
+        continue-on-error: true
+        working-directory: bridges/a2a
+        run: |
+          npm install
+          npm run build
+          sleep 5
+          npm publish --access public
+        # env:
+        #   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       - name: Publish @treeship/cli-linux-x64
         continue-on-error: true
         working-directory: npm/@treeship/cli-linux-x64

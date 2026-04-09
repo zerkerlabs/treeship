@@ -22,6 +22,7 @@ if [ -z "$VERSION" ]; then
   echo "  cli:         $(grep '^version' packages/cli/Cargo.toml | head -1 | sed 's/.*= "//' | sed 's/"//')"
   echo "  sdk-ts:      $(node -p "require('./packages/sdk-ts/package.json').version")"
   echo "  mcp:         $(node -p "require('./bridges/mcp/package.json').version")"
+  echo "  a2a:         $(node -p "require('./bridges/a2a/package.json').version")"
   echo "  sdk-python:  $(grep '^version' packages/sdk-python/pyproject.toml | head -1 | sed 's/.*= "//' | sed 's/"//')"
   echo "  npm wrapper: $(node -p "require('./npm/treeship/package.json').version")"
   exit 1
@@ -45,6 +46,10 @@ npm version "$VERSION" --no-git-tag-version --allow-same-version --prefix packag
 # MCP bridge
 echo "Bumping @treeship/mcp..."
 npm version "$VERSION" --no-git-tag-version --allow-same-version --prefix bridges/mcp
+
+# A2A bridge
+echo "Bumping @treeship/a2a..."
+npm version "$VERSION" --no-git-tag-version --allow-same-version --prefix bridges/a2a
 
 # Python SDK
 echo "Bumping treeship-sdk (Python)..."
@@ -79,6 +84,7 @@ echo "  packages/cli/Cargo.toml"
 echo "  packages/core-wasm/Cargo.toml"
 echo "  packages/sdk-ts/package.json"
 echo "  bridges/mcp/package.json"
+echo "  bridges/a2a/package.json"
 echo "  packages/sdk-python/pyproject.toml"
 echo "  npm/treeship/package.json"
 echo "  npm/@treeship/cli-*/package.json"

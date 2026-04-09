@@ -1,0 +1,43 @@
+{
+  "name": "@treeship/a2a",
+  "version": "0.6.1",
+  "description": "Treeship attestation middleware for A2A (Agent2Agent) servers and clients",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zerkerlabs/treeship",
+    "directory": "bridges/a2a"
+  },
+  "homepage": "https://treeship.dev",
+  "keywords": [
+    "treeship",
+    "a2a",
+    "agent2agent",
+    "attestation",
+    "agents",
+    "agent-card",
+    "trust"
+  ],
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  }
+}

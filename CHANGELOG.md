@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.7.0 (unreleased)
+
+### A2A Integration
+
+- New package: `@treeship/a2a`, framework-agnostic Treeship middleware for A2A (Agent2Agent) servers and clients
+- `TreeshipA2AMiddleware` with `onTaskReceived` (awaited intent), `onTaskCompleted` (chained receipt), `onHandoff`, and `decorateArtifact`
+- `buildAgentCard`, `hasTreeshipExtension`, `getTreeshipExtension`, `fetchAgentCard` for AgentCard discovery + extension publishing
+- `verifyReceipt` and `verifyArtifact` for pre-delegation trust checks at line speed
+- Canonical extension URI: `treeship.dev/extensions/attestation/v1`
+- Zero runtime dependencies; never throws; CLI-missing path prints one actionable warning per process
+- 15 vitest tests covering middleware, AgentCard helpers, CLI-missing handling, and `TREESHIP_DISABLE=1` short-circuit
+- Docs: `docs/integrations/a2a.mdx` (Mintlify) and `treeship/docs/content/docs/integrations/a2a.mdx` (Fumadocs)
+- Blog post: "A2A Makes Agents Interoperable. Treeship Makes That Interoperability Trustworthy."
+- Release pipeline: `bridges/a2a` wired into `scripts/release.sh` and `.github/workflows/release.yml`
+
 ## 0.5.0 (2026-04-04)
 
 ### Zero-Knowledge Proofs
