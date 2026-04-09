@@ -6,11 +6,24 @@ use std::time::{Duration, SystemTime};
 use treeship_core::{
     attestation::sign,
     rules::ProjectConfig,
+    session::{
+        EventLog, EventType, SessionEvent, SessionManifest,
+        event::{generate_event_id, generate_span_id, generate_trace_id},
+    },
     statements::{ActionStatement, payload_type},
     storage::Record,
 };
 
 use crate::{ctx, printer::Printer};
+
+/// File timestamps captured per snapshot.
+/// `mtime` advances on writes; `atime` advances on content reads
+/// (subject to the filesystem's `atime` policy: `relatime`/`strictatime`/`noatime`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FileTimes {
+    mtime: SystemTime,
+    atime: SystemTime,
+}
 
 // ---------------------------------------------------------------------------
 // PID file locking
@@ -144,13 +157,13 @@ fn daemon_log(ts: &Path, msg: &str) {
 // File snapshots
 // ---------------------------------------------------------------------------
 
-fn snapshot_files(root: &Path, ts: &Path) -> HashMap<PathBuf, SystemTime> {
+fn snapshot_files(root: &Path, ts: &Path) -> HashMap<PathBuf, FileTimes> {
     let mut map = HashMap::new();
     snapshot_recurse(root, ts, &mut map, 0);
     map
 }
 
-fn snapshot_recurse(dir: &Path, ts: &Path, map: &mut HashMap<PathBuf, SystemTime>, depth: u32) {
+fn snapshot_recurse(dir: &Path, ts: &Path, map: &mut HashMap<PathBuf, FileTimes>, depth: u32) {
     if depth > 10 {
         return; // safety limit
     }
@@ -164,7 +177,10 @@ fn snapshot_recurse(dir: &Path, ts: &Path, map: &mut HashMap<PathBuf, SystemTime
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
 
-        // Skip hidden dirs, .treeship, .git, node_modules, target
+        // Skip hidden dirs, .treeship, .git, node_modules, target.
+        // Note: this means dotfiles like .env are NOT walked by the recurse
+        // loop. The daemon's main loop watches them separately via
+        // sensitive-file polling so they still get atime tracking.
         if name_str.starts_with('.')
             || name_str == "node_modules"
             || name_str == "target"
@@ -177,26 +193,209 @@ fn snapshot_recurse(dir: &Path, ts: &Path, map: &mut HashMap<PathBuf, SystemTime
             snapshot_recurse(&path, ts, map, depth + 1);
         } else if path.is_file() {
             if let Ok(meta) = std::fs::metadata(&path) {
-                if let Ok(mtime) = meta.modified() {
-                    map.insert(path, mtime);
+                let mtime = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+                let atime = meta.accessed().unwrap_or(mtime);
+                map.insert(path, FileTimes { mtime, atime });
+            }
+        }
+    }
+}
+
+/// Snapshot dotfiles at the project root that match an `on: access` rule.
+///
+/// The main `snapshot_recurse` skips hidden files and directories so .git
+/// and .treeship don't pollute the watch set. But sensitive files like
+/// .env, .env.local, .aws/credentials live in those skipped paths. This
+/// pass walks the root directory only and includes dotfiles whose path
+/// matches an access rule, plus a small set of well-known sensitive
+/// subdirectories one level deep.
+fn snapshot_sensitive_files(
+    root: &Path,
+    project: &ProjectConfig,
+    map: &mut HashMap<PathBuf, FileTimes>,
+) {
+    // 1. Dotfiles at the project root.
+    if let Ok(entries) = std::fs::read_dir(root) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if !name_str.starts_with('.') {
+                continue; // already covered by snapshot_recurse
+            }
+            let rel = relative_path(&path, root);
+            if matches_access_rule(project, &rel) {
+                if let Ok(meta) = std::fs::metadata(&path) {
+                    let mtime = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+                    let atime = meta.accessed().unwrap_or(mtime);
+                    map.insert(path, FileTimes { mtime, atime });
+                }
+            }
+        }
+    }
+
+    // 2. Well-known sensitive dot-directories one level deep.
+    for dotdir in &[".aws", ".ssh", ".gnupg", ".docker", ".kube"] {
+        let dir_path = root.join(dotdir);
+        if !dir_path.is_dir() {
+            continue;
+        }
+        if let Ok(entries) = std::fs::read_dir(&dir_path) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_file() {
+                    continue;
+                }
+                let rel = relative_path(&path, root);
+                if matches_access_rule(project, &rel) {
+                    if let Ok(meta) = std::fs::metadata(&path) {
+                        let mtime = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+                        let atime = meta.accessed().unwrap_or(mtime);
+                        map.insert(path, FileTimes { mtime, atime });
+                    }
                 }
             }
         }
     }
 }
 
+/// Returns true if the given relative path matches a configured rule with `on: access`.
+fn matches_access_rule(project: &ProjectConfig, rel_path: &str) -> bool {
+    project
+        .match_path(rel_path)
+        .map(|m| m.on == "access")
+        .unwrap_or(false)
+}
+
+/// Result of comparing two file snapshots.
+#[derive(Debug, Default)]
+struct SnapshotDiff {
+    /// Files whose mtime advanced (writes / new files).
+    written: Vec<PathBuf>,
+    /// Files whose atime advanced but mtime did not (pure reads).
+    read: Vec<PathBuf>,
+}
+
 fn diff_snapshots(
-    old: &HashMap<PathBuf, SystemTime>,
-    new: &HashMap<PathBuf, SystemTime>,
-) -> Vec<PathBuf> {
-    let mut changed = Vec::new();
-    for (path, mtime) in new {
+    old: &HashMap<PathBuf, FileTimes>,
+    new: &HashMap<PathBuf, FileTimes>,
+) -> SnapshotDiff {
+    let mut diff = SnapshotDiff::default();
+    for (path, new_times) in new {
         match old.get(path) {
-            Some(old_mtime) if old_mtime == mtime => {}
-            _ => changed.push(path.clone()),
+            None => {
+                // New file -- treat as a write.
+                diff.written.push(path.clone());
+            }
+            Some(old_times) => {
+                let mtime_changed = old_times.mtime != new_times.mtime;
+                let atime_changed = old_times.atime != new_times.atime;
+                if mtime_changed {
+                    diff.written.push(path.clone());
+                } else if atime_changed {
+                    diff.read.push(path.clone());
+                }
+            }
         }
     }
-    changed
+    diff
+}
+
+// ---------------------------------------------------------------------------
+// Session event integration
+// ---------------------------------------------------------------------------
+
+/// Load the active session manifest if one is present at `.treeship/session.json`.
+fn load_active_session(ts: &Path) -> Option<SessionManifest> {
+    let path = ts.join("session.json");
+    if !path.exists() {
+        return None;
+    }
+    let data = std::fs::read_to_string(&path).ok()?;
+    serde_json::from_str(&data).ok()
+}
+
+/// Open the EventLog for the active session, if any.
+fn open_active_event_log(ts: &Path) -> Option<(SessionManifest, EventLog)> {
+    let manifest = load_active_session(ts)?;
+    let evt_dir = ts.join("sessions").join(&manifest.session_id);
+    let log = EventLog::open(&evt_dir).ok()?;
+    Some((manifest, log))
+}
+
+/// Emit an `agent.read_file` event to the active session's event log.
+///
+/// Best-effort: returns false if no session is active or the append fails.
+/// The event is tagged with `capture_confidence: "inferred"` because atime
+/// detection cannot distinguish a real content read from filesystem
+/// metadata operations on some platforms.
+fn emit_read_event(
+    ts: &Path,
+    rel_path: &str,
+    content_digest_str: Option<String>,
+    label: &str,
+) -> bool {
+    let (manifest, log) = match open_active_event_log(ts) {
+        Some(pair) => pair,
+        None => return false,
+    };
+
+    let host_id = local_host_id();
+    let trace_id = generate_trace_id();
+
+    let meta = serde_json::json!({
+        "capture_confidence": "inferred",
+        "source": "daemon-atime",
+        "label": label,
+    });
+
+    let mut event = SessionEvent {
+        session_id: manifest.session_id.clone(),
+        event_id: generate_event_id(),
+        timestamp: now_rfc3339_daemon(),
+        sequence_no: 0, // set by EventLog::append
+        trace_id,
+        span_id: generate_span_id(),
+        parent_span_id: None,
+        agent_id: manifest.actor.clone(),
+        agent_instance_id: "daemon".into(),
+        agent_name: "treeship-daemon".into(),
+        agent_role: Some("watcher".into()),
+        host_id,
+        tool_runtime_id: None,
+        event_type: EventType::AgentReadFile {
+            file_path: rel_path.into(),
+            digest: content_digest_str,
+        },
+        artifact_ref: None,
+        meta: Some(meta),
+    };
+
+    log.append(&mut event).is_ok()
+}
+
+/// RFC3339 timestamp helper for daemon-emitted events.
+fn now_rfc3339_daemon() -> String {
+    let secs = SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    treeship_core::statements::unix_to_rfc3339(secs)
+}
+
+/// Best-effort host ID derived from `hostname` command.
+fn local_host_id() -> String {
+    std::env::var("TREESHIP_HOST_ID").unwrap_or_else(|_| {
+        std::process::Command::new("hostname")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|h| format!("host_{}", h.trim().replace('.', "_")))
+            .unwrap_or_else(|| "host_unknown".into())
+    })
 }
 
 /// Compute a simple content digest for a file (sha256 hex, first 16 chars).
@@ -393,8 +592,12 @@ pub fn start(
     // Determine project root (parent of .treeship)
     let root = ts.parent().unwrap_or(Path::new(".")).to_path_buf();
 
-    // Initial snapshot
+    // Initial snapshot (regular tree + sensitive dotfiles)
+    let initial_project = ProjectConfig::load(&config_yaml).ok();
     let mut file_snapshot = snapshot_files(&root, &ts);
+    if let Some(ref proj) = initial_project {
+        snapshot_sensitive_files(&root, proj, &mut file_snapshot);
+    }
 
     loop {
         std::thread::sleep(Duration::from_secs(2));
@@ -411,18 +614,51 @@ pub fn start(
             Err(_) => continue, // config broken, skip this cycle
         };
 
-        // Check for file changes
-        let new_snapshot = snapshot_files(&root, &ts);
-        let changes = diff_snapshots(&file_snapshot, &new_snapshot);
+        // Check for file changes (regular tree + sensitive dotfiles)
+        let mut new_snapshot = snapshot_files(&root, &ts);
+        snapshot_sensitive_files(&root, &project, &mut new_snapshot);
+        let diff = diff_snapshots(&file_snapshot, &new_snapshot);
 
-        for change_path in &changes {
+        // ── Writes: existing attestation flow ─────────────────────────
+        for change_path in &diff.written {
             let rel = relative_path(change_path, &root);
 
             if let Some(match_result) = project.match_path(&rel) {
+                // Skip pure-access rules in the write loop -- those are handled below.
+                if match_result.on == "access" {
+                    continue;
+                }
                 daemon_log(&ts, &format!("attesting: {} ({})", rel, match_result.label));
 
                 if let Err(e) = attest_file_change(&ctx, change_path, &rel, &match_result.label) {
                     daemon_log(&ts, &format!("attest error: {}", e));
+                }
+            }
+        }
+
+        // ── Reads: emit AgentReadFile events to active session ────────
+        // Only fires for paths matching a rule with `on: access`. The detection
+        // is best-effort and tagged `capture_confidence: inferred` because
+        // atime semantics vary by filesystem (relatime, noatime, etc).
+        for read_path in &diff.read {
+            let rel = relative_path(read_path, &root);
+            if let Some(match_result) = project.match_path(&rel) {
+                if match_result.on != "access" {
+                    continue;
+                }
+
+                let digest = Some(content_digest(read_path));
+                let emitted = emit_read_event(&ts, &rel, digest, &match_result.label);
+
+                if emitted {
+                    daemon_log(&ts, &format!("read event: {} ({})", rel, match_result.label));
+                } else {
+                    // No active session -- still log the alert if configured.
+                    daemon_log(&ts, &format!("read detected (no active session): {} ({})", rel, match_result.label));
+                }
+
+                if match_result.alert {
+                    daemon_log(&ts, &format!("ALERT: sensitive file accessed: {}", rel));
                 }
             }
         }
@@ -754,4 +990,113 @@ pub fn daemon_info() -> (bool, Option<u32>, Option<u64>) {
     };
 
     (running, pid, uptime)
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn t(secs: u64) -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(secs)
+    }
+
+    #[test]
+    fn diff_detects_new_files_as_writes() {
+        let old: HashMap<PathBuf, FileTimes> = HashMap::new();
+        let mut new = HashMap::new();
+        new.insert(
+            PathBuf::from("src/main.rs"),
+            FileTimes { mtime: t(100), atime: t(100) },
+        );
+
+        let diff = diff_snapshots(&old, &new);
+        assert_eq!(diff.written.len(), 1);
+        assert_eq!(diff.read.len(), 0);
+        assert_eq!(diff.written[0], PathBuf::from("src/main.rs"));
+    }
+
+    #[test]
+    fn diff_detects_mtime_advance_as_write() {
+        let path = PathBuf::from("src/lib.rs");
+        let mut old = HashMap::new();
+        old.insert(path.clone(), FileTimes { mtime: t(100), atime: t(100) });
+        let mut new = HashMap::new();
+        new.insert(path.clone(), FileTimes { mtime: t(200), atime: t(200) });
+
+        let diff = diff_snapshots(&old, &new);
+        assert_eq!(diff.written.len(), 1);
+        assert_eq!(diff.read.len(), 0);
+    }
+
+    #[test]
+    fn diff_detects_atime_advance_only_as_read() {
+        // mtime stays the same, atime advances -- pure read
+        let path = PathBuf::from(".env");
+        let mut old = HashMap::new();
+        old.insert(path.clone(), FileTimes { mtime: t(100), atime: t(100) });
+        let mut new = HashMap::new();
+        new.insert(path.clone(), FileTimes { mtime: t(100), atime: t(150) });
+
+        let diff = diff_snapshots(&old, &new);
+        assert_eq!(diff.written.len(), 0);
+        assert_eq!(diff.read.len(), 1);
+        assert_eq!(diff.read[0], PathBuf::from(".env"));
+    }
+
+    #[test]
+    fn diff_ignores_unchanged_files() {
+        let path = PathBuf::from("README.md");
+        let mut old = HashMap::new();
+        old.insert(path.clone(), FileTimes { mtime: t(100), atime: t(100) });
+        let mut new = HashMap::new();
+        new.insert(path.clone(), FileTimes { mtime: t(100), atime: t(100) });
+
+        let diff = diff_snapshots(&old, &new);
+        assert_eq!(diff.written.len(), 0);
+        assert_eq!(diff.read.len(), 0);
+    }
+
+    #[test]
+    fn diff_prefers_write_over_read_when_both_change() {
+        // If mtime AND atime both advance, classify as write (the stronger
+        // signal). Reads-only is the special case.
+        let path = PathBuf::from("src/foo.rs");
+        let mut old = HashMap::new();
+        old.insert(path.clone(), FileTimes { mtime: t(100), atime: t(100) });
+        let mut new = HashMap::new();
+        new.insert(path.clone(), FileTimes { mtime: t(200), atime: t(250) });
+
+        let diff = diff_snapshots(&old, &new);
+        assert_eq!(diff.written.len(), 1);
+        assert_eq!(diff.read.len(), 0);
+    }
+
+    #[test]
+    fn matches_access_rule_uses_on_field() {
+        let yaml = r#"
+treeship:
+  version: 1
+session:
+  actor: "human://test"
+attest:
+  paths:
+    - path: "*.env*"
+      on: "access"
+      label: "env file access"
+      alert: true
+    - path: "src/**"
+      on: "write"
+      label: "code change"
+"#;
+        let project = ProjectConfig::from_yaml(yaml).unwrap();
+        assert!(matches_access_rule(&project, ".env"));
+        assert!(matches_access_rule(&project, ".env.local"));
+        assert!(!matches_access_rule(&project, "src/main.rs")); // write rule, not access
+        assert!(!matches_access_rule(&project, "README.md"));   // no rule
+    }
 }
