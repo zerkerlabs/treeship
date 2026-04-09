@@ -1,6 +1,35 @@
 # Changelog
 
-## 0.7.0 (unreleased)
+## 0.7.0 (2026-04-09)
+
+### Session Receipts
+
+- New `treeship_core::session` module: event model, manifest, context propagation, agent graph, side effects, append-only event log, canonical receipt composer with Merkle root
+- `.treeship` package format: deterministic `receipt.json` + `merkle.json` + `render.json` + per-artifact inclusion proofs + static `preview.html`
+- `treeship session close` now composes a Session Receipt v1 and writes a `.treeship` package under `.treeship/sessions/`
+- `treeship package inspect` and `treeship package verify` for offline inspection and local verification (no hub required)
+- `treeship session report` uploads a closed session's receipt to the configured hub and prints the permanent public URL
+
+### Hub: public receipt endpoints
+
+- `PUT /v1/receipt/{session_id}` (DPoP-authenticated): idempotent upload, rejects cross-dock overwrites, refreshes per-ship agent registry from the receipt's agent graph
+- `GET /v1/receipt/{session_id}` (public, no auth): returns 200 + raw receipt JSON, 403 "session still open" if the row exists without a receipt, 404 if not found. Permanent URL, immutable cache
+- `GET /v1/ship/agents` and `GET /v1/ship/sessions`: per-ship registry endpoints for dashboards and A2A clients
+- New `sessions` and `ship_agents` tables with composite keys scoped per dock
+
+### Hub: workspace share tokens
+
+- `POST /v1/session` (DPoP-authenticated): mints a short-lived opaque token bound to a dock_id at mint time
+- New `auth.ResolveReader` helper: read endpoints accept either DPoP or `?session=TOKEN`, fails closed on expired tokens
+- `treeship hub open` mints a share token and opens a browser URL that does not require a private key on the client
+- Access logs now redact `session` query parameters to prevent tokens from landing in stdout
+
+### Sensitive file read detection
+
+- Daemon now tracks both mtime and atime per file; a `SnapshotDiff` separates writes from reads
+- Sensitive-file pass walks dotfiles at the project root and one level into `.aws`, `.ssh`, `.gnupg`, `.docker`, `.kube`
+- When a file matching an `on: access` rule has its atime advance, the daemon emits an `agent.read_file` event to the active session's event log with `capture_confidence: "inferred"` and writes an ALERT line if the rule has `alert: true`
+- Closes the file-read capture gap that left `.env`, `*.pem`, and `.ssh/*` access invisible in prior releases
 
 ### A2A Integration
 
@@ -14,6 +43,11 @@
 - Docs: `docs/integrations/a2a.mdx` (Mintlify) and `treeship/docs/content/docs/integrations/a2a.mdx` (Fumadocs)
 - Blog post: "A2A Makes Agents Interoperable. Treeship Makes That Interoperability Trustworthy."
 - Release pipeline: `bridges/a2a` wired into `scripts/release.sh` and `.github/workflows/release.yml`
+
+### Python SDK
+
+- `Treeship.session_report(session_id=None)` returns a `SessionReportResult` with the permanent receipt URL, agent count, and event count
+- Defaults to the most recently closed session when no `session_id` is given
 
 ## 0.5.0 (2026-04-04)
 
