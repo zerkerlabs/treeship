@@ -43,6 +43,14 @@ CREATE TABLE IF NOT EXISTS dpop_jtis (
   seen_at  INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS workspace_sessions (
+  token       TEXT PRIMARY KEY,
+  dock_id     TEXT NOT NULL REFERENCES ships(dock_id),
+  created_at  INTEGER NOT NULL,
+  expires_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_workspace_sessions_expires_at ON workspace_sessions(expires_at);
+
 CREATE TABLE IF NOT EXISTS merkle_checkpoints (
   id              INTEGER PRIMARY KEY,
   root_hex        TEXT NOT NULL,
@@ -65,6 +73,43 @@ CREATE TABLE IF NOT EXISTS merkle_proofs (
   dock_id         TEXT REFERENCES ships(dock_id),
   PRIMARY KEY (artifact_id, checkpoint_id)
 );
+
+-- Session metadata + uploaded receipts.
+-- A row may exist with NULL receipt_json to represent a session that's
+-- still open (registered but not yet closed). PUT /v1/receipt/:session_id
+-- populates receipt_json and the closed-at fields.
+CREATE TABLE IF NOT EXISTS sessions (
+  session_id    TEXT PRIMARY KEY,
+  dock_id       TEXT NOT NULL REFERENCES ships(dock_id),
+  name          TEXT,
+  started_at    TEXT,
+  ended_at      TEXT,
+  duration_ms   INTEGER,
+  status        TEXT NOT NULL DEFAULT 'open',
+  agent_count   INTEGER DEFAULT 0,
+  action_count  INTEGER DEFAULT 0,
+  receipt_json  TEXT,
+  uploaded_at   INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_dock_id ON sessions(dock_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_uploaded_at ON sessions(uploaded_at);
+
+-- Per-ship agent registry. Populated by extracting agent_graph.nodes
+-- from uploaded session receipts. The (dock_id, agent_id) pair is the
+-- composite key so the same agent identifier across two ships maps to
+-- two distinct rows.
+CREATE TABLE IF NOT EXISTS ship_agents (
+  dock_id    TEXT NOT NULL REFERENCES ships(dock_id),
+  agent_id   TEXT NOT NULL,
+  label      TEXT,
+  role       TEXT,
+  model      TEXT,
+  host       TEXT,
+  status     TEXT,
+  last_seen  INTEGER NOT NULL,
+  PRIMARY KEY (dock_id, agent_id)
+);
+CREATE INDEX IF NOT EXISTS idx_ship_agents_dock_id ON ship_agents(dock_id);
 `
 
 // Open opens (or creates) the SQLite database and applies the schema.
@@ -281,6 +326,37 @@ func CleanExpiredJTIs(db *sql.DB, before int64) error {
 	return err
 }
 
+// --- workspace_sessions ---
+
+// InsertWorkspaceSession stores a share token bound to a single dock_id.
+func InsertWorkspaceSession(db *sql.DB, token, dockID string, createdAt, expiresAt int64) error {
+	_, err := db.Exec(
+		`INSERT INTO workspace_sessions (token, dock_id, created_at, expires_at) VALUES (?, ?, ?, ?)`,
+		token, dockID, createdAt, expiresAt,
+	)
+	return err
+}
+
+// GetWorkspaceSessionDockID returns the dock_id the token was issued for,
+// if the token exists and is not yet expired.
+func GetWorkspaceSessionDockID(db *sql.DB, token string, now int64) (string, error) {
+	row := db.QueryRow(
+		`SELECT dock_id FROM workspace_sessions WHERE token = ? AND expires_at > ?`,
+		token, now,
+	)
+	var dockID string
+	if err := row.Scan(&dockID); err != nil {
+		return "", err
+	}
+	return dockID, nil
+}
+
+// CleanExpiredWorkspaceSessions purges sessions whose expiry has passed.
+func CleanExpiredWorkspaceSessions(db *sql.DB, now int64) error {
+	_, err := db.Exec(`DELETE FROM workspace_sessions WHERE expires_at <= ?`, now)
+	return err
+}
+
 // --- merkle_checkpoints ---
 
 type MerkleCheckpoint struct {
@@ -358,6 +434,153 @@ func InsertProof(database *sql.DB, artifactID string, checkpointID int64, leafIn
 		artifactID, checkpointID, leafIndex, leafHash, proofJSON, dockID,
 	)
 	return err
+}
+
+// --- sessions ---
+
+// Session represents a row in the sessions table.
+// ReceiptJSON is nil when the session is open (registered but no receipt yet).
+type Session struct {
+	SessionID    string
+	DockID       string
+	Name         *string
+	StartedAt    *string
+	EndedAt      *string
+	DurationMS   *int64
+	Status       string
+	AgentCount   int
+	ActionCount  int
+	ReceiptJSON  *string
+	UploadedAt   *int64
+}
+
+// UpsertSession inserts or fully updates a session row.
+// Existing rows are overwritten -- callers that want preserve-on-conflict
+// semantics should query first.
+func UpsertSession(database *sql.DB, s *Session) error {
+	_, err := database.Exec(
+		`INSERT INTO sessions
+		   (session_id, dock_id, name, started_at, ended_at, duration_ms, status, agent_count, action_count, receipt_json, uploaded_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(session_id) DO UPDATE SET
+		   dock_id      = excluded.dock_id,
+		   name         = excluded.name,
+		   started_at   = excluded.started_at,
+		   ended_at     = excluded.ended_at,
+		   duration_ms  = excluded.duration_ms,
+		   status       = excluded.status,
+		   agent_count  = excluded.agent_count,
+		   action_count = excluded.action_count,
+		   receipt_json = excluded.receipt_json,
+		   uploaded_at  = excluded.uploaded_at`,
+		s.SessionID, s.DockID, s.Name, s.StartedAt, s.EndedAt, s.DurationMS,
+		s.Status, s.AgentCount, s.ActionCount, s.ReceiptJSON, s.UploadedAt,
+	)
+	return err
+}
+
+// GetSession returns a session row by session_id, or nil + sql.ErrNoRows if not found.
+func GetSession(database *sql.DB, sessionID string) (*Session, error) {
+	row := database.QueryRow(
+		`SELECT session_id, dock_id, name, started_at, ended_at, duration_ms, status, agent_count, action_count, receipt_json, uploaded_at
+		 FROM sessions WHERE session_id = ?`, sessionID,
+	)
+	s := &Session{}
+	if err := row.Scan(
+		&s.SessionID, &s.DockID, &s.Name, &s.StartedAt, &s.EndedAt, &s.DurationMS,
+		&s.Status, &s.AgentCount, &s.ActionCount, &s.ReceiptJSON, &s.UploadedAt,
+	); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// ListSessionsByDock returns all sessions for a dock, most recent first.
+// Ordering uses uploaded_at DESC then started_at DESC as a tiebreaker.
+func ListSessionsByDock(database *sql.DB, dockID string) ([]Session, error) {
+	rows, err := database.Query(
+		`SELECT session_id, dock_id, name, started_at, ended_at, duration_ms, status, agent_count, action_count, receipt_json, uploaded_at
+		 FROM sessions WHERE dock_id = ?
+		 ORDER BY COALESCE(uploaded_at, 0) DESC, COALESCE(started_at, '') DESC`,
+		dockID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Session
+	for rows.Next() {
+		var s Session
+		if err := rows.Scan(
+			&s.SessionID, &s.DockID, &s.Name, &s.StartedAt, &s.EndedAt, &s.DurationMS,
+			&s.Status, &s.AgentCount, &s.ActionCount, &s.ReceiptJSON, &s.UploadedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// --- ship_agents ---
+
+// ShipAgent represents a row in the ship_agents table.
+type ShipAgent struct {
+	DockID   string
+	AgentID  string
+	Label    *string
+	Role     *string
+	Model    *string
+	Host     *string
+	Status   *string
+	LastSeen int64
+}
+
+// UpsertShipAgent inserts or updates an agent row for a given dock.
+// Subsequent calls with the same (dock_id, agent_id) refresh the metadata
+// fields and bump last_seen.
+func UpsertShipAgent(database *sql.DB, a *ShipAgent) error {
+	_, err := database.Exec(
+		`INSERT INTO ship_agents
+		   (dock_id, agent_id, label, role, model, host, status, last_seen)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(dock_id, agent_id) DO UPDATE SET
+		   label     = excluded.label,
+		   role      = excluded.role,
+		   model     = excluded.model,
+		   host      = excluded.host,
+		   status    = excluded.status,
+		   last_seen = excluded.last_seen`,
+		a.DockID, a.AgentID, a.Label, a.Role, a.Model, a.Host, a.Status, a.LastSeen,
+	)
+	return err
+}
+
+// ListShipAgentsByDock returns all agents registered for a dock, most recently seen first.
+func ListShipAgentsByDock(database *sql.DB, dockID string) ([]ShipAgent, error) {
+	rows, err := database.Query(
+		`SELECT dock_id, agent_id, label, role, model, host, status, last_seen
+		 FROM ship_agents WHERE dock_id = ?
+		 ORDER BY last_seen DESC`,
+		dockID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []ShipAgent
+	for rows.Next() {
+		var a ShipAgent
+		if err := rows.Scan(
+			&a.DockID, &a.AgentID, &a.Label, &a.Role, &a.Model, &a.Host, &a.Status, &a.LastSeen,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
 }
 
 // GetProof looks up the proof for an artifact, joining with its checkpoint.
