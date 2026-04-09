@@ -50,6 +50,10 @@ func main() {
 	// Workspace endpoint.
 	r.Get("/v1/workspace/{dockId}", artifactHandlers.Workspace)
 
+	// Workspace share-session endpoint: DPoP-authenticated mint of a short-lived
+	// opaque token that browsers can present via ?session= on the workspace GET.
+	r.Post("/v1/session", artifactHandlers.Session)
+
 	// Verify endpoint.
 	r.Get("/v1/verify/{id}", verifyHandlers.Verify)
 

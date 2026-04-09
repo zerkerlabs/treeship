@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/treeship/hub/internal/auth"
 	"github.com/treeship/hub/internal/db"
 	"github.com/treeship/hub/internal/dpop"
 	"github.com/treeship/hub/internal/rekor"
@@ -111,25 +112,26 @@ func (h *Handlers) Push(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-// Workspace handles GET /v1/workspace/{dockId}
-// Requires DPoP authentication. The authenticated dock must match the requested dock.
+// Workspace handles GET /v1/workspace/{dockId}.
+//
+// Auth is delegated to auth.ResolveReader, which accepts either DPoP (for
+// CLI callers) or ?session=TOKEN (for browser callers loading a share link).
+// Whichever mechanism succeeds, the resolved dock_id must match the
+// {dockId} in the path; you can never read another ship's workspace.
 func (h *Handlers) Workspace(w http.ResponseWriter, r *http.Request) {
-	// Authenticate via DPoP.
-	authedDockID := dpop.Verify(h.DB, w, r)
+	authedDockID := auth.ResolveReader(h.DB, w, r)
 	if authedDockID == "" {
-		return // dpop.Verify already wrote the 401 response
+		return // ResolveReader already wrote the error response
 	}
 
 	dockID := chi.URLParam(r, "dockId")
 	if dockID == "" {
-		dockID = authedDockID // default to the authenticated dock
+		dockID = authedDockID
 	}
-
-	// Only allow access to your own workspace.
 	if dockID != authedDockID {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
-		json.NewEncoder(w).Encode(map[string]string{"error": "dock id mismatch: you can only access your own workspace"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "you can only access your own workspace"})
 		return
 	}
 
