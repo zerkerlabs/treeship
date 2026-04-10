@@ -295,7 +295,12 @@ fn diff_snapshots(
                 let atime_changed = old_times.atime != new_times.atime;
                 if mtime_changed {
                     diff.written.push(path.clone());
-                } else if atime_changed {
+                }
+                // Emit a read whenever atime advanced, even if mtime also
+                // changed. Without this, a touch/write after a secret read
+                // would suppress the atime-only signal entirely, and
+                // on:access rules would never fire for that file.
+                if atime_changed {
                     diff.read.push(path.clone());
                 }
             }
@@ -1022,11 +1027,12 @@ mod tests {
 
     #[test]
     fn diff_detects_mtime_advance_as_write() {
+        // When only mtime changes (atime stays the same), it's a pure write.
         let path = PathBuf::from("src/lib.rs");
         let mut old = HashMap::new();
         old.insert(path.clone(), FileTimes { mtime: t(100), atime: t(100) });
         let mut new = HashMap::new();
-        new.insert(path.clone(), FileTimes { mtime: t(200), atime: t(200) });
+        new.insert(path.clone(), FileTimes { mtime: t(200), atime: t(100) });
 
         let diff = diff_snapshots(&old, &new);
         assert_eq!(diff.written.len(), 1);
@@ -1062,9 +1068,10 @@ mod tests {
     }
 
     #[test]
-    fn diff_prefers_write_over_read_when_both_change() {
-        // If mtime AND atime both advance, classify as write (the stronger
-        // signal). Reads-only is the special case.
+    fn diff_emits_both_write_and_read_when_both_change() {
+        // When mtime AND atime both advance, the file appears in BOTH
+        // lists so on:access rules still fire even when a write happened
+        // concurrently (e.g. touch after a secret read).
         let path = PathBuf::from("src/foo.rs");
         let mut old = HashMap::new();
         old.insert(path.clone(), FileTimes { mtime: t(100), atime: t(100) });
@@ -1073,7 +1080,7 @@ mod tests {
 
         let diff = diff_snapshots(&old, &new);
         assert_eq!(diff.written.len(), 1);
-        assert_eq!(diff.read.len(), 0);
+        assert_eq!(diff.read.len(), 1);
     }
 
     #[test]
