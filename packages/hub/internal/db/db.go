@@ -502,7 +502,11 @@ func InsertSessionWriteOnce(database *sql.DB, s *Session) (string, error) {
 	}
 
 	// Same dock, receipt slot is empty. Fill it (write-once).
-	_, err = database.Exec(
+	// The WHERE clause guards against a concurrent write that sealed the
+	// receipt between our GetSession and this UPDATE. We check RowsAffected
+	// to detect the lost race and re-read to decide whether the winner's
+	// content was identical (idempotent replay) or different (reject).
+	res2, err := database.Exec(
 		`UPDATE sessions SET
 		   name = ?, started_at = ?, ended_at = ?, duration_ms = ?, status = ?,
 		   agent_count = ?, action_count = ?, receipt_json = ?, uploaded_at = ?
@@ -513,6 +517,19 @@ func InsertSessionWriteOnce(database *sql.DB, s *Session) (string, error) {
 	)
 	if err != nil {
 		return "", err
+	}
+	affected, _ := res2.RowsAffected()
+	if affected == 0 {
+		// Lost the race: another request sealed the receipt first. Re-read
+		// to check if it was a byte-identical replay (ok) or a conflict.
+		reread, err := GetSession(database, s.SessionID)
+		if err != nil {
+			return "", err
+		}
+		if reread.ReceiptJSON != nil && s.ReceiptJSON != nil && *reread.ReceiptJSON == *s.ReceiptJSON {
+			return "ok", nil
+		}
+		return "already_sealed", nil
 	}
 	return "ok", nil
 }
