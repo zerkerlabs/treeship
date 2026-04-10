@@ -9,6 +9,7 @@
     "bundle",
     "dock",
     "session",
+    "package",
     "approve",
     "install-cmd",
     "log",

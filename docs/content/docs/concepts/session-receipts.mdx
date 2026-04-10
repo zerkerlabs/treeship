@@ -1,0 +1,196 @@
+---
+title: Session Receipts
+description: The end product of a day of agent work. One deterministic, independently verifiable artifact across every agent, host, tool, handoff, and side effect.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+A Session Receipt v1 is the unified output of a Treeship session. It takes the fragmented work done across multiple agents, hosts, and tools and turns it into a single canonical JSON document plus a portable `.treeship` package that anyone can inspect, verify, or share.
+
+The goal is simple: **at the end of a session, the operator should have one complete artifact that answers "what happened, who did it, what changed, and can I trust it" without depending on the original runtime.**
+
+## The three names
+
+These terms come up in the docs and the code. Keep them distinct:
+
+| Name | What it is |
+|------|------|
+| **Session Report** | The human-facing visual rendering. Explorer, `preview.html`, or the future hub UI. |
+| **Session Receipt** | The cryptographic artifact: canonical JSON with Merkle root and inclusion proofs. |
+| **`.treeship` package** | The portable directory that bundles the receipt with the proof files and a static preview. |
+
+The receipt is the trust anchor. The report is a view. The package is a transport format.
+
+## Lifecycle
+
+A session flows through three states:
+
+1. **Active.** Started by [`treeship session start`](/docs/cli/session#treeship-session-start) or by a registered agent. Events are appended to `.treeship/sessions/<session_id>/events.jsonl` in real time. The artifact chain grows under `.treeship/artifacts/`.
+2. **Closed.** [`treeship session close`](/docs/cli/session#treeship-session-close) composes the receipt, writes a `.treeship` package, and seals the chain with a `session.close` attestation. The package is self-contained and immutable from this point forward.
+3. **Published.** [`treeship session report`](/docs/cli/session#treeship-session-report) uploads the receipt to the configured hub. The hub serves it at a permanent public URL: `https://treeship.dev/receipt/<session_id>`.
+
+Publishing is optional. A session is equally valid sitting on disk as a `.treeship` directory that you `treeship package verify` locally.
+
+## What a receipt contains
+
+The top-level shape of `receipt.json`:
+
+```json
+{
+  "type": "treeship/session-receipt/v1",
+  "session": {
+    "id": "ssn_01HR...",
+    "name": "fix auth bug",
+    "mode": "auto_workspace",
+    "started_at": "2026-04-09T06:57:56Z",
+    "ended_at": "2026-04-09T07:04:38Z",
+    "status": "completed",
+    "duration_ms": 401658
+  },
+  "participants": {
+    "root_agent_instance_id": "ai_root_1",
+    "final_output_agent_instance_id": "ai_review_2",
+    "total_agents": 6,
+    "spawned_subagents": 4,
+    "handoffs": 7,
+    "max_depth": 3,
+    "hosts": 2,
+    "tool_runtimes": 5
+  },
+  "hosts": [...],
+  "tools": [...],
+  "agent_graph": { "nodes": [...], "edges": [...] },
+  "timeline": [...],
+  "side_effects": {
+    "files_read": [...],
+    "files_written": [...],
+    "ports_opened": [...],
+    "network_connections": [...],
+    "processes": [...],
+    "tool_invocations": [...]
+  },
+  "artifacts": [...],
+  "proofs": { ... },
+  "merkle": {
+    "leaf_count": 4,
+    "root": "mroot_effc020c67548f53",
+    "inclusion_proofs": [...]
+  },
+  "render": { ... }
+}
+```
+
+### Agent graph
+
+Every agent instance that participated becomes a node. Edges describe their relationships:
+
+| Edge type | Meaning |
+|-----------|------|
+| `parent_child` | Agent A spawned agent B as a sub-agent |
+| `handoff` | Agent A passed work to agent B, with zero or more artifacts accompanying the handoff |
+| `collaboration` | Agents worked together on a shared task (peer, not hierarchical) |
+| `return` | Agent B returned control to agent A after completing its delegated work |
+
+Each node carries its role, host, depth, started/completed timestamps, and a count of tool calls it made.
+
+### Timeline
+
+A chronologically ordered list of every event emitted during the session. Event types include:
+
+- `session.started`, `session.closed`
+- `agent.started`, `agent.spawned`, `agent.handoff`, `agent.collaborated`, `agent.returned`, `agent.completed`, `agent.failed`
+- `agent.called_tool`, `agent.read_file`, `agent.wrote_file`
+- `agent.opened_port`, `agent.connected_network`
+- `agent.started_process`, `agent.completed_process`
+
+Every event carries W3C Trace Context fields (`trace_id`, `span_id`, `parent_span_id`), agent identity fields (`agent_id`, `agent_instance_id`, `agent_name`, `agent_role`), host identity, and a monotonic sequence number.
+
+### Side effects
+
+A convenience index over the timeline, grouped by kind: files read, files written, ports opened, network connections, processes, and tool invocations. Each entry points back to the agent instance that performed it.
+
+### Merkle section
+
+A Merkle tree is built over the content-addressed artifact ids in `artifacts`. The tree root is stored as `merkle.root`, and per-artifact inclusion proofs are stored inline. This is what makes the receipt verifiable: anyone can recompute the tree from the artifact ids and check that the stored root matches.
+
+## Determinism rules
+
+For a receipt to be independently verifiable, two honest parties building it from the same inputs must produce byte-identical JSON. The composer enforces:
+
+1. **Canonical serialization.** Field order follows the struct declaration order; no random map iteration.
+2. **Timeline ordering.** Events sort by `(timestamp, sequence_no, event_id)` before being written.
+3. **Hosts and tools sorted.** Keyed by stable ids.
+4. **Content-addressed artifacts.** Every artifact reference uses its content hash, not a runtime-assigned id.
+5. **Leaf hashing before Merkle construction.** The tree's leaf inputs are the raw artifact id strings, hashed identically on the composer side and the verifier side.
+6. **No wall-clock metadata** inside the cryptographic payload. Render hints and previews are cosmetic; they never affect the Merkle root.
+
+`treeship package verify` checks determinism directly: it parses `receipt.json`, re-serializes it, and confirms the bytes match the on-disk file.
+
+## Package format
+
+A `.treeship` package is a directory:
+
+```
+ssn_42e740bd9eb238f6.treeship/
+├── receipt.json          canonical Session Receipt v1
+├── merkle.json           standalone copy of the Merkle section
+├── render.json           Explorer render hints
+├── preview.html          self-contained static HTML preview
+├── artifacts/            reserved for future artifact payloads
+└── proofs/
+    ├── art_6c7ff9c5a8d20e0f18f504375ef28a24.proof.json
+    ├── art_d9823ce56401fa900ac3adbf63bc5125.proof.json
+    └── ...
+```
+
+`receipt.json` is authoritative. Everything else is derived and can be regenerated from it deterministically. `preview.html` is a self-contained dark-themed HTML file you can open in a browser without any build step.
+
+## Local verification
+
+Running [`treeship package verify <path>`](/docs/cli/package#treeship-package-verify) produces a pass/fail result for every check in one pass. A valid package yields:
+
+```
+PASS receipt.json  -- Parses as valid Session Receipt
+PASS type          -- Correct receipt type
+PASS determinism   -- receipt.json round-trips identically
+PASS merkle_root   -- Merkle root matches recomputed value
+PASS inclusion:... -- Inclusion proof valid (one per artifact)
+PASS leaf_count    -- Leaf count matches artifact count
+PASS timeline_order -- Timeline is correctly ordered
+```
+
+There is no "partial trust" for receipts. Any FAIL means the package was modified after signing and the trust anchor is broken.
+
+<Callout type="info">
+Hubs are convenience. The receipt itself is the trust anchor. A hub serving the receipt at `https://treeship.dev/receipt/<session_id>` does not add cryptographic guarantees. The guarantees come from running `treeship package verify` on the downloaded package.
+</Callout>
+
+## Public receipt URLs
+
+When you run [`treeship session report`](/docs/cli/session#treeship-session-report), the receipt is uploaded via DPoP-authenticated PUT to the configured hub. The hub then serves it at a permanent public URL:
+
+```
+https://treeship.dev/receipt/ssn_42e740bd9eb238f6
+```
+
+The URL:
+
+- Requires no authentication to fetch
+- Never expires
+- Returns the raw receipt JSON verbatim
+- Is cached immutably (`Cache-Control: public, max-age=86400, immutable`)
+
+A2A agents, dashboards, and automated verifiers can fetch this URL programmatically and make pre-delegation trust decisions.
+
+See [`GET /v1/receipt/{session_id}`](/docs/api/receipt-get) for the API reference.
+
+## Honest limitations
+
+Session Receipts describe what was *instrumented*. They do not claim to describe what an agent might have done outside Treeship's capture boundary. Things worth naming clearly:
+
+- **Capture completeness depends on instrumentation.** If an agent bypasses `treeship wrap`, spawns a process directly, or uses a runtime that is not registered with Treeship, those actions will not appear in the receipt.
+- **File read detection is best-effort.** The [daemon's atime watcher](/docs/cli/daemon#sensitive-file-read-detection) emits events tagged with `capture_confidence: "inferred"` because filesystems mounted `noatime` or using `relatime` do not always update access times.
+- **Actor URIs are identity labels, not cryptographic identities.** The current release signs all artifacts from a trust domain with one key. Actor URIs like `human://alice` or `agent://coder` are strings, not independently authenticated identities. A key compromise means actor URIs are unverifiable. Per-actor binding is planned for a later release.
+- **The receipt is not a correctness proof.** It does not judge whether the agent's output was good, safe, or policy-compliant. It is a high-fidelity record of what happened. Policy decisions sit on top.
+
+These are design boundaries, not bugs. Treeship gives the strongest possible proof for everything inside its capture boundary, and names the boundary explicitly.

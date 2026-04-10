@@ -1,0 +1,155 @@
+---
+title: package
+description: Inspect and verify .treeship session packages offline.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`.treeship` packages are portable Session Receipt bundles written by [`treeship session close`](/docs/cli/session#treeship-session-close). The `package` subcommands let you read and verify them without talking to any hub. See the [Session Receipts concept page](/docs/concepts/session-receipts) for the format.
+
+## treeship package inspect
+
+Pretty-print the full contents of a Session Receipt.
+
+```bash
+treeship package inspect .treeship/sessions/ssn_42e740bd9eb238f6.treeship
+```
+
+### Argument
+
+| Argument | Description |
+|----------|-------------|
+| `<path>` | Path to a `.treeship` package directory |
+
+Output includes:
+
+- Session metadata: id, name, mode, status, started, ended, duration
+- Participants: agent count, spawned sub-agents, handoffs, max delegation depth, hosts
+- Agent graph: every agent instance with role, host, depth, and tool call count
+- Side effects summary: files read, files written, tool invocations, processes, ports, network
+- Timeline: up to 20 events with timestamp, event type, agent name, and detail
+- Merkle: leaf count, root, inclusion proof count
+- Artifacts: chain entries with content ids and digests
+
+Example:
+
+```
+session receipt
+  type:       treeship/session-receipt/v1
+  id:         ssn_42e740bd9eb238f6
+  name:       smoke-test
+  mode:       AutoWorkspace
+  status:     Completed
+  started:    2026-04-09T06:57:56Z
+  ended:      2026-04-09T07:04:38Z
+  duration:   401658ms
+
+participants
+  agents:     1
+  spawned:    0
+  handoffs:   0
+  max depth:  0
+  hosts:      1
+  root agent: operator
+
+agent graph
+  treeship-cli (operator) depth=0 tools=0 [active] @host_MacBookPro
+
+side effects
+  files read:     0
+  files written:  0
+  tool calls:     0
+  processes:      0
+  ports opened:   0
+  network conns:  0
+
+timeline
+  events: 2
+  06:57:56 session.started treeship-cli Session started
+  07:04:38 session.closed treeship-cli smoke test session
+
+merkle
+  leaves:  4
+  root:    mroot_effc020c67548f53
+  proofs:  4
+```
+
+## treeship package verify
+
+Run local verification checks against a `.treeship` package. All checks are offline; no hub, no network.
+
+```bash
+treeship package verify .treeship/sessions/ssn_42e740bd9eb238f6.treeship
+```
+
+### Argument
+
+| Argument | Description |
+|----------|-------------|
+| `<path>` | Path to a `.treeship` package directory |
+
+### Checks performed
+
+| Check | What it validates |
+|-------|------|
+| `receipt.json` | File exists and parses as a valid Session Receipt |
+| `type` | Receipt type is `treeship/session-receipt/v1` |
+| `determinism` | Re-serializing the parsed receipt byte-matches the on-disk file |
+| `merkle_root` | Recomputing the Merkle tree over the artifact ids produces the root stored in the receipt |
+| `inclusion:<id>` | Each stored inclusion proof verifies against the recomputed root |
+| `leaf_count` | `merkle.leaf_count` matches the artifact count in the receipt |
+| `timeline_order` | Timeline entries are in deterministic `(timestamp, sequence_no, event_id)` order |
+
+Example output:
+
+```
+package verification
+  package: .treeship/sessions/ssn_42e740bd9eb238f6.treeship
+
+  PASS receipt.json -- Parses as valid Session Receipt
+  PASS type -- Correct receipt type
+  PASS determinism -- receipt.json round-trips identically
+  PASS merkle_root -- Merkle root matches recomputed value
+  PASS inclusion:art_6c7ff9c5a8d20e0f18f504375ef28a24 -- Inclusion proof valid
+  PASS inclusion:art_d9823ce56401fa900ac3adbf63bc5125 -- Inclusion proof valid
+  PASS inclusion:art_aacba22f6fa864322cd8d116e931ad1c -- Inclusion proof valid
+  PASS inclusion:art_e5e2782c3579100f1dd1c21f79c4a387 -- Inclusion proof valid
+  PASS leaf_count -- Leaf count matches artifact count
+  PASS timeline_order -- Timeline is correctly ordered
+
+  10 passed, 0 failed, 0 warnings
+
+✓ package verified
+```
+
+Any FAIL causes the command to print a warning summary. WARNs (for example, "no artifacts to verify") are non-fatal and still allow the package to be considered valid for inspection.
+
+<Callout type="info">
+Local verification is the trust anchor. A hub serving a receipt at `https://treeship.dev/receipt/<session_id>` is a convenience layer; the cryptographic trust comes from running `treeship package verify` on the downloaded package and getting 10 PASS.
+</Callout>
+
+## Package format
+
+A `.treeship` package is a directory containing:
+
+```
+<session_id>.treeship/
+├── receipt.json          canonical Session Receipt v1
+├── merkle.json           standalone copy of the Merkle section
+├── render.json           Explorer render hints
+├── preview.html          static preview you can open in a browser
+├── artifacts/            reserved for artifact payloads
+└── proofs/
+    ├── art_xxx.proof.json
+    └── ...
+```
+
+`receipt.json` is the authoritative artifact. Everything else is derived from it and can be regenerated deterministically.
+
+## Sharing packages
+
+You can share a `.treeship` package in three ways:
+
+1. **Upload to a hub** via [`treeship session report`](/docs/cli/session#treeship-session-report), which prints a permanent public URL like `https://treeship.dev/receipt/<session_id>`.
+2. **Tar and send** the directory directly: `tar czf ssn_xxx.treeship.tar.gz .treeship/sessions/ssn_xxx.treeship/`. Recipients extract and run `treeship package verify`.
+3. **Commit the directory** to git or upload to any object store. The format is deterministic so two identical inputs produce byte-identical packages.

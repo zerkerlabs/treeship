@@ -1,0 +1,139 @@
+---
+title: GET /v1/ship/agents and /v1/ship/sessions
+description: Per-ship registry endpoints. List the calling dock's agents and session history.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Two read endpoints return per-ship index data that is populated as a side effect of [`PUT /v1/receipt/{session_id}`](/docs/api/receipt-put). Every uploaded receipt refreshes the calling dock's entries in both.
+
+Both endpoints accept either DPoP authentication (for CLI callers) or a workspace share token (for browser callers). See the [Hub API overview](/docs/api/overview) for auth details.
+
+## GET /v1/ship/agents
+
+Returns the agent registry for the resolved dock, ordered by most recently seen.
+
+### Request
+
+```
+GET /v1/ship/agents
+Authorization: DPoP dck_9f8e7d6c
+DPoP: eyJhbGciOiJFZERTQSJ9...
+```
+
+Or, with a workspace share token:
+
+```
+GET /v1/ship/agents?session=TOKEN
+```
+
+### Response
+
+```json
+{
+  "agents": [
+    {
+      "id": "ai_root_1",
+      "label": "claude-code",
+      "role": "planner",
+      "model": "",
+      "host": "host_macbookpro",
+      "status": "completed"
+    },
+    {
+      "id": "ai_review_2",
+      "label": "hermes",
+      "role": "reviewer",
+      "model": "",
+      "host": "host_vps1",
+      "status": "completed"
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|------|
+| `id` | string | Stable agent instance id (matches `agent_graph.nodes[].agent_instance_id` in receipts) |
+| `label` | string | Human-readable name, derived from `agent_name` in the most recent receipt |
+| `role` | string | Role hint (for example `planner`, `reviewer`, `operator`) |
+| `model` | string | Reserved for future use; currently empty |
+| `host` | string | Host id where the agent was last observed |
+| `status` | string | Last observed status (`completed`, `failed`, or empty for still-active) |
+
+Returns an empty list if the dock has never uploaded a receipt.
+
+## GET /v1/ship/sessions
+
+Returns the calling dock's session list, ordered `uploaded_at DESC` then `started_at DESC`.
+
+### Request
+
+```
+GET /v1/ship/sessions
+Authorization: DPoP dck_9f8e7d6c
+DPoP: eyJhbGciOiJFZERTQSJ9...
+```
+
+Or with a share token:
+
+```
+GET /v1/ship/sessions?session=TOKEN
+```
+
+### Response
+
+```json
+{
+  "sessions": [
+    {
+      "session_id": "ssn_42e740bd9eb238f6",
+      "name": "fix auth bug",
+      "started_at": "2026-04-09T06:57:56Z",
+      "ended_at": "2026-04-09T07:04:38Z",
+      "duration_min": 6,
+      "status": "completed",
+      "agent_count": 1,
+      "action_count": 2,
+      "receipt_url": "https://treeship.dev/receipt/ssn_42e740bd9eb238f6"
+    },
+    {
+      "session_id": "ssn_8a3f1e...",
+      "name": "deploy v2.3",
+      "started_at": "2026-04-08T14:00:00Z",
+      "ended_at": "2026-04-08T14:42:01Z",
+      "duration_min": 42,
+      "status": "completed",
+      "agent_count": 3,
+      "action_count": 18,
+      "receipt_url": "https://treeship.dev/receipt/ssn_8a3f1e..."
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|------|
+| `session_id` | string | Session id |
+| `name` | string | Human-readable session name if one was set |
+| `started_at` | string | ISO 8601 timestamp when the session started |
+| `ended_at` | string | ISO 8601 timestamp when the session closed (empty if still open) |
+| `duration_min` | integer | Session duration in minutes, derived from `duration_ms / 60000` |
+| `status` | string | `open`, `closed`, `completed`, `failed`, or `abandoned` |
+| `agent_count` | integer | Number of distinct agents in the receipt's participants |
+| `action_count` | integer | Number of timeline events in the receipt |
+| `receipt_url` | string | Permanent public URL for the receipt (empty for open sessions) |
+
+Open sessions appear in the list if the hub has any row for them, even without an uploaded receipt. Closed sessions with an uploaded receipt carry a non-empty `receipt_url`.
+
+## Authentication notes
+
+Both endpoints go through `auth.ResolveReader`, which:
+
+1. Checks for a `?session=TOKEN` query parameter first. Valid tokens resolve to the dock id bound at mint time.
+2. Falls back to DPoP proof in the `Authorization` header.
+3. Fails closed: a present-but-invalid share token returns 401 rather than falling through to DPoP, so stale share links produce clear errors instead of confusing "missing Authorization" messages.
+
+<Callout type="info">
+The registry tables are derived indexes. The source of truth is the receipt itself. If you need the full agent graph, timeline, or Merkle proofs, fetch the receipt at [`GET /v1/receipt/{session_id}`](/docs/api/receipt-get).
+</Callout>

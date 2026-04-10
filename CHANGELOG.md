@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.7.1 (2026-04-09)
+
+### Security fixes (from Codex adversarial review)
+
+- Store full 256-bit SHA-256 Merkle root in receipts instead of truncated 64-bit prefix. Prior receipts should be regenerated.
+- Atomic first-write ownership on `PUT /v1/receipt/{session_id}`: dock_id is never overwritten on conflict, eliminating the race between two docks.
+- Write-once receipt semantics: once a receipt is uploaded for a session_id, it cannot be replaced (byte-identical replays are accepted for retry safety). The `immutable` cache header is now honest.
+- 10 MB body-size limit on receipt upload to prevent memory-DoS from authenticated docks.
+- Daemon emits read events even when mtime also advances, preventing `touch` after a secret read from suppressing the `on: access` alert.
+- Session close deletes `session.json` before composing the receipt to prevent late daemon events from landing in the log but not the receipt.
+- `treeship session report` selects the most recently closed session by `session.ended_at` inside the receipt, not filesystem mtime.
+- Log redaction matches the `session` query parameter case-insensitively.
+
 ## 0.7.0 (2026-04-09)
 
 ### Session Receipts

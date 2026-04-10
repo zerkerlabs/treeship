@@ -1,0 +1,103 @@
+---
+title: GET /v1/receipt/{session_id}
+description: Fetch a Session Receipt by session id. Fully public, no authentication required.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Returns the Session Receipt v1 JSON for a given session id. This endpoint is fully public: no authentication, no token, no expiry. The URL is permanent.
+
+It is the A2A verification endpoint and the shareable-link primitive for Session Receipts. Any client (human, browser, agent, crawler) can fetch this URL programmatically and verify the receipt locally.
+
+## Request
+
+```
+GET /v1/receipt/{session_id}
+```
+
+No headers required. No authentication.
+
+### Path parameters
+
+| Name | Description |
+|------|------|
+| `session_id` | The session id to fetch |
+
+## Response shapes
+
+### 200 OK
+
+```json
+{
+  "type": "treeship/session-receipt/v1",
+  "session": { ... },
+  "participants": { ... },
+  "agent_graph": { ... },
+  "timeline": [...],
+  "side_effects": { ... },
+  "artifacts": [...],
+  "merkle": { ... },
+  "render": { ... }
+}
+```
+
+The body is the raw `receipt.json` stored at upload time, returned verbatim. See the [Session Receipts concept page](/docs/concepts/session-receipts) for the full schema.
+
+Response headers include:
+
+```
+Content-Type: application/json
+Cache-Control: public, max-age=86400, immutable
+```
+
+The `immutable` cache directive reflects the fact that a receipt for a given `session_id` never changes. PUT is idempotent for the owning dock, and cross-dock overwrites are rejected with 403, so byte equality is guaranteed for the lifetime of the session id.
+
+### 403 Forbidden
+
+```json
+{ "error": "session still open" }
+```
+
+Returned when a row exists for this `session_id` but no receipt has been uploaded yet. This shape lets A2A consumers distinguish "session exists but is still running" from "no such session".
+
+### 404 Not Found
+
+```json
+{ "error": "session not found" }
+```
+
+Returned when no row exists for this `session_id`.
+
+## Local verification
+
+Fetching the receipt from the hub is a convenience. The trust anchor is running [`treeship package verify`](/docs/cli/package#treeship-package-verify) against the downloaded bytes:
+
+```bash
+# Fetch
+curl -o receipt.json https://api.treeship.dev/v1/receipt/ssn_42e740bd9eb238f6
+
+# Place it inside a .treeship directory so the verifier can read it
+mkdir -p verify-work/ssn.treeship
+mv receipt.json verify-work/ssn.treeship/
+
+# Verify offline
+treeship package verify verify-work/ssn.treeship
+```
+
+If `receipt.json` has been tampered with, the `determinism` and `merkle_root` checks will FAIL. A serving hub cannot forge a passing result.
+
+## Example
+
+```bash
+curl https://api.treeship.dev/v1/receipt/ssn_42e740bd9eb238f6
+```
+
+```bash
+# Programmatic fetch for A2A trust filtering
+curl -sS https://api.treeship.dev/v1/receipt/$SESSION_ID \
+  | jq '.participants.total_agents, .merkle.root'
+```
+
+<Callout type="info">
+Share URLs of the form `https://treeship.dev/receipt/<session_id>` in blog posts, dashboards, pull requests, and incident reports. Every recipient can fetch without auth and verify locally. No keys, no tokens, no expiry.
+</Callout>

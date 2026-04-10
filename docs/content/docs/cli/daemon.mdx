@@ -1,9 +1,11 @@
 ---
 title: daemon
-description: Background process that watches file changes and auto-attests.
+description: Background process that watches file changes, detects sensitive file reads, and auto-attests.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
+
+The Treeship daemon is a background process that watches your project tree for file changes and emits attestations or session events without requiring manual `treeship attest` calls. Two separate passes run in the main loop: a mtime pass for writes (auto-attestation) and an atime pass for sensitive file reads (session event emission).
 
 ## treeship daemon start
 
@@ -20,11 +22,9 @@ treeship daemon start --no-push
 | Option | Description |
 |--------|-------------|
 | `--foreground` | Run in the foreground instead of backgrounding |
-| `--no-push` | Create local artifacts only, do not push to the Hub |
+| `--no-push` | Create local artifacts only, do not push to the hub |
 
-The daemon watches for file changes matching path rules configured in `~/.treeship/config.json`. When a matching file changes, it automatically creates an action attestation.
-
-This is useful for monitoring build outputs, deployment artifacts, or any directory where changes should be tracked without manual `treeship attest` calls.
+The daemon reads `.treeship/config.yaml` once per cycle (every 2 seconds by default) so you can edit path rules without restarting.
 
 ## treeship daemon stop
 
@@ -42,21 +42,111 @@ Check whether the daemon is running.
 treeship daemon status
 ```
 
-Output when running:
+## File write attestation
+
+The default mode. When a file whose path matches a rule with `on: write` or `on: change` has its mtime advance, the daemon creates a signed attestation automatically.
+
+Example `config.yaml` rule:
+
+```yaml
+attest:
+  paths:
+    - path: "src/**"
+      on: "write"
+      label: "code change"
+    - path: "*lock*"
+      on: "change"
+      label: "dependency change"
+```
+
+With these rules, editing `src/main.rs` or `package-lock.json` produces an attestation tagged with the configured label.
+
+## Sensitive file read detection
+
+In addition to the write pass, the daemon runs a second pass that watches `on: access` rules for atime advancement. When a file matching such a rule is read, the daemon emits an `agent.read_file` event to the active session's event log (if a session is running) and, optionally, writes an ALERT line to `daemon.log`.
+
+Example rule:
+
+```yaml
+attest:
+  paths:
+    - path: "*.env*"
+      on: "access"
+      label: "env file access"
+      alert: true
+```
+
+This default rule ships with `treeship init`, so `.env`, `.env.local`, `.env.production`, and friends are covered out of the box.
+
+### What gets watched
+
+The regular file snapshot skips hidden dotfiles and dotdirectories (`.git`, `.treeship`, `.next`, and so on) to keep the watch set small. The sensitive-file pass adds two categories back in for `on: access` rules:
+
+1. **Dotfiles at the project root.** `.env`, `.env.local`, `.gitignore`, `.dockerignore`, etc.
+2. **Known sensitive dot-directories, one level deep.** `.aws/`, `.ssh/`, `.gnupg/`, `.docker/`, `.kube/`. Files one level inside these are watched if they match an `on: access` rule.
+
+### Event emission
+
+When the daemon detects a read, it writes a `SessionEvent` of type `agent.read_file` to `.treeship/sessions/<session_id>/events.jsonl` with:
+
+```json
+{
+  "session_id": "ssn_...",
+  "agent_instance_id": "daemon",
+  "agent_name": "treeship-daemon",
+  "agent_role": "watcher",
+  "event_type": {
+    "type": "agent.read_file",
+    "file_path": ".env",
+    "digest": "sha256:..."
+  },
+  "meta": {
+    "capture_confidence": "inferred",
+    "source": "daemon-atime",
+    "label": "env file access"
+  }
+}
+```
+
+The `capture_confidence: "inferred"` tag is deliberate. atime-based detection is not deterministic the way signed attestation is; it depends on the host filesystem's access-time policy. The receipt format preserves this confidence level so downstream consumers can weight the signal accordingly.
+
+### Alerts
+
+If the matched rule has `alert: true`, the daemon also writes a line like:
 
 ```
-Daemon: running (PID 48201)
-Watching: 3 path rules
-Artifacts created: 47
-Uptime: 2h 14m
+[1744185720] ALERT: sensitive file accessed: .env
 ```
 
-Output when stopped:
+to `.treeship/daemon.log`. Alerts are non-blocking; they are log-only and do not halt the daemon or any running process.
+
+### Behavior when no session is active
+
+Read events require an active session to land in an event log. If the daemon detects a sensitive read while no session is running, it logs the detection (and the alert, if configured) to `daemon.log` but does not persist the event. Starting a session with [`treeship session start`](/docs/cli/session#treeship-session-start) enables full capture.
+
+## Honest limitations
+
+File-read detection is best-effort. The receipt format tags these events `capture_confidence: "inferred"` for real reasons:
+
+- **`noatime` mounts.** Filesystems mounted with `noatime` never update access times. Reads on these filesystems will not be detected.
+- **`relatime` (Linux default).** `relatime` only updates atime if the previous atime is older than the current mtime, or if 24 hours have passed. A rapid burst of reads on the same file may only register once.
+- **macOS variations.** APFS typically updates atime, but specific configurations may not.
+- **Capture boundary.** If a process bypasses the filesystem layer entirely (for example, by reading memory-mapped files without triggering the access-time hook), the daemon will not see it.
+
+These are design boundaries, not bugs. The daemon captures the strongest possible signal from the OS and names the confidence level honestly in the event meta. See the [Session Receipts concept page](/docs/concepts/session-receipts#honest-limitations) for the full framing.
+
+## Daemon log
+
+The daemon writes structured log lines to `.treeship/daemon.log`. Useful entries:
 
 ```
-Daemon: not running
+[1744185600] daemon started (pid 48201)
+[1744185710] attesting: src/main.rs (code change)
+[1744185720] read event: .env (env file access)
+[1744185720] ALERT: sensitive file accessed: .env
+[1744185730] daemon stopping (pid file removed)
 ```
 
 <Callout type="info">
-The daemon respects `TREESHIP_DISABLE=1`. If set, the daemon starts but skips all attestation, which is useful for testing path rules without generating artifacts.
+The daemon respects `TREESHIP_DISABLE=1`. If set, the daemon starts but skips all attestation and event emission, which is useful for testing path rules without generating artifacts.
 </Callout>

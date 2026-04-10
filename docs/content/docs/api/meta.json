@@ -1,4 +1,16 @@
 {
   "title": "Hub API",
-  "pages": ["overview", "dock-challenge", "dock-authorize", "artifacts-push", "artifacts-get", "verify", "merkle-proof", "merkle-checkpoint"]
+  "pages": [
+    "overview",
+    "dock-challenge",
+    "dock-authorize",
+    "artifacts-push",
+    "artifacts-get",
+    "receipt-put",
+    "receipt-get",
+    "ship-registry",
+    "verify",
+    "merkle-proof",
+    "merkle-checkpoint"
+  ]
 }

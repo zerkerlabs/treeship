@@ -1,11 +1,13 @@
 ---
 title: session
-description: Manage attestation sessions -- start, inspect, and close.
+description: Manage attestation sessions. Start, close, report, and share Session Receipts.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-A session groups related attestations together. All artifacts created while a session is active are linked to that session automatically.
+A session groups related work into a single unit. When you close a session, Treeship composes a Session Receipt v1 and writes a portable `.treeship` package that can be inspected and verified offline, or uploaded to a hub for sharing at a permanent public URL.
+
+See the [Session Receipts concept page](/docs/concepts/session-receipts) for the full format and determinism rules.
 
 ## treeship session start
 
@@ -13,8 +15,8 @@ Start a new session.
 
 ```bash
 treeship session start
-treeship session start --name "deploy-v2.3"
-treeship session start --actor agent://deployer
+treeship session start --name "fix auth bug"
+treeship session start --actor agent://coder
 ```
 
 ### Options
@@ -22,9 +24,9 @@ treeship session start --actor agent://deployer
 | Option | Description |
 |--------|-------------|
 | `--name <text>` | Human-readable session name |
-| `--actor <uri>` | Default actor URI for all attestations in this session |
+| `--actor <uri>` | Default actor URI for attestations in this session |
 
-Once started, the session ID is printed to stdout and stored in `~/.treeship/session.json`. All subsequent `treeship attest` commands inherit the session context until it is closed.
+Starting a session writes `.treeship/session.json`, initializes an append-only event log at `.treeship/sessions/<session_id>/events.jsonl`, and emits a `session.started` event. All subsequent attestations and wrap calls are linked to the session.
 
 ## treeship session status
 
@@ -34,25 +36,17 @@ Show the current session state.
 treeship session status
 ```
 
-Outputs the session ID, name, actor, start time, and artifact count.
+Outputs session id, name, actor, started-at timestamp, artifact count verified against the chain, and the number of events in the session's event log.
 
-```
-Session: ses_a1b2c3d4
-Name:    deploy-v2.3
-Actor:   agent://deployer
-Started: 2026-03-30T14:22:01Z
-Artifacts: 12
-```
-
-If no session is active, exits with code 1.
+If no session is active, exits cleanly with a hint to run `session start`.
 
 ## treeship session close
 
-Close the active session.
+Close the active session, compose the Session Receipt, and write a `.treeship` package.
 
 ```bash
 treeship session close
-treeship session close --summary "Deployed v2.3 to production, 12 artifacts"
+treeship session close --summary "fixed JWT expiry bug"
 ```
 
 ### Options
@@ -61,6 +55,88 @@ treeship session close --summary "Deployed v2.3 to production, 12 artifacts"
 |--------|-------------|
 | `--summary <text>` | Plain-text summary of what the session accomplished |
 
+On close, Treeship:
+
+1. Appends a `session.closed` event to the event log.
+2. Walks the artifact chain from `.last` back to the session's root artifact.
+3. Composes a canonical [Session Receipt v1](/docs/concepts/session-receipts) from the events, the artifact chain, and the agent graph.
+4. Builds a [`.treeship` package](/docs/concepts/session-receipts#package-format) under `.treeship/sessions/<session_id>.treeship/` with `receipt.json`, `merkle.json`, `render.json`, per-artifact inclusion proofs, and a static `preview.html`.
+5. Signs a `session.close` chain artifact as before.
+6. Prints the package path, the canonical receipt digest, and the Merkle root.
+
+Example output:
+
+```
+✓ session receipt composed
+  package:   .treeship/sessions/ssn_42e740bd9eb238f6.treeship
+  digest:    sha256:942e6b2bfcbe860223fbae57ee7d9b73400a278ccfb0f1d5ca865aec9ce9aba6
+  merkle:    mroot_effc020c67548f53
+  files:     8
+
+✓ session closed
+  id:       ssn_42e740bd9eb238f6
+  duration: 6m
+  receipts: 2
+  events:   2
+```
+
+After close, run [`treeship package verify`](/docs/cli/package) against the package path to confirm the receipt is locally verifiable.
+
+## treeship session report
+
+Upload a closed session's receipt to the configured hub and print the permanent public URL.
+
+```bash
+treeship session report
+treeship session report ssn_42e740bd9eb238f6
+```
+
+### Options
+
+| Argument | Description |
+|----------|-------------|
+| `[session_id]` | Session ID to upload. Defaults to the most recently closed session's package under `.treeship/sessions/`. |
+
+The command:
+
+1. Locates the `.treeship` package for the requested session (or the most recently modified one).
+2. Reads `receipt.json` verbatim so the digest signed by `session close` is preserved bit-for-bit.
+3. DPoP-signs a `PUT {hub_endpoint}/v1/receipt/{session_id}` request using the active hub connection's private key.
+4. Prints the permanent receipt URL.
+
+Example output:
+
+```
+✓ session receipt uploaded
+  hub:      local
+  session:  ssn_42e740bd9eb238f6
+  agents:   1
+  events:   2
+
+  receipt:  https://treeship.dev/receipt/ssn_42e740bd9eb238f6
+
+  → share this URL freely -- it never expires and needs no auth
+```
+
 <Callout type="info">
-Closing a session creates a final session-close artifact that seals the chain. After closing, new attestations start a fresh chain unless another session is opened.
+The receipt URL is permanent and public. No token, no expiry, no auth required to fetch it. A2A clients, dashboards, and offline verifiers can all `curl` it programmatically. See [`GET /v1/receipt/{session_id}`](/docs/api/receipt-get) for the API reference.
+</Callout>
+
+## What gets sealed in a receipt
+
+A Session Receipt v1 includes:
+
+- **Session metadata**: id, name, mode, started-at, ended-at, duration, status
+- **Participants summary**: total agents, spawned sub-agents, handoffs, max delegation depth, hosts, tool runtimes
+- **Agent graph**: every agent instance with its role, host, depth, and edges (parent-child spawn, handoff, collaboration, return)
+- **Timeline**: all events in deterministic order (timestamp, sequence_no, event_id)
+- **Side effects**: files read, files written, ports opened, network connections, processes, tool invocations
+- **Artifacts**: chain entries with content-addressed ids
+- **Merkle root + inclusion proofs** over the artifact ids
+- **Render hints** for Explorer and the preview HTML
+
+Events the session can capture include tool calls, file reads (via the [daemon's sensitive-file watcher](/docs/cli/daemon)), file writes, network connections, process execution, agent spawning, handoffs, collaborations, and returns.
+
+<Callout type="info">
+A session is auto-sealed: the chain of signed artifacts inside the session is what the receipt commits to via the Merkle root. The receipt itself is a human-readable summary on top of that cryptographic backbone.
 </Callout>

@@ -1,0 +1,205 @@
+---
+title: "treeship-sdk (Python)"
+description: Python SDK for Treeship. Wraps the CLI binary for signing, verification, session reporting, and hub operations.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+## Install
+
+```bash
+pip install treeship-sdk
+```
+
+<Callout type="info">
+The Python SDK shells out to the `treeship` CLI binary. The CLI must be installed and initialized (`treeship init`) before using the SDK.
+</Callout>
+
+## Quick start
+
+```python
+from treeship_sdk import Treeship
+
+ts = Treeship()
+
+# Attest an action
+result = ts.attest_action(
+    actor="agent://my-agent",
+    action="tool.call",
+)
+print(result.artifact_id)
+
+# Verify it
+verified = ts.verify(result.artifact_id)
+print(verified.outcome)  # "pass"
+
+# Upload a closed session's receipt and get the permanent public URL
+report = ts.session_report()
+print(report.receipt_url)
+```
+
+## Treeship class
+
+Wraps the `treeship` CLI. All methods raise `TreeshipError` on CLI failure.
+
+### `attest_action(actor, action, ...)`
+
+Create a signed action receipt.
+
+```python
+result = ts.attest_action(
+    actor="agent://coder",
+    action="tool.call",
+    parent_id="art_abc123",
+    meta={"tool": "read_file", "path": "src/main.rs"},
+)
+```
+
+| Parameter | Type | Description |
+|-----------|------|------|
+| `actor` | `str` | Actor URI |
+| `action` | `str` | Label for the action |
+| `parent_id` | `Optional[str]` | Parent artifact id for chain linking |
+| `approval_nonce` | `Optional[str]` | Nonce from an existing approval |
+| `meta` | `Optional[Dict[str, Any]]` | Arbitrary metadata |
+
+Returns `ActionResult(artifact_id)`.
+
+### `attest_approval(approver, description, expires_in=None)`
+
+Create a signed approval receipt with a single-use nonce.
+
+Returns `ApprovalResult(artifact_id, nonce)`.
+
+### `attest_handoff(from_actor, to_actor, artifacts, approvals=None)`
+
+Create a signed handoff receipt between agents.
+
+Returns `ActionResult(artifact_id)`.
+
+### `attest_decision(actor, model=None, tokens_in=None, ...)`
+
+Create a signed decision receipt capturing LLM reasoning context.
+
+Returns `ActionResult(artifact_id)`.
+
+### `verify(artifact_id)`
+
+Verify an artifact and walk its chain.
+
+```python
+result = ts.verify("art_abc123")
+if result.outcome == "pass":
+    print(f"Chain length: {result.chain}")
+```
+
+Returns `VerifyResult(outcome, chain, target)`.
+
+### `dock_push(artifact_id)`
+
+Push an artifact to the configured hub.
+
+Returns `PushResult(hub_url, rekor_index)`.
+
+### `wrap(command, actor=None)`
+
+Wrap a shell command with a signed receipt.
+
+```python
+result = ts.wrap("npm test", actor="agent://ci")
+```
+
+Returns `ActionResult(artifact_id)`.
+
+### `session_report(session_id=None)`
+
+Upload a closed session's [Session Receipt](/docs/concepts/session-receipts) to the configured hub and return the permanent public URL.
+
+```python
+# Upload the most recently closed session
+result = ts.session_report()
+print(result.receipt_url)
+# https://treeship.dev/receipt/ssn_42e740bd9eb238f6
+
+# Upload a specific session by id
+result = ts.session_report(session_id="ssn_42e740bd9eb238f6")
+```
+
+| Parameter | Type | Description |
+|-----------|------|------|
+| `session_id` | `Optional[str]` | Session id to upload. Defaults to the most recently closed session's package under `.treeship/sessions/`. |
+
+Returns `SessionReportResult(session_id, receipt_url, agents, events)`.
+
+This method shells out to [`treeship session report`](/docs/cli/session#treeship-session-report), which reads the `.treeship` package from disk, DPoP-signs a PUT to the hub, and prints the receipt URL. The Python wrapper parses the text output and returns the structured result.
+
+<Callout type="info">
+The returned `receipt_url` is permanent and public. Share it freely; no token, no expiry, no auth required to fetch it. See the [receipt API docs](/docs/api/receipt-get) for the endpoint reference.
+</Callout>
+
+## Result types
+
+All results are simple dataclasses exported from `treeship_sdk`.
+
+### `ActionResult`
+
+```python
+@dataclass
+class ActionResult:
+    artifact_id: str
+```
+
+### `ApprovalResult`
+
+```python
+@dataclass
+class ApprovalResult:
+    artifact_id: str
+    nonce: str
+```
+
+### `VerifyResult`
+
+```python
+@dataclass
+class VerifyResult:
+    outcome: str  # "pass", "fail", "error"
+    chain: int
+    target: str
+```
+
+### `PushResult`
+
+```python
+@dataclass
+class PushResult:
+    hub_url: str
+    rekor_index: Optional[int] = None
+```
+
+### `SessionReportResult`
+
+```python
+@dataclass
+class SessionReportResult:
+    session_id: str
+    receipt_url: str
+    agents: int = 0
+    events: int = 0
+```
+
+## Error handling
+
+The SDK raises `TreeshipError` when the CLI exits non-zero, when the CLI is missing from PATH, or when the CLI output cannot be parsed.
+
+```python
+from treeship_sdk import Treeship, TreeshipError
+
+ts = Treeship()
+
+try:
+    result = ts.session_report()
+except TreeshipError as e:
+    print(f"session report failed: {e}")
+    print(f"CLI args used: {e.args_used}")
+```

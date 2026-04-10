@@ -1,0 +1,108 @@
+---
+title: PUT /v1/receipt/{session_id}
+description: Upload a Session Receipt v1 to the hub. DPoP authenticated. Idempotent.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Uploads a [Session Receipt v1](/docs/concepts/session-receipts) to the hub and makes it available at the permanent public URL `https://treeship.dev/receipt/{session_id}`.
+
+In practice you do not call this directly. Run [`treeship session report`](/docs/cli/session#treeship-session-report) and the CLI handles package discovery, body serialization, and DPoP signing for you.
+
+## Request
+
+```
+PUT /v1/receipt/{session_id}
+Authorization: DPoP dck_9f8e7d6c
+DPoP: eyJhbGciOiJFZERTQSIsInR5cCI6ImRwb3Arand0In0...
+Content-Type: application/json
+```
+
+The request body is the canonical `receipt.json` from the `.treeship` package, sent verbatim.
+
+### Path parameters
+
+| Name | Description |
+|------|------|
+| `session_id` | The session id to upload. Must match the `session.id` field inside the request body. |
+
+### Body validation
+
+The hub parses the body as a Session Receipt v1 and rejects the request if:
+
+- The `type` field is not `treeship/session-receipt/v1`
+- `session.id` is missing
+- `session.id` does not match the path parameter (prevents cross-session overwrite via routing trick)
+- The body is empty or invalid JSON
+
+### Authentication
+
+DPoP-authenticated. The `Authorization` header must be `DPoP {dock_id}`, and the `DPoP` header must be a valid JWT signed by the dock's private key with:
+
+- `htm: "PUT"` matching the HTTP method
+- `htu: "https://api.treeship.dev/v1/receipt/{session_id}"` matching the full request URL
+
+See the [Hub API overview](/docs/api/overview) for full DPoP details.
+
+## Idempotency
+
+PUT is idempotent for the owning dock. A second PUT from the same dock for the same `session_id` overwrites the first and refreshes the agent registry.
+
+A PUT from a **different** dock for a `session_id` that already exists is rejected with `403`. Session ids are owned by the first dock to upload a receipt for them.
+
+## Side effects
+
+On success, the hub:
+
+1. Upserts the session into its `sessions` table with name, timestamps, status, participant counts, and the raw receipt JSON.
+2. Refreshes the per-ship agent registry by upserting every `agent_graph.nodes` entry into `ship_agents` with `last_seen` bumped to now.
+3. Returns the canonical receipt URL.
+
+## Response
+
+```json
+{
+  "session_id": "ssn_42e740bd9eb238f6",
+  "receipt_url": "https://treeship.dev/receipt/ssn_42e740bd9eb238f6",
+  "agents": 6,
+  "events": 42,
+  "uploaded_at": 1744185600
+}
+```
+
+| Field | Type | Description |
+|-------|------|------|
+| `session_id` | string | Echoed session id |
+| `receipt_url` | string | Permanent public URL for the uploaded receipt |
+| `agents` | integer | Number of agent nodes extracted from the receipt's agent graph |
+| `events` | integer | Number of timeline events in the receipt |
+| `uploaded_at` | integer | Unix timestamp of the upload |
+
+## Errors
+
+| Status | Body | Cause |
+|--------|------|------|
+| `400` | `{"error": "missing session_id in path"}` | Empty path parameter |
+| `400` | `{"error": "empty request body"}` | Zero-length body |
+| `400` | `{"error": "invalid receipt JSON: ..."}` | Body does not parse as valid JSON |
+| `400` | `{"error": "unsupported receipt type: ..."}` | `type` field is not `treeship/session-receipt/v1` |
+| `400` | `{"error": "receipt missing session.id"}` | `session.id` field is missing |
+| `400` | `{"error": "session_id in path does not match receipt body"}` | Path parameter does not match `session.id` in the body |
+| `401` | `{"error": "invalid DPoP proof"}` | DPoP JWT invalid or expired |
+| `403` | `{"error": "session_id is owned by another dock"}` | A different dock has already uploaded a receipt for this session id |
+| `500` | `{"error": "failed to store receipt"}` | Database error |
+
+## Example
+
+```bash
+SESSION_ID=ssn_42e740bd9eb238f6
+curl -X PUT https://api.treeship.dev/v1/receipt/$SESSION_ID \
+  -H "Authorization: DPoP dck_9f8e7d6c" \
+  -H "DPoP: eyJhbGciOiJFZERTQSJ9..." \
+  -H "Content-Type: application/json" \
+  --data @.treeship/sessions/$SESSION_ID.treeship/receipt.json
+```
+
+<Callout type="info">
+The receipt body is sent verbatim from disk. Do not re-serialize it, because re-serializing would produce different whitespace and break the determinism check that `treeship package verify` runs on the receiving end.
+</Callout>
