@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -127,14 +128,22 @@ func requestLogger(next http.Handler) http.Handler {
 }
 
 // redactPath returns "/path?query" with the value of any `session` query
-// parameter replaced by "REDACTED".
+// parameter replaced by "REDACTED". Matches case-insensitively so
+// ?Session= or ?SESSION= are also redacted.
 func redactPath(u *url.URL) string {
 	if u.RawQuery == "" {
 		return u.Path
 	}
 	q := u.Query()
-	if q.Get("session") != "" {
-		q.Set("session", "REDACTED")
+	redacted := false
+	for key := range q {
+		if strings.EqualFold(key, "session") {
+			q.Set(key, "REDACTED")
+			redacted = true
+		}
+	}
+	if !redacted {
+		return u.Path + "?" + u.RawQuery
 	}
 	return u.Path + "?" + q.Encode()
 }
