@@ -183,7 +183,7 @@ pub fn verify_package(pkg_dir: &Path) -> Result<Vec<VerifyCheck>, PackageError> 
         }
         let root_bytes = tree.root();
         let recomputed_root = root_bytes
-            .map(|r| format!("mroot_{}", &hex::encode(r)[..16]));
+            .map(|r| format!("mroot_{}", hex::encode(r)));
         let root_hex = root_bytes
             .map(|r| hex::encode(r))
             .unwrap_or_default();

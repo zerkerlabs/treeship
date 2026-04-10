@@ -338,7 +338,7 @@ fn build_merkle(artifacts: &[ArtifactEntry]) -> (MerkleSection, Option<MerkleTre
         tree.append(&art.artifact_id);
     }
 
-    let root = tree.root().map(|r| format!("mroot_{}", &hex::encode(r)[..16]));
+    let root = tree.root().map(|r| format!("mroot_{}", hex::encode(r)));
 
     // Build inclusion proofs for each artifact
     let inclusion_proofs: Vec<InclusionProofEntry> = artifacts.iter().enumerate()
