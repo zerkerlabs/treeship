@@ -95,6 +95,20 @@ fn format_duration_ms(ms: u64) -> String {
 
 pub fn load_session() -> Option<SessionManifest> {
     let path = session_path()?;
+
+    // Crash recovery: if session.json is missing but session.closing exists,
+    // a prior `session close` was interrupted after freezing but before the
+    // package was written. Restore the manifest so a retry of `session close`
+    // can finish the job.
+    if !path.exists() {
+        if let Some(ts_dir) = path.parent() {
+            let closing = ts_dir.join("session.closing");
+            if closing.exists() {
+                let _ = std::fs::rename(&closing, &path);
+            }
+        }
+    }
+
     if !path.exists() {
         return None;
     }
@@ -460,14 +474,24 @@ pub fn close(
 
     write_last(&ctx.config.storage_dir, &result.artifact_id);
 
-    // ── Freeze the session: delete session.json so the daemon stops ──
-    // appending events. We already have the manifest loaded in memory.
-    // This must happen BEFORE reading the event log so no late daemon
-    // events sneak in between read_all() and receipt composition.
+    // ── Freeze the session: rename session.json to session.closing ──
+    // so the daemon's load_active_session() returns None and stops
+    // appending events. This must happen BEFORE reading the event log
+    // so no late daemon events sneak in between read_all() and receipt
+    // composition.
     //
-    // ZK proof jobs need root_artifact_id which is already in `manifest`.
-    if let Some(path) = session_path() {
-        let _ = std::fs::remove_file(&path);
+    // We rename instead of deleting so a crash between here and the
+    // successful package write leaves a recoverable marker. On the next
+    // `session close` or `session start`, the presence of
+    // session.closing signals an incomplete close that can be retried.
+    let closing_marker = session_dir()
+        .map(|d| d.join("session.closing"));
+    if let Some(ref path) = session_path() {
+        if let Some(ref marker) = closing_marker {
+            let _ = std::fs::rename(path, marker);
+        } else {
+            let _ = std::fs::remove_file(path);
+        }
     }
 
     // ── Compose Session Receipt and build .treeship package ─────────
@@ -490,6 +514,11 @@ pub fn close(
 
     match build_package(&receipt, &pkg_dir) {
         Ok(pkg_output) => {
+            // Package written successfully. Remove the closing marker
+            // so start/close don't see a stale incomplete-close signal.
+            if let Some(ref marker) = closing_marker {
+                let _ = std::fs::remove_file(marker);
+            }
             printer.blank();
             printer.success("session receipt composed", &[]);
             printer.info(&format!("  package:   {}", pkg_output.path.display()));
@@ -501,6 +530,7 @@ pub fn close(
         }
         Err(e) => {
             printer.warn(&format!("failed to build .treeship package: {e}"), &[]);
+            printer.warn("session.closing marker left in place for recovery -- re-run session close to retry", &[]);
         }
     }
 
