@@ -460,6 +460,16 @@ pub fn close(
 
     write_last(&ctx.config.storage_dir, &result.artifact_id);
 
+    // ── Freeze the session: delete session.json so the daemon stops ──
+    // appending events. We already have the manifest loaded in memory.
+    // This must happen BEFORE reading the event log so no late daemon
+    // events sneak in between read_all() and receipt composition.
+    //
+    // ZK proof jobs need root_artifact_id which is already in `manifest`.
+    if let Some(path) = session_path() {
+        let _ = std::fs::remove_file(&path);
+    }
+
     // ── Compose Session Receipt and build .treeship package ─────────
     let events = event_log.read_all().unwrap_or_default();
 
@@ -532,11 +542,6 @@ pub fn close(
         ) {
             printer.dim_info("  chain proof queued (generating in background)");
         }
-    }
-
-    // Now safe to delete session.json
-    if let Some(path) = session_path() {
-        let _ = std::fs::remove_file(&path);
     }
 
     printer.blank();
