@@ -120,14 +120,6 @@ func (h *Handlers) PutReceipt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Idempotency: a second PUT from a DIFFERENT dock for the same session_id
-	// is rejected so docks cannot squat on each other's session slots.
-	existing, err := db.GetSession(h.DB, pathSessionID)
-	if err == nil && existing != nil && existing.DockID != dockID {
-		writeError(w, http.StatusForbidden, "session_id is owned by another dock")
-		return
-	}
-
 	receiptJSON := string(body)
 	now := time.Now().Unix()
 	status := "closed"
@@ -149,9 +141,20 @@ func (h *Handlers) PutReceipt(w http.ResponseWriter, r *http.Request) {
 		UploadedAt:  &now,
 	}
 
-	if err := db.UpsertSession(h.DB, sess); err != nil {
-		log.Printf("upsert session error: %v", err)
+	// Atomic write-once insert. Ownership is established on first write
+	// and never transferred. Receipt content is immutable once sealed.
+	outcome, err := db.InsertSessionWriteOnce(h.DB, sess)
+	if err != nil {
+		log.Printf("insert session error: %v", err)
 		writeError(w, http.StatusInternalServerError, "failed to store receipt")
+		return
+	}
+	switch outcome {
+	case "owned_by_other":
+		writeError(w, http.StatusForbidden, "session_id is owned by another dock")
+		return
+	case "already_sealed":
+		writeError(w, http.StatusConflict, "receipt already uploaded for this session; receipts are write-once")
 		return
 	}
 

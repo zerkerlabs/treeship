@@ -454,29 +454,67 @@ type Session struct {
 	UploadedAt   *int64
 }
 
-// UpsertSession inserts or fully updates a session row.
-// Existing rows are overwritten -- callers that want preserve-on-conflict
-// semantics should query first.
-func UpsertSession(database *sql.DB, s *Session) error {
-	_, err := database.Exec(
+// InsertSessionWriteOnce atomically inserts a session with its receipt.
+//
+// Ownership rules:
+//   - First insert wins: dock_id is never updated on conflict.
+//   - Write-once receipt: receipt_json is set only if the existing row
+//     has a NULL receipt. A second PUT with different content is rejected.
+//   - Returns ("ok", nil) on successful insert or idempotent replay.
+//   - Returns ("owned_by_other", nil) when the session_id belongs to
+//     a different dock.
+//   - Returns ("already_sealed", nil) when a receipt already exists
+//     (same dock, but receipt_json is already non-NULL).
+func InsertSessionWriteOnce(database *sql.DB, s *Session) (string, error) {
+	// Attempt the insert. ON CONFLICT DO NOTHING so dock_id is never overwritten.
+	res, err := database.Exec(
 		`INSERT INTO sessions
 		   (session_id, dock_id, name, started_at, ended_at, duration_ms, status, agent_count, action_count, receipt_json, uploaded_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(session_id) DO UPDATE SET
-		   dock_id      = excluded.dock_id,
-		   name         = excluded.name,
-		   started_at   = excluded.started_at,
-		   ended_at     = excluded.ended_at,
-		   duration_ms  = excluded.duration_ms,
-		   status       = excluded.status,
-		   agent_count  = excluded.agent_count,
-		   action_count = excluded.action_count,
-		   receipt_json = excluded.receipt_json,
-		   uploaded_at  = excluded.uploaded_at`,
+		 ON CONFLICT(session_id) DO NOTHING`,
 		s.SessionID, s.DockID, s.Name, s.StartedAt, s.EndedAt, s.DurationMS,
 		s.Status, s.AgentCount, s.ActionCount, s.ReceiptJSON, s.UploadedAt,
 	)
-	return err
+	if err != nil {
+		return "", err
+	}
+
+	rows, _ := res.RowsAffected()
+	if rows == 1 {
+		// Fresh insert succeeded.
+		return "ok", nil
+	}
+
+	// Row already exists. Check ownership and sealed state.
+	existing, err := GetSession(database, s.SessionID)
+	if err != nil {
+		return "", err
+	}
+	if existing.DockID != s.DockID {
+		return "owned_by_other", nil
+	}
+	if existing.ReceiptJSON != nil && *existing.ReceiptJSON != "" {
+		// Already sealed. Accept only byte-identical replays.
+		if s.ReceiptJSON != nil && *s.ReceiptJSON == *existing.ReceiptJSON {
+			return "ok", nil
+		}
+		return "already_sealed", nil
+	}
+
+	// Same dock, receipt slot is empty. Fill it (write-once).
+	_, err = database.Exec(
+		`UPDATE sessions SET
+		   name = ?, started_at = ?, ended_at = ?, duration_ms = ?, status = ?,
+		   agent_count = ?, action_count = ?, receipt_json = ?, uploaded_at = ?
+		 WHERE session_id = ? AND dock_id = ? AND (receipt_json IS NULL OR receipt_json = '')`,
+		s.Name, s.StartedAt, s.EndedAt, s.DurationMS, s.Status,
+		s.AgentCount, s.ActionCount, s.ReceiptJSON, s.UploadedAt,
+		s.SessionID, s.DockID,
+	)
+	if err != nil {
+		return "", err
+	}
+	return "ok", nil
 }
 
 // GetSession returns a session row by session_id, or nil + sql.ErrNoRows if not found.
