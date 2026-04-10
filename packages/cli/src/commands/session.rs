@@ -601,9 +601,10 @@ fn collect_artifact_entries(
 // session report -- upload a session receipt to the configured hub
 // ---------------------------------------------------------------------------
 
-/// Locate the most recently modified `.treeship` package directory under
-/// `.treeship/sessions/`. Returns the package path and the session_id parsed
-/// from its directory name.
+/// Locate the most recently closed `.treeship` package directory under
+/// `.treeship/sessions/`. Sorts by the `session.ended_at` timestamp inside
+/// `receipt.json` rather than filesystem mtime, so touching an older
+/// package directory cannot cause the wrong session to be uploaded.
 fn find_latest_package() -> Option<(PathBuf, String)> {
     let ts_dir = session_dir()?;
     let sessions_root = ts_dir.join("sessions");
@@ -611,7 +612,7 @@ fn find_latest_package() -> Option<(PathBuf, String)> {
         return None;
     }
 
-    let mut latest: Option<(PathBuf, String, std::time::SystemTime)> = None;
+    let mut latest: Option<(PathBuf, String, String)> = None; // (path, id, ended_at)
     for entry in std::fs::read_dir(&sessions_root).ok()?.flatten() {
         let path = entry.path();
         let name = entry.file_name();
@@ -624,14 +625,16 @@ fn find_latest_package() -> Option<(PathBuf, String)> {
         if !receipt_path.exists() {
             continue;
         }
-        let mtime = entry
-            .metadata()
-            .and_then(|m| m.modified())
-            .unwrap_or(std::time::UNIX_EPOCH);
+        // Parse ended_at from the receipt for stable ordering.
+        let ended_at = std::fs::read_to_string(&receipt_path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|v| v["session"]["ended_at"].as_str().map(|s| s.to_string()))
+            .unwrap_or_default();
         match &latest {
-            None => latest = Some((path.clone(), session_id, mtime)),
-            Some((_, _, prev_mtime)) if mtime > *prev_mtime => {
-                latest = Some((path.clone(), session_id, mtime));
+            None => latest = Some((path.clone(), session_id, ended_at)),
+            Some((_, _, prev_ended)) if ended_at > *prev_ended => {
+                latest = Some((path.clone(), session_id, ended_at));
             }
             _ => {}
         }
