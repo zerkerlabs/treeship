@@ -91,9 +91,13 @@ func (h *Handlers) PutReceipt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Cap request body at 10 MB to prevent memory-DoS from authenticated docks.
+	const maxReceiptBytes = 10 << 20
+	r.Body = http.MaxBytesReader(w, r.Body, maxReceiptBytes)
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "failed to read request body")
+		writeError(w, http.StatusRequestEntityTooLarge, "receipt body exceeds 10 MB limit")
 		return
 	}
 	if len(body) == 0 {
