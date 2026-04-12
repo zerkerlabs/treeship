@@ -281,156 +281,29 @@ impl VerifyCheck {
     }
 }
 
-/// Generate a minimal static preview HTML for the session.
+/// HTML template for the self-contained verifier preview.
+/// Loaded at compile time so the binary carries no runtime file dependencies.
+const PREVIEW_TEMPLATE: &str = include_str!("preview_template.html");
+
+/// Generate a self-contained preview.html that embeds the receipt JSON
+/// and runs Merkle verification client-side using Web Crypto API.
+///
+/// The HTML works fully air-gapped: no network calls, no CDN, no server.
+/// Open it in any modern browser and it automatically verifies the receipt
+/// and shows pass/fail for each check.
 fn generate_preview_html(receipt: &SessionReceipt) -> String {
-    let session = &receipt.session;
-    let p = &receipt.participants;
-    let se_files = receipt.side_effects.files_written.len();
-    let se_tools = receipt.side_effects.tool_invocations.len();
-    let merkle_root = receipt.merkle.root.as_deref().unwrap_or("none");
-    let duration = session.duration_ms
-        .map(|ms| format_duration(ms))
-        .unwrap_or_else(|| "unknown".into());
+    let receipt_json = serde_json::to_string_pretty(receipt)
+        .unwrap_or_else(|_| "{}".to_string());
+    // Defense-in-depth: escape </script sequences so a malicious receipt
+    // field cannot break out of the JSON data block. The primary defense
+    // is type="application/json" which the HTML parser does not execute,
+    // but this escaping adds a second layer.
+    let safe_json = receipt_json.replace("</script", r"<\/script");
+    let session_id = &receipt.session.id;
 
-    let agents_html: String = receipt.agent_graph.nodes.iter()
-        .map(|n| format!(
-            "<li><strong>{}</strong> ({}){}</li>",
-            n.agent_name,
-            n.host_id,
-            n.agent_role.as_ref().map(|r| format!(" -- {r}")).unwrap_or_default(),
-        ))
-        .collect::<Vec<_>>()
-        .join("\n        ");
-
-    let timeline_html: String = receipt.timeline.iter()
-        .map(|t| format!(
-            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
-            t.timestamp, t.event_type, t.agent_name,
-            t.summary.as_deref().unwrap_or(""),
-        ))
-        .collect::<Vec<_>>()
-        .join("\n          ");
-
-    format!(r#"<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Session Report: {session_id}</title>
-  <style>
-    * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-    body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-           background: #0a0a0a; color: #e0e0e0; padding: 2rem; max-width: 960px; margin: 0 auto; }}
-    h1 {{ color: #fff; margin-bottom: 0.25rem; font-size: 1.5rem; }}
-    .subtitle {{ color: #888; margin-bottom: 2rem; font-size: 0.875rem; }}
-    .badge {{ display: inline-block; padding: 0.2rem 0.6rem; border-radius: 4px;
-              font-size: 0.75rem; font-weight: 600; }}
-    .badge-pass {{ background: #1a3a1a; color: #4ade80; }}
-    .badge-status {{ background: #1a2a3a; color: #60a5fa; }}
-    .card {{ background: #141414; border: 1px solid #252525; border-radius: 8px;
-             padding: 1.25rem; margin-bottom: 1rem; }}
-    .card h2 {{ font-size: 1rem; color: #aaa; margin-bottom: 0.75rem; text-transform: uppercase;
-                letter-spacing: 0.05em; font-weight: 500; }}
-    .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.75rem; }}
-    .stat {{ text-align: center; }}
-    .stat .value {{ font-size: 1.5rem; font-weight: 700; color: #fff; }}
-    .stat .label {{ font-size: 0.75rem; color: #888; margin-top: 0.15rem; }}
-    ul {{ list-style: none; }}
-    ul li {{ padding: 0.3rem 0; border-bottom: 1px solid #1a1a1a; font-size: 0.875rem; }}
-    table {{ width: 100%; border-collapse: collapse; font-size: 0.8rem; }}
-    th, td {{ text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #1a1a1a; }}
-    th {{ color: #888; font-weight: 500; }}
-    .mono {{ font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.8rem; color: #60a5fa; }}
-    .footer {{ margin-top: 2rem; text-align: center; color: #555; font-size: 0.75rem; }}
-  </style>
-</head>
-<body>
-  <h1>{name}</h1>
-  <p class="subtitle">
-    <span class="badge badge-status">{status:?}</span>
-    <span class="mono">{session_id}</span>
-  </p>
-
-  <div class="card">
-    <h2>Session Summary</h2>
-    <div class="grid">
-      <div class="stat"><div class="value">{total_agents}</div><div class="label">Agents</div></div>
-      <div class="stat"><div class="value">{spawned}</div><div class="label">Spawned</div></div>
-      <div class="stat"><div class="value">{handoffs}</div><div class="label">Handoffs</div></div>
-      <div class="stat"><div class="value">{max_depth}</div><div class="label">Max Depth</div></div>
-      <div class="stat"><div class="value">{hosts}</div><div class="label">Hosts</div></div>
-      <div class="stat"><div class="value">{duration}</div><div class="label">Duration</div></div>
-    </div>
-  </div>
-
-  <div class="card">
-    <h2>Participants</h2>
-    <ul>
-        {agents_html}
-    </ul>
-  </div>
-
-  <div class="card">
-    <h2>Timeline</h2>
-    <table>
-      <thead><tr><th>Time</th><th>Event</th><th>Agent</th><th>Detail</th></tr></thead>
-      <tbody>
-          {timeline_html}
-      </tbody>
-    </table>
-  </div>
-
-  <div class="card">
-    <h2>Side Effects</h2>
-    <div class="grid">
-      <div class="stat"><div class="value">{se_files}</div><div class="label">Files Written</div></div>
-      <div class="stat"><div class="value">{se_tools}</div><div class="label">Tool Calls</div></div>
-    </div>
-  </div>
-
-  <div class="card">
-    <h2>Verification</h2>
-    <p><span class="badge badge-pass">Merkle Root</span> <span class="mono">{merkle_root}</span></p>
-    <p style="margin-top: 0.5rem; font-size: 0.8rem; color: #888;">
-      {leaf_count} leaves &middot; {proof_count} inclusion proofs
-    </p>
-  </div>
-
-  <div class="footer">
-    Generated by Treeship Session Receipt v1 &middot; <a href="https://treeship.dev" style="color:#60a5fa;">treeship.dev</a>
-  </div>
-</body>
-</html>"#,
-        session_id = session.id,
-        name = session.name.as_deref().unwrap_or(&session.id),
-        status = session.status,
-        total_agents = p.total_agents,
-        spawned = p.spawned_subagents,
-        handoffs = p.handoffs,
-        max_depth = p.max_depth,
-        hosts = p.hosts,
-        duration = duration,
-        agents_html = agents_html,
-        timeline_html = timeline_html,
-        se_files = se_files,
-        se_tools = se_tools,
-        merkle_root = merkle_root,
-        leaf_count = receipt.merkle.leaf_count,
-        proof_count = receipt.merkle.inclusion_proofs.len(),
-    )
-}
-
-fn format_duration(ms: u64) -> String {
-    let secs = ms / 1000;
-    if secs < 60 {
-        format!("{secs}s")
-    } else if secs < 3600 {
-        format!("{}m {}s", secs / 60, secs % 60)
-    } else {
-        let h = secs / 3600;
-        let m = (secs % 3600) / 60;
-        format!("{h}h {m}m")
-    }
+    PREVIEW_TEMPLATE
+        .replace("__RECEIPT_JSON__", &safe_json)
+        .replace("__SESSION_ID__", session_id)
 }
 
 #[cfg(test)]
