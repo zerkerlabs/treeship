@@ -10,9 +10,9 @@ FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y ca-certificates curl && rm -rf /var/lib/apt/lists/*
 
-# Persistent data directory for SQLite. Railway volume should mount here.
+# Persistent data directory for SQLite.
+# On Railway, attach a volume mounted at /var/lib/treeship.
 RUN mkdir -p /var/lib/treeship && chmod 755 /var/lib/treeship
-VOLUME ["/var/lib/treeship"]
 
 COPY --from=builder /app/hub /usr/local/bin/hub
 
