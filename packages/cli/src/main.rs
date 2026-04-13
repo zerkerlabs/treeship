@@ -555,6 +555,14 @@ struct SessionCloseArgs {
     /// Summary of what was accomplished
     #[arg(long, value_name = "TEXT")]
     summary: Option<String>,
+
+    /// One-line headline for the receipt (e.g. "Verifier refactor completed.")
+    #[arg(long, value_name = "TEXT")]
+    headline: Option<String>,
+
+    /// What should be reviewed before trusting the output
+    #[arg(long, value_name = "TEXT")]
+    review: Option<String>,
 }
 
 // --- package ---------------------------------------------------------------
@@ -1261,6 +1269,8 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             ),
             SessionCommand::Close(a) => commands::session::close(
                 a.summary.clone(),
+                a.headline.clone(),
+                a.review.clone(),
                 cli.config.as_deref(),
                 printer,
             ),

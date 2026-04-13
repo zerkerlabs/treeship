@@ -55,6 +55,34 @@ pub struct SessionSection {
     pub status: SessionStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
+    /// Structured narrative for human review. All fields optional.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub narrative: Option<Narrative>,
+    /// Cumulative cost in USD across all agents.
+    #[serde(default, skip_serializing_if = "is_zero_f64")]
+    pub total_cost_usd: f64,
+    /// Cumulative input tokens across all agents.
+    #[serde(default)]
+    pub total_tokens_in: u64,
+    /// Cumulative output tokens across all agents.
+    #[serde(default)]
+    pub total_tokens_out: u64,
+}
+
+fn is_zero_f64(v: &f64) -> bool { *v == 0.0 }
+
+/// Structured narrative for the session summary.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Narrative {
+    /// One-line headline: "Verifier refactor completed."
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub headline: Option<String>,
+    /// Multi-sentence summary of what happened.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    /// What should be reviewed before trusting the output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review: Option<String>,
 }
 
 /// A single timeline entry.
@@ -184,6 +212,11 @@ impl ReceiptComposer {
             zk_proofs_present: false,
         };
 
+        // Compute cost/token totals from agent graph
+        let total_cost_usd: f64 = agent_graph.nodes.iter().map(|n| n.cost_usd).sum();
+        let total_tokens_in: u64 = agent_graph.nodes.iter().map(|n| n.tokens_in).sum();
+        let total_tokens_out: u64 = agent_graph.nodes.iter().map(|n| n.tokens_out).sum();
+
         // Session section
         let session = SessionSection {
             id: manifest.session_id.clone(),
@@ -193,6 +226,14 @@ impl ReceiptComposer {
             ended_at: manifest.closed_at.clone(),
             status: manifest.status.clone(),
             duration_ms,
+            narrative: manifest.summary.as_ref().map(|s| Narrative {
+                headline: manifest.name.clone(),
+                summary: Some(s.clone()),
+                review: None,
+            }),
+            total_cost_usd,
+            total_tokens_in,
+            total_tokens_out,
         };
 
         // Render config
@@ -381,6 +422,7 @@ fn event_type_label(et: &super::event::EventType) -> String {
         AgentConnectedNetwork { .. } => "agent.connected_network",
         AgentStartedProcess { .. } => "agent.started_process",
         AgentCompletedProcess { .. } => "agent.completed_process",
+        AgentDecision { .. } => "agent.decision",
     }.into()
 }
 
@@ -405,6 +447,13 @@ fn event_summary(et: &super::event::EventType) -> Option<String> {
         }
         AgentCompleted { termination_reason } => termination_reason.clone().or(Some("Agent completed".into())),
         AgentFailed { reason } => reason.clone().or(Some("Agent failed".into())),
+        AgentDecision { model, summary, cost_usd, .. } => {
+            let mut parts = Vec::new();
+            if let Some(s) = summary { parts.push(s.clone()); }
+            if let Some(m) = model { parts.push(format!("model: {m}")); }
+            if let Some(c) = cost_usd { parts.push(format!("${:.2}", c)); }
+            if parts.is_empty() { Some("LLM decision".into()) } else { Some(parts.join(" | ")) }
+        }
         _ => None,
     }
 }
@@ -450,7 +499,7 @@ mod tests {
             mk(1, "root", EventType::AgentStarted { parent_agent_instance_id: None }),
             mk(2, "worker", EventType::AgentSpawned { spawned_by_agent_instance_id: "root".into(), reason: Some("review".into()) }),
             mk(3, "worker", EventType::AgentCalledTool { tool_name: "read_file".into(), tool_input_digest: None, tool_output_digest: None, duration_ms: Some(5) }),
-            mk(4, "worker", EventType::AgentWroteFile { file_path: "src/fix.rs".into(), digest: None }),
+            mk(4, "worker", EventType::AgentWroteFile { file_path: "src/fix.rs".into(), digest: None, operation: None, additions: None, deletions: None }),
             mk(5, "worker", EventType::AgentCompleted { termination_reason: None }),
             mk(6, "root", EventType::SessionClosed { summary: Some("Done".into()), duration_ms: Some(360000) }),
         ]

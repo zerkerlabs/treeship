@@ -169,7 +169,7 @@ fn count_chain_artifacts(ctx: &ctx::Ctx, root_id: &str) -> u64 {
 }
 
 /// Get the host ID for the current machine.
-fn local_host_id() -> String {
+pub(crate) fn local_host_id() -> String {
     // Use PropagationContext's approach: read from env or derive from hostname
     std::env::var("TREESHIP_HOST_ID").unwrap_or_else(|_| {
         std::process::Command::new("hostname")
@@ -394,6 +394,8 @@ pub fn status(
 
 pub fn close(
     summary: Option<String>,
+    headline: Option<String>,
+    review: Option<String>,
     config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -506,7 +508,17 @@ pub fn close(
     receipt_manifest.closed_at = Some(now_rfc3339());
     receipt_manifest.summary = summary.clone();
 
-    let receipt = ReceiptComposer::compose(&receipt_manifest, &events, artifact_entries);
+    let mut receipt = ReceiptComposer::compose(&receipt_manifest, &events, artifact_entries);
+
+    // Override narrative with explicit --headline/--review if provided
+    if headline.is_some() || review.is_some() {
+        let existing = receipt.session.narrative.take().unwrap_or_default();
+        receipt.session.narrative = Some(session::receipt::Narrative {
+            headline: headline.or(existing.headline),
+            summary: existing.summary,
+            review: review.or(existing.review),
+        });
+    }
 
     // Build the .treeship package
     let pkg_dir = ts_dir.join("sessions");

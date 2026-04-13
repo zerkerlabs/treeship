@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 /// All supported session event types.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum EventType {
     #[serde(rename = "session.started")]
@@ -87,6 +87,13 @@ pub enum EventType {
         file_path: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         digest: Option<String>,
+        /// "created", "modified", or "deleted". Absent in legacy events.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        operation: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        additions: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        deletions: Option<u32>,
     },
 
     #[serde(rename = "agent.opened_port")]
@@ -108,6 +115,9 @@ pub enum EventType {
         process_name: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         pid: Option<u32>,
+        /// Full command string (e.g. "npm test --runInBand"). Absent in legacy events.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        command: Option<String>,
     },
 
     #[serde(rename = "agent.completed_process")]
@@ -117,6 +127,25 @@ pub enum EventType {
         exit_code: Option<i32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         duration_ms: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        command: Option<String>,
+    },
+
+    /// LLM inference decision with model, token usage, and cost.
+    #[serde(rename = "agent.decision")]
+    AgentDecision {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tokens_in: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tokens_out: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cost_usd: Option<f64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        summary: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        confidence: Option<f64>,
     },
 }
 

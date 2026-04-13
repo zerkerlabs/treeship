@@ -7,6 +7,10 @@ use sha2::{Sha256, Digest};
 
 use treeship_core::{
     attestation::sign,
+    session::{
+        EventLog, EventType, SessionEvent,
+        event::{generate_event_id, generate_span_id, generate_trace_id},
+    },
     statements::{ActionStatement, payload_type},
     storage::Record,
 };
@@ -221,6 +225,11 @@ pub fn run(
 
     // ── 2. Auto-chaining: write .last ──────────────────────────────────
     write_last(&ctx.config.storage_dir, &result.artifact_id);
+
+    // ── Emit session events (best-effort, never fails the wrap) ─────
+    // If a session is active, emit process start/complete and file-write
+    // events so they appear in the Session Receipt.
+    emit_wrap_events(&safe_command, &action_label, exit_code, elapsed_ms, &changed_files);
 
     // ── OTel export (best-effort, never fails the wrap) ─────────────
     #[cfg(feature = "otel")]
@@ -509,6 +518,95 @@ fn chain_depth(ctx: &ctx::Ctx, parent_id: &str) -> usize {
         }
     }
     depth
+}
+
+/// Emit session events for a wrapped command. Best-effort: silently skips
+/// if no active session exists.
+fn emit_wrap_events(
+    command: &str,
+    process_name: &str,
+    exit_code: i32,
+    elapsed_ms: u64,
+    changed_files: &[String],
+) {
+    // Find active session
+    let manifest = match super::session::load_session() {
+        Some(m) => m,
+        None => return,
+    };
+    let ts_dir = match find_treeship_dir() {
+        Some(d) => d,
+        None => return,
+    };
+    let evt_dir = ts_dir.join("sessions").join(&manifest.session_id);
+    let log = match EventLog::open(&evt_dir) {
+        Ok(l) => l,
+        Err(_) => return,
+    };
+
+    let host_id = super::session::local_host_id();
+    let trace_id = generate_trace_id();
+    let now = || {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        treeship_core::statements::unix_to_rfc3339(secs)
+    };
+
+    let base = |et: EventType| -> SessionEvent {
+        SessionEvent {
+            session_id: manifest.session_id.clone(),
+            event_id: generate_event_id(),
+            timestamp: now(),
+            sequence_no: 0,
+            trace_id: trace_id.clone(),
+            span_id: generate_span_id(),
+            parent_span_id: None,
+            agent_id: manifest.actor.clone(),
+            agent_instance_id: "operator".into(),
+            agent_name: "treeship-cli".into(),
+            agent_role: Some("operator".into()),
+            host_id: host_id.clone(),
+            tool_runtime_id: None,
+            event_type: et,
+            artifact_ref: None,
+            meta: None,
+        }
+    };
+
+    // Process completed event (single event since wrap is synchronous)
+    let mut evt = base(EventType::AgentCompletedProcess {
+        process_name: process_name.into(),
+        exit_code: Some(exit_code),
+        duration_ms: Some(elapsed_ms),
+        command: Some(command.into()),
+    });
+    let _ = log.append(&mut evt);
+
+    // File write events
+    for path in changed_files {
+        let mut evt = base(EventType::AgentWroteFile {
+            file_path: path.clone(),
+            digest: None,
+            operation: Some("modified".into()),
+            additions: None,
+            deletions: None,
+        });
+        let _ = log.append(&mut evt);
+    }
+}
+
+/// Find the .treeship directory by walking up from cwd.
+fn find_treeship_dir() -> Option<std::path::PathBuf> {
+    let mut dir = std::env::current_dir().ok()?;
+    loop {
+        let ts = dir.join(".treeship");
+        if ts.is_dir() {
+            return Some(ts);
+        }
+        if !dir.pop() { return None; }
+    }
 }
 
 /// Format a Duration as a human-readable elapsed time string.

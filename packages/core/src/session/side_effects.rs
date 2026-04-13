@@ -17,6 +17,13 @@ pub struct FileAccess {
     pub timestamp: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub digest: Option<String>,
+    /// "created", "modified", or "deleted". Absent for read events and legacy writes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub additions: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deletions: Option<u32>,
 }
 
 /// A port opened by an agent.
@@ -49,6 +56,9 @@ pub struct ProcessExecution {
     pub exit_code: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
+    /// Full command string (e.g. "npm test --runInBand"). Absent in legacy events.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
 }
 
 /// A tool invocation by an agent.
@@ -89,15 +99,21 @@ impl SideEffects {
                         agent_instance_id: event.agent_instance_id.clone(),
                         timestamp: event.timestamp.clone(),
                         digest: digest.clone(),
+                        operation: None,
+                        additions: None,
+                        deletions: None,
                     });
                 }
 
-                EventType::AgentWroteFile { file_path, digest } => {
+                EventType::AgentWroteFile { file_path, digest, operation, additions, deletions } => {
                     se.files_written.push(FileAccess {
                         file_path: file_path.clone(),
                         agent_instance_id: event.agent_instance_id.clone(),
                         timestamp: event.timestamp.clone(),
                         digest: digest.clone(),
+                        operation: operation.clone(),
+                        additions: *additions,
+                        deletions: *deletions,
                     });
                 }
 
@@ -119,7 +135,7 @@ impl SideEffects {
                     });
                 }
 
-                EventType::AgentStartedProcess { process_name, pid: _ } => {
+                EventType::AgentStartedProcess { process_name, pid: _, command } => {
                     let idx = se.processes.len();
                     se.processes.push(ProcessExecution {
                         process_name: process_name.clone(),
@@ -127,6 +143,7 @@ impl SideEffects {
                         started_at: event.timestamp.clone(),
                         exit_code: None,
                         duration_ms: None,
+                        command: command.clone(),
                     });
                     started_processes.insert(
                         (event.agent_instance_id.clone(), process_name.clone()),
@@ -134,21 +151,24 @@ impl SideEffects {
                     );
                 }
 
-                EventType::AgentCompletedProcess { process_name, exit_code, duration_ms } => {
+                EventType::AgentCompletedProcess { process_name, exit_code, duration_ms, command } => {
                     let key = (event.agent_instance_id.clone(), process_name.clone());
                     if let Some(&idx) = started_processes.get(&key) {
                         if let Some(proc) = se.processes.get_mut(idx) {
                             proc.exit_code = *exit_code;
                             proc.duration_ms = *duration_ms;
+                            if proc.command.is_none() {
+                                proc.command = command.clone();
+                            }
                         }
                     } else {
-                        // Completed without a started event (e.g., joined mid-session)
                         se.processes.push(ProcessExecution {
                             process_name: process_name.clone(),
                             agent_instance_id: event.agent_instance_id.clone(),
                             started_at: event.timestamp.clone(),
                             exit_code: *exit_code,
                             duration_ms: *duration_ms,
+                            command: command.clone(),
                         });
                     }
                 }
@@ -223,7 +243,7 @@ mod tests {
     fn aggregates_file_and_tool_events() {
         let events = vec![
             evt(EventType::AgentReadFile { file_path: "src/main.rs".into(), digest: None }),
-            evt(EventType::AgentWroteFile { file_path: "src/lib.rs".into(), digest: Some("sha256:abc".into()) }),
+            evt(EventType::AgentWroteFile { file_path: "src/lib.rs".into(), digest: Some("sha256:abc".into()), operation: Some("modified".into()), additions: Some(10), deletions: Some(3) }),
             evt(EventType::AgentCalledTool { tool_name: "read_file".into(), tool_input_digest: None, tool_output_digest: None, duration_ms: Some(10) }),
             evt(EventType::AgentCalledTool { tool_name: "write_file".into(), tool_input_digest: None, tool_output_digest: None, duration_ms: None }),
         ];
@@ -239,8 +259,8 @@ mod tests {
     #[test]
     fn matches_process_start_and_complete() {
         let events = vec![
-            evt(EventType::AgentStartedProcess { process_name: "npm test".into(), pid: Some(1234) }),
-            evt(EventType::AgentCompletedProcess { process_name: "npm test".into(), exit_code: Some(0), duration_ms: Some(5000) }),
+            evt(EventType::AgentStartedProcess { process_name: "npm test".into(), pid: Some(1234), command: Some("npm test --runInBand".into()) }),
+            evt(EventType::AgentCompletedProcess { process_name: "npm test".into(), exit_code: Some(0), duration_ms: Some(5000), command: None }),
         ];
 
         let se = SideEffects::from_events(&events);

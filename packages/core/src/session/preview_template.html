@@ -1,400 +1,347 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Session Receipt: __SESSION_ID__</title>
 <style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-       background: #09080d; color: #e0e0e0; max-width: 960px; margin: 0 auto; padding: 2rem; }
-h1 { font-size: 1.5rem; color: #fff; margin-bottom: 0.25rem; }
-h2 { font-size: 0.8rem; color: #888; text-transform: uppercase; letter-spacing: 0.05em;
-     font-weight: 500; margin-bottom: 0.75rem; margin-top: 2rem; }
-a { color: #60a5fa; text-decoration: none; }
-a:hover { text-decoration: underline; }
-.mono { font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace; font-size: 0.8rem; }
-.dim { color: #888; }
-.card { background: #141414; border: 1px solid #252525; border-radius: 8px; padding: 1.25rem; margin-bottom: 1rem; }
-.badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
-.badge-pass { background: #1a3a1a; color: #4ade80; border: 1px solid #4ade8040; }
-.badge-fail { background: #3a1a1a; color: #f87171; border: 1px solid #f8717140; }
-.badge-warn { background: #3a2a1a; color: #fbbf24; border: 1px solid #fbbf2440; }
-.badge-status { background: #1a2a3a; color: #60a5fa; border: 1px solid #60a5fa40; }
-.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.75rem; }
-.stat { text-align: center; }
-.stat .value { font-size: 1.4rem; font-weight: 700; color: #fff; }
-.stat .label { font-size: 0.65rem; color: #888; text-transform: uppercase; letter-spacing: 0.03em; }
-.check-row { display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0; border-bottom: 1px solid #1a1a1a; font-size: 0.85rem; }
-.check-row:last-child { border-bottom: none; }
-.check-name { min-width: 140px; color: #ccc; }
-.check-detail { color: #888; flex: 1; }
-.event-row { display: flex; gap: 0.75rem; padding: 0.4rem 0; border-bottom: 1px solid #1a1a1a; font-size: 0.8rem; }
-.event-row:last-child { border-bottom: none; }
-.event-time { width: 70px; color: #888; flex-shrink: 0; }
-.event-type { color: #60a5fa; min-width: 100px; flex-shrink: 0; }
-.event-agent { color: #a855f7; min-width: 100px; flex-shrink: 0; }
-.event-summary { color: #ccc; flex: 1; word-break: break-all; }
-.agent-row { display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0; border-bottom: 1px solid #1a1a1a; }
-.agent-row:last-child { border-bottom: none; }
-.agent-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.hero { text-align: center; padding: 2rem 0 1rem; }
-.hero .status-icon { font-size: 2.5rem; margin-bottom: 0.5rem; }
-.hero .status-text { font-size: 1.1rem; font-weight: 600; margin-bottom: 0.5rem; }
-.hero .root-hash { font-size: 0.75rem; color: #60a5fa; word-break: break-all; }
-.summary-count { font-size: 0.75rem; color: #888; margin-top: 0.5rem; }
-#verifying { text-align: center; padding: 3rem; color: #888; }
-.se-item { font-size: 0.8rem; padding: 0.25rem 0; color: #ccc; }
-.se-item .se-agent { color: #888; margin-left: 0.5rem; }
-.footer { margin-top: 3rem; text-align: center; color: #555; font-size: 0.7rem; padding-top: 1rem; border-top: 1px solid #1a1a1a; }
+:root{--font:'Segoe UI',-apple-system,BlinkMacSystemFont,Roboto,sans-serif;--mono:'JetBrains Mono','SF Mono','Fira Code',monospace;--bg:#0f0f0e;--surface:#171614;--surface-2:#1d1c19;--border:#2e2d2a;--text:#e8e6e1;--muted:#9a978f;--faint:#5e5d59;--primary:#5db8a3;--primary-s:rgba(93,184,163,.10);--ok:#4caf82;--ok-s:rgba(76,175,130,.10);--warn:#d4924a;--warn-s:rgba(212,146,74,.10);--risk:#d46060;--risk-s:rgba(212,96,96,.10);--info:#5b90c8;--info-s:rgba(91,144,200,.10);--radius:12px;--shadow:0 16px 48px rgba(0,0,0,.5)}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-font-smoothing:antialiased;scroll-behavior:smooth;scroll-padding-top:80px}
+body{font-family:var(--font);font-size:.88rem;color:var(--text);background:var(--bg);line-height:1.6;min-height:100dvh}
+a{color:var(--primary);text-decoration:none}
+.mono{font-family:var(--mono);font-size:.75rem}
+.muted{color:var(--muted)}.faint{color:var(--faint)}
+.topbar{position:sticky;top:0;z-index:50;height:56px;display:flex;align-items:center;justify-content:space-between;padding:0 1.5rem;background:color-mix(in srgb,var(--bg) 90%,transparent);backdrop-filter:blur(16px);border-bottom:1px solid var(--border)}
+.brand{font-weight:600;font-size:.95rem;letter-spacing:-.03em}
+.layout{display:flex;min-height:calc(100dvh - 56px)}
+.sidebar{width:210px;flex-shrink:0;position:sticky;top:56px;height:calc(100dvh - 56px);overflow-y:auto;padding:1.5rem 1rem;border-right:1px solid var(--border)}
+.nav-label{font-family:var(--mono);font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin-bottom:.4rem}
+.nav-group{margin-bottom:1.25rem}
+.nav-item{display:flex;align-items:center;justify-content:space-between;padding:.4rem .75rem;border-radius:8px;color:var(--muted);font-size:.78rem;font-weight:500;cursor:pointer;text-decoration:none;transition:.15s}
+.nav-item:hover{color:var(--text);background:var(--surface-2)}
+.nav-item.active{color:var(--primary);background:var(--primary-s)}
+.nav-count{font-family:var(--mono);font-size:.6rem;color:var(--faint);background:var(--surface-2);padding:1px 6px;border-radius:99px}
+.nav-item.active .nav-count{color:var(--primary);background:rgba(93,184,163,.16)}
+.main{flex:1;min-width:0;padding:2rem 2.5rem 4rem}
+@media(max-width:900px){.sidebar{display:none}.main{padding:1.5rem 1rem 3rem}}
+.section{margin-bottom:3rem;scroll-margin-top:80px}
+.section-title{font-size:1.35rem;font-weight:700;letter-spacing:-.04em;margin-bottom:.25rem}
+.section-sub{font-size:.75rem;color:var(--muted)}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.card-p{padding:1.25rem 1.5rem}
+.badge{display:inline-flex;align-items:center;gap:4px;font-family:var(--mono);font-size:.6rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;padding:3px 8px;border-radius:99px;white-space:nowrap}
+.badge-ok{background:var(--ok-s);color:var(--ok);border:1px solid rgba(76,175,130,.2)}
+.badge-warn{background:var(--warn-s);color:var(--warn);border:1px solid rgba(212,146,74,.2)}
+.badge-risk{background:var(--risk-s);color:var(--risk);border:1px solid rgba(212,96,96,.2)}
+.badge-info{background:var(--info-s);color:var(--info);border:1px solid rgba(91,144,200,.2)}
+.badge-muted{background:var(--surface-2);color:var(--muted);border:1px solid var(--border)}
+.hero{margin-bottom:3rem;padding:2rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);position:relative;overflow:hidden;box-shadow:var(--shadow)}
+.hero::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 70% 60% at 50% -20%,var(--primary-s),transparent 70%);pointer-events:none}
+.hero-status{display:flex;align-items:center;gap:.75rem;margin-bottom:1rem;position:relative}
+.status-dot{width:8px;height:8px;border-radius:50%;box-shadow:0 0 0 3px var(--ok-s)}
+.hero-headline{font-size:clamp(1.4rem,1rem + 1.5vw,2.2rem);font-weight:700;letter-spacing:-.05em;line-height:1.05;margin-bottom:.75rem;position:relative}
+.hero-summary{font-size:.88rem;color:var(--muted);line-height:1.65;max-width:68ch;margin-bottom:1.25rem;position:relative}
+.hero-badges{display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:1.5rem;position:relative}
+.metrics-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:.75rem;position:relative}
+.metric{padding:1rem;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius)}
+.metric-label{font-family:var(--mono);font-size:.6rem;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);margin-bottom:.25rem}
+.metric-value{font-size:1.3rem;font-weight:700;letter-spacing:-.04em;font-variant-numeric:tabular-nums}
+.metric-sub{font-size:.7rem;color:var(--faint);margin-top:2px}
+table{width:100%;border-collapse:collapse}
+th{font-family:var(--mono);font-size:.6rem;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);padding:.75rem 1rem;text-align:left;border-bottom:1px solid var(--border)}
+td{padding:.75rem 1rem;font-size:.78rem;vertical-align:middle;border-bottom:1px solid var(--border)}
+tr:last-child td{border-bottom:none}
+.tl-item{display:grid;grid-template-columns:52px 1fr auto;gap:.75rem;align-items:start;padding:.75rem 1rem;border-bottom:1px solid var(--border)}
+.tl-item:last-child{border-bottom:none}
+.tl-time{font-family:var(--mono);font-size:.72rem;color:var(--faint);padding-top:2px}
+.tl-label{font-size:.78rem;font-weight:600;margin-bottom:2px}
+.tl-detail{font-size:.7rem;color:var(--muted);line-height:1.5}
+.tl-agent{display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:.62rem;color:var(--faint);margin-top:4px}
+.tl-dot{width:6px;height:6px;border-radius:50%;display:inline-block}
+.check-row{display:flex;align-items:center;gap:.75rem;padding:.5rem 1rem;border-bottom:1px solid var(--border);font-size:.8rem}
+.check-row:last-child{border-bottom:none}
+.check-name{min-width:120px;font-family:var(--mono);font-size:.72rem}
+.check-detail{color:var(--muted);flex:1;font-size:.75rem}
+.finding{display:grid;grid-template-columns:1fr auto;gap:1rem;align-items:start;padding:1rem;border-bottom:1px solid var(--border)}
+.finding:last-child{border-bottom:none}
+.finding-title{font-size:.78rem;font-weight:600;margin-bottom:3px}
+.finding-desc{font-size:.7rem;color:var(--muted);line-height:1.5}
+.finding-path{font-family:var(--mono);font-size:.65rem;color:var(--faint);margin-top:3px}
+.proof-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.75rem;margin-bottom:1.25rem}
+.proof-cell{padding:1rem 1.25rem;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius)}
+.proof-label{font-family:var(--mono);font-size:.6rem;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);margin-bottom:.25rem}
+.proof-value{font-family:var(--mono);font-size:.72rem;color:var(--text);word-break:break-all;line-height:1.6}
+.raw-pre{background:#0a0908;border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem;font-family:var(--mono);font-size:.7rem;color:#c8c3ba;line-height:1.85;overflow-x:auto;max-height:520px}
+.footer{text-align:center;color:var(--faint);font-size:.7rem;padding:2rem 0;border-top:1px solid var(--border);margin-top:2rem}
+#loading{display:flex;align-items:center;justify-content:center;min-height:60vh;color:var(--muted);font-size:.88rem}
+.agent-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:.5rem;flex-shrink:0}
+.role-chip{font-family:var(--mono);font-size:.58rem;font-weight:600;letter-spacing:.05em;text-transform:uppercase;padding:2px 7px;border-radius:99px}
+.role-lead{background:rgba(93,184,163,.16);color:var(--primary)}
+.role-helper{background:var(--surface-2);color:var(--muted)}
+.cmd-item{display:grid;grid-template-columns:1fr auto;gap:1rem;align-items:center;padding:.75rem 1.25rem;border-bottom:1px solid var(--border)}
+.cmd-item:last-child{border-bottom:none}
+.cmd-shell{font-family:var(--mono);font-size:.75rem;margin-bottom:3px}
+.cmd-meta{display:flex;gap:.75rem;align-items:center;font-family:var(--mono);font-size:.65rem;color:var(--faint)}
+.exit-ok{font-family:var(--mono);font-size:.65rem;font-weight:600;padding:2px 7px;border-radius:4px;background:var(--ok-s);color:var(--ok)}
+.exit-fail{font-family:var(--mono);font-size:.65rem;font-weight:600;padding:2px 7px;border-radius:4px;background:var(--risk-s);color:var(--risk)}
 </style>
 </head>
 <body>
-
-<!-- Receipt data in a non-executable block to prevent XSS breakout.
-     If any receipt field contains </script>, the HTML parser will NOT
-     terminate this tag because type="application/json" blocks are not
-     parsed as executable script. -->
 <script id="receipt-data" type="application/json">__RECEIPT_JSON__</script>
-
-<div id="verifying">Verifying receipt...</div>
-<div id="app" style="display:none"></div>
+<div id="loading">Verifying receipt...</div>
 
 <script>
-// -- Parse receipt from the safe data block --
-const RECEIPT = JSON.parse(document.getElementById('receipt-data').textContent);
+const R = JSON.parse(document.getElementById('receipt-data').textContent);
 
-// ---------------------------------------------------------------------------
-// SHA-256 helpers using Web Crypto API (works offline in all modern browsers)
-// ---------------------------------------------------------------------------
-async function sha256(data) {
-  const buf = (typeof data === 'string')
-    ? new TextEncoder().encode(data)
-    : data;
-  const hash = await crypto.subtle.digest('SHA-256', buf);
-  return new Uint8Array(hash);
+// ── SHA-256 via Web Crypto API ──
+async function sha256(d){const b=typeof d==='string'?new TextEncoder().encode(d):d;return new Uint8Array(await crypto.subtle.digest('SHA-256',b))}
+function toHex(b){return Array.from(b).map(x=>x.toString(16).padStart(2,'0')).join('')}
+function fromHex(h){const b=new Uint8Array(h.length/2);for(let i=0;i<h.length;i+=2)b[i/2]=parseInt(h.substr(i,2),16);return b}
+function concat(a,b){const c=new Uint8Array(a.length+b.length);c.set(a);c.set(b,a.length);return c}
+
+async function computeRoot(ids){if(!ids.length)return null;let lv=[];for(const id of ids)lv.push(await sha256(id));while(lv.length>1){const nx=[];let i=0;while(i+1<lv.length){nx.push(await sha256(concat(lv[i],lv[i+1])));i+=2}if(i<lv.length)nx.push(lv[i]);lv=nx}return toHex(lv[0])}
+
+async function verifyProof(artId,proof,rootHex){
+  const algo=proof.algorithm||'sha256-duplicate-last';
+  if(algo!=='sha256-duplicate-last'&&algo!=='sha256-rfc9162')return false;
+  const lh=await sha256(artId);if(toHex(lh)!==proof.leaf_hash)return false;
+  let cur=lh;for(const s of(proof.path||proof.steps||[])){
+    const sh=s.hash||s.sibling_hash;if(!sh)return false;const sib=fromHex(sh);
+    const dir=(s.direction||'').toLowerCase();
+    if(dir==='right')cur=await sha256(concat(cur,sib));
+    else if(dir==='left')cur=await sha256(concat(sib,cur));
+    else return false;
+  }return toHex(cur)===rootHex;
 }
 
-function toHex(bytes) {
-  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-function fromHex(hex) {
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < hex.length; i += 2) {
-    bytes[i / 2] = parseInt(hex.substr(i, 2), 16);
-  }
-  return bytes;
-}
-
-function concat(a, b) {
-  const c = new Uint8Array(a.length + b.length);
-  c.set(a, 0);
-  c.set(b, a.length);
+async function runChecks(){
+  const c=[];
+  c.push({n:'receipt',s:'pass',d:'Parses as valid Session Receipt'});
+  c.push(R.type==='treeship/session-receipt/v1'?{n:'type',s:'pass',d:'Correct receipt type'}:{n:'type',s:'fail',d:'Expected treeship/session-receipt/v1'});
+  const arts=R.artifacts||[];
+  if(arts.length){
+    const root=await computeRoot(arts.map(a=>a.artifact_id));
+    const stored=(R.merkle.root||'').replace('mroot_','');
+    c.push(root===stored?{n:'merkle_root',s:'pass',d:'Merkle root matches recomputed value'}:{n:'merkle_root',s:'fail',d:'Root mismatch'});
+    for(const e of(R.merkle.inclusion_proofs||[])){
+      const v=await verifyProof(e.artifact_id,e.proof||e,stored);
+      c.push({n:'proof:'+e.artifact_id.slice(0,12),s:v?'pass':'fail',d:v?'Inclusion proof valid':'Proof failed'});
+    }
+  }else c.push({n:'merkle',s:'warn',d:'No artifacts'});
+  c.push(R.merkle.leaf_count===arts.length?{n:'leaf_count',s:'pass',d:'Leaf count matches'}:{n:'leaf_count',s:'fail',d:'Mismatch'});
+  const tl=R.timeline||[];let ord=true;
+  for(let i=1;i<tl.length;i++){if(tl[i-1].timestamp>tl[i].timestamp||(tl[i-1].timestamp===tl[i].timestamp&&tl[i-1].sequence_no>tl[i].sequence_no)){ord=false;break}}
+  c.push({n:'timeline',s:ord?'pass':'fail',d:ord?'Timeline ordered':'Out of order'});
   return c;
 }
 
-// ---------------------------------------------------------------------------
-// Merkle tree: RFC 9162 (sha256-rfc9162) — matches tree.rs compute_root
-// ---------------------------------------------------------------------------
-async function computeMerkleRoot(artifactIds) {
-  if (artifactIds.length === 0) return null;
-  let level = [];
-  for (const id of artifactIds) {
-    level.push(await sha256(id));
-  }
-  while (level.length > 1) {
-    const next = [];
-    let i = 0;
-    while (i + 1 < level.length) {
-      next.push(await sha256(concat(level[i], level[i + 1])));
-      i += 2;
-    }
-    if (i < level.length) {
-      next.push(level[i]); // RFC 9162: promote unpaired node
-    }
-    level = next;
-  }
-  return toHex(level[0]);
-}
+// ── Helpers ──
+function esc(s){return(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function fmtDur(ms){if(!ms)return'--';const s=Math.floor(ms/1000);if(s<60)return s+'s';if(s<3600)return Math.floor(s/60)+'m '+s%60+'s';return Math.floor(s/3600)+'h '+Math.floor(s%3600/60)+'m'}
+function timeOf(iso){return(iso||'').slice(11,19)}
+const COLORS=['#a855f7','#f59e0b','#14b8a6','#3b82f6','#ec4899','#06b6d4'];
+const EVENT_BADGE={
+  'session.started':'badge-muted','session.closed':'badge-muted',
+  'agent.started':'badge-ok','agent.spawned':'badge-info','agent.handoff':'badge-warn',
+  'agent.collaborated':'badge-info','agent.returned':'badge-muted',
+  'agent.completed':'badge-ok','agent.failed':'badge-risk',
+  'agent.called_tool':'badge-info','agent.read_file':'badge-warn','agent.wrote_file':'badge-ok',
+  'agent.opened_port':'badge-risk','agent.connected_network':'badge-warn',
+  'agent.started_process':'badge-info','agent.completed_process':'badge-muted',
+  'agent.decision':'badge-info'
+};
 
-// ---------------------------------------------------------------------------
-// Inclusion proof verification — matches tree.rs verify_proof
-// ---------------------------------------------------------------------------
-async function verifyInclusionProof(artifactId, proof, rootHex) {
-  // Validate algorithm field — must match the Rust verifier's accepted set.
-  const algo = proof.algorithm || 'sha256-duplicate-last';
-  if (algo !== 'sha256-duplicate-last' && algo !== 'sha256-rfc9162') {
-    return false; // unknown algorithm — reject
-  }
+async function render(){
+  const checks=await runChecks();
+  const allPass=checks.every(c=>c.s!=='fail');
+  const s=R.session||{};const p=R.participants||{};
+  const nodes=(R.agent_graph||{}).nodes||[];
+  const edges=(R.agent_graph||{}).edges||[];
+  const tl=R.timeline||[];const se=R.side_effects||{};
+  const arts=R.artifacts||[];const mk=R.merkle||{};
+  const pr=R.proofs||{};const narr=s.narrative||{};
 
-  const leafHash = await sha256(artifactId);
-  if (toHex(leafHash) !== proof.leaf_hash) return false;
+  // Derive security findings from side effects
+  const findings=[];
+  (se.files_read||[]).forEach(f=>{if(/\.env|\.ssh|\.aws|\.pem|credentials|\.gnupg/i.test(f.file_path))findings.push({title:'Sensitive file read: '+f.file_path,desc:'Read by '+f.agent_instance_id+' at '+timeOf(f.timestamp),sev:'warn'})});
+  (se.network_connections||[]).forEach(n=>{findings.push({title:'External network: '+n.destination,desc:'Connected by '+n.agent_instance_id,sev:'risk'})});
+  (se.ports_opened||[]).forEach(p=>{findings.push({title:'Port opened: '+p.port,desc:'By '+p.agent_instance_id,sev:'warn'})});
 
-  let current = leafHash;
-  for (const step of (proof.path || proof.steps || [])) {
-    const siblingHex = step.hash || step.sibling_hash;
-    if (!siblingHex) return false;
-    const sibling = fromHex(siblingHex);
-    const dir = (step.direction || '').toLowerCase();
-    if (dir === 'right') {
-      current = await sha256(concat(current, sibling));
-    } else if (dir === 'left') {
-      current = await sha256(concat(sibling, current));
-    } else {
-      return false; // unknown direction — reject, matching Rust's closed enum
-    }
-  }
-  return toHex(current) === rootHex;
-}
+  // Build node index for timeline
+  const nodeIdx={};nodes.forEach((n,i)=>nodeIdx[n.agent_instance_id]=i);
 
-// ---------------------------------------------------------------------------
-// Run all verification checks
-// ---------------------------------------------------------------------------
-async function runChecks() {
-  const checks = [];
+  let h='';
 
-  // 1. Receipt parses (it's already parsed since it's embedded)
-  checks.push({ name: 'receipt.json', status: 'pass', detail: 'Parses as valid Session Receipt' });
+  // ── TOPBAR ──
+  h+='<header class="topbar"><span class="brand">treeship</span><span class="mono muted">'+esc(s.id)+'</span></header>';
+  h+='<div class="layout">';
 
-  // 2. Type field
-  if (RECEIPT.type === 'treeship/session-receipt/v1') {
-    checks.push({ name: 'type', status: 'pass', detail: 'Correct receipt type' });
-  } else {
-    checks.push({ name: 'type', status: 'fail', detail: 'Expected treeship/session-receipt/v1, got ' + RECEIPT.type });
-  }
+  // ── SIDEBAR ──
+  h+='<nav class="sidebar">';
+  h+='<div class="nav-group"><div class="nav-label">Receipt</div>';
+  h+='<a class="nav-item active" href="#summary">Summary</a>';
+  h+='<a class="nav-item" href="#agents">Agents <span class="nav-count">'+nodes.length+'</span></a>';
+  h+='<a class="nav-item" href="#timeline">Timeline <span class="nav-count">'+tl.length+'</span></a>';
+  h+='</div><div class="nav-group"><div class="nav-label">Changes</div>';
+  h+='<a class="nav-item" href="#files">Files <span class="nav-count">'+((se.files_written||[]).length+(se.files_read||[]).length)+'</span></a>';
+  h+='<a class="nav-item" href="#commands">Commands <span class="nav-count">'+(se.processes||[]).length+'</span></a>';
+  h+='</div><div class="nav-group"><div class="nav-label">Trust</div>';
+  if(findings.length)h+='<a class="nav-item" href="#security">Findings <span class="nav-count" style="color:var(--warn)">'+findings.length+'</span></a>';
+  h+='<a class="nav-item" href="#verification">Verification <span class="nav-count">'+checks.length+'</span></a>';
+  h+='<a class="nav-item" href="#proof">Proof</a>';
+  h+='<a class="nav-item" href="#raw">Raw receipt</a>';
+  h+='</div></nav>';
 
-  // 3. Merkle root recomputation
-  const artifacts = RECEIPT.artifacts || [];
-  if (artifacts.length > 0) {
-    const ids = artifacts.map(a => a.artifact_id);
-    const recomputedRoot = await computeMerkleRoot(ids);
-    const storedRoot = (RECEIPT.merkle.root || '').replace('mroot_', '');
+  // ── MAIN ──
+  h+='<main class="main">';
 
-    if (recomputedRoot === storedRoot) {
-      checks.push({ name: 'merkle_root', status: 'pass', detail: 'Merkle root matches recomputed value' });
-    } else {
-      checks.push({ name: 'merkle_root', status: 'fail',
-        detail: 'Mismatch: stored ' + (RECEIPT.merkle.root || 'none').slice(0, 24) + '... vs recomputed mroot_' + (recomputedRoot || '').slice(0, 16) + '...' });
-    }
+  // ── HERO ──
+  h+='<section class="hero" id="summary">';
+  h+='<div class="hero-status"><div class="status-dot" style="background:'+(allPass?'var(--ok)':'var(--risk)')+';box-shadow:0 0 0 3px '+(allPass?'var(--ok-s)':'var(--risk-s)')+'"></div>';
+  h+='<span class="mono" style="font-size:.72rem;color:'+(allPass?'var(--ok)':'var(--risk)')+'">Session '+(s.status||'complete')+' · '+(allPass?'All checks passed':'Verification issues detected')+'</span></div>';
+  h+='<h1 class="hero-headline">'+esc(narr.headline||s.name||s.id)+'</h1>';
+  if(narr.summary)h+='<p class="hero-summary">'+esc(narr.summary)+'</p>';
+  h+='<div class="hero-badges">';
+  h+='<span class="badge '+(allPass?'badge-ok':'badge-risk')+'">'+(allPass?'&#x2714; Verified':'&#x2718; Issues')+'</span>';
+  h+='<span class="badge badge-ok">'+pr.signature_count+' signatures</span>';
+  if(findings.length)h+='<span class="badge badge-warn">'+findings.length+' finding'+(findings.length>1?'s':'')+'</span>';
+  h+='<span class="badge badge-info">'+nodes.length+' agent'+(nodes.length!==1?'s':'')+'</span>';
+  h+='</div>';
+  h+='<div class="metrics-row">';
+  h+='<div class="metric"><div class="metric-label">Files</div><div class="metric-value">'+(se.files_written||[]).length+'</div><div class="metric-sub">written</div></div>';
+  h+='<div class="metric"><div class="metric-label">Tool actions</div><div class="metric-value">'+(se.tool_invocations||[]).length+'</div><div class="metric-sub">across '+nodes.length+' agents</div></div>';
+  h+='<div class="metric"><div class="metric-label">Duration</div><div class="metric-value">'+fmtDur(s.duration_ms)+'</div><div class="metric-sub">'+esc(s.started_at||'').slice(11,16)+' start</div></div>';
+  if(s.total_cost_usd>0)h+='<div class="metric"><div class="metric-label">Cost</div><div class="metric-value">$'+s.total_cost_usd.toFixed(2)+'</div><div class="metric-sub">'+((s.total_tokens_in||0)/1000).toFixed(0)+'k in / '+((s.total_tokens_out||0)/1000).toFixed(0)+'k out</div></div>';
+  h+='<div class="metric"><div class="metric-label">Trust</div><div class="metric-value" style="color:var(--primary);font-size:1rem">'+(pr.zk_proofs_present?'L3':'L2')+'</div><div class="metric-sub">Merkle + Ed25519</div></div>';
+  h+='</div></section>';
 
-    // 4. Inclusion proofs
-    const proofs = RECEIPT.merkle.inclusion_proofs || [];
-    for (const entry of proofs) {
-      const valid = await verifyInclusionProof(entry.artifact_id, entry.proof || entry, storedRoot);
-      checks.push({
-        name: 'inclusion:' + entry.artifact_id.slice(0, 16),
-        status: valid ? 'pass' : 'fail',
-        detail: valid ? 'Inclusion proof valid' : 'Inclusion proof failed',
-      });
-    }
-  } else {
-    checks.push({ name: 'merkle_root', status: 'warn', detail: 'No artifacts to verify' });
-  }
-
-  // 5. Leaf count
-  if (RECEIPT.merkle.leaf_count === artifacts.length) {
-    checks.push({ name: 'leaf_count', status: 'pass', detail: 'Leaf count matches artifact count' });
-  } else {
-    checks.push({ name: 'leaf_count', status: 'fail',
-      detail: 'leaf_count ' + RECEIPT.merkle.leaf_count + ' != artifact count ' + artifacts.length });
+  // ── AGENTS ──
+  if(nodes.length){
+    h+='<section class="section" id="agents"><div class="section-title">Agents</div><div class="section-sub muted">Every agent that participated, their role, model, and contribution.</div>';
+    h+='<div class="card" style="margin-top:.75rem"><table><thead><tr><th>Agent</th><th>Role</th><th>Model</th><th>Host</th><th>Actions</th>';
+    if(s.total_cost_usd>0)h+='<th>Cost</th>';
+    h+='</tr></thead><tbody>';
+    nodes.forEach((n,i)=>{
+      const c=COLORS[i%COLORS.length];
+      h+='<tr><td><span class="agent-dot" style="background:'+c+'"></span><span style="font-weight:600">'+esc(n.agent_name)+'</span></td>';
+      h+='<td><span class="role-chip '+(n.depth===0?'role-lead':'role-helper')+'">'+esc(n.agent_role||'agent')+'</span></td>';
+      h+='<td class="mono faint">'+esc(n.model||'--')+'</td>';
+      h+='<td class="mono faint">'+esc(n.host_id)+'</td>';
+      h+='<td class="mono">'+n.tool_calls+'</td>';
+      if(s.total_cost_usd>0)h+='<td class="mono">$'+n.cost_usd.toFixed(2)+'</td>';
+      h+='</tr>';
+    });
+    h+='</tbody></table></div></section>';
   }
 
-  // 6. Timeline ordering
-  const tl = RECEIPT.timeline || [];
-  let ordered = true;
-  for (let i = 1; i < tl.length; i++) {
-    const prev = [tl[i-1].timestamp, tl[i-1].sequence_no, tl[i-1].event_id];
-    const curr = [tl[i].timestamp, tl[i].sequence_no, tl[i].event_id];
-    if (prev[0] > curr[0] || (prev[0] === curr[0] && prev[1] > curr[1]) ||
-        (prev[0] === curr[0] && prev[1] === curr[1] && prev[2] > curr[2])) {
-      ordered = false; break;
-    }
+  // ── TIMELINE ──
+  if(tl.length){
+    h+='<section class="section" id="timeline"><div class="section-title">Timeline</div><div class="section-sub muted">Append-only event log. Every action sealed in sequence.</div>';
+    h+='<div class="card" style="margin-top:.75rem">';
+    tl.forEach(ev=>{
+      const ni=nodeIdx[ev.agent_instance_id];
+      const c=ni!==undefined?COLORS[ni%COLORS.length]:'#6b7280';
+      const badge=EVENT_BADGE[ev.event_type]||'badge-muted';
+      const label=ev.event_type.replace('agent.','').replace('session.','').replace(/_/g,' ');
+      h+='<div class="tl-item"><span class="tl-time">'+timeOf(ev.timestamp)+'</span><div>';
+      h+='<div class="tl-label">'+esc(ev.summary||label)+'</div>';
+      h+='<div class="tl-agent"><span class="tl-dot" style="background:'+c+'"></span>'+esc(ev.agent_name)+'</div>';
+      h+='</div><span class="badge '+badge+'">'+esc(label)+'</span></div>';
+    });
+    h+='</div></section>';
   }
-  checks.push({
-    name: 'timeline_order',
-    status: ordered ? 'pass' : 'fail',
-    detail: ordered ? 'Timeline is correctly ordered' : 'Timeline entries are not in deterministic order',
+
+  // ── FILES ──
+  const allFiles=[...(se.files_written||[]).map(f=>({...f,op:'write'})),...(se.files_read||[]).map(f=>({...f,op:'read'}))];
+  if(allFiles.length){
+    h+='<section class="section" id="files"><div class="section-title">Files</div><div class="section-sub muted">All file operations during the session.</div>';
+    h+='<div class="card" style="margin-top:.75rem"><table><thead><tr><th>Path</th><th>Op</th><th>Agent</th>';
+    if(allFiles.some(f=>f.additions||f.deletions))h+='<th>Diff</th>';
+    h+='</tr></thead><tbody>';
+    allFiles.forEach(f=>{
+      const opClass=f.op==='read'?'badge-muted':f.operation==='created'?'badge-ok':'badge-info';
+      h+='<tr><td class="mono" style="font-size:.72rem;word-break:break-all">'+esc(f.file_path)+'</td>';
+      h+='<td><span class="badge '+opClass+'">'+esc(f.operation||f.op)+'</span></td>';
+      h+='<td class="mono faint">'+esc(f.agent_instance_id)+'</td>';
+      if(allFiles.some(x=>x.additions||x.deletions))h+='<td class="mono">'+(f.additions!=null?'<span style="color:var(--ok)">+'+f.additions+'</span> <span style="color:var(--risk)">-'+(f.deletions||0)+'</span>':'')+'</td>';
+      h+='</tr>';
+    });
+    h+='</tbody></table></div></section>';
+  }
+
+  // ── COMMANDS ──
+  if((se.processes||[]).length){
+    h+='<section class="section" id="commands"><div class="section-title">Commands</div><div class="section-sub muted">Processes executed during the session.</div>';
+    h+='<div class="card" style="margin-top:.75rem">';
+    (se.processes||[]).forEach(p=>{
+      const exitClass=p.exit_code===0?'exit-ok':'exit-fail';
+      h+='<div class="cmd-item"><div><div class="cmd-shell">'+esc(p.command||p.process_name)+'</div>';
+      h+='<div class="cmd-meta"><span>'+esc(p.agent_instance_id)+'</span>';
+      if(p.duration_ms)h+='<span>'+fmtDur(p.duration_ms)+'</span>';
+      h+='</div></div>';
+      h+='<span class="'+exitClass+'">exit '+(p.exit_code!=null?p.exit_code:'?')+'</span></div>';
+    });
+    h+='</div></section>';
+  }
+
+  // ── SECURITY FINDINGS ──
+  if(findings.length){
+    h+='<section class="section" id="security"><div class="section-title">Security findings</div><div class="section-sub muted">Sensitive operations detected during the session.</div>';
+    h+='<div class="card" style="margin-top:.75rem">';
+    findings.forEach(f=>{
+      h+='<div class="finding"><div><div class="finding-title">'+esc(f.title)+'</div>';
+      h+='<div class="finding-desc">'+esc(f.desc)+'</div></div>';
+      h+='<span class="badge badge-'+f.sev+'">'+f.sev+'</span></div>';
+    });
+    h+='</div></section>';
+  }
+
+  // ── VERIFICATION CHECKS ──
+  h+='<section class="section" id="verification"><div class="section-title">Verification</div><div class="section-sub muted">Client-side checks run in your browser using Web Crypto API. No server trust.</div>';
+  h+='<div class="card" style="margin-top:.75rem">';
+  checks.forEach(c=>{
+    const badge=c.s==='pass'?'badge-ok':c.s==='fail'?'badge-risk':'badge-warn';
+    h+='<div class="check-row"><span class="badge '+badge+'">'+c.s.toUpperCase()+'</span>';
+    h+='<span class="check-name">'+esc(c.n)+'</span>';
+    h+='<span class="check-detail">'+esc(c.d)+'</span></div>';
   });
+  const pc=checks.filter(c=>c.s==='pass').length;const fc=checks.filter(c=>c.s==='fail').length;
+  h+='<div style="padding:.75rem 1rem;font-size:.75rem;color:var(--muted)">'+pc+' passed, '+fc+' failed</div>';
+  h+='</div></section>';
 
-  return checks;
-}
+  // ── PROOF ──
+  h+='<section class="section" id="proof"><div class="section-title">Proof</div>';
+  h+='<div class="card card-p" style="margin-top:.75rem"><div class="proof-grid">';
+  h+='<div class="proof-cell"><div class="proof-label">Merkle root</div><div class="proof-value">'+esc(mk.root||'none')+'</div></div>';
+  h+='<div class="proof-cell"><div class="proof-label">Leaves</div><div class="proof-value">'+mk.leaf_count+'</div></div>';
+  h+='<div class="proof-cell"><div class="proof-label">Proofs</div><div class="proof-value">'+(mk.inclusion_proofs||[]).length+'</div></div>';
+  h+='<div class="proof-cell"><div class="proof-label">Signatures</div><div class="proof-value">'+pr.signature_count+'</div></div>';
+  h+='<div class="proof-cell"><div class="proof-label">ZK proofs</div><div class="proof-value">'+(pr.zk_proofs_present?'present':'none')+'</div></div>';
+  h+='</div></div></section>';
 
-// ---------------------------------------------------------------------------
-// Render the page
-// ---------------------------------------------------------------------------
-function esc(s) { return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  // ── RAW ──
+  h+='<section class="section" id="raw"><div class="section-title">Raw receipt</div>';
+  h+='<div class="raw-pre"><code>'+esc(JSON.stringify(R,null,2))+'</code></div></section>';
 
-function renderChecks(checks) {
-  return checks.map(c => {
-    const badge = c.status === 'pass' ? '<span class="badge badge-pass">PASS</span>'
-                : c.status === 'fail' ? '<span class="badge badge-fail">FAIL</span>'
-                : '<span class="badge badge-warn">WARN</span>';
-    return '<div class="check-row">' + badge +
-      '<span class="check-name mono">' + esc(c.name) + '</span>' +
-      '<span class="check-detail">' + esc(c.detail) + '</span></div>';
-  }).join('');
-}
-
-function formatDuration(ms) {
-  if (!ms) return '--';
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return s + 's';
-  if (s < 3600) return Math.floor(s/60) + 'm ' + (s%60) + 's';
-  return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';
-}
-
-function timeOnly(iso) { return (iso || '').slice(11, 19); }
-
-const AGENT_COLORS = ['#a855f7','#f59e0b','#14b8a6','#3b82f6','#ec4899','#06b6d4'];
-
-async function render() {
-  const checks = await runChecks();
-  const allPass = checks.every(c => c.status !== 'fail');
-  const passCount = checks.filter(c => c.status === 'pass').length;
-  const failCount = checks.filter(c => c.status === 'fail').length;
-  const warnCount = checks.filter(c => c.status === 'warn').length;
-
-  const s = RECEIPT.session || {};
-  const p = RECEIPT.participants || {};
-  const nodes = (RECEIPT.agent_graph || {}).nodes || [];
-  const edges = (RECEIPT.agent_graph || {}).edges || [];
-  const tl = RECEIPT.timeline || [];
-  const se = RECEIPT.side_effects || {};
-  const arts = RECEIPT.artifacts || [];
-  const mk = RECEIPT.merkle || {};
-
-  let html = '';
-
-  // Hero: verification status
-  html += '<div class="hero">';
-  html += '<div class="status-icon">' + (allPass ? '&#x2714;' : '&#x2718;') + '</div>';
-  html += '<div class="status-text" style="color:' + (allPass ? '#4ade80' : '#f87171') + '">';
-  html += allPass ? 'Verified by Treeship' : 'Verification Failed';
-  html += '</div>';
-  html += '<div class="root-hash mono">' + esc(mk.root || 'no merkle root') + '</div>';
-  html += '<div class="summary-count">' + passCount + ' passed, ' + failCount + ' failed, ' + warnCount + ' warnings</div>';
-  html += '</div>';
-
-  // Session header
-  html += '<h1>' + esc(s.name || s.id) + '</h1>';
-  html += '<div class="dim mono" style="margin-bottom:0.5rem">';
-  html += '<span class="badge badge-status">' + esc(s.status) + '</span> ';
-  html += esc(s.id) + ' &middot; ' + esc(s.started_at || '') + ' &middot; ' + formatDuration(s.duration_ms);
-  html += '</div>';
-
-  // Verification checks
-  html += '<h2>Verification Checks</h2>';
-  html += '<div class="card">' + renderChecks(checks) + '</div>';
-
-  // Participants
-  html += '<h2>Participants</h2>';
-  html += '<div class="card"><div class="grid">';
-  html += '<div class="stat"><div class="value">' + p.total_agents + '</div><div class="label">Agents</div></div>';
-  html += '<div class="stat"><div class="value">' + p.spawned_subagents + '</div><div class="label">Spawned</div></div>';
-  html += '<div class="stat"><div class="value">' + p.handoffs + '</div><div class="label">Handoffs</div></div>';
-  html += '<div class="stat"><div class="value">' + p.max_depth + '</div><div class="label">Max Depth</div></div>';
-  html += '<div class="stat"><div class="value">' + p.hosts + '</div><div class="label">Hosts</div></div>';
-  html += '<div class="stat"><div class="value">' + (p.tool_runtimes || 0) + '</div><div class="label">Runtimes</div></div>';
-  html += '</div></div>';
-
-  // Agent graph
-  if (nodes.length > 0) {
-    html += '<h2>Agent Graph</h2><div class="card">';
-    nodes.forEach((n, i) => {
-      const color = AGENT_COLORS[i % AGENT_COLORS.length];
-      html += '<div class="agent-row">';
-      html += '<span class="agent-dot" style="background:' + color + '"></span>';
-      html += '<span style="font-size:0.9rem;font-weight:500">' + esc(n.agent_name) + '</span>';
-      html += '<span class="dim mono" style="font-size:0.75rem">' + esc(n.agent_role || 'agent') +
-              ' &middot; depth ' + n.depth + ' &middot; ' + n.tool_calls + ' tools &middot; @' + esc(n.host_id) + '</span>';
-      if (n.status) html += '<span class="badge ' + (n.status === 'completed' ? 'badge-pass' : n.status === 'failed' ? 'badge-fail' : 'badge-status') + '">' + esc(n.status) + '</span>';
-      html += '</div>';
-    });
-    html += '</div>';
+  // ── REVIEW CALLOUT ──
+  if(narr.review){
+    h+='<section class="section"><div class="card card-p" style="border-left:3px solid var(--warn)">';
+    h+='<div style="font-size:.65rem;text-transform:uppercase;letter-spacing:.1em;color:var(--warn);margin-bottom:.5rem">What to review</div>';
+    h+='<p style="font-size:.85rem;color:var(--muted);line-height:1.6">'+esc(narr.review)+'</p></div></section>';
   }
 
-  // Timeline
-  if (tl.length > 0) {
-    html += '<h2>Timeline (' + tl.length + ' events)</h2><div class="card">';
-    tl.forEach(ev => {
-      html += '<div class="event-row">';
-      html += '<span class="event-time mono">' + timeOnly(ev.timestamp) + '</span>';
-      html += '<span class="event-type mono">' + esc(ev.event_type) + '</span>';
-      html += '<span class="event-agent mono">' + esc(ev.agent_name) + '</span>';
-      html += '<span class="event-summary">' + esc(ev.summary || '') + '</span>';
-      html += '</div>';
-    });
-    html += '</div>';
-  }
+  h+='<div class="footer">Verified client-side. No network calls. No server trust.<br>Generated by <a href="https://treeship.dev">Treeship</a> Session Receipt v1</div>';
+  h+='</main></div>';
 
-  // Side effects
-  const seFiles = (se.files_written || []).length + (se.files_read || []).length;
-  const seTools = (se.tool_invocations || []).length;
-  const seProcs = (se.processes || []).length;
-  const sePorts = (se.ports_opened || []).length;
-  const seNet = (se.network_connections || []).length;
-  if (seFiles + seTools + seProcs + sePorts + seNet > 0) {
-    html += '<h2>Side Effects</h2><div class="card"><div class="grid" style="margin-bottom:0.75rem">';
-    html += '<div class="stat"><div class="value">' + (se.files_read||[]).length + '</div><div class="label">Files Read</div></div>';
-    html += '<div class="stat"><div class="value">' + (se.files_written||[]).length + '</div><div class="label">Files Written</div></div>';
-    html += '<div class="stat"><div class="value">' + seTools + '</div><div class="label">Tool Calls</div></div>';
-    html += '<div class="stat"><div class="value">' + seProcs + '</div><div class="label">Processes</div></div>';
-    html += '<div class="stat"><div class="value">' + sePorts + '</div><div class="label">Ports</div></div>';
-    html += '<div class="stat"><div class="value">' + seNet + '</div><div class="label">Network</div></div>';
-    html += '</div>';
-    (se.files_written || []).forEach(f => {
-      html += '<div class="se-item mono">' + esc(f.file_path) + '<span class="se-agent">by ' + esc(f.agent_instance_id) + '</span></div>';
-    });
-    (se.files_read || []).forEach(f => {
-      html += '<div class="se-item mono" style="color:#fbbf24">' + esc(f.file_path) + ' (read)<span class="se-agent">by ' + esc(f.agent_instance_id) + '</span></div>';
-    });
-    html += '</div>';
-  }
-
-  // Artifacts
-  if (arts.length > 0) {
-    html += '<h2>Artifacts (' + arts.length + ')</h2><div class="card">';
-    arts.forEach(a => {
-      html += '<div class="mono" style="font-size:0.75rem;padding:0.3rem 0;border-bottom:1px solid #1a1a1a;color:#ccc">';
-      html += esc(a.artifact_id) + ' <span class="dim">' + esc(a.payload_type) + '</span>';
-      if (a.digest) html += ' <span class="dim">' + esc(a.digest.slice(0, 23)) + '...</span>';
-      html += '</div>';
-    });
-    html += '</div>';
-  }
-
-  // Proof summary
-  html += '<h2>Proof</h2><div class="card">';
-  html += '<div class="mono" style="font-size:0.8rem;margin-bottom:0.5rem"><span class="dim">merkle root</span> ' + esc(mk.root || 'none') + '</div>';
-  html += '<div class="mono" style="font-size:0.8rem;margin-bottom:0.5rem"><span class="dim">leaves</span> ' + mk.leaf_count + ' <span class="dim">proofs</span> ' + (mk.inclusion_proofs || []).length + '</div>';
-  html += '<div class="mono" style="font-size:0.8rem"><span class="dim">signatures</span> ' + (RECEIPT.proofs || {}).signature_count + '</div>';
-  html += '</div>';
-
-  // Footer
-  html += '<div class="footer">';
-  html += 'Verified client-side using Web Crypto API. No network calls. No server trust.<br>';
-  html += 'Generated by <a href="https://treeship.dev">Treeship</a> Session Receipt v1';
-  html += '</div>';
-
-  document.getElementById('verifying').style.display = 'none';
-  document.getElementById('app').style.display = 'block';
-  document.getElementById('app').innerHTML = html;
+  document.getElementById('loading').style.display='none';
+  document.body.insertAdjacentHTML('beforeend',h);
 }
 
-// Check crypto.subtle availability (may be blocked on file:// in some browsers)
-if (typeof crypto === 'undefined' || !crypto.subtle) {
-  document.getElementById('verifying').innerHTML =
-    '<div style="color:#fbbf24;max-width:500px;margin:2rem auto;text-align:center">' +
-    '<div style="font-size:1.5rem;margin-bottom:0.5rem">Verification unavailable</div>' +
-    '<div style="font-size:0.85rem;color:#888">This browser does not support Web Crypto API on this origin. ' +
-    'Try opening preview.html via a local HTTP server (python3 -m http.server) or use ' +
-    '<code style="color:#60a5fa">treeship package verify</code> from the CLI.</div></div>';
-} else {
-  render().catch(e => {
-    document.getElementById('verifying').innerHTML =
-      '<div style="color:#f87171">Verification error: ' + e.message + '</div>';
-  });
+if(typeof crypto==='undefined'||!crypto.subtle){
+  document.getElementById('loading').innerHTML='<div style="color:var(--warn);max-width:500px;text-align:center"><div style="font-size:1.2rem;margin-bottom:.5rem">Verification unavailable</div><div style="font-size:.82rem;color:var(--muted)">Web Crypto API not available on this origin. Try a local HTTP server or use <code>treeship package verify</code>.</div></div>';
+}else{
+  render().catch(e=>{document.getElementById('loading').innerHTML='<div style="color:var(--risk)">Error: '+e.message+'</div>'});
 }
 </script>
 </body>

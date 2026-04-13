@@ -43,7 +43,21 @@ pub struct AgentNode {
     /// Number of tool calls made by this agent.
     #[serde(default)]
     pub tool_calls: u32,
+    /// Model identifier (e.g. "claude-opus-4-6"). Populated from decision events.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Cumulative input tokens across all decisions by this agent.
+    #[serde(default)]
+    pub tokens_in: u64,
+    /// Cumulative output tokens across all decisions by this agent.
+    #[serde(default)]
+    pub tokens_out: u64,
+    /// Cumulative cost in USD across all decisions by this agent.
+    #[serde(default, skip_serializing_if = "is_zero_f64")]
+    pub cost_usd: f64,
 }
+
+fn is_zero_f64(v: &f64) -> bool { *v == 0.0 }
 
 /// A directed edge in the agent graph.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,6 +99,10 @@ impl AgentGraph {
                 status: None,
                 depth: 0,
                 tool_calls: 0,
+                model: None,
+                tokens_in: 0,
+                tokens_out: 0,
+                cost_usd: 0.0,
             });
 
             match &event.event_type {
@@ -127,6 +145,10 @@ impl AgentGraph {
                         status: None,
                         depth: 0,
                         tool_calls: 0,
+                        model: None,
+                        tokens_in: 0,
+                        tokens_out: 0,
+                        cost_usd: 0.0,
                     });
                 }
 
@@ -164,6 +186,16 @@ impl AgentGraph {
 
                 EventType::AgentCalledTool { .. } => {
                     node.tool_calls += 1;
+                }
+
+                EventType::AgentDecision { ref model, tokens_in, tokens_out, cost_usd, .. } => {
+                    if let Some(ref m) = model {
+                        // Last model wins (agents may switch models mid-session).
+                        node.model = Some(m.clone());
+                    }
+                    if let Some(t) = tokens_in { node.tokens_in += t; }
+                    if let Some(t) = tokens_out { node.tokens_out += t; }
+                    if let Some(c) = cost_usd { node.cost_usd += c; }
                 }
 
                 _ => {}
