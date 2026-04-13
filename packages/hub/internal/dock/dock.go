@@ -16,6 +16,12 @@ type Handlers struct {
 	DB *sql.DB
 }
 
+func jsonError(w http.ResponseWriter, msg string, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
 // Challenge handles GET /v1/dock/challenge
 func (h *Handlers) Challenge(w http.ResponseWriter, r *http.Request) {
 	nonce := randomHex(16)
@@ -23,7 +29,7 @@ func (h *Handlers) Challenge(w http.ResponseWriter, r *http.Request) {
 	expiresAt := time.Now().Unix() + 300
 
 	if err := db.InsertChallenge(h.DB, deviceCode, nonce, expiresAt); err != nil {
-		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		jsonError(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
@@ -39,7 +45,7 @@ func (h *Handlers) Challenge(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) Authorized(w http.ResponseWriter, r *http.Request) {
 	deviceCode := r.URL.Query().Get("device_code")
 	if deviceCode == "" {
-		http.Error(w, `{"error":"missing device_code"}`, http.StatusBadRequest)
+		jsonError(w, "missing device_code", http.StatusBadRequest)
 		return
 	}
 
@@ -66,8 +72,6 @@ func (h *Handlers) Authorized(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Challenge is approved. Return 200 with status "approved".
-	// The CLI will then POST /v1/dock/authorize with real keys to get a dock_id.
-	// If a ships row already exists (CLI already called authorize), include dock_id.
 	w.Header().Set("Content-Type", "application/json")
 
 	row := h.DB.QueryRow(
@@ -77,7 +81,6 @@ func (h *Handlers) Authorized(w http.ResponseWriter, r *http.Request) {
 	)
 	var dockID string
 	if err := row.Scan(&dockID); err != nil {
-		// No ships row yet -- browser approved but CLI hasn't sent keys
 		json.NewEncoder(w).Encode(map[string]string{"status": "approved"})
 		return
 	}
@@ -96,12 +99,12 @@ type authorizeRequest struct {
 func (h *Handlers) Authorize(w http.ResponseWriter, r *http.Request) {
 	var req authorizeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid JSON body"}`, http.StatusBadRequest)
+		jsonError(w, "invalid JSON body", http.StatusBadRequest)
 		return
 	}
 
 	if req.DeviceCode == "" {
-		http.Error(w, `{"error":"missing device_code"}`, http.StatusBadRequest)
+		jsonError(w, "missing device_code", http.StatusBadRequest)
 		return
 	}
 
@@ -123,7 +126,7 @@ func (h *Handlers) Authorize(w http.ResponseWriter, r *http.Request) {
 	// Browser-only approval (no keys): just mark as approved and return.
 	if req.ShipPublicKey == "" || req.DockPublicKey == "" {
 		if err := db.ApproveChallenge(h.DB, challenge.DeviceCode, nil, nil); err != nil {
-			http.Error(w, `{"error":"failed to approve challenge"}`, http.StatusInternalServerError)
+			jsonError(w, "failed to approve challenge", http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -164,12 +167,12 @@ func (h *Handlers) Authorize(w http.ResponseWriter, r *http.Request) {
 
 	shipPubKey, err := hex.DecodeString(req.ShipPublicKey)
 	if err != nil {
-		http.Error(w, `{"error":"invalid ship_public_key hex"}`, http.StatusBadRequest)
+		jsonError(w, "invalid ship_public_key hex", http.StatusBadRequest)
 		return
 	}
 	dockPubKey, err := hex.DecodeString(req.DockPublicKey)
 	if err != nil {
-		http.Error(w, `{"error":"invalid dock_public_key hex"}`, http.StatusBadRequest)
+		jsonError(w, "invalid dock_public_key hex", http.StatusBadRequest)
 		return
 	}
 
@@ -177,7 +180,7 @@ func (h *Handlers) Authorize(w http.ResponseWriter, r *http.Request) {
 	dockID := "dck_" + randomHex(16)
 	now := time.Now().Unix()
 	if err := db.InsertShip(h.DB, dockID, shipPubKey, dockPubKey, now); err != nil {
-		http.Error(w, `{"error":"failed to create ship"}`, http.StatusInternalServerError)
+		jsonError(w, "failed to create ship", http.StatusInternalServerError)
 		return
 	}
 

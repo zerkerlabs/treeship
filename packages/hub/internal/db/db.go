@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	_ "modernc.org/sqlite"
 )
@@ -113,10 +114,20 @@ CREATE INDEX IF NOT EXISTS idx_ship_agents_dock_id ON ship_agents(dock_id);
 `
 
 // Open opens (or creates) the SQLite database and applies the schema.
+// Checks TREESHIP_HUB_DB first, then DATABASE_PATH (Railway sets this),
+// then falls back to a persistent path under /var/lib.
 func Open() (*sql.DB, error) {
 	path := os.Getenv("TREESHIP_HUB_DB")
 	if path == "" {
-		path = "/tmp/treeship-hub.db"
+		path = os.Getenv("DATABASE_PATH")
+	}
+	if path == "" {
+		path = "/var/lib/treeship/hub.db"
+	}
+
+	// Ensure the parent directory exists.
+	if dir := filepath.Dir(path); dir != "" {
+		_ = os.MkdirAll(dir, 0o755)
 	}
 
 	db, err := sql.Open("sqlite", path)

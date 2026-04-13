@@ -90,6 +90,10 @@ func (h *Handlers) PutReceipt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "missing session_id in path")
 		return
 	}
+	if len(pathSessionID) > 128 {
+		writeError(w, http.StatusBadRequest, "session_id too long (max 128 chars)")
+		return
+	}
 
 	// Cap request body at 10 MB to prevent memory-DoS from authenticated docks.
 	const maxReceiptBytes = 10 << 20
@@ -203,6 +207,10 @@ func (h *Handlers) GetReceipt(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "session_id")
 	if sessionID == "" {
 		writeError(w, http.StatusBadRequest, "missing session_id in path")
+		return
+	}
+	if len(sessionID) > 128 {
+		writeError(w, http.StatusBadRequest, "session_id too long")
 		return
 	}
 

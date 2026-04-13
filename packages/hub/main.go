@@ -39,6 +39,9 @@ func main() {
 	// CORS — allow treeship.dev frontend to call the API.
 	r.Use(corsMiddleware)
 
+	// Rate limiting: max 100 concurrent requests.
+	r.Use(middleware.Throttle(100))
+
 	// Log every request.
 	r.Use(middleware.RequestID)
 	r.Use(requestLogger)

@@ -10,10 +10,9 @@ FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y ca-certificates curl && rm -rf /var/lib/apt/lists/*
 
-# Install treeship CLI (needed by /v1/verify endpoint)
-ARG TREESHIP_VERSION=0.1.0
-RUN curl -fsSL "https://github.com/zerkerlabs/treeship/releases/download/v${TREESHIP_VERSION}/treeship-linux-x86_64" \
-    -o /usr/local/bin/treeship && chmod +x /usr/local/bin/treeship
+# Persistent data directory for SQLite. Railway volume should mount here.
+RUN mkdir -p /var/lib/treeship && chmod 755 /var/lib/treeship
+VOLUME ["/var/lib/treeship"]
 
 COPY --from=builder /app/hub /usr/local/bin/hub
 
