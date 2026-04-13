@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Session Receipt: __SESSION_ID__</title>
+<title>Session Receipt</title>
 <style>
 :root{--font:'Segoe UI',-apple-system,BlinkMacSystemFont,Roboto,sans-serif;--mono:'JetBrains Mono','SF Mono','Fira Code',monospace;--bg:#0f0f0e;--surface:#171614;--surface-2:#1d1c19;--border:#2e2d2a;--text:#e8e6e1;--muted:#9a978f;--faint:#5e5d59;--primary:#5db8a3;--primary-s:rgba(93,184,163,.10);--ok:#4caf82;--ok-s:rgba(76,175,130,.10);--warn:#d4924a;--warn-s:rgba(212,146,74,.10);--risk:#d46060;--risk-s:rgba(212,96,96,.10);--info:#5b90c8;--info-s:rgba(91,144,200,.10);--radius:12px;--shadow:0 16px 48px rgba(0,0,0,.5)}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -94,6 +94,13 @@ tr:last-child td{border-bottom:none}
 <script>
 const R = JSON.parse(document.getElementById('receipt-data').textContent);
 
+// Set page title safely from parsed data (not from template placeholder)
+document.title = 'Session Receipt: ' + (R.session && R.session.id ? R.session.id : 'unknown');
+
+// Safe numeric coercion: returns 0 for non-numeric values so attacker-supplied
+// strings like '0</span><img onerror=alert(1)>' cannot inject HTML.
+function num(v){const n=Number(v);return Number.isFinite(n)?n:0}
+
 // ── SHA-256 via Web Crypto API ──
 async function sha256(d){const b=typeof d==='string'?new TextEncoder().encode(d):d;return new Uint8Array(await crypto.subtle.digest('SHA-256',b))}
 function toHex(b){return Array.from(b).map(x=>x.toString(16).padStart(2,'0')).join('')}
@@ -166,7 +173,7 @@ async function render(){
   const findings=[];
   (se.files_read||[]).forEach(f=>{if(/\.env|\.ssh|\.aws|\.pem|credentials|\.gnupg/i.test(f.file_path))findings.push({title:'Sensitive file read: '+f.file_path,desc:'Read by '+f.agent_instance_id+' at '+timeOf(f.timestamp),sev:'warn'})});
   (se.network_connections||[]).forEach(n=>{findings.push({title:'External network: '+n.destination,desc:'Connected by '+n.agent_instance_id,sev:'risk'})});
-  (se.ports_opened||[]).forEach(p=>{findings.push({title:'Port opened: '+p.port,desc:'By '+p.agent_instance_id,sev:'warn'})});
+  (se.ports_opened||[]).forEach(p=>{findings.push({title:'Port opened: '+num(p.port),desc:'By '+p.agent_instance_id,sev:'warn'})});
 
   // Build node index for timeline
   const nodeIdx={};nodes.forEach((n,i)=>nodeIdx[n.agent_instance_id]=i);
@@ -199,12 +206,12 @@ async function render(){
   // ── HERO ──
   h+='<section class="hero" id="summary">';
   h+='<div class="hero-status"><div class="status-dot" style="background:'+(allPass?'var(--ok)':'var(--risk)')+';box-shadow:0 0 0 3px '+(allPass?'var(--ok-s)':'var(--risk-s)')+'"></div>';
-  h+='<span class="mono" style="font-size:.72rem;color:'+(allPass?'var(--ok)':'var(--risk)')+'">Session '+(s.status||'complete')+' · '+(allPass?'All checks passed':'Verification issues detected')+'</span></div>';
+  h+='<span class="mono" style="font-size:.72rem;color:'+(allPass?'var(--ok)':'var(--risk)')+'">Session '+(s.status||'complete')+' · '+(allPass?'Merkle structure verified':'Structural issues detected')+'</span></div>';
   h+='<h1 class="hero-headline">'+esc(narr.headline||s.name||s.id)+'</h1>';
   if(narr.summary)h+='<p class="hero-summary">'+esc(narr.summary)+'</p>';
   h+='<div class="hero-badges">';
-  h+='<span class="badge '+(allPass?'badge-ok':'badge-risk')+'">'+(allPass?'&#x2714; Verified':'&#x2718; Issues')+'</span>';
-  h+='<span class="badge badge-ok">'+pr.signature_count+' signatures</span>';
+  h+='<span class="badge '+(allPass?'badge-ok':'badge-risk')+'">'+(allPass?'&#x2714; Merkle verified':'&#x2718; Issues')+'</span>';
+  h+='<span class="badge badge-ok">'+num(pr.signature_count)+' signatures</span>';
   if(findings.length)h+='<span class="badge badge-warn">'+findings.length+' finding'+(findings.length>1?'s':'')+'</span>';
   h+='<span class="badge badge-info">'+nodes.length+' agent'+(nodes.length!==1?'s':'')+'</span>';
   h+='</div>';
@@ -212,7 +219,7 @@ async function render(){
   h+='<div class="metric"><div class="metric-label">Files</div><div class="metric-value">'+(se.files_written||[]).length+'</div><div class="metric-sub">written</div></div>';
   h+='<div class="metric"><div class="metric-label">Tool actions</div><div class="metric-value">'+(se.tool_invocations||[]).length+'</div><div class="metric-sub">across '+nodes.length+' agents</div></div>';
   h+='<div class="metric"><div class="metric-label">Duration</div><div class="metric-value">'+fmtDur(s.duration_ms)+'</div><div class="metric-sub">'+esc(s.started_at||'').slice(11,16)+' start</div></div>';
-  if(s.total_cost_usd>0)h+='<div class="metric"><div class="metric-label">Cost</div><div class="metric-value">$'+s.total_cost_usd.toFixed(2)+'</div><div class="metric-sub">'+((s.total_tokens_in||0)/1000).toFixed(0)+'k in / '+((s.total_tokens_out||0)/1000).toFixed(0)+'k out</div></div>';
+  if(num(s.total_cost_usd)>0)h+='<div class="metric"><div class="metric-label">Cost</div><div class="metric-value">$'+num(s.total_cost_usd).toFixed(2)+'</div><div class="metric-sub">'+(num(s.total_tokens_in)/1000).toFixed(0)+'k in / '+(num(s.total_tokens_out)/1000).toFixed(0)+'k out</div></div>';
   h+='<div class="metric"><div class="metric-label">Trust</div><div class="metric-value" style="color:var(--primary);font-size:1rem">'+(pr.zk_proofs_present?'L3':'L2')+'</div><div class="metric-sub">Merkle + Ed25519</div></div>';
   h+='</div></section>';
 
@@ -220,16 +227,16 @@ async function render(){
   if(nodes.length){
     h+='<section class="section" id="agents"><div class="section-title">Agents</div><div class="section-sub muted">Every agent that participated, their role, model, and contribution.</div>';
     h+='<div class="card" style="margin-top:.75rem"><table><thead><tr><th>Agent</th><th>Role</th><th>Model</th><th>Host</th><th>Actions</th>';
-    if(s.total_cost_usd>0)h+='<th>Cost</th>';
+    if(num(s.total_cost_usd)>0)h+='<th>Cost</th>';
     h+='</tr></thead><tbody>';
     nodes.forEach((n,i)=>{
       const c=COLORS[i%COLORS.length];
       h+='<tr><td><span class="agent-dot" style="background:'+c+'"></span><span style="font-weight:600">'+esc(n.agent_name)+'</span></td>';
-      h+='<td><span class="role-chip '+(n.depth===0?'role-lead':'role-helper')+'">'+esc(n.agent_role||'agent')+'</span></td>';
+      h+='<td><span class="role-chip '+(num(n.depth)===0?'role-lead':'role-helper')+'">'+esc(n.agent_role||'agent')+'</span></td>';
       h+='<td class="mono faint">'+esc(n.model||'--')+'</td>';
       h+='<td class="mono faint">'+esc(n.host_id)+'</td>';
-      h+='<td class="mono">'+n.tool_calls+'</td>';
-      if(s.total_cost_usd>0)h+='<td class="mono">$'+n.cost_usd.toFixed(2)+'</td>';
+      h+='<td class="mono">'+num(n.tool_calls)+'</td>';
+      if(num(s.total_cost_usd)>0)h+='<td class="mono">$'+num(n.cost_usd).toFixed(2)+'</td>';
       h+='</tr>';
     });
     h+='</tbody></table></div></section>';
@@ -264,7 +271,7 @@ async function render(){
       h+='<tr><td class="mono" style="font-size:.72rem;word-break:break-all">'+esc(f.file_path)+'</td>';
       h+='<td><span class="badge '+opClass+'">'+esc(f.operation||f.op)+'</span></td>';
       h+='<td class="mono faint">'+esc(f.agent_instance_id)+'</td>';
-      if(allFiles.some(x=>x.additions||x.deletions))h+='<td class="mono">'+(f.additions!=null?'<span style="color:var(--ok)">+'+f.additions+'</span> <span style="color:var(--risk)">-'+(f.deletions||0)+'</span>':'')+'</td>';
+      if(allFiles.some(x=>x.additions||x.deletions))h+='<td class="mono">'+(f.additions!=null?'<span style="color:var(--ok)">+'+num(f.additions)+'</span> <span style="color:var(--risk)">-'+num(f.deletions)+'</span>':'')+'</td>';
       h+='</tr>';
     });
     h+='</tbody></table></div></section>';
@@ -280,7 +287,7 @@ async function render(){
       h+='<div class="cmd-meta"><span>'+esc(p.agent_instance_id)+'</span>';
       if(p.duration_ms)h+='<span>'+fmtDur(p.duration_ms)+'</span>';
       h+='</div></div>';
-      h+='<span class="'+exitClass+'">exit '+(p.exit_code!=null?p.exit_code:'?')+'</span></div>';
+      h+='<span class="'+exitClass+'">exit '+(p.exit_code!=null?num(p.exit_code):'?')+'</span></div>';
     });
     h+='</div></section>';
   }
@@ -298,7 +305,7 @@ async function render(){
   }
 
   // ── VERIFICATION CHECKS ──
-  h+='<section class="section" id="verification"><div class="section-title">Verification</div><div class="section-sub muted">Client-side checks run in your browser using Web Crypto API. No server trust.</div>';
+  h+='<section class="section" id="verification"><div class="section-title">Verification</div><div class="section-sub muted">Merkle tree and structural checks run client-side via Web Crypto API. For full Ed25519 signature verification, use <code>treeship package verify</code>.</div>';
   h+='<div class="card" style="margin-top:.75rem">';
   checks.forEach(c=>{
     const badge=c.s==='pass'?'badge-ok':c.s==='fail'?'badge-risk':'badge-warn';
@@ -314,7 +321,7 @@ async function render(){
   h+='<section class="section" id="proof"><div class="section-title">Proof</div>';
   h+='<div class="card card-p" style="margin-top:.75rem"><div class="proof-grid">';
   h+='<div class="proof-cell"><div class="proof-label">Merkle root</div><div class="proof-value">'+esc(mk.root||'none')+'</div></div>';
-  h+='<div class="proof-cell"><div class="proof-label">Leaves</div><div class="proof-value">'+mk.leaf_count+'</div></div>';
+  h+='<div class="proof-cell"><div class="proof-label">Leaves</div><div class="proof-value">'+num(mk.leaf_count)+'</div></div>';
   h+='<div class="proof-cell"><div class="proof-label">Proofs</div><div class="proof-value">'+(mk.inclusion_proofs||[]).length+'</div></div>';
   h+='<div class="proof-cell"><div class="proof-label">Signatures</div><div class="proof-value">'+pr.signature_count+'</div></div>';
   h+='<div class="proof-cell"><div class="proof-label">ZK proofs</div><div class="proof-value">'+(pr.zk_proofs_present?'present':'none')+'</div></div>';
@@ -331,7 +338,7 @@ async function render(){
     h+='<p style="font-size:.85rem;color:var(--muted);line-height:1.6">'+esc(narr.review)+'</p></div></section>';
   }
 
-  h+='<div class="footer">Verified client-side. No network calls. No server trust.<br>Generated by <a href="https://treeship.dev">Treeship</a> Session Receipt v1</div>';
+  h+='<div class="footer">Merkle structure verified client-side via Web Crypto API. Ed25519 signature verification requires <code>treeship package verify</code> or the WASM verifier.<br>No network calls. No server trust. Generated by <a href="https://treeship.dev">Treeship</a> Session Receipt v1</div>';
   h+='</main></div>';
 
   document.getElementById('loading').style.display='none';

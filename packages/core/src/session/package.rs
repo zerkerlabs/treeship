@@ -299,11 +299,12 @@ fn generate_preview_html(receipt: &SessionReceipt) -> String {
     // is type="application/json" which the HTML parser does not execute,
     // but this escaping adds a second layer.
     let safe_json = receipt_json.replace("</script", r"<\/script");
-    let session_id = &receipt.session.id;
 
+    // Only one placeholder: __RECEIPT_JSON__ inside the data block.
+    // The page title is set at runtime from the parsed JSON to avoid
+    // a second replacement pass that could re-inject content.
     PREVIEW_TEMPLATE
         .replace("__RECEIPT_JSON__", &safe_json)
-        .replace("__SESSION_ID__", session_id)
 }
 
 #[cfg(test)]
