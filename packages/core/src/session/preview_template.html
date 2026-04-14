@@ -159,6 +159,77 @@ const EVENT_BADGE={
   'agent.decision':'badge-info'
 };
 
+// ── [1] Retry detection ──
+// Consecutive process events, same command, first exit != 0, second exit == 0.
+function detectRetries(procs){
+  const retries=new Set();
+  for(let i=1;i<procs.length;i++){
+    const prev=procs[i-1],cur=procs[i];
+    const pCmd=prev.command||prev.process_name, cCmd=cur.command||cur.process_name;
+    if(pCmd===cCmd && prev.exit_code!=null && prev.exit_code!==0 && cur.exit_code===0){
+      retries.add(i-1); retries.add(i);
+    }
+  }
+  return retries;
+}
+function retryLabel(procs,idx,retries){
+  if(!retries.has(idx))return null;
+  const p=procs[idx];
+  if(p.exit_code!=null&&p.exit_code!==0)return{badge:'badge-warn',text:'failed',detail:'Exited '+p.exit_code+' — retried next'};
+  return{badge:'badge-ok',text:'recovered',detail:'Retry succeeded'};
+}
+
+// ── [2] File path split ──
+function renderPath(p){
+  const i=p.lastIndexOf('/');
+  if(i<0)return'<span style="font-weight:600">'+esc(p)+'</span>';
+  return'<span style="color:var(--faint)">'+esc(p.slice(0,i+1))+'</span><span style="font-weight:600">'+esc(p.slice(i+1))+'</span>';
+}
+
+// ── [3] Risk badge per file ──
+const SENSITIVE_RE=/\.env|\.ssh|\.pem|\.aws|\.gnupg|credentials|id_rsa|id_ed25519/i;
+function fileRisk(f,netDests){
+  if(SENSITIVE_RE.test(f.file_path))return{badge:'badge-warn',text:'sensitive'};
+  // Check if this file path appears in network destinations (unlikely but possible)
+  return{badge:'badge-ok',text:'ok'};
+}
+
+// ── [4] Security finding explanations ──
+function buildFindings(se){
+  const findings=[];
+  const writtenPaths=new Set((se.files_written||[]).map(f=>f.file_path));
+  (se.files_read||[]).forEach(f=>{
+    if(SENSITIVE_RE.test(f.file_path)){
+      const wasWritten=writtenPaths.has(f.file_path);
+      findings.push({
+        title:'Sensitive file read: '+f.file_path,
+        desc:wasWritten
+          ?'Read and subsequently written by '+f.agent_instance_id+'. Review whether the write was intentional.'
+          :'Read only by '+f.agent_instance_id+'. No write occurred to this file during the session.',
+        path:f.file_path+' · agent: '+f.agent_instance_id+' · '+timeOf(f.timestamp),
+        sev:'warn'
+      });
+    }
+  });
+  (se.network_connections||[]).forEach(n=>{
+    findings.push({
+      title:'External network connection',
+      desc:'Outbound connection to '+n.destination+(n.port?' on port '+num(n.port):'')+' by '+n.agent_instance_id+'. Review whether this external call was expected.',
+      path:n.destination+' · agent: '+n.agent_instance_id+' · '+timeOf(n.timestamp),
+      sev:'risk'
+    });
+  });
+  (se.ports_opened||[]).forEach(p=>{
+    findings.push({
+      title:'Port opened: '+num(p.port),
+      desc:'Agent '+p.agent_instance_id+' opened port '+num(p.port)+(p.protocol?' ('+p.protocol+')':'')+'. Verify this was intentional.',
+      path:'port '+num(p.port)+' · agent: '+p.agent_instance_id+' · '+timeOf(p.timestamp),
+      sev:'warn'
+    });
+  });
+  return findings;
+}
+
 async function render(){
   const checks=await runChecks();
   const allPass=checks.every(c=>c.s!=='fail');
@@ -169,11 +240,8 @@ async function render(){
   const arts=R.artifacts||[];const mk=R.merkle||{};
   const pr=R.proofs||{};const narr=s.narrative||{};
 
-  // Derive security findings from side effects
-  const findings=[];
-  (se.files_read||[]).forEach(f=>{if(/\.env|\.ssh|\.aws|\.pem|credentials|\.gnupg/i.test(f.file_path))findings.push({title:'Sensitive file read: '+f.file_path,desc:'Read by '+f.agent_instance_id+' at '+timeOf(f.timestamp),sev:'warn'})});
-  (se.network_connections||[]).forEach(n=>{findings.push({title:'External network: '+n.destination,desc:'Connected by '+n.agent_instance_id,sev:'risk'})});
-  (se.ports_opened||[]).forEach(p=>{findings.push({title:'Port opened: '+num(p.port),desc:'By '+p.agent_instance_id,sev:'warn'})});
+  // Derive security findings from side effects (deterministic pattern matching)
+  const findings=buildFindings(se);
 
   // Build node index for timeline
   const nodeIdx={};nodes.forEach((n,i)=>nodeIdx[n.agent_instance_id]=i);
@@ -224,19 +292,31 @@ async function render(){
   h+='</div></section>';
 
   // ── AGENTS ──
+  const hasCost=num(s.total_cost_usd)>0;
   if(nodes.length){
-    h+='<section class="section" id="agents"><div class="section-title">Agents</div><div class="section-sub muted">Every agent that participated, their role, model, and contribution.</div>';
+    h+='<section class="section" id="agents"><div class="section-title">Agents</div><div class="section-sub muted">Every agent that participated in this session, their role, model, and contribution.</div>';
     h+='<div class="card" style="margin-top:.75rem"><table><thead><tr><th>Agent</th><th>Role</th><th>Model</th><th>Host</th><th>Actions</th>';
-    if(num(s.total_cost_usd)>0)h+='<th>Cost</th>';
+    if(hasCost)h+='<th>Cost</th>';
     h+='</tr></thead><tbody>';
     nodes.forEach((n,i)=>{
       const c=COLORS[i%COLORS.length];
-      h+='<tr><td><span class="agent-dot" style="background:'+c+'"></span><span style="font-weight:600">'+esc(n.agent_name)+'</span></td>';
+      const costPct=hasCost&&num(s.total_cost_usd)>0?((num(n.cost_usd)/num(s.total_cost_usd))*100):0;
+      h+='<tr><td>';
+      h+='<div style="display:flex;align-items:center;gap:.5rem">';
+      h+='<span class="agent-dot" style="background:'+c+'"></span>';
+      h+='<div><div style="font-weight:600;font-size:.85rem">'+esc(n.agent_name)+'</div>';
+      h+='<div class="mono" style="font-size:.62rem;color:var(--faint)">'+esc(n.agent_instance_id)+'</div></div>';
+      h+='</div></td>';
       h+='<td><span class="role-chip '+(num(n.depth)===0?'role-lead':'role-helper')+'">'+esc(n.agent_role||'agent')+'</span></td>';
       h+='<td class="mono faint">'+esc(n.model||'--')+'</td>';
       h+='<td class="mono faint">'+esc(n.host_id)+'</td>';
       h+='<td class="mono">'+num(n.tool_calls)+'</td>';
-      if(num(s.total_cost_usd)>0)h+='<td class="mono">$'+num(n.cost_usd).toFixed(2)+'</td>';
+      if(hasCost){
+        h+='<td><div class="mono" style="margin-bottom:4px">$'+num(n.cost_usd).toFixed(2)+'</div>';
+        h+='<div style="height:4px;width:100%;background:var(--surface-2);border-radius:2px;overflow:hidden">';
+        h+='<div style="height:100%;width:'+costPct.toFixed(1)+'%;background:'+c+';border-radius:2px"></div>';
+        h+='</div></td>';
+      }
       h+='</tr>';
     });
     h+='</tbody></table></div></section>';
@@ -262,30 +342,40 @@ async function render(){
   // ── FILES ──
   const allFiles=[...(se.files_written||[]).map(f=>({...f,op:'write'})),...(se.files_read||[]).map(f=>({...f,op:'read'}))];
   if(allFiles.length){
-    h+='<section class="section" id="files"><div class="section-title">Files</div><div class="section-sub muted">All file operations during the session.</div>';
+    const hasDiff=allFiles.some(f=>f.additions||f.deletions);
+    h+='<section class="section" id="files"><div class="section-title">Files changed</div><div class="section-sub muted">Per-file record of every write, creation, and read detected during this session.</div>';
     h+='<div class="card" style="margin-top:.75rem"><table><thead><tr><th>Path</th><th>Op</th><th>Agent</th>';
-    if(allFiles.some(f=>f.additions||f.deletions))h+='<th>Diff</th>';
-    h+='</tr></thead><tbody>';
+    if(hasDiff)h+='<th>Diff</th>';
+    h+='<th>Risk</th></tr></thead><tbody>';
     allFiles.forEach(f=>{
       const opClass=f.op==='read'?'badge-muted':f.operation==='created'?'badge-ok':'badge-info';
-      h+='<tr><td class="mono" style="font-size:.72rem;word-break:break-all">'+esc(f.file_path)+'</td>';
+      const risk=fileRisk(f);
+      h+='<tr><td class="mono" style="font-size:.72rem;word-break:break-all">'+renderPath(f.file_path)+'</td>';
       h+='<td><span class="badge '+opClass+'">'+esc(f.operation||f.op)+'</span></td>';
-      h+='<td class="mono faint">'+esc(f.agent_instance_id)+'</td>';
-      if(allFiles.some(x=>x.additions||x.deletions))h+='<td class="mono">'+(f.additions!=null?'<span style="color:var(--ok)">+'+num(f.additions)+'</span> <span style="color:var(--risk)">-'+num(f.deletions)+'</span>':'')+'</td>';
+      h+='<td class="mono faint" style="font-size:.7rem">'+esc(f.agent_instance_id)+'</td>';
+      if(hasDiff)h+='<td class="mono">'+(f.additions!=null?'<span style="color:var(--ok)">+'+num(f.additions)+'</span> <span style="color:var(--risk)">-'+num(f.deletions)+'</span>':'')+'</td>';
+      h+='<td><span class="badge '+risk.badge+'">'+risk.text+'</span></td>';
       h+='</tr>';
     });
     h+='</tbody></table></div></section>';
   }
 
   // ── COMMANDS ──
-  if((se.processes||[]).length){
-    h+='<section class="section" id="commands"><div class="section-title">Commands</div><div class="section-sub muted">Processes executed during the session.</div>';
+  const procs=se.processes||[];
+  if(procs.length){
+    const retries=detectRetries(procs);
+    h+='<section class="section" id="commands"><div class="section-title">Commands run</div><div class="section-sub muted">Every shell command and process executed during this session.</div>';
     h+='<div class="card" style="margin-top:.75rem">';
-    (se.processes||[]).forEach(p=>{
+    procs.forEach((p,i)=>{
+      const ni=nodeIdx[p.agent_instance_id];
+      const ac=ni!==undefined?COLORS[ni%COLORS.length]:'#6b7280';
       const exitClass=p.exit_code===0?'exit-ok':'exit-fail';
+      const retry=retryLabel(procs,i,retries);
       h+='<div class="cmd-item"><div><div class="cmd-shell">'+esc(p.command||p.process_name)+'</div>';
-      h+='<div class="cmd-meta"><span>'+esc(p.agent_instance_id)+'</span>';
+      h+='<div class="cmd-meta">';
+      h+='<span style="display:flex;align-items:center;gap:4px"><span class="tl-dot" style="background:'+ac+';display:inline-block"></span>'+esc(p.agent_instance_id)+'</span>';
       if(p.duration_ms)h+='<span>'+fmtDur(p.duration_ms)+'</span>';
+      if(retry)h+='<span class="badge '+retry.badge+'" style="font-size:.58rem">'+retry.text+'</span>';
       h+='</div></div>';
       h+='<span class="'+exitClass+'">exit '+(p.exit_code!=null?num(p.exit_code):'?')+'</span></div>';
     });
@@ -294,12 +384,17 @@ async function render(){
 
   // ── SECURITY FINDINGS ──
   if(findings.length){
-    h+='<section class="section" id="security"><div class="section-title">Security findings</div><div class="section-sub muted">Sensitive operations detected during the session.</div>';
+    h+='<section class="section" id="security"><div class="section-title">Security findings</div><div class="section-sub muted">Automatically detected behaviors that require human review. Sealed into the chain -- these cannot be removed retroactively.</div>';
     h+='<div class="card" style="margin-top:.75rem">';
     findings.forEach(f=>{
-      h+='<div class="finding"><div><div class="finding-title">'+esc(f.title)+'</div>';
-      h+='<div class="finding-desc">'+esc(f.desc)+'</div></div>';
-      h+='<span class="badge badge-'+f.sev+'">'+f.sev+'</span></div>';
+      const icon=f.sev==='risk'
+        ?'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--risk)" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'
+        :'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2" stroke-linecap="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
+      h+='<div class="finding" style="grid-template-columns:28px 1fr auto"><div style="padding-top:2px">'+icon+'</div><div>';
+      h+='<div class="finding-title">'+esc(f.title)+'</div>';
+      h+='<div class="finding-desc">'+esc(f.desc)+'</div>';
+      if(f.path)h+='<div class="mono" style="font-size:.65rem;color:var(--faint);margin-top:3px">'+esc(f.path)+'</div>';
+      h+='</div><span class="badge badge-'+f.sev+'">'+f.sev+'</span></div>';
     });
     h+='</div></section>';
   }
@@ -337,6 +432,24 @@ async function render(){
     h+='<div style="font-size:.65rem;text-transform:uppercase;letter-spacing:.1em;color:var(--warn);margin-bottom:.5rem">What to review</div>';
     h+='<p style="font-size:.85rem;color:var(--muted);line-height:1.6">'+esc(narr.review)+'</p></div></section>';
   }
+
+  // ── WHAT'S IN A RECEIPT ──
+  h+='<section class="section" id="schema"><div class="section-title">What\'s in a receipt</div>';
+  h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:.75rem">';
+
+  h+='<div class="card card-p"><div class="mono" style="font-size:.62rem;color:var(--primary);letter-spacing:.08em;margin-bottom:.5rem">01 MERKLE TREE</div>';
+  h+='<div style="font-weight:700;font-size:.95rem;letter-spacing:-.03em;margin-bottom:.5rem">Every artifact is a leaf</div>';
+  h+='<p class="muted" style="font-size:.78rem;line-height:1.55">Each action during the session produces a signed artifact with a content-addressed ID. These IDs become leaves in a SHA-256 Merkle tree. The root hash at the top commits to every artifact below it. Change one artifact and the root changes. That root is what you see in the Proof section above.</p></div>';
+
+  h+='<div class="card card-p"><div class="mono" style="font-size:.62rem;color:var(--primary);letter-spacing:.08em;margin-bottom:.5rem">02 ED25519 SIGNATURES</div>';
+  h+='<div style="font-weight:700;font-size:.95rem;letter-spacing:-.03em;margin-bottom:.5rem">Each artifact is individually signed</div>';
+  h+='<p class="muted" style="font-size:.78rem;line-height:1.55">The agent\'s ship key signs every artifact at creation time using Ed25519 elliptic-curve signatures. The signature binds the artifact content to the signing key. This preview verifies the Merkle structure; for full signature verification, run <code style="font-size:.72rem;background:var(--surface-2);padding:1px 5px;border-radius:4px">treeship package verify</code> on the downloaded package.</p></div>';
+
+  h+='<div class="card card-p"><div class="mono" style="font-size:.62rem;color:var(--primary);letter-spacing:.08em;margin-bottom:.5rem">03 INCLUSION PROOFS</div>';
+  h+='<div style="font-weight:700;font-size:.95rem;letter-spacing:-.03em;margin-bottom:.5rem">Prove any artifact belongs</div>';
+  h+='<p class="muted" style="font-size:.78rem;line-height:1.55">Each artifact carries an inclusion proof: a list of sibling hashes that, when walked from the leaf to the root, reproduce the Merkle root. This means anyone can verify that a specific artifact was part of this session without needing the full tree. The verification section above checks every inclusion proof against the recomputed root.</p></div>';
+
+  h+='</div></section>';
 
   h+='<div class="footer">Merkle structure verified client-side via Web Crypto API. Ed25519 signature verification requires <code>treeship package verify</code> or the WASM verifier.<br>No network calls. No server trust. Generated by <a href="https://treeship.dev">Treeship</a> Session Receipt v1</div>';
   h+='</main></div>';
