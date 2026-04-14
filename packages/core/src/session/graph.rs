@@ -188,6 +188,10 @@ impl AgentGraph {
                     node.tool_calls += 1;
                 }
 
+                EventType::AgentCompletedProcess { .. } => {
+                    node.tool_calls += 1;
+                }
+
                 EventType::AgentDecision { ref model, tokens_in, tokens_out, cost_usd, .. } => {
                     if let Some(ref m) = model {
                         // Last model wins (agents may switch models mid-session).

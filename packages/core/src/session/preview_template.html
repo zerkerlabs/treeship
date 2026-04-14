@@ -329,7 +329,7 @@ async function render(){
   h+='</div>';
 
   // ── NARRATIVE PANELS ──
-  const planned=s.name||'Session '+esc(s.id);
+  const planned=narr.headline||s.name||'Session '+esc(s.id);
   const done=narr.summary||autoSummary(se,procs,nodes);
   const review=narr.review||autoReview(se,procs);
   h+='<div class="narrative-grid">';
