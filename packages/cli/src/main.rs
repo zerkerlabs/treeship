@@ -184,6 +184,18 @@ enum Command {
     #[command(subcommand)]
     Package(PackageCommand),
 
+    /// Declare authorized tool scope for this project
+    ///
+    /// Creates `.treeship/declaration.json` listing which tools agents
+    /// are authorized to use. The session receipt compares declared vs
+    /// actual tool usage and flags unauthorized calls.
+    ///
+    /// Examples:
+    ///   treeship declare --tools read_file,write_file,bash
+    ///   treeship declare --tools read_file --forbidden deploy,rm
+    ///   treeship declare --show
+    Declare(DeclareArgs),
+
     /// List pending approvals
     ///
     /// Shows actions that are blocked waiting for human approval.
@@ -647,6 +659,31 @@ enum PackageCommand {
 struct PackagePathArgs {
     /// Path to the .treeship package directory
     path: std::path::PathBuf,
+}
+
+// --- declare ---------------------------------------------------------------
+
+#[derive(Args)]
+struct DeclareArgs {
+    /// Comma-separated list of authorized tool names
+    #[arg(long, value_name = "TOOLS", value_delimiter = ',')]
+    tools: Vec<String>,
+
+    /// Comma-separated list of forbidden tool names
+    #[arg(long, value_name = "TOOLS", value_delimiter = ',')]
+    forbidden: Vec<String>,
+
+    /// Comma-separated list of tools requiring escalation/approval
+    #[arg(long, value_name = "TOOLS", value_delimiter = ',')]
+    escalation: Vec<String>,
+
+    /// ISO-8601 timestamp when this declaration expires
+    #[arg(long, value_name = "TIMESTAMP")]
+    valid_until: Option<String>,
+
+    /// Show the current declaration instead of creating one
+    #[arg(long)]
+    show: bool,
 }
 
 // --- approve / deny ---------------------------------------------------------
@@ -1358,6 +1395,14 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 a.path.clone(),
                 printer,
             ),
+        },
+
+        Command::Declare(a) => {
+            if a.show {
+                commands::declare::show(printer)
+            } else {
+                commands::declare::create(a.tools.clone(), a.forbidden.clone(), a.escalation.clone(), a.valid_until.clone(), printer)
+            }
         },
 
         Command::Pending => commands::approve::pending(printer),

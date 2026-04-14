@@ -151,6 +151,10 @@ pub struct SessionManifest {
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolInfo>,
+
+    /// Tools declared as authorized for this session (from declaration.json).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub authorized_tools: Vec<String>,
 }
 
 impl SessionManifest {
@@ -174,6 +178,7 @@ impl SessionManifest {
             participants: Participants::default(),
             hosts: Vec::new(),
             tools: Vec::new(),
+            authorized_tools: Vec::new(),
         }
     }
 }
@@ -240,6 +245,7 @@ mod tests {
                 tool_runtime_id: Some("rt_cc1".into()),
                 invocation_count: 42,
             }],
+            authorized_tools: vec!["read_file".into(), "write_file".into()],
         };
         let json = serde_json::to_string_pretty(&m).unwrap();
         let m2: SessionManifest = serde_json::from_str(&json).unwrap();

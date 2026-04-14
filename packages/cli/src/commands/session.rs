@@ -284,6 +284,7 @@ pub fn start(
     let mut manifest = manifest;
     manifest.name = name.clone();
     manifest.root_artifact_id = Some(result.artifact_id.clone());
+    manifest.authorized_tools = super::declare::read_authorized_tools();
 
     let session_path = ts_dir.join("session.json");
     let json = serde_json::to_string_pretty(&manifest)?;

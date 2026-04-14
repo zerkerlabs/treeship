@@ -40,6 +40,30 @@ pub struct SessionReceipt {
     pub proofs: ProofsSection,
     pub merkle: MerkleSection,
     pub render: RenderConfig,
+    /// Tool usage summary: declared vs actual tools used during the session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_usage: Option<ToolUsage>,
+}
+
+/// Tool authorization and usage summary for the session.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ToolUsage {
+    /// Tools declared as authorized (from declaration.json).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub declared: Vec<String>,
+    /// Tools actually called during the session with invocation counts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actual: Vec<ToolUsageEntry>,
+    /// Tools called that were NOT in the declared list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unauthorized: Vec<String>,
+}
+
+/// A single tool's usage count.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolUsageEntry {
+    pub tool_name: String,
+    pub count: u32,
 }
 
 /// Session metadata section of the receipt.
@@ -244,6 +268,9 @@ impl ReceiptComposer {
             generate_preview: true,
         };
 
+        // Derive tool usage from side effects + manifest authorized_tools
+        let tool_usage = derive_tool_usage(&side_effects, &manifest.authorized_tools);
+
         SessionReceipt {
             type_: RECEIPT_TYPE.into(),
             session,
@@ -257,6 +284,7 @@ impl ReceiptComposer {
             proofs,
             merkle: merkle_section,
             render,
+            tool_usage,
         }
     }
 
@@ -403,6 +431,47 @@ fn build_merkle(artifacts: &[ArtifactEntry]) -> (MerkleSection, Option<MerkleTre
 }
 
 /// Extract a human-readable label from an EventType.
+/// Derive tool usage from side effects and the declared authorized tools list.
+fn derive_tool_usage(
+    side_effects: &SideEffects,
+    authorized_tools: &[String],
+) -> Option<ToolUsage> {
+    use std::collections::BTreeMap;
+
+    if side_effects.tool_invocations.is_empty() && authorized_tools.is_empty() {
+        return None;
+    }
+
+    // Count actual tool usage
+    let mut counts: BTreeMap<String, u32> = BTreeMap::new();
+    for inv in &side_effects.tool_invocations {
+        *counts.entry(inv.tool_name.clone()).or_insert(0) += 1;
+    }
+
+    let actual: Vec<ToolUsageEntry> = counts.iter()
+        .map(|(name, &count)| ToolUsageEntry { tool_name: name.clone(), count })
+        .collect();
+
+    // Find tools called that were NOT in the declared list
+    let unauthorized = if authorized_tools.is_empty() {
+        Vec::new()
+    } else {
+        let declared_set: std::collections::BTreeSet<&str> = authorized_tools.iter()
+            .map(|s| s.as_str())
+            .collect();
+        counts.keys()
+            .filter(|name| !declared_set.contains(name.as_str()))
+            .cloned()
+            .collect()
+    };
+
+    Some(ToolUsage {
+        declared: authorized_tools.to_vec(),
+        actual,
+        unauthorized,
+    })
+}
+
 fn event_type_label(et: &super::event::EventType) -> String {
     use super::event::EventType::*;
     match et {
