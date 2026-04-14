@@ -5,86 +5,161 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Session Receipt</title>
 <style>
-:root{--font:'Segoe UI',-apple-system,BlinkMacSystemFont,Roboto,sans-serif;--mono:'JetBrains Mono','SF Mono','Fira Code',monospace;--bg:#0f0f0e;--surface:#171614;--surface-2:#1d1c19;--border:#2e2d2a;--text:#e8e6e1;--muted:#9a978f;--faint:#5e5d59;--primary:#5db8a3;--primary-s:rgba(93,184,163,.10);--ok:#4caf82;--ok-s:rgba(76,175,130,.10);--warn:#d4924a;--warn-s:rgba(212,146,74,.10);--risk:#d46060;--risk-s:rgba(212,96,96,.10);--info:#5b90c8;--info-s:rgba(91,144,200,.10);--radius:12px;--shadow:0 16px 48px rgba(0,0,0,.5)}
+:root{--font:'Segoe UI',-apple-system,BlinkMacSystemFont,Roboto,sans-serif;--mono:'JetBrains Mono','SF Mono','Fira Code',monospace;--bg:#0f0f0e;--surface:#161514;--surface-2:#1c1b18;--surface-3:#242320;--border:#2a2926;--border-a:#353431;--text:#e8e6e1;--muted:#9a978f;--faint:#5e5d59;--primary:#5db8a3;--primary-s:rgba(93,184,163,.10);--primary-m:rgba(93,184,163,.16);--ok:#4caf82;--ok-s:rgba(76,175,130,.10);--warn:#d4924a;--warn-s:rgba(212,146,74,.10);--risk:#d46060;--risk-s:rgba(212,96,96,.10);--info:#5b90c8;--info-s:rgba(91,144,200,.10);--radius:14px;--shadow:0 16px 48px rgba(0,0,0,.45)}
 *{box-sizing:border-box;margin:0;padding:0}
 html{-webkit-font-smoothing:antialiased;scroll-behavior:smooth;scroll-padding-top:80px}
 body{font-family:var(--font);font-size:.88rem;color:var(--text);background:var(--bg);line-height:1.6;min-height:100dvh}
-a{color:var(--primary);text-decoration:none}
-.mono{font-family:var(--mono);font-size:.75rem}
+a{color:var(--primary);text-decoration:none}a:hover{text-decoration:underline}
+code{font-family:var(--mono);font-size:.75rem;background:var(--surface-2);padding:1px 5px;border-radius:4px}
+.mono{font-family:var(--mono);font-size:.72rem}
 .muted{color:var(--muted)}.faint{color:var(--faint)}
-.topbar{position:sticky;top:0;z-index:50;height:56px;display:flex;align-items:center;justify-content:space-between;padding:0 1.5rem;background:color-mix(in srgb,var(--bg) 90%,transparent);backdrop-filter:blur(16px);border-bottom:1px solid var(--border)}
-.brand{font-weight:600;font-size:.95rem;letter-spacing:-.03em}
-.layout{display:flex;min-height:calc(100dvh - 56px)}
-.sidebar{width:210px;flex-shrink:0;position:sticky;top:56px;height:calc(100dvh - 56px);overflow-y:auto;padding:1.5rem 1rem;border-right:1px solid var(--border)}
-.nav-label{font-family:var(--mono);font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin-bottom:.4rem}
+
+/* ── Topbar ── */
+.topbar{position:fixed;top:0;left:0;right:0;z-index:50;height:56px;display:flex;align-items:center;justify-content:space-between;padding:0 1.5rem;background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(16px);border-bottom:1px solid var(--border)}
+.brand{font-weight:700;font-size:1rem;letter-spacing:-.03em}
+.topbar-right{display:flex;align-items:center;gap:.5rem}
+.btn-sm{display:inline-flex;align-items:center;gap:.4rem;font-size:.72rem;font-weight:600;padding:.4rem .8rem;border-radius:8px;border:1px solid var(--border);color:var(--muted);background:transparent;cursor:pointer;transition:.15s}
+.btn-sm:hover{color:var(--text);border-color:var(--border-a);background:var(--surface-2)}
+
+/* ── Layout ── */
+.layout{display:flex;margin-top:56px;min-height:calc(100dvh - 56px)}
+.sidebar{width:210px;flex-shrink:0;position:sticky;top:56px;height:calc(100dvh - 56px);overflow-y:auto;padding:1.5rem 1rem 2rem;border-right:1px solid var(--border)}
+.nav-label{font-family:var(--mono);font-size:.6rem;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin-bottom:.35rem}
 .nav-group{margin-bottom:1.25rem}
-.nav-item{display:flex;align-items:center;justify-content:space-between;padding:.4rem .75rem;border-radius:8px;color:var(--muted);font-size:.78rem;font-weight:500;cursor:pointer;text-decoration:none;transition:.15s}
-.nav-item:hover{color:var(--text);background:var(--surface-2)}
+.nav-item{display:flex;align-items:center;justify-content:space-between;padding:.4rem .75rem;border-radius:8px;color:var(--muted);font-size:.76rem;font-weight:500;cursor:pointer;text-decoration:none;transition:.15s;position:relative}
+.nav-item:hover{color:var(--text);background:var(--surface-2);text-decoration:none}
 .nav-item.active{color:var(--primary);background:var(--primary-s)}
-.nav-count{font-family:var(--mono);font-size:.6rem;color:var(--faint);background:var(--surface-2);padding:1px 6px;border-radius:99px}
-.nav-item.active .nav-count{color:var(--primary);background:rgba(93,184,163,.16)}
-.main{flex:1;min-width:0;padding:2rem 2.5rem 4rem}
+.nav-item.active::before{content:'';position:absolute;left:-1rem;top:50%;transform:translateY(-50%);width:3px;height:16px;background:var(--primary);border-radius:2px}
+.nav-count{font-family:var(--mono);font-size:.58rem;color:var(--faint);background:var(--surface-3);padding:1px 6px;border-radius:99px}
+.nav-item.active .nav-count{color:var(--primary);background:var(--primary-m)}
+.main{flex:1;min-width:0;padding:2.5rem 3rem 4rem}
 @media(max-width:900px){.sidebar{display:none}.main{padding:1.5rem 1rem 3rem}}
-.section{margin-bottom:3rem;scroll-margin-top:80px}
-.section-title{font-size:1.35rem;font-weight:700;letter-spacing:-.04em;margin-bottom:.25rem}
-.section-sub{font-size:.75rem;color:var(--muted)}
+@media print{.sidebar{display:none}.topbar{display:none}.main{padding:1rem}.layout{margin-top:0}body{background:#fff;color:#111}.card{box-shadow:none;border:1px solid #ddd}.badge{border:1px solid #ccc}}
+
+/* ── Sections ── */
+.section{margin-bottom:3.5rem;scroll-margin-top:80px}
+.section-head{margin-bottom:1rem}
+.section-title{font-size:1.35rem;font-weight:700;letter-spacing:-.04em;line-height:1.1;margin-bottom:.2rem}
+.section-sub{font-size:.75rem;color:var(--muted);line-height:1.5}
+
+/* ── Cards ── */
 .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
 .card-p{padding:1.25rem 1.5rem}
-.badge{display:inline-flex;align-items:center;gap:4px;font-family:var(--mono);font-size:.6rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;padding:3px 8px;border-radius:99px;white-space:nowrap}
+
+/* ── Badges ── */
+.badge{display:inline-flex;align-items:center;gap:4px;font-family:var(--mono);font-size:.58rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;padding:3px 8px;border-radius:99px;white-space:nowrap}
 .badge-ok{background:var(--ok-s);color:var(--ok);border:1px solid rgba(76,175,130,.2)}
 .badge-warn{background:var(--warn-s);color:var(--warn);border:1px solid rgba(212,146,74,.2)}
 .badge-risk{background:var(--risk-s);color:var(--risk);border:1px solid rgba(212,96,96,.2)}
 .badge-info{background:var(--info-s);color:var(--info);border:1px solid rgba(91,144,200,.2)}
-.badge-muted{background:var(--surface-2);color:var(--muted);border:1px solid var(--border)}
-.hero{margin-bottom:3rem;padding:2rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);position:relative;overflow:hidden;box-shadow:var(--shadow)}
-.hero::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 70% 60% at 50% -20%,var(--primary-s),transparent 70%);pointer-events:none}
-.hero-status{display:flex;align-items:center;gap:.75rem;margin-bottom:1rem;position:relative}
-.status-dot{width:8px;height:8px;border-radius:50%;box-shadow:0 0 0 3px var(--ok-s)}
-.hero-headline{font-size:clamp(1.4rem,1rem + 1.5vw,2.2rem);font-weight:700;letter-spacing:-.05em;line-height:1.05;margin-bottom:.75rem;position:relative}
-.hero-summary{font-size:.88rem;color:var(--muted);line-height:1.65;max-width:68ch;margin-bottom:1.25rem;position:relative}
-.hero-badges{display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:1.5rem;position:relative}
-.metrics-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:.75rem;position:relative}
-.metric{padding:1rem;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius)}
-.metric-label{font-family:var(--mono);font-size:.6rem;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);margin-bottom:.25rem}
+.badge-muted{background:var(--surface-3);color:var(--muted);border:1px solid var(--border)}
+
+/* ── Hero ── */
+.hero{margin-bottom:3.5rem;padding:2.25rem 2.25rem 2rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);position:relative;overflow:hidden;box-shadow:var(--shadow)}
+.hero::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 70% 55% at 50% -20%,var(--primary-s),transparent 70%);pointer-events:none}
+.hero-status{display:flex;align-items:center;gap:.75rem;margin-bottom:1.25rem;position:relative}
+.status-dot{width:16px;height:16px;border-radius:50%;position:relative;flex-shrink:0}
+.status-dot::after{content:'';position:absolute;inset:-4px;border-radius:50%;animation:pulse 3s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.4;transform:scale(1)}50%{opacity:.15;transform:scale(1.15)}}
+.status-text{font-family:var(--mono);font-size:.72rem;letter-spacing:.04em}
+.hero-title{font-size:1.5rem;font-weight:700;letter-spacing:-.05em;line-height:1.1;margin-bottom:.25rem;position:relative}
+.hero-id{font-family:var(--mono);font-size:.72rem;color:var(--faint);margin-bottom:1rem;position:relative}
+.hero-summary{font-size:.88rem;color:var(--muted);line-height:1.65;max-width:70ch;margin-bottom:1.25rem;position:relative}
+.hero-badges{display:flex;flex-wrap:wrap;gap:.4rem;margin-bottom:1.75rem;position:relative}
+.metrics-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:.65rem;position:relative}
+.metric{padding:1rem 1.1rem;background:var(--surface-2);border:1px solid var(--border);border-radius:12px}
+.metric-label{font-family:var(--mono);font-size:.58rem;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);margin-bottom:.2rem}
 .metric-value{font-size:1.3rem;font-weight:700;letter-spacing:-.04em;font-variant-numeric:tabular-nums}
-.metric-sub{font-size:.7rem;color:var(--faint);margin-top:2px}
-table{width:100%;border-collapse:collapse}
-th{font-family:var(--mono);font-size:.6rem;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);padding:.75rem 1rem;text-align:left;border-bottom:1px solid var(--border)}
-td{padding:.75rem 1rem;font-size:.78rem;vertical-align:middle;border-bottom:1px solid var(--border)}
-tr:last-child td{border-bottom:none}
+.metric-sub{font-size:.68rem;color:var(--faint);margin-top:2px}
+
+/* ── Narrative panels ── */
+.narrative-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:.65rem;margin-top:1.5rem;position:relative}
+@media(max-width:768px){.narrative-grid{grid-template-columns:1fr}}
+.narrative-card{padding:1.1rem 1.25rem;background:var(--surface-2);border:1px solid var(--border);border-radius:12px}
+.narrative-label{font-family:var(--mono);font-size:.58rem;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin-bottom:.5rem}
+.narrative-text{font-size:.82rem;color:var(--text);line-height:1.6}
+
+/* ── Agent cards ── */
+.agent-card{display:flex;gap:1rem;padding:1.1rem 1.25rem;border-bottom:1px solid var(--border);align-items:flex-start}
+.agent-card:last-child{border-bottom:none}
+.agent-stripe{width:4px;border-radius:2px;align-self:stretch;flex-shrink:0}
+.agent-info{flex:1;min-width:0}
+.agent-name{font-weight:600;font-size:.88rem;margin-bottom:2px}
+.agent-meta{font-family:var(--mono);font-size:.62rem;color:var(--faint)}
+.agent-stats{display:flex;gap:1rem;margin-top:.5rem;font-family:var(--mono);font-size:.68rem;color:var(--muted)}
+.agent-bar{height:4px;border-radius:2px;background:var(--surface-3);margin-top:.5rem;overflow:hidden}
+.agent-bar-fill{height:100%;border-radius:2px}
+
+/* ── Timeline ── */
+.tl-group{margin-bottom:.5rem}
+.tl-group-header{display:flex;align-items:center;gap:.5rem;padding:.4rem 1rem;font-family:var(--mono);font-size:.62rem;color:var(--faint)}
+.tl-group-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
 .tl-item{display:grid;grid-template-columns:52px 1fr auto;gap:.75rem;align-items:start;padding:.75rem 1rem;border-bottom:1px solid var(--border)}
 .tl-item:last-child{border-bottom:none}
-.tl-time{font-family:var(--mono);font-size:.72rem;color:var(--faint);padding-top:2px}
+.tl-time{font-family:var(--mono);font-size:.68rem;color:var(--faint);padding-top:2px}
 .tl-label{font-size:.78rem;font-weight:600;margin-bottom:2px}
 .tl-detail{font-size:.7rem;color:var(--muted);line-height:1.5}
-.tl-agent{display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:.62rem;color:var(--faint);margin-top:4px}
 .tl-dot{width:6px;height:6px;border-radius:50%;display:inline-block}
-.check-row{display:flex;align-items:center;gap:.75rem;padding:.5rem 1rem;border-bottom:1px solid var(--border);font-size:.8rem}
-.check-row:last-child{border-bottom:none}
-.check-name{min-width:120px;font-family:var(--mono);font-size:.72rem}
-.check-detail{color:var(--muted);flex:1;font-size:.75rem}
-.finding{display:grid;grid-template-columns:1fr auto;gap:1rem;align-items:start;padding:1rem;border-bottom:1px solid var(--border)}
+
+/* ── Command cards ── */
+.cmd-card{padding:1rem 1.25rem;border-bottom:1px solid var(--border)}
+.cmd-card:last-child{border-bottom:none}
+.cmd-header{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem}
+.cmd-shell{font-family:var(--mono);font-size:.78rem;color:var(--text);margin-bottom:4px}
+.cmd-meta{display:flex;gap:.75rem;align-items:center;flex-wrap:wrap;font-family:var(--mono);font-size:.64rem;color:var(--faint)}
+.exit-pill{font-family:var(--mono);font-size:.64rem;font-weight:600;padding:3px 8px;border-radius:6px;flex-shrink:0}
+.exit-ok{background:var(--ok-s);color:var(--ok)}
+.exit-fail{background:var(--risk-s);color:var(--risk)}
+
+/* ── Trust chain ── */
+.trust-chain{display:flex;flex-direction:column;gap:0}
+.trust-step{display:flex;align-items:center;gap:1rem;padding:.85rem 1.25rem;position:relative}
+.trust-step:not(:last-child)::after{content:'';position:absolute;left:1.85rem;bottom:-.1rem;width:1px;height:.85rem;background:var(--border)}
+.trust-icon{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;flex-shrink:0;font-size:.75rem}
+.trust-icon.ok{background:var(--ok-s);color:var(--ok)}
+.trust-icon.muted{background:var(--surface-3);color:var(--faint)}
+.trust-label{font-size:.82rem;font-weight:600}
+.trust-desc{font-size:.7rem;color:var(--muted)}
+
+/* ── Findings ── */
+.finding{display:grid;grid-template-columns:28px 1fr auto;gap:.75rem;align-items:start;padding:1rem 1.25rem;border-bottom:1px solid var(--border)}
 .finding:last-child{border-bottom:none}
-.finding-title{font-size:.78rem;font-weight:600;margin-bottom:3px}
-.finding-desc{font-size:.7rem;color:var(--muted);line-height:1.5}
-.finding-path{font-family:var(--mono);font-size:.65rem;color:var(--faint);margin-top:3px}
-.proof-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.75rem;margin-bottom:1.25rem}
-.proof-cell{padding:1rem 1.25rem;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius)}
-.proof-label{font-family:var(--mono);font-size:.6rem;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);margin-bottom:.25rem}
+
+/* ── Check rows ── */
+.check-row{display:flex;align-items:center;gap:.75rem;padding:.55rem 1.25rem;border-bottom:1px solid var(--border);font-size:.8rem}
+.check-row:last-child{border-bottom:none}
+.check-name{min-width:120px;font-family:var(--mono);font-size:.68rem}
+.check-detail{color:var(--muted);flex:1;font-size:.72rem}
+
+/* ── Positive confirmation ── */
+.confirm-row{display:flex;align-items:center;gap:.65rem;padding:.7rem 1.25rem;font-size:.78rem;color:var(--ok)}
+.confirm-icon{width:18px;height:18px;border-radius:50%;background:var(--ok-s);display:grid;place-items:center;flex-shrink:0;font-size:.65rem}
+
+/* ── Proof grid ── */
+.proof-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.65rem;margin-bottom:1.25rem}
+.proof-cell{padding:1rem 1.1rem;background:var(--surface-2);border:1px solid var(--border);border-radius:12px}
+.proof-label{font-family:var(--mono);font-size:.58rem;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);margin-bottom:.2rem}
 .proof-value{font-family:var(--mono);font-size:.72rem;color:var(--text);word-break:break-all;line-height:1.6}
-.raw-pre{background:#0a0908;border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem;font-family:var(--mono);font-size:.7rem;color:#c8c3ba;line-height:1.85;overflow-x:auto;max-height:520px}
-.footer{text-align:center;color:var(--faint);font-size:.7rem;padding:2rem 0;border-top:1px solid var(--border);margin-top:2rem}
+
+/* ── Raw ── */
+.raw-pre{background:#0a0908;border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem;font-family:var(--mono);font-size:.68rem;color:#c8c3ba;line-height:1.85;overflow-x:auto;max-height:520px;position:relative}
+.copy-btn{position:absolute;top:.75rem;right:.75rem;font-family:var(--mono);font-size:.62rem;padding:.3rem .6rem;border-radius:6px;border:1px solid var(--border);background:var(--surface-2);color:var(--muted);cursor:pointer;transition:.15s}
+.copy-btn:hover{color:var(--text);border-color:var(--border-a)}
+
+/* ── Educational cards ── */
+.edu-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:.65rem}
+.edu-card{padding:1.25rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius)}
+.edu-num{font-family:var(--mono);font-size:.6rem;color:var(--primary);letter-spacing:.08em;margin-bottom:.5rem}
+.edu-title{font-weight:700;font-size:.92rem;letter-spacing:-.03em;margin-bottom:.5rem}
+.edu-text{font-size:.76rem;color:var(--muted);line-height:1.55}
+
+/* ── Footer ── */
+.footer{text-align:center;color:var(--faint);font-size:.68rem;padding:2.5rem 0;border-top:1px solid var(--border);margin-top:2rem;line-height:1.7}
 #loading{display:flex;align-items:center;justify-content:center;min-height:60vh;color:var(--muted);font-size:.88rem}
-.agent-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:.5rem;flex-shrink:0}
-.role-chip{font-family:var(--mono);font-size:.58rem;font-weight:600;letter-spacing:.05em;text-transform:uppercase;padding:2px 7px;border-radius:99px}
-.role-lead{background:rgba(93,184,163,.16);color:var(--primary)}
-.role-helper{background:var(--surface-2);color:var(--muted)}
-.cmd-item{display:grid;grid-template-columns:1fr auto;gap:1rem;align-items:center;padding:.75rem 1.25rem;border-bottom:1px solid var(--border)}
-.cmd-item:last-child{border-bottom:none}
-.cmd-shell{font-family:var(--mono);font-size:.75rem;margin-bottom:3px}
-.cmd-meta{display:flex;gap:.75rem;align-items:center;font-family:var(--mono);font-size:.65rem;color:var(--faint)}
-.exit-ok{font-family:var(--mono);font-size:.65rem;font-weight:600;padding:2px 7px;border-radius:4px;background:var(--ok-s);color:var(--ok)}
-.exit-fail{font-family:var(--mono);font-size:.65rem;font-weight:600;padding:2px 7px;border-radius:4px;background:var(--risk-s);color:var(--risk)}
+
+/* ── Spinner ── */
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner{width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin .6s linear infinite;display:inline-block}
 </style>
 </head>
 <body>
@@ -92,23 +167,16 @@ tr:last-child td{border-bottom:none}
 <div id="loading">Verifying receipt...</div>
 
 <script>
-const R = JSON.parse(document.getElementById('receipt-data').textContent);
-
-// Set page title safely from parsed data (not from template placeholder)
-document.title = 'Session Receipt: ' + (R.session && R.session.id ? R.session.id : 'unknown');
-
-// Safe numeric coercion: returns 0 for non-numeric values so attacker-supplied
-// strings like '0</span><img onerror=alert(1)>' cannot inject HTML.
+const R=JSON.parse(document.getElementById('receipt-data').textContent);
+document.title='Session Receipt: '+(R.session&&R.session.id?R.session.id:'unknown');
 function num(v){const n=Number(v);return Number.isFinite(n)?n:0}
 
-// ── SHA-256 via Web Crypto API ──
+// ── SHA-256 ──
 async function sha256(d){const b=typeof d==='string'?new TextEncoder().encode(d):d;return new Uint8Array(await crypto.subtle.digest('SHA-256',b))}
 function toHex(b){return Array.from(b).map(x=>x.toString(16).padStart(2,'0')).join('')}
 function fromHex(h){const b=new Uint8Array(h.length/2);for(let i=0;i<h.length;i+=2)b[i/2]=parseInt(h.substr(i,2),16);return b}
 function concat(a,b){const c=new Uint8Array(a.length+b.length);c.set(a);c.set(b,a.length);return c}
-
 async function computeRoot(ids){if(!ids.length)return null;let lv=[];for(const id of ids)lv.push(await sha256(id));while(lv.length>1){const nx=[];let i=0;while(i+1<lv.length){nx.push(await sha256(concat(lv[i],lv[i+1])));i+=2}if(i<lv.length)nx.push(lv[i]);lv=nx}return toHex(lv[0])}
-
 async function verifyProof(artId,proof,rootHex){
   const algo=proof.algorithm||'sha256-duplicate-last';
   if(algo!=='sha256-duplicate-last'&&algo!=='sha256-rfc9162')return false;
@@ -121,7 +189,6 @@ async function verifyProof(artId,proof,rootHex){
     else return false;
   }return toHex(cur)===rootHex;
 }
-
 async function runChecks(){
   const c=[];
   c.push({n:'receipt',s:'pass',d:'Parses as valid Session Receipt'});
@@ -147,88 +214,50 @@ async function runChecks(){
 function esc(s){return(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function fmtDur(ms){if(!ms)return'--';const s=Math.floor(ms/1000);if(s<60)return s+'s';if(s<3600)return Math.floor(s/60)+'m '+s%60+'s';return Math.floor(s/3600)+'h '+Math.floor(s%3600/60)+'m'}
 function timeOf(iso){return(iso||'').slice(11,19)}
+function renderPath(p){const i=p.lastIndexOf('/');if(i<0)return'<span style="font-weight:600">'+esc(p)+'</span>';return'<span style="color:var(--faint)">'+esc(p.slice(0,i+1))+'</span><span style="font-weight:600">'+esc(p.slice(i+1))+'</span>'}
 const COLORS=['#a855f7','#f59e0b','#14b8a6','#3b82f6','#ec4899','#06b6d4'];
-const EVENT_BADGE={
-  'session.started':'badge-muted','session.closed':'badge-muted',
-  'agent.started':'badge-ok','agent.spawned':'badge-info','agent.handoff':'badge-warn',
-  'agent.collaborated':'badge-info','agent.returned':'badge-muted',
-  'agent.completed':'badge-ok','agent.failed':'badge-risk',
-  'agent.called_tool':'badge-info','agent.read_file':'badge-warn','agent.wrote_file':'badge-ok',
-  'agent.opened_port':'badge-risk','agent.connected_network':'badge-warn',
-  'agent.started_process':'badge-info','agent.completed_process':'badge-muted',
-  'agent.decision':'badge-info'
-};
-
-// ── [1] Retry detection ──
-// Consecutive process events, same command, first exit != 0, second exit == 0.
-function detectRetries(procs){
-  const retries=new Set();
-  for(let i=1;i<procs.length;i++){
-    const prev=procs[i-1],cur=procs[i];
-    const pCmd=prev.command||prev.process_name, cCmd=cur.command||cur.process_name;
-    if(pCmd===cCmd && prev.exit_code!=null && prev.exit_code!==0 && cur.exit_code===0){
-      retries.add(i-1); retries.add(i);
-    }
-  }
-  return retries;
-}
-function retryLabel(procs,idx,retries){
-  if(!retries.has(idx))return null;
-  const p=procs[idx];
-  if(p.exit_code!=null&&p.exit_code!==0)return{badge:'badge-warn',text:'failed',detail:'Exited '+p.exit_code+' — retried next'};
-  return{badge:'badge-ok',text:'recovered',detail:'Retry succeeded'};
-}
-
-// ── [2] File path split ──
-function renderPath(p){
-  const i=p.lastIndexOf('/');
-  if(i<0)return'<span style="font-weight:600">'+esc(p)+'</span>';
-  return'<span style="color:var(--faint)">'+esc(p.slice(0,i+1))+'</span><span style="font-weight:600">'+esc(p.slice(i+1))+'</span>';
-}
-
-// ── [3] Risk badge per file ──
 const SENSITIVE_RE=/\.env|\.ssh|\.pem|\.aws|\.gnupg|credentials|id_rsa|id_ed25519/i;
-function fileRisk(f,netDests){
-  if(SENSITIVE_RE.test(f.file_path))return{badge:'badge-warn',text:'sensitive'};
-  // Check if this file path appears in network destinations (unlikely but possible)
-  return{badge:'badge-ok',text:'ok'};
+function fileRisk(f){return SENSITIVE_RE.test(f.file_path)?{b:'badge-warn',t:'sensitive'}:{b:'badge-ok',t:'ok'}}
+function detectRetries(procs){const r=new Set();for(let i=1;i<procs.length;i++){const p=procs[i-1],c=procs[i];if((p.command||p.process_name)===(c.command||c.process_name)&&p.exit_code!=null&&p.exit_code!==0&&c.exit_code===0){r.add(i-1);r.add(i)}}return r}
+function buildFindings(se){
+  const f=[];const wp=new Set((se.files_written||[]).map(x=>x.file_path));
+  (se.files_read||[]).forEach(r=>{if(SENSITIVE_RE.test(r.file_path))f.push({title:'Sensitive file read: '+r.file_path,desc:wp.has(r.file_path)?'Read and subsequently written by '+r.agent_instance_id+'. Review whether the write was intentional.':'Read only by '+r.agent_instance_id+'. No write occurred to this file during the session.',path:r.file_path+' \u00b7 agent: '+r.agent_instance_id+' \u00b7 '+timeOf(r.timestamp),sev:'warn'})});
+  (se.network_connections||[]).forEach(n=>{f.push({title:'External network connection',desc:'Outbound connection to '+n.destination+(n.port?' on port '+num(n.port):'')+' by '+n.agent_instance_id+'. Review whether this external call was expected.',path:n.destination+' \u00b7 agent: '+n.agent_instance_id+' \u00b7 '+timeOf(n.timestamp),sev:'risk'})});
+  (se.ports_opened||[]).forEach(p=>{f.push({title:'Port opened: '+num(p.port),desc:'Agent '+p.agent_instance_id+' opened port '+num(p.port)+'. Verify this was intentional.',path:'port '+num(p.port)+' \u00b7 agent: '+p.agent_instance_id+' \u00b7 '+timeOf(p.timestamp),sev:'warn'})});
+  return f;
+}
+// Auto-generate summary from receipt data when --summary not provided
+function autoSummary(se,procs,nodes){
+  const parts=[];
+  const fw=(se.files_written||[]).length,fr=(se.files_read||[]).length;
+  if(fw)parts.push(fw+' file'+(fw>1?'s':'')+' written');
+  if(fr)parts.push(fr+' file'+(fr>1?'s':'')+' read');
+  if(procs.length)parts.push(procs.length+' command'+(procs.length>1?'s':'')+' run');
+  const retries=detectRetries(procs);
+  const recoveries=procs.filter((_,i)=>retries.has(i)&&procs[i].exit_code===0).length;
+  if(recoveries)parts.push(recoveries+' recovered from failure');
+  const sens=(se.files_read||[]).filter(f=>SENSITIVE_RE.test(f.file_path)).length;
+  if(sens)parts.push(sens+' sensitive read'+(sens>1?'s':''));
+  else parts.push('0 sensitive reads');
+  const net=(se.network_connections||[]).length;
+  if(net)parts.push(net+' external call'+(net>1?'s':''));
+  if(nodes.length>1)parts.push(nodes.length+' agents collaborated');
+  return parts.join(', ')+'.';
+}
+// Auto-generate "what to check" from receipt data
+function autoReview(se,procs){
+  const items=[];
+  const failedCmds=procs.filter(p=>p.exit_code!=null&&p.exit_code!==0);
+  if(failedCmds.length)items.push('Review '+failedCmds.length+' failed command'+(failedCmds.length>1?'s':''));
+  const sens=(se.files_read||[]).filter(f=>SENSITIVE_RE.test(f.file_path));
+  if(sens.length)items.push('Check '+sens.length+' sensitive file read'+(sens.length>1?'s':''));
+  const net=(se.network_connections||[]).length;
+  if(net)items.push('Verify '+net+' external network call'+(net>1?'s':''));
+  if(!items.length)items.push('No items requiring special review detected');
+  return items.join('. ')+'.';
 }
 
-// ── [4] Security finding explanations ──
-function buildFindings(se){
-  const findings=[];
-  const writtenPaths=new Set((se.files_written||[]).map(f=>f.file_path));
-  (se.files_read||[]).forEach(f=>{
-    if(SENSITIVE_RE.test(f.file_path)){
-      const wasWritten=writtenPaths.has(f.file_path);
-      findings.push({
-        title:'Sensitive file read: '+f.file_path,
-        desc:wasWritten
-          ?'Read and subsequently written by '+f.agent_instance_id+'. Review whether the write was intentional.'
-          :'Read only by '+f.agent_instance_id+'. No write occurred to this file during the session.',
-        path:f.file_path+' · agent: '+f.agent_instance_id+' · '+timeOf(f.timestamp),
-        sev:'warn'
-      });
-    }
-  });
-  (se.network_connections||[]).forEach(n=>{
-    findings.push({
-      title:'External network connection',
-      desc:'Outbound connection to '+n.destination+(n.port?' on port '+num(n.port):'')+' by '+n.agent_instance_id+'. Review whether this external call was expected.',
-      path:n.destination+' · agent: '+n.agent_instance_id+' · '+timeOf(n.timestamp),
-      sev:'risk'
-    });
-  });
-  (se.ports_opened||[]).forEach(p=>{
-    findings.push({
-      title:'Port opened: '+num(p.port),
-      desc:'Agent '+p.agent_instance_id+' opened port '+num(p.port)+(p.protocol?' ('+p.protocol+')':'')+'. Verify this was intentional.',
-      path:'port '+num(p.port)+' · agent: '+p.agent_instance_id+' · '+timeOf(p.timestamp),
-      sev:'warn'
-    });
-  });
-  return findings;
-}
+const EVB={'session.started':'badge-muted','session.closed':'badge-muted','agent.started':'badge-ok','agent.spawned':'badge-info','agent.handoff':'badge-warn','agent.collaborated':'badge-info','agent.returned':'badge-muted','agent.completed':'badge-ok','agent.failed':'badge-risk','agent.called_tool':'badge-info','agent.read_file':'badge-warn','agent.wrote_file':'badge-ok','agent.opened_port':'badge-risk','agent.connected_network':'badge-warn','agent.started_process':'badge-info','agent.completed_process':'badge-muted','agent.decision':'badge-info'};
 
 async function render(){
   const checks=await runChecks();
@@ -239,33 +268,38 @@ async function render(){
   const tl=R.timeline||[];const se=R.side_effects||{};
   const arts=R.artifacts||[];const mk=R.merkle||{};
   const pr=R.proofs||{};const narr=s.narrative||{};
-
-  // Derive security findings from side effects (deterministic pattern matching)
   const findings=buildFindings(se);
-
-  // Build node index for timeline
+  const procs=se.processes||[];
+  const retries=detectRetries(procs);
+  const hasCost=num(s.total_cost_usd)>0;
   const nodeIdx={};nodes.forEach((n,i)=>nodeIdx[n.agent_instance_id]=i);
+  const totalActions=nodes.reduce((s,n)=>s+num(n.tool_calls),0)||1;
+  const dotColor=allPass?'var(--ok)':'var(--risk)';
+  const dotShadow=allPass?'var(--ok-s)':'var(--risk-s)';
 
   let h='';
 
   // ── TOPBAR ──
-  h+='<header class="topbar"><span class="brand">treeship</span><span class="mono muted">'+esc(s.id)+'</span></header>';
+  h+='<header class="topbar"><span class="brand">treeship</span><div class="topbar-right">';
+  h+='<button class="btn-sm" onclick="navigator.clipboard.writeText(JSON.stringify(R,null,2))">Copy JSON</button>';
+  h+='</div></header>';
   h+='<div class="layout">';
 
   // ── SIDEBAR ──
-  h+='<nav class="sidebar">';
+  h+='<nav class="sidebar" id="sidebar">';
   h+='<div class="nav-group"><div class="nav-label">Receipt</div>';
-  h+='<a class="nav-item active" href="#summary">Summary</a>';
-  h+='<a class="nav-item" href="#agents">Agents <span class="nav-count">'+nodes.length+'</span></a>';
-  h+='<a class="nav-item" href="#timeline">Timeline <span class="nav-count">'+tl.length+'</span></a>';
+  h+='<a class="nav-item active" href="#summary" data-section="summary">Summary</a>';
+  if(nodes.length>1)h+='<a class="nav-item" href="#agents" data-section="agents">Agents <span class="nav-count">'+nodes.length+'</span></a>';
+  h+='<a class="nav-item" href="#timeline" data-section="timeline">Timeline <span class="nav-count">'+tl.length+'</span></a>';
   h+='</div><div class="nav-group"><div class="nav-label">Changes</div>';
-  h+='<a class="nav-item" href="#files">Files <span class="nav-count">'+((se.files_written||[]).length+(se.files_read||[]).length)+'</span></a>';
-  h+='<a class="nav-item" href="#commands">Commands <span class="nav-count">'+(se.processes||[]).length+'</span></a>';
+  h+='<a class="nav-item" href="#files" data-section="files">Files <span class="nav-count">'+((se.files_written||[]).length+(se.files_read||[]).length)+'</span></a>';
+  h+='<a class="nav-item" href="#commands" data-section="commands">Commands <span class="nav-count">'+procs.length+'</span></a>';
   h+='</div><div class="nav-group"><div class="nav-label">Trust</div>';
-  if(findings.length)h+='<a class="nav-item" href="#security">Findings <span class="nav-count" style="color:var(--warn)">'+findings.length+'</span></a>';
-  h+='<a class="nav-item" href="#verification">Verification <span class="nav-count">'+checks.length+'</span></a>';
-  h+='<a class="nav-item" href="#proof">Proof</a>';
-  h+='<a class="nav-item" href="#raw">Raw receipt</a>';
+  h+='<a class="nav-item" href="#security" data-section="security">Findings <span class="nav-count"'+(findings.length?' style="color:var(--warn)"':'')+'>'+findings.length+'</span></a>';
+  h+='<a class="nav-item" href="#trust-chain" data-section="trust-chain">Trust chain</a>';
+  h+='<a class="nav-item" href="#verification" data-section="verification">Checks <span class="nav-count">'+checks.length+'</span></a>';
+  h+='<a class="nav-item" href="#raw" data-section="raw">Raw receipt</a>';
+  h+='<a class="nav-item" href="#schema" data-section="schema">How it works</a>';
   h+='</div></nav>';
 
   // ── MAIN ──
@@ -273,67 +307,76 @@ async function render(){
 
   // ── HERO ──
   h+='<section class="hero" id="summary">';
-  h+='<div class="hero-status"><div class="status-dot" style="background:'+(allPass?'var(--ok)':'var(--risk)')+';box-shadow:0 0 0 3px '+(allPass?'var(--ok-s)':'var(--risk-s)')+'"></div>';
-  h+='<span class="mono" style="font-size:.72rem;color:'+(allPass?'var(--ok)':'var(--risk)')+'">Session '+(s.status||'complete')+' · '+(allPass?'Merkle structure verified':'Structural issues detected')+'</span></div>';
-  h+='<h1 class="hero-headline">'+esc(narr.headline||s.name||s.id)+'</h1>';
-  if(narr.summary)h+='<p class="hero-summary">'+esc(narr.summary)+'</p>';
+  h+='<div class="hero-status"><div class="status-dot" style="background:'+dotColor+';box-shadow:0 0 0 4px '+dotShadow+'"><div style="position:absolute;inset:-4px;border-radius:50%;border:2px solid '+dotColor+';opacity:.3;animation:pulse 3s ease-in-out infinite"></div></div>';
+  h+='<span class="status-text" style="color:'+dotColor+'">Session '+esc(s.status||'complete')+' \u00b7 '+(allPass?'Merkle structure verified':'Structural issues detected')+'</span></div>';
+  h+='<h1 class="hero-title">'+esc(narr.headline||s.name||s.id)+'</h1>';
+  h+='<div class="hero-id">'+esc(s.id)+'</div>';
+  h+='<p class="hero-summary">'+esc(narr.summary||autoSummary(se,procs,nodes))+'</p>';
   h+='<div class="hero-badges">';
-  h+='<span class="badge '+(allPass?'badge-ok':'badge-risk')+'">'+(allPass?'&#x2714; Merkle verified':'&#x2718; Issues')+'</span>';
+  h+='<span class="badge '+(allPass?'badge-ok':'badge-risk')+'">'+(allPass?'\u2714 Merkle verified':'\u2718 Issues')+'</span>';
   h+='<span class="badge badge-ok">'+num(pr.signature_count)+' signatures</span>';
   if(findings.length)h+='<span class="badge badge-warn">'+findings.length+' finding'+(findings.length>1?'s':'')+'</span>';
+  else h+='<span class="badge badge-ok">\u2714 No findings</span>';
   h+='<span class="badge badge-info">'+nodes.length+' agent'+(nodes.length!==1?'s':'')+'</span>';
   h+='</div>';
   h+='<div class="metrics-row">';
-  h+='<div class="metric"><div class="metric-label">Files</div><div class="metric-value">'+(se.files_written||[]).length+'</div><div class="metric-sub">written</div></div>';
-  h+='<div class="metric"><div class="metric-label">Tool actions</div><div class="metric-value">'+(se.tool_invocations||[]).length+'</div><div class="metric-sub">across '+nodes.length+' agents</div></div>';
-  h+='<div class="metric"><div class="metric-label">Duration</div><div class="metric-value">'+fmtDur(s.duration_ms)+'</div><div class="metric-sub">'+esc(s.started_at||'').slice(11,16)+' start</div></div>';
-  if(num(s.total_cost_usd)>0)h+='<div class="metric"><div class="metric-label">Cost</div><div class="metric-value">$'+num(s.total_cost_usd).toFixed(2)+'</div><div class="metric-sub">'+(num(s.total_tokens_in)/1000).toFixed(0)+'k in / '+(num(s.total_tokens_out)/1000).toFixed(0)+'k out</div></div>';
+  h+='<div class="metric"><div class="metric-label">Files</div><div class="metric-value">'+(se.files_written||[]).length+'</div><div class="metric-sub">'+(se.files_read||[]).length+' read</div></div>';
+  h+='<div class="metric"><div class="metric-label">Actions</div><div class="metric-value">'+num(totalActions)+'</div><div class="metric-sub">across '+nodes.length+' agent'+(nodes.length!==1?'s':'')+'</div></div>';
+  h+='<div class="metric"><div class="metric-label">Duration</div><div class="metric-value">'+fmtDur(s.duration_ms)+'</div><div class="metric-sub">'+esc((s.started_at||'').slice(11,16))+' start</div></div>';
+  if(hasCost)h+='<div class="metric"><div class="metric-label">Cost</div><div class="metric-value">$'+num(s.total_cost_usd).toFixed(2)+'</div><div class="metric-sub">'+(num(s.total_tokens_in)/1000).toFixed(0)+'k in / '+(num(s.total_tokens_out)/1000).toFixed(0)+'k out</div></div>';
   h+='<div class="metric"><div class="metric-label">Trust</div><div class="metric-value" style="color:var(--primary);font-size:1rem">'+(pr.zk_proofs_present?'L3':'L2')+'</div><div class="metric-sub">Merkle + Ed25519</div></div>';
-  h+='</div></section>';
+  h+='</div>';
+
+  // ── NARRATIVE PANELS ──
+  const planned=s.name||'Session '+esc(s.id);
+  const done=narr.summary||autoSummary(se,procs,nodes);
+  const review=narr.review||autoReview(se,procs);
+  h+='<div class="narrative-grid">';
+  h+='<div class="narrative-card"><div class="narrative-label">Planned</div><div class="narrative-text">'+esc(planned)+'</div></div>';
+  h+='<div class="narrative-card"><div class="narrative-label">Actually done</div><div class="narrative-text">'+esc(done)+'</div></div>';
+  h+='<div class="narrative-card"><div class="narrative-label">What to check</div><div class="narrative-text">'+esc(review)+'</div></div>';
+  h+='</div>';
+  h+='</section>';
 
   // ── AGENTS ──
-  const hasCost=num(s.total_cost_usd)>0;
-  if(nodes.length){
-    h+='<section class="section" id="agents"><div class="section-title">Agents</div><div class="section-sub muted">Every agent that participated in this session, their role, model, and contribution.</div>';
-    h+='<div class="card" style="margin-top:.75rem"><table><thead><tr><th>Agent</th><th>Role</th><th>Model</th><th>Host</th><th>Actions</th>';
-    if(hasCost)h+='<th>Cost</th>';
-    h+='</tr></thead><tbody>';
+  if(nodes.length>1||hasCost){
+    h+='<section class="section" id="agents"><div class="section-head"><div class="section-title">Agents</div><div class="section-sub">Every agent that participated, their role, model, and contribution.</div></div>';
+    h+='<div class="card">';
     nodes.forEach((n,i)=>{
       const c=COLORS[i%COLORS.length];
-      const costPct=hasCost&&num(s.total_cost_usd)>0?((num(n.cost_usd)/num(s.total_cost_usd))*100):0;
-      h+='<tr><td>';
-      h+='<div style="display:flex;align-items:center;gap:.5rem">';
-      h+='<span class="agent-dot" style="background:'+c+'"></span>';
-      h+='<div><div style="font-weight:600;font-size:.85rem">'+esc(n.agent_name)+'</div>';
-      h+='<div class="mono" style="font-size:.62rem;color:var(--faint)">'+esc(n.agent_instance_id)+'</div></div>';
-      h+='</div></td>';
-      h+='<td><span class="role-chip '+(num(n.depth)===0?'role-lead':'role-helper')+'">'+esc(n.agent_role||'agent')+'</span></td>';
-      h+='<td class="mono faint">'+esc(n.model||'--')+'</td>';
-      h+='<td class="mono faint">'+esc(n.host_id)+'</td>';
-      h+='<td class="mono">'+num(n.tool_calls)+'</td>';
-      if(hasCost){
-        h+='<td><div class="mono" style="margin-bottom:4px">$'+num(n.cost_usd).toFixed(2)+'</div>';
-        h+='<div style="height:4px;width:100%;background:var(--surface-2);border-radius:2px;overflow:hidden">';
-        h+='<div style="height:100%;width:'+costPct.toFixed(1)+'%;background:'+c+';border-radius:2px"></div>';
-        h+='</div></td>';
-      }
-      h+='</tr>';
+      const pct=Math.max(2,num(n.tool_calls)/totalActions*100);
+      h+='<div class="agent-card"><div class="agent-stripe" style="background:'+c+'"></div><div class="agent-info">';
+      h+='<div class="agent-name">'+esc(n.agent_name)+'</div>';
+      h+='<div class="agent-meta">'+esc(n.agent_instance_id)+' \u00b7 '+esc(n.agent_role||'agent')+' \u00b7 '+esc(n.model||'--')+' \u00b7 @'+esc(n.host_id)+'</div>';
+      h+='<div class="agent-stats"><span>'+num(n.tool_calls)+' actions</span>';
+      if(hasCost)h+='<span>$'+num(n.cost_usd).toFixed(2)+'</span>';
+      h+='<span>depth '+num(n.depth)+'</span>';
+      if(n.status)h+='<span class="badge '+(n.status==='completed'?'badge-ok':'badge-risk')+'">'+esc(n.status)+'</span>';
+      h+='</div>';
+      h+='<div class="agent-bar"><div class="agent-bar-fill" style="width:'+pct.toFixed(1)+'%;background:'+c+'"></div></div>';
+      h+='</div></div>';
     });
-    h+='</tbody></table></div></section>';
+    h+='</div></section>';
   }
 
-  // ── TIMELINE ──
+  // ── TIMELINE (grouped by agent) ──
   if(tl.length){
-    h+='<section class="section" id="timeline"><div class="section-title">Timeline</div><div class="section-sub muted">Append-only event log. Every action sealed in sequence.</div>';
-    h+='<div class="card" style="margin-top:.75rem">';
+    h+='<section class="section" id="timeline"><div class="section-head"><div class="section-title">Timeline</div><div class="section-sub">Append-only event log. Every action sealed as an artifact in sequence.</div></div>';
+    h+='<div class="card">';
+    let lastAgent='';
     tl.forEach(ev=>{
       const ni=nodeIdx[ev.agent_instance_id];
       const c=ni!==undefined?COLORS[ni%COLORS.length]:'#6b7280';
-      const badge=EVENT_BADGE[ev.event_type]||'badge-muted';
+      const badge=EVB[ev.event_type]||'badge-muted';
       const label=ev.event_type.replace('agent.','').replace('session.','').replace(/_/g,' ');
+      // Agent group header on switch
+      if(ev.agent_instance_id!==lastAgent){
+        if(lastAgent&&ev.event_type==='agent.handoff')h+='<div class="tl-group-header"><div class="tl-group-dot" style="background:'+c+'"></div><span>\u2192 handoff to '+esc(ev.agent_name)+'</span></div>';
+        else if(lastAgent)h+='<div class="tl-group-header"><div class="tl-group-dot" style="background:'+c+'"></div><span>'+esc(ev.agent_name)+'</span></div>';
+        lastAgent=ev.agent_instance_id;
+      }
       h+='<div class="tl-item"><span class="tl-time">'+timeOf(ev.timestamp)+'</span><div>';
       h+='<div class="tl-label">'+esc(ev.summary||label)+'</div>';
-      h+='<div class="tl-agent"><span class="tl-dot" style="background:'+c+'"></span>'+esc(ev.agent_name)+'</div>';
       h+='</div><span class="badge '+badge+'">'+esc(label)+'</span></div>';
     });
     h+='</div></section>';
@@ -343,65 +386,96 @@ async function render(){
   const allFiles=[...(se.files_written||[]).map(f=>({...f,op:'write'})),...(se.files_read||[]).map(f=>({...f,op:'read'}))];
   if(allFiles.length){
     const hasDiff=allFiles.some(f=>f.additions||f.deletions);
-    h+='<section class="section" id="files"><div class="section-title">Files changed</div><div class="section-sub muted">Per-file record of every write, creation, and read detected during this session.</div>';
-    h+='<div class="card" style="margin-top:.75rem"><table><thead><tr><th>Path</th><th>Op</th><th>Agent</th>';
-    if(hasDiff)h+='<th>Diff</th>';
-    h+='<th>Risk</th></tr></thead><tbody>';
+    h+='<section class="section" id="files"><div class="section-head"><div class="section-title">Files changed</div><div class="section-sub">Per-file record of every write, creation, and read detected.</div></div>';
+    h+='<div class="card"><table style="width:100%;border-collapse:collapse"><thead><tr><th style="font-family:var(--mono);font-size:.58rem;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);padding:.65rem 1.25rem;text-align:left;border-bottom:1px solid var(--border)">Path</th><th style="font-family:var(--mono);font-size:.58rem;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);padding:.65rem .75rem;text-align:left;border-bottom:1px solid var(--border)">Op</th><th style="font-family:var(--mono);font-size:.58rem;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);padding:.65rem .75rem;text-align:left;border-bottom:1px solid var(--border)">Agent</th>';
+    if(hasDiff)h+='<th style="font-family:var(--mono);font-size:.58rem;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);padding:.65rem .75rem;text-align:left;border-bottom:1px solid var(--border)">Diff</th>';
+    h+='<th style="font-family:var(--mono);font-size:.58rem;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);padding:.65rem .75rem;text-align:left;border-bottom:1px solid var(--border)">Risk</th></tr></thead><tbody>';
     allFiles.forEach(f=>{
       const opClass=f.op==='read'?'badge-muted':f.operation==='created'?'badge-ok':'badge-info';
       const risk=fileRisk(f);
-      h+='<tr><td class="mono" style="font-size:.72rem;word-break:break-all">'+renderPath(f.file_path)+'</td>';
-      h+='<td><span class="badge '+opClass+'">'+esc(f.operation||f.op)+'</span></td>';
-      h+='<td class="mono faint" style="font-size:.7rem">'+esc(f.agent_instance_id)+'</td>';
-      if(hasDiff)h+='<td class="mono">'+(f.additions!=null?'<span style="color:var(--ok)">+'+num(f.additions)+'</span> <span style="color:var(--risk)">-'+num(f.deletions)+'</span>':'')+'</td>';
-      h+='<td><span class="badge '+risk.badge+'">'+risk.text+'</span></td>';
-      h+='</tr>';
+      h+='<tr><td style="padding:.6rem 1.25rem;border-bottom:1px solid var(--border)"><span class="mono" style="font-size:.72rem;word-break:break-all">'+renderPath(f.file_path)+'</span></td>';
+      h+='<td style="padding:.6rem .75rem;border-bottom:1px solid var(--border)"><span class="badge '+opClass+'">'+esc(f.operation||f.op)+'</span></td>';
+      h+='<td style="padding:.6rem .75rem;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:.68rem;color:var(--faint)">'+esc(f.agent_instance_id)+'</td>';
+      if(hasDiff)h+='<td style="padding:.6rem .75rem;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:.72rem">'+(f.additions!=null?'<span style="color:var(--ok)">+'+num(f.additions)+'</span> <span style="color:var(--risk)">-'+num(f.deletions)+'</span>':'')+'</td>';
+      h+='<td style="padding:.6rem .75rem;border-bottom:1px solid var(--border)"><span class="badge '+risk.b+'">'+risk.t+'</span></td></tr>';
     });
     h+='</tbody></table></div></section>';
   }
 
   // ── COMMANDS ──
-  const procs=se.processes||[];
   if(procs.length){
-    const retries=detectRetries(procs);
-    h+='<section class="section" id="commands"><div class="section-title">Commands run</div><div class="section-sub muted">Every shell command and process executed during this session.</div>';
-    h+='<div class="card" style="margin-top:.75rem">';
+    h+='<section class="section" id="commands"><div class="section-head"><div class="section-title">Commands run</div><div class="section-sub">Every shell command and process executed during this session.</div></div>';
+    h+='<div class="card">';
     procs.forEach((p,i)=>{
       const ni=nodeIdx[p.agent_instance_id];
       const ac=ni!==undefined?COLORS[ni%COLORS.length]:'#6b7280';
-      const exitClass=p.exit_code===0?'exit-ok':'exit-fail';
-      const retry=retryLabel(procs,i,retries);
-      h+='<div class="cmd-item"><div><div class="cmd-shell">'+esc(p.command||p.process_name)+'</div>';
+      const isRetryFail=retries.has(i)&&p.exit_code!=null&&p.exit_code!==0;
+      const isRetryOk=retries.has(i)&&p.exit_code===0;
+      h+='<div class="cmd-card"><div class="cmd-header"><div><div class="cmd-shell">'+esc(p.command||p.process_name)+'</div>';
       h+='<div class="cmd-meta">';
-      h+='<span style="display:flex;align-items:center;gap:4px"><span class="tl-dot" style="background:'+ac+';display:inline-block"></span>'+esc(p.agent_instance_id)+'</span>';
+      h+='<span style="display:flex;align-items:center;gap:4px"><span class="tl-dot" style="background:'+ac+'"></span>'+esc(p.agent_instance_id)+'</span>';
       if(p.duration_ms)h+='<span>'+fmtDur(p.duration_ms)+'</span>';
-      if(retry)h+='<span class="badge '+retry.badge+'" style="font-size:.58rem">'+retry.text+'</span>';
+      if(isRetryFail)h+='<span class="badge badge-warn">failed \u2192 retried</span>';
+      if(isRetryOk)h+='<span class="badge badge-ok">recovered</span>';
       h+='</div></div>';
-      h+='<span class="'+exitClass+'">exit '+(p.exit_code!=null?num(p.exit_code):'?')+'</span></div>';
+      h+='<span class="exit-pill '+(p.exit_code===0?'exit-ok':'exit-fail')+'">exit '+(p.exit_code!=null?num(p.exit_code):'?')+'</span>';
+      h+='</div></div>';
     });
     h+='</div></section>';
+  }else{
+    h+='<section class="section" id="commands"><div class="section-head"><div class="section-title">Commands run</div></div>';
+    h+='<div class="card card-p"><div class="confirm-row"><div class="confirm-icon">\u2714</div>No commands executed during this session.</div></div></section>';
   }
 
-  // ── SECURITY FINDINGS ──
+  // ── SECURITY FINDINGS (with empty state) ──
+  h+='<section class="section" id="security"><div class="section-head"><div class="section-title">Security findings</div><div class="section-sub">Automatically detected behaviors that require human review. Sealed into the chain.</div></div>';
   if(findings.length){
-    h+='<section class="section" id="security"><div class="section-title">Security findings</div><div class="section-sub muted">Automatically detected behaviors that require human review. Sealed into the chain -- these cannot be removed retroactively.</div>';
-    h+='<div class="card" style="margin-top:.75rem">';
+    h+='<div class="card">';
     findings.forEach(f=>{
       const icon=f.sev==='risk'
         ?'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--risk)" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'
         :'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2" stroke-linecap="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
-      h+='<div class="finding" style="grid-template-columns:28px 1fr auto"><div style="padding-top:2px">'+icon+'</div><div>';
-      h+='<div class="finding-title">'+esc(f.title)+'</div>';
-      h+='<div class="finding-desc">'+esc(f.desc)+'</div>';
-      if(f.path)h+='<div class="mono" style="font-size:.65rem;color:var(--faint);margin-top:3px">'+esc(f.path)+'</div>';
+      h+='<div class="finding"><div style="padding-top:2px">'+icon+'</div><div>';
+      h+='<div style="font-size:.78rem;font-weight:600;margin-bottom:3px">'+esc(f.title)+'</div>';
+      h+='<div style="font-size:.7rem;color:var(--muted);line-height:1.5">'+esc(f.desc)+'</div>';
+      if(f.path)h+='<div class="mono" style="font-size:.62rem;color:var(--faint);margin-top:3px">'+esc(f.path)+'</div>';
       h+='</div><span class="badge badge-'+f.sev+'">'+f.sev+'</span></div>';
     });
-    h+='</div></section>';
+    h+='</div>';
+  }else{
+    h+='<div class="card card-p">';
+    const sensReads=(se.files_read||[]).filter(f=>SENSITIVE_RE.test(f.file_path)).length;
+    const extCalls=(se.network_connections||[]).length;
+    const failedCmds=procs.filter(p=>p.exit_code!=null&&p.exit_code!==0).length;
+    if(!sensReads)h+='<div class="confirm-row"><div class="confirm-icon">\u2714</div>No sensitive file reads detected</div>';
+    if(!extCalls)h+='<div class="confirm-row"><div class="confirm-icon">\u2714</div>No external network calls</div>';
+    if(!failedCmds)h+='<div class="confirm-row"><div class="confirm-icon">\u2714</div>No failed commands</div>';
+    if(!sensReads&&!extCalls&&!failedCmds)h+='<div style="padding:.5rem 1.25rem;font-size:.75rem;color:var(--muted)">Clean session. All operations stayed within expected boundaries.</div>';
+    h+='</div>';
   }
+  h+='</section>';
+
+  // ── TRUST CHAIN VISUAL ──
+  h+='<section class="section" id="trust-chain"><div class="section-head"><div class="section-title">Trust chain</div><div class="section-sub">How this receipt earns your trust, step by step.</div></div>';
+  h+='<div class="card"><div class="trust-chain">';
+  const steps=[
+    {ok:tl.length>0,label:'Events captured',desc:tl.length+' session events recorded in append-only log'},
+    {ok:arts.length>0,label:'Artifacts signed',desc:arts.length+' artifacts signed with Ed25519 ship key'},
+    {ok:!!mk.root,label:'Merkle tree built',desc:num(mk.leaf_count)+' leaves hashed into SHA-256 tree'},
+    {ok:allPass,label:'Root committed',desc:'Merkle root: '+(mk.root?esc(mk.root).slice(0,28)+'...':'none')},
+    {ok:checks.filter(c=>c.n.startsWith('proof:')&&c.s==='pass').length>0,label:'Inclusion proofs verified',desc:(mk.inclusion_proofs||[]).length+' proofs checked client-side via Web Crypto API'},
+  ];
+  steps.forEach(st=>{
+    h+='<div class="trust-step"><div class="trust-icon '+(st.ok?'ok':'muted')+'">'+(st.ok?'\u2714':'\u2013')+'</div><div>';
+    h+='<div class="trust-label">'+esc(st.label)+'</div>';
+    h+='<div class="trust-desc">'+esc(st.desc)+'</div>';
+    h+='</div></div>';
+  });
+  h+='</div></div></section>';
 
   // ── VERIFICATION CHECKS ──
-  h+='<section class="section" id="verification"><div class="section-title">Verification</div><div class="section-sub muted">Merkle tree and structural checks run client-side via Web Crypto API. For full Ed25519 signature verification, use <code>treeship package verify</code>.</div>';
-  h+='<div class="card" style="margin-top:.75rem">';
+  h+='<section class="section" id="verification"><div class="section-head"><div class="section-title">Verification checks</div><div class="section-sub">Merkle tree and structural checks run client-side. For Ed25519 signature verification, use <code>treeship package verify</code>.</div></div>';
+  h+='<div class="card">';
   checks.forEach(c=>{
     const badge=c.s==='pass'?'badge-ok':c.s==='fail'?'badge-risk':'badge-warn';
     h+='<div class="check-row"><span class="badge '+badge+'">'+c.s.toUpperCase()+'</span>';
@@ -409,46 +483,19 @@ async function render(){
     h+='<span class="check-detail">'+esc(c.d)+'</span></div>';
   });
   const pc=checks.filter(c=>c.s==='pass').length;const fc=checks.filter(c=>c.s==='fail').length;
-  h+='<div style="padding:.75rem 1rem;font-size:.75rem;color:var(--muted)">'+pc+' passed, '+fc+' failed</div>';
+  h+='<div style="padding:.65rem 1.25rem;font-size:.72rem;color:var(--muted)">'+pc+' passed, '+fc+' failed</div>';
   h+='</div></section>';
 
-  // ── PROOF ──
-  h+='<section class="section" id="proof"><div class="section-title">Proof</div>';
-  h+='<div class="card card-p" style="margin-top:.75rem"><div class="proof-grid">';
-  h+='<div class="proof-cell"><div class="proof-label">Merkle root</div><div class="proof-value">'+esc(mk.root||'none')+'</div></div>';
-  h+='<div class="proof-cell"><div class="proof-label">Leaves</div><div class="proof-value">'+num(mk.leaf_count)+'</div></div>';
-  h+='<div class="proof-cell"><div class="proof-label">Proofs</div><div class="proof-value">'+(mk.inclusion_proofs||[]).length+'</div></div>';
-  h+='<div class="proof-cell"><div class="proof-label">Signatures</div><div class="proof-value">'+pr.signature_count+'</div></div>';
-  h+='<div class="proof-cell"><div class="proof-label">ZK proofs</div><div class="proof-value">'+(pr.zk_proofs_present?'present':'none')+'</div></div>';
-  h+='</div></div></section>';
-
   // ── RAW ──
-  h+='<section class="section" id="raw"><div class="section-title">Raw receipt</div>';
-  h+='<div class="raw-pre"><code>'+esc(JSON.stringify(R,null,2))+'</code></div></section>';
+  h+='<section class="section" id="raw"><div class="section-head"><div class="section-title">Raw receipt</div></div>';
+  h+='<div class="raw-pre" style="position:relative"><button class="copy-btn" onclick="navigator.clipboard.writeText(JSON.stringify(R,null,2));this.textContent=\'Copied\';setTimeout(()=>this.textContent=\'Copy\',1500)">Copy</button><code>'+esc(JSON.stringify(R,null,2))+'</code></div></section>';
 
-  // ── REVIEW CALLOUT ──
-  if(narr.review){
-    h+='<section class="section"><div class="card card-p" style="border-left:3px solid var(--warn)">';
-    h+='<div style="font-size:.65rem;text-transform:uppercase;letter-spacing:.1em;color:var(--warn);margin-bottom:.5rem">What to review</div>';
-    h+='<p style="font-size:.85rem;color:var(--muted);line-height:1.6">'+esc(narr.review)+'</p></div></section>';
-  }
-
-  // ── WHAT'S IN A RECEIPT ──
-  h+='<section class="section" id="schema"><div class="section-title">What\'s in a receipt</div>';
-  h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:.75rem">';
-
-  h+='<div class="card card-p"><div class="mono" style="font-size:.62rem;color:var(--primary);letter-spacing:.08em;margin-bottom:.5rem">01 MERKLE TREE</div>';
-  h+='<div style="font-weight:700;font-size:.95rem;letter-spacing:-.03em;margin-bottom:.5rem">Every artifact is a leaf</div>';
-  h+='<p class="muted" style="font-size:.78rem;line-height:1.55">Each action during the session produces a signed artifact with a content-addressed ID. These IDs become leaves in a SHA-256 Merkle tree. The root hash at the top commits to every artifact below it. Change one artifact and the root changes. That root is what you see in the Proof section above.</p></div>';
-
-  h+='<div class="card card-p"><div class="mono" style="font-size:.62rem;color:var(--primary);letter-spacing:.08em;margin-bottom:.5rem">02 ED25519 SIGNATURES</div>';
-  h+='<div style="font-weight:700;font-size:.95rem;letter-spacing:-.03em;margin-bottom:.5rem">Each artifact is individually signed</div>';
-  h+='<p class="muted" style="font-size:.78rem;line-height:1.55">The agent\'s ship key signs every artifact at creation time using Ed25519 elliptic-curve signatures. The signature binds the artifact content to the signing key. This preview verifies the Merkle structure; for full signature verification, run <code style="font-size:.72rem;background:var(--surface-2);padding:1px 5px;border-radius:4px">treeship package verify</code> on the downloaded package.</p></div>';
-
-  h+='<div class="card card-p"><div class="mono" style="font-size:.62rem;color:var(--primary);letter-spacing:.08em;margin-bottom:.5rem">03 INCLUSION PROOFS</div>';
-  h+='<div style="font-weight:700;font-size:.95rem;letter-spacing:-.03em;margin-bottom:.5rem">Prove any artifact belongs</div>';
-  h+='<p class="muted" style="font-size:.78rem;line-height:1.55">Each artifact carries an inclusion proof: a list of sibling hashes that, when walked from the leaf to the root, reproduce the Merkle root. This means anyone can verify that a specific artifact was part of this session without needing the full tree. The verification section above checks every inclusion proof against the recomputed root.</p></div>';
-
+  // ── HOW IT WORKS ──
+  h+='<section class="section" id="schema"><div class="section-head"><div class="section-title">How this receipt works</div><div class="section-sub">For third-party readers who have not used Treeship before.</div></div>';
+  h+='<div class="edu-grid">';
+  h+='<div class="edu-card"><div class="edu-num">01 MERKLE TREE</div><div class="edu-title">Every artifact is a leaf</div><div class="edu-text">Each action during the session produces a signed artifact with a content-addressed ID. These IDs become leaves in a SHA-256 Merkle tree. The root hash commits to every artifact below it. Change one artifact and the root changes. That root is what the Trust Chain section verifies.</div></div>';
+  h+='<div class="edu-card"><div class="edu-num">02 ED25519 SIGNATURES</div><div class="edu-title">Each artifact is individually signed</div><div class="edu-text">The agent\'s ship key signs every artifact at creation time using Ed25519 elliptic-curve signatures. This preview verifies the Merkle structure; for full signature verification, run <code>treeship package verify</code> on the downloaded package.</div></div>';
+  h+='<div class="edu-card"><div class="edu-num">03 INCLUSION PROOFS</div><div class="edu-title">Prove any artifact belongs</div><div class="edu-text">Each artifact carries an inclusion proof: sibling hashes that walk from the leaf to the root. Anyone can verify that a specific artifact was part of this session without needing the full tree. The verification section above checks every proof against the recomputed root.</div></div>';
   h+='</div></section>';
 
   h+='<div class="footer">Merkle structure verified client-side via Web Crypto API. Ed25519 signature verification requires <code>treeship package verify</code> or the WASM verifier.<br>No network calls. No server trust. Generated by <a href="https://treeship.dev">Treeship</a> Session Receipt v1</div>';
@@ -456,6 +503,20 @@ async function render(){
 
   document.getElementById('loading').style.display='none';
   document.body.insertAdjacentHTML('beforeend',h);
+
+  // ── Sidebar IntersectionObserver ──
+  const sections=document.querySelectorAll('.section,.hero');
+  const navItems=document.querySelectorAll('[data-section]');
+  if(sections.length&&navItems.length&&typeof IntersectionObserver!=='undefined'){
+    const obs=new IntersectionObserver(entries=>{
+      entries.forEach(e=>{if(e.isIntersecting){
+        navItems.forEach(n=>n.classList.remove('active'));
+        const match=document.querySelector('[data-section="'+e.target.id+'"]');
+        if(match)match.classList.add('active');
+      }});
+    },{rootMargin:'-20% 0px -70% 0px',threshold:0});
+    sections.forEach(s=>{if(s.id)obs.observe(s)});
+  }
 }
 
 if(typeof crypto==='undefined'||!crypto.subtle){
