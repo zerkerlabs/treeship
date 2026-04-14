@@ -493,6 +493,24 @@ async function render(){
   }
   h+='</section>';
 
+  // ── APPROVALS ──
+  const approvalArts=arts.filter(a=>a.payload_type&&a.payload_type.includes('approval'));
+  h+='<section class="section" id="approvals"><div class="section-head"><div class="section-title">Approval gates</div><div class="section-sub">Human approval checkpoints during the session.</div></div>';
+  if(approvalArts.length){
+    h+='<div class="card">';
+    approvalArts.forEach(a=>{
+      h+='<div style="display:flex;align-items:center;gap:1rem;padding:1rem 1.25rem;border-bottom:1px solid var(--border)">';
+      h+='<span class="badge badge-ok">\u2714 approved</span>';
+      h+='<div><div style="font-size:.82rem;font-weight:600">Approval artifact</div>';
+      h+='<div class="mono" style="font-size:.65rem;color:var(--faint)">'+esc(a.artifact_id)+' \u00b7 '+esc(a.signed_at||'')+'</div>';
+      h+='</div></div>';
+    });
+    h+='</div>';
+  }else{
+    h+='<div class="card card-p"><div class="confirm-row" style="color:var(--faint)"><div class="confirm-icon" style="background:var(--surface-3);color:var(--faint)">\u2013</div>No approval gates recorded. All actions ran without a human review checkpoint.</div></div>';
+  }
+  h+='</section>';
+
   // ── TRUST CHAIN VISUAL ──
   h+='<section class="section" id="trust-chain"><div class="section-head"><div class="section-title">Trust chain</div><div class="section-sub">How this receipt earns your trust, step by step.</div></div>';
   h+='<div class="card"><div class="trust-chain">';
