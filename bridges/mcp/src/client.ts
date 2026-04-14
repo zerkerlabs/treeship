@@ -7,7 +7,7 @@ import type {
 } from '@modelcontextprotocol/sdk/types.js';
 import type { RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import type { ClientOptions } from '@modelcontextprotocol/sdk/client/index.js';
-import { attestAction, attestReceipt } from './attest.js';
+import { attestAction, attestReceipt, emitSessionEvent } from './attest.js';
 import { hashPayload } from './utils.js';
 import type { ToolReceipt } from './types.js';
 
@@ -93,7 +93,7 @@ export class TreeshipMCPClient extends Client {
     error?: Error,
   ): Promise<string | undefined> {
     try {
-      return await attestReceipt({
+      const receiptId = await attestReceipt({
         system: this._actor,
         kind: 'tool.result',
         subject: intentId,
@@ -108,6 +108,26 @@ export class TreeshipMCPClient extends Client {
           error_message: error?.message,
         },
       });
+
+      // Emit a session event so this tool call appears in the receipt
+      // timeline, side effects, and agent graph. The signed artifact
+      // (above) is the cryptographic proof; the session event is what
+      // makes it human-readable in the receipt.
+      emitSessionEvent({
+        type: 'agent.called_tool',
+        tool: params.name,
+        actor: this._actor,
+        agentName: this._actor.replace('agent://', ''),
+        durationMs: elapsedMs,
+        exitCode: error ? 1 : 0,
+        artifactId: receiptId,
+        meta: {
+          source: 'mcp-bridge',
+          is_error: result?.isError ?? !!error,
+        },
+      }).catch(() => {}); // best-effort, never block
+
+      return receiptId;
     } catch (e) {
       process.stderr.write(
         `[treeship] attestReceipt failed for ${params.name}: ${(e as Error).message}\n`,

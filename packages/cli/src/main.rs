@@ -531,12 +531,67 @@ enum SessionCommand {
     ///   treeship session report
     ///   treeship session report ssn_01HR
     Report(SessionReportArgs),
+
+    /// Append a structured event to the active session's event log.
+    ///
+    /// Used by integrations (MCP bridge, A2A bridge, SDKs) to record
+    /// tool calls, file operations, and other session activity so it
+    /// appears in the receipt timeline and side effects.
+    ///
+    /// Examples:
+    ///   treeship session event --type agent.called_tool --tool read_file --format json
+    ///   treeship session event --type agent.wrote_file --file src/main.rs
+    Event(SessionEventArgs),
 }
 
 #[derive(Args)]
 struct SessionReportArgs {
     /// Session ID to report (defaults to the most recently closed session)
     session_id: Option<String>,
+}
+
+#[derive(Args)]
+struct SessionEventArgs {
+    /// Event type (e.g. agent.called_tool, agent.wrote_file, agent.read_file,
+    /// agent.connected_network, agent.decision)
+    #[arg(long, value_name = "TYPE")]
+    r#type: String,
+
+    /// Tool name (for agent.called_tool events)
+    #[arg(long, value_name = "NAME")]
+    tool: Option<String>,
+
+    /// File path (for agent.wrote_file / agent.read_file events)
+    #[arg(long, value_name = "PATH")]
+    file: Option<String>,
+
+    /// Network destination (for agent.connected_network events)
+    #[arg(long, value_name = "HOST")]
+    destination: Option<String>,
+
+    /// Actor URI (default: reads from session manifest)
+    #[arg(long, value_name = "URI")]
+    actor: Option<String>,
+
+    /// Agent name for the event
+    #[arg(long, value_name = "NAME")]
+    agent_name: Option<String>,
+
+    /// Duration in milliseconds
+    #[arg(long, value_name = "MS")]
+    duration_ms: Option<u64>,
+
+    /// Exit code or error indicator (0 = success)
+    #[arg(long, value_name = "CODE")]
+    exit_code: Option<i32>,
+
+    /// Artifact ID to reference
+    #[arg(long, value_name = "ID")]
+    artifact_id: Option<String>,
+
+    /// Arbitrary JSON metadata
+    #[arg(long, value_name = "JSON")]
+    meta: Option<String>,
 }
 
 #[derive(Args)]
@@ -1277,6 +1332,19 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             SessionCommand::Report(a) => commands::session::report(
                 a.session_id.clone(),
                 cli.config.as_deref(),
+                printer,
+            ),
+            SessionCommand::Event(a) => commands::session::event(
+                &a.r#type,
+                a.tool.as_deref(),
+                a.file.as_deref(),
+                a.destination.as_deref(),
+                a.actor.as_deref(),
+                a.agent_name.as_deref(),
+                a.duration_ms,
+                a.exit_code,
+                a.artifact_id.as_deref(),
+                a.meta.as_deref(),
                 printer,
             ),
         },

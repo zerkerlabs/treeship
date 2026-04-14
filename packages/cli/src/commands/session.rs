@@ -592,6 +592,119 @@ pub fn close(
 }
 
 // ---------------------------------------------------------------------------
+// session event -- append a structured event to the active session's log
+// ---------------------------------------------------------------------------
+
+pub fn event(
+    event_type: &str,
+    tool: Option<&str>,
+    file: Option<&str>,
+    destination: Option<&str>,
+    actor: Option<&str>,
+    agent_name: Option<&str>,
+    duration_ms: Option<u64>,
+    exit_code: Option<i32>,
+    artifact_id: Option<&str>,
+    meta_json: Option<&str>,
+    printer: &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let manifest = match load_session() {
+        Some(m) => m,
+        None => return Err("no active session -- run treeship session start first".into()),
+    };
+
+    let ts_dir = session_dir().ok_or("no .treeship directory found")?;
+    let evt_dir = ts_dir.join("sessions").join(&manifest.session_id);
+    let event_log = EventLog::open(&evt_dir)?;
+
+    let actor_uri = actor.unwrap_or(&manifest.actor);
+    let host_id = local_host_id();
+    let trace_id = generate_trace_id();
+    let a_name = agent_name.unwrap_or("external");
+
+    let et = match event_type {
+        "agent.called_tool" => EventType::AgentCalledTool {
+            tool_name: tool.unwrap_or("unknown").into(),
+            tool_input_digest: None,
+            tool_output_digest: None,
+            duration_ms,
+        },
+        "agent.wrote_file" => EventType::AgentWroteFile {
+            file_path: file.unwrap_or("unknown").into(),
+            digest: None,
+            operation: None,
+            additions: None,
+            deletions: None,
+        },
+        "agent.read_file" => EventType::AgentReadFile {
+            file_path: file.unwrap_or("unknown").into(),
+            digest: None,
+        },
+        "agent.connected_network" => EventType::AgentConnectedNetwork {
+            destination: destination.unwrap_or("unknown").into(),
+            port: None,
+        },
+        "agent.completed_process" => EventType::AgentCompletedProcess {
+            process_name: tool.unwrap_or("unknown").into(),
+            exit_code,
+            duration_ms,
+            command: None,
+        },
+        "agent.decision" => EventType::AgentDecision {
+            model: tool.map(|s| s.into()),
+            tokens_in: None,
+            tokens_out: None,
+            cost_usd: None,
+            summary: None,
+            confidence: None,
+        },
+        "agent.handoff" => EventType::AgentHandoff {
+            from_agent_instance_id: actor_uri.into(),
+            to_agent_instance_id: destination.unwrap_or("unknown").into(),
+            artifacts: artifact_id.map(|id| vec![id.into()]).unwrap_or_default(),
+        },
+        other => {
+            return Err(format!("unsupported event type: {other}\n\n  supported: agent.called_tool, agent.wrote_file, agent.read_file, agent.connected_network, agent.completed_process, agent.decision, agent.handoff").into());
+        }
+    };
+
+    let meta = meta_json
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok());
+
+    let mut evt = SessionEvent {
+        session_id: manifest.session_id.clone(),
+        event_id: generate_event_id(),
+        timestamp: now_rfc3339(),
+        sequence_no: 0,
+        trace_id,
+        span_id: generate_span_id(),
+        parent_span_id: None,
+        agent_id: actor_uri.into(),
+        agent_instance_id: a_name.into(),
+        agent_name: a_name.into(),
+        agent_role: Some("agent".into()),
+        host_id,
+        tool_runtime_id: None,
+        event_type: et,
+        artifact_ref: artifact_id.map(|s| s.into()),
+        meta,
+    };
+
+    event_log.append(&mut evt)?;
+
+    // Output JSON for machine consumption
+    let output = serde_json::json!({
+        "event_id": evt.event_id,
+        "session_id": manifest.session_id,
+        "sequence_no": evt.sequence_no,
+    });
+
+    printer.info(&serde_json::to_string(&output).unwrap_or_default());
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Collect artifact entries from the chain for receipt composition
 // ---------------------------------------------------------------------------
 

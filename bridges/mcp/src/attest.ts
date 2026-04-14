@@ -4,6 +4,54 @@ import type { AttestParams, AttestReceiptParams } from './types.js';
 
 const exec = promisify(execFile);
 
+/**
+ * Emit a structured session event so tool calls appear in the receipt
+ * timeline. This bridges the gap between signed artifacts (which are
+ * Merkle-proven) and the session event log (which populates the
+ * receipt's timeline, agent graph, and side effects).
+ *
+ * Best-effort: never throws. If no session is active, the CLI prints
+ * an error and we silently ignore it.
+ */
+export async function emitSessionEvent(params: {
+  type: string;
+  tool?: string;
+  actor: string;
+  agentName?: string;
+  durationMs?: number;
+  exitCode?: number;
+  artifactId?: string;
+  meta?: Record<string, unknown>;
+}): Promise<void> {
+  const args = [
+    'session', 'event',
+    '--type', params.type,
+  ];
+
+  if (params.tool) args.push('--tool', params.tool);
+  if (params.actor) args.push('--actor', params.actor);
+  if (params.agentName) args.push('--agent-name', params.agentName);
+  if (params.durationMs != null) args.push('--duration-ms', String(params.durationMs));
+  if (params.exitCode != null) args.push('--exit-code', String(params.exitCode));
+  if (params.artifactId) args.push('--artifact-id', params.artifactId);
+
+  if (params.meta && Object.keys(params.meta).length > 0) {
+    const clean: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(params.meta)) {
+      if (v !== undefined && v !== null) clean[k] = v;
+    }
+    if (Object.keys(clean).length > 0) {
+      args.push('--meta', JSON.stringify(clean));
+    }
+  }
+
+  try {
+    await exec('treeship', args, { timeout: 3000 });
+  } catch {
+    // Best-effort: no active session or CLI not installed.
+  }
+}
+
 export async function attestAction(params: AttestParams): Promise<string | undefined> {
   const args = [
     'attest', 'action',
