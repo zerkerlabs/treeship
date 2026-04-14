@@ -227,7 +227,9 @@ impl ReceiptComposer {
         // Build Merkle tree from artifact IDs
         let (merkle_section, merkle_tree) = build_merkle(&artifact_entries);
 
-        // Proofs section
+        // Proofs section. zk_proofs_present defaults to false here;
+        // the CLI caller sets it to true after compose if proof files
+        // exist in the session directory.
         let proofs = ProofsSection {
             signature_count: artifact_entries.len() as u32,
             signatures_valid: true, // Caller should verify

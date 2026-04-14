@@ -521,6 +521,13 @@ pub fn close(
         });
     }
 
+    // Check for ZK proof files in the session directory or proof_queue.
+    // If any .zkproof files exist, set zk_proofs_present = true.
+    let zk_present = has_zk_proofs(&ts_dir, &manifest.session_id);
+    if zk_present {
+        receipt.proofs.zk_proofs_present = true;
+    }
+
     // Build the .treeship package
     let pkg_dir = ts_dir.join("sessions");
     std::fs::create_dir_all(&pkg_dir)?;
@@ -711,6 +718,45 @@ pub fn event(
     printer.info(&serde_json::to_string(&output).unwrap_or_default());
 
     Ok(())
+}
+
+/// Check if ZK proof files exist for this session.
+/// Looks for .zkproof files in the .treeship directory and proof_queue.
+fn has_zk_proofs(ts_dir: &Path, session_id: &str) -> bool {
+    // Check proof_queue for completed proofs
+    let queue_dir = ts_dir.join("proof_queue");
+    if queue_dir.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(&queue_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.contains(session_id) && name_str.ends_with(".zkproof") {
+                    return true;
+                }
+            }
+        }
+    }
+
+    // Check for any .zkproof file with the session_id prefix
+    let session_dir = ts_dir.join("sessions").join(session_id);
+    if session_dir.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(&session_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                if name.to_string_lossy().ends_with(".zkproof") {
+                    return true;
+                }
+            }
+        }
+    }
+
+    // Check in the storage directory for session-scoped proof files
+    let proof_file = format!("{}.chain.zkproof", session_id);
+    if ts_dir.join(&proof_file).exists() {
+        return true;
+    }
+
+    false
 }
 
 // ---------------------------------------------------------------------------

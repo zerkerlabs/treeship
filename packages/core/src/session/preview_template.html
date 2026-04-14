@@ -325,7 +325,7 @@ async function render(){
   h+='<div class="metric"><div class="metric-label">Duration</div><div class="metric-value">'+fmtDur(s.duration_ms)+'</div><div class="metric-sub">'+esc((s.started_at||'').slice(11,16))+' start</div></div>';
   if(hasCost)h+='<div class="metric"><div class="metric-label">Cost</div><div class="metric-value">$'+num(s.total_cost_usd).toFixed(2)+'</div><div class="metric-sub">'+(num(s.total_tokens_in)/1000).toFixed(0)+'k in / '+(num(s.total_tokens_out)/1000).toFixed(0)+'k out</div></div>';
   else h+='<div class="metric"><div class="metric-label">Cost</div><div class="metric-value" style="color:var(--faint);font-size:.82rem">not captured</div><div class="metric-sub" style="font-size:.6rem">Set TREESHIP_MODEL, TREESHIP_COST_USD</div></div>';
-  h+='<div class="metric"><div class="metric-label">Trust</div><div class="metric-value" style="color:var(--primary);font-size:1rem">'+(pr.zk_proofs_present?'L3':'L2')+'</div><div class="metric-sub">Merkle + Ed25519</div></div>';
+  h+='<div class="metric"><div class="metric-label">Trust</div><div class="metric-value" style="color:var(--primary);font-size:1rem">'+(pr.zk_proofs_present?'L3':'L2')+'</div><div class="metric-sub">'+(pr.zk_proofs_present?'Merkle + Ed25519 + ZK':'Merkle + Ed25519')+'</div></div>';
   h+='</div>';
 
   // ── NARRATIVE PANELS ──
