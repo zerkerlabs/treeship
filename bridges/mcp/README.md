@@ -1,6 +1,6 @@
 # @treeship/mcp
 
-Drop-in [Treeship](https://treeship.dev) attestation for MCP tool calls. One import change, every tool call gets a signed receipt.
+Drop-in [Treeship](https://treeship.dev) attestation for MCP tool calls. One import change, every tool call gets a signed receipt and appears in the session receipt timeline.
 
 ## Install
 
@@ -41,12 +41,37 @@ console.log(result._treeship)
 
 ## What happens automatically
 
-Every `callTool()` creates two artifacts:
+Every `callTool()` does three things:
 
-1. **Intent** (awaited before the call) -- proves what was about to happen
-2. **Receipt** (fire-and-forget after the call) -- proves what happened
+1. **Intent** (awaited before the call) -- signed artifact proving what was about to happen `[AUTO]`
+2. **Receipt** (fire-and-forget after the call) -- signed artifact proving what happened `[AUTO]`
+3. **Session event** -- `agent.called_tool` event emitted to the active session's event log so the tool call appears in the receipt timeline, agent graph, and side effects `[AUTO]`
 
-Both are signed with Ed25519, content-addressed, and auto-chained.
+All three are automatic. The signed artifacts are Merkle-proven. The session event makes them human-readable in the receipt.
+
+## What is captured
+
+| Field | Source | Status |
+|-------|--------|--------|
+| MCP tool name | `params.name` | `AUTO` -- always captured |
+| Input content | SHA-256 digest only | `AUTO` -- never raw content |
+| Output content | SHA-256 digest only | `AUTO` -- never raw content |
+| Duration | `Date.now()` delta | `AUTO` |
+| Exit code | `isError` flag | `AUTO` |
+| Error message | `error.message` | `AUTO` -- only on failure |
+| Actor URI | `TREESHIP_ACTOR` env or default | `AUTO` |
+| Model | Not captured by MCP bridge | `NOT YET CAPTURED` -- set `TREESHIP_MODEL` env var with `treeship wrap` |
+| Token counts | Not captured by MCP bridge | `NOT YET CAPTURED` -- set `TREESHIP_TOKENS_IN`/`OUT` env vars |
+| Cost | Not captured by MCP bridge | `NOT YET CAPTURED` -- set `TREESHIP_COST_USD` env var |
+
+## Integration status
+
+| Runtime | Status | Notes |
+|---------|--------|-------|
+| Generic MCP server | Tested (unit tests) | 3 tests covering Client export and subclass |
+| Claude Code MCP | Not yet tested | Should work since Claude Code uses standard MCP transport |
+| Hermes | Not yet tested | Hermes transport compatibility to be confirmed |
+| Cursor MCP | Not yet tested | Standard stdio transport expected |
 
 ## Environment variables
 
@@ -56,6 +81,10 @@ Both are signed with Ed25519, content-addressed, and auto-chained.
 | `TREESHIP_ACTOR` | Override default actor URI |
 | `TREESHIP_APPROVAL_NONCE` | Bind all calls to an approval |
 | `TREESHIP_DEBUG=1` | Log attestation failures to stderr |
+| `TREESHIP_MODEL` | Model name for cost tracking (via `treeship wrap`) |
+| `TREESHIP_TOKENS_IN` | Input token count (via `treeship wrap`) |
+| `TREESHIP_TOKENS_OUT` | Output token count (via `treeship wrap`) |
+| `TREESHIP_COST_USD` | Cost in USD (via `treeship wrap`) |
 
 ## Design rules
 
@@ -63,6 +92,7 @@ Both are signed with Ed25519, content-addressed, and auto-chained.
 - Only hashes are stored, **never** raw content
 - Intent attestation is **awaited** (proof of what was about to happen)
 - Receipt attestation is **fire-and-forget** (never blocks response)
+- Session events are **best-effort** (no active session = silent no-op)
 - `TREESHIP_DISABLE=1` produces **zero** overhead
 
 ## License
