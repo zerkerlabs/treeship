@@ -618,7 +618,8 @@ fn emit_decision_from_env() {
         .and_then(|s| s.parse().ok());
     let cost_usd: Option<f64> = std::env::var("TREESHIP_COST_USD")
         .ok()
-        .and_then(|s| s.parse().ok());
+        .and_then(|s| s.parse().ok())
+        .filter(|v: &f64| v.is_finite()); // Reject NaN/Infinity to prevent serde failures
 
     // Only emit if at least one env var is set.
     if model.is_none() && tokens_in.is_none() && tokens_out.is_none() && cost_usd.is_none() {

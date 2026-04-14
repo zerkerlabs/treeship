@@ -669,8 +669,16 @@ pub fn event(
         }
     };
 
-    let meta = meta_json
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok());
+    // Merge caller-provided meta with a source marker so receipts can
+    // distinguish externally-emitted events from daemon or wrap events.
+    // This is NOT a security boundary -- same-user local access is the
+    // trust domain, matching the single-key architecture.
+    let mut meta_obj = meta_json
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default();
+    meta_obj.insert("source".into(), serde_json::json!("session-event-cli"));
+    let meta = Some(serde_json::Value::Object(meta_obj));
 
     let mut evt = SessionEvent {
         session_id: manifest.session_id.clone(),

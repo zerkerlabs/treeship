@@ -45,11 +45,14 @@ export class TreeshipMCPClient extends Client {
     } finally {
       const elapsedMs = Date.now() - startMs;
 
-      // Attach treeship metadata to result immediately (receipt comes async)
-      if (result) {
-        const receipt = { resolve: (_id: string | undefined) => {} };
-        const receiptPromise = new Promise<string | undefined>(r => { receipt.resolve = r; });
+      // Always attest + emit session event, even on failure.
+      // A thrown tool call that did side effects must not vanish from
+      // the audit trail. The receipt and session event fire regardless
+      // of whether result exists.
+      const receipt = { resolve: (_id: string | undefined) => {} };
+      const receiptPromise = new Promise<string | undefined>(r => { receipt.resolve = r; });
 
+      if (result) {
         result._treeship = {
           intent: intentId,
           receipt: undefined,
@@ -57,16 +60,16 @@ export class TreeshipMCPClient extends Client {
           tool: params.name,
           actor: this._actor,
         } as ToolReceipt;
-
-        // Fire-and-forget: receipt attestation happens off the hot path.
-        // Callers who need the receipt ID can await result._treeship.receiptReady.
-        this._attestReceipt(params, result, intentId, elapsedMs, error)
-          .then(id => {
-            result._treeship.receipt = id;
-            receipt.resolve(id);
-          })
-          .catch(() => receipt.resolve(undefined));
       }
+
+      this._attestReceipt(params, result, intentId, elapsedMs, error)
+        .then(id => {
+          if (result) {
+            result._treeship.receipt = id;
+          }
+          receipt.resolve(id);
+        })
+        .catch(() => receipt.resolve(undefined));
     }
 
     return result;
