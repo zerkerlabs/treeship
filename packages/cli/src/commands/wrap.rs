@@ -231,6 +231,12 @@ pub fn run(
     // events so they appear in the Session Receipt.
     emit_wrap_events(&safe_command, &action_label, exit_code, elapsed_ms, &changed_files);
 
+    // ── AgentDecision from env vars (best-effort) ─────────────────
+    // If TREESHIP_MODEL (or any of TREESHIP_TOKENS_IN, TREESHIP_TOKENS_OUT,
+    // TREESHIP_COST_USD) is set, emit an AgentDecision event so model,
+    // token counts, and cost flow into the receipt automatically.
+    emit_decision_from_env();
+
     // ── OTel export (best-effort, never fails the wrap) ─────────────
     #[cfg(feature = "otel")]
     {
@@ -595,6 +601,80 @@ fn emit_wrap_events(
         });
         let _ = log.append(&mut evt);
     }
+}
+
+/// Read TREESHIP_MODEL, TREESHIP_TOKENS_IN, TREESHIP_TOKENS_OUT,
+/// TREESHIP_COST_USD from environment and emit an AgentDecision event
+/// if any are present. This allows any agent runtime that sets these
+/// env vars to have model, token, and cost data flow into the receipt
+/// automatically.
+fn emit_decision_from_env() {
+    let model = std::env::var("TREESHIP_MODEL").ok();
+    let tokens_in: Option<u64> = std::env::var("TREESHIP_TOKENS_IN")
+        .ok()
+        .and_then(|s| s.parse().ok());
+    let tokens_out: Option<u64> = std::env::var("TREESHIP_TOKENS_OUT")
+        .ok()
+        .and_then(|s| s.parse().ok());
+    let cost_usd: Option<f64> = std::env::var("TREESHIP_COST_USD")
+        .ok()
+        .and_then(|s| s.parse().ok());
+
+    // Only emit if at least one env var is set.
+    if model.is_none() && tokens_in.is_none() && tokens_out.is_none() && cost_usd.is_none() {
+        return;
+    }
+
+    let manifest = match super::session::load_session() {
+        Some(m) => m,
+        None => return,
+    };
+    let ts_dir = match find_treeship_dir() {
+        Some(d) => d,
+        None => return,
+    };
+    let evt_dir = ts_dir.join("sessions").join(&manifest.session_id);
+    let log = match EventLog::open(&evt_dir) {
+        Ok(l) => l,
+        Err(_) => return,
+    };
+
+    let host_id = super::session::local_host_id();
+    let now = {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        treeship_core::statements::unix_to_rfc3339(secs)
+    };
+
+    let mut event = SessionEvent {
+        session_id: manifest.session_id.clone(),
+        event_id: generate_event_id(),
+        timestamp: now,
+        sequence_no: 0,
+        trace_id: generate_trace_id(),
+        span_id: generate_span_id(),
+        parent_span_id: None,
+        agent_id: manifest.actor.clone(),
+        agent_instance_id: "operator".into(),
+        agent_name: "treeship-cli".into(),
+        agent_role: Some("operator".into()),
+        host_id,
+        tool_runtime_id: None,
+        event_type: EventType::AgentDecision {
+            model,
+            tokens_in,
+            tokens_out,
+            cost_usd,
+            summary: None,
+            confidence: None,
+        },
+        artifact_ref: None,
+        meta: None,
+    };
+
+    let _ = log.append(&mut event);
 }
 
 /// Find the .treeship directory by walking up from cwd.
