@@ -324,6 +324,7 @@ async function render(){
   h+='<div class="metric"><div class="metric-label">Actions</div><div class="metric-value">'+num(totalActions)+'</div><div class="metric-sub">across '+nodes.length+' agent'+(nodes.length!==1?'s':'')+'</div></div>';
   h+='<div class="metric"><div class="metric-label">Duration</div><div class="metric-value">'+fmtDur(s.duration_ms)+'</div><div class="metric-sub">'+esc((s.started_at||'').slice(11,16))+' start</div></div>';
   if(hasCost)h+='<div class="metric"><div class="metric-label">Cost</div><div class="metric-value">$'+num(s.total_cost_usd).toFixed(2)+'</div><div class="metric-sub">'+(num(s.total_tokens_in)/1000).toFixed(0)+'k in / '+(num(s.total_tokens_out)/1000).toFixed(0)+'k out</div></div>';
+  else h+='<div class="metric"><div class="metric-label">Cost</div><div class="metric-value" style="color:var(--faint);font-size:.82rem">not captured</div><div class="metric-sub" style="font-size:.6rem">Set TREESHIP_MODEL, TREESHIP_COST_USD</div></div>';
   h+='<div class="metric"><div class="metric-label">Trust</div><div class="metric-value" style="color:var(--primary);font-size:1rem">'+(pr.zk_proofs_present?'L3':'L2')+'</div><div class="metric-sub">Merkle + Ed25519</div></div>';
   h+='</div>';
 
@@ -347,7 +348,8 @@ async function render(){
       const pct=Math.max(2,num(n.tool_calls)/totalActions*100);
       h+='<div class="agent-card"><div class="agent-stripe" style="background:'+c+'"></div><div class="agent-info">';
       h+='<div class="agent-name">'+esc(n.agent_name)+'</div>';
-      h+='<div class="agent-meta">'+esc(n.agent_instance_id)+' \u00b7 '+esc(n.agent_role||'agent')+' \u00b7 '+esc(n.model||'--')+' \u00b7 @'+esc(n.host_id)+'</div>';
+      const modelStr=n.model?esc(n.model):'<span style="color:var(--faint)" title="Set TREESHIP_MODEL env var to capture">not captured</span>';
+      h+='<div class="agent-meta">'+esc(n.agent_instance_id)+' \u00b7 '+esc(n.agent_role||'agent')+' \u00b7 '+modelStr+' \u00b7 @'+esc(n.host_id)+'</div>';
       h+='<div class="agent-stats"><span>'+num(n.tool_calls)+' actions</span>';
       if(hasCost)h+='<span>$'+num(n.cost_usd).toFixed(2)+'</span>';
       h+='<span>depth '+num(n.depth)+'</span>';
@@ -476,10 +478,17 @@ async function render(){
     const sensReads=(se.files_read||[]).filter(f=>SENSITIVE_RE.test(f.file_path)).length;
     const extCalls=(se.network_connections||[]).length;
     const failedCmds=procs.filter(p=>p.exit_code!=null&&p.exit_code!==0).length;
-    if(!sensReads)h+='<div class="confirm-row"><div class="confirm-icon">\u2714</div>No sensitive file reads detected</div>';
-    if(!extCalls)h+='<div class="confirm-row"><div class="confirm-icon">\u2714</div>No external network calls</div>';
-    if(!failedCmds)h+='<div class="confirm-row"><div class="confirm-icon">\u2714</div>No failed commands</div>';
-    if(!sensReads&&!extCalls&&!failedCmds)h+='<div style="padding:.5rem 1.25rem;font-size:.75rem;color:var(--muted)">Clean session. All operations stayed within expected boundaries.</div>';
+    // Distinguish "nothing happened" (green) from "never measured" (grey).
+    // Sensitive reads: green only if daemon events exist (source: daemon-atime).
+    const hasDaemonEvents=tl.some(e=>e.agent_name==='treeship-daemon');
+    if(hasDaemonEvents&&!sensReads)h+='<div class="confirm-row"><div class="confirm-icon">\u2714</div>No sensitive file reads detected</div>';
+    else if(!sensReads)h+='<div class="confirm-row" style="color:var(--faint)"><div class="confirm-icon" style="background:var(--surface-3);color:var(--faint)">\u2013</div>Sensitive file read detection requires the daemon. Run <code>treeship daemon start</code>.</div>';
+    // Network: never auto-captured, always grey unless explicitly emitted.
+    if(extCalls)h+='<div class="confirm-row"><div class="confirm-icon">\u2714</div>'+extCalls+' external network call'+(extCalls>1?'s':'')+' detected</div>';
+    else h+='<div class="confirm-row" style="color:var(--faint)"><div class="confirm-icon" style="background:var(--surface-3);color:var(--faint)">\u2013</div>Network monitoring requires <code>treeship session event --type agent.connected_network</code> or <code>@treeship/mcp</code>.</div>';
+    // Failed commands: green if commands were run, grey if no commands.
+    if(procs.length&&!failedCmds)h+='<div class="confirm-row"><div class="confirm-icon">\u2714</div>No failed commands</div>';
+    else if(!procs.length)h+='<div class="confirm-row" style="color:var(--faint)"><div class="confirm-icon" style="background:var(--surface-3);color:var(--faint)">\u2013</div>No commands captured. Use <code>treeship wrap</code> or <code>@treeship/mcp</code>.</div>';
     h+='</div>';
   }
   h+='</section>';
