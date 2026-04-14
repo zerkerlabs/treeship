@@ -298,7 +298,10 @@ fn generate_preview_html(receipt: &SessionReceipt) -> String {
     // field cannot break out of the JSON data block. The primary defense
     // is type="application/json" which the HTML parser does not execute,
     // but this escaping adds a second layer.
-    let safe_json = receipt_json.replace("</script", r"<\/script");
+    // Escape ALL '<' as '\u003c' in the JSON string to prevent any
+    // case-variant of </script> from breaking out of the data block.
+    // This is bulletproof: no HTML parser can see a tag open inside the JSON.
+    let safe_json = receipt_json.replace('<', r"\u003c");
 
     // Only one placeholder: __RECEIPT_JSON__ inside the data block.
     // The page title is set at runtime from the parsed JSON to avoid
