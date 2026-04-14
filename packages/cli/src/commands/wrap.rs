@@ -229,7 +229,7 @@ pub fn run(
     // ── Emit session events (best-effort, never fails the wrap) ─────
     // If a session is active, emit process start/complete and file-write
     // events so they appear in the Session Receipt.
-    emit_wrap_events(&safe_command, &action_label, exit_code, elapsed_ms, &changed_files);
+    emit_wrap_events(&safe_command, &action_label, exit_code, elapsed_ms, &changed_files, &files_before);
 
     // ── AgentDecision from env vars (best-effort) ─────────────────
     // If TREESHIP_MODEL (or any of TREESHIP_TOKENS_IN, TREESHIP_TOKENS_OUT,
@@ -534,6 +534,7 @@ fn emit_wrap_events(
     exit_code: i32,
     elapsed_ms: u64,
     changed_files: &[String],
+    files_before: &std::collections::HashMap<String, std::time::SystemTime>,
 ) {
     // Find active session
     let manifest = match super::session::load_session() {
@@ -590,12 +591,17 @@ fn emit_wrap_events(
     });
     let _ = log.append(&mut evt);
 
-    // File write events
+    // File write events with created/modified detection
     for path in changed_files {
+        let op = if files_before.contains_key(path) {
+            if std::path::Path::new(path).exists() { "modified" } else { "deleted" }
+        } else {
+            "created"
+        };
         let mut evt = base(EventType::AgentWroteFile {
             file_path: path.clone(),
             digest: None,
-            operation: Some("modified".into()),
+            operation: Some(op.into()),
             additions: None,
             deletions: None,
         });
