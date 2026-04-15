@@ -1,6 +1,6 @@
 {
   "name": "@treeship/a2a",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Treeship attestation middleware for A2A (Agent2Agent) servers and clients",
   "license": "Apache-2.0",
   "repository": {

@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.7.2 (2026-04-15)
+
+### Session Receipt: production-quality preview.html
+
+- Self-contained verifier in preview.html: Merkle root recomputation, inclusion proof verification, and timeline ordering checks run client-side via Web Crypto API. Works air-gapped, zero network calls.
+- Production design overhaul: three-panel narrative (planned/done/review), trust chain visual, agent cards with cost bars, command cards with retry detection, timeline grouped by agent, sidebar with IntersectionObserver, print stylesheet, copy buttons, mobile collapse.
+- Honest empty states: grey "not captured" for unmeasured data, green confirmations only for things actually measured.
+- Security hardening: XSS prevention via \u003c escaping, numeric coercion via num() helper, honest "Merkle structure verified" language (not "Verified").
+
+### MCP bridge: session event wiring
+
+- `treeship session event` CLI command: append structured events to the active session's event log. Used by MCP bridge, A2A bridge, and SDKs.
+- `@treeship/mcp` now emits `agent.called_tool` session events after each tool call so MCP tool usage appears in the receipt timeline, agent graph, and side effects.
+- Failed MCP tool calls are now audited (previously vanished from the audit trail).
+
+### Agent instrumentation
+
+- `TREESHIP_MODEL`, `TREESHIP_TOKENS_IN`, `TREESHIP_TOKENS_OUT`, `TREESHIP_COST_USD` environment variables: set these before `treeship wrap` to capture model, token counts, and cost in the receipt.
+- `treeship declare` CLI command: create `.treeship/declaration.json` with `bounded_actions`, `forbidden`, `escalation_required`. Receipt compares declared vs actual tool usage and flags unauthorized calls.
+- File operation type detection: wrap now distinguishes created, modified, and deleted files.
+- ZK proof detection: `zk_proofs_present` is set automatically when proof files exist for the session.
+- Approval gates shown in preview.html when approval artifacts are present.
+
+### Hub hardening
+
+- SQLite persistence: reads `DATABASE_PATH` env var (Railway), persistent default at `/var/lib/treeship/hub.db`.
+- Consistent JSON error responses across all endpoints.
+- Session ID length cap (128 chars).
+- Rate limiting via chi Throttle middleware.
+- Write-once receipts with RowsAffected check on conditional update.
+- Crash-safe session close with `session.closing` recovery marker.
+- Case-insensitive log redaction for session query parameters.
+
 ## 0.7.1 (2026-04-09)
 
 ### Security fixes (from Codex adversarial review)
