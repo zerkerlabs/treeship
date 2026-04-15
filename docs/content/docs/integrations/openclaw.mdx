@@ -1,95 +1,91 @@
 ---
 title: OpenClaw
-description: Add Treeship as an OpenClaw skill. Every agent action gets a signed receipt.
+description: Integrate Treeship with OpenClaw agents using the TREESHIP.md skill file. Zero code changes, drop-in instrumentation.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Steps, Step } from 'fumadocs-ui/components/steps';
 
-## Quick setup
+OpenClaw agents pick up skills from markdown files in their skills directory. The `TREESHIP.md` skill file instructs any OpenClaw agent to produce verifiable session receipts with zero code changes.
+
+## Integration pattern
+
+OpenClaw uses the **instruction boundary** pattern: the agent reads `TREESHIP.md` as a skill and follows the instructions to wrap commands, set environment variables, and manage session lifecycle. No SDK, no middleware, no dependency. One file.
+
+This is also the **universal fallback** for any agent framework that accepts instruction files. If an agent can read markdown and run shell commands, it can produce Treeship receipts.
+
+## Setup
 
 <Steps>
 <Step>
-### Install Treeship
+### Install Treeship CLI
 
 ```bash
-cargo install --git https://github.com/zerkerlabs/treeship treeship-cli
+curl -fsSL treeship.dev/install | sh
 treeship init
-treeship install
 ```
 </Step>
 <Step>
-### Add the Treeship skill
+### Add the TREESHIP.md skill
 
-Create a `treeship.skill.md` file in your OpenClaw skills directory:
+Copy `TREESHIP.md` from the Treeship repo root into your OpenClaw skills directory:
 
-````markdown
-# treeship
-
-Treeship creates signed receipts for agent actions. Use this skill
-to attest important actions, get approvals, and create verifiable
-proof of what happened.
-
-## Commands
-
-### Attest an action
 ```bash
-treeship wrap -- <command>
-```
-Wraps any shell command. Captures output digest, file changes, git state,
-exit code, and elapsed time. Signs everything with Ed25519.
-
-### Get approval before a risky action
-```bash
-treeship attest approval --approver human://alice --description "approve deployment"
-```
-Returns a nonce. Pass it to the action:
-```bash
-treeship wrap --approval-nonce <nonce> -- kubectl apply -f deploy.yaml
+cp TREESHIP.md /path/to/openclaw/skills/
 ```
 
-### Record a decision
-```bash
-treeship attest decision --actor agent://openclaw --model claude-opus-4 \
-  --summary "Analyzed contract. Standard terms." --confidence 0.91
-```
+Or download it directly:
 
-### Check what's been attested
 ```bash
-treeship log --tail 10
+curl -o skills/TREESHIP.md \
+  https://raw.githubusercontent.com/zerkerlabs/treeship/main/TREESHIP.md
 ```
-
-### Verify the chain
-```bash
-treeship verify last --full
-```
-
-### Push to Hub for a shareable URL
-```bash
-treeship hub push <artifact-id>
-```
-
-## Rules
-- Always use `treeship wrap -- <command>` for shell commands
-- Use `treeship attest decision` after LLM inference that leads to an action
-- Check `treeship pending` before risky operations
-- Never skip attestation. Every action matters for the audit trail.
-````
 </Step>
 <Step>
-### Verify it works
+### Run your agent
 
-Run your OpenClaw agent, then check:
+The skill instructs the agent to manage session lifecycle automatically:
 
 ```bash
-treeship log --tail 10
-treeship verify last --full
+# Agent starts session, wraps commands, closes with narrative, uploads receipt
+# All handled by the TREESHIP.md instructions
+```
+
+After the agent completes its task, check the receipt:
+
+```bash
+treeship package inspect .treeship/sessions/<session_id>.treeship
+treeship package verify .treeship/sessions/<session_id>.treeship
 ```
 </Step>
 </Steps>
 
+## What the skill instructs
+
+The skill covers three scenarios:
+
+**Session start**: the agent runs `treeship session start --name "<task>"` and sets `TREESHIP_MODEL`, `TREESHIP_TOKENS_IN`, `TREESHIP_TOKENS_OUT`, `TREESHIP_COST_USD` environment variables.
+
+**Command wrapping**: every shell command is prefixed with `treeship wrap --`. This creates a signed artifact for each command and records it in the session timeline.
+
+**Session close**: the agent calls `treeship session close` with `--headline`, `--summary`, and `--review` flags for a meaningful narrative, then `treeship session report` to upload.
+
+## What appears in the receipt
+
+| Section | Content | Capture method |
+|---------|---------|----------------|
+| Agent identity | Agent name, model, host | `TREESHIP_MODEL` env var `[AUTO]` |
+| Timeline | Every wrapped command in order | `treeship wrap` events `[AUTO]` |
+| Commands | Full command strings with exit codes | Process events `[AUTO]` |
+| Cost and tokens | Model, input/output tokens, cost per wrap | Env vars `[EXPLICIT]` |
+| Narrative | Headline, summary, review | CLI flags at close `[EXPLICIT]` |
+| File operations | Created/modified/deleted files | File snapshot diff `[AUTO]` |
+| Merkle proof | Cryptographic commitment | Automatic `[AUTO]` |
+| Sensitive reads | .env, .ssh, .aws file access | Daemon atime detection `[EXPLICIT]` |
+| Network connections | External API calls | `treeship session event` `[EXPLICIT]` |
+
 <Callout type="info">
-OpenClaw agents can read the skill file and call treeship commands directly. No SDK or library import needed.
+`[AUTO]` means captured automatically by `treeship wrap`. `[EXPLICIT]` means the agent or operator must set an env var, run a command, or start the daemon for this data to appear.
 </Callout>
 
 ## Subagent support
@@ -104,8 +100,19 @@ treeship wrap --actor agent://openclaw-main -- research "topic"
 treeship wrap --actor agent://openclaw-researcher -- fetch "papers"
 
 # Handoff between agents
-treeship attest handoff --from agent://openclaw-researcher --to agent://openclaw-main \
-  --artifacts art_abc123
+treeship session event --type agent.handoff \
+  --actor agent://openclaw-researcher \
+  --destination agent://openclaw-main \
+  --artifact-id art_abc123
 ```
 
-All receipts chain together automatically via the `.last` file.
+All receipts chain together automatically via the `.last` file. The receipt agent graph shows each subagent as a separate node.
+
+## Works with any agent
+
+The `TREESHIP.md` skill is not OpenClaw-specific. Any agent that reads markdown instructions can use it:
+
+- **OpenClaw**: drop in `skills/TREESHIP.md`
+- **Claude Code**: add to `CLAUDE.md` or reference as a project file
+- **Custom agents**: include in the system prompt or instructions
+- **CI/CD**: source the instructions in your pipeline script
