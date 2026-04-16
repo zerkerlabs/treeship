@@ -140,7 +140,7 @@ func redactPath(u *url.URL) string {
 	q := u.Query()
 	redacted := false
 	for key := range q {
-		if strings.EqualFold(key, "session") {
+		if strings.EqualFold(key, "session") || strings.EqualFold(key, "device_code") {
 			q.Set(key, "REDACTED")
 			redacted = true
 		}

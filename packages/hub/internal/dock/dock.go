@@ -7,10 +7,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"time"
 
 	"github.com/treeship/hub/internal/db"
 )
+
+// isValidDeviceCode checks that a device code is exactly 16 lowercase hex chars.
+var deviceCodeRe = regexp.MustCompile(`^[0-9a-f]{16}$`)
+
+func isValidDeviceCode(code string) bool {
+	return deviceCodeRe.MatchString(code)
+}
 
 type Handlers struct {
 	DB *sql.DB
@@ -44,8 +52,8 @@ func (h *Handlers) Challenge(w http.ResponseWriter, r *http.Request) {
 // Authorized handles GET /v1/dock/authorized?device_code=XXX
 func (h *Handlers) Authorized(w http.ResponseWriter, r *http.Request) {
 	deviceCode := r.URL.Query().Get("device_code")
-	if deviceCode == "" {
-		jsonError(w, "missing device_code", http.StatusBadRequest)
+	if deviceCode == "" || !isValidDeviceCode(deviceCode) {
+		jsonError(w, "missing or invalid device_code", http.StatusBadRequest)
 		return
 	}
 
@@ -103,8 +111,8 @@ func (h *Handlers) Authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.DeviceCode == "" {
-		jsonError(w, "missing device_code", http.StatusBadRequest)
+	if req.DeviceCode == "" || !isValidDeviceCode(req.DeviceCode) {
+		jsonError(w, "missing or invalid device_code", http.StatusBadRequest)
 		return
 	}
 
