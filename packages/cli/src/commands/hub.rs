@@ -665,9 +665,13 @@ pub(crate) fn build_dpop_jwt(
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Format a device code as XXXX-XXXX for display.
+/// Format a device code for display.
+/// Shows full code as XXXX-XXXX-XXXX-XXXX so the user can enter
+/// the complete code in the browser activation page.
 fn format_device_code(code: &str) -> String {
-    if code.len() >= 8 {
+    if code.len() >= 16 {
+        format!("{}-{}-{}-{}", &code[..4], &code[4..8], &code[8..12], &code[12..16])
+    } else if code.len() >= 8 {
         format!("{}-{}", &code[..4], &code[4..8])
     } else {
         code.to_string()
