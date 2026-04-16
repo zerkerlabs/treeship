@@ -13,8 +13,10 @@ import (
 	"github.com/treeship/hub/internal/db"
 )
 
-// isValidDeviceCode checks that a device code is exactly 16 lowercase hex chars.
-var deviceCodeRe = regexp.MustCompile(`^[0-9a-f]{16}$`)
+// isValidDeviceCode accepts both the full 16-char code and the legacy
+// 8-char prefix format (from CLI v0.7.2 and earlier which displayed
+// only the first 8 chars).
+var deviceCodeRe = regexp.MustCompile(`^[0-9a-f]{8,16}$`)
 
 func isValidDeviceCode(code string) bool {
 	return deviceCodeRe.MatchString(code)

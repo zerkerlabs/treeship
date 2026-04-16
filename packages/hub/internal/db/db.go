@@ -168,6 +168,7 @@ func InsertChallenge(db *sql.DB, deviceCode, nonce string, expiresAt int64) erro
 }
 
 func GetChallenge(db *sql.DB, deviceCode string) (*Challenge, error) {
+	// Try exact match first (full 16-char code).
 	row := db.QueryRow(
 		`SELECT device_code, nonce, expires_at, approved FROM dock_challenges WHERE device_code = ?`,
 		deviceCode,
@@ -175,6 +176,20 @@ func GetChallenge(db *sql.DB, deviceCode string) (*Challenge, error) {
 	c := &Challenge{}
 	var approved int
 	if err := row.Scan(&c.DeviceCode, &c.Nonce, &c.ExpiresAt, &approved); err != nil {
+		// If exact match fails and input is 8 chars (legacy CLI prefix),
+		// try prefix match. LIKE is safe here because we already validated
+		// the input as ^[0-9a-f]{8,16}$ before calling this function.
+		if len(deviceCode) < 16 {
+			row = db.QueryRow(
+				`SELECT device_code, nonce, expires_at, approved FROM dock_challenges WHERE device_code LIKE ? LIMIT 1`,
+				deviceCode+"%",
+			)
+			if err2 := row.Scan(&c.DeviceCode, &c.Nonce, &c.ExpiresAt, &approved); err2 != nil {
+				return nil, err // return original error
+			}
+			c.Approved = approved == 1
+			return c, nil
+		}
 		return nil, err
 	}
 	c.Approved = approved == 1
