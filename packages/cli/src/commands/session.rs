@@ -390,6 +390,187 @@ pub fn status(
 }
 
 // ---------------------------------------------------------------------------
+// session status --watch (live TUI)
+// ---------------------------------------------------------------------------
+
+pub fn watch(
+    config: Option<&str>,
+    _printer: &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::io::Write;
+    use std::collections::BTreeMap;
+
+    let manifest = match load_session() {
+        Some(m) => m,
+        None => return Err("no active session -- run treeship session start first".into()),
+    };
+
+    let ts_dir = session_dir().ok_or("no .treeship directory found")?;
+    let evt_dir = ts_dir.join("sessions").join(&manifest.session_id);
+
+    // Setup: enable raw mode for clean Ctrl+C via crossterm event polling.
+    // If stdout is not a terminal (piped), skip raw mode and run one frame.
+    let is_tty = crossterm::tty::IsTty::is_tty(&std::io::stdout());
+    if is_tty {
+        crossterm::terminal::enable_raw_mode()?;
+    }
+
+    let mut stdout = std::io::stdout();
+    let mut last_count = 0u64;
+
+    loop {
+        // Read events
+        let log = match EventLog::open(&evt_dir) {
+            Ok(l) => l,
+            Err(_) => { std::thread::sleep(std::time::Duration::from_secs(2)); continue; }
+        };
+        let events = log.read_all().unwrap_or_default();
+        let event_count = events.len();
+
+        // Compute agent stats
+        let mut agents: BTreeMap<String, (String, String, u32, f64, u64, u64)> = BTreeMap::new(); // name -> (model, role, actions, cost, tok_in, tok_out)
+        for e in &events {
+            let entry = agents.entry(e.agent_instance_id.clone()).or_insert_with(|| {
+                (String::new(), String::new(), 0, 0.0, 0, 0)
+            });
+            if entry.0.is_empty() { entry.0 = e.agent_name.clone(); }
+            if entry.1.is_empty() { entry.1 = e.agent_role.clone().unwrap_or_default(); }
+            match &e.event_type {
+                EventType::AgentCalledTool { .. } | EventType::AgentCompletedProcess { .. } => { entry.2 += 1; }
+                EventType::AgentDecision { model, tokens_in, tokens_out, cost_usd, .. } => {
+                    if let Some(m) = model { if !m.is_empty() { entry.0 = m.clone(); } } // overwrite name with model for display
+                    if let Some(m) = model { if !m.is_empty() { /* keep model */ } }
+                    if let Some(t) = tokens_in { entry.4 += t; }
+                    if let Some(t) = tokens_out { entry.5 += t; }
+                    if let Some(c) = cost_usd { entry.3 += c; }
+                }
+                _ => {}
+            }
+        }
+
+        // Compute security stats
+        let sensitive_reads = events.iter().filter(|e| {
+            matches!(&e.event_type, EventType::AgentReadFile { file_path, .. } if
+                file_path.contains(".env") || file_path.contains(".ssh") || file_path.contains(".pem") || file_path.contains(".aws"))
+        }).count();
+        let external_calls = events.iter().filter(|e| matches!(&e.event_type, EventType::AgentConnectedNetwork { .. })).count();
+        let failed_cmds = events.iter().filter(|e| {
+            matches!(&e.event_type, EventType::AgentCompletedProcess { exit_code: Some(c), .. } if *c != 0)
+        }).count();
+
+        // Artifact count (from chain, approximate from events)
+        let artifact_count = events.iter().filter(|e| e.artifact_ref.is_some()).count();
+
+        // Clear screen and render
+        write!(stdout, "\x1b[2J\x1b[H")?; // clear + home
+
+        // Header
+        let elapsed_ms = epoch_ms().saturating_sub(manifest.started_at_ms);
+        let elapsed_str = format_duration_ms(elapsed_ms);
+        writeln!(stdout, "\x1b[1m SESSION: {}\x1b[0m  \x1b[90m{}\x1b[0m  \x1b[32m{} ago\x1b[0m\r",
+            manifest.name.as_deref().unwrap_or("unnamed"),
+            manifest.session_id,
+            elapsed_str,
+        )?;
+        writeln!(stdout, "\x1b[90m{}\x1b[0m\r", "\u{2500}".repeat(70))?;
+        writeln!(stdout, "\r")?;
+
+        // Agent table
+        writeln!(stdout, "\x1b[1m AGENTS\x1b[0m                          \x1b[90mACTIONS    COST\x1b[0m\r")?;
+        let colors = ["\x1b[35m", "\x1b[33m", "\x1b[36m", "\x1b[34m", "\x1b[31m"];
+        for (i, (id, (name, _role, actions, cost, _ti, _to))) in agents.iter().enumerate() {
+            let c = colors[i % colors.len()];
+            let display_name = if name.is_empty() { id.as_str() } else { name.as_str() };
+            writeln!(stdout, " {c}\u{25cf}\x1b[0m {:<28} {:>4}      ${:.2}\r",
+                &display_name[..display_name.len().min(28)], actions, cost)?;
+        }
+        writeln!(stdout, "\r")?;
+
+        // Live events (last 15)
+        writeln!(stdout, "\x1b[1m LIVE EVENTS\x1b[0m\r")?;
+        let start = if events.len() > 15 { events.len() - 15 } else { 0 };
+        for e in &events[start..] {
+            let time = &e.timestamp[11..19.min(e.timestamp.len())];
+            let agent = &e.agent_name[..e.agent_name.len().min(14)];
+            let (ev_label, detail) = match &e.event_type {
+                EventType::SessionStarted => ("start".to_string(), "session opened".to_string()),
+                EventType::SessionClosed { summary, .. } => ("closed".to_string(), summary.clone().unwrap_or_default()),
+                EventType::AgentCalledTool { tool_name, duration_ms, .. } => {
+                    (tool_name.clone(), format!("{}ms", duration_ms.unwrap_or(0)))
+                }
+                EventType::AgentCompletedProcess { process_name, exit_code, duration_ms, .. } => {
+                    let status = if *exit_code == Some(0) { "\x1b[32m\u{2713}\x1b[0m" } else { "\x1b[31m\u{2717}\x1b[0m" };
+                    (process_name.clone(), format!("{} {}ms", status, duration_ms.unwrap_or(0)))
+                }
+                EventType::AgentDecision { model, cost_usd, .. } => {
+                    ("decision".to_string(), format!("{} ${:.2}", model.as_deref().unwrap_or(""), cost_usd.unwrap_or(0.0)))
+                }
+                EventType::AgentWroteFile { file_path, operation, .. } => {
+                    (operation.clone().unwrap_or_else(|| "write".into()), file_path.clone())
+                }
+                EventType::AgentReadFile { file_path, .. } => ("read".to_string(), file_path.clone()),
+                EventType::AgentConnectedNetwork { destination, .. } => ("network".to_string(), destination.clone()),
+                EventType::AgentHandoff { to_agent_instance_id, .. } => ("handoff \u{2192}".to_string(), to_agent_instance_id.clone()),
+                _ => ("event".to_string(), String::new()),
+            };
+            let detail_short = if detail.len() > 40 { format!("{}...", &detail[..37]) } else { detail };
+            writeln!(stdout, " \x1b[90m{}\x1b[0m  {:<14} \x1b[36m{:<14}\x1b[0m {}\r",
+                time, agent, &ev_label[..ev_label.len().min(14)], detail_short)?;
+        }
+        writeln!(stdout, "\r")?;
+
+        // Security summary
+        writeln!(stdout, "\x1b[1m SECURITY\x1b[0m\r")?;
+        let sr = if sensitive_reads == 0 { format!("\x1b[32m\u{2713} 0 sensitive reads\x1b[0m") }
+                 else { format!("\x1b[33m\u{26a0} {} sensitive read{}\x1b[0m", sensitive_reads, if sensitive_reads > 1 { "s" } else { "" }) };
+        let ec = if external_calls == 0 { format!("\x1b[32m\u{2713} 0 external calls\x1b[0m") }
+                 else { format!("\x1b[33m\u{26a0} {} external call{}\x1b[0m", external_calls, if external_calls > 1 { "s" } else { "" }) };
+        let fc = if failed_cmds == 0 { format!("\x1b[32m\u{2713} 0 failed commands\x1b[0m") }
+                 else { format!("\x1b[31m\u{2717} {} failed command{}\x1b[0m", failed_cmds, if failed_cmds > 1 { "s" } else { "" }) };
+        writeln!(stdout, " {}    {}    {}\r", sr, ec, fc)?;
+        writeln!(stdout, "\r")?;
+
+        // Merkle progress
+        writeln!(stdout, "\x1b[1m VERIFICATION\x1b[0m\r")?;
+        writeln!(stdout, " Events: {}    Artifacts: {}    Signatures: {}\r",
+            event_count, artifact_count, artifact_count)?;
+        writeln!(stdout, "\r")?;
+        writeln!(stdout, " \x1b[90mPolling every 2s. Press Ctrl+C to exit.\x1b[0m\r")?;
+
+        stdout.flush()?;
+        last_count = event_count as u64;
+
+        // If not a TTY, render one frame and exit
+        if !is_tty {
+            let _ = crossterm::terminal::disable_raw_mode();
+            return Ok(());
+        }
+
+        // Wait 2 seconds, but check for Ctrl+C / 'q' every 100ms
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() { break; }
+            if crossterm::event::poll(remaining.min(std::time::Duration::from_millis(100)))? {
+                if let crossterm::event::Event::Key(key) = crossterm::event::read()? {
+                    use crossterm::event::KeyCode;
+                    match key.code {
+                        KeyCode::Char('q') | KeyCode::Char('c')
+                            if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
+                               || key.code == KeyCode::Char('q') => {
+                            let _ = crossterm::terminal::disable_raw_mode();
+                            println!();
+                            return Ok(());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // session close
 // ---------------------------------------------------------------------------
 

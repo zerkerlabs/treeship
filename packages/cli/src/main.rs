@@ -524,7 +524,10 @@ enum SessionCommand {
     Start(SessionStartArgs),
 
     /// Show active session info
-    Status,
+    ///
+    /// With --watch, polls the event log every 2 seconds and renders
+    /// a live terminal UI showing agents, events, and security status.
+    Status(SessionStatusArgs),
 
     /// Close the active session
     ///
@@ -554,6 +557,13 @@ enum SessionCommand {
     ///   treeship session event --type agent.called_tool --tool read_file --format json
     ///   treeship session event --type agent.wrote_file --file src/main.rs
     Event(SessionEventArgs),
+}
+
+#[derive(Args)]
+struct SessionStatusArgs {
+    /// Watch mode: poll the event log every 2 seconds and render a live TUI
+    #[arg(long)]
+    watch: bool,
 }
 
 #[derive(Args)]
@@ -1355,10 +1365,13 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 cli.config.as_deref(),
                 printer,
             ),
-            SessionCommand::Status => commands::session::status(
-                cli.config.as_deref(),
-                printer,
-            ),
+            SessionCommand::Status(a) => {
+                if a.watch {
+                    commands::session::watch(cli.config.as_deref(), printer)
+                } else {
+                    commands::session::status(cli.config.as_deref(), printer)
+                }
+            },
             SessionCommand::Close(a) => commands::session::close(
                 a.summary.clone(),
                 a.headline.clone(),
