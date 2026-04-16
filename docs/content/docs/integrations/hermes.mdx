@@ -1,172 +1,95 @@
 ---
-title: Hermes Agent
-description: Add Treeship to Hermes Agent. Every tool call, skill execution, and subagent action gets a signed receipt.
+title: Hermes
+description: Integrate Treeship with Hermes A2A agents for verified multi-agent task receipts.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Steps, Step } from 'fumadocs-ui/components/steps';
 
-## Quick setup
+Hermes communicates via HTTP and the A2A (Agent-to-Agent) protocol. The `@treeship/a2a` middleware wraps every task received, completed, and handed off.
+
+## Integration pattern
+
+Hermes uses the **task boundary** pattern: `@treeship/a2a` middleware intercepts A2A task lifecycle events and emits session events so they appear in the receipt timeline.
+
+## Setup
 
 <Steps>
 <Step>
-### Install Treeship
+### Install dependencies
 
 ```bash
-cargo install --git https://github.com/zerkerlabs/treeship treeship-cli
+npm install @treeship/a2a
+curl -fsSL treeship.dev/install | sh
 treeship init
-treeship install
 ```
 </Step>
 <Step>
-### Install the Treeship skill
+### Add middleware to Hermes server
 
-Create `~/.hermes/skills/devops/treeship/SKILL.md`:
+```typescript
+import { TreeshipA2AMiddleware } from '@treeship/a2a';
 
-````markdown
----
-name: treeship
-description: Signed receipts for every agent action. Wraps commands, records approvals, and creates a verifiable audit trail.
-version: 0.1.0
-platforms: [macos, linux]
-metadata:
-  hermes:
-    tags: [security, verification, audit, trust]
-    category: devops
-    requires_toolsets: [terminal]
----
-# Treeship
+const treeship = new TreeshipA2AMiddleware({
+  actor: 'agent://hermes',
+  defaultModel: 'hermes-2',
+});
 
-Treeship creates cryptographically signed receipts for agent actions.
-Use this skill to attest important actions, get approvals for risky
-operations, and create verifiable proof of what happened.
+// Wrap your A2A task handler
+app.post('/a2a/task', async (req, res) => {
+  await treeship.onTaskReceived(req.body);
 
-## When to Use
-- After completing any task that modifies files or systems
-- Before risky operations (deployments, credential access, destructive commands)
-- When handing off work between subagents
-- When making LLM-driven decisions that lead to actions
+  // ... your task handling logic ...
 
-## Procedure
+  await treeship.onTaskCompleted(req.body, result);
+  res.json(result);
+});
 
-### Wrap any shell command
-```bash
-treeship wrap -- <command>
+// For handoffs to other agents
+await treeship.onHandoff({
+  from: 'agent://hermes',
+  to: 'agent://claude-code',
+  taskId: task.id,
+});
 ```
-Captures output digest, file changes, exit code, and elapsed time.
-Signs everything with Ed25519.
-
-### Get approval before a risky action
-```bash
-treeship attest approval --approver human://ops --description "approve deployment"
-```
-Returns a nonce. Pass it to the action:
-```bash
-treeship wrap --approval-nonce <nonce> -- kubectl apply -f deploy.yaml
-```
-
-### Record a decision
-```bash
-treeship attest decision --actor agent://hermes --model hermes-3-llama-3.1-70b \
-  --summary "Analyzed logs. Root cause is memory leak in worker pool." --confidence 0.87
-```
-
-### Check what has been attested
-```bash
-treeship log --tail 10
-```
-
-### Verify the chain
-```bash
-treeship verify last --full
-```
-
-### Push to Hub for a shareable URL
-```bash
-treeship hub push <artifact-id>
-```
-
-## Pitfalls
-- Never skip attestation. Every action matters for the audit trail.
-- Use `--approval-nonce` for destructive operations, not just `treeship wrap`.
-- Each subagent should use a distinct `--actor` URI.
-
-## Verification
-Run `treeship verify last --full` to confirm the receipt chain is intact.
-Run `treeship log --tail 5` to see recent attestations.
-````
 </Step>
 <Step>
-### Apply the trust template (optional)
-
-Treeship ships with a built-in Hermes template that auto-attests tool calls:
+### Set environment variables
 
 ```bash
-treeship template apply hermes-agent
-```
-
-This configures pattern matching for `hermes*`, `curl*`, `python*`, `docker*`,
-and `npm*` commands, plus approval gates for production deployments.
-</Step>
-<Step>
-### Verify it works
-
-Run your Hermes agent, then check:
-
-```bash
-treeship log --tail 10
-treeship verify last --full
+export TREESHIP_MODEL=hermes-2
+export TREESHIP_TOKENS_IN=6200
+export TREESHIP_TOKENS_OUT=400
+export TREESHIP_COST_USD=0.10
 ```
 </Step>
 </Steps>
 
+## What appears in the receipt
+
+| Section | Content | Capture method |
+|---------|---------|----------------|
+| Agent identity | "hermes", model, host | Middleware config `[AUTO]` |
+| A2A task events | Task received, completed, failed | Middleware lifecycle `[AUTO]` |
+| Handoffs | From/to agent with task ID | `onHandoff()` call `[EXPLICIT]` |
+| Cost | Model, tokens, cost | Env vars `[EXPLICIT]` |
+| Artifacts | Signed intent + receipt per task | `@treeship/a2a` `[AUTO]` |
+
+## Multi-agent sessions
+
+When Hermes works alongside Claude Code and other agents, the receipt shows the full coordination graph:
+
+- Each agent appears as a separate node in the agent graph
+- Handoff edges show task delegation between agents
+- The timeline shows interleaved events from all agents
+- Cost rolls up per agent in the agents table
+
 <Callout type="info">
-Hermes agents can read the skill file and call treeship commands directly via the terminal toolset. No SDK or library import needed.
+**Integration status**: `@treeship/a2a` is published and tested with unit tests. Full end-to-end testing with a live Hermes server is pending. If you test it, please report results at github.com/zerkerlabs/treeship/issues.
 </Callout>
 
-## Subagent support
+## What is NOT captured
 
-Hermes runs isolated subagents with their own conversations and terminals.
-Each subagent should use a different `--actor` URI:
-
-```bash
-# Main agent
-treeship wrap --actor agent://hermes-main -- research "security audit"
-
-# Research subagent
-treeship wrap --actor agent://hermes-researcher -- web_search "CVE database"
-
-# Coding subagent
-treeship wrap --actor agent://hermes-coder -- python fix_vulnerability.py
-
-# Handoff between agents
-treeship attest handoff --from agent://hermes-researcher --to agent://hermes-coder \
-  --artifacts art_abc123
-```
-
-All receipts chain together automatically via the `.last` file.
-
-## Multi-gateway attestation
-
-Hermes operates across Telegram, Discord, Slack, WhatsApp, and CLI from a single gateway.
-Treeship attestations work the same regardless of which gateway triggered the action,
-since all tool execution happens server-side through the terminal toolset.
-
-To differentiate gateway context in attestations:
-
-```bash
-treeship wrap --actor agent://hermes-telegram -- send_response "deployment complete"
-treeship wrap --actor agent://hermes-slack -- post_update "#ops" "deploy finished"
-```
-
-## Skill auto-creation
-
-Hermes creates skills automatically after complex tasks. If your agent creates a skill
-that involves system modifications or external API calls, wrap the skill creation itself:
-
-```bash
-treeship wrap -- hermes skills create "deploy-monitor"
-```
-
-This attests what the auto-generated skill contains, providing an audit trail
-for the agent's growing capability set.
+- **Internal Hermes reasoning**: only task lifecycle events at the A2A boundary
+- **Sub-tool calls within Hermes**: use `treeship session event --type agent.called_tool` for granular tool tracking
+- **Network connections**: not auto-captured by the A2A middleware
