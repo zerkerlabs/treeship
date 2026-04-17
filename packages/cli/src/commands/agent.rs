@@ -90,8 +90,18 @@ pub fn register(
         },
     };
 
-    // Write .agent package
-    let pkg_name = format!("{}.agent", name.replace(' ', "-").to_lowercase());
+    // Write .agent package. Sanitize name to prevent path traversal:
+    // strip path separators, .., and non-alphanumeric chars (except dash/underscore).
+    let safe_name: String = name
+        .replace(' ', "-")
+        .to_lowercase()
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
+    if safe_name.is_empty() {
+        return Err("agent name must contain at least one alphanumeric character".into());
+    }
+    let pkg_name = format!("{}.agent", safe_name);
     let pkg_dir = std::env::current_dir()?.join(&pkg_name);
     std::fs::create_dir_all(&pkg_dir)?;
 

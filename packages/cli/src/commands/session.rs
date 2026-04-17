@@ -400,6 +400,26 @@ pub fn watch(
     use std::io::Write;
     use std::collections::BTreeMap;
 
+    /// Strip terminal escape sequences and control characters from a string
+    /// to prevent injected ANSI codes from hijacking the TUI display.
+    fn sanitize(s: &str) -> String {
+        s.chars().filter(|c| !c.is_control() || *c == '\n').collect()
+    }
+
+    /// UTF-8-safe truncation: truncate to at most `max` chars, not bytes.
+    fn trunc(s: &str, max: usize) -> String {
+        let truncated: String = s.chars().take(max).collect();
+        if s.chars().count() > max { format!("{}...", truncated) } else { truncated }
+    }
+
+    /// Guard that disables raw mode on drop (panic, error, or clean exit).
+    struct RawModeGuard(bool);
+    impl Drop for RawModeGuard {
+        fn drop(&mut self) {
+            if self.0 { let _ = crossterm::terminal::disable_raw_mode(); }
+        }
+    }
+
     let manifest = match load_session() {
         Some(m) => m,
         None => return Err("no active session -- run treeship session start first".into()),
@@ -409,11 +429,14 @@ pub fn watch(
     let evt_dir = ts_dir.join("sessions").join(&manifest.session_id);
 
     // Setup: enable raw mode for clean Ctrl+C via crossterm event polling.
-    // If stdout is not a terminal (piped), skip raw mode and run one frame.
+    // RawModeGuard ensures raw mode is disabled on any exit path (panic, error, clean).
     let is_tty = crossterm::tty::IsTty::is_tty(&std::io::stdout());
-    if is_tty {
+    let _guard = if is_tty {
         crossterm::terminal::enable_raw_mode()?;
-    }
+        RawModeGuard(true)
+    } else {
+        RawModeGuard(false)
+    };
 
     let mut stdout = std::io::stdout();
     let mut last_count = 0u64;
@@ -482,7 +505,7 @@ pub fn watch(
             let c = colors[i % colors.len()];
             let display_name = if name.is_empty() { id.as_str() } else { name.as_str() };
             writeln!(stdout, " {c}\u{25cf}\x1b[0m {:<28} {:>4}      ${:.2}\r",
-                &display_name[..display_name.len().min(28)], actions, cost)?;
+                trunc(&sanitize(display_name), 28), actions, cost)?;
         }
         writeln!(stdout, "\r")?;
 
@@ -491,7 +514,7 @@ pub fn watch(
         let start = if events.len() > 15 { events.len() - 15 } else { 0 };
         for e in &events[start..] {
             let time = &e.timestamp[11..19.min(e.timestamp.len())];
-            let agent = &e.agent_name[..e.agent_name.len().min(14)];
+            let agent = trunc(&sanitize(&e.agent_name), 14);
             let (ev_label, detail) = match &e.event_type {
                 EventType::SessionStarted => ("start".to_string(), "session opened".to_string()),
                 EventType::SessionClosed { summary, .. } => ("closed".to_string(), summary.clone().unwrap_or_default()),
@@ -513,9 +536,10 @@ pub fn watch(
                 EventType::AgentHandoff { to_agent_instance_id, .. } => ("handoff \u{2192}".to_string(), to_agent_instance_id.clone()),
                 _ => ("event".to_string(), String::new()),
             };
-            let detail_short = if detail.len() > 40 { format!("{}...", &detail[..37]) } else { detail };
+            let detail_short = trunc(&sanitize(&detail), 40);
+            let ev_short = trunc(&sanitize(&ev_label), 14);
             writeln!(stdout, " \x1b[90m{}\x1b[0m  {:<14} \x1b[36m{:<14}\x1b[0m {}\r",
-                time, agent, &ev_label[..ev_label.len().min(14)], detail_short)?;
+                time, agent, ev_short, detail_short)?;
         }
         writeln!(stdout, "\r")?;
 
@@ -558,7 +582,7 @@ pub fn watch(
                         KeyCode::Char('q') | KeyCode::Char('c')
                             if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
                                || key.code == KeyCode::Char('q') => {
-                            let _ = crossterm::terminal::disable_raw_mode();
+                            // _guard Drop handles disable_raw_mode
                             println!();
                             return Ok(());
                         }
