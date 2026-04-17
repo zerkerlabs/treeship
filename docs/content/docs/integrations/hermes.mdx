@@ -1,95 +1,62 @@
 ---
 title: Hermes
-description: Integrate Treeship with Hermes A2A agents for verified multi-agent task receipts.
+description: Integrate Treeship with Hermes agents via skill file or MCP server.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Steps, Step } from 'fumadocs-ui/components/steps';
 
-Hermes communicates via HTTP and the A2A (Agent-to-Agent) protocol. The `@treeship/a2a` middleware wraps every task received, completed, and handed off.
+Hermes agents support two integration methods: a skill file (instruction-based) and an MCP server (tool-call interception).
 
-## Integration pattern
-
-Hermes uses the **task boundary** pattern: `@treeship/a2a` middleware intercepts A2A task lifecycle events and emits session events so they appear in the receipt timeline.
-
-## Setup
+## Method 1: Skill file
 
 <Steps>
 <Step>
-### Install dependencies
+### Install Treeship CLI
 
 ```bash
-npm install @treeship/a2a
 curl -fsSL treeship.dev/install | sh
 treeship init
 ```
 </Step>
 <Step>
-### Add middleware to Hermes server
-
-```typescript
-import { TreeshipA2AMiddleware } from '@treeship/a2a';
-
-const treeship = new TreeshipA2AMiddleware({
-  actor: 'agent://hermes',
-  defaultModel: 'hermes-2',
-});
-
-// Wrap your A2A task handler
-app.post('/a2a/task', async (req, res) => {
-  await treeship.onTaskReceived(req.body);
-
-  // ... your task handling logic ...
-
-  await treeship.onTaskCompleted(req.body, result);
-  res.json(result);
-});
-
-// For handoffs to other agents
-await treeship.onHandoff({
-  from: 'agent://hermes',
-  to: 'agent://claude-code',
-  taskId: task.id,
-});
-```
-</Step>
-<Step>
-### Set environment variables
+### Install the Treeship skill
 
 ```bash
-export TREESHIP_MODEL=hermes-2
-export TREESHIP_TOKENS_IN=6200
-export TREESHIP_TOKENS_OUT=400
-export TREESHIP_COST_USD=0.10
+curl -sL https://raw.githubusercontent.com/zerkerlabs/treeship/main/integrations/hermes/treeship.skill/SKILL.md \
+  -o ~/.hermes/skills/treeship.skill/SKILL.md --create-dirs
 ```
+
+The Hermes agent reads the skill and follows the instructions to wrap commands, set env vars, and manage session lifecycle.
 </Step>
 </Steps>
 
+## Method 2: MCP server
+
+Add Treeship as an MCP server in your Hermes config:
+
+```yaml
+# ~/.hermes/config.yaml
+mcp_servers:
+  treeship:
+    command: npx
+    args: ["-y", "@treeship/mcp"]
+    env:
+      TREESHIP_HUB_ENDPOINT: "https://api.treeship.dev"
+```
+
+This intercepts every MCP tool call and creates signed artifacts + session events automatically.
+
 ## What appears in the receipt
 
-| Section | Content | Capture method |
-|---------|---------|----------------|
-| Agent identity | "hermes", model, host | Middleware config `[AUTO]` |
-| A2A task events | Task received, completed, failed | Middleware lifecycle `[AUTO]` |
-| Handoffs | From/to agent with task ID | `onHandoff()` call `[EXPLICIT]` |
-| Cost | Model, tokens, cost | Env vars `[EXPLICIT]` |
-| Artifacts | Signed intent + receipt per task | `@treeship/a2a` `[AUTO]` |
-
-## Multi-agent sessions
-
-When Hermes works alongside Claude Code and other agents, the receipt shows the full coordination graph:
-
-- Each agent appears as a separate node in the agent graph
-- Handoff edges show task delegation between agents
-- The timeline shows interleaved events from all agents
-- Cost rolls up per agent in the agents table
+| Section | Skill file | MCP server |
+|---------|-----------|------------|
+| Commands | Via `treeship wrap` `[AUTO]` | Not applicable |
+| Tool calls | Not applicable | Every MCP tool call `[AUTO]` |
+| Model/cost | Via env vars `[EXPLICIT]` | Via env vars `[EXPLICIT]` |
+| File operations | File snapshot diff `[AUTO]` | Not applicable |
+| Handoffs | Via `treeship session event` `[EXPLICIT]` | Via `treeship session event` `[EXPLICIT]` |
 
 <Callout type="info">
-**Integration status**: `@treeship/a2a` is published and tested with unit tests. Full end-to-end testing with a live Hermes server is pending. If you test it, please report results at github.com/zerkerlabs/treeship/issues.
+**Integration status**: Skill file and MCP server packages are ready. Full end-to-end testing with a live Hermes server is pending. If you test it, please report results at github.com/zerkerlabs/treeship/issues.
 </Callout>
-
-## What is NOT captured
-
-- **Internal Hermes reasoning**: only task lifecycle events at the A2A boundary
-- **Sub-tool calls within Hermes**: use `treeship session event --type agent.called_tool` for granular tool tracking
-- **Network connections**: not auto-captured by the A2A middleware

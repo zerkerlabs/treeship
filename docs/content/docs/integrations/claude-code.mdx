@@ -1,14 +1,14 @@
 ---
 title: Claude Code
-description: Add Treeship to Claude Code for signed, verifiable session receipts of every tool call and command.
+description: Integrate Treeship with Claude Code via CLAUDE.md or MCP server.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Steps, Step } from 'fumadocs-ui/components/steps';
 
-Claude Code integration uses the **instruction boundary** pattern: add `TREESHIP.md` to your project root and Claude Code follows the instructions to wrap commands, track costs, and produce verifiable receipts.
+Claude Code supports two integration methods: a CLAUDE.md instruction file and an MCP server for automatic tool-call interception.
 
-## Quick setup
+## Method 1: CLAUDE.md (recommended)
 
 <Steps>
 <Step>
@@ -20,101 +20,56 @@ treeship init
 ```
 </Step>
 <Step>
-### Add TREESHIP.md to your project
-
-Copy the skill file from the Treeship repo:
+### Add CLAUDE.md to your project
 
 ```bash
-curl -o TREESHIP.md https://raw.githubusercontent.com/zerkerlabs/treeship/main/TREESHIP.md
+curl -o CLAUDE.md https://raw.githubusercontent.com/zerkerlabs/treeship/main/integrations/claude-code/CLAUDE.md
 ```
 
-Claude Code reads `TREESHIP.md` automatically when it exists in the project root.
-</Step>
-<Step>
-### Start a session
-
-Claude Code will follow the TREESHIP.md instructions to start a session, wrap commands, and close with a narrative. You can also start manually:
-
-```bash
-treeship session start --name "my task"
-```
+Claude Code reads `CLAUDE.md` from the project root automatically. It instructs Claude Code to wrap every shell command with `treeship wrap --`, set model/cost env vars, and close sessions with meaningful summaries.
 </Step>
 </Steps>
 
-## How it works
+## Method 2: MCP server
 
-Claude Code's built-in tools (read_file, write_file, bash, search) are not MCP server tools. They run inside the Claude Code runtime. Treeship captures them through the **command wrapping** pattern:
+Add Treeship as an MCP server so every tool call is automatically intercepted:
 
-1. Claude Code reads `TREESHIP.md` from the project root
-2. The skill instructs Claude Code to prefix every shell command with `treeship wrap --`
-3. Each wrapped command produces a signed artifact with the command string, exit code, duration, and output digest
-4. At session close, all artifacts are composed into a Session Receipt with a Merkle root
-
-## Environment variables for rich receipts
-
-Set these before starting Claude Code to capture model and cost data:
-
-```bash
-export TREESHIP_MODEL=claude-opus-4-6
-export TREESHIP_TOKENS_IN=12000
-export TREESHIP_TOKENS_OUT=3000
-export TREESHIP_COST_USD=0.42
+```json
+// ~/.claude/mcp.json
+{
+  "mcpServers": {
+    "treeship": {
+      "command": "npx",
+      "args": ["-y", "@treeship/mcp"],
+      "env": {
+        "TREESHIP_ACTOR": "agent://claude-code",
+        "TREESHIP_HUB_ENDPOINT": "https://api.treeship.dev"
+      }
+    }
+  }
+}
 ```
 
-These flow into the receipt's agent table showing model, token counts, and cost per interaction.
+Restart Claude Code after adding the config.
 
 ## Live monitoring
 
-While Claude Code is working, watch the session in real time from another terminal:
+While Claude Code works, watch the session in real time:
 
 ```bash
 treeship session status --watch
 ```
 
-This shows a live TUI with agents, events, security status, and verification progress updating every 2 seconds.
-
 ## What appears in the receipt
 
-| Section | Content | Capture method |
-|---------|---------|----------------|
-| Agent identity | "treeship-cli", model name, host | `TREESHIP_MODEL` env var `[AUTO]` |
-| Timeline | Every wrapped command in order | `treeship wrap` events `[AUTO]` |
-| Commands | Full command strings with exit codes | Process events `[AUTO]` |
-| File operations | Created/modified/deleted files | File snapshot diff `[AUTO]` |
-| Cost | Model, tokens, cost per wrap | Env vars `[EXPLICIT]` |
-| Narrative | Headline, summary, review | CLI flags at close `[EXPLICIT]` |
+| Section | CLAUDE.md | MCP server |
+|---------|-----------|------------|
+| Shell commands | Via `treeship wrap` `[AUTO]` | Not applicable |
+| MCP tool calls | Not applicable | Every tool call `[AUTO]` |
+| Model/cost | Via env vars `[EXPLICIT]` | Via env vars `[EXPLICIT]` |
+| File operations | File snapshot diff `[AUTO]` | Not applicable |
+| Narrative | Via `--headline/--summary/--review` `[EXPLICIT]` | Not captured |
 
 <Callout type="info">
-Claude Code's file reads (when it reads source code to understand context) are NOT captured through wrapping. To capture file reads, run `treeship daemon start` before the session. The daemon uses atime-based detection for sensitive files (.env, .ssh, .aws).
+Claude Code's built-in tools (read_file, write_file, bash) are internal to the runtime, not MCP tools. With Method 1, shell commands are captured via wrapping. With Method 2, only calls to external MCP servers are intercepted.
 </Callout>
-
-## Attach to Hub for shareable receipts
-
-```bash
-treeship hub attach --endpoint https://api.treeship.dev
-```
-
-Follow the device code flow to authenticate. Then after any session:
-
-```bash
-treeship session report
-```
-
-This uploads the receipt and prints a permanent public URL like `https://treeship.dev/receipt/ssn_xxx`.
-
-## Integration patterns
-
-| Pattern | What it captures | Setup |
-|---------|-----------------|-------|
-| `TREESHIP.md` in project root | Shell commands via wrapping | Drop-in, zero config |
-| `treeship daemon start` | Sensitive file reads via atime | One command |
-| `TREESHIP_MODEL` env var | Model, tokens, cost | Environment setup |
-| `treeship session status --watch` | Live monitoring | Separate terminal |
-
-## What is NOT captured
-
-- **Claude Code's internal tool calls** (read_file, write_file, search): these happen inside the runtime and are not shell commands. They don't go through `treeship wrap`.
-- **Network connections**: not auto-captured. Use `treeship session event --type agent.connected_network` explicitly.
-- **Multi-agent handoffs**: only captured if agents explicitly emit handoff events.
-
-The TREESHIP.md skill is honest about this boundary. The receipt proves what was instrumented, not everything the agent did.
