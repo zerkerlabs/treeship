@@ -16,6 +16,7 @@ pub mod doctor;
 pub mod merkle;
 pub mod otel;
 pub mod template;
+pub mod agent;
 pub mod declare;
 pub mod package;
 pub mod prove;

@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Agent Certificate</title>
+<style>
+:root{--font:'Segoe UI',-apple-system,BlinkMacSystemFont,Roboto,sans-serif;--mono:'JetBrains Mono','SF Mono','Fira Code',monospace;--bg:#0f0f0e;--surface:#161514;--surface-2:#1c1b18;--border:#2a2926;--text:#e8e6e1;--muted:#9a978f;--faint:#5e5d59;--primary:#5db8a3;--primary-s:rgba(93,184,163,.10);--primary-m:rgba(93,184,163,.16);--ok:#4caf82;--ok-s:rgba(76,175,130,.10);--warn:#d4924a;--warn-s:rgba(212,146,74,.10);--risk:#d46060;--risk-s:rgba(212,96,96,.10);--radius:14px;--shadow:0 16px 48px rgba(0,0,0,.45)}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-font-smoothing:antialiased}
+body{font-family:var(--font);font-size:.88rem;color:var(--text);background:var(--bg);line-height:1.6;min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:2rem}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);max-width:640px;width:100%;box-shadow:var(--shadow);overflow:hidden}
+.mono{font-family:var(--mono);font-size:.72rem}
+.muted{color:var(--muted)}.faint{color:var(--faint)}
+.badge{display:inline-flex;align-items:center;gap:4px;font-family:var(--mono);font-size:.58rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;padding:3px 8px;border-radius:99px;white-space:nowrap}
+.badge-ok{background:var(--ok-s);color:var(--ok);border:1px solid rgba(76,175,130,.2)}
+.badge-warn{background:var(--warn-s);color:var(--warn);border:1px solid rgba(212,146,74,.2)}
+.badge-risk{background:var(--risk-s);color:var(--risk);border:1px solid rgba(212,96,96,.2)}
+.badge-info{background:rgba(91,144,200,.10);color:#5b90c8;border:1px solid rgba(91,144,200,.2)}
+.zone{padding:1.5rem 1.75rem;border-bottom:1px solid var(--border)}
+.zone:last-child{border-bottom:none}
+.zone-label{font-family:var(--mono);font-size:.58rem;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin-bottom:.75rem}
+.agent-name{font-size:1.5rem;font-weight:700;letter-spacing:-.04em;margin-bottom:.25rem}
+.agent-id{font-family:var(--mono);font-size:.72rem;color:var(--faint)}
+.meta-row{display:flex;flex-wrap:wrap;gap:1rem;margin-top:.75rem}
+.meta-item{font-size:.78rem}
+.meta-label{color:var(--faint);font-size:.68rem}
+.tool-list{display:flex;flex-wrap:wrap;gap:.35rem}
+.tool-chip{font-family:var(--mono);font-size:.68rem;padding:4px 10px;border-radius:8px;background:var(--primary-s);color:var(--primary);border:1px solid var(--primary-m)}
+.forbidden-chip{background:var(--risk-s);color:var(--risk);border:1px solid rgba(212,96,96,.2)}
+.escalation-chip{background:var(--warn-s);color:var(--warn);border:1px solid rgba(212,146,74,.2)}
+.proof-field{margin-bottom:.75rem}
+.proof-label{font-family:var(--mono);font-size:.58rem;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);margin-bottom:.2rem}
+.proof-value{font-family:var(--mono);font-size:.68rem;color:var(--text);word-break:break-all;line-height:1.6}
+.header{display:flex;align-items:center;justify-content:space-between;padding:1rem 1.75rem;border-bottom:1px solid var(--border)}
+.brand{font-weight:700;font-size:.95rem;letter-spacing:-.03em}
+.footer{text-align:center;padding:1.25rem;font-size:.65rem;color:var(--faint);border-top:1px solid var(--border)}
+.status-row{display:flex;align-items:center;gap:.75rem;margin-bottom:1rem}
+.status-dot{width:14px;height:14px;border-radius:50%;position:relative}
+.status-dot::after{content:'';position:absolute;inset:-3px;border-radius:50%;animation:pulse 3s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.4;transform:scale(1)}50%{opacity:.15;transform:scale(1.15)}}
+</style>
+</head>
+<body>
+<script id="cert-data" type="application/json">__CERTIFICATE_JSON__</script>
+
+<div class="card" id="app">Loading...</div>
+
+<script>
+const C=JSON.parse(document.getElementById('cert-data').textContent);
+document.title='Agent Certificate: '+(C.identity?C.identity.agent_name:'unknown');
+function esc(s){return(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function num(v){const n=Number(v);return Number.isFinite(n)?n:0}
+
+const id=C.identity||{};
+const cap=C.capabilities||{};
+const dec=C.declaration||{};
+const sig=C.signature||{};
+
+// Check validity
+const now=new Date();
+const validUntil=new Date(id.valid_until);
+const isValid=validUntil>now;
+const dotColor=isValid?'var(--ok)':'var(--risk)';
+const dotShadow=isValid?'var(--ok-s)':'var(--risk-s)';
+const statusText=isValid?'Valid':'Expired';
+
+let h='';
+
+// Header
+h+='<div class="header"><span class="brand">treeship</span><span class="mono muted">agent certificate</span></div>';
+
+// Zone 1: Identity
+h+='<div class="zone"><div class="zone-label">Identity</div>';
+h+='<div class="status-row"><div class="status-dot" style="background:'+dotColor+';box-shadow:0 0 0 3px '+dotShadow+'"><div style="position:absolute;inset:-3px;border-radius:50%;border:2px solid '+dotColor+';opacity:.3;animation:pulse 3s ease-in-out infinite"></div></div>';
+h+='<span class="badge '+(isValid?'badge-ok':'badge-risk')+'">'+statusText+'</span></div>';
+h+='<div class="agent-name">'+esc(id.agent_name)+'</div>';
+h+='<div class="agent-id">'+esc(id.ship_id)+'</div>';
+h+='<div class="meta-row">';
+h+='<div class="meta-item"><div class="meta-label">Issuer</div>'+esc(id.issuer)+'</div>';
+h+='<div class="meta-item"><div class="meta-label">Issued</div>'+esc(id.issued_at)+'</div>';
+h+='<div class="meta-item"><div class="meta-label">Valid until</div>'+esc(id.valid_until)+'</div>';
+if(id.model)h+='<div class="meta-item"><div class="meta-label">Model</div>'+esc(id.model)+'</div>';
+h+='</div>';
+if(id.description)h+='<p style="margin-top:.75rem;font-size:.82rem;color:var(--muted)">'+esc(id.description)+'</p>';
+h+='</div>';
+
+// Zone 2: Authorized Tools
+h+='<div class="zone"><div class="zone-label">Authorized Tools</div>';
+if((cap.tools||[]).length){
+  h+='<div class="tool-list">';
+  (cap.tools||[]).forEach(t=>{
+    h+='<span class="tool-chip" title="'+(t.description?esc(t.description):'')+'">'+esc(t.name)+'</span>';
+  });
+  h+='</div>';
+  h+='<p style="margin-top:.75rem;font-size:.72rem;color:var(--faint)">Any tool not on this list is unauthorized. The session receipt compares this list against actual tool usage.</p>';
+}else{
+  h+='<p class="muted" style="font-size:.82rem">No specific tools declared. All tools are implicitly allowed.</p>';
+}
+h+='</div>';
+
+// Zone 3: Declared Scope
+h+='<div class="zone"><div class="zone-label">Declared Scope</div>';
+const ba=dec.bounded_actions||[];
+const fb=dec.forbidden||[];
+const esc_req=dec.escalation_required||[];
+if(ba.length){
+  h+='<div style="margin-bottom:.75rem"><div style="font-size:.72rem;color:var(--faint);margin-bottom:.35rem">Authorized actions</div>';
+  h+='<div class="tool-list">'+ba.map(a=>'<span class="tool-chip">'+esc(a)+'</span>').join('')+'</div></div>';
+}
+if(fb.length){
+  h+='<div style="margin-bottom:.75rem"><div style="font-size:.72rem;color:var(--risk);margin-bottom:.35rem">Forbidden</div>';
+  h+='<div class="tool-list">'+fb.map(a=>'<span class="tool-chip forbidden-chip">'+esc(a)+'</span>').join('')+'</div></div>';
+}
+if(esc_req.length){
+  h+='<div style="margin-bottom:.75rem"><div style="font-size:.72rem;color:var(--warn);margin-bottom:.35rem">Requires escalation</div>';
+  h+='<div class="tool-list">'+esc_req.map(a=>'<span class="tool-chip escalation-chip">'+esc(a)+'</span>').join('')+'</div></div>';
+}
+if(!ba.length&&!fb.length&&!esc_req.length){
+  h+='<p class="muted" style="font-size:.82rem">No scope constraints declared.</p>';
+}
+h+='</div>';
+
+// Zone 4: Cryptographic Proof
+h+='<div class="zone"><div class="zone-label">Cryptographic Proof</div>';
+h+='<div class="proof-field"><div class="proof-label">Public key (Ed25519)</div><div class="proof-value">'+esc(sig.public_key)+'</div></div>';
+h+='<div class="proof-field"><div class="proof-label">Signature</div><div class="proof-value">'+esc(sig.signature)+'</div></div>';
+h+='<div class="proof-field"><div class="proof-label">Key ID</div><div class="proof-value">'+esc(sig.key_id)+'</div></div>';
+h+='<div class="proof-field"><div class="proof-label">Algorithm</div><div class="proof-value">'+esc(sig.algorithm)+'</div></div>';
+h+='<div class="proof-field"><div class="proof-label">Signed fields</div><div class="proof-value">'+esc(sig.signed_fields)+'</div></div>';
+h+='<div style="margin-top:1rem;padding:1rem;background:var(--surface-2);border:1px solid var(--border);border-radius:10px">';
+h+='<div style="font-size:.72rem;font-weight:600;margin-bottom:.4rem">Verify this certificate</div>';
+h+='<p style="font-size:.7rem;color:var(--muted);line-height:1.5">The signature covers the canonical JSON of identity + capabilities + declaration. To verify offline, extract the public key and signature from this certificate and check the Ed25519 signature against the concatenated JSON payload.</p>';
+h+='</div>';
+h+='</div>';
+
+// Footer
+h+='<div class="footer">Agent Identity Certificate v1 &middot; <a href="https://treeship.dev" style="color:var(--primary)">treeship.dev</a></div>';
+
+document.getElementById('app').innerHTML=h;
+</script>
+</body>
+</html>

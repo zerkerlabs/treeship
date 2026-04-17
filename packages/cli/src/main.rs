@@ -196,6 +196,17 @@ enum Command {
     ///   treeship declare --show
     Declare(DeclareArgs),
 
+    /// Register an agent and produce an Agent Identity Certificate
+    ///
+    /// Creates a .agent package with identity.json, capabilities.json,
+    /// declaration.json, and certificate.html.
+    ///
+    /// Examples:
+    ///   treeship agent register --name claude-code --tools read_file,write_file,bash
+    ///   treeship agent register --name hermes --tools web_search --model hermes-2 --valid-days 365
+    #[command(subcommand)]
+    Agent(AgentCommand),
+
     /// List pending approvals
     ///
     /// Shows actions that are blocked waiting for human approval.
@@ -669,6 +680,45 @@ enum PackageCommand {
 struct PackagePathArgs {
     /// Path to the .treeship package directory
     path: std::path::PathBuf,
+}
+
+// --- agent -----------------------------------------------------------------
+
+#[derive(Subcommand)]
+enum AgentCommand {
+    /// Register an agent and create an Identity Certificate
+    Register(AgentRegisterArgs),
+}
+
+#[derive(Args)]
+struct AgentRegisterArgs {
+    /// Agent name (e.g. "claude-code", "hermes")
+    #[arg(long, value_name = "NAME")]
+    name: String,
+
+    /// Comma-separated list of authorized tool names
+    #[arg(long, value_name = "TOOLS", value_delimiter = ',')]
+    tools: Vec<String>,
+
+    /// Model name (e.g. "claude-opus-4-6")
+    #[arg(long, value_name = "MODEL")]
+    model: Option<String>,
+
+    /// Certificate validity in days (default: 365)
+    #[arg(long, value_name = "DAYS", default_value = "365")]
+    valid_days: u32,
+
+    /// Agent description
+    #[arg(long, value_name = "TEXT")]
+    description: Option<String>,
+
+    /// Comma-separated list of forbidden actions
+    #[arg(long, value_name = "ACTIONS", value_delimiter = ',')]
+    forbidden: Vec<String>,
+
+    /// Comma-separated list of actions requiring escalation
+    #[arg(long, value_name = "ACTIONS", value_delimiter = ',')]
+    escalation: Vec<String>,
 }
 
 // --- declare ---------------------------------------------------------------
@@ -1416,6 +1466,20 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             } else {
                 commands::declare::create(a.tools.clone(), a.forbidden.clone(), a.escalation.clone(), a.valid_until.clone(), printer)
             }
+        },
+
+        Command::Agent(sub) => match sub {
+            AgentCommand::Register(a) => commands::agent::register(
+                &a.name,
+                a.tools.clone(),
+                a.model.clone(),
+                a.valid_days,
+                a.description.clone(),
+                a.forbidden.clone(),
+                a.escalation.clone(),
+                cli.config.as_deref(),
+                printer,
+            ),
         },
 
         Command::Pending => commands::approve::pending(printer),
