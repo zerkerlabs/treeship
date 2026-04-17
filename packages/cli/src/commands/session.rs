@@ -608,7 +608,7 @@ pub fn close(
     let manifest = match load_session() {
         Some(m) => m,
         None => {
-            return Err("no active session to close".into());
+            return Err("no active session to close\n\n  Fix: treeship session start --name \"my task\"".into());
         }
     };
 

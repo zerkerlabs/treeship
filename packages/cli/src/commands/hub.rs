@@ -92,7 +92,7 @@ pub fn attach(
     loop {
         let elapsed = start.elapsed().unwrap_or_default().as_secs();
         if elapsed > timeout_secs {
-            return Err("hub attach timed out after 5 minutes".into());
+            return Err("hub attach timed out after 5 minutes\n\n  Fix: try again with treeship hub attach".into());
         }
 
         std::thread::sleep(std::time::Duration::from_secs(2));
@@ -108,7 +108,7 @@ pub fn attach(
                 // 202 = pending, keep polling
             }
             Err(ureq::Error::Status(404, _)) => {
-                return Err("device code expired or not found".into());
+                return Err("device code expired or not found\n\n  Fix: run treeship hub attach again to get a new code".into());
             }
             Err(e) => {
                 return Err(format!("polling error: {e}").into());
@@ -602,7 +602,7 @@ fn resolve_artifact_id(
             .map_err(|_| "no .last artifact found -- attest or wrap something first")?;
         let resolved = content.trim().to_string();
         if resolved.is_empty() {
-            return Err("empty .last file".into());
+            return Err("no artifacts found -- wrap a command first\n\n  Fix: treeship wrap -- echo hello".into());
         }
         Ok(resolved)
     } else {

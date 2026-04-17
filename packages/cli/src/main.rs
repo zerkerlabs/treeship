@@ -23,6 +23,7 @@ use printer::{Format, Printer};
     name    = "treeship",
     version = env!("CARGO_PKG_VERSION"),
     about   = "Portable trust receipts for agent workflows",
+    before_help = "\x1b[1mQuick start\x1b[0m\n  treeship quickstart          guided setup in 90 seconds\n  treeship session start       begin recording a session\n  treeship wrap -- <cmd>       record a command\n  treeship session close       finalize and create receipt\n  treeship session report      upload and get shareable URL\n\n  Learn more: docs.treeship.dev",
     after_help = "Docs: https://treeship.dev/docs   Hub: treeship hub attach",
 )]
 struct Cli {
@@ -48,6 +49,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Guided first-time setup in 90 seconds
+    ///
+    /// Walks through init, session start, wrapping a command, and creating
+    /// a receipt. No flags needed.
+    Quickstart,
+
     /// Set up a new Treeship -- generates a keypair and config
     ///
     /// Run this once on each machine. Your signing key is encrypted at
@@ -1370,6 +1377,11 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             println!("treeship {} (rust)", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
+
+        Command::Quickstart => commands::quickstart::run(
+            cli.config.as_deref(),
+            printer,
+        ),
 
         Command::Init(a) => commands::init::run(
             a.name.clone(), cli.config.clone(), a.force, a.template.clone(), printer,

@@ -20,4 +20,5 @@ pub mod agent;
 pub mod declare;
 pub mod package;
 pub mod prove;
+pub mod quickstart;
 pub mod zk;

@@ -387,7 +387,24 @@ pub fn run(
         }
     }
 
-    // 14. Is there an active session?
+    // 14. Is there a declaration?
+    if let Some(ref ts_path) = ts {
+        let decl_path = ts_path.join("declaration.json");
+        if decl_path.exists() {
+            let tools = super::declare::read_authorized_tools();
+            checks.push(Check::pass(
+                "declaration",
+                &format!("{} authorized tools", tools.len()),
+            ));
+        } else {
+            checks.push(Check::info(
+                "declaration",
+                "not found (optional)",
+            ));
+        }
+    }
+
+    // 15. Is there an active session?
     if let Some(manifest) = super::session::load_session() {
         let elapsed_ms = epoch_ms().saturating_sub(manifest.started_at_ms);
         let elapsed_str = format_duration_ms(elapsed_ms);
