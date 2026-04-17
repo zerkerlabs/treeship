@@ -752,6 +752,15 @@ pub fn close(
                 printer.info(&format!("  merkle:    {}", root));
             }
             printer.info(&format!("  files:     {}", pkg_output.file_count));
+
+            // Auto-open preview.html if running in a terminal
+            let preview_path = pkg_output.path.join("preview.html");
+            if preview_path.exists() && crossterm::tty::IsTty::is_tty(&std::io::stdout()) {
+                #[cfg(target_os = "macos")]
+                { let _ = std::process::Command::new("open").arg(&preview_path).spawn(); }
+                #[cfg(target_os = "linux")]
+                { let _ = std::process::Command::new("xdg-open").arg(&preview_path).spawn(); }
+            }
         }
         Err(e) => {
             printer.warn(&format!("failed to build .treeship package: {e}"), &[]);

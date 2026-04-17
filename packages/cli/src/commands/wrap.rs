@@ -377,6 +377,13 @@ pub fn run(
         printer.info(&format!("  hub:      {}", url));
     }
 
+    // Warn if no session is active -- the wrap created an artifact but
+    // it won't appear in any session receipt.
+    if super::session::load_session().is_none() {
+        printer.warn("no active session -- this command will not appear in a receipt", &[]);
+        printer.hint("run: treeship session start --name \"my task\"");
+    }
+
     printer.dim_info(separator);
     printer.hint(&format!("treeship verify {}", result.artifact_id));
     if hub_url.is_none() && !push {

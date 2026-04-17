@@ -56,10 +56,9 @@ pub fn run(
     ArtifactStore::open(&cfg.storage_dir)?;
 
     printer.blank();
-    printer.success("Keypair generated", &[
-        ("Ship ID", &ship_id),
-        ("Key ID",  &format!("{} (ed25519)", key_info.id)),
-    ]);
+    printer.success("Treeship initialized", &[]);
+    printer.info(&format!("  Ship ID:  {}", ship_id));
+    printer.info(&format!("  Key ID:   {}", key_info.id));
 
     // ---- Template path ----
     if let Some(ref tmpl_name) = template {
@@ -106,10 +105,7 @@ pub fn run(
         write_project_config(&project_config)?;
 
         printer.blank();
-        printer.success("Configuration saved to .treeship/config.yaml", &[]);
-        printer.blank();
-        printer.hint("treeship wrap -- <command>  to create your first receipt");
-        printer.hint("treeship install  to set up shell hooks");
+        printer.hint("Next: treeship session start --name \"my task\"");
         printer.blank();
         return Ok(());
     }
