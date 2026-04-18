@@ -264,13 +264,13 @@ pub enum VerifyStatus {
 }
 
 impl VerifyCheck {
-    fn pass(name: &str, detail: &str) -> Self {
+    pub fn pass(name: &str, detail: &str) -> Self {
         Self { name: name.into(), status: VerifyStatus::Pass, detail: detail.into() }
     }
-    fn fail(name: &str, detail: &str) -> Self {
+    pub fn fail(name: &str, detail: &str) -> Self {
         Self { name: name.into(), status: VerifyStatus::Fail, detail: detail.into() }
     }
-    fn warn(name: &str, detail: &str) -> Self {
+    pub fn warn(name: &str, detail: &str) -> Self {
         Self { name: name.into(), status: VerifyStatus::Warn, detail: detail.into() }
     }
 }

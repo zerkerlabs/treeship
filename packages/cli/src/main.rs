@@ -1122,18 +1122,28 @@ struct BundleImportArgs {
 
 #[derive(Args)]
 struct VerifyArgs {
-    /// Artifact ID or path to a .treeship bundle file
+    /// What to verify: artifact ID, path to a .treeship/.agent package, or a
+    /// receipt URL (http:// or https://). Use the global --quiet for
+    /// exit-code-only output and --format json for machine-readable output.
     target: String,
 
-    /// Verify only this artifact, do not walk the parent chain
+    /// Cross-verify against an Agent Certificate (path to a .agent package
+    /// or a URL serving the certificate JSON).
+    #[arg(long, value_name = "PATH-OR-URL")]
+    certificate: Option<String>,
+
+    /// Verify only this artifact, do not walk the parent chain.
+    /// Only applies to the artifact-ID form.
     #[arg(long, default_value_t = false)]
     no_chain: bool,
 
-    /// Maximum chain depth to walk (default: 20)
+    /// Maximum chain depth to walk (default: 20).
+    /// Only applies to the artifact-ID form.
     #[arg(long, default_value_t = 20, value_name = "N")]
     max_depth: usize,
 
-    /// Show full chain timeline with box-drawn cards
+    /// Show full chain timeline with box-drawn cards.
+    /// Only applies to the artifact-ID form.
     #[arg(long, default_value_t = false)]
     full: bool,
 }
@@ -1663,9 +1673,29 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             ),
         },
 
-        Command::Verify(a) => commands::verify::run(
-            &a.target, a.no_chain, a.max_depth, a.full, cli.config.as_deref(), printer,
-        ),
+        Command::Verify(a) => {
+            // External targets (URL, file path to a .treeship/.agent package)
+            // and the cross-verification path go through verify_external.
+            // Bare artifact IDs continue through the existing local-storage path.
+            if commands::verify_external::is_url(&a.target)
+                || commands::verify_external::is_local_path(&a.target)
+                || a.certificate.is_some()
+            {
+                let exit = commands::verify_external::run(
+                    &a.target,
+                    a.certificate.as_deref(),
+                    printer,
+                );
+                if exit != commands::verify_external::ExternalExit::Ok {
+                    std::process::exit(exit.code());
+                }
+                Ok(())
+            } else {
+                commands::verify::run(
+                    &a.target, a.no_chain, a.max_depth, a.full, cli.config.as_deref(), printer,
+                )
+            }
+        }
 
         Command::Keys(sub) => match sub {
             KeysCommand::List => commands::keys::list(cli.config.as_deref(), printer),
