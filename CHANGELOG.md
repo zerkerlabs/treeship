@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.8.0 (2026-04-18)
+
+### Added
+- `treeship add` -- auto-detect and instrument installed agent frameworks (Claude Code, Cursor, Cline, Hermes, OpenClaw)
+- `treeship quickstart` -- guided interactive setup from zero to receipt in under 90 seconds
+- `treeship agent register` -- Agent Identity Certificate (.agent package with certificate.html)
+- `treeship session event` -- append structured events to the active session's event log (used by MCP/A2A bridges)
+- `treeship session status --watch` -- live terminal TUI showing agents, events, security, and verification progress
+- `treeship declare` -- create .treeship/declaration.json with tool authorization scope
+- `TREESHIP_PROVIDER` environment variable for provider attribution (anthropic, openrouter, bedrock)
+- Setup one-liner at treeship.dev/setup (installs, initializes, instruments agents)
+- Integration packages for Claude Code, Hermes, OpenClaw in integrations/ with skill files and MCP configs
+- TREESHIP.md universal skill file for any agent that reads markdown instructions
+- Production-quality preview.html: three-panel narrative, trust chain visual, agent cards, timeline grouping, retry detection, approval gates, honest empty states, sidebar IntersectionObserver, print stylesheet, copy buttons
+- Tool authorization in receipts: declared vs actual tool usage, unauthorized calls flagged
+- Self-contained Merkle verification in preview.html via Web Crypto API
+
+### Changed
+- `treeship init` output simplified to Ship ID + Key ID + next step hints
+- `treeship wrap` without active session shows warning with fix instructions
+- `treeship session close` auto-opens preview.html on macOS/Linux terminals
+- All error messages now tell the user what command to run to fix the issue
+- Root help text shows quick-start workflow first
+- MCP bridge (@treeship/mcp) now emits session events so tool calls appear in receipt timeline
+- Failed MCP tool calls are now audited (previously vanished from the audit trail)
+
+### Removed
+- `TREESHIP_COST_USD` environment variable and cost_usd field. Cost is a consumer concern (Witness dashboards, billing tools). Receipts store verifiable token usage only.
+- RELEASE_NOTES_NEXT.md
+
+### Fixed
+- Device code auth: full 16-char code displayed, hub accepts 8-char prefix for backward compat
+- Terminal escape injection in watch mode (sanitize all event fields)
+- Path traversal in agent register (name sanitized to alphanumeric + dash + underscore)
+- Case-insensitive script tag breakout in preview.html JSON escaping
+- Raw mode guard ensures terminal restoration on all exit paths
+- UTF-8 safe string truncation in TUI
+- Hub: device_code redacted from access logs, format validated before DB lookup
+- Hub: SQLite persistence reads DATABASE_PATH env var (Railway), consistent JSON error responses, session ID length cap, rate limiting
+
+### Security
+- 15+ findings from four rounds of Codex adversarial review, all addressed
+- Atomic first-write ownership + write-once receipts on Hub
+- 10 MB body-size limit on receipt upload
+- Honest verification language ("Merkle structure verified", not "Verified")
+
 ## 0.7.2 (2026-04-15)
 
 ### Session Receipt: production-quality preview.html
