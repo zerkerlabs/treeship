@@ -16,14 +16,14 @@ OpenTelemetry support is behind a compile-time feature flag to keep the default 
 cargo build --features otel
 
 # Or install with the flag
-cargo install treeship-cli --features otel
+cargo install --git https://github.com/zerkerlabs/treeship treeship-cli --features otel
 ```
 
 Without the feature flag, all `treeship otel` commands print a rebuild hint:
 
 ```
 OpenTelemetry support is not compiled in.
-Rebuild with: cargo install treeship-cli --features otel
+Rebuild with: cargo install --git https://github.com/zerkerlabs/treeship treeship-cli --features otel
 ```
 
 ## Commands

@@ -1,32 +1,32 @@
 ---
 title: Quickstart
-description: From zero to a verified artifact URL in under two minutes.
+description: From zero to a verifiable session receipt in under 90 seconds.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Steps, Step } from 'fumadocs-ui/components/steps';
-import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
 <Callout type="info">
 No account, email, or API key required. Everything runs locally.
 </Callout>
 
+## One-liner setup
+
+```bash
+curl -fsSL treeship.dev/setup | sh
+```
+
+This installs the CLI, initializes your ship, and instruments any detected agent frameworks (Claude Code, Cursor, Hermes, OpenClaw).
+
+## Or step by step
+
 <Steps>
 <Step>
 ### Install
 
-<Tabs items={['npm', 'cargo']}>
-<Tab value="npm">
 ```bash
-npm install -g treeship
+curl -fsSL treeship.dev/install | sh
 ```
-</Tab>
-<Tab value="cargo">
-```bash
-cargo install --git https://github.com/zerkerlabs/treeship treeship-cli
-```
-</Tab>
-</Tabs>
 </Step>
 <Step>
 ### Initialize
@@ -37,61 +37,102 @@ treeship init
 
 ```
 ✓ Treeship initialized
-  name: my-workspace
-  key:  key_9f8e7d6c (ed25519, encrypted at rest)
+  Ship ID:  ship_xxx
+  Key ID:   key_xxx
 ```
 </Step>
 <Step>
-### Wrap a command
+### Instrument your agents (optional)
+
+```bash
+treeship add
+```
+
+Auto-detects Claude Code, Cursor, Hermes, OpenClaw and configures Treeship integration.
+</Step>
+<Step>
+### Start a session
+
+```bash
+treeship session start --name "my first task"
+```
+</Step>
+<Step>
+### Wrap commands
 
 ```bash
 treeship wrap -- npm test
+treeship wrap -- git commit -m "fix bug"
 ```
 
-```
-✓ action attested
-  id:      art_f7e6d5c4
-  actor:   human://alice
-  action:  npm test
-  exit:    0
-  elapsed: 1.4s
-```
+Every wrapped command gets a signed artifact with exit code, duration, and output digest.
 </Step>
 <Step>
-### Verify
+### Close and create your receipt
 
 ```bash
-treeship verify last
+treeship session close \
+  --summary "Fixed the auth bug and added a regression test"
 ```
 
-```
-✓ verified
-  chain:  1 artifact, intact
-  signed: human://alice, 2026-03-26T21:00:00Z
-```
+This creates a `.treeship` package with a self-verifying `preview.html` that opens in your browser.
 </Step>
 <Step>
-### Share
+### Verify locally
 
 ```bash
-treeship hub attach
-# Visit the URL shown, enter the code, click Approve
-
-treeship hub push last
-# -> https://treeship.dev/verify/art_f7e6d5c4
+treeship package verify .treeship/sessions/ssn_*.treeship
 ```
 
-Anyone with that URL can verify the full chain. No account or install needed.
+Should show all PASS. This runs offline with zero network calls.
+</Step>
+<Step>
+### Share (optional)
+
+```bash
+treeship hub attach --endpoint https://api.treeship.dev
+treeship session report
+```
+
+Prints a permanent public URL like `https://treeship.dev/receipt/ssn_xxx`. No auth needed to view it.
 </Step>
 </Steps>
 
-## What's next
+## Interactive quickstart
+
+For a fully guided experience:
+
+```bash
+treeship quickstart
+```
+
+Walks through init, wrapping a command, and creating a receipt interactively.
+
+## Environment variables for richer receipts
+
+Set these before running commands to capture model and token data:
+
+```bash
+export TREESHIP_MODEL=claude-opus-4-6
+export TREESHIP_TOKENS_IN=12000
+export TREESHIP_TOKENS_OUT=3000
+export TREESHIP_PROVIDER=anthropic  # optional
+```
 
 <Callout type="info">
-The quickstart covers the simplest path. These guides go deeper:
+Cost is not captured in receipts. Pricing depends on provider, tier, and timing. Receipts store verifiable usage (model + tokens). Cost is calculated by consumer tools (Witness dashboards, billing) from their pricing config.
 </Callout>
 
-- **[How it works](/docs/guides/how-it-works)** / Signing, chaining, verification, and Merkle proofs explained
-- **[Approvals](/docs/guides/approvals)** / Issue time-limited approvals and bind agent actions to them
-- **[Multiple actors](/docs/guides/actors)** / Add human and agent actors to your Treeship
-- **[Hub connections](/docs/guides/hub-connections)** / Attach to multiple workspaces, switch between them, and manage access
+## Live monitoring
+
+While your agent works, watch the session in real time:
+
+```bash
+treeship session status --watch
+```
+
+## What's next
+
+- [Session Receipts](/docs/concepts/session-receipts) -- understand the receipt format
+- [Claude Code integration](/docs/integrations/claude-code) -- setup for Claude Code
+- [CLI reference](/docs/cli/overview) -- all commands

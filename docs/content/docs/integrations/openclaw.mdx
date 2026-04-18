@@ -64,7 +64,7 @@ treeship package verify .treeship/sessions/<session_id>.treeship
 
 The skill covers three scenarios:
 
-**Session start**: the agent runs `treeship session start --name "<task>"` and sets `TREESHIP_MODEL`, `TREESHIP_TOKENS_IN`, `TREESHIP_TOKENS_OUT`, `TREESHIP_COST_USD` environment variables.
+**Session start**: the agent runs `treeship session start --name "<task>"` and sets `TREESHIP_MODEL`, `TREESHIP_TOKENS_IN`, `TREESHIP_TOKENS_OUT`, `TREESHIP_PROVIDER` environment variables.
 
 **Command wrapping**: every shell command is prefixed with `treeship wrap --`. This creates a signed artifact for each command and records it in the session timeline.
 
