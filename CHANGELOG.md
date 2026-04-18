@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.9.0 (2026-04-18)
+
+Verification UX is now complete and future-proofed. v0.9.0 is the first of three planned releases in this window; see the roadmap at the bottom of this entry for the story.
+
+### Added
+
+- `treeship verify <url-or-path-or-artifact-id>` accepts three target shapes: HTTPS/HTTP URL fetched as receipt JSON, path to a local `.treeship` or `.agent` package directory, or a local artifact ID (the original v0.1 form). The URL and file paths produce the full checkmark-style output specified for the release. (item 1)
+- `treeship verify --certificate <path-or-url>` cross-verifies a receipt against an Agent Certificate. Pass or fail is a roll-up of three checks: ship IDs match, certificate is valid at verify time, every tool the session called is authorized by the certificate. (item 1 + item 2)
+- New exit codes on `verify`: `0` success, `1` verification failed, `2` cross-verification failed, `3` network or filesystem error. Documented in `docs/cli/verify.mdx`. (item 1)
+- Reusable library primitive `treeship_core::verify::cross_verify_receipt_and_certificate(receipt, certificate, now_rfc3339)` returning `CrossVerifyResult` with authorized / unauthorized / never-called tool lists, ship-ID status, and certificate validity. Explicit `now` argument keeps the function deterministic for testing and for future edge-runtime callers. (item 2)
+- `schema_version` field on Session Receipts and Agent Certificates. New documents emit `"1"`; documents without the field are treated as `"0"` (legacy) and verified under existing rules. Optional `Option<String>` with `#[serde(skip_serializing_if = "Option::is_none")]` so legacy documents round-trip byte-identical. Full semantics in `docs/reference/schema.mdx`. (item 3)
+- `session.ship_id` field on Session Receipts, parsed from the manifest's `actor` URI when it starts with `ship://`. Absent on pre-v0.9.0 receipts and on non-ship actors (`human://alice`, bare `agent://`). Cross-verification uses it to check receipt and certificate reference the same ship. (item 2)
+- `treeship_core::artifacts` module with five DSSE-signed command artifact schemas for supervisor → ship control-plane messaging: `KillCommand`, `ApprovalDecision`, `MandateUpdate`, `BudgetUpdate`, `TerminateSession`. Plus `verify_command(envelope, &authorized_keys)` helper. Ship as primitives in v0.9.0; CLI surfaces that issue and consume them ship in v0.10.0. (item 7)
+- `treeship_core::agent::verify_certificate` validates the embedded Ed25519 signature on an `AgentCertificate` against its embedded public key. Exposed as a public library API so the CLI, `@treeship/verify` (v0.9.1), and third parties share one implementation. (item 1)
+- `treeship_core::agent::effective_schema_version` helper resolves `Option<String>` to its effective string (`"0"` default). Use this over manual `Option` checks so the legacy default flows from one place.
+- New docs: `cli/verify.mdx` rewrite, `concepts/cross-verification.mdx`, `concepts/command-artifacts.mdx`, `reference/schema.mdx`. `concepts/session-receipts.mdx` updated to mention the new fields. (item 11)
+- Backwards-compatibility regression suite at `packages/core/tests/legacy_receipt_fixtures.rs` with synthesized + hand-curated v0.7.2 and v0.8.0 fixtures. Every future release must keep these fixtures verifying cleanly; if the schema changes in a way that breaks them, it must be documented here first. (item 9)
+
+### Changed
+
+- `treeship verify` dispatcher: URL-shaped and existing-path-shaped targets, or any invocation with `--certificate`, go through the new external path. Bare artifact IDs (including `"last"`) fall through to the original local-storage verify path unchanged.
+- `ArtifactEntry` re-exported from `treeship_core::session` so downstream code can construct receipts without reaching into the package module.
+- Legacy `Option<String>` defaults on `schema_version` and `session.ship_id` are deliberately informational in v0.9.0: `schema_version: "1"` and `"0"` both select the same ruleset. Future versions that diverge will bump to `"2"` and move the field inside the signed payload. See `reference/schema.mdx`.
+
+### Explicitly deferred
+
+Not hidden, not quiet. Each of these was in the original v0.9.0 draft; each got moved because shipping it with a cohesive announcement beats burying it in a release note. Three releases, three stories.
+
+- **v0.9.1 — Runs everywhere.** WASM migration of `@treeship/sdk` and `@treeship/a2a` from CLI subprocess to direct `packages/core-wasm` calls, and the new `@treeship/verify` standalone npm package (zero `@treeship/sdk` dependency, pure WASM, for Vercel Edge / Cloudflare Workers / AWS Lambda / browser). The `@treeship/verify` package uses the same `cross_verify_receipt_and_certificate` implementation that ships in v0.9.0 — no semantic drift.
+- **v0.10.0 — Live management primitives.** Approval-loop Hub endpoints (5 new routes), `--require-approval` flag on `treeship wrap`, `treeship approver add / list / remove` CLI. `treeship.dev/verify` browser-based drag-and-drop verifier (uses the WASM bundle from v0.9.1). The command artifact schemas are already in v0.9.0 (`ApprovalDecision`, etc.) so Witness can start consuming them before v0.10.0 lands.
+- **v1.0.** API stability guarantee, `treeship upgrade` self-update, additional platform support and polish.
+
+### Follow-ups in this release window
+
+- Comprehensive Codex adversarial review: v0.9.0 included a scoped review item that was deferred on shipping constraints. The v0.9.0 surface is tested (165+ unit/integration tests across the workspace, including every legacy fixture), but a formal adversarial pass on the URL fetch / certificate cross-verify / command-artifact code paths will be run before v0.9.1 cuts.
+- Page-by-page docs audit for feature status (AUTO / EXPLICIT / NOT YET CAPTURED) is partial. v0.9.0-specific pages are complete and the most-read concept page (`session-receipts.mdx`) is current; the remaining pages will be audited before v0.10.0.
+- Clean-room VM acceptance tests on macOS arm64 / macOS x64 / Linux x64 run out-of-band.
+
+### Rollback
+
+Previous stable is v0.8.0 and remains published on every registry.
+
+```bash
+npm install -g treeship@0.8.0
+npm install @treeship/sdk@0.8.0 @treeship/mcp@0.8.0 @treeship/a2a@0.8.0
+cargo install treeship-cli@0.8.0 treeship-core@0.8.0
+pip install treeship-sdk==0.8.0
+```
+
+No breaking wire-format changes between v0.8.0 and v0.9.0. A v0.9.0 verifier reads v0.8.0 receipts cleanly (regression suite enforces this). A v0.8.0 verifier reads v0.9.0 receipts cleanly as long as the new optional fields are ignored, which they are by default.
+
 ## 0.8.0 (2026-04-18)
 
 ### Added
