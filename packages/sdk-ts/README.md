@@ -76,9 +76,12 @@ Returns a `Ship` instance with three modules:
 
 ### `ship.verify`
 
-| Method | Params | Returns |
-|--------|--------|---------|
-| `verify(id)` | artifact ID string | `{ outcome, chain, target }` |
+| Method | Params | Returns | Runtime |
+|--------|--------|---------|---------|
+| `verify(id)` | artifact ID string | `{ outcome, chain, target }` | CLI subprocess (legacy) |
+| `verifyReceipt(target)` | receipt JSON / URL / parsed object | `VerifyReceiptResult` | WASM |
+| `verifyCertificate(target, now?)` | cert JSON / URL / parsed object + optional `Date \| string` | `VerifyCertificateResult` | WASM |
+| `crossVerify(receipt, cert, now?)` | receipt + cert in any of the above forms | `CrossVerifyResult` | WASM |
 
 ### `ship.dock`
 
@@ -88,11 +91,29 @@ Returns a `Ship` instance with three modules:
 | `pull(id)` | artifact ID string | `void` |
 | `status()` | none | `{ docked, endpoint?, dockId? }` |
 
+## Runtime compatibility
+
+Verification (`verifyReceipt`, `verifyCertificate`, `crossVerify`) is WASM-backed since v0.9.1 and runs anywhere WebAssembly + `fetch` are available:
+
+| Runtime | Verify | Attest / Session / Hub |
+|---------|--------|-----------------------|
+| Node.js 18+ | yes | yes (needs `treeship` CLI in PATH) |
+| Node.js 20+ | yes | yes |
+| Deno | yes | no (use the WASM-only `@treeship/verify` package for read-only consumers) |
+| Browser | yes | no |
+| Vercel Edge | yes | no |
+| Cloudflare Workers | yes | no |
+| AWS Lambda (Node) | yes | no |
+
+Stateful operations — `attest.*`, `session.*`, `dock.*`, and `agent register` — continue to shell out to the `treeship` CLI binary because they need filesystem access for key storage, the artifact chain, and the session log. These paths work only in runtimes that can spawn the CLI (Node with the binary on `PATH`, typically).
+
+For read-only consumers (dashboards, Witness, third-party verifiers) that only need verification, depend on [`@treeship/verify`](../verify-js/) instead — zero SDK dependency, zero subprocess, pure WASM.
+
 ## How it works
 
-The SDK shells out to the `treeship` CLI binary via `child_process.execFile`. All signing happens in the Rust binary. The SDK is a thin TypeScript wrapper that makes the CLI ergonomic from code.
+Verification paths: the SDK lazily imports `@treeship/core-wasm` on the first `verifyReceipt` / `verifyCertificate` / `crossVerify` call, then reuses the cached bindings. Same Rust code the CLI runs, compiled to WASM.
 
-A future version will embed the WASM verifier for in-process signing without the subprocess.
+Attestation and other stateful paths: the SDK shells out to the `treeship` CLI binary via `child_process.execFile`. All signing happens in the Rust binary. The SDK is a thin TypeScript wrapper that makes the CLI ergonomic from code.
 
 ## License
 

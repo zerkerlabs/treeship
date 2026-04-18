@@ -34,6 +34,9 @@
     "build": "tsc",
     "test": "vitest run"
   },
+  "dependencies": {
+    "@treeship/core-wasm": "0.9.1"
+  },
   "devDependencies": {
     "@types/node": "^25.5.0",
     "typescript": "^5.7.0",

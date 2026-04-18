@@ -44,6 +44,61 @@ export interface ApprovalResult {
   nonce: string;
 }
 
+export interface VerifyCheck {
+  step: string;
+  status: "pass" | "fail" | "warn";
+  detail: string;
+}
+
+export interface VerifyReceiptResult {
+  outcome: "pass" | "fail" | "error";
+  checks: VerifyCheck[];
+  session: {
+    id: string;
+    ship_id?: string;
+    schema_version?: string;
+    agent: string;
+    duration_ms?: number;
+    actions: number;
+  };
+  error_code?: string;
+  message?: string;
+}
+
+export interface VerifyCertificateResult {
+  outcome: "pass" | "fail" | "error";
+  signature_valid: boolean;
+  validity: "valid" | "expired" | "not_yet_valid" | "not_checked";
+  certificate: {
+    ship_id: string;
+    agent_name: string;
+    issued_at: string;
+    valid_until: string;
+    schema_version?: string;
+  };
+  error_code?: string;
+  message?: string;
+}
+
+export interface CrossVerifyResult {
+  outcome: "pass" | "fail" | "error";
+  ok: boolean;
+  ship_id_status: "match" | "mismatch" | "unknown";
+  certificate_status: "valid" | "expired" | "not_yet_valid";
+  certificate_signature_valid: boolean;
+  authorized_tool_calls: string[];
+  unauthorized_tool_calls: string[];
+  authorized_tools_never_called: string[];
+  error_code?: string;
+  message?: string;
+}
+
+/**
+ * Legacy VerifyResult shape (pre-v0.9.1). Preserved for backwards
+ * compatibility with callers of the old VerifyModule.verify(artifactId)
+ * path, which ships legacy-formatted chain counts. New code should prefer
+ * VerifyReceiptResult.
+ */
 export interface VerifyResult {
   outcome: "pass" | "fail" | "error";
   chain: number;

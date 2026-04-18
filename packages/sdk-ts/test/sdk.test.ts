@@ -22,9 +22,16 @@ describe("@treeship/sdk", () => {
     expect(typeof s.attest.decision).toBe("function");
   });
 
-  it("verify module has verify method", () => {
+  it("verify module has legacy artifact-ID verify method", () => {
     const s = ship();
     expect(typeof s.verify.verify).toBe("function");
+  });
+
+  it("verify module has WASM-backed receipt / certificate / cross verifiers", () => {
+    const s = ship();
+    expect(typeof s.verify.verifyReceipt).toBe("function");
+    expect(typeof s.verify.verifyCertificate).toBe("function");
+    expect(typeof s.verify.crossVerify).toBe("function");
   });
 
   it("dock module has push, pull, status methods", () => {
