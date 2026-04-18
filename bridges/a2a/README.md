@@ -142,6 +142,23 @@ This is the same artifact `treeship attest handoff` produces from the CLI, it ap
 | `TREESHIP_SESSION_ID` | Inherited from `treeship session start`; auto-included in payloads. |
 | `TREESHIP_DEBUG=1` | Logs attestation failures to stderr. |
 
+## Runtime compatibility
+
+`verifyReceipt` is WASM-backed since v0.9.1 and runs anywhere WebAssembly + `fetch` are available:
+
+| Runtime | verifyReceipt | Attest paths |
+|---------|---------------|--------------|
+| Node.js 18+ | yes (real Ed25519/Merkle via WASM) | yes (needs `treeship` CLI in PATH) |
+| Deno | yes | no |
+| Browser | yes | no |
+| Vercel Edge | yes | no |
+| Cloudflare Workers | yes | no |
+| AWS Lambda (Node) | yes | no |
+
+Before v0.9.1, `verifyReceipt` was network-only and returned a structural summary without cryptographic checks. From v0.9.1, `VerifiedReceipt.cryptographicallyVerified` is `true` only if Merkle root recomputation, inclusion proofs, leaf-count parity, timeline ordering, and chain linkage all passed. Inspect `verifyChecks` for the per-step breakdown.
+
+Attest paths (`onTaskReceived`, `onTaskCompleted`, `onHandoff`, `decorateArtifact`) still shell out to the `treeship` CLI for filesystem access to the keystore, artifact chain, and session log. These paths work only in Node with the binary on `PATH`.
+
 ## Design rules
 
 - Treeship errors **never** fail the A2A handler.
@@ -149,6 +166,7 @@ This is the same artifact `treeship attest handoff` produces from the CLI, it ap
 - Intent attestation is **awaited** so the proof exists before the agent runs.
 - Receipt attestation is fast and runs inside `onTaskCompleted` so the receipt URL is available before you return the artifact.
 - Handoffs and AgentCard extensions are **opt-in but on-by-default**.
+- Receipt verification via WASM is graceful: if `@treeship/core-wasm` cannot be loaded in the host runtime, `verifyReceipt` falls back to the pre-v0.9.1 structural summary with `cryptographicallyVerified: false`.
 
 ## License
 

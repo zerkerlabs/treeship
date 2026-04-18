@@ -106,6 +106,13 @@ export interface TaskAttestationResult {
   shipId: string;
 }
 
+/** One step of a WASM-backed receipt verification. */
+export interface VerifyCheck {
+  step: string;
+  status: 'pass' | 'fail' | 'warn';
+  detail: string;
+}
+
 /** Verified-receipt summary returned by verifyReceipt(). */
 export interface VerifiedReceipt {
   sessionId: string;
@@ -114,6 +121,16 @@ export interface VerifiedReceipt {
   events: number;
   artifacts: number;
   withinDeclaredBounds: boolean;
+  /**
+   * True iff the receipt JSON passed cryptographic checks via WASM
+   * (Merkle root recomputation, inclusion proofs, leaf count parity,
+   * timeline ordering, chain linkage). False when WASM is unavailable
+   * in the runtime or when a check failed -- inspect `verifyChecks` for
+   * the per-step breakdown.
+   */
+  cryptographicallyVerified: boolean;
+  /** Per-step verification results from WASM. Present when WASM ran. */
+  verifyChecks?: VerifyCheck[];
   raw: unknown;
 }
 
