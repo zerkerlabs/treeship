@@ -88,13 +88,13 @@ fn detect_agents() -> Vec<DetectedAgent> {
     agents
 }
 
+/// In-process PATH search (no shell-out to external `which`).
 fn which(name: &str) -> bool {
-    std::process::Command::new("which")
-        .arg(name)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
+    std::env::var_os("PATH")
+        .map(|paths| {
+            std::env::split_paths(&paths)
+                .any(|dir| dir.join(name).is_file())
+        })
         .unwrap_or(false)
 }
 
@@ -119,8 +119,26 @@ const TREESHIP_MCP_ENTRY: &str = r#"{
       }
     }"#;
 
+/// Reject paths that contain symlinks to prevent writing to unexpected locations.
+fn is_safe_path(path: &Path) -> bool {
+    // Check each ancestor for symlinks
+    let mut check = path.to_path_buf();
+    loop {
+        if check.is_symlink() { return false; }
+        if !check.pop() { break; }
+        if check.as_os_str().is_empty() { break; }
+    }
+    true
+}
+
 fn install_mcp_config(agent: &DetectedAgent, dry_run: bool, printer: &Printer) -> Result<bool, Box<dyn std::error::Error>> {
     let config_path = &agent.config_path;
+
+    // Reject symlinked directories to prevent arbitrary file writes
+    if !is_safe_path(config_path) {
+        printer.warn(&format!("  {} config path contains a symlink, skipping for safety", agent.display), &[]);
+        return Ok(false);
+    }
 
     // Read existing config or start fresh
     let mut config: serde_json::Value = if config_path.exists() {
@@ -157,12 +175,14 @@ fn install_mcp_config(agent: &DetectedAgent, dry_run: bool, printer: &Printer) -
         .ok_or("mcpServers is not an object")?
         .insert("treeship".into(), entry);
 
-    // Write back
+    // Atomic write: temp file + rename to prevent data loss on interruption
     if let Some(parent) = config_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     let json = serde_json::to_string_pretty(&config)?;
-    std::fs::write(config_path, json)?;
+    let tmp_path = config_path.with_extension("tmp");
+    std::fs::write(&tmp_path, &json)?;
+    std::fs::rename(&tmp_path, config_path)?;
 
     printer.success(&format!("{} configured", agent.display), &[]);
     printer.dim_info(&format!("  {}", config_path.display()));
@@ -176,6 +196,12 @@ fn install_mcp_config(agent: &DetectedAgent, dry_run: bool, printer: &Printer) -
 fn install_skill(agent: &DetectedAgent, dry_run: bool, printer: &Printer) -> Result<bool, Box<dyn std::error::Error>> {
     let skill_path = &agent.config_path;
 
+    // Reject symlinked directories
+    if !is_safe_path(skill_path) {
+        printer.warn(&format!("  {} skill path contains a symlink, skipping for safety", agent.display), &[]);
+        return Ok(false);
+    }
+
     if skill_path.exists() {
         printer.dim_info(&format!("  {} skill already installed, skipping", agent.display));
         return Ok(false);
@@ -186,7 +212,6 @@ fn install_skill(agent: &DetectedAgent, dry_run: bool, printer: &Printer) -> Res
         return Ok(true);
     }
 
-    // Determine which skill template to use
     let skill_content = match agent.name {
         "hermes" => include_str!("../../../../integrations/hermes/treeship.skill/SKILL.md"),
         "openclaw" => include_str!("../../../../integrations/openclaw/treeship.skill/SKILL.md"),
@@ -196,7 +221,10 @@ fn install_skill(agent: &DetectedAgent, dry_run: bool, printer: &Printer) -> Res
     if let Some(parent) = skill_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(skill_path, skill_content)?;
+    // Atomic write via temp + rename
+    let tmp_path = skill_path.with_extension("tmp");
+    std::fs::write(&tmp_path, skill_content)?;
+    std::fs::rename(&tmp_path, skill_path)?;
 
     printer.success(&format!("{} skill installed", agent.display), &[]);
     printer.dim_info(&format!("  {}", skill_path.display()));
