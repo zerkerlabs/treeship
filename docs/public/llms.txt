@@ -1,0 +1,46 @@
+# Treeship Documentation Index
+# https://docs.treeship.dev
+
+## Getting Started
+- /docs/guides/introduction
+- /docs/guides/quickstart
+- /docs/guides/how-it-works
+
+## Core Concepts
+- /docs/concepts/trust-model
+- /docs/concepts/artifacts
+- /docs/concepts/session-receipts
+- /docs/concepts/zero-knowledge
+- /docs/concepts/glossary
+- /docs/concepts/security
+
+## CLI Reference
+- /docs/cli/overview
+- /docs/cli/init
+- /docs/cli/wrap
+- /docs/cli/attest
+- /docs/cli/verify
+- /docs/cli/session
+- /docs/cli/package
+- /docs/cli/daemon
+- /docs/cli/doctor
+
+## Integrations
+- /docs/integrations/claude-code
+- /docs/integrations/hermes
+- /docs/integrations/openclaw
+- /docs/integrations/cursor
+- /docs/integrations/mcp
+- /docs/integrations/a2a
+
+## SDK
+- /docs/sdk/overview
+- /docs/sdk/python
+
+## Hub API
+- /docs/api/overview
+- /docs/api/receipt-put
+- /docs/api/receipt-get
+- /docs/api/ship-registry
+- /docs/api/artifacts-push
+- /docs/api/artifacts-get
