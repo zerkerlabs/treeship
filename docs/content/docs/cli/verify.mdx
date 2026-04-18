@@ -1,84 +1,132 @@
 ---
 title: verify
-description: Verify an artifact or its full parent chain. Exit 0 = clean. Exit 1 = failed.
+description: Verify a receipt by URL, file path, or local artifact ID. Optionally cross-verify against an Agent Certificate.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
+`treeship verify` accepts three target shapes and one optional cross-check:
+
+- a **URL** to a receipt JSON document served by the Hub
+- a **file path** to a local `.treeship` or `.agent` package directory
+- an **artifact ID** from local storage (the original v0.1 path; chain walk + signature checks)
+
+Pair any of those with `--certificate` to also confirm the session stayed inside the envelope of an Agent Certificate.
+
 ## Usage
 
 ```bash
-treeship verify <artifact-id> [OPTIONS]
+treeship verify <url-or-path-or-artifact-id> [OPTIONS]
 ```
-
-## What the verifier checks
-
-1. Derives expected artifact ID from `sha256(PAE_bytes)[..16]`
-2. Compares against stored ID -- tampering detected immediately
-3. Verifies Ed25519 signature
-4. Validates statement schema
-5. Walks parent chain recursively
-6. Enforces `action.approvalNonce == approval.nonce` if present
-7. Checks approval expiry
 
 ## Options
 
 | Option | Description |
 |--------|-------------|
-| `--no-chain` | Verify only this artifact, do not walk the parent chain |
-| `--max-depth <N>` | Maximum chain depth to walk (default: 20) |
-| `--full` | Show full chain timeline with box-drawn cards |
-| `--format json` | Global flag. Output as JSON instead of text |
+| `--certificate <path-or-url>` | Cross-verify against an Agent Certificate (`.agent` package or URL) |
+| `--no-chain` | Verify only this artifact, do not walk the parent chain. Artifact-ID form only. |
+| `--max-depth <N>` | Maximum chain depth to walk (default 20). Artifact-ID form only. |
+| `--full` | Show full chain timeline with box-drawn cards. Artifact-ID form only. |
+| `--format json` | Global flag. Machine-readable output for CI pipelines. |
+| `--quiet` | Global flag. Exit code only, no output. |
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Verified |
+| `1` | Verification failed (signature, Merkle, inclusion proof, determinism) |
+| `2` | Cross-verification failed (cert mismatch, unauthorized tool call, expired cert) |
+| `3` | Network or filesystem error (could not fetch URL or read file) |
 
 ## Examples
 
-<Tabs items={['Simple', 'Full chain', 'JSON output', 'Bundle']}>
-<Tab value="Simple">
+<Tabs items={['URL', 'File path', '.agent', 'Cross-verify', 'Artifact ID', 'JSON for CI']}>
+<Tab value="URL">
 ```bash
-treeship verify art_f7e6d5c4
+treeship verify https://api.treeship.dev/v1/receipt/ssn_abc123
 ```
+
+```
+  ✓  Downloaded receipt
+  ✓  Merkle root verified
+  ✓  2/2 inclusion proofs passed
+  ✓  Leaf count matches artifact count
+  ✓  Timeline ordering verified
+  ✓  Chain linkage intact
+
+Verified. This receipt is authentic.
+
+  Session:   ssn_abc123
+  Ship:      ship_demo
+  Agent:     researcher
+  Duration:  4m 22s
+  Actions:   28
+```
+
+The human-readable mirror at `treeship.dev/receipt/...` is also accepted; the CLI rewrites `/receipt/` to `/v1/receipt/` automatically.
 </Tab>
-<Tab value="Full chain">
+<Tab value="File path">
+```bash
+treeship verify .treeship/sessions/ssn_abc123.treeship
+```
+
+Loads the on-disk package, runs the full bag of checks (determinism, Merkle root, inclusion proofs, leaf count, timeline ordering), and prints the same checkmark output as the URL form.
+</Tab>
+<Tab value=".agent">
+```bash
+treeship verify ./researcher.agent
+```
+
+Loads the certificate from `researcher.agent/certificate.json`, verifies the embedded Ed25519 signature, and prints the certificate metadata.
+</Tab>
+<Tab value="Cross-verify">
+```bash
+treeship verify https://api.treeship.dev/v1/receipt/ssn_abc123 \
+  --certificate ./researcher.agent
+```
+
+Verifies the receipt, then runs cross-verification:
+
+```
+  ✓  Certificate verified
+  ✓  Ship IDs match
+  ✓  All 12 tool calls authorized by certificate
+
+Complete trust loop verified.
+```
+
+Fails with exit code `2` if the receipt's `ship_id` does not match the certificate's `identity.ship_id`, the certificate is expired or not yet valid at the verify time, or any tool the session called is missing from the certificate's `capabilities.tools`.
+</Tab>
+<Tab value="Artifact ID">
 ```bash
 treeship verify art_f7e6d5c4 --full
 ```
+
+The original local-artifact path. Walks the parent chain, verifies every Ed25519 signature, checks approval nonce binding, and prints a box-drawn timeline.
 </Tab>
-<Tab value="JSON output">
+<Tab value="JSON for CI">
 ```bash
-treeship verify art_f7e6d5c4 --format json
+treeship verify $RECEIPT_URL --format json --certificate $CERT_PATH \
+  | jq -e '.cross_verify.ok == true'
 ```
 
-```json
-{
-  "outcome": "pass",
-  "total": 3,
-  "passed": 3,
-  "failed": 0,
-  "checks": [
-    { "id": "art_a1b2c3d4", "outcome": "pass", "reason": null },
-    { "id": "art_e5f6a7b8", "outcome": "pass", "reason": null },
-    { "id": "art_f7e6d5c4", "outcome": "pass", "reason": null }
-  ]
-}
-```
-</Tab>
-<Tab value="Bundle">
-```bash
-treeship verify release.treeship
-```
+The JSON object includes `outcome`, per-check status, and (when `--certificate` is used) a `cross_verify` block with `ship_id_status`, `certificate_status`, the three tool-call lists, and a roll-up `ok` boolean. Pipe it to `jq -e` for a clean pass/fail gate.
 </Tab>
 </Tabs>
 
+## What the verifier checks
+
+The exact set of checks depends on what's available at the target:
+
+- **URL mode** runs every check that's derivable from the receipt JSON alone: Merkle root recomputation, inclusion proofs, leaf count, timeline ordering, chain linkage. Per-artifact Ed25519 signature checks need the original envelope bytes, which only the local-storage and `.treeship` package paths have.
+- **`.treeship` package mode** runs everything URL mode runs plus determinism (the on-disk `receipt.json` round-trips byte-identical) and any signature checks the package preserves.
+- **`.agent` package mode** verifies the certificate's Ed25519 signature against the public key embedded in the certificate. It does NOT chain to a trusted issuer; trust chaining is out of scope for v0.9.0.
+- **Artifact-ID mode** is the original local-storage path: walks the parent chain, verifies every signature, enforces nonce binding on approvals, checks expiry. See [the chain-verification guide](/docs/concepts/artifacts) for full semantics.
+
+The cross-verification path additionally verifies that the receipt's `session.ship_id` matches the certificate's `identity.ship_id`, the certificate was valid at verify time (`issued_at <= now <= valid_until`), and every tool the session called is present in the certificate's `capabilities.tools` list. See the [cross-verification concept](/docs/concepts/cross-verification) for the full semantics.
+
 <Callout type="info">
-Use `--format json` in CI pipelines. Pipe the output to `jq -e '.outcome == "pass"'` for a clean pass/fail gate.
+Pre-v0.9.0 receipts (before `schema_version` and `session.ship_id` were added) verify cleanly under the URL and package paths but cannot complete cross-verification because the receipt has no `ship_id`. The CLI reports `Receipt has no ship_id (legacy receipt; cannot cross-verify)` and exits `2`.
 </Callout>
-
-## Use in CI
-
-```yaml
-# .github/workflows/verify.yml
-- name: Verify deployment chain
-  run: |
-    treeship verify $ARTIFACT_ID --format json | jq -e '.outcome == "pass"'
-```

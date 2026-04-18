@@ -38,6 +38,7 @@ The top-level shape of `receipt.json`:
 ```json
 {
   "type": "treeship/session-receipt/v1",
+  "schema_version": "1",
   "session": {
     "id": "ssn_01HR...",
     "name": "fix auth bug",
@@ -45,7 +46,8 @@ The top-level shape of `receipt.json`:
     "started_at": "2026-04-09T06:57:56Z",
     "ended_at": "2026-04-09T07:04:38Z",
     "status": "completed",
-    "duration_ms": 401658
+    "duration_ms": 401658,
+    "ship_id": "ship_demo"
   },
   "participants": {
     "root_agent_instance_id": "ai_root_1",
@@ -194,3 +196,12 @@ Session Receipts describe what was *instrumented*. They do not claim to describe
 - **The receipt is not a correctness proof.** It does not judge whether the agent's output was good, safe, or policy-compliant. It is a high-fidelity record of what happened. Policy decisions sit on top.
 
 These are design boundaries, not bugs. Treeship gives the strongest possible proof for everything inside its capture boundary, and names the boundary explicitly.
+
+## Schema versioning and cross-verification
+
+v0.9.0 introduced two new optional fields for forward compatibility and cross-verification:
+
+- `schema_version` (top level): `"1"` for v0.9.0+ receipts, absent on legacy receipts. See [Schema versioning](/docs/reference/schema).
+- `session.ship_id`: parsed from the manifest's `actor` URI when it starts with `ship://`. Absent on pre-v0.9.0 receipts and when the actor is not a ship URI.
+
+Pair a v0.9.0+ receipt with the matching Agent Certificate via [`treeship verify --certificate`](/docs/cli/verify) to confirm the session stayed inside the certificate's authorized envelope. See [Cross-verification](/docs/concepts/cross-verification).

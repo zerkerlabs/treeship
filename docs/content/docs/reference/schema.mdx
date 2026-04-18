@@ -1,0 +1,92 @@
+---
+title: Schema versioning
+description: schema_version field on receipts and certificates, legacy rules for missing field, forward compatibility guarantees.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Treeship's wire format evolves. v0.9.0 introduced a `schema_version` field on Session Receipts and Agent Certificates so verifiers can keep doing the right thing across schema generations.
+
+The rules are intentionally simple:
+
+- New documents (v0.9.0+) emit `schema_version: "1"`.
+- Documents with no `schema_version` field are treated as `"0"` and verified under legacy rules (the pre-v0.9.0 shape).
+- The field is optional in the struct definition (`Option<String>`) and skipped from output when `None`, so legacy documents round-trip byte-identical and any signature over those bytes is preserved.
+
+## Where it lives
+
+```json
+{
+  "type": "treeship/session-receipt/v1",
+  "schema_version": "1",
+  "session": { ... },
+  ...
+}
+```
+
+```json
+{
+  "type": "treeship/agent-certificate/v1",
+  "schema_version": "1",
+  "identity": { ... },
+  "capabilities": { ... },
+  "declaration": { ... },
+  "signature": { ... }
+}
+```
+
+Both fields are at the top level of the document, immediately after `type`.
+
+## Effective version
+
+The library helper `treeship_core::agent::effective_schema_version` resolves the `Option<String>` to its effective string, defaulting to `"0"` for missing values:
+
+```rust
+use treeship_core::agent::effective_schema_version;
+
+let v = effective_schema_version(receipt.schema_version.as_deref());
+// "1" for v0.9.0+ receipts, "0" for legacy receipts.
+```
+
+Verifiers branch on `v`, not on `receipt.schema_version.is_some()`, so the legacy default flows from one place.
+
+## What v0.9.0 changes vs v0.8.0
+
+The v0.9.0 wire format is a strict superset of v0.8.0. Two new optional fields on the receipt:
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `schema_version` | `Option<String>` (top level) | Forward compatibility marker |
+| `session.ship_id` | `Option<String>` | Cross-verification target — must equal certificate's `identity.ship_id` |
+
+And one new optional field on the certificate:
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `schema_version` | `Option<String>` (top level) | Forward compatibility marker |
+
+That's it. Every other v0.8.0 field carries forward unchanged. Pre-v0.9.0 receipts continue to verify cleanly under v0.9.0 code via the regression suite at `packages/core/tests/legacy_receipt_fixtures.rs`. Pre-v0.9.0 certificates continue to verify under v0.9.0 code; the cross-verification path simply reports `Unknown` for ship-ID status when the receipt has no `ship_id`.
+
+## Cryptographic binding
+
+In v0.9.0, `schema_version` is **informational on the envelope**, not bound by a signature.
+
+- For **receipts**, integrity is via the Merkle tree over individual artifact envelopes; the receipt itself is a composed view, not a signed document. `schema_version` sits on that view.
+- For **certificates**, the embedded Ed25519 signature covers `{identity, capabilities, declaration}` (canonical JSON, declaration-order). `schema_version` is on the certificate wrapper, outside the signed payload, for backward compatibility with pre-v0.9.0 certificates whose signatures were computed without it.
+
+In v0.9.0 this distinction is harmless because the rules for `"0"` and `"1"` are identical — `"1"` is just "the field happens to be present". Future versions that need `schema_version` to be cryptographically bound (because v1 and v2 rules diverge) will move it inside the signed payload and bump to `"2"`. The migration path:
+
+1. New documents emit `"2"` with the field inside the signed payload.
+2. Verifiers see `"2"` and apply the v2 ruleset.
+3. Verifiers see `"1"` (or missing) and apply the v1 ruleset (current behavior).
+4. After enough adoption, drop `"0"` / `"1"` support in a major release.
+
+## Forward compatibility guarantee
+
+What this commits to: any field added in a future minor release will be added with `#[serde(default, skip_serializing_if = "...")]` so old documents continue to round-trip byte-identical and the determinism check inside `verify_package` keeps passing. This is enforced by the regression suite — old fixtures must verify in every release.
+
+What this does **not** commit to: existing fields cannot change semantics within the same `schema_version`. If field X means one thing in v0.9.0 and a different thing in v0.10.0, the schema_version bumps and the verifier branches.
+
+<Callout type="info">
+If you're parsing receipts in your own code, check `effective_schema_version` rather than the raw `Option`. New schema versions land first in the library helper; depending on it shields your code from the field being absent on legacy documents.
+</Callout>

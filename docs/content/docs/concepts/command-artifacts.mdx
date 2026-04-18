@@ -1,0 +1,74 @@
+---
+title: Command artifacts
+description: Signed control-plane messages a supervisor sends to a running ship. Ship in v0.9.0 as primitives; consumed by Witness today, exposed via CLI in later releases.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+A Session Receipt records what the agent **did**. A command artifact records what someone with authority **told the agent to do** — kill the session, approve a pending action, tighten the mandate, adjust the budget, ask for a graceful shutdown.
+
+Both ride the same DSSE envelope. Both are signed Ed25519 artifacts. Both end up in the same audit trail. The difference is only direction: receipts flow up from the ship, commands flow down to it.
+
+v0.9.0 ships the **schemas** and a single library helper. The CLI surfaces that issue and consume commands ship in later releases (the approval loop in v0.10.0, kill / terminate in v1.0). Witness consumes them today via the library.
+
+## The five command types
+
+| Type | payloadType | Use |
+|------|------------|-----|
+| `KillCommand` | `application/vnd.treeship.command.kill.v1+json` | Issuer demands an immediate halt. No drain, no grace period. Receipt cuts at the kill point. |
+| `ApprovalDecision` | `application/vnd.treeship.command.approval_decision.v1+json` | Approver's signed approve / reject on a pending approval-required artifact. |
+| `MandateUpdate` | `application/vnd.treeship.command.mandate_update.v1+json` | Replace the ship's `bounded_actions` and `forbidden` lists, optionally with an expiry. |
+| `BudgetUpdate` | `application/vnd.treeship.command.budget_update.v1+json` | Add or revoke tokens against the ship's running budget (signed delta). |
+| `TerminateSession` | `application/vnd.treeship.command.terminate_session.v1+json` | Graceful shutdown. The ship drains in-flight work and emits a final receipt. |
+
+`KillCommand` and `TerminateSession` are deliberately separate. `Kill` is `kill -9`; `Terminate` is `SIGTERM`. The distinction matters when reading an audit trail.
+
+## Verifying a command artifact
+
+```rust
+use treeship_core::artifacts::{verify_command, CommandType};
+
+let result = verify_command(&envelope, &authorized_keys)?;
+
+match result.command {
+    CommandType::Kill(k) => { /* halt now, log k.reason */ }
+    CommandType::ApprovalDecision(d) => { /* unblock the wrap, log d.reason */ }
+    CommandType::MandateUpdate(m) => { /* replace mandate */ }
+    CommandType::BudgetUpdate(b) => { /* apply b.token_limit_delta */ }
+    CommandType::TerminateSession(t) => { /* drain, then close */ }
+}
+```
+
+`authorized_keys` is the `(key_id -> Ed25519 public key)` map of issuers permitted to send commands to this ship. Any signature on the envelope from a key outside this set is ignored; if no in-set key produced a valid signature, verification fails. This mirrors `verify_any` semantics on regular Treeship envelopes — same wire format, same crypto, same registry pattern.
+
+The result also carries:
+
+- `artifact_id` — the content-addressed ID re-derived during verification, suitable for chaining and dedup
+- `verified_key_ids` — the subset of `authorized_keys` that actually signed (usually one)
+- `command.kind()` — a stable `&'static str` label for logs ("kill", "approval_decision", etc.)
+
+## Why DSSE again
+
+Command artifacts deliberately reuse the DSSE envelope so:
+
+- They sit inside the existing audit trail (Hub, preview.html, Merkle tree) with zero special casing.
+- The same Verifier that checks an `action` checks a `kill_command`.
+- The same content-addressing rule produces stable artifact IDs.
+- The same key-rotation story works (a ship updates its `authorized_keys` registry the same way it rotates any other trust root).
+
+A separate transport for control-plane messages would have meant a second crypto path, a second audit trail, and a second class of regressions. DSSE keeps them on the main road.
+
+## What's not in v0.9.0
+
+Schemas only. v0.9.0 does not ship:
+
+- `treeship approver add / list / remove` — those are v0.10.0 (approval loop release).
+- `--require-approval` flag on `treeship wrap` — v0.10.0.
+- Hub endpoints that accept and serve approval-required artifacts — v0.10.0.
+- A CLI for emitting a `KillCommand` or `TerminateSession` — v1.0; the Hub-level kill switch is Witness territory until then.
+
+The schemas are stable in v0.9.0 because Witness needs to start consuming them now without waiting for the CLI surface to land. If the schema needs to evolve before v1.0, it gets bumped via the `schema_version` field on the parent artifact and the verifier branches accordingly. See [schema versioning](/docs/reference/schema).
+
+<Callout type="info">
+If you're building a supervisor (Witness or otherwise) that needs to issue commands to a Treeship ship today, depend on `treeship_core::artifacts` and produce DSSE envelopes signed with a key the ship has already added to its authorized issuer registry. The CLI catches up in v0.10.0; the wire format does not change.
+</Callout>

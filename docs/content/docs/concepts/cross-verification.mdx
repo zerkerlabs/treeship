@@ -1,0 +1,93 @@
+---
+title: Cross-verification
+description: Pair a receipt with an Agent Certificate to confirm the session stayed inside the agent's authorized envelope.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+A Session Receipt proves what happened. An Agent Certificate proves what the agent was allowed to do. Cross-verification pairs the two and answers a single question: **did this session stay inside the agent's authorized envelope?**
+
+Same machinery, three audiences:
+
+- The CLI calls it through `treeship verify --certificate`.
+- `@treeship/verify` will call it through WebAssembly in v0.9.1, so browser dashboards and edge workers can run the check with no server roundtrip.
+- Third-party dashboards embedding Treeship verification call the library function directly.
+
+All three paths share the same Rust implementation and produce the same result.
+
+## What it checks
+
+Three independent questions, in order:
+
+### 1. Do the receipt and certificate refer to the same ship?
+
+The receipt's `session.ship_id` (added in v0.9.0) must equal the certificate's `identity.ship_id`. A pre-v0.9.0 receipt has no `ship_id` and the answer is `Unknown` rather than `Match` or `Mismatch`. By default `Unknown` blocks the overall pass; callers that explicitly accept legacy receipts can inspect the status field.
+
+### 2. Was the certificate valid at the time of the check?
+
+`issued_at <= now <= valid_until`, where `now` is supplied explicitly by the caller. Making time an argument keeps the function deterministic and testable: tests pass a fixed value, the CLI passes `SystemTime::now()`, the future WASM build passes a JS-supplied timestamp.
+
+The result is one of `Valid`, `Expired { valid_until, now }`, or `NotYetValid { issued_at, now }`.
+
+### 3. Was every tool the session called authorized by the certificate?
+
+Every tool name in the receipt's `tool_usage.actual` must appear in the certificate's `capabilities.tools`. The library returns three lists:
+
+- **authorized tool calls** — called AND in the certificate
+- **unauthorized tool calls** — called but NOT in the certificate; non-empty means the session exceeded its envelope
+- **authorized tools never called** — in the certificate but never used; not a failure, just useful context for reviewers
+
+## The roll-up
+
+`CrossVerifyResult::ok()` returns `true` only if all three checks pass: ship IDs match, certificate is valid, zero unauthorized tool calls.
+
+`authorized_tools_never_called` is reported but never blocks `ok()`. The agent had permission it didn't use; that's fine.
+
+## CLI output
+
+```
+✓  Certificate verified
+✓  Ship IDs match
+✓  All 12 tool calls authorized by certificate
+
+Complete trust loop verified.
+```
+
+If any check fails the CLI reports the specific failure and exits `2`.
+
+## Library use
+
+The function lives at `treeship_core::verify::cross_verify_receipt_and_certificate`:
+
+```rust
+use treeship_core::verify::{cross_verify_receipt_and_certificate, ShipIdStatus};
+
+let result = cross_verify_receipt_and_certificate(&receipt, &certificate, "2026-04-18T10:00:00Z");
+
+if result.ok() {
+    // ship matches, cert valid, no unauthorized calls
+} else {
+    match result.ship_id_status {
+        ShipIdStatus::Match => {}
+        ShipIdStatus::Mismatch { receipt, certificate } => {
+            eprintln!("ship mismatch: receipt={receipt}, cert={certificate}");
+        }
+        ShipIdStatus::Unknown => {
+            eprintln!("legacy receipt with no ship_id");
+        }
+    }
+    eprintln!("unauthorized tool calls: {:?}", result.unauthorized_tool_calls);
+}
+```
+
+## What it does not do
+
+Cross-verification is scoped. It does not:
+
+- Verify Ed25519 signatures inside the receipt's individual artifacts. That's the artifact-ID verify path or the `.treeship` package path. Cross-verify assumes the receipt itself was already verified.
+- Chain the certificate to a trusted issuer. v0.9.0 verifies the certificate's embedded Ed25519 signature against its embedded public key; trust chaining (issuer registry, revocation) is roadmap material.
+- Detect tools that were declared in `bounded_actions` but neither called nor in the certificate. Those are caught by the existing declaration vs actual analysis in the receipt itself.
+
+<Callout type="info">
+The same library function is the seam Witness, third-party dashboards, and the future browser verifier all sit on. If you build verification UI of your own, depend on `treeship_core::verify` (or the WASM bridge in v0.9.1) rather than reimplementing the rules. Same input, same answer, in every runtime.
+</Callout>
