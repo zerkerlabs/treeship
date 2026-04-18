@@ -86,6 +86,23 @@ All three are automatic. The signed artifacts are Merkle-proven. The session eve
 | `TREESHIP_TOKENS_OUT` | Output token count (via `treeship wrap`) |
 | `TREESHIP_PROVIDER` | Provider name e.g. "anthropic" (via `treeship wrap`) |
 
+## Runtime compatibility
+
+Attestation paths (tool-call intent + receipt, session events) still shell out to the `treeship` CLI for filesystem access to the keystore and session log. Those paths need Node with the binary on `PATH`.
+
+Verification helpers (`verifyReceipt`, `verifyCertificate`, `crossVerify`) are WASM-backed since v0.9.1 and run anywhere WebAssembly + `fetch` are available:
+
+| Runtime | Verification | Attest paths |
+|---------|-------------|--------------|
+| Node.js 18+ | yes | yes |
+| Deno | yes | no |
+| Browser | yes | no |
+| Vercel Edge | yes | no |
+| Cloudflare Workers | yes | no |
+| AWS Lambda (Node) | yes | no |
+
+For read-only consumers (dashboards, third-party MCP audit tools) that only need verification, depend on [`@treeship/verify`](../../packages/verify-js/) instead — zero MCP dependency, zero subprocess, pure WASM.
+
 ## Design rules
 
 - Treeship errors **never** fail the underlying tool call
@@ -94,6 +111,7 @@ All three are automatic. The signed artifacts are Merkle-proven. The session eve
 - Receipt attestation is **fire-and-forget** (never blocks response)
 - Session events are **best-effort** (no active session = silent no-op)
 - `TREESHIP_DISABLE=1` produces **zero** overhead
+- Verification helpers are **graceful** -- a runtime without WASM support will surface a clear error rather than crashing the MCP client
 
 ## License
 
