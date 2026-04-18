@@ -78,6 +78,7 @@ pub fn register(
 
     let certificate = AgentCertificate {
         r#type: CERTIFICATE_TYPE.into(),
+        schema_version: Some(CERTIFICATE_SCHEMA_VERSION.into()),
         identity: identity.clone(),
         capabilities: capabilities.clone(),
         declaration: declaration.clone(),

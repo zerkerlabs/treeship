@@ -20,6 +20,10 @@ use super::side_effects::SideEffects;
 /// Receipt type identifier.
 pub const RECEIPT_TYPE: &str = "treeship/session-receipt/v1";
 
+/// Current receipt schema version. Receipts without this field are treated
+/// as schema "0" and verified under legacy rules (pre-v0.9.0 shape).
+pub const RECEIPT_SCHEMA_VERSION: &str = "1";
+
 // ── Top-level receipt ────────────────────────────────────────────────
 
 /// The complete Session Receipt.
@@ -28,6 +32,11 @@ pub struct SessionReceipt {
     /// Always "treeship/session-receipt/v1".
     #[serde(rename = "type")]
     pub type_: String,
+
+    /// Schema version. Absent on pre-v0.9.0 receipts (treated as "0").
+    /// Set to "1" for v0.9.0+ receipts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema_version: Option<String>,
 
     pub session: SessionSection,
     pub participants: Participants,
@@ -270,6 +279,7 @@ impl ReceiptComposer {
 
         SessionReceipt {
             type_: RECEIPT_TYPE.into(),
+            schema_version: Some(RECEIPT_SCHEMA_VERSION.into()),
             session,
             participants,
             hosts,
@@ -589,6 +599,48 @@ mod tests {
         assert_eq!(receipt.side_effects.files_written.len(), 1);
         assert_eq!(receipt.merkle.leaf_count, 2);
         assert!(receipt.merkle.root.is_some());
+    }
+
+    #[test]
+    fn new_receipts_carry_schema_version() {
+        let manifest = make_manifest();
+        let events = make_events();
+        let artifacts = vec![
+            ArtifactEntry { artifact_id: "art_001".into(), payload_type: "action".into(), digest: None, signed_at: None },
+        ];
+        let receipt = ReceiptComposer::compose(&manifest, &events, artifacts);
+        assert_eq!(receipt.schema_version.as_deref(), Some(RECEIPT_SCHEMA_VERSION));
+        // And it shows up in canonical JSON.
+        let json = String::from_utf8(ReceiptComposer::to_canonical_json(&receipt).unwrap()).unwrap();
+        assert!(json.contains(r#""schema_version":"1""#), "missing schema_version: {json}");
+    }
+
+    #[test]
+    fn legacy_receipt_without_schema_version_round_trips_byte_identical() {
+        // Simulate a pre-v0.9.0 receipt by composing one and stripping the
+        // schema_version field. Re-serializing must produce byte-identical
+        // output so the package-level determinism check keeps passing for
+        // old receipts that nobody can re-sign.
+        let manifest = make_manifest();
+        let events = make_events();
+        let artifacts = vec![
+            ArtifactEntry { artifact_id: "art_001".into(), payload_type: "action".into(), digest: None, signed_at: None },
+        ];
+        let mut receipt = ReceiptComposer::compose(&manifest, &events, artifacts);
+        receipt.schema_version = None; // mimic a legacy receipt
+
+        let original = ReceiptComposer::to_canonical_json(&receipt).unwrap();
+        // Verify the field is omitted, not serialized as null.
+        let original_str = std::str::from_utf8(&original).unwrap();
+        assert!(!original_str.contains("schema_version"),
+            "schema_version must be skipped when None");
+
+        let parsed: SessionReceipt = serde_json::from_slice(&original).unwrap();
+        assert!(parsed.schema_version.is_none(), "legacy receipts must parse with schema_version=None");
+
+        let reserialized = ReceiptComposer::to_canonical_json(&parsed).unwrap();
+        assert_eq!(original, reserialized,
+            "legacy receipt must round-trip byte-identical so package determinism check passes");
     }
 
     #[test]
