@@ -90,3 +90,9 @@ What this does **not** commit to: existing fields cannot change semantics within
 <Callout type="info">
 If you're parsing receipts in your own code, check `effective_schema_version` rather than the raw `Option`. New schema versions land first in the library helper; depending on it shields your code from the field being absent on legacy documents.
 </Callout>
+
+## Parity between CLI and WASM
+
+From v0.9.1, the `@treeship/core-wasm` bundle applies identical schema-version rules to the CLI. Both paths use the same `effective_schema_version` helper and the same legacy defaults. `treeship verify <url>` on the CLI and `verifyReceipt(url)` from `@treeship/verify` (or the WASM-backed `@treeship/sdk` / `@treeship/a2a` / `@treeship/mcp` surfaces) produce the same check list on the same receipt. A receipt that verifies on one path verifies on all of them; a receipt that fails fails on all of them with the same reason.
+
+This is enforced by the core library: all verifiers route through `treeship_core::verify::verify_receipt_json_checks`. The WASM export is a thin wrapper. Future schema-version migrations land in the core function; every WASM consumer picks them up the next time `@treeship/core-wasm` is installed at the exact pinned version.

@@ -1,0 +1,207 @@
+---
+title: Verifying receipts on the edge
+description: Deploy Treeship receipt verification to Vercel Edge, Cloudflare Workers, AWS Lambda, or the browser. Zero server roundtrip, zero subprocess, pure WASM.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+From v0.9.1, verification runs anywhere. `@treeship/verify` + `@treeship/core-wasm` compile a 170 KB Rust bundle that verifies receipts and certificates in-process on any runtime with WebAssembly and `fetch`. Same rules the CLI applies, same result shape, across every target.
+
+This guide walks through deploying a minimal verification endpoint on each of the four targets we've exercised in the acceptance suite at [`tests/runtime-acceptance/`](https://github.com/zerkerlabs/treeship/tree/main/tests/runtime-acceptance).
+
+## When to use which
+
+| You want... | Use |
+|-------------|-----|
+| A browser dashboard that verifies a receipt pasted by the user | `@treeship/verify` in the browser bundle |
+| A low-latency verification API at the edge | `@treeship/verify` on Vercel Edge or Cloudflare Workers |
+| Serverless verification with VPC / auth integration | `@treeship/verify` on AWS Lambda |
+| Full local-chain signature verification | `treeship verify <artifact-id>` on the CLI (not WASM) |
+| Attestation (signing, not verifying) | `@treeship/sdk` (still subprocess-backed) |
+
+## Vercel Edge Function
+
+<Tabs items={['Function', 'Deploy', 'Test']}>
+<Tab value="Function">
+```typescript
+// api/verify.ts
+import { verifyReceipt } from '@treeship/verify';
+
+export const config = { runtime: 'edge' };
+
+export default async function handler(req: Request): Promise<Response> {
+  if (req.method !== 'POST') {
+    return new Response('POST only', { status: 405 });
+  }
+  const { url } = (await req.json()) as { url: string };
+  const result = await verifyReceipt(url);
+  return Response.json(result);
+}
+```
+</Tab>
+<Tab value="Deploy">
+```bash
+cd your-project
+npm install @treeship/verify
+npx vercel --prod
+```
+</Tab>
+<Tab value="Test">
+```bash
+curl -X POST https://your-deploy.vercel.app/api/verify \
+  -H "content-type: application/json" \
+  -d '{"url":"https://treeship.dev/receipt/ssn_abc"}'
+```
+</Tab>
+</Tabs>
+
+Vercel Edge uses V8 isolates, not Node. The package's only import is `@treeship/core-wasm`, which is isolate-safe (no `fs`, no `child_process`). Cold start is typically under 1 second for a fresh deploy.
+
+## Cloudflare Worker
+
+<Tabs items={['Worker', 'wrangler.toml', 'Deploy', 'Test']}>
+<Tab value="Worker">
+```typescript
+// src/index.ts
+import { verifyReceipt } from '@treeship/verify';
+
+export default {
+  async fetch(request: Request): Promise<Response> {
+    const { url } = (await request.json()) as { url: string };
+    const result = await verifyReceipt(url);
+    return Response.json(result);
+  },
+};
+```
+</Tab>
+<Tab value="wrangler.toml">
+```toml
+name = "treeship-verify"
+main = "src/index.ts"
+compatibility_date = "2026-04-18"
+compatibility_flags = ["nodejs_compat"]
+```
+</Tab>
+<Tab value="Deploy">
+```bash
+cd your-worker
+npm install @treeship/verify wrangler
+npx wrangler deploy
+```
+</Tab>
+<Tab value="Test">
+```bash
+curl -X POST https://treeship-verify.your-subdomain.workers.dev \
+  -H "content-type: application/json" \
+  -d '{"url":"https://treeship.dev/receipt/ssn_abc"}'
+```
+</Tab>
+</Tabs>
+
+CF Workers bundle size limit is 1 MB post-compression on the free plan; our bundle fits with room to spare. The `nodejs_compat` flag handles some wasm-bindgen glue references — not always required but inexpensive.
+
+## AWS Lambda (Node runtime)
+
+<Tabs items={['Handler', 'SAM template', 'Build + Deploy', 'Test']}>
+<Tab value="Handler">
+```typescript
+// src/handler.ts
+import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
+import { verifyReceipt } from '@treeship/verify';
+
+export const handler = async (
+  event: APIGatewayProxyEventV2,
+): Promise<APIGatewayProxyResultV2> => {
+  const { url } = JSON.parse(event.body ?? '{}');
+  const result = await verifyReceipt(url);
+  return {
+    statusCode: 200,
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(result),
+  };
+};
+```
+</Tab>
+<Tab value="SAM template">
+```yaml
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Resources:
+  VerifyFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: nodejs20.x
+      Handler: handler.handler
+      CodeUri: dist/
+      MemorySize: 256
+      Timeout: 15
+      Architectures: [arm64]
+      Events:
+        HttpPost:
+          Type: HttpApi
+          Properties:
+            Path: /verify
+            Method: POST
+```
+</Tab>
+<Tab value="Build + Deploy">
+```bash
+cd your-lambda
+npm install @treeship/verify
+npx esbuild src/handler.ts --bundle --platform=node --target=node20 \
+  --format=esm --outfile=dist/handler.mjs
+sam build --use-container
+sam deploy --guided
+```
+</Tab>
+<Tab value="Test">
+```bash
+curl -X POST https://your-api.execute-api.region.amazonaws.com/verify \
+  -H "content-type: application/json" \
+  -d '{"url":"https://treeship.dev/receipt/ssn_abc"}'
+```
+</Tab>
+</Tabs>
+
+Node Lambda cold starts for this bundle are under 1 second on arm64 with 256 MB memory. Increase memory if cold start matters; Lambda scales CPU proportionally.
+
+## Browser
+
+```typescript
+import { verifyReceipt } from '@treeship/verify';
+
+async function onDropFile(file: File) {
+  const text = await file.text();
+  const result = await verifyReceipt(text);
+  renderChecks(result.checks);
+}
+```
+
+Any modern bundler (Vite, webpack, esbuild, Rollup, Next.js, Parcel) handles the bundler-target WASM import from `@treeship/core-wasm` without extra config. For the one-liner `treeship.dev/verify` drag-and-drop page (shipping in v0.10.0), the page imports `@treeship/verify` directly and does all verification client-side with zero network calls beyond fetching any URL the user pastes.
+
+## Verifying the result matches the CLI
+
+```bash
+# From your local machine:
+treeship verify https://treeship.dev/receipt/ssn_abc --format json > cli-output.json
+
+# Invoke your edge endpoint with the same URL:
+curl -X POST https://your-edge-endpoint \
+  -H "content-type: application/json" \
+  -d '{"url":"https://treeship.dev/receipt/ssn_abc"}' > edge-output.json
+
+# Compare:
+diff <(jq -S . cli-output.json) <(jq -S . edge-output.json)
+```
+
+The receipt-level results should be identical. The CLI output carries a few extra fields (`target`, `source`) that describe how the CLI invocation was made; the edge output sticks to the WASM result shape.
+
+## Acceptance harnesses
+
+The repo ships runnable, deployable examples of each of the above at [`tests/runtime-acceptance/`](https://github.com/zerkerlabs/treeship/tree/main/tests/runtime-acceptance). Each subdirectory has its own README with the exact deploy + test commands. Use them as a starting point for your own deploys.
+
+<Callout type="info">
+If your runtime is not on this list, the usual question is whether it supports `WebAssembly.instantiate` and `fetch`. If yes, `@treeship/verify` works. If no, fall back to the `@treeship/sdk` subprocess path on a Node host that forwards for you. File an issue with the runtime details and we'll check it in.
+</Callout>

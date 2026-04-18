@@ -1,0 +1,133 @@
+---
+title: '@treeship/verify'
+description: Zero-dependency cryptographic verification for Treeship receipts and certificates. Runs anywhere WASM runs.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+`@treeship/verify` is the verification-only npm package Witness, dashboards, browser viewers, and any third-party consumer embedding Treeship verification installs. Zero dependency on `@treeship/sdk`, zero subprocess. Only dependency is `@treeship/core-wasm` (the compiled Rust core, under 170 KB gzipped).
+
+Everything `treeship verify --format json` produces on the CLI, `@treeship/verify` produces in-process, anywhere WebAssembly and `fetch` are available.
+
+## Install
+
+```bash
+npm install @treeship/verify
+```
+
+Same verification semantics in every runtime. The package ships with `@treeship/core-wasm` pinned to an exact version (no caret), so there is no silent drift between the WASM you install and the rules this package documents.
+
+## API
+
+Three functions. Each accepts a parsed object, a JSON string, or a URL.
+
+### `verifyReceipt(target)`
+
+Runs the JSON-level checks a Session Receipt carries: Merkle root recomputation, inclusion proof verification, leaf-count parity, timeline ordering, chain linkage.
+
+```typescript
+import { verifyReceipt } from '@treeship/verify';
+
+const result = await verifyReceipt('https://treeship.dev/receipt/ssn_abc');
+
+if (result.outcome === 'pass') {
+  console.log(`session ${result.session.id} verified`);
+} else {
+  console.log(`verification failed:`, result.checks.filter(c => c.status === 'fail'));
+}
+```
+
+Returns `VerifyReceiptResult`:
+
+```typescript
+{
+  outcome: 'pass' | 'fail' | 'error';
+  checks: { step: string; status: 'pass' | 'fail' | 'warn'; detail: string }[];
+  session: {
+    id: string;
+    ship_id?: string;
+    schema_version?: string;
+    agent: string;
+    duration_ms?: number;
+    actions: number;
+  };
+  error_code?: string;
+  message?: string;
+}
+```
+
+<Callout type="info">
+Signature verification on individual envelopes needs the original envelope bytes, which a URL-fetched receipt does not carry. `verifyReceipt` verifies receipt-level integrity only. For per-envelope signature checks, use `treeship verify <artifact-id>` on the CLI against local storage.
+</Callout>
+
+### `verifyCertificate(target, now?)`
+
+Verifies the Ed25519 signature on an Agent Certificate against the public key embedded in the certificate. With `now` supplied (Date or RFC 3339 string), also classifies the validity window.
+
+```typescript
+import { verifyCertificate } from '@treeship/verify';
+
+const result = await verifyCertificate(cert, new Date());
+
+if (result.outcome === 'pass' && result.validity === 'valid') {
+  console.log(`${result.certificate.agent_name} is authorized`);
+}
+```
+
+Omit `now` (or pass `undefined`) for signature-only checks.
+
+### `crossVerify(receipt, certificate, now?)`
+
+Answers three questions at once: do the receipt and certificate reference the same ship, was the certificate valid at `now`, was every tool the session called authorized by the certificate. The `ok` field is the roll-up.
+
+```typescript
+import { crossVerify } from '@treeship/verify';
+
+const result = await crossVerify(receiptUrl, certUrl);
+
+if (result.ok) {
+  console.log('complete trust loop verified');
+} else {
+  console.log('ship_id:', result.ship_id_status);
+  console.log('cert:', result.certificate_status);
+  console.log('unauthorized tools:', result.unauthorized_tool_calls);
+}
+```
+
+See [Cross-verification](/docs/concepts/cross-verification) for the full semantics.
+
+## Runtime compatibility
+
+| Runtime | Status |
+|---------|--------|
+| Node.js 18+ | supported |
+| Node.js 20+ | supported |
+| Deno | supported |
+| Browser (bundler) | supported |
+| Vercel Edge | supported |
+| Cloudflare Workers | supported |
+| AWS Lambda (Node) | supported |
+
+See the [edge runtime guide](/docs/guides/edge-runtime) for deployable examples on each target.
+
+## Input shapes
+
+All three functions accept four target forms:
+
+| Form | Example | Behavior |
+|------|---------|----------|
+| Parsed object | `{ type: 'treeship/...', ... }` | Serialized with `JSON.stringify`, handed to WASM |
+| JSON string | `'{"type":"treeship/..."}'` | Handed to WASM directly |
+| URL string | `'https://treeship.dev/receipt/ssn_abc'` | Fetched with global `fetch`, `/receipt/` remapped to `/v1/receipt/` |
+| `URL` object | `new URL('https://...')` | Same as URL string |
+
+## What this package is NOT
+
+- **Not an attestation SDK.** For signing artifacts, session management, Hub push/pull, or agent registration, use [`@treeship/sdk`](/docs/sdk/overview) which shells out to the `treeship` CLI.
+- **Not a trust anchor.** The embedded Ed25519 signature on an Agent Certificate is verified against the certificate's own public key. Chaining a certificate to a trusted issuer is the caller's responsibility.
+- **Not a drop-in for local-chain verification.** Some signature verification needs the original envelope bytes, which a URL-fetched receipt does not carry. Use `treeship verify <artifact-id>` on the CLI for that.
+
+## Schema versioning
+
+`@treeship/verify` picks up schema versioning from the WASM core without any API surface change here. A receipt emitted with `schema_version: "1"` verifies under v1 rules; a pre-v0.9.0 receipt with no field verifies under legacy rules. See [Schema versioning](/docs/reference/schema) for the full story.
