@@ -172,12 +172,23 @@ impl PropagationContext {
 }
 
 /// Default host ID derived from hostname.
+///
+/// WASM builds have no OS-level hostname available, so they fall back to
+/// "host_unknown". The receipts emitted from WASM contexts (edge workers,
+/// browser verifiers, Lambda) don't author session manifests directly --
+/// they consume receipts authored elsewhere -- so the fallback is safe.
+#[cfg(not(target_family = "wasm"))]
 fn default_host_id() -> String {
     hostname::get()
         .ok()
         .and_then(|h| h.into_string().ok())
         .map(|h| format!("host_{}", h.replace('.', "_")))
         .unwrap_or_else(|| "host_unknown".into())
+}
+
+#[cfg(target_family = "wasm")]
+fn default_host_id() -> String {
+    "host_unknown".into()
 }
 
 #[cfg(test)]

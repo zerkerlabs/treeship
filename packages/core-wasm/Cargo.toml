@@ -29,6 +29,7 @@ ark-ff        = { version = "0.4", optional = true }
 default = []
 zk = ["ark-groth16", "ark-bn254", "ark-serialize", "ark-ec", "ark-ff"]
 
-[profile.release]
-opt-level = "s"
-lto = true
+# WASM release tuning lives at the workspace root under
+# [profile.release.package.treeship-core-wasm]. Leaf-level [profile.release]
+# is silently ignored in a workspace, so we avoid putting it here to prevent
+# future readers from assuming it takes effect.

@@ -23,6 +23,8 @@ if [ -z "$VERSION" ]; then
   echo "  sdk-ts:      $(node -p "require('./packages/sdk-ts/package.json').version")"
   echo "  mcp:         $(node -p "require('./bridges/mcp/package.json').version")"
   echo "  a2a:         $(node -p "require('./bridges/a2a/package.json').version")"
+  echo "  verify:      $(node -p "require('./packages/verify-js/package.json').version" 2>/dev/null || echo 'not-built-yet')"
+  echo "  core-wasm:   $(node -p "require('./packages/core-wasm/pkg/package.json').version" 2>/dev/null || echo 'not-built-yet')"
   echo "  sdk-python:  $(grep '^version' packages/sdk-python/pyproject.toml | head -1 | sed 's/.*= "//' | sed 's/"//')"
   echo "  npm wrapper: $(node -p "require('./npm/treeship/package.json').version")"
   exit 1
@@ -50,6 +52,35 @@ npm version "$VERSION" --no-git-tag-version --allow-same-version --prefix bridge
 # A2A bridge
 echo "Bumping @treeship/a2a..."
 npm version "$VERSION" --no-git-tag-version --allow-same-version --prefix bridges/a2a
+
+# @treeship/verify standalone package (if it exists)
+if [ -f packages/verify-js/package.json ]; then
+  echo "Bumping @treeship/verify..."
+  npm version "$VERSION" --no-git-tag-version --allow-same-version --prefix packages/verify-js
+  # Pin @treeship/core-wasm exact version in @treeship/verify
+  node -e "
+    const fs = require('fs');
+    const p = JSON.parse(fs.readFileSync('packages/verify-js/package.json', 'utf8'));
+    if (p.dependencies && p.dependencies['@treeship/core-wasm']) {
+      p.dependencies['@treeship/core-wasm'] = '${VERSION}';
+      fs.writeFileSync('packages/verify-js/package.json', JSON.stringify(p, null, 2) + '\n');
+    }
+  "
+fi
+
+# Pin @treeship/core-wasm exact version across any package that depends on it.
+for pkgjson in packages/sdk-ts/package.json bridges/a2a/package.json bridges/mcp/package.json; do
+  if [ -f "$pkgjson" ]; then
+    node -e "
+      const fs = require('fs');
+      const p = JSON.parse(fs.readFileSync('$pkgjson', 'utf8'));
+      if (p.dependencies && p.dependencies['@treeship/core-wasm']) {
+        p.dependencies['@treeship/core-wasm'] = '${VERSION}';
+        fs.writeFileSync('$pkgjson', JSON.stringify(p, null, 2) + '\n');
+      }
+    "
+  fi
+done
 
 # Python SDK
 echo "Bumping treeship-sdk (Python)..."
@@ -85,9 +116,16 @@ echo "  packages/core-wasm/Cargo.toml"
 echo "  packages/sdk-ts/package.json"
 echo "  bridges/mcp/package.json"
 echo "  bridges/a2a/package.json"
+if [ -f packages/verify-js/package.json ]; then
+  echo "  packages/verify-js/package.json"
+fi
 echo "  packages/sdk-python/pyproject.toml"
 echo "  npm/treeship/package.json"
 echo "  npm/@treeship/cli-*/package.json"
+echo ""
+echo "Note: @treeship/core-wasm is built and published by GitHub Actions"
+echo "on tag push. The pkg/ directory is regenerated via"
+echo "packages/core-wasm/build-npm.sh."
 echo ""
 
 # Commit and tag

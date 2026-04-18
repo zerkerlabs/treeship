@@ -2,3 +2,11 @@
 members = ["packages/core", "packages/cli", "packages/core-wasm", "packages/zk-circom", "packages/zk-risc0", "packages/zk-risc0/methods", "packages/vi"]
 default-members = ["packages/core", "packages/cli"]
 resolver = "2"
+
+# WASM release profile tuned for bundle size. Applies only to
+# treeship-core-wasm so the CLI keeps its standard release tuning for speed.
+# Leaf-level `[profile.release]` in the core-wasm crate would be silently
+# ignored by cargo; this is the supported way to tune per-package profiles.
+[profile.release.package.treeship-core-wasm]
+opt-level = "z"
+codegen-units = 1

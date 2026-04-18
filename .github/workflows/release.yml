@@ -80,12 +80,34 @@ jobs:
       - name: Ensure npm >= 11.5.1
         run: npm install -g npm@latest
 
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Install wasm-opt (binaryen)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y binaryen
+
+      - name: Build and publish @treeship/core-wasm
+        continue-on-error: true
+        run: |
+          bash packages/core-wasm/build-npm.sh "${GITHUB_REF_NAME#v}"
+          cd packages/core-wasm/pkg
+          npm publish --access public
+        # env:
+        #   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       - name: Build and publish @treeship/sdk
         continue-on-error: true
         working-directory: packages/sdk-ts
         run: |
           npm install
           npm run build
+          sleep 5
           npm publish --access public
         # env:
         #   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -105,6 +127,21 @@ jobs:
         continue-on-error: true
         working-directory: bridges/a2a
         run: |
+          npm install
+          npm run build
+          sleep 5
+          npm publish --access public
+        # env:
+        #   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Build and publish @treeship/verify
+        continue-on-error: true
+        working-directory: packages/verify-js
+        run: |
+          if [ ! -f package.json ]; then
+            echo "packages/verify-js not present; skipping (package is v0.9.1+)"
+            exit 0
+          fi
           npm install
           npm run build
           sleep 5

@@ -18,6 +18,10 @@ base64        = "0.22"
 rand          = "0.8"
 serde_yaml    = "0.9"
 hex           = "0.4"
+
+# hostname doesn't compile on WASM (no OS-level hostname APIs). Gate it to
+# non-wasm targets; the WASM build falls back to "host_unknown".
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
 hostname      = "0.4"
 
 [dev-dependencies]
