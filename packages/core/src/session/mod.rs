@@ -20,6 +20,6 @@ pub use event_log::EventLog;
 pub use context::PropagationContext;
 pub use graph::{AgentGraph, AgentNode, AgentEdge, AgentEdgeType};
 pub use side_effects::SideEffects;
-pub use receipt::{SessionReceipt, ReceiptComposer};
+pub use receipt::{ArtifactEntry, ReceiptComposer, SessionReceipt};
 pub use render::RenderConfig;
 pub use package::{build_package, read_package, verify_package, VerifyCheck, VerifyStatus};

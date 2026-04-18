@@ -1,0 +1,216 @@
+{
+  "type": "treeship/session-receipt/v1",
+  "session": {
+    "id": "ssn_v0_8_0_demo",
+    "name": "v0.8.0 era receipt fixture",
+    "mode": "manual",
+    "started_at": "2026-04-15T08:00:00Z",
+    "ended_at": "2026-04-15T08:02:00Z",
+    "status": "completed",
+    "duration_ms": 120000,
+    "total_tokens_in": 0,
+    "total_tokens_out": 0
+  },
+  "participants": {
+    "root_agent_instance_id": "root",
+    "final_output_agent_instance_id": "root",
+    "total_agents": 1,
+    "spawned_subagents": 0,
+    "handoffs": 0,
+    "max_depth": 0,
+    "hosts": 1,
+    "tool_runtimes": 0
+  },
+  "hosts": [
+    {
+      "host_id": "host_1"
+    }
+  ],
+  "tools": [
+    {
+      "tool_id": "Bash",
+      "tool_name": "Bash",
+      "invocation_count": 1
+    }
+  ],
+  "agent_graph": {
+    "nodes": [
+      {
+        "agent_id": "agent://root",
+        "agent_instance_id": "root",
+        "agent_name": "root",
+        "host_id": "host_1",
+        "started_at": "2026-04-15T08:00:01Z",
+        "completed_at": "2026-04-15T08:00:03Z",
+        "status": "completed",
+        "depth": 0,
+        "tool_calls": 1,
+        "tokens_in": 0,
+        "tokens_out": 0
+      }
+    ],
+    "edges": []
+  },
+  "timeline": [
+    {
+      "sequence_no": 0,
+      "timestamp": "2026-04-15T08:00:00Z",
+      "event_id": "ev_0",
+      "event_type": "session.started",
+      "agent_instance_id": "root",
+      "agent_name": "root",
+      "host_id": "host_1",
+      "summary": "Session started"
+    },
+    {
+      "sequence_no": 1,
+      "timestamp": "2026-04-15T08:00:01Z",
+      "event_id": "ev_1",
+      "event_type": "agent.started",
+      "agent_instance_id": "root",
+      "agent_name": "root",
+      "host_id": "host_1"
+    },
+    {
+      "sequence_no": 2,
+      "timestamp": "2026-04-15T08:00:02Z",
+      "event_id": "ev_2",
+      "event_type": "agent.called_tool",
+      "agent_instance_id": "root",
+      "agent_name": "root",
+      "host_id": "host_1",
+      "summary": "Called Bash"
+    },
+    {
+      "sequence_no": 3,
+      "timestamp": "2026-04-15T08:00:03Z",
+      "event_id": "ev_3",
+      "event_type": "agent.completed",
+      "agent_instance_id": "root",
+      "agent_name": "root",
+      "host_id": "host_1",
+      "summary": "Agent completed"
+    },
+    {
+      "sequence_no": 4,
+      "timestamp": "2026-04-15T08:00:04Z",
+      "event_id": "ev_4",
+      "event_type": "session.closed",
+      "agent_instance_id": "root",
+      "agent_name": "root",
+      "host_id": "host_1",
+      "summary": "Done"
+    }
+  ],
+  "side_effects": {
+    "files_read": [],
+    "files_written": [],
+    "ports_opened": [],
+    "network_connections": [],
+    "processes": [],
+    "tool_invocations": [
+      {
+        "tool_name": "Bash",
+        "agent_instance_id": "root",
+        "timestamp": "2026-04-15T08:00:02Z",
+        "duration_ms": 8
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "artifact_id": "art_001",
+      "payload_type": "action"
+    },
+    {
+      "artifact_id": "art_002",
+      "payload_type": "action"
+    }
+  ],
+  "proofs": {
+    "signature_count": 2,
+    "signatures_valid": true,
+    "merkle_root_valid": true,
+    "inclusion_proofs_count": 2,
+    "zk_proofs_present": false
+  },
+  "merkle": {
+    "leaf_count": 2,
+    "root": "mroot_873300d923b0d42b957d364d1a57dd51ee5360dad488a3fcac4619d4a8f5b1f1",
+    "inclusion_proofs": [
+      {
+        "artifact_id": "art_001",
+        "leaf_index": 0,
+        "proof": {
+          "leaf_index": 0,
+          "leaf_hash": "f9641c42ec474e0e60c241f4170dbf5bc6c2f511040e104e2e796b18f220afd8",
+          "path": [
+            {
+              "direction": "Right",
+              "hash": "62aace380ebdc2d53e2c68ac6ebfbe22d21124088c5d71314a4725f5c2dee26c"
+            }
+          ],
+          "algorithm": "sha256-rfc9162"
+        }
+      },
+      {
+        "artifact_id": "art_002",
+        "leaf_index": 1,
+        "proof": {
+          "leaf_index": 1,
+          "leaf_hash": "62aace380ebdc2d53e2c68ac6ebfbe22d21124088c5d71314a4725f5c2dee26c",
+          "path": [
+            {
+              "direction": "Left",
+              "hash": "f9641c42ec474e0e60c241f4170dbf5bc6c2f511040e104e2e796b18f220afd8"
+            }
+          ],
+          "algorithm": "sha256-rfc9162"
+        }
+      }
+    ]
+  },
+  "render": {
+    "sections": [
+      {
+        "id": "summary",
+        "label": "Session Summary",
+        "visible": true
+      },
+      {
+        "id": "participants",
+        "label": "Participant Strip",
+        "visible": true
+      },
+      {
+        "id": "agent_graph",
+        "label": "Delegation & Collaboration Graph",
+        "visible": true
+      },
+      {
+        "id": "timeline",
+        "label": "Mission Timeline",
+        "visible": true
+      },
+      {
+        "id": "side_effects",
+        "label": "Side-Effect Ledger",
+        "visible": true
+      },
+      {
+        "id": "proofs",
+        "label": "Proofs Panel",
+        "visible": true
+      }
+    ],
+    "generate_preview": true
+  },
+  "tool_usage": {
+    "actual": [
+      {
+        "tool_name": "Bash",
+        "count": 1
+      }
+    ]
+  }
+}
