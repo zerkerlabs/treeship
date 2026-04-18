@@ -1,0 +1,26 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Treeship @treeship/verify acceptance test on AWS Lambda (Node runtime).
+
+Resources:
+  VerifyFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: nodejs20.x
+      Handler: handler.handler
+      CodeUri: dist/
+      MemorySize: 256
+      Timeout: 15
+      Architectures:
+        - arm64
+      Events:
+        HttpPost:
+          Type: HttpApi
+          Properties:
+            Path: /verify
+            Method: POST
+
+Outputs:
+  ApiUrl:
+    Description: Invoke URL for the verify endpoint
+    Value: !Sub https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com/verify

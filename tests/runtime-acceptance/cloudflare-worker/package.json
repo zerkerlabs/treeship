@@ -1,0 +1,18 @@
+{
+  "name": "treeship-cloudflare-worker-acceptance",
+  "version": "0.9.1",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@treeship/verify": "0.9.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240000.0",
+    "typescript": "^5.7.0",
+    "wrangler": "^3.80.0"
+  },
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  }
+}

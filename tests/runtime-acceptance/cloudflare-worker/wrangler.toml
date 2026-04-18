@@ -1,0 +1,6 @@
+name = "treeship-verify-acceptance"
+main = "src/index.ts"
+compatibility_date = "2026-04-18"
+compatibility_flags = ["nodejs_compat"]
+
+# Workers supports WASM natively via wrangler's bundler.

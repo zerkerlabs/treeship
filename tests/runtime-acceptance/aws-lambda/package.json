@@ -1,0 +1,19 @@
+{
+  "name": "treeship-aws-lambda-acceptance",
+  "version": "0.9.1",
+  "private": true,
+  "type": "module",
+  "main": "dist/handler.js",
+  "dependencies": {
+    "@treeship/verify": "0.9.1"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.0",
+    "@types/node": "^25.5.0",
+    "typescript": "^5.7.0",
+    "esbuild": "^0.24.0"
+  },
+  "scripts": {
+    "build": "esbuild src/handler.ts --bundle --platform=node --target=node20 --format=esm --outfile=dist/handler.mjs --external:aws-sdk"
+  }
+}
