@@ -1,0 +1,50 @@
+{
+  "name": "@treeship/verify",
+  "version": "0.9.1",
+  "description": "Zero-dependency cryptographic verification for Treeship receipts and certificates. Runs anywhere WASM runs: Node, browser, Vercel Edge, Cloudflare Workers, AWS Lambda.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zerkerlabs/treeship",
+    "directory": "packages/verify-js"
+  },
+  "homepage": "https://treeship.dev",
+  "keywords": [
+    "treeship",
+    "verification",
+    "verify",
+    "attestation",
+    "receipts",
+    "certificate",
+    "cross-verification",
+    "wasm",
+    "edge",
+    "serverless"
+  ],
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@treeship/core-wasm": "0.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}
