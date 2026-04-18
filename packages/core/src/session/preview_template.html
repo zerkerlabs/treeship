@@ -271,7 +271,7 @@ async function render(){
   const findings=buildFindings(se);
   const procs=se.processes||[];
   const retries=detectRetries(procs);
-  const hasCost=num(s.total_cost_usd)>0;
+  const hasTokens=num(s.total_tokens_in)>0||num(s.total_tokens_out)>0;
   const nodeIdx={};nodes.forEach((n,i)=>nodeIdx[n.agent_instance_id]=i);
   const totalActions=nodes.reduce((s,n)=>s+num(n.tool_calls),0)||1;
   const dotColor=allPass?'var(--ok)':'var(--risk)';
@@ -323,8 +323,8 @@ async function render(){
   h+='<div class="metric"><div class="metric-label">Files</div><div class="metric-value">'+(se.files_written||[]).length+'</div><div class="metric-sub">'+(se.files_read||[]).length+' read</div></div>';
   h+='<div class="metric"><div class="metric-label">Actions</div><div class="metric-value">'+num(totalActions)+'</div><div class="metric-sub">across '+nodes.length+' agent'+(nodes.length!==1?'s':'')+'</div></div>';
   h+='<div class="metric"><div class="metric-label">Duration</div><div class="metric-value">'+fmtDur(s.duration_ms)+'</div><div class="metric-sub">'+esc((s.started_at||'').slice(11,16))+' start</div></div>';
-  if(hasCost)h+='<div class="metric"><div class="metric-label">Cost</div><div class="metric-value">$'+num(s.total_cost_usd).toFixed(2)+'</div><div class="metric-sub">'+(num(s.total_tokens_in)/1000).toFixed(0)+'k in / '+(num(s.total_tokens_out)/1000).toFixed(0)+'k out</div></div>';
-  else h+='<div class="metric"><div class="metric-label">Cost</div><div class="metric-value" style="color:var(--faint);font-size:.82rem">not captured</div><div class="metric-sub" style="font-size:.6rem">Set TREESHIP_MODEL, TREESHIP_COST_USD</div></div>';
+  if(hasTokens)h+='<div class="metric"><div class="metric-label">Tokens</div><div class="metric-value">'+(num(s.total_tokens_in)/1000).toFixed(0)+'k in</div><div class="metric-sub">'+(num(s.total_tokens_out)/1000).toFixed(0)+'k out</div></div>';
+  else h+='<div class="metric"><div class="metric-label">Tokens</div><div class="metric-value" style="color:var(--faint);font-size:.82rem">not captured</div><div class="metric-sub" style="font-size:.6rem">Set TREESHIP_MODEL, TREESHIP_TOKENS_IN</div></div>';
   h+='<div class="metric"><div class="metric-label">Trust</div><div class="metric-value" style="color:var(--primary);font-size:1rem">'+(pr.zk_proofs_present?'L3':'L2')+'</div><div class="metric-sub">'+(pr.zk_proofs_present?'Merkle + Ed25519 + ZK':'Merkle + Ed25519')+'</div></div>';
   h+='</div>';
 
@@ -340,7 +340,7 @@ async function render(){
   h+='</section>';
 
   // ── AGENTS ──
-  if(nodes.length>1||hasCost){
+  if(nodes.length>0){
     h+='<section class="section" id="agents"><div class="section-head"><div class="section-title">Agents</div><div class="section-sub">Every agent that participated, their role, model, and contribution.</div></div>';
     h+='<div class="card">';
     nodes.forEach((n,i)=>{
@@ -351,7 +351,7 @@ async function render(){
       const modelStr=n.model?esc(n.model):'<span style="color:var(--faint)" title="Set TREESHIP_MODEL env var to capture">not captured</span>';
       h+='<div class="agent-meta">'+esc(n.agent_instance_id)+' \u00b7 '+esc(n.agent_role||'agent')+' \u00b7 '+modelStr+' \u00b7 @'+esc(n.host_id)+'</div>';
       h+='<div class="agent-stats"><span>'+num(n.tool_calls)+' actions</span>';
-      if(hasCost)h+='<span>$'+num(n.cost_usd).toFixed(2)+'</span>';
+      if(n.provider)h+='<span>via '+esc(n.provider)+'</span>';
       h+='<span>depth '+num(n.depth)+'</span>';
       if(n.status)h+='<span class="badge '+(n.status==='completed'?'badge-ok':'badge-risk')+'">'+esc(n.status)+'</span>';
       h+='</div>';

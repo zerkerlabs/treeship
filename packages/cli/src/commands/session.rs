@@ -451,21 +451,19 @@ pub fn watch(
         let event_count = events.len();
 
         // Compute agent stats
-        let mut agents: BTreeMap<String, (String, String, u32, f64, u64, u64)> = BTreeMap::new(); // name -> (model, role, actions, cost, tok_in, tok_out)
+        let mut agents: BTreeMap<String, (String, String, u32, u64, u64)> = BTreeMap::new(); // name -> (model, role, actions, tok_in, tok_out)
         for e in &events {
             let entry = agents.entry(e.agent_instance_id.clone()).or_insert_with(|| {
-                (String::new(), String::new(), 0, 0.0, 0, 0)
+                (String::new(), String::new(), 0, 0, 0)
             });
             if entry.0.is_empty() { entry.0 = e.agent_name.clone(); }
             if entry.1.is_empty() { entry.1 = e.agent_role.clone().unwrap_or_default(); }
             match &e.event_type {
                 EventType::AgentCalledTool { .. } | EventType::AgentCompletedProcess { .. } => { entry.2 += 1; }
-                EventType::AgentDecision { model, tokens_in, tokens_out, cost_usd, .. } => {
-                    if let Some(m) = model { if !m.is_empty() { entry.0 = m.clone(); } } // overwrite name with model for display
-                    if let Some(m) = model { if !m.is_empty() { /* keep model */ } }
-                    if let Some(t) = tokens_in { entry.4 += t; }
-                    if let Some(t) = tokens_out { entry.5 += t; }
-                    if let Some(c) = cost_usd { entry.3 += c; }
+                EventType::AgentDecision { model, tokens_in, tokens_out, .. } => {
+                    if let Some(m) = model { if !m.is_empty() { entry.0 = m.clone(); } }
+                    if let Some(t) = tokens_in { entry.3 += t; }
+                    if let Some(t) = tokens_out { entry.4 += t; }
                 }
                 _ => {}
             }
@@ -499,13 +497,12 @@ pub fn watch(
         writeln!(stdout, "\r")?;
 
         // Agent table
-        writeln!(stdout, "\x1b[1m AGENTS\x1b[0m                          \x1b[90mACTIONS    COST\x1b[0m\r")?;
         let colors = ["\x1b[35m", "\x1b[33m", "\x1b[36m", "\x1b[34m", "\x1b[31m"];
-        for (i, (id, (name, _role, actions, cost, _ti, _to))) in agents.iter().enumerate() {
+        for (i, (id, (name, _role, actions, ti, to))) in agents.iter().enumerate() {
             let c = colors[i % colors.len()];
             let display_name = if name.is_empty() { id.as_str() } else { name.as_str() };
-            writeln!(stdout, " {c}\u{25cf}\x1b[0m {:<28} {:>4}      ${:.2}\r",
-                trunc(&sanitize(display_name), 28), actions, cost)?;
+            writeln!(stdout, " {c}\u{25cf}\x1b[0m {:<28} {:>4}      {}k/{}k\r",
+                trunc(&sanitize(display_name), 28), actions, ti/1000, to/1000)?;
         }
         writeln!(stdout, "\r")?;
 
@@ -525,8 +522,14 @@ pub fn watch(
                     let status = if *exit_code == Some(0) { "\x1b[32m\u{2713}\x1b[0m" } else { "\x1b[31m\u{2717}\x1b[0m" };
                     (process_name.clone(), format!("{} {}ms", status, duration_ms.unwrap_or(0)))
                 }
-                EventType::AgentDecision { model, cost_usd, .. } => {
-                    ("decision".to_string(), format!("{} ${:.2}", model.as_deref().unwrap_or(""), cost_usd.unwrap_or(0.0)))
+                EventType::AgentDecision { model, provider, .. } => {
+                    let detail = match (model, provider) {
+                        (Some(m), Some(p)) => format!("{} via {}", m, p),
+                        (Some(m), None) => m.clone(),
+                        (None, Some(p)) => format!("via {}", p),
+                        (None, None) => String::new(),
+                    };
+                    ("decision".to_string(), detail)
                 }
                 EventType::AgentWroteFile { file_path, operation, .. } => {
                     (operation.clone().unwrap_or_else(|| "write".into()), file_path.clone())
@@ -876,7 +879,7 @@ pub fn event(
             model: tool.map(|s| s.into()),
             tokens_in: None,
             tokens_out: None,
-            cost_usd: None,
+            provider: None,
             summary: None,
             confidence: None,
         },

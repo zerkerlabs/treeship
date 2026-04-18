@@ -62,7 +62,7 @@ All three are automatic. The signed artifacts are Merkle-proven. The session eve
 | Actor URI | `TREESHIP_ACTOR` env or default | `AUTO` |
 | Model | Not captured by MCP bridge | `NOT YET CAPTURED` -- set `TREESHIP_MODEL` env var with `treeship wrap` |
 | Token counts | Not captured by MCP bridge | `NOT YET CAPTURED` -- set `TREESHIP_TOKENS_IN`/`OUT` env vars |
-| Cost | Not captured by MCP bridge | `NOT YET CAPTURED` -- set `TREESHIP_COST_USD` env var |
+| Provider | Not captured by MCP bridge | `NOT YET CAPTURED` -- set `TREESHIP_PROVIDER` env var |
 
 ## Integration status
 
@@ -84,7 +84,7 @@ All three are automatic. The signed artifacts are Merkle-proven. The session eve
 | `TREESHIP_MODEL` | Model name for cost tracking (via `treeship wrap`) |
 | `TREESHIP_TOKENS_IN` | Input token count (via `treeship wrap`) |
 | `TREESHIP_TOKENS_OUT` | Output token count (via `treeship wrap`) |
-| `TREESHIP_COST_USD` | Cost in USD (via `treeship wrap`) |
+| `TREESHIP_PROVIDER` | Provider name e.g. "anthropic" (via `treeship wrap`) |
 
 ## Design rules
 

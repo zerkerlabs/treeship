@@ -52,12 +52,10 @@ pub struct AgentNode {
     /// Cumulative output tokens across all decisions by this agent.
     #[serde(default)]
     pub tokens_out: u64,
-    /// Cumulative cost in USD across all decisions by this agent.
-    #[serde(default, skip_serializing_if = "is_zero_f64")]
-    pub cost_usd: f64,
+    /// Provider e.g. "anthropic", "openrouter", "bedrock"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
 }
-
-fn is_zero_f64(v: &f64) -> bool { *v == 0.0 }
 
 /// A directed edge in the agent graph.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,7 +100,7 @@ impl AgentGraph {
                 model: None,
                 tokens_in: 0,
                 tokens_out: 0,
-                cost_usd: 0.0,
+                provider: None,
             });
 
             match &event.event_type {
@@ -148,7 +146,7 @@ impl AgentGraph {
                         model: None,
                         tokens_in: 0,
                         tokens_out: 0,
-                        cost_usd: 0.0,
+                        provider: None,
                     });
                 }
 
@@ -192,14 +190,15 @@ impl AgentGraph {
                     node.tool_calls += 1;
                 }
 
-                EventType::AgentDecision { ref model, tokens_in, tokens_out, cost_usd, .. } => {
+                EventType::AgentDecision { ref model, tokens_in, tokens_out, ref provider, .. } => {
                     if let Some(ref m) = model {
-                        // Last model wins (agents may switch models mid-session).
                         node.model = Some(m.clone());
+                    }
+                    if let Some(ref p) = provider {
+                        node.provider = Some(p.clone());
                     }
                     if let Some(t) = tokens_in { node.tokens_in += t; }
                     if let Some(t) = tokens_out { node.tokens_out += t; }
-                    if let Some(c) = cost_usd { node.cost_usd += c; }
                 }
 
                 _ => {}

@@ -131,7 +131,13 @@ pub enum EventType {
         command: Option<String>,
     },
 
-    /// LLM inference decision with model, token usage, and cost.
+    /// LLM inference decision with model and token usage.
+    ///
+    // Cost is deliberately not captured. Pricing depends on provider,
+    // subscription tier, contract rates, and timing. Baking a dollar
+    // amount into a signed receipt would make old receipts falsely
+    // signed when pricing changes. Consumers (dashboards, billing tools)
+    // calculate cost from model + tokens + their pricing config.
     #[serde(rename = "agent.decision")]
     AgentDecision {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -140,8 +146,9 @@ pub enum EventType {
         tokens_in: Option<u64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tokens_out: Option<u64>,
+        /// Provider e.g. "anthropic", "openrouter", "bedrock", "openai"
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        cost_usd: Option<f64>,
+        provider: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         summary: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]

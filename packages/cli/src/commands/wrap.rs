@@ -233,7 +233,7 @@ pub fn run(
 
     // ── AgentDecision from env vars (best-effort) ─────────────────
     // If TREESHIP_MODEL (or any of TREESHIP_TOKENS_IN, TREESHIP_TOKENS_OUT,
-    // TREESHIP_COST_USD) is set, emit an AgentDecision event so model,
+    // TREESHIP_PROVIDER) is set, emit an AgentDecision event so model,
     // token counts, and cost flow into the receipt automatically.
     emit_decision_from_env();
 
@@ -617,7 +617,7 @@ fn emit_wrap_events(
 }
 
 /// Read TREESHIP_MODEL, TREESHIP_TOKENS_IN, TREESHIP_TOKENS_OUT,
-/// TREESHIP_COST_USD from environment and emit an AgentDecision event
+/// TREESHIP_PROVIDER from environment and emit an AgentDecision event
 /// if any are present. This allows any agent runtime that sets these
 /// env vars to have model, token, and cost data flow into the receipt
 /// automatically.
@@ -629,13 +629,10 @@ fn emit_decision_from_env() {
     let tokens_out: Option<u64> = std::env::var("TREESHIP_TOKENS_OUT")
         .ok()
         .and_then(|s| s.parse().ok());
-    let cost_usd: Option<f64> = std::env::var("TREESHIP_COST_USD")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .filter(|v: &f64| v.is_finite()); // Reject NaN/Infinity to prevent serde failures
+    let provider: Option<String> = std::env::var("TREESHIP_PROVIDER").ok();
 
     // Only emit if at least one env var is set.
-    if model.is_none() && tokens_in.is_none() && tokens_out.is_none() && cost_usd.is_none() {
+    if model.is_none() && tokens_in.is_none() && tokens_out.is_none() && provider.is_none() {
         return;
     }
 
@@ -680,7 +677,7 @@ fn emit_decision_from_env() {
             model,
             tokens_in,
             tokens_out,
-            cost_usd,
+            provider,
             summary: None,
             confidence: None,
         },

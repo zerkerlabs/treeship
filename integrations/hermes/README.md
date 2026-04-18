@@ -63,4 +63,4 @@ treeship session report
 - Agent: hermes (or hermes-2 if TREESHIP_MODEL is set)
 - Timeline: every wrapped command or MCP tool call
 - Commands: full command strings with exit codes
-- Cost: populated if TREESHIP_COST_USD is set
+- Provider: populated if TREESHIP_PROVIDER is set

@@ -38,7 +38,7 @@ treeship session start --name "<task description>"
 export TREESHIP_MODEL="<your model>"
 export TREESHIP_TOKENS_IN="<input tokens>"
 export TREESHIP_TOKENS_OUT="<output tokens>"
-export TREESHIP_COST_USD="<cost>"
+export TREESHIP_PROVIDER="anthropic"  # optional
 ```
 
 ### During the task
@@ -99,7 +99,7 @@ treeship session report
 | File operations | File snapshot diff | AUTO |
 | Model name | `TREESHIP_MODEL` env var | EXPLICIT |
 | Token counts | `TREESHIP_TOKENS_IN/OUT` | EXPLICIT |
-| Cost | `TREESHIP_COST_USD` | EXPLICIT |
+| Provider | `TREESHIP_PROVIDER` | EXPLICIT |
 | Session narrative | `--headline/--summary/--review` | EXPLICIT |
 | Merkle proof | Automatic | AUTO |
 | Ed25519 signatures | Automatic | AUTO |

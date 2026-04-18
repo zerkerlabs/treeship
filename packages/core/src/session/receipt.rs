@@ -82,9 +82,6 @@ pub struct SessionSection {
     /// Structured narrative for human review. All fields optional.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub narrative: Option<Narrative>,
-    /// Cumulative cost in USD across all agents.
-    #[serde(default, skip_serializing_if = "is_zero_f64")]
-    pub total_cost_usd: f64,
     /// Cumulative input tokens across all agents.
     #[serde(default)]
     pub total_tokens_in: u64,
@@ -93,7 +90,6 @@ pub struct SessionSection {
     pub total_tokens_out: u64,
 }
 
-fn is_zero_f64(v: &f64) -> bool { *v == 0.0 }
 
 /// Structured narrative for the session summary.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -239,7 +235,7 @@ impl ReceiptComposer {
         };
 
         // Compute cost/token totals from agent graph
-        let total_cost_usd: f64 = agent_graph.nodes.iter().map(|n| n.cost_usd).sum();
+        // Cost is deliberately not aggregated. See event.rs comment.
         let total_tokens_in: u64 = agent_graph.nodes.iter().map(|n| n.tokens_in).sum();
         let total_tokens_out: u64 = agent_graph.nodes.iter().map(|n| n.tokens_out).sum();
 
@@ -257,7 +253,6 @@ impl ReceiptComposer {
                 summary: Some(s.clone()),
                 review: None,
             }),
-            total_cost_usd,
             total_tokens_in,
             total_tokens_out,
         };
@@ -518,11 +513,11 @@ fn event_summary(et: &super::event::EventType) -> Option<String> {
         }
         AgentCompleted { termination_reason } => termination_reason.clone().or(Some("Agent completed".into())),
         AgentFailed { reason } => reason.clone().or(Some("Agent failed".into())),
-        AgentDecision { model, summary, cost_usd, .. } => {
+        AgentDecision { model, summary, provider, .. } => {
             let mut parts = Vec::new();
             if let Some(s) = summary { parts.push(s.clone()); }
             if let Some(m) = model { parts.push(format!("model: {m}")); }
-            if let Some(c) = cost_usd { parts.push(format!("${:.2}", c)); }
+            if let Some(p) = provider { parts.push(format!("via {p}")); }
             if parts.is_empty() { Some("LLM decision".into()) } else { Some(parts.join(" | ")) }
         }
         _ => None,
