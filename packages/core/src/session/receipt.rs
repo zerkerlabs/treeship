@@ -88,6 +88,13 @@ pub struct SessionSection {
     pub status: SessionStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
+    /// Ship ID this session ran under, parsed from the manifest actor URI
+    /// (`ship://<ship_id>`). Absent on pre-v0.9.0 receipts or when the actor
+    /// URI was not a ship:// URI (e.g. human://alice for a human-led session).
+    /// Cross-verification uses this to check that a receipt and a presented
+    /// Agent Certificate reference the same ship.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ship_id: Option<String>,
     /// Structured narrative for human review. All fields optional.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub narrative: Option<Narrative>,
@@ -257,6 +264,7 @@ impl ReceiptComposer {
             ended_at: manifest.closed_at.clone(),
             status: manifest.status.clone(),
             duration_ms,
+            ship_id: parse_ship_id_from_actor(&manifest.actor),
             narrative: manifest.summary.as_ref().map(|s| Narrative {
                 headline: manifest.name.clone(),
                 summary: Some(s.clone()),
@@ -435,6 +443,15 @@ fn build_merkle(artifacts: &[ArtifactEntry]) -> (MerkleSection, Option<MerkleTre
     };
 
     (section, Some(tree))
+}
+
+/// Extract the ship_id from an actor URI of the form `ship://<id>`.
+/// Returns None for other URI schemes (human://, agent://) or malformed values.
+pub fn parse_ship_id_from_actor(actor: &str) -> Option<String> {
+    let rest = actor.strip_prefix("ship://")?;
+    // Strip any trailing path segment so `ship://ship_abc/foo` -> `ship_abc`.
+    let id = rest.split('/').next().unwrap_or(rest);
+    if id.is_empty() { None } else { Some(id.to_string()) }
 }
 
 /// Extract a human-readable label from an EventType.

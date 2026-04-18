@@ -8,3 +8,4 @@ pub mod merkle;
 pub mod agent;
 pub mod artifacts;
 pub mod session;
+pub mod verify;
