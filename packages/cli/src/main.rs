@@ -23,7 +23,7 @@ use printer::{Format, Printer};
     name    = "treeship",
     version = env!("CARGO_PKG_VERSION"),
     about   = "Portable trust receipts for agent workflows",
-    before_help = "\x1b[1mQuick start\x1b[0m\n  treeship quickstart          guided setup in 90 seconds\n  treeship session start       begin recording a session\n  treeship wrap -- <cmd>       record a command\n  treeship session close       finalize and create receipt\n  treeship session report      upload and get shareable URL\n\n  Learn more: docs.treeship.dev",
+    before_help = "\x1b[1mQuick start\x1b[0m\n  treeship quickstart          guided setup in 90 seconds\n  treeship add                 instrument your AI agents\n  treeship session start       begin recording a session\n  treeship wrap -- <cmd>       record a command\n  treeship session close       finalize and create receipt\n  treeship session report      upload and get shareable URL\n\n  Learn more: docs.treeship.dev",
     after_help = "Docs: https://treeship.dev/docs   Hub: treeship hub attach",
 )]
 struct Cli {
@@ -49,6 +49,19 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Auto-detect and instrument installed AI agent frameworks
+    ///
+    /// Checks for Claude Code, Cursor, Cline, Hermes, and OpenClaw.
+    /// Adds @treeship/mcp as an MCP server or installs the Treeship
+    /// skill file depending on the framework.
+    ///
+    /// Examples:
+    ///   treeship add                    # detect and instrument all
+    ///   treeship add claude-code hermes # instrument specific agents
+    ///   treeship add --all              # non-interactive, all detected
+    ///   treeship add --dry-run          # show what would be done
+    Add(AddArgs),
+
     /// Guided first-time setup in 90 seconds
     ///
     /// Walks through init, session start, wrapping a command, and creating
@@ -687,6 +700,22 @@ enum PackageCommand {
 struct PackagePathArgs {
     /// Path to the .treeship package directory
     path: std::path::PathBuf,
+}
+
+// --- add -------------------------------------------------------------------
+
+#[derive(Args)]
+struct AddArgs {
+    /// Specific agent frameworks to instrument (e.g. claude-code hermes)
+    agents: Vec<String>,
+
+    /// Instrument all detected agents without prompting
+    #[arg(long)]
+    all: bool,
+
+    /// Show what would be done without making changes
+    #[arg(long)]
+    dry_run: bool,
 }
 
 // --- agent -----------------------------------------------------------------
@@ -1377,6 +1406,13 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             println!("treeship {} (rust)", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
+
+        Command::Add(a) => commands::add::run(
+            a.agents.clone(),
+            a.all,
+            a.dry_run,
+            printer,
+        ),
 
         Command::Quickstart => commands::quickstart::run(
             cli.config.as_deref(),

@@ -105,7 +105,10 @@ pub fn run(
         write_project_config(&project_config)?;
 
         printer.blank();
-        printer.hint("Next: treeship session start --name \"my task\"");
+        printer.blank();
+        printer.info("  Next:");
+        printer.hint("treeship add               instrument your AI agents");
+        printer.hint("treeship session start     begin recording a session");
         printer.blank();
         return Ok(());
     }
