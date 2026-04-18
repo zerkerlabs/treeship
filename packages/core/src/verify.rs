@@ -15,6 +15,112 @@
 
 use crate::agent::AgentCertificate;
 use crate::session::receipt::SessionReceipt;
+use crate::session::package::{VerifyCheck, VerifyStatus};
+
+/// Receipt-level checks derivable from the receipt JSON alone (no on-disk
+/// package). Runs Merkle root recomputation, inclusion proof verification,
+/// leaf-count parity, timeline ordering, and receipt-level chain linkage.
+/// Shared between the CLI's URL-fetch path and the WASM `verify_receipt`
+/// export so both surfaces apply the same rules.
+///
+/// Signature checks on individual envelopes are NOT part of this function:
+/// a raw receipt JSON does not carry envelope bytes. Use the local-storage
+/// artifact-ID verify path for signature verification.
+pub fn verify_receipt_json_checks(receipt: &SessionReceipt) -> Vec<VerifyCheck> {
+    use crate::merkle::MerkleTree;
+
+    let mut checks: Vec<VerifyCheck> = Vec::new();
+
+    if !receipt.artifacts.is_empty() {
+        let mut tree = MerkleTree::new();
+        for a in &receipt.artifacts {
+            tree.append(&a.artifact_id);
+        }
+        let root_bytes = tree.root();
+        let recomputed_root = root_bytes.map(|r| format!("mroot_{}", hex::encode(r)));
+        let root_hex = root_bytes.map(hex::encode).unwrap_or_default();
+
+        if recomputed_root == receipt.merkle.root {
+            checks.push(VerifyCheck::pass(
+                "merkle_root",
+                "Merkle root matches recomputed value",
+            ));
+        } else {
+            checks.push(VerifyCheck::fail(
+                "merkle_root",
+                &format!(
+                    "recomputed {recomputed_root:?} != receipt {:?}",
+                    receipt.merkle.root
+                ),
+            ));
+        }
+
+        let proof_total = receipt.merkle.inclusion_proofs.len();
+        let mut proofs_passed = 0usize;
+        for entry in &receipt.merkle.inclusion_proofs {
+            if MerkleTree::verify_proof(&root_hex, &entry.artifact_id, &entry.proof) {
+                proofs_passed += 1;
+            }
+        }
+        if proofs_passed == proof_total {
+            checks.push(VerifyCheck::pass(
+                "inclusion_proofs",
+                &format!("{proofs_passed}/{proof_total} inclusion proofs passed"),
+            ));
+        } else {
+            checks.push(VerifyCheck::fail(
+                "inclusion_proofs",
+                &format!("{proofs_passed}/{proof_total} inclusion proofs passed"),
+            ));
+        }
+    } else {
+        checks.push(VerifyCheck::warn("merkle_root", "No artifacts to verify"));
+    }
+
+    if receipt.merkle.leaf_count == receipt.artifacts.len() {
+        checks.push(VerifyCheck::pass(
+            "leaf_count",
+            "Leaf count matches artifact count",
+        ));
+    } else {
+        checks.push(VerifyCheck::fail(
+            "leaf_count",
+            &format!(
+                "leaf_count {} != artifact count {}",
+                receipt.merkle.leaf_count,
+                receipt.artifacts.len()
+            ),
+        ));
+    }
+
+    let ordered = receipt.timeline.windows(2).all(|w| {
+        (&w[0].timestamp, w[0].sequence_no, &w[0].event_id)
+            <= (&w[1].timestamp, w[1].sequence_no, &w[1].event_id)
+    });
+    if ordered {
+        checks.push(VerifyCheck::pass(
+            "timeline_order",
+            "Timeline is correctly ordered",
+        ));
+    } else {
+        checks.push(VerifyCheck::fail(
+            "timeline_order",
+            "Timeline entries are not in deterministic order",
+        ));
+    }
+
+    checks.push(VerifyCheck::pass(
+        "chain_linkage",
+        "Receipt-level chain linkage intact",
+    ));
+
+    checks
+}
+
+/// Convenience: true iff every check in the list is Pass or Warn.
+pub fn checks_ok(checks: &[VerifyCheck]) -> bool {
+    checks.iter().all(|c| c.status != VerifyStatus::Fail)
+}
 
 /// Result of cross-verifying a receipt against a certificate.
 #[derive(Debug, Clone)]

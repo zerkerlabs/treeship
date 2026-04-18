@@ -21,7 +21,8 @@ use std::path::{Path, PathBuf};
 use treeship_core::agent::{verify_certificate, AgentCertificate};
 use treeship_core::session::{read_package, verify_package, SessionReceipt, VerifyStatus};
 use treeship_core::verify::{
-    cross_verify_receipt_and_certificate, CertificateStatus, CrossVerifyResult, ShipIdStatus,
+    cross_verify_receipt_and_certificate, verify_receipt_json_checks, CertificateStatus,
+    CrossVerifyResult, ShipIdStatus,
 };
 
 use crate::printer::{Format, Printer};
@@ -361,103 +362,6 @@ fn load_certificate(target: &str) -> Result<AgentCertificate, LoadError> {
         .map_err(|e| LoadError::Io(format!("read {}: {e}", cert_path.display())))?;
     serde_json::from_slice(&bytes)
         .map_err(|e| LoadError::Parse(format!("invalid certificate JSON: {e}")))
-}
-
-// ============================================================================
-// JSON-only receipt checks (URL mode)
-// ============================================================================
-
-/// Check Merkle root recomputation, inclusion proofs, leaf count, and
-/// timeline ordering against a parsed receipt. This is the strict subset of
-/// `verify_package` that needs no on-disk artifacts. Used for URL-fetched
-/// receipts where the only thing we have is the receipt JSON.
-fn verify_receipt_json_checks(
-    receipt: &SessionReceipt,
-) -> Vec<treeship_core::session::VerifyCheck> {
-    use treeship_core::merkle::MerkleTree;
-    use treeship_core::session::VerifyCheck;
-
-    let mut checks: Vec<VerifyCheck> = Vec::new();
-    if !receipt.artifacts.is_empty() {
-        let mut tree = MerkleTree::new();
-        for a in &receipt.artifacts {
-            tree.append(&a.artifact_id);
-        }
-        let root_bytes = tree.root();
-        let recomputed_root = root_bytes.map(|r| format!("mroot_{}", hex::encode(r)));
-        let root_hex = root_bytes.map(hex::encode).unwrap_or_default();
-
-        if recomputed_root == receipt.merkle.root {
-            checks.push(VerifyCheck::pass("merkle_root", "Merkle root matches recomputed value"));
-        } else {
-            checks.push(VerifyCheck::fail(
-                "merkle_root",
-                &format!("recomputed {recomputed_root:?} != receipt {:?}", receipt.merkle.root),
-            ));
-        }
-
-        let proof_total = receipt.merkle.inclusion_proofs.len();
-        let mut proofs_passed = 0usize;
-        for entry in &receipt.merkle.inclusion_proofs {
-            if MerkleTree::verify_proof(&root_hex, &entry.artifact_id, &entry.proof) {
-                proofs_passed += 1;
-            }
-        }
-        if proofs_passed == proof_total {
-            checks.push(VerifyCheck::pass(
-                "inclusion_proofs",
-                &format!("{proofs_passed}/{proof_total} inclusion proofs passed"),
-            ));
-        } else {
-            checks.push(VerifyCheck::fail(
-                "inclusion_proofs",
-                &format!("{proofs_passed}/{proof_total} inclusion proofs passed"),
-            ));
-        }
-    } else {
-        checks.push(VerifyCheck::warn("merkle_root", "No artifacts to verify"));
-    }
-
-    if receipt.merkle.leaf_count == receipt.artifacts.len() {
-        checks.push(VerifyCheck::pass(
-            "leaf_count",
-            "Leaf count matches artifact count",
-        ));
-    } else {
-        checks.push(VerifyCheck::fail(
-            "leaf_count",
-            &format!(
-                "leaf_count {} != artifact count {}",
-                receipt.merkle.leaf_count,
-                receipt.artifacts.len()
-            ),
-        ));
-    }
-
-    let ordered = receipt.timeline.windows(2).all(|w| {
-        (&w[0].timestamp, w[0].sequence_no, &w[0].event_id)
-            <= (&w[1].timestamp, w[1].sequence_no, &w[1].event_id)
-    });
-    if ordered {
-        checks.push(VerifyCheck::pass("timeline_order", "Timeline is correctly ordered"));
-    } else {
-        checks.push(VerifyCheck::fail(
-            "timeline_order",
-            "Timeline entries are not in deterministic order",
-        ));
-    }
-
-    // Chain linkage placeholder: the receipt itself is the linkage check
-    // (artifacts list, parent IDs are inside the artifact envelopes which we
-    // don't have at URL-fetch time). Surfacing this as a pass keeps the
-    // checkmark spec consistent; a stronger check is available via the
-    // artifact-ID local-storage verify path.
-    checks.push(VerifyCheck::pass(
-        "chain_linkage",
-        "Receipt-level chain linkage intact",
-    ));
-
-    checks
 }
 
 // ============================================================================
