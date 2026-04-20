@@ -137,7 +137,7 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           bash packages/core-wasm/build-npm.sh "$VERSION"
           cd packages/core-wasm/pkg
-          npm publish --access public
+          bash "$GITHUB_WORKSPACE/.github/scripts/npm-publish-if-needed.sh" @treeship/core-wasm "$VERSION"
 
       - name: Verify @treeship/core-wasm version landed
         run: .github/scripts/wait-for-npm-version.sh @treeship/core-wasm "${GITHUB_REF_NAME#v}"
@@ -148,7 +148,7 @@ jobs:
           set -e
           npm install
           npm run build
-          npm publish --access public
+          bash "$GITHUB_WORKSPACE/.github/scripts/npm-publish-if-needed.sh" @treeship/sdk "${GITHUB_REF_NAME#v}"
 
       - name: Verify @treeship/sdk version landed
         run: .github/scripts/wait-for-npm-version.sh @treeship/sdk "${GITHUB_REF_NAME#v}"
@@ -159,7 +159,7 @@ jobs:
           set -e
           npm install
           npm run build
-          npm publish --access public
+          bash "$GITHUB_WORKSPACE/.github/scripts/npm-publish-if-needed.sh" @treeship/mcp "${GITHUB_REF_NAME#v}"
 
       - name: Verify @treeship/mcp version landed
         run: .github/scripts/wait-for-npm-version.sh @treeship/mcp "${GITHUB_REF_NAME#v}"
@@ -170,7 +170,7 @@ jobs:
           set -e
           npm install
           npm run build
-          npm publish --access public
+          bash "$GITHUB_WORKSPACE/.github/scripts/npm-publish-if-needed.sh" @treeship/a2a "${GITHUB_REF_NAME#v}"
 
       - name: Verify @treeship/a2a version landed
         run: .github/scripts/wait-for-npm-version.sh @treeship/a2a "${GITHUB_REF_NAME#v}"
@@ -185,35 +185,35 @@ jobs:
           fi
           npm install
           npm run build
-          npm publish --access public
+          bash "$GITHUB_WORKSPACE/.github/scripts/npm-publish-if-needed.sh" @treeship/verify "${GITHUB_REF_NAME#v}"
 
       - name: Verify @treeship/verify version landed
         run: .github/scripts/wait-for-npm-version.sh @treeship/verify "${GITHUB_REF_NAME#v}"
 
       - name: Publish @treeship/cli-linux-x64
         working-directory: npm/@treeship/cli-linux-x64
-        run: npm publish --access public
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/npm-publish-if-needed.sh" @treeship/cli-linux-x64 "${GITHUB_REF_NAME#v}"
 
       - name: Verify @treeship/cli-linux-x64 version landed
         run: .github/scripts/wait-for-npm-version.sh @treeship/cli-linux-x64 "${GITHUB_REF_NAME#v}"
 
       - name: Publish @treeship/cli-darwin-arm64
         working-directory: npm/@treeship/cli-darwin-arm64
-        run: npm publish --access public
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/npm-publish-if-needed.sh" @treeship/cli-darwin-arm64 "${GITHUB_REF_NAME#v}"
 
       - name: Verify @treeship/cli-darwin-arm64 version landed
         run: .github/scripts/wait-for-npm-version.sh @treeship/cli-darwin-arm64 "${GITHUB_REF_NAME#v}"
 
       - name: Publish @treeship/cli-darwin-x64
         working-directory: npm/@treeship/cli-darwin-x64
-        run: npm publish --access public
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/npm-publish-if-needed.sh" @treeship/cli-darwin-x64 "${GITHUB_REF_NAME#v}"
 
       - name: Verify @treeship/cli-darwin-x64 version landed
         run: .github/scripts/wait-for-npm-version.sh @treeship/cli-darwin-x64 "${GITHUB_REF_NAME#v}"
 
       - name: Publish treeship (main wrapper)
         working-directory: npm/treeship
-        run: npm publish --access public
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/npm-publish-if-needed.sh" treeship "${GITHUB_REF_NAME#v}"
 
       - name: Verify treeship wrapper version landed
         run: .github/scripts/wait-for-npm-version.sh treeship "${GITHUB_REF_NAME#v}"
@@ -227,7 +227,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Publish treeship-core
-        run: cargo publish -p treeship-core
+        run: |
+          set -e
+          VERSION="${GITHUB_REF_NAME#v}"
+          EXISTING="$(curl -sSf "https://crates.io/api/v1/crates/treeship-core" 2>/dev/null \
+            | jq -r '.crate.max_version' 2>/dev/null || true)"
+          if [ "$EXISTING" = "$VERSION" ]; then
+            echo "  ✓ treeship-core ${VERSION} already live on crates.io; skipping publish"
+            exit 0
+          fi
+          cargo publish -p treeship-core
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
 
@@ -256,8 +265,15 @@ jobs:
         working-directory: packages/sdk-python
         run: |
           set -e
+          VERSION="${GITHUB_REF_NAME#v}"
+          EXISTING="$(curl -sSf "https://pypi.org/pypi/treeship-sdk/json" 2>/dev/null \
+            | jq -r '.info.version' 2>/dev/null || true)"
+          if [ "$EXISTING" = "$VERSION" ]; then
+            echo "  ✓ treeship-sdk ${VERSION} already live on PyPI; skipping publish"
+            exit 0
+          fi
           python -m build
-          twine upload dist/*
+          twine upload --skip-existing dist/*
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
