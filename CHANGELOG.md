@@ -1,6 +1,73 @@
 # Changelog
 
+## 0.9.2 (2026-04-20)
+
+All packages realigned at 0.9.2 after a partial v0.9.1 npm publish. v0.9.1 landed successfully on crates.io, PyPI, and for the `treeship` wrapper + platform binaries on npm, but the new `@treeship/core-wasm` and `@treeship/verify` packages failed to bootstrap (scope permissions for new package names), which cascaded failure to `@treeship/sdk`, `@treeship/mcp`, and `@treeship/a2a`. The release workflow has been hardened to fail loud on publish failures, pre-flight every expected package on the `@treeship` scope, and verify each package post-publish.
+
+**v0.9.2 is the first version where every package lands cleanly on every registry together. Install v0.9.2 everywhere; do not mix with 0.9.1.**
+
+### Release workflow hardening
+
+- Every `npm publish` / `cargo publish` / `twine upload` step has `continue-on-error` removed. A failure in any one now fails the workflow — no more silent partial releases.
+- New pre-flight step on the `publish-npm` job enumerates every expected package on the `@treeship` scope and fails fast if any is missing. New scoped packages must be bootstrapped once with a web-auth `npm publish` from an account that owns the scope; thereafter the workflow's OIDC trusted publisher handles all future versions.
+- New `.github/scripts/wait-for-{npm,crates,pypi}-version.sh` helpers poll each registry after publish and fail the workflow if the expected version does not appear within 30 seconds. Catches partial propagation, transient registry errors, and accidentally-skipped publish steps.
+
+### Contents of this release
+
+All v0.9.1 work below. Semantically identical; the only difference is the version string and that every package actually lands on its registry this time.
+
+#### Added
+
+- `@treeship/core-wasm` npm package. The Rust core compiled to WebAssembly with 10 exported functions (`verify_envelope`, `artifact_id`, `digest`, `decode_payload`, `verify_merkle_proof`, `verify_zk_proof`, `version`, plus the three new high-level ones below). Bundle size: **167 KB gzipped** (target was under 250 KB). First-class published npm package; pinned to exact versions across all dependents to prevent silent drift.
+- `@treeship/verify` zero-dependency verification package at `packages/verify-js/`. Install alone, verify receipts and certificates in any runtime with WebAssembly + `fetch`. Only dependency is `@treeship/core-wasm`. This is what Witness, dashboards, and third-party consumers install.
+- High-level WASM exports: `verify_receipt`, `verify_certificate`, `cross_verify`. Previously only low-level envelope and Merkle primitives were exposed. Each returns JSON in / JSON out with an error shape on malformed input rather than panicking.
+- Reusable library primitive `treeship_core::verify::verify_receipt_json_checks` — lifted from the CLI's URL-fetch path so CLI and WASM share one implementation. Same checks (Merkle root recomputation, inclusion proofs, leaf count, timeline ordering, chain linkage) produce the same result across every runtime.
+- `treeship_core::agent::verify_certificate` — Ed25519 signature check against the certificate's embedded public key. Exposed so the CLI, `@treeship/verify`, and future WASM consumers share one implementation.
+- Runtime compatibility: **Node.js 18+, Deno, browser (bundler), Vercel Edge, Cloudflare Workers, AWS Lambda**. Edge runtime deploy harnesses at `tests/runtime-acceptance/{vercel-edge,cloudflare-worker,aws-lambda}/` — runnable projects with per-runtime READMEs.
+- New docs: `sdk/verify.mdx`, `guides/edge-runtime.mdx`. Runtime compatibility matrices added to `@treeship/sdk`, `@treeship/a2a`, and `@treeship/mcp` READMEs. `reference/schema.mdx` gains a "Parity between CLI and WASM" section.
+- Command-line build pipeline: `packages/core-wasm/build-npm.sh <version>` runs `wasm-pack build --target bundler`, optionally `wasm-opt -Oz`, then rewrites `pkg/package.json` with scoped name + license + repo + keywords. Release workflow installs wasm-pack + binaryen and runs this before the other npm publish steps so dependents resolve against the fresh core-wasm.
+
+#### Changed
+
+- `@treeship/sdk` verification path migrated from CLI subprocess to direct WASM calls. `ship.verify.verify(id)` (legacy artifact-ID form) still subprocesses; new `verifyReceipt` / `verifyCertificate` / `crossVerify` methods run in-process via WASM. Stateful operations (attest, session, dock, agent register) still use subprocess.
+- `@treeship/a2a` `verifyReceipt` now performs real cryptographic verification (was previously network-only structural summary). `VerifiedReceipt.cryptographicallyVerified` surfaces the WASM result; `verifyChecks` carries the per-step breakdown. Graceful fallback: if `@treeship/core-wasm` can't load in the runtime, returns the pre-v0.9.1 summary with `cryptographicallyVerified: false`.
+- `@treeship/mcp` gains WASM-backed verification helpers alongside its attestation surface. Attest paths remain subprocess-based.
+- `scripts/release.sh` now pins `@treeship/core-wasm` to the exact release version across all dependent packages (sdk-ts, a2a, mcp, verify-js) at tag time. No caret ranges for this dependency — drift would break the schema-rules parity guarantee.
+- Workspace `Cargo.toml` adds `[profile.release.package.treeship-core-wasm]` with `opt-level = "z"` and `codegen-units = 1`. CLI release tuning unchanged.
+- `treeship_core` `hostname` dep moved to `target.'cfg(not(target_family = "wasm"))'`. WASM builds fall back to `"host_unknown"` in `default_host_id`; WASM contexts consume receipts rather than author them, so the fallback is benign.
+
+#### Notes
+
+- All packages that depend on `@treeship/core-wasm` pin to exact version `0.9.2` (no caret). `release.sh` enforces this at tag time.
+- Subprocess fallback was not implemented for WASM. The SDK's `verifyReceipt` / `verifyCertificate` / `crossVerify` functions require a runtime that can load the bundled WebAssembly. Runtimes without WASM support can continue using the legacy `verify(id)` subprocess path.
+- WASM imports are lazy: the SDK and bridge modules can load in environments where `@treeship/core-wasm` is not yet resolvable (early-bootstrap CI, non-verification code paths). The first verification call pays the load cost; subsequent calls reuse cached bindings.
+
+#### Release-window follow-ups
+
+- Edge runtime acceptance deploys to Vercel Edge, Cloudflare Workers, and AWS Lambda are **code-complete** in `tests/runtime-acceptance/` but the actual deploys + cold-start measurements run out-of-band. Acceptance criteria are documented in each subdirectory's README; rerun to reproduce.
+- Comprehensive Codex adversarial review of the v0.9.x WASM migration surface is planned before v0.10.0 cuts. 174+ unit / integration tests pass workspace-wide, but a formal adversarial pass adds a second set of eyes.
+
+#### Not in this release (coming in v0.10.0)
+
+- Approval loop primitives (5 new Hub endpoints + `--require-approval` flag on `treeship wrap` + `treeship approver` CLI)
+- `treeship.dev/verify` browser drag-and-drop page (unblocked now that v0.9.2 publishes `@treeship/core-wasm` and `@treeship/verify`)
+- Command-artifact CLI surfaces to issue `KillCommand` / `TerminateSession` / etc. — the schemas exist as of v0.9.0
+
+#### Rollback
+
+Previous stable is v0.9.0 and remains published on every registry. **Do not roll back to v0.9.1** — the npm side of that tag is partial and will leave installs in an inconsistent state. Downgrade straight to v0.9.0:
+
+```bash
+npm install @treeship/sdk@0.9.0 @treeship/a2a@0.9.0 @treeship/mcp@0.9.0 treeship@0.9.0
+cargo install treeship-core@0.9.0
+pip install treeship-sdk==0.9.0
+```
+
+v0.9.0 verification uses the CLI subprocess — less portable, but still correct. `@treeship/core-wasm` and `@treeship/verify` are new in v0.9.2 and have no v0.9.0 counterpart to roll back to.
+
 ## 0.9.1 (2026-04-18)
+
+> **Partial publish; superseded by 0.9.2. Do not install 0.9.1 npm packages.** This entry remains as a historical record. On npm, only `treeship`, `@treeship/cli-linux-x64`, `@treeship/cli-darwin-arm64`, and `@treeship/cli-darwin-x64` reached 0.9.1. `@treeship/core-wasm` and `@treeship/verify` never published, which cascaded install failures to `@treeship/sdk`, `@treeship/mcp`, and `@treeship/a2a`. `treeship-core` (crates.io) and `treeship-sdk` (PyPI) did reach 0.9.1 cleanly. v0.9.2 realigns everything.
 
 Verification runs anywhere. WASM migration of the core verification surface, published as an npm package, and rewired through the SDK and bridge packages. Second of three planned releases in this window; see v0.9.0 for the schema foundation and v0.10.0 (upcoming) for the approval loop and drag-drop verifier.
 

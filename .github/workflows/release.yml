@@ -80,6 +80,45 @@ jobs:
       - name: Ensure npm >= 11.5.1
         run: npm install -g npm@latest
 
+      # Pre-flight: every package we intend to publish must already exist on
+      # the @treeship scope with the OIDC trusted publisher configured. npm
+      # returns 404 (not 403) when a new scoped package name is requested by
+      # a publisher that lacks scope-create permission, which silently
+      # cascades through any downstream package's `npm install`. Fail loud
+      # here so a mis-configured scope never produces a partial release.
+      #
+      # To bootstrap a new package into the scope, do ONE manual publish
+      # locally with `npm publish --access public --auth-type=web` from an
+      # npm account that owns the @treeship scope. Once the package name
+      # exists on the registry at any version, this check passes and future
+      # automated publishes work.
+      - name: Pre-flight check @treeship scope packages exist on npm
+        run: |
+          set -e
+          MISSING=()
+          for pkg in \
+            @treeship/core-wasm \
+            @treeship/verify \
+            @treeship/sdk \
+            @treeship/mcp \
+            @treeship/a2a \
+            @treeship/cli-linux-x64 \
+            @treeship/cli-darwin-arm64 \
+            @treeship/cli-darwin-x64 \
+            treeship; do
+            if npm view "$pkg" version > /dev/null 2>&1; then
+              echo "  ✓ $pkg exists"
+            else
+              echo "::error::$pkg does not exist on npm."
+              MISSING+=("$pkg")
+            fi
+          done
+          if [ ${#MISSING[@]} -gt 0 ]; then
+            echo "::error::${#MISSING[@]} package(s) missing: ${MISSING[*]}"
+            echo "::error::Bootstrap each with: npm publish --access public --auth-type=web"
+            exit 1
+          fi
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
@@ -93,91 +132,91 @@ jobs:
           sudo apt-get install -y binaryen
 
       - name: Build and publish @treeship/core-wasm
-        continue-on-error: true
         run: |
-          bash packages/core-wasm/build-npm.sh "${GITHUB_REF_NAME#v}"
+          set -e
+          VERSION="${GITHUB_REF_NAME#v}"
+          bash packages/core-wasm/build-npm.sh "$VERSION"
           cd packages/core-wasm/pkg
           npm publish --access public
-        # env:
-        #   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Verify @treeship/core-wasm version landed
+        run: .github/scripts/wait-for-npm-version.sh @treeship/core-wasm "${GITHUB_REF_NAME#v}"
 
       - name: Build and publish @treeship/sdk
-        continue-on-error: true
         working-directory: packages/sdk-ts
         run: |
+          set -e
           npm install
           npm run build
-          sleep 5
           npm publish --access public
-        # env:
-        #   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Verify @treeship/sdk version landed
+        run: .github/scripts/wait-for-npm-version.sh @treeship/sdk "${GITHUB_REF_NAME#v}"
 
       - name: Build and publish @treeship/mcp
-        continue-on-error: true
         working-directory: bridges/mcp
         run: |
+          set -e
           npm install
           npm run build
-          sleep 5
           npm publish --access public
-        # env:
-        #   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Verify @treeship/mcp version landed
+        run: .github/scripts/wait-for-npm-version.sh @treeship/mcp "${GITHUB_REF_NAME#v}"
 
       - name: Build and publish @treeship/a2a
-        continue-on-error: true
         working-directory: bridges/a2a
         run: |
+          set -e
           npm install
           npm run build
-          sleep 5
           npm publish --access public
-        # env:
-        #   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Verify @treeship/a2a version landed
+        run: .github/scripts/wait-for-npm-version.sh @treeship/a2a "${GITHUB_REF_NAME#v}"
 
       - name: Build and publish @treeship/verify
-        continue-on-error: true
         working-directory: packages/verify-js
         run: |
+          set -e
           if [ ! -f package.json ]; then
-            echo "packages/verify-js not present; skipping (package is v0.9.1+)"
-            exit 0
+            echo "::error::packages/verify-js missing; cannot publish @treeship/verify"
+            exit 1
           fi
           npm install
           npm run build
-          sleep 5
           npm publish --access public
-        # env:
-        #   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Verify @treeship/verify version landed
+        run: .github/scripts/wait-for-npm-version.sh @treeship/verify "${GITHUB_REF_NAME#v}"
 
       - name: Publish @treeship/cli-linux-x64
-        continue-on-error: true
         working-directory: npm/@treeship/cli-linux-x64
         run: npm publish --access public
-        # env:
-        #   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Verify @treeship/cli-linux-x64 version landed
+        run: .github/scripts/wait-for-npm-version.sh @treeship/cli-linux-x64 "${GITHUB_REF_NAME#v}"
 
       - name: Publish @treeship/cli-darwin-arm64
-        continue-on-error: true
         working-directory: npm/@treeship/cli-darwin-arm64
         run: npm publish --access public
-        # env:
-        #   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Verify @treeship/cli-darwin-arm64 version landed
+        run: .github/scripts/wait-for-npm-version.sh @treeship/cli-darwin-arm64 "${GITHUB_REF_NAME#v}"
 
       - name: Publish @treeship/cli-darwin-x64
-        continue-on-error: true
         working-directory: npm/@treeship/cli-darwin-x64
         run: npm publish --access public
-        # env:
-        #   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Verify @treeship/cli-darwin-x64 version landed
+        run: .github/scripts/wait-for-npm-version.sh @treeship/cli-darwin-x64 "${GITHUB_REF_NAME#v}"
 
       - name: Publish treeship (main wrapper)
-        continue-on-error: true
         working-directory: npm/treeship
-        run: |
-          sleep 5
-          npm publish --access public
-        # env:
-        #   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
+
+      - name: Verify treeship wrapper version landed
+        run: .github/scripts/wait-for-npm-version.sh treeship "${GITHUB_REF_NAME#v}"
 
   publish-crates:
     needs: release
@@ -188,10 +227,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Publish treeship-core
-        continue-on-error: true
         run: cargo publish -p treeship-core
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
+
+      - name: Verify treeship-core on crates.io
+        run: .github/scripts/wait-for-crates-version.sh treeship-core "${GITHUB_REF_NAME#v}"
 
       # treeship-cli is NOT published to crates.io.
       # It's a binary tool with ZK deps that can't satisfy crates.io requirements.
@@ -212,11 +253,14 @@ jobs:
         run: pip install build twine
 
       - name: Build and publish treeship-sdk
-        continue-on-error: true
         working-directory: packages/sdk-python
         run: |
+          set -e
           python -m build
           twine upload dist/*
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+
+      - name: Verify treeship-sdk on PyPI
+        run: .github/scripts/wait-for-pypi-version.sh treeship-sdk "${GITHUB_REF_NAME#v}"
