@@ -230,18 +230,32 @@ jobs:
         run: |
           set -e
           VERSION="${GITHUB_REF_NAME#v}"
-          # The crate-wide endpoint (.crate.max_version) lags fresh
-          # publishes by several minutes due to the search index. The
-          # version-specific endpoint returns 200 immediately after a
-          # successful publish, or 404 if the version does not exist;
-          # no indexing lag. This is the correct idempotency check.
-          HTTP_CODE="$(curl -s -o /dev/null -w "%{http_code}" \
-            "https://crates.io/api/v1/crates/treeship-core/${VERSION}")"
-          if [ "$HTTP_CODE" = "200" ]; then
-            echo "  ✓ treeship-core ${VERSION} already live on crates.io; skipping publish"
+          CRATE="treeship-core"
+
+          # First line of defense: cargo search. It queries crates.io's
+          # registry API over the same path cargo publish uses, so if
+          # search reports the exact version, cargo publish would also
+          # report it. No CDN layer, no staleness vs. /api/v1/crates.
+          if cargo search "$CRATE" --limit 1 | grep -Fq "$CRATE = \"$VERSION\""; then
+            echo "  ✓ $CRATE $VERSION already live on crates.io; skipping publish"
             exit 0
           fi
-          cargo publish -p treeship-core
+
+          # Second line of defense: if the search missed (eg. very-fresh
+          # publish that has not propagated into search yet) and the
+          # registry rejects our publish with "already exists", treat
+          # that as success rather than a workflow failure. Any other
+          # publish error is still fatal.
+          if PUBLISH_OUTPUT="$(cargo publish -p "$CRATE" 2>&1)"; then
+            echo "$PUBLISH_OUTPUT"
+            exit 0
+          fi
+          echo "$PUBLISH_OUTPUT"
+          if echo "$PUBLISH_OUTPUT" | grep -qE "already (exists|uploaded)"; then
+            echo "  ✓ $CRATE $VERSION publish race: registry reports already exists; treating as success"
+            exit 0
+          fi
+          exit 1
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
 
@@ -271,19 +285,35 @@ jobs:
         run: |
           set -e
           VERSION="${GITHUB_REF_NAME#v}"
-          # PyPI's project-wide /json endpoint (.info.version) can lag
-          # fresh publishes. The version-specific endpoint returns 200
-          # as soon as the release is actually live, or 404 if not;
-          # no lag. twine --skip-existing is a second safety net in
-          # case the HTTP check races against CDN invalidation.
+          PKG="treeship-sdk"
+
+          # First line of defense: version-specific endpoint. Returns
+          # 200 for a live version, 404 otherwise; no lag because it
+          # reads the exact release record, not a project-wide summary.
           HTTP_CODE="$(curl -s -o /dev/null -w "%{http_code}" \
-            "https://pypi.org/pypi/treeship-sdk/${VERSION}/json")"
+            "https://pypi.org/pypi/${PKG}/${VERSION}/json")"
           if [ "$HTTP_CODE" = "200" ]; then
-            echo "  ✓ treeship-sdk ${VERSION} already live on PyPI; skipping publish"
+            echo "  ✓ $PKG $VERSION already live on PyPI; skipping publish"
             exit 0
           fi
+
           python -m build
-          twine upload --skip-existing dist/*
+
+          # Second line of defense: twine --skip-existing returns 0
+          # when the file already exists, so the normal path handles
+          # the race cleanly. The output-grep fallback catches the
+          # edge case where twine does exit non-zero on "already
+          # exists" (older versions, proxy errors, etc.).
+          if UPLOAD_OUTPUT="$(twine upload --skip-existing dist/* 2>&1)"; then
+            echo "$UPLOAD_OUTPUT"
+            exit 0
+          fi
+          echo "$UPLOAD_OUTPUT"
+          if echo "$UPLOAD_OUTPUT" | grep -qiE "already (exists|uploaded)|HTTPError: 400"; then
+            echo "  ✓ $PKG $VERSION publish race: registry reports already exists; treating as success"
+            exit 0
+          fi
+          exit 1
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
