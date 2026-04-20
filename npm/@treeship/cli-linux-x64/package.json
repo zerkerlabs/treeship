@@ -1,6 +1,6 @@
 {
   "name": "@treeship/cli-linux-x64",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "Treeship CLI binary for linux x64",
   "os": [
     "linux"

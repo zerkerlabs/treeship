@@ -1,6 +1,6 @@
 [package]
 name = "treeship-core-wasm"
-version = "0.9.1"
+version = "0.9.2"
 edition = "2021"
 description = "Treeship verification in the browser via WebAssembly"
 
