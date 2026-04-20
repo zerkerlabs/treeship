@@ -230,9 +230,14 @@ jobs:
         run: |
           set -e
           VERSION="${GITHUB_REF_NAME#v}"
-          EXISTING="$(curl -sSf "https://crates.io/api/v1/crates/treeship-core" 2>/dev/null \
-            | jq -r '.crate.max_version' 2>/dev/null || true)"
-          if [ "$EXISTING" = "$VERSION" ]; then
+          # The crate-wide endpoint (.crate.max_version) lags fresh
+          # publishes by several minutes due to the search index. The
+          # version-specific endpoint returns 200 immediately after a
+          # successful publish, or 404 if the version does not exist;
+          # no indexing lag. This is the correct idempotency check.
+          HTTP_CODE="$(curl -s -o /dev/null -w "%{http_code}" \
+            "https://crates.io/api/v1/crates/treeship-core/${VERSION}")"
+          if [ "$HTTP_CODE" = "200" ]; then
             echo "  ✓ treeship-core ${VERSION} already live on crates.io; skipping publish"
             exit 0
           fi
@@ -266,9 +271,14 @@ jobs:
         run: |
           set -e
           VERSION="${GITHUB_REF_NAME#v}"
-          EXISTING="$(curl -sSf "https://pypi.org/pypi/treeship-sdk/json" 2>/dev/null \
-            | jq -r '.info.version' 2>/dev/null || true)"
-          if [ "$EXISTING" = "$VERSION" ]; then
+          # PyPI's project-wide /json endpoint (.info.version) can lag
+          # fresh publishes. The version-specific endpoint returns 200
+          # as soon as the release is actually live, or 404 if not;
+          # no lag. twine --skip-existing is a second safety net in
+          # case the HTTP check races against CDN invalidation.
+          HTTP_CODE="$(curl -s -o /dev/null -w "%{http_code}" \
+            "https://pypi.org/pypi/treeship-sdk/${VERSION}/json")"
+          if [ "$HTTP_CODE" = "200" ]; then
             echo "  ✓ treeship-sdk ${VERSION} already live on PyPI; skipping publish"
             exit 0
           fi
