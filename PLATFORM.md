@@ -99,19 +99,25 @@ treeship/
 
 ## Packages
 
-All packages are at **v0.4.0** and published to their respective registries.
+All packages are at **v0.9.4** and published to their respective registries.
 
 | Package | Registry | Install | Description |
 |---------|----------|---------|-------------|
 | `treeship` | [npm](https://www.npmjs.com/package/treeship) | `npm install -g treeship` | CLI wrapper (auto-downloads platform binary) |
-| `treeship-cli` | [crates.io](https://crates.io/crates/treeship-cli) | `cargo install treeship-cli` | CLI binary (build from source) |
 | `treeship-core` | [crates.io](https://crates.io/crates/treeship-core) | `cargo add treeship-core` | Core cryptographic library |
 | `@treeship/sdk` | [npm](https://www.npmjs.com/package/@treeship/sdk) | `npm install @treeship/sdk` | TypeScript SDK |
 | `@treeship/mcp` | [npm](https://www.npmjs.com/package/@treeship/mcp) | `npm install @treeship/mcp` | MCP attestation bridge |
+| `@treeship/a2a` | [npm](https://www.npmjs.com/package/@treeship/a2a) | `npm install @treeship/a2a` | Agent-to-agent message attestation bridge |
+| `@treeship/verify` | [npm](https://www.npmjs.com/package/@treeship/verify) | `npm install @treeship/verify` | Zero-dep verification (WASM + fetch) |
+| `@treeship/core-wasm` | [npm](https://www.npmjs.com/package/@treeship/core-wasm) | (transitive dep) | Rust core compiled to WebAssembly |
 | `treeship-sdk` | [PyPI](https://pypi.org/project/treeship-sdk/) | `pip install treeship-sdk` | Python SDK |
 | `@treeship/cli-darwin-arm64` | [npm](https://www.npmjs.com/package/@treeship/cli-darwin-arm64) | (auto-installed) | Binary for Apple Silicon |
 | `@treeship/cli-darwin-x64` | [npm](https://www.npmjs.com/package/@treeship/cli-darwin-x64) | (auto-installed) | Binary for Intel Mac |
 | `@treeship/cli-linux-x64` | [npm](https://www.npmjs.com/package/@treeship/cli-linux-x64) | (auto-installed) | Binary for Linux |
+
+**Note:** the `treeship-cli` crate on crates.io is orphaned at v0.4.0. It is no longer the canonical install path; use the `treeship` npm wrapper instead. The crate name is preserved on crates.io to avoid squatting and to keep download counters meaningful for historical references.
+
+**Plugin marketplace:** the treeship monorepo also ships `.claude-plugin/marketplace.json` at the root, so `claude plugin marketplace add zerkerlabs/treeship` registers the Treeship plugin marketplace. `claude plugin install treeship@treeship` then installs the official Claude Code plugin from `integrations/claude-code-plugin/`.
 
 ### npm organization
 
@@ -126,15 +132,17 @@ The unscoped `treeship` wrapper is owned by `zerker1` with org access granted.
 ### Install
 
 ```bash
-# Option 1: npm (recommended -- no Rust needed)
+# Option 1: One-liner (recommended -- installs CLI + runs init + instruments any AI agents detected)
+curl -fsSL treeship.dev/setup | sh
+
+# Option 2: npm wrapper (binary only)
 npm install -g treeship
 
-# Option 2: Cargo (build from source)
-cargo install treeship-cli
-
-# Option 3: Shell script (auto-detects platform)
+# Option 3: Shell script (binary only, like option 2 but explicit)
 curl -fsSL treeship.dev/install | sh
 ```
+
+The `treeship-cli` cargo install path is no longer available; that crate is orphaned at v0.4.0. The CLI ships exclusively via the npm wrapper / shell installers above (which fetch a prebuilt platform binary, no Rust toolchain required).
 
 ### Quickstart
 
@@ -527,7 +535,7 @@ Platform packages:
 - `@treeship/cli-darwin-x64` -- Intel Mac
 - `@treeship/cli-linux-x64` -- Linux x86_64
 
-If the binary download fails, postinstall prints a fallback message: `cargo install treeship-cli`.
+If the binary download fails, postinstall prints a fallback message pointing the user to the shell installer (`curl -fsSL treeship.dev/install | sh`) or the one-liner setup (`curl -fsSL treeship.dev/setup | sh`). The `cargo install treeship-cli` fallback is no longer offered (that crate is orphaned at v0.4.0).
 
 ---
 

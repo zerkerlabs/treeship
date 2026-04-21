@@ -7,7 +7,7 @@ Read this file to understand what Treeship is, how the repo is organized, and ho
 
 Portable trust layer for AI agent workflows. Every action, approval, and handoff gets a cryptographically signed receipt -- tamper-proof, verifiable by anyone, works offline.
 
-The loop: `treeship wrap -- your-command` -> signed artifact -> `treeship dock push` -> `https://treeship.dev/verify/art_xxx`
+The loop: `treeship wrap -- your-command` -> signed artifact -> `treeship hub push` -> `https://treeship.dev/verify/art_xxx`
 
 ## Links
 
@@ -27,13 +27,17 @@ The loop: `treeship wrap -- your-command` -> signed artifact -> `treeship dock p
 ## Quick Start
 
 ```bash
-# Install
-cargo install --git https://github.com/zerkerlabs/treeship treeship-cli
-# or
-npm install -g treeship
+# Install (recommended): one-liner that installs CLI + runs init + instruments any AI agents it detects
+curl -fsSL treeship.dev/setup | sh
 
-# Initialize
+# Or just the CLI binary:
+npm install -g treeship
 treeship init
+
+# If you're a Claude Code user, also install the plugin so every session
+# auto-records via SessionStart / PostToolUse / SessionEnd hooks:
+claude plugin marketplace add zerkerlabs/treeship
+claude plugin install treeship@treeship
 
 # Sign an action
 treeship wrap -- npm test
@@ -42,10 +46,11 @@ treeship wrap -- npm test
 treeship verify last --full
 
 # Push to Hub for a shareable link
-treeship dock login
-
-treeship dock push <artifact-id>
+treeship hub attach
+treeship hub push <artifact-id>
 ```
+
+**Note:** the `treeship-cli` crate on crates.io is orphaned at v0.4.0; the live Rust crate is `treeship-core` (the library). The CLI ships via the `treeship` npm wrapper, which auto-fetches the right platform binary. Don't `cargo install treeship-cli`.
 
 ## Repo Structure
 
@@ -92,7 +97,7 @@ treeship/
         merkle/            Checkpoint + proof endpoints
         rekor/             Sigstore Rekor anchoring
 
-    core-wasm/             WASM verifier (241KB, browser-ready)
+    core-wasm/             WASM verifier (167KB gzipped, browser-ready)
       src/lib.rs           verify_envelope, artifact_id, verify_merkle_proof
 
     sdk-ts/                TypeScript SDK (@treeship/sdk)
@@ -201,10 +206,10 @@ treeship verify last --full      # Verify full chain
 treeship log [--tail N]          # View receipt log
 treeship session start|close     # Manage sessions
 treeship approve|deny|pending    # Human approval workflow
-treeship dock login              # Authenticate with Hub
-treeship dock push <id>          # Push artifact to Hub
-treeship dock pull <id>          # Pull artifact from Hub
-treeship dock status             # Check dock state
+treeship hub attach              # Authenticate with Hub
+treeship hub push <id>          # Push artifact to Hub
+treeship hub pull <id>           # Pull artifact from Hub
+treeship hub status              # Check hub connection state
 treeship bundle create|export    # Create portable bundles
 treeship checkpoint              # Create Merkle checkpoint
 treeship merkle proof|verify     # Merkle operations

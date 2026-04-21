@@ -2,208 +2,190 @@
 
 # Treeship
 
-**Portable trust receipts for agent workflows.**
+**Portable, cryptographically signed receipts for AI agent sessions.**
 
-[![Crates.io](https://img.shields.io/crates/v/treeship-cli.svg)](https://crates.io/crates/treeship-cli)
-[![npm](https://img.shields.io/npm/v/@treeship/sdk.svg)](https://www.npmjs.com/package/@treeship/sdk)
+[![Crates.io](https://img.shields.io/crates/v/treeship-core.svg)](https://crates.io/crates/treeship-core)
+[![npm](https://img.shields.io/npm/v/treeship.svg)](https://www.npmjs.com/package/treeship)
 [![PyPI](https://img.shields.io/pypi/v/treeship-sdk.svg)](https://pypi.org/project/treeship-sdk/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![CI](https://github.com/zerkerlabs/treeship/actions/workflows/ci.yml/badge.svg)](https://github.com/zerkerlabs/treeship/actions/workflows/ci.yml)
 
-An open-source, local-first trust layer that creates and verifies signed receipts
-for agent actions, handoffs, approvals, and dependencies.
-Works offline. No central server. Portable evidence bundles anyone can verify.
+Treeship turns every AI agent session into a portable, signed receipt.
+Local-first. Cryptographically verifiable. Works offline.
+Shareable with anyone. **The receipt is yours, not ours.**
 
 </div>
 
 ---
 
-Before you trust an agent's output, verify its receipts.
+## Why this exists
 
-## Why
+AI agents are doing real work — real money, real code, real decisions. But there's no clean way to answer the simplest question afterward: *what did the agent actually do?*
 
-AI agents are being deployed into workflows where no one can verify what actually happened. Traditional logs are mutable, vendor-locked, and break across trust domains. Treeship fills the gap between "tool authorization" and "verifiable proof of what occurred."
+Chat logs are editable, screenshottable, deniable. They're a story, not evidence.
 
-- **Actions**: Signed receipts for every tool call, API request, or agent decision
-- **Approvals**: Cryptographic proof that a human or authority approved an intent
-- **Handoffs**: Tamper-evident records when work moves between agents or humans
-- **Endorsements**: Third-party assertions of compliance or validation
-- **Bundles**: Portable packages containing everything needed for offline verification
+Treeship produces evidence: signed, timestamped, portable, verifiable receipts of every tool call an agent made. Show the receipt to a customer, a regulator, a teammate, or your future self in six months. It stays true.
 
-## Three Layers
+## Install
 
-| Layer | What it is |
-|-------|------------|
-| **Agents** | Actors (humans or AI) that produce receipts for their actions |
-| **Treeships** | Trust domains that hold receipts, keys, and Merkle trees |
-| **Hub connections** | Workspace links that connect a local Treeship to a remote hub for sharing and visibility |
-
-## Prerequisites
-
-- **Node.js 18+** (for npm install) or **Rust 1.75+** (for cargo install)
-- Works on macOS, Linux, and Windows (WSL)
-
-## Quick Start
-
-### Install
+### CLI (the binary you'll always need)
 
 ```bash
-# npm (recommended) -- prebuilt binary, no Rust required
+# One-liner: installs CLI, runs treeship init, instruments any AI agents
+# it detects (Claude Code, Cursor, Hermes, OpenClaw)
+curl -fsSL treeship.dev/setup | sh
+
+# Or via npm (inspectable, signed package, no shell pipe)
 npm install -g treeship
-
-# Shell script -- auto-detects platform
-curl -fsSL treeship.dev/install | sh
-
-# From source (Rust engineers) -- full ZK support
-cargo install --git https://github.com/zerkerlabs/treeship treeship-cli --features zk
 ```
 
-### First receipt in 60 seconds
+`/setup` and `/install` are both POSIX shell. macOS and Linux native. Windows users: use WSL — a native Windows binary is planned for v0.10.0.
+
+### Claude Code plugin (recommended for Claude Code users)
 
 ```bash
-# Initialize a local Treeship
-treeship init
-
-# Wrap a command and capture a trust receipt
-treeship wrap -- npm test
-
-# Verify the last receipt
-treeship verify last
-
-# Attach to a hub (connects your Treeship to treeship.dev)
-treeship hub attach
-
-# Push the last receipt to the hub
-treeship hub push last
+claude plugin marketplace add zerkerlabs/treeship
+claude plugin install treeship@treeship
 ```
 
-### Multi-hub setup
+After this, every Claude Code session in a project with a `.treeship/` directory auto-records to a portable, signed receipt. The plugin's SessionStart / PostToolUse / SessionEnd hooks fire automatically — no `treeship session start` to remember, no manual wrapping.
 
-You can connect a single Treeship to multiple hubs at once.
+See [`integrations/claude-code-plugin/`](./integrations/claude-code-plugin/) for the full design.
+
+## First receipt in 60 seconds
 
 ```bash
-# Attach a named hub connection
-treeship hub attach --name work
-
-# Push to a specific hub
-treeship hub push last --hub work
+treeship init                       # one-time, per machine
+treeship session start              # opens a recording session
+treeship wrap -- npm test           # captures the command + its exit code + file writes
+treeship session close              # seals the receipt
+treeship session report             # uploads + prints a shareable URL
 ```
 
-## How It Works
+Or with the Claude Code plugin installed: just open Claude Code in a `treeship init`-ed project. Sessions start and seal themselves.
+
+## What you get
+
+- **Signed receipts** — Ed25519 over RFC 8785 canonical JSON (DSSE envelopes, in-toto compatible)
+- **Auto-chaining** — every receipt links to the hash of the previous one
+- **Merkle inclusion proofs** — packaged with the receipt for offline verification
+- **Hash-only payloads** — by default the receipt stores SHA-256 of arguments and outputs, not the raw content
+- **Approval binding** — `treeship attest action --approval-nonce` wires a human approval to the action it authorized
+- **Local-first** — everything works offline; the hub is a publishing surface, not a custodian
+- **Offline verification** — `treeship package verify` is pure WASM, no network required
+- **Multi-runtime SDKs** — TypeScript, Python, Go (hub), Rust core; verifier runs on Node, Deno, browser, Vercel Edge, Cloudflare Workers, AWS Lambda
+
+## Trust model
+
+Treeship doesn't decide trust globally. Each verifier decides trust using local policy.
+
+- Trust comes from keys + your policy, not from a Treeship server
+- Receipts are portable bundles — verify anywhere, no callback to a Treeship API
+- Privacy-aware default: payloads are hashed, not stored raw
+- Hub connections are optional and per-receipt opt-in
+
+For an exhaustive description of what `@treeship/mcp` actually captures (every field, in every artifact type), see [`TREESHIP.md`](./TREESHIP.md). It's the universal trust + onboarding doc that any AI agent can read to evaluate Treeship before using it.
+
+## How it works
 
 ```
-Agent / Human Action
-        |
-        v
-  Treeship Core
-        |
-        +--> Canonicalize payload (RFC 8785)
-        +--> Hash inputs/outputs (SHA-256)
-        +--> Link to previous receipt
-        +--> Sign with Ed25519
-        +--> Append to Merkle log
-        |
-        v
-  Local Receipt Store
-        |
-        +--> Bundle Builder
-        +--> Checkpoint (signed Merkle root)
-        +--> Verifier
-        +--> Optional: Hub connection
+Agent / human action
+        │
+        ▼
+  Treeship core
+        │
+        ├─ Canonicalize payload (RFC 8785)
+        ├─ Hash inputs/outputs (SHA-256)
+        ├─ Link to previous receipt
+        ├─ Sign with Ed25519
+        └─ Append to Merkle log
+        │
+        ▼
+  Local receipt store (.treeship/)
+        │
+        ├─ Bundle builder
+        ├─ Checkpoint (signed Merkle root)
+        ├─ Verifier (pure WASM)
+        └─ Optional: hub publish
 ```
 
-### Verification checks
+Verification runs five checks: signatures (DSSE envelope), chain integrity (each receipt links to its parent), Merkle inclusion, checkpoint signature, and policy. All offline.
 
-When you verify a bundle, Treeship runs:
+## Packages
 
-1. **Signature verification** on each receipt (Ed25519 via DSSE envelope)
-2. **Chain integrity** (each receipt links to the hash of the previous one)
-3. **Merkle inclusion proofs** (each receipt is in the tree)
-4. **Checkpoint verification** (signed snapshot of tree state)
-5. **Policy evaluation** (optional local trust rules)
+### Rust crates (crates.io)
 
-All checks work offline. No server callback required.
+| Crate | Path | Description |
+|---|---|---|
+| `treeship-core` | `packages/core/` | Receipt engine, signing, Merkle tree, verification |
 
-## Architecture
+The CLI is distributed via the `treeship` npm wrapper (which auto-fetches the right platform binary), not as a separate cargo install.
 
-### Core Primitives
+### npm packages
 
-| Primitive | Purpose |
-|-----------|---------|
-| **Receipt** | Signed record of one action, approval, handoff, or endorsement |
-| **DSSE Envelope** | Minimal signed container (Dead Simple Signing Envelope) |
-| **Merkle Tree** | Append-only log with inclusion proofs |
-| **Checkpoint** | Signed snapshot of tree state (anchoring point) |
-| **Bundle** | Portable package for cross-system verification |
-| **Policy** | Local trust rules (who to trust, what checks to require) |
+| Package | Path | Description |
+|---|---|---|
+| `treeship` | `npm/treeship/` | CLI wrapper that auto-installs the right platform binary |
+| `@treeship/sdk` | `packages/sdk-ts/` | TypeScript SDK (wraps the WASM verifier) |
+| `@treeship/mcp` | `bridges/mcp/` | MCP bridge — every tool call gets a signed receipt with one import change |
+| `@treeship/a2a` | `bridges/a2a/` | A2A bridge — verify receipts attached to agent-to-agent messages |
+| `@treeship/verify` | `packages/verify-js/` | Zero-dependency verification package (WASM + fetch) |
+| `@treeship/core-wasm` | `packages/core-wasm/` | Rust core compiled to WebAssembly (167 KB gzipped) |
 
-### Trust Model
+### PyPI
 
-Treeship does not decide trust globally. Each verifier decides trust using local policy.
+| Package | Path | Description |
+|---|---|---|
+| `treeship-sdk` | `packages/sdk-python/` | Python SDK |
 
-- **Local-first**: All signing and verification works offline
-- **No central authority**: Trust comes from keys and policy, not a Treeship server
-- **Portable**: Bundles are self-contained -- verify anywhere
-- **Privacy-aware**: Default to input/output hashes, not raw content
-- **Optional hub connections**: Connect your Treeship to treeship.dev for visibility and sharing
+### Hub server (Go)
 
-### Statement Types
+The reference hub server is at `packages/hub/` and runs at <https://api.treeship.dev>. Self-hosting is supported but uncommon today.
 
-```
-treeship/action/v1       -- an agent or human did something
-treeship/approval/v1     -- someone approved an intent or action
-treeship/handoff/v1      -- work moved between actors
-treeship/endorsement/v1  -- third-party asserts compliance
-```
+### Claude Code plugin
 
-## SDK Usage
+| Path | Description |
+|---|---|
+| `integrations/claude-code-plugin/` | Marketplace-installable plugin: SessionStart/PostToolUse/SessionEnd hooks + MCP server + skills |
+| `.claude-plugin/marketplace.json` | Marketplace manifest at the repo root |
+
+Install with `claude plugin marketplace add zerkerlabs/treeship && claude plugin install treeship@treeship`.
+
+### Other agent integrations
+
+| Path | Description |
+|---|---|
+| `integrations/claude-code/` | Manual Claude Code wiring (CLAUDE.md template + MCP config) — for users who don't want the plugin |
+| `integrations/cursor/` | Cursor MCP wiring |
+| `integrations/hermes/` | Hermes skill |
+| `integrations/openclaw/` | OpenClaw skill |
+
+## SDK example (TypeScript)
 
 ```typescript
 import { Ship } from "@treeship/sdk";
 
-// Initialize or load a ship
-const ship = await Ship.init("./.treeship", "my-agent");
+const ship = await Ship.init("./.treeship", "agent://researcher");
 
-// Attest an action
-const { receipt, receiptHash } = ship.attestAction({
-  actor: { type: "agent", id: "agent://researcher" },
+const { receipt } = ship.attestAction({
+  actor:      { type: "agent", id: "agent://researcher" },
   actionType: "tool.call",
   actionName: "search.web",
-  inputs: JSON.stringify({ query: "AI safety" }),
-  outputs: JSON.stringify({ results: ["paper1"] }),
+  inputs:     JSON.stringify({ query: "AI safety" }),
+  outputs:    JSON.stringify({ results: ["paper1"] }),
 });
 
-// Attest a handoff
 ship.attestHandoff({
-  fromActor: { type: "agent", id: "agent://researcher" },
-  toActor: { type: "agent", id: "agent://executor" },
+  fromActor:      { type: "agent", id: "agent://researcher" },
+  toActor:        { type: "agent", id: "agent://executor" },
   taskCommitment: "complete-purchase",
 });
 
-// Create checkpoint and export bundle
 ship.createCheckpoint();
 const bundle = ship.createBundle("Research workflow");
 
-// Save state
 await ship.save();
 ```
-
-## Packages
-
-| Package | Location | Description |
-|---------|----------|-------------|
-| `treeship` (Rust core) | `packages/core/` | Receipt engine, signing, Merkle tree, verification |
-| `treeship` (CLI) | `packages/cli/` | 25+ commands for issuing, bundling, verifying, hub connections |
-| Hub server (Go) | `packages/hub/` | 12-endpoint API for treeship.dev |
-| `@treeship/core-wasm` | `packages/core-wasm/` | 241KB WASM verifier (Merkle + Ed25519) |
-| `@treeship/sdk` | `packages/sdk-ts/` | TypeScript SDK wrapping the WASM verifier |
-| `@treeship/mcp` | `bridges/mcp/` | MCP bridge for agent tool integration |
-| `treeship-sdk` | `packages/sdk-py/` | Python SDK |
-| TUI | `packages/cli/` | Interactive terminal dashboard (Ratatui) |
-
-## Documentation
-
-Full documentation is available at **[docs.treeship.dev](https://docs.treeship.dev)**.
 
 ## Standards
 
@@ -211,38 +193,46 @@ Treeship builds on existing standards rather than inventing cryptography:
 
 - **RFC 8785** (JSON Canonicalization Scheme) for deterministic signing
 - **Ed25519** (RFC 8032) for signatures
-- **DSSE** for signed envelopes (compatible with Sigstore/in-toto ecosystem)
-- **SHA-256** for content addressing and Merkle tree
-- **RATS/EAT** concepts for attestation roles (future)
-- **SCITT** patterns for optional transparency anchoring (future)
+- **DSSE** for signed envelopes (compatible with Sigstore / in-toto)
+- **SHA-256** for content addressing and the Merkle tree
+
+## Documentation
+
+- Docs site: **<https://docs.treeship.dev>**
+- Trust model + capture inventory: [`TREESHIP.md`](./TREESHIP.md)
+- Changelog: [`CHANGELOG.md`](./CHANGELOG.md)
+- Plugin design: [`integrations/claude-code-plugin/README.md`](./integrations/claude-code-plugin/README.md)
 
 ## Roadmap
 
-- [x] Rust core receipt engine and verification (120 tests)
-- [x] CLI with 25+ commands
-- [x] DSSE envelope support
-- [x] Merkle tree with inclusion proofs and checkpoints
-- [x] Policy and rules engine
-- [x] Go Hub server (12 API endpoints)
-- [x] Hub authentication (DPoP, device flow)
-- [x] WASM verifier (241KB, browser-ready)
-- [x] TypeScript SDK (@treeship/sdk)
-- [x] MCP bridge (@treeship/mcp)
-- [x] Fumadocs site (45 pages)
-- [x] Terminal UI (`treeship ui` -- Ratatui interactive dashboard)
-- [x] OpenTelemetry export (feature-flagged, works with Jaeger/Datadog/Langfuse)
-- [x] Merkle tree (checkpoint, proof, verify, publish)
-- [x] Zero-knowledge proofs (Circom Groth16, RISC Zero chain proofs)
-- [ ] ZK TLS (TLSNotary) -- specced, feature-flagged, waiting on TLSNotary alpha
-- [ ] `treeship attach claude/cursor` -- agent process detection
-- [ ] Install script (`curl treeship.dev/install | sh`)
-- [ ] Hub Merkle Rekor anchoring
-- [ ] Capture adapters (shell, file, HTTP, A2A)
-- [ ] Anchoring adapters (OTS/Bitcoin, Solana)
-- [ ] Selective disclosure
+Realistic, version-tagged.
+
+**Shipped (v0.9.x)**
+- Rust core, CLI, hub server, WASM verifier, TypeScript / Python SDKs
+- MCP bridge (`@treeship/mcp`) and A2A bridge (`@treeship/a2a`)
+- Merkle tree with inclusion proofs and checkpoints
+- DSSE envelopes, Ed25519 signing, hash-only payload defaults
+- ZK proofs (Circom Groth16, RISC Zero chain proofs)
+- Hub authentication (DPoP, device flow), multi-hub support
+- OpenTelemetry export (feature-flagged)
+- Cross-process safe event log (flock + fail-open under contention)
+- **Official Claude Code plugin** with auto-recording hooks (v0.9.3+)
+- **Universal SKILL.md** at <https://treeship.dev/SKILL.md> for AI agent self-onboarding
+
+**v0.9.5 / v0.10.0 (next)**
+- O(1) event-log append (counter sidecar instead of full file rescan)
+- Native Windows binary + PowerShell setup script
+- Anthropic official-marketplace listing for the Claude Code plugin
+- `treeship attach <agent>` — process detection for non-MCP agents
+- Selective disclosure (redactable receipts)
+
+**Researching, no commitment**
+- ZK TLS (TLSNotary) — waiting on the TLSNotary alpha to stabilize
+- Hub Merkle Rekor anchoring
+- Anchoring adapters for OTS / Bitcoin / Solana
 
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE).
 
-Copyright 2025-2026 Zerker Labs, Inc.
+Copyright 2025–2026 Zerker Labs, Inc.

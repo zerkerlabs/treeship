@@ -1,38 +1,88 @@
 ---
 title: Claude Code
-description: Integrate Treeship with Claude Code via CLAUDE.md or MCP server.
+description: Integrate Treeship with Claude Code via the official plugin (recommended), CLAUDE.md, or MCP server.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Steps, Step } from 'fumadocs-ui/components/steps';
 
-Claude Code supports two integration methods: a CLAUDE.md instruction file and an MCP server for automatic tool-call interception.
+Claude Code has three integration paths. The plugin is the recommended one — it auto-records every session via hooks, no manual `treeship session start` to remember.
 
-## Method 1: CLAUDE.md (recommended)
+## Method 1: Official plugin (recommended)
+
+The Treeship Claude Code plugin ships every session as a portable, signed receipt with zero configuration. SessionStart / PostToolUse / SessionEnd hooks fire automatically; the bundled `@treeship/mcp` server captures any MCP-routed tool calls; built-in tools (Read, Write, Edit, Bash, Grep, Glob) are captured via the PostToolUse hook.
+
+<Steps>
+<Step>
+### Install the marketplace + plugin
+
+```bash
+claude plugin marketplace add zerkerlabs/treeship
+claude plugin install treeship@treeship
+```
+
+The plugin lands at `~/.claude/plugins/cache/treeship/treeship/<version>/` and auto-loads in every subsequent Claude Code session. No restart needed for a session you start after install; existing sessions pick it up next time you open them.
+</Step>
+<Step>
+### Make sure the project is Treeship-initialized
+
+```bash
+cd your-project
+treeship init   # if you haven't already
+```
+
+The plugin's hooks are gated on `./.treeship/` existing in the project root. Without it, the hooks silently exit zero so they never break Claude Code in unrelated projects.
+</Step>
+<Step>
+### Start coding
+
+Open Claude Code in the project. The SessionStart hook automatically opens a Treeship session named after the project + timestamp. Every Read, Write, Edit, Bash, etc. is appended to the session's event timeline. When the session ends, the SessionEnd hook seals the receipt and surfaces the shareable session report URL back into the conversation context.
+</Step>
+</Steps>
+
+<Callout type="info">
+Updating: when a new plugin version ships, run `claude plugin marketplace update treeship && claude plugin update treeship`. Restart any open Claude Code sessions to pick up the new version.
+</Callout>
+
+### What the plugin ships
+
+| Component | What it does |
+|---|---|
+| `.mcp.json` | Mounts `@treeship/mcp` via `npx -y` so MCP tool calls get signed receipts |
+| `hooks/hooks.json` | SessionStart (auto-start), SessionEnd (seal + report URL), PostToolUse (capture built-in tools) |
+| `monitors/monitors.json` | Live receipt/event counter streamed into Claude's context |
+| `skills/treeship-session` | How to close with a real headline before SessionEnd auto-headlines |
+| `skills/treeship-verify` | How to verify a receipt URL someone shares with you |
+| `skills/treeship-report` | How to publish + share a session report URL |
+
+## Method 2: CLAUDE.md instruction file (no plugin)
+
+For users who don't want to install the plugin but still want Claude Code to use Treeship intentionally:
 
 <Steps>
 <Step>
 ### Install Treeship CLI
 
 ```bash
-curl -fsSL treeship.dev/install | sh
-treeship init
+curl -fsSL treeship.dev/setup | sh
 ```
+
+The `/setup` one-liner installs the CLI, runs `treeship init`, and instruments any AI agents it detects.
 </Step>
 <Step>
-### Add CLAUDE.md to your project
+### Drop CLAUDE.md into your project
 
 ```bash
 curl -o CLAUDE.md https://raw.githubusercontent.com/zerkerlabs/treeship/main/integrations/claude-code/CLAUDE.md
 ```
 
-Claude Code reads `CLAUDE.md` from the project root automatically. It instructs Claude Code to wrap every shell command with `treeship wrap --`, set model/cost env vars, and close sessions with meaningful summaries.
+Claude Code reads `CLAUDE.md` from the project root automatically. The template instructs Claude Code to wrap every shell command with `treeship wrap --`, set model/cost env vars, and close sessions with meaningful summaries. It also includes the trust block (what `@treeship/mcp` captures, what it doesn't, when data leaves the machine) so Claude Code trusts the MCP server.
 </Step>
 </Steps>
 
-## Method 2: MCP server
+## Method 3: MCP server only
 
-Add Treeship as an MCP server so every tool call is automatically intercepted:
+If you don't want hooks but want MCP tool calls captured:
 
 ```json
 // ~/.claude/mcp.json
@@ -50,7 +100,7 @@ Add Treeship as an MCP server so every tool call is automatically intercepted:
 }
 ```
 
-Restart Claude Code after adding the config.
+Restart Claude Code after adding the config. This catches MCP-routed tool calls (e.g. `brave_search`, `notion`) but not Claude Code's built-in tools (Read, Write, Edit, Bash) — those bypass MCP entirely. For full coverage, use Method 1.
 
 ## Live monitoring
 
@@ -60,16 +110,28 @@ While Claude Code works, watch the session in real time:
 treeship session status --watch
 ```
 
+The plugin also streams live receipt/event counters into Claude's context via its background monitor, so the agent itself can see the receipt being built without polluting the chat.
+
 ## What appears in the receipt
 
-| Section | CLAUDE.md | MCP server |
-|---------|-----------|------------|
-| Shell commands | Via `treeship wrap` `[AUTO]` | Not applicable |
-| MCP tool calls | Not applicable | Every tool call `[AUTO]` |
-| Model/cost | Via env vars `[EXPLICIT]` | Via env vars `[EXPLICIT]` |
-| File operations | File snapshot diff `[AUTO]` | Not applicable |
-| Narrative | Via `--headline/--summary/--review` `[EXPLICIT]` | Not captured |
+| Section | Plugin (Method 1) | CLAUDE.md (Method 2) | MCP only (Method 3) |
+|---|---|---|---|
+| Built-in tool calls (Read, Write, Edit, Bash, etc.) | Captured via PostToolUse `[AUTO]` | Via `treeship wrap` for shell `[AUTO]` | Not captured |
+| MCP tool calls | Captured via `@treeship/mcp` `[AUTO]` | Captured via `@treeship/mcp` `[AUTO]` | Captured `[AUTO]` |
+| Session lifecycle | SessionStart/SessionEnd `[AUTO]` | Manual `session start/close` `[EXPLICIT]` | Manual `[EXPLICIT]` |
+| Model/cost | Via env vars `[EXPLICIT]` | Via env vars `[EXPLICIT]` | Via env vars `[EXPLICIT]` |
+| Narrative | Auto-headline + skill-driven manual close `[MIXED]` | Via `--headline/--summary/--review` `[EXPLICIT]` | Not captured |
 
 <Callout type="info">
-Claude Code's built-in tools (read_file, write_file, bash) are internal to the runtime, not MCP tools. With Method 1, shell commands are captured via wrapping. With Method 2, only calls to external MCP servers are intercepted.
+Claude Code's built-in tools (Read, Write, Edit, Bash) are internal to the runtime, not MCP tools. They bypass the MCP bridge entirely. The plugin's PostToolUse hook is what closes that gap — without it, only MCP-routed tool calls would show up in the receipt timeline.
 </Callout>
+
+## Verifying a session report
+
+The URL printed by `treeship session report` is the human-readable session report at `treeship.dev/receipt/<id>`. Anyone you share it with can verify the embedded receipt themselves:
+
+```bash
+treeship verify https://treeship.dev/receipt/<id>
+```
+
+Verification is pure WASM (`@treeship/core-wasm`), works entirely offline, doesn't phone home.

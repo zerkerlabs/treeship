@@ -1,7 +1,7 @@
 # TREESHIP --AGENT INSTRUCTIONS
 
 > **Read this file first. Every time. It is the single source of truth.**
-> Last updated: March 2026 · 120 tests passing · CLI + Hub + SDK + MCP shipped.
+> Last updated: April 2026 · 161 core lib tests passing · CLI + Hub + SDK + MCP + Claude Code plugin shipped (v0.9.4).
 
 ---
 
@@ -9,7 +9,7 @@
 
 Treeship is a portable trust layer for AI agent workflows. Every action, approval, and handoff gets a **cryptographically signed artifact** --a tamper-proof receipt verifiable by anyone, anywhere, without trusting any infrastructure.
 
-**The loop:** `treeship wrap -- your-agent-command` → signed artifact → `treeship dock push` → `https://treeship.dev/verify/art_xxx` --shareable proof that something happened.
+**The loop:** `treeship wrap -- your-agent-command` → signed artifact → `treeship hub push` → `https://treeship.dev/verify/art_xxx` --shareable proof that something happened.
 
 **Four properties that never change:**
 - **Local-first.** Every operation works offline. Hub adds shareability, never trust.
@@ -25,12 +25,12 @@ Treeship is a portable trust layer for AI agent workflows. Every action, approva
 
 | Component | Location | Status |
 |-----------|----------|--------|
-| Rust core library | `packages/core/` | 120 tests passing |
+| Rust core library | `packages/core/` | 161 tests passing |
 | Rust CLI binary | `packages/cli/` | 25+ commands |
 | TUI (Ratatui) | `packages/cli/` | Interactive terminal dashboard (`treeship ui`) |
 | OTel export | `packages/cli/` | OpenTelemetry span export (feature-flagged) |
 | Go Hub server | `packages/hub/` | 12 API endpoints |
-| WASM verifier | `packages/core-wasm/` | 241KB, Merkle + Ed25519 verify |
+| WASM verifier | `packages/core-wasm/` | 167KB gzipped, Merkle + Ed25519 verify |
 | TypeScript SDK | `packages/sdk-ts/` | @treeship/sdk, 5 tests |
 | MCP bridge | `bridges/mcp/` | @treeship/mcp, 3 tests |
 | Fumadocs site | `docs/` | 45 pages |
@@ -88,7 +88,7 @@ treeship/                           # monorepo root
 │   │           ├── daemon.rs       # treeship daemon start|stop|status
 │   │           ├── doctor.rs       # treeship doctor
 │   │           ├── merkle.rs       # treeship checkpoint, merkle proof|verify|status|publish
-│   │           ├── dock.rs         # treeship dock login|push|pull|status|undock
+│   │           ├── dock.rs         # treeship hub attach|push|pull|status|undock
 │   │           ├── ui.rs           # treeship ui (Ratatui interactive dashboard)
 │   │           └── otel.rs         # treeship otel test|status|export|enable|disable (feature-flagged)
 │   │
@@ -104,7 +104,7 @@ treeship/                           # monorepo root
 │   │       ├── merkle/             # Merkle checkpoint + proof endpoints
 │   │       └── rekor/              # Rekor anchoring (best-effort)
 │   │
-│   ├── core-wasm/                  # WASM verifier (241KB, Merkle + Ed25519)
+│   ├── core-wasm/                  # WASM verifier (167KB gzipped, Merkle + Ed25519)
 │   └── sdk-ts/                     # @treeship/sdk (5 tests)
 │
 ├── bridges/
@@ -367,7 +367,7 @@ pub dock_public_key: Option<String>,  // hex encoded
 pub dock_secret_key: Option<String>,  // hex encoded, same encryption as ship key
 ```
 
-**treeship dock login [--endpoint <url>]**
+**treeship hub attach [--endpoint <url>]**
 ```
 Default endpoint: https://api.treeship.dev
 1. GET {endpoint}/v1/dock/challenge → { device_code, nonce }
@@ -385,10 +385,10 @@ Default endpoint: https://api.treeship.dev
      ✓ docked
        dock id:   dck_...
        endpoint:  {endpoint}
-       → treeship dock push <artifact-id>
+       → treeship hub push <artifact-id>
 ```
 
-**treeship dock push <id>**
+**treeship hub push <id>**
 ```
 1. Load artifact from local storage. Error if not found.
 2. Build DPoP proof JWT:
@@ -410,22 +410,22 @@ Default endpoint: https://api.treeship.dev
        → treeship open {hub_url}
 ```
 
-**treeship dock pull <id>**
+**treeship hub pull <id>**
 ```
 GET {endpoint}/v1/artifacts/{id}   (no auth --public artifacts)
 Store to local storage
 Print: ✓ pulled  {id}
 ```
 
-**treeship dock status**
+**treeship hub status**
 ```
-Undocked: print "○ undocked" + hint "→ treeship dock login"
+Undocked: print "○ undocked" + hint "→ treeship hub attach"
 Docked:   print "● docked"
             endpoint: {endpoint}
             dock id:  {dock_id}
 ```
 
-**treeship dock undock**
+**treeship hub detach**
 ```
 Clear hub section from config (status: "undocked", clear all dock fields)
 Print: ✓ undocked
@@ -440,13 +440,13 @@ Print: ✓ undocked
 cd packages/hub && go run . &
 
 # Terminal 2 --test
-treeship dock login --endpoint http://localhost:8080
+treeship hub attach --endpoint http://localhost:8080
 # (for local testing, manually approve via curl:)
 curl -X POST http://localhost:8080/v1/dock/authorize \
   -d '{"device_code":"...","ship_public_key":"...","dock_public_key":"..."}'
 
 treeship attest action --actor agent://test --action tool.call
-treeship dock push art_xxxxx
+treeship hub push art_xxxxx
 
 # Should return passing ChainResult:
 curl http://localhost:8080/v1/verify/art_xxxxx
@@ -463,7 +463,7 @@ curl http://localhost:8080/v1/verify/art_xxxxx
 - Stolen `config.json` is useless without the encrypted dock private key
 
 ### Rekor anchoring --default ON
-- Every `treeship dock push` anchors to Rekor automatically
+- Every `treeship hub push` anchors to Rekor automatically
 - The anchor receipt is stored as `treeship/receipt/v1` locally
 - Hub cannot retroactively modify anchored chains
 

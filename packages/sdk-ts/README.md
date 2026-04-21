@@ -8,11 +8,17 @@ TypeScript SDK for [Treeship](https://treeship.dev) -- portable trust receipts f
 npm install @treeship/sdk
 ```
 
-Requires the `treeship` CLI binary in PATH. Install it with:
+Requires the `treeship` CLI binary in PATH. Install with:
 
 ```bash
-curl -fsSL treeship.dev/install | sh
+# One-liner: installs CLI, runs treeship init, instruments any detected agents
+curl -fsSL treeship.dev/setup | sh
+
+# Or via npm
+npm install -g treeship
 ```
+
+macOS and Linux only at v0.9.4. Windows users: install via WSL.
 
 ## Usage
 
