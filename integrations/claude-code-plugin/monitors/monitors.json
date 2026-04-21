@@ -1,0 +1,8 @@
+[
+  {
+    "name": "treeship-status",
+    "command": "${CLAUDE_PLUGIN_ROOT}/scripts/monitor.sh",
+    "description": "Live Treeship receipt activity for the current session.",
+    "when": "always"
+  }
+]

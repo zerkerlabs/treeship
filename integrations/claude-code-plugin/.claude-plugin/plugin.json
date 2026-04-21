@@ -1,0 +1,22 @@
+{
+  "name": "treeship",
+  "description": "Portable, cryptographically signed receipts for everything Claude Code does. Proof that stays true after the session ends.",
+  "version": "0.9.3",
+  "author": {
+    "name": "Zerker Labs",
+    "email": "hello@treeship.dev",
+    "url": "https://treeship.dev"
+  },
+  "homepage": "https://treeship.dev",
+  "repository": "https://github.com/zerkerlabs/treeship",
+  "license": "Apache-2.0",
+  "keywords": [
+    "treeship",
+    "receipts",
+    "attestation",
+    "verification",
+    "agent-trust",
+    "cryptographic-signing",
+    "session-receipts"
+  ]
+}
