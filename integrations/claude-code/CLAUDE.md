@@ -17,12 +17,12 @@ For each MCP `callTool`, the bridge writes three things. The complete field inve
 **Result receipt** (signed, after the call):
 - `system` (actor URI), `kind` (literal `"tool.result"`), `subject` (intent ID)
 - `payload.tool`, `payload.elapsed_ms`, `payload.exit_code`, `payload.is_error`
-- `payload.output_digest` (sha256 of output JSON — NOT the raw output)
+- `payload.output_digest` (sha256 of `result.content ?? result` JSON — NOT the raw output)
 - `payload.error_message` (raw `Error.message` text on thrown errors only — treat like a logged stack trace if your tools can leak in error messages)
 
 **Session event** (timeline entry):
 - `type` (`agent.called_tool`), `tool`, `actor`, `agent_name`
-- `duration_ms`, `exit_code`, `artifact_id` (the receipt ID)
+- `duration_ms`, `exit_code`, `artifact_id` (the receipt ID — present only if the receipt write succeeded)
 - `meta.source` (literal `"mcp-bridge"`), `meta.is_error`
 
 That is the complete set. No other fields are emitted.

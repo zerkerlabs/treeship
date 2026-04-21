@@ -34,7 +34,7 @@ For every MCP `callTool` invocation, the bridge writes three things: a signed **
 - `payload.elapsed_ms` — wall-clock duration of the call
 - `payload.exit_code` — `0` on success, `1` on thrown error
 - `payload.is_error` — boolean, true if the result was an MCP error response *or* the call threw
-- `payload.output_digest` — `sha256:<hex>` digest of `JSON.stringify(result.content ?? result)`, present only if the call returned (the output content is NOT stored)
+- `payload.output_digest` — `sha256:<hex>` digest of `JSON.stringify(result.content ?? result)`, present only if the call returned. The `?? result` fallback means: if the result has no `.content` field (some MCP tools return a bare object), the entire result object is digested instead. The output content itself is never stored.
 - `payload.error_message` — present only on thrown error: the **raw `Error.message` string**. If your tool's error messages can contain sensitive data, treat this field with the same care you'd treat a logged stack trace.
 
 **Session event** (timeline entry, written *after* the call):
@@ -45,7 +45,7 @@ For every MCP `callTool` invocation, the bridge writes three things: a signed **
 - `agent_name` — actor URI with the `agent://` prefix stripped (e.g. `claude-code`)
 - `duration_ms` — wall-clock duration
 - `exit_code` — `0` or `1`
-- `artifact_id` — the result receipt's artifact ID
+- `artifact_id` — the result receipt's artifact ID. Present **only if** the receipt attestation succeeded (i.e. the CLI accepted the receipt and returned an ID). On a failed receipt write, this field is omitted from the session event.
 - `meta.source` — literal `"mcp-bridge"`
 - `meta.is_error` — same boolean as the receipt's `is_error`
 

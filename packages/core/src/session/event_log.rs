@@ -4,15 +4,26 @@
 //! `.treeship/sessions/<session_id>/events.jsonl`.
 //!
 //! Concurrency model: `append()` is safe to call from multiple processes
-//! concurrently. Each call acquires an exclusive advisory lock (via
-//! `fs2::FileExt::lock_exclusive` -- backed by `flock(2)` on Unix and
-//! `LockFileEx` on Windows) on a sidecar `events.jsonl.lock` file, then
-//! re-counts the JSONL lines under the lock to derive `sequence_no`. This
-//! makes sequence numbers monotonic and unique even when several
-//! `treeship session event` processes race (e.g. parallel PostToolUse hook
-//! invocations from a Claude Code plugin). The per-process AtomicU64 is
-//! retained as a hot-path optimization for non-contended single-process
-//! use, but the on-disk count is always authoritative.
+//! concurrently. Each call attempts to acquire an exclusive advisory lock
+//! (via `fs2::FileExt::try_lock_exclusive` -- backed by `flock(2)` on Unix
+//! and `LockFileEx` on Windows) on a sidecar `events.jsonl.lock` file in a
+//! ~500ms bounded retry loop. Under the lock, the JSONL line count is the
+//! authoritative source for the next `sequence_no`. The per-process
+//! AtomicU64 is retained as a hot-path optimization for non-contended use,
+//! but its value is overwritten by the on-disk count after every locked
+//! append.
+//!
+//! Fail-open semantics: if a writer cannot acquire the lock within the
+//! retry window (typically because a peer crashed while holding it, or a
+//! filesystem doesn't honor flock at all), the append still proceeds
+//! without the lock and writes a stderr warning. In that degenerate case
+//! the resulting `sequence_no` is best-effort rather than guaranteed
+//! monotonic, but the event itself is preserved -- the alternative
+//! (blocking the agent forever on a wedged peer) is strictly worse.
+//!
+//! Lock file permissions are 0o600 (owner-only) on Unix, applied at file
+//! creation via `OpenOptionsExt::mode` and re-tightened on every open if
+//! a previous run left the file with looser perms.
 
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -225,26 +236,54 @@ impl EventLog {
 
 /// Open the sidecar lock file with owner-only permissions (0o600 on Unix).
 ///
-/// On Unix the mode is set atomically via `OpenOptionsExt::mode` so the
-/// file can never exist on disk with a more permissive mode (a separate
-/// `set_permissions` call after create would race). On Windows the mode
-/// concept doesn't apply; ACLs default to inheriting the parent dir's
-/// permissions, which for `.treeship/sessions/<id>/` should already be
-/// scoped to the owning user.
+/// On Unix the mode is set atomically via `OpenOptionsExt::mode` for newly
+/// created files. For files that already exist (e.g. left over from a
+/// prior crash or an upgrade from a pre-0.9.3 CLI that didn't tighten
+/// perms), we additionally re-chmod to 0o600 after open IF the file is
+/// owned by the current user. This is best-effort: if the chmod fails
+/// (file owned by another user, read-only filesystem, etc.) we proceed
+/// silently rather than refuse to open the lock -- the lock semantics
+/// don't depend on the perms being tight, only the privacy of the
+/// sidecar's existence does.
 ///
-/// If the file already exists, `OpenOptionsExt::mode` is a no-op (the
-/// file is opened with its existing permissions). That's correct -- a
-/// pre-existing lock file from a prior crash is reused as-is, and we
-/// have no business widening or narrowing whatever the OS or admin set.
+/// On Windows the mode concept doesn't apply; ACLs default to inheriting
+/// the parent dir's permissions, which for `.treeship/sessions/<id>/`
+/// should already be scoped to the owning user.
 #[cfg(all(not(target_family = "wasm"), unix))]
 fn open_lock_file(path: &Path) -> Result<std::fs::File, std::io::Error> {
-    use std::os::unix::fs::OpenOptionsExt;
-    std::fs::OpenOptions::new()
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+
+    let file = std::fs::OpenOptions::new()
         .create(true)
         .read(true)
         .write(true)
         .mode(0o600)
-        .open(path)
+        .open(path)?;
+
+    // Re-tighten if a pre-existing file has loose perms. Only act when the
+    // file is owned by us (uid match) -- chmod'ing files we don't own is
+    // either pointless (will fail with EPERM) or a security smell.
+    if let Ok(meta) = file.metadata() {
+        let mode = meta.permissions().mode() & 0o777;
+        let owned_by_us = meta.uid() == nix_uid();
+        if owned_by_us && mode != 0o600 {
+            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+        }
+    }
+
+    Ok(file)
+}
+
+/// Lightweight wrapper around `geteuid` so we can compare to file ownership
+/// without pulling in the `nix` crate. Uses `libc` directly (already a
+/// transitive dep via several upstream crates).
+#[cfg(all(not(target_family = "wasm"), unix))]
+fn nix_uid() -> u32 {
+    // SAFETY: geteuid is async-signal-safe and never fails per POSIX.
+    unsafe extern "C" {
+        fn geteuid() -> u32;
+    }
+    unsafe { geteuid() }
 }
 
 #[cfg(all(not(target_family = "wasm"), not(unix)))]
@@ -405,6 +444,41 @@ mod tests {
             mode, 0o600,
             "lock file mode is {:o}, expected 0o600 (owner-only)",
             mode
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A pre-existing lock file (e.g. from a v0.9.2 era crash) with looser
+    /// permissions must be tightened to 0o600 on next `EventLog::open`.
+    /// Regression test for the third Codex adversarial review.
+    #[cfg(all(not(target_family = "wasm"), unix))]
+    #[test]
+    fn existing_lock_file_is_re_tightened() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir()
+            .join(format!("treeship-evtlog-retighten-{}", rand::random::<u32>()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Pre-create a lock file with deliberately loose perms, simulating
+        // an upgrade from a CLI version that didn't set 0o600.
+        let lock_path = dir.join("events.jsonl.lock");
+        std::fs::write(&lock_path, b"").unwrap();
+        std::fs::set_permissions(&lock_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let pre_mode = std::fs::metadata(&lock_path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(pre_mode, 0o644, "test setup: pre-existing perms should be 0o644");
+
+        // First append after upgrade -- should re-tighten.
+        let log = EventLog::open(&dir).unwrap();
+        let mut e = make_event("ssn_retighten", EventType::SessionStarted);
+        log.append(&mut e).unwrap();
+
+        let post_mode = std::fs::metadata(&lock_path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            post_mode, 0o600,
+            "lock file should be re-tightened to 0o600 after open; got {:o}",
+            post_mode
         );
 
         let _ = std::fs::remove_dir_all(&dir);
