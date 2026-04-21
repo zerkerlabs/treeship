@@ -1480,7 +1480,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             ),
             SessionCommand::Status(a) => {
                 if a.check {
-                    commands::session::status_check(cli.config.as_deref())
+                    commands::session::status_check()
                 } else if a.watch {
                     commands::session::watch(cli.config.as_deref(), printer)
                 } else {

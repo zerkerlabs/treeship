@@ -252,6 +252,7 @@ impl EventLog {
 #[cfg(all(not(target_family = "wasm"), unix))]
 fn open_lock_file(path: &Path) -> Result<std::fs::File, std::io::Error> {
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+    use std::os::unix::io::AsRawFd;
 
     let file = std::fs::OpenOptions::new()
         .create(true)
@@ -260,18 +261,52 @@ fn open_lock_file(path: &Path) -> Result<std::fs::File, std::io::Error> {
         .mode(0o600)
         .open(path)?;
 
-    // Re-tighten if a pre-existing file has loose perms. Only act when the
-    // file is owned by us (uid match) -- chmod'ing files we don't own is
-    // either pointless (will fail with EPERM) or a security smell.
+    // Re-tighten if a pre-existing file has loose perms. Use `fchmod` on the
+    // open file descriptor rather than `set_permissions(path, ...)` to
+    // eliminate the TOCTOU window -- between metadata() and a path-based
+    // chmod, an attacker could swap the file. `fchmod` operates on the
+    // already-opened inode, so the target is pinned.
+    //
+    // Only act when the file is owned by us (uid match via geteuid). If
+    // fchmod fails (NFS mount with restricted metadata writes, or some
+    // filesystems without full POSIX perm support), emit a one-line
+    // stderr warning so an operator has visibility. The lock still works;
+    // only the privacy of the sidecar's existence is affected.
     if let Ok(meta) = file.metadata() {
         let mode = meta.permissions().mode() & 0o777;
         let owned_by_us = meta.uid() == nix_uid();
         if owned_by_us && mode != 0o600 {
-            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+            let fd = file.as_raw_fd();
+            // SAFETY: fd is valid (we just opened it), 0o600 is a
+            // well-formed mode. fchmod is async-signal-safe per POSIX.
+            let rc = unsafe { libc_fchmod(fd, 0o600) };
+            if rc != 0 {
+                let err = std::io::Error::last_os_error();
+                eprintln!(
+                    "[treeship] warning: could not tighten lock file perms on {} \
+                     to 0o600 (current: 0o{:o}). Error: {}. Lock still functions; \
+                     only the privacy of the sidecar is affected. Common cause: \
+                     NFS mount or filesystem without full POSIX perm support.",
+                    path.display(), mode, err
+                );
+            }
         }
     }
 
     Ok(file)
+}
+
+/// Thin FFI wrapper around libc::fchmod. Declared here so event_log.rs
+/// doesn't need a direct libc crate dep -- the symbol is available in
+/// every Unix libc binary.
+#[cfg(all(not(target_family = "wasm"), unix))]
+fn libc_fchmod(fd: i32, mode: u32) -> i32 {
+    // SAFETY: posix-standard FFI signature; `fd` validity and `mode`
+    // bounds are enforced by the caller.
+    unsafe extern "C" {
+        fn fchmod(fd: i32, mode: u32) -> i32;
+    }
+    unsafe { fchmod(fd, mode) }
 }
 
 /// Lightweight wrapper around `geteuid` so we can compare to file ownership

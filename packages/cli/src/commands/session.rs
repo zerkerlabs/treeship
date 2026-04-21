@@ -328,7 +328,13 @@ pub fn start(
 /// the noise of full `session status` output. The default `status` command
 /// returns Ok(()) in both branches (it's a human-facing report), which is
 /// the wrong shape for shell-script `if` checks -- they would always pass.
-pub fn status_check(_config: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+///
+/// Note: takes no config argument because `load_session()` reads the
+/// project-local session marker directly from cwd, not from the global
+/// config. This intentionally diverges from `status` (which opens the
+/// config-backed Ctx for verifying receipt integrity); for a pure
+/// existence probe we don't need the full context.
+pub fn status_check() -> Result<(), Box<dyn std::error::Error>> {
     if load_session().is_some() {
         Ok(())
     } else {
