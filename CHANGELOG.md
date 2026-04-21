@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.9.4 (2026-04-21)
+
+Closes the v0.9.3 launch gaps surfaced during live plugin testing: the plugin now has a real install path without waiting for Anthropic marketplace approval, keystore-migration failures produce actionable errors instead of cryptic ones, and the plugin's SessionStart hook no longer silently swallows errors.
+
+### Added
+
+- **Zerker Labs Claude Code plugin marketplace.** The treeship monorepo now ships `.claude-plugin/marketplace.json` at the repo root so any user can install the plugin tonight with:
+  ```
+  claude plugin marketplace add zerkerlabs/treeship
+  claude plugin install treeship@treeship
+  ```
+  Installs to `~/.claude/plugins/cache/treeship/treeship/<version>/`. Every subsequent Claude Code session auto-loads the plugin — SessionStart / PostToolUse / SessionEnd hooks fire, sealed receipts land in `.treeship/sessions/<id>.treeship`, `treeship package verify` passes all integrity checks. Independently verified end-to-end on a fresh scratch project. Anthropic's official-marketplace submission remains a separate track.
+
+- **Actionable keystore migration error.** When `Store::signer()` can't MAC-verify a key (typical cause: upgrading from a pre-0.9.x Treeship whose machine-key derivation has since changed), the error now includes a diagnosis and a copy-pasteable recovery path instead of just "MAC verification failed — key file may be corrupt or wrong machine". Detection is best-effort: presence of a legacy `.machineseed` or `machine_seed` file inside the keys dir upgrades the diagnosis from "could be many causes" to "this is specifically a version upgrade". The recovery path explicitly notes non-destructive move semantics and that prior sealed `.treeship` packages remain verifiable (their receipts embed the old public key, so signatures still check out offline).
+
+- **Plugin SessionStart hook surfaces failures to Claude Code.** `integrations/claude-code-plugin/scripts/session-start.sh` previously redirected stderr to `/dev/null` and silently exited 0 on any session-start error. With a broken keystore, that meant a user got no signal that recording wasn't happening — the worst possible failure mode. The hook now captures stderr, and on failure emits an `additionalContext` JSON envelope with the full diagnostic (built via python3 so newlines and quotes escape correctly) so Claude sees the recovery commands inline.
+
+### Fixed
+
+- **`fchmod`-on-fd eliminates TOCTOU in lock-file perm re-tightening.** The sidecar-lock-file open path (`open_lock_file` in `packages/core/src/session/event_log.rs`) previously re-chmodded existing files via `set_permissions(path, ...)` after an `file.metadata()` check. That's a TOCTOU: between the metadata read and the path-based chmod, an attacker could swap the inode. Now we call `fchmod(fd)` on the already-open file descriptor, so the target is pinned to the inode we hold. FFI wrapped locally to avoid adding a full `libc` dep for one symbol.
+
+- **NFS chmod warning.** If `fchmod` returns non-zero (NFS mount with restricted metadata, some filesystems without full POSIX perm support), we now emit a one-line stderr warning instead of silently ignoring the failure. The lock itself still functions; operators just gain visibility into perms that weren't tightened.
+
+- **Crates verify-script hardening.** `wait-for-crates-version.sh` now queries the sparse index (`https://index.crates.io/...`) first, falls back to the api/v1 endpoint with a policy-compliant User-Agent, and treats 403 as transient throttle rather than a hard failure. Fixes the ~5 minute verify-timeout false alarm we saw during the v0.9.3 release (the crate itself published successfully; only the verify gate was broken). Also avoids a SIGPIPE interaction where `grep -q` exiting early under `set -o pipefail` made successful matches look like network failures.
+
+- **`status_check` dead `_config` arg removed.** Cosmetic cleanup from the v0.9.3 Codex review punch list. `treeship session status --check` no longer takes a dead config argument because `load_session()` reads the project-local session marker from cwd directly.
+
+### Notes
+
+- No schema or API-surface changes. Workspace crates bumped together per the lockstep convention established in v0.9.2.
+- All 161 `treeship-core` lib tests pass, including the race-safety regression (`concurrent_appends_have_unique_sequence_numbers`), the lock-perm regression (`lock_file_has_owner_only_permissions`), and the upgrade-path regression (`existing_lock_file_is_re_tightened`).
+
+### Known limitations
+
+- **Append is still O(N)** in the on-disk event count. The counter-sidecar optimization noted as a v0.9.4 target in the v0.9.3 CHANGELOG is deferred again; for typical session lengths (50-500 events) this is negligible, and the current implementation is correct. Scheduled for v0.9.5 alongside the `treeship wrap`-vs-plugin-hooks architectural discussion.
+
 ## 0.9.3 (2026-04-20)
 
 Trust onboarding for AI agents. The motivating problem: developers attempting to install Treeship would land on `treeship.dev/setup` (404, missing rewrite) and, even after installing, Claude Code would refuse to attach the MCP server because it had no in-context explanation of what `@treeship/mcp` captures or where data goes. v0.9.3 fixes both halves.
