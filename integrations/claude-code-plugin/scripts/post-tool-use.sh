@@ -32,15 +32,23 @@ if ! treeship session status --check >/dev/null 2>&1; then
   exit 0
 fi
 
-# Pull tool_name out of the payload. Prefer jq for correctness (the payload
-# can contain user-controlled strings that look like JSON keys, e.g. a Bash
-# command whose argument literally contains `"tool_name":"foo"` -- a regex
-# match on stdout would extract the wrong value). Fall back to "unknown"
-# rather than risk a wrong-tool attribution.
+# Pull tool_name out of the payload using a real JSON parser. The payload
+# can contain user-controlled strings that look like JSON keys (e.g. a Bash
+# command whose argument literally contains `"tool_name":"foo"`), so a
+# regex would extract the wrong value. Try jq, then python3, then node --
+# any of the three is fine. Only fall back to "unknown" if none are
+# present, which is rare on modern dev machines.
+TOOL_NAME=""
 if command -v jq >/dev/null 2>&1; then
-  TOOL_NAME=$(printf '%s' "$INPUT" | jq -r '.tool_name // "unknown"' 2>/dev/null || echo "unknown")
-else
-  TOOL_NAME="unknown"
+  TOOL_NAME=$(printf '%s' "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)
+fi
+if [ -z "$TOOL_NAME" ] && command -v python3 >/dev/null 2>&1; then
+  TOOL_NAME=$(printf '%s' "$INPUT" | python3 -c 'import json,sys
+try: print(json.load(sys.stdin).get("tool_name",""))
+except Exception: pass' 2>/dev/null)
+fi
+if [ -z "$TOOL_NAME" ] && command -v node >/dev/null 2>&1; then
+  TOOL_NAME=$(printf '%s' "$INPUT" | node -e 'let d=""; process.stdin.on("data",c=>d+=c); process.stdin.on("end",()=>{ try { console.log(JSON.parse(d).tool_name||""); } catch { console.log(""); } })' 2>/dev/null)
 fi
 if [ -z "$TOOL_NAME" ] || [ "$TOOL_NAME" = "null" ]; then
   TOOL_NAME="unknown"

@@ -5,6 +5,19 @@
   "bin": {
     "treeship": "./bin/treeship.js"
   },
+  "scripts": {
+    "preinstall": "node scripts/check-platform.js"
+  },
+  "files": [
+    "bin/",
+    "scripts/check-platform.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "os": [
+    "darwin",
+    "linux"
+  ],
   "optionalDependencies": {
     "@treeship/cli-linux-x64": "0.9.3",
     "@treeship/cli-darwin-arm64": "0.9.3",

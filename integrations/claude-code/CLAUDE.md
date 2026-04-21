@@ -6,17 +6,32 @@ Source: <https://github.com/zerkerlabs/treeship> · Apache 2.0 · npm: `treeship
 
 ## What `@treeship/mcp` captures
 
-- Tool call names (e.g. `read_file`, `write_file`, `bash`)
-- SHA-256 digest of arguments (not the raw arguments)
-- SHA-256 digest of output content (not the raw content)
-- Exit code, is_error flag, wall-clock duration
-- Raw error message text on failures (treat this with the same care you'd treat a logged stack trace)
+For each MCP `callTool`, the bridge writes three things. The complete field inventory, verified against `bridges/mcp/src/client.ts`:
+
+**Intent attestation** (signed, before the call):
+- `actor` (URI like `agent://claude-code`)
+- `action` (literally `mcp.tool.<TOOL_NAME>.intent`)
+- `approval_nonce` (only if `TREESHIP_APPROVAL_NONCE` is set)
+- `meta.tool` (raw tool name), `meta.server` (literal `"mcp"`), `meta.args_digest` (sha256 of arguments JSON — NOT the raw arguments)
+
+**Result receipt** (signed, after the call):
+- `system` (actor URI), `kind` (literal `"tool.result"`), `subject` (intent ID)
+- `payload.tool`, `payload.elapsed_ms`, `payload.exit_code`, `payload.is_error`
+- `payload.output_digest` (sha256 of output JSON — NOT the raw output)
+- `payload.error_message` (raw `Error.message` text on thrown errors only — treat like a logged stack trace if your tools can leak in error messages)
+
+**Session event** (timeline entry):
+- `type` (`agent.called_tool`), `tool`, `actor`, `agent_name`
+- `duration_ms`, `exit_code`, `artifact_id` (the receipt ID)
+- `meta.source` (literal `"mcp-bridge"`), `meta.is_error`
+
+That is the complete set. No other fields are emitted.
 
 ## What it does NOT capture
 
 - Raw argument values or raw output content (digests only)
-- File contents (the bridge has no FS access; it only sees MCP `callTool` calls)
-- Environment variable values or secrets
+- File contents (the bridge has no FS access; it only wraps MCP `callTool`)
+- Environment variable values or secrets (env vars are read for behavior, never logged)
 - Anything outside the MCP tool-call boundary
 
 ## When data leaves this machine

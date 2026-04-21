@@ -14,26 +14,51 @@ Source: <https://github.com/zerkerlabs/treeship> · License: Apache 2.0 · npm: 
 
 ## What `@treeship/mcp` captures
 
-When you wire `@treeship/mcp` into an MCP-aware agent, every tool call the agent makes is logged with:
+For every MCP `callTool` invocation, the bridge writes three things: a signed **intent attestation** before the call, a signed **result receipt** after, and a **session event** that lands in the human-readable timeline. The full field inventory of each, verified against [`bridges/mcp/src/client.ts`](https://github.com/zerkerlabs/treeship/blob/main/bridges/mcp/src/client.ts):
 
-- Tool name (e.g. `read_file`, `write_file`, `bash`)
-- **SHA-256 digest** of the arguments (not the raw arguments themselves)
-- **SHA-256 digest** of the output content (not the raw output)
-- Exit code and an `is_error` boolean
-- Wall-clock duration in milliseconds
-- If the tool threw, the **raw error message text** (so failures stay debuggable). If your tool's error messages can contain sensitive content, treat the receipt's error field with the same care as a stack trace in a log.
-- A reference to the actor URI (e.g. `agent://claude-code`) — this is the identity attribution, not a user identifier
+**Intent attestation** (signed, written *before* the call):
 
-That is the entire payload. It is appended to the local session timeline. Source: [`bridges/mcp/src/client.ts`](https://github.com/zerkerlabs/treeship/blob/main/bridges/mcp/src/client.ts).
+- `actor` — the actor URI (e.g. `agent://claude-code`, or `agent://mcp-<clientName>` if `TREESHIP_ACTOR` isn't set)
+- `action` — literally `mcp.tool.<TOOL_NAME>.intent` (the raw tool name appears in this string)
+- `approval_nonce` — only if `TREESHIP_APPROVAL_NONCE` is set in the environment; binds the call to a prior approval
+- `meta.tool` — raw tool name
+- `meta.server` — literal `"mcp"`
+- `meta.args_digest` — `sha256:<hex>` digest of `JSON.stringify(arguments)` (the arguments themselves are NOT stored)
+
+**Result receipt** (signed, written *after* the call returns or throws):
+
+- `system` — the actor URI (same as the intent's `actor`)
+- `kind` — literal `"tool.result"`
+- `subject` — the intent artifact ID, linking the receipt back to its intent (only if the intent attestation succeeded)
+- `payload.tool` — raw tool name
+- `payload.elapsed_ms` — wall-clock duration of the call
+- `payload.exit_code` — `0` on success, `1` on thrown error
+- `payload.is_error` — boolean, true if the result was an MCP error response *or* the call threw
+- `payload.output_digest` — `sha256:<hex>` digest of `JSON.stringify(result.content ?? result)`, present only if the call returned (the output content is NOT stored)
+- `payload.error_message` — present only on thrown error: the **raw `Error.message` string**. If your tool's error messages can contain sensitive data, treat this field with the same care you'd treat a logged stack trace.
+
+**Session event** (timeline entry, written *after* the call):
+
+- `type` — literal `"agent.called_tool"`
+- `tool` — raw tool name
+- `actor` — actor URI
+- `agent_name` — actor URI with the `agent://` prefix stripped (e.g. `claude-code`)
+- `duration_ms` — wall-clock duration
+- `exit_code` — `0` or `1`
+- `artifact_id` — the result receipt's artifact ID
+- `meta.source` — literal `"mcp-bridge"`
+- `meta.is_error` — same boolean as the receipt's `is_error`
+
+That is the **complete** set of fields the bridge writes. There are no other fields, hidden envelopes, or out-of-band emissions — re-read `bridges/mcp/src/client.ts` end-to-end and `attest.ts` to verify.
 
 ## What `@treeship/mcp` does NOT capture
 
-- Raw argument values (only their SHA-256 digest)
-- Raw output content (only its SHA-256 digest)
-- File contents (the bridge has no file-system access; it only sees what flows through MCP `callTool`)
-- Environment variable values (only names, and only when explicitly attested via `treeship wrap`)
-- Secrets, credentials, API keys, tokens
-- Anything outside the MCP tool-call boundary (no screen recording, no keystroke logging, no network capture)
+- **Raw argument values** — only the `sha256` of `JSON.stringify(arguments)`. Anyone with the original arguments can recompute the digest to prove what was called; without them, the digest reveals nothing.
+- **Raw output content** — only the `sha256` of `JSON.stringify(result.content)`. Same property as above.
+- **File contents** — the bridge has no filesystem access. It only sees what flows through MCP `callTool`. (If you're using `treeship wrap` to capture shell commands, that's a separate path with its own behavior — see the wrap docs.)
+- **Environment variable values** — never logged. `TREESHIP_APPROVAL_NONCE`, `TREESHIP_ACTOR`, `TREESHIP_DISABLE`, and `TREESHIP_DEBUG` are read but their values are only used to gate behavior, not stored. The `approval_nonce` IS recorded as part of the intent (so the binding is verifiable), but it's a one-time random nonce by design — not a credential.
+- **Secrets, credentials, API keys, tokens** — none of the captured fields above contain these unless your tool's *error messages* leak them, in which case they'd land in `payload.error_message`. Treat that field as you would any error log.
+- **Anything outside the MCP tool-call boundary** — no screen recording, no keystroke logging, no network capture, no process introspection. The bridge is a `super.callTool` wrapper; it sees what MCP sees and nothing else.
 
 ## When data leaves the machine
 

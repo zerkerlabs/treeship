@@ -89,22 +89,62 @@ impl EventLog {
     /// sidecar `.lock` file, re-counts events.jsonl lines, assigns sequence_no,
     /// writes the new event, then releases the lock on drop.
     ///
+    /// Lock acquisition is bounded: tries to acquire for up to ~500ms via
+    /// `try_lock_exclusive` poll, then falls back to an unlocked append
+    /// with a stderr warning. A wedged or crashed writer must NOT hang
+    /// hook-driven invocations forever (PostToolUse hooks running per
+    /// tool call would freeze the agent). Better to lose strict
+    /// sequence_no monotonicity in the rare wedge case than to deadlock.
+    ///
+    /// Lock file is created mode 0o600 (owner-only) so the sidecar can
+    /// never be opened by other users on a shared machine.
+    ///
     /// Skipped on WASM (no fs, no concurrency).
     #[cfg(not(target_family = "wasm"))]
     fn append_locked(&self, event: &mut SessionEvent) -> Result<(), EventLogError> {
+        use std::time::{Duration, Instant};
+
         // Sidecar lock file: contention here doesn't block readers of events.jsonl.
         let lock_path = self.path.with_extension("jsonl.lock");
-        let lock_file = std::fs::OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .open(&lock_path)?;
-        // Blocks until exclusive lock is acquired. Released when lock_file is dropped.
-        lock_file.lock_exclusive()?;
 
-        // Under the lock: re-derive sequence_no from the actual on-disk line
-        // count. The per-process AtomicU64 is a stale hint -- only the on-disk
-        // count is authoritative when multiple processes are appending.
+        // Open or create the lock file. On Unix we set 0o600 explicitly so
+        // the sidecar isn't group/world readable; the umask-derived default
+        // would otherwise be permissive on some setups.
+        let lock_file = open_lock_file(&lock_path)?;
+
+        // Bounded retry. With 16 parallel writers the worst case is a
+        // queue of N short-held locks; 500ms is plenty. If we fail to
+        // acquire in that window something is wedged -- fall through and
+        // append without ordering rather than freezing the caller.
+        let mut acquired = false;
+        let start = Instant::now();
+        let deadline = Duration::from_millis(500);
+        loop {
+            match lock_file.try_lock_exclusive() {
+                Ok(()) => {
+                    acquired = true;
+                    break;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if start.elapsed() >= deadline {
+                        eprintln!(
+                            "[treeship] event_log: lock contention on {} \
+                             exceeded {}ms; appending without sequence ordering guarantee",
+                            lock_path.display(),
+                            deadline.as_millis()
+                        );
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+
+        // Under the lock (or unlocked fallback): re-derive sequence_no
+        // from the actual on-disk line count. The per-process AtomicU64
+        // is a stale hint -- only the on-disk count is authoritative
+        // when multiple processes are appending.
         let count = if self.path.exists() {
             let f = std::fs::File::open(&self.path)?;
             let r = std::io::BufReader::new(f);
@@ -128,7 +168,9 @@ impl EventLog {
         // see the right value via event_count() without re-reading.
         self.sequence.store(count + 1, Ordering::SeqCst);
 
-        // lock_file drops here -> flock released.
+        // Suppress the unused-variable warning on the unlock-fallback path.
+        let _ = acquired;
+        // lock_file drops here -> flock released (no-op if we never acquired).
         Ok(())
     }
 
@@ -179,6 +221,39 @@ impl EventLog {
     pub fn path(&self) -> &Path {
         &self.path
     }
+}
+
+/// Open the sidecar lock file with owner-only permissions (0o600 on Unix).
+///
+/// On Unix the mode is set atomically via `OpenOptionsExt::mode` so the
+/// file can never exist on disk with a more permissive mode (a separate
+/// `set_permissions` call after create would race). On Windows the mode
+/// concept doesn't apply; ACLs default to inheriting the parent dir's
+/// permissions, which for `.treeship/sessions/<id>/` should already be
+/// scoped to the owning user.
+///
+/// If the file already exists, `OpenOptionsExt::mode` is a no-op (the
+/// file is opened with its existing permissions). That's correct -- a
+/// pre-existing lock file from a prior crash is reused as-is, and we
+/// have no business widening or narrowing whatever the OS or admin set.
+#[cfg(all(not(target_family = "wasm"), unix))]
+fn open_lock_file(path: &Path) -> Result<std::fs::File, std::io::Error> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .mode(0o600)
+        .open(path)
+}
+
+#[cfg(all(not(target_family = "wasm"), not(unix)))]
+fn open_lock_file(path: &Path) -> Result<std::fs::File, std::io::Error> {
+    std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(path)
 }
 
 #[cfg(test)]
@@ -307,5 +382,31 @@ mod tests {
         assert_eq!(on_disk, expected);
 
         let _ = std::fs::remove_dir_all(&*dir);
+    }
+
+    /// Sidecar lock file must be created mode 0o600 (owner-only) on Unix.
+    /// Regression test for #5 in the second Codex adversarial review.
+    #[cfg(all(not(target_family = "wasm"), unix))]
+    #[test]
+    fn lock_file_has_owner_only_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir()
+            .join(format!("treeship-evtlog-perms-{}", rand::random::<u32>()));
+        let log = EventLog::open(&dir).unwrap();
+
+        let mut e = make_event("ssn_perms", EventType::SessionStarted);
+        log.append(&mut e).unwrap();
+
+        let lock_path = log.path().with_extension("jsonl.lock");
+        let meta = std::fs::metadata(&lock_path).expect("lock file must exist after first append");
+        let mode = meta.permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "lock file mode is {:o}, expected 0o600 (owner-only)",
+            mode
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
