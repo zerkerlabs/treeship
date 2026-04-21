@@ -20,6 +20,8 @@ claude --plugin-dir /path/to/treeship/integrations/claude-code-plugin
 
 The plugin requires the `treeship` CLI binary on your PATH and a `.treeship/` directory in your project (run `treeship init` once per project). Both are zero-noise: missing CLI or missing `.treeship/` makes the plugin a silent no-op so it never blocks Claude Code from working.
 
+**Platform support: macOS and Linux only at v0.9.3.** The hook scripts are POSIX shell. Native Windows is planned for v0.10.0 — on Windows today, use WSL or skip the plugin and use the cross-platform Treeship SDKs directly.
+
 ## What you get
 
 - **Sessions start automatically.** The first message in any project with a `.treeship/` directory triggers a SessionStart hook that opens a Treeship session named after the project + timestamp. You don't run `treeship session start` yourself.

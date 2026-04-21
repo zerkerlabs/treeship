@@ -18,7 +18,7 @@ fi
 LAST=""
 
 while :; do
-  if [ -d "./.treeship" ] && treeship session status >/dev/null 2>&1; then
+  if [ -d "./.treeship" ] && treeship session status --check >/dev/null 2>&1; then
     # Pull the receipts/events counters out of `session status`. The CLI's
     # default output includes lines like "receipts:  3" and "events:    7".
     STATUS=$(treeship session status 2>/dev/null || true)

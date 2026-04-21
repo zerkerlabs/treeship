@@ -595,6 +595,11 @@ struct SessionStatusArgs {
     /// Watch mode: poll the event log every 2 seconds and render a live TUI
     #[arg(long)]
     watch: bool,
+
+    /// Quiet check: print nothing, exit 0 if a session is active, exit 1 otherwise.
+    /// Designed for shell-script gating (hooks, monitors, CI).
+    #[arg(long)]
+    check: bool,
 }
 
 #[derive(Args)]
@@ -1474,7 +1479,9 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 printer,
             ),
             SessionCommand::Status(a) => {
-                if a.watch {
+                if a.check {
+                    commands::session::status_check(cli.config.as_deref())
+                } else if a.watch {
                     commands::session::watch(cli.config.as_deref(), printer)
                 } else {
                     commands::session::status(cli.config.as_deref(), printer)

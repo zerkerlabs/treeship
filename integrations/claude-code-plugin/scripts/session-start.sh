@@ -23,8 +23,8 @@ if [ ! -d "./.treeship" ]; then
 fi
 
 # If a session is already active in this project, don't start a duplicate.
-# `treeship session status` exits non-zero when no active session.
-if treeship session status >/dev/null 2>&1; then
+# `treeship session status --check` exits 0 when active, 1 when not.
+if treeship session status --check >/dev/null 2>&1; then
   exit 0
 fi
 

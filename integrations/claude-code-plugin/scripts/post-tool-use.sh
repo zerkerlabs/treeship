@@ -26,15 +26,23 @@ if [ ! -d "./.treeship" ]; then
   exit 0
 fi
 
-# No active session means no place to record this event
-if ! treeship session status >/dev/null 2>&1; then
+# No active session means no place to record this event.
+# `treeship session status --check` exits 0 when active, 1 when not.
+if ! treeship session status --check >/dev/null 2>&1; then
   exit 0
 fi
 
-# Pull tool_name out of the payload without requiring jq. The PostToolUse
-# JSON schema includes a top-level "tool_name" string field.
-TOOL_NAME=$(printf '%s' "$INPUT" | sed -n 's/.*"tool_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
-if [ -z "$TOOL_NAME" ]; then
+# Pull tool_name out of the payload. Prefer jq for correctness (the payload
+# can contain user-controlled strings that look like JSON keys, e.g. a Bash
+# command whose argument literally contains `"tool_name":"foo"` -- a regex
+# match on stdout would extract the wrong value). Fall back to "unknown"
+# rather than risk a wrong-tool attribution.
+if command -v jq >/dev/null 2>&1; then
+  TOOL_NAME=$(printf '%s' "$INPUT" | jq -r '.tool_name // "unknown"' 2>/dev/null || echo "unknown")
+else
+  TOOL_NAME="unknown"
+fi
+if [ -z "$TOOL_NAME" ] || [ "$TOOL_NAME" = "null" ]; then
   TOOL_NAME="unknown"
 fi
 

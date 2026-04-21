@@ -17,13 +17,14 @@ if [ ! -d "./.treeship" ]; then
   exit 0
 fi
 
-# No active session means nothing to close
-if ! treeship session status >/dev/null 2>&1; then
+# No active session means nothing to close.
+# `treeship session status --check` exits 0 when active, 1 when not.
+if ! treeship session status --check >/dev/null 2>&1; then
   exit 0
 fi
 
 # Generic auto-headline. If the user invoked the treeship-session skill earlier
-# and closed with a real headline, `session status` returns non-zero above and
+# and closed with a real headline, `session status --check` returns 1 above and
 # we never get here.
 HEADLINE="Claude Code session"
 

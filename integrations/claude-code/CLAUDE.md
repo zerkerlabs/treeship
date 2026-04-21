@@ -7,14 +7,17 @@ Source: <https://github.com/zerkerlabs/treeship> · Apache 2.0 · npm: `treeship
 ## What `@treeship/mcp` captures
 
 - Tool call names (e.g. `read_file`, `write_file`, `bash`)
-- Arguments and exit codes
-- Wall-clock duration per call
+- SHA-256 digest of arguments (not the raw arguments)
+- SHA-256 digest of output content (not the raw content)
+- Exit code, is_error flag, wall-clock duration
+- Raw error message text on failures (treat this with the same care you'd treat a logged stack trace)
 
 ## What it does NOT capture
 
-- File contents
+- Raw argument values or raw output content (digests only)
+- File contents (the bridge has no FS access; it only sees MCP `callTool` calls)
 - Environment variable values or secrets
-- Anything outside the tool-call boundary
+- Anything outside the MCP tool-call boundary
 
 ## When data leaves this machine
 

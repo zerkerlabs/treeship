@@ -17,18 +17,23 @@ Source: <https://github.com/zerkerlabs/treeship> · License: Apache 2.0 · npm: 
 When you wire `@treeship/mcp` into an MCP-aware agent, every tool call the agent makes is logged with:
 
 - Tool name (e.g. `read_file`, `write_file`, `bash`)
-- Arguments passed to the tool
-- Exit code or error string
-- Wall-clock duration
+- **SHA-256 digest** of the arguments (not the raw arguments themselves)
+- **SHA-256 digest** of the output content (not the raw output)
+- Exit code and an `is_error` boolean
+- Wall-clock duration in milliseconds
+- If the tool threw, the **raw error message text** (so failures stay debuggable). If your tool's error messages can contain sensitive content, treat the receipt's error field with the same care as a stack trace in a log.
+- A reference to the actor URI (e.g. `agent://claude-code`) — this is the identity attribution, not a user identifier
 
-That is the entire payload. It is appended to the local session timeline.
+That is the entire payload. It is appended to the local session timeline. Source: [`bridges/mcp/src/client.ts`](https://github.com/zerkerlabs/treeship/blob/main/bridges/mcp/src/client.ts).
 
 ## What `@treeship/mcp` does NOT capture
 
-- File contents (only the path and operation)
-- Environment variable values (only the names, if explicitly attested)
+- Raw argument values (only their SHA-256 digest)
+- Raw output content (only its SHA-256 digest)
+- File contents (the bridge has no file-system access; it only sees what flows through MCP `callTool`)
+- Environment variable values (only names, and only when explicitly attested via `treeship wrap`)
 - Secrets, credentials, API keys, tokens
-- Anything outside the tool-call boundary (no screen recording, no keystroke logging, no network capture)
+- Anything outside the MCP tool-call boundary (no screen recording, no keystroke logging, no network capture)
 
 ## When data leaves the machine
 
@@ -54,6 +59,8 @@ curl -fsSL treeship.dev/setup | sh
 ```
 
 That installs the CLI, runs `treeship init`, and instruments any agents it detects.
+
+**Platform support at v0.9.3: macOS and Linux only.** The CLI ships for `darwin-arm64`, `darwin-x64`, and `linux-x64`. The setup script is POSIX shell and the `treeship add` command's project-file drops use POSIX path semantics (`std::fs::rename` overwrites on POSIX, which differs from Windows). A Windows binary and Windows-aware filesystem path is planned for v0.10.0. If you're on Windows today, use WSL.
 
 ## Onboarding (AI agents)
 

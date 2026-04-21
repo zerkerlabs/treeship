@@ -320,6 +320,22 @@ pub fn start(
 // session status
 // ---------------------------------------------------------------------------
 
+/// Quiet existence probe for shell scripts. Prints nothing.
+/// Exit 0 if a session is active, exit 1 if not.
+///
+/// Used by hooks (SessionStart, SessionEnd, PostToolUse) and monitors that
+/// need to gate behavior on "is there an active session right now?" without
+/// the noise of full `session status` output. The default `status` command
+/// returns Ok(()) in both branches (it's a human-facing report), which is
+/// the wrong shape for shell-script `if` checks -- they would always pass.
+pub fn status_check(_config: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    if load_session().is_some() {
+        Ok(())
+    } else {
+        std::process::exit(1);
+    }
+}
+
 pub fn status(
     config: Option<&str>,
     printer: &Printer,

@@ -21,8 +21,14 @@ hex           = "0.4"
 
 # hostname doesn't compile on WASM (no OS-level hostname APIs). Gate it to
 # non-wasm targets; the WASM build falls back to "host_unknown".
+# fs2 (advisory file locks via flock / Windows equivalents) is required by
+# the event_log append path so sequence_no assignment is race-free across
+# multiple `treeship session event` processes (e.g. parallel PostToolUse
+# hook invocations from a Claude Code plugin). WASM contexts have neither
+# concurrent writers nor a real filesystem, so fs2 is gated to non-wasm too.
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 hostname      = "0.4"
+fs2           = "0.4"
 
 [dev-dependencies]
 # Nothing extra needed — tests use the same crates
