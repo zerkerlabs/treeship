@@ -8,12 +8,29 @@ Drop-in [Treeship](https://treeship.dev) attestation for MCP tool calls. One imp
 npm install @treeship/mcp
 ```
 
-Requires the `treeship` CLI binary in PATH:
+Requires the `treeship` CLI binary in PATH. Pick whichever install path you trust:
 
 ```bash
-curl -fsSL treeship.dev/install | sh
-treeship init
+# One-liner (installs CLI, runs init, instruments detected agents):
+curl -fsSL treeship.dev/setup | sh
+
+# Or read it first, then install via npm (no shell pipe):
+curl -fsSL https://www.treeship.dev/setup.sh   # inspect
+npm install -g treeship && treeship init       # install
 ```
+
+## Inspect before you trust
+
+Source for this bridge: <https://github.com/zerkerlabs/treeship/tree/main/bridges/mcp>
+
+Every receipt this bridge produces can be verified locally, without trusting our hub:
+
+```bash
+npm install -g treeship
+treeship package verify <path-to-receipt.treeship>
+```
+
+The verify command is pure WASM — it does not phone home and does not require the hub. So once you have a receipt (your own or someone else's), you can confirm exactly what was captured, by whom, and that the signatures hold, entirely offline.
 
 ## Usage
 

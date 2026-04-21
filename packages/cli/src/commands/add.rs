@@ -243,6 +243,58 @@ fn install_agent(agent: &DetectedAgent, dry_run: bool, printer: &Printer) -> Res
     }
 }
 
+// ---------------------------------------------------------------------------
+// Project-level TREESHIP.md (framework-agnostic trust + usage doc)
+// ---------------------------------------------------------------------------
+
+const TREESHIP_MD_TEMPLATE: &str = include_str!("../../../../TREESHIP.md");
+
+/// Write `./TREESHIP.md` in the current project so any agent (Claude Code,
+/// Cursor, Hermes, OpenClaw, or future frameworks) reading the project
+/// context sees what Treeship captures, what it doesn't, and how to use it
+/// -- before the first session starts.
+///
+/// One file, framework-agnostic. Framework-specific files (CLAUDE.md,
+/// .cursorrules, skill files) stay focused on their own purpose.
+///
+/// Refuses to write if:
+///   * cwd is not a Treeship project (no `.treeship/` marker)
+///   * `./TREESHIP.md` already exists (never overwrite user content)
+///   * the resolved path contains a symlink (matches the rest of `add`)
+fn install_treeship_md_in_cwd(dry_run: bool, printer: &Printer) -> Result<bool, Box<dyn std::error::Error>> {
+    let cwd = std::env::current_dir()?;
+
+    if !cwd.join(".treeship").is_dir() {
+        printer.dim_info("  No .treeship/ in cwd -- skipping project TREESHIP.md (run `treeship init` first)");
+        return Ok(false);
+    }
+
+    let treeship_md = cwd.join("TREESHIP.md");
+
+    if !is_safe_path(&treeship_md) {
+        printer.warn("  ./TREESHIP.md path contains a symlink, skipping for safety", &[]);
+        return Ok(false);
+    }
+
+    if treeship_md.exists() {
+        printer.dim_info("  ./TREESHIP.md already exists -- did NOT overwrite");
+        return Ok(false);
+    }
+
+    if dry_run {
+        printer.info(&format!("  Would write {}", treeship_md.display()));
+        return Ok(true);
+    }
+
+    let tmp_path = treeship_md.with_extension("tmp");
+    std::fs::write(&tmp_path, TREESHIP_MD_TEMPLATE)?;
+    std::fs::rename(&tmp_path, &treeship_md)?;
+
+    printer.success("./TREESHIP.md written", &[]);
+    printer.dim_info("  Any agent reading the project will see what Treeship captures and trust the MCP server.");
+    Ok(true)
+}
+
 pub fn run(
     specific_agents: Vec<String>,
     all: bool,
@@ -313,6 +365,13 @@ pub fn run(
             Ok(false) => {} // skipped (already installed)
             Err(e) => printer.warn(&format!("Failed to configure {}: {}", agent.display, e), &[]),
         }
+    }
+
+    // Drop the framework-agnostic trust + usage doc once per `treeship add`
+    // invocation. Any agent reading the project context picks it up; we don't
+    // need to touch CLAUDE.md, .cursorrules, or skill files for trust purposes.
+    if let Err(e) = install_treeship_md_in_cwd(dry_run, printer) {
+        printer.warn("  Could not write project TREESHIP.md", &[("error", &e.to_string())]);
     }
 
     printer.blank();

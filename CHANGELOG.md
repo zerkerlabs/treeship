@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.9.3 (2026-04-20)
+
+Trust onboarding for AI agents. The motivating problem: developers attempting to install Treeship would land on `treeship.dev/setup` (404, missing rewrite) and, even after installing, Claude Code would refuse to attach the MCP server because it had no in-context explanation of what `@treeship/mcp` captures or where data goes. v0.9.3 fixes both halves.
+
+### Added
+
+- `treeship add` (any framework) now drops a single `./TREESHIP.md` into the project root if one isn't already there. The file is framework-agnostic and answers the trust question for Claude Code, Cursor, Cline, Hermes, OpenClaw, and any future MCP-aware agent in one place: what gets captured (tool name, arguments, exit code, duration), what does NOT get captured (file contents, env values, secrets), when data leaves the machine (only on explicit `treeship session report` / `hub push` / `auto_push: true`), and how to use the wrap/session lifecycle.
+- The TREESHIP.md template ships embedded in the CLI binary via `include_str!` so the drop works offline and never fetches over the network.
+
+### Changed
+
+- `treeship add` no longer touches framework-specific files (CLAUDE.md, .cursorrules, skill files) for trust purposes. Those stay focused on framework-specific instructions; the trust block lives in TREESHIP.md instead. One file, one source of truth, any agent.
+- `integrations/claude-code/CLAUDE.md` template gains the trust block (what's captured, what isn't, when data leaves) above the existing wrapping rules — so users who copy the template manually also get the trust context, not only those who go through `treeship add`.
+- `bridges/mcp/README.md` reframed: the inspect-before-trust path now leads with `treeship package verify` (offline, WASM, no hub required), with a clear pointer to the bridge source. Removed the previous "Verify our own development" section pending the flagship release receipt.
+
+### Notes
+
+- Same safety guards as the rest of `treeship add`: refuses to write outside a `.treeship/`-initialized project, refuses through symlinks, never overwrites an existing `./TREESHIP.md`.
+- The website's `setup.sh` one-liner is unchanged in behavior — `treeship add --all` (which it already calls) now drops TREESHIP.md automatically once v0.9.3 is published.
+- Website-side fix for the original `treeship.dev/setup` 404 is in the `treeship-website` repo (added a Next.js rewrite for `/setup` → `/setup.sh` mirroring the existing `/install` rewrite). Independent of this CLI release; deploys with the website.
+
 ## 0.9.2 (2026-04-20)
 
 All packages realigned at 0.9.2 after a partial v0.9.1 npm publish. v0.9.1 landed successfully on crates.io, PyPI, and for the `treeship` wrapper + platform binaries on npm, but the new `@treeship/core-wasm` and `@treeship/verify` packages failed to bootstrap (scope permissions for new package names), which cascaded failure to `@treeship/sdk`, `@treeship/mcp`, and `@treeship/a2a`. The release workflow has been hardened to fail loud on publish failures, pre-flight every expected package on the `@treeship` scope, and verify each package post-publish.

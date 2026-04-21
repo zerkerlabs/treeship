@@ -1,6 +1,6 @@
 {
   "name": "@treeship/verify",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "Zero-dependency cryptographic verification for Treeship receipts and certificates. Runs anywhere WASM runs: Node, browser, Vercel Edge, Cloudflare Workers, AWS Lambda.",
   "license": "Apache-2.0",
   "repository": {
@@ -40,7 +40,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@treeship/core-wasm": "0.9.2"
+    "@treeship/core-wasm": "0.9.3"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
