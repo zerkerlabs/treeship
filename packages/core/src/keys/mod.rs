@@ -168,7 +168,7 @@ impl Store {
         let entry = self.load_entry(id)?;
 
         let secret = aes_gcm_decrypt(&self.machine_key, &entry.enc_priv_key, &entry.nonce)
-            .map_err(|e| KeyError::Crypto(e))?;
+            .map_err(|e| self.enrich_crypto_error(e))?;
 
         let secret_arr: [u8; 32] = secret.try_into()
             .map_err(|_| KeyError::Crypto("decrypted key is wrong length".into()))?;
@@ -177,6 +177,61 @@ impl Store {
             .map_err(|e| KeyError::Crypto(e.to_string()))?;
 
         Ok(Box::new(signer))
+    }
+
+    /// Wrap a bare crypto error (typically "MAC verification failed ..." from
+    /// the AES-GCM decrypt path) with a diagnostic and an actionable recovery
+    /// path.
+    ///
+    /// The common failure mode in the wild is a pre-0.9.x keystore whose
+    /// machine-key derivation was seed-file-based. Later versions derive
+    /// the machine key from hostname+username (macOS) or /etc/machine-id
+    /// (Linux), so old ciphertexts can't be MAC-verified with the new key.
+    /// Detecting that case is best-effort: the presence of a legacy seed
+    /// file (`.machineseed` or `machine_seed` inside the keys dir) is a
+    /// strong hint. If we see one, call it out explicitly.
+    fn enrich_crypto_error(&self, raw: String) -> KeyError {
+        // Only enrich on MAC failures -- other errors (I/O, wrong length) are
+        // surfaced as-is because their remediation differs.
+        if !raw.contains("MAC verification failed") {
+            return KeyError::Crypto(raw);
+        }
+
+        let legacy_seed_dot = self.dir.join(".machineseed");
+        let legacy_seed     = self.dir.join("machine_seed");
+        let has_legacy_seed = legacy_seed_dot.exists() || legacy_seed.exists();
+
+        let diagnosis = if has_legacy_seed {
+            "your keystore was created by an older Treeship version whose \
+             machine-key derivation has since changed. The ciphertext is \
+             intact but cannot be decrypted under the current derivation."
+        } else {
+            "the keystore cannot be decrypted. Usual causes: the key file \
+             was copied from a different machine, the hostname or username \
+             changed, or the file was corrupted."
+        };
+
+        // Resolve the user's ~/.treeship path for the recovery command, so
+        // we give a copy-pasteable command rather than a generic instruction.
+        let ts_dir = std::env::var("HOME")
+            .map(|h| format!("{h}/.treeship"))
+            .unwrap_or_else(|_| "~/.treeship".into());
+
+        // The outer KeyError::Crypto Display impl already prepends
+        // "keys crypto: "; don't double it. Start with the raw MAC error
+        // so the user still sees the underlying cryptographic reason,
+        // then follow with the human-readable diagnosis and recovery.
+        let msg = format!(
+            "{raw}\n\n  \
+             Diagnosis: {diagnosis}\n\n  \
+             Recovery (nondestructive -- the old keystore is moved aside, \
+             not deleted; any sealed .treeship packages you produced remain \
+             verifiable since their receipts embed the old public key):\n\n    \
+             mv {ts_dir} {ts_dir}.bak.$(date +%s)\n    \
+             treeship init\n"
+        );
+
+        KeyError::Crypto(msg)
     }
 
     /// Returns the default key ID.

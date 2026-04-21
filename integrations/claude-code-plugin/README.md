@@ -6,13 +6,23 @@ This is the official Treeship plugin for Claude Code. Install it once and every 
 
 ## Install
 
-From inside Claude Code:
+Add the Treeship marketplace once, then install the plugin:
 
 ```
-/plugin install treeship
+claude plugin marketplace add zerkerlabs/treeship
+claude plugin install treeship@treeship
 ```
 
-For local development against a checked-out copy of this directory:
+After that, every Claude Code session on this machine auto-loads the plugin. No restart needed for the current session to pick up the install; new sessions attach it automatically.
+
+**Updating.** When a new version ships:
+
+```
+claude plugin marketplace update treeship
+claude plugin update treeship
+```
+
+**For local development** against a checked-out copy of this directory:
 
 ```
 claude --plugin-dir /path/to/treeship/integrations/claude-code-plugin
