@@ -6,13 +6,13 @@
   },
   "metadata": {
     "description": "Official Treeship marketplace. Portable, cryptographically signed receipts for AI coding sessions.",
-    "version": "0.9.3"
+    "version": "0.9.4"
   },
   "plugins": [
     {
       "name": "treeship",
       "description": "Portable, cryptographically signed receipts for everything Claude Code does. Proof that stays true after the session ends.",
-      "version": "0.9.3",
+      "version": "0.9.4",
       "author": {
         "name": "Zerker Labs",
         "url": "https://treeship.dev"

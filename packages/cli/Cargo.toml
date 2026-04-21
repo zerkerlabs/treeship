@@ -1,6 +1,6 @@
 [package]
 name = "treeship-cli"
-version = "0.9.3"
+version = "0.9.4"
 edition = "2021"
 description = "Portable trust receipts for agent workflows - CLI"
 license = "Apache-2.0"
@@ -20,7 +20,7 @@ zk = ["treeship-zk-circom", "treeship-zk-risc0"]  # Circom + RISC Zero ZK proofs
 zk-bonsai = ["treeship-zk-risc0/zk-bonsai"]  # RISC Zero Bonsai hosted proving
 
 [dependencies]
-treeship-core = { version = "0.9.3", path = "../core" }
+treeship-core = { version = "0.9.4", path = "../core" }
 clap = { version = "4", features = ["derive"] }
 serde         = { version = "1", features = ["derive"] }
 serde_json = "1"

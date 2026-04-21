@@ -1,6 +1,6 @@
 [package]
 name = "treeship-core"
-version = "0.9.3"
+version = "0.9.4"
 edition = "2021"
 description = "Portable trust receipts for agent workflows - core library"
 license = "Apache-2.0"
