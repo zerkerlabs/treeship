@@ -182,11 +182,44 @@ impl AgentGraph {
                     node.status = Some("failed".into());
                 }
 
+                // node.tool_calls counts every action the agent took. The
+                // side-effects ledger then groups those actions by category
+                // (files_read, files_written, processes, network_connections,
+                // ports_opened, tool_invocations) -- but the per-agent total
+                // here is the cardinal count.
+                //
+                // History note: prior to v0.9.5 only AgentCalledTool and
+                // AgentCompletedProcess were counted, which made the per-agent
+                // count drop to near-zero when the Claude Code plugin started
+                // emitting specialized event types (agent.read_file, etc.).
+                // The sum of node.tool_calls across all agents (used as
+                // "Actions" in the local preview and as the headline tool
+                // count on treeship.dev/receipt/<id>) was undercounting the
+                // agent's actual activity. Adding the four file/network/port
+                // event types here fixes the counter for all consumers in
+                // one place; renderers don't need to compute the total
+                // themselves.
                 EventType::AgentCalledTool { .. } => {
                     node.tool_calls += 1;
                 }
 
                 EventType::AgentCompletedProcess { .. } => {
+                    node.tool_calls += 1;
+                }
+
+                EventType::AgentReadFile { .. } => {
+                    node.tool_calls += 1;
+                }
+
+                EventType::AgentWroteFile { .. } => {
+                    node.tool_calls += 1;
+                }
+
+                EventType::AgentConnectedNetwork { .. } => {
+                    node.tool_calls += 1;
+                }
+
+                EventType::AgentOpenedPort { .. } => {
                     node.tool_calls += 1;
                 }
 
@@ -332,5 +365,63 @@ mod tests {
         assert_eq!(graph.max_depth(), 3);
         let l3 = graph.nodes.iter().find(|n| n.agent_instance_id == "l3").unwrap();
         assert_eq!(l3.depth, 3);
+    }
+
+    /// Regression test: per-agent `tool_calls` must count every action event
+    /// type the agent emits, not just `AgentCalledTool` and `AgentCompletedProcess`.
+    ///
+    /// Pre-v0.9.5, this counter ignored AgentReadFile, AgentWroteFile,
+    /// AgentConnectedNetwork, and AgentOpenedPort. As soon as the Claude Code
+    /// plugin started emitting those specialized event types (also v0.9.5),
+    /// the per-agent count -- and the `nodes.reduce(...)` total used by the
+    /// receipt renderer -- collapsed to near-zero even when the agent had
+    /// done substantial work. The fix lives in the EventType match arm above.
+    #[test]
+    fn tool_calls_counts_every_action_event_type() {
+        let events = vec![
+            evt("a", "h", EventType::AgentStarted { parent_agent_instance_id: None }),
+            evt("a", "h", EventType::AgentCalledTool {
+                tool_name: "Glob".into(),
+                tool_input_digest: None,
+                tool_output_digest: None,
+                duration_ms: None,
+            }),
+            evt("a", "h", EventType::AgentReadFile {
+                file_path: "src/foo.rs".into(),
+                digest: None,
+            }),
+            evt("a", "h", EventType::AgentWroteFile {
+                file_path: "src/bar.rs".into(),
+                digest: None,
+                operation: None,
+                additions: None,
+                deletions: None,
+            }),
+            evt("a", "h", EventType::AgentCompletedProcess {
+                process_name: "npm test".into(),
+                exit_code: Some(0),
+                duration_ms: Some(2_500),
+                command: None,
+            }),
+            evt("a", "h", EventType::AgentConnectedNetwork {
+                destination: "api.github.com".into(),
+                port: None,
+            }),
+            evt("a", "h", EventType::AgentOpenedPort {
+                port: 3000,
+                protocol: Some("tcp".into()),
+            }),
+        ];
+
+        let graph = AgentGraph::from_events(&events);
+        let agent_a = graph.nodes.iter().find(|n| n.agent_instance_id == "a").unwrap();
+
+        // 6 action events (Glob, ReadFile, WroteFile, CompletedProcess,
+        // ConnectedNetwork, OpenedPort). AgentStarted is not an action.
+        assert_eq!(
+            agent_a.tool_calls, 6,
+            "tool_calls must count all action event types (was {}, expected 6)",
+            agent_a.tool_calls
+        );
     }
 }
