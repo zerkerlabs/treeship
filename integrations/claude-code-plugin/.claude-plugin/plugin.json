@@ -1,7 +1,7 @@
 {
   "name": "treeship",
   "description": "Portable, cryptographically signed receipts for everything Claude Code does. Proof that stays true after the session ends.",
-  "version": "0.9.4",
+  "version": "0.9.5",
   "author": {
     "name": "Zerker Labs",
     "email": "hello@treeship.dev",
