@@ -758,9 +758,15 @@ pub fn close(
         receipt.proofs.zk_proofs_present = true;
     }
 
-    // Build the .treeship package
+    // Build the .treeship package. We capture the path into an Option
+    // outside the match so the post-close hints (rendered below the
+    // session summary) can reference it as a copy-pasteable argument
+    // for `treeship package verify`. Falls back to None if package
+    // composition failed; the hint logic below skips local-verify in
+    // that case rather than printing a path that doesn't exist.
     let pkg_dir = ts_dir.join("sessions");
     std::fs::create_dir_all(&pkg_dir)?;
+    let mut sealed_pkg_path: Option<std::path::PathBuf> = None;
 
     match build_package(&receipt, &pkg_dir) {
         Ok(pkg_output) => {
@@ -777,6 +783,8 @@ pub fn close(
                 printer.info(&format!("  merkle:    {}", root));
             }
             printer.info(&format!("  files:     {}", pkg_output.file_count));
+
+            sealed_pkg_path = Some(pkg_output.path.clone());
 
             // Auto-open preview.html if running in a terminal
             let preview_path = pkg_output.path.join("preview.html");
@@ -814,8 +822,24 @@ pub fn close(
     printer.info(&format!("  receipts: {}", artifact_count));
     printer.info(&format!("  events:   {}", event_log.event_count()));
     printer.blank();
-    printer.hint(&format!("treeship verify {} --full  to see the chain", result.artifact_id));
-    printer.hint(&format!("treeship hub push {}      to share", result.artifact_id));
+
+    // Next-step hints. The two paths a user has after a successful
+    // close are: (a) verify the sealed receipt locally with no hub
+    // dependency, or (b) publish to a hub and get a shareable URL.
+    // Surface BOTH so a user who doesn't have a hub attached doesn't
+    // hit a dead end, and a user who does isn't pushed toward the
+    // local-only path. Falls back to the prior single-artifact hints
+    // if package composition failed (sealed_pkg_path is None).
+    if let Some(ref pkg_path) = sealed_pkg_path {
+        printer.hint(&format!(
+            "treeship package verify {}  to verify locally (no hub needed)",
+            pkg_path.display(),
+        ));
+        printer.hint("treeship session report                                              to publish + get a shareable URL (requires `treeship hub attach`)");
+    } else {
+        printer.hint(&format!("treeship verify {} --full  to see the chain", result.artifact_id));
+        printer.hint(&format!("treeship hub push {}      to share", result.artifact_id));
+    }
 
     // ZK: Enqueue chain proof BEFORE deleting session.json so the proof
     // job captures root_artifact_id (the daemon needs it to bound the chain).
@@ -1127,16 +1151,42 @@ pub fn report(
         .map_err(|e| format!("failed to read {}: {e}", receipt_path.display()))?;
 
     // 3. Resolve the active hub connection.
+    //
+    // If the user hasn't attached a hub yet they'll hit this path right
+    // after a successful `session close`, expecting `session report` to
+    // "share the receipt." The default resolve_hub error mentions
+    // `treeship hub attach` (a one-time browser flow), but that's a
+    // commitment some users don't want to make. Wrap the error with
+    // a session-report-specific recovery: hub attach for the share path,
+    // OR `package verify` for fully-local verification of the same
+    // sealed receipt. Either path keeps the receipt useful.
     let ctx = ctx::open(config)?;
     let (hub_name, hub_entry) = ctx
         .config
         .resolve_hub(None)
-        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+        .map_err(|e| -> Box<dyn std::error::Error> {
+            format!(
+                "{e}\n\n  \
+                 To publish (one-time browser flow):\n    \
+                 treeship hub attach\n    \
+                 treeship session report\n\n  \
+                 Or skip publishing and verify the sealed receipt locally:\n    \
+                 treeship package verify {}",
+                pkg_dir.display(),
+            ).into()
+        })?;
 
     let hub_secret_hex = hub_entry
         .hub_secret_key
         .as_deref()
-        .ok_or("no hub_secret_key -- run: treeship hub attach")?;
+        .ok_or_else(|| -> Box<dyn std::error::Error> {
+            format!(
+                "no hub_secret_key for connection '{hub_name}' -- run: treeship hub attach\n\n  \
+                 Or verify the sealed receipt locally without publishing:\n    \
+                 treeship package verify {}",
+                pkg_dir.display(),
+            ).into()
+        })?;
 
     // 4. Build the PUT URL and DPoP proof.
     let put_url = format!("{}/v1/receipt/{}", hub_entry.endpoint, resolved_id);
