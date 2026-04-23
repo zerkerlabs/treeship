@@ -205,7 +205,7 @@ Treeship builds on existing standards rather than inventing cryptography:
 
 ## Roadmap
 
-Realistic, version-tagged.
+Realistic, version-tagged (see [`CHANGELOG.md`](./CHANGELOG.md) for what each release actually shipped).
 
 **Shipped (v0.9.x)**
 - Rust core, CLI, hub server, WASM verifier, TypeScript / Python SDKs
@@ -216,13 +216,14 @@ Realistic, version-tagged.
 - Hub authentication (DPoP, device flow), multi-hub support
 - OpenTelemetry export (feature-flagged)
 - Cross-process safe event log (flock + fail-open under contention)
-- **Official Claude Code plugin** with auto-recording hooks (v0.9.3+)
+- **Claude Code plugin** — SessionStart / PostToolUse / SessionEnd hooks, skills, Zerker Labs marketplace install (v0.9.3+; see [`CHANGELOG.md`](./CHANGELOG.md)); Anthropic’s own plugin directory is separate distribution work
+- **Cursor** — MCP via `treeship add` → `~/.cursor/mcp.json`, docs and templates in [`integrations/cursor/`](./integrations/cursor/)
 - **Universal SKILL.md** at <https://treeship.dev/SKILL.md> for AI agent self-onboarding
 
 **v0.9.5 / v0.10.0 (next)**
-- O(1) event-log append (counter sidecar instead of full file rescan)
+- O(1) event-log append (counter sidecar instead of full file rescan; was deferred from earlier 0.9.x releases — see changelog)
 - Native Windows binary + PowerShell setup script
-- Anthropic official-marketplace listing for the Claude Code plugin
+- Anthropic plugin marketplace listing (broader reach for the Claude Code plugin; Zerker marketplace already works)
 - `treeship attach <agent>` — process detection for non-MCP agents
 - Selective disclosure (redactable receipts)
 

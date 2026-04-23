@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "treeship": {
+      "command": "npx",
+      "args": ["-y", "@treeship/mcp"],
+      "env": {
+        "TREESHIP_ACTOR": "agent://cursor",
+        "TREESHIP_HUB_ENDPOINT": "https://api.treeship.dev"
+      }
+    }
+  }
+}

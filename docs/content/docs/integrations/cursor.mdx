@@ -1,10 +1,12 @@
 ---
 title: Cursor
-description: Add Treeship to Cursor agent. Signed receipts for every action.
+description: Add Treeship to Cursor via MCP. Signed receipts for tool calls and wrap-friendly shell hooks.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+Cursor uses the same [`@treeship/mcp`](https://www.npmjs.com/package/@treeship/mcp) bridge as other MCP hosts: every `callTool` can be attested into your Treeship session when the CLI and an active session are present. There is no Cursor-specific plugin with editor hooks today; pair MCP with `treeship wrap` or shell hooks for shell commands.
 
 ## Quick setup
 
@@ -15,44 +17,62 @@ import { Steps, Step } from 'fumadocs-ui/components/steps';
 ```bash
 curl -fsSL treeship.dev/install | sh
 treeship init
-treeship install
 ```
+
+Run `treeship install` if you want shell hooks to attest matching terminal commands automatically.
 </Step>
 <Step>
-### Add .cursorrules to your project
+### Enable the Treeship MCP server (recommended)
 
-Create a `.cursorrules` file in your project root. Cursor reads this automatically.
-
-```
-# Treeship Integration
-
-This project uses Treeship for signed receipts of all agent actions.
-
-Rules:
-1. Wrap all shell commands with treeship:
-   - Use: treeship wrap -- <command>
-   - Example: treeship wrap -- npm test
-   - Example: treeship wrap -- git push
-
-2. Before making changes that need approval, check:
-   - Run: treeship pending
-   - If approval is needed: treeship approve
-
-3. After completing a task:
-   - Run: treeship session close --summary "what was done"
-
-4. Never skip treeship wrapping. Every command gets a receipt.
-```
-</Step>
-<Step>
-### Verify it works
+From your project directory:
 
 ```bash
-treeship log --tail 5
+treeship add cursor
 ```
+
+This merges a `treeship` entry into `~/.cursor/mcp.json` with `TREESHIP_ACTOR=agent://cursor`. Use `treeship add` (no argument) to configure every detected agent at once.
+
+**Restart Cursor** so it reloads MCP configuration.
+
+If `treeship add` skips Cursor, create `~/.cursor` by opening Cursor once, then run `treeship add cursor` again.
+
+</Step>
+<Step>
+### Trust doc in the repo
+
+The first successful `treeship add` in a project drops `./TREESHIP.md` (if missing). Read it once: it lists exactly what the MCP bridge captures and what never leaves your machine without an explicit action.
+</Step>
+<Step>
+### (Optional) `.cursorrules` for `treeship wrap`
+
+If you want the model nudged to wrap shell invocations, add a `.cursorrules` file. This is **optional**—`TREESHIP.md` is the source of truth for trust; rules are for ergonomics.
+
+```
+# Treeship — optional reminders
+
+- Prefer: treeship wrap -- <command> for shell work when not covered by `treeship install` hooks
+- When finishing a block of work: treeship session close (after sealing makes sense for your flow)
+```
+
+</Step>
+<Step>
+### Session + verify
+
+```bash
+treeship session start
+# work in Cursor (MCP tools + your workflow)
+treeship log --tail 20
+treeship session close
+treeship package verify .treeship/sessions/<id>.treeship
+```
+
 </Step>
 </Steps>
 
 <Callout type="info">
-Shell hooks (from `treeship install`) will automatically attest matching commands even if Cursor doesn't use `treeship wrap` explicitly.
+**Shell hooks** from `treeship install` can attest many terminal commands even when the model does not type `treeship wrap` explicitly. MCP captures tool calls through `@treeship/mcp`; built-in editor actions that do not go through MCP or your shell are outside that path unless you add more instrumentation later.
 </Callout>
+
+## Templates
+
+Copy-paste MCP snippets and a longer walkthrough: [`integrations/cursor/`](https://github.com/zerkerlabs/treeship/tree/main/integrations/cursor) in the monorepo.

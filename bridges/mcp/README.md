@@ -86,9 +86,9 @@ All three are automatic. The signed artifacts are Merkle-proven. The session eve
 | Runtime | Status | Notes |
 |---------|--------|-------|
 | Generic MCP server | Tested (unit tests) | 3 tests covering Client export and subclass |
-| Claude Code MCP | Not yet tested | Should work since Claude Code uses standard MCP transport |
+| Claude Code MCP | Shipped | Used by the official plugin and `treeship add`; stdio MCP — same code path as generic client |
+| Cursor MCP | Documented + same client | `treeship add cursor` writes `~/.cursor/mcp.json`; see [`integrations/cursor/`](../../integrations/cursor/) — run a quick E2E when upgrading the bridge |
 | Hermes | Not yet tested | Hermes transport compatibility to be confirmed |
-| Cursor MCP | Not yet tested | Standard stdio transport expected |
 
 ## Environment variables
 
