@@ -666,17 +666,21 @@ SDK:
 
 ## Security
 
+**Hub authentication (summary):** **Enrollment** uses a device-style browser flow (see [Hub API](#authentication) / `GET /v1/dock/challenge` …). **Every authenticated Hub write** uses **DPoP (RFC 9449)** with the connection’s private key — **not** a replayable bearer token. A **device code is not required on each push**; that is by design. What the Hub calls a “device” is a **registered dock (cryptographic identity)**, not hardware attestation, unless a future release adds it.
+
+**Threat model and operational guidance:** [docs: Security (concepts)](https://docs.treeship.dev/docs/concepts/security) — see *Hub connection model: enrollment and operation*.
+
 **Supported versions:**
 
 | Version | Status |
 |---------|--------|
-| 0.4.x | Supported (current) |
-| 0.3.x | Security fixes only |
-| < 0.3 | No longer supported |
+| 0.9.x | Supported (current) |
+| 0.8.x | Security fixes only |
+| < 0.8 | No longer supported |
 
 Report vulnerabilities to security@treeship.dev or via GitHub Security Advisories.
 
-See [SECURITY.md](SECURITY.md) for the full policy.
+See [SECURITY.md](SECURITY.md) for reporting policy, Hub auth summary, and version table.
 
 ---
 
