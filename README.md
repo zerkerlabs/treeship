@@ -18,13 +18,43 @@ Shareable with anyone. **The receipt is yours, not ours.**
 
 ---
 
-## Why this exists
+## The problem
 
-AI agents are doing real work — real money, real code, real decisions. But there's no clean way to answer the simplest question afterward: *what did the agent actually do?*
+AI agents are doing real work — deploying code, processing transactions, making decisions. But when someone asks *"what did the agent actually do?"*, the answer is usually a chat log. Chat logs are editable, screenshottable, deniable. They're a story, not evidence.
 
-Chat logs are editable, screenshottable, deniable. They're a story, not evidence.
+**Treeship produces evidence.** Every agent action gets a signed, timestamped, portable receipt that anyone can verify independently — without trusting Treeship, without creating an account, without network access.
 
-Treeship produces evidence: signed, timestamped, portable, verifiable receipts of every tool call an agent made. Show the receipt to a customer, a regulator, a teammate, or your future self in six months. It stays true.
+## The 30-second demo
+
+```bash
+# Install + initialize (one-time)
+curl -fsSL treeship.dev/setup | sh
+
+# Wrap any command — get a signed receipt
+treeship wrap -- npm test
+# → artifact art_abc123: npm test, exit 0, 4.2s, signed key_xyz
+
+# Verify the receipt offline
+treeship verify last
+# → ✓ signature valid  ✓ chain valid  ✓ 1 artifact
+
+# Share a public verify URL
+treeship hub push last
+# → https://treeship.dev/verify/art_abc123
+```
+
+That's the entire core loop. Everything else builds on it.
+
+## What makes Treeship different
+
+| | Treeship | Audit logs | Platform-native (GitHub, Vercel) | Sigstore / in-toto |
+|---|---|---|---|---|
+| **Portable across infrastructure** | ✅ Self-contained JSON | ❌ Tied to log system | ❌ Tied to platform | ✅ But complex to implement |
+| **Works offline** | ✅ Pure WASM verifier | ❌ Needs log server | ❌ Needs platform API | ⚠️ Rekor is online |
+| **No account / API key required** | ✅ DPoP auth (no bearer keys) | ❌ Usually needs access | ❌ Needs platform auth | ✅ Keyless signing |
+| **Privacy by default** | ✅ SHA-256 hashes, not raw content | ❌ Often stores full data | ❌ Stores full data | ⚠️ Configurable |
+| **Agent-native** | ✅ Built for agent workflows | ❌ Generic logging | ❌ Platform-centric | ⚠️ Requires integration |
+| **Multi-runtime** | ✅ Rust / TS / Python / Go / WASM | ❌ Usually single runtime | ❌ Platform-specific | ✅ Multiple languages |
 
 ## Install
 
@@ -160,7 +190,9 @@ Install with `claude plugin marketplace add zerkerlabs/treeship && claude plugin
 | `integrations/hermes/` | Hermes skill |
 | `integrations/openclaw/` | OpenClaw skill |
 
-## SDK example (TypeScript)
+## SDK examples
+
+### TypeScript
 
 ```typescript
 import { Ship } from "@treeship/sdk";
@@ -186,6 +218,47 @@ const bundle = ship.createBundle("Research workflow");
 
 await ship.save();
 ```
+
+### Python
+
+```python
+from treeship_sdk import Treeship
+
+ts = Treeship()
+
+# Attest an action
+result = ts.attest_action(
+    actor="agent://deployer",
+    action="deploy.production",
+    meta={"commit": "abc123", "env": "prod"},
+)
+
+# Verify the artifact
+verified = ts.verify(result.artifact_id)
+print(f"Outcome: {verified.outcome}, chain: {verified.chain} artifacts")
+```
+
+### CLI (approval-gated deployment)
+
+```bash
+# Human creates an approval. The CLI prints an approval nonce; capture it.
+approval=$(treeship attest approval \
+  --approver human://alice \
+  --description "deploy v2.1" \
+  --expires 2026-04-30T11:00:00Z \
+  --format json | jq -r .approval_nonce)
+
+# Agent attests the deploy intent, binding the human approval via nonce.
+treeship attest action \
+  --actor agent://deployer \
+  --action deploy.production \
+  --approval-nonce "$approval"
+
+# Verify the full chain. Verification will check the approval-nonce binding.
+treeship verify last
+```
+
+> Note: `--approval-nonce` is currently on `treeship attest action`, not on `treeship wrap`. To bind a human approval to a wrapped process, attest the action first (as above), then run the deploy. Adding `--approval-nonce` directly to `wrap` for one-step ergonomics is on the v0.10 roadmap.
 
 ## Standards
 
@@ -231,6 +304,10 @@ Realistic, version-tagged (see [`CHANGELOG.md`](./CHANGELOG.md) for what each re
 - ZK TLS (TLSNotary) — waiting on the TLSNotary alpha to stabilize
 - Hub Merkle Rekor anchoring
 - Anchoring adapters for OTS / Bitcoin / Solana
+
+## Contributing
+
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md). All contributions welcome — code, docs, bug reports, feature requests, security reviews.
 
 ## License
 
