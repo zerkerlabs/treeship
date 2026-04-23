@@ -33,33 +33,33 @@ Root access to the machine breaks all guarantees. The trust boundary is the mach
 | Phase | Question | Mechanism |
 |-------|----------|-----------|
 | **Enrollment** (`treeship hub attach`) | Should this machine be allowed to register a new **hub connection** (dock) with the Hub? | Human-in-the-loop **device authorization** (browser at `treeship.dev/hub/activate`, single-use challenge, atomic consumption, mandatory nonce on finalize). The CLI generates a fresh Ed25519 keypair for Hub / DPoP use and registers **ship** + **dock** public keys with the Hub. |
-| **Operation** (every `hub push`, `session report`, etc.) | Does this request come from someone who **right now** holds the private key for this connection? | **DPoP (RFC 9449)** — a short-lived proof JWT bound to HTTP method and URL, signed with the connection private key. **No** long-lived bearer token for writes. |
+| **Operation** (every `hub push`, `session report`, etc.) | Does this request come from someone who **right now** holds the private key for this connection? | **DPoP (RFC 9449)** -- a short-lived proof JWT bound to HTTP method and URL, signed with the connection private key. **No** long-lived bearer token for writes. |
 
 Good user experience (**no device code on every push**) is compatible with this model: the code is **only** for **bootstrapping trust** (enrollment). Ongoing auth is **cryptographic proof-of-possession**, not repeated human proof.
 
-### What counts as a “device”?
+### What counts as a "device"?
 
-The Hub identifies a **hub connection** by a **`dock_id`** (returned as `hub_id` in the CLI) and registered **public keys**. That is **cryptographic device identity**, **not** hardware attestation (no TPM / Secure Enclave binding in the default path). Copying `~/.treeship` with valid hub connection material to another host is, from the Hub’s perspective, the **same** connection — the same as copying an SSH private key.
+The Hub identifies a **hub connection** by a **`dock_id`** (returned as `hub_id` in the CLI) and registered **public keys**. That is **cryptographic device identity**, **not** hardware attestation (no TPM / Secure Enclave binding in the default path). Copying `~/.treeship` with valid hub connection material to another host is, from the Hub's perspective, the **same** connection -- the same as copying an SSH private key.
 
 ### Standards alignment
 
-- **RFC 8628** (OAuth 2.0 Device Authorization Grant) — same *class* of flow as “CLI / constrained client can’t do a browser redirect.”
-- **RFC 9449** (DPoP) — proof-of-possession for API requests, aligned with modern **sender-constrained** access patterns (contrast with replayable bearer secrets for every call).
-- **Ed25519** — widely deployed signature scheme for new systems.
+- **RFC 8628** (OAuth 2.0 Device Authorization Grant) -- same *class* of flow as "CLI / constrained client can't do a browser redirect."
+- **RFC 9449** (DPoP) -- proof-of-possession for API requests, aligned with modern **sender-constrained** access patterns (contrast with replayable bearer secrets for every call).
+- **Ed25519** -- widely deployed signature scheme for new systems.
 
 ### Threats and mitigations (Hub path)
 
 | Threat | Mitigation | Residual risk |
 |--------|------------|---------------|
-| Stolen **DPoP proof** from a log | Proofs are bound to **method + URL** and use **jti** / time window; replay should fail | Misconfiguration or bugs could weaken binding — treat as **implementation** risk |
+| Stolen **DPoP proof** from a log | Proofs are bound to **method + URL** and use **jti** / time window; replay should fail | Misconfiguration or bugs could weaken binding -- treat as **implementation** risk |
 | Stolen **connection private key** (filesystem exfil) | Same class as **stolen SSH key**; use **OS protections**, FDE, least privilege, **`treeship hub kill`** to revoke the connection on the Hub | Until revoked, attacker can act as that connection **without** a new device code |
-| Rogue **enrollment** | Device flow requires **human approval**; challenge is **single-use** and consumed **atomically** (see `PLATFORM.md` / Hub changelog for hardening history) | Phishing a user into approving a rogue attach — partial mitigation is **user education** and **clear UI** on the activate page |
+| Rogue **enrollment** | Device flow requires **human approval**; challenge is **single-use** and consumed **atomically** (see `PLATFORM.md` / Hub changelog for hardening history) | Phishing a user into approving a rogue attach -- partial mitigation is **user education** and **clear UI** on the activate page |
 | **Hub** compromise | Does not rewrite **past** offline-verifiable receipts; may affect **availability** and **published** URLs | Out of scope for client-only verification; run verifiers **offline** for evidence |
 
 ### Operational best practices
 
-- **Revoke** lost or decommissioned machines: `treeship hub kill` (or equivalent) so the Hub stops accepting that dock’s DPoP.
-- **Named connections** (`treeship hub attach --name …`) for multiple tenants or lifecycles.
+- **Revoke** lost or decommissioned machines: `treeship hub kill` (or equivalent) so the Hub stops accepting that dock's DPoP.
+- **Named connections** (`treeship hub attach --name ...`) for multiple tenants or lifecycles.
 - **CI and automation:** prefer **short-lived** or **federated** provisioning when you add it; avoid long-lived **shared** secrets in plain environment variables where OIDC or a vault is available.
 - **Be explicit** if you add a separate **bearer** or API-key path: document it as a **different** trust tier, not a silent substitute for DPoP.
 
