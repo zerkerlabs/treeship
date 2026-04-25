@@ -115,6 +115,7 @@ out = {
             "artifact_id": action_id,
             "category": "valid",
             "expected_outcome": "pass",
+            # Lone artifact, no parent: chain length is 1.
             "expected_chain": 1,
         },
         {
@@ -122,13 +123,19 @@ out = {
             "artifact_id": decision_id,
             "category": "valid",
             "expected_outcome": "pass",
-            "expected_chain": 1,
+            # `treeship attest decision` auto-parents to the most recent
+            # artifact in the keystore (the action above), so verifying
+            # the decision walks the parent chain and returns 2.
+            "expected_chain": 2,
         },
         {
             "name": "valid.approval",
             "artifact_id": approval_id,
             "category": "valid",
             "expected_outcome": "pass",
+            # Approvals do NOT auto-parent (they're roots of new
+            # approval trees), so chain length is 1 even when the
+            # keystore already has artifacts.
             "expected_chain": 1,
         },
         {
@@ -136,6 +143,10 @@ out = {
             "artifact_id": tamper_id,
             "category": "broken-chain",
             "expected_outcome": "fail",
+            # Per the SDK contract, `chain` on outcome=fail reports the
+            # NUMBER OF FAILED checks, not chain length. One artifact's
+            # signature was tampered, so one check failed.
+            "expected_chain": 1,
         },
     ],
 }

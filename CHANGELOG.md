@@ -39,7 +39,7 @@ The performance and key-lifecycle release. Closes the two technical debts called
 ### Notes
 
 - No on-the-wire schema changes. Receipts and certificates produced by 0.9.4 verify identically under 0.9.5; receipts produced by 0.9.5 verify identically under 0.9.4 (the new key-lifecycle fields are scoped to the keystore, not the signed envelope).
-- Workspace crates bumped together per the lockstep convention. Full `treeship-core` lib suite: 176/176 passing (was 161 in 0.9.4; +5 counter-sidecar tests, +7 key-rotation tests, +3 unrelated). Cross-SDK contract suite: 4/4 vectors agree across both SDKs on this release after the two Python SDK fixes the suite forced.
+- Workspace crates bumped together per the lockstep convention. Full `treeship-core` lib suite: 177/177 passing (was 161 in 0.9.4; +5 counter-sidecar tests, +8 key-rotation tests, +3 unrelated). Cross-SDK contract suite: 4/4 vectors agree across both SDKs on this release after the two Python SDK fixes the suite forced. The release went through three review rounds (self-review, then two parallel Codex adversarial passes); each round produced a real fix that's now landed. The `Store::rotate` cache update was reordered to happen BEFORE the manifest write so a same-process retry sees consistent state on a manifest-write failure, and the cross-SDK runners now also assert `expected_chain` per vector (not just `expected_outcome`) so a same-direction regression in both SDKs can no longer silently pass.
 
 ### Known limitations
 

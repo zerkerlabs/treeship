@@ -90,10 +90,22 @@ for (const v of corpus.vectors) {
       outcome: result.outcome,
       chain: result.chain,
     };
+    const errors: string[] = [];
     if (result.outcome !== v.expected_outcome) {
+      errors.push(`expected outcome=${v.expected_outcome}, got ${result.outcome}`);
+    }
+    // expected_chain is optional in the corpus -- if it's set, both SDKs
+    // must agree on it too. Without this assertion both SDKs could
+    // silently regress to the same wrong chain count and the suite
+    // would still exit 0 (Codex finding #4 in the v0.9.5 review).
+    if (v.expected_chain !== undefined && result.chain !== v.expected_chain) {
+      errors.push(`expected chain=${v.expected_chain}, got ${result.chain}`);
+    }
+    if (errors.length > 0) {
       mismatches++;
       line.expected_outcome = v.expected_outcome;
-      line.error = `expected outcome=${v.expected_outcome}, got ${result.outcome}`;
+      if (v.expected_chain !== undefined) line.expected_chain = v.expected_chain;
+      line.error = errors.join("; ");
     }
   } catch (err) {
     mismatches++;

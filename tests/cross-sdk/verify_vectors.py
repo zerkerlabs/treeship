@@ -71,12 +71,22 @@ def main() -> int:
             result = ts.verify(v["artifact_id"])
             line["outcome"] = result.outcome
             line["chain"] = result.chain
+            errors = []
             if result.outcome != v["expected_outcome"]:
+                errors.append(f"expected outcome={v['expected_outcome']}, got {result.outcome}")
+            # expected_chain is optional -- if set, both SDKs must agree
+            # on it too. Without this assertion both SDKs could silently
+            # regress to the same wrong chain count and the suite would
+            # still exit 0 (Codex finding #4 in the v0.9.5 review).
+            expected_chain = v.get("expected_chain")
+            if expected_chain is not None and result.chain != expected_chain:
+                errors.append(f"expected chain={expected_chain}, got {result.chain}")
+            if errors:
                 mismatches += 1
                 line["expected_outcome"] = v["expected_outcome"]
-                line["error"] = (
-                    f"expected outcome={v['expected_outcome']}, got {result.outcome}"
-                )
+                if expected_chain is not None:
+                    line["expected_chain"] = expected_chain
+                line["error"] = "; ".join(errors)
         except TreeshipError as e:
             mismatches += 1
             line["outcome"] = "error"

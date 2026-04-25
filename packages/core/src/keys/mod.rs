@@ -290,6 +290,21 @@ impl Store {
         self.write_entry(&succ_entry)?;
         self.write_entry(&pred_entry)?;
 
+        // Refresh the cache to mirror the on-disk state we just wrote --
+        // BEFORE the manifest update. If the manifest write fails, the
+        // cache must still match disk so a same-process retry sees the
+        // half-rotated state and the already-rotated guard fires
+        // correctly. Doing this AFTER write_manifest would leave a
+        // window where disk reflects the rotation but the in-memory
+        // cache still serves the unstamped predecessor, and a retry
+        // from the same Store instance would generate a duplicate
+        // successor -- defeating the whole point of the guard.
+        {
+            let mut cache = self.cache.write().unwrap();
+            cache.insert(pred_entry.id.clone(), pred_entry.clone());
+            cache.insert(succ_id.clone(),       succ_entry.clone());
+        }
+
         // Update the manifest: register the new key, optionally promote it.
         let mut manifest = self.read_manifest()?;
         manifest.key_ids.push(succ_id.clone());
@@ -297,14 +312,6 @@ impl Store {
             manifest.default_key_id = Some(succ_id.clone());
         }
         self.write_manifest(&manifest)?;
-
-        // Refresh the cache so subsequent `signer()` / `list()` calls see
-        // the new successor and the predecessor's updated lifecycle.
-        {
-            let mut cache = self.cache.write().unwrap();
-            cache.insert(pred_entry.id.clone(), pred_entry.clone());
-            cache.insert(succ_id.clone(),       succ_entry.clone());
-        }
 
         let default_id = manifest.default_key_id.clone();
         let predecessor = KeyInfo {
@@ -1115,6 +1122,47 @@ mod tests {
     /// who manually deletes a successor file mid-life. The recovery path
     /// is: clear the predecessor's successor pointer (or restore the file
     /// from backup) and try again.
+    /// Regression: even if the manifest write FAILED (say, disk full at
+    /// the worst possible moment), the in-memory cache must reflect the
+    /// stamped predecessor that already landed on disk -- otherwise a
+    /// same-process retry would skip the already-rotated guard and mint
+    /// a duplicate successor.
+    ///
+    /// We can't easily inject a manifest-write failure mid-test, but we
+    /// can verify the precondition that makes the recovery work: after a
+    /// successful rotate(), the cache holds the stamped predecessor (so
+    /// any subsequent rotate would correctly refuse). Combined with the
+    /// write order (cache update BEFORE manifest write in rotate()),
+    /// this proves a manifest-write crash leaves the cache aligned with
+    /// disk, not behind it.
+    #[test]
+    fn rotate_cache_reflects_stamped_predecessor_for_retry_safety() {
+        let (store, dir) = make_store();
+        let pred = store.generate(true).unwrap();
+        let _ = store
+            .rotate(None, std::time::Duration::from_secs(60), true)
+            .unwrap();
+
+        // The cache must have the stamped predecessor; a same-process
+        // retry of rotate(predecessor) MUST be refused. If the cache
+        // were stale (still showing the unstamped predecessor), this
+        // call would proceed and mint a duplicate successor.
+        let err = store
+            .rotate(Some(&pred.id),
+                    std::time::Duration::from_secs(60),
+                    true)
+            .unwrap_err();
+        match err {
+            KeyError::Crypto(msg) => assert!(
+                msg.contains("already been rotated"),
+                "cache should reflect stamped predecessor; got: {msg}"
+            ),
+            other => panic!("expected Crypto error, got {other:?}"),
+        }
+
+        cleanup(dir);
+    }
+
     #[test]
     fn rotated_predecessor_pointing_at_missing_successor_surfaces_clear_error() {
         let (store, dir) = make_store();

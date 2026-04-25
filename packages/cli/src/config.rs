@@ -143,6 +143,18 @@ impl From<serde_json::Error> for ConfigError { fn from(e: serde_json::Error) -> 
 /// option. Setting `TREESHIP_CONFIG=/tmp/scratch/config.json` then invoking
 /// `treeship` from any caller (TS SDK, Python SDK, raw shell) is sufficient
 /// to redirect every read and write into the scratch directory.
+///
+/// **Security model.** This env var is caller convenience, not a security
+/// boundary. Treeship has no privileged execution context: every CLI
+/// invocation runs as the local user, the keystore is owner-only files at
+/// `~/.treeship/keys/`, and an attacker who can set environment variables
+/// for the treeship process can already read or replace the user's
+/// keystore directly. There is no setuid binary, no system service, and
+/// no installed hook that escalates privilege. The env var widens the
+/// caller's options for choosing WHICH user-owned keystore to use; it
+/// does not give a caller access to a keystore they couldn't already
+/// touch. Don't add owner-checks or symlink-resolution rejection here
+/// without first explaining what privilege boundary they would defend.
 pub fn default_config_path() -> Result<PathBuf, ConfigError> {
     if let Some(env) = std::env::var_os("TREESHIP_CONFIG") {
         // Empty string is interpreted as "unset" -- avoids a footgun where a
