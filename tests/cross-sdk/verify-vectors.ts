@@ -1,24 +1,25 @@
 // TypeScript runner for the cross-SDK contract suite.
 //
-// Reads tests/cross-sdk/corpus.json (written by gen-vectors.sh), verifies
-// every vector through the @treeship/sdk public surface, and emits one JSON
-// line per vector to stdout. The orchestrator (run.sh) diffs this against
-// the Python runner's output and fails on any divergence.
+// Loads tests/cross-sdk/corpus.json (written by gen-vectors.sh), points
+// the @treeship/sdk at the corpus's scratch keystore via TREESHIP_CONFIG,
+// then verifies every vector through ship().verify.verify(id) -- the
+// actual SDK public surface, NOT a private CLI bypass. Emits one JSON
+// line per vector to stdout.
 //
 // Output format (one per line, JSON, no embedded newlines):
 //   {"runner":"ts","name":"<vector-name>","outcome":"pass","chain":1}
-//   {"runner":"ts","name":"<vector-name>","outcome":"fail","chain":0,"error":null}
+//   {"runner":"ts","name":"<vector-name>","outcome":"fail","chain":0}
 //   {"runner":"ts","name":"<vector-name>","outcome":"error","error":"<message>"}
 //
-// The runner exits 0 if every observed outcome matches the corpus's
-// expected_outcome; non-zero if any vector failed expectations or threw.
+// Exits 0 if every observed outcome matches the corpus's expected_outcome;
+// non-zero if any vector failed expectations or threw.
 
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { readFileSync, existsSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { execFileSync } from "node:child_process";
 
 const here = dirname(fileURLToPath(import.meta.url));
+const repoRoot = join(here, "..", "..");
 const corpusPath = join(here, "corpus.json");
 
 type Vector = {
@@ -36,29 +37,17 @@ type Corpus = {
 
 const corpus: Corpus = JSON.parse(readFileSync(corpusPath, "utf8"));
 
-// Locate the SDK source. We import from the workspace path because the
-// suite is meant to validate the in-tree SDK, not whatever's on npm.
-const sdkSrc = join(here, "..", "..", "packages", "sdk-ts");
-
-// The published SDK shells out to `treeship` on PATH. To bind it to the
-// scratch keystore the corpus was generated against, we wrap our calls
-// here directly rather than going through ship().verify.verify(). This
-// shadows the public API while keeping the same input/output shape, so
-// the contract under test is "verify(id) returns {outcome, chain}" --
-// not "what binary do you happen to find on PATH".
-//
-// For the higher-fidelity contract (in-process WASM verifyReceipt), see
-// the matching block in verify_vectors.py and the README.
-
-function runVerify(artifactId: string): { outcome: string; chain: number } {
-  // Find the binary the same way gen-vectors.sh does.
-  const repoRoot = join(here, "..", "..");
+// Locate the treeship binary the same way gen-vectors.sh does and put its
+// directory on PATH so the SDK finds it when it spawns `treeship`.
+function findBinaryDir(): string {
+  // Prefer debug over release: the orchestrator rebuilds debug each run,
+  // so a stale release binary from a prior `cargo build --release` won't
+  // silently shadow it. TREESHIP_BIN still wins for explicit callers.
   const candidates = [
     process.env.TREESHIP_BIN,
-    join(repoRoot, "target", "release", "treeship"),
     join(repoRoot, "target", "debug", "treeship"),
+    join(repoRoot, "target", "release", "treeship"),
   ].filter((x): x is string => Boolean(x));
-
   const binary = candidates.find((p) => {
     try {
       return existsSync(p) && (statSync(p).mode & 0o111) !== 0;
@@ -66,36 +55,35 @@ function runVerify(artifactId: string): { outcome: string; chain: number } {
       return false;
     }
   });
-  if (!binary) {
-    throw new Error("no treeship binary found; build with cargo first");
-  }
-
-  let stdout = "";
-  try {
-    stdout = execFileSync(binary, [
-      "--config", corpus.config_path,
-      "--format", "json",
-      "verify", artifactId,
-    ], { encoding: "utf8" });
-  } catch (err: unknown) {
-    // verify exits 1 on fail. We still want the JSON outcome.
-    const ex = err as { stdout?: string };
-    stdout = ex.stdout ?? "";
-    if (!stdout) throw err;
-  }
-
-  const parsed = JSON.parse(stdout);
-  return {
-    outcome: String(parsed.outcome),
-    chain: Number(parsed.passed ?? parsed.total ?? 0),
-  };
+  if (!binary) throw new Error("no treeship binary found; build with cargo first");
+  return dirname(binary);
 }
 
+const binaryDir = findBinaryDir();
+process.env.PATH = `${binaryDir}:${process.env.PATH ?? ""}`;
+process.env.TREESHIP_CONFIG = corpus.config_path;
+
+// Import the SDK from its built output. The source uses .js suffixes in
+// its imports (TS module resolution hint), which Node's strip-types
+// loader doesn't resolve back to .ts -- so we point at packages/sdk-ts/dist,
+// which is real .js. The orchestrator (run.sh) is responsible for ensuring
+// the build is fresh before invoking this runner.
+const sdkIndex = join(repoRoot, "packages", "sdk-ts", "dist", "index.js");
+if (!existsSync(sdkIndex)) {
+  throw new Error(
+    `SDK build not found at ${sdkIndex} -- run 'npm run build' in packages/sdk-ts first`,
+  );
+}
+const { ship } = (await import(sdkIndex)) as {
+  ship: () => { verify: { verify: (id: string) => Promise<{ outcome: string; chain: number; target: string }> } };
+};
+
 let mismatches = 0;
+const s = ship();
 for (const v of corpus.vectors) {
   let line: Record<string, unknown>;
   try {
-    const result = runVerify(v.artifact_id);
+    const result = await s.verify.verify(v.artifact_id);
     line = {
       runner: "ts",
       name: v.name,
@@ -119,5 +107,4 @@ for (const v of corpus.vectors) {
   process.stdout.write(JSON.stringify(line) + "\n");
 }
 
-void sdkSrc; // silence unused-binding when SDK source is referenced only for documentation
 process.exit(mismatches === 0 ? 0 : 1);

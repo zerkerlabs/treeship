@@ -14,13 +14,27 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-# 1. Build CLI if not present (needed by both runners).
-if [[ ! -x "$REPO_ROOT/target/release/treeship" && ! -x "$REPO_ROOT/target/debug/treeship" ]]; then
-  echo "==> building treeship CLI (debug)" >&2
+# 1. Always build the debug CLI (incremental; <1s when nothing changed).
+# This is what the runners pick up. Skipping the build would let a stale
+# binary mask a regression in the very code path the suite exists to
+# guard. Set TREESHIP_SKIP_BUILD=1 to opt out (CI release smoke does this
+# after building once for the whole job).
+if [[ -z "${TREESHIP_SKIP_BUILD:-}" ]]; then
+  echo "==> building treeship CLI (debug, incremental)" >&2
   (cd "$REPO_ROOT" && cargo build --bin treeship)
 fi
 
-# 2. Generate corpus.
+# 2. Build the TypeScript SDK if its dist/ is missing or older than src/.
+# The runner imports from packages/sdk-ts/dist/ (real .js, full module
+# resolution); building on demand here means a developer who hasn't
+# touched the SDK in a while still gets a green run.
+SDK_TS_DIR="$REPO_ROOT/packages/sdk-ts"
+if [[ ! -f "$SDK_TS_DIR/dist/index.js" ]] || [[ -n "$(find "$SDK_TS_DIR/src" -newer "$SDK_TS_DIR/dist/index.js" -type f 2>/dev/null | head -1)" ]]; then
+  echo "==> building TS SDK" >&2
+  (cd "$SDK_TS_DIR" && npm install --no-audit --no-fund --silent && npm run build --silent)
+fi
+
+# 3. Generate corpus.
 echo "==> generating test vectors" >&2
 "$SCRIPT_DIR/gen-vectors.sh"
 

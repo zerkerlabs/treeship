@@ -273,11 +273,22 @@ impl Store {
         pred_entry.valid_until      = Some(valid_until.clone());
         pred_entry.successor_key_id = Some(succ_id.clone());
 
-        // Persist both entries before touching the manifest. If a write
-        // fails partway through, the manifest is still valid and a retry
-        // can resume cleanly.
-        self.write_entry(&pred_entry)?;
+        // Write order matters for partial-failure recovery. Persist the
+        // successor entry FIRST, then stamp the predecessor pointing at
+        // it. If we wrote the predecessor first and then the successor
+        // write failed, the predecessor's successor_key_id would dangle
+        // at a key that doesn't exist on disk -- and the
+        // already-been-rotated guard would refuse to retry. With this
+        // order:
+        //   - successor write fails: nothing observable changed; retry clean.
+        //   - predecessor write fails: orphan successor key file on disk
+        //     (not yet referenced by manifest or by any other key); retry
+        //     generates a new successor and the orphan is harmless.
+        //   - manifest write fails: predecessor + successor both on disk,
+        //     manifest stale; retry's already-rotated guard catches the
+        //     half-finished state and surfaces a clear error.
         self.write_entry(&succ_entry)?;
+        self.write_entry(&pred_entry)?;
 
         // Update the manifest: register the new key, optionally promote it.
         let mut manifest = self.read_manifest()?;
@@ -1092,6 +1103,42 @@ mod tests {
         assert_eq!(valid_after.len(), 1,
                    "after grace window only successor remains valid");
         assert_eq!(valid_after[0].id, result.successor.id);
+
+        cleanup(dir);
+    }
+
+    /// Regression: if the successor key file is missing on disk (because a
+    /// prior rotate() crashed AFTER stamping the predecessor but BEFORE
+    /// writing the successor), retrying must NOT be wedged. With the
+    /// successor-first write order this scenario can't be reached by a
+    /// single-process crash, but we still need to defend against an operator
+    /// who manually deletes a successor file mid-life. The recovery path
+    /// is: clear the predecessor's successor pointer (or restore the file
+    /// from backup) and try again.
+    #[test]
+    fn rotated_predecessor_pointing_at_missing_successor_surfaces_clear_error() {
+        let (store, dir) = make_store();
+        store.generate(true).unwrap();
+        let result = store
+            .rotate(None, std::time::Duration::from_secs(60), true)
+            .unwrap();
+
+        // Simulate operator-deleted successor file. The manifest still
+        // references it, so a cold-cache reader trying to walk the chain
+        // hits a clear NotFound for the missing key.
+        let succ_path = store.entry_path(&result.successor.id);
+        fs::remove_file(&succ_path).unwrap();
+
+        // Open a fresh Store instance so the cache doesn't paper over the
+        // missing on-disk entry. successor_chain() walks via load_entry;
+        // the missing file must produce KeyError::NotFound, not a panic
+        // and not an infinite loop.
+        let store2 = Store::open(&dir).unwrap();
+        let err = store2.successor_chain(&result.predecessor.id).unwrap_err();
+        match err {
+            KeyError::NotFound(id) => assert_eq!(id, result.successor.id),
+            other => panic!("expected NotFound error, got {other:?}"),
+        }
 
         cleanup(dir);
     }

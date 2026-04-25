@@ -131,7 +131,27 @@ impl From<serde_json::Error> for ConfigError { fn from(e: serde_json::Error) -> 
 
 // -- Load / Save / Migrate ----------------------------------------------------
 
+/// Resolve the config-file path, honoring `TREESHIP_CONFIG` first.
+///
+/// Order of precedence (highest first):
+///   1. The `--config <path>` CLI flag (handled by the caller).
+///   2. The `TREESHIP_CONFIG` environment variable.
+///   3. `~/.treeship/config.json`.
+///
+/// The env-var hook exists so SDK consumers and CI runners can target an
+/// isolated keystore without forcing every SDK to add a per-call config
+/// option. Setting `TREESHIP_CONFIG=/tmp/scratch/config.json` then invoking
+/// `treeship` from any caller (TS SDK, Python SDK, raw shell) is sufficient
+/// to redirect every read and write into the scratch directory.
 pub fn default_config_path() -> Result<PathBuf, ConfigError> {
+    if let Some(env) = std::env::var_os("TREESHIP_CONFIG") {
+        // Empty string is interpreted as "unset" -- avoids a footgun where a
+        // shell exports `TREESHIP_CONFIG=` and silently retargets every
+        // CLI invocation at the working directory.
+        if !env.is_empty() {
+            return Ok(PathBuf::from(env));
+        }
+    }
     let home = home::home_dir().ok_or(ConfigError::NoHome)?;
     Ok(home.join(".treeship").join("config.json"))
 }

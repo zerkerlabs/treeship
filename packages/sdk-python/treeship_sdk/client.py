@@ -180,13 +180,64 @@ class Treeship:
         return ActionResult(artifact_id=result.get("id") or result.get("artifact_id", ""))
 
     def verify(self, artifact_id: str) -> VerifyResult:
-        """Verify an artifact and its chain."""
-        result = _run(["verify", artifact_id, "--format", "json"])
-        return VerifyResult(
-            outcome=result.get("outcome", "error"),
-            chain=result.get("total", result.get("chain", 1)),
-            target=artifact_id,
-        )
+        """Verify an artifact and its chain.
+
+        A verify failure (outcome=fail) is a STRUCTURED result, not an
+        exception. The CLI exits non-zero on a failed verification but
+        still emits valid JSON with the failure detail; we mirror that
+        here -- callers get a VerifyResult with outcome="fail" instead
+        of a TreeshipError. This matches the TypeScript SDK's
+        ship().verify.verify() shape, so cross-SDK callers see the same
+        contract regardless of language.
+
+        TreeshipError is reserved for cases where verification couldn't
+        even be attempted: missing CLI binary, malformed JSON output,
+        keystore inaccessible.
+        """
+        try:
+            result = subprocess.run(
+                ["treeship", "verify", artifact_id, "--format", "json"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except FileNotFoundError:
+            raise TreeshipError(
+                "treeship CLI not found. Install: curl -fsSL treeship.dev/install | sh",
+                ["verify", artifact_id],
+            )
+
+        # Empty stdout means the binary couldn't even attempt verification
+        # (config missing, keystore broken, etc.) -- that's a real error.
+        if not result.stdout.strip():
+            raise TreeshipError(
+                f"treeship verify produced no output (exit={result.returncode}): "
+                f"{result.stderr.strip() or '<empty stderr>'}",
+                ["verify", artifact_id],
+            )
+
+        try:
+            parsed = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            raise TreeshipError(
+                f"treeship verify returned invalid JSON: {result.stdout[:200]}",
+                ["verify", artifact_id],
+            )
+
+        # `chain` semantics match the TypeScript SDK contract:
+        #   - on outcome=pass: number of artifacts that passed (== total)
+        #   - on outcome=fail: number of artifacts that failed
+        # The two SDKs MUST agree here -- the cross-SDK contract suite
+        # asserts equality on every vector.
+        outcome = parsed.get("outcome", "error")
+        if outcome == "pass":
+            chain = parsed.get("passed") or parsed.get("total") or 1
+        elif outcome == "fail":
+            chain = parsed.get("failed", 0)
+        else:
+            chain = parsed.get("total", 0)
+
+        return VerifyResult(outcome=outcome, chain=chain, target=artifact_id)
 
     def dock_push(self, artifact_id: str) -> PushResult:
         """Push an artifact to Hub."""

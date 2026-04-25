@@ -12,13 +12,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 CORPUS_JSON="$SCRIPT_DIR/corpus.json"
 
-# Locate the treeship binary. Prefer a release build, fall back to debug.
+# Locate the treeship binary. The orchestrator (run.sh) is responsible
+# for ensuring an up-to-date debug build, so we prefer debug -- a stale
+# release build sitting around from a prior `cargo build --release`
+# would otherwise silently shadow the freshly-built debug and run the
+# wrong code under test. TREESHIP_BIN env var still wins for callers
+# who genuinely want to test a specific binary (CI release smoke).
 if [[ -n "${TREESHIP_BIN:-}" ]]; then
   TS="$TREESHIP_BIN"
-elif [[ -x "$REPO_ROOT/target/release/treeship" ]]; then
-  TS="$REPO_ROOT/target/release/treeship"
 elif [[ -x "$REPO_ROOT/target/debug/treeship" ]]; then
   TS="$REPO_ROOT/target/debug/treeship"
+elif [[ -x "$REPO_ROOT/target/release/treeship" ]]; then
+  TS="$REPO_ROOT/target/release/treeship"
 else
   echo "error: no treeship binary found. Build with 'cargo build' first." >&2
   exit 2
@@ -61,11 +66,19 @@ APPROVAL_ID=$(
 
 # --- broken-chain vectors ---------------------------------------------------
 
-# Tampered payload: take a fresh action, flip a byte in its stored JSON.
-# Verify must reject (signature MAC fails on the mutated bytes).
+# Tampered payload: take an action with a UNIQUE actor/action pair and
+# flip a byte in its stored signature. Verify must reject (the signature
+# bytes no longer match the canonical payload).
+#
+# The actor/action must differ from the valid action vector above --
+# Treeship artifacts are content-addressed, so identical inputs collapse
+# to the same artifact id. Sharing the id between "valid" and "tampered"
+# vectors would mean tampering corrupts both at once, and the suite would
+# silently report a divergence-free FAIL/FAIL instead of catching the
+# tamper-detection contract.
 TAMPER_ID=$(
   "$TS" --config "$CFG" --format json attest action \
-    --actor "agent://cross-sdk-test" --action "tool.call" \
+    --actor "agent://cross-sdk-test-tamper" --action "tool.call.tampered" \
     | extract_id
 )
 TAMPER_PATH="$SCRATCH/artifacts/$TAMPER_ID.json"
