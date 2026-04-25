@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.9.5 (2026-04-25)
+
+The performance and key-lifecycle release. Closes the two technical debts called out in the v0.9.4 "Known limitations" -- the O(N) event-log append, and the absence of any rotation primitive in a keystore where every key was meant to live forever. Also adds the first cross-SDK contract tests so TypeScript and Python can no longer drift apart silently, and unbreaks the docs site, which had been 404'ing in production since the 4906398 commit landed an invalid fumadocs `root` field.
+
+### Added
+
+- **`Store::rotate(predecessor, grace_period, set_default) -> RotationResult`.** The first lifecycle surface on the keystore. Mints a freshly generated Ed25519 successor, links the predecessor forward via a new `successor_key_id` field, and stamps it with `valid_until = now + grace_period` in a single transactional manifest write. The predecessor remains usable for signing during its grace window so an in-flight session that already started signing under the old key can finish; verifiers that honor `valid_until` can refuse the predecessor on lifecycle. Refuses to rotate an already-rotated key (caller must rotate the chain head). Backed by `Store::successor_chain(id) -> Vec<KeyId>` for forward walks and `Store::valid_keys_at(at_unix_secs) -> Vec<KeyInfo>` for building a verifier's accept-set as of a given time.
+
+- **`treeship keys rotate` CLI surface.** `treeship keys rotate [--key id] [--grace-hours 24] [--no-default]`. Default 24h grace matches a typical client-cache TTL for fetched public-key bundles. `treeship keys list` is enriched to show rotation status inline (`rotated -> key_xxx, valid until 2026-04-26T...`).
+
+- **`KeyInfo.valid_until` and `KeyInfo.successor_key_id`.** Lifecycle metadata threaded through the public `KeyInfo` shape and the on-disk encrypted entry. Both `Option<String>` and `Option<KeyId>`. Pre-0.9.5 entry files lack these fields entirely; they're `#[serde(default)]` and `skip_serializing_if = "Option::is_none"`, so legacy files load with `None` and never-rotated entries don't grow new fields on disk -- a 0.9.5 keystore is on-disk byte-identical to a 0.9.4 keystore until you actually rotate something.
+
+- **Cross-SDK contract suite at `tests/cross-sdk/`.** Generates a scratch corpus of signed artifacts (action, decision, approval, plus one DSSE-tampered variant with a flipped signature byte), runs `verify(artifact_id)` through both the TypeScript SDK and the Python SDK, diffs `{outcome, chain}` per vector. Any divergence fails CI. The contract is the lowest-common-denominator surface both SDKs already implement; `verifyReceipt(json)` parity is queued for a follow-up once Python exposes a JSON-receipt entry point. Local run: `./tests/cross-sdk/run.sh`. CI matrix: `{ubuntu, macos} x {Node 20, 22} x {Python 3.11, 3.12}` -- eight cells so platform-specific divergences (different `fetch` implementations, different subprocess line endings) surface immediately.
+
+### Changed
+
+- **Event log append is now O(1) in session length.** `packages/core/src/session/event_log.rs`. The previous implementation re-streamed the entire `events.jsonl` on every append to derive the next `sequence_no`. That made each PostToolUse hook O(N) in session length and dominated end-to-end latency on long sessions; a typical Claude Code session of 200-500 events meant each later append re-read 200+ lines under the lock. A new 16-byte `events.jsonl.count` sidecar (`[count: u64 LE, byte_size: u64 LE]`) replaces the rescan with two 16-byte file ops in the steady state. The byte_size field is the crash detector: if a writer wrote `events.jsonl` but crashed before fsyncing the counter (or vice versa), the actual file size and the recorded size disagree -- mismatch, recount once, rewrite. Self-heals on the next append/open without ever assigning a duplicate sequence_no. Counter writes go through write-temp-then-rename so a reader that catches us mid-update sees either the old 16 bytes or the new 16 bytes, never a torn write.
+
+### Fixed
+
+- **Docs site restored.** Commit 4906398 set `"root": "overview"` in `docs/content/docs/cli/meta.json` to (purportedly) fix `/cli` 404'ing. fumadocs-mdx schema actually rejects it (`expected boolean, received string`), which crashed mdx generation, which made every docs URL return 500. `treeship.dev/cli` and even `treeship.dev/cli/init` were 404 in production until this release. Replaces the broken approach with explicit Next.js redirects from `/cli`, `/sdk`, `/api`, `/commerce`, `/reference` to their respective first-page targets, plus a permanent `/cli/dock -> /cli/hub` redirect for the long-pending CLI rename.
+
+- **`cli/dock` resolved to `cli/hub`.** The CLI command has been `treeship hub` since v0.7.x; the doc page lived at `/cli/dock` under the legacy URL with its title set to "hub". Renamed `dock.mdx -> hub.mdx`, updated the section meta, added the permanent redirect.
+
+### Added (docs surface)
+
+- **SEO surfaces.** `docs/app/robots.ts` (with sitemap pointer), `docs/app/sitemap.ts` (generated from `source.getPages()` and `blogSource.getPages()` so all 87 docs + 18 blog URLs appear), and metadata export in `docs/app/layout.tsx` with `metadataBase`, OG tags, and Twitter card defaults so social previews stop falling back to bare URLs.
+
+- **`llms.txt` rewritten.** `docs/public/llms.txt` now uses canonical paths (no `/docs/` prefix that depended on the old redirect), correct host (`treeship.dev`, not the imagined `docs.treeship.dev`), and lists every current page including `/cli/hub`, `/cli/log`, `/cli/merkle`, `/cli/otel`, `/cli/ui`, `/cli/install-cmd`, `/cli/approve`, `/cli/bundle`, `/sdk/verify`, `/sdk/mcp`, the full `/api/*` and `/commerce/*` sections.
+
+### Notes
+
+- No on-the-wire schema changes. Receipts and certificates produced by 0.9.4 verify identically under 0.9.5; receipts produced by 0.9.5 verify identically under 0.9.4 (the new key-lifecycle fields are scoped to the keystore, not the signed envelope).
+- Workspace crates bumped together per the lockstep convention. Full `treeship-core` lib suite: 175/175 passing (was 161 in 0.9.4; +5 counter-sidecar tests, +6 key-rotation tests, +3 unrelated). Cross-SDK contract suite: 4/4 vectors agree across both SDKs on this release.
+
+### Known limitations
+
+- **Verifier-side enforcement of `valid_until` is NOT in this release.** Adding the metadata is half the work; making the receipt-verify path refuse signatures whose key has expired is the other half, and it's a behavior change that would silently invalidate in-flight receipts if shipped in a patch. Slated for v0.10.0 behind an opt-in feature flag, with a migration window measured in releases not days.
+- **Compromise-revocation primitive is not in this release.** `rotate` is a graceful primitive (predecessor remains usable through its grace window); it's the wrong primitive for "this key is compromised, distrust it immediately." That needs its own design (revocation list distribution, verifier-side lookup latency, threat model). Tracked separately.
+- **`verifyReceipt(json)` parity in the cross-SDK suite is missing.** The TS SDK exposes it via WASM; Python doesn't have a JSON-receipt entry point yet. The current suite locks down `verify(artifact_id)` -- the LCD surface -- and is structured so adding `verifyReceipt` later is a one-line addition to `gen-vectors.sh` plus a method call swap in each runner.
+
 ## 0.9.4 (2026-04-21)
 
 Closes the v0.9.3 launch gaps surfaced during live plugin testing: the plugin now has a real install path without waiting for Anthropic marketplace approval, keystore-migration failures produce actionable errors instead of cryptic ones, and the plugin's SessionStart hook no longer silently swallows errors.
