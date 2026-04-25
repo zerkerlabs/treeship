@@ -3,3 +3,8 @@ target/
 .DS_Store
 .env
 .env.local
+
+# cross-SDK contract suite: regenerated on every run, never checked in
+tests/cross-sdk/corpus.json
+tests/cross-sdk/.ts-output.jsonl
+tests/cross-sdk/.py-output.jsonl

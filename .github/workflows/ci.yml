@@ -33,3 +33,33 @@ jobs:
       - name: Build Hub
         working-directory: packages/hub
         run: go build ./...
+
+  cross-sdk:
+    name: Cross-SDK contract (${{ matrix.os }} / Node ${{ matrix.node }} / Python ${{ matrix.python }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: ['20', '22']
+        python: ['3.11', '3.12']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Build CLI
+        run: cargo build --bin treeship
+
+      - name: Install tsx
+        run: npm install --no-save tsx
+
+      - name: Run cross-SDK contract suite
+        run: ./tests/cross-sdk/run.sh
+        env:
+          PATH: ./node_modules/.bin:${{ env.PATH }}
