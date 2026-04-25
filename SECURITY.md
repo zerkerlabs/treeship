@@ -6,7 +6,7 @@
 
 **Operation (every Hub write):** **DPoP (RFC 9449)** only -- the client proves possession of the **connection private key** per request. There is no long-lived **bearer** token for those writes. No device code is required on each `hub push` or `session report`; that is **by design** and matches proof-of-possession best practices.
 
-**"Device"** means a **registered keypair + `dock_id`**, not hardware attestation, unless a future release adds it. See the full [threat model and Hub section](https://docs.treeship.dev/docs/concepts/security#hub-connection-model-enrollment-and-operation) in the documentation.
+**"Device"** means a **registered keypair + `dock_id`**, not hardware attestation, unless a future release adds it. See the full [threat model and Hub section](https://docs.treeship.dev/concepts/security#hub-connection-model-enrollment-and-operation) in the documentation.
 
 ---
 
@@ -36,7 +36,7 @@ We will acknowledge your report within 48 hours and aim to release a fix within 
 
 ## Security model
 
-Full detail: [Security -- concepts](https://docs.treeship.dev/docs/concepts/security)
+Full detail: [Security -- concepts](https://docs.treeship.dev/concepts/security)
 
 Key properties:
 - Ed25519 signatures via ed25519-dalek (NCC Group audited)

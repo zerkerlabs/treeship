@@ -1,7 +1,7 @@
 # TREESHIP --AGENT INSTRUCTIONS
 
 > **Read this file first. Every time. It is the single source of truth.**
-> Last updated: April 2026 · 161 core lib tests passing · CLI + Hub + SDK + MCP + Claude Code plugin shipped (v0.9.4).
+> Last updated: April 2026 · 177 core lib tests passing · CLI + Hub + SDK + MCP + Claude Code plugin shipped (v0.9.5).
 
 ---
 
@@ -25,24 +25,26 @@ Treeship is a portable trust layer for AI agent workflows. Every action, approva
 
 | Component | Location | Status |
 |-----------|----------|--------|
-| Rust core library | `packages/core/` | 161 tests passing |
+| Rust core library | `packages/core/` | 177 tests passing |
 | Rust CLI binary | `packages/cli/` | 25+ commands |
 | TUI (Ratatui) | `packages/cli/` | Interactive terminal dashboard (`treeship ui`) |
 | OTel export | `packages/cli/` | OpenTelemetry span export (feature-flagged) |
 | Go Hub server | `packages/hub/` | 12 API endpoints |
 | WASM verifier | `packages/core-wasm/` | 167KB gzipped, Merkle + Ed25519 verify |
-| TypeScript SDK | `packages/sdk-ts/` | @treeship/sdk, 5 tests |
+| TypeScript SDK | `packages/sdk-ts/` | @treeship/sdk, 6 tests |
+| Python SDK | `packages/sdk-python/` | treeship-sdk, parity-tested vs TS via cross-SDK suite |
+| Cross-SDK contract suite | `tests/cross-sdk/` | 4 vectors, runs in CI matrix (Ubuntu+macOS, Node 20/22, Python 3.11/3.12) |
 | MCP bridge | `bridges/mcp/` | @treeship/mcp, 3 tests |
-| Fumadocs site | `docs/` | 45 pages |
+| Fumadocs site | `docs/` | 62 pages + 18 blog posts |
 | Website | (separate repo) | 8 pages |
 
 ### What is NOT built yet
 
 1. **ZK TLS (TLSNotary)** -- fully specced, feature-flagged, TLSNotary still alpha
-2. **`treeship attach claude/cursor`** -- agent process detection
-3. **npm/crates.io publishing** -- packages ready, not yet published
-4. **Install script** -- `curl treeship.dev/install | sh` not yet wired
-5. **Hub Merkle Rekor anchoring** -- Rekor integration is best-effort, not yet live
+2. **`treeship attach claude/cursor`** -- agent process detection (the official Claude Code plugin at `integrations/claude-code-plugin/` covers Claude Code via PostToolUse hooks; standalone process attach for Cursor/Cline is still planned)
+3. **Hub Merkle Rekor anchoring** -- Rekor integration is best-effort, not yet live
+4. **Verifier-side enforcement of `valid_until` on rotated keys** -- the metadata is captured in v0.9.5 (`Store::rotate`) but verifiers do not yet refuse signatures from expired keys; slated for v0.10.0 behind an opt-in flag
+5. **Compromise-revocation primitive** -- `rotate` is graceful (predecessor stays valid through grace window); a separate revocation primitive for compromised keys is its own design
 
 ---
 
@@ -55,7 +57,7 @@ treeship/                           # monorepo root
 ├── AGENTS.md                       # this file
 │
 ├── packages/
-│   ├── core/                       # Rust library (120 tests)
+│   ├── core/                       # Rust library (177 tests)
 │   │   └── src/
 │   │       ├── attestation/        # DSSE, PAE, Ed25519, content-addressed IDs
 │   │       ├── statements/         # 8 statement types (action, approval, handoff, endorsement, receipt, bundle, decision, declaration), nonce binding
@@ -105,7 +107,7 @@ treeship/                           # monorepo root
 │   │       └── rekor/              # Rekor anchoring (best-effort)
 │   │
 │   ├── core-wasm/                  # WASM verifier (167KB gzipped, Merkle + Ed25519)
-│   └── sdk-ts/                     # @treeship/sdk (5 tests)
+│   └── sdk-ts/                     # @treeship/sdk (6 tests)
 │
 ├── bridges/
 │   └── mcp/                        # @treeship/mcp (3 tests)

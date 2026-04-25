@@ -85,7 +85,7 @@ curl -fsSL treeship.dev/setup | sh
 
 That installs the CLI, runs `treeship init`, and instruments any agents it detects.
 
-**Platform support at v0.9.3: macOS and Linux only.** The CLI ships for `darwin-arm64`, `darwin-x64`, and `linux-x64`. The setup script is POSIX shell and the `treeship add` command's project-file drops use POSIX path semantics (`std::fs::rename` overwrites on POSIX, which differs from Windows). A Windows binary and Windows-aware filesystem path is planned for v0.10.0. If you're on Windows today, use WSL.
+**Platform support at v0.9.5: macOS and Linux only.** The CLI ships for `darwin-arm64`, `darwin-x64`, and `linux-x64`. The setup script is POSIX shell and the `treeship add` command's project-file drops use POSIX path semantics (`std::fs::rename` overwrites on POSIX, which differs from Windows). A Windows binary and Windows-aware filesystem path is planned for v0.10.0. If you're on Windows today, use WSL.
 
 ## Onboarding (AI agents)
 

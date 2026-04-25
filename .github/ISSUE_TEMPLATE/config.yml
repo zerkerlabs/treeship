@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://docs.treeship.dev
+    about: Concepts, guides, CLI reference, and SDK docs.
+  - name: Security vulnerability
+    url: https://github.com/zerkerlabs/treeship/security/advisories/new
+    about: Please use private advisories for security issues -- do not file a public bug.

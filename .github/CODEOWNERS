@@ -1,0 +1,11 @@
+# Default owners — every PR pings them for review unless overridden below.
+* @rezker1
+
+# Security-sensitive surfaces: any change here MUST be reviewed.
+/SECURITY.md            @rezker1
+/.github/               @rezker1
+/.github/workflows/     @rezker1
+/packages/core/src/keys/        @rezker1
+/packages/core/src/attestation/ @rezker1
+/packages/core/src/session/event_log.rs @rezker1
+/packages/hub/                  @rezker1

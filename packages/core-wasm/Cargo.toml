@@ -3,6 +3,11 @@ name = "treeship-core-wasm"
 version = "0.9.5"
 edition = "2021"
 description = "Treeship verification in the browser via WebAssembly"
+license = "Apache-2.0"
+repository = "https://github.com/zerkerlabs/treeship"
+homepage = "https://treeship.dev"
+keywords = ["treeship", "wasm", "verification", "webassembly", "ed25519"]
+categories = ["wasm", "cryptography"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
