@@ -7,11 +7,26 @@
 //! concurrently. Each call attempts to acquire an exclusive advisory lock
 //! (via `fs2::FileExt::try_lock_exclusive` -- backed by `flock(2)` on Unix
 //! and `LockFileEx` on Windows) on a sidecar `events.jsonl.lock` file in a
-//! ~500ms bounded retry loop. Under the lock, the JSONL line count is the
-//! authoritative source for the next `sequence_no`. The per-process
-//! AtomicU64 is retained as a hot-path optimization for non-contended use,
-//! but its value is overwritten by the on-disk count after every locked
-//! append.
+//! ~500ms bounded retry loop. Under the lock, a counter sidecar
+//! `events.jsonl.count` is the authoritative source for the next
+//! `sequence_no`. The per-process AtomicU64 is retained as a hot-path
+//! optimization for non-contended use, but its value is overwritten by the
+//! on-disk counter after every locked append.
+//!
+//! Counter sidecar format (16 bytes):
+//!   - bytes 0..8:  count (u64 LE) -- number of events written to events.jsonl
+//!   - bytes 8..16: byte_size (u64 LE) -- size of events.jsonl when count was recorded
+//!
+//! The byte_size field is the crash detector. If a peer wrote events.jsonl
+//! but crashed before fsyncing the counter (or vice versa), the size on disk
+//! and the size in the counter disagree. On any mismatch we fall back to an
+//! O(N) line count and rewrite the counter -- one paid scan, then back to
+//! O(1) on every subsequent append.
+//!
+//! This bounds steady-state append cost at constant: read 16 bytes, write
+//! one JSONL line, write 16 bytes. The previous implementation re-streamed
+//! the entire events.jsonl on every append, which made hooks O(N) in
+//! session length and dominated PostToolUse latency on long sessions.
 //!
 //! Fail-open semantics: if a writer cannot acquire the lock within the
 //! retry window (typically because a peer crashed while holding it, or a
@@ -69,21 +84,16 @@ impl EventLog {
     ///
     /// The session directory is typically `.treeship/sessions/<session_id>/`.
     /// If the directory does not exist, it will be created.
+    ///
+    /// Initialization reads the counter sidecar in O(1) when present and
+    /// consistent with events.jsonl's byte size; falls back to an O(N) line
+    /// count (and rewrites the sidecar) when the sidecar is missing,
+    /// short-read, or stale from a crashed previous appender.
     pub fn open(session_dir: &Path) -> Result<Self, EventLogError> {
         std::fs::create_dir_all(session_dir)?;
         let path = session_dir.join("events.jsonl");
-
-        // Count existing events to initialize the sequence counter.
-        let sequence = if path.exists() {
-            let file = std::fs::File::open(&path)?;
-            let reader = std::io::BufReader::new(file);
-            let count = reader.lines().filter(|l| l.is_ok()).count() as u64;
-            AtomicU64::new(count)
-        } else {
-            AtomicU64::new(0)
-        };
-
-        Ok(Self { path, sequence })
+        let count = read_counter_or_recount(&path)?;
+        Ok(Self { path, sequence: AtomicU64::new(count) })
     }
 
     /// Append a single event to the log.
@@ -152,17 +162,14 @@ impl EventLog {
             }
         }
 
-        // Under the lock (or unlocked fallback): re-derive sequence_no
-        // from the actual on-disk line count. The per-process AtomicU64
-        // is a stale hint -- only the on-disk count is authoritative
-        // when multiple processes are appending.
-        let count = if self.path.exists() {
-            let f = std::fs::File::open(&self.path)?;
-            let r = std::io::BufReader::new(f);
-            r.lines().filter(|l| l.is_ok()).count() as u64
-        } else {
-            0
-        };
+        // Under the lock (or unlocked fallback): read sequence_no from the
+        // counter sidecar in O(1) when consistent with events.jsonl size.
+        // Stale or missing counters force a one-time O(N) rescan that also
+        // rewrites the counter, so subsequent appends return to O(1). Only
+        // the on-disk state (counter + size check) is authoritative when
+        // multiple processes are appending; the per-process AtomicU64 is a
+        // stale hint.
+        let count = read_counter_or_recount(&self.path)?;
         event.sequence_no = count;
 
         let mut line = serde_json::to_vec(event)?;
@@ -174,6 +181,13 @@ impl EventLog {
             .open(&self.path)?;
         file.write_all(&line)?;
         file.flush()?;
+
+        // Update the counter sidecar with the new count and the new
+        // events.jsonl size, so the next append can short-circuit the line
+        // scan. Failure to update the counter is non-fatal: the next reader
+        // will detect the size mismatch and recount.
+        let new_size = file.metadata().map(|m| m.len()).unwrap_or(0);
+        let _ = write_counter(&self.path, count + 1, new_size);
 
         // Keep the in-process AtomicU64 in sync so non-contended callers
         // see the right value via event_count() without re-reading.
@@ -327,6 +341,114 @@ fn open_lock_file(path: &Path) -> Result<std::fs::File, std::io::Error> {
         .create(true)
         .read(true)
         .write(true)
+        .open(path)
+}
+
+/// Path of the counter sidecar for a given events.jsonl path.
+fn counter_path(events_path: &Path) -> PathBuf {
+    events_path.with_extension("jsonl.count")
+}
+
+/// Read the counter sidecar if it exists and is consistent with events.jsonl.
+///
+/// Returns `Some(count)` when the sidecar's recorded byte_size matches the
+/// current events.jsonl size, and `None` otherwise (missing sidecar, short
+/// read, parse failure, or size mismatch from a crashed previous appender).
+#[cfg(not(target_family = "wasm"))]
+fn read_counter_consistent(events_path: &Path) -> Option<u64> {
+    let counter = counter_path(events_path);
+    let bytes = std::fs::read(&counter).ok()?;
+    if bytes.len() != 16 {
+        return None;
+    }
+    let count = u64::from_le_bytes(bytes[0..8].try_into().ok()?);
+    let recorded_size = u64::from_le_bytes(bytes[8..16].try_into().ok()?);
+
+    // events.jsonl may not exist yet -- counter records (0, 0) for that case.
+    let actual_size = match std::fs::metadata(events_path) {
+        Ok(m) => m.len(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
+        Err(_) => return None,
+    };
+    if actual_size != recorded_size {
+        return None;
+    }
+    Some(count)
+}
+
+/// Read the counter via the sidecar (O(1)) or fall back to an O(N) line
+/// scan, rewriting the sidecar on the way out. This is the recovery path
+/// after a crash that left the counter and events.jsonl out of sync.
+#[cfg(not(target_family = "wasm"))]
+fn read_counter_or_recount(events_path: &Path) -> Result<u64, EventLogError> {
+    if let Some(count) = read_counter_consistent(events_path) {
+        return Ok(count);
+    }
+    let count = if events_path.exists() {
+        let f = std::fs::File::open(events_path)?;
+        let r = std::io::BufReader::new(f);
+        r.lines().filter(|l| l.is_ok()).count() as u64
+    } else {
+        0
+    };
+    let size = std::fs::metadata(events_path).map(|m| m.len()).unwrap_or(0);
+    let _ = write_counter(events_path, count, size);
+    Ok(count)
+}
+
+/// WASM has no fs and no concurrent writers; the in-memory AtomicU64 in the
+/// EventLog is sufficient. Initialize to zero on open.
+#[cfg(target_family = "wasm")]
+fn read_counter_or_recount(_events_path: &Path) -> Result<u64, EventLogError> {
+    Ok(0)
+}
+
+/// Atomically replace the counter sidecar with the new (count, byte_size).
+///
+/// Writes to a temp file in the same directory and renames into place so a
+/// reader either sees the old 16 bytes or the new 16 bytes, never a partial
+/// write. The 0o600 perm matches the lock file -- the counter doesn't leak
+/// secrets but its existence is a session signal worth scoping to the owner.
+#[cfg(not(target_family = "wasm"))]
+fn write_counter(events_path: &Path, count: u64, byte_size: u64) -> Result<(), std::io::Error> {
+    use std::io::Write as _;
+    let counter = counter_path(events_path);
+    let dir = counter.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "counter path has no parent")
+    })?;
+    std::fs::create_dir_all(dir)?;
+
+    let mut buf = [0u8; 16];
+    buf[0..8].copy_from_slice(&count.to_le_bytes());
+    buf[8..16].copy_from_slice(&byte_size.to_le_bytes());
+
+    let tmp = counter.with_extension("count.tmp");
+    {
+        let mut f = open_counter_tmp(&tmp)?;
+        f.write_all(&buf)?;
+        f.sync_all()?;
+    }
+    std::fs::rename(&tmp, &counter)?;
+    Ok(())
+}
+
+#[cfg(all(not(target_family = "wasm"), unix))]
+fn open_counter_tmp(path: &Path) -> Result<std::fs::File, std::io::Error> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+}
+
+#[cfg(all(not(target_family = "wasm"), not(unix)))]
+fn open_counter_tmp(path: &Path) -> Result<std::fs::File, std::io::Error> {
+    std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
         .open(path)
 }
 
@@ -514,6 +636,210 @@ mod tests {
             post_mode, 0o600,
             "lock file should be re-tightened to 0o600 after open; got {:o}",
             post_mode
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Counter sidecar must exist after the first append and contain
+    /// (count=1, byte_size=size of events.jsonl). This is the happy path
+    /// that lets every subsequent append skip the O(N) rescan.
+    #[cfg(not(target_family = "wasm"))]
+    #[test]
+    fn counter_sidecar_written_after_append() {
+        let dir = std::env::temp_dir()
+            .join(format!("treeship-evtlog-counter-{}", rand::random::<u32>()));
+        let log = EventLog::open(&dir).unwrap();
+
+        let mut e = make_event("ssn_counter", EventType::SessionStarted);
+        log.append(&mut e).unwrap();
+
+        let counter = log.path().with_extension("jsonl.count");
+        let bytes = std::fs::read(&counter).expect("counter sidecar must exist after append");
+        assert_eq!(bytes.len(), 16, "counter sidecar must be 16 bytes");
+
+        let count = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
+        let recorded_size = u64::from_le_bytes(bytes[8..16].try_into().unwrap());
+        let actual_size = std::fs::metadata(log.path()).unwrap().len();
+        assert_eq!(count, 1, "counter must reflect the one appended event");
+        assert_eq!(
+            recorded_size, actual_size,
+            "counter byte_size ({}) must match events.jsonl size ({})",
+            recorded_size, actual_size
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A missing counter sidecar (fresh install, deleted by user, etc.)
+    /// must not break sequence_no assignment. The next append falls back
+    /// to an O(N) recount and rewrites the counter.
+    #[cfg(not(target_family = "wasm"))]
+    #[test]
+    fn counter_sidecar_recovers_when_missing() {
+        let dir = std::env::temp_dir()
+            .join(format!("treeship-evtlog-missing-counter-{}", rand::random::<u32>()));
+
+        // Append two events, then nuke the counter sidecar.
+        {
+            let log = EventLog::open(&dir).unwrap();
+            let mut e1 = make_event("ssn_x", EventType::SessionStarted);
+            let mut e2 = make_event("ssn_x", EventType::AgentStarted {
+                parent_agent_instance_id: None,
+            });
+            log.append(&mut e1).unwrap();
+            log.append(&mut e2).unwrap();
+        }
+        let counter = dir.join("events.jsonl.count");
+        std::fs::remove_file(&counter).expect("counter must exist before deletion");
+
+        // Reopen + append. The third event must get sequence_no=2 even
+        // though the counter sidecar is gone.
+        let log = EventLog::open(&dir).unwrap();
+        assert_eq!(log.event_count(), 2, "open() must recount when counter is missing");
+
+        let mut e3 = make_event("ssn_x", EventType::SessionClosed {
+            summary: None,
+            duration_ms: None,
+        });
+        log.append(&mut e3).unwrap();
+        assert_eq!(e3.sequence_no, 2);
+        assert!(counter.exists(), "counter must be rewritten after recount");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A short-read or garbage counter sidecar (corrupted, partial write,
+    /// truncated by external tool) must not be trusted. The size mismatch
+    /// path covers the "wrong content" case for a 16-byte file too.
+    #[cfg(not(target_family = "wasm"))]
+    #[test]
+    fn counter_sidecar_recovers_when_corrupt() {
+        let dir = std::env::temp_dir()
+            .join(format!("treeship-evtlog-corrupt-counter-{}", rand::random::<u32>()));
+
+        {
+            let log = EventLog::open(&dir).unwrap();
+            let mut e = make_event("ssn_corrupt", EventType::SessionStarted);
+            log.append(&mut e).unwrap();
+        }
+        // Truncate the counter to a non-16 length.
+        let counter = dir.join("events.jsonl.count");
+        std::fs::write(&counter, b"junk").unwrap();
+
+        let log = EventLog::open(&dir).unwrap();
+        assert_eq!(log.event_count(), 1, "short-read counter must be ignored, recount kicks in");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A counter that recorded the wrong byte_size (someone or something
+    /// appended to events.jsonl behind our back) must not be trusted.
+    /// This is the crash-recovery path: peer wrote events.jsonl but
+    /// crashed before fsyncing the counter, so the recorded size is stale.
+    #[cfg(not(target_family = "wasm"))]
+    #[test]
+    fn counter_sidecar_recovers_when_size_disagrees() {
+        let dir = std::env::temp_dir()
+            .join(format!("treeship-evtlog-stale-counter-{}", rand::random::<u32>()));
+
+        {
+            let log = EventLog::open(&dir).unwrap();
+            let mut e = make_event("ssn_stale", EventType::SessionStarted);
+            log.append(&mut e).unwrap();
+        }
+
+        // Simulate a crash mid-append: append one extra raw line to
+        // events.jsonl WITHOUT updating the counter. Now the counter
+        // says (1, S) but events.jsonl is (S + |line|) bytes.
+        let events_path = dir.join("events.jsonl");
+        let mut extra = make_event("ssn_stale", EventType::AgentStarted {
+            parent_agent_instance_id: None,
+        });
+        extra.sequence_no = 999; // intentionally wrong; will be overwritten on read
+        let mut line = serde_json::to_vec(&extra).unwrap();
+        line.push(b'\n');
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&events_path)
+            .unwrap();
+        std::io::Write::write_all(&mut f, &line).unwrap();
+        std::io::Write::flush(&mut f).unwrap();
+
+        // Re-open. The size mismatch must trigger a recount; we should see 2.
+        let log = EventLog::open(&dir).unwrap();
+        assert_eq!(
+            log.event_count(),
+            2,
+            "size mismatch must force recount, ignoring stale counter"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The counter sidecar fix must not break the cross-process race
+    /// safety established by the flock layer. This is the same shape as
+    /// `concurrent_appends_have_unique_sequence_numbers` but exists to
+    /// guard against a regression where the counter is read OUTSIDE the
+    /// lock, which would let two writers both see count=N and assign N
+    /// to two different events.
+    #[cfg(not(target_family = "wasm"))]
+    #[test]
+    fn counter_sidecar_preserves_concurrent_uniqueness() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let dir = std::env::temp_dir()
+            .join(format!("treeship-evtlog-counter-race-{}", rand::random::<u32>()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        const WRITERS: usize = 16;
+        let dir = Arc::new(dir);
+        let mut handles = Vec::with_capacity(WRITERS);
+
+        for _ in 0..WRITERS {
+            let dir = Arc::clone(&dir);
+            handles.push(thread::spawn(move || {
+                let log = EventLog::open(&dir).unwrap();
+                let mut e = make_event("ssn_counter_race", EventType::SessionStarted);
+                log.append(&mut e).unwrap();
+                e.sequence_no
+            }));
+        }
+
+        let mut seqs: Vec<u64> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        seqs.sort();
+        let expected: Vec<u64> = (0..WRITERS as u64).collect();
+        assert_eq!(seqs, expected, "counter must not bypass the flock race protection");
+
+        // Counter should reflect the final state.
+        let log = EventLog::open(&dir).unwrap();
+        assert_eq!(log.event_count(), WRITERS as u64);
+
+        let _ = std::fs::remove_dir_all(&*dir);
+    }
+
+    /// Counter sidecar must be created mode 0o600 (owner-only) on Unix --
+    /// same scoping as the lock file; the existence of a counter is a
+    /// session signal that doesn't need to leak to other users.
+    #[cfg(all(not(target_family = "wasm"), unix))]
+    #[test]
+    fn counter_sidecar_has_owner_only_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir()
+            .join(format!("treeship-evtlog-counter-perms-{}", rand::random::<u32>()));
+        let log = EventLog::open(&dir).unwrap();
+
+        let mut e = make_event("ssn_counter_perms", EventType::SessionStarted);
+        log.append(&mut e).unwrap();
+
+        let counter = log.path().with_extension("jsonl.count");
+        let mode = std::fs::metadata(&counter).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "counter sidecar mode is {:o}, expected 0o600 (owner-only)",
+            mode
         );
 
         let _ = std::fs::remove_dir_all(&dir);
