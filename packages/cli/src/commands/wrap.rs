@@ -44,6 +44,7 @@ pub fn run(
     actor:     Option<String>,
     action:    Option<String>,
     parent_id: Option<String>,
+    category:  Option<String>,
     push:      bool,
     config:    Option<&str>,
     args:      &[String],     // everything after --
@@ -206,6 +207,9 @@ pub fn run(
 
     let mut stmt = ActionStatement::new(&actor_uri, &action_label);
     stmt.parent_id = parent_id.clone();
+    stmt.category = category.as_deref()
+        .and_then(treeship_core::statements::ReceiptCategory::from_cli)
+        .unwrap_or_default();
     stmt.meta = Some(meta);
 
     let signer = ctx.keys.default_signer()?;
@@ -367,6 +371,7 @@ pub fn run(
     printer.info(&format!("  id:       {}", short_id));
     printer.info(&format!("  command:  {}", args.join(" ")));
     printer.info(&format!("  exit:     {}", exit_label));
+    printer.info(&format!("  category: {}", stmt.category));
     printer.info(&format!("  elapsed:  {}", elapsed_str));
     printer.info(&format!("  output:   {}", output_line));
     printer.info(&format!("  files:    {}", files_line));

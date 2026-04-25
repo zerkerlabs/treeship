@@ -823,6 +823,18 @@ struct WrapArgs {
     #[arg(long, value_name = "ID")]
     parent: Option<String>,
 
+    /// Receipt category: boundary, consequence, or internal
+    ///
+    /// - boundary: trust boundary crossing (default) — external API calls,
+    ///   agent handoffs, file writes that other agents read
+    /// - consequence: downstream effect of a boundary crossing — test results,
+    ///   generated files, state mutations
+    /// - internal: agent-internal operation — reasoning, planning, context loading
+    ///
+    /// Examples: --category boundary  --category consequence  --category internal
+    #[arg(long, value_name = "CAT")]
+    category: Option<String>,
+
     /// Push the artifact to Hub immediately after attesting
     #[arg(long, default_value_t = false)]
     push: bool,
@@ -1444,6 +1456,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             a.actor.clone(),
             a.action.clone(),
             a.parent.clone(),
+            a.category.clone(),
             a.push,
             cli.config.as_deref(),
             &a.cmd,
