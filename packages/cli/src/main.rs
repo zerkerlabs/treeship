@@ -1159,6 +1159,34 @@ struct VerifyArgs {
 enum KeysCommand {
     /// List all signing keys
     List,
+
+    /// Rotate a signing key, minting a successor and stamping the
+    /// predecessor with a grace-period valid_until.
+    ///
+    /// Examples:
+    ///   treeship keys rotate
+    ///   treeship keys rotate --grace-hours 48
+    ///   treeship keys rotate --key key_a1b2c3d4
+    ///   treeship keys rotate --no-default
+    Rotate(KeysRotateArgs),
+}
+
+#[derive(clap::Args)]
+struct KeysRotateArgs {
+    /// Specific key id to rotate. Defaults to the current default key.
+    #[arg(long)]
+    key: Option<String>,
+
+    /// Hours the predecessor remains valid for verifiers honoring the
+    /// grace window. Default 24h matches the typical client-cache TTL
+    /// for fetched public-key bundles.
+    #[arg(long, default_value_t = 24)]
+    grace_hours: u64,
+
+    /// Mint the successor without promoting it to default. Useful for
+    /// staging a rotation for review before the active signer flips.
+    #[arg(long)]
+    no_default: bool,
 }
 
 // --- hub --------------------------------------------------------------------
@@ -1706,6 +1734,13 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
 
         Command::Keys(sub) => match sub {
             KeysCommand::List => commands::keys::list(cli.config.as_deref(), printer),
+            KeysCommand::Rotate(a) => commands::keys::rotate(
+                a.key.as_deref(),
+                a.grace_hours,
+                !a.no_default,
+                cli.config.as_deref(),
+                printer,
+            ),
         },
 
         Command::Hub(sub) => match sub {

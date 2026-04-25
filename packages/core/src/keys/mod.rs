@@ -26,6 +26,31 @@ pub struct KeyInfo {
     /// First 8 bytes of sha256(public_key), hex-encoded.
     pub fingerprint: String,
     pub public_key:  Vec<u8>,  // raw 32-byte Ed25519 public key
+    /// RFC 3339 timestamp after which signatures by this key should be
+    /// considered stale. `None` means the key has not been rotated and is
+    /// indefinitely valid. Set automatically by `Store::rotate` to
+    /// `now + grace_period` on the predecessor key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_until: Option<String>,
+    /// If this key was rotated to a successor, the successor's key id.
+    /// Lets verifiers walk a rotation chain forward when validating an old
+    /// receipt against the current keystore. `None` means this is the head
+    /// of its chain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub successor_key_id: Option<KeyId>,
+}
+
+/// Outcome of a `Store::rotate` call.
+#[derive(Debug, Clone)]
+pub struct RotationResult {
+    /// The key that was rotated. Its `valid_until` is now set.
+    pub predecessor: KeyInfo,
+    /// The freshly minted successor key.
+    pub successor: KeyInfo,
+    /// RFC 3339 timestamp until which the predecessor remains valid for
+    /// signature verification under the grace period. Equal to
+    /// `predecessor.valid_until.unwrap()`.
+    pub grace_period_until: String,
 }
 
 /// Errors from keystore operations.
@@ -59,7 +84,7 @@ impl From<serde_json::Error>  for KeyError { fn from(e: serde_json::Error)  -> S
 // --- On-disk formats ---
 
 /// The encrypted representation of one keypair on disk.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct EncryptedEntry {
     id:           KeyId,
     algorithm:    String,
@@ -69,6 +94,15 @@ struct EncryptedEntry {
     enc_priv_key: Vec<u8>,
     /// 12-byte GCM nonce used when encrypting.
     nonce:        Vec<u8>,
+    /// RFC 3339 timestamp after which signatures by this key should be
+    /// considered stale. `None` means the key is indefinitely valid.
+    /// Defaulted on deserialization so pre-0.9.5 entry files still load.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    valid_until: Option<String>,
+    /// Successor key id if this key was rotated. Defaulted on
+    /// deserialization for pre-0.9.5 entry files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    successor_key_id: Option<KeyId>,
 }
 
 /// The manifest file: which keys exist and which is the default.
@@ -125,12 +159,14 @@ impl Store {
             .map_err(|e| KeyError::Crypto(e))?;
 
         let entry = EncryptedEntry {
-            id:           key_id.clone(),
-            algorithm:    "ed25519".into(),
-            created_at:   crate::statements::unix_to_rfc3339(unix_now()),
-            public_key:   pub_key.clone(),
-            enc_priv_key: enc,
+            id:               key_id.clone(),
+            algorithm:        "ed25519".into(),
+            created_at:       crate::statements::unix_to_rfc3339(unix_now()),
+            public_key:       pub_key.clone(),
+            enc_priv_key:     enc,
             nonce,
+            valid_until:      None,
+            successor_key_id: None,
         };
 
         self.write_entry(&entry)?;
@@ -147,13 +183,183 @@ impl Store {
         self.cache.write().unwrap().insert(key_id.clone(), entry);
 
         Ok(KeyInfo {
-            id:          key_id,
-            algorithm:   "ed25519".into(),
-            is_default:  manifest.default_key_id.as_deref() == Some(&manifest.key_ids.last().unwrap_or(&String::new())),
-            created_at:  crate::statements::unix_to_rfc3339(unix_now()),
-            fingerprint: fingerprint(&pub_key),
-            public_key:  pub_key,
+            id:               key_id.clone(),
+            algorithm:        "ed25519".into(),
+            is_default:       manifest.default_key_id.as_deref() == Some(key_id.as_str()),
+            created_at:       crate::statements::unix_to_rfc3339(unix_now()),
+            fingerprint:      fingerprint(&pub_key),
+            public_key:       pub_key,
+            valid_until:      None,
+            successor_key_id: None,
         })
+    }
+
+    /// Rotate the current default key (or a specific key) to a freshly
+    /// generated successor.
+    ///
+    /// Mints a new Ed25519 keypair, links the predecessor to it via
+    /// `successor_key_id`, and stamps the predecessor with a `valid_until`
+    /// of `now + grace_period`. The grace window lets verifiers continue to
+    /// accept signatures from the predecessor while clients catch up to
+    /// the new public key.
+    ///
+    /// If `set_default` is true (the typical case -- you rotate because you
+    /// want to start signing with the new key immediately), the successor
+    /// becomes the default. Pass `false` to stage a rotation for review
+    /// without flipping the active signer.
+    ///
+    /// `predecessor_id` may be `None` to rotate the current default. Pass
+    /// an explicit id to rotate a non-default key (e.g. a per-environment
+    /// secondary).
+    ///
+    /// Note on threat model: this is a graceful rotation primitive, not a
+    /// revocation primitive. If the predecessor key is suspected compromised
+    /// the grace_period should be `Duration::ZERO` (or use a future
+    /// `revoke()` call once that lands) so the predecessor's `valid_until`
+    /// is in the past and any verifier honoring the metadata refuses
+    /// further signatures from it.
+    pub fn rotate(
+        &self,
+        predecessor_id: Option<&str>,
+        grace_period: std::time::Duration,
+        set_default: bool,
+    ) -> Result<RotationResult, KeyError> {
+        // Resolve predecessor: explicit id, else the current default.
+        let pred_id = match predecessor_id {
+            Some(id) => id.to_string(),
+            None => self.default_key_id()?,
+        };
+
+        // Refuse to rotate a key that has already been rotated -- the
+        // chain head is the only valid rotation source. This makes the
+        // operation idempotent in the face of accidental re-runs.
+        let pred_entry_existing = self.load_entry(&pred_id)?;
+        if let Some(existing) = &pred_entry_existing.successor_key_id {
+            return Err(KeyError::Crypto(format!(
+                "key {pred_id} has already been rotated to {existing}; \
+                 rotate the chain head instead"
+            )));
+        }
+
+        // Mint the successor. We deliberately do NOT call `self.generate()`
+        // because that path also updates the manifest's default. We need a
+        // single transactional update that sets both predecessor metadata
+        // AND (optionally) the new default in one manifest write.
+        let succ_id = new_key_id();
+        let signer = Ed25519Signer::generate(&succ_id)
+            .map_err(|e| KeyError::Crypto(e.to_string()))?;
+        let succ_secret  = signer.secret_bytes();
+        let succ_pub_key = signer.public_key_bytes();
+        let (succ_enc, succ_nonce) = aes_gcm_encrypt(&self.machine_key, &succ_secret)
+            .map_err(KeyError::Crypto)?;
+
+        let succ_created = crate::statements::unix_to_rfc3339(unix_now());
+        let succ_entry = EncryptedEntry {
+            id:               succ_id.clone(),
+            algorithm:        "ed25519".into(),
+            created_at:       succ_created.clone(),
+            public_key:       succ_pub_key.clone(),
+            enc_priv_key:     succ_enc,
+            nonce:            succ_nonce,
+            valid_until:      None,
+            successor_key_id: None,
+        };
+
+        // Stamp the predecessor with the grace deadline and link forward.
+        let valid_until = crate::statements::unix_to_rfc3339(
+            unix_now() + grace_period.as_secs(),
+        );
+        let mut pred_entry = pred_entry_existing;
+        pred_entry.valid_until      = Some(valid_until.clone());
+        pred_entry.successor_key_id = Some(succ_id.clone());
+
+        // Persist both entries before touching the manifest. If a write
+        // fails partway through, the manifest is still valid and a retry
+        // can resume cleanly.
+        self.write_entry(&pred_entry)?;
+        self.write_entry(&succ_entry)?;
+
+        // Update the manifest: register the new key, optionally promote it.
+        let mut manifest = self.read_manifest()?;
+        manifest.key_ids.push(succ_id.clone());
+        if set_default {
+            manifest.default_key_id = Some(succ_id.clone());
+        }
+        self.write_manifest(&manifest)?;
+
+        // Refresh the cache so subsequent `signer()` / `list()` calls see
+        // the new successor and the predecessor's updated lifecycle.
+        {
+            let mut cache = self.cache.write().unwrap();
+            cache.insert(pred_entry.id.clone(), pred_entry.clone());
+            cache.insert(succ_id.clone(),       succ_entry.clone());
+        }
+
+        let default_id = manifest.default_key_id.clone();
+        let predecessor = KeyInfo {
+            id:               pred_entry.id.clone(),
+            algorithm:        pred_entry.algorithm.clone(),
+            is_default:       default_id.as_deref() == Some(pred_entry.id.as_str()),
+            created_at:       pred_entry.created_at.clone(),
+            fingerprint:      fingerprint(&pred_entry.public_key),
+            public_key:       pred_entry.public_key.clone(),
+            valid_until:      pred_entry.valid_until.clone(),
+            successor_key_id: pred_entry.successor_key_id.clone(),
+        };
+        let successor = KeyInfo {
+            id:               succ_id.clone(),
+            algorithm:        "ed25519".into(),
+            is_default:       default_id.as_deref() == Some(succ_id.as_str()),
+            created_at:       succ_created,
+            fingerprint:      fingerprint(&succ_pub_key),
+            public_key:       succ_pub_key,
+            valid_until:      None,
+            successor_key_id: None,
+        };
+
+        Ok(RotationResult {
+            predecessor,
+            successor,
+            grace_period_until: valid_until,
+        })
+    }
+
+    /// Walk the rotation chain forward from `id`, returning the ordered
+    /// list of key ids: `[id, successor_of_id, ...]`. The first element is
+    /// always `id` itself. Stops at a key with no `successor_key_id`.
+    pub fn successor_chain(&self, id: &str) -> Result<Vec<KeyId>, KeyError> {
+        let mut chain = Vec::new();
+        let mut cursor = id.to_string();
+        // Cap iterations at the manifest size to defend against a corrupt
+        // chain that loops back on itself. A well-formed chain is bounded
+        // by the number of keys in the keystore.
+        let max_steps = self.read_manifest()?.key_ids.len() + 1;
+        for _ in 0..max_steps {
+            chain.push(cursor.clone());
+            let entry = self.load_entry(&cursor)?;
+            match entry.successor_key_id {
+                Some(next) => cursor = next,
+                None => return Ok(chain),
+            }
+        }
+        Err(KeyError::Crypto(format!(
+            "rotation chain starting at {id} exceeds keystore size; suspected loop"
+        )))
+    }
+
+    /// Returns the `KeyInfo` for every key whose `valid_until` is either
+    /// unset or strictly after `at_unix_secs`. The result includes both
+    /// rotated-but-still-in-grace predecessors and never-rotated keys.
+    /// Useful for building a verifier's accept-set as of a given time.
+    pub fn valid_keys_at(&self, at_unix_secs: u64) -> Result<Vec<KeyInfo>, KeyError> {
+        let cutoff_rfc = crate::statements::unix_to_rfc3339(at_unix_secs);
+        Ok(self.list()?
+            .into_iter()
+            .filter(|k| match &k.valid_until {
+                None => true,
+                Some(until) => until.as_str() > cutoff_rfc.as_str(),
+            })
+            .collect())
     }
 
     /// Returns a boxed `Signer` for the current default key.
@@ -249,12 +455,14 @@ impl Store {
         manifest.key_ids.iter().map(|id| {
             let entry = self.load_entry(id)?;
             Ok(KeyInfo {
-                id:          entry.id.clone(),
-                algorithm:   entry.algorithm.clone(),
-                is_default:  entry.id == default,
-                created_at:  entry.created_at.clone(),
-                fingerprint: fingerprint(&entry.public_key),
-                public_key:  entry.public_key.clone(),
+                id:               entry.id.clone(),
+                algorithm:        entry.algorithm.clone(),
+                is_default:       entry.id == default,
+                created_at:       entry.created_at.clone(),
+                fingerprint:      fingerprint(&entry.public_key),
+                public_key:       entry.public_key.clone(),
+                valid_until:      entry.valid_until.clone(),
+                successor_key_id: entry.successor_key_id.clone(),
             })
         }).collect()
     }
@@ -279,15 +487,7 @@ impl Store {
         // Check cache first.
         if let Ok(cache) = self.cache.read() {
             if let Some(entry) = cache.get(id) {
-                // Re-create entry from cache fields to satisfy ownership.
-                return Ok(EncryptedEntry {
-                    id:           entry.id.clone(),
-                    algorithm:    entry.algorithm.clone(),
-                    created_at:   entry.created_at.clone(),
-                    public_key:   entry.public_key.clone(),
-                    enc_priv_key: entry.enc_priv_key.clone(),
-                    nonce:        entry.nonce.clone(),
-                });
+                return Ok(entry.clone());
             }
         }
         self.read_entry(id)
@@ -744,6 +944,188 @@ mod tests {
     fn no_default_key_errors() {
         let (store, dir) = make_store();
         assert!(store.default_signer().is_err());
+        cleanup(dir);
+    }
+
+    #[test]
+    fn rotate_mints_successor_and_links_predecessor() {
+        let (store, dir) = make_store();
+        let pred = store.generate(true).unwrap();
+        assert!(pred.valid_until.is_none(), "fresh key has no expiry");
+        assert!(pred.successor_key_id.is_none(), "fresh key has no successor");
+
+        let result = store
+            .rotate(None, std::time::Duration::from_secs(3600), true)
+            .unwrap();
+
+        // Predecessor metadata is updated.
+        assert_eq!(result.predecessor.id, pred.id);
+        assert!(result.predecessor.valid_until.is_some(),
+                "predecessor must get valid_until after rotation");
+        assert_eq!(result.predecessor.successor_key_id.as_deref(),
+                   Some(result.successor.id.as_str()),
+                   "predecessor must link forward to successor");
+        assert!(!result.predecessor.is_default,
+                "after rotation with set_default=true, predecessor is no longer default");
+
+        // Successor is fresh.
+        assert_ne!(result.successor.id, pred.id);
+        assert!(result.successor.valid_until.is_none(), "successor has no expiry yet");
+        assert!(result.successor.successor_key_id.is_none(), "successor is chain head");
+        assert!(result.successor.is_default, "successor is the new default");
+
+        // Same metadata visible via list().
+        let listed = store.list().unwrap();
+        assert_eq!(listed.len(), 2);
+        let pred_listed = listed.iter().find(|k| k.id == pred.id).unwrap();
+        assert!(pred_listed.valid_until.is_some());
+        assert_eq!(pred_listed.successor_key_id.as_deref(),
+                   Some(result.successor.id.as_str()));
+
+        cleanup(dir);
+    }
+
+    #[test]
+    fn rotate_with_set_default_false_keeps_predecessor_active() {
+        let (store, dir) = make_store();
+        let pred = store.generate(true).unwrap();
+
+        let result = store
+            .rotate(None, std::time::Duration::from_secs(3600), false)
+            .unwrap();
+
+        // Predecessor is still default. Successor exists but is not default.
+        assert!(result.predecessor.is_default);
+        assert!(!result.successor.is_default);
+        assert_eq!(store.default_key_id().unwrap(), pred.id);
+
+        cleanup(dir);
+    }
+
+    #[test]
+    fn rotate_predecessor_signing_still_works_during_grace_window() {
+        let (store, dir) = make_store();
+        let pred = store.generate(true).unwrap();
+        let _ = store
+            .rotate(None, std::time::Duration::from_secs(3600), true)
+            .unwrap();
+
+        // Predecessor key must still be loadable and capable of signing
+        // during its grace window. Verifiers can refuse on lifecycle, but
+        // the keystore must not preemptively destroy material.
+        let signer = store.signer(&pred.id).unwrap();
+        let pae = crate::attestation::pae("text/plain", b"grace-window-payload");
+        let sig = signer.sign(&pae).unwrap();
+        assert_eq!(sig.len(), 64);
+
+        cleanup(dir);
+    }
+
+    #[test]
+    fn rotate_refuses_to_rotate_already_rotated_key() {
+        let (store, dir) = make_store();
+        store.generate(true).unwrap();
+        let r1 = store
+            .rotate(None, std::time::Duration::from_secs(60), true)
+            .unwrap();
+
+        // Rotating the predecessor again must be refused -- it already
+        // points at r1.successor. Caller should rotate the chain head.
+        let err = store
+            .rotate(Some(&r1.predecessor.id),
+                    std::time::Duration::from_secs(60),
+                    true)
+            .unwrap_err();
+        match err {
+            KeyError::Crypto(msg) => assert!(
+                msg.contains("already been rotated"),
+                "error must explain why: {msg}"
+            ),
+            other => panic!("expected Crypto error, got {other:?}"),
+        }
+        cleanup(dir);
+    }
+
+    #[test]
+    fn successor_chain_walks_forward() {
+        let (store, dir) = make_store();
+        let k0 = store.generate(true).unwrap();
+        let r1 = store
+            .rotate(None, std::time::Duration::from_secs(60), true)
+            .unwrap();
+        let r2 = store
+            .rotate(None, std::time::Duration::from_secs(60), true)
+            .unwrap();
+
+        let chain = store.successor_chain(&k0.id).unwrap();
+        assert_eq!(chain, vec![k0.id.clone(), r1.successor.id.clone(), r2.successor.id.clone()],
+                   "chain must be ordered head -> tail");
+
+        // Mid-chain start: chain from r1.successor should drop k0.
+        let mid = store.successor_chain(&r1.successor.id).unwrap();
+        assert_eq!(mid, vec![r1.successor.id.clone(), r2.successor.id.clone()]);
+
+        // Tail: just itself.
+        let tail = store.successor_chain(&r2.successor.id).unwrap();
+        assert_eq!(tail, vec![r2.successor.id.clone()]);
+
+        cleanup(dir);
+    }
+
+    #[test]
+    fn valid_keys_at_filters_by_grace_window() {
+        let (store, dir) = make_store();
+        let _ = store.generate(true).unwrap();
+        let result = store
+            .rotate(None, std::time::Duration::from_secs(3600), true)
+            .unwrap();
+
+        // At time-of-rotation, both keys must be valid -- predecessor is
+        // mid-grace, successor is freshly minted.
+        let now = unix_now();
+        let valid_now = store.valid_keys_at(now).unwrap();
+        assert_eq!(valid_now.len(), 2, "both predecessor (in grace) and successor should be valid");
+
+        // After the grace window expires, only the successor remains.
+        let after_grace = unix_now() + 7200;
+        let valid_after = store.valid_keys_at(after_grace).unwrap();
+        assert_eq!(valid_after.len(), 1,
+                   "after grace window only successor remains valid");
+        assert_eq!(valid_after[0].id, result.successor.id);
+
+        cleanup(dir);
+    }
+
+    /// Pre-0.9.5 entry files lack `valid_until` and `successor_key_id`.
+    /// They must still deserialize cleanly and be visible via `list()` /
+    /// `default_signer()` etc.
+    #[test]
+    fn legacy_entry_without_lifecycle_fields_loads() {
+        let (store, dir) = make_store();
+        let info = store.generate(true).unwrap();
+
+        // Re-serialize the on-disk entry without the new fields, simulating
+        // a file created by a 0.9.4 or earlier CLI.
+        let path = store.entry_path(&info.id);
+        let raw  = fs::read(&path).unwrap();
+        let mut json: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+        let obj = json.as_object_mut().unwrap();
+        obj.remove("valid_until");
+        obj.remove("successor_key_id");
+        fs::write(&path, serde_json::to_vec_pretty(&json).unwrap()).unwrap();
+
+        // A fresh Store (cold cache) must still load the entry and treat
+        // the missing fields as None.
+        let store2 = Store::open(&dir).unwrap();
+        let listed = store2.list().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert!(listed[0].valid_until.is_none(),
+                "missing valid_until must default to None on legacy entry");
+        assert!(listed[0].successor_key_id.is_none(),
+                "missing successor_key_id must default to None on legacy entry");
+        let signer = store2.default_signer().unwrap();
+        assert_eq!(signer.key_id(), info.id);
+
         cleanup(dir);
     }
 }
