@@ -21,12 +21,25 @@ This suite makes the divergence visible at PR time.
 
 ## What it tests
 
-The cross-SDK *contract* is the lowest-common-denominator path that both
-SDKs already implement: `verify(artifact_id) -> {outcome, chain, target}`.
+Two phases, both must pass for `run.sh` to exit 0.
 
-That's the surface every SDK has agreed on, so it's the surface we lock down.
-Higher-fidelity contracts (`verifyReceipt(json)`, certificate cross-verify)
-will land here once Python implements them.
+**Phase A — Vector parity (`verify(artifact_id)`)**
+
+Both SDKs verify the same corpus of pre-attested artifacts (action,
+decision, approval, plus one DSSE-tampered variant). They must agree on
+`{outcome, chain}` for every vector. Catches drift in HOW each SDK
+interprets the CLI's structured output.
+
+**Phase B — Roundtrip (`attest` + `verify` across SDKs)**
+
+TS attests an artifact, Python verifies it. Python attests an artifact,
+TS verifies it. All four legs must pass. Catches a deeper class of
+drift: an artifact attested by SDK A whose envelope shape, digest scheme,
+or signature encoding diverges from what SDK B expects to verify.
+
+Higher-fidelity contracts (`verifyReceipt(json)`, certificate cross-verify,
+`hub.push` parity against a live Hub) will land here as those surfaces
+get exposed in both SDKs.
 
 ## Layout
 
@@ -34,9 +47,12 @@ will land here once Python implements them.
 tests/cross-sdk/
 ├── README.md           # this file
 ├── gen-vectors.sh      # generator: mints a scratch keystore + N artifacts
-├── verify-vectors.ts   # TS runner (Node 20+)
-├── verify_vectors.py   # Python runner (3.10+)
-├── run.sh              # orchestrator: gen, run both, diff outcomes
+├── verify-vectors.ts   # Phase A: TS runner (Node 20+)
+├── verify_vectors.py   # Phase A: Python runner (3.10+)
+├── roundtrip.sh        # Phase B: TS↔Python attest+verify roundtrip
+├── _sdk-helper.mjs     # Phase B: tiny TS dispatcher (attest-action / verify)
+├── _sdk_helper.py      # Phase B: tiny Python dispatcher (attest-action / verify)
+├── run.sh              # orchestrator: gen, Phase A, Phase B, diff outcomes
 └── corpus.json         # written by gen-vectors.sh; runners read it
 ```
 

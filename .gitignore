@@ -8,3 +8,4 @@ target/
 tests/cross-sdk/corpus.json
 tests/cross-sdk/.ts-output.jsonl
 tests/cross-sdk/.py-output.jsonl
+tests/cross-sdk/.roundtrip-output.jsonl

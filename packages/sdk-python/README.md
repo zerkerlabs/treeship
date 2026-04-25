@@ -55,7 +55,7 @@ result = ts.verify("art_abc123")
 print(result.outcome)  # "pass"
 
 # Push to Hub
-push = ts.dock_push("art_abc123")
+push = ts.hub_push("art_abc123")
 print(push.hub_url)  # https://treeship.dev/verify/art_abc123
 
 # Wrap a command
@@ -72,7 +72,7 @@ print(result.artifact_id)
 | `attest_handoff(from_actor, to_actor, artifacts)` | `ActionResult` | Sign a handoff receipt |
 | `attest_decision(actor, model, ...)` | `ActionResult` | Sign a decision receipt |
 | `verify(artifact_id)` | `VerifyResult` | Verify an artifact chain |
-| `dock_push(artifact_id)` | `PushResult` | Push to Hub |
+| `hub_push(artifact_id)` | `PushResult` | Push artifact to the configured Hub |
 | `wrap(command, actor)` | `ActionResult` | Wrap a shell command |
 
 ## How it works

@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { AttestModule } from "./attest.js";
 import { VerifyModule } from "./verify.js";
-import { DockModule } from "./dock.js";
+import { HubModule } from "./hub.js";
 
 const exec = promisify(execFile);
 
@@ -16,7 +16,7 @@ const exec = promisify(execFile);
 export class Ship {
   readonly attest = new AttestModule();
   readonly verify = new VerifyModule();
-  readonly dock = new DockModule();
+  readonly hub = new HubModule();
 
   /**
    * Checks that the `treeship` CLI binary is available and returns its

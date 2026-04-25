@@ -105,19 +105,45 @@ sys.exit(0 if not divs else 1)
 PY
 )" || divergence_status=$?
 
-if [[ $divergence_status -eq 0 && $ts_status -eq 0 && $py_status -eq 0 ]]; then
-  echo "  ok -- TS and Python agree on every vector and both met expectations" >&2
+phase_a_ok=true
+if [[ $divergence_status -ne 0 || $ts_status -ne 0 || $py_status -ne 0 ]]; then
+  phase_a_ok=false
+fi
+
+# 7. Phase B: roundtrip attest+verify across SDKs. Pulls TREESHIP_CONFIG
+# from the corpus we just generated. This catches signing/format drift
+# that Phase A's verify-only contract can't see -- e.g. TS produces an
+# artifact that Python cannot parse.
+echo "" >&2
+echo "==> Phase B: roundtrip attest+verify" >&2
+PHASE_B_OUT="$SCRIPT_DIR/.roundtrip-output.jsonl"
+phase_b_status=0
+TREESHIP_CONFIG="$(python3 -c 'import json; print(json.load(open("'"$SCRIPT_DIR/corpus.json"'"))["config_path"])')" \
+  PATH="$REPO_ROOT/target/debug:$PATH" \
+  "$SCRIPT_DIR/roundtrip.sh" > "$PHASE_B_OUT" 2>&1 || phase_b_status=$?
+cat "$PHASE_B_OUT" >&2
+
+if [[ "$phase_a_ok" == "true" && $phase_b_status -eq 0 ]]; then
+  echo "" >&2
+  echo "  ok -- Phase A (vector parity) and Phase B (roundtrip) both green" >&2
   exit 0
 fi
 
+echo "" >&2
 echo "  CONTRACT FAILED" >&2
-if [[ -n "$divergences" ]]; then
-  echo "$divergences" >&2 | sed 's/^/    /'
+if [[ "$phase_a_ok" == "false" ]]; then
+  echo "  Phase A (vector parity):" >&2
+  if [[ -n "$divergences" ]]; then
+    echo "$divergences" >&2 | sed 's/^/    /'
+  fi
+  if [[ $ts_status -ne 0 ]]; then
+    echo "    TS runner exit=$ts_status (some vector did not match expected_outcome)" >&2
+  fi
+  if [[ $py_status -ne 0 ]]; then
+    echo "    Python runner exit=$py_status (some vector did not match expected_outcome)" >&2
+  fi
 fi
-if [[ $ts_status -ne 0 ]]; then
-  echo "    TS runner exit=$ts_status (some vector did not match expected_outcome)" >&2
-fi
-if [[ $py_status -ne 0 ]]; then
-  echo "    Python runner exit=$py_status (some vector did not match expected_outcome)" >&2
+if [[ $phase_b_status -ne 0 ]]; then
+  echo "  Phase B (roundtrip): exit=$phase_b_status -- see output above" >&2
 fi
 exit 1

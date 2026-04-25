@@ -61,7 +61,7 @@ const result = await s.verify.verify('art_abc123')
 // { outcome: 'pass', chain: 3, target: 'art_abc123' }
 
 // Push to Hub
-const { hubUrl } = await s.dock.push('art_abc123')
+const { hubUrl } = await s.hub.push('art_abc123')
 // https://treeship.dev/verify/art_abc123
 ```
 
@@ -89,13 +89,13 @@ Returns a `Ship` instance with three modules:
 | `verifyCertificate(target, now?)` | cert JSON / URL / parsed object + optional `Date \| string` | `VerifyCertificateResult` | WASM |
 | `crossVerify(receipt, cert, now?)` | receipt + cert in any of the above forms | `CrossVerifyResult` | WASM |
 
-### `ship.dock`
+### `ship.hub`
 
 | Method | Params | Returns |
 |--------|--------|---------|
 | `push(id)` | artifact ID string | `{ hubUrl, rekorIndex? }` |
 | `pull(id)` | artifact ID string | `void` |
-| `status()` | none | `{ docked, endpoint?, dockId? }` |
+| `status()` | none | `{ connected, endpoint?, hubId? }` |
 
 ## Runtime compatibility
 
@@ -111,7 +111,7 @@ Verification (`verifyReceipt`, `verifyCertificate`, `crossVerify`) is WASM-backe
 | Cloudflare Workers | yes | no |
 | AWS Lambda (Node) | yes | no |
 
-Stateful operations — `attest.*`, `session.*`, `dock.*`, and `agent register` — continue to shell out to the `treeship` CLI binary because they need filesystem access for key storage, the artifact chain, and the session log. These paths work only in runtimes that can spawn the CLI (Node with the binary on `PATH`, typically).
+Stateful operations — `attest.*`, `session.*`, `hub.*`, and `agent register` — continue to shell out to the `treeship` CLI binary because they need filesystem access for key storage, the artifact chain, and the session log. These paths work only in runtimes that can spawn the CLI (Node with the binary on `PATH`, typically).
 
 For read-only consumers (dashboards, Witness, third-party verifiers) that only need verification, depend on [`@treeship/verify`](../verify-js/) instead — zero SDK dependency, zero subprocess, pure WASM.
 

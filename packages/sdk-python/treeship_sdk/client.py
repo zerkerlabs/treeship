@@ -239,9 +239,15 @@ class Treeship:
 
         return VerifyResult(outcome=outcome, chain=chain, target=artifact_id)
 
-    def dock_push(self, artifact_id: str) -> PushResult:
-        """Push an artifact to Hub."""
-        result = _run(["dock", "push", artifact_id, "--format", "json"])
+    def hub_push(self, artifact_id: str) -> PushResult:
+        """Push an artifact to Hub.
+
+        Returns the public URL where the artifact can be fetched and
+        verified. The CLI subcommand is `treeship hub push` -- prior
+        versions of this SDK called the now-removed `treeship dock`
+        subcommand, which silently failed against any v0.7+ binary.
+        """
+        result = _run(["hub", "push", artifact_id, "--format", "json"])
         return PushResult(
             hub_url=result.get("hub_url", result.get("url", "")),
             rekor_index=result.get("rekor_index"),
