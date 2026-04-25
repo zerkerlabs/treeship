@@ -1,6 +1,5 @@
 {
   "title": "CLI reference",
-  "root": "overview",
   "pages": [
     "overview",
     "init",
@@ -8,7 +7,7 @@
     "attest",
     "verify",
     "bundle",
-    "dock",
+    "hub",
     "session",
     "package",
     "approve",

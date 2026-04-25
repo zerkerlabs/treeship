@@ -1,46 +1,80 @@
 # Treeship Documentation Index
-# https://docs.treeship.dev
+# https://treeship.dev
 
 ## Getting Started
-- /docs/guides/introduction
-- /docs/guides/quickstart
-- /docs/guides/how-it-works
+- /guides/introduction
+- /guides/quickstart
+- /guides/how-it-works
+- /guides/approvals
+- /guides/handoffs
+- /guides/workflows
+- /guides/templates
+- /guides/merkle-proofs
+- /guides/edge-runtime
 
 ## Core Concepts
-- /docs/concepts/trust-model
-- /docs/concepts/artifacts
-- /docs/concepts/session-receipts
-- /docs/concepts/zero-knowledge
-- /docs/concepts/glossary
-- /docs/concepts/security
+- /concepts/trust-model
+- /concepts/artifacts
+- /concepts/command-artifacts
+- /concepts/session-receipts
+- /concepts/zero-knowledge
+- /concepts/cross-verification
+- /concepts/security
+- /concepts/glossary
 
 ## CLI Reference
-- /docs/cli/overview
-- /docs/cli/init
-- /docs/cli/wrap
-- /docs/cli/attest
-- /docs/cli/verify
-- /docs/cli/session
-- /docs/cli/package
-- /docs/cli/daemon
-- /docs/cli/doctor
+- /cli/overview
+- /cli/init
+- /cli/wrap
+- /cli/attest
+- /cli/verify
+- /cli/bundle
+- /cli/hub
+- /cli/session
+- /cli/package
+- /cli/approve
+- /cli/install-cmd
+- /cli/log
+- /cli/daemon
+- /cli/doctor
+- /cli/ui
+- /cli/otel
+- /cli/merkle
 
 ## Integrations
-- /docs/integrations/claude-code
-- /docs/integrations/hermes
-- /docs/integrations/openclaw
-- /docs/integrations/cursor
-- /docs/integrations/mcp
-- /docs/integrations/a2a
+- /integrations/claude-code
+- /integrations/cursor
+- /integrations/openclaw
+- /integrations/hermes
+- /integrations/langchain
+- /integrations/mcp
+- /integrations/a2a
+- /integrations/verifiable-intent
+- /integrations/lobster-cash
 
 ## SDK
-- /docs/sdk/overview
-- /docs/sdk/python
+- /sdk/overview
+- /sdk/python
+- /sdk/verify
+- /sdk/mcp
 
 ## Hub API
-- /docs/api/overview
-- /docs/api/receipt-put
-- /docs/api/receipt-get
-- /docs/api/ship-registry
-- /docs/api/artifacts-push
-- /docs/api/artifacts-get
+- /api/overview
+- /api/dock-challenge
+- /api/dock-authorize
+- /api/artifacts-push
+- /api/artifacts-get
+- /api/receipt-put
+- /api/receipt-get
+- /api/ship-registry
+- /api/verify
+- /api/merkle-proof
+- /api/merkle-checkpoint
+
+## Commerce
+- /commerce/overview
+- /commerce/payment-proofs
+- /commerce/compliance
+
+## Reference
+- /reference/schema
