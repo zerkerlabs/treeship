@@ -9,22 +9,24 @@ Treeship can export every artifact as an OpenTelemetry (OTLP) span, letting you 
 
 ## Feature flag
 
-OpenTelemetry support is behind a compile-time feature flag to keep the default binary lean.
+OpenTelemetry support is behind a compile-time feature flag to keep the default binary lean. The default `treeship` binary distributed via `npm install -g treeship` and `curl -fsSL treeship.dev/install | sh` does NOT include OTel; you have to build the binary yourself with the flag enabled.
 
 ```bash
-# Build from source with OTel enabled
-cargo build --features otel
-
-# Or install with the flag
-cargo install --git https://github.com/zerkerlabs/treeship treeship-cli --features otel
+git clone https://github.com/zerkerlabs/treeship && cd treeship
+cargo build --release --bin treeship --features otel
+# the OTel-enabled binary is at ./target/release/treeship
 ```
 
 Without the feature flag, all `treeship otel` commands print a rebuild hint:
 
 ```
 OpenTelemetry support is not compiled in.
-Rebuild with: cargo install --git https://github.com/zerkerlabs/treeship treeship-cli --features otel
+Rebuild from source with: cargo build --release --bin treeship --features otel
 ```
+
+<Callout type="warn">
+Do NOT use `cargo install treeship-cli` from crates.io -- that crate is orphaned at v0.4.0. The CLI ships exclusively via the npm wrapper (`npm install -g treeship`) and the `treeship.dev/install` script, which fetch a prebuilt platform binary. To get a Rust toolchain build, clone the repo and `cargo build` as above.
+</Callout>
 
 ## Commands
 
