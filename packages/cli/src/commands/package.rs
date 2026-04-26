@@ -58,6 +58,16 @@ pub fn inspect(
                 "  {} ({}) depth={} tools={} [{}] @{}",
                 node.agent_name, role, node.depth, node.tool_calls, status, node.host_id,
             ));
+            // Model attribution -- only print when populated, so agents
+            // without decision events stay one-line.
+            if node.model.is_some() || node.tokens_in > 0 || node.tokens_out > 0 {
+                let model = node.model.as_deref().unwrap_or("--");
+                let provider = node.provider.as_deref().unwrap_or("--");
+                printer.info(&format!(
+                    "    model: {} | provider: {} | tokens: {}↓ {}↑",
+                    model, provider, node.tokens_in, node.tokens_out,
+                ));
+            }
         }
     }
 

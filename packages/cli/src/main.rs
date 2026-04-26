@@ -650,6 +650,28 @@ struct SessionEventArgs {
     /// Arbitrary JSON metadata
     #[arg(long, value_name = "JSON")]
     meta: Option<String>,
+
+    /// Model identifier (for agent.decision events). Examples:
+    /// claude-opus-4-7, gpt-5, kimi-k2, gemini-3-pro.
+    /// Falls back to TREESHIP_MODEL env var when unset.
+    #[arg(long, value_name = "NAME")]
+    model: Option<String>,
+
+    /// Provider name (for agent.decision events). Examples:
+    /// anthropic, openai, moonshot, google, meta, mistral.
+    /// Falls back to TREESHIP_PROVIDER env var when unset.
+    #[arg(long, value_name = "NAME")]
+    provider: Option<String>,
+
+    /// Input tokens consumed by the inference (for agent.decision events).
+    /// Falls back to TREESHIP_TOKENS_IN env var when unset.
+    #[arg(long, value_name = "N")]
+    tokens_in: Option<u64>,
+
+    /// Output tokens produced by the inference (for agent.decision events).
+    /// Falls back to TREESHIP_TOKENS_OUT env var when unset.
+    #[arg(long, value_name = "N")]
+    tokens_out: Option<u64>,
 }
 
 #[derive(Args)]
@@ -1538,6 +1560,10 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 a.exit_code,
                 a.artifact_id.as_deref(),
                 a.meta.as_deref(),
+                a.model.as_deref(),
+                a.provider.as_deref(),
+                a.tokens_in,
+                a.tokens_out,
                 printer,
             ),
         },
