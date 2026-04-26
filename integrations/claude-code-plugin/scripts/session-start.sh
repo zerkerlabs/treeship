@@ -40,6 +40,43 @@ SESSION_NAME="${PROJECT}-claude-code-${TIMESTAMP}"
 SESSION_START_ERR=$(treeship session start --name "$SESSION_NAME" 2>&1 >/dev/null) || SESSION_START_FAILED=1
 
 if [ -z "${SESSION_START_FAILED:-}" ]; then
+  # Emit one agent.decision event so the receipt records WHICH model
+  # Claude Code was running on. Without this, AgentNode.model stays
+  # null and the receipt page can't show "claude-opus-4-7" beside
+  # the agent name -- the central claim of a multi-model session
+  # receipt.
+  #
+  # Detection priority (best-effort, fail-open):
+  #   1. TREESHIP_MODEL env var      (most explicit)
+  #   2. ~/.claude/settings.json     (where the user picks /model)
+  #   3. fall back to "claude" generic
+  MODEL="${TREESHIP_MODEL:-}"
+  if [ -z "$MODEL" ] && [ -f "$HOME/.claude/settings.json" ]; then
+    if command -v jq >/dev/null 2>&1; then
+      MODEL=$(jq -r '.model // empty' "$HOME/.claude/settings.json" 2>/dev/null)
+    elif command -v python3 >/dev/null 2>&1; then
+      MODEL=$(python3 -c '
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        print(json.load(f).get("model", "") or "")
+except Exception:
+    pass
+' "$HOME/.claude/settings.json" 2>/dev/null)
+    fi
+  fi
+  MODEL="${MODEL:-claude}"
+
+  # Provider for claude-code is always anthropic. For multi-vendor
+  # deployments (codex/kimi/etc) each integration has its own
+  # session-start hook with the right provider hardcoded.
+  treeship session event \
+    --type agent.decision \
+    --model "$MODEL" \
+    --provider anthropic \
+    --agent-name claude-code \
+    >/dev/null 2>&1 || true
+
   cat <<EOF
 {
   "additionalContext": "Treeship session started: $SESSION_NAME. Every tool call below will be recorded into a portable, signed receipt. The receipt is yours -- it stays in .treeship/sessions/ and only leaves this machine when you run \`treeship session report\`."
