@@ -1,6 +1,6 @@
 {
   "name": "@treeship/cli-darwin-x64",
-  "version": "0.9.5",
+  "version": "0.9.6",
   "description": "Treeship CLI binary for darwin x64",
   "os": [
     "darwin"
