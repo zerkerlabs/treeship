@@ -696,24 +696,61 @@ pub fn derive_machine_key(store_dir: &Path) -> Result<[u8; 32], KeyError> {
         }
     }
 
-    // 3. Fallback: random seed in ~/.treeship/machine_seed
-    //    Stored separately from key material (not in store_dir)
+    // 3. Fallback: random seed file. Co-located with the keystore so a
+    //    project-local keystore (/proj/.treeship/keys/) keeps its seed at
+    //    /proj/.treeship/machine_seed -- never reaching for ~/.treeship.
+    //    A global keystore (~/.treeship/keys/) co-locates to
+    //    ~/.treeship/machine_seed, which is byte-identical to the
+    //    pre-v0.9.6 location, so existing global keystores keep working.
+    //
+    //    Backward-compat read order:
+    //      1. <store_dir>/../machine_seed  (the new co-located path)
+    //      2. ~/.treeship/machine_seed     (the old hardcoded path)
+    //    Write order on first creation:
+    //      1. <store_dir>/../machine_seed  if the parent exists/is writable
+    //      2. ~/.treeship/machine_seed     as a last resort
+    //
+    //    This makes project-local config truly self-contained: an
+    //    isolated /proj keystore can decrypt its own keys even when
+    //    the user's ~/.treeship is corrupt or on a different machine,
+    //    closing the trust-fabric isolation gap that blocked
+    //    project-local smoke tests.
+    let local_seed_path = store_dir.parent().map(|p| p.join("machine_seed"));
     let home = std::env::var("HOME")
         .map(std::path::PathBuf::from)
         .map_err(|_| KeyError::Crypto("HOME not set".to_string()))?;
-    let seed_path = home.join(".treeship").join("machine_seed");
-    let seed = if seed_path.exists() {
-        fs::read_to_string(&seed_path).map_err(KeyError::Io)?
+    let global_seed_path = home.join(".treeship").join("machine_seed");
+
+    let seed = if let Some(local) = local_seed_path.as_ref().filter(|p| p.exists()) {
+        fs::read_to_string(local).map_err(KeyError::Io)?
+    } else if global_seed_path.exists() {
+        // Backward-compat: an existing global seed keeps decrypting any
+        // keystore that was encrypted under it (in particular the
+        // standard ~/.treeship/keys/ case where local == global).
+        fs::read_to_string(&global_seed_path).map_err(KeyError::Io)?
     } else {
         let mut bytes = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut bytes);
         let seed_hex = hex_encode(&bytes);
-        let _ = fs::create_dir_all(seed_path.parent().unwrap_or(Path::new(".")));
-        fs::write(&seed_path, &seed_hex).map_err(KeyError::Io)?;
+
+        // Prefer creating the seed locally. Falls back to the global
+        // path only when the keystore has no usable parent (rare;
+        // happens when store_dir is "/" or similar pathological input).
+        let target = match local_seed_path.as_ref() {
+            Some(p) => {
+                let _ = fs::create_dir_all(p.parent().unwrap_or(Path::new(".")));
+                p.clone()
+            }
+            None => {
+                let _ = fs::create_dir_all(global_seed_path.parent().unwrap_or(Path::new(".")));
+                global_seed_path.clone()
+            }
+        };
+        fs::write(&target, &seed_hex).map_err(KeyError::Io)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(&seed_path, fs::Permissions::from_mode(0o600));
+            let _ = fs::set_permissions(&target, fs::Permissions::from_mode(0o600));
         }
         seed_hex
     };
