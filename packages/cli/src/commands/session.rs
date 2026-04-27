@@ -728,7 +728,14 @@ pub fn close(
     }
 
     // ── Compose Session Receipt and build .treeship package ─────────
-    let events = event_log.read_all().unwrap_or_default();
+    // Use read_all_with_stats so the count of malformed lines that
+    // EventLog skipped during parsing flows into the sealed receipt
+    // (Codex finding #8). Without this in-band signal, a downstream
+    // verifier cannot tell a complete receipt from one whose event
+    // log was silently truncated by skipping bad lines.
+    let (events, event_log_skipped) = event_log
+        .read_all_with_stats()
+        .unwrap_or_else(|_| (Vec::new(), 0));
 
     // Build artifact entries from the chain
     let artifact_entries: Vec<session::receipt::ArtifactEntry> = collect_artifact_entries(&ctx, &manifest);
@@ -740,6 +747,12 @@ pub fn close(
     receipt_manifest.summary = summary.clone();
 
     let mut receipt = ReceiptComposer::compose(&receipt_manifest, &events, artifact_entries);
+
+    // Stamp the in-band incompleteness signal. Defaults to 0 (omitted
+    // from canonical JSON via skip_serializing_if) so receipts produced
+    // when the event log was clean stay byte-identical to receipts
+    // produced before this PR landed.
+    receipt.proofs.event_log_skipped = event_log_skipped as u32;
 
     // Override narrative with explicit --headline/--review if provided
     if headline.is_some() || review.is_some() {
