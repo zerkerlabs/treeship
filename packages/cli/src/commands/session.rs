@@ -286,6 +286,14 @@ pub fn start(
     manifest.root_artifact_id = Some(result.artifact_id.clone());
     manifest.authorized_tools = super::declare::read_authorized_tools();
 
+    // Capture the git HEAD SHA at session start so close-time
+    // reconciliation can compute committed-during-session changes.
+    // Fail-open: None for non-git projects; reconciliation falls back
+    // to working-tree-only diffs in that case.
+    if let Ok(cwd) = std::env::current_dir() {
+        manifest.start_commit_sha = session::current_head_sha(&cwd);
+    }
+
     let session_path = ts_dir.join("session.json");
     let json = serde_json::to_string_pretty(&manifest)?;
     std::fs::write(&session_path, &json)?;
@@ -728,7 +736,78 @@ pub fn close(
     }
 
     // ── Compose Session Receipt and build .treeship package ─────────
-    let events = event_log.read_all().unwrap_or_default();
+    let mut events = event_log.read_all().unwrap_or_default();
+
+    // ── Git reconciliation ──────────────────────────────────────────
+    // Backstop layer of the trust-fabric file-capture stack. Catches
+    // any files the agent edited outside captured tool channels:
+    // sed -i inside a Bash command, build outputs, manual edits during
+    // the session. Synthetic AgentWroteFile events are appended to
+    // events.jsonl so they're sealed in the merkle root alongside the
+    // rest of the session's evidence -- not just patched into the
+    // receipt as out-of-band claims.
+    //
+    // Dedup against existing AgentWroteFile/AgentReadFile events by
+    // file_path so a file already captured by hook or MCP isn't
+    // double-counted with a "git-reconcile" entry.
+    //
+    // Fail-open: if not in a git repo, git binary missing, or any
+    // git command errors, reconcile_changes returns an empty Vec and
+    // close proceeds normally.
+    if let Ok(cwd) = std::env::current_dir() {
+        let already_captured: std::collections::BTreeSet<String> = events.iter()
+            .filter_map(|e| match &e.event_type {
+                EventType::AgentWroteFile { file_path, .. } => Some(file_path.clone()),
+                EventType::AgentReadFile { file_path, .. } => Some(file_path.clone()),
+                _ => None,
+            })
+            .collect();
+        let host_id = local_host_id();
+        let trace_id = generate_trace_id();
+        let changes = session::reconcile_changes(&cwd, manifest.start_commit_sha.as_deref());
+        let mut reconciled = 0usize;
+        for change in changes {
+            if already_captured.contains(&change.file_path) {
+                continue;
+            }
+            let mut evt = SessionEvent {
+                session_id: manifest.session_id.clone(),
+                event_id: generate_event_id(),
+                timestamp: now_rfc3339(),
+                sequence_no: 0,
+                trace_id: trace_id.clone(),
+                span_id: generate_span_id(),
+                parent_span_id: None,
+                agent_id: "system://git-reconcile".into(),
+                agent_instance_id: "git-reconcile".into(),
+                agent_name: "git-reconcile".into(),
+                agent_role: Some("reconciler".into()),
+                host_id: host_id.clone(),
+                tool_runtime_id: None,
+                event_type: EventType::AgentWroteFile {
+                    file_path: change.file_path.clone(),
+                    digest: None,
+                    operation: Some(change.operation.clone()),
+                    additions: change.additions,
+                    deletions: change.deletions,
+                },
+                artifact_ref: None,
+                meta: Some(serde_json::json!({"source": "git-reconcile"})),
+            };
+            // Best-effort log append: include the event in the in-memory
+            // composition list either way so the receipt has the data
+            // even if the on-disk log refused (filesystem error, etc.).
+            let _ = event_log.append(&mut evt);
+            events.push(evt);
+            reconciled += 1;
+        }
+        if reconciled > 0 {
+            printer.dim_info(&format!(
+                "  reconciled {reconciled} file{} from git that weren't captured by hook or MCP",
+                if reconciled == 1 { "" } else { "s" },
+            ));
+        }
+    }
 
     // Build artifact entries from the chain
     let artifact_entries: Vec<session::receipt::ArtifactEntry> = collect_artifact_entries(&ctx, &manifest);
