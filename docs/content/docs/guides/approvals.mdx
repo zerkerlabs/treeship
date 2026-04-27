@@ -1,28 +1,32 @@
 ---
 title: Approvals
-description: An approval is a cryptographic authorization for a specific action, bound by a single-use nonce.
+description: An approval is a cryptographic authorization for an action, bound by a nonce and constrained by a signed scope.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-An approval answers "who authorized this?" -- signed, scoped, single-use, and verifiable.
+An approval answers "who authorized this, to do what, against which subject" -- signed, scoped, and verifiable.
 
 ## How approvals work
 
 ```bash
-# Approver issues an approval
+# Approver issues a scoped approval
 treeship attest approval \
   --approver human://alice \
   --description "approve stripe charge max $500 to acme-corp" \
+  --allowed-actor agent://payments \
+  --allowed-action stripe.charge.create \
+  --max-uses 1 \
   --expires 2026-03-26T18:00:00Z
 
 # Returns:
 # ✓ approval attested
 #   id:    art_approval_abc123
 #   nonce: nce_7f8e9d0a1b2c3d4e
+#   scope: actors=["agent://payments"], actions=["stripe.charge.create"], max_uses=1
 ```
 
-The nonce is a one-time token. Pass it to your agent.
+The nonce is the binding token. Pass it to your agent.
 
 ```bash
 # Agent acts under the approval
@@ -33,16 +37,28 @@ treeship attest action \
   --meta '{"amount":450,"vendor":"acme-corp"}'
 ```
 
-## What makes it binding
+## What gets checked
 
-At verification time, the verifier enforces:
+Treeship's verify pass enforces three independent properties and reports each separately. Conflating them would let a fooled audit reader trust a guarantee that wasn't actually evaluated.
+
+| Property | What it proves | Stateless? |
+|---|---|---|
+| **Binding** | The action's `approvalNonce` matches a real signed approval | Yes |
+| **Scope** | Action's `actor`, `action`, and `subject` are inside the approval's signed allow-lists; approval not expired | Yes |
+| **Replay** | The nonce has not been consumed before | **Verifier-state-dependent** |
 
 ```
-action.approvalNonce == approval.nonce
+✓  approval binding nonce matched a signed approval
+✓  approval scope   actor / action / subject matched approval scope
+⚠  replay check     package-local only -- no global ledger consulted
 ```
 
-<Callout type="warn" title="Nonce binding is mandatory">
-This check is in the Rust core and cannot be skipped. If the nonces do not match, verification fails. If the approval has expired, verification fails. If the same nonce is used twice, the second action has no matching approval to link to.
+<Callout type="warn" title="Replay posture as of v0.9.6">
+Stateless verifiers cannot detect replay across artifacts they never saw. The current implementation observes replay **only within a single verified package** -- if the same nonce appears on two actions in one package, the second fails. A `--max-uses` value is signed into the grant for future enforcement, but no global ledger is consulted yet.
+
+**Roadmap:**
+- **v0.10:** local Approval Use Journal (append-only, hash-chained, with signed Merkle checkpoints) for device/workspace replay enforcement.
+- **v0.11+:** Hub/org checkpoints for distributed single-use across machines and teams.
 </Callout>
 
 ## Approval flags
@@ -51,8 +67,13 @@ This check is in the Rust core and cannot be skipped. If the nonces do not match
 |------|----------|-------------|
 | `--approver <uri>` | Yes | Human or identity URI, e.g. `human://alice` |
 | `--description <text>` | No | Plain text scope of what is authorized |
+| `--allowed-actor <uri>` | No, repeatable | Actor URIs permitted to consume this approval |
+| `--allowed-action <label>` | No, repeatable | Action labels permitted under this approval |
+| `--allowed-subject <uri>` | No, repeatable | Subject URIs permitted as the action's target |
+| `--max-uses <n>` | No | Signed into the grant for future ledger enforcement |
+| `--unscoped` | No | Required to mint a bearer approval (no scope axes set). Without it the CLI refuses, since unscoped approvals authorize any actor / action / subject |
 | `--expires <timestamp>` | No | RFC 3339 expiry time |
-| `--subject <id>` | No | Artifact ID being approved |
+| `--subject <id>` | No | Artifact ID being approved (the subject of the approval itself) |
 
 ## Verifying an approved action
 

@@ -21,7 +21,7 @@ Treeship doesn't execute payments. lobster.cash does that. Treeship wraps every 
 | Step | What happens | What Treeship proves |
 |------|-------------|---------------------|
 | Wallet check | Agent checks lobster.cash balance | Action attested (Ed25519) |
-| Human approval | User authorizes the payment | Nonce-bound approval (single-use) |
+| Human approval | User authorizes the payment | Scoped approval (binding nonce + actor/action/subject scope; replay package-local) |
 | Payment | lobster.cash executes the transfer | Policy compliance + spend limit (Circom ZK) |
 | Confirmation | lobster.cash confirms status | Receipt attested |
 | Session close | Workflow complete | Full chain proof (RISC Zero) |

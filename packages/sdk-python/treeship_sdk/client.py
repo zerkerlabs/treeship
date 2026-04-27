@@ -122,7 +122,13 @@ class Treeship:
         description: str,
         expires_in: Optional[str] = None,
     ) -> ApprovalResult:
-        """Create a signed approval receipt with a single-use nonce."""
+        """Create a signed approval receipt with a binding nonce.
+
+        v0.9.6 enforces binding + scope (when set on the underlying CLI)
+        statelessly; replay enforcement is package-local. Cross-package
+        and distributed replay enforcement land in v0.10 (local
+        Approval Use Journal) and v0.11+ (Hub-backed checkpoints).
+        """
         args = ["attest", "approval", "--approver", approver, "--description", description, "--format", "json"]
         if expires_in:
             args += ["--expires", expires_in]

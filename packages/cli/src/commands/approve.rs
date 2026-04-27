@@ -352,7 +352,7 @@ pub fn approve(
     printer.blank();
     printer.success("approved", &[]);
     printer.info(&format!("  command:  {}", pa.command));
-    printer.info(&format!("  nonce:    {}  (single-use)", nonce));
+    printer.info(&format!("  nonce:    {}  (binding token)", nonce));
     printer.blank();
     printer.dim_info("  The command will now proceed.");
     printer.blank();

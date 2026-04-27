@@ -6,6 +6,10 @@ tags: ["security", "authorization", "cryptography", "agents"]
 readTime: "8 min read"
 ---
 
+> **Implementation status (v0.9.6).** This post describes the approval-grant model end to end. As of v0.9.6, Treeship's verify pass enforces three of the four properties below **statelessly**: binding (the nonce ↔ approval link), scope (the actor / action / subject / expiry constraints signed into the grant), and **package-local replay** (a second action claiming the same nonce inside one verified package fails). The fourth property — **cross-package / cross-machine single-use** — requires verifier-side state and is on the roadmap: a local Approval Use Journal in v0.10, Hub-backed checkpoints in v0.11+. Verify reports the replay-check posture honestly today (`replay check: package-local only -- no global ledger consulted`) instead of claiming a guarantee that hasn't been consulted.
+>
+> Bookmark this post; the body below describes the destination, and we'll update it as the journal layers land.
+
 Imagine your agent needs human authorization before executing a payment. You've built an approval flow: the human clicks Approve in a UI, a token is generated and passed to the agent, the agent includes the token in its action record, and downstream systems can verify the token was present.
 
 This is better than no authorization. But it has a vulnerability that's easy to miss.
@@ -66,7 +70,7 @@ action.approvalNonce == approval.nonce
 
 This check is in the Rust core. It cannot be bypassed. And because the nonce is tied to exactly one approval and exactly one action, every vulnerability in the bearer token model is closed:
 
-**Replay** -- the nonce can appear in exactly one action. A second action with the same nonce finds no matching approval (the first action consumed it) and fails verification.
+**Replay** -- the nonce should appear in exactly one consumption. As of v0.9.6, Treeship enforces this within a single verified package (a second action claiming the same nonce in one package fails). The local Approval Use Journal landing in v0.10 extends enforcement to all consumptions on a given device or workspace; Hub-backed checkpoints in v0.11+ extend it to distributed single-use across machines and teams. Verify reports today's posture honestly rather than overclaiming.
 
 **Scope creep** -- the verifier checks the scope fields. A charge for $600 fails when the approval specifies max_amount 450. A different action type fails when the approval specifies allowed_actions.
 
@@ -79,19 +83,24 @@ This check is in the Rust core. It cannot be bypassed. And because the nonce is 
 Here's what an approval-style authorization looks like versus approval-style:
 
 ```bash
-# Approval style -- broad, reusable
+# Bearer-token style -- broad, reusable
 # "approve payment workflows today"
 # Token: bearer_abc123
 # Any action can claim this token
 
-# Approval style -- specific, single-use
+# Approval-grant style -- specific, scoped, replay-observed
 treeship attest approval \
   --approver human://approver \
   --description "stripe charge $450 to acme-corp INV-2847" \
+  --allowed-actor agent://payments \
+  --allowed-action stripe.charge.create \
+  --allowed-subject vendor://acme-corp \
+  --max-uses 1 \
   --expires 2026-03-26T17:00:00Z
 # Nonce: nce_7f8e9d0a
-# Only stripe.charge.create for ≤$450 to acme-corp can use this nonce
-# Only once
+# Only agent://payments calling stripe.charge.create against
+# vendor://acme-corp can consume this nonce. max-uses is signed
+# into the grant for ledger enforcement (v0.10 / v0.11+).
 ```
 
 The approval is not less convenient for the human -- it's one approval action that produces one nonce. The difference is precision: the human is approving a specific thing, not a broad category.
@@ -101,25 +110,15 @@ The approval is not less convenient for the human -- it's one approval action th
 When something goes wrong -- or when nothing has gone wrong but compliance needs to prove it -- approval-based authorization produces a different quality of evidence.
 
 ```bash
-treeship verify art_charge --format json | jq '{
-  outcome,
-  approver: .approver,
-  approval: .warrant_description,
-  nonce_status: .nonce_binding,
-  scope: .scope_valid
-}'
+treeship verify art_charge --full
 
-# {
-#   "outcome": "pass",
-#   "approver": "human://approver",
-#   "approval_description": "stripe charge $450 to acme-corp INV-2847",
-#   "nonce_status": "matched · single use verified",
-#   "scope": true
-# }
+# ✓  approval binding nonce matched a signed approval
+# ✓  approval scope   actor / action / subject matched approval scope
+# ⚠  replay check     package-local only -- no global ledger consulted
 ```
 
-This isn't "a valid authorization token was present." It's a specific named human, approving a specific action, with cryptographic proof the authorization was used exactly once, for exactly the amount and vendor specified, before the expiry time.
+This isn't "a valid authorization token was present." It's a specific named human, approving a specific action against a specific subject by a specific actor, with cryptographic proof the binding holds and the scope was respected.
 
-The replay attack fails here not because of access controls or rate limiting or session management. It fails because the cryptographic structure makes it impossible. The nonce was used. The approval is spent. There is nothing to replay.
+Replay defense in v0.9.6 is package-local — and verify says so plainly rather than claiming a guarantee it can't deliver. The local Approval Use Journal in v0.10 extends that to every action seen on a device; Hub checkpoints in v0.11+ extend it across machines. The cryptographic structure is in place; the enforcement layers are landing in order.
 
-That's the kind of authorization AI agents taking consequential actions actually need.
+That's the kind of authorization AI agents taking consequential actions actually need — and the kind whose limits a system should be honest about today.

@@ -71,16 +71,14 @@ treeship attest approval \
 The agent receives the nonce. The bridge picks it up from the environment and binds it to the intent artifact. The verifier then enforces that the action is cryptographically linked to the specific approval that authorized it.
 
 ```bash
-treeship verify art_bbb --format json | jq .
-# {
-#   "outcome": "pass",
-#   "approver": "human://approver",
-#   "approval_description": "authorize stripe charge max $500 to acme-corp",
-#   "nonce_status": "matched · single use enforced"
-# }
+treeship verify art_bbb --full
+
+# ✓  approval binding nonce matched a signed approval
+# ✓  approval scope   actor / action / subject matched approval scope
+# ⚠  replay check     package-local only -- no global ledger consulted
 ```
 
-That's the answer to "who authorized this tool call?" It's not "a user with valid credentials ran the agent." It's a specific named human, with a specific approval, cryptographically bound to this specific action, verified to have been used exactly once.
+That's the answer to "who authorized this tool call?" It's not "a user with valid credentials ran the agent." It's a specific named human, with a specific approval, cryptographically bound to this specific action and constrained by a signed scope. Replay defense is package-local in v0.9.6; cross-package and cross-machine enforcement land via the local Approval Use Journal (v0.10) and Hub checkpoints (v0.11+).
 
 ## What never enters a receipt
 

@@ -33,7 +33,7 @@ treeship attest action \
   --approval-nonce <nonce>
 ```
 
-The approval nonce is single-use. The agent cannot reuse it for a second action. Verifiers can confirm that the nonce was valid at the time of use.
+The approval is bound to the action by nonce, scoped to a specific actor / action / subject when the approver sets `--allowed-actor` / `--allowed-action` / `--allowed-subject`, and verifiers report exactly what was checked: binding (always), scope (when present), and replay posture (`package-local only -- no global ledger consulted` as of v0.9.6). A local Approval Use Journal for cross-package replay enforcement ships in v0.10.
 
 ## Compliance patterns
 

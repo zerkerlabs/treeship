@@ -12,17 +12,21 @@ This is the gap Treeship closes: cryptographic proof of human approval, bound to
 
 ## The approval receipt with nonce binding
 
-The core primitive is simple. A human issues an approval. The approval contains a single-use nonce and an optional scope. When the agent acts, the action receipt echoes the nonce. The two receipts are cryptographically linked. Break one, and the chain breaks.
+The core primitive is simple. A human issues an approval. The approval contains a binding nonce and a signed scope (`allowed_actor`, `allowed_action`, `allowed_subject`, `max_uses`). When the agent acts, the action receipt echoes the nonce. The verifier checks the binding, the scope, and the replay posture as three separate properties.
 
-### Step 1: Human issues an approval
+### Step 1: Human issues a scoped approval
 
 ```bash
 treeship attest approval \
   --approver human://alice \
-  --description "approve payment to acme-corp max $500"
+  --description "approve payment to acme-corp max $500" \
+  --allowed-actor agent://payments \
+  --allowed-action stripe.charge.create \
+  --allowed-subject vendor://acme-corp \
+  --max-uses 1
 ```
 
-This creates a signed approval artifact with a unique nonce and optional scope constraints (max amount, allowed actions, expiration).
+This creates a signed approval artifact with a binding nonce and the signed scope. `--max-uses` is signed into the grant for ledger enforcement (v0.10 / v0.11+); v0.9.6 enforces actor / action / subject statelessly and observes nonce replay package-locally.
 
 ### Step 2: Agent executes the payment with the nonce
 
@@ -43,12 +47,12 @@ The `wrap` command runs the payment command, captures its output, and produces a
 treeship verify --full
 ```
 
-The verification checks:
+The verification checks (and reports each independently):
 - The approval signature is valid (Ed25519)
 - The action signature is valid
-- The nonce in the action matches the nonce in the approval
-- The nonce has not been used before
-- The action falls within the approval's scope
+- **Binding:** the nonce in the action matches the nonce in the approval
+- **Scope:** the action's actor / action / subject fall inside the approval's signed allow-lists; expiry not past
+- **Replay:** the nonce has not been consumed earlier in this verified package (cross-package and cross-machine enforcement land via local Approval Use Journal in v0.10 and Hub checkpoints in v0.11+; verify reports today's posture as `package-local only -- no global ledger consulted`)
 
 ## Why this matters for commerce
 
@@ -58,21 +62,32 @@ The verification checks:
 
 **Cross-org trust.** A vendor can verify the buyer's agent had approval without trusting the buyer's infrastructure. The receipts are self-contained. Verification happens client-side, offline, with no callback to the buyer's systems.
 
-## The nonce prevents replay
+## How the nonce constrains replay
 
-Without the nonce, an agent could reuse a single approval for unlimited purchases. The nonce makes each approval single-use. Once an action receipt echoes a nonce, that nonce is spent. Any second use fails verification.
+Without the nonce, an agent could pass any approval as authorization for any action. The nonce binds approval ↔ action cryptographically: the action receipt must echo the exact nonce of the signed approval, and the verifier checks it.
+
+That binding is the foundation. Replay enforcement layers on top:
+
+- **v0.9.6 (today):** if two actions inside one verified package claim the same nonce, the second fails. Verify reports `replay check: package-local only -- no global ledger consulted`.
+- **v0.10:** a local Approval Use Journal — append-only, hash-chained, with signed Merkle checkpoints — extends the check across all actions seen on a device or workspace.
+- **v0.11+:** Hub-backed checkpoints extend it across machines and teams.
 
 ```bash
-# This fails -- nonce already consumed
+# Today: this fails when verified together with the first use
 treeship wrap \
   --approval-nonce abc123def456 \
   -- stripe charges create \
     --amount 99900 \
     --currency usd \
     --customer cus_other
+# verify error: nonce already consumed by art_... in this package (package-local replay)
+
+# Cross-package replay (e.g. running the same nonce in a different
+# workspace on the same machine) starts failing in v0.10 once the
+# local Approval Use Journal lands.
 ```
 
-The nonce is a small field. It prevents an entire class of replay attacks.
+The signed scope (`--allowed-actor` / `--allowed-action` / `--allowed-subject` / `--max-uses`) is the layer that prevents the same nonce from authorizing a *different* action even before the journal lands — and that part is enforced statelessly today.
 
 ## What Treeship does not do
 

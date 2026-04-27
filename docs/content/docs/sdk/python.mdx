@@ -67,7 +67,7 @@ Returns `ActionResult(artifact_id)`.
 
 ### `attest_approval(approver, description, expires_in=None)`
 
-Create a signed approval receipt with a single-use nonce.
+Create a signed approval receipt with a binding nonce. (Replay posture is package-local in v0.9.6; cross-package enforcement lands in v0.10 via the local Approval Use Journal.)
 
 Returns `ApprovalResult(artifact_id, nonce)`.
 
