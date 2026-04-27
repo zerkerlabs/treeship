@@ -57,9 +57,9 @@ jobs:
         run: cargo build --bin treeship
 
       - name: Install tsx
-        run: npm install --no-save tsx
+        run: |
+          npm install --no-save tsx
+          echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"
 
       - name: Run cross-SDK contract suite
         run: ./tests/cross-sdk/run.sh
-        env:
-          PATH: ./node_modules/.bin:${{ env.PATH }}
