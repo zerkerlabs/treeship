@@ -755,10 +755,25 @@ pub fn close(
     // git command errors, reconcile_changes returns an empty Vec and
     // close proceeds normally.
     if let Ok(cwd) = std::env::current_dir() {
+        // Dedupe ONLY against prior writes, never reads.
+        //
+        // Bug Codex caught in adversarial review: the original filter
+        // included AgentReadFile, which suppressed real writes whenever
+        // the file had been read earlier in the session. Classic miss:
+        // agent reads src/lib.rs (post-tool-use.sh emits AgentReadFile),
+        // then a Bash command runs `sed -i src/lib.rs` (post-tool-use.sh
+        // emits AgentCompletedProcess, NOT AgentWroteFile). Git diff
+        // sees the modification, but reconcile dropped it because the
+        // path was "already captured" as a read. Receipt then showed
+        // the read and the process but no write -- a confidently
+        // incomplete audit trail.
+        //
+        // The trust-fabric bar is "if a file changed during the session,
+        // the receipt shows it." Reads do not change files. Only writes
+        // belong in the dedup set.
         let already_captured: std::collections::BTreeSet<String> = events.iter()
             .filter_map(|e| match &e.event_type {
                 EventType::AgentWroteFile { file_path, .. } => Some(file_path.clone()),
-                EventType::AgentReadFile { file_path, .. } => Some(file_path.clone()),
                 _ => None,
             })
             .collect();
