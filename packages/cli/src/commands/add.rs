@@ -85,6 +85,19 @@ fn detect_agents() -> Vec<DetectedAgent> {
         });
     }
 
+    // Codex CLI: ~/.codex/config.toml
+    // OpenAI's Codex CLI uses TOML for config, so the install path is a
+    // text-append into config.toml rather than a JSON merge.
+    let codex_dir = h.join(".codex");
+    if codex_dir.is_dir() {
+        agents.push(DetectedAgent {
+            name: "codex",
+            display: "Codex CLI",
+            method: "MCP server (~/.codex/config.toml)",
+            config_path: codex_dir.join("config.toml"),
+        });
+    }
+
     agents
 }
 
@@ -239,8 +252,89 @@ fn install_agent(agent: &DetectedAgent, dry_run: bool, printer: &Printer) -> Res
     match agent.name {
         "claude-code" | "cursor" | "cline" => install_mcp_config(agent, dry_run, printer),
         "hermes" | "openclaw" => install_skill(agent, dry_run, printer),
+        "codex" => install_codex_mcp_config(agent, dry_run, printer),
         _ => Err(format!("unknown agent: {}", agent.name).into()),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Codex CLI MCP config (TOML-based)
+//
+// Codex stores MCP servers as TOML tables in ~/.codex/config.toml, not JSON,
+// so the JSON-based install_mcp_config above doesn't fit. We append a fresh
+// [mcp_servers.treeship] block instead of round-tripping the whole file
+// through a TOML library -- that preserves the user's existing comments and
+// formatting and avoids pulling toml_edit into the CLI for one feature.
+//
+// Idempotent via a pre-write substring check on the destination block name.
+// ---------------------------------------------------------------------------
+
+const CODEX_MCP_BLOCK: &str = r#"
+
+[mcp_servers.treeship]
+command = "npx"
+args = ["-y", "@treeship/mcp"]
+
+[mcp_servers.treeship.env]
+TREESHIP_ACTOR = "agent://codex"
+TREESHIP_HUB_ENDPOINT = "https://api.treeship.dev"
+"#;
+
+fn install_codex_mcp_config(
+    agent: &DetectedAgent,
+    dry_run: bool,
+    printer: &Printer,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let config_path = &agent.config_path;
+
+    if !is_safe_path(config_path) {
+        printer.warn(
+            &format!("  {} config path contains a symlink, skipping for safety", agent.display),
+            &[],
+        );
+        return Ok(false);
+    }
+
+    // Read existing config (or empty if it doesn't exist yet -- Codex will
+    // create the file on first run, but we can also create it preemptively).
+    let existing = if config_path.exists() {
+        std::fs::read_to_string(config_path)?
+    } else {
+        String::new()
+    };
+
+    // Idempotency guard: any existing [mcp_servers.treeship] table means
+    // we've already installed (or the user installed manually).
+    if existing.contains("[mcp_servers.treeship]") {
+        printer.dim_info(&format!("  {} already configured, skipping", agent.display));
+        return Ok(false);
+    }
+
+    if dry_run {
+        printer.info(&format!("  Would configure {} at {}", agent.display, config_path.display()));
+        return Ok(true);
+    }
+
+    // Build the new content. If the existing file doesn't end in a newline,
+    // start the appended block with one to keep TOML well-formed.
+    let mut new_content = existing.clone();
+    if !new_content.is_empty() && !new_content.ends_with('\n') {
+        new_content.push('\n');
+    }
+    new_content.push_str(CODEX_MCP_BLOCK);
+
+    // Atomic write
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let tmp_path = config_path.with_extension("toml.tmp");
+    std::fs::write(&tmp_path, &new_content)?;
+    std::fs::rename(&tmp_path, config_path)?;
+
+    printer.success(&format!("{} configured", agent.display), &[]);
+    printer.dim_info(&format!("  {}", config_path.display()));
+    printer.dim_info("  Restart Codex so it reloads MCP settings.");
+    Ok(true)
 }
 
 // ---------------------------------------------------------------------------
@@ -310,6 +404,7 @@ pub fn run(
         printer.info("  Treeship works with:");
         printer.info("    Claude Code   ~/.claude/");
         printer.info("    Cursor        ~/.cursor/");
+        printer.info("    Codex CLI     ~/.codex/");
         printer.info("    Hermes        ~/.hermes/ or hermes in PATH");
         printer.info("    OpenClaw      ~/.openclaw/ or openclaw in PATH");
         printer.info("    Cline         ~/.config/cline/");
