@@ -35,16 +35,32 @@ import type { ToolReceipt } from './types.js';
 // ---------------------------------------------------------------------------
 
 /// Field names whose values are safe to include in meta.tool_input.
-/// All are paths or commands -- they describe WHICH file or process, not
-/// the contents thereof. If a future MCP tool needs a new safe field,
-/// add it here explicitly. Do not switch to a denylist.
+/// Paths only — the names of files an agent touched. NOT command lines.
+///
+/// Codex round-2 review caught a real leak: shell-style MCP tools
+/// commonly receive raw command strings like
+///   { "command": "curl -H 'Authorization: Bearer sk-live-abcd' https://..." }
+/// Whitelisting the `command` / `cmd` fields meant those strings landed
+/// verbatim in `meta.tool_input.command` and were then copied into the
+/// signed, eventually shareable session log. Operators who put bearer
+/// tokens or signed URLs in their commands would leak them into every
+/// receipt.
+///
+/// Conservative fix: drop `command` / `cmd` from the whitelist entirely.
+/// Shell-style MCP calls promote to the generic `tool_invocations` bucket
+/// (the bridge already records the tool name and result digest), but no
+/// `processes[]` row gets created from the bridge path. Result: shell
+/// tools still appear in the receipt, but raw arg strings stay out of
+/// the log. A later PR can add structured argv0 extraction (recording
+/// the binary name only — `curl`, `bash`, `git` — without the args).
+///
+/// If a future MCP tool needs a new safe field, add it here explicitly.
+/// Do not switch to a denylist.
 const SAFE_TOOL_INPUT_KEYS = [
   'file_path',
   'path',
   'notebook_path',
   'target_file',
-  'command',
-  'cmd',
 ] as const;
 
 /**
