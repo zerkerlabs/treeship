@@ -877,6 +877,15 @@ pub fn event(
     exit_code: Option<i32>,
     artifact_id: Option<&str>,
     meta_json: Option<&str>,
+    // Inference attribution. Used by agent.decision events to populate
+    // AgentNode.model / .provider / .tokens_in / .tokens_out in the
+    // session graph. Each falls back to its TREESHIP_* env var (mirrors
+    // the wrap command's env handling) so integration hooks can set
+    // them once at session start instead of per-event.
+    model_arg: Option<&str>,
+    provider_arg: Option<&str>,
+    tokens_in_arg: Option<u64>,
+    tokens_out_arg: Option<u64>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let manifest = match load_session() {
@@ -921,14 +930,34 @@ pub fn event(
             duration_ms,
             command: None,
         },
-        "agent.decision" => EventType::AgentDecision {
-            model: tool.map(|s| s.into()),
-            tokens_in: None,
-            tokens_out: None,
-            provider: None,
-            summary: None,
-            confidence: None,
-        },
+        "agent.decision" => {
+            // Resolve each field from CLI flag, then env var fallback.
+            // Mirrors the precedence the wrap command uses (see
+            // commands/wrap.rs::read_decision_env). When neither is set,
+            // the field stays None and the receipt simply won't surface
+            // it -- caller is responsible for at least providing model.
+            let model = model_arg.map(|s| s.to_string())
+                .or_else(|| std::env::var("TREESHIP_MODEL").ok());
+            let provider = provider_arg.map(|s| s.to_string())
+                .or_else(|| std::env::var("TREESHIP_PROVIDER").ok());
+            let tokens_in = tokens_in_arg
+                .or_else(|| std::env::var("TREESHIP_TOKENS_IN").ok().and_then(|s| s.parse().ok()));
+            let tokens_out = tokens_out_arg
+                .or_else(|| std::env::var("TREESHIP_TOKENS_OUT").ok().and_then(|s| s.parse().ok()));
+
+            if model.is_none() {
+                return Err("agent.decision events require --model (or TREESHIP_MODEL env var)".into());
+            }
+
+            EventType::AgentDecision {
+                model,
+                tokens_in,
+                tokens_out,
+                provider,
+                summary: None,
+                confidence: None,
+            }
+        }
         "agent.handoff" => EventType::AgentHandoff {
             from_agent_instance_id: actor_uri.into(),
             to_agent_instance_id: destination.unwrap_or("unknown").into(),
