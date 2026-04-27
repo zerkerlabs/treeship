@@ -1,0 +1,128 @@
+---
+title: Trust fabric
+description: Treeship is a trust fabric for AI agents — the universal layer that gives every agent both a verifiable identity and a verifiable work record. This page is the whole architecture in one read.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+> **Treeship is the trust fabric, not another agent.**
+
+Once Treeship is installed, attaching any serious agent — Claude Code, Cursor, Codex, OpenClaw, Hermes, or any future MCP-compatible agent — should be a one-config-block change. The output is always the same: a verifiable agent identity plus a verifiable work receipt, regardless of vendor. Two surfaces, one trust story.
+
+## The two surfaces
+
+Treeship's trust fabric has two public artifacts. They bind into a single verifiable record but they answer different questions.
+
+| | Identity layer | Activity layer |
+|---|---|---|
+| **URL** | `treeship.dev/agent/<slug>` | `treeship.dev/receipt/<id>` |
+| **Answers** | Who this agent represents and what it's allowed to do | What this agent actually did |
+| **Built from** | `treeship agent register` (CLI) → signed `.agent` package | Session events from hooks + MCP + git, sealed in a Merkle tree |
+| **Signed under** | The ship's ed25519 key | The same key, plus per-artifact ed25519 signatures inside the session |
+| **Binding** | Cross-verification: every receipt must stay inside its agent's declared `bounded_actions` | |
+
+See [Agent Identity](/docs/concepts/agent-identity) for the identity layer, [Session Receipts](/docs/concepts/session-receipts) for the activity layer, and [Cross-verification](/docs/concepts/cross-verification) for the binding.
+
+## Three axes the trust fabric separates cleanly
+
+A clean trust story for agents has to keep three different concerns from collapsing into each other. Treeship treats them as orthogonal:
+
+| Axis | Examples | Where it shows up in the receipt |
+|---|---|---|
+| **Agent surface** | Claude Code, Cursor, Codex, Cline, OpenClaw, Hermes | `agent_name` per event, `agent_graph` per session |
+| **Model + provider** | claude-opus-4-7 / anthropic, gpt-5 / openai, kimi-k2 / moonshot, llama / meta, local / ollama | Provider-colored model pill on each agent card |
+| **Tool channel** | Native hook, MCP gateway, shell wrap, git reconciliation | `source` field on every file row and process row |
+
+Any agent that speaks MCP attaches via the same gateway. Any model behind that agent gets attributed. Any tool channel that touches the working tree gets witnessed.
+
+## The bar
+
+> **If an agent changes code during a Treeship session and the receipt does not show it, Treeship failed.**
+
+Hooks and MCP cover most paths but not all. An agent that runs `sed -i` inside a Bash command, a build tool that modifies generated files, a developer who manually edits during the session — none of those reach a captured tool channel directly. The trust fabric closes that gap with three complementary layers, ranked by attribution strength:
+
+| Layer | Source | What it sees | Trust signal |
+|---|---|---|---|
+| 1 | Specialized event types (`agent.wrote_file`) | Native hook saw the tool fire with full input | `source: "hook"` — highest direct attribution |
+| 2 | Promoted from `agent.called_tool` | MCP bridge captured the call; the aggregator inferred direction from tool name + meta | `source: "mcp"` — medium, direction inferred |
+| 3 | `git diff` at session close | Backstop; catches anything missed | `source: "git-reconcile"` — completeness over direct attribution |
+
+Every file row on a receipt carries one of these `source` labels so a reviewer can see how each change was witnessed, not just that it happened.
+
+## Determinism is a property, not a marketing word
+
+Every artifact Treeship produces is reproducible bit-for-bit from its inputs. This isn't aesthetic — it's the foundation of independent verification.
+
+- **Signatures are deterministic.** Ed25519 signing the same message with the same key always produces the same signature. (RFC 8032 — see the [DSSE explainer](/blog/dsse-dead-simple-signing-explained) for why this matters as a safety property.)
+- **Pre-Authentication Encoding is deterministic.** The PAE format used for signing prepends every payload's type and length so the bytes signed cannot be reinterpreted.
+- **Receipts are deterministic.** The session receipt is a pure aggregation over the event log. Same events in, same `receipt.json` out, same merkle root, same package digest. See [`treeship package inspect`](/docs/cli/package).
+- **Verification is deterministic.** The verifier runs offline on your machine. No network call, no clock skew tolerance applied silently — the caller passes `now` explicitly.
+- **Reconciliation is deterministic.** Git reconciliation at session close uses a `BTreeMap` ordering so two close runs against the same working tree produce byte-identical receipts.
+
+The result: anyone can take a `.treeship` package and an `.agent` certificate, run them through a verifier on a clean machine, and get the same answer Treeship's own renderer got. No server, no account, no trust required.
+
+## How identity gets bound to activity
+
+When you run a Treeship session under a registered agent, three independent records are created and bound together:
+
+1. **The Agent Identity Certificate** (issued at registration) declares `bounded_actions`, `forbidden`, `escalation_required`, and a validity window — all signed under the ship's ed25519 key.
+2. **Session events** are emitted in real time as the agent works. Each event records actor, tool, timestamp, and (when present) the file path or command. The event log is sealed in a Merkle tree at session close.
+3. **The Session Receipt** is composed from those events plus an optional git-reconciliation pass. It carries the same `ship_id` as the certificate.
+
+[Cross-verification](/docs/concepts/cross-verification) (`cross_verify_receipt_and_certificate` in core, `treeship verify --certificate` from the CLI) takes both artifacts and answers a single question: **did this session stay inside the certificate's authorized envelope?**
+
+The result has four orthogonal checks:
+
+- `ship_id_match` — the receipt is signed by the same ship the cert was issued to
+- `within_validity_window` — the session ran while the cert was still valid
+- `unauthorized_calls` — count of tool calls outside `bounded_actions` (must be zero)
+- `never_called` — declared tools the agent didn't end up using (informational; useful for tightening the next cert)
+
+The agent card surfaces this binding visually as a "✓ no unauthorized calls" badge alongside each recent receipt.
+
+## Capture → normalize → reconcile → receipt → verify
+
+The end-to-end pipeline:
+
+```
+   Native hooks    ┐
+   (Claude Code)   │
+                    │
+   MCP bridge      ├─▶  events.jsonl  ──▶  ReceiptComposer  ──▶  receipt.json
+   (Cursor/Codex/  │    (signed in     │    (deterministic       │   (canonical
+    Cline/...)     │     real time)    │     aggregation;        │    JSON,
+                    │                   │     git-reconcile       │    sealed in
+   treeship wrap   │                   │     adds backstop)      │    merkle root)
+   (shell)         ┘                   │                          │
+                                        │                          ▼
+                                        │              treeship package verify
+                                        │              cross_verify_receipt_and_certificate
+                                        │              (offline, deterministic)
+                                        ▼
+                              Sealed in merkle root
+                              alongside the per-artifact
+                              ed25519 signatures
+```
+
+Each stage has its own concept doc:
+
+- **Capture**: [Session Receipts](/docs/concepts/session-receipts) covers the event model. The integration READMEs (`integrations/claude-code-plugin/`, `integrations/cursor/`, `integrations/codex/`, etc) cover per-vendor instrumentation. The MCP gateway is documented in [`bridges/mcp/ATTACHING.md`](https://github.com/zerkerlabs/treeship/blob/main/bridges/mcp/ATTACHING.md).
+- **Normalize**: handled inside `SideEffects::from_events` in `packages/core/src/session/side_effects.rs`. Generic `agent.called_tool` events with file-path metadata get promoted into `files_read` / `files_written` / `processes` so the receipt's headline sections actually reflect the work.
+- **Reconcile**: `packages/core/src/session/git.rs` runs `git diff` at session close and synthesizes events for changes no captured channel saw.
+- **Receipt**: [Session Receipts](/docs/concepts/session-receipts) covers the on-disk format and the package layout.
+- **Verify**: [Trust model](/docs/concepts/trust-model), [Cross-verification](/docs/concepts/cross-verification), and [`treeship package verify`](/docs/cli/package) cover the offline check.
+
+## What this is not
+
+- **Not a hosted runtime.** Treeship doesn't execute agents. It records what they do.
+- **Not a single-vendor stack.** The MCP gateway makes any MCP-compatible agent an equal citizen. Skill-based agents (Hermes, OpenClaw) attach via skill files rather than MCP.
+- **Not a payment layer by itself.** x402 / lobster.cash payment flows can be wrapped via `treeship wrap` and recorded into the same receipt, but identity-of-payment is a separate concern from identity-of-agent.
+- **Not a moderation tool.** The certificate declares what an agent is *allowed* to do. Whether that envelope is appropriate is a policy question, not a Treeship one.
+
+## Where to go next
+
+- New to Treeship? [Quickstart](/docs/guides/quickstart) gets you a verified receipt in 90 seconds.
+- Want to understand the activity layer? [Session Receipts](/docs/concepts/session-receipts).
+- Want to understand the identity layer? [Agent Identity](/docs/concepts/agent-identity).
+- Want to understand the binding? [Cross-verification](/docs/concepts/cross-verification).
+- Want to attach a new agent? [`bridges/mcp/ATTACHING.md`](https://github.com/zerkerlabs/treeship/blob/main/bridges/mcp/ATTACHING.md).

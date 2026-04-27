@@ -1,0 +1,190 @@
+---
+title: Agent Identity
+description: An Agent Identity Certificate is the TLS certificate of an AI agent — a deterministic, signed bundle that says who an agent represents and what it's allowed to do. This page covers the format, how to issue one, and how it binds to session receipts.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+A Session Receipt proves *what happened*. An Agent Identity Certificate proves *who is allowed to make that happen, and within what envelope*. Together they form the [trust fabric](/docs/concepts/trust-fabric): one click from "this agent did X" to "this agent is allowed to do X" — both verifiable on a clean machine with no network call.
+
+## The TLS-for-AI-agents analogy, carefully
+
+The web has SSL/TLS certificates: a CA-signed bundle that says "this server represents `acme.com`, here is its public key, here is the validity window." That's why a browser can show a green lock without the user having to call Acme's IT desk.
+
+AI agents need an equivalent. There's currently no broadly adopted, interoperable way for one agent to prove to another (or to a human reviewer) **who it represents, what it's allowed to do, and how it gets paid.** Vertically integrated stacks solve this for their own ecosystem; protocol attempts like x402 solve the payment side; MCP solves the application-layer wiring. None of them produce a single signed artifact a third party can verify offline.
+
+The Agent Identity Certificate is Treeship's answer. It is:
+
+- **A single signed bundle** under one ed25519 key, deterministic to verify
+- **Layered**: identity / capabilities / declaration, each independently inspectable
+- **Independent of any hosting decision** — works for cloud agents, local agents, OSS contributors, enterprise deployments
+- **Bound to receipts** via [cross-verification](/docs/concepts/cross-verification), so the cert isn't just a claim — it's a contract that gets checked against actual behavior
+
+It is *not* a CA-issued public-trust certificate. There is no centralized CA in Treeship; identity bottoms out in the ed25519 keypair generated at `treeship init`. Domain ownership and other trust-amplifying signals are layered on top through separate, optional verification flows.
+
+## The three layers in one bundle
+
+Every Agent Identity Certificate is a deterministic JSON document with three signed sections plus a signature block. The format is defined in `packages/core/src/agent/` and emitted by `treeship agent register`.
+
+### Layer 1 — Identity (who they represent)
+
+```json
+{
+  "agent_name": "deploy-bot",
+  "ship_id": "ship_6232d021805b8fb5",
+  "public_key": "ed25519:gN4kT9pRq2sVxL5wJ8bF6cYzM3aD1eH7iU0oP4nQ2vW8",
+  "issuer": "ship://ship_6232d021805b8fb5",
+  "issued_at": "2026-04-26T17:00:00Z",
+  "valid_until": "2026-07-25T17:00:00Z",
+  "model": "claude-opus-4-7",
+  "description": "Ships acme staging from agent-driven sessions."
+}
+```
+
+Mandatory fields: `agent_name`, `ship_id`, `public_key`, `issuer`, `issued_at`, `valid_until`. Optional: `model`, `description`.
+
+`ship_id` is the cryptographic identity of the issuing machine — it ties this certificate to a specific keystore. Self-issuance is the default (`issuer == "ship://" + ship_id`); future Hub-mediated issuance can use a different issuer URI.
+
+### Layer 2 — Capabilities (what surface they expose)
+
+```json
+{
+  "tools": [
+    { "name": "read_file",  "description": "Read a file from the working tree." },
+    { "name": "write_file", "description": "Create or modify a file." },
+    { "name": "bash",       "description": "Run a shell command." }
+  ],
+  "api_endpoints": [],
+  "mcp_servers": [
+    { "name": "treeship", "command": "npx -y @treeship/mcp" }
+  ]
+}
+```
+
+Capabilities are the *surface* — what the agent can call. Optional descriptions help reviewers understand each tool's purpose without grepping the agent's source.
+
+### Layer 3 — Declaration (the contract)
+
+```json
+{
+  "bounded_actions": ["read_file", "write_file", "bash", "git_diff", "fly_deploy"],
+  "forbidden":       ["git_force_push", "prod_deploy", "delete_branch_main"],
+  "escalation_required": ["prod_db_migrate", "billing_change", "rotate_secrets"]
+}
+```
+
+Declaration is the *contract* — what the agent is *allowed* to call, what it must *never* call, and what requires human approval. This is the layer that gets cross-verified against actual session activity.
+
+`bounded_actions` is usually a subset of `capabilities.tools` (you might have a tool installed but not authorized for a given session). `forbidden` and `escalation_required` exist on the certificate so a verifier can check independently — even an agent that ignores its own contract gets caught at receipt-review time.
+
+### Signature
+
+```json
+{
+  "algorithm": "ed25519",
+  "key_id": "key_2026q1_acme_deploybot",
+  "public_key": "ed25519:gN4kT9pRq2sVxL5wJ8bF6cYzM3aD1eH7iU0oP4nQ2vW8",
+  "signature": "mZkN7tH3xR8cQ4sA1pV5fB2eY6wJ9oU0iL3dG7hT5nM2vX8bC4kP1qS6rW9aE3yF",
+  "signed_fields": "identity+capabilities+declaration"
+}
+```
+
+Ed25519 signature over the canonical JSON of `identity + capabilities + declaration`. Deterministic — the same inputs always produce the same signature, which is itself a safety property (see [the DSSE explainer](/blog/dsse-dead-simple-signing-explained) for why randomized signatures are dangerous in agent infrastructure).
+
+## Issuing a certificate
+
+```bash
+treeship agent register \
+  --name acme-deploy-bot \
+  --description "Ships acme staging from agent-driven sessions" \
+  --tools read_file,write_file,bash,git_diff,fly_deploy \
+  --forbidden git_force_push,prod_deploy \
+  --escalation prod_db_migrate,billing_change \
+  --model claude-opus-4-7 \
+  --valid-days 90
+```
+
+This produces a `.agent` package in the current directory:
+
+```
+acme-deploy-bot.agent/
+├── identity.json       # the identity layer, pretty-printed
+├── capabilities.json   # the capabilities layer, pretty-printed
+├── declaration.json    # the declaration layer, pretty-printed
+├── certificate.json    # the full bundle (all three + signature)
+└── certificate.html    # a self-contained shareable card
+```
+
+You can publish the `.agent` directory to a Hub (so others can fetch the certificate by slug at `treeship.dev/agent/<slug>`) or distribute it directly. Either way, the trust check is local: anyone with `treeship verify --certificate certificate.json` can confirm the signature.
+
+<Callout title="Where does the public key come from?">
+The keypair was generated at `treeship init`. There is no separate CA enrollment step — your machine is its own root of trust. This is intentional: it keeps Treeship installable in five seconds with no upstream dependency. Domain ownership and other trust amplifiers (below) are layered on top, not gating.
+</Callout>
+
+## Trust amplifiers (optional)
+
+A bare certificate proves an ed25519 signature. That's enough for offline verification, but a third party reading the cert may want stronger signals. Treeship's identity backend exposes optional verification flows:
+
+| Amplifier | What it proves | How |
+|---|---|---|
+| **Domain ownership** | "This agent represents acme.com" | DNS TXT record challenge at `_treeship-challenge.acme.com`, verified server-side via `/identity/{slug}/verify-domain` |
+| **Voice fingerprint** | "Communications signed under this cert match the agent's stable style fingerprint" | Style-based fingerprinting via `/identity/{slug}/voice-fingerprint` and `/identity/{slug}/verify-voice` |
+| **Tool manifest verification** | "The tools this cert declares are the tools the agent actually exposes" | Manifest probe via `/identity/{slug}/verify-tools` |
+
+Each amplifier produces an independent attestation that the agent card surfaces as a separate badge. Stronger trust without coupling everything into one mechanism — a single failed amplifier doesn't invalidate the cert; it just narrows what the cert claims.
+
+## Binding to session receipts
+
+The cert is half a contract. The other half is the [Session Receipt](/docs/concepts/session-receipts) — what the agent actually did. Cross-verification binds the two:
+
+```bash
+treeship verify --certificate acme-deploy-bot.agent/certificate.json \
+  ./.treeship/sessions/ssn_a1b2c3d4.treeship
+```
+
+This runs `cross_verify_receipt_and_certificate` (in `packages/core/src/verify/`) and answers four questions:
+
+1. `ship_id_match` — does the receipt's `ship_id` equal the cert's `identity.ship_id`?
+2. `within_validity_window` — was the session inside `[issued_at, valid_until]`?
+3. `unauthorized_calls` — count of tool calls outside `bounded_actions` (must be zero for a clean pass)
+4. `never_called` — declared tools the agent didn't end up using (informational, useful for tightening the next cert)
+
+The function takes `now` as an explicit argument so the check is deterministic and testable: tests pass a fixed value, the CLI passes `SystemTime::now()`, the WASM build passes a JS-supplied timestamp. See [Cross-verification](/docs/concepts/cross-verification) for the full check matrix.
+
+The agent card at `treeship.dev/agent/<slug>` runs this on every recent receipt and surfaces the result as a `✓ no unauthorized calls` badge per row.
+
+## Initial scope: how `bounded_actions` gets determined
+
+Three sources, in order of trust:
+
+1. **Operator-declared at registration.** The `--tools / --forbidden / --escalation` flags. The agent's owner declares the contract upfront and signs it. This is the canonical source.
+2. **Project-declared via `treeship declare`.** Each project can carry its own `.treeship/declaration.json` that lists which tools agents are authorized to use *in this project*. The session receipt records both the agent cert's declaration AND the project declaration; cross-verify treats unauthorized = "called but in neither list."
+3. **Discoverable from the integration.** For MCP-routed agents, the bridge can introspect the tool list the agent connected with. This is the "no-config" path: a fresh `treeship add cursor` registers a default certificate from Cursor's actual MCP capabilities. (Building.)
+
+The two-axis gate (agent declaration AND project declaration) lets the same agent operate under different policies in different projects without re-issuing certs.
+
+## What an agent's URL looks like
+
+Once a certificate is published to a Hub, anyone can view it at:
+
+```
+https://www.treeship.dev/agent/<slug>
+```
+
+Where `<slug>` is the canonical sanitization of `agent_name` (lowercase, spaces → dashes, alphanumeric + dash + underscore only). The page renders identity, capabilities, declaration, recent verified receipts, and the `treeship verify --certificate` snippet for the offline check.
+
+This is the URL operators put in their README, in their docs, on their GitHub profile. It's the public face of the agent's identity — the equivalent of a TLS cert viewer for an HTTPS site.
+
+## What this is not
+
+- **Not a CA-rooted PKI.** There's no globally-trusted root authority. Trust bottoms out in the ship's ed25519 keypair plus optional amplifiers (domain, voice, tool manifest).
+- **Not a hosting decision.** The certificate works for cloud agents, local agents, OSS contributors, enterprise deployments. The only requirement is that the issuing machine has a Treeship keystore.
+- **Not a payment identity.** x402 / lobster.cash flows are wrapped by `treeship wrap` and recorded into receipts; the identity of *who is allowed to spend* is a separate concern from *who is allowed to act*. Future certificates may include a `payment` layer; today they don't.
+- **Not immutable.** Certs expire (default 90 days). Re-issue with the same name to publish a new version. The Merkle history of past receipts under the old cert remains verifiable forever — the cert just stops being usable for new attestations.
+
+## Where to go next
+
+- [Trust fabric](/docs/concepts/trust-fabric) for the full architecture overview
+- [Session Receipts](/docs/concepts/session-receipts) for the activity layer
+- [Cross-verification](/docs/concepts/cross-verification) for the check matrix
+- [`treeship agent register`](/docs/cli/agent) for the CLI reference
