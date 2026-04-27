@@ -139,6 +139,35 @@ fn parse_numstat_line(line: &str) -> Option<(String, Option<u32>, Option<u32>)> 
     Some((path, adds, dels))
 }
 
+/// Decides whether a path discovered by git reconciliation should be
+/// included in the receipt.
+///
+/// Treeship's own runtime artifacts -- session.closing markers,
+/// sessions/<id>/ event logs, artifact storage, scratch tmp -- live
+/// inside `.treeship/` and get touched by the very session that's
+/// closing. Without this filter they show up in `files_written` as
+/// "the agent modified .treeship/sessions/ssn_X/events.jsonl",
+/// noisy and misleading: it was Treeship's own bookkeeping, not the
+/// agent's work.
+///
+/// User-authored Treeship files (config.yaml, declaration.json, agent
+/// cards, policy) DO get surfaced -- those are the operator's own
+/// changes that an audit reader cares about.
+fn is_treeship_runtime_artifact(path: &str) -> bool {
+    // Strip leading "./" if present so both forms compare cleanly.
+    let p = path.strip_prefix("./").unwrap_or(path);
+    if !p.starts_with(".treeship/") && p != ".treeship" {
+        return false;
+    }
+    // Within .treeship/, exclude generated runtime state.
+    p == ".treeship/session.closing"
+        || p == ".treeship/session.json"
+        || p.starts_with(".treeship/sessions/")
+        || p.starts_with(".treeship/artifacts/")
+        || p.starts_with(".treeship/tmp/")
+        || p.starts_with(".treeship/proof_queue/")
+}
+
 /// Collect every file change in `repo_dir` worth surfacing in a
 /// session receipt: working-tree modifications (staged or not),
 /// committed-since-`since_sha` changes (when provided), and untracked
@@ -162,6 +191,9 @@ pub fn reconcile_changes(repo_dir: &Path, since_sha: Option<&str>) -> Vec<GitCha
     let mut by_path: BTreeMap<String, GitChange> = BTreeMap::new();
 
     let mut record = |path: String, op: &str| {
+        if is_treeship_runtime_artifact(&path) {
+            return;
+        }
         by_path.entry(path.clone()).or_insert(GitChange {
             file_path: path,
             operation: op.to_string(),
@@ -344,5 +376,92 @@ mod tests {
         assert!(parse_name_status_line("\t\t").is_none()); // empty code field
         // Code with no path -- nothing to record.
         assert!(parse_name_status_line("M").is_none());
+    }
+
+    #[test]
+    fn runtime_artifact_filter_excludes_generated_state() {
+        // Generated runtime state -- never the agent's work.
+        assert!(is_treeship_runtime_artifact(".treeship/session.closing"));
+        assert!(is_treeship_runtime_artifact(".treeship/session.json"));
+        assert!(is_treeship_runtime_artifact(".treeship/sessions/ssn_abc/events.jsonl"));
+        assert!(is_treeship_runtime_artifact(".treeship/sessions/ssn_abc/manifest.json"));
+        assert!(is_treeship_runtime_artifact(".treeship/artifacts/foo.json"));
+        assert!(is_treeship_runtime_artifact(".treeship/tmp/scratch"));
+        assert!(is_treeship_runtime_artifact(".treeship/proof_queue/pending.json"));
+
+        // "./"-prefixed forms (some git output emits these).
+        assert!(is_treeship_runtime_artifact("./.treeship/session.closing"));
+        assert!(is_treeship_runtime_artifact("./.treeship/sessions/ssn_x/events.jsonl"));
+    }
+
+    #[test]
+    fn runtime_artifact_filter_preserves_user_authored_files() {
+        // User-authored Treeship config / policy / cards: these ARE the
+        // operator's own changes and must show up in the receipt.
+        assert!(!is_treeship_runtime_artifact(".treeship/config.yaml"));
+        assert!(!is_treeship_runtime_artifact(".treeship/config.json"));
+        assert!(!is_treeship_runtime_artifact(".treeship/declaration.json"));
+        assert!(!is_treeship_runtime_artifact(".treeship/policy.yaml"));
+        assert!(!is_treeship_runtime_artifact(".treeship/agents/coder.agent"));
+        assert!(!is_treeship_runtime_artifact(".treeship/agents/reviewer.json"));
+
+        // Anything outside .treeship/ is never filtered.
+        assert!(!is_treeship_runtime_artifact("src/main.rs"));
+        assert!(!is_treeship_runtime_artifact("README.md"));
+        assert!(!is_treeship_runtime_artifact("treeship-notes.md"));
+        assert!(!is_treeship_runtime_artifact(".treeshiprc"));
+    }
+
+    #[test]
+    fn reconcile_filters_runtime_artifacts_end_to_end() {
+        // Build a real one-commit git repo, then make changes to a mix
+        // of runtime-artifact paths and user-authored paths. The
+        // returned reconciliation must include the user files and
+        // exclude the runtime artifacts.
+        let tmp = std::env::temp_dir().join(format!("treeship-reconcile-{}", rand::random::<u32>()));
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let run = |args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C").arg(&tmp)
+                .args(args)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .ok();
+        };
+
+        run(&["init", "-q"]);
+        run(&["config", "user.email", "test@example.com"]);
+        run(&["config", "user.name", "Test"]);
+        std::fs::write(tmp.join("README.md"), "hi\n").unwrap();
+        run(&["add", "."]);
+        run(&["commit", "-q", "-m", "init"]);
+
+        // Now create a mix: runtime artifacts and a real user file.
+        std::fs::create_dir_all(tmp.join(".treeship/sessions/ssn_x")).unwrap();
+        std::fs::create_dir_all(tmp.join(".treeship/artifacts")).unwrap();
+        std::fs::create_dir_all(tmp.join(".treeship/agents")).unwrap();
+        std::fs::write(tmp.join(".treeship/sessions/ssn_x/events.jsonl"), "{}\n").unwrap();
+        std::fs::write(tmp.join(".treeship/artifacts/foo.json"), "{}\n").unwrap();
+        std::fs::write(tmp.join(".treeship/session.closing"), "").unwrap();
+        std::fs::write(tmp.join(".treeship/agents/coder.agent"), "name: coder\n").unwrap();
+        std::fs::write(tmp.join(".treeship/declaration.json"), "{}\n").unwrap();
+        std::fs::write(tmp.join("src.rs"), "fn main() {}\n").unwrap();
+
+        let changes = reconcile_changes(&tmp, None);
+        let paths: Vec<&str> = changes.iter().map(|c| c.file_path.as_str()).collect();
+
+        // User-authored content: present.
+        assert!(paths.contains(&"src.rs"), "user file missing: {paths:?}");
+        assert!(paths.contains(&".treeship/agents/coder.agent"), "agent card missing: {paths:?}");
+        assert!(paths.contains(&".treeship/declaration.json"), "declaration missing: {paths:?}");
+
+        // Runtime artifacts: excluded.
+        assert!(!paths.contains(&".treeship/sessions/ssn_x/events.jsonl"), "leaked: {paths:?}");
+        assert!(!paths.contains(&".treeship/artifacts/foo.json"), "leaked: {paths:?}");
+        assert!(!paths.contains(&".treeship/session.closing"), "leaked: {paths:?}");
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
