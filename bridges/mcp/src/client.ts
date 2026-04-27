@@ -11,6 +11,65 @@ import { attestAction, attestReceipt, emitSessionEvent } from './attest.js';
 import { hashPayload } from './utils.js';
 import type { ToolReceipt } from './types.js';
 
+// ---------------------------------------------------------------------------
+// Tool-input sanitization for session events
+//
+// Codex finding #3: the receipt's MCP promotion logic
+// (packages/core/src/session/side_effects.rs::promote_mcp_called_tool)
+// looks for `meta.tool_input.{file_path,path,notebook_path,target_file,
+// command,cmd}` to lift a generic agent.called_tool into a specialized
+// files_read / files_written / processes side effect. Without those
+// fields in meta, every MCP-routed file write in a session shows up as
+// "tool_invocations: 1" with no file appearing in files_written -- the
+// trust-fabric "files changed" guarantee silently breaks for the entire
+// MCP path (Cursor, Codex, Cline, all custom MCP file-op servers).
+//
+// Whitelist-only by design. The bridge does NOT pass through arbitrary
+// caller-supplied keys. Passing the whole arguments object would leak
+// content/text/body/password/token/secret/api_key fields and any
+// caller-defined sensitive payload into the (signed, eventually
+// shareable) session log. Only the small set of path/command keys we
+// know are safe to publish make it through; everything else stays in
+// the args_digest in the intent attestation, where the operator can
+// audit it locally without the digest leaving their machine.
+// ---------------------------------------------------------------------------
+
+/// Field names whose values are safe to include in meta.tool_input.
+/// All are paths or commands -- they describe WHICH file or process, not
+/// the contents thereof. If a future MCP tool needs a new safe field,
+/// add it here explicitly. Do not switch to a denylist.
+const SAFE_TOOL_INPUT_KEYS = [
+  'file_path',
+  'path',
+  'notebook_path',
+  'target_file',
+  'command',
+  'cmd',
+] as const;
+
+/**
+ * Extract only the whitelisted keys from a tool's raw arguments.
+ * Returns undefined when no whitelisted keys are present (so the meta
+ * field is omitted entirely rather than serialized as `{}`).
+ *
+ * Exported (named `__sanitizeToolInput`) only so the regression suite
+ * can pin the whitelist behavior. The underscore prefix signals
+ * internal use; callers in this package should not import it.
+ */
+export function __sanitizeToolInput(
+  args: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!args || typeof args !== 'object') return undefined;
+  const out: Record<string, unknown> = {};
+  for (const key of SAFE_TOOL_INPUT_KEYS) {
+    const v = (args as Record<string, unknown>)[key];
+    if (typeof v === 'string' && v.length > 0) {
+      out[key] = v;
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 export class TreeshipMCPClient extends Client {
   private _actor: string;
   private _disabled: boolean;
@@ -116,6 +175,15 @@ export class TreeshipMCPClient extends Client {
       // timeline, side effects, and agent graph. The signed artifact
       // (above) is the cryptographic proof; the session event is what
       // makes it human-readable in the receipt.
+      //
+      // Sanitized tool_input is included in meta so the core's MCP
+      // promotion logic (packages/core/src/session/side_effects.rs)
+      // can lift file/process side effects into files_read /
+      // files_written / processes. Without this, an agent writing a
+      // file via @treeship/mcp shows up as "tool_invocations: 1" with
+      // no promoted side effect -- the file change vanishes from the
+      // receipt's "Files changed" section. Codex adversarial review
+      // finding #3.
       emitSessionEvent({
         type: 'agent.called_tool',
         tool: params.name,
@@ -127,6 +195,7 @@ export class TreeshipMCPClient extends Client {
         meta: {
           source: 'mcp-bridge',
           is_error: result?.isError ?? !!error,
+          tool_input: __sanitizeToolInput(params.arguments),
         },
       }).catch(() => {}); // best-effort, never block
 
