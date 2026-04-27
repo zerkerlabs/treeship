@@ -82,6 +82,50 @@ fn translate_status(code: &str) -> &'static str {
     }
 }
 
+/// Parse a single line of `git diff --name-status`, returning the
+/// canonical operation and the FINAL path of the change.
+///
+/// Codex round-2 finding 5: the original `parts.next() / parts.next()`
+/// shorthand grabbed the FIRST path, which on rename / copy lines is
+/// the OLD path. So `git mv src/old.rs src/new.rs` produced
+/// `R100\told.rs\tnew.rs`, and reconcile recorded `src/old.rs` (which
+/// no longer exists) instead of `src/new.rs` (the destination the
+/// agent actually created). Cross-verify against a cert that allowed
+/// "src/new.rs" then incorrectly flagged the change as touching an
+/// unauthorized file.
+///
+/// Format from `git diff --name-status`:
+///   M\tpath               -- modified
+///   A\tpath               -- added
+///   D\tpath               -- deleted
+///   T\tpath               -- type-changed
+///   R<score>\told\tnew    -- renamed (with similarity score)
+///   C<score>\told\tnew    -- copied
+///   ?\?\tpath             -- (only from ls-files, never name-status)
+///
+/// For R* and C* we return the destination (new) path. For everything
+/// else, the single path. Returns None when the line is empty or
+/// missing fields.
+fn parse_name_status_line(line: &str) -> Option<(&'static str, String)> {
+    let mut parts = line.split('\t');
+    let code = parts.next()?;
+    if code.is_empty() {
+        return None;
+    }
+    let first_path = parts.next()?;
+    let op = translate_status(code);
+    let path = match code.chars().next().unwrap_or(' ') {
+        'R' | 'C' => {
+            // Rename / copy: the FINAL path is the third field.
+            // If the destination is missing for any reason, fall
+            // back to the source so we still record SOMETHING.
+            parts.next().map(|p| p.to_string()).unwrap_or_else(|| first_path.to_string())
+        }
+        _ => first_path.to_string(),
+    };
+    Some((op, path))
+}
+
 /// Parse a single line of `git diff --numstat` (additions, deletions,
 /// path). Numeric fields are "-" for binary files; we represent
 /// those as None.
@@ -131,10 +175,8 @@ pub fn reconcile_changes(repo_dir: &Path, since_sha: Option<&str>) -> Vec<GitCha
     //    commit.
     if let Some(out) = git_capture(repo_dir, &["diff", "HEAD", "--name-status"]) {
         for line in out.lines() {
-            let mut parts = line.split('\t');
-            if let (Some(code), Some(path)) = (parts.next(), parts.next()) {
-                let op = translate_status(code);
-                record(path.to_string(), op);
+            if let Some((op, path)) = parse_name_status_line(line) {
+                record(path, op);
             }
         }
     }
@@ -145,10 +187,8 @@ pub fn reconcile_changes(repo_dir: &Path, since_sha: Option<&str>) -> Vec<GitCha
         let range = format!("{sha}..HEAD");
         if let Some(out) = git_capture(repo_dir, &["diff", &range, "--name-status"]) {
             for line in out.lines() {
-                let mut parts = line.split('\t');
-                if let (Some(code), Some(path)) = (parts.next(), parts.next()) {
-                    let op = translate_status(code);
-                    record(path.to_string(), op);
+                if let Some((op, path)) = parse_name_status_line(line) {
+                    record(path, op);
                 }
             }
         }
@@ -240,5 +280,69 @@ mod tests {
         let result = reconcile_changes(&tmp, None);
         assert!(result.is_empty());
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // ── Codex round-2 finding 5: rename / copy parsing returned the
+    //    SOURCE path instead of the destination, so `git mv old new`
+    //    surfaced "old" (which no longer exists) instead of "new"
+    //    (which the agent created).
+
+    #[test]
+    fn parse_name_status_modify_uses_single_path() {
+        let (op, path) = parse_name_status_line("M\tsrc/lib.rs").unwrap();
+        assert_eq!(op, "modified");
+        assert_eq!(path, "src/lib.rs");
+    }
+
+    #[test]
+    fn parse_name_status_added_uses_single_path() {
+        let (op, path) = parse_name_status_line("A\tsrc/new.rs").unwrap();
+        assert_eq!(op, "created");
+        assert_eq!(path, "src/new.rs");
+    }
+
+    #[test]
+    fn parse_name_status_deleted_uses_single_path() {
+        let (op, path) = parse_name_status_line("D\tsrc/gone.rs").unwrap();
+        assert_eq!(op, "deleted");
+        assert_eq!(path, "src/gone.rs");
+    }
+
+    #[test]
+    fn parse_name_status_rename_uses_destination() {
+        // The bug Codex caught: this line produced path="src/old.rs"
+        // even though the agent's `git mv` ended with src/new.rs as
+        // the actual file on disk.
+        let (op, path) = parse_name_status_line("R100\tsrc/old.rs\tsrc/new.rs").unwrap();
+        assert_eq!(op, "renamed");
+        assert_eq!(path, "src/new.rs", "rename must record the destination, not the source");
+    }
+
+    #[test]
+    fn parse_name_status_copy_uses_destination() {
+        // Copies map to "created" semantically -- a new file appeared
+        // at the destination -- and we record the destination path.
+        let (op, path) = parse_name_status_line("C75\tsrc/template.rs\tsrc/new-from-template.rs").unwrap();
+        assert_eq!(op, "created");
+        assert_eq!(path, "src/new-from-template.rs", "copy must record the destination");
+    }
+
+    #[test]
+    fn parse_name_status_rename_falls_back_to_source_if_dest_missing() {
+        // Defensive: if git output were ever truncated to "R100\told"
+        // with no destination, we should still record SOMETHING
+        // rather than silently swallowing the line. Falls back to
+        // the source path -- not perfect, but visible.
+        let (op, path) = parse_name_status_line("R100\tsrc/only-old.rs").unwrap();
+        assert_eq!(op, "renamed");
+        assert_eq!(path, "src/only-old.rs");
+    }
+
+    #[test]
+    fn parse_name_status_handles_empty_or_garbage_lines() {
+        assert!(parse_name_status_line("").is_none());
+        assert!(parse_name_status_line("\t\t").is_none()); // empty code field
+        // Code with no path -- nothing to record.
+        assert!(parse_name_status_line("M").is_none());
     }
 }
