@@ -59,7 +59,7 @@ treeship attest action \
   --approval-nonce nce_a1b2c3d4e5f6
 ```
 
-The verifier confirms that the approval nonce matches a valid approval artifact, proving the payment was authorized. The nonce is single-use -- it cannot be replayed for a second payment.
+The verifier confirms that the approval nonce matches a valid signed approval (binding) and -- if the approver set scope flags -- that the action's actor / action / subject fall inside the approval's allow-lists (scope). Replay posture is reported as package-local; v0.10 adds a local Approval Use Journal for device/workspace replay, v0.11+ adds Hub checkpoints for distributed replay.
 
 ## Using treeship wrap
 

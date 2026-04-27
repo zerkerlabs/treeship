@@ -238,7 +238,7 @@ enum Command {
     /// Approve a pending action
     ///
     /// Approves the Nth pending action (or the first one if N is omitted).
-    /// Creates an ApprovalStatement artifact with a single-use nonce.
+    /// Creates an ApprovalStatement artifact with a binding nonce.
     ///
     /// Examples:
     ///   treeship approve

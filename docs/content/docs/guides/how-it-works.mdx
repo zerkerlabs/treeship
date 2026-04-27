@@ -107,9 +107,9 @@ Confirm the payload conforms to the expected Treeship statement schema for its d
 Follow `parentId` links recursively, verifying each ancestor artifact the same way. A broken link at any point fails the entire chain.
 </Step>
 <Step>
-### Check approval binding (if present)
+### Check approval binding, scope, and replay (if present)
 
-If the artifact references an `approvalNonce`, confirm that a matching approval artifact exists in the chain with a valid nonce that has not been reused.
+If the artifact references an `approvalNonce`, confirm a matching signed approval exists; if the approval has a scope, confirm the action's actor / action / subject fall inside the signed allow-lists; observe whether the same nonce was consumed earlier inside this verified package. Verify reports each property as a separate line and is explicit that cross-package replay enforcement is on the v0.10 / v0.11 roadmap, not yet shipped.
 </Step>
 <Step>
 ### Return the result

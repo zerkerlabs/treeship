@@ -41,7 +41,7 @@ approval = ts.attest_approval(
     approver="human://alice",
     description="approve payment max $500",
 )
-print(approval.nonce)  # single-use nonce
+print(approval.nonce)  # binding token; replay enforcement is package-local in v0.9.6
 
 # Attest with approval binding
 ts.attest_action(

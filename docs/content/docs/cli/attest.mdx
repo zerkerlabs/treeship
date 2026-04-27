@@ -98,12 +98,23 @@ Returns the approval artifact ID and the nonce. Pass the nonce to the agent so i
 | Option | Description |
 |--------|-------------|
 | `--approver <uri>` | Approver identity URI (required) |
-| `--subject <id>` | Artifact ID being approved |
+| `--subject <id>` | Artifact ID being approved (the subject of the approval itself) |
 | `--description <text>` | Plain text scope of what is authorized |
+| `--allowed-actor <uri>` | Scope: actor URIs permitted to consume this approval (repeatable) |
+| `--allowed-action <label>` | Scope: action labels permitted under this approval (repeatable) |
+| `--allowed-subject <uri>` | Scope: subject URIs permitted as the action's target (repeatable) |
+| `--max-uses <n>` | Signed into the grant for future ledger enforcement |
+| `--unscoped` | Required to mint a bearer approval (no scope axes set); without it the CLI refuses |
 | `--expires <timestamp>` | RFC 3339 expiry time |
 
-<Callout type="warn">
-Approvals are single-use by default. If the same nonce is used twice, the second action will fail verification. This is enforced in the Rust core and cannot be bypassed.
+<Callout type="warn" title="Scope is the new default">
+As of v0.9.6, `treeship attest approval` refuses to mint an approval that has no scope axis (no `--allowed-*` and no `--max-uses`). Pass `--unscoped` to opt in to a bearer approval explicitly. Verify will warn that an unscoped approval proves binding only -- not actor/action/subject authorization.
+</Callout>
+
+<Callout type="warn" title="Replay posture (v0.9.6)">
+Verifier observes nonce replay **within a single verified package** -- two actions claiming the same nonce in one package, the second fails. Cross-package and cross-machine replay enforcement is not yet shipped. Verify reports the replay check posture honestly (`replay check: package-local only -- no global ledger consulted`) rather than claiming global single-use.
+
+Roadmap: local Approval Use Journal in v0.10 (device/workspace replay), Hub checkpoints in v0.11+ (distributed replay).
 </Callout>
 </Tab>
 <Tab value="handoff">

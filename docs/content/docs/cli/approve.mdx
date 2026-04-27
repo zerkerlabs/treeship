@@ -37,7 +37,7 @@ Approve a pending request by number.
 treeship approve 1
 ```
 
-This creates an approval artifact, generates a single-use nonce, and passes it back to the requesting agent. The agent can then include the nonce in its action attestation to prove it had authorization.
+This creates an approval artifact, generates a binding nonce, and passes it back to the requesting agent. The agent then includes the nonce in its action attestation to prove it had authorization.
 
 ## treeship deny
 
@@ -49,6 +49,10 @@ treeship deny 2
 
 This creates a denial artifact. The requesting agent receives the denial and should not proceed with the action.
 
-<Callout type="info">
-Approvals are single-use. If the same nonce is used in two action attestations, the second one will fail verification. This is enforced in the Rust core and cannot be bypassed.
+<Callout type="warn" title="Replay posture (v0.9.6)">
+Treeship's verifier observes nonce replay **only within a single verified package** -- two actions in one package that claim the same nonce, the second fails. This is enforced in the Rust core and cannot be bypassed.
+
+Cross-package and cross-machine replay enforcement is **not yet shipped**. A `--max-uses` value is signed into the grant for future enforcement; verify reports the replay check posture honestly (`replay check: package-local only -- no global ledger consulted`) rather than claiming global single-use.
+
+Roadmap: a local Approval Use Journal lands in v0.10 (device/workspace replay), Hub-backed checkpoints in v0.11+ (distributed replay).
 </Callout>

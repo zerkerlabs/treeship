@@ -47,7 +47,7 @@ Each step is signed, chained, and independently verifiable.
 ## What this gives you
 
 - **Audit trail.** Every transaction step has a tamper-proof receipt.
-- **Approval binding.** The payment cannot execute without a valid approval nonce. The nonce is single-use -- it cannot be reused for multiple purchases.
+- **Approval binding + scope.** The payment cannot execute without a valid approval nonce, and the approval's signed scope (`allowed_actor`, `allowed_action`, `allowed_subject`) is checked statelessly against the action -- a `stripe.charge.create` approval cannot authorize a `stripe.refund.create`. Nonce replay is observed within a verified package; cross-package replay enforcement (local Approval Use Journal, Hub checkpoints) is on the v0.10/v0.11 roadmap.
 - **Chain verification.** Anyone can walk the chain from fulfillment back to the original order.
 - **Offline verification.** No API call needed to verify the receipts.
 
@@ -64,7 +64,7 @@ treeship attest approval \
   --expires 24h
 ```
 
-The approval nonce binds to exactly one action. The agent cannot reuse it for multiple purchases.
+The approval's `--max-uses` is signed into the grant and the scope (`allowed_action`, `allowed_subject`) constrains what the agent can do with the nonce. Replay is observed within a verified package; the global / multi-package replay enforcement layer ships in v0.10 (local Approval Use Journal) and v0.11+ (Hub checkpoints).
 
 ### Multi-party transactions
 

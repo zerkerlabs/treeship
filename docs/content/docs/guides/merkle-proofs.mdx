@@ -52,24 +52,35 @@ treeship verify --full
 
 The verify page at treeship.dev performs the same verification client-side via WASM. The same Rust code that signs artifacts in the CLI verifies them in the browser.
 
-## Approval nonce binding
+## Approval nonce binding + scope
 
-Single-use nonces prevent approval reuse. The approval artifact contains a nonce. The action artifact must echo that nonce. Verification checks the match.
+The approval artifact contains a nonce and an optional signed scope (`allowed_actors`, `allowed_actions`, `allowed_subjects`, `max_uses`). The action artifact must echo the nonce; verification then checks the binding, the scope, and the replay posture as three separate properties.
 
 ```bash
-# Approval creates the nonce
+# Approval creates the nonce + scope
 treeship attest approval \
   --approver human://alice \
-  --description "approve deployment to staging"
+  --description "approve deployment to staging" \
+  --allowed-actor agent://deployer \
+  --allowed-action deploy.staging \
+  --max-uses 1
 # Output includes: nonce = "n_8f3a..."
 
-# Action must echo the nonce
+# Action must echo the nonce AND match the scope
 treeship wrap \
   --approval-nonce n_8f3a... \
   -- kubectl apply -f staging.yaml
 ```
 
-If an agent tries to reuse a nonce, verification fails. One approval, one action. No replay.
+Verify reports each property separately:
+
+```
+✓  approval binding nonce matched a signed approval
+✓  approval scope   actor / action / subject matched approval scope
+⚠  replay check     package-local only -- no global ledger consulted
+```
+
+If the action's actor / action / subject falls outside the signed scope, verification fails on the scope line and the audit reader sees exactly why. Replay observation is package-local in v0.9.6; cross-package enforcement lands in v0.10 via a local Approval Use Journal (append-only hash chain with signed Merkle checkpoints), and v0.11+ adds Hub-backed checkpoints for distributed replay.
 
 ## Rekor anchoring
 
