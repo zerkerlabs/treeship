@@ -3902,7 +3902,7 @@ dependencies = [
 
 [[package]]
 name = "treeship-cli"
-version = "0.9.5"
+version = "0.9.6"
 dependencies = [
  "base64",
  "clap",
@@ -3926,7 +3926,7 @@ dependencies = [
 
 [[package]]
 name = "treeship-core"
-version = "0.9.5"
+version = "0.9.6"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -3942,7 +3942,7 @@ dependencies = [
 
 [[package]]
 name = "treeship-core-wasm"
-version = "0.9.5"
+version = "0.9.6"
 dependencies = [
  "ark-bn254 0.4.0",
  "ark-ec 0.4.2",

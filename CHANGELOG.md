@@ -1,5 +1,77 @@
 # Changelog
 
+## 0.9.6 (2026-04-27)
+
+The trust-fabric release. v0.9.5 shipped *receipts* with cryptographic integrity but no comparison surface: a session could attest "the agent called Read 14 times" without anyone checking whether Read was even on the agent's authorized tool list, and a receipt's `files_written` could quietly omit anything that escaped the captured tool channel (a `sed -i` inside a Bash command, a build output, a manual edit). v0.9.6 closes both holes by building out the full capture-normalize-verify chain: every file the agent touches is captured by at least one of three layers (hook, MCP, or git reconciliation), every tool call is normalized through canonical aliases so cross-verification can compare claimed authorization against actual usage, and the receipt now signals when capture itself was incomplete instead of silently truncating.
+
+The "trust fabric" framing is now load-bearing: an audit reader looking at a v0.9.6 receipt can answer *did this agent stay inside its bounds* with the same confidence they could already answer *was this signature valid*.
+
+### Added (capture layer)
+
+- **MCP-routed tool calls promote into typed file/process events.** `packages/core/src/session/`. Generic `agent.called_tool` events emitted by the MCP bridge previously stayed generic -- they appeared in the timeline but never landed in `files_read`, `files_written`, or `processes` on the receipt's side-effects block. New promotion pass at receipt composition inspects each `agent.called_tool` event's `meta.tool_input` and synthesizes the matching specialized event (`AgentReadFile`, `AgentWroteFile`, `AgentExecutedCommand`) when a known tool name + path are present. The synthetic event carries `meta.source = "mcp"` for provenance. Treeship can now serve as a generic MCP-routing fabric and the receipt still answers "what files did this agent touch" correctly. (#11)
+
+- **Git reconciliation as the file-capture backstop.** `packages/core/src/session/git.rs`. Runs at session close: shells out to `git diff HEAD --name-status`, `git diff <since>..HEAD --name-status`, and `git ls-files --others --exclude-standard`, deduplicates against files already captured by hook or MCP, and synthesizes `AgentWroteFile` events for everything else. The synthetic events are appended to `events.jsonl` BEFORE the merkle root is sealed, so backstop-discovered changes are cryptographically committed alongside the rest of the session evidence -- not patched into the receipt as out-of-band claims. Closes the long-standing trust gap: an agent that ran `sed -i` inside a Bash command, a build tool that modified files, or any other untracked side effect would otherwise have vanished from the receipt. Fail-open by design: if the working dir isn't a git repo, the git binary is missing, or any git command errors, returns an empty Vec and the receipt is still produced -- reconciliation is best-effort enhancement, never a gate. (#29, #30, #20, #24, #25)
+
+- **`session-event-cli` source-of-truth attribution for hook events.** Every `treeship session event` invocation now stamps `meta.source = "session-event-cli"` on the event it emits. The Claude Code plugin's `post-tool-use.sh` hook calls this for every tool use Claude makes, so the source label flows from "agent emitted a tool event" all the way through to receipt composition and cross-verification. Without this provenance label, every Claude tool call was indistinguishable from a generic event in the receipt and thus invisible to cross-verification.
+
+### Added (cross-verification layer)
+
+- **Cross-verification: receipt vs certificate, with canonical tool aliases.** `packages/core/src/session/receipt.rs`. The receipt's `tool_usage` block now carries both `declared` (what the agent's certificate authorized) and `actual` (what the agent actually called), and the verifier diffs them with `TOOL_ALIASES` mapping snake_case CLI names (`read_file`, `write_file`, `bash`, `web_fetch`) to TitleCase Claude tool names (`Read`, `Write`, `Bash`, `WebFetch`). Without alias normalization, a Claude session would always have `actual: ["Read","Write","Bash"]` while the certificate declared `["read_file","write_file","bash"]`, and cross-verification would falsely flag every authorized call as unauthorized. (#31, #32)
+
+- **`source_attributes_a_tool()` filter so backstop sources don't get counted as direct tool calls.** Cross-verification's `actual` list aggregates `AgentReadFile`, `AgentWroteFile`, and `AgentExecutedCommand` events -- but only when their `meta.source` is `hook`, `mcp`, `shell-wrap`, `session-event-cli`, or absent. Events synthesized by `git-reconcile` or the `daemon-atime` channel are excluded; they're Treeship's own backstop layers, not the agent calling tools, and counting them as direct tool use would inflate `actual` against the agent's certificate. (#32)
+
+- **In-band incompleteness signal: `proofs.event_log_skipped`.** `packages/core/src/session/receipt.rs`. When the event log reader skips a malformed JSON line, the count is now stamped on the sealed receipt as `proofs.event_log_skipped: N`. A downstream verifier can tell at a glance whether a receipt represents a clean session or one where some events were dropped during parsing. Defaults to `0` and is `skip_serializing_if`-omitted from canonical JSON, so receipts produced when the event log was clean stay byte-identical to v0.9.5 receipts. (#26)
+
+### Added (model + provider attribution)
+
+- **`agent.decision` event at session start records the model.** `integrations/claude-code-plugin/scripts/session-start.sh` now emits an `agent.decision` event carrying `meta.model` so the receipt records what model the agent ran on. Pairs with the CLI surface that plumbs model/provider/token-budget through the `treeship session event` command. Receipt readers can now answer "which model produced this work" without inferring from event timing. (#28, #6)
+
+### Changed (trust gates)
+
+- **Provenance source labels are no longer downgraded to `"hook"` when unknown.** `packages/core/src/session/receipt.rs`. Side-effect entries in the receipt now preserve the exact `meta.source` value they were stamped with, instead of falling back to `"hook"` for any unrecognized label. Caller-asserted provenance is now visible to the audit reader as written. (#20)
+
+- **Git reconcile dedupes against writes only, never reads.** `packages/cli/src/commands/session.rs`. Previous logic suppressed reconciled writes whenever the same path had been read earlier in the session, producing a confidently incomplete audit trail (read + process recorded; the write that the process performed silently dropped). Reads do not change files; only writes belong in the dedup set. Trust-fabric Codex finding #2. (#30)
+
+- **Git reconcile records destination path on rename/copy.** `packages/core/src/session/git.rs`. `parse_name_status_line` now returns the destination path for `R`/`C` codes instead of the source. `git mv old new` previously surfaced "old" (which no longer exists on disk) instead of "new" (which the agent created). Trust-fabric Codex round-2 finding. (#24)
+
+- **Git reconcile filters Treeship's own runtime artifacts.** `packages/core/src/session/git.rs`. `.treeship/sessions/*`, `.treeship/artifacts/*`, `.treeship/tmp/*`, `.treeship/proof_queue/*`, `.treeship/session.closing`, and `.treeship/session.json` are now excluded from `files_written` because they're Treeship's own bookkeeping touched by the very session that's closing -- noisy and misleading in a receipt. User-authored files under `.treeship/` (`config.yaml`, `declaration.json`, `agents/*`, `policy.yaml`) are preserved -- those ARE the operator's own changes that an audit reader cares about. (#25)
+
+### Changed (security)
+
+- **MCP bridge sanitizer no longer leaks `command` / `cmd` into receipts.** `bridges/mcp/src/client.ts`. The `__sanitizeToolInput` whitelist is now strictly path-only (`file_path`, `path`, `notebook_path`, `target_file`). The earlier whitelist accepted `command` and `cmd`, which would have shipped raw shell-arg secrets (Bearer tokens passed inline to curl, AWS credentials passed inline to aws CLI) into `meta.tool_input` and ultimately the receipt. Caught by Codex round-2 trust-fabric review. (#19, #27)
+
+### Fixed
+
+- **`ctx::open` no longer overwrites a project-local `config.json` with a global-extends marker.** `packages/cli/src/ctx.rs`. `treeship init` previously wrote the marker even when the directory already had a populated `config.json` from a separately-managed setup, silently breaking that project's keystore reference. (#15)
+
+- **`machine_seed` is co-located with the keystore for project-local isolation.** `packages/core/src/keys/`. Was previously written to a global path (`~/.treeship/machine_seed`), which meant two projects on the same host shared a derivation and a keystore-MAC failure in one project could surface as a decryption failure in the other. Now lives in the project's `.treeship/machine_seed`. (#16)
+
+- **Event log: one malformed line no longer drops the whole receipt.** `packages/core/src/session/event_log.rs`. Previously a single bad JSON line in `events.jsonl` made `read_all()` short-circuit and return an empty Vec; the receipt then composed against zero events and looked like an empty session. Now skips the malformed line, increments a `skipped` counter, and continues. The skipped count surfaces in the sealed receipt via `proofs.event_log_skipped` (see Added). (#8)
+
+- **Preview UI no longer crashes when `tool_usage.declared` or `tool_usage.actual` is absent.** `docs/components/receipt-preview.tsx`. Receipts produced by clients that pre-date the cross-verify block were rendering as a blank panel because the preview component dereferenced both arrays without a guard. (#9)
+
+- **Docs install button no longer advertises the orphaned `cargo install treeship-cli`.** `docs/components/install-button.tsx`. The `crates.io` upload was yanked weeks ago in favor of the npm path; the docs hadn't caught up. (#5)
+
+- **CI: cross-SDK matrix no longer wipes `/usr/bin` from PATH.** `.github/workflows/ci.yml`. Workflow expression `${{ env.PATH }}` resolves to empty string at workflow context, so `PATH: ./node_modules/.bin:${{ env.PATH }}` left PATH as just `./node_modules/.bin:`, and `/usr/bin/env: 'bash': No such file or directory` killed every cross-SDK matrix entry with exit 127. Replaced with the canonical `$GITHUB_PATH` mechanism. (#33)
+
+- **CI: `tests/cross-sdk/` parses as ESM.** `tests/cross-sdk/package.json`. `verify-vectors.ts` uses `import.meta.url` and top-level await (added in v0.9.5 for cross-SDK roundtrip Phase B), both ESM-only. Without `"type": "module"` somewhere up the tree, tsx defaulted to CJS and esbuild rejected the file. Local package.json scopes the ESM treatment to this directory. (#33)
+
+### Added (integrations)
+
+- **Codex CLI integration.** `treeship add codex` now detects the Codex CLI and installs an MCP block in `~/.codex/config.toml` so Codex sessions flow through the same trust-fabric channels as Claude Code. (#10)
+
+### Added (docs)
+
+- **Trust-fabric concept overview.** `docs/content/docs/concepts/trust-fabric.mdx`. Explains the three-axis separation (agent surface / model+provider / tool channel) and the three-layer file capture stack as a single mental model. (#14)
+
+- **Universal MCP attach guide.** `bridges/mcp/ATTACHING.md`. Step-by-step for wiring any MCP-speaking agent runtime (Codex, Cursor, Cline, Continue, custom) through the Treeship MCP bridge so the same trust-fabric behavior applies regardless of which agent surface is in use. (#13)
+
+### Notes
+
+- **All 234 unit tests + 10 bridge tests + 8 cross-SDK matrix entries pass on main.** Verified after the fix to `.github/workflows/ci.yml` landed.
+- **No keystore format change.** v0.9.6 reads and writes the same encrypted entries as v0.9.5; no rotation or rekey required.
+- **No SDK API breakage.** The cross-verification block is purely additive on the receipt side; existing SDK consumers continue to work without changes. The `tool_usage` block was already present in v0.9.5 receipts -- v0.9.6 just makes its `actual` list useful by populating it from the specialized event types and normalizing tool names through aliases.
+
 ## 0.9.5 (2026-04-25)
 
 The performance and key-lifecycle release. Closes the two technical debts called out in the v0.9.4 "Known limitations" -- the O(N) event-log append, and the absence of any rotation primitive in a keystore where every key was meant to live forever. Also adds the first cross-SDK contract tests so TypeScript and Python can no longer drift apart silently, and unbreaks the docs site, which had been 404'ing in production since the 4906398 commit landed an invalid fumadocs `root` field.
