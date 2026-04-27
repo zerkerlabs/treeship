@@ -13,6 +13,7 @@ pub mod side_effects;
 pub mod receipt;
 pub mod render;
 pub mod package;
+pub mod git;
 
 pub use manifest::*;
 pub use event::*;
@@ -23,3 +24,4 @@ pub use side_effects::SideEffects;
 pub use receipt::{ArtifactEntry, ReceiptComposer, SessionReceipt};
 pub use render::RenderConfig;
 pub use package::{build_package, read_package, verify_package, VerifyCheck, VerifyStatus};
+pub use git::{reconcile_changes, current_head_sha, GitChange};
