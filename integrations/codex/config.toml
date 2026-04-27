@@ -1,0 +1,14 @@
+# Treeship MCP server config for Codex CLI.
+#
+# Append this block to ~/.codex/config.toml (or run `treeship add codex`
+# which does it for you, idempotently).
+#
+# Restart Codex so it reloads MCP settings.
+
+[mcp_servers.treeship]
+command = "npx"
+args = ["-y", "@treeship/mcp"]
+
+[mcp_servers.treeship.env]
+TREESHIP_ACTOR = "agent://codex"
+TREESHIP_HUB_ENDPOINT = "https://api.treeship.dev"
