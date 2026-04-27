@@ -430,32 +430,43 @@ async function render(){
   }
 
   // ── TOOL USAGE ──
+  // Defensive destructure: R.tool_usage may be present (object exists)
+  // but its inner arrays (declared / actual / unauthorized) may be
+  // missing entirely when the user never ran `treeship declare` or
+  // when an older receipt format omitted the arrays. Direct access
+  // like tu.declared.length used to throw "Cannot read properties of
+  // undefined" and crash the entire preview render.
   const tu=R.tool_usage;
-  if(tu&&(tu.declared.length||tu.actual.length)){
-    h+='<section class="section" id="tools"><div class="section-head"><div class="section-title">Tool authorization</div><div class="section-sub">Declared vs actual tool usage. Unauthorized calls are flagged.</div></div>';
-    h+='<div class="card">';
-    if(tu.declared.length){
-      h+='<div style="padding:1rem 1.25rem;border-bottom:1px solid var(--border)"><div style="font-size:.65rem;text-transform:uppercase;letter-spacing:.09em;color:var(--faint);margin-bottom:.4rem;font-family:var(--mono)">Authorized tools</div>';
-      h+='<div style="display:flex;flex-wrap:wrap;gap:.35rem">'+tu.declared.map(t=>'<span class="badge badge-ok">'+esc(t)+'</span>').join('')+'</div></div>';
-    }
-    if(tu.actual.length){
-      h+='<div style="padding:1rem 1.25rem;border-bottom:1px solid var(--border)"><div style="font-size:.65rem;text-transform:uppercase;letter-spacing:.09em;color:var(--faint);margin-bottom:.4rem;font-family:var(--mono)">Actual usage</div>';
-      tu.actual.forEach(a=>{
-        const isAuth=!tu.declared.length||tu.declared.includes(a.tool_name);
-        h+='<div style="display:flex;align-items:center;gap:.75rem;padding:.3rem 0;font-size:.8rem">';
-        h+='<span class="badge '+(isAuth?'badge-info':'badge-risk')+'">'+esc(a.tool_name)+'</span>';
-        h+='<span class="mono faint">'+num(a.count)+' call'+(a.count!==1?'s':'')+'</span>';
-        if(!isAuth)h+='<span class="badge badge-risk">unauthorized</span>';
+  if(tu){
+    const declared=tu.declared||[];
+    const actual=tu.actual||[];
+    const unauthorized=tu.unauthorized||[];
+    if(declared.length||actual.length){
+      h+='<section class="section" id="tools"><div class="section-head"><div class="section-title">Tool authorization</div><div class="section-sub">Declared vs actual tool usage. Unauthorized calls are flagged.</div></div>';
+      h+='<div class="card">';
+      if(declared.length){
+        h+='<div style="padding:1rem 1.25rem;border-bottom:1px solid var(--border)"><div style="font-size:.65rem;text-transform:uppercase;letter-spacing:.09em;color:var(--faint);margin-bottom:.4rem;font-family:var(--mono)">Authorized tools</div>';
+        h+='<div style="display:flex;flex-wrap:wrap;gap:.35rem">'+declared.map(t=>'<span class="badge badge-ok">'+esc(t)+'</span>').join('')+'</div></div>';
+      }
+      if(actual.length){
+        h+='<div style="padding:1rem 1.25rem;border-bottom:1px solid var(--border)"><div style="font-size:.65rem;text-transform:uppercase;letter-spacing:.09em;color:var(--faint);margin-bottom:.4rem;font-family:var(--mono)">Actual usage</div>';
+        actual.forEach(a=>{
+          const isAuth=!declared.length||declared.includes(a.tool_name);
+          h+='<div style="display:flex;align-items:center;gap:.75rem;padding:.3rem 0;font-size:.8rem">';
+          h+='<span class="badge '+(isAuth?'badge-info':'badge-risk')+'">'+esc(a.tool_name)+'</span>';
+          h+='<span class="mono faint">'+num(a.count)+' call'+(a.count!==1?'s':'')+'</span>';
+          if(!isAuth)h+='<span class="badge badge-risk">unauthorized</span>';
+          h+='</div>';
+        });
         h+='</div>';
-      });
-      h+='</div>';
+      }
+      if(unauthorized.length){
+        h+='<div style="padding:1rem 1.25rem"><div style="font-size:.65rem;text-transform:uppercase;letter-spacing:.09em;color:var(--risk);margin-bottom:.4rem;font-family:var(--mono)">Unauthorized tool calls</div>';
+        unauthorized.forEach(t=>{h+='<span class="badge badge-risk" style="margin-right:.35rem">'+esc(t)+'</span>'});
+        h+='</div>';
+      }
+      h+='</div></section>';
     }
-    if(tu.unauthorized.length){
-      h+='<div style="padding:1rem 1.25rem"><div style="font-size:.65rem;text-transform:uppercase;letter-spacing:.09em;color:var(--risk);margin-bottom:.4rem;font-family:var(--mono)">Unauthorized tool calls</div>';
-      tu.unauthorized.forEach(t=>{h+='<span class="badge badge-risk" style="margin-right:.35rem">'+esc(t)+'</span>'});
-      h+='</div>';
-    }
-    h+='</div></section>';
   }
 
   // ── SECURITY FINDINGS (with empty state) ──
