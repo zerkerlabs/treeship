@@ -4,7 +4,30 @@
 
 The trust-fabric release. v0.9.5 shipped *receipts* with cryptographic integrity but no comparison surface: a session could attest "the agent called Read 14 times" without anyone checking whether Read was even on the agent's authorized tool list, and a receipt's `files_written` could quietly omit anything that escaped the captured tool channel (a `sed -i` inside a Bash command, a build output, a manual edit). v0.9.6 closes both holes by building out the full capture-normalize-verify chain: every file the agent touches is captured by at least one of three layers (hook, MCP, or git reconciliation), every tool call is normalized through canonical aliases so cross-verification can compare claimed authorization against actual usage, and the receipt now signals when capture itself was incomplete instead of silently truncating.
 
+It also tightens the **approval grant** model. v0.9.5 approvals carried only a nonce -- the cryptographic binding was real, but the same nonce could be replayed across unlimited actions and across different actions entirely. An approval to `deploy.production` could authorize a `deploy.staging` action; verify still printed `single-use enforced` because the binding was intact. v0.9.6 adds an `ApprovalScope` object that signs *who* (`allowed_actors`), *what* (`allowed_actions`), *where* (`allowed_subjects`), and *how many times* (`max_actions`) into the grant; verify now checks actor / action / subject statelessly and refuses the actions that don't match. The verify output is rewritten to report **only what was actually checked** -- three separate lines for binding, scope, and replay posture -- with explicit ⚠ warnings instead of false confidence claims.
+
 The "trust fabric" framing is now load-bearing: an audit reader looking at a v0.9.6 receipt can answer *did this agent stay inside its bounds* with the same confidence they could already answer *was this signature valid*.
+
+### Added (approval grant model)
+
+- **`ApprovalScope` carries actor / action / subject allow-lists and max-uses.** `packages/core/src/statements/mod.rs`. `ApprovalScope` previously held only `max_actions`, `valid_until`, and `allowed_actions`; v0.9.6 adds `allowed_actors` and `allowed_subjects`. The grant now answers "who may consume this approval, to do what, against which subject, how many times." `is_unscoped()` returns true when no axis is populated -- verify uses this to emit a warning instead of a false authorization claim. New fields default-empty and `skip_serializing_if`-omitted, so a 0.9.5 approval payload deserializes cleanly into a 0.9.6 `ApprovalScope` (legacy roundtrip test pinned).
+
+- **`treeship attest approval` flags: `--allowed-actor`, `--allowed-action`, `--allowed-subject`, `--max-uses`, `--unscoped`.** `packages/cli/src/main.rs`, `packages/cli/src/commands/attest.rs`. Each `--allowed-*` flag is repeatable. `--max-uses N` is signed into the grant for future ledger enforcement (verify reports replay posture honestly and does not yet claim global single-use). `--unscoped` is the explicit opt-in for bearer approvals -- without any scope axis AND without `--unscoped`, the CLI now refuses to mint the approval (defaults to safe).
+
+- **`treeship attest action --subject <URI>` for symmetric scope binding.** Alias for the existing `--content-uri`. Lets callers naturally write `attest approval --allowed-subject env://prod` and `attest action --subject env://prod` and have the verifier match them.
+
+- **`packages/core/src/statements/mod.rs::ApprovalScope::is_unscoped()`.** Public predicate exposed so SDK consumers and the verify pass agree on the same definition of "unscoped."
+
+### Changed (verification surface)
+
+- **Verify output rewritten to stop overclaiming.** `packages/cli/src/commands/verify.rs`. The single line `✓ nonce binding   approval nonce matched, single-use enforced` is replaced with three precisely-scoped lines:
+  - `✓ approval binding   nonce matched a signed approval` (cryptographic only)
+  - `✓ approval scope     actor / action / subject matched approval scope` (when scope present and matched), OR
+  - `⚠ approval scope     approval is unscoped -- proves binding only, not actor/action/subject authorization` (when no scope was signed in)
+  - `⚠ replay check       package-local only -- no global ledger consulted` (always; honest about what stateless verify can and can't do)
+- **`verify_nonce_bindings` enforces `allowed_actors` and `allowed_subjects`.** Was already enforcing `allowed_actions`; now covers all three axes plus a separate `valid_until` on the scope itself. First-violation-wins ordering: actor → action → subject → scope expiry, so a wrong-actor failure isn't masked by a wrong-action one.
+- **Package-local replay observation.** When two actions in the same verified bundle claim the same approval nonce, the second is rejected with `nonce already consumed by <id> in this package (package-local replay)`. Not a global ledger -- the CHANGELOG and verify text are explicit about this scope -- but catches the obvious in-package replay pattern.
+- **`treeship attest approval` defaults to scoped.** Without any `--allowed-*` / `--max-uses` and without `--unscoped`, the command refuses with a message pointing at the right flags. Bearer approvals are now opt-in, not the default.
 
 ### Added (capture layer)
 

@@ -930,9 +930,19 @@ struct AttestActionArgs {
     #[arg(long, value_name = "sha256:HEX")]
     output_digest: Option<String>,
 
-    /// URI to referenced content (for large/external payloads)
-    #[arg(long, value_name = "URI")]
+    /// URI to referenced content (for large/external payloads). Sets
+    /// the action's subject.uri so it can be matched against an
+    /// approval's --allowed-subject scope. Same role as the older
+    /// --content-uri flag, named to read symmetrically with the
+    /// --allowed-subject flag on `attest approval`.
+    #[arg(long, value_name = "URI", alias = "subject-uri")]
     content_uri: Option<String>,
+
+    /// Subject the action targets, as a URI. Alias for --content-uri.
+    /// Provided so callers reading `treeship attest approval --allowed-subject env://prod`
+    /// can naturally type `treeship attest action --subject env://prod`.
+    #[arg(long, value_name = "URI")]
+    subject: Option<String>,
 
     /// Parent artifact ID -- links this into a chain
     #[arg(long, value_name = "ID")]
@@ -957,7 +967,9 @@ struct AttestApprovalArgs {
     #[arg(long, required = true, value_name = "URI")]
     approver: String,
 
-    /// Artifact ID being approved
+    /// Artifact ID being approved (subject reference for the
+    /// ApprovalStatement itself; for *scope* constraints on what the
+    /// downstream action may target, use --allowed-subject)
     #[arg(long, value_name = "ID")]
     subject: Option<String>,
 
@@ -968,6 +980,34 @@ struct AttestApprovalArgs {
     /// Expiry as ISO 8601 timestamp
     #[arg(long, value_name = "TIMESTAMP")]
     expires: Option<String>,
+
+    /// Scope: actor URI(s) permitted to consume this approval. Repeatable.
+    /// Empty list (and no other --allowed-* / --max-uses) means unscoped;
+    /// verify will warn that the binding proves nothing about authorization.
+    #[arg(long, value_name = "URI")]
+    allowed_actor: Vec<String>,
+
+    /// Scope: action label(s) permitted under this approval. Repeatable.
+    /// Pre-existing flag --allowed-action remains the canonical name.
+    #[arg(long, value_name = "LABEL")]
+    allowed_action: Vec<String>,
+
+    /// Scope: subject URI(s) permitted as the action's target. Repeatable.
+    /// Matched against ActionStatement.subject.{uri | artifact_id | digest}.
+    #[arg(long, value_name = "URI")]
+    allowed_subject: Vec<String>,
+
+    /// Scope: maximum number of actions this approval may authorise.
+    /// Signed into the grant for future ledger enforcement; verify
+    /// reports replay posture honestly and does NOT claim global single-use.
+    #[arg(long, value_name = "N")]
+    max_uses: Option<u32>,
+
+    /// Explicit opt-in to an unscoped (bearer) approval. Required when
+    /// no --allowed-* or --max-uses flag is set; without it the CLI
+    /// refuses, since unscoped approvals are footguns.
+    #[arg(long)]
+    unscoped: bool,
 }
 
 #[derive(Args)]
@@ -1630,12 +1670,16 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
 
         Command::Attest(sub) => match sub {
             AttestCommand::Action(a) => {
+                // --subject is the symmetric name; --content-uri is the
+                // legacy name. Either populates the subject URI; --subject
+                // wins if both are set.
+                let subject_uri = a.subject.clone().or(a.content_uri.clone());
                 commands::attest::action(commands::attest::ActionArgs {
                     actor:          a.actor.clone(),
                     action:         a.action.clone(),
                     input_digest:   a.input_digest.clone(),
                     output_digest:  a.output_digest.clone(),
-                    content_uri:    a.content_uri.clone(),
+                    content_uri:    subject_uri,
                     parent_id:      a.parent.clone(),
                     approval_nonce: a.approval_nonce.clone(),
                     meta:           a.meta.clone(),
@@ -1646,11 +1690,16 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             }
             AttestCommand::Approval(a) => commands::attest::approval(
                 commands::attest::ApprovalArgs {
-                    approver:    a.approver.clone(),
-                    subject_id:  a.subject.clone(),
-                    description: a.description.clone(),
-                    expires:     a.expires.clone(),
-                    config:      cli.config.clone(),
+                    approver:         a.approver.clone(),
+                    subject_id:       a.subject.clone(),
+                    description:      a.description.clone(),
+                    expires:          a.expires.clone(),
+                    allowed_actors:   a.allowed_actor.clone(),
+                    allowed_actions:  a.allowed_action.clone(),
+                    allowed_subjects: a.allowed_subject.clone(),
+                    max_uses:         a.max_uses,
+                    unscoped:         a.unscoped,
+                    config:           cli.config.clone(),
                 },
                 printer,
             ),
