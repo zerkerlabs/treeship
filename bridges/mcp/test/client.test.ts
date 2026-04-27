@@ -42,10 +42,23 @@ describe('sanitizeToolInput', () => {
     expect(out).not.toHaveProperty('content');
   });
 
-  it('extracts command for a shell-style call', async () => {
+  it('drops command and cmd entirely (raw command lines leak secrets)', async () => {
+    // Codex round-2: shell-style MCP tools commonly carry secrets in
+    // command args (curl -H 'Authorization: Bearer sk-live-...').
+    // The bridge MUST NOT publish those raw strings into the session log.
+    // Result: shell tools still get an agent.called_tool record from the
+    // bridge (with the tool name and result digest), but no
+    // meta.tool_input.command gets emitted -- so the bearer token never
+    // reaches a sealed receipt.
     const { __sanitizeToolInput } = await import('../src/client.js');
-    const out = __sanitizeToolInput({ command: 'rm -rf /tmp/cache' });
-    expect(out).toEqual({ command: 'rm -rf /tmp/cache' });
+    expect(
+      __sanitizeToolInput({
+        command: "curl -H 'Authorization: Bearer sk-live-abcd' https://api.example.com",
+      }),
+    ).toBeUndefined();
+    expect(
+      __sanitizeToolInput({ cmd: 'rm -rf /important' }),
+    ).toBeUndefined();
   });
 
   it('strips secret-like keys even when they sit alongside whitelisted keys', async () => {
@@ -59,7 +72,12 @@ describe('sanitizeToolInput', () => {
       content: '<file body>',
       text: '<text body>',
       body: '<body>',
+      command: "curl -H 'Authorization: Bearer sk-live-...' .../",
+      cmd: 'echo $API_KEY',
     });
+    // Only the whitelisted path comes through. Notably command/cmd
+    // are NOT in the whitelist (round-2 fix: raw command lines leak
+    // secrets, so they're never published).
     expect(out).toEqual({ file_path: 'README.md' });
   });
 
@@ -80,28 +98,24 @@ describe('sanitizeToolInput', () => {
       __sanitizeToolInput({
         file_path: '', // empty
         path: 42 as unknown as string, // wrong type
-        command: 'echo ok',
+        target_file: 'kept.rs',
       }),
-    ).toEqual({ command: 'echo ok' });
+    ).toEqual({ target_file: 'kept.rs' });
   });
 
-  it('handles all whitelisted keys', async () => {
+  it('handles all whitelisted keys (paths only)', async () => {
     const { __sanitizeToolInput } = await import('../src/client.js');
     const out = __sanitizeToolInput({
       file_path: 'a.rs',
       path: 'b.rs',
       notebook_path: 'c.ipynb',
       target_file: 'd.rs',
-      command: 'echo',
-      cmd: 'grep',
     });
     expect(out).toEqual({
       file_path: 'a.rs',
       path: 'b.rs',
       notebook_path: 'c.ipynb',
       target_file: 'd.rs',
-      command: 'echo',
-      cmd: 'grep',
     });
   });
 });
