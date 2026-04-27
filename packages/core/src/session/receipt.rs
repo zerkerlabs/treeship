@@ -485,6 +485,77 @@ pub fn parse_ship_id_from_actor(actor: &str) -> Option<String> {
 /// cert that uses an alternate naming scheme (e.g. `files.write`) needs
 /// to declare both for now -- a future TODO is canonical mapping at the
 /// cert layer.
+/// Side-effect canonical mapping for tool authorization.
+///
+/// Each entry maps a side-effect bucket to a canonical tool name AND a
+/// list of accepted aliases. The canonical name is what gets recorded
+/// in `tool_usage.actual`. Any alias from the authorized_tools list
+/// counts as authorization for the canonical name.
+///
+/// Codex round-2 caught two bugs in the round-1 fix:
+///
+/// 1. The round-1 mapping used Claude-Code TitleCase ("Read", "Write",
+///    "Bash") but the existing CLI -- `treeship declare --tools
+///    read_file,write_file,bash` per declare.rs:80 and `treeship agent
+///    register --tools read_file,write_file,bash` per main.rs:226 --
+///    teaches users lowercase snake_case names. So a cert that follows
+///    the documented convention got every actual tool flagged as
+///    unauthorized. Aliases close that gap: declarations in either
+///    convention authorize the same canonical entry.
+///
+/// 2. The round-1 logic counted side effects regardless of provenance.
+///    `git-reconcile` synthetic writes (the backstop layer) and
+///    `session-event-cli` manual records were registering as tool use
+///    even though no actual tool was directly attributed for them. So
+///    a build script that touched a file made the receipt say "Write
+///    tool was used", and the cert had to authorize Write or fail
+///    cross-verify -- even though the agent never invoked any Write
+///    tool. Below, only `hook` / `mcp` / `shell-wrap` (and untagged
+///    legacy events) count toward tool usage. Everything else is
+///    backstop evidence: it surfaces in the receipt's "Files changed"
+///    section so the reader sees the change, but it does NOT claim
+///    that an agent tool was the proximate cause.
+const TOOL_ALIASES: &[(&str, &[&str])] = &[
+    // Canonical first; rest are accepted aliases.
+    ("read_file",  &["read_file", "Read"]),
+    ("write_file", &["write_file", "Write", "Edit", "MultiEdit", "NotebookEdit", "edit_file"]),
+    ("bash",       &["bash", "Bash", "shell"]),
+    ("web_fetch",  &["web_fetch", "WebFetch", "webfetch"]),
+];
+
+/// Returns true iff `source` represents a direct tool attribution that
+/// should count toward `tool_usage.actual`. Backstop or
+/// recording-channel sources (`git-reconcile`, `session-event-cli`,
+/// `daemon-atime`) are NOT direct attribution -- they witness that
+/// something happened without claiming a specific tool caused it. None
+/// (no source tag) defaults to true for backward compat with legacy
+/// hook-emitted events that predated the source field.
+fn source_attributes_a_tool(source: Option<&str>) -> bool {
+    matches!(
+        source,
+        None | Some("hook") | Some("mcp") | Some("shell-wrap"),
+    )
+}
+
+/// Counts side effects by canonical tool name, filtering out
+/// non-attribution sources (git-reconcile, session-event-cli, etc).
+fn count_attributed<'a, F>(
+    items: usize,
+    source_at: F,
+    canonical: &str,
+    counts: &mut std::collections::BTreeMap<String, u32>,
+)
+where
+    F: Fn(usize) -> Option<&'a str>,
+{
+    let n: u32 = (0..items)
+        .filter(|i| source_attributes_a_tool(source_at(*i)))
+        .count() as u32;
+    if n > 0 {
+        *counts.entry(canonical.to_string()).or_insert(0) += n;
+    }
+}
+
 fn derive_tool_usage(
     side_effects: &SideEffects,
     authorized_tools: &[String],
@@ -503,33 +574,48 @@ fn derive_tool_usage(
         return None;
     }
 
-    // Count actual tool usage from generic agent.called_tool events.
     let mut counts: BTreeMap<String, u32> = BTreeMap::new();
+
+    // Generic agent.called_tool events use the tool's actual name.
+    // The MCP bridge writes meta.source = "mcp-bridge" (which is not
+    // in source_attributes_a_tool's allow list) but tool_invocations
+    // come ONLY from agent.called_tool, which is direct attribution
+    // by definition -- so count all of them, no source filter applies
+    // here. (The bridge tool name is the source.)
     for inv in &side_effects.tool_invocations {
         *counts.entry(inv.tool_name.clone()).or_insert(0) += 1;
     }
 
-    // ALSO count specialized events. These come from native hooks
-    // (claude-code-plugin's PostToolUse) and from git reconciliation,
-    // and they were previously invisible to cross-verification.
-    if !side_effects.files_read.is_empty() {
-        *counts.entry("Read".to_string()).or_insert(0) +=
-            side_effects.files_read.len() as u32;
-    }
-    if !side_effects.files_written.is_empty() {
-        // Maps Write, Edit, MultiEdit, NotebookEdit, and git-reconciled
-        // changes alike -- post-tool-use.sh dispatches all of those into
-        // agent.wrote_file, and the aggregator does not preserve which
-        // specific built-in produced the change.
-        *counts.entry("Write".to_string()).or_insert(0) +=
-            side_effects.files_written.len() as u32;
-    }
-    if !side_effects.processes.is_empty() {
-        *counts.entry("Bash".to_string()).or_insert(0) +=
-            side_effects.processes.len() as u32;
-    }
+    // Specialized side effects, source-filtered: only direct
+    // attribution (hook / mcp / shell-wrap / untagged-legacy) counts.
+    // git-reconcile and friends surface in the "Files changed" section
+    // for the reader but do NOT inflate tool_usage.
+    let fr = &side_effects.files_read;
+    count_attributed(
+        fr.len(),
+        |i| fr[i].source.as_deref(),
+        "read_file",
+        &mut counts,
+    );
+    let fw = &side_effects.files_written;
+    count_attributed(
+        fw.len(),
+        |i| fw[i].source.as_deref(),
+        "write_file",
+        &mut counts,
+    );
+    let pr = &side_effects.processes;
+    count_attributed(
+        pr.len(),
+        |i| pr[i].source.as_deref(),
+        "bash",
+        &mut counts,
+    );
+    // network_connections has no source field today; treat all as
+    // attributed (this matches the round-1 behavior since there's no
+    // backstop layer producing network entries).
     if !side_effects.network_connections.is_empty() {
-        *counts.entry("WebFetch".to_string()).or_insert(0) +=
+        *counts.entry("web_fetch".to_string()).or_insert(0) +=
             side_effects.network_connections.len() as u32;
     }
 
@@ -537,10 +623,11 @@ fn derive_tool_usage(
         .map(|(name, &count)| ToolUsageEntry { tool_name: name.clone(), count })
         .collect();
 
-    // Find tools used that were NOT in the declared list. With specialized
-    // events now contributing, this catches the hole the certificate was
-    // built to prevent: an agent whose cert says "no Bash" but who ran
-    // Bash anyway via Claude Code's built-in.
+    // Authorization check uses alias resolution: an actual tool is
+    // unauthorized only if NONE of its aliases are in the declared
+    // list. So a declaration of "read_file" authorizes both "Read"
+    // (Claude convention) and "read_file" (CLI convention) when they
+    // produce the canonical "read_file" actual entry.
     let unauthorized = if authorized_tools.is_empty() {
         Vec::new()
     } else {
@@ -548,7 +635,7 @@ fn derive_tool_usage(
             .map(|s| s.as_str())
             .collect();
         counts.keys()
-            .filter(|name| !declared_set.contains(name.as_str()))
+            .filter(|actual_name| !is_authorized(actual_name, &declared_set))
             .cloned()
             .collect()
     };
@@ -558,6 +645,30 @@ fn derive_tool_usage(
         actual,
         unauthorized,
     })
+}
+
+/// Returns true if `actual_name` (or any of its declared aliases) is
+/// in the declared set. Aliases mean a cert can use either Claude
+/// convention or snake_case CLI convention and still authorize the
+/// same canonical bucket.
+fn is_authorized(actual_name: &str, declared_set: &std::collections::BTreeSet<&str>) -> bool {
+    // Direct hit: the declared set names this tool exactly.
+    if declared_set.contains(actual_name) {
+        return true;
+    }
+    // Alias hit: walk the canonical mapping and see if any alias of
+    // the canonical bucket the actual_name belongs to is in declared.
+    for (canonical, aliases) in TOOL_ALIASES {
+        if *canonical == actual_name || aliases.contains(&actual_name) {
+            for alias in *aliases {
+                if declared_set.contains(*alias) {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+    false
 }
 
 fn event_type_label(et: &super::event::EventType) -> String {
@@ -763,9 +874,10 @@ mod tests {
 
     #[test]
     fn cert_omitting_bash_flags_unauthorized_when_session_runs_bash() {
-        let manifest = manifest_with_authorized(vec!["Read", "Write"]); // NO Bash
-        // Hook-emitted process event: this is what claude-code-plugin's
-        // PostToolUse hook produces when the agent uses the Bash built-in.
+        // Cert uses CLI-documented snake_case names (declare.rs:80,
+        // main.rs:226). Round-2 fix: canonical actual is "bash" not
+        // "Bash"; round-1 was flagging mismatches the wrong way.
+        let manifest = manifest_with_authorized(vec!["read_file", "write_file"]); // NO bash
         let events = vec![
             mk(0, "root", EventType::SessionStarted),
             mk(1, "agent", EventType::AgentCompletedProcess {
@@ -779,15 +891,15 @@ mod tests {
         let receipt = ReceiptComposer::compose(&manifest, &events, vec![]);
         let tu = receipt.tool_usage.expect("tool_usage must be populated");
         assert!(
-            tu.unauthorized.iter().any(|t| t == "Bash"),
-            "Bash must be flagged as unauthorized when cert omits it; got unauthorized={:?}, actual={:?}",
+            tu.unauthorized.iter().any(|t| t == "bash"),
+            "bash must be flagged as unauthorized when cert omits it; got unauthorized={:?}, actual={:?}",
             tu.unauthorized, tu.actual,
         );
     }
 
     #[test]
     fn cert_omitting_write_flags_unauthorized_when_session_writes_file() {
-        let manifest = manifest_with_authorized(vec!["Read", "Bash"]); // NO Write
+        let manifest = manifest_with_authorized(vec!["read_file", "bash"]); // NO write_file
         let events = vec![
             mk(0, "root", EventType::SessionStarted),
             mk(1, "agent", EventType::AgentWroteFile {
@@ -800,15 +912,15 @@ mod tests {
         let receipt = ReceiptComposer::compose(&manifest, &events, vec![]);
         let tu = receipt.tool_usage.expect("tool_usage must be populated");
         assert!(
-            tu.unauthorized.iter().any(|t| t == "Write"),
-            "Write must be flagged as unauthorized when cert omits it; got unauthorized={:?}, actual={:?}",
+            tu.unauthorized.iter().any(|t| t == "write_file"),
+            "write_file must be flagged as unauthorized when cert omits it; got unauthorized={:?}, actual={:?}",
             tu.unauthorized, tu.actual,
         );
     }
 
     #[test]
     fn cert_includes_read_write_bash_passes_clean_when_all_used() {
-        let manifest = manifest_with_authorized(vec!["Read", "Write", "Bash"]);
+        let manifest = manifest_with_authorized(vec!["read_file", "write_file", "bash"]);
         let events = vec![
             mk(0, "root", EventType::SessionStarted),
             mk(1, "agent", EventType::AgentReadFile { file_path: "package.json".into(), digest: None }),
@@ -831,17 +943,19 @@ mod tests {
             "all tools declared in cert should pass clean; got unauthorized={:?}",
             tu.unauthorized,
         );
-        // And the actual list shows what the agent did, by canonical name.
+        // The actual list uses canonical lowercase names that match what
+        // `treeship declare --tools` and `treeship agent register --tools`
+        // teach (declare.rs:80, main.rs:226).
         let actual_names: std::collections::BTreeSet<String> =
             tu.actual.iter().map(|e| e.tool_name.clone()).collect();
-        assert!(actual_names.contains("Read"));
-        assert!(actual_names.contains("Write"));
-        assert!(actual_names.contains("Bash"));
+        assert!(actual_names.contains("read_file"));
+        assert!(actual_names.contains("write_file"));
+        assert!(actual_names.contains("bash"));
     }
 
     #[test]
     fn webfetch_unauthorized_flagged_when_cert_omits_it() {
-        let manifest = manifest_with_authorized(vec!["Read", "Write", "Bash"]); // NO WebFetch
+        let manifest = manifest_with_authorized(vec!["read_file", "write_file", "bash"]); // NO web_fetch
         let events = vec![
             mk(0, "root", EventType::SessionStarted),
             mk(1, "agent", EventType::AgentConnectedNetwork {
@@ -853,9 +967,145 @@ mod tests {
         let receipt = ReceiptComposer::compose(&manifest, &events, vec![]);
         let tu = receipt.tool_usage.expect("tool_usage must be populated");
         assert!(
-            tu.unauthorized.iter().any(|t| t == "WebFetch"),
-            "WebFetch must be flagged as unauthorized when cert omits it; got unauthorized={:?}",
+            tu.unauthorized.iter().any(|t| t == "web_fetch"),
+            "web_fetch must be flagged as unauthorized when cert omits it; got unauthorized={:?}",
             tu.unauthorized,
+        );
+    }
+
+    // ── Round-2 fix tests: alias matching + source filtering ──
+
+    fn evt_with_source(event_type: EventType, source: &str) -> SessionEvent {
+        let mut e = mk(99, "agent", event_type);
+        e.meta = Some(serde_json::json!({"source": source}));
+        e
+    }
+
+    #[test]
+    fn titlecase_cert_authorizes_canonical_snake_actuals_via_alias() {
+        // Operator declares Claude convention. Aliases map "Read" to
+        // canonical "read_file", "Write" to "write_file", etc.
+        let manifest = manifest_with_authorized(vec!["Read", "Write", "Bash"]);
+        let events = vec![
+            mk(0, "root", EventType::SessionStarted),
+            mk(1, "agent", EventType::AgentReadFile { file_path: "x".into(), digest: None }),
+            mk(2, "agent", EventType::AgentWroteFile {
+                file_path: "y".into(),
+                digest: None, operation: None, additions: None, deletions: None,
+            }),
+            mk(3, "agent", EventType::AgentCompletedProcess {
+                process_name: "z".into(),
+                exit_code: Some(0), duration_ms: Some(1), command: None,
+            }),
+            mk(4, "root", EventType::SessionClosed { summary: None, duration_ms: Some(1000) }),
+        ];
+        let tu = ReceiptComposer::compose(&manifest, &events, vec![]).tool_usage.unwrap();
+        assert!(
+            tu.unauthorized.is_empty(),
+            "TitleCase declarations must authorize canonical snake_case actuals via aliases; \
+             got unauthorized={:?}",
+            tu.unauthorized,
+        );
+    }
+
+    #[test]
+    fn edit_alias_authorizes_specialized_wrote_file() {
+        // Operator declares "Edit" specifically. post-tool-use.sh
+        // emits agent.wrote_file for Edit/MultiEdit alike, so the
+        // canonical actual is "write_file". Edit is in the write_file
+        // alias list, so the cert authorizes.
+        let manifest = manifest_with_authorized(vec!["Edit"]);
+        let events = vec![
+            mk(0, "root", EventType::SessionStarted),
+            mk(1, "agent", EventType::AgentWroteFile {
+                file_path: "x".into(),
+                digest: None, operation: None, additions: None, deletions: None,
+            }),
+            mk(2, "root", EventType::SessionClosed { summary: None, duration_ms: Some(1000) }),
+        ];
+        let tu = ReceiptComposer::compose(&manifest, &events, vec![]).tool_usage.unwrap();
+        assert!(tu.unauthorized.is_empty(), "Edit alias must authorize write_file");
+    }
+
+    #[test]
+    fn git_reconcile_writes_dont_count_toward_tool_usage() {
+        // Backstop evidence -- not direct tool attribution.
+        // A git-reconciled change must NOT make the cert require
+        // write_file authorization, because no Write tool was invoked.
+        let manifest = manifest_with_authorized(vec!["read_file"]);
+        let events = vec![
+            mk(0, "root", EventType::SessionStarted),
+            evt_with_source(
+                EventType::AgentWroteFile {
+                    file_path: "CHANGELOG.md".into(),
+                    digest: None, operation: Some("modified".into()),
+                    additions: Some(7), deletions: Some(2),
+                },
+                "git-reconcile",
+            ),
+            mk(2, "root", EventType::SessionClosed { summary: None, duration_ms: Some(1000) }),
+        ];
+        let tu = ReceiptComposer::compose(&manifest, &events, vec![]).tool_usage.unwrap();
+        assert!(
+            !tu.unauthorized.iter().any(|t| t == "write_file"),
+            "git-reconcile entries must NOT count toward tool_usage; \
+             got unauthorized={:?}, actual={:?}",
+            tu.unauthorized, tu.actual,
+        );
+        let actual_names: std::collections::BTreeSet<String> =
+            tu.actual.iter().map(|e| e.tool_name.clone()).collect();
+        assert!(!actual_names.contains("write_file"),
+            "actual must not include backstop-only writes");
+    }
+
+    // (session-event-cli source filtering tests are covered indirectly
+    // by the git-reconcile test above. The session-event-cli label
+    // requires PR #20's source_from_meta verbatim-preservation fix to
+    // flow through unmangled -- on this branch, side_effects.rs
+    // downgrades unrecognized labels to "hook". Once PR #20 lands,
+    // a follow-up PR can stack the full label-passthrough tests on
+    // top of the merged base.)
+
+    #[test]
+    fn hook_emitted_writes_still_count_toward_tool_usage() {
+        // Positive case: regular hook-emitted write IS direct attribution.
+        let manifest = manifest_with_authorized(vec!["read_file"]); // NO write_file
+        let events = vec![
+            mk(0, "root", EventType::SessionStarted),
+            evt_with_source(
+                EventType::AgentWroteFile {
+                    file_path: "src/x.rs".into(),
+                    digest: None, operation: None, additions: None, deletions: None,
+                },
+                "hook",
+            ),
+            mk(2, "root", EventType::SessionClosed { summary: None, duration_ms: Some(1000) }),
+        ];
+        let tu = ReceiptComposer::compose(&manifest, &events, vec![]).tool_usage.unwrap();
+        assert!(
+            tu.unauthorized.iter().any(|t| t == "write_file"),
+            "hook-emitted writes MUST count toward tool_usage; got unauthorized={:?}",
+            tu.unauthorized,
+        );
+    }
+
+    #[test]
+    fn legacy_untagged_writes_count_for_back_compat() {
+        // Pre-v0.9.6 events have no source tag. Treat as attributed
+        // (back-compat: receipts produced before source labeling existed).
+        let manifest = manifest_with_authorized(vec!["read_file"]); // NO write_file
+        let events = vec![
+            mk(0, "root", EventType::SessionStarted),
+            mk(1, "agent", EventType::AgentWroteFile {
+                file_path: "x".into(),
+                digest: None, operation: None, additions: None, deletions: None,
+            }),
+            mk(2, "root", EventType::SessionClosed { summary: None, duration_ms: Some(1000) }),
+        ];
+        let tu = ReceiptComposer::compose(&manifest, &events, vec![]).tool_usage.unwrap();
+        assert!(
+            tu.unauthorized.iter().any(|t| t == "write_file"),
+            "legacy untagged writes must count for back-compat",
         );
     }
 }
