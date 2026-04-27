@@ -19,6 +19,10 @@ pub const TYPE_RECEIPT:     &str = "treeship/receipt/v1";
 pub const TYPE_BUNDLE:      &str = "treeship/bundle/v1";
 pub const TYPE_DECISION:    &str = "treeship/decision/v1";
 
+pub mod category;
+
+pub use category::ReceiptCategory;
+
 use serde::{Deserialize, Serialize};
 
 /// A reference to content being attested, approved, or receipted.
@@ -92,6 +96,11 @@ pub struct ActionStatement {
 
     #[serde(rename = "policyRef", skip_serializing_if = "Option::is_none")]
     pub policy_ref: Option<String>,
+
+    /// Trust-impact category: boundary crossing, consequence, or internal.
+    /// Defaults to Boundary for safety.
+    #[serde(default, skip_serializing_if = "is_default_category")]
+    pub category: ReceiptCategory,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meta: Option<serde_json::Value>,
@@ -349,6 +358,10 @@ fn is_empty_subject(s: &SubjectRef) -> bool {
     s.digest.is_none() && s.uri.is_none() && s.artifact_id.is_none()
 }
 
+fn is_default_category(c: &ReceiptCategory) -> bool {
+    *c == ReceiptCategory::Boundary
+}
+
 // --- Constructors ---
 
 impl ActionStatement {
@@ -362,6 +375,7 @@ impl ActionStatement {
             parent_id: None,
             approval_nonce: None,
             policy_ref: None,
+            category: ReceiptCategory::Boundary, // safe default
             meta: None,
         }
     }
