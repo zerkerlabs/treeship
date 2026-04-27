@@ -504,17 +504,18 @@ pub fn parse_ship_id_from_actor(actor: &str) -> Option<String> {
 ///    convention authorize the same canonical entry.
 ///
 /// 2. The round-1 logic counted side effects regardless of provenance.
-///    `git-reconcile` synthetic writes (the backstop layer) and
-///    `session-event-cli` manual records were registering as tool use
-///    even though no actual tool was directly attributed for them. So
-///    a build script that touched a file made the receipt say "Write
-///    tool was used", and the cert had to authorize Write or fail
-///    cross-verify -- even though the agent never invoked any Write
-///    tool. Below, only `hook` / `mcp` / `shell-wrap` (and untagged
-///    legacy events) count toward tool usage. Everything else is
-///    backstop evidence: it surfaces in the receipt's "Files changed"
-///    section so the reader sees the change, but it does NOT claim
-///    that an agent tool was the proximate cause.
+///    `git-reconcile` synthetic writes (the backstop layer) registered
+///    as tool use even though no actual tool was directly attributed
+///    for them. A build script that touched a file made the receipt
+///    say "Write tool was used", and the cert had to authorize Write
+///    or fail cross-verify -- even though the agent never invoked any
+///    Write tool. Below, only direct-attribution sources (`hook`,
+///    `mcp`, `shell-wrap`, `session-event-cli`, and untagged legacy
+///    events) count toward tool usage. Backstop sources (`git-reconcile`,
+///    `daemon-atime`) surface in the receipt's "Files changed" section
+///    so the reader sees the change, but they do NOT claim that an
+///    agent tool was the proximate cause. See source_attributes_a_tool
+///    below for the authoritative allow list.
 const TOOL_ALIASES: &[(&str, &[&str])] = &[
     // Canonical first; rest are accepted aliases.
     ("read_file",  &["read_file", "Read"]),
@@ -559,7 +560,7 @@ fn source_attributes_a_tool(source: Option<&str>) -> bool {
 }
 
 /// Counts side effects by canonical tool name, filtering out
-/// non-attribution sources (git-reconcile, session-event-cli, etc).
+/// non-attribution sources (git-reconcile, daemon-atime).
 fn count_attributed<'a, F>(
     items: usize,
     source_at: F,
@@ -1079,13 +1080,13 @@ mod tests {
             "actual must not include backstop-only writes");
     }
 
-    // (session-event-cli source filtering tests are covered indirectly
-    // by the git-reconcile test above. The session-event-cli label
-    // requires PR #20's source_from_meta verbatim-preservation fix to
-    // flow through unmangled -- on this branch, side_effects.rs
-    // downgrades unrecognized labels to "hook". Once PR #20 lands,
-    // a follow-up PR can stack the full label-passthrough tests on
-    // top of the merged base.)
+    // session-event-cli is a direct-attribution source -- the standard
+    // label the CLI stamps on events emitted by claude-code-plugin's
+    // PostToolUse hook. So it counts toward tool_usage.actual just like
+    // hook/mcp/shell-wrap do. The end-to-end test for this lives in
+    // the targeted acceptance suite (T1) rather than as a unit test
+    // here, because it requires the full event-emission + receipt-
+    // composition pipeline running through `treeship session event`.
 
     #[test]
     fn hook_emitted_writes_still_count_toward_tool_usage() {
