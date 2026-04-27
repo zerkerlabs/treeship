@@ -244,6 +244,25 @@ pub fn verify_package(pkg_dir: &Path) -> Result<Vec<VerifyCheck>, PackageError> 
         checks.push(VerifyCheck::fail("timeline_order", "Timeline entries are not in deterministic order"));
     }
 
+    // event_log completeness: when session::close skipped malformed
+    // event log lines, the count is recorded on receipt.proofs.event_log_skipped.
+    // Surface as WARN (not FAIL) because the receipt is still
+    // cryptographically valid -- we just want a downstream verifier to
+    // know that some evidence was dropped before the receipt was sealed.
+    // A future --strict flag can promote this to FAIL.
+    // Codex adversarial review finding #8.
+    if receipt.proofs.event_log_skipped > 0 {
+        checks.push(VerifyCheck::warn(
+            "event_log_completeness",
+            &format!(
+                "{} event(s) skipped during close (malformed lines in events.jsonl). \
+                 Receipt is cryptographically valid but does not represent the full event stream. \
+                 Inspect close-time stderr or the events.jsonl directly to investigate.",
+                receipt.proofs.event_log_skipped,
+            ),
+        ));
+    }
+
     Ok(checks)
 }
 

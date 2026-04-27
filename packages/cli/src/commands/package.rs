@@ -117,6 +117,31 @@ pub fn inspect(
         printer.dim_info(&format!("  ... and {} more", receipt.artifacts.len() - 10));
     }
 
+    // Surface event-log incompleteness when present (Codex finding #8).
+    // The receipt is still cryptographically valid, but it represents
+    // fewer events than were appended to the log because some lines
+    // failed to parse during close. Make that visible without burying
+    // it in the proofs subtree.
+    if receipt.proofs.event_log_skipped > 0 {
+        printer.blank();
+        printer.warn(
+            &format!(
+                "event log incomplete: {} skipped",
+                receipt.proofs.event_log_skipped,
+            ),
+            &[(
+                "what",
+                "events.jsonl had lines that failed to parse during close",
+            ), (
+                "impact",
+                "the receipt does not represent the full event stream",
+            ), (
+                "next",
+                "inspect close-time stderr or events.jsonl to investigate",
+            )],
+        );
+    }
+
     printer.blank();
 
     Ok(())

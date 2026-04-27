@@ -159,7 +159,19 @@ pub struct ProofsSection {
     pub inclusion_proofs_count: u32,
     #[serde(default)]
     pub zk_proofs_present: bool,
+    /// Count of events.jsonl lines that were skipped during read_all
+    /// because they failed to deserialize. Set by session::close from
+    /// EventLog::read_all_with_stats. Codex adversarial review finding #8:
+    /// without this in-band signal, a receipt sealed after malformed
+    /// events were silently dropped looks complete to a verifier even
+    /// when it isn't. `treeship package verify` surfaces this as a WARN
+    /// when nonzero. Defaults to 0; absent on pre-v0.9.6 receipts so
+    /// they still verify byte-identical.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub event_log_skipped: u32,
 }
+
+fn is_zero_u32(n: &u32) -> bool { *n == 0 }
 
 /// Merkle section of the receipt.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -248,6 +260,7 @@ impl ReceiptComposer {
             merkle_root_valid: merkle_tree.is_some(),
             inclusion_proofs_count: merkle_section.inclusion_proofs.len() as u32,
             zk_proofs_present: false,
+            event_log_skipped: 0, // Set by caller after compose (Codex #8)
         };
 
         // Compute cost/token totals from agent graph
