@@ -524,16 +524,37 @@ const TOOL_ALIASES: &[(&str, &[&str])] = &[
 ];
 
 /// Returns true iff `source` represents a direct tool attribution that
-/// should count toward `tool_usage.actual`. Backstop or
-/// recording-channel sources (`git-reconcile`, `session-event-cli`,
-/// `daemon-atime`) are NOT direct attribution -- they witness that
-/// something happened without claiming a specific tool caused it. None
-/// (no source tag) defaults to true for backward compat with legacy
-/// hook-emitted events that predated the source field.
+/// should count toward `tool_usage.actual`.
+///
+/// Direct attribution sources -- a real tool fired and the channel
+/// captured it:
+///   - `hook`              integration hook saw the tool fire
+///   - `mcp`               promoted from MCP-bridge agent.called_tool
+///   - `shell-wrap`        `treeship wrap` captured a shell command
+///   - `session-event-cli` `treeship session event` from a hook script.
+///                         The Claude Code plugin's PostToolUse hook
+///                         calls `treeship session event --type
+///                         agent.wrote_file --file X`, and the CLI
+///                         tags those as "session-event-cli" -- so
+///                         excluding this label would make every
+///                         claude-code-plugin event invisible to
+///                         cross-verify.
+///   - None                legacy untagged event (back-compat)
+///
+/// Backstop / inference sources -- a file changed but no tool was
+/// directly attributed. Surface in the receipt's "Files changed"
+/// section so the reader sees the change but they must NOT inflate
+/// tool_usage:
+///   - `git-reconcile`     git diff at session close
+///   - `daemon-atime`      atime-based file detection
 fn source_attributes_a_tool(source: Option<&str>) -> bool {
     matches!(
         source,
-        None | Some("hook") | Some("mcp") | Some("shell-wrap"),
+        None
+            | Some("hook")
+            | Some("mcp")
+            | Some("shell-wrap")
+            | Some("session-event-cli"),
     )
 }
 
