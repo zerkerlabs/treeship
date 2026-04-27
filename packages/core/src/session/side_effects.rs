@@ -296,22 +296,37 @@ fn first_meta_string(event: &SessionEvent, paths: &[&str]) -> Option<String> {
     None
 }
 
-/// Pull a known-good source label off event.meta if present, else
-/// return the default. Lets emitters tag their provenance in meta
-/// without each event variant needing a dedicated field. Recognized
-/// values: `"hook"`, `"mcp"`, `"git-reconcile"`, `"shell-wrap"`.
-/// Anything else falls back to the default (so a typo doesn't pollute
-/// the receipt).
+/// Pull the source label off event.meta if present, else return the
+/// default. Lets emitters tag their provenance in meta without each
+/// event variant needing a dedicated field.
+///
+/// Codex adversarial review caught a real provenance lie in finding #7:
+/// the original implementation only RECOGNIZED `"hook"`, `"mcp"`,
+/// `"git-reconcile"`, and `"shell-wrap"`, and FELL BACK TO THE DEFAULT
+/// (callers passed `"hook"`) for any other value. That meant events
+/// emitted by `treeship session event` (which the CLI tags with
+/// `meta.source = "session-event-cli"`) and the daemon's atime-based
+/// detection (which tags `"daemon-atime"`) were both silently downgraded
+/// into the highest-trust `"hook"` label on the receipt page. The
+/// receipt rendered things as observed-by-hook that were actually
+/// observed by lower-trust mechanisms -- a quiet but real trust lie.
+///
+/// Fix: when meta.source is present and is a non-empty string, preserve
+/// it verbatim. Honest provenance, even for labels we have not added a
+/// pretty pill for yet (the receipt page falls back to `via <source>`
+/// for unknown labels, see SOURCE_LABELS in the website's receipt page).
+/// Only fall back to `default` when meta.source is genuinely absent,
+/// which is the case for events that do not tag their source at all
+/// (e.g. legacy hook-emitted events from a pre-v0.9.6 plugin).
 fn source_from_meta(event: &SessionEvent, default: &str) -> String {
-    let raw = event
+    event
         .meta
         .as_ref()
         .and_then(|m| m.get("source"))
-        .and_then(|v| v.as_str());
-    match raw {
-        Some(s @ ("hook" | "mcp" | "git-reconcile" | "shell-wrap")) => s.to_string(),
-        _ => default.to_string(),
-    }
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| default.to_string())
 }
 
 /// Classify a tool name into a side-effects bucket using string contains
@@ -633,5 +648,111 @@ mod tests {
                 "expected promotion via {} but got nothing", path_field,
             );
         }
+    }
+
+    // ── source_from_meta provenance preservation (Codex finding #7) ──
+    //
+    // Unknown labels must NOT be downgraded to "hook" -- the original
+    // implementation silently mapped session-event-cli, daemon-atime,
+    // and any other unrecognized value to the highest-trust "hook"
+    // bucket, lying to receipt readers about how the change was
+    // witnessed. The fix preserves the exact meta.source string when
+    // present.
+
+    fn evt_with_meta(et: EventType, meta: serde_json::Value) -> SessionEvent {
+        let mut e = evt(et);
+        e.meta = Some(meta);
+        e
+    }
+
+    #[test]
+    fn source_from_meta_preserves_session_event_cli() {
+        // Events emitted via `treeship session event` have meta.source =
+        // "session-event-cli" (set in commands/session.rs::event). This
+        // must NOT render as "hook" on the receipt.
+        let events = vec![
+            evt_with_meta(
+                EventType::AgentWroteFile {
+                    file_path: "src/x.rs".into(),
+                    digest: None, operation: None, additions: None, deletions: None,
+                },
+                serde_json::json!({"source": "session-event-cli"}),
+            ),
+        ];
+        let se = SideEffects::from_events(&events);
+        assert_eq!(se.files_written[0].source.as_deref(), Some("session-event-cli"),
+            "session-event-cli must be preserved verbatim, not downgraded to hook");
+    }
+
+    #[test]
+    fn source_from_meta_preserves_daemon_atime() {
+        // The daemon's atime-based file detection tags events with
+        // source = "daemon-atime" (lower trust than direct hook). Must
+        // not be silently promoted to hook.
+        let events = vec![
+            evt_with_meta(
+                EventType::AgentReadFile {
+                    file_path: "src/x.rs".into(),
+                    digest: None,
+                },
+                serde_json::json!({"source": "daemon-atime"}),
+            ),
+        ];
+        let se = SideEffects::from_events(&events);
+        assert_eq!(se.files_read[0].source.as_deref(), Some("daemon-atime"),
+            "daemon-atime must be preserved verbatim, not downgraded to hook");
+    }
+
+    #[test]
+    fn source_from_meta_preserves_arbitrary_unknown_label() {
+        // A future emitter (or a bug in the wild) might tag a brand-new
+        // source label. We preserve it so the receipt page renders
+        // "via <label>" -- honest provenance even for labels we do not
+        // have a styled pill for yet.
+        let events = vec![
+            evt_with_meta(
+                EventType::AgentWroteFile {
+                    file_path: "x".into(),
+                    digest: None, operation: None, additions: None, deletions: None,
+                },
+                serde_json::json!({"source": "future-bridge-v2"}),
+            ),
+        ];
+        let se = SideEffects::from_events(&events);
+        assert_eq!(se.files_written[0].source.as_deref(), Some("future-bridge-v2"));
+    }
+
+    #[test]
+    fn source_from_meta_falls_back_when_meta_source_absent() {
+        // Backward compat: events with no meta.source field at all keep
+        // getting tagged with the caller's default. This is the legacy
+        // hook-emitted-event path -- pre-v0.9.6 plugins did not tag
+        // their source, and the aggregator still tags those as "hook"
+        // because that is what they actually were.
+        let events = vec![
+            evt(EventType::AgentWroteFile {
+                file_path: "x".into(),
+                digest: None, operation: None, additions: None, deletions: None,
+            }),
+        ];
+        let se = SideEffects::from_events(&events);
+        assert_eq!(se.files_written[0].source.as_deref(), Some("hook"));
+    }
+
+    #[test]
+    fn source_from_meta_treats_empty_string_as_absent() {
+        // Defensive: meta.source = "" should not render as a row with
+        // "via " (empty pill). Treat as absent and fall back to default.
+        let events = vec![
+            evt_with_meta(
+                EventType::AgentReadFile {
+                    file_path: "x".into(),
+                    digest: None,
+                },
+                serde_json::json!({"source": ""}),
+            ),
+        ];
+        let se = SideEffects::from_events(&events);
+        assert_eq!(se.files_read[0].source.as_deref(), Some("hook"));
     }
 }
