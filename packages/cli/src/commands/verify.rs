@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use ed25519_dalek::VerifyingKey;
 use treeship_core::{
     attestation::{Envelope, Verifier},
-    statements::{ActionStatement, ApprovalStatement, DecisionStatement, HandoffStatement, ReceiptStatement, payload_type},
+    statements::{ActionStatement, ApprovalStatement, ApprovalScope, DecisionStatement, HandoffStatement, ReceiptStatement, payload_type},
     storage::Store,
 };
 
@@ -341,15 +341,54 @@ fn print_full_timeline(
     };
     printer.info(&format!("  {chain_status}"));
 
-    // Nonce binding (only if there were nonce checks)
-    if !nonce_checks.is_empty() {
-        let nonce_ok = nonce_checks.iter().all(|c| c.outcome == Outcome::Pass);
-        let nonce_status = if nonce_ok {
-            printer.green("\u{2713}  nonce binding   approval nonce matched, single-use enforced")
+    // Approval binding + scope + replay reporting.
+    //
+    // Three independent properties must be reported separately so the
+    // audit reader knows exactly what was checked:
+    //   1. Binding   -- did the action's nonce match a real approval?
+    //   2. Scope     -- did actor/action/subject fall inside the
+    //                   approval's signed allow-lists? An unscoped
+    //                   approval cannot answer this and the line says so.
+    //   3. Replay    -- was the nonce consumed before? Only checkable
+    //                   for the artifacts inside this package; a global
+    //                   replay ledger does not exist yet, and verify
+    //                   must NOT claim "single-use enforced" without one.
+    let approval_checks: Vec<&ArtifactCheck> = checks.iter()
+        .filter(|c| c.payload_type.starts_with("nonce-binding"))
+        .collect();
+    if !approval_checks.is_empty() {
+        let any_fail = approval_checks.iter().any(|c| c.outcome == Outcome::Fail);
+        let any_unscoped = approval_checks.iter().any(|c| c.payload_type == "nonce-binding-unscoped");
+        let any_scoped   = approval_checks.iter().any(|c| c.payload_type == "nonce-binding-scoped");
+
+        // Line 1: cryptographic binding (always emitted).
+        let bind_status = if any_fail {
+            printer.red("\u{2717}  approval binding nonce verification failed")
         } else {
-            printer.red("\u{2717}  nonce binding   nonce verification failed")
+            printer.green("\u{2713}  approval binding nonce matched a signed approval")
         };
-        printer.info(&format!("  {nonce_status}"));
+        printer.info(&format!("  {bind_status}"));
+
+        // Line 2: scope evaluation. Only when a scoped approval was in
+        // the chain. Unscoped approvals get the warning instead.
+        if any_scoped && !any_fail {
+            printer.info(&format!(
+                "  {}",
+                printer.green("\u{2713}  approval scope   actor / action / subject matched approval scope")
+            ));
+        }
+        if any_unscoped {
+            printer.info(&format!(
+                "  {}",
+                printer.yellow("\u{26A0}  approval scope   approval is unscoped -- proves binding only, not actor/action/subject authorization")
+            ));
+        }
+
+        // Line 3: replay posture. Honest about what was (and wasn't) enforced.
+        printer.info(&format!(
+            "  {}",
+            printer.yellow("\u{26A0}  replay check     package-local only -- no global ledger consulted")
+        ));
     }
 
     printer.info(&format!("  {rule}"));
@@ -765,13 +804,24 @@ fn verify_one(verifier: &Verifier, envelope: &Envelope, id: &str) -> ArtifactChe
     }
 }
 
-/// Verify nonce bindings between actions and approvals.
+/// Verify nonce bindings AND scope constraints between actions and approvals.
 ///
-/// For each ActionStatement with an `approval_nonce`, find the matching
-/// ApprovalStatement (in the chain or in storage) and check:
-/// 1. Nonce match: action.approval_nonce == approval.nonce
-/// 2. Approval not expired
-/// 3. Scope constraints (allowed_actions) are respected
+/// For each ActionStatement with an `approval_nonce`:
+///   1. Look up the matching ApprovalStatement (in chain or storage).
+///   2. Check the approval is not expired.
+///   3. If the approval has a scope, check the action's `actor`,
+///      `action`, and `subject` are within the scope's allowed lists.
+///   4. Stamp a result row with payload_type set to a scope-specific
+///      tag so the summary block can report what was actually checked
+///      versus what was absent (the `unscoped` case is reported as a
+///      warning, not a failure -- the binding still holds).
+///
+/// What this does NOT check (and the summary block must say so):
+///   - Replay / single-use enforcement. Stateless verification cannot
+///     observe whether a nonce was already consumed by an artifact
+///     outside the package being verified. `approval.scope.max_actions`
+///     is signed into the grant for a future ledger-backed enforcer
+///     but is not enforced here.
 fn verify_nonce_bindings(
     chain: &[(String, Envelope)],
     storage: &Store,
@@ -787,6 +837,13 @@ fn verify_nonce_bindings(
             }
         }
     }
+
+    // Track per-nonce consumption WITHIN THIS PACKAGE so the summary can
+    // report a package-local replay finding even though no global
+    // ledger exists yet. Multiple actions claiming the same nonce
+    // inside one verified bundle are observable here and must not be
+    // silently accepted as "single-use."
+    let mut nonce_consumed_by: HashMap<String, String> = HashMap::new();
 
     for (id, env) in chain {
         if env.payload_type != payload_type("action") {
@@ -805,13 +862,12 @@ fn verify_nonce_bindings(
         let approval = if let Some(a) = approvals_by_nonce.get(&nonce) {
             a.clone()
         } else {
-            // Search storage for approvals with this nonce.
             match find_approval_by_nonce(&nonce, storage) {
                 Some(a) => a,
                 None => {
                     checks.push(ArtifactCheck {
                         id:           id.clone(),
-                        payload_type: env.payload_type.clone(),
+                        payload_type: "nonce-binding".into(),
                         actor_or_sys: action.actor.clone(),
                         outcome:      Outcome::Fail,
                         reason:       Some(format!(
@@ -824,13 +880,13 @@ fn verify_nonce_bindings(
             }
         };
 
-        // Check expiry.
+        // Check approval expiry.
         if let Some(ref expires) = approval.expires_at {
             let now = now_rfc3339();
             if *expires < now {
                 checks.push(ArtifactCheck {
                     id:           id.clone(),
-                    payload_type: env.payload_type.clone(),
+                    payload_type: "nonce-binding".into(),
                     actor_or_sys: action.actor.clone(),
                     outcome:      Outcome::Fail,
                     reason:       Some(format!(
@@ -841,30 +897,49 @@ fn verify_nonce_bindings(
             }
         }
 
-        // Check scope: if the approval restricts allowed_actions, the
-        // action label must be in the list.
-        if let Some(ref scope) = approval.scope {
-            if !scope.allowed_actions.is_empty()
-                && !scope.allowed_actions.contains(&action.action)
-            {
-                checks.push(ArtifactCheck {
-                    id:           id.clone(),
-                    payload_type: env.payload_type.clone(),
-                    actor_or_sys: action.actor.clone(),
-                    outcome:      Outcome::Fail,
-                    reason:       Some(format!(
-                        "action '{}' not in approval's allowed_actions: {:?}",
-                        action.action, scope.allowed_actions
-                    )),
-                });
-                continue;
+        // Check scope: actor, action, subject, and scope-level expiry.
+        // Default-empty (no scope at all, or all-empty scope) is a
+        // bearer / unscoped grant -- the binding holds but no
+        // authorization claims are made. We still pass the binding row
+        // and let the summary emit the unscoped warning separately.
+        let scope_tag = match &approval.scope {
+            Some(scope) if !scope.is_unscoped() => {
+                if let Some(reason) = check_scope_violation(scope, &action) {
+                    checks.push(ArtifactCheck {
+                        id:           id.clone(),
+                        payload_type: "nonce-binding".into(),
+                        actor_or_sys: action.actor.clone(),
+                        outcome:      Outcome::Fail,
+                        reason:       Some(reason),
+                    });
+                    continue;
+                }
+                "nonce-binding-scoped"
             }
-        }
+            _ => "nonce-binding-unscoped",
+        };
 
-        // Nonce binding valid.
+        // Package-local replay observation: same nonce, second action.
+        // Not a global ledger; just what we can see in this bundle.
+        if let Some(prev) = nonce_consumed_by.get(&nonce) {
+            checks.push(ArtifactCheck {
+                id:           id.clone(),
+                payload_type: "nonce-binding".into(),
+                actor_or_sys: action.actor.clone(),
+                outcome:      Outcome::Fail,
+                reason:       Some(format!(
+                    "nonce already consumed by {} in this package (package-local replay)",
+                    short_id(prev)
+                )),
+            });
+            continue;
+        }
+        nonce_consumed_by.insert(nonce.clone(), id.clone());
+
+        // Binding + scope (if any) valid.
         checks.push(ArtifactCheck {
             id:           id.clone(),
-            payload_type: "nonce-binding".into(),
+            payload_type: scope_tag.into(),
             actor_or_sys: action.actor.clone(),
             outcome:      Outcome::Pass,
             reason:       None,
@@ -872,6 +947,63 @@ fn verify_nonce_bindings(
     }
 
     checks
+}
+
+/// Returns `Some(reason)` if the action violates the approval's scope,
+/// `None` if every populated scope axis matches.
+///
+/// Empty `allowed_*` lists mean "no constraint on that axis." The order
+/// of checks is actor → action → subject → scope-level expiry; the
+/// first violation wins for a clear failure message.
+fn check_scope_violation(scope: &ApprovalScope, action: &ActionStatement) -> Option<String> {
+    if !scope.allowed_actors.is_empty()
+        && !scope.allowed_actors.contains(&action.actor)
+    {
+        return Some(format!(
+            "actor '{}' not in approval's allowed_actors: {:?}",
+            action.actor, scope.allowed_actors
+        ));
+    }
+
+    if !scope.allowed_actions.is_empty()
+        && !scope.allowed_actions.contains(&action.action)
+    {
+        return Some(format!(
+            "action '{}' not in approval's allowed_actions: {:?}",
+            action.action, scope.allowed_actions
+        ));
+    }
+
+    if !scope.allowed_subjects.is_empty() {
+        // Match on whichever subject reference the action carries.
+        // URI is the canonical form; artifact_id is a chain-internal
+        // form. Either may appear in allowed_subjects.
+        let observed = action.subject.uri.clone()
+            .or_else(|| action.subject.artifact_id.clone())
+            .or_else(|| action.subject.digest.clone());
+        let matches = match observed.as_deref() {
+            Some(s) => scope.allowed_subjects.iter().any(|allowed| allowed == s),
+            None    => false,
+        };
+        if !matches {
+            return Some(format!(
+                "subject '{}' not in approval's allowed_subjects: {:?}",
+                observed.as_deref().unwrap_or("<none>"),
+                scope.allowed_subjects
+            ));
+        }
+    }
+
+    if let Some(ref valid_until) = scope.valid_until {
+        let now = now_rfc3339();
+        if *valid_until < now {
+            return Some(format!(
+                "approval scope expired at {} (now: {})", valid_until, now
+            ));
+        }
+    }
+
+    None
 }
 
 /// Search storage for an approval whose nonce matches.
@@ -935,4 +1067,160 @@ fn build_verifier(keys: &treeship_core::keys::Store) -> Result<Verifier, Box<dyn
     }
 
     Ok(Verifier::new(map))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use treeship_core::statements::{ActionStatement, ApprovalScope, SubjectRef};
+
+    fn act(actor: &str, action: &str, subject_uri: Option<&str>) -> ActionStatement {
+        let mut a = ActionStatement::new(actor, action);
+        if let Some(uri) = subject_uri {
+            a.subject = SubjectRef { uri: Some(uri.into()), ..Default::default() };
+        }
+        a
+    }
+
+    // ── check_scope_violation: actor axis ──────────────────────────────
+    #[test]
+    fn scope_wrong_actor_fails() {
+        let scope = ApprovalScope {
+            allowed_actors: vec!["agent://deployer".into()],
+            ..Default::default()
+        };
+        let action = act("agent://other", "deploy.production", None);
+        let r = check_scope_violation(&scope, &action);
+        assert!(r.is_some(), "wrong actor should violate scope");
+        assert!(r.unwrap().contains("not in approval's allowed_actors"));
+    }
+
+    #[test]
+    fn scope_right_actor_passes() {
+        let scope = ApprovalScope {
+            allowed_actors: vec!["agent://deployer".into()],
+            ..Default::default()
+        };
+        let action = act("agent://deployer", "deploy.production", None);
+        assert!(check_scope_violation(&scope, &action).is_none());
+    }
+
+    // ── check_scope_violation: action axis ─────────────────────────────
+    #[test]
+    fn scope_wrong_action_fails() {
+        // The repro from the engineer's report: deploy.production approval
+        // must NOT authorize deploy.staging.
+        let scope = ApprovalScope {
+            allowed_actions: vec!["deploy.production".into()],
+            ..Default::default()
+        };
+        let action = act("agent://deployer", "deploy.staging", None);
+        let r = check_scope_violation(&scope, &action);
+        assert!(r.is_some());
+        assert!(r.unwrap().contains("not in approval's allowed_actions"));
+    }
+
+    // ── check_scope_violation: subject axis ────────────────────────────
+    #[test]
+    fn scope_wrong_subject_uri_fails() {
+        // env://production approval must NOT authorize env://staging
+        // even with the right actor + action.
+        let scope = ApprovalScope {
+            allowed_subjects: vec!["env://production".into()],
+            ..Default::default()
+        };
+        let action = act("agent://deployer", "deploy.production", Some("env://staging"));
+        let r = check_scope_violation(&scope, &action);
+        assert!(r.is_some());
+        assert!(r.unwrap().contains("not in approval's allowed_subjects"));
+    }
+
+    #[test]
+    fn scope_right_subject_uri_passes() {
+        let scope = ApprovalScope {
+            allowed_subjects: vec!["env://production".into()],
+            ..Default::default()
+        };
+        let action = act("agent://deployer", "deploy.production", Some("env://production"));
+        assert!(check_scope_violation(&scope, &action).is_none());
+    }
+
+    #[test]
+    fn scope_subject_artifact_id_fallback() {
+        // When the action's subject is a chain-internal artifact_id,
+        // it should also be matchable against allowed_subjects.
+        let scope = ApprovalScope {
+            allowed_subjects: vec!["art_abc123".into()],
+            ..Default::default()
+        };
+        let mut action = act("agent://x", "doit", None);
+        action.subject = SubjectRef { artifact_id: Some("art_abc123".into()), ..Default::default() };
+        assert!(check_scope_violation(&scope, &action).is_none());
+    }
+
+    #[test]
+    fn scope_subject_required_but_action_has_none_fails() {
+        let scope = ApprovalScope {
+            allowed_subjects: vec!["env://production".into()],
+            ..Default::default()
+        };
+        let action = act("agent://x", "doit", None); // no subject
+        assert!(check_scope_violation(&scope, &action).is_some());
+    }
+
+    // ── check_scope_violation: combined axes ───────────────────────────
+    #[test]
+    fn scope_first_violation_wins_actor_then_action() {
+        // Actor matches, action doesn't -- action error reported.
+        let scope = ApprovalScope {
+            allowed_actors:  vec!["agent://deployer".into()],
+            allowed_actions: vec!["deploy.production".into()],
+            ..Default::default()
+        };
+        let action = act("agent://deployer", "deploy.staging", None);
+        let r = check_scope_violation(&scope, &action).unwrap();
+        assert!(r.contains("allowed_actions"));
+    }
+
+    #[test]
+    fn scope_first_violation_wins_actor_takes_priority() {
+        // Both wrong; actor reported because it's checked first.
+        let scope = ApprovalScope {
+            allowed_actors:  vec!["agent://deployer".into()],
+            allowed_actions: vec!["deploy.production".into()],
+            ..Default::default()
+        };
+        let action = act("agent://other", "deploy.staging", None);
+        let r = check_scope_violation(&scope, &action).unwrap();
+        assert!(r.contains("allowed_actors"));
+    }
+
+    // ── ApprovalScope::is_unscoped ─────────────────────────────────────
+    #[test]
+    fn scope_default_is_unscoped() {
+        let scope = ApprovalScope::default();
+        assert!(scope.is_unscoped());
+        // And produces no violations.
+        let action = act("agent://anyone", "anything", Some("any://subject"));
+        assert!(check_scope_violation(&scope, &action).is_none());
+    }
+
+    #[test]
+    fn scope_with_max_uses_only_is_not_unscoped() {
+        let scope = ApprovalScope { max_actions: Some(1), ..Default::default() };
+        assert!(!scope.is_unscoped());
+    }
+
+    // ── scope_valid_until ──────────────────────────────────────────────
+    #[test]
+    fn scope_expired_fails() {
+        let scope = ApprovalScope {
+            valid_until: Some("2000-01-01T00:00:00Z".into()),
+            ..Default::default()
+        };
+        let action = act("agent://x", "doit", None);
+        let r = check_scope_violation(&scope, &action);
+        assert!(r.is_some());
+        assert!(r.unwrap().contains("scope expired"));
+    }
 }

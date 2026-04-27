@@ -38,24 +38,70 @@ pub struct SubjectRef {
     pub artifact_id: Option<String>,
 }
 
-/// Scope constraints on an approval — what it permits and for how long.
+/// Scope constraints on an approval — *who* may perform *what* against
+/// *which subject*, *how many times*, and *until when*.
+///
+/// Treeship's verify pass enforces these constraints statelessly (every
+/// field except `max_actions` can be checked from the signed envelope
+/// alone). `max_actions` is signed into the grant so a future ledger /
+/// Hub layer can enforce single-use across the global view; for now it
+/// is descriptive, and verify reports the replay-check posture honestly
+/// rather than claiming enforcement that did not happen.
+///
+/// An empty `allowed_*` list means "no constraint on that axis."
+/// All-empty scope is equivalent to no scope at all (an unscoped /
+/// bearer approval) — which `verify` flags with a warning so callers
+/// know the binding is the only thing being attested.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ApprovalScope {
-    /// Maximum number of actions this approval authorises.
+    /// Maximum number of actions this approval authorises. Signed into
+    /// the grant for future stateful enforcement; not yet checked
+    /// statelessly.
     #[serde(rename = "maxActions", skip_serializing_if = "Option::is_none")]
     pub max_actions: Option<u32>,
 
     /// ISO 8601 timestamp after which the approval is no longer valid.
+    /// Independent of `ApprovalStatement.expires_at` so a single approval
+    /// can have an outer "key valid until X" and a tighter "scope valid
+    /// until Y" if the operator wants both. Verify enforces both.
     #[serde(rename = "validUntil", skip_serializing_if = "Option::is_none")]
     pub valid_until: Option<String>,
 
-    /// If set, only these action labels are permitted.
+    /// Actor URIs permitted to consume this approval. Empty = no
+    /// constraint on actor.
+    #[serde(rename = "allowedActors", skip_serializing_if = "Vec::is_empty", default)]
+    pub allowed_actors: Vec<String>,
+
+    /// Action labels permitted under this approval. Empty = no
+    /// constraint on action.
     #[serde(rename = "allowedActions", skip_serializing_if = "Vec::is_empty", default)]
     pub allowed_actions: Vec<String>,
+
+    /// Subject URIs permitted as the target of an action under this
+    /// approval. Matched against `ActionStatement.subject.uri` (or
+    /// `artifact_id` for chain-internal subjects). Empty = no
+    /// constraint on subject.
+    #[serde(rename = "allowedSubjects", skip_serializing_if = "Vec::is_empty", default)]
+    pub allowed_subjects: Vec<String>,
 
     /// Arbitrary additional constraints (e.g. max payment amount).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extra: Option<serde_json::Value>,
+}
+
+impl ApprovalScope {
+    /// True when no constraint axis is populated. An unscoped approval
+    /// proves only nonce binding -- it does NOT bind actor, action, or
+    /// subject. Verify warns when this is true so the audit reader
+    /// knows the limit of what was signed.
+    pub fn is_unscoped(&self) -> bool {
+        self.max_actions.is_none()
+            && self.valid_until.is_none()
+            && self.allowed_actors.is_empty()
+            && self.allowed_actions.is_empty()
+            && self.allowed_subjects.is_empty()
+            && self.extra.is_none()
+    }
 }
 
 /// Records that an actor performed an action.
@@ -562,6 +608,66 @@ mod tests {
         let decoded: ApprovalStatement = result.envelope.unmarshal_statement().unwrap();
         assert_eq!(decoded.nonce, "nonce_abc123");
         assert_eq!(decoded.scope.unwrap().max_actions, Some(1));
+    }
+
+    #[test]
+    fn approval_scope_full_grant_roundtrips() {
+        // Every scope axis populated -- the full "allowed_actors +
+        // allowed_actions + allowed_subjects + max_uses" grant must
+        // serialize, sign, deserialize, and read back identically.
+        let signer = Ed25519Signer::generate("key_piyush").unwrap();
+
+        let mut approval = ApprovalStatement::new("human://piyush", "nonce_deadbeef");
+        approval.description = Some("Deploy production after final review".into());
+        approval.scope = Some(ApprovalScope {
+            max_actions:      Some(1),
+            valid_until:      None,
+            allowed_actors:   vec!["agent://deployer".into()],
+            allowed_actions:  vec!["deploy.production".into()],
+            allowed_subjects: vec!["env://production".into()],
+            extra:            None,
+        });
+
+        let pt = payload_type("approval");
+        let result = sign(&pt, &approval, &signer).unwrap();
+        let decoded: ApprovalStatement = result.envelope.unmarshal_statement().unwrap();
+        let scope = decoded.scope.expect("scope must round-trip");
+
+        assert_eq!(scope.allowed_actors,   vec!["agent://deployer".to_string()]);
+        assert_eq!(scope.allowed_actions,  vec!["deploy.production".to_string()]);
+        assert_eq!(scope.allowed_subjects, vec!["env://production".to_string()]);
+        assert_eq!(scope.max_actions,      Some(1));
+    }
+
+    #[test]
+    fn approval_scope_is_unscoped_predicate() {
+        // Default scope = unscoped.
+        assert!(ApprovalScope::default().is_unscoped());
+
+        // Any single populated axis flips the predicate.
+        assert!(!ApprovalScope { max_actions: Some(1), ..Default::default() }.is_unscoped());
+        assert!(!ApprovalScope { valid_until: Some("2030-01-01T00:00:00Z".into()), ..Default::default() }.is_unscoped());
+        assert!(!ApprovalScope { allowed_actors:   vec!["agent://x".into()], ..Default::default() }.is_unscoped());
+        assert!(!ApprovalScope { allowed_actions:  vec!["doit".into()],      ..Default::default() }.is_unscoped());
+        assert!(!ApprovalScope { allowed_subjects: vec!["env://prod".into()], ..Default::default() }.is_unscoped());
+    }
+
+    #[test]
+    fn approval_scope_legacy_payloads_decode_with_empty_new_fields() {
+        // Pre-0.9.6 payloads that omitted allowed_actors / allowed_subjects
+        // must continue to deserialize cleanly. We construct the JSON shape
+        // directly to simulate an envelope from an older signer.
+        let legacy = serde_json::json!({
+            "maxActions": 1,
+            "allowedActions": ["stripe.payment_intent.create"]
+        });
+        let scope: ApprovalScope = serde_json::from_value(legacy).unwrap();
+        assert_eq!(scope.max_actions, Some(1));
+        assert_eq!(scope.allowed_actions, vec!["stripe.payment_intent.create".to_string()]);
+        // New fields default to empty -- not present in legacy payload.
+        assert!(scope.allowed_actors.is_empty());
+        assert!(scope.allowed_subjects.is_empty());
+        assert!(!scope.is_unscoped()); // because max_actions IS set
     }
 
     #[test]

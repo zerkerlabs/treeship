@@ -1,7 +1,7 @@
 use serde_json::Value;
 use treeship_core::{
     attestation::sign,
-    statements::{ActionStatement, ApprovalStatement, DecisionStatement, EndorsementStatement, HandoffStatement, ReceiptStatement, payload_type, SubjectRef},
+    statements::{ActionStatement, ApprovalScope, ApprovalStatement, DecisionStatement, EndorsementStatement, HandoffStatement, ReceiptStatement, payload_type, SubjectRef},
     storage::Record,
 };
 
@@ -95,15 +95,52 @@ pub fn action(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std
 // --- approval ---------------------------------------------------------------
 
 pub struct ApprovalArgs {
-    pub approver:        String,
-    pub subject_id:      Option<String>,
-    pub description:     Option<String>,
-    pub expires:         Option<String>,
-    pub config:          Option<String>,
+    pub approver:         String,
+    pub subject_id:       Option<String>,
+    pub description:      Option<String>,
+    pub expires:          Option<String>,
+    /// Scope: actor URIs allowed to consume this approval.
+    pub allowed_actors:   Vec<String>,
+    /// Scope: action labels allowed under this approval.
+    pub allowed_actions:  Vec<String>,
+    /// Scope: subject URIs allowed as the action target.
+    pub allowed_subjects: Vec<String>,
+    /// Scope: max consumption count (signed for future ledger enforcement).
+    pub max_uses:         Option<u32>,
+    /// Explicit opt-in to an unscoped approval. Required when no
+    /// scope axis is populated; without it the command refuses since
+    /// unscoped approvals are footguns.
+    pub unscoped:         bool,
+    pub config:           Option<String>,
 }
 
 pub fn approval(args: ApprovalArgs, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(args.config.as_deref())?;
+
+    // Build scope from CLI flags. An all-empty scope is treated as "no
+    // scope" -- but we refuse to mint such an approval unless the
+    // operator explicitly typed --unscoped, since the verify pass will
+    // (correctly) flag it as proving nothing about authorization.
+    let scope = ApprovalScope {
+        max_actions:      args.max_uses,
+        valid_until:      None,
+        allowed_actors:   args.allowed_actors.clone(),
+        allowed_actions:  args.allowed_actions.clone(),
+        allowed_subjects: args.allowed_subjects.clone(),
+        extra:            None,
+    };
+    let scope_for_stmt = if scope.is_unscoped() {
+        if !args.unscoped {
+            return Err(
+                "approval has no scope (no --allowed-actor / --allowed-action / --allowed-subject / --max-uses). \
+                 Pass --unscoped to mint a bearer approval explicitly, or add a scope constraint."
+                .into(),
+            );
+        }
+        None
+    } else {
+        Some(scope)
+    };
 
     // Generate a cryptographically random nonce for approval binding.
     let nonce = {
@@ -119,6 +156,7 @@ pub fn approval(args: ApprovalArgs, printer: &Printer) -> Result<(), Box<dyn std
     let mut stmt = ApprovalStatement::new(&args.approver, &nonce);
     stmt.description = args.description.clone();
     stmt.expires_at  = args.expires.clone();
+    stmt.scope       = scope_for_stmt;
     if let Some(id) = &args.subject_id {
         stmt.subject.artifact_id = Some(id.clone());
     }
@@ -145,6 +183,16 @@ pub fn approval(args: ApprovalArgs, printer: &Printer) -> Result<(), Box<dyn std
         ("nonce",    &nonce),
         ("signed",   &stmt.timestamp),
     ]);
+    if stmt.scope.is_none() {
+        printer.hint("scope: none (unscoped/bearer approval -- proves binding only, not actor/action/subject authorization)");
+    } else if let Some(ref s) = stmt.scope {
+        let mut parts = Vec::new();
+        if !s.allowed_actors.is_empty()   { parts.push(format!("actors={:?}", s.allowed_actors)); }
+        if !s.allowed_actions.is_empty()  { parts.push(format!("actions={:?}", s.allowed_actions)); }
+        if !s.allowed_subjects.is_empty() { parts.push(format!("subjects={:?}", s.allowed_subjects)); }
+        if let Some(n) = s.max_actions    { parts.push(format!("max_uses={n}")); }
+        printer.hint(&format!("scope: {}", parts.join(", ")));
+    }
     printer.hint(&format!("nonce: {}  (echo this in --approval-nonce when you attest the action)", nonce));
     printer.blank();
     Ok(())
