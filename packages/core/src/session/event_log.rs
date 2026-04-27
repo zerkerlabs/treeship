@@ -219,6 +219,23 @@ impl EventLog {
     }
 
     /// Read all events from the log.
+    ///
+    /// Per-line tolerant: a single malformed line (unknown event type,
+    /// missing required field, truncated JSON from a crashed writer) is
+    /// logged to stderr and skipped, not propagated as an error. The
+    /// caller -- session close, in particular -- composes a receipt
+    /// from whatever events parse, instead of dropping every event when
+    /// any one is bad.
+    ///
+    /// Why this matters: events.jsonl is append-only and written by
+    /// hooks, daemons, SDKs, and bridges from multiple processes. A
+    /// single bad event from one buggy emitter would otherwise nuke
+    /// the entire receipt's side_effects / agent_graph / timeline.
+    /// Real-world repro: a hook that emitted events with an unknown
+    /// `type` field caused side_effects.files_written to come back
+    /// empty even though the rest of the events in the log were valid
+    /// agent.wrote_file events the aggregator would have happily
+    /// processed.
     pub fn read_all(&self) -> Result<Vec<SessionEvent>, EventLogError> {
         if !self.path.exists() {
             return Ok(Vec::new());
@@ -226,13 +243,32 @@ impl EventLog {
         let file = std::fs::File::open(&self.path)?;
         let reader = std::io::BufReader::new(file);
         let mut events = Vec::new();
-        for line in reader.lines() {
+        let mut skipped = 0usize;
+        for (idx, line) in reader.lines().enumerate() {
             let line = line?;
             if line.trim().is_empty() {
                 continue;
             }
-            let event: SessionEvent = serde_json::from_str(&line)?;
-            events.push(event);
+            match serde_json::from_str::<SessionEvent>(&line) {
+                Ok(event) => events.push(event),
+                Err(e) => {
+                    skipped += 1;
+                    eprintln!(
+                        "[treeship] event_log: skipping malformed line {} in {}: {}",
+                        idx + 1,
+                        self.path.display(),
+                        e,
+                    );
+                }
+            }
+        }
+        if skipped > 0 {
+            eprintln!(
+                "[treeship] event_log: {} malformed line(s) skipped while reading {} (kept {} valid event(s))",
+                skipped,
+                self.path.display(),
+                events.len(),
+            );
         }
         Ok(events)
     }
@@ -499,6 +535,67 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].sequence_no, 0);
         assert_eq!(events[1].sequence_no, 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_all_skips_malformed_lines() {
+        // Regression: a single malformed line in events.jsonl used to
+        // make read_all() return Err, and the caller's
+        // .unwrap_or_default() would drop EVERY event in the log. Real
+        // bug: hooks emitting events with an unknown `type` field made
+        // side_effects.files_written come back empty even though every
+        // other event in the log was a perfectly valid agent.wrote_file
+        // event. Now we skip-and-log the bad line and keep the rest.
+        let dir = std::env::temp_dir().join(format!("treeship-evtlog-malformed-{}", rand::random::<u32>()));
+        let log = EventLog::open(&dir).unwrap();
+
+        let mut good1 = make_event(
+            "ssn_001",
+            EventType::AgentWroteFile {
+                file_path: "src/before.rs".into(),
+                digest: None,
+                operation: None,
+                additions: None,
+                deletions: None,
+            },
+        );
+        let mut good2 = make_event(
+            "ssn_001",
+            EventType::AgentWroteFile {
+                file_path: "src/after.rs".into(),
+                digest: None,
+                operation: None,
+                additions: None,
+                deletions: None,
+            },
+        );
+        log.append(&mut good1).unwrap();
+        log.append(&mut good2).unwrap();
+
+        // Manually inject a malformed line between the two good ones by
+        // truncating the file and rewriting. The malformed line has an
+        // unknown event type ("custom.weird") which the closed EventType
+        // enum can't deserialize.
+        let path = log.path().to_path_buf();
+        let original = std::fs::read_to_string(&path).unwrap();
+        let mut lines: Vec<&str> = original.lines().collect();
+        lines.insert(1, r#"{"session_id":"ssn_001","event_id":"evt_bad","timestamp":"2026-04-26T00:00:00Z","sequence_no":1,"trace_id":"x","span_id":"y","agent_id":"a","agent_instance_id":"i","agent_name":"n","host_id":"h","type":"custom.weird","payload":42}"#);
+        std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+
+        let events = log.read_all().unwrap();
+        assert_eq!(events.len(), 2, "expected the two valid events to come through; got {}", events.len());
+        // Confirm the valid events are the file-write events and not
+        // some default fallback.
+        let written_paths: Vec<&str> = events
+            .iter()
+            .filter_map(|e| match &e.event_type {
+                EventType::AgentWroteFile { file_path, .. } => Some(file_path.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(written_paths, vec!["src/before.rs", "src/after.rs"]);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
