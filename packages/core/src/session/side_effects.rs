@@ -123,7 +123,7 @@ impl SideEffects {
                         operation: None,
                         additions: None,
                         deletions: None,
-                        source: Some("hook".into()),
+                        source: Some(source_from_meta(event, "hook")),
                     });
                 }
 
@@ -136,7 +136,7 @@ impl SideEffects {
                         operation: operation.clone(),
                         additions: *additions,
                         deletions: *deletions,
-                        source: Some("hook".into()),
+                        source: Some(source_from_meta(event, "hook")),
                     });
                 }
 
@@ -167,7 +167,7 @@ impl SideEffects {
                         exit_code: None,
                         duration_ms: None,
                         command: command.clone(),
-                        source: Some("hook".into()),
+                        source: Some(source_from_meta(event, "hook")),
                     });
                     started_processes.insert(
                         (event.agent_instance_id.clone(), process_name.clone()),
@@ -193,7 +193,7 @@ impl SideEffects {
                             exit_code: *exit_code,
                             duration_ms: *duration_ms,
                             command: command.clone(),
-                            source: Some("hook".into()),
+                            source: Some(source_from_meta(event, "hook")),
                         });
                     }
                 }
@@ -294,6 +294,24 @@ fn first_meta_string(event: &SessionEvent, paths: &[&str]) -> Option<String> {
         }
     }
     None
+}
+
+/// Pull a known-good source label off event.meta if present, else
+/// return the default. Lets emitters tag their provenance in meta
+/// without each event variant needing a dedicated field. Recognized
+/// values: `"hook"`, `"mcp"`, `"git-reconcile"`, `"shell-wrap"`.
+/// Anything else falls back to the default (so a typo doesn't pollute
+/// the receipt).
+fn source_from_meta(event: &SessionEvent, default: &str) -> String {
+    let raw = event
+        .meta
+        .as_ref()
+        .and_then(|m| m.get("source"))
+        .and_then(|v| v.as_str());
+    match raw {
+        Some(s @ ("hook" | "mcp" | "git-reconcile" | "shell-wrap")) => s.to_string(),
+        _ => default.to_string(),
+    }
 }
 
 /// Classify a tool name into a side-effects bucket using string contains

@@ -155,6 +155,14 @@ pub struct SessionManifest {
     /// Tools declared as authorized for this session (from declaration.json).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub authorized_tools: Vec<String>,
+
+    /// Git HEAD SHA captured at session start, when the project is a
+    /// git repo. Used by session::close to compute committed-during-
+    /// session changes via `git diff <sha>..HEAD` for the
+    /// reconciliation pass. Absent for non-git projects or for
+    /// sessions started before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_commit_sha: Option<String>,
 }
 
 impl SessionManifest {
@@ -179,6 +187,7 @@ impl SessionManifest {
             hosts: Vec::new(),
             tools: Vec::new(),
             authorized_tools: Vec::new(),
+            start_commit_sha: None,
         }
     }
 }
@@ -246,6 +255,7 @@ mod tests {
                 invocation_count: 42,
             }],
             authorized_tools: vec!["read_file".into(), "write_file".into()],
+            start_commit_sha: Some("abc1234567890abcdef1234567890abcdef12345".into()),
         };
         let json = serde_json::to_string_pretty(&m).unwrap();
         let m2: SessionManifest = serde_json::from_str(&json).unwrap();
