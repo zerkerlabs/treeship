@@ -456,27 +456,78 @@ pub fn parse_ship_id_from_actor(actor: &str) -> Option<String> {
 
 /// Extract a human-readable label from an EventType.
 /// Derive tool usage from side effects and the declared authorized tools list.
+///
+/// Bug Codex caught in adversarial review: previously this function counted
+/// only `side_effects.tool_invocations` (built from `EventType::AgentCalledTool`).
+/// But Claude Code's PostToolUse hook emits SPECIALIZED events for built-in
+/// tools (`agent.wrote_file` for Write/Edit, `agent.completed_process` for
+/// Bash, `agent.read_file` for Read, etc) -- those events never landed in
+/// `tool_invocations`, so a certificate that omitted "Bash" or "Write"
+/// passed cross-verification cleanly even when the agent ran them.
+///
+/// The fix: also count side effects from specialized event types under
+/// canonical tool names that match what an operator would declare in
+/// `bounded_actions`. Naming follows Claude Code conventions (Read, Write,
+/// Bash, WebFetch) since those are the tools users actually declare. A
+/// cert that uses an alternate naming scheme (e.g. `files.write`) needs
+/// to declare both for now -- a future TODO is canonical mapping at the
+/// cert layer.
 fn derive_tool_usage(
     side_effects: &SideEffects,
     authorized_tools: &[String],
 ) -> Option<ToolUsage> {
     use std::collections::BTreeMap;
 
-    if side_effects.tool_invocations.is_empty() && authorized_tools.is_empty() {
+    let total_specialized = side_effects.files_read.len()
+        + side_effects.files_written.len()
+        + side_effects.processes.len()
+        + side_effects.network_connections.len();
+
+    if side_effects.tool_invocations.is_empty()
+        && total_specialized == 0
+        && authorized_tools.is_empty()
+    {
         return None;
     }
 
-    // Count actual tool usage
+    // Count actual tool usage from generic agent.called_tool events.
     let mut counts: BTreeMap<String, u32> = BTreeMap::new();
     for inv in &side_effects.tool_invocations {
         *counts.entry(inv.tool_name.clone()).or_insert(0) += 1;
+    }
+
+    // ALSO count specialized events. These come from native hooks
+    // (claude-code-plugin's PostToolUse) and from git reconciliation,
+    // and they were previously invisible to cross-verification.
+    if !side_effects.files_read.is_empty() {
+        *counts.entry("Read".to_string()).or_insert(0) +=
+            side_effects.files_read.len() as u32;
+    }
+    if !side_effects.files_written.is_empty() {
+        // Maps Write, Edit, MultiEdit, NotebookEdit, and git-reconciled
+        // changes alike -- post-tool-use.sh dispatches all of those into
+        // agent.wrote_file, and the aggregator does not preserve which
+        // specific built-in produced the change.
+        *counts.entry("Write".to_string()).or_insert(0) +=
+            side_effects.files_written.len() as u32;
+    }
+    if !side_effects.processes.is_empty() {
+        *counts.entry("Bash".to_string()).or_insert(0) +=
+            side_effects.processes.len() as u32;
+    }
+    if !side_effects.network_connections.is_empty() {
+        *counts.entry("WebFetch".to_string()).or_insert(0) +=
+            side_effects.network_connections.len() as u32;
     }
 
     let actual: Vec<ToolUsageEntry> = counts.iter()
         .map(|(name, &count)| ToolUsageEntry { tool_name: name.clone(), count })
         .collect();
 
-    // Find tools called that were NOT in the declared list
+    // Find tools used that were NOT in the declared list. With specialized
+    // events now contributing, this catches the hole the certificate was
+    // built to prevent: an agent whose cert says "no Bash" but who ran
+    // Bash anyway via Claude Code's built-in.
     let unauthorized = if authorized_tools.is_empty() {
         Vec::new()
     } else {
@@ -565,28 +616,30 @@ mod tests {
         )
     }
 
-    fn make_events() -> Vec<SessionEvent> {
-        let mk = |seq: u64, inst: &str, et: EventType| -> SessionEvent {
-            SessionEvent {
-                session_id: "ssn_001".into(),
-                event_id: format!("evt_{:016x}", seq),
-                timestamp: format!("2026-04-05T08:{:02}:00Z", seq),
-                sequence_no: seq,
-                trace_id: "trace_1".into(),
-                span_id: format!("span_{seq}"),
-                parent_span_id: None,
-                agent_id: format!("agent://{inst}"),
-                agent_instance_id: inst.into(),
-                agent_name: inst.into(),
-                agent_role: None,
-                host_id: "host_1".into(),
-                tool_runtime_id: None,
-                event_type: et,
-                artifact_ref: None,
-                meta: None,
-            }
-        };
+    /// Module-level event constructor so the tool-authorization regression
+    /// tests below can reuse it without each redefining the closure.
+    fn mk(seq: u64, inst: &str, et: EventType) -> SessionEvent {
+        SessionEvent {
+            session_id: "ssn_001".into(),
+            event_id: format!("evt_{:016x}", seq),
+            timestamp: format!("2026-04-05T08:{:02}:00Z", seq),
+            sequence_no: seq,
+            trace_id: "trace_1".into(),
+            span_id: format!("span_{seq}"),
+            parent_span_id: None,
+            agent_id: format!("agent://{inst}"),
+            agent_instance_id: inst.into(),
+            agent_name: inst.into(),
+            agent_role: None,
+            host_id: "host_1".into(),
+            tool_runtime_id: None,
+            event_type: et,
+            artifact_ref: None,
+            meta: None,
+        }
+    }
 
+    fn make_events() -> Vec<SessionEvent> {
         vec![
             mk(0, "root", EventType::SessionStarted),
             mk(1, "root", EventType::AgentStarted { parent_agent_instance_id: None }),
@@ -678,5 +731,118 @@ mod tests {
         let d1 = ReceiptComposer::digest(&r1).unwrap();
         let d2 = ReceiptComposer::digest(&r2).unwrap();
         assert_eq!(d1, d2);
+    }
+
+    // ── Tool authorization regression tests (Codex finding #1) ──
+    //
+    // Specialized event types (agent.wrote_file, agent.completed_process,
+    // agent.read_file) must contribute to tool_usage.actual so that a
+    // certificate's bounded_actions list can correctly flag unauthorized
+    // built-in tool usage. Before this fix, only agent.called_tool fed
+    // tool_usage.actual, so a cert that omitted "Bash" still passed even
+    // when the agent ran Bash via Claude Code's built-in.
+
+    fn manifest_with_authorized(tools: Vec<&str>) -> SessionManifest {
+        let mut m = make_manifest();
+        m.authorized_tools = tools.into_iter().map(String::from).collect();
+        m
+    }
+
+    #[test]
+    fn cert_omitting_bash_flags_unauthorized_when_session_runs_bash() {
+        let manifest = manifest_with_authorized(vec!["Read", "Write"]); // NO Bash
+        // Hook-emitted process event: this is what claude-code-plugin's
+        // PostToolUse hook produces when the agent uses the Bash built-in.
+        let events = vec![
+            mk(0, "root", EventType::SessionStarted),
+            mk(1, "agent", EventType::AgentCompletedProcess {
+                process_name: "rm -rf /".into(),
+                exit_code: Some(0),
+                duration_ms: Some(50),
+                command: Some("rm -rf /".into()),
+            }),
+            mk(2, "root", EventType::SessionClosed { summary: None, duration_ms: Some(1000) }),
+        ];
+        let receipt = ReceiptComposer::compose(&manifest, &events, vec![]);
+        let tu = receipt.tool_usage.expect("tool_usage must be populated");
+        assert!(
+            tu.unauthorized.iter().any(|t| t == "Bash"),
+            "Bash must be flagged as unauthorized when cert omits it; got unauthorized={:?}, actual={:?}",
+            tu.unauthorized, tu.actual,
+        );
+    }
+
+    #[test]
+    fn cert_omitting_write_flags_unauthorized_when_session_writes_file() {
+        let manifest = manifest_with_authorized(vec!["Read", "Bash"]); // NO Write
+        let events = vec![
+            mk(0, "root", EventType::SessionStarted),
+            mk(1, "agent", EventType::AgentWroteFile {
+                file_path: "src/secret.rs".into(),
+                digest: None, operation: Some("modified".into()),
+                additions: Some(10), deletions: Some(0),
+            }),
+            mk(2, "root", EventType::SessionClosed { summary: None, duration_ms: Some(1000) }),
+        ];
+        let receipt = ReceiptComposer::compose(&manifest, &events, vec![]);
+        let tu = receipt.tool_usage.expect("tool_usage must be populated");
+        assert!(
+            tu.unauthorized.iter().any(|t| t == "Write"),
+            "Write must be flagged as unauthorized when cert omits it; got unauthorized={:?}, actual={:?}",
+            tu.unauthorized, tu.actual,
+        );
+    }
+
+    #[test]
+    fn cert_includes_read_write_bash_passes_clean_when_all_used() {
+        let manifest = manifest_with_authorized(vec!["Read", "Write", "Bash"]);
+        let events = vec![
+            mk(0, "root", EventType::SessionStarted),
+            mk(1, "agent", EventType::AgentReadFile { file_path: "package.json".into(), digest: None }),
+            mk(2, "agent", EventType::AgentWroteFile {
+                file_path: "src/lib.rs".into(),
+                digest: None, operation: Some("modified".into()),
+                additions: Some(5), deletions: Some(2),
+            }),
+            mk(3, "agent", EventType::AgentCompletedProcess {
+                process_name: "bun test".into(),
+                exit_code: Some(0), duration_ms: Some(2000),
+                command: Some("bun test".into()),
+            }),
+            mk(4, "root", EventType::SessionClosed { summary: None, duration_ms: Some(5000) }),
+        ];
+        let receipt = ReceiptComposer::compose(&manifest, &events, vec![]);
+        let tu = receipt.tool_usage.expect("tool_usage must be populated");
+        assert!(
+            tu.unauthorized.is_empty(),
+            "all tools declared in cert should pass clean; got unauthorized={:?}",
+            tu.unauthorized,
+        );
+        // And the actual list shows what the agent did, by canonical name.
+        let actual_names: std::collections::BTreeSet<String> =
+            tu.actual.iter().map(|e| e.tool_name.clone()).collect();
+        assert!(actual_names.contains("Read"));
+        assert!(actual_names.contains("Write"));
+        assert!(actual_names.contains("Bash"));
+    }
+
+    #[test]
+    fn webfetch_unauthorized_flagged_when_cert_omits_it() {
+        let manifest = manifest_with_authorized(vec!["Read", "Write", "Bash"]); // NO WebFetch
+        let events = vec![
+            mk(0, "root", EventType::SessionStarted),
+            mk(1, "agent", EventType::AgentConnectedNetwork {
+                destination: "evil.example.com".into(),
+                port: Some(443),
+            }),
+            mk(2, "root", EventType::SessionClosed { summary: None, duration_ms: Some(1000) }),
+        ];
+        let receipt = ReceiptComposer::compose(&manifest, &events, vec![]);
+        let tu = receipt.tool_usage.expect("tool_usage must be populated");
+        assert!(
+            tu.unauthorized.iter().any(|t| t == "WebFetch"),
+            "WebFetch must be flagged as unauthorized when cert omits it; got unauthorized={:?}",
+            tu.unauthorized,
+        );
     }
 }
