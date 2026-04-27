@@ -237,8 +237,30 @@ impl EventLog {
     /// agent.wrote_file events the aggregator would have happily
     /// processed.
     pub fn read_all(&self) -> Result<Vec<SessionEvent>, EventLogError> {
+        // Drop the skipped count for callers that don't carry it through.
+        // Receipt composition uses read_all_with_stats to record the
+        // count in-band on the sealed receipt -- see Codex finding #8.
+        self.read_all_with_stats().map(|(events, _skipped)| events)
+    }
+
+    /// Same as `read_all` but returns the count of malformed lines that
+    /// were skipped during parsing alongside the valid events.
+    ///
+    /// Codex adversarial review finding #8: skipping malformed events
+    /// on stderr only is silent data loss from the verifier's
+    /// perspective. The receipt gets sealed under a merkle root that
+    /// represents only the events that successfully parsed -- a
+    /// downstream consumer cannot tell whether the receipt is complete
+    /// or whether N events were silently dropped.
+    ///
+    /// session::close calls this and stores the count on
+    /// `receipt.proofs.event_log_skipped`. `treeship package verify`
+    /// surfaces it as a WARN when nonzero so the receipt's
+    /// completeness signal is visible without breaking byte-identical
+    /// re-verification of pre-existing receipts.
+    pub fn read_all_with_stats(&self) -> Result<(Vec<SessionEvent>, usize), EventLogError> {
         if !self.path.exists() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), 0));
         }
         let file = std::fs::File::open(&self.path)?;
         let reader = std::io::BufReader::new(file);
@@ -270,7 +292,7 @@ impl EventLog {
                 events.len(),
             );
         }
-        Ok(events)
+        Ok((events, skipped))
     }
 
     /// Return the current event count.
@@ -596,6 +618,38 @@ mod tests {
             })
             .collect();
         assert_eq!(written_paths, vec!["src/before.rs", "src/after.rs"]);
+
+        // Codex finding #8: the count must be exposed in-band so a
+        // sealed receipt can carry the incompleteness signal. Verify
+        // read_all_with_stats reports it.
+        let (events2, skipped) = log.read_all_with_stats().unwrap();
+        assert_eq!(events2.len(), 2);
+        assert_eq!(skipped, 1, "exactly one malformed line was injected; expected skipped == 1");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_all_with_stats_reports_zero_when_clean() {
+        // No malformed lines -> skipped == 0 -> the receipt's
+        // event_log_skipped field stays default (0) and gets omitted
+        // from canonical JSON. This preserves byte-identical receipts
+        // for the common case where the event log is clean.
+        let dir = std::env::temp_dir().join(format!("treeship-evtlog-clean-{}", rand::random::<u32>()));
+        let log = EventLog::open(&dir).unwrap();
+
+        let mut e = make_event(
+            "ssn_001",
+            EventType::AgentWroteFile {
+                file_path: "x.rs".into(),
+                digest: None, operation: None, additions: None, deletions: None,
+            },
+        );
+        log.append(&mut e).unwrap();
+
+        let (events, skipped) = log.read_all_with_stats().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(skipped, 0);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
