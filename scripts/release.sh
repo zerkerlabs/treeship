@@ -108,6 +108,18 @@ node -e "
 echo "Updating Cargo.lock..."
 cargo check -p treeship-core 2>/dev/null || true
 
+# Preflight: fail loudly if any manifest, version file, or internal pin still
+# disagrees with the target version. Same script the CI release workflow runs
+# before any publish job. Catches the class of bug that produced the v0.9.6
+# Python drift and the stale @treeship/core-wasm pins.
+echo ""
+echo "Running release version preflight..."
+if ! python3 "$(dirname "$0")/check-release-versions.py" "$VERSION"; then
+  echo ""
+  echo "Preflight failed. Fix the disagreeing sites above before tagging." >&2
+  exit 1
+fi
+
 echo ""
 echo "Versions bumped to ${VERSION}:"
 echo "  packages/core/Cargo.toml"

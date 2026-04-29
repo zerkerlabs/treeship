@@ -7,6 +7,20 @@ on:
     branches: [main]
 
 jobs:
+  # PR-level guard against the failure mode that produced the v0.9.6 PyPI
+  # drift: pyproject.toml at 0.9.5 while every other package was at 0.9.6,
+  # and stale @treeship/core-wasm pins in three packages. Anchors on
+  # packages/core/Cargo.toml and fails if any other site disagrees.
+  version-consistency:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check internal version consistency
+        run: python3 scripts/check-release-versions.py --consistency
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -21,6 +35,13 @@ jobs:
 
       - name: Build CLI with OTel
         run: cargo build -p treeship-cli --features otel
+
+      # Smoke acceptance: end-to-end session round-trip exercises the full
+      # capture-normalize-verify chain. Catches release-breaking regressions
+      # the per-package unit tests can't see. T1-T9 stubs in the suite
+      # document the broader v0.9.6 trust-fabric invariants pending port.
+      - name: Trust-fabric acceptance suite
+        run: bash tests/acceptance/trust-fabric.sh
 
   hub:
     runs-on: ubuntu-latest

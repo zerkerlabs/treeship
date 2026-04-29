@@ -10,7 +10,24 @@ permissions:
   id-token: write
 
 jobs:
+  # Preflight: fail the entire release if any package manifest, version file, or
+  # internal-dep pin disagrees with the tag. Runs first; every other job
+  # `needs:` it so a misalignment cannot produce a partial release like the
+  # v0.9.6 PyPI/Python drift or the stale @treeship/core-wasm pins.
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check every release-version site against the tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          python3 scripts/check-release-versions.py "$VERSION"
+
   build:
+    needs: preflight
     strategy:
       fail-fast: false
       matrix:
@@ -286,6 +303,9 @@ jobs:
           set -e
           VERSION="${GITHUB_REF_NAME#v}"
           PKG="treeship-sdk"
+          # PEP 503 normalizes hyphens to underscores in built filenames; both
+          # treeship_sdk-X.Y.Z-*.whl and treeship_sdk-X.Y.Z.tar.gz must exist.
+          DIST_NAME="treeship_sdk"
 
           # First line of defense: version-specific endpoint. Returns
           # 200 for a live version, 404 otherwise; no lag because it
@@ -297,14 +317,46 @@ jobs:
             exit 0
           fi
 
+          # Clean any stale build artifacts before building. v0.9.6 shipped
+          # with sdk-python pyproject at 0.9.5; if a left-over dist/ from a
+          # previous run exists, twine could upload that wrong-version file
+          # under --skip-existing without anyone noticing.
+          rm -rf dist build *.egg-info treeship_sdk.egg-info
+
           python -m build
 
-          # Second line of defense: twine --skip-existing returns 0
-          # when the file already exists, so the normal path handles
-          # the race cleanly. The output-grep fallback catches the
-          # edge case where twine does exit non-zero on "already
-          # exists" (older versions, proxy errors, etc.).
-          if UPLOAD_OUTPUT="$(twine upload --skip-existing dist/* 2>&1)"; then
+          # Verify the built artifacts actually carry the expected version.
+          # If pyproject.toml drifted from the tag (the v0.9.6 failure mode),
+          # python -m build happily produces files named after the wrong
+          # version; we refuse to upload them.
+          EXPECTED_WHEEL="dist/${DIST_NAME}-${VERSION}-py3-none-any.whl"
+          EXPECTED_SDIST="dist/${DIST_NAME}-${VERSION}.tar.gz"
+          MISSING=()
+          for f in "$EXPECTED_WHEEL" "$EXPECTED_SDIST"; do
+            if [ ! -f "$f" ]; then
+              MISSING+=("$f")
+            fi
+          done
+          if [ ${#MISSING[@]} -gt 0 ]; then
+            echo "::error::expected dist artifacts missing: ${MISSING[*]}"
+            echo "::error::dist/ contains:"
+            ls -la dist/ || true
+            echo "::error::pyproject.toml may have drifted from the tag. Aborting before upload."
+            exit 1
+          fi
+          # Refuse to upload anything that isn't the exact two files we expect
+          # — if dist/ contains a stray older wheel, --skip-existing would
+          # silently accept it.
+          UNEXPECTED="$(find dist -mindepth 1 -maxdepth 1 ! -name "$(basename "$EXPECTED_WHEEL")" ! -name "$(basename "$EXPECTED_SDIST")" -print)"
+          if [ -n "$UNEXPECTED" ]; then
+            echo "::error::unexpected artifacts in dist/, refusing to upload:"
+            echo "$UNEXPECTED"
+            exit 1
+          fi
+
+          # Upload exact paths, not a glob. Belt-and-braces with the dist/
+          # cleanup above: even if something snuck in, twine only sees these.
+          if UPLOAD_OUTPUT="$(twine upload --skip-existing "$EXPECTED_WHEEL" "$EXPECTED_SDIST" 2>&1)"; then
             echo "$UPLOAD_OUTPUT"
             exit 0
           fi
