@@ -131,12 +131,40 @@ impl From<serde_json::Error> for ConfigError { fn from(e: serde_json::Error) -> 
 
 // -- Load / Save / Migrate ----------------------------------------------------
 
+/// Where the resolved config path came from. Surfaced by `doctor` so users
+/// debugging "wrong config" can see which lookup tier won.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigSource {
+    /// Caller passed `--config <path>`.
+    Explicit,
+    /// `TREESHIP_CONFIG` environment variable.
+    Env,
+    /// `.treeship/config.json` discovered by walking up from cwd. Picked over
+    /// the global config so that a user inside a project workspace can keep a
+    /// project-local keystore even when their home `~/.treeship` is broken.
+    ProjectLocal,
+    /// Fallback: `~/.treeship/config.json`.
+    Global,
+}
+
+impl ConfigSource {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Explicit     => "explicit (--config)",
+            Self::Env          => "env (TREESHIP_CONFIG)",
+            Self::ProjectLocal => "project-local",
+            Self::Global       => "global",
+        }
+    }
+}
+
 /// Resolve the config-file path, honoring `TREESHIP_CONFIG` first.
 ///
 /// Order of precedence (highest first):
 ///   1. The `--config <path>` CLI flag (handled by the caller).
 ///   2. The `TREESHIP_CONFIG` environment variable.
-///   3. `~/.treeship/config.json`.
+///   3. `.treeship/config.json` discovered by walking up from cwd.
+///   4. `~/.treeship/config.json`.
 ///
 /// The env-var hook exists so SDK consumers and CI runners can target an
 /// isolated keystore without forcing every SDK to add a per-call config
@@ -156,16 +184,118 @@ impl From<serde_json::Error> for ConfigError { fn from(e: serde_json::Error) -> 
 /// touch. Don't add owner-checks or symlink-resolution rejection here
 /// without first explaining what privilege boundary they would defend.
 pub fn default_config_path() -> Result<PathBuf, ConfigError> {
+    Ok(resolve_config_path()?.0)
+}
+
+/// Like `default_config_path` but also returns where the path came from.
+/// `doctor` uses the source label to explain unexpected resolution.
+pub fn resolve_config_path() -> Result<(PathBuf, ConfigSource), ConfigError> {
     if let Some(env) = std::env::var_os("TREESHIP_CONFIG") {
-        // Empty string is interpreted as "unset" -- avoids a footgun where a
-        // shell exports `TREESHIP_CONFIG=` and silently retargets every
-        // CLI invocation at the working directory.
         if !env.is_empty() {
-            return Ok(PathBuf::from(env));
+            return Ok((PathBuf::from(env), ConfigSource::Env));
         }
     }
+
     let home = home::home_dir().ok_or(ConfigError::NoHome)?;
-    Ok(home.join(".treeship").join("config.json"))
+    let global_path = home.join(".treeship").join("config.json");
+
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Some(found) = walk_up_for_project_config(&cwd, &global_path, |p| p.is_file()) {
+            return Ok((found, ConfigSource::ProjectLocal));
+        }
+    }
+
+    Ok((global_path, ConfigSource::Global))
+}
+
+/// Walk up from `start`, returning the first `.treeship/config.json` that
+/// passes `exists` and is not the global config. Pure so unit tests can drive
+/// it without chdir'ing.
+///
+/// Skipping `global_path` is what keeps `~/.treeship/config.json` from being
+/// labelled project-local for a user running from `$HOME` -- a real footgun
+/// because the keystore would then claim project-local provenance even though
+/// it's the same global config.
+fn walk_up_for_project_config<F: Fn(&Path) -> bool>(
+    start: &Path,
+    global_path: &Path,
+    exists: F,
+) -> Option<PathBuf> {
+    let mut dir = start;
+    loop {
+        let candidate = dir.join(".treeship").join("config.json");
+        if exists(&candidate) && candidate != global_path {
+            return Some(candidate);
+        }
+        match dir.parent() {
+            Some(parent) => dir = parent,
+            None => return None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    fn fake_exists(present: &[&str]) -> impl Fn(&Path) -> bool {
+        let set: HashSet<PathBuf> = present.iter().map(PathBuf::from).collect();
+        move |p: &Path| set.contains(p)
+    }
+
+    #[test]
+    fn walk_up_finds_nearest_project_config() {
+        // /home/u/work/proj/sub  →  finds /home/u/work/proj/.treeship/config.json
+        let global = PathBuf::from("/home/u/.treeship/config.json");
+        let found = walk_up_for_project_config(
+            Path::new("/home/u/work/proj/sub"),
+            &global,
+            fake_exists(&["/home/u/work/proj/.treeship/config.json"]),
+        );
+        assert_eq!(found, Some(PathBuf::from("/home/u/work/proj/.treeship/config.json")));
+    }
+
+    #[test]
+    fn walk_up_skips_when_only_match_is_global() {
+        // Running from a subdir of $HOME with no project config -- the only
+        // match in the walk is $HOME/.treeship/config.json itself, which is
+        // the global. Must NOT label that as project-local.
+        let global = PathBuf::from("/home/u/.treeship/config.json");
+        let found = walk_up_for_project_config(
+            Path::new("/home/u/Documents"),
+            &global,
+            fake_exists(&["/home/u/.treeship/config.json"]),
+        );
+        assert_eq!(found, None);
+    }
+
+    #[test]
+    fn walk_up_returns_none_when_nothing_matches() {
+        let global = PathBuf::from("/home/u/.treeship/config.json");
+        let found = walk_up_for_project_config(
+            Path::new("/home/u/work/proj"),
+            &global,
+            fake_exists(&[]),
+        );
+        assert_eq!(found, None);
+    }
+
+    #[test]
+    fn walk_up_prefers_nearest_over_ancestor() {
+        // Both /a/b/.treeship/config.json and /a/.treeship/config.json exist
+        // -- prefer the nearest.
+        let global = PathBuf::from("/home/u/.treeship/config.json");
+        let found = walk_up_for_project_config(
+            Path::new("/a/b/c"),
+            &global,
+            fake_exists(&[
+                "/a/b/.treeship/config.json",
+                "/a/.treeship/config.json",
+            ]),
+        );
+        assert_eq!(found, Some(PathBuf::from("/a/b/.treeship/config.json")));
+    }
 }
 
 pub fn load(path: &Path) -> Result<Config, ConfigError> {

@@ -179,6 +179,14 @@ pub fn run(
                 "treeship initialized",
                 &ctx.config.ship_id,
             ));
+            // Surface where the config came from. A user debugging "wrong
+            // keystore" or "stale config" needs to see whether the resolved
+            // path was an --config override, env var, project-local
+            // discovery, or the global fallback. v0.9.6 had no signal here.
+            checks.push(Check::info(
+                "config source",
+                &format!("{} -- {}", ctx.config_source.label(), ctx.config_path.display()),
+            ));
         }
         Err(_) => {
             checks.push(Check::fail(
