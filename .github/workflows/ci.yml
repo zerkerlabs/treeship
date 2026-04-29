@@ -67,6 +67,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
@@ -76,6 +78,12 @@ jobs:
 
       - name: Build CLI
         run: cargo build --bin treeship
+
+      # Cross-SDK builds @treeship/core-wasm from source (so it tests the
+      # workspace, not whatever was last published to npm). wasm-pack is
+      # required.
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Install tsx
         run: |

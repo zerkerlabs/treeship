@@ -24,15 +24,83 @@ if [[ -z "${TREESHIP_SKIP_BUILD:-}" ]]; then
   (cd "$REPO_ROOT" && cargo build --bin treeship)
 fi
 
-# 2. Build the TypeScript SDK if its dist/ is missing or older than src/.
-# The runner imports from packages/sdk-ts/dist/ (real .js, full module
-# resolution); building on demand here means a developer who hasn't
-# touched the SDK in a while still gets a green run.
+# 2. Build the TypeScript SDK against the workspace's @treeship/core-wasm,
+# not the npm registry copy. During cutover PRs (e.g. v0.9.7), the SDK's
+# package.json declares the *next* core-wasm version which has not yet
+# been published; resolving that from npm gives ETARGET. The contract
+# suite's job is to verify the workspace, not yesterday's published
+# graph, so we build core-wasm locally and install it into the SDK as
+# a file: tarball before npm install.
+#
+# Original package.json + package-lock.json are restored on EXIT so
+# local invocations leave the working tree clean.
 SDK_TS_DIR="$REPO_ROOT/packages/sdk-ts"
-if [[ ! -f "$SDK_TS_DIR/dist/index.js" ]] || [[ -n "$(find "$SDK_TS_DIR/src" -newer "$SDK_TS_DIR/dist/index.js" -type f 2>/dev/null | head -1)" ]]; then
-  echo "==> building TS SDK" >&2
-  (cd "$SDK_TS_DIR" && npm install --no-audit --no-fund --silent && npm run build --silent)
+CORE_WASM_DIR="$REPO_ROOT/packages/core-wasm"
+CORE_WASM_PKG_DIR="$CORE_WASM_DIR/pkg"
+TARBALL_DIR="$REPO_ROOT/target/cross-sdk-npm"
+
+if ! command -v wasm-pack >/dev/null 2>&1; then
+  cat >&2 <<'EOF'
+::error::wasm-pack not found. Cross-SDK builds @treeship/core-wasm from
+source and needs wasm-pack on PATH. Install with:
+  curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+or:
+  cargo install wasm-pack --locked
+EOF
+  exit 3
 fi
+
+# Determine the version from the SDK manifest -- this is the version
+# pyproject/Cargo/package.json all agree on after `release.sh prepare`,
+# which is the version we're testing here. Strip any leading semver
+# prefix (^, ~, =, v) so build-npm.sh receives a clean version.
+CORE_WASM_VERSION="$(node -p "require('$SDK_TS_DIR/package.json').dependencies['@treeship/core-wasm'].replace(/^[\\^~=v]+/, '')")"
+
+echo "==> building local @treeship/core-wasm@${CORE_WASM_VERSION}" >&2
+(cd "$CORE_WASM_DIR" && bash build-npm.sh "$CORE_WASM_VERSION" >&2)
+
+mkdir -p "$TARBALL_DIR"
+echo "==> packing local @treeship/core-wasm" >&2
+CORE_WASM_TGZ_NAME="$(cd "$CORE_WASM_PKG_DIR" && npm pack --pack-destination "$TARBALL_DIR" --silent)"
+CORE_WASM_TGZ="$TARBALL_DIR/$CORE_WASM_TGZ_NAME"
+if [[ ! -f "$CORE_WASM_TGZ" ]]; then
+  echo "::error::expected tarball at $CORE_WASM_TGZ but it doesn't exist" >&2
+  exit 1
+fi
+
+# Snapshot package.json + lockfile, restore on any exit. Without this, a
+# Ctrl-C halfway through would leave a dev's working tree pointing at a
+# file: dependency.
+SDK_PKG="$SDK_TS_DIR/package.json"
+SDK_LOCK="$SDK_TS_DIR/package-lock.json"
+SDK_PKG_BAK="$(mktemp -t cross-sdk-pkg.XXXXXX)"
+SDK_LOCK_BAK="$(mktemp -t cross-sdk-lock.XXXXXX)"
+cp "$SDK_PKG" "$SDK_PKG_BAK"
+if [[ -f "$SDK_LOCK" ]]; then cp "$SDK_LOCK" "$SDK_LOCK_BAK"; else : > "$SDK_LOCK_BAK"; fi
+restore_sdk_manifests() {
+  if [[ -f "$SDK_PKG_BAK" ]]; then mv "$SDK_PKG_BAK" "$SDK_PKG"; fi
+  if [[ -s "$SDK_LOCK_BAK" ]]; then
+    mv "$SDK_LOCK_BAK" "$SDK_LOCK"
+  else
+    rm -f "$SDK_LOCK_BAK" "$SDK_LOCK"
+  fi
+}
+trap restore_sdk_manifests EXIT
+
+# Rewrite the dependency to point at the local tarball, then install +
+# build. Lockfile is removed so npm doesn't try to honor a registry
+# resolution from a previous run.
+node - "$SDK_PKG" "$CORE_WASM_TGZ" <<'NODE'
+const fs = require('fs');
+const [pkgPath, tgz] = process.argv.slice(2);
+const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+pkg.dependencies = pkg.dependencies || {};
+pkg.dependencies['@treeship/core-wasm'] = `file:${tgz}`;
+fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+NODE
+
+echo "==> building TS SDK against local core-wasm" >&2
+(cd "$SDK_TS_DIR" && rm -f package-lock.json && rm -rf node_modules/@treeship/core-wasm && npm install --no-audit --no-fund --silent && npm run build --silent)
 
 # 3. Generate corpus.
 echo "==> generating test vectors" >&2
