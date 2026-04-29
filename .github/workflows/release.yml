@@ -354,6 +354,12 @@ jobs:
             exit 1
           fi
 
+          # Validate package metadata (long-description rendering, required
+          # fields, METADATA-Version compatibility) before upload. PyPI runs
+          # the same check server-side; catching it here means we fail
+          # before publish instead of after a partial release.
+          twine check "$EXPECTED_WHEEL" "$EXPECTED_SDIST"
+
           # Upload exact paths, not a glob. Belt-and-braces with the dist/
           # cleanup above: even if something snuck in, twine only sees these.
           if UPLOAD_OUTPUT="$(twine upload --skip-existing "$EXPECTED_WHEEL" "$EXPECTED_SDIST" 2>&1)"; then
