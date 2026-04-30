@@ -1,0 +1,127 @@
+---
+title: Agent Harnesses
+description: How Treeship attaches to and observes each agent surface. The differentiator behind Verified coverage.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+A **harness** is how Treeship attaches to and observes a specific agent surface. Native hooks for Claude Code, an MCP bridge for Cursor / Codex / Cline, skill files for Hermes / OpenClaw, shell-wrap for any custom agent, git-reconcile as the universal backstop. Harnesses make agents *observable*.
+
+Cards describe **who** an agent is. Harnesses describe **how** Treeship is attached to it. The two stay distinct on purpose: the same surface (Claude Code) might one day have multiple harnesses (native hook vs MCP-only), and the same harness will instrument many cards (every agent of that surface in this workspace).
+
+## The 1:1 mapping today
+
+In v0.9.8, every supported surface has exactly one harness. The harness IDs match what users type to `treeship add`:
+
+| Harness ID | Surface | Coverage | Auto-installable? |
+|---|---|---|---|
+| `claude-code` | Claude Code | high | yes — native hook + MCP |
+| `cursor` | Cursor | medium | yes — MCP |
+| `cline` | Cline | medium | yes — MCP |
+| `codex` | Codex CLI | medium | yes — TOML MCP |
+| `hermes` | Hermes | medium | yes — skill file |
+| `openclaw` | OpenClaw | medium | yes — skill file |
+| `ninjatech-superninja` | NinjaTech / SuperNinja remote | basic | **no** — see [NinjaTech integration](/docs/integrations/ninjatech) |
+| `ninjatech-ninja-dev` | Ninja Dev IDE | medium | **no** — manual MCP |
+| `generic-mcp` | Any MCP client | medium | **no** — manual register |
+| `shell-wrap` | Custom shell-wrap agent | basic | **no** — `treeship wrap` only |
+
+The four "no auto-installer" rows still have manifests. `treeship harness inspect <id>` is honest about what they could capture vs what's actually attached.
+
+## Manifest vs state
+
+Treeship splits harness data into two physically separate types so reports can't conflate "could capture" with "did capture":
+
+**`HarnessManifest`** — static metadata, in code:
+
+```rust
+pub struct HarnessManifest {
+    pub harness_id: &'static str,
+    pub surface: AgentSurface,
+    pub display_name: &'static str,
+    pub connection_modes: &'static [ConnectionMode],
+    pub coverage: CoverageLevel,
+    pub captures: PotentialCaptures,        // ← what this harness COULD capture
+    pub known_gaps: &'static [&'static str],
+    pub privacy_posture: &'static str,
+    pub recommended_backstops: &'static [ConnectionMode],
+    pub install: Option<InstallProfile>,
+}
+```
+
+**`HarnessState`** — per-workspace, on disk at `.treeship/harnesses/<id>.json`:
+
+```rust
+pub struct HarnessState {
+    pub harness_id: String,
+    pub status: HarnessStatus,              // detected / instrumented / verified / ...
+    pub coverage: CoverageLevel,
+    pub active_connection_modes: Vec<ConnectionMode>,
+    pub last_smoke_result: Option<SmokeResult>,
+    pub last_verified_at: Option<String>,
+    pub verified_captures: VerifiedCaptures, // ← what's actually been PROVEN
+    pub linked_agent_ids: Vec<String>,
+    ...
+}
+```
+
+`PotentialCaptures` is `bool` per signal. `VerifiedCaptures` is `Option<bool>` per signal: `Some(true)` proven, `Some(false)` smoke ran but signal didn't fire, `None` never asserted (the default).
+
+## Status lifecycle
+
+```
+Detected → Available → Instrumented → Verified
+                              ↓
+                        Drifted / Degraded / Disabled
+```
+
+| Status | What it means |
+|---|---|
+| **Detected** | A manifest exists; nothing on disk. |
+| **Available** | The manifest has an installer but Treeship hasn't installed it in this workspace. (Reserved for "user declined" path.) |
+| **Instrumented** | Treeship installed the snippet/config. Generic trust-fabric smoke may have passed. |
+| **Verified** | A harness-specific smoke has proven this harness's own capture path on this machine. **Setup's generic smoke does not promote here.** |
+| **Drifted** | The on-disk install no longer matches what Treeship would write. (Reserved for a future drift-check command.) |
+| **Degraded** | Capture is incomplete — a previously-proven signal stopped firing. (Reserved.) |
+| **Disabled** | User explicitly opted out. |
+
+<Callout type="warn">
+Setup's smoke runs a generic `init → session → wrap → close → package verify` round-trip. It proves Treeship's signing pipeline works. It does *not* prove Claude Code's native hook fired, or that Cursor's MCP routing actually captured a tool call. Setup therefore promotes harnesses to **Instrumented**, not Verified. Verified is reserved for harness-specific smokes that exercise each capture signal.
+</Callout>
+
+## CLI
+
+```bash
+treeship harness list                    # every manifest joined with workspace state
+treeship harness inspect <id>            # full manifest + state for one harness
+treeship harness smoke <id>              # generic trust-fabric smoke (does NOT prove harness-specific capture)
+```
+
+`harness inspect` shows two distinct rows:
+
+```
+potential captures (when attached and working):
+  files.read     yes
+  files.write    yes
+  commands.run   yes
+  mcp.call       yes
+  model/provider yes
+
+verified captures (proven by harness-specific smoke):
+  (none yet -- run a real session through this harness)
+```
+
+## How linkage works
+
+When you run `treeship setup` or `treeship agent register`, Treeship records the relationship between a card and its harness in two places:
+
+- `AgentCard.active_harness_id` — points the card at the harness it's attached through.
+- `HarnessState.linked_agent_ids` — lists every card on the other side.
+
+Both update on re-run; `harness inspect <id>` shows linked cards alongside last smoke result.
+
+## See also
+
+- [Agent Cards](/docs/concepts/agent-cards)
+- [Coverage levels](/docs/guides/coverage-levels)
+- Per-integration guides: [Claude Code](/docs/integrations/claude-code), [Cursor](/docs/integrations/cursor), [Codex](/docs/integrations/codex), [NinjaTech](/docs/integrations/ninjatech), [Hermes](/docs/integrations/hermes), [OpenClaw](/docs/integrations/openclaw)

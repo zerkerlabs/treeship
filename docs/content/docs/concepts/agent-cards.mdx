@@ -1,0 +1,106 @@
+---
+title: Agent Cards
+description: Workspace trust objects that describe who an agent is, what it's allowed to do, and which harness it uses.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+An **Agent Card** is the local trust object Treeship keeps about a specific agent in a specific workspace. Cards make agents *accountable*: they capture identity (who the agent is, where it runs, what model is behind it), authorization (which tools it may call, which require human approval, which are forbidden), and the lifecycle status of that local trust decision.
+
+Cards are distinct from three other things they're often confused with:
+
+| Object | What it is | Where it lives |
+|---|---|---|
+| **Harness** | How Treeship attaches to and observes the agent (hooks, MCP, shell-wrap) | Workspace (`.treeship/harnesses/<id>.json`) |
+| **Agent Card** | Who the agent is, what it's allowed, which harness it uses | Workspace (`.treeship/agents/<id>.json`) |
+| **`.agent` package** | Signed Agent Identity Certificate — a portable credential | Anywhere (you ship it) |
+| **Receipt** | Deterministic proof of what the agent actually did in one session | Workspace `.treeship/sessions/<id>.treeship` |
+
+## Card lifecycle
+
+```
+Draft  →  NeedsReview  →  Active  →  Verified
+```
+
+| Status | What it means |
+|---|---|
+| **Draft** | Treeship discovered an agent but the user has not approved attaching to it. Setup writes draft cards on first detection. |
+| **NeedsReview** | Either (a) the user ran `treeship agent register` so a signed certificate exists, or (b) the certificate digest changed under an existing card and we demoted it for re-review. The user has not yet confirmed. |
+| **Active** | The user approved the card via `treeship agents approve` or via `treeship setup --yes` for an instrumented harness. Treeship will use this card during sessions. |
+| **Verified** | A harness-specific smoke proved Treeship can capture the agent's actions on this machine. Reserved for v0.9.9+ per-harness smokes; setup's generic smoke does **not** flip cards to Verified. |
+
+<Callout type="info">
+**Verified is set programmatically, not manually.** There is no `treeship agents verify` flag. The word "verified" must mean Treeship checked something specific, not that the user toggled it.
+</Callout>
+
+## Card shape on disk
+
+```json
+{
+  "agent_id": "agent_b95cf24a2fdcfeb9",
+  "agent_name": "Claude Code",
+  "surface": "claude-code",
+  "connection_modes": ["native-hook", "mcp"],
+  "coverage": "high",
+  "capabilities": {
+    "bounded_tools": ["read_file", "write_file", "bash"],
+    "escalation_required": [],
+    "forbidden": []
+  },
+  "provenance": "discovered",
+  "status": "active",
+  "host": "MacBook-Pro.local",
+  "workspace": "/Users/me/projects/treeship/.treeship",
+  "active_harness_id": "claude-code",
+  "certificate_digest": "sha256:1ed78740...",
+  "created_at": "2026-04-30T03:09:50Z",
+  "updated_at": "2026-04-30T03:11:02Z"
+}
+```
+
+`agent_id` is deterministic from `(surface, host, workspace)` so re-running discovery produces the same card; setup is idempotent.
+
+## Provenance
+
+A card carries `provenance` so consumers can tell which surface authored it:
+
+- **`discovered`** — Treeship found the agent on disk via `treeship add --discover` / `treeship setup`.
+- **`registered`** — `treeship agent register` produced a signed `.agent` package. The card pins `certificate_digest` for tamper detection.
+- **`manual`** — User added the card with `treeship agent add --kind <kind>` for a surface that isn't auto-discoverable (remote VMs, generic-mcp wrappers).
+
+## Certificate digest drift
+
+If a card's `provenance` is `registered` and the user re-registers with different tools or scope, the resulting certificate has a different digest. Treeship demotes the card from Active or Verified back to **NeedsReview** on drift — silently keeping it Active would let `treeship agents` claim a certificate the user never approved.
+
+```
+$ treeship agent register --name claude-code --tools read_file --valid-days 30
+✓ card: needs-review
+
+$ treeship agents approve agent_xxx
+✓ status: active
+
+$ treeship agent register --name claude-code --tools read_file,write_file,bash --valid-days 60
+✓ card: needs-review     ← demoted on cert digest change
+```
+
+## Working with cards
+
+```bash
+treeship agents              # list every card with status + harness
+treeship agents review <id>  # full details
+treeship agents approve <id> # Draft / NeedsReview → Active
+treeship agents remove <id>  # delete the card
+```
+
+JSON output is stable for scripting:
+
+```bash
+treeship agents --format json | jq '.cards[] | select(.status=="active")'
+```
+
+## See also
+
+- [Agent Harnesses](/docs/concepts/harnesses)
+- [Coverage levels](/docs/guides/coverage-levels)
+- [`treeship setup`](/docs/cli/setup) — guided first-run flow that writes cards
+- [`treeship agent register`](/docs/cli/agent) — produce a signed `.agent` package alongside the card

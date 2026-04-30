@@ -1,0 +1,133 @@
+---
+title: NinjaTech / SuperNinja
+description: Attach Treeship to NinjaTech surfaces — Ninja Dev locally, SuperNinja remote VMs through MCP / GitHub once invite/join lands.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+NinjaTech ships as two distinct agent surfaces, and they need different harnesses:
+
+- **Ninja Dev** — a local IDE / VS Code-style agent. Runs on your machine. Treeship attaches via MCP or shell-wrap.
+- **SuperNinja** — a remote VM agent. Treeship can't auto-discover it locally; it joins through the (forthcoming) `treeship agent invite` flow or via GitHub PR / Actions evidence.
+
+This page covers both. If you're not sure which you're running, `treeship add --discover` will tell you.
+
+## Ninja Dev (local)
+
+### Detection
+
+Treeship looks for these signals on `treeship add --discover`:
+
+- `~/.ninja-dev/` directory
+- `~/.config/ninjatech/` directory
+- A VS Code extension whose dirname starts with `ninjatech` or `ninja-dev`
+- `ninja-dev` or `ninjatech` on `PATH`
+
+Any one is enough to surface a discovery hint. Two or more bumps confidence from `low` to `medium`.
+
+### Harness profile
+
+```
+treeship harness inspect ninjatech-ninja-dev
+```
+
+| Field | Value |
+|---|---|
+| Coverage | medium |
+| Potential captures | files.write, commands.run, mcp.call |
+| Connection modes | mcp, shell-wrap, git-reconcile |
+| Recommended backstops | shell-wrap, git-reconcile |
+
+### Attach
+
+There's no automated installer for Ninja Dev today (`install: None` in the manifest) — the extension's MCP config path varies across versions. Register manually:
+
+```bash
+treeship agent register \
+  --name ninja-dev \
+  --tools read_file,write_file,bash \
+  --description "Ninja Dev IDE local"
+```
+
+Then point your Ninja Dev MCP config at `npx -y @treeship/mcp` — see [the Generic MCP guide](/docs/integrations/mcp) for the shape.
+
+## SuperNinja (remote VM)
+
+### Why it's not auto-discoverable
+
+SuperNinja by definition runs on a machine that isn't yours. Discovery shows it as an always-on hint with `confidence: low`, not as a detection — there's no filesystem signal we could honestly match on.
+
+```
+treeship harness inspect ninjatech-superninja
+```
+
+| Field | Value |
+|---|---|
+| Coverage | basic |
+| Potential captures | files.write (via git-reconcile backstop) |
+| Connection modes | mcp, shell-wrap, git-reconcile |
+| Auto-installable | **no** |
+
+The harness inspect output is honest about this:
+
+```
+known gaps:
+  - SuperNinja runs on a remote VM and is not auto-discoverable locally.
+  - Coverage stays at basic until Treeship runs inside the VM or routes through MCP.
+  - Use `treeship agent invite` to attach a remote host (deferred to v0.9.9).
+```
+
+<Callout type="warn">
+**The full remote attach flow lands in v0.9.9.** Today, you can register a SuperNinja card so it appears in your inventory, but `verified_captures` will stay empty until v0.9.9 ships `treeship agent invite` / `treeship join --invite` and the harness can actually run inside the remote VM.
+</Callout>
+
+### What works today (v0.9.8)
+
+Three honest paths, in order of fidelity:
+
+#### 1. Manual register + git-reconcile backstop
+
+Best when SuperNinja's edits land in your local workspace via PR or rsync:
+
+```bash
+treeship agent register \
+  --name superninja \
+  --tools read_file,write_file,bash \
+  --description "SuperNinja remote VM via PR"
+```
+
+Then run a normal session — git-reconcile at close picks up the diff. The receipt's files-written list will be tagged `[git-reconcile]` instead of `[hook]`, which is the honest source attribution.
+
+#### 2. Manual register + GitHub Actions evidence
+
+If SuperNinja opens PRs against this repo, you can verify those PRs separately and link the receipts. Coming as part of the GitHub verification surface — see [GitHub verification](/docs/integrations/github) (v0.9.9).
+
+#### 3. MCP if the remote routes through it
+
+If your SuperNinja deployment exposes an MCP endpoint, you can point a local `@treeship/mcp` proxy at it and Treeship will see MCP-routed tool calls. This is the same shape as [Generic MCP](/docs/integrations/mcp).
+
+### What lands in v0.9.9
+
+```bash
+# On your local machine
+treeship agent invite \
+  --name superninja \
+  --kind ninjatech-superninja \
+  --host remote-vm
+
+# Output:
+#   Run on the remote VM:
+#     curl -fsSL treeship.dev/setup | sh
+#     treeship join --invite trj_8xK2...
+```
+
+The invite encodes which Ship/workspace the remote should join, expires in 15 minutes, and produces a Host Card + Agent Instance Card on this side once the remote runs `join`. After `join` succeeds, the SuperNinja harness can run *inside* the VM, lifting coverage from basic to medium (or higher if MCP plumbing is wired).
+
+This is intentionally not in v0.9.8. The principle is local-first: get a signed receipt from local agents before adding the remote-attach configuration burden.
+
+## See also
+
+- [Agent Harnesses](/docs/concepts/harnesses) — how harnesses work in general
+- [Coverage levels](/docs/guides/coverage-levels) — what `basic` vs `medium` actually claim
+- [First run](/docs/guides/first-run) — local-first setup flow
+- [Generic MCP](/docs/integrations/mcp) — shape of any custom MCP-backed harness

@@ -1717,6 +1717,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
         Command::Package(sub) => match sub {
             PackageCommand::Inspect(a) => commands::package::inspect(
                 a.path.clone(),
+                cli.config.as_deref(),
                 printer,
             ),
             PackageCommand::Verify(a) => commands::package::verify(
