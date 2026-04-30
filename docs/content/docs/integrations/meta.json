@@ -1,4 +1,4 @@
 {
   "title": "Integrations",
-  "pages": ["claude-code", "cursor", "ninjatech", "openclaw", "hermes", "langchain", "mcp", "a2a", "lobster-cash", "verifiable-intent"]
+  "pages": ["agent-skills", "claude-code", "cursor", "ninjatech", "openclaw", "hermes", "langchain", "mcp", "a2a", "lobster-cash", "verifiable-intent"]
 }

@@ -1,0 +1,120 @@
+---
+title: Agent Skills
+description: Install the Treeship skill on any coding agent — Kimi, Claude, Codex, Cursor, OpenClaw, Hermes. One skill, every agent.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Agent Skills
+
+<Callout type="info">
+**One skill, every agent.** The same `SKILL.md` works with Kimi Code CLI, Claude Code, Codex, Cursor, OpenClaw, and Hermes. Install it once and the agent can sign actions, verify chains, manage approvals, and push receipts to the Hub without you re-explaining the API every conversation.
+</Callout>
+
+The Treeship Agent Skill is a single Markdown file the agent reads as durable knowledge: the CLI commands, the Python and TypeScript SDK shapes, when to attest action vs. approval vs. handoff vs. decision, the MCP bridge wiring, the Hub API surface, and the approval-gated workflow pattern. Drop it into any of the supported agents' skills directory and the agent stops needing the API explained to it.
+
+## Quick Install
+
+Pick your agent and run the matching command:
+
+```bash
+# Kimi Code CLI
+npx skills add zerkerlabs/treeship --skill treeship --agent kimi-cli -g -y
+
+# Claude Code
+npx skills add zerkerlabs/treeship --skill treeship --agent claude-code -g -y
+
+# Codex
+npx skills add zerkerlabs/treeship --skill treeship --agent codex -g -y
+
+# Cursor
+npx skills add zerkerlabs/treeship --skill treeship --agent cursor -g -y
+
+# OpenClaw
+npx skills add zerkerlabs/treeship --skill treeship --agent openclaw -g -y
+
+# Hermes (no skills installer; plain curl into the skill dir)
+mkdir -p ~/.hermes/skills/treeship
+curl -fsSL https://raw.githubusercontent.com/zerkerlabs/treeship/main/skills/treeship/SKILL.md \
+  -o ~/.hermes/skills/treeship/SKILL.md
+```
+
+`-g` installs globally (one copy on the machine, every project sees it). `-y` skips the confirmation prompt — useful in CI and scripted setup.
+
+## What the Skill Teaches Your Agent
+
+- **Every Treeship CLI command** — `wrap`, `verify`, `session report`, `approve`, `hub push`, plus the v0.9.x setup/harness/agents surface for first-run orchestration.
+- **The Python and TypeScript SDK shapes** — `Treeship().attest_action()`, `Ship.attestAction()`, full result types and exceptions.
+- **The MCP bridge wiring** — exact `claude mcp add`, `kimi mcp add`, `cursor mcp.json` snippets the agent can paste back to a user who asks "how do I attach Treeship to my agent?".
+- **Approval-gated workflows** — the create-approval / consume-with-nonce / verify-with-replay-checks pattern, with realistic examples (deployment, payment authorization, scoped tool grants).
+- **Chained workflows** — multi-agent handoffs linked by `parent_id`, the chain walk that `treeship verify` runs, what passes vs. fails.
+- **The Hub API and public verification URLs** — DPoP auth, `/v1/artifacts`, public `/verify/<id>` endpoints, no API keys needed for verification.
+
+## MCP Bridge (optional, recommended for full coverage)
+
+The skill teaches the agent what to do. The MCP bridge ([`@treeship/mcp`](https://www.npmjs.com/package/@treeship/mcp)) captures whatever the agent does. Together they give High coverage without prompting.
+
+```bash
+# Claude Code
+claude mcp add --transport stdio treeship -- npx -y @treeship/mcp
+
+# Kimi Code CLI
+kimi mcp add --transport stdio treeship -- npx -y @treeship/mcp
+
+# Cursor — add to ~/.cursor/mcp.json
+{
+  "mcpServers": {
+    "treeship": { "command": "npx", "args": ["-y", "@treeship/mcp"] }
+  }
+}
+```
+
+Codex's MCP config lives at `~/.codex/config.toml`; Hermes routes commands through `treeship wrap` per the skill's guidance rather than via MCP today.
+
+## Coverage Levels
+
+| Level | What Treeship sees | When |
+|---|---|---|
+| **High** | Every Read, Write, Bash, and MCP tool call captured automatically | Skill + MCP bridge attached, or Claude Code plugin installed |
+| **Medium** | Commands the agent explicitly wraps with `treeship wrap` (the skill tells it when this matters) | Skill alone, no MCP bridge |
+| **Basic** | Explicit `treeship wrap` calls for commands the user asked the agent to attest | Fallback when neither skill nor MCP is wired |
+
+The skill's job is to lift any agent from "doesn't know about Treeship" to at least Medium. Adding the MCP bridge — or installing the [Claude Code plugin](/integrations/claude-code) where available — lifts coverage to High. See the [coverage levels guide](/guides/coverage-levels) for the full ladder.
+
+## How It Works
+
+`SKILL.md` is a [YAML-frontmatter Markdown file](https://github.com/anthropics/skills) the agent loads as durable instructions. The frontmatter has a `name` and a `description`; the description is what the agent matches against the user's intent to decide when the skill applies. The body is regular Markdown — code blocks, tables, headings — that the agent reads as authoritative reference for the API.
+
+The skill is **declarative, not procedural**: it doesn't run anything itself. It teaches the agent the API and the right shape for each use case. The agent decides when to call the CLI or SDK based on what the user actually asked for. That keeps the skill safe (it's just text) and portable (the same file lands on every agent).
+
+## Updating
+
+```bash
+# Same install command — `-y` overwrites without prompting
+npx skills add zerkerlabs/treeship --skill treeship --agent <agent> -g -y
+```
+
+For Hermes, re-run the curl one-liner. The skill content is versioned with the Treeship release; each release that changes the CLI surface or SDK shape pushes a matching skill update. Pin to a specific release tag if you need stability:
+
+```bash
+npx skills add zerkerlabs/treeship@v0.10.0 --skill treeship --agent <agent> -g -y
+```
+
+## Removing
+
+```bash
+npx skills remove --skill treeship --agent <agent> -g
+
+# Or manual removal (any agent)
+rm -rf ~/.<agent-config-dir>/skills/treeship/
+```
+
+The skill leaves no other state behind — no daemons, no background processes, no tracking. Removing the directory un-installs cleanly.
+
+## Resources
+
+- [`skills/treeship/SKILL.md`](https://github.com/zerkerlabs/treeship/blob/main/skills/treeship/SKILL.md) — the skill content
+- [`integrations/agent-skills/README.md`](https://github.com/zerkerlabs/treeship/blob/main/integrations/agent-skills/README.md) — full multi-agent integration guide
+- [Claude Code integration](/integrations/claude-code) — higher-coverage path for Claude Code (plugin)
+- [Coverage levels](/guides/coverage-levels) — what High / Medium / Basic mean
+- [Install + registry topology](/guides/install) — what's on each registry and how to install Treeship itself
