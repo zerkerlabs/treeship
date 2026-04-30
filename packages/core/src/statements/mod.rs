@@ -19,6 +19,18 @@ pub const TYPE_RECEIPT:     &str = "treeship/receipt/v1";
 pub const TYPE_BUNDLE:      &str = "treeship/bundle/v1";
 pub const TYPE_DECISION:    &str = "treeship/decision/v1";
 
+// v0.9.9 Approval Authority schemas. See `approval_use` for details on
+// the journal-side record types and the `replay_check` metadata shape
+// that verify uses to report what level of replay check actually ran.
+mod approval_use;
+pub use approval_use::{
+    ApprovalRevocation, ApprovalUse, JournalCheckpoint, ReplayCheck,
+    ReplayCheckLevel,
+    TYPE_APPROVAL_REVOCATION, TYPE_APPROVAL_USE, TYPE_JOURNAL_CHECKPOINT,
+    approval_revocation_record_digest, approval_use_record_digest,
+    journal_checkpoint_record_digest, nonce_digest,
+};
+
 use serde::{Deserialize, Serialize};
 
 /// A reference to content being attested, approved, or receipted.
