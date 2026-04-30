@@ -1867,6 +1867,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 yes:           a.yes,
                 skip_smoke:    a.skip_smoke,
                 no_instrument: a.no_instrument,
+                format:        cli.format.clone(),
             },
             printer,
         ),
