@@ -241,21 +241,57 @@ pub fn run(
     };
 
     if smoke_ok {
-        // Smoke proved Treeship can capture on this machine. Promote
-        // every instrumented card straight to Verified. Cards we did not
-        // instrument (SuperNinja remote, generic-mcp without a known
-        // surface) stay at Draft -- smoke can't speak for them.
+        // Trust-semantics note (v0.9.8 PR 5 patch):
+        //
+        // The smoke we ran is the GENERIC trust-fabric round-trip
+        // (init/session/wrap/close/verify). It proves Treeship's signing,
+        // session log, package emission, and verify pipeline all work on
+        // this machine. It does NOT exercise any specific harness's
+        // capture path -- no Claude native hook fired, no Cursor MCP
+        // tool was routed, no Codex shell-wrap was tested. Marking
+        // harnesses Verified here would over-claim.
+        //
+        // Instead:
+        //   - cards confirmed by the user move Draft -> Active
+        //     (they survive `treeship agents review`)
+        //   - harnesses move Detected -> Instrumented with a smoke
+        //     summary that explicitly says "generic trust-fabric only"
+        //   - `verified_captures` stays empty
+        //   - HarnessStatus::Verified is reserved for v0.9.9 per-harness
+        //     smokes that assert on specific signals (files.read,
+        //     mcp.call, etc.)
+        let now = now_rfc3339();
+        let harnesses_dir = crate::commands::harnesses::harnesses_dir_for(&ctx.config_path);
         for card in &instrumented_cards {
             if let Err(e) = cards::set_status(
                 &agents_dir,
                 &card.agent_id,
-                CardStatus::Verified,
-                &now_rfc3339(),
+                CardStatus::Active,
+                &now,
             ) {
                 printer.warn(
-                    &format!("could not promote {} to verified", card.agent_id),
+                    &format!("could not promote {} to active", card.agent_id),
                     &[("error", &e.to_string())],
                 );
+            }
+            if let Some(harness_id) = card.active_harness_id.as_deref() {
+                if let Some(manifest) = crate::commands::harnesses::find(harness_id) {
+                    let mut state = crate::commands::harnesses::load_state(&harnesses_dir, harness_id)
+                        .unwrap_or_else(|_| crate::commands::harnesses::HarnessState::from_manifest(manifest, &now));
+                    state.status = crate::commands::harnesses::HarnessStatus::Instrumented;
+                    // Do NOT set last_verified_at: nothing was verified
+                    // about this specific harness.
+                    state.last_smoke_result = Some(crate::commands::harnesses::SmokeResult {
+                        at:      now.clone(),
+                        passed:  true,
+                        summary: "setup generic trust-fabric smoke ok (does not prove harness-specific capture)".into(),
+                    });
+                    if !state.linked_agent_ids.iter().any(|s| s == &card.agent_id) {
+                        state.linked_agent_ids.push(card.agent_id.clone());
+                        state.linked_agent_ids.sort();
+                    }
+                    let _ = crate::commands::harnesses::save_state(&harnesses_dir, &state);
+                }
             }
         }
     }
@@ -403,8 +439,10 @@ fn print_complete(cards_list: &[AgentCard], smoke_ok: bool, printer: &Printer) {
     }
     printer.blank();
     if smoke_ok {
-        printer.dim_info("  Smoke session proved Treeship can capture on this machine.");
-        printer.dim_info("  Live-agent capture only proven when you run a real session.");
+        printer.dim_info("  Generic trust-fabric smoke passed: signing, session log, package emission, verify.");
+        printer.dim_info("  Each harness is now `instrumented`. Per-harness capture (Claude native hook,");
+        printer.dim_info("  Cursor MCP, Codex shell-wrap, etc.) is NOT yet verified. Run a real session");
+        printer.dim_info("  through each harness to populate verified_captures and reach `verified`.");
     } else {
         printer.dim_info("  Smoke session skipped or failed; cards remain at draft / needs-review.");
     }

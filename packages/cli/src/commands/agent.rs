@@ -254,6 +254,11 @@ pub fn register(
         model:                 model.clone(),
         description:           description.clone(),
         certificate_digest:    Some(cert_digest),
+        // surface.kind() ("cursor-agent") and harness_id ("cursor") are
+        // distinct namespaces; harnesses::recommended_id is the right
+        // lookup so cards always point at a real entry in HARNESSES.
+        active_harness_id:     crate::commands::harnesses::recommended_id(surface)
+            .map(str::to_string),
         latest_session_id:     None,
         latest_receipt_digest: None,
         created_at:            now.clone(),
@@ -262,6 +267,26 @@ pub fn register(
     // upsert preserves any pre-existing session linkage and never demotes
     // a higher-status card.
     let merged = cards::upsert(&agents_dir, card, &now)?;
+
+    // Link the new card into the harness state (PR 5) so
+    // `treeship harness inspect <id>` shows which agents reference it.
+    // Best-effort -- harness registration failure should not fail
+    // certificate creation, since the .agent package + card are the
+    // primary outputs.
+    if let Some(harness_id) = merged.active_harness_id.clone() {
+        let harnesses_dir = crate::commands::harnesses::harnesses_dir_for(&ctx.config_path);
+        if let Err(e) = crate::commands::harnesses::link_agent(
+            &harnesses_dir,
+            &harness_id,
+            &merged.agent_id,
+            &now,
+        ) {
+            printer.warn(
+                "  could not link card into harness state",
+                &[("error", &e.to_string()), ("harness", &harness_id)],
+            );
+        }
+    }
 
     printer.blank();
     printer.success("agent certificate created", &[]);

@@ -258,6 +258,22 @@ enum Command {
     ///   treeship setup --no-instrument     # cards only, no config writes
     Setup(SetupArgs),
 
+    /// Inspect and smoke-test the local Harness Manager
+    ///
+    /// Cards describe agents; harnesses describe how Treeship attaches
+    /// to them. Use `harness list` to see every supported harness with
+    /// its coverage and status, `harness inspect <id>` for the full
+    /// manifest plus workspace state, and `harness smoke <id>` to verify
+    /// capture works end-to-end on this machine.
+    ///
+    /// Examples:
+    ///   treeship harness list
+    ///   treeship harness inspect claude-code
+    ///   treeship harness inspect ninjatech-superninja
+    ///   treeship harness smoke claude-code
+    #[command(subcommand)]
+    Harness(HarnessCommand),
+
     /// List pending approvals
     ///
     /// Shows actions that are blocked waiting for human approval.
@@ -805,6 +821,19 @@ enum AgentsCommand {
 
     /// Delete an Agent Card from the store. Idempotent.
     Remove { agent_id: String },
+}
+
+// --- harness ---------------------------------------------------------------
+
+#[derive(Subcommand)]
+enum HarnessCommand {
+    /// List every harness manifest joined with workspace state.
+    List,
+    /// Show the full manifest plus workspace state for one harness.
+    Inspect { harness_id: String },
+    /// Run an isolated smoke session and promote the harness to verified
+    /// on success.
+    Smoke { harness_id: String },
 }
 
 // --- setup -----------------------------------------------------------------
@@ -1713,6 +1742,25 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 a.description.clone(),
                 a.forbidden.clone(),
                 a.escalation.clone(),
+                cli.config.as_deref(),
+                printer,
+            ),
+        },
+
+        Command::Harness(sub) => match sub {
+            HarnessCommand::List => commands::harness::list(
+                cli.config.as_deref(),
+                Format::from_str(&cli.format),
+                printer,
+            ),
+            HarnessCommand::Inspect { harness_id } => commands::harness::inspect(
+                harness_id,
+                cli.config.as_deref(),
+                Format::from_str(&cli.format),
+                printer,
+            ),
+            HarnessCommand::Smoke { harness_id } => commands::harness::smoke(
+                harness_id,
                 cli.config.as_deref(),
                 printer,
             ),

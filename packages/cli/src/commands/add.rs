@@ -2,11 +2,11 @@
 //!
 //! Reads from two data sources, both shared:
 //!   * `commands::discovery` (PR 1)  detects which agents are on this machine
-//!   * `commands::templates` (PR 4)  declarative install rules per surface
+//!   * `commands::harnesses` (PR 5)   harness manifests + install rules per surface
 //!
 //! The PR 4 refactor pulled three separate install functions
 //! (`install_mcp_config`, `install_skill`, `install_codex_mcp_config`) and
-//! their hardcoded snippets/paths into `templates::PROFILES`. Adding a new
+//! their hardcoded snippets/paths into `harnesses::HARNESSES`. Adding a new
 //! surface is now one row in that table; this module just dispatches on
 //! `Profile::install_method`.
 
@@ -14,19 +14,19 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use crate::commands::discovery::{self, AgentSurface, DiscoveredAgent, Env};
-use crate::commands::templates::{self, InstallMethod, Profile};
+use crate::commands::harnesses::{self, HarnessManifest, InstallMethod, InstallProfile};
 use crate::printer::{Format, Printer};
 
 // ---------------------------------------------------------------------------
 // Detection -> install candidates
 // ---------------------------------------------------------------------------
 
-/// One agent we both detected on this machine AND have a template for.
-/// Surfaces without an instrumentation template (SuperNinja remote, Ninja
+/// One agent we both detected on this machine AND have an installable
+/// harness for. Manifests with `install: None` (SuperNinja remote, Ninja
 /// Dev, GenericMcp, ShellWrap) are filtered out -- there's nothing
-/// `install_via_profile` could write for them.
+/// `install_via_manifest` could write for them.
 struct InstallCandidate {
-    profile:  &'static Profile,
+    manifest: &'static HarnessManifest,
     /// The DiscoveredAgent reference the candidate came from. Carried so
     /// future tooling can show evidence paths in the install log.
     #[allow(dead_code)]
@@ -36,10 +36,14 @@ struct InstallCandidate {
 fn install_candidates(env: &Env) -> Vec<InstallCandidate> {
     discovery::discover(env)
         .into_iter()
-        .filter_map(|d| templates::for_surface(d.surface).map(|p| InstallCandidate {
-            profile:  p,
-            detected: d,
-        }))
+        .filter_map(|d| {
+            harnesses::for_surface(d.surface).and_then(|m| {
+                m.install.as_ref().map(|_| InstallCandidate {
+                    manifest: m,
+                    detected: d,
+                })
+            })
+        })
         .collect()
 }
 
@@ -64,32 +68,46 @@ fn is_safe_path(path: &Path) -> bool {
 // Install dispatch (data-driven)
 // ---------------------------------------------------------------------------
 
-/// Install one profile against the given HOME. Returns true if work was
-/// performed (or would be performed under `--dry-run`). False means
-/// "skipped because already installed."
-fn install_via_profile(
-    profile: &Profile,
+/// Install a harness against the given HOME. Manifests without
+/// `install` are caller-filtered (see `install_candidates`); this function
+/// asserts on that invariant rather than silently no-op'ing.
+///
+/// Returns true if work was performed (or would be performed under
+/// `--dry-run`). False means "skipped because already installed."
+pub fn install_via_manifest(
+    manifest: &HarnessManifest,
     home: &Path,
     dry_run: bool,
     printer: &Printer,
 ) -> Result<bool, Box<dyn std::error::Error>> {
-    let path = (profile.config_path)(home);
+    let install = match manifest.install.as_ref() {
+        Some(i) => i,
+        None => {
+            // Caller bug; report rather than silently doing nothing.
+            return Err(format!(
+                "{} has no install profile (manifest is metadata-only)",
+                manifest.harness_id
+            )
+            .into());
+        }
+    };
+    let path = (install.config_path)(home);
 
     if !is_safe_path(&path) {
         printer.warn(
-            &format!("  {} config path contains a symlink, skipping for safety", profile.display),
+            &format!("  {} config path contains a symlink, skipping for safety", manifest.display_name),
             &[],
         );
         return Ok(false);
     }
 
-    if (profile.idempotency)(&path) {
-        printer.dim_info(&format!("  {} already configured, skipping", profile.display));
+    if (install.idempotency)(&path) {
+        printer.dim_info(&format!("  {} already configured, skipping", manifest.display_name));
         return Ok(false);
     }
 
     if dry_run {
-        printer.info(&format!("  Would configure {} at {}", profile.display, path.display()));
+        printer.info(&format!("  Would configure {} at {}", manifest.display_name, path.display()));
         return Ok(true);
     }
 
@@ -97,15 +115,15 @@ fn install_via_profile(
         std::fs::create_dir_all(parent)?;
     }
 
-    match profile.install_method {
-        InstallMethod::JsonMcp   => install_json_mcp(profile, &path)?,
-        InstallMethod::TomlMcp   => install_toml_mcp(profile, &path)?,
-        InstallMethod::SkillFile => install_skill_file(profile, &path)?,
+    match install.install_method {
+        InstallMethod::JsonMcp   => install_json_mcp(manifest.harness_id, install.snippet, &path)?,
+        InstallMethod::TomlMcp   => install_toml_mcp(install.snippet, &path)?,
+        InstallMethod::SkillFile => install_skill_file(install.snippet, &path)?,
     }
 
-    printer.success(&format!("{} configured", profile.display), &[]);
+    printer.success(&format!("{} configured", manifest.display_name), &[]);
     printer.dim_info(&format!("  {}", path.display()));
-    if profile.install_method == InstallMethod::TomlMcp {
+    if install.install_method == InstallMethod::TomlMcp {
         // Codex (and future TOML clients) need a restart to reload MCP
         // settings. Keep the existing UX hint.
         printer.dim_info("  Restart the agent so it reloads MCP settings.");
@@ -114,15 +132,16 @@ fn install_via_profile(
 }
 
 /// JSON merge: read `path` (or start with `{"mcpServers": {}}`), insert
-/// `mcpServers.treeship` from the profile snippet, atomic-write back.
-fn install_json_mcp(profile: &Profile, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+/// `mcpServers.treeship` from the snippet, atomic-write back. `kind` fills
+/// the `__AGENT__` placeholder so receipts attribute activity correctly.
+fn install_json_mcp(kind: &str, snippet: &str, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let mut config: serde_json::Value = if path.exists() {
         serde_json::from_str(&std::fs::read_to_string(path)?)?
     } else {
         serde_json::json!({"mcpServers": {}})
     };
 
-    let entry_json = profile.snippet.replace("__AGENT__", profile.kind);
+    let entry_json = snippet.replace("__AGENT__", kind);
     let entry: serde_json::Value = serde_json::from_str(&entry_json)?;
 
     let servers = config
@@ -143,8 +162,8 @@ fn install_json_mcp(profile: &Profile, path: &Path) -> Result<(), Box<dyn std::e
 }
 
 /// TOML append: leave existing content untouched (preserves user comments
-/// and formatting); concatenate the profile snippet at the end.
-fn install_toml_mcp(profile: &Profile, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+/// and formatting); concatenate the snippet at the end.
+fn install_toml_mcp(snippet: &str, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let existing = if path.exists() {
         std::fs::read_to_string(path)?
     } else {
@@ -154,7 +173,7 @@ fn install_toml_mcp(profile: &Profile, path: &Path) -> Result<(), Box<dyn std::e
     if !new_content.is_empty() && !new_content.ends_with('\n') {
         new_content.push('\n');
     }
-    new_content.push_str(profile.snippet);
+    new_content.push_str(snippet);
     let tmp_path = path.with_extension("toml.tmp");
     std::fs::write(&tmp_path, &new_content)?;
     std::fs::rename(&tmp_path, path)?;
@@ -163,9 +182,9 @@ fn install_toml_mcp(profile: &Profile, path: &Path) -> Result<(), Box<dyn std::e
 
 /// Skill file: write the snippet (Markdown) to a fixed path. Idempotency
 /// already short-circuited if the file exists.
-fn install_skill_file(profile: &Profile, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+fn install_skill_file(snippet: &str, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let tmp_path = path.with_extension("tmp");
-    std::fs::write(&tmp_path, profile.snippet)?;
+    std::fs::write(&tmp_path, snippet)?;
     std::fs::rename(&tmp_path, path)?;
     Ok(())
 }
@@ -222,7 +241,23 @@ pub fn run_discover(format: Format, printer: &Printer) -> Result<(), Box<dyn std
     let agents = discovery::discover(&Env::current());
     match format {
         Format::Json => {
-            let value = serde_json::json!({ "agents": agents });
+            // Include recommended_harness_id alongside each agent so PR 3's
+            // setup orchestration and external tooling can read it
+            // without re-deriving from surface.
+            let enriched: Vec<serde_json::Value> = agents
+                .iter()
+                .map(|a| {
+                    let mut v = serde_json::to_value(a).unwrap_or(serde_json::Value::Null);
+                    if let Some(obj) = v.as_object_mut() {
+                        obj.insert(
+                            "recommended_harness_id".into(),
+                            serde_json::Value::String(a.recommended_harness_id().into()),
+                        );
+                    }
+                    v
+                })
+                .collect();
+            let value = serde_json::json!({ "agents": enriched });
             println!("{}", serde_json::to_string_pretty(&value)?);
         }
         Format::Text => {
@@ -253,6 +288,7 @@ fn print_discover_text(agents: &[DiscoveredAgent], printer: &Printer) {
         printer.dim_info(&format!("    surface:    {}", agent.surface.kind()));
         let conns: Vec<&str> = agent.connection_modes.iter().map(|c| c.label()).collect();
         printer.dim_info(&format!("    connection: {}", conns.join(" + ")));
+        printer.dim_info(&format!("    harness:    {}", agent.recommended_harness_id()));
         printer.dim_info(&format!("    coverage:   {}", agent.coverage.label()));
         printer.dim_info(&format!("    confidence: {}", agent.confidence.label()));
         printer.dim_info("    card:       draft");
@@ -291,9 +327,9 @@ pub fn run(
         printer.blank();
         printer.dim_info("  No agent frameworks detected on this machine that Treeship can instrument.");
         printer.blank();
-        printer.info("  Treeship has install templates for:");
-        for p in templates::PROFILES {
-            printer.info(&format!("    {}  ({})", p.display, p.kind));
+        printer.info("  Treeship has harness manifests for:");
+        for p in harnesses::HARNESSES {
+            printer.info(&format!("    {}  ({})", p.display_name, p.harness_id));
         }
         printer.blank();
         printer.hint("Install an agent framework, then run treeship add again.");
@@ -304,7 +340,7 @@ pub fn run(
     let targets: Vec<&InstallCandidate> = if !specific_agents.is_empty() {
         candidates
             .iter()
-            .filter(|c| specific_agents.iter().any(|s| s.eq_ignore_ascii_case(c.profile.kind)))
+            .filter(|c| specific_agents.iter().any(|s| s.eq_ignore_ascii_case(c.manifest.harness_id)))
             .collect()
     } else {
         candidates.iter().collect()
@@ -316,7 +352,7 @@ pub fn run(
         printer.blank();
         printer.info("  Detected:");
         for c in &candidates {
-            printer.info(&format!("    {}", c.profile.display));
+            printer.info(&format!("    {}", c.manifest.display_name));
         }
         printer.blank();
         return Ok(());
@@ -330,8 +366,8 @@ pub fn run(
             printer.info(&format!(
                 "    [{}] {}  -- {}",
                 i + 1,
-                c.profile.display,
-                c.profile.install_method.label()
+                c.manifest.display_name,
+                c.manifest.install.as_ref().unwrap().install_method.label()
             ));
         }
         printer.blank();
@@ -351,10 +387,10 @@ pub fn run(
 
     let mut installed = 0usize;
     for c in &targets {
-        match install_via_profile(c.profile, &home, dry_run, printer) {
+        match install_via_manifest(c.manifest, &home, dry_run, printer) {
             Ok(true)  => installed += 1,
             Ok(false) => {}
-            Err(e)    => printer.warn(&format!("Failed to configure {}: {}", c.profile.display, e), &[]),
+            Err(e)    => printer.warn(&format!("Failed to configure {}: {}", c.manifest.display_name, e), &[]),
         }
     }
 
@@ -388,7 +424,7 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    /// install_via_profile drives JSON-merge MCP installs against a tmp HOME.
+    /// install_via_manifest drives JSON-merge MCP installs against a tmp HOME.
     /// Asserts: file contents have mcpServers.treeship; second run is a no-op.
     #[test]
     fn json_mcp_installs_then_idempotent() {
@@ -400,9 +436,9 @@ mod tests {
         let home = home.as_path();
     std::fs::create_dir_all(home.join(".claude")).unwrap();
         let printer = Printer::new(Format::Text, true /* quiet */, true /* no_color */);
-        let profile = templates::for_surface(AgentSurface::ClaudeCode).unwrap();
+        let profile = harnesses::for_surface(AgentSurface::ClaudeCode).unwrap();
 
-        let did_install = install_via_profile(profile, home, false, &printer).unwrap();
+        let did_install = install_via_manifest(profile, home, false, &printer).unwrap();
         assert!(did_install);
 
         let written = home.join(".claude").join("mcp.json");
@@ -417,7 +453,7 @@ mod tests {
         );
 
         // Second run -- idempotency check returns true; nothing happens.
-        let did_install_again = install_via_profile(profile, home, false, &printer).unwrap();
+        let did_install_again = install_via_manifest(profile, home, false, &printer).unwrap();
         assert!(!did_install_again);
     }
 
@@ -433,8 +469,8 @@ mod tests {
         let home = home.as_path();
     std::fs::create_dir_all(home.join(".cursor")).unwrap();
         let printer = Printer::new(Format::Text, true, true);
-        let profile = templates::for_surface(AgentSurface::CursorAgent).unwrap();
-        install_via_profile(profile, home, false, &printer).unwrap();
+        let profile = harnesses::for_surface(AgentSurface::CursorAgent).unwrap();
+        install_via_manifest(profile, home, false, &printer).unwrap();
 
         let json: serde_json::Value = serde_json::from_slice(
             &std::fs::read(home.join(".cursor").join("mcp.json")).unwrap(),
@@ -460,8 +496,8 @@ mod tests {
         std::fs::write(&path, "# user note\nmodel = \"o4\"").unwrap();
 
         let printer = Printer::new(Format::Text, true, true);
-        let profile = templates::for_surface(AgentSurface::Codex).unwrap();
-        let did = install_via_profile(profile, home, false, &printer).unwrap();
+        let profile = harnesses::for_surface(AgentSurface::Codex).unwrap();
+        let did = install_via_manifest(profile, home, false, &printer).unwrap();
         assert!(did);
 
         let after = std::fs::read_to_string(&path).unwrap();
@@ -469,7 +505,7 @@ mod tests {
         assert!(after.contains("[mcp_servers.treeship]"), "appends treeship block");
 
         // Idempotency: second run is a no-op.
-        let again = install_via_profile(profile, home, false, &printer).unwrap();
+        let again = install_via_manifest(profile, home, false, &printer).unwrap();
         assert!(!again);
     }
 
@@ -483,15 +519,15 @@ mod tests {
         let home = home.as_path();
     std::fs::create_dir_all(home.join(".hermes")).unwrap();
         let printer = Printer::new(Format::Text, true, true);
-        let profile = templates::for_surface(AgentSurface::Hermes).unwrap();
+        let profile = harnesses::for_surface(AgentSurface::Hermes).unwrap();
 
-        let did = install_via_profile(profile, home, false, &printer).unwrap();
+        let did = install_via_manifest(profile, home, false, &printer).unwrap();
         assert!(did);
-        let skill = (profile.config_path)(home);
+        let skill = (profile.install.as_ref().unwrap().config_path)(home);
         assert!(skill.is_file(), "skill file should exist");
 
         // Idempotency: second run is a no-op.
-        let again = install_via_profile(profile, home, false, &printer).unwrap();
+        let again = install_via_manifest(profile, home, false, &printer).unwrap();
         assert!(!again);
     }
 
@@ -505,8 +541,8 @@ mod tests {
         let home = home.as_path();
     std::fs::create_dir_all(home.join(".claude")).unwrap();
         let printer = Printer::new(Format::Text, true, true);
-        let profile = templates::for_surface(AgentSurface::ClaudeCode).unwrap();
-        let did = install_via_profile(profile, home, true /* dry_run */, &printer).unwrap();
+        let profile = harnesses::for_surface(AgentSurface::ClaudeCode).unwrap();
+        let did = install_via_manifest(profile, home, true /* dry_run */, &printer).unwrap();
         // Reports as "would do work" but doesn't write.
         assert!(did);
         assert!(!home.join(".claude").join("mcp.json").exists());
@@ -530,8 +566,8 @@ mod tests {
         return;
 
         let printer = Printer::new(Format::Text, true, true);
-        let profile = templates::for_surface(AgentSurface::ClaudeCode).unwrap();
-        let did = install_via_profile(profile, home, false, &printer).unwrap();
+        let profile = harnesses::for_surface(AgentSurface::ClaudeCode).unwrap();
+        let did = install_via_manifest(profile, home, false, &printer).unwrap();
         assert!(!did, "symlinked path must be refused");
         // Nothing should have been written through the symlink.
         assert!(!target.path().join("mcp.json").exists());
@@ -540,21 +576,30 @@ mod tests {
     }
 
     #[test]
-    fn install_candidates_skips_surfaces_without_templates() {
-        // SuperNinja has no install template -- it should never appear as
-        // an InstallCandidate even though discover always emits it.
-        // We can't easily fake the discovery env from this test, but we
-        // can prove the filter directly: every PROFILES surface is
-        // instrumentable, no SuperNinja entry exists in PROFILES.
-        for p in templates::PROFILES {
-            assert_ne!(p.surface, AgentSurface::NinjatechSuperninja);
-            assert_ne!(p.surface, AgentSurface::ShellWrap);
-            assert_ne!(p.surface, AgentSurface::GenericMcp);
+    fn install_candidates_skips_surfaces_without_install_profile() {
+        // SuperNinja, Ninja Dev, GenericMcp, and ShellWrap have manifests
+        // (so `harness inspect` can describe them honestly) but `install:
+        // None`. The candidate filter must reject any manifest without
+        // install rules so add::run never tries to instrument them.
+        for h in harnesses::HARNESSES {
+            let candidate_eligible = h.install.is_some();
+            let is_remote_or_generic = matches!(
+                h.surface,
+                AgentSurface::NinjatechSuperninja
+                | AgentSurface::NinjatechNinjaDev
+                | AgentSurface::GenericMcp
+                | AgentSurface::ShellWrap
+            );
+            assert_eq!(
+                candidate_eligible, !is_remote_or_generic,
+                "{} install presence must match its candidate eligibility",
+                h.harness_id,
+            );
         }
     }
 
     /// Existing detect_agents PathBuf fields are gone; this is a compile-
-    /// time check that templates::for_surface is the canonical lookup
+    /// time check that harnesses::for_surface is the canonical lookup
     /// instead.
     #[test]
     fn template_paths_match_expected_layout() {
@@ -568,8 +613,8 @@ mod tests {
             ("openclaw",    "/h/.openclaw/skills/treeship/SKILL.md"),
         ];
         for (kind, expected) in cases {
-            let p = templates::find(kind).unwrap();
-            assert_eq!((p.config_path)(&home).to_str().unwrap(), expected, "{kind}");
+            let p = harnesses::find(kind).unwrap();
+            assert_eq!((p.install.as_ref().unwrap().config_path)(&home).to_str().unwrap(), expected, "{kind}");
         }
     }
 }
