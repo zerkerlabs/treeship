@@ -3,6 +3,10 @@
   "pages": [
     "overview",
     "init",
+    "setup",
+    "add",
+    "agents",
+    "harness",
     "wrap",
     "attest",
     "verify",

@@ -1,0 +1,139 @@
+---
+title: harness
+description: Inspect and smoke-test the local Harness Manager.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+## Usage
+
+```bash
+treeship harness <SUBCOMMAND>
+```
+
+## What it does
+
+Cards describe agents; **harnesses** describe how Treeship attaches to them. Each surface (Claude Code, Cursor, Cline, Codex, Hermes, OpenClaw, generic MCP, shell-wrap, NinjaTech) has a *manifest* — a declarative profile listing connection modes, coverage level, the capture signals Treeship can observe in principle, known gaps, and the install method (MCP entry, skill file, or "no auto-installer"). The manifest is the static contract; the **harness state** is the per-workspace status of a specific install: `Detected`, `Available`, `Instrumented`, or `Verified`.
+
+The two are kept separate by design: a manifest's `PotentialCaptures` (what a harness *could* observe if attached and working) is a different type from a state's `VerifiedCaptures` (what's actually been *proven* by a smoke run on this machine). UI code physically can't render one in the other's slot.
+
+<Callout type="info">
+The setup command in [`treeship setup`](/cli/setup) drives instrumentation. `treeship harness` is the read + smoke surface — it tells you what's installed and verifies the capture path actually fires. See [Harnesses](/concepts/harnesses) for the full lifecycle.
+</Callout>
+
+## Subcommands
+
+### `harness list`
+
+```bash
+treeship harness list
+treeship harness list --format json
+```
+
+Lists every harness manifest joined with workspace state. One row per supported surface; status reflects the local install.
+
+```
+HARNESS                       SURFACE        COVERAGE   STATUS         LAST SMOKE
+claude-code-mcp               claude-code    full       Verified       2 hours ago, ok
+cursor-mcp                    cursor         full       Instrumented   never
+cline-mcp                     cline          full       Detected       —
+codex-mcp                     codex          partial    Available      —
+hermes-skill                  hermes         partial    Instrumented   1 day ago, ok
+openclaw-skill                openclaw       partial    Detected       —
+ninjatech-superninja          ninjatech      basic      Detected       —     ← remote, no auto-instrument
+generic-mcp                   generic        partial    Available      —
+shell-wrap                    custom         basic      Available      —     ← treeship wrap only
+```
+
+### `harness inspect <id>`
+
+```bash
+treeship harness inspect claude-code-mcp
+treeship harness inspect ninjatech-superninja
+```
+
+Shows the full manifest plus workspace state for one harness. Two distinct rows for capture signals — one for **potential** (manifest contract), one for **verified** (state proof).
+
+```
+harness:           claude-code-mcp
+surface:           claude-code
+coverage:          full
+connection modes:  mcp
+status:            Verified
+last smoke:        2026-04-30T14:21:00Z (passed)
+
+potential captures (when attached and working):
+  files_read:    yes
+  files_written: yes
+  mcp_call:      yes
+  shell_exec:    no   (claude-code routes shell through a separate hook)
+
+verified captures (proven by harness-specific smoke):
+  files_read:    yes
+  files_written: yes
+  mcp_call:      yes
+  shell_exec:    not yet checked
+
+known gaps:
+  - shell_exec is not captured by this harness; pair with shell-wrap
+    for full coverage.
+
+privacy posture:    files_read tracks paths; never content
+recommended backstops: shell-wrap for any non-MCP shell calls
+```
+
+### `harness smoke <id>`
+
+```bash
+treeship harness smoke claude-code-mcp
+```
+
+Runs an isolated smoke session through the harness and promotes its workspace state to `Verified` on success. The smoke session lives in a tmpdir; it never pollutes the workspace journal.
+
+A passing smoke proves: (a) the agent's MCP/skill config still points at Treeship, (b) Treeship can capture the harness's claimed signals, and (c) the resulting receipt verifies. A failing smoke leaves the harness's status unchanged and prints what failed.
+
+```
+running smoke session for claude-code-mcp...
+
+✓ MCP server reachable
+✓ test action recorded (files_read, files_written, mcp_call)
+✓ session closed, package emitted
+✓ package verifies
+
+claude-code-mcp: Instrumented -> Verified
+verified captures: files_read, files_written, mcp_call
+last smoke recorded.
+```
+
+## Options (top-level)
+
+| Option | Description |
+|--------|-------------|
+| `--config <path>` | Config file path (default `~/.treeship/config.json`). |
+| `--format <fmt>` | `text` (default) or `json`. Stable shape for AI agents. |
+| `--no-color` | Disable color output. |
+
+## Status lifecycle
+
+```
+Detected ─────► Available ─────► Instrumented ─────► Verified
+   │                │                  │                  │
+   │                │                  │                  │
+discovered      installable       config wired       smoke-proven
+                                                  capture per signal
+```
+
+`Drifted`, `Degraded`, and `Disabled` are reserved for future use (e.g. an MCP entry whose binary path no longer resolves).
+
+## Privacy
+
+The harness records *what was captured*, never the content. `files_read: yes` means Treeship recorded a path; the file's contents do not enter the receipt. The same rule applies to `mcp_call` (records the tool call's name + caller, not its raw arguments) and `shell_exec` (records command-line metadata, not stdout/stderr).
+
+For the full privacy model, see [Receipts](/concepts/session-receipts) and the per-harness `privacy posture` line in `harness inspect`.
+
+## See also
+
+- [setup](/cli/setup) — orchestrates discover + instrument + smoke
+- [agents](/cli/agents) — Agent Cards (the trust object harnesses attach to)
+- [Harnesses](/concepts/harnesses) — concept page
+- [Coverage levels](/guides/coverage-levels) — full vs partial vs basic

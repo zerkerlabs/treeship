@@ -1,0 +1,129 @@
+---
+title: add
+description: Auto-detect and instrument installed AI agent frameworks.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+## Usage
+
+```bash
+treeship add [AGENTS]... [OPTIONS]
+```
+
+## What it does
+
+Detects which AI agent frameworks are installed on this machine and instruments them so they emit attestable events through Treeship. For each supported surface, `add` either installs an MCP server entry pointing at `@treeship/mcp`, or drops a Treeship skill file into the agent's skills directory — depending on what the agent supports.
+
+Surfaces detected:
+
+- **Claude Code** — adds `@treeship/mcp` as an MCP server in `~/Library/Application Support/Claude/...`
+- **Cursor** — same MCP path, in Cursor's MCP config
+- **Cline** — same MCP path
+- **Codex** — adds an MCP entry in `~/.codex/config.toml`
+- **Hermes** — drops a Treeship skill file
+- **OpenClaw** — drops a Treeship skill file
+- **NinjaTech (Ninja Dev local IDE)** — manual register today; SuperNinja remote attach is deferred
+- **Generic MCP** — any tool that speaks MCP can pick up the same server entry
+- **Shell-wrap (custom)** — for agents Treeship doesn't auto-detect; uses [`treeship wrap`](/cli/wrap) as a generic backstop
+
+<Callout type="info">
+For the typical first-run flow (detect → draft Agent Card → instrument → smoke), use [`treeship setup`](/cli/setup) instead. `add` is the focused instrumenter — it installs configs but doesn't draft cards or run a smoke.
+</Callout>
+
+## Examples
+
+```bash
+# Detect and instrument every installed agent
+treeship add
+```
+
+```bash
+# Instrument specific agents
+treeship add claude-code hermes
+```
+
+```bash
+# Non-interactive — instrument all detected agents without prompting
+treeship add --all
+```
+
+```bash
+# Show what would be done without writing anything
+treeship add --dry-run
+```
+
+```bash
+# Read-only: list detected agents, print a stable JSON shape, don't touch any config.
+treeship add --discover --format json
+```
+
+## Sample output
+
+```
+✓ detected 3 agents on this machine
+  - claude-code (high confidence)   ~/Library/Application Support/Claude/...
+  - cursor      (high confidence)   ~/.cursor/extensions/...
+  - hermes      (medium confidence) ~/.openclaw/skills/
+
+instrument all 3? (y/N) y
+
+✓ claude-code: added @treeship/mcp to ~/Library/Application Support/Claude/claude_desktop_config.json
+✓ cursor:      added @treeship/mcp to ~/.cursor/mcp.json
+✓ hermes:      wrote ~/.openclaw/skills/treeship.md
+
+3 agents instrumented. Restart each agent to pick up the change.
+```
+
+## `--discover` (read-only)
+
+```bash
+treeship add --discover
+treeship add --discover --format json
+```
+
+Lists every detected agent with `surface`, `connection_modes`, `coverage`, and `confidence` — without modifying any config. Useful for AI agents that want to see what's on a machine before deciding what to do, and for CI environments that need to confirm an instrumentation already happened.
+
+The JSON shape is stable for downstream tooling:
+
+```json
+{
+  "agents": [
+    {
+      "id": "agent_a1b2c3d4",
+      "surface": "claude-code",
+      "connection_modes": ["mcp"],
+      "coverage": "full",
+      "confidence": "high",
+      "host": "laptop.local",
+      "workspace": "/Users/me/work/treeship",
+      "recommended_harness_id": "claude-code-mcp",
+      "config_path": "~/Library/Application Support/Claude/claude_desktop_config.json",
+      "already_instrumented": true
+    }
+  ]
+}
+```
+
+`already_instrumented: true` means the agent's config already has the `@treeship/mcp` entry — re-running `treeship add` on this agent is a no-op.
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `--all` | Instrument every detected agent without prompting. |
+| `--dry-run` | Show what would be done without writing any config. |
+| `--discover` | Read-only: list detected agents and exit. Honors `--format`. |
+| `--format <fmt>` | `text` (default) or `json`. JSON is stable for AI agents. |
+| `--config <path>` | Config file path (default `~/.treeship/config.json`). |
+
+## Idempotency
+
+Re-running `treeship add` against an agent that's already instrumented is a no-op for that agent — the existing MCP entry or skill file isn't rewritten. Adding new agents to the machine and re-running `add` instruments only the new ones; the existing ones stay untouched.
+
+## See also
+
+- [setup](/cli/setup) — full first-run orchestration (discover + cards + instrument + smoke)
+- [agents](/cli/agents) — manage the resulting Agent Card store
+- [harness](/cli/harness) — inspect and smoke-test the per-agent capture path
+- [Coverage levels](/guides/coverage-levels) — what `full`, `partial`, `basic` mean
