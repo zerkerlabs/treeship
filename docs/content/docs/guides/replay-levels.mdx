@@ -13,8 +13,10 @@ When `treeship verify` or `treeship package verify` runs against a package that 
 ✓ replay package-local     no duplicate approval use inside package
 ✓ replay local-journal     local Approval Use Journal passed, use 1/1
 ✓ replay checkpoint        included journal checkpoint verified
-- replay hub-org           not checked (no Hub checkpoint in package)
+✓ replay hub-org           cp_42 signed by hub://zerker-org verifies; covers 1 use
 ```
+
+(when no Hub-signed checkpoint is embedded, the last row reads `- replay hub-org   not checked (no Hub checkpoint in package)` instead).
 
 ## The four levels
 
@@ -23,7 +25,7 @@ When `treeship verify` or `treeship package verify` runs against a package that 
 | `package-local` | No duplicate use *inside this package* | Says nothing about uses on this machine outside the package, or on other machines | Always |
 | `local-journal` | The recorded use is within `max_uses` per the **workspace's local journal** | Says nothing about other machines | Verifier has Treeship workspace |
 | `included-checkpoint` | An embedded `JournalCheckpoint`'s record_digest verifies offline | Doesn't bind to your workspace journal; only proves the checkpoint records weren't tampered after sealing | Package carries checkpoints |
-| `hub-org` | A signed Hub checkpoint validates global single-use across machines | — | **Reserved.** v0.9.9 doesn't ship a Hub. Never reports "passed" without one. |
+| `hub-org` | A signed Hub checkpoint validates global single-use across machines | — | **Available since v0.9.9 (consumer side).** Verifies an embedded Hub-signed `JournalCheckpoint` and its coverage. The Hub server itself is out of scope for v0.9.9. |
 
 ## How each level is checked
 
@@ -51,14 +53,24 @@ Reads the package's embedded `approvals/checkpoints/*.json`. Recomputes each `re
 - **Pass:** every checkpoint's stored digest matches the recompute.
 - **Fail:** any checkpoint was tampered after sealing.
 
-A checkpoint is itself a Merkle commitment over a contiguous range of journal records. Once PR 6 lands the Hub-signed variant, the same row will also verify the signature.
+A checkpoint is itself a Merkle commitment over a contiguous range of journal records. The Hub-signed variant (`checkpoint_kind: hub-org`) carries an embedded Ed25519 signature over the canonical signing bytes; that signature is what the `hub-org` row checks.
 
-### `hub-org` (reserved)
+### `hub-org` (consumer side, since v0.9.9)
 
-Will require a signed `hub-approval-checkpoint/v1` record. Until v0.9.9 PR 6 ships and a Hub actually signs one, this row reports **`not checked`** rather than absent or "passed."
+A `JournalCheckpoint` with `checkpoint_kind: hub-org` carries five extra fields: `hub_id`, `hub_public_key`, `hub_signature`, `signed_at`, and `covered_use_ids`. The verifier emits **`replay-hub-org` PASS** only when every gate clears:
+
+1. **Signature verifies.** The Ed25519 signature decodes against the embedded public key over `canonical_hub_signing_bytes()` (every signed field except the signature itself).
+2. **Coverage is explicit.** Every `use_id` in the package appears in `covered_use_ids`. A checkpoint that verifies but doesn't cover a particular use cannot promote the row for that use.
+3. **All required fields are populated.** `hub_id`, `hub_public_key`, `hub_signature`, `signed_at` non-empty.
+
+Anything short of all three: the row is `✗` (warning by default, fail under `--strict`). When no Hub-kind checkpoint is embedded at all, the row reports **`not checked (no Hub checkpoint in package)`** — absent evidence is reported as absent, never as a silent pass.
+
+<Callout type="info">
+**Out of scope for v0.9.9:** the Hub server itself — the thing that signs checkpoints — lives in a separate release. v0.9.9 ships only the consumer-side verifier. Until you have a Hub signing checkpoints and embedding them in packages, the row will keep reading `not checked`.
+</Callout>
 
 <Callout type="warn">
-**The honesty rule, baked in:** Treeship will never print "global single-use enforced" or "hub-org passed" without a real Hub checkpoint. The check exists to fire when evidence exists; before then, the row stays explicit about what's missing.
+**The honesty rule, baked in:** Treeship will never print "global single-use enforced" or "hub-org passed" without a real Hub checkpoint that signs cleanly AND covers every use. The check exists to fire when evidence exists; absent evidence stays explicit about what's missing.
 </Callout>
 
 ## Reading the report
@@ -78,6 +90,15 @@ approval authority (1 use from 1 grant)
     - hub-org              not checked (no Hub checkpoint in package)
 ```
 
+When the package embeds a Hub-signed checkpoint that covers each use, the bottom two rows promote:
+
+```
+    ✓ package-local        no duplicate use inside package
+    ✓ local-journal        local Approval Use Journal passed, use 1/1
+    ✓ included-checkpoint  cp_42 verified offline
+    ✓ hub-org              use use_cf0cb… signed by hub://zerker-org
+```
+
 A `✓` means the level was actually checked and passed. A `✗` means it was checked and failed. A `-` means the level was not checked — usually because the evidence wasn't present, not because the check was skipped.
 
 ## Strict mode
@@ -93,19 +114,23 @@ Existing receipt-determinism and event-log warnings stay warnings. Only the `rep
 
 ## Decision Cards
 
-The "Key decisions" section under `package inspect` includes a **Replay-warning card** when only `package-local` and/or `local-journal` are available:
+The "Key decisions" section under `package inspect` includes a **Replay-warning card** when no verified Hub-signed checkpoint covers every use in the package:
 
 ```
-⚠ Replay posture: package-local + local-journal only
-    No JournalCheckpoint embedded in this package; verifiers without
-    access to your workspace's local journal can only check package-local
-    replay (duplicate uses inside this package). Hub-org replay is not
-    checked -- a global single-use guarantee requires a signed Hub
-    checkpoint, which v0.9.9 does not yet emit.
+⚠ Replay posture: no verified Hub coverage
+    Verifiers without access to your workspace's local journal can
+    only check package-local replay (duplicate uses inside this package).
+    Hub-org replay is not asserted -- a global single-use guarantee
+    requires a signed Hub checkpoint that covers every use_id in this
+    package. v0.9.9 supports verifying such checkpoints when present;
+    the Hub signer itself is out of scope for this release.
     evidence:
       approval uses:   1 (see approval authority panel above)
+      hub checkpoints: 0 embedded (none)
       verify rows:     replay-package-local, replay-local-journal
 ```
+
+When a Hub-signed checkpoint is embedded and verifies, the card stays silent — the Approval Authority panel's `✓ hub-org` row already tells the story.
 
 Every Decision Card carries evidence pointers (grant_id, approval_use_id, action_artifact_id, verify check rows). No LLM, no invented intent — the narrative is generated mechanically from the receipt.
 

@@ -31,7 +31,7 @@ Each layer answers exactly one question, and the report format makes it impossib
 
 **The journal proves local replay.** With the journal present, `verify` can say "use 1/1 — local Approval Use Journal passed" rather than the older "package-local only — no global ledger consulted."
 
-**A Hub checkpoint would prove distributed replay.** Reserved for v0.9.9+; until then, any output that says "global single-use" is overclaiming. Treeship physically cannot say it.
+**A signed Hub checkpoint proves distributed replay.** v0.9.9 ships the **consumer-side** verifier: when a `.treeship` package embeds a `JournalCheckpoint` with `kind: HubOrg` that's signed by an org and explicitly covers each `use_id` in the package, verify emits `replay-hub-org PASS`. The Hub server itself — the thing that signs checkpoints — is **out of scope for v0.9.9** and lives in a separate release. Until a Hub signs a checkpoint and you embed it, any "global single-use" claim is overclaiming, and Treeship physically cannot say it.
 
 ## The flow
 
@@ -80,12 +80,12 @@ Reports surface up to four replay levels, each with its own row:
 | `package-local` | Duplicate uses *inside this package* | Always available |
 | `local-journal` | Workspace `<config>/journals/approval-use/` consulted | Available since v0.9.9 PR 2 |
 | `included-checkpoint` | Embedded `JournalCheckpoint` records verify offline | Available since v0.9.9 PR 4 |
-| `hub-org` | Signed Hub checkpoint validates global single-use | **Reserved for v0.9.9+** — never claimed without a real checkpoint |
+| `hub-org` | Signed Hub checkpoint validates global single-use | **Available since v0.9.9 (consumer side)** — never claimed without a real checkpoint signed AND covering every use_id |
 
 A row reports the *strongest* level it actually achieved. It never silently downgrades, and it never claims a stronger level than the evidence supports. See [Replay levels](/docs/guides/replay-levels) for the full ladder.
 
 <Callout type="warn">
-**Verify never says "global single-use enforced".** That language requires a Hub checkpoint signed by the org, and v0.9.9 doesn't ship a Hub. The honest output today caps at `local-journal` (or `included-checkpoint` for offline verifiers).
+**"Global single-use enforced" requires a verified Hub checkpoint that covers every use.** v0.9.9 ships the consumer-side check: with a real org-signed `JournalCheckpoint { kind: HubOrg }` embedded in the package whose `covered_use_ids` includes every embedded `use_id`, verify emits `replay-hub-org PASS`. Without that evidence, the row is absent and the honest output caps at `local-journal` (or `included-checkpoint` for offline verifiers). The Hub *signer* is out of scope for v0.9.9 and lives in a separate release.
 </Callout>
 
 ## Privacy posture
