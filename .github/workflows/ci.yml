@@ -21,6 +21,24 @@ jobs:
       - name: Check internal version consistency
         run: python3 scripts/check-release-versions.py --consistency
 
+  # Static check that every page advertised in a docs `meta.json`
+  # resolves to a real `.mdx` file (or a sub-section), every section
+  # root has either an index.mdx or a redirect in `next.config.mjs`,
+  # and every redirect points at a destination that exists. Catches
+  # the failure mode where a renamed/deleted doc leaves a sidebar
+  # entry pointing at a 404, or where a new section ships without a
+  # root redirect so `/cli` works but `/concepts` doesn't. Cheap; no
+  # network, no build.
+  docs-route-health:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check docs route health
+        run: python3 scripts/check-docs-routes.py
+
   test:
     runs-on: ubuntu-latest
     steps:
