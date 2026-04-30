@@ -40,6 +40,10 @@ agent_d4e5f6  Verified  cursor         laptop.local               ~/work/treeshi
 agent_g7h8i9  Draft     hermes         laptop.local               ~/work/treeship
 ```
 
+<Callout type="info">
+Today (v0.9.10), `--format json` on the `agents` subcommands returns a minimal placeholder shape (`{}`). The full agent-readable JSON for the card store is part of the **Agent-Native Bootstrap** roadmap and lands in a later v0.10.x release. The text output above carries the full information for human readers. Until the JSON stabilizes, AI agents should read the on-disk card files at `~/.treeship/agents/<id>.json` directly — those are stable, schema-versioned JSON.
+</Callout>
+
 ### `agents review <id>`
 
 ```bash

@@ -90,22 +90,20 @@ The JSON shape is stable for downstream tooling:
 {
   "agents": [
     {
-      "id": "agent_a1b2c3d4",
       "surface": "claude-code",
-      "connection_modes": ["mcp"],
-      "coverage": "full",
+      "display_name": "Claude Code",
+      "connection_modes": ["native-hook", "mcp"],
+      "coverage": "high",
       "confidence": "high",
-      "host": "laptop.local",
-      "workspace": "/Users/me/work/treeship",
-      "recommended_harness_id": "claude-code-mcp",
-      "config_path": "~/Library/Application Support/Claude/claude_desktop_config.json",
-      "already_instrumented": true
+      "evidence": ["/Users/me/.claude"],
+      "recommended_harness_id": "claude-code",
+      "note": null
     }
   ]
 }
 ```
 
-`already_instrumented: true` means the agent's config already has the `@treeship/mcp` entry — re-running `treeship add` on this agent is a no-op.
+`evidence` lists the paths the discovery probe matched on (config dirs, skill files). `note` carries per-surface caveats — e.g. NinjaTech SuperNinja sets `note: "remote attach not yet implemented"` to flag that auto-instrumentation isn't possible today. Additional richer fields (deterministic `agent_id`, `host`, `workspace`, `already_instrumented`) are part of the agent-native bootstrap roadmap and will land in a later v0.10.x release.
 
 ## Options
 
