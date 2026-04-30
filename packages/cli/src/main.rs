@@ -1084,6 +1084,19 @@ struct AttestActionArgs {
     #[arg(long, value_name = "NONCE")]
     approval_nonce: Option<String>,
 
+    /// Idempotency key for retry-safe approval consumption.
+    ///
+    /// When set together with --approval-nonce, a retry with the same
+    /// (grant_id, idempotency_key) collapses to the existing journal
+    /// entry rather than burning another use slot. Different keys
+    /// consume separately and respect the grant's max_uses.
+    ///
+    /// Use case: a flaky network or crashed CLI between journal write
+    /// and action sign. The next invocation with the same key picks
+    /// up the reserved use and finishes signing the action against it.
+    #[arg(long, value_name = "KEY")]
+    idempotency_key: Option<String>,
+
     /// Extra metadata as a JSON object
     #[arg(long, value_name = r#"'{"key":"val"}'"#)]
     meta: Option<String>,
@@ -1889,16 +1902,17 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 // wins if both are set.
                 let subject_uri = a.subject.clone().or(a.content_uri.clone());
                 commands::attest::action(commands::attest::ActionArgs {
-                    actor:          a.actor.clone(),
-                    action:         a.action.clone(),
-                    input_digest:   a.input_digest.clone(),
-                    output_digest:  a.output_digest.clone(),
-                    content_uri:    subject_uri,
-                    parent_id:      a.parent.clone(),
-                    approval_nonce: a.approval_nonce.clone(),
-                    meta:           a.meta.clone(),
-                    out:            a.out.clone(),
-                    config:         cli.config.clone(),
+                    actor:           a.actor.clone(),
+                    action:          a.action.clone(),
+                    input_digest:    a.input_digest.clone(),
+                    output_digest:   a.output_digest.clone(),
+                    content_uri:     subject_uri,
+                    parent_id:       a.parent.clone(),
+                    approval_nonce:  a.approval_nonce.clone(),
+                    idempotency_key: a.idempotency_key.clone(),
+                    meta:            a.meta.clone(),
+                    out:             a.out.clone(),
+                    config:          cli.config.clone(),
                 }, printer)?;
                 Ok(())
             }

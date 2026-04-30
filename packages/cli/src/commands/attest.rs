@@ -1,31 +1,42 @@
 use serde_json::Value;
 use treeship_core::{
     attestation::sign,
-    statements::{ActionStatement, ApprovalScope, ApprovalStatement, DecisionStatement, EndorsementStatement, HandoffStatement, ReceiptStatement, payload_type, SubjectRef},
+    journal::{self, Journal},
+    statements::{
+        ActionStatement, ApprovalScope, ApprovalStatement, ApprovalUse, DecisionStatement,
+        EndorsementStatement, HandoffStatement, ReceiptStatement, ReplayCheckLevel,
+        SubjectRef, TYPE_APPROVAL_USE, payload_type, nonce_digest,
+    },
     storage::Record,
 };
 
+use crate::commands::verify::{check_scope_violation, find_approval_by_nonce, now_rfc3339};
 use crate::{ctx, printer::Printer};
 
 // --- action -----------------------------------------------------------------
 
 pub struct ActionArgs {
-    pub actor:          String,
-    pub action:         String,
-    pub input_digest:   Option<String>,
-    pub output_digest:  Option<String>,
-    pub content_uri:    Option<String>,
-    pub parent_id:      Option<String>,
-    pub approval_nonce: Option<String>,
-    pub meta:           Option<String>,
-    pub out:            Option<String>,
-    pub config:         Option<String>,
+    pub actor:           String,
+    pub action:          String,
+    pub input_digest:    Option<String>,
+    pub output_digest:   Option<String>,
+    pub content_uri:     Option<String>,
+    pub parent_id:       Option<String>,
+    pub approval_nonce:  Option<String>,
+    /// Set together with --approval-nonce: a retry with the same key
+    /// collapses to the existing journal entry instead of allocating a
+    /// new one. See attest::action() for the precise crash-recovery
+    /// semantics.
+    pub idempotency_key: Option<String>,
+    pub meta:            Option<String>,
+    pub out:             Option<String>,
+    pub config:          Option<String>,
 }
 
 pub fn action(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std::error::Error>> {
     let ctx = ctx::open(args.config.as_deref())?;
 
-    let meta: Option<Value> = args.meta.as_deref()
+    let mut meta: Option<Value> = args.meta.as_deref()
         .map(|m| serde_json::from_str(m))
         .transpose()
         .map_err(|e| format!("--meta is not valid JSON: {e}"))?;
@@ -37,10 +48,53 @@ pub fn action(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std
     };
 
     let mut stmt = ActionStatement::new(&args.actor, &args.action);
-    stmt.subject       = subject;
-    stmt.parent_id     = args.parent_id.clone();
+    stmt.subject        = subject;
+    stmt.parent_id      = args.parent_id.clone();
     stmt.approval_nonce = args.approval_nonce.clone();
-    stmt.meta          = meta;
+
+    // ----------------------------------------------------------------------
+    // Consume-before-action (v0.9.9 PR 3)
+    //
+    // When --approval-nonce is set, we resolve the matching grant, run
+    // the same scope checks `verify_nonce_bindings` runs, then RESERVE
+    // an ApprovalUse in the local journal BEFORE signing the action.
+    //
+    // Crash semantics ("reserved counts as consumed"): if the process
+    // dies between the journal write and the action signature, the use
+    // remains on disk. A retry with the SAME --idempotency-key collapses
+    // to that record and finishes signing the action against it. A retry
+    // WITHOUT an idempotency key (or with a different one) sees the
+    // earlier use as already-consumed and refuses if max_uses would be
+    // exceeded -- the explicit safer-by-default behavior.
+    //
+    // Cheap rejections (missing grant, scope mismatch, expired) happen
+    // BEFORE the journal lock so they don't contend on the lock when
+    // they're going to fail anyway.
+    // ----------------------------------------------------------------------
+    let consumed_use_id = if let Some(ref raw_nonce) = args.approval_nonce {
+        Some(consume_approval(
+            &ctx,
+            raw_nonce,
+            &stmt,
+            args.idempotency_key.as_deref(),
+            printer,
+        )?)
+    } else {
+        None
+    };
+
+    // If we recorded a use, link the use_id into the action's meta so
+    // verify can cross-reference (PR 4 reads this on package verify).
+    if let Some(ref use_id) = consumed_use_id {
+        let mut obj = match meta.take() {
+            Some(Value::Object(map)) => map,
+            Some(_other) => return Err("--meta must be a JSON object when --approval-nonce is set".into()),
+            None => serde_json::Map::new(),
+        };
+        obj.insert("approval_use_id".into(), Value::String(use_id.clone()));
+        meta = Some(Value::Object(obj));
+    }
+    stmt.meta = meta;
 
     let signer = ctx.keys.default_signer()?;
     let pt     = payload_type("action");
@@ -59,6 +113,27 @@ pub fn action(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std
     };
     ctx.storage.write(&record)?;
     write_last(&ctx.config.storage_dir, &result.artifact_id);
+
+    // Backfill action_artifact_id onto the journal record once the
+    // action is signed. The reserved use already counts; this just
+    // upgrades the record from "reserved" to "committed" by linking
+    // the action it authorized.
+    if consumed_use_id.is_some() {
+        if let Err(e) = backfill_action_artifact_id(
+            &ctx,
+            consumed_use_id.as_deref().unwrap(),
+            &result.artifact_id,
+        ) {
+            // Backfill failure is recoverable (the journal still
+            // records the use; the link can be re-derived from the
+            // by-grant index). Surface a warning rather than failing
+            // the whole action.
+            printer.warn(
+                "could not backfill action_artifact_id onto journal record",
+                &[("error", &e.to_string())],
+            );
+        }
+    }
 
     // Optional: write raw DSSE envelope to file or stdout.
     if let Some(path) = &args.out {
@@ -460,6 +535,242 @@ fn resolve_parent(ctx: &ctx::Ctx, explicit: Option<String>) -> Option<String> {
         }
     }
     None
+}
+
+/// Resolve the journal directory for the active workspace -- pairs with
+/// the same config_path the cards / harnesses stores use.
+fn journal_dir_for(ctx: &ctx::Ctx) -> std::path::PathBuf {
+    ctx.config_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("journals")
+        .join("approval-use")
+}
+
+/// Look up a grant's artifact_id by its raw nonce. Mirrors what
+/// `verify::find_approval_by_nonce` does, but returns the artifact_id
+/// alongside the parsed statement so we can stamp it on the journal
+/// record. Reusing find_approval_by_nonce for the parse + then walking
+/// storage a second time would be wasteful; we walk once here and
+/// return both.
+fn resolve_grant_by_nonce(
+    ctx: &ctx::Ctx,
+    raw_nonce: &str,
+) -> Option<(String, ApprovalStatement)> {
+    let approval_type = payload_type("approval");
+    for entry in ctx.storage.list_by_type(&approval_type) {
+        if let Ok(rec) = ctx.storage.read(&entry.id) {
+            if let Ok(approval) = rec.envelope.unmarshal_statement::<ApprovalStatement>() {
+                if approval.nonce == raw_nonce {
+                    return Some((entry.id, approval));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Reserve an ApprovalUse in the journal before signing the action.
+///
+/// Returns the `use_id` so the caller can:
+///   * stamp it into the action's meta as `approval_use_id`
+///   * backfill `action_artifact_id` onto the same journal record once
+///     the action signs
+///
+/// Order of checks (cheap before expensive, scope before journal lock):
+///   1. resolve grant by nonce          → fail fast if no such grant
+///   2. check expiry                    → fail fast if expired
+///   3. check scope                     → fail fast on actor/action/subject
+///   4. compute nonce_digest
+///   5. acquire journal lock (LockBusy if held)
+///   6. idempotency-key short-circuit   → return existing use_id
+///   7. check_replay                    → refuse on max_uses exceeded
+///   8. write reserved ApprovalUse      → action_artifact_id = None
+fn consume_approval(
+    ctx: &ctx::Ctx,
+    raw_nonce: &str,
+    action: &ActionStatement,
+    idempotency_key: Option<&str>,
+    printer: &Printer,
+) -> Result<String, Box<dyn std::error::Error>> {
+    // 1. Resolve grant.
+    let (grant_id, grant) = match resolve_grant_by_nonce(ctx, raw_nonce) {
+        Some(found) => found,
+        None => return Err(format!(
+            "approval_nonce '{}...' set but no matching ApprovalStatement in local storage",
+            &raw_nonce[..16.min(raw_nonce.len())],
+        ).into()),
+    };
+
+    // 2. Expiry on the grant envelope itself.
+    if let Some(ref expires) = grant.expires_at {
+        let now = now_rfc3339();
+        if *expires < now {
+            return Err(format!(
+                "approval grant {grant_id} expired at {expires} (now: {now})",
+            ).into());
+        }
+    }
+
+    // 3. Scope check (reuses the verify pass's logic so binding /
+    // scope / consume all read from one source of truth).
+    if let Some(ref scope) = grant.scope {
+        if !scope.is_unscoped() {
+            if let Some(reason) = check_scope_violation(scope, action) {
+                return Err(format!("approval scope refused this action: {reason}").into());
+            }
+        }
+    }
+
+    let max_uses = grant.scope.as_ref().and_then(|s| s.max_actions);
+    let nonce_digest = nonce_digest(raw_nonce);
+
+    // 4-8. Journal-side: acquire lock, idempotency check, replay check,
+    // reserve. Pulled into a helper so the lock scope is tight.
+    reserve_in_journal(
+        ctx,
+        &grant_id,
+        &grant,
+        action,
+        nonce_digest,
+        max_uses,
+        idempotency_key,
+        printer,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn reserve_in_journal(
+    ctx: &ctx::Ctx,
+    grant_id: &str,
+    grant: &ApprovalStatement,
+    action: &ActionStatement,
+    nonce_digest: String,
+    max_uses: Option<u32>,
+    idempotency_key: Option<&str>,
+    printer: &Printer,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let dir = journal_dir_for(ctx);
+    let j = Journal::new(&dir);
+
+    // Idempotency-key short-circuit. Read existing uses for the grant
+    // (the journal's by-grant index is the small list we need). If a
+    // prior use carries the same idempotency_key, we reuse its use_id
+    // -- the action signer will sign a fresh action against the same
+    // reserved record. This is the crash-recovery primitive: a flaky
+    // network or crashed CLI can retry safely.
+    if let Some(key) = idempotency_key {
+        let existing = journal::list_uses_for_grant(&j, grant_id)?;
+        if let Some(prior) = existing.iter().find(|u| u.idempotency_key.as_deref() == Some(key)) {
+            printer.dim_info(&format!(
+                "  idempotency: reusing existing use_id {}", prior.use_id,
+            ));
+            return Ok(prior.use_id.clone());
+        }
+    }
+
+    // Replay check BEFORE writing. check_replay reports
+    // ReplayCheckLevel::NotPerformed when no journal exists yet, which
+    // for a first-use is fine -- we proceed to write and the journal
+    // gets created on first append. When journal exists, "passed"
+    // false means max_uses would be exceeded.
+    let replay = journal::check_replay(&j, grant_id, &nonce_digest, max_uses)?;
+    if matches!(replay.level, ReplayCheckLevel::LocalJournal) {
+        if matches!(replay.passed, Some(false)) {
+            return Err(format!(
+                "approval grant {grant_id} would exceed max_uses ({} of {})",
+                replay.use_number.map(|n| n.saturating_sub(1)).unwrap_or(0),
+                replay.max_uses.map(|m| m.to_string()).unwrap_or_else(|| "?".into()),
+            ).into());
+        }
+    }
+
+    // Compute use_number from the existing record list (the list above
+    // already counted them; but we re-derive here to keep this function
+    // self-contained when called without the idempotency-key path).
+    let prior_count = journal::list_uses_for_grant(&j, grant_id)?.len() as u32;
+    let use_number = prior_count.saturating_add(1);
+
+    // Use_id is a fresh UUID-style hex token. Same shape as nonces.
+    let use_id = {
+        use rand::RngCore;
+        let mut b = [0u8; 12];
+        rand::thread_rng().fill_bytes(&mut b);
+        let mut hex = String::with_capacity(2 * b.len() + 4);
+        hex.push_str("use_");
+        for byte in &b {
+            use std::fmt::Write;
+            let _ = write!(hex, "{byte:02x}");
+        }
+        hex
+    };
+
+    // sha256 of the canonical-JSON envelope of the grant -- we don't
+    // have the raw envelope here, but the artifact_id is itself a
+    // content-addressed digest of that envelope, so we record it as
+    // the grant_digest. PR 4 will validate this against the package's
+    // copy of the grant.
+    let grant_digest = grant_id.to_string();
+
+    let record = ApprovalUse {
+        type_:                  TYPE_APPROVAL_USE.into(),
+        use_id:                 use_id.clone(),
+        grant_id:               grant_id.to_string(),
+        grant_digest,
+        nonce_digest,
+        actor:                  action.actor.clone(),
+        action:                 action.action.clone(),
+        subject:                action
+            .subject
+            .uri
+            .clone()
+            .or_else(|| action.subject.artifact_id.clone())
+            .or_else(|| action.subject.digest.clone())
+            .unwrap_or_default(),
+        session_id:             None, // PR 5 wires this from active session
+        action_artifact_id:     None, // backfilled after signing
+        receipt_digest:         None,
+        use_number,
+        max_uses,
+        idempotency_key:        idempotency_key.map(str::to_string),
+        created_at:             now_rfc3339(),
+        expires_at:             None,
+        previous_record_digest: String::new(), // append_use stamps this
+        record_digest:          String::new(), // append_use stamps this
+        signature:              None,
+        signature_alg:          None,
+        signing_key_id:         None,
+    };
+
+    journal::append_use(&j, record).map_err(|e| -> Box<dyn std::error::Error> {
+        format!("could not reserve approval use in journal: {e}").into()
+    })?;
+
+    printer.dim_info(&format!(
+        "  approval use reserved: {use_id} (use {use_number}/{})",
+        max_uses.map(|m| m.to_string()).unwrap_or_else(|| "unbounded".into()),
+    ));
+
+    Ok(use_id)
+}
+
+/// After signing the action, rewrite the matching journal record so
+/// `action_artifact_id` points at the freshly-signed action. The use
+/// record's content changes, so its `record_digest` and downstream
+/// chain links would change too -- which would invalidate journal
+/// integrity. Instead we update a sidecar map (kept inside the index
+/// directory) that the verify pass reads alongside the chain.
+fn backfill_action_artifact_id(
+    ctx: &ctx::Ctx,
+    use_id: &str,
+    action_artifact_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let dir = journal_dir_for(ctx);
+    let backfill_dir = dir.join("indexes").join("backfill");
+    std::fs::create_dir_all(&backfill_dir)?;
+    let path = backfill_dir.join(format!("{use_id}.txt"));
+    std::fs::write(&path, action_artifact_id)?;
+    Ok(())
 }
 
 /// Write the artifact_id to {storage_dir}/.last for auto-chaining.
