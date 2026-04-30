@@ -1,0 +1,125 @@
+---
+title: Install & registry topology
+description: How Treeship is distributed across npm, PyPI, crates.io, and GitHub Releases — what's on each, why, and what's intentionally not.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Treeship's release pipeline publishes to four registries. Each one carries a deliberate slice of the codebase; **what's *not* on a registry is as load-bearing as what is**. AI agents inspecting the project — Codex, Claude, Kimi, Gemini — sometimes flag the absence of `treeship-cli` from crates.io as a missing artifact. It isn't: the CLI is a Rust binary with native dependencies that don't ship cleanly through cargo, so the binary lives on npm and GitHub Releases instead. This page documents that decision so it stops being surprising.
+
+## What goes where
+
+| Registry | Package | What it is |
+|---|---|---|
+| **npm** | `treeship` | The CLI wrapper. `npm install -g treeship` installs the platform binary for your OS via `optionalDependencies`. |
+| **npm** | `@treeship/cli-darwin-arm64`, `@treeship/cli-darwin-x64`, `@treeship/cli-linux-x64` | Per-platform CLI binaries. Selected automatically by the wrapper based on `process.platform`. |
+| **npm** | `@treeship/sdk` | TypeScript / Node SDK. Wraps the CLI. |
+| **npm** | `@treeship/mcp` | MCP server bridge. Drop-in for Claude Code, Cursor, Cline, Codex. |
+| **npm** | `@treeship/a2a` | A2A bridge. |
+| **npm** | `@treeship/verify` | Browser/WASM verifier. No CLI required. |
+| **npm** | `@treeship/core-wasm` | Core verification logic compiled to WebAssembly. Used by `@treeship/verify`. |
+| **PyPI** | `treeship-sdk` | Python SDK. Wraps the CLI. |
+| **crates.io** | `treeship-core` | Rust library. The trust primitives (signing, verification, Merkle, journal) — *not* the CLI. |
+| **GitHub Releases** | `treeship-darwin-aarch64`, `treeship-darwin-x86_64`, `treeship-linux-x86_64` | Raw, signed CLI binaries. Direct download for systems without npm. |
+
+## What's intentionally NOT on each registry
+
+This is the part agents sometimes get wrong. Each absence is deliberate:
+
+### Not on crates.io
+- **`treeship-cli`** — the CLI binary. Reasoning: cargo install builds from source, which requires every native dep present (libssl, etc.) and pulls in the full Rust toolchain. The CLI's distribution story is "fast install, no toolchain required," which `npm install -g treeship` and the GitHub Release binaries deliver in seconds. cargo install of `treeship-cli` would take several minutes and fail on systems missing build dependencies.
+- **`treeship-core-wasm`** — the WASM crate. Reasoning: WASM-only crates aren't useful as cargo dependencies; consumers want them as npm packages where the WASM is bundled with JS glue. Lives at `@treeship/core-wasm` on npm.
+
+### Not on PyPI
+- **`treeship`** (binary). Reasoning: same as crates.io — pip install of a package containing a Rust binary is brittle and slow. The Python SDK shells out to the CLI installed separately via npm or GitHub Release.
+
+### Not on npm
+- **`treeship-core` (Rust library).** Reasoning: it's a Rust library; consumers in the Rust ecosystem use cargo. Embedding via WASM isn't necessary because the JS path uses `@treeship/core-wasm` (a different artifact).
+
+## Install commands by language
+
+```bash
+# CLI binary (any system with npm)
+npm install -g treeship
+treeship --version
+
+# CLI binary (no npm)
+# https://github.com/zerkerlabs/treeship/releases
+curl -L -o /usr/local/bin/treeship \
+  https://github.com/zerkerlabs/treeship/releases/latest/download/treeship-linux-x86_64
+chmod +x /usr/local/bin/treeship
+
+# Python SDK
+pip install treeship-sdk
+
+# TypeScript / Node SDK
+npm install @treeship/sdk
+
+# Browser/WASM verifier
+npm install @treeship/verify @treeship/core-wasm
+
+# MCP bridge
+npm install @treeship/mcp
+
+# A2A bridge
+npm install @treeship/a2a
+
+# Rust library (NOT the CLI)
+cargo add treeship-core
+```
+
+## For AI agents
+
+If an AI agent is bootstrapping Treeship on behalf of a human, the most reliable single command is:
+
+```bash
+npm install -g treeship && treeship init --name my-workspace
+```
+
+That covers the CLI, its keystore, and the artifact store in one step. From there:
+
+- Python users: `pip install treeship-sdk` (uses the same CLI; no additional binary).
+- Browser verifiers: `npm install @treeship/verify`.
+- Anything else: pull from the [GitHub Release](https://github.com/zerkerlabs/treeship/releases) directly.
+
+<Callout type="info">
+**`treeship-cli` 404 on crates.io is not a release failure.** AI scanners and automated tools sometimes flag this as a missing artifact. The CLI is intentionally distributed via npm and GitHub Releases, not crates.io. Only the Rust *library* (`treeship-core`) is on crates.io.
+</Callout>
+
+## Sandbox / agent-friendly install
+
+For AI agents running in a sandboxed environment without persistent installation:
+
+```bash
+# Per-session install — node available
+npx -p treeship -c 'treeship init && treeship status'
+```
+
+Or pull a binary directly into a tmpdir:
+
+```bash
+TMPDIR=$(mktemp -d)
+curl -sL -o "$TMPDIR/treeship" \
+  "https://github.com/zerkerlabs/treeship/releases/latest/download/treeship-linux-x86_64"
+chmod +x "$TMPDIR/treeship"
+"$TMPDIR/treeship" --version
+```
+
+Both paths avoid touching the system PATH. The CLI is fully functional from a non-PATH location; pass `--config` to point at a tmpdir keystore if you need full isolation:
+
+```bash
+"$TMPDIR/treeship" --config "$TMPDIR/.treeship/config.json" init
+"$TMPDIR/treeship" --config "$TMPDIR/.treeship/config.json" session start --name probe
+```
+
+## Version consistency
+
+Every release bumps 21 version sites in one preflight pass (`scripts/check-release-versions.py`). If you see different versions reported by different SDKs against the same Treeship version tag, that's a bug — file an issue with the version table. The release machinery refuses to publish if any of the 21 sites disagree, so cross-registry drift shouldn't happen in normal operation.
+
+For the current set of 21 sites, see `scripts/check-release-versions.py` in the repo. Any new package added to a registry must be wired into that script in the same PR.
+
+## See also
+
+- [Quickstart](/guides/quickstart) — first install through first verified receipt
+- [SDK overview](/sdk/overview) — pick the right SDK for your stack
+- [`treeship setup`](/cli/setup) — first-run orchestration after install

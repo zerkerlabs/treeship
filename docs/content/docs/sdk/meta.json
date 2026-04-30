@@ -2,8 +2,9 @@
   "title": "SDK",
   "pages": [
     "overview",
-    "verify",
+    "typescript",
     "python",
+    "verify",
     "mcp"
   ]
 }
