@@ -722,6 +722,106 @@ fn print_approval_authority_panel(
         let _ = ReplayCheckLevel::HubOrg;
     }
 
+    // v0.9.10 PR A: bundle-level integrity rows. Render once per
+    // package after the per-use replay rows. Each is computed inline
+    // from the bundle so the panel stays self-contained even when the
+    // verify checks haven't been threaded through.
+    if !bundle.uses.is_empty() {
+        use treeship_core::statements::approval_use_record_digest;
+        let tampered_digest = bundle.uses.iter().any(|u| {
+            approval_use_record_digest(u) != u.record_digest
+        });
+        printer.dim_info(&format!(
+            "  {} approval-use-record-digest    {}",
+            if tampered_digest { "✗" } else { "✓" },
+            if tampered_digest { "one or more use records tampered post-write" }
+            else { "every use record's stored digest recomputes identically" },
+        ));
+
+        // Nonce binding: each use's nonce_digest must equal
+        // nonce_digest(grant.nonce) for the grant carried in the
+        // package. If the grant is missing from the bundle, the row
+        // reports the gap honestly.
+        use treeship_core::attestation::envelope::Envelope;
+        use treeship_core::statements::{nonce_digest, ApprovalStatement};
+        let mut grant_nonce_digest: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        for (gid, env_bytes) in &bundle.grants {
+            if let Ok(env) = Envelope::from_json(env_bytes) {
+                if let Ok(g) = env.unmarshal_statement::<ApprovalStatement>() {
+                    grant_nonce_digest.insert(gid.clone(), nonce_digest(&g.nonce));
+                }
+            }
+        }
+        let nonce_ok = bundle.uses.iter().all(|u| {
+            grant_nonce_digest.get(&u.grant_id).map_or(false, |d| d == &u.nonce_digest)
+        });
+        printer.dim_info(&format!(
+            "  {} approval-use-nonce-binding    {}",
+            if nonce_ok { "✓" } else { "✗" },
+            if nonce_ok { "use.nonce_digest == sha256(grant.nonce) for every use" }
+            else { "one or more uses do not bind to a grant signed nonce" },
+        ));
+
+        // Action binding row: empty action_envelopes -> "not asserted"
+        // (pre-v0.9.10 packages); otherwise pass/fail based on the
+        // approval_use_id pointer + nonce match.
+        if bundle.action_envelopes.is_empty() {
+            printer.dim_info(
+                "  - approval-use-action-binding  not asserted by package (pre-v0.9.10 -- artifacts/ empty)",
+            );
+        } else {
+            use treeship_core::statements::ActionStatement;
+            let use_ids: std::collections::HashSet<&str> =
+                bundle.uses.iter().map(|u| u.use_id.as_str()).collect();
+            let mut all_ok = true;
+            let mut bound = 0usize;
+            for (_aid, env_bytes) in &bundle.action_envelopes {
+                let Ok(env) = Envelope::from_json(env_bytes) else { all_ok = false; continue };
+                let Ok(action) = env.unmarshal_statement::<ActionStatement>() else { all_ok = false; continue };
+                let Some(raw_nonce) = action.approval_nonce.as_deref() else { continue };
+                let claimed = action.meta.as_ref()
+                    .and_then(|m| m.get("approval_use_id"))
+                    .and_then(|v| v.as_str());
+                match claimed {
+                    Some(uid) if use_ids.contains(uid) => {
+                        let expected = nonce_digest(raw_nonce);
+                        let matched = bundle.uses.iter().find(|u| u.use_id == uid);
+                        if matched.map_or(false, |u| u.nonce_digest == expected) {
+                            bound += 1;
+                        } else {
+                            all_ok = false;
+                        }
+                    }
+                    _ => all_ok = false,
+                }
+            }
+            printer.dim_info(&format!(
+                "  {} approval-use-action-binding  {}",
+                if all_ok { "✓" } else { "✗" },
+                if all_ok {
+                    format!("{bound} action(s) bind cleanly to embedded use records")
+                } else {
+                    "one or more actions fail action↔use binding".into()
+                },
+            ));
+        }
+
+        // Chain continuity: every previous_record_digest must point at
+        // an in-package record_digest or be empty (genesis).
+        let mut owned: std::collections::HashSet<String> = std::collections::HashSet::new();
+        owned.insert(String::new());
+        for u in &bundle.uses          { owned.insert(u.record_digest.clone()); }
+        for cp in &bundle.checkpoints  { owned.insert(cp.record_digest.clone()); }
+        let chain_ok = bundle.uses.iter().all(|u| owned.contains(&u.previous_record_digest))
+            && bundle.checkpoints.iter().all(|cp| owned.contains(&cp.previous_record_digest));
+        printer.dim_info(&format!(
+            "  {} approval-use-chain-continuity {}",
+            if chain_ok { "✓" } else { "✗" },
+            if chain_ok { "every previous_record_digest anchors in-package or genesis" }
+            else { "one or more previous_record_digest values dangle" },
+        ));
+    }
+
     printer.blank();
 }
 
@@ -1079,8 +1179,18 @@ pub fn verify(
     if strict {
         let mut promoted = 0usize;
         for c in checks.iter_mut() {
+            // Approval-evidence rows: every replay-* row plus the
+            // four binding/integrity rows from v0.9.10 PR A. The old
+            // `approval-use-integrity` label is kept here for backward
+            // compatibility with any external tooling that pinned on
+            // it, but the live emitter now uses
+            // `approval-use-record-digest`.
             let approval_row = c.name.starts_with("replay-")
-                || c.name == "approval-use-integrity";
+                || c.name == "approval-use-integrity"
+                || c.name == "approval-use-record-digest"
+                || c.name == "approval-use-nonce-binding"
+                || c.name == "approval-use-action-binding"
+                || c.name == "approval-use-chain-continuity";
             if approval_row && c.status == VerifyStatus::Warn {
                 c.status = VerifyStatus::Fail;
                 promoted += 1;

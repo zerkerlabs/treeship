@@ -273,6 +273,69 @@ pub fn append_use(j: &Journal, mut rec: ApprovalUse) -> Result<Head, JournalErro
     })
 }
 
+/// Atomic check-and-append for the consume path. Combines `check_replay` +
+/// append under a single journal lock so concurrent consume paths cannot
+/// bypass `max_uses` via TOCTOU race.
+///
+/// v0.9.9 PR 3 (`reserve_in_journal` in attest.rs) ran `check_replay` and
+/// derived `use_number` *outside* `with_lock`, then called `append_use`
+/// (which takes the lock only for the write). Two parallel attests could
+/// both pass the pre-lock replay check, then queue serially through the
+/// lock, and both would write — exceeding `max_uses=1`. v0.9.10 closes
+/// that race by doing the check *inside* the lock.
+///
+/// The function also stamps `use_number` from the grant-wide count
+/// observed at lock-acquire time. Callers should pass the record with
+/// `use_number = 0` (or any value); it will be overwritten.
+///
+/// Returns the new head on success. On replay violation, returns
+/// `JournalError::MaxUsesExceeded` and writes nothing — the lock is
+/// released without state change.
+pub fn reserve_use(
+    j: &Journal,
+    mut rec: ApprovalUse,
+    max_uses: Option<u32>,
+) -> Result<Head, JournalError> {
+    rec.type_ = TYPE_APPROVAL_USE.into();
+    with_lock(j, || {
+        // Replay check inside the lock. `check_replay` reads the
+        // by-nonce index; while we hold the exclusive lock, no other
+        // writer can mutate that index, so the count is correct.
+        let replay = check_replay(j, &rec.grant_id, &rec.nonce_digest, max_uses)?;
+        if let Some(false) = replay.passed {
+            let current = replay
+                .use_number
+                .map(|n| n.saturating_sub(1))
+                .unwrap_or(0);
+            return Err(JournalError::MaxUsesExceeded {
+                grant_id: rec.grant_id.clone(),
+                max_uses: replay.max_uses.unwrap_or(0),
+                current,
+            });
+        }
+        // Stamp use_number from grant-wide count, also inside the lock,
+        // so two parallel reservations on the same grant cannot both
+        // claim the same use_number.
+        let prior_count = list_uses_for_grant(j, &rec.grant_id)?.len() as u32;
+        rec.use_number = prior_count.saturating_add(1);
+        // Append.
+        let head = read_head(j)?;
+        rec.previous_record_digest = head.digest.clone();
+        rec.record_digest = approval_use_record_digest(&rec);
+        let next_index = head.index + 1;
+        write_record_use(j, next_index, &rec)?;
+        update_indexes_for_use(j, next_index, &rec)?;
+        let new_head = Head {
+            index:      next_index,
+            digest:     rec.record_digest.clone(),
+            updated_at: rec.created_at.clone(),
+        };
+        write_head(j, &new_head)?;
+        ensure_meta(j)?;
+        Ok(new_head)
+    })
+}
+
 /// Append an ApprovalRevocation. Sibling of `append_use`.
 pub fn append_revocation(j: &Journal, mut rec: ApprovalRevocation) -> Result<Head, JournalError> {
     rec.type_ = TYPE_APPROVAL_REVOCATION.into();
@@ -1002,5 +1065,162 @@ mod tests {
         }
         // The digest IS allowed.
         assert!(obj.contains_key("nonce_digest"));
+    }
+
+    // -- v0.9.10 PR A: reserve_use atomic check+append regression tests --
+
+    #[test]
+    fn reserve_use_first_call_succeeds_and_stamps_use_number() {
+        // Caller passes use_number=0; reserve_use stamps it from the
+        // grant-wide count observed inside the lock.
+        let dir = tempdir().unwrap();
+        let j = Journal::new(dir.path());
+        let mut rec = sample_use("use_1", "g1", "sha256:nn1", 0);
+        rec.use_number = 0;
+        let head = reserve_use(&j, rec, Some(1)).unwrap();
+        assert_eq!(head.index, 1);
+        let stored = list_uses_for_grant(&j, "g1").unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].use_number, 1, "reserve_use must stamp use_number=1 for the first use");
+    }
+
+    #[test]
+    fn reserve_use_max_uses_1_serial_second_call_rejects() {
+        // Sequential second call with the same nonce against
+        // max_uses=1 must error with MaxUsesExceeded BEFORE writing.
+        let dir = tempdir().unwrap();
+        let j = Journal::new(dir.path());
+        reserve_use(&j, sample_use("use_1", "g1", "sha256:nn_a", 0), Some(1)).unwrap();
+
+        let err = reserve_use(&j, sample_use("use_2", "g1", "sha256:nn_a", 0), Some(1))
+            .expect_err("second consume of max_uses=1 grant must fail");
+        match err {
+            JournalError::MaxUsesExceeded { grant_id, max_uses, current } => {
+                assert_eq!(grant_id, "g1");
+                assert_eq!(max_uses, 1);
+                assert_eq!(current, 1);
+            }
+            other => panic!("expected MaxUsesExceeded, got {other:?}"),
+        }
+        // Crucially, the second record is NOT written.
+        let stored = list_uses_for_grant(&j, "g1").unwrap();
+        assert_eq!(stored.len(), 1, "rejected reserve must not append");
+    }
+
+    #[test]
+    fn reserve_use_max_uses_2_two_uses_pass_third_rejects() {
+        // Legitimate multi-use grant: two distinct nonces, same grant.
+        let dir = tempdir().unwrap();
+        let j = Journal::new(dir.path());
+        let mut a = sample_use("use_1", "g1", "sha256:nn_a", 0); a.max_uses = Some(2);
+        let mut b = sample_use("use_2", "g1", "sha256:nn_b", 0); b.max_uses = Some(2);
+        reserve_use(&j, a, Some(2)).unwrap();
+        reserve_use(&j, b, Some(2)).unwrap();
+        // A third nonce with max_uses=2 is fine (per-nonce check, not
+        // per-grant); the journal's invariant is single-use-per-nonce.
+        let mut c = sample_use("use_3", "g1", "sha256:nn_c", 0); c.max_uses = Some(2);
+        reserve_use(&j, c, Some(2)).unwrap();
+        // But a SECOND consume of nn_a violates max_uses=2 because
+        // that nonce already has 1 use; 1+1 = 2 is within bound, so
+        // this second use of nn_a is actually allowed — pin that.
+        let mut a2 = sample_use("use_1b", "g1", "sha256:nn_a", 0); a2.max_uses = Some(2);
+        reserve_use(&j, a2, Some(2)).unwrap();
+        // A THIRD consume of nn_a exceeds max_uses=2.
+        let mut a3 = sample_use("use_1c", "g1", "sha256:nn_a", 0); a3.max_uses = Some(2);
+        let err = reserve_use(&j, a3, Some(2)).expect_err("third use of same nonce must fail");
+        assert!(matches!(err, JournalError::MaxUsesExceeded { .. }));
+    }
+
+    /// Round-2 hardening: idempotency-key retries through the
+    /// CLI's `reserve_in_journal` should NOT bypass `reserve_use`'s
+    /// max_uses gate. The CLI checks the idempotency key against
+    /// existing uses *before* calling `reserve_use`; this test
+    /// confirms that path doesn't sneak a second reservation past
+    /// max_uses=1 just because a flaky retry uses the same key.
+    ///
+    /// The journal-level invariant we pin here: even if a caller
+    /// repeatedly invokes `reserve_use` with the same record after a
+    /// `LockBusy`, the second call sees the first record (now
+    /// committed) and rejects with `MaxUsesExceeded`. There is no
+    /// "free retry" loophole.
+    #[test]
+    fn reserve_use_retry_after_lock_busy_does_not_bypass_max_uses() {
+        let dir = tempdir().unwrap();
+        let j = Journal::new(dir.path());
+        // First reserve commits use_1.
+        reserve_use(&j, sample_use("use_1", "g1", "sha256:nn_retry", 0), Some(1)).unwrap();
+        // Subsequent reserves with the SAME nonce all fail with
+        // MaxUsesExceeded -- no retry-bypass window.
+        for i in 0..5 {
+            let err = reserve_use(
+                &j,
+                sample_use(&format!("use_retry_{i}"), "g1", "sha256:nn_retry", 0),
+                Some(1),
+            ).expect_err("retry must fail");
+            assert!(matches!(err, JournalError::MaxUsesExceeded { .. }));
+        }
+        let stored = list_uses_for_grant(&j, "g1").unwrap();
+        assert_eq!(stored.len(), 1, "exactly one record on disk despite 5 retries");
+    }
+
+    #[test]
+    fn reserve_use_concurrent_max_uses_1_only_one_succeeds() {
+        // The headline regression test for the v0.9.9 TOCTOU race.
+        //
+        // Eight threads race to reserve the same (grant_id, nonce_digest)
+        // against max_uses=1. With v0.9.9's split check_replay/append_use
+        // pattern, two threads could both pass the pre-lock replay check
+        // and write — exceeding max_uses. With v0.9.10's reserve_use,
+        // the check happens INSIDE the lock; exactly one thread wins.
+        //
+        // Outcomes for the 7 losers are a mix of:
+        //   - LockBusy: the lock was held when they tried try_lock
+        //   - MaxUsesExceeded: they got the lock after the winner
+        //     released, saw the winner's record, declined to write
+        // Both are correct — neither is a bypass.
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::thread;
+
+        let dir = tempdir().unwrap();
+        let dir_path = Arc::new(dir.path().to_path_buf());
+        let success = Arc::new(AtomicUsize::new(0));
+        let lock_busy = Arc::new(AtomicUsize::new(0));
+        let max_exceeded = Arc::new(AtomicUsize::new(0));
+
+        let mut handles = Vec::new();
+        for i in 0..8 {
+            let dir_path = Arc::clone(&dir_path);
+            let success = Arc::clone(&success);
+            let lock_busy = Arc::clone(&lock_busy);
+            let max_exceeded = Arc::clone(&max_exceeded);
+            handles.push(thread::spawn(move || {
+                let j = Journal::new(dir_path.as_path());
+                let rec = sample_use(
+                    &format!("use_{i}"),
+                    "g1",
+                    "sha256:race_nonce",
+                    0,
+                );
+                match reserve_use(&j, rec, Some(1)) {
+                    Ok(_)                                            => { success.fetch_add(1, Ordering::SeqCst); }
+                    Err(JournalError::LockBusy)                      => { lock_busy.fetch_add(1, Ordering::SeqCst); }
+                    Err(JournalError::MaxUsesExceeded { .. })        => { max_exceeded.fetch_add(1, Ordering::SeqCst); }
+                    Err(other) => panic!("unexpected error: {other:?}"),
+                }
+            }));
+        }
+        for h in handles { h.join().unwrap(); }
+
+        let s = success.load(Ordering::SeqCst);
+        let lb = lock_busy.load(Ordering::SeqCst);
+        let me = max_exceeded.load(Ordering::SeqCst);
+        assert_eq!(s, 1, "exactly one of 8 concurrent reserves must succeed; got {s} (lock_busy={lb}, max_exceeded={me})");
+        assert_eq!(s + lb + me, 8, "every thread accounted for");
+
+        // Belt-and-braces: only one record actually on disk for this nonce.
+        let stored = list_uses_for_grant(&Journal::new(dir.path()), "g1").unwrap();
+        let same_nonce = stored.iter().filter(|u| u.nonce_digest == "sha256:race_nonce").count();
+        assert_eq!(same_nonce, 1, "exactly one record on disk for the contested nonce");
     }
 }
