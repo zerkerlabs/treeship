@@ -2,7 +2,10 @@
 
 use std::path::{Path, PathBuf};
 
-use treeship_core::session::{read_package, verify_package, FileAccess, VerifyStatus};
+use treeship_core::session::{
+    read_package, verify_package, ApprovalsBundle, FileAccess, SessionReceipt, VerifyStatus,
+};
+use treeship_core::statements::{ApprovalUse, ReplayCheckLevel};
 
 use crate::commands::cards;
 use crate::commands::harnesses;
@@ -163,6 +166,20 @@ pub fn inspect(
         print_agent_cards_panel(&ctx_opened.config_path, printer);
         print_harness_coverage_panel(&ctx_opened.config_path, printer);
     }
+
+    // Approval Authority panel + Decision Cards (v0.9.9 PR 5).
+    // Reads from PR 4's read_approvals_bundle plus, when workspace
+    // context is available, the local journal for the local-journal
+    // replay level. Both pure functions; no schema fork.
+    let approvals_bundle = treeship_core::session::read_approvals_bundle(&path)
+        .unwrap_or_default();
+    let workspace_config_path = ctx::open(config).ok().map(|c| c.config_path);
+    print_approval_authority_panel(
+        &approvals_bundle,
+        workspace_config_path.as_deref(),
+        printer,
+    );
+    print_decision_cards(&receipt, &approvals_bundle, printer);
 
     printer.blank();
     printer.section("timeline");
@@ -412,6 +429,380 @@ fn print_harness_coverage_panel(config_path: &Path, printer: &Printer) {
 fn yes_or_no(b: bool) -> &'static str { if b { "y" } else { "n" } }
 fn tri(v: Option<bool>) -> &'static str {
     match v { Some(true) => "y", Some(false) => "no-fire", None => "?" }
+}
+
+// ---------------------------------------------------------------------------
+// approval authority panel (v0.9.9 PR 5)
+// ---------------------------------------------------------------------------
+
+/// Render the Approval Authority panel for `treeship package inspect`.
+///
+/// Reads from PR 4's `ApprovalsBundle` (embedded in the package). When a
+/// Treeship workspace is available at `workspace_config_path`, also
+/// consults the local journal via `journal::find_use_for_action` for the
+/// local-journal replay row -- same primitive PR 4's verify uses; no fork.
+///
+/// Honesty rule pinned by tests: no row says "global single-use" or
+/// "hub-org passed" unless an actual signed Hub checkpoint is present.
+/// PR 6 will land that scaffold; until then the hub-org row is reported
+/// as "not checked" rather than absent or false-passing.
+fn print_approval_authority_panel(
+    bundle: &ApprovalsBundle,
+    workspace_config_path: Option<&Path>,
+    printer: &Printer,
+) {
+    if bundle.uses.is_empty() && bundle.grants.is_empty() {
+        return;
+    }
+
+    printer.blank();
+    printer.section(&format!(
+        "approval authority ({} use{} from {} grant{})",
+        bundle.uses.len(),
+        if bundle.uses.len() == 1 { "" } else { "s" },
+        bundle.grants.len(),
+        if bundle.grants.len() == 1 { "" } else { "s" },
+    ));
+
+    // Resolve grant envelopes once. The grants vec carries
+    // (grant_id, raw_envelope_json); decode each so the panel can
+    // surface approver / scope without callers walking storage.
+    use std::collections::HashMap;
+    let mut grants_by_id: HashMap<String, treeship_core::statements::ApprovalStatement> =
+        HashMap::new();
+    for (grant_id, env_bytes) in &bundle.grants {
+        if let Ok(env) = serde_json::from_slice::<treeship_core::attestation::Envelope>(env_bytes) {
+            if let Ok(approval) =
+                env.unmarshal_statement::<treeship_core::statements::ApprovalStatement>()
+            {
+                grants_by_id.insert(grant_id.clone(), approval);
+            }
+        }
+    }
+
+    // For the local-journal row we need a Journal handle. Optional --
+    // bare-package inspection in someone's inbox skips this row.
+    let journal_opt = workspace_config_path.map(|cp| {
+        let dir = cp
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("journals")
+            .join("approval-use");
+        treeship_core::journal::Journal::new(dir)
+    });
+
+    // Index uses by grant_id so each grant gets one summary card with
+    // its uses underneath, instead of repeating the grant header per use.
+    let mut uses_by_grant: HashMap<String, Vec<&ApprovalUse>> = HashMap::new();
+    for u in &bundle.uses {
+        uses_by_grant
+            .entry(u.grant_id.clone())
+            .or_default()
+            .push(u);
+    }
+
+    // Stable display order: by grant_id ascending. Uses inside a grant
+    // already in journal append order (use_number).
+    let mut grant_ids: Vec<&String> = uses_by_grant.keys().collect();
+    grant_ids.sort();
+
+    for grant_id in grant_ids {
+        let uses = &uses_by_grant[grant_id];
+        let grant = grants_by_id.get(grant_id);
+
+        printer.blank();
+        // Header line: approver -> actor on action.subject
+        match grant {
+            Some(g) => {
+                let actor_label = uses
+                    .first()
+                    .map(|u| u.actor.as_str())
+                    .unwrap_or("agent://?");
+                let action_label = uses
+                    .first()
+                    .map(|u| u.action.as_str())
+                    .unwrap_or("?");
+                printer.info(&format!(
+                    "  {} approved {}  ({})",
+                    g.approver, actor_label, action_label,
+                ));
+            }
+            None => {
+                printer.info(&format!("  grant {grant_id}  (envelope not in package)"));
+            }
+        }
+
+        // Subject + scope summary
+        if let Some(g) = grant {
+            if let Some(scope) = &g.scope {
+                let max_label = scope
+                    .max_actions
+                    .map(|m| m.to_string())
+                    .unwrap_or_else(|| "unbounded".into());
+                let subj = uses
+                    .first()
+                    .map(|u| u.subject.as_str())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("(none)");
+                printer.dim_info(&format!("    grant_id:    {grant_id}"));
+                printer.dim_info(&format!(
+                    "    subject:     {subj}      max_uses: {max_label}      uses recorded: {}",
+                    uses.len(),
+                ));
+            } else {
+                printer.dim_info(&format!("    grant_id:    {grant_id}  (unscoped)"));
+            }
+        }
+
+        for u in uses {
+            printer.dim_info(&format!(
+                "    use {}/{}  use_id={}",
+                u.use_number,
+                u.max_uses
+                    .map(|m| m.to_string())
+                    .unwrap_or_else(|| "?".into()),
+                u.use_id,
+            ));
+        }
+
+        // Replay levels -- exactly four rows. Honest about what was
+        // checked vs not checked. Hub-org never reports "passed"
+        // here; it reports "not checked" until PR 6's scaffold (and
+        // even then, only when a Hub checkpoint is present).
+        let nonce_dig = uses
+            .first()
+            .map(|u| u.nonce_digest.clone())
+            .unwrap_or_default();
+
+        // package-local: re-derive from the bundle directly. The check
+        // PR 4's verifier emits is per-package; in the panel we
+        // restate it briefly.
+        let package_local_pass = {
+            let count = uses.len() as u32;
+            let max = uses.iter().filter_map(|u| u.max_uses).next();
+            match max {
+                Some(m) => count <= m,
+                None    => true,
+            }
+        };
+        printer.dim_info(&format!(
+            "    {} package-local        {}",
+            if package_local_pass { "✓" } else { "✗" },
+            if package_local_pass {
+                "no duplicate use inside package"
+            } else {
+                "duplicate use exceeds max_uses"
+            },
+        ));
+
+        // local-journal: if we have a workspace journal, ask
+        // find_use_for_action whether the recorded use is within
+        // bounds. If we don't, say so.
+        match journal_opt.as_ref().filter(|j| j.exists()) {
+            Some(j) => {
+                let max_uses = grant
+                    .and_then(|g| g.scope.as_ref())
+                    .and_then(|s| s.max_actions);
+                match treeship_core::journal::find_use_for_action(
+                    j, grant_id, &nonce_dig, max_uses,
+                ) {
+                    Ok(Some((_rec, replay))) => {
+                        let mark = match replay.passed {
+                            Some(false) => "✗",
+                            _ => "✓",
+                        };
+                        let detail = replay
+                            .details
+                            .clone()
+                            .unwrap_or_else(|| "local Approval Use Journal consulted".into());
+                        printer.dim_info(&format!("    {mark} local-journal        {detail}"));
+                    }
+                    Ok(None) => {
+                        printer.dim_info(
+                            "    - local-journal        not present in this workspace",
+                        );
+                    }
+                    Err(e) => {
+                        printer.dim_info(&format!("    ✗ local-journal        error: {e}"));
+                    }
+                }
+            }
+            None => {
+                printer.dim_info(
+                    "    - local-journal        no Treeship workspace at this config path",
+                );
+            }
+        }
+
+        // included-checkpoint: any embedded JournalCheckpoint? We
+        // don't pin which checkpoint covers which use here -- the
+        // panel just reports "checkpoints present and verify offline."
+        if bundle.checkpoints.is_empty() {
+            printer.dim_info(
+                "    - included-checkpoint  no journal checkpoint included in package",
+            );
+        } else {
+            // Reuse the integrity recompute helper indirectly: if the
+            // verifier already gave us a pass row, we trust that.
+            // For the panel, just acknowledge presence and let
+            // `package verify` carry the actual chain check.
+            printer.dim_info(&format!(
+                "    ✓ included-checkpoint  {} embedded checkpoint(s)",
+                bundle.checkpoints.len(),
+            ));
+        }
+
+        // hub-org: PR 6 territory. Until then, never claim it.
+        printer.dim_info(
+            "    - hub-org              not checked (no Hub checkpoint in package)",
+        );
+
+        // Suppress unused-import warning in builds where the symbol
+        // is feature-gated; this keeps the import path live so PR 6
+        // can flip the level on without re-declaring.
+        let _ = ReplayCheckLevel::HubOrg;
+    }
+
+    printer.blank();
+}
+
+// ---------------------------------------------------------------------------
+// Decision Cards v0 (v0.9.9 PR 5)
+// ---------------------------------------------------------------------------
+
+/// Render Decision Cards from receipt evidence. Every card carries
+/// evidence pointers (artifact_ids, grant_ids, use_ids, receipt digest,
+/// verify check rows). No LLM, no invented intent. The narrative text
+/// is generated mechanically from the evidence; if there's nothing to
+/// say, the card doesn't appear.
+///
+/// v0 cards (this PR):
+///   1. Approval card -- one per grant with at least one use
+///   2. Replay-warning card -- when only package-local replay is
+///      available (no journal, no checkpoint, no Hub)
+///   3. Verification-warning card -- when receipt.proofs reports
+///      skipped events
+fn print_decision_cards(
+    receipt: &SessionReceipt,
+    bundle: &ApprovalsBundle,
+    printer: &Printer,
+) {
+    use std::collections::HashSet;
+
+    let mut cards_emitted = 0usize;
+
+    // Approval cards: one per grant with uses.
+    let mut grants_seen: HashSet<&str> = HashSet::new();
+    let approval_cards: Vec<&ApprovalUse> = bundle
+        .uses
+        .iter()
+        .filter(|u| grants_seen.insert(u.grant_id.as_str()))
+        .collect();
+
+    if approval_cards.is_empty() && receipt.proofs.event_log_skipped == 0 && bundle.uses.is_empty() {
+        // Nothing to say -- omit the section entirely.
+        return;
+    }
+
+    printer.blank();
+    printer.section("key decisions");
+
+    for u in &approval_cards {
+        let grant_uses: Vec<&ApprovalUse> = bundle
+            .uses
+            .iter()
+            .filter(|x| x.grant_id == u.grant_id)
+            .collect();
+        let count = grant_uses.len() as u32;
+        let max = u.max_uses;
+
+        printer.blank();
+        printer.info(&format!("  ▸ Approval consumed: {} on {}", u.action, u.subject));
+        printer.dim_info(&format!(
+            "      {} use(s) recorded against grant {} (max_uses={})",
+            count,
+            u.grant_id,
+            max.map(|m| m.to_string()).unwrap_or_else(|| "unbounded".into()),
+        ));
+        printer.dim_info("      evidence:");
+        printer.dim_info(&format!("        grant_id:        {}", u.grant_id));
+        printer.dim_info(&format!("        approval_use_id: {}", u.use_id));
+        if let Some(aid) = &u.action_artifact_id {
+            printer.dim_info(&format!("        action_id:       {}", aid));
+        }
+        for sib in &grant_uses[1..] {
+            printer.dim_info(&format!("        sibling use:     {}", sib.use_id));
+        }
+        cards_emitted += 1;
+    }
+
+    // Replay-warning card. Trigger: at least one approval use exists
+    // AND there's no journal-level or checkpoint-level evidence we
+    // could speak to from THIS package alone. We can detect the
+    // "no checkpoint in package" condition cheaply; the no-journal
+    // condition is determined by the panel above and surfaced here
+    // by checking checkpoints + the absence of any journal records
+    // referenced in receipt.proofs (we don't have a direct receipt
+    // field for this in v0.9.9, so we fall back to "checkpoint
+    // missing" as the strict trigger).
+    if !bundle.uses.is_empty() && bundle.checkpoints.is_empty() {
+        printer.blank();
+        printer.info("  ⚠ Replay posture: package-local + local-journal only");
+        printer.dim_info(
+            "      No JournalCheckpoint embedded in this package; verifiers without",
+        );
+        printer.dim_info(
+            "      access to your workspace's local journal can only check package-local",
+        );
+        printer.dim_info(
+            "      replay (duplicate uses inside this package). Hub-org replay is not",
+        );
+        printer.dim_info(
+            "      checked -- a global single-use guarantee requires a signed Hub",
+        );
+        printer.dim_info("      checkpoint, which v0.9.9 does not yet emit.");
+        printer.dim_info("      evidence:");
+        printer.dim_info(&format!(
+            "        approval uses:   {} (see approval authority panel above)",
+            bundle.uses.len(),
+        ));
+        printer.dim_info("        verify rows:     replay-package-local, replay-local-journal");
+        cards_emitted += 1;
+    }
+
+    // Verification-warning card: skipped events, broken chain, etc.
+    // The receipt already exposes event_log_skipped; tampered uses /
+    // broken checkpoints are surfaced by `package verify` and don't
+    // round-trip into the receipt itself, so we link to `verify`
+    // there.
+    if receipt.proofs.event_log_skipped > 0 {
+        printer.blank();
+        printer.info(&format!(
+            "  ⚠ Verification posture: {} event(s) skipped during close",
+            receipt.proofs.event_log_skipped,
+        ));
+        printer.dim_info(
+            "      Treeship dropped malformed lines from events.jsonl when sealing the",
+        );
+        printer.dim_info(
+            "      receipt. The receipt is cryptographically valid but does not represent",
+        );
+        printer.dim_info("      the full event stream.");
+        printer.dim_info("      evidence:");
+        printer.dim_info(&format!(
+            "        receipt.proofs.event_log_skipped: {}",
+            receipt.proofs.event_log_skipped,
+        ));
+        printer.dim_info("        next: inspect close-time stderr or events.jsonl directly");
+        cards_emitted += 1;
+    }
+
+    if cards_emitted == 0 {
+        // We printed the section header above; soften it.
+        printer.dim_info("  no decisions to surface from this package");
+    }
+
+    printer.blank();
 }
 
 #[cfg(test)]

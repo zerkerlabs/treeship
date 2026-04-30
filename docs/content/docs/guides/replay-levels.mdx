@@ -1,0 +1,117 @@
+---
+title: Replay levels
+description: What each replay-check level actually proves — and what it doesn't.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+When `treeship verify` or `treeship package verify` runs against a package that contains an action consuming an Approval Grant, it can speak to up to four **replay levels**. Each level is a separate check, emitted as its own row, with its own evidence requirement. The output reports the *strongest* level it actually achieved — never overclaims, never silently downgrades.
+
+```
+✓ approval binding         nonce matched a signed approval
+✓ approval scope           actor / action / subject matched approval scope
+✓ replay package-local     no duplicate approval use inside package
+✓ replay local-journal     local Approval Use Journal passed, use 1/1
+✓ replay checkpoint        included journal checkpoint verified
+- replay hub-org           not checked (no Hub checkpoint in package)
+```
+
+## The four levels
+
+| Level | What it proves | What it doesn't | Available in |
+|---|---|---|---|
+| `package-local` | No duplicate use *inside this package* | Says nothing about uses on this machine outside the package, or on other machines | Always |
+| `local-journal` | The recorded use is within `max_uses` per the **workspace's local journal** | Says nothing about other machines | Verifier has Treeship workspace |
+| `included-checkpoint` | An embedded `JournalCheckpoint`'s record_digest verifies offline | Doesn't bind to your workspace journal; only proves the checkpoint records weren't tampered after sealing | Package carries checkpoints |
+| `hub-org` | A signed Hub checkpoint validates global single-use across machines | — | **Reserved.** v0.9.9 doesn't ship a Hub. Never reports "passed" without one. |
+
+## How each level is checked
+
+### `package-local` (always offline, always available)
+
+Reads the package's embedded `approvals/uses/*.json` files. Counts uses sharing `(grant_id, nonce_digest)` and compares to the use record's `max_uses` snapshot.
+
+- **Pass:** every grant's recorded uses are within `max_uses`. Two legitimate uses of a `max_uses=2` grant pass.
+- **Fail:** uses exceed `max_uses`, or two records carry the same `use_id` (always a corruption — never legitimate).
+
+This is the v0.9.6 behavior, preserved.
+
+### `local-journal` (CLI-side, workspace-aware)
+
+Calls `journal::find_use_for_action(grant_id, nonce_digest, max_uses_hint)` against the workspace's `<config>/journals/approval-use/`. Asks the *verify-time* question — "does the recorded use's `use_number` stay within bounds?" — distinct from consume-time's "would the next use exceed?".
+
+- **Pass:** the journal has a record for this `(grant_id, nonce_digest)` and its `use_number ≤ max_uses`.
+- **Fail:** journal record exists but exceeds `max_uses`.
+- **Warn:** no journal in this workspace; falls back to package-local. Bare-package verification in someone's inbox doesn't error here.
+
+### `included-checkpoint` (offline)
+
+Reads the package's embedded `approvals/checkpoints/*.json`. Recomputes each `record_digest` from canonical form and compares.
+
+- **Pass:** every checkpoint's stored digest matches the recompute.
+- **Fail:** any checkpoint was tampered after sealing.
+
+A checkpoint is itself a Merkle commitment over a contiguous range of journal records. Once PR 6 lands the Hub-signed variant, the same row will also verify the signature.
+
+### `hub-org` (reserved)
+
+Will require a signed `hub-approval-checkpoint/v1` record. Until v0.9.9 PR 6 ships and a Hub actually signs one, this row reports **`not checked`** rather than absent or "passed."
+
+<Callout type="warn">
+**The honesty rule, baked in:** Treeship will never print "global single-use enforced" or "hub-org passed" without a real Hub checkpoint. The check exists to fire when evidence exists; before then, the row stays explicit about what's missing.
+</Callout>
+
+## Reading the report
+
+`treeship package inspect` renders each level as a discrete line under the Approval Authority panel:
+
+```
+approval authority (1 use from 1 grant)
+
+  human://piyush approved agent://deployer  (deploy.production)
+    grant_id:    art_2a325283550936d0c32a15ba
+    subject:     env://production      max_uses: 1      uses recorded: 1
+    use 1/1  use_id=use_cf0cb9fea3540e92
+    ✓ package-local        no duplicate use inside package
+    ✓ local-journal        local Approval Use Journal passed, use 1/1
+    - included-checkpoint  no journal checkpoint included in package
+    - hub-org              not checked (no Hub checkpoint in package)
+```
+
+A `✓` means the level was actually checked and passed. A `✗` means it was checked and failed. A `-` means the level was not checked — usually because the evidence wasn't present, not because the check was skipped.
+
+## Strict mode
+
+`treeship package verify --strict` promotes approval-evidence warnings to failures. Useful in CI:
+
+```bash
+treeship package verify --strict ./session.treeship
+echo "exit code: $?"   # non-zero on any approval anomaly
+```
+
+Existing receipt-determinism and event-log warnings stay warnings. Only the `replay-*` and `approval-use-integrity` rows are promoted.
+
+## Decision Cards
+
+The "Key decisions" section under `package inspect` includes a **Replay-warning card** when only `package-local` and/or `local-journal` are available:
+
+```
+⚠ Replay posture: package-local + local-journal only
+    No JournalCheckpoint embedded in this package; verifiers without
+    access to your workspace's local journal can only check package-local
+    replay (duplicate uses inside this package). Hub-org replay is not
+    checked -- a global single-use guarantee requires a signed Hub
+    checkpoint, which v0.9.9 does not yet emit.
+    evidence:
+      approval uses:   1 (see approval authority panel above)
+      verify rows:     replay-package-local, replay-local-journal
+```
+
+Every Decision Card carries evidence pointers (grant_id, approval_use_id, action_artifact_id, verify check rows). No LLM, no invented intent — the narrative is generated mechanically from the receipt.
+
+## See also
+
+- [Approval Authority](/docs/concepts/approval-authority) — the wider model
+- [Approval Use Journal](/docs/concepts/approval-use-journal) — the local store
+- [Approvals](/docs/guides/approvals) — minting, consuming, verifying flows
+- [Trust fabric](/docs/concepts/trust-fabric) — how this fits the rest of the system

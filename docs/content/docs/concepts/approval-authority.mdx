@@ -1,0 +1,104 @@
+---
+title: Approval Authority
+description: How Treeship turns scoped approvals into consumable, auditable authority.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Treeship's approval model is designed around four claims, each made by a different artifact:
+
+> **Nonces bind. Scopes authorize. Approval Uses prove consumption. Local journals enforce local replay. Hub checkpoints upgrade replay to org/distributed. Reports say exactly which level was checked.**
+
+Each layer answers exactly one question, and the report format makes it impossible to confuse one layer for another.
+
+## The model
+
+| Artifact | What it proves | Where it lives |
+|---|---|---|
+| **Approval Grant** (`treeship/approval/v1`) | An approver authorized this scope: who, what, against which subject, how many times | Signed envelope in chain + package |
+| **Approval Use** (`treeship/approval-use/v1`) | This grant was consumed by this action | Local journal + (optionally) package |
+| **Journal Checkpoint** (`treeship/journal-checkpoint/v1`) | A signed Merkle commitment to a contiguous range of journal records | Local journal + (optionally) package |
+| **Session Receipt** | Deterministic proof of what happened | Package |
+| **Session Report** | Human-readable explanation with evidence pointers | Generated from package |
+
+## What each layer proves (and doesn't)
+
+**The grant alone proves binding.** The action's `approval_nonce` matches a real signed approval. That's all. It does **not** mean the action was within the approver's scope, and it does **not** mean the approval wasn't reused.
+
+**The grant + scope proves authorization.** The approval's `ApprovalScope` (introduced in v0.9.6) signs `allowed_actors`, `allowed_actions`, `allowed_subjects`, and `max_actions` into the grant. Verify checks each axis statelessly. An unscoped approval (no constraints) gets an explicit warning, not silent acceptance.
+
+**The Approval Use proves consumption.** A signed-or-chained record in the local Approval Use Journal that says "this grant was consumed by this action at this time, as use N/M." Without a use record, you only know the action *claimed* the grant — not that the grant was reserved before signing.
+
+**The journal proves local replay.** With the journal present, `verify` can say "use 1/1 — local Approval Use Journal passed" rather than the older "package-local only — no global ledger consulted."
+
+**A Hub checkpoint would prove distributed replay.** Reserved for v0.9.9+; until then, any output that says "global single-use" is overclaiming. Treeship physically cannot say it.
+
+## The flow
+
+```
+1. Approver mints grant
+   treeship attest approval --approver human://alice \
+     --allowed-actor agent://deployer \
+     --allowed-action deploy.production \
+     --allowed-subject env://production \
+     --max-uses 1
+   → ApprovalStatement with random nonce + ApprovalScope
+
+2. Agent attempts action with the nonce
+   treeship attest action \
+     --actor agent://deployer \
+     --action deploy.production \
+     --subject env://production \
+     --approval-nonce <nonce>
+
+3. consume_approval (PR 3) runs in this exact order:
+   a. resolve grant by nonce            (cheap rejection: no grant)
+   b. expiry check                      (cheap rejection: expired)
+   c. scope check                       (cheap rejection: actor/action/subject)
+   d. acquire journal lock
+   e. idempotency-key short-circuit     (retry collapses to existing use)
+   f. check_replay -> max_uses          (refuse if would exceed)
+   g. RESERVE ApprovalUse with action_artifact_id = None
+   h. SIGN action
+   i. backfill action_artifact_id (sidecar; doesn't change the
+      digest-stable record)
+   j. stamp approval_use_id into action.meta
+```
+
+## Crash semantics
+
+If the process dies between **g.** (reserve) and **h.** (sign), the use is on disk. A retry **without** an idempotency key — or with a different one — sees the use as already-consumed and refuses if `max_uses` would be exceeded. A retry with the **same** `--idempotency-key` collapses to that record and signs a fresh action against it.
+
+This is the **reserved-counts-as-consumed** rule: the trust property is "nobody can sign two actions against a single-use grant by racing," and we get that property by writing the use first. The retry primitive (idempotency key) gives crash-safety without weakening the trust property.
+
+## Replay levels
+
+Reports surface up to four replay levels, each with its own row:
+
+| Level | What it checks | Status today |
+|---|---|---|
+| `package-local` | Duplicate uses *inside this package* | Always available |
+| `local-journal` | Workspace `<config>/journals/approval-use/` consulted | Available since v0.9.9 PR 2 |
+| `included-checkpoint` | Embedded `JournalCheckpoint` records verify offline | Available since v0.9.9 PR 4 |
+| `hub-org` | Signed Hub checkpoint validates global single-use | **Reserved for v0.9.9+** — never claimed without a real checkpoint |
+
+A row reports the *strongest* level it actually achieved. It never silently downgrades, and it never claims a stronger level than the evidence supports. See [Replay levels](/docs/guides/replay-levels) for the full ladder.
+
+<Callout type="warn">
+**Verify never says "global single-use enforced".** That language requires a Hub checkpoint signed by the org, and v0.9.9 doesn't ship a Hub. The honest output today caps at `local-journal` (or `included-checkpoint` for offline verifiers).
+</Callout>
+
+## Privacy posture
+
+The Approval Use Journal stores `nonce_digest`, never raw nonces. Records do not contain commands, prompts, file contents, bearer tokens, API keys, or secrets. The journal answers exactly one question:
+
+> "Has `(grant_id, nonce_digest)` been consumed before, and if so how many times?"
+
+Everything else stays in the signed grant + receipt where it was already going to live.
+
+## See also
+
+- [Approval Use Journal](/docs/concepts/approval-use-journal) — the local store
+- [Replay levels](/docs/guides/replay-levels) — what each level proves
+- [Approvals](/docs/guides/approvals) — minting, consuming, verifying flows
+- [Trust fabric](/docs/concepts/trust-fabric) — the wider picture
