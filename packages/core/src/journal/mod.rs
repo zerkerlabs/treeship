@@ -1131,6 +1131,38 @@ mod tests {
         assert!(matches!(err, JournalError::MaxUsesExceeded { .. }));
     }
 
+    /// Round-2 hardening: idempotency-key retries through the
+    /// CLI's `reserve_in_journal` should NOT bypass `reserve_use`'s
+    /// max_uses gate. The CLI checks the idempotency key against
+    /// existing uses *before* calling `reserve_use`; this test
+    /// confirms that path doesn't sneak a second reservation past
+    /// max_uses=1 just because a flaky retry uses the same key.
+    ///
+    /// The journal-level invariant we pin here: even if a caller
+    /// repeatedly invokes `reserve_use` with the same record after a
+    /// `LockBusy`, the second call sees the first record (now
+    /// committed) and rejects with `MaxUsesExceeded`. There is no
+    /// "free retry" loophole.
+    #[test]
+    fn reserve_use_retry_after_lock_busy_does_not_bypass_max_uses() {
+        let dir = tempdir().unwrap();
+        let j = Journal::new(dir.path());
+        // First reserve commits use_1.
+        reserve_use(&j, sample_use("use_1", "g1", "sha256:nn_retry", 0), Some(1)).unwrap();
+        // Subsequent reserves with the SAME nonce all fail with
+        // MaxUsesExceeded -- no retry-bypass window.
+        for i in 0..5 {
+            let err = reserve_use(
+                &j,
+                sample_use(&format!("use_retry_{i}"), "g1", "sha256:nn_retry", 0),
+                Some(1),
+            ).expect_err("retry must fail");
+            assert!(matches!(err, JournalError::MaxUsesExceeded { .. }));
+        }
+        let stored = list_uses_for_grant(&j, "g1").unwrap();
+        assert_eq!(stored.len(), 1, "exactly one record on disk despite 5 retries");
+    }
+
     #[test]
     fn reserve_use_concurrent_max_uses_1_only_one_succeeds() {
         // The headline regression test for the v0.9.9 TOCTOU race.

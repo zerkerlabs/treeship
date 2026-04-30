@@ -692,26 +692,53 @@ pub(crate) fn add_approval_evidence_checks(
     // it (and recompute record_digest) to claim consumption of a grant
     // whose nonce was never actually used. This row closes that gap.
     //
-    // Discipline: the grant envelope is the source of truth. We pull
-    // the raw `nonce` from the grant's payload, hash it via the same
-    // `nonce_digest` helper that attest used, and compare to each
-    // use's stored `nonce_digest`. Mismatch -> fail.
+    // Discipline: the grant envelope is the source of truth. Before
+    // pulling the raw `nonce` from the grant's payload we verify the
+    // envelope's *content addressing* -- recompute the artifact_id
+    // from the envelope's PAE bytes and confirm it equals the grant_id
+    // the package claims. v0.9.10 PR A round 1 only parsed the
+    // envelope without this check; that left a forgery window where
+    // an attacker could ship an arbitrary unsigned envelope under any
+    // grant_id filename. v0.9.10 PR A round 2 closes the window: only
+    // a bytes-identical envelope produces the same artifact_id under
+    // SHA-256.
     if !bundle.uses.is_empty() {
         use crate::attestation::envelope::Envelope;
+        use crate::attestation::{pae, artifact_id_from_pae};
         use crate::statements::{nonce_digest, ApprovalStatement};
-        // Build a grant_id -> expected_nonce_digest map from the bundle's
-        // grant envelopes. Skip grants we can't parse (the receipt's
-        // signature checks would catch those upstream; here we just
-        // can't speak to their binding).
         let mut grant_nonce_digest: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        let mut tampered_grants: Vec<String> = Vec::new();
         for (grant_id, env_bytes) in &bundle.grants {
             let env = match Envelope::from_json(env_bytes) {
                 Ok(e)  => e,
-                Err(_) => continue,
+                Err(_) => {
+                    tampered_grants.push(format!("grant {grant_id} envelope unparseable"));
+                    continue;
+                }
             };
+            // Content-addressing check: derive the artifact_id from
+            // the envelope's PAE bytes and confirm it matches the
+            // claimed grant_id. If they differ the envelope was
+            // substituted or its bytes were tampered post-sign.
+            let derived = match env.payload_bytes() {
+                Ok(p) => artifact_id_from_pae(&pae(&env.payload_type, &p)),
+                Err(_) => {
+                    tampered_grants.push(format!("grant {grant_id} envelope payload undecodable"));
+                    continue;
+                }
+            };
+            if &derived != grant_id {
+                tampered_grants.push(format!(
+                    "grant {grant_id} envelope content derives to {derived} -- envelope substituted or tampered",
+                ));
+                continue;
+            }
             let approval: ApprovalStatement = match env.unmarshal_statement() {
                 Ok(a)  => a,
-                Err(_) => continue,
+                Err(_) => {
+                    tampered_grants.push(format!("grant {grant_id} payload not an ApprovalStatement"));
+                    continue;
+                }
             };
             grant_nonce_digest.insert(grant_id.clone(), nonce_digest(&approval.nonce));
         }
@@ -729,25 +756,26 @@ pub(crate) fn add_approval_evidence_checks(
                 }
                 None => {
                     missing_grants.push(format!(
-                        "use {} references grant {} but the grant envelope is not in the package",
+                        "use {} references grant {} but no usable grant envelope is in the package",
                         u.use_id, u.grant_id,
                     ));
                 }
             }
         }
-        if mismatches.is_empty() && missing_grants.is_empty() {
+        if mismatches.is_empty() && missing_grants.is_empty() && tampered_grants.is_empty() {
             checks.push(VerifyCheck::pass(
                 "approval-use-nonce-binding",
-                &format!("{} use record(s) bind to grant signed nonces", bundle.uses.len()),
+                &format!(
+                    "{} use record(s) bind to content-addressed grant signed nonces",
+                    bundle.uses.len(),
+                ),
             ));
         } else {
-            let mut detail = String::new();
-            if !mismatches.is_empty()    { detail.push_str(&mismatches.join("; ")); }
-            if !missing_grants.is_empty() {
-                if !detail.is_empty() { detail.push_str("; "); }
-                detail.push_str(&missing_grants.join("; "));
-            }
-            checks.push(VerifyCheck::fail("approval-use-nonce-binding", &detail));
+            let mut parts: Vec<String> = Vec::new();
+            if !tampered_grants.is_empty() { parts.push(tampered_grants.join("; ")); }
+            if !mismatches.is_empty()      { parts.push(mismatches.join("; ")); }
+            if !missing_grants.is_empty()  { parts.push(missing_grants.join("; ")); }
+            checks.push(VerifyCheck::fail("approval-use-nonce-binding", &parts.join("; ")));
         }
     }
 
@@ -767,6 +795,7 @@ pub(crate) fn add_approval_evidence_checks(
     // than silent PASS.
     if !bundle.uses.is_empty() {
         use crate::attestation::envelope::Envelope;
+        use crate::attestation::{pae, artifact_id_from_pae};
         use crate::statements::{nonce_digest, ActionStatement};
         if bundle.action_envelopes.is_empty() {
             checks.push(VerifyCheck::warn(
@@ -785,6 +814,26 @@ pub(crate) fn add_approval_evidence_checks(
                         continue;
                     }
                 };
+                // Content-addressing gate: derive the artifact_id
+                // from the envelope's PAE bytes and require it to
+                // match the filename stem the package shipped this
+                // envelope under. Without this gate an attacker
+                // controlling the package can write any forged
+                // unsigned action JSON to artifacts/<id>.json and the
+                // binding rows would trust it.
+                let derived = match env.payload_bytes() {
+                    Ok(p) => artifact_id_from_pae(&pae(&env.payload_type, &p)),
+                    Err(_) => {
+                        violations.push(format!("action {artifact_id} envelope payload undecodable"));
+                        continue;
+                    }
+                };
+                if &derived != artifact_id {
+                    violations.push(format!(
+                        "action {artifact_id} envelope content derives to {derived} -- envelope substituted or tampered",
+                    ));
+                    continue;
+                }
                 let action: ActionStatement = match env.unmarshal_statement() {
                     Ok(a)  => a,
                     Err(_) => {
@@ -792,9 +841,6 @@ pub(crate) fn add_approval_evidence_checks(
                         continue;
                     }
                 };
-                // Action envelopes shipped only when they consumed an
-                // approval, but be defensive: if there's no
-                // approval_nonce, skip silently.
                 let raw_nonce = match action.approval_nonce.as_deref() {
                     Some(n) => n,
                     None    => continue,
@@ -817,8 +863,6 @@ pub(crate) fn add_approval_evidence_checks(
                     ));
                     continue;
                 }
-                // The use exists; cross-check that its nonce_digest
-                // matches the action's approval_nonce hash.
                 let expected = nonce_digest(raw_nonce);
                 let matched_use = bundle.uses.iter().find(|u| u.use_id == claimed_use_id);
                 if let Some(u) = matched_use {
@@ -835,7 +879,9 @@ pub(crate) fn add_approval_evidence_checks(
             if violations.is_empty() {
                 checks.push(VerifyCheck::pass(
                     "approval-use-action-binding",
-                    &format!("{bound_count} consuming action(s) bind cleanly to embedded use records"),
+                    &format!(
+                        "{bound_count} consuming action(s) bind cleanly to content-addressed envelope(s)",
+                    ),
                 ));
             } else {
                 checks.push(VerifyCheck::fail(
@@ -853,53 +899,139 @@ pub(crate) fn add_approval_evidence_checks(
     // (recomputing each digest along the way) and the per-record
     // checks all passed.
     //
-    // We can only do a *partial* chain walk in offline package replay:
-    // the package ships only records the session touched, not the
-    // workspace journal's full history, so the chain we see may have
-    // gaps. What we CAN check: every embedded record's
-    // previous_record_digest must point at SOME record_digest that
-    // either (a) belongs to another embedded record, or (b) is
-    // explicitly the empty string (genesis). A dangling
-    // previous_record_digest pointing at nothing is a bypass attempt.
+    // Algorithm (v0.9.10 PR A round 2): build a graph of embedded
+    // records keyed by record_digest, then require the embedded
+    // records to form a SINGLE linked list with exactly one genesis
+    // (previous_record_digest == "") and no cycles, forks, or
+    // disconnected subchains.
     //
-    // Anchoring against a Hub-signed checkpoint is handled separately
-    // by replay-hub-org (the signature covers previous_record_digest);
-    // here we report internal consistency only.
+    //   - Dangling prev pointer (not in `owned`) -> fail.
+    //   - More than one record with prev == ""    -> fail (mid-chain
+    //     genesis is a forgery primitive).
+    //   - Two records sharing the same prev       -> fail (fork).
+    //   - Cycle reached during the walk           -> fail.
+    //   - Walk doesn't reach every record         -> fail (disconnected
+    //     subchain).
+    //
+    // We can only check *internal* consistency offline -- the package
+    // doesn't ship the workspace journal's full history, so the chain
+    // we see may be a contiguous prefix or window. Anchoring against
+    // a Hub-signed checkpoint is replay-hub-org's job; here we report
+    // structural consistency only.
     if !bundle.uses.is_empty() || !bundle.checkpoints.is_empty() {
-        // Collect every digest the package "owns" as a chain link.
-        let mut owned: std::collections::HashSet<String> = std::collections::HashSet::new();
-        owned.insert(String::new()); // genesis is a valid prev pointer
-        for u in &bundle.uses          { owned.insert(u.record_digest.clone()); }
-        for cp in &bundle.checkpoints  { owned.insert(cp.record_digest.clone()); }
-        let mut dangling: Vec<String> = Vec::new();
+        use std::collections::{HashMap, HashSet};
+        // Each record carries a label for diagnostics + its own
+        // record_digest + previous_record_digest.
+        struct Node<'a> { label: String, digest: &'a str, prev: &'a str }
+        let mut nodes: Vec<Node> = Vec::new();
         for u in &bundle.uses {
-            if !owned.contains(&u.previous_record_digest) {
-                dangling.push(format!(
-                    "use {} previous_record_digest {} not anchored in package",
-                    u.use_id, u.previous_record_digest,
-                ));
-            }
+            nodes.push(Node {
+                label: format!("use {}", u.use_id),
+                digest: u.record_digest.as_str(),
+                prev: u.previous_record_digest.as_str(),
+            });
         }
         for cp in &bundle.checkpoints {
-            if !owned.contains(&cp.previous_record_digest) {
-                dangling.push(format!(
-                    "checkpoint {} previous_record_digest {} not anchored in package",
-                    cp.checkpoint_id, cp.previous_record_digest,
+            nodes.push(Node {
+                label: format!("checkpoint {}", cp.checkpoint_id),
+                digest: cp.record_digest.as_str(),
+                prev: cp.previous_record_digest.as_str(),
+            });
+        }
+
+        let owned: HashSet<&str> = std::iter::once("")
+            .chain(nodes.iter().map(|n| n.digest))
+            .collect();
+
+        let mut violations: Vec<String> = Vec::new();
+        // Dangling prev: pointer not in owned set.
+        for n in &nodes {
+            if !owned.contains(n.prev) {
+                violations.push(format!(
+                    "{} previous_record_digest {} not anchored in package",
+                    n.label, n.prev,
                 ));
             }
         }
-        if dangling.is_empty() {
+        // Genesis count: only one record allowed to have prev == "".
+        let genesis: Vec<&Node> = nodes.iter().filter(|n| n.prev.is_empty()).collect();
+        if genesis.len() > 1 {
+            violations.push(format!(
+                "{} records claim previous_record_digest='' (genesis): {}",
+                genesis.len(),
+                genesis.iter().map(|n| n.label.clone()).collect::<Vec<_>>().join(", "),
+            ));
+        }
+        // Forks: two records sharing the same non-empty prev.
+        let mut by_prev: HashMap<&str, Vec<&Node>> = HashMap::new();
+        for n in &nodes {
+            by_prev.entry(n.prev).or_default().push(n);
+        }
+        for (prev, group) in &by_prev {
+            if group.len() > 1 && !prev.is_empty() {
+                violations.push(format!(
+                    "fork: {} records share previous_record_digest {}: {}",
+                    group.len(),
+                    prev,
+                    group.iter().map(|n| n.label.clone()).collect::<Vec<_>>().join(", "),
+                ));
+            }
+        }
+
+        // Walk from genesis (if exactly one) following digest-as-prev
+        // links. Detect cycles and unreachable records.
+        if violations.is_empty() {
+            let by_digest: HashMap<&str, &Node> = nodes.iter().map(|n| (n.digest, n)).collect();
+            let next_of: HashMap<&str, &Node> = nodes
+                .iter()
+                .filter(|n| !n.prev.is_empty())
+                .map(|n| (n.prev, *(&n)))
+                .collect();
+            let start = match genesis.first() {
+                Some(g) => Some(*g),
+                None    => None,
+            };
+            let mut visited: HashSet<&str> = HashSet::new();
+            let mut current = start;
+            while let Some(node) = current {
+                if !visited.insert(node.digest) {
+                    violations.push(format!(
+                        "cycle detected at {} (record_digest {})",
+                        node.label, node.digest,
+                    ));
+                    break;
+                }
+                current = next_of.get(node.digest).copied();
+            }
+            // Disconnected: walk didn't include every node.
+            if violations.is_empty() && visited.len() != nodes.len() {
+                let unreached: Vec<String> = nodes.iter()
+                    .filter(|n| !visited.contains(n.digest))
+                    .map(|n| n.label.clone())
+                    .collect();
+                if !unreached.is_empty() {
+                    violations.push(format!(
+                        "disconnected subchain: {} record(s) not reachable from genesis: {}",
+                        unreached.len(),
+                        unreached.join(", "),
+                    ));
+                }
+            }
+            let _ = by_digest; // reserved for future cross-checks
+        }
+
+        if violations.is_empty() {
             checks.push(VerifyCheck::pass(
                 "approval-use-chain-continuity",
                 &format!(
-                    "{} record(s) form a self-consistent chain (every previous_record_digest anchors in-package or genesis)",
-                    bundle.uses.len() + bundle.checkpoints.len(),
+                    "{} record(s) form a single connected linked list from one genesis with no cycles or forks",
+                    nodes.len(),
                 ),
             ));
         } else {
             checks.push(VerifyCheck::fail(
                 "approval-use-chain-continuity",
-                &dangling.join("; "),
+                &violations.join("; "),
             ));
         }
     }

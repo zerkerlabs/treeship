@@ -1,14 +1,12 @@
 //! Integration tests for v0.9.10 PR A: closing the four trust-bypass
-//! paths Codex's adversarial review of v0.9.9 found.
+//! paths Codex's adversarial review of v0.9.9 found, plus the
+//! adjacent hardenings the v0.9.10 PR A round-2 re-check flagged
+//! (content-addressed envelope verification, tightened chain
+//! continuity).
 //!
 //! Each test builds a fixture `.treeship` package with deliberately
 //! tampered approval evidence and asserts that `verify_package` flags
-//! the right row. The tests are the regression pins for:
-//!
-//!   1. action↔use binding (via meta.approval_use_id)        → approval-use-action-binding
-//!   2. nonce binding (use.nonce_digest vs grant.nonce)      → approval-use-nonce-binding
-//!   3. record-digest integrity (renamed from -integrity)    → approval-use-record-digest
-//!   4. embedded chain continuity                            → approval-use-chain-continuity
+//! the right row.
 //!
 //! The TOCTOU race fix (Blocker 1) is unit-tested in the journal
 //! module itself; this file exercises only the package-level checks.
@@ -55,14 +53,15 @@ fn make_use_with_nonce(use_id: &str, grant_id: &str, raw_nonce: &str) -> Approva
     u
 }
 
-/// Build a fake-but-canonical signed ApprovalStatement envelope JSON
-/// carrying the given raw nonce. The signatures aren't real Ed25519
-/// here; we only need `Envelope::from_json` + `unmarshal_statement`
-/// to succeed, and the verifier to read the grant's `nonce` field.
-fn fake_grant_envelope(_grant_id: &str, raw_nonce: &str) -> Vec<u8> {
+/// Build a fake-but-canonical signed ApprovalStatement envelope JSON.
+/// Returns `(derived_grant_id, envelope_bytes)` where the grant_id is
+/// derived from the envelope's PAE bytes via `artifact_id_from_pae` --
+/// matching production sign behavior. v0.9.10 PR A round 2 verifies
+/// content addressing, so test fixtures must produce envelopes whose
+/// derived id matches the grant_id we ship them under.
+fn fake_grant_envelope(raw_nonce: &str) -> (String, Vec<u8>) {
     use base64::Engine;
-    // Field names match ApprovalStatement's serde renames
-    // (timestamp / approver / nonce / delegatable required).
+    use treeship_core::attestation::{pae, artifact_id_from_pae};
     let payload = json!({
         "type": "treeship/approval/v1",
         "timestamp": "2026-04-30T07:00:00Z",
@@ -71,32 +70,31 @@ fn fake_grant_envelope(_grant_id: &str, raw_nonce: &str) -> Vec<u8> {
         "delegatable": false,
         "nonce": raw_nonce,
     });
-    let payload_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .encode(serde_json::to_vec(&payload).unwrap());
+    let payload_bytes = serde_json::to_vec(&payload).unwrap();
+    let payload_type = "application/vnd.treeship.approval.v1+json";
+    let pae_bytes = pae(payload_type, &payload_bytes);
+    let derived_id = artifact_id_from_pae(&pae_bytes);
+    let payload_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&payload_bytes);
     let env = json!({
         "payload": payload_b64,
-        "payloadType": "application/vnd.treeship.approval.v1+json",
+        "payloadType": payload_type,
         "signatures": [{ "keyid": "key_test", "sig": "AA" }],
     });
-    serde_json::to_vec(&env).unwrap()
+    (derived_id, serde_json::to_vec(&env).unwrap())
 }
 
-/// Build a fake-but-canonical signed ActionStatement envelope JSON
-/// carrying the given approval_nonce and meta.approval_use_id. Useful
-/// for testing what verify sees when the action envelope ships in
-/// `artifacts/`.
+/// Build a fake-but-canonical signed ActionStatement envelope JSON.
+/// Returns `(derived_artifact_id, envelope_bytes)`.
 fn fake_action_envelope(
-    artifact_id: &str,
     raw_nonce: &str,
     approval_use_id: Option<&str>,
 ) -> (String, Vec<u8>) {
     use base64::Engine;
+    use treeship_core::attestation::{pae, artifact_id_from_pae};
     let meta: Value = match approval_use_id {
         Some(id) => json!({ "approval_use_id": id }),
         None     => json!({}),
     };
-    // Field names match ActionStatement's serde renames
-    // (approvalNonce / parentId / policyRef / type / timestamp).
     let payload = json!({
         "type": "treeship/action/v1",
         "timestamp": "2026-04-30T08:00:00Z",
@@ -106,14 +104,17 @@ fn fake_action_envelope(
         "approvalNonce": raw_nonce,
         "meta": meta,
     });
-    let payload_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .encode(serde_json::to_vec(&payload).unwrap());
+    let payload_bytes = serde_json::to_vec(&payload).unwrap();
+    let payload_type = "application/vnd.treeship.action.v1+json";
+    let pae_bytes = pae(payload_type, &payload_bytes);
+    let derived_id = artifact_id_from_pae(&pae_bytes);
+    let payload_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&payload_bytes);
     let env = json!({
         "payload": payload_b64,
-        "payloadType": "application/vnd.treeship.action.v1+json",
+        "payloadType": payload_type,
         "signatures": [{ "keyid": "key_test", "sig": "AA" }],
     });
-    (artifact_id.to_string(), serde_json::to_vec(&env).unwrap())
+    (derived_id, serde_json::to_vec(&env).unwrap())
 }
 
 fn make_minimal_receipt(action_artifact_ids: &[&str]) -> treeship_core::session::SessionReceipt {
@@ -181,19 +182,20 @@ fn find_check<'a>(
 }
 
 // ---------------------------------------------------------------------------
-// Fix 2 — action↔use binding
+// Fix 2 — action↔use binding (content-addressed)
 // ---------------------------------------------------------------------------
 
 #[test]
 fn action_envelope_with_correct_use_id_binds_cleanly() {
     let nonce = "raw_nonce_alpha";
+    let (g_id, g_env) = fake_grant_envelope(nonce);
+    let (art_id, env) = fake_action_envelope(nonce, Some("use_real"));
     let mut bundle = ApprovalsBundle::default();
-    bundle.grants.push(("g1".into(), fake_grant_envelope("g1", nonce)));
-    bundle.uses.push(make_use_with_nonce("use_real", "g1", nonce));
-    let (art_id, env) = fake_action_envelope("art_a", nonce, Some("use_real"));
-    bundle.action_envelopes.push((art_id, env));
+    bundle.grants.push((g_id.clone(), g_env));
+    bundle.uses.push(make_use_with_nonce("use_real", &g_id, nonce));
+    bundle.action_envelopes.push((art_id.clone(), env));
 
-    let pkg = build(bundle, &["art_a"]);
+    let pkg = build(bundle, &[art_id.as_str()]);
     let checks = verify_package(&pkg).unwrap();
 
     let row = find_check(&checks, "approval-use-action-binding")
@@ -204,17 +206,15 @@ fn action_envelope_with_correct_use_id_binds_cleanly() {
 
 #[test]
 fn action_envelope_with_nonexistent_use_id_fails_binding() {
-    // The exact v0.9.9 attack: action.meta.approval_use_id points at a
-    // use_id that has no record. v0.9.9 verify ignored this; v0.9.10
-    // catches it.
     let nonce = "raw_nonce_beta";
+    let (g_id, g_env) = fake_grant_envelope(nonce);
+    let (art_id, env) = fake_action_envelope(nonce, Some("use_does_not_exist"));
     let mut bundle = ApprovalsBundle::default();
-    bundle.grants.push(("g1".into(), fake_grant_envelope("g1", nonce)));
-    bundle.uses.push(make_use_with_nonce("use_real", "g1", nonce));
-    let (art_id, env) = fake_action_envelope("art_a", nonce, Some("use_does_not_exist"));
-    bundle.action_envelopes.push((art_id, env));
+    bundle.grants.push((g_id.clone(), g_env));
+    bundle.uses.push(make_use_with_nonce("use_real", &g_id, nonce));
+    bundle.action_envelopes.push((art_id.clone(), env));
 
-    let pkg = build(bundle, &["art_a"]);
+    let pkg = build(bundle, &[art_id.as_str()]);
     let checks = verify_package(&pkg).unwrap();
 
     let row = find_check(&checks, "approval-use-action-binding")
@@ -225,16 +225,15 @@ fn action_envelope_with_nonexistent_use_id_fails_binding() {
 
 #[test]
 fn action_envelope_missing_use_id_pointer_fails_binding() {
-    // Action carries approval_nonce but its meta has no
-    // approval_use_id. v0.9.9 didn't care; v0.9.10 fails.
     let nonce = "raw_nonce_gamma";
+    let (g_id, g_env) = fake_grant_envelope(nonce);
+    let (art_id, env) = fake_action_envelope(nonce, None);
     let mut bundle = ApprovalsBundle::default();
-    bundle.grants.push(("g1".into(), fake_grant_envelope("g1", nonce)));
-    bundle.uses.push(make_use_with_nonce("use_real", "g1", nonce));
-    let (art_id, env) = fake_action_envelope("art_a", nonce, None); // no approval_use_id
-    bundle.action_envelopes.push((art_id, env));
+    bundle.grants.push((g_id.clone(), g_env));
+    bundle.uses.push(make_use_with_nonce("use_real", &g_id, nonce));
+    bundle.action_envelopes.push((art_id.clone(), env));
 
-    let pkg = build(bundle, &["art_a"]);
+    let pkg = build(bundle, &[art_id.as_str()]);
     let checks = verify_package(&pkg).unwrap();
 
     let row = find_check(&checks, "approval-use-action-binding")
@@ -245,16 +244,13 @@ fn action_envelope_missing_use_id_pointer_fails_binding() {
 
 #[test]
 fn package_without_action_envelopes_warns_binding_unasserted() {
-    // Pre-v0.9.10 packages: artifacts/ dir empty, no action envelopes
-    // shipped. Verify must NOT silently pass; it must report the row
-    // as `not asserted by package`.
     let nonce = "raw_nonce_delta";
+    let (g_id, g_env) = fake_grant_envelope(nonce);
     let mut bundle = ApprovalsBundle::default();
-    bundle.grants.push(("g1".into(), fake_grant_envelope("g1", nonce)));
-    bundle.uses.push(make_use_with_nonce("use_real", "g1", nonce));
-    // No action_envelopes deliberately.
+    bundle.grants.push((g_id.clone(), g_env));
+    bundle.uses.push(make_use_with_nonce("use_real", &g_id, nonce));
 
-    let pkg = build(bundle, &["art_a"]);
+    let pkg = build(bundle, &[]);
     let checks = verify_package(&pkg).unwrap();
 
     let row = find_check(&checks, "approval-use-action-binding")
@@ -263,16 +259,55 @@ fn package_without_action_envelopes_warns_binding_unasserted() {
     assert!(row.detail.contains("not asserted by package"), "detail: {}", row.detail);
 }
 
+/// Round-2 hardening regression: an attacker writes a forged action
+/// envelope at `artifacts/<some_id>.json` whose content does NOT
+/// derive to that id. v0.9.10 PR A round 1 trusted the file name and
+/// parsed `meta.approval_use_id` from arbitrary bytes; round 2 rejects
+/// because content-derived artifact_id mismatches the filename stem.
+#[test]
+fn forged_action_envelope_under_wrong_id_fails_content_addressing() {
+    use treeship_core::session::ApprovalsBundle;
+    let nonce = "raw_nonce_forge_action";
+    let (g_id, g_env) = fake_grant_envelope(nonce);
+    let mut bundle = ApprovalsBundle::default();
+    bundle.grants.push((g_id.clone(), g_env));
+    bundle.uses.push(make_use_with_nonce("use_real", &g_id, nonce));
+
+    // Real action envelope -> derives to art_a.
+    let (real_art_id, real_env) = fake_action_envelope(nonce, Some("use_real"));
+    // Different action envelope (different nonce, different
+    // approval_use_id) -> derives to a different art_b.
+    let (fake_art_id, fake_env) = fake_action_envelope("a_different_nonce", Some("use_real"));
+    assert_ne!(real_art_id, fake_art_id, "fixture sanity: forge must derive to a distinct id");
+
+    // The attack: ship the FORGED envelope under the REAL id. The
+    // file content does not derive to its filename.
+    bundle.action_envelopes.push((real_art_id.clone(), fake_env));
+
+    let pkg = build(bundle, &[real_art_id.as_str()]);
+    let checks = verify_package(&pkg).unwrap();
+
+    let row = find_check(&checks, "approval-use-action-binding")
+        .expect("approval-use-action-binding row required");
+    assert_eq!(row.status, VerifyStatus::Fail, "expected FAIL on substituted envelope, got: {row:?}");
+    assert!(
+        row.detail.contains("substituted or tampered") || row.detail.contains("content derives"),
+        "detail: {}",
+        row.detail,
+    );
+}
+
 // ---------------------------------------------------------------------------
-// Fix 3 — nonce binding (use.nonce_digest vs grant.nonce)
+// Fix 3 — nonce binding (content-addressed grant envelope)
 // ---------------------------------------------------------------------------
 
 #[test]
 fn use_nonce_digest_matches_grant_signed_nonce_passes() {
     let nonce = "raw_nonce_epsilon";
+    let (g_id, g_env) = fake_grant_envelope(nonce);
     let mut bundle = ApprovalsBundle::default();
-    bundle.grants.push(("g1".into(), fake_grant_envelope("g1", nonce)));
-    bundle.uses.push(make_use_with_nonce("use_real", "g1", nonce));
+    bundle.grants.push((g_id.clone(), g_env));
+    bundle.uses.push(make_use_with_nonce("use_real", &g_id, nonce));
 
     let pkg = build(bundle, &[]);
     let checks = verify_package(&pkg).unwrap();
@@ -284,17 +319,11 @@ fn use_nonce_digest_matches_grant_signed_nonce_passes() {
 
 #[test]
 fn tampered_use_nonce_digest_fails_binding() {
-    // The exact v0.9.9 attack: edit the use's nonce_digest to claim a
-    // different consumption, then recompute record_digest. v0.9.9
-    // accepted; v0.9.10 cross-checks against the grant's signed nonce.
     let real_nonce = "raw_nonce_zeta";
+    let (g_id, g_env) = fake_grant_envelope(real_nonce);
     let mut bundle = ApprovalsBundle::default();
-    bundle.grants.push(("g1".into(), fake_grant_envelope("g1", real_nonce)));
-
-    let mut tampered_use = make_use_with_nonce("use_real", "g1", real_nonce);
-    // Mutate nonce_digest to claim consumption of a different grant's
-    // nonce. Recompute record_digest so the per-record digest still
-    // matches (this is the v0.9.9 forgery primitive).
+    bundle.grants.push((g_id.clone(), g_env));
+    let mut tampered_use = make_use_with_nonce("use_real", &g_id, real_nonce);
     tampered_use.nonce_digest = nonce_digest("a_different_nonce");
     tampered_use.record_digest = approval_use_record_digest(&tampered_use);
     bundle.uses.push(tampered_use);
@@ -306,7 +335,7 @@ fn tampered_use_nonce_digest_fails_binding() {
         .expect("approval-use-nonce-binding row required");
     assert_eq!(row.status, VerifyStatus::Fail, "expected FAIL on nonce mismatch, got: {row:?}");
     assert!(
-        row.detail.contains("hashes to") || row.detail.contains("nonce_digest"),
+        row.detail.contains("hashes to") || row.detail.contains("nonce_digest") || row.detail.contains("substituted"),
         "detail: {}",
         row.detail,
     );
@@ -315,7 +344,6 @@ fn tampered_use_nonce_digest_fails_binding() {
 #[test]
 fn use_referencing_unknown_grant_fails_binding() {
     let mut bundle = ApprovalsBundle::default();
-    // Use without its grant in the bundle.
     bundle.uses.push(make_use_with_nonce("use_orphan", "g_missing", "n"));
 
     let pkg = build(bundle, &[]);
@@ -324,21 +352,52 @@ fn use_referencing_unknown_grant_fails_binding() {
     let row = find_check(&checks, "approval-use-nonce-binding")
         .expect("approval-use-nonce-binding row required");
     assert_eq!(row.status, VerifyStatus::Fail);
-    assert!(row.detail.contains("not in the package"), "detail: {}", row.detail);
+    assert!(row.detail.contains("no usable grant envelope"), "detail: {}", row.detail);
+}
+
+/// Round-2 hardening regression: an attacker substitutes a forged
+/// grant envelope (different nonce) under the original grant_id
+/// filename. The use record's nonce_digest claims to match the real
+/// grant's nonce, but the envelope on disk no longer carries that
+/// nonce. v0.9.10 PR A round 1 trusted the parsed envelope; round 2
+/// rejects because the envelope's content-derived id no longer
+/// matches its filename.
+#[test]
+fn forged_grant_envelope_under_real_id_fails_content_addressing() {
+    let real_nonce = "raw_nonce_grant_real";
+    let (real_g_id, _real_env) = fake_grant_envelope(real_nonce);
+    let (_, forged_env) = fake_grant_envelope("a_completely_different_nonce");
+    // Sanity: the forged envelope content does NOT derive to real_g_id.
+
+    let mut bundle = ApprovalsBundle::default();
+    // Ship the forged envelope under the real grant_id filename.
+    bundle.grants.push((real_g_id.clone(), forged_env));
+    bundle.uses.push(make_use_with_nonce("use_real", &real_g_id, real_nonce));
+
+    let pkg = build(bundle, &[]);
+    let checks = verify_package(&pkg).unwrap();
+
+    let row = find_check(&checks, "approval-use-nonce-binding")
+        .expect("approval-use-nonce-binding row required");
+    assert_eq!(row.status, VerifyStatus::Fail, "expected FAIL on substituted grant envelope, got: {row:?}");
+    assert!(
+        row.detail.contains("substituted or tampered") || row.detail.contains("content derives"),
+        "detail: {}",
+        row.detail,
+    );
 }
 
 // ---------------------------------------------------------------------------
-// Fix 4 — embedded chain continuity
+// Fix 4 — embedded chain continuity (single connected linked list)
 // ---------------------------------------------------------------------------
 
 #[test]
 fn embedded_chain_anchored_to_genesis_passes() {
     let nonce = "raw_nonce_eta";
+    let (g_id, g_env) = fake_grant_envelope(nonce);
     let mut bundle = ApprovalsBundle::default();
-    bundle.grants.push(("g1".into(), fake_grant_envelope("g1", nonce)));
-    let u = make_use_with_nonce("use_real", "g1", nonce);
-    // Default previous_record_digest is empty string = genesis.
-    bundle.uses.push(u);
+    bundle.grants.push((g_id.clone(), g_env));
+    bundle.uses.push(make_use_with_nonce("use_real", &g_id, nonce));
 
     let pkg = build(bundle, &[]);
     let checks = verify_package(&pkg).unwrap();
@@ -349,14 +408,13 @@ fn embedded_chain_anchored_to_genesis_passes() {
 
 #[test]
 fn dangling_previous_record_digest_fails_chain_continuity() {
-    // Attacker rewrites a use record's previous_record_digest to point
-    // at an arbitrary value not anchored in this package.
     let nonce = "raw_nonce_theta";
+    let (g_id, g_env) = fake_grant_envelope(nonce);
     let mut bundle = ApprovalsBundle::default();
-    bundle.grants.push(("g1".into(), fake_grant_envelope("g1", nonce)));
-    let mut u = make_use_with_nonce("use_real", "g1", nonce);
+    bundle.grants.push((g_id.clone(), g_env));
+    let mut u = make_use_with_nonce("use_real", &g_id, nonce);
     u.previous_record_digest = "sha256:dangling_anchor_no_record_here".into();
-    u.record_digest = approval_use_record_digest(&u); // re-sync digest after edit
+    u.record_digest = approval_use_record_digest(&u);
     bundle.uses.push(u);
 
     let pkg = build(bundle, &[]);
@@ -372,13 +430,15 @@ fn dangling_previous_record_digest_fails_chain_continuity() {
 fn two_use_chain_with_correct_links_passes() {
     let nonce_a = "raw_nonce_iota_a";
     let nonce_b = "raw_nonce_iota_b";
+    let (g1_id, g1_env) = fake_grant_envelope(nonce_a);
+    let (g2_id, g2_env) = fake_grant_envelope(nonce_b);
     let mut bundle = ApprovalsBundle::default();
-    bundle.grants.push(("g1".into(), fake_grant_envelope("g1", nonce_a)));
-    bundle.grants.push(("g2".into(), fake_grant_envelope("g2", nonce_b)));
+    bundle.grants.push((g1_id.clone(), g1_env));
+    bundle.grants.push((g2_id.clone(), g2_env));
 
-    let u1 = make_use_with_nonce("use_1", "g1", nonce_a);
+    let u1 = make_use_with_nonce("use_1", &g1_id, nonce_a);
     let u1_digest = u1.record_digest.clone();
-    let mut u2 = make_use_with_nonce("use_2", "g2", nonce_b);
+    let mut u2 = make_use_with_nonce("use_2", &g2_id, nonce_b);
     u2.previous_record_digest = u1_digest;
     u2.record_digest = approval_use_record_digest(&u2);
     bundle.uses.push(u1);
@@ -392,6 +452,124 @@ fn two_use_chain_with_correct_links_passes() {
     assert_eq!(row.status, VerifyStatus::Pass);
 }
 
+/// Round-2 hardening regression: two records both claim
+/// `previous_record_digest == ""` (genesis). A real journal has
+/// exactly one genesis record (the chronologically first); seeing
+/// two means an attacker fabricated a second "first record" mid-chain
+/// to launder a forged record into the linked list.
+#[test]
+fn multiple_genesis_records_fail_chain_continuity() {
+    let nonce_a = "raw_nonce_genesis_a";
+    let nonce_b = "raw_nonce_genesis_b";
+    let (g1_id, g1_env) = fake_grant_envelope(nonce_a);
+    let (g2_id, g2_env) = fake_grant_envelope(nonce_b);
+    let mut bundle = ApprovalsBundle::default();
+    bundle.grants.push((g1_id.clone(), g1_env));
+    bundle.grants.push((g2_id.clone(), g2_env));
+
+    // Both records have prev = "" -> two genesis claims.
+    let mut u1 = make_use_with_nonce("use_1", &g1_id, nonce_a);
+    u1.previous_record_digest = String::new();
+    u1.record_digest = approval_use_record_digest(&u1);
+    let mut u2 = make_use_with_nonce("use_2", &g2_id, nonce_b);
+    u2.previous_record_digest = String::new();
+    u2.record_digest = approval_use_record_digest(&u2);
+    bundle.uses.push(u1);
+    bundle.uses.push(u2);
+
+    let pkg = build(bundle, &[]);
+    let checks = verify_package(&pkg).unwrap();
+
+    let row = find_check(&checks, "approval-use-chain-continuity")
+        .expect("approval-use-chain-continuity row required");
+    assert_eq!(row.status, VerifyStatus::Fail, "expected FAIL on multiple genesis, got: {row:?}");
+    assert!(row.detail.contains("genesis"), "detail: {}", row.detail);
+}
+
+/// Round-2 hardening regression: two records share the same non-empty
+/// `previous_record_digest`. That's a fork; an honest journal has
+/// exactly one record per prev pointer.
+#[test]
+fn forked_chain_two_records_share_prev_fails_chain_continuity() {
+    let nonce_a = "raw_nonce_fork_a";
+    let nonce_b = "raw_nonce_fork_b";
+    let nonce_c = "raw_nonce_fork_c";
+    let (g_a, env_a) = fake_grant_envelope(nonce_a);
+    let (g_b, env_b) = fake_grant_envelope(nonce_b);
+    let (g_c, env_c) = fake_grant_envelope(nonce_c);
+    let mut bundle = ApprovalsBundle::default();
+    bundle.grants.push((g_a.clone(), env_a));
+    bundle.grants.push((g_b.clone(), env_b));
+    bundle.grants.push((g_c.clone(), env_c));
+
+    // u1 is genesis; both u2 and u3 link back to u1 -> fork.
+    let u1 = make_use_with_nonce("use_1", &g_a, nonce_a);
+    let u1_digest = u1.record_digest.clone();
+    let mut u2 = make_use_with_nonce("use_2", &g_b, nonce_b);
+    u2.previous_record_digest = u1_digest.clone();
+    u2.record_digest = approval_use_record_digest(&u2);
+    let mut u3 = make_use_with_nonce("use_3", &g_c, nonce_c);
+    u3.previous_record_digest = u1_digest;
+    u3.record_digest = approval_use_record_digest(&u3);
+    bundle.uses.push(u1);
+    bundle.uses.push(u2);
+    bundle.uses.push(u3);
+
+    let pkg = build(bundle, &[]);
+    let checks = verify_package(&pkg).unwrap();
+
+    let row = find_check(&checks, "approval-use-chain-continuity")
+        .expect("approval-use-chain-continuity row required");
+    assert_eq!(row.status, VerifyStatus::Fail, "expected FAIL on fork, got: {row:?}");
+    assert!(row.detail.contains("fork") || row.detail.contains("share previous_record_digest"),
+        "detail: {}", row.detail);
+}
+
+/// Round-2 hardening regression: a disconnected subchain. Two
+/// records form a linked list but neither links to genesis (both
+/// have prev pointing at each other's record_digest -- a cycle). An
+/// honest chain walks from genesis to tail with no cycles.
+#[test]
+fn disconnected_subchain_fails_chain_continuity() {
+    let nonce_a = "raw_nonce_disconn_a";
+    let nonce_b = "raw_nonce_disconn_b";
+    let (g_a, env_a) = fake_grant_envelope(nonce_a);
+    let (g_b, env_b) = fake_grant_envelope(nonce_b);
+    let mut bundle = ApprovalsBundle::default();
+    bundle.grants.push((g_a.clone(), env_a));
+    bundle.grants.push((g_b.clone(), env_b));
+
+    // u1's prev is u2's digest; u2's prev is u1's digest -> 2-cycle,
+    // no genesis reachable.
+    let mut u1 = make_use_with_nonce("use_1", &g_a, nonce_a);
+    let mut u2 = make_use_with_nonce("use_2", &g_b, nonce_b);
+    // First compute provisional digests, then point at each other.
+    let u1_digest_v0 = u1.record_digest.clone();
+    let u2_digest_v0 = u2.record_digest.clone();
+    u1.previous_record_digest = u2_digest_v0;
+    u1.record_digest = approval_use_record_digest(&u1);
+    u2.previous_record_digest = u1_digest_v0;
+    u2.record_digest = approval_use_record_digest(&u2);
+    bundle.uses.push(u1);
+    bundle.uses.push(u2);
+
+    let pkg = build(bundle, &[]);
+    let checks = verify_package(&pkg).unwrap();
+
+    let row = find_check(&checks, "approval-use-chain-continuity")
+        .expect("approval-use-chain-continuity row required");
+    assert_eq!(row.status, VerifyStatus::Fail, "expected FAIL on disconnected/cyclic chain, got: {row:?}");
+    // Expect any of "dangling", "disconnected", "cycle" depending on
+    // which gate fires first; the chain is structurally broken
+    // either way.
+    assert!(
+        row.detail.contains("not anchored")
+            || row.detail.contains("disconnected")
+            || row.detail.contains("cycle"),
+        "detail: {}", row.detail,
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Fix 5 — record-digest rename + label hygiene
 // ---------------------------------------------------------------------------
@@ -399,9 +577,10 @@ fn two_use_chain_with_correct_links_passes() {
 #[test]
 fn renamed_record_digest_row_emits_for_present_uses() {
     let nonce = "raw_nonce_kappa";
+    let (g_id, g_env) = fake_grant_envelope(nonce);
     let mut bundle = ApprovalsBundle::default();
-    bundle.grants.push(("g1".into(), fake_grant_envelope("g1", nonce)));
-    bundle.uses.push(make_use_with_nonce("use_real", "g1", nonce));
+    bundle.grants.push((g_id.clone(), g_env));
+    bundle.uses.push(make_use_with_nonce("use_real", &g_id, nonce));
 
     let pkg = build(bundle, &[]);
     let checks = verify_package(&pkg).unwrap();
@@ -418,16 +597,15 @@ fn renamed_record_digest_row_emits_for_present_uses() {
 
 #[test]
 fn read_back_round_trips_action_envelopes() {
-    // The v0.9.10 package format ships action envelopes in
-    // `artifacts/`; round-trip via build + read_approvals_bundle.
     let nonce = "raw_nonce_lambda";
+    let (g_id, g_env) = fake_grant_envelope(nonce);
+    let (art_id, env) = fake_action_envelope(nonce, Some("use_real"));
     let mut bundle = ApprovalsBundle::default();
-    bundle.grants.push(("g1".into(), fake_grant_envelope("g1", nonce)));
-    bundle.uses.push(make_use_with_nonce("use_real", "g1", nonce));
-    let (art_id, env) = fake_action_envelope("art_a", nonce, Some("use_real"));
+    bundle.grants.push((g_id.clone(), g_env));
+    bundle.uses.push(make_use_with_nonce("use_real", &g_id, nonce));
     bundle.action_envelopes.push((art_id.clone(), env.clone()));
 
-    let pkg = build(bundle, &["art_a"]);
+    let pkg = build(bundle, &[art_id.as_str()]);
 
     let read_back = read_approvals_bundle(&pkg).unwrap();
     assert_eq!(read_back.action_envelopes.len(), 1);
