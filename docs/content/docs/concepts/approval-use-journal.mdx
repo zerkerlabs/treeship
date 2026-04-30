@@ -1,0 +1,132 @@
+---
+title: Approval Use Journal
+description: Local append-only memory of consumed approvals. Records are truth; indexes are cache.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+The **Approval Use Journal** is a per-workspace append-only JSON store that records every consumed Approval Grant. It's the load-bearing piece behind v0.9.9's `local-journal` replay level: with the journal present, `treeship verify` can say "use 1/1 — local Approval Use Journal passed" instead of the older "package-local only — no global ledger consulted."
+
+## Layout
+
+```
+<config_dir>/journals/approval-use/
+  journal.json                 # metadata: kind, version, format
+  records/                     # truth (append-only)
+    0000000001.approval-use.<short-digest>.json
+    0000000002.approval-use.<short-digest>.json
+    0000000003.approval-revocation.<short-digest>.json
+    ...
+  heads/
+    current.json               # {index, digest, updated_at}
+  indexes/                     # rebuildable cache
+    by-grant/<safe-name>.txt
+    by-nonce/<safe-name>.txt
+    backfill/<use_id>.txt      # action_artifact_id sidecar
+  locks/
+    journal.lock               # fs2 exclusive lock for appends
+```
+
+The directory follows the same precedence rule as Agent Cards and Harness state from v0.9.8: project-local `<workspace>/.treeship/journals/approval-use/` first, falling back to the global config's location.
+
+## Records are truth, indexes are cache
+
+Two principles, both load-bearing:
+
+1. **Records are truth.** Every appended file is a complete, digest-stable JSON document. The integrity check (`treeship approval journal verify`) walks records in index order, recomputes each `record_digest`, and asserts the chain matches.
+
+2. **Indexes are cache.** `indexes/by-grant/` and `indexes/by-nonce/` exist to make `check_replay` fast. They can be deleted at any time and rebuilt from records via `journal::rebuild_indexes`. If you don't trust them, run the rebuilder.
+
+The split keeps the trust surface small: the only thing the journal needs to keep honest is the records directory and its hash chain. The indexes can be stale, missing, or even corrupted without affecting the trust answer.
+
+## Hash chain
+
+Every record carries:
+
+- `previous_record_digest` — `record_digest` of the prior record (empty for the genesis record)
+- `record_digest` — sha256 of the canonical-JSON form of the record with `record_digest` itself cleared
+
+The first invariant is checked by `verify_integrity`: tampering with any field changes `record_digest`, which means the *next* record's `previous_record_digest` no longer matches.
+
+```text
+record N      record N+1
++----------+  +-----------------+
+| ...      |  | ...             |
+| digest:X |<-| prev_digest: X  |
++----------+  | digest:        Y|
+              +-----------------+
+```
+
+A broken chain is detected at any record by walking from the genesis. Tampering with one record breaks every subsequent verification.
+
+## Three record types
+
+The journal carries three sibling record types in the same chain:
+
+| Type | What it records | Wired in |
+|---|---|---|
+| `treeship/approval-use/v1` | A grant was consumed by an action | v0.9.9 PR 2 |
+| `treeship/approval-revocation/v1` | An approver revoked a grant | v0.9.9 PR 1 (schema), wiring deferred |
+| `treeship/journal-checkpoint/v1` | Signed Merkle commitment over a record range | v0.9.9 PR 1 (schema), Hub-signed in v0.9.9 PR 6 |
+
+All three follow the same digest discipline. A future record type (e.g. delegation) plugs in as a fourth variant without breaking the chain check.
+
+## What's in an ApprovalUse — and what isn't
+
+```json
+{
+  "type": "treeship/approval-use/v1",
+  "use_id": "use_b733c1a3c90d84df",
+  "grant_id": "art_2a325283550936d0c32a15ba",
+  "grant_digest": "art_2a325283550936d0c32a15ba",
+  "nonce_digest": "sha256:67e3db06f16af062...",
+  "actor": "agent://deployer",
+  "action": "deploy.production",
+  "subject": "env://production",
+  "use_number": 1,
+  "max_uses": 1,
+  "idempotency_key": "abc123",
+  "created_at": "2026-04-30T07:13:00Z",
+  "previous_record_digest": "",
+  "record_digest": "sha256:..."
+}
+```
+
+What you'll **never** find on disk: raw `nonce`, `command`, `prompt`, `file_content`, `bearer_token`, or `api_key`. The privacy invariant is pinned by the test `record_files_contain_no_raw_nonce_or_signature_secrets` — by construction, since the schema doesn't have those fields.
+
+## CLI
+
+```bash
+treeship approval uses <grant-id>     # list every recorded use
+treeship approval status <grant-id>   # use_count vs max_uses, would-exceed
+treeship approval journal verify      # walk chain, report integrity
+```
+
+All three are read-only. Writes happen via `treeship attest action --approval-nonce` (PR 3's consume-before-action flow); the journal layer doesn't expose a "manually append a use" command, deliberately.
+
+## Idempotency keys
+
+Crash-recovery primitive. When `treeship attest action --idempotency-key <key> --approval-nonce <n>` runs:
+
+- If a use record for this grant carries the same key, the consume flow **collapses** to that record and signs a fresh action against it (no second use slot consumed).
+- If no record carries the key, a fresh use is reserved.
+- Without `--idempotency-key`, retries always allocate a new use and `max_uses` enforcement applies normally.
+
+This means a flaky network or crashed CLI can retry safely without burning a use slot per retry.
+
+## What this is not
+
+- **Not a public ledger.** No external publishing. The journal is private workspace memory.
+- **Not SQLite.** Source of truth is the JSON file tree, not a database.
+- **Not a Hub.** PR 6 will add a `hub-approval-checkpoint/v1` schema scaffold. Until then, no replay claim crosses machines.
+- **Not a global single-use enforcer.** The journal cannot speak for what happens on another machine. v0.9.9 verify reports `local-journal` honestly; it does not say `hub-org` or `global single-use`.
+
+<Callout type="info">
+**Records are truth, indexes are cache** is also the recovery story. If your machine drops the indexes (filesystem corruption, manual `rm`, etc.), `journal::rebuild_indexes` reconstructs them from records. The trust answer is unaffected.
+</Callout>
+
+## See also
+
+- [Approval Authority](/docs/concepts/approval-authority) — the wider model
+- [Replay levels](/docs/guides/replay-levels) — what each level proves
+- [Approvals](/docs/guides/approvals) — minting, consuming, verifying flows
