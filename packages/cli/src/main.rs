@@ -743,6 +743,12 @@ struct AddArgs {
     /// Show what would be done without making changes
     #[arg(long)]
     dry_run: bool,
+
+    /// Read-only: list every detected agent with surface, connection,
+    /// coverage and confidence -- without modifying any config.
+    /// Honors the global --format flag (text or json).
+    #[arg(long)]
+    discover: bool,
 }
 
 // --- agent -----------------------------------------------------------------
@@ -1512,12 +1518,18 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             Ok(())
         }
 
-        Command::Add(a) => commands::add::run(
-            a.agents.clone(),
-            a.all,
-            a.dry_run,
-            printer,
-        ),
+        Command::Add(a) => {
+            if a.discover {
+                commands::add::run_discover(Format::from_str(&cli.format), printer)
+            } else {
+                commands::add::run(
+                    a.agents.clone(),
+                    a.all,
+                    a.dry_run,
+                    printer,
+                )
+            }
+        }
 
         Command::Quickstart => commands::quickstart::run(
             cli.config.as_deref(),

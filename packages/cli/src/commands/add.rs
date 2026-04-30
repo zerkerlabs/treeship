@@ -3,7 +3,8 @@
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use crate::printer::Printer;
+use crate::commands::discovery::{self, ConnectionMode, DiscoveredAgent, Env};
+use crate::printer::{Format, Printer};
 
 // ---------------------------------------------------------------------------
 // Agent detection
@@ -387,6 +388,78 @@ fn install_treeship_md_in_cwd(dry_run: bool, printer: &Printer) -> Result<bool, 
     printer.success("./TREESHIP.md written", &[]);
     printer.dim_info("  Any agent reading the project will see what Treeship captures and trust the MCP server.");
     Ok(true)
+}
+
+/// Read-only discovery mode for `treeship add --discover`.
+///
+/// Prints every plausible agent on the local machine -- surface, connection
+/// modes, coverage, confidence -- without touching any config. Honors the
+/// global --format flag so PR 3's `treeship setup` and any external script
+/// can consume stable JSON.
+///
+/// This is the entry point that the v0.9.8 prompt called `treeship discover`.
+/// We expose it as an `add` flag instead of a new top-level command so the
+/// detection rules stay in one place; if a future release wants a dedicated
+/// command, it can alias to this. See discovery.rs for the rationale.
+pub fn run_discover(
+    format: Format,
+    printer: &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let agents = discovery::discover(&Env::current());
+
+    match format {
+        Format::Json => {
+            // Emit `{ "agents": [ DiscoveredAgent... ] }`. Stable shape: the
+            // discovery::tests::json_serialization_is_stable test pins it.
+            let value = serde_json::json!({ "agents": agents });
+            println!("{}", serde_json::to_string_pretty(&value)?);
+        }
+        Format::Text => {
+            print_discover_text(&agents, printer);
+        }
+    }
+
+    Ok(())
+}
+
+fn print_discover_text(agents: &[DiscoveredAgent], printer: &Printer) {
+    printer.blank();
+    if agents.is_empty() {
+        printer.dim_info("  No agents detected.");
+        printer.blank();
+        printer.hint("Treeship still works -- start a session with `treeship session start` and wrap commands with `treeship wrap`.");
+        printer.blank();
+        return;
+    }
+
+    printer.section("Detected agents");
+    printer.blank();
+
+    for agent in agents {
+        let mark = match agent.confidence {
+            discovery::Confidence::High   => "✓",
+            discovery::Confidence::Medium => "✓",
+            discovery::Confidence::Low    => "?",
+        };
+        printer.info(&format!("  {} {}", mark, agent.display_name));
+        printer.dim_info(&format!("    surface:    {}", agent.surface.kind()));
+        let conns: Vec<&str> = agent.connection_modes.iter().map(|c| c.label()).collect();
+        printer.dim_info(&format!("    connection: {}", conns.join(" + ")));
+        printer.dim_info(&format!("    coverage:   {}", agent.coverage.label()));
+        printer.dim_info(&format!("    confidence: {}", agent.confidence.label()));
+        printer.dim_info("    card:       draft");
+        if let Some(note) = &agent.note {
+            printer.dim_info(&format!("    note:       {}", note));
+        }
+        printer.blank();
+    }
+
+    printer.hint("Run `treeship add` to instrument these agents, or `treeship setup` for guided first-run setup.");
+    printer.blank();
+
+    // Suppress the unused-import warning until PR 3 starts consuming
+    // ConnectionMode from this file directly.
+    let _ = ConnectionMode::Mcp;
 }
 
 pub fn run(
