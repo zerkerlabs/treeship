@@ -4,7 +4,7 @@ use treeship_core::{
     journal::{self, Journal},
     statements::{
         ActionStatement, ApprovalScope, ApprovalStatement, ApprovalUse, DecisionStatement,
-        EndorsementStatement, HandoffStatement, ReceiptStatement, ReplayCheckLevel,
+        EndorsementStatement, HandoffStatement, ReceiptStatement,
         SubjectRef, TYPE_APPROVAL_USE, payload_type, nonce_digest,
     },
     storage::Record,
@@ -669,27 +669,17 @@ fn reserve_in_journal(
         }
     }
 
-    // Replay check BEFORE writing. check_replay reports
-    // ReplayCheckLevel::NotPerformed when no journal exists yet, which
-    // for a first-use is fine -- we proceed to write and the journal
-    // gets created on first append. When journal exists, "passed"
-    // false means max_uses would be exceeded.
-    let replay = journal::check_replay(&j, grant_id, &nonce_digest, max_uses)?;
-    if matches!(replay.level, ReplayCheckLevel::LocalJournal) {
-        if matches!(replay.passed, Some(false)) {
-            return Err(format!(
-                "approval grant {grant_id} would exceed max_uses ({} of {})",
-                replay.use_number.map(|n| n.saturating_sub(1)).unwrap_or(0),
-                replay.max_uses.map(|m| m.to_string()).unwrap_or_else(|| "?".into()),
-            ).into());
-        }
-    }
-
-    // Compute use_number from the existing record list (the list above
-    // already counted them; but we re-derive here to keep this function
-    // self-contained when called without the idempotency-key path).
-    let prior_count = journal::list_uses_for_grant(&j, grant_id)?.len() as u32;
-    let use_number = prior_count.saturating_add(1);
+    // The replay check + use_number derivation + append happen as one
+    // atomic operation inside `journal::reserve_use`. v0.9.9 PR 3 split
+    // these into separate calls (check_replay outside, append_use
+    // inside its own lock), which let two parallel attests both pass
+    // the replay check before either acquired the append lock --
+    // bypassing `max_uses=1`. v0.9.10 closes the race.
+    //
+    // `use_number` is stamped by `reserve_use` from the grant-wide
+    // count observed inside the lock; the value we put here is just a
+    // placeholder.
+    let use_number = 0u32;
 
     // Use_id is a fresh UUID-style hex token. Same shape as nonces.
     let use_id = {
@@ -742,12 +732,19 @@ fn reserve_in_journal(
         signing_key_id:         None,
     };
 
-    journal::append_use(&j, record).map_err(|e| -> Box<dyn std::error::Error> {
+    let head = journal::reserve_use(&j, record, max_uses).map_err(|e| -> Box<dyn std::error::Error> {
         format!("could not reserve approval use in journal: {e}").into()
     })?;
+    // reserve_use stamped use_number inside the lock; recover it from
+    // the just-written record so the user-visible message is accurate.
+    let actual_use_number = journal::list_uses_for_grant(&j, grant_id)
+        .ok()
+        .and_then(|uses| uses.iter().find(|u| u.use_id == use_id).map(|u| u.use_number))
+        .unwrap_or(0);
+    let _ = head;
 
     printer.dim_info(&format!(
-        "  approval use reserved: {use_id} (use {use_number}/{})",
+        "  approval use reserved: {use_id} (use {actual_use_number}/{})",
         max_uses.map(|m| m.to_string()).unwrap_or_else(|| "unbounded".into()),
     ));
 

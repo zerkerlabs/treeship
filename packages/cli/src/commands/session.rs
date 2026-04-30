@@ -1423,6 +1423,10 @@ fn collect_approval_evidence(
             Ok(r)  => r,
             Err(_) => continue,
         };
+        // Snapshot the raw envelope BEFORE unmarshaling so we can ship
+        // it in the package -- v0.9.10 PR A relies on the verifier
+        // being able to read action.meta.approval_use_id offline.
+        let envelope_bytes_for_package = rec.envelope.to_json().ok();
         let action = match rec.envelope.unmarshal_statement::<ActionStatement>() {
             Ok(a)  => a,
             Err(_) => continue,
@@ -1431,6 +1435,16 @@ fn collect_approval_evidence(
             Some(n) => n,
             None    => continue,
         };
+        // Only record the envelope for actions that actually consumed
+        // an approval; an action without `approval_nonce` doesn't need
+        // to ship for the binding check.
+        if let Some(env_bytes) = envelope_bytes_for_package {
+            // Deduplicate by artifact_id; the receipt may reference the
+            // same artifact twice in pathological cases.
+            if !bundle.action_envelopes.iter().any(|(id, _)| id == &art.artifact_id) {
+                bundle.action_envelopes.push((art.artifact_id.clone(), env_bytes));
+            }
+        }
 
         // Find the grant by nonce -- mirror what verify does.
         let approval_pt = payload_type("approval");
@@ -1455,17 +1469,28 @@ fn collect_approval_evidence(
             }
         }
 
-        // Pull every Approval Use for this grant. Records are exported
-        // verbatim -- mutating `action_artifact_id` after the journal
-        // append would invalidate the record_digest, so the action↔use
-        // link is carried elsewhere:
-        //   * the action artifact's meta.approval_use_id points at the use
-        //   * the workspace sidecar at indexes/backfill/<use_id>.txt
-        //     gives the CLI a friendly display join (not exported)
+        // Pull the Approval Use(s) bound to THIS action. Records are
+        // exported verbatim -- mutating `action_artifact_id` after the
+        // journal append would invalidate the record_digest, so the
+        // action↔use link is carried as `meta.approval_use_id` on the
+        // signed action envelope. v0.9.10 PR A: when the action carries
+        // that pointer, export ONLY the referenced use; previously we
+        // dumped every use for the grant, which let an attacker's
+        // tampered package reference unrelated uses.
+        let action_use_id_hint: Option<String> = action
+            .meta
+            .as_ref()
+            .and_then(|m| m.get("approval_use_id"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
         if journal.exists() {
             if let Ok(uses) = journal::list_uses_for_grant(&journal, &grant_id) {
                 for u in uses {
-                    if use_ids_seen.insert(u.use_id.clone()) {
+                    let take = match &action_use_id_hint {
+                        Some(target) => &u.use_id == target,
+                        None         => true, // legacy behavior when no pointer
+                    };
+                    if take && use_ids_seen.insert(u.use_id.clone()) {
                         bundle.uses.push(u);
                     }
                 }

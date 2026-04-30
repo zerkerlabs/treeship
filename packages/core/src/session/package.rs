@@ -102,6 +102,15 @@ pub struct ApprovalsBundle {
     /// show the consumed evidence and the revocation alongside).
     /// Empty in PR 4; reserved.
     pub revocations: Vec<ApprovalRevocation>,
+
+    /// Bytes of each action artifact's signed envelope that consumed an
+    /// approval. Each entry is `(action_artifact_id, raw_envelope_json)`.
+    /// v0.9.10 PR A: shipped to close the action↔use binding gap. The
+    /// verifier extracts `meta.approval_use_id` from each envelope and
+    /// cross-checks it against the package's use records. Empty in
+    /// pre-v0.9.10 packages; readers must treat absence as "binding
+    /// not asserted by package" rather than "binding present and OK."
+    pub action_envelopes: Vec<(String, Vec<u8>)>,
 }
 
 /// `approvals/index.json` -- top-level inventory of evidence in the
@@ -209,10 +218,24 @@ pub fn build_package_with_approvals(
     // bundle behaves the same as None so a session with no consumed
     // approvals doesn't leave behind an empty `approvals/` directory.
     if let Some(b) = bundle {
-        if !b.grants.is_empty() || !b.uses.is_empty() || !b.checkpoints.is_empty() || !b.revocations.is_empty() {
+        if !b.grants.is_empty() || !b.uses.is_empty() || !b.checkpoints.is_empty() || !b.revocations.is_empty() || !b.action_envelopes.is_empty() {
             std::fs::create_dir_all(pkg_dir.join(APPROVALS_GRANTS))?;
             std::fs::create_dir_all(pkg_dir.join(APPROVALS_USES))?;
             std::fs::create_dir_all(pkg_dir.join(APPROVALS_CHECKPOINTS))?;
+            // v0.9.10 PR A: write action envelopes that consumed an
+            // approval. The artifacts/ directory was created earlier
+            // for the package layout but never populated; closing the
+            // action↔use binding gap requires the verifier to be able
+            // to read each consuming action's `meta.approval_use_id`.
+            std::fs::create_dir_all(pkg_dir.join(ARTIFACTS_DIR))?;
+            for (artifact_id, envelope_bytes) in &b.action_envelopes {
+                let safe = sanitize_filename(artifact_id);
+                std::fs::write(
+                    pkg_dir.join(ARTIFACTS_DIR).join(format!("{safe}.json")),
+                    envelope_bytes,
+                )?;
+                file_count += 1;
+            }
 
             let mut grant_ids = Vec::with_capacity(b.grants.len());
             for (grant_id, envelope_bytes) in &b.grants {
@@ -344,6 +367,24 @@ pub fn read_approvals_bundle(pkg_dir: &Path) -> Result<ApprovalsBundle, PackageE
             let bytes = std::fs::read(&path)?;
             let cp: JournalCheckpoint = serde_json::from_slice(&bytes)?;
             bundle.checkpoints.push(cp);
+        }
+    }
+
+    // v0.9.10 PR A: read action envelopes shipped to support the
+    // action↔use binding check. Pre-v0.9.10 packages have an empty
+    // artifacts/ dir (the dir was created but never populated); the
+    // bundle's `action_envelopes` stays empty in that case, and the
+    // verifier reports the binding row honestly as "not asserted by
+    // package" rather than silently passing.
+    let arts_dir = pkg_dir.join(ARTIFACTS_DIR);
+    if arts_dir.is_dir() {
+        for entry in std::fs::read_dir(&arts_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("json") { continue; }
+            let id = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+            let bytes = std::fs::read(&path)?;
+            bundle.action_envelopes.push((id, bytes));
         }
     }
 
@@ -611,9 +652,15 @@ pub(crate) fn add_approval_evidence_checks(
         }
     }
 
-    // -- per-use record-digest integrity --
-    // Even without a checkpoint, each ApprovalUse carries its own
-    // record_digest; tampering with any field changes the digest.
+    // -- approval-use-record-digest --
+    // Each ApprovalUse carries its own record_digest computed over the
+    // canonical form of the record (minus the digest itself). Tampering
+    // any field changes the digest. v0.9.10 PR A renames this from the
+    // older `approval-use-integrity` because the prior label suggested
+    // it covered nonce/action binding -- it didn't, and Codex's v0.9.9
+    // adversarial review flagged the over-claim. The honest scope of
+    // this row is "each use's stored digest matches its canonical
+    // recompute"; the binding checks are now separate rows below.
     let mut tampered_uses = Vec::new();
     for u in &bundle.uses {
         let recomputed = approval_use_record_digest(u);
@@ -621,14 +668,240 @@ pub(crate) fn add_approval_evidence_checks(
             tampered_uses.push((u.use_id.clone(), u.record_digest.clone(), recomputed));
         }
     }
-    if !tampered_uses.is_empty() {
-        let detail = tampered_uses.iter()
-            .map(|(id, expected, actual)| {
-                format!("use {id} tampered (stored {expected}, recomputed {actual})")
-            })
-            .collect::<Vec<_>>()
-            .join("; ");
-        checks.push(VerifyCheck::fail("approval-use-integrity", &detail));
+    if !bundle.uses.is_empty() {
+        if tampered_uses.is_empty() {
+            checks.push(VerifyCheck::pass(
+                "approval-use-record-digest",
+                &format!("{} use record(s) recompute identically", bundle.uses.len()),
+            ));
+        } else {
+            let detail = tampered_uses.iter()
+                .map(|(id, expected, actual)| {
+                    format!("use {id} tampered (stored {expected}, recomputed {actual})")
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
+            checks.push(VerifyCheck::fail("approval-use-record-digest", &detail));
+        }
+    }
+
+    // -- approval-use-nonce-binding --
+    // Cross-check each use's `nonce_digest` against the corresponding
+    // grant's *signed* nonce. v0.9.9 trusted the use's nonce_digest
+    // verbatim, which let an attacker who controls the package mutate
+    // it (and recompute record_digest) to claim consumption of a grant
+    // whose nonce was never actually used. This row closes that gap.
+    //
+    // Discipline: the grant envelope is the source of truth. We pull
+    // the raw `nonce` from the grant's payload, hash it via the same
+    // `nonce_digest` helper that attest used, and compare to each
+    // use's stored `nonce_digest`. Mismatch -> fail.
+    if !bundle.uses.is_empty() {
+        use crate::attestation::envelope::Envelope;
+        use crate::statements::{nonce_digest, ApprovalStatement};
+        // Build a grant_id -> expected_nonce_digest map from the bundle's
+        // grant envelopes. Skip grants we can't parse (the receipt's
+        // signature checks would catch those upstream; here we just
+        // can't speak to their binding).
+        let mut grant_nonce_digest: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        for (grant_id, env_bytes) in &bundle.grants {
+            let env = match Envelope::from_json(env_bytes) {
+                Ok(e)  => e,
+                Err(_) => continue,
+            };
+            let approval: ApprovalStatement = match env.unmarshal_statement() {
+                Ok(a)  => a,
+                Err(_) => continue,
+            };
+            grant_nonce_digest.insert(grant_id.clone(), nonce_digest(&approval.nonce));
+        }
+        let mut mismatches: Vec<String> = Vec::new();
+        let mut missing_grants: Vec<String> = Vec::new();
+        for u in &bundle.uses {
+            match grant_nonce_digest.get(&u.grant_id) {
+                Some(expected) => {
+                    if expected != &u.nonce_digest {
+                        mismatches.push(format!(
+                            "use {} claims nonce_digest {} but grant {} signed nonce hashes to {}",
+                            u.use_id, u.nonce_digest, u.grant_id, expected,
+                        ));
+                    }
+                }
+                None => {
+                    missing_grants.push(format!(
+                        "use {} references grant {} but the grant envelope is not in the package",
+                        u.use_id, u.grant_id,
+                    ));
+                }
+            }
+        }
+        if mismatches.is_empty() && missing_grants.is_empty() {
+            checks.push(VerifyCheck::pass(
+                "approval-use-nonce-binding",
+                &format!("{} use record(s) bind to grant signed nonces", bundle.uses.len()),
+            ));
+        } else {
+            let mut detail = String::new();
+            if !mismatches.is_empty()    { detail.push_str(&mismatches.join("; ")); }
+            if !missing_grants.is_empty() {
+                if !detail.is_empty() { detail.push_str("; "); }
+                detail.push_str(&missing_grants.join("; "));
+            }
+            checks.push(VerifyCheck::fail("approval-use-nonce-binding", &detail));
+        }
+    }
+
+    // -- approval-use-action-binding --
+    // Cross-check each consuming action's `meta.approval_use_id`
+    // against the package's use records. v0.9.9 ignored this pointer
+    // entirely; the package didn't even ship action envelopes, so the
+    // verifier could not see the field. v0.9.10 PR A: action envelopes
+    // ride along in `artifacts/`, and this row pins that every action
+    // declaring it consumed an approval has a use record for that
+    // exact use_id, with matching grant_id and matching
+    // `nonce_digest(approval_nonce)`.
+    //
+    // Honesty rule: when bundle.action_envelopes is empty (pre-v0.9.10
+    // packages, or a v0.9.10 package with no consuming actions
+    // recorded), this row reports `not asserted by package` rather
+    // than silent PASS.
+    if !bundle.uses.is_empty() {
+        use crate::attestation::envelope::Envelope;
+        use crate::statements::{nonce_digest, ActionStatement};
+        if bundle.action_envelopes.is_empty() {
+            checks.push(VerifyCheck::warn(
+                "approval-use-action-binding",
+                "no action envelopes embedded -- action↔use binding not asserted by package (pre-v0.9.10)",
+            ));
+        } else {
+            let use_ids: std::collections::HashSet<&str> = bundle.uses.iter().map(|u| u.use_id.as_str()).collect();
+            let mut violations: Vec<String> = Vec::new();
+            let mut bound_count = 0usize;
+            for (artifact_id, env_bytes) in &bundle.action_envelopes {
+                let env = match Envelope::from_json(env_bytes) {
+                    Ok(e)  => e,
+                    Err(_) => {
+                        violations.push(format!("action {artifact_id} envelope unparseable"));
+                        continue;
+                    }
+                };
+                let action: ActionStatement = match env.unmarshal_statement() {
+                    Ok(a)  => a,
+                    Err(_) => {
+                        violations.push(format!("action {artifact_id} not an ActionStatement"));
+                        continue;
+                    }
+                };
+                // Action envelopes shipped only when they consumed an
+                // approval, but be defensive: if there's no
+                // approval_nonce, skip silently.
+                let raw_nonce = match action.approval_nonce.as_deref() {
+                    Some(n) => n,
+                    None    => continue,
+                };
+                let claimed_use_id = action
+                    .meta
+                    .as_ref()
+                    .and_then(|m| m.get("approval_use_id"))
+                    .and_then(|v| v.as_str());
+                let Some(claimed_use_id) = claimed_use_id else {
+                    violations.push(format!(
+                        "action {artifact_id} consumed an approval but its meta has no approval_use_id"
+                    ));
+                    continue;
+                };
+                if !use_ids.contains(claimed_use_id) {
+                    violations.push(format!(
+                        "action {artifact_id} claims approval_use_id={} but no such use is embedded",
+                        claimed_use_id,
+                    ));
+                    continue;
+                }
+                // The use exists; cross-check that its nonce_digest
+                // matches the action's approval_nonce hash.
+                let expected = nonce_digest(raw_nonce);
+                let matched_use = bundle.uses.iter().find(|u| u.use_id == claimed_use_id);
+                if let Some(u) = matched_use {
+                    if u.nonce_digest != expected {
+                        violations.push(format!(
+                            "action {artifact_id} approval_nonce hashes to {} but use {} stores nonce_digest {}",
+                            expected, claimed_use_id, u.nonce_digest,
+                        ));
+                        continue;
+                    }
+                }
+                bound_count += 1;
+            }
+            if violations.is_empty() {
+                checks.push(VerifyCheck::pass(
+                    "approval-use-action-binding",
+                    &format!("{bound_count} consuming action(s) bind cleanly to embedded use records"),
+                ));
+            } else {
+                checks.push(VerifyCheck::fail(
+                    "approval-use-action-binding",
+                    &violations.join("; "),
+                ));
+            }
+        }
+    }
+
+    // -- approval-use-chain-continuity --
+    // v0.9.9 verified each use's individual record_digest but never
+    // walked the `previous_record_digest` chain across the embedded
+    // records. An attacker could rewrite an entire chain consistently
+    // (recomputing each digest along the way) and the per-record
+    // checks all passed.
+    //
+    // We can only do a *partial* chain walk in offline package replay:
+    // the package ships only records the session touched, not the
+    // workspace journal's full history, so the chain we see may have
+    // gaps. What we CAN check: every embedded record's
+    // previous_record_digest must point at SOME record_digest that
+    // either (a) belongs to another embedded record, or (b) is
+    // explicitly the empty string (genesis). A dangling
+    // previous_record_digest pointing at nothing is a bypass attempt.
+    //
+    // Anchoring against a Hub-signed checkpoint is handled separately
+    // by replay-hub-org (the signature covers previous_record_digest);
+    // here we report internal consistency only.
+    if !bundle.uses.is_empty() || !bundle.checkpoints.is_empty() {
+        // Collect every digest the package "owns" as a chain link.
+        let mut owned: std::collections::HashSet<String> = std::collections::HashSet::new();
+        owned.insert(String::new()); // genesis is a valid prev pointer
+        for u in &bundle.uses          { owned.insert(u.record_digest.clone()); }
+        for cp in &bundle.checkpoints  { owned.insert(cp.record_digest.clone()); }
+        let mut dangling: Vec<String> = Vec::new();
+        for u in &bundle.uses {
+            if !owned.contains(&u.previous_record_digest) {
+                dangling.push(format!(
+                    "use {} previous_record_digest {} not anchored in package",
+                    u.use_id, u.previous_record_digest,
+                ));
+            }
+        }
+        for cp in &bundle.checkpoints {
+            if !owned.contains(&cp.previous_record_digest) {
+                dangling.push(format!(
+                    "checkpoint {} previous_record_digest {} not anchored in package",
+                    cp.checkpoint_id, cp.previous_record_digest,
+                ));
+            }
+        }
+        if dangling.is_empty() {
+            checks.push(VerifyCheck::pass(
+                "approval-use-chain-continuity",
+                &format!(
+                    "{} record(s) form a self-consistent chain (every previous_record_digest anchors in-package or genesis)",
+                    bundle.uses.len() + bundle.checkpoints.len(),
+                ),
+            ));
+        } else {
+            checks.push(VerifyCheck::fail(
+                "approval-use-chain-continuity",
+                &dangling.join("; "),
+            ));
+        }
     }
 
     // -- replay-hub-org -- v0.9.9 PR 6.
