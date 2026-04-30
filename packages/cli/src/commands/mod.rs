@@ -23,6 +23,7 @@ pub mod agents;
 pub mod cards;
 pub mod discovery;
 pub mod setup;
+pub mod templates;
 pub mod declare;
 pub mod package;
 pub mod prove;

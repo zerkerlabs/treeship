@@ -1,141 +1,56 @@
-//! treeship add -- auto-detect and instrument installed agent frameworks.
+//! `treeship add` -- auto-detect and instrument installed agent frameworks.
+//!
+//! Reads from two data sources, both shared:
+//!   * `commands::discovery` (PR 1)  detects which agents are on this machine
+//!   * `commands::templates` (PR 4)  declarative install rules per surface
+//!
+//! The PR 4 refactor pulled three separate install functions
+//! (`install_mcp_config`, `install_skill`, `install_codex_mcp_config`) and
+//! their hardcoded snippets/paths into `templates::PROFILES`. Adding a new
+//! surface is now one row in that table; this module just dispatches on
+//! `Profile::install_method`.
 
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use crate::commands::discovery::{self, ConnectionMode, DiscoveredAgent, Env};
+use crate::commands::discovery::{self, AgentSurface, DiscoveredAgent, Env};
+use crate::commands::templates::{self, InstallMethod, Profile};
 use crate::printer::{Format, Printer};
 
 // ---------------------------------------------------------------------------
-// Agent detection
+// Detection -> install candidates
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone)]
-struct DetectedAgent {
-    name: &'static str,
-    display: &'static str,
-    method: &'static str,
-    config_path: PathBuf,
+/// One agent we both detected on this machine AND have a template for.
+/// Surfaces without an instrumentation template (SuperNinja remote, Ninja
+/// Dev, GenericMcp, ShellWrap) are filtered out -- there's nothing
+/// `install_via_profile` could write for them.
+struct InstallCandidate {
+    profile:  &'static Profile,
+    /// The DiscoveredAgent reference the candidate came from. Carried so
+    /// future tooling can show evidence paths in the install log.
+    #[allow(dead_code)]
+    detected: DiscoveredAgent,
 }
 
-fn home() -> Option<PathBuf> {
-    home::home_dir()
-}
-
-fn detect_agents() -> Vec<DetectedAgent> {
-    let mut agents = Vec::new();
-    let h = match home() { Some(h) => h, None => return agents };
-    let cwd = std::env::current_dir().unwrap_or_default();
-
-    // Claude Code: ~/.claude/ or ./.claude/
-    let claude_global = h.join(".claude");
-    let claude_local = cwd.join(".claude");
-    if claude_global.is_dir() || claude_local.is_dir() {
-        let dir = if claude_local.is_dir() { claude_local } else { claude_global };
-        agents.push(DetectedAgent {
-            name: "claude-code",
-            display: "Claude Code",
-            method: "MCP server (.claude/mcp.json)",
-            config_path: dir.join("mcp.json"),
-        });
-    }
-
-    // Cursor: ~/.cursor/
-    let cursor_dir = h.join(".cursor");
-    if cursor_dir.is_dir() {
-        agents.push(DetectedAgent {
-            name: "cursor",
-            display: "Cursor",
-            method: "MCP server (.cursor/mcp.json)",
-            config_path: cursor_dir.join("mcp.json"),
-        });
-    }
-
-    // Cline: ~/.config/cline/
-    let cline_dir = h.join(".config").join("cline");
-    if cline_dir.is_dir() {
-        agents.push(DetectedAgent {
-            name: "cline",
-            display: "Cline",
-            method: "MCP server",
-            config_path: cline_dir.join("mcp.json"),
-        });
-    }
-
-    // Hermes: ~/.hermes/ or hermes in PATH
-    let hermes_dir = h.join(".hermes");
-    let hermes_in_path = which("hermes");
-    if hermes_dir.is_dir() || hermes_in_path {
-        agents.push(DetectedAgent {
-            name: "hermes",
-            display: "Hermes",
-            method: "Skill file (~/.hermes/skills/treeship/)",
-            config_path: hermes_dir.join("skills").join("treeship").join("SKILL.md"),
-        });
-    }
-
-    // OpenClaw: ~/.openclaw/ or openclaw in PATH
-    let openclaw_dir = h.join(".openclaw");
-    let openclaw_in_path = which("openclaw");
-    if openclaw_dir.is_dir() || openclaw_in_path {
-        agents.push(DetectedAgent {
-            name: "openclaw",
-            display: "OpenClaw",
-            method: "Skill file (~/.openclaw/skills/treeship/)",
-            config_path: openclaw_dir.join("skills").join("treeship").join("SKILL.md"),
-        });
-    }
-
-    // Codex CLI: ~/.codex/config.toml
-    // OpenAI's Codex CLI uses TOML for config, so the install path is a
-    // text-append into config.toml rather than a JSON merge.
-    let codex_dir = h.join(".codex");
-    if codex_dir.is_dir() {
-        agents.push(DetectedAgent {
-            name: "codex",
-            display: "Codex CLI",
-            method: "MCP server (~/.codex/config.toml)",
-            config_path: codex_dir.join("config.toml"),
-        });
-    }
-
-    agents
-}
-
-/// In-process PATH search (no shell-out to external `which`).
-fn which(name: &str) -> bool {
-    std::env::var_os("PATH")
-        .map(|paths| {
-            std::env::split_paths(&paths)
-                .any(|dir| dir.join(name).is_file())
-        })
-        .unwrap_or(false)
-}
-
-fn prompt(msg: &str) -> String {
-    print!("{}", msg);
-    io::stdout().flush().ok();
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).unwrap_or_default();
-    input.trim().to_string()
+fn install_candidates(env: &Env) -> Vec<InstallCandidate> {
+    discovery::discover(env)
+        .into_iter()
+        .filter_map(|d| templates::for_surface(d.surface).map(|p| InstallCandidate {
+            profile:  p,
+            detected: d,
+        }))
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
-// MCP config writing
+// Symlink guard
 // ---------------------------------------------------------------------------
 
-const TREESHIP_MCP_ENTRY: &str = r#"{
-      "command": "npx",
-      "args": ["-y", "@treeship/mcp"],
-      "env": {
-        "TREESHIP_ACTOR": "agent://__AGENT__",
-        "TREESHIP_HUB_ENDPOINT": "https://api.treeship.dev"
-      }
-    }"#;
-
-/// Reject paths that contain symlinks to prevent writing to unexpected locations.
+/// Reject paths whose parent chain contains a symlink. Stops a malicious
+/// or surprising symlink from redirecting our atomic write to an unrelated
+/// file. Identical to the pre-PR-4 behavior.
 fn is_safe_path(path: &Path) -> bool {
-    // Check each ancestor for symlinks
     let mut check = path.to_path_buf();
     loop {
         if check.is_symlink() { return false; }
@@ -145,272 +60,168 @@ fn is_safe_path(path: &Path) -> bool {
     true
 }
 
-fn install_mcp_config(agent: &DetectedAgent, dry_run: bool, printer: &Printer) -> Result<bool, Box<dyn std::error::Error>> {
-    let config_path = &agent.config_path;
-
-    // Reject symlinked directories to prevent arbitrary file writes
-    if !is_safe_path(config_path) {
-        printer.warn(&format!("  {} config path contains a symlink, skipping for safety", agent.display), &[]);
-        return Ok(false);
-    }
-
-    // Read existing config or start fresh
-    let mut config: serde_json::Value = if config_path.exists() {
-        let data = std::fs::read_to_string(config_path)?;
-        serde_json::from_str(&data)?
-    } else {
-        serde_json::json!({"mcpServers": {}})
-    };
-
-    // Check if treeship entry already exists
-    if let Some(servers) = config.get("mcpServers").and_then(|s| s.as_object()) {
-        if servers.contains_key("treeship") {
-            printer.dim_info(&format!("  {} already configured, skipping", agent.display));
-            return Ok(false);
-        }
-    }
-
-    if dry_run {
-        printer.info(&format!("  Would configure {} at {}", agent.display, config_path.display()));
-        return Ok(true);
-    }
-
-    // Build the treeship entry
-    let entry_json = TREESHIP_MCP_ENTRY.replace("__AGENT__", agent.name);
-    let entry: serde_json::Value = serde_json::from_str(&entry_json)?;
-
-    // Insert into mcpServers
-    let servers = config
-        .as_object_mut()
-        .ok_or("invalid config format")?
-        .entry("mcpServers")
-        .or_insert_with(|| serde_json::json!({}));
-    servers.as_object_mut()
-        .ok_or("mcpServers is not an object")?
-        .insert("treeship".into(), entry);
-
-    // Atomic write: temp file + rename to prevent data loss on interruption
-    if let Some(parent) = config_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let json = serde_json::to_string_pretty(&config)?;
-    let tmp_path = config_path.with_extension("tmp");
-    std::fs::write(&tmp_path, &json)?;
-    std::fs::rename(&tmp_path, config_path)?;
-
-    printer.success(&format!("{} configured", agent.display), &[]);
-    printer.dim_info(&format!("  {}", config_path.display()));
-    Ok(true)
-}
-
 // ---------------------------------------------------------------------------
-// Skill file installation
+// Install dispatch (data-driven)
 // ---------------------------------------------------------------------------
 
-fn install_skill(agent: &DetectedAgent, dry_run: bool, printer: &Printer) -> Result<bool, Box<dyn std::error::Error>> {
-    let skill_path = &agent.config_path;
-
-    // Reject symlinked directories
-    if !is_safe_path(skill_path) {
-        printer.warn(&format!("  {} skill path contains a symlink, skipping for safety", agent.display), &[]);
-        return Ok(false);
-    }
-
-    if skill_path.exists() {
-        printer.dim_info(&format!("  {} skill already installed, skipping", agent.display));
-        return Ok(false);
-    }
-
-    if dry_run {
-        printer.info(&format!("  Would install {} skill at {}", agent.display, skill_path.display()));
-        return Ok(true);
-    }
-
-    let skill_content = match agent.name {
-        "hermes" => include_str!("../../../../integrations/hermes/treeship.skill/SKILL.md"),
-        "openclaw" => include_str!("../../../../integrations/openclaw/treeship.skill/SKILL.md"),
-        _ => return Err(format!("no skill template for {}", agent.name).into()),
-    };
-
-    if let Some(parent) = skill_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    // Atomic write via temp + rename
-    let tmp_path = skill_path.with_extension("tmp");
-    std::fs::write(&tmp_path, skill_content)?;
-    std::fs::rename(&tmp_path, skill_path)?;
-
-    printer.success(&format!("{} skill installed", agent.display), &[]);
-    printer.dim_info(&format!("  {}", skill_path.display()));
-    Ok(true)
-}
-
-// ---------------------------------------------------------------------------
-// Main entry point
-// ---------------------------------------------------------------------------
-
-fn install_agent(agent: &DetectedAgent, dry_run: bool, printer: &Printer) -> Result<bool, Box<dyn std::error::Error>> {
-    match agent.name {
-        "claude-code" | "cursor" | "cline" => install_mcp_config(agent, dry_run, printer),
-        "hermes" | "openclaw" => install_skill(agent, dry_run, printer),
-        "codex" => install_codex_mcp_config(agent, dry_run, printer),
-        _ => Err(format!("unknown agent: {}", agent.name).into()),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Codex CLI MCP config (TOML-based)
-//
-// Codex stores MCP servers as TOML tables in ~/.codex/config.toml, not JSON,
-// so the JSON-based install_mcp_config above doesn't fit. We append a fresh
-// [mcp_servers.treeship] block instead of round-tripping the whole file
-// through a TOML library -- that preserves the user's existing comments and
-// formatting and avoids pulling toml_edit into the CLI for one feature.
-//
-// Idempotent via a pre-write substring check on the destination block name.
-// ---------------------------------------------------------------------------
-
-const CODEX_MCP_BLOCK: &str = r#"
-
-[mcp_servers.treeship]
-command = "npx"
-args = ["-y", "@treeship/mcp"]
-
-[mcp_servers.treeship.env]
-TREESHIP_ACTOR = "agent://codex"
-TREESHIP_HUB_ENDPOINT = "https://api.treeship.dev"
-"#;
-
-fn install_codex_mcp_config(
-    agent: &DetectedAgent,
+/// Install one profile against the given HOME. Returns true if work was
+/// performed (or would be performed under `--dry-run`). False means
+/// "skipped because already installed."
+fn install_via_profile(
+    profile: &Profile,
+    home: &Path,
     dry_run: bool,
     printer: &Printer,
 ) -> Result<bool, Box<dyn std::error::Error>> {
-    let config_path = &agent.config_path;
+    let path = (profile.config_path)(home);
 
-    if !is_safe_path(config_path) {
+    if !is_safe_path(&path) {
         printer.warn(
-            &format!("  {} config path contains a symlink, skipping for safety", agent.display),
+            &format!("  {} config path contains a symlink, skipping for safety", profile.display),
             &[],
         );
         return Ok(false);
     }
 
-    // Read existing config (or empty if it doesn't exist yet -- Codex will
-    // create the file on first run, but we can also create it preemptively).
-    let existing = if config_path.exists() {
-        std::fs::read_to_string(config_path)?
-    } else {
-        String::new()
-    };
-
-    // Idempotency guard: any existing [mcp_servers.treeship] table means
-    // we've already installed (or the user installed manually).
-    if existing.contains("[mcp_servers.treeship]") {
-        printer.dim_info(&format!("  {} already configured, skipping", agent.display));
+    if (profile.idempotency)(&path) {
+        printer.dim_info(&format!("  {} already configured, skipping", profile.display));
         return Ok(false);
     }
 
     if dry_run {
-        printer.info(&format!("  Would configure {} at {}", agent.display, config_path.display()));
+        printer.info(&format!("  Would configure {} at {}", profile.display, path.display()));
         return Ok(true);
     }
 
-    // Build the new content. If the existing file doesn't end in a newline,
-    // start the appended block with one to keep TOML well-formed.
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    match profile.install_method {
+        InstallMethod::JsonMcp   => install_json_mcp(profile, &path)?,
+        InstallMethod::TomlMcp   => install_toml_mcp(profile, &path)?,
+        InstallMethod::SkillFile => install_skill_file(profile, &path)?,
+    }
+
+    printer.success(&format!("{} configured", profile.display), &[]);
+    printer.dim_info(&format!("  {}", path.display()));
+    if profile.install_method == InstallMethod::TomlMcp {
+        // Codex (and future TOML clients) need a restart to reload MCP
+        // settings. Keep the existing UX hint.
+        printer.dim_info("  Restart the agent so it reloads MCP settings.");
+    }
+    Ok(true)
+}
+
+/// JSON merge: read `path` (or start with `{"mcpServers": {}}`), insert
+/// `mcpServers.treeship` from the profile snippet, atomic-write back.
+fn install_json_mcp(profile: &Profile, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let mut config: serde_json::Value = if path.exists() {
+        serde_json::from_str(&std::fs::read_to_string(path)?)?
+    } else {
+        serde_json::json!({"mcpServers": {}})
+    };
+
+    let entry_json = profile.snippet.replace("__AGENT__", profile.kind);
+    let entry: serde_json::Value = serde_json::from_str(&entry_json)?;
+
+    let servers = config
+        .as_object_mut()
+        .ok_or("invalid config format")?
+        .entry("mcpServers")
+        .or_insert_with(|| serde_json::json!({}));
+    servers
+        .as_object_mut()
+        .ok_or("mcpServers is not an object")?
+        .insert("treeship".into(), entry);
+
+    let json = serde_json::to_string_pretty(&config)?;
+    let tmp_path = path.with_extension("tmp");
+    std::fs::write(&tmp_path, &json)?;
+    std::fs::rename(&tmp_path, path)?;
+    Ok(())
+}
+
+/// TOML append: leave existing content untouched (preserves user comments
+/// and formatting); concatenate the profile snippet at the end.
+fn install_toml_mcp(profile: &Profile, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let existing = if path.exists() {
+        std::fs::read_to_string(path)?
+    } else {
+        String::new()
+    };
     let mut new_content = existing.clone();
     if !new_content.is_empty() && !new_content.ends_with('\n') {
         new_content.push('\n');
     }
-    new_content.push_str(CODEX_MCP_BLOCK);
-
-    // Atomic write
-    if let Some(parent) = config_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let tmp_path = config_path.with_extension("toml.tmp");
+    new_content.push_str(profile.snippet);
+    let tmp_path = path.with_extension("toml.tmp");
     std::fs::write(&tmp_path, &new_content)?;
-    std::fs::rename(&tmp_path, config_path)?;
+    std::fs::rename(&tmp_path, path)?;
+    Ok(())
+}
 
-    printer.success(&format!("{} configured", agent.display), &[]);
-    printer.dim_info(&format!("  {}", config_path.display()));
-    printer.dim_info("  Restart Codex so it reloads MCP settings.");
-    Ok(true)
+/// Skill file: write the snippet (Markdown) to a fixed path. Idempotency
+/// already short-circuited if the file exists.
+fn install_skill_file(profile: &Profile, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let tmp_path = path.with_extension("tmp");
+    std::fs::write(&tmp_path, profile.snippet)?;
+    std::fs::rename(&tmp_path, path)?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
-// Project-level TREESHIP.md (framework-agnostic trust + usage doc)
+// Project-level TREESHIP.md
 // ---------------------------------------------------------------------------
 
 const TREESHIP_MD_TEMPLATE: &str = include_str!("../../../../TREESHIP.md");
 
-/// Write `./TREESHIP.md` in the current project so any agent (Claude Code,
-/// Cursor, Hermes, OpenClaw, or future frameworks) reading the project
-/// context sees what Treeship captures, what it doesn't, and how to use it
-/// -- before the first session starts.
+/// Write `./TREESHIP.md` in the current project so any agent reading the
+/// project context (Claude Code, Cursor, Hermes, OpenClaw, future
+/// frameworks) sees what Treeship captures, what it doesn't, and how to
+/// use it.
 ///
-/// One file, framework-agnostic. Framework-specific files (CLAUDE.md,
-/// .cursorrules, skill files) stay focused on their own purpose.
-///
-/// Refuses to write if:
+/// One file, framework-agnostic. Refuses to write if:
 ///   * cwd is not a Treeship project (no `.treeship/` marker)
 ///   * `./TREESHIP.md` already exists (never overwrite user content)
 ///   * the resolved path contains a symlink (matches the rest of `add`)
 fn install_treeship_md_in_cwd(dry_run: bool, printer: &Printer) -> Result<bool, Box<dyn std::error::Error>> {
     let cwd = std::env::current_dir()?;
-
     if !cwd.join(".treeship").is_dir() {
         printer.dim_info("  No .treeship/ in cwd -- skipping project TREESHIP.md (run `treeship init` first)");
         return Ok(false);
     }
-
     let treeship_md = cwd.join("TREESHIP.md");
-
     if !is_safe_path(&treeship_md) {
         printer.warn("  ./TREESHIP.md path contains a symlink, skipping for safety", &[]);
         return Ok(false);
     }
-
     if treeship_md.exists() {
-        printer.dim_info("  ./TREESHIP.md already exists -- did NOT overwrite");
+        printer.dim_info("  ./TREESHIP.md already exists, skipping");
         return Ok(false);
     }
-
     if dry_run {
         printer.info(&format!("  Would write {}", treeship_md.display()));
         return Ok(true);
     }
-
     let tmp_path = treeship_md.with_extension("tmp");
     std::fs::write(&tmp_path, TREESHIP_MD_TEMPLATE)?;
     std::fs::rename(&tmp_path, &treeship_md)?;
-
     printer.success("./TREESHIP.md written", &[]);
     printer.dim_info("  Any agent reading the project will see what Treeship captures and trust the MCP server.");
     Ok(true)
 }
 
-/// Read-only discovery mode for `treeship add --discover`.
-///
-/// Prints every plausible agent on the local machine -- surface, connection
-/// modes, coverage, confidence -- without touching any config. Honors the
-/// global --format flag so PR 3's `treeship setup` and any external script
-/// can consume stable JSON.
-///
-/// This is the entry point that the v0.9.8 prompt called `treeship discover`.
-/// We expose it as an `add` flag instead of a new top-level command so the
-/// detection rules stay in one place; if a future release wants a dedicated
-/// command, it can alias to this. See discovery.rs for the rationale.
-pub fn run_discover(
-    format: Format,
-    printer: &Printer,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let agents = discovery::discover(&Env::current());
+// ---------------------------------------------------------------------------
+// Public entry points
+// ---------------------------------------------------------------------------
 
+/// Read-only discovery mode for `treeship add --discover`. Unchanged in
+/// behavior from PR 1; carried forward verbatim.
+pub fn run_discover(format: Format, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
+    let agents = discovery::discover(&Env::current());
     match format {
         Format::Json => {
-            // Emit `{ "agents": [ DiscoveredAgent... ] }`. Stable shape: the
-            // discovery::tests::json_serialization_is_stable test pins it.
             let value = serde_json::json!({ "agents": agents });
             println!("{}", serde_json::to_string_pretty(&value)?);
         }
@@ -418,7 +229,6 @@ pub fn run_discover(
             print_discover_text(&agents, printer);
         }
     }
-
     Ok(())
 }
 
@@ -431,10 +241,8 @@ fn print_discover_text(agents: &[DiscoveredAgent], printer: &Printer) {
         printer.blank();
         return;
     }
-
     printer.section("Detected agents");
     printer.blank();
-
     for agent in agents {
         let mark = match agent.confidence {
             discovery::Confidence::High   => "✓",
@@ -453,47 +261,53 @@ fn print_discover_text(agents: &[DiscoveredAgent], printer: &Printer) {
         }
         printer.blank();
     }
-
     printer.hint("Run `treeship add` to instrument these agents, or `treeship setup` for guided first-run setup.");
     printer.blank();
-
-    // Suppress the unused-import warning until PR 3 starts consuming
-    // ConnectionMode from this file directly.
-    let _ = ConnectionMode::Mcp;
 }
 
+fn prompt(msg: &str) -> String {
+    print!("{}", msg);
+    io::stdout().flush().ok();
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).unwrap_or_default();
+    input.trim().to_string()
+}
+
+/// Instrument detected agents.
+///
+/// `specific_agents` filters by kind (e.g. `["claude-code", "hermes"]`).
+/// `all` skips the interactive confirmation. `dry_run` previews without
+/// writing.
 pub fn run(
     specific_agents: Vec<String>,
     all: bool,
     dry_run: bool,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let detected = detect_agents();
+    let env = Env::current();
+    let candidates = install_candidates(&env);
 
-    if detected.is_empty() {
+    if candidates.is_empty() {
         printer.blank();
-        printer.dim_info("  No agent frameworks detected on this machine.");
+        printer.dim_info("  No agent frameworks detected on this machine that Treeship can instrument.");
         printer.blank();
-        printer.info("  Treeship works with:");
-        printer.info("    Claude Code   ~/.claude/");
-        printer.info("    Cursor        ~/.cursor/");
-        printer.info("    Codex CLI     ~/.codex/");
-        printer.info("    Hermes        ~/.hermes/ or hermes in PATH");
-        printer.info("    OpenClaw      ~/.openclaw/ or openclaw in PATH");
-        printer.info("    Cline         ~/.config/cline/");
+        printer.info("  Treeship has install templates for:");
+        for p in templates::PROFILES {
+            printer.info(&format!("    {}  ({})", p.display, p.kind));
+        }
         printer.blank();
         printer.hint("Install an agent framework, then run treeship add again.");
         printer.blank();
         return Ok(());
     }
 
-    // Filter to specific agents if requested
-    let targets: Vec<&DetectedAgent> = if !specific_agents.is_empty() {
-        detected.iter()
-            .filter(|a| specific_agents.iter().any(|s| s.eq_ignore_ascii_case(a.name)))
+    let targets: Vec<&InstallCandidate> = if !specific_agents.is_empty() {
+        candidates
+            .iter()
+            .filter(|c| specific_agents.iter().any(|s| s.eq_ignore_ascii_case(c.profile.kind)))
             .collect()
     } else {
-        detected.iter().collect()
+        candidates.iter().collect()
     };
 
     if targets.is_empty() && !specific_agents.is_empty() {
@@ -501,8 +315,8 @@ pub fn run(
         printer.warn("None of the specified agents were detected on this machine.", &[]);
         printer.blank();
         printer.info("  Detected:");
-        for a in &detected {
-            printer.info(&format!("    {}", a.display));
+        for c in &candidates {
+            printer.info(&format!("    {}", c.profile.display));
         }
         printer.blank();
         return Ok(());
@@ -510,11 +324,15 @@ pub fn run(
 
     printer.blank();
 
-    // Interactive confirmation unless --all or specific agents given
     if !all && specific_agents.is_empty() && crossterm::tty::IsTty::is_tty(&io::stdin()) {
         printer.info("  Detected:");
-        for (i, a) in targets.iter().enumerate() {
-            printer.info(&format!("    [{}] {}  -- {}", i + 1, a.display, a.method));
+        for (i, c) in targets.iter().enumerate() {
+            printer.info(&format!(
+                "    [{}] {}  -- {}",
+                i + 1,
+                c.profile.display,
+                c.profile.install_method.label()
+            ));
         }
         printer.blank();
         let answer = prompt("  Instrument all? (Y/n): ");
@@ -526,25 +344,31 @@ pub fn run(
         printer.blank();
     }
 
+    let home = match home::home_dir() {
+        Some(h) => h,
+        None    => return Err("no HOME directory; cannot resolve config paths".into()),
+    };
+
     let mut installed = 0usize;
-    for agent in &targets {
-        match install_agent(agent, dry_run, printer) {
-            Ok(true) => installed += 1,
-            Ok(false) => {} // skipped (already installed)
-            Err(e) => printer.warn(&format!("Failed to configure {}: {}", agent.display, e), &[]),
+    for c in &targets {
+        match install_via_profile(c.profile, &home, dry_run, printer) {
+            Ok(true)  => installed += 1,
+            Ok(false) => {}
+            Err(e)    => printer.warn(&format!("Failed to configure {}: {}", c.profile.display, e), &[]),
         }
     }
 
-    // Drop the framework-agnostic trust + usage doc once per `treeship add`
-    // invocation. Any agent reading the project context picks it up; we don't
-    // need to touch CLAUDE.md, .cursorrules, or skill files for trust purposes.
     if let Err(e) = install_treeship_md_in_cwd(dry_run, printer) {
         printer.warn("  Could not write project TREESHIP.md", &[("error", &e.to_string())]);
     }
 
     printer.blank();
     if dry_run {
-        printer.info(&format!("  Dry run: {} agent{} would be configured.", installed, if installed != 1 { "s" } else { "" }));
+        printer.info(&format!(
+            "  Dry run: {} agent{} would be configured.",
+            installed,
+            if installed != 1 { "s" } else { "" }
+        ));
     } else if installed > 0 {
         printer.hint("Next: treeship session start --name \"my task\"");
     } else {
@@ -553,4 +377,199 @@ pub fn run(
     printer.blank();
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    /// install_via_profile drives JSON-merge MCP installs against a tmp HOME.
+    /// Asserts: file contents have mcpServers.treeship; second run is a no-op.
+    #[test]
+    fn json_mcp_installs_then_idempotent() {
+        let home_dir = tempfile::tempdir().unwrap();
+        // macOS' /var/folders tempdir lives under /var, which is a symlink to
+        // /private/var. is_safe_path rejects symlinked ancestors (correct in
+        // production), so canonicalize for tests.
+        let home = home_dir.path().canonicalize().unwrap();
+        let home = home.as_path();
+    std::fs::create_dir_all(home.join(".claude")).unwrap();
+        let printer = Printer::new(Format::Text, true /* quiet */, true /* no_color */);
+        let profile = templates::for_surface(AgentSurface::ClaudeCode).unwrap();
+
+        let did_install = install_via_profile(profile, home, false, &printer).unwrap();
+        assert!(did_install);
+
+        let written = home.join(".claude").join("mcp.json");
+        let json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&written).unwrap()).unwrap();
+        assert!(
+            json["mcpServers"]["treeship"]["command"]
+                .as_str()
+                .unwrap_or("")
+                .contains("npx"),
+            "treeship MCP entry should be present"
+        );
+
+        // Second run -- idempotency check returns true; nothing happens.
+        let did_install_again = install_via_profile(profile, home, false, &printer).unwrap();
+        assert!(!did_install_again);
+    }
+
+    #[test]
+    fn json_mcp_uses_kind_in_actor_uri() {
+        // Cursor's snippet should land with "agent://cursor", not the
+        // generic placeholder.
+        let home_dir = tempfile::tempdir().unwrap();
+        // macOS' /var/folders tempdir lives under /var, which is a symlink to
+        // /private/var. is_safe_path rejects symlinked ancestors (correct in
+        // production), so canonicalize for tests.
+        let home = home_dir.path().canonicalize().unwrap();
+        let home = home.as_path();
+    std::fs::create_dir_all(home.join(".cursor")).unwrap();
+        let printer = Printer::new(Format::Text, true, true);
+        let profile = templates::for_surface(AgentSurface::CursorAgent).unwrap();
+        install_via_profile(profile, home, false, &printer).unwrap();
+
+        let json: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(home.join(".cursor").join("mcp.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            json["mcpServers"]["treeship"]["env"]["TREESHIP_ACTOR"],
+            "agent://cursor"
+        );
+    }
+
+    #[test]
+    fn toml_mcp_appends_block() {
+        let home_dir = tempfile::tempdir().unwrap();
+        // macOS' /var/folders tempdir lives under /var, which is a symlink to
+        // /private/var. is_safe_path rejects symlinked ancestors (correct in
+        // production), so canonicalize for tests.
+        let home = home_dir.path().canonicalize().unwrap();
+        let home = home.as_path();
+    std::fs::create_dir_all(home.join(".codex")).unwrap();
+        // Pre-existing file with comments -- append must preserve it.
+        let path = home.join(".codex").join("config.toml");
+        std::fs::write(&path, "# user note\nmodel = \"o4\"").unwrap();
+
+        let printer = Printer::new(Format::Text, true, true);
+        let profile = templates::for_surface(AgentSurface::Codex).unwrap();
+        let did = install_via_profile(profile, home, false, &printer).unwrap();
+        assert!(did);
+
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert!(after.contains("# user note"), "preserves user comments");
+        assert!(after.contains("[mcp_servers.treeship]"), "appends treeship block");
+
+        // Idempotency: second run is a no-op.
+        let again = install_via_profile(profile, home, false, &printer).unwrap();
+        assert!(!again);
+    }
+
+    #[test]
+    fn skill_file_writes_then_idempotent() {
+        let home_dir = tempfile::tempdir().unwrap();
+        // macOS' /var/folders tempdir lives under /var, which is a symlink to
+        // /private/var. is_safe_path rejects symlinked ancestors (correct in
+        // production), so canonicalize for tests.
+        let home = home_dir.path().canonicalize().unwrap();
+        let home = home.as_path();
+    std::fs::create_dir_all(home.join(".hermes")).unwrap();
+        let printer = Printer::new(Format::Text, true, true);
+        let profile = templates::for_surface(AgentSurface::Hermes).unwrap();
+
+        let did = install_via_profile(profile, home, false, &printer).unwrap();
+        assert!(did);
+        let skill = (profile.config_path)(home);
+        assert!(skill.is_file(), "skill file should exist");
+
+        // Idempotency: second run is a no-op.
+        let again = install_via_profile(profile, home, false, &printer).unwrap();
+        assert!(!again);
+    }
+
+    #[test]
+    fn dry_run_reports_but_does_not_write() {
+        let home_dir = tempfile::tempdir().unwrap();
+        // macOS' /var/folders tempdir lives under /var, which is a symlink to
+        // /private/var. is_safe_path rejects symlinked ancestors (correct in
+        // production), so canonicalize for tests.
+        let home = home_dir.path().canonicalize().unwrap();
+        let home = home.as_path();
+    std::fs::create_dir_all(home.join(".claude")).unwrap();
+        let printer = Printer::new(Format::Text, true, true);
+        let profile = templates::for_surface(AgentSurface::ClaudeCode).unwrap();
+        let did = install_via_profile(profile, home, true /* dry_run */, &printer).unwrap();
+        // Reports as "would do work" but doesn't write.
+        assert!(did);
+        assert!(!home.join(".claude").join("mcp.json").exists());
+    }
+
+    #[test]
+    fn symlink_in_path_is_rejected() {
+        let home_dir = tempfile::tempdir().unwrap();
+        // macOS' /var/folders tempdir lives under /var, which is a symlink to
+        // /private/var. is_safe_path rejects symlinked ancestors (correct in
+        // production), so canonicalize for tests.
+        let home = home_dir.path().canonicalize().unwrap();
+        let home = home.as_path();
+    // Make ~/.claude a symlink to /tmp; install must refuse rather
+        // than write through it.
+        let target = tempfile::tempdir().unwrap();
+        let link = home.join(".claude");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target.path(), &link).unwrap();
+        #[cfg(not(unix))]
+        return;
+
+        let printer = Printer::new(Format::Text, true, true);
+        let profile = templates::for_surface(AgentSurface::ClaudeCode).unwrap();
+        let did = install_via_profile(profile, home, false, &printer).unwrap();
+        assert!(!did, "symlinked path must be refused");
+        // Nothing should have been written through the symlink.
+        assert!(!target.path().join("mcp.json").exists());
+        // Also nothing at the original target path.
+        let _ = link; // keep `target` alive
+    }
+
+    #[test]
+    fn install_candidates_skips_surfaces_without_templates() {
+        // SuperNinja has no install template -- it should never appear as
+        // an InstallCandidate even though discover always emits it.
+        // We can't easily fake the discovery env from this test, but we
+        // can prove the filter directly: every PROFILES surface is
+        // instrumentable, no SuperNinja entry exists in PROFILES.
+        for p in templates::PROFILES {
+            assert_ne!(p.surface, AgentSurface::NinjatechSuperninja);
+            assert_ne!(p.surface, AgentSurface::ShellWrap);
+            assert_ne!(p.surface, AgentSurface::GenericMcp);
+        }
+    }
+
+    /// Existing detect_agents PathBuf fields are gone; this is a compile-
+    /// time check that templates::for_surface is the canonical lookup
+    /// instead.
+    #[test]
+    fn template_paths_match_expected_layout() {
+        let home = PathBuf::from("/h");
+        let cases = [
+            ("claude-code", "/h/.claude/mcp.json"),
+            ("cursor",      "/h/.cursor/mcp.json"),
+            ("cline",       "/h/.config/cline/mcp.json"),
+            ("codex",       "/h/.codex/config.toml"),
+            ("hermes",      "/h/.hermes/skills/treeship/SKILL.md"),
+            ("openclaw",    "/h/.openclaw/skills/treeship/SKILL.md"),
+        ];
+        for (kind, expected) in cases {
+            let p = templates::find(kind).unwrap();
+            assert_eq!((p.config_path)(&home).to_str().unwrap(), expected, "{kind}");
+        }
+    }
 }
