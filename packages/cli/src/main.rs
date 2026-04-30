@@ -666,6 +666,31 @@ struct SessionStatusArgs {
 struct SessionReportArgs {
     /// Session ID to report (defaults to the most recently closed session)
     session_id: Option<String>,
+
+    /// Output format: text (default) or json. JSON returns the
+    /// agent-native shape: { receipt_url, raw_json_url,
+    /// package_download_url, receipt_digest, package_digest,
+    /// verification_status, warnings }. Stable for AI agents and
+    /// orchestration tools.
+    #[arg(long, value_name = "FORMAT", default_value = "text")]
+    format: String,
+
+    /// Skip uploading to the hub. Compute digests + run local
+    /// verification, return the agent-native shape with `receipt_url`
+    /// / `raw_json_url` / `package_download_url` set to null. Useful
+    /// when running in an environment without hub auth (CI, sandboxed
+    /// agent, demo) but the caller still needs a structured share
+    /// response.
+    #[arg(long)]
+    no_upload: bool,
+
+    /// Alias accepted for compatibility with the agent-native sharing
+    /// idiom. `treeship session report --share --format json` is
+    /// equivalent to `treeship session report --format json`. The
+    /// flag is a no-op when the receipt is already being shared
+    /// (which is what `report` does).
+    #[arg(long, hide = true)]
+    share: bool,
 }
 
 #[derive(Args)]
@@ -1757,6 +1782,9 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             SessionCommand::Report(a) => commands::session::report(
                 a.session_id.clone(),
                 cli.config.as_deref(),
+                &a.format,
+                a.no_upload,
+                a.share,
                 printer,
             ),
             SessionCommand::Event(a) => commands::session::event(
