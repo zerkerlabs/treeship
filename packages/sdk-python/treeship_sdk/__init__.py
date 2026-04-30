@@ -33,4 +33,4 @@ __all__ = [
     "TreeshipError",
     "ensure_cli",
 ]
-__version__ = "0.9.11"
+__version__ = "0.10.0"
