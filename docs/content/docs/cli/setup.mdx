@@ -1,0 +1,134 @@
+---
+title: setup
+description: Guided first-run — detect agents, draft Agent Cards, instrument, smoke verify.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+## Usage
+
+```bash
+treeship setup [OPTIONS]
+```
+
+## What it does
+
+One command for the typical first-run flow. Composes existing primitives — agent discovery, the Agent Card store, the Harness Manager, the smoke session — into a single orchestrated path.
+
+1. **Detect agents** on this machine (Claude Code, Cursor, Cline, Codex, Hermes, OpenClaw, generic MCP, shell-wrap, NinjaTech).
+2. **Draft an Agent Card** for each detected agent. Idempotent on re-run — re-running setup against the same machine doesn't double-write cards.
+3. **Confirm** before modifying any agent's config files. Non-interactive without `--yes` defaults to a safe "no" — CI invocations don't touch user configs without permission.
+4. **Instrument** the detected agents (Treeship MCP server, hooks, skill files), through the same path `treeship add` uses.
+5. **Smoke session** — run a real session round-trip (`init → session start → wrap → session close → package verify`) inside an isolated tmpdir to prove Treeship's pipeline works end-to-end on this machine.
+6. **Promote cards** to `Active` and **harnesses** to `Instrumented` on smoke success. *Never* to `Verified` — that status is reserved for per-harness smokes that prove specific capture signals.
+
+<Callout type="info">
+The smoke pass proves Treeship's pipeline works, not that any specific harness's capture path fires. Card status `Verified` only happens when a harness-specific smoke run proves each capture signal individually. See [Harnesses](/concepts/harnesses) for the full status ladder.
+</Callout>
+
+## Examples
+
+```bash
+# Default — interactive, prompts before writing configs
+treeship setup
+```
+
+```bash
+# Non-interactive: instrument all detected agents
+treeship setup --yes
+```
+
+```bash
+# Cards + instrumentation only, skip the smoke session
+treeship setup --skip-smoke
+```
+
+```bash
+# Cards only — discover and draft, never modify any config
+treeship setup --no-instrument
+```
+
+```bash
+# Machine-readable for AI agents and CI orchestration
+treeship setup --yes --format json
+```
+
+## Sample output
+
+```
+✓ detected 3 agents on this machine
+  - claude-code @ ~/Library/Application Support/Claude/...   confidence: high
+  - cursor      @ ~/.cursor/extensions/...                   confidence: high
+  - hermes      @ ~/.openclaw/skills/treeship.md             confidence: medium
+
+instrument all 3? (y/N) y
+
+✓ instrumented claude-code (Treeship MCP server)
+✓ instrumented cursor      (Treeship MCP server)
+✓ instrumented hermes      (skill file)
+
+running smoke session...
+✓ smoke session passed   (5 events, 1 wrap, package verifies)
+
+cards promoted: 3 (Draft -> Active)
+harnesses promoted: 3 (Detected -> Instrumented)
+
+next: run a real session through each agent to prove its specific capture
+signals. After that, harness status flips Instrumented -> Verified.
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `--yes` | Skip the confirmation prompt; instrument every detected agent. |
+| `--skip-smoke` | Skip the smoke verification pass after instrumentation. Cards still promote `Draft → Active`; harnesses stay `Available`. |
+| `--no-instrument` | Detect + draft cards only. Never modify any agent config files. |
+| `--format <fmt>` | `text` (default) or `json`. The JSON shape is stable for AI agents and orchestration. |
+| `--config <path>` | Config file path (default `~/.treeship/config.json`). |
+| `--quiet` | Suppress all output except errors. |
+| `--no-color` | Disable color output. |
+
+## Idempotency
+
+Re-running `setup` against an already-set-up machine:
+
+- Re-runs discovery; new agents detected since the last run get fresh `Draft` cards.
+- Existing cards are *merged*, not overwritten. Approved cards stay `Active`.
+- Instrumentation is idempotent — if an agent's config already has the Treeship entry, `add` skips it.
+- The smoke session always runs in a fresh tmpdir, so it never pollutes the workspace journal.
+
+## What gets written
+
+- `~/.treeship/agents/<id>.json` — one Agent Card per detected agent
+- `~/.treeship/harnesses/<id>.json` — one Harness State per detected agent
+- agent-specific config files when `--no-instrument` is **not** set:
+  - Claude Code / Cursor / Cline: an MCP server entry pointing at `@treeship/mcp`
+  - Codex: an MCP entry in `~/.codex/config.toml`
+  - Hermes / OpenClaw: a skill file at the agent's skills directory
+
+If setup fails partway, the smoke session leaves nothing behind (isolated tmpdir). Card and harness state writes are append-only and survive a partial run.
+
+## Agent-mode JSON output
+
+```bash
+treeship setup --yes --format json
+```
+
+Today (v0.9.10), `setup --format json` returns an empty JSON object on completion (`{}`) — the orchestration result lives in the human-readable text output. The structured agent-mode shape that surfaces detected/instrumented/smoke/cards/harnesses counts is part of the **Agent-Native Bootstrap** roadmap and lands in a later v0.10.x release. Until then, if an AI agent needs to inspect what setup produced, it should call the per-component commands afterward:
+
+```bash
+treeship add --discover --format json   # what's on the machine
+treeship harness list --format json     # which harnesses are wired
+# (treeship agents list --format json   # — currently {}; see /cli/agents)
+```
+
+`treeship harness list --format json` already returns a rich, stable shape today and is the most useful agent-readable touchpoint until `setup`'s shape stabilizes.
+
+## See also
+
+- [add](/cli/add) — the underlying instrumenter setup orchestrates
+- [agents](/cli/agents) — manage the resulting Agent Card store
+- [harness](/cli/harness) — inspect harness state and run per-harness smokes
+- [Agent Cards](/concepts/agent-cards) — the trust object setup produces
+- [Harnesses](/concepts/harnesses) — the attachment surface setup wires

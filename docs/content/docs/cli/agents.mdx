@@ -1,0 +1,105 @@
+---
+title: agents
+description: Manage the local Agent Card store — list, review, approve, remove.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+## Usage
+
+```bash
+treeship agents <SUBCOMMAND>
+```
+
+## What it does
+
+Manages the workspace's **Agent Card** store at `<config>/agents/<id>.json`. Each card is a per-workspace trust object describing one agent: who it is (surface, host, workspace), what it's allowed to do (capabilities), how Treeship is attached (`active_harness_id`), and what status it's at (`Draft`, `NeedsReview`, `Active`, `Verified`).
+
+<Callout type="info">
+Cards are workspace-local trust objects. They're distinct from the `.agent` *certificate* package produced by [`treeship agent register`](/cli/agent) — the certificate is the portable artifact, the card is the local accountability object. Same data, two sites, no schema fork.
+</Callout>
+
+The card status `Verified` is intentionally not exposed as a manual flag. Only a successful smoke session writes that status — see [`treeship setup`](/cli/setup) and [`treeship harness smoke`](/cli/harness#harness-smoke-id).
+
+## Subcommands
+
+### `agents list`
+
+```bash
+treeship agents
+treeship agents list
+treeship agents list --format json
+```
+
+Lists every Agent Card in the workspace store.
+
+```
+ID            STATUS    SURFACE        HOST                       WORKSPACE
+agent_a1b2c3  Active    claude-code    laptop.local               ~/work/treeship
+agent_d4e5f6  Verified  cursor         laptop.local               ~/work/treeship
+agent_g7h8i9  Draft     hermes         laptop.local               ~/work/treeship
+```
+
+<Callout type="info">
+Today (v0.9.10), `--format json` on the `agents` subcommands returns a minimal placeholder shape (`{}`). The full agent-readable JSON for the card store is part of the **Agent-Native Bootstrap** roadmap and lands in a later v0.10.x release. The text output above carries the full information for human readers. Until the JSON stabilizes, AI agents should read the on-disk card files at `~/.treeship/agents/<id>.json` directly — those are stable, schema-versioned JSON.
+</Callout>
+
+### `agents review <id>`
+
+```bash
+treeship agents review agent_a1b2c3
+treeship agents review agent_a1b2c3 --format json
+```
+
+Shows the full card details — surface, host, model (if known), capabilities (the v0.9.6 ApprovalScope vocabulary: `bounded_tools`, `escalation_required`, `forbidden`), provenance (`Discovered`, `Registered`, `Manual`), `active_harness_id`, and the certificate digest if a `.agent` package was registered.
+
+### `agents approve <id>`
+
+```bash
+treeship agents approve agent_a1b2c3
+```
+
+Promotes a `Draft` or `NeedsReview` card to `Active`. Active means the card has been read by a human and acknowledged. It does **not** mean the agent's capture path has been smoke-tested — that gate is `Verified`, only writable by a smoke run.
+
+### `agents remove <id>`
+
+```bash
+treeship agents remove agent_a1b2c3
+```
+
+Deletes the card from the store. Idempotent — removing a card that doesn't exist isn't an error. The agent's `.agent` certificate (if one was registered) is unaffected; only the workspace card is deleted.
+
+## Status lifecycle
+
+```
+Draft ───► NeedsReview ───► Active ───► Verified
+  │             │             │              │
+  │             │             │              │
+discovered  cert digest    human          smoke run
+            changed        approved       proves capture
+```
+
+- **`Draft`** — card was just written by `treeship setup` or `agents`'s discovery path. Hasn't been reviewed.
+- **`NeedsReview`** — typically set automatically by `cards::upsert` when a re-registered agent's `certificate_digest` differs from the stored one. Re-registering an agent therefore can't leave a previously-approved card pointing at a certificate the user never saw.
+- **`Active`** — a human ran `agents approve`. The card is in scope for trust decisions.
+- **`Verified`** — a smoke session proved Treeship can capture the agent's claimed signals through its harness. Reserved for smoke runs; never set by hand.
+
+## Options (top-level)
+
+| Option | Description |
+|--------|-------------|
+| `--config <path>` | Config file path (default `~/.treeship/config.json`). |
+| `--format <fmt>` | `text` (default) or `json`. Stable shape for AI agents. |
+| `--no-color` | Disable color output. |
+
+## Agent ID
+
+Each card's id is `agent_<8 hex chars>`, derived as `sha256("<surface>|<host>|<workspace>")[..8]`. Deterministic — re-running discovery against the same machine produces the same id, so re-running `setup` or `agents` doesn't double-write the same agent.
+
+## See also
+
+- [setup](/cli/setup) — orchestrates discover + draft cards + instrument + smoke
+- [add](/cli/add) — instrument a specific agent (or list with `--discover`)
+- [agent](/cli/agent) — register an agent and produce its `.agent` certificate package
+- [harness](/cli/harness) — the attachment surface cards point at via `active_harness_id`
+- [Agent Cards](/concepts/agent-cards) — concept page

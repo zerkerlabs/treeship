@@ -130,3 +130,44 @@ The cross-verification path additionally verifies that the receipt's `session.sh
 <Callout type="info">
 Pre-v0.9.0 receipts (before `schema_version` and `session.ship_id` were added) verify cleanly under the URL and package paths but cannot complete cross-verification because the receipt has no `ship_id`. The CLI reports `Receipt has no ship_id (legacy receipt; cannot cross-verify)` and exits `2`.
 </Callout>
+
+## Approval Authority replay rows (v0.9.10)
+
+When the package contains evidence of consumed `ApprovalUse` records, `verify` emits one row per replay level — each row pinned to a specific invariant. The strongest level the package's evidence supports wins; nothing silently downgrades.
+
+| Row | What it proves | Available when |
+|---|---|---|
+| `replay-package-local` | No duplicate uses inside this package | Always |
+| `replay-local-journal` | The workspace's local journal has not exceeded `max_uses` for the recorded `(grant_id, nonce_digest)` | Verifier has Treeship workspace (`treeship package verify` from a workspace) |
+| `replay-included-checkpoint` | An embedded `JournalCheckpoint`'s `record_digest` recomputes — record range wasn't tampered after sealing | Package carries one or more checkpoints |
+| `replay-hub-org` | A signed Hub checkpoint validates global single-use across machines | Package carries a `kind: hub-org` checkpoint that signature-verifies AND covers every embedded `use_id`. The Hub server itself is out of scope for v0.9.9-v0.9.10. |
+
+Plus four bundle-level integrity rows added in v0.9.10:
+
+| Row | What it proves |
+|---|---|
+| `approval-use-record-digest` | Every embedded use record's `record_digest` recomputes from canonical form |
+| `approval-use-nonce-binding` | Each use's `nonce_digest` equals `sha256(grant.nonce)` for a content-addressed grant in the package |
+| `approval-use-action-binding` | Each consuming action's `meta.approval_use_id` resolves to a use in the package, and the action's `approval_nonce` hashes to that use's `nonce_digest`. The action envelope is content-addressed against its filename — substituted/forged envelopes fail this row. |
+| `approval-use-chain-continuity` | Embedded uses + checkpoints form a single connected linked list from one genesis: no forks, cycles, or disconnected subchains. |
+
+### The honesty rule
+
+A row reports `✓` only when the matching evidence is present and verified. `✗` only when the evidence is present and a check failed. `-` (or absent) when the evidence isn't in the package at all — never silent pass. Treeship will physically refuse to print "global single-use enforced" or "replay-hub-org passed" without a real Hub-signed checkpoint that verifies cleanly AND covers every use_id.
+
+### Strict mode
+
+```bash
+treeship package verify --strict <pkg>
+```
+
+Promotes every approval-evidence warning to a hard failure. `replay-*`, `approval-use-record-digest`, `approval-use-nonce-binding`, `approval-use-action-binding`, and `approval-use-chain-continuity` all participate. Existing receipt-determinism / event-log warnings stay warnings.
+
+Useful in CI:
+
+```bash
+treeship package verify --strict ./session.treeship
+echo "exit code: $?"   # non-zero on any approval anomaly
+```
+
+For the full ladder and the v0.9.10 bypass paths the binding rows close, see [Replay levels](/guides/replay-levels) and [Approval Authority](/concepts/approval-authority).

@@ -111,10 +111,18 @@ Returns the approval artifact ID and the nonce. Pass the nonce to the agent so i
 As of v0.9.6, `treeship attest approval` refuses to mint an approval that has no scope axis (no `--allowed-*` and no `--max-uses`). Pass `--unscoped` to opt in to a bearer approval explicitly. Verify will warn that an unscoped approval proves binding only -- not actor/action/subject authorization.
 </Callout>
 
-<Callout type="warn" title="Replay posture (v0.9.6)">
-Verifier observes nonce replay **within a single verified package** -- two actions claiming the same nonce in one package, the second fails. Cross-package and cross-machine replay enforcement is not yet shipped. Verify reports the replay check posture honestly (`replay check: package-local only -- no global ledger consulted`) rather than claiming global single-use.
+<Callout type="info" title="Replay posture (v0.9.10)">
+v0.9.9 shipped the **local Approval Use Journal** and the **consumer-side Hub checkpoint verifier**. v0.9.10 closed four trust-bypass paths in those checks. Each replay level surfaces as its own verify row:
 
-Roadmap: local Approval Use Journal in v0.10 (device/workspace replay), Hub checkpoints in v0.11+ (distributed replay).
+- **`replay-package-local`** — duplicate uses inside this package. Always available.
+- **`replay-local-journal`** — the workspace's `<config>/journals/approval-use/` enforces single-use for `(grant_id, nonce_digest)`. Available when verifying inside the workspace that produced the package.
+- **`replay-included-checkpoint`** — embedded `JournalCheckpoint` records verify offline (each `record_digest` recomputes).
+- **`replay-hub-org`** — a Hub-signed checkpoint covers every embedded use_id. Available when present; the Hub server itself is out of scope for v0.9.9-v0.9.10.
+
+Plus four bundle-level binding rows (added in v0.9.10):
+`approval-use-record-digest`, `approval-use-nonce-binding`, `approval-use-action-binding`, `approval-use-chain-continuity`. Each pins a specific invariant; the panel renders one ✓ or ✗ per row, never silent pass.
+
+The honesty rule: a row reports `✓` only when the matching evidence is present and verified, `✗` only when present and failed, `-` when the evidence isn't in the package. See [Replay levels](/guides/replay-levels) for the full ladder.
 </Callout>
 </Tab>
 <Tab value="handoff">
