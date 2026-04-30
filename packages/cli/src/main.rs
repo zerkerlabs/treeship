@@ -241,6 +241,23 @@ enum Command {
     #[command(subcommand)]
     Agents(AgentsCommand),
 
+    /// Guided first-run setup -- detect agents, draft cards, instrument, smoke verify
+    ///
+    /// One command for the typical first-run flow:
+    ///   1. detect agents on this machine
+    ///   2. write a draft Agent Card for each (idempotent on re-run)
+    ///   3. confirm before modifying any agent's config
+    ///   4. instrument those agents (Treeship MCP, hooks, skill files)
+    ///   5. run a smoke session to prove Treeship can capture
+    ///   6. promote cards to Verified on smoke success
+    ///
+    /// Examples:
+    ///   treeship setup
+    ///   treeship setup --yes               # non-interactive, instrument all
+    ///   treeship setup --skip-smoke        # cards + instrumentation only
+    ///   treeship setup --no-instrument     # cards only, no config writes
+    Setup(SetupArgs),
+
     /// List pending approvals
     ///
     /// Shows actions that are blocked waiting for human approval.
@@ -788,6 +805,23 @@ enum AgentsCommand {
 
     /// Delete an Agent Card from the store. Idempotent.
     Remove { agent_id: String },
+}
+
+// --- setup -----------------------------------------------------------------
+
+#[derive(Args)]
+struct SetupArgs {
+    /// Skip the confirmation prompt before instrumenting.
+    #[arg(long)]
+    yes: bool,
+
+    /// Skip the smoke verification pass after instrumentation.
+    #[arg(long)]
+    skip_smoke: bool,
+
+    /// Detect + draft cards only -- do not modify any agent config files.
+    #[arg(long)]
+    no_instrument: bool,
 }
 
 #[derive(Args)]
@@ -1683,6 +1717,16 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 printer,
             ),
         },
+
+        Command::Setup(a) => commands::setup::run(
+            cli.config.as_deref(),
+            commands::setup::SetupOpts {
+                yes:           a.yes,
+                skip_smoke:    a.skip_smoke,
+                no_instrument: a.no_instrument,
+            },
+            printer,
+        ),
 
         Command::Agents(sub) => match sub {
             AgentsCommand::List => commands::agents::list(

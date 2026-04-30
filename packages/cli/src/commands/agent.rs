@@ -85,13 +85,6 @@ fn now_rfc3339() -> String {
     treeship_core::statements::unix_to_rfc3339(secs)
 }
 
-fn local_hostname() -> String {
-    // Falling back to "local" is safe because the agent ID derivation also
-    // uses workspace path; collisions would have to share both.
-    std::env::var("HOSTNAME")
-        .or_else(|_| std::env::var("COMPUTERNAME"))
-        .unwrap_or_else(|_| "local".to_string())
-}
 
 /// Register an agent and produce a .agent package.
 pub fn register(
@@ -223,7 +216,7 @@ pub fn register(
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .to_path_buf();
-    let host = local_hostname();
+    let host = cards::local_hostname();
     let (surface, connection_modes, coverage) = surface_from_name(name);
     let agent_id = cards::derive_agent_id(surface, &host, &workspace);
 

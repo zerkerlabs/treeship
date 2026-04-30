@@ -201,6 +201,16 @@ impl AgentCard {
     }
 }
 
+/// Best-effort local hostname for use in agent_id derivation. Falls back
+/// to "local" when neither HOSTNAME nor COMPUTERNAME is set; collisions
+/// only happen if (surface, "local", workspace_path) repeats, which means
+/// the same workspace anyway.
+pub fn local_hostname() -> String {
+    std::env::var("HOSTNAME")
+        .or_else(|_| std::env::var("COMPUTERNAME"))
+        .unwrap_or_else(|_| "local".to_string())
+}
+
 /// Stable derivation: SHA-256 of "<surface>|<host>|<workspace>", first 16
 /// hex chars prefixed with `agent_`. Same surface on the same host+workspace
 /// always collapses to the same ID, which is what makes idempotent
