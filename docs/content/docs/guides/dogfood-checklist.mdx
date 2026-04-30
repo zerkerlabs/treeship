@@ -1,0 +1,152 @@
+---
+title: Dogfood checklist
+description: Post-ship review template — drive a real session through each surface and report what was useful, confusing, or broken.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+When a release ships, run a real session through Treeship from a fresh install and answer the questions below. The goal is to catch what `cargo test` and the acceptance smoke can't: what the human (or AI agent) actually experiences when they hold the product in their hands. File the result as a comment on the release PR or as a markdown file under `docs/dogfood/<version>.md`.
+
+This template is deliberately short. The lesson from the v0.9.6 → v0.9.10 release path: the things that broke weren't the things tests were watching. A 60-second dogfood from a fresh install would have caught the agent-bootstrap install timeout, the broken docs section roots, and the missing receipt page SSR before they shipped.
+
+## Setup (one-time per dogfood run)
+
+```bash
+# Fresh tmpdir to keep the run isolated from any existing workspace
+TMP=$(mktemp -d -t treeship-dogfood.XXXX)
+cd "$TMP"
+treeship init --config "$TMP/.treeship/config.json" --name dogfood
+```
+
+Capture the version under test:
+
+```bash
+treeship --version
+# treeship X.Y.Z
+```
+
+## Run a session
+
+```bash
+treeship session start --config "$TMP/.treeship/config.json" --name dogfood
+treeship wrap --config "$TMP/.treeship/config.json" --action dogfood.write -- \
+  sh -c 'echo hello > a.txt'
+treeship session close --config "$TMP/.treeship/config.json" --summary "dogfood run"
+PKG=$(find "$TMP/.treeship/sessions" -name 'ssn_*.treeship' -print -quit)
+treeship package inspect --config "$TMP/.treeship/config.json" "$PKG"
+```
+
+Then push and grab the shareable URL:
+
+```bash
+treeship session report --config "$TMP/.treeship/config.json" "$PKG"
+# → captures receipt_url, raw_json_url, package_download_url
+```
+
+## The checklist
+
+Fill in each line. Honest one-line answers are better than long ones.
+
+### Identity
+
+- **Treeship version:** `____`
+- **Date / time:** `____`
+- **Host:** `____` (uname -srm + node version + python version)
+- **Receipt URL:** `____` (the shareable URL `treeship session report` returned)
+
+### Agents and harnesses
+
+- **Agent under test:** `____` (claude-code, cursor, codex, hermes, openclaw, ninjatech, generic-mcp, shell-wrap, custom)
+- **Harness used:** `____` (from `treeship harness list`)
+- **Harness status before this run:** Detected | Available | Instrumented | Verified
+- **Harness status after this run:** Detected | Available | Instrumented | Verified
+
+### What was useful
+
+Three things — be specific. Examples: "the panel's per-grant breakdown made the consume chain obvious," "JSON output of `harness list` was easy to pipe into jq," "the receipt URL rendered the Merkle tree without me asking for it."
+
+1. `____`
+2. `____`
+3. `____`
+
+### What was confusing
+
+Three things — be specific. Examples: "I had to guess that `treeship attest action` needed `--parent <grant_artifact_id>` even though the help text just said `--parent <ID>`," "the docs said `setup --format json` returned a rich shape but it returned `{}`," "I couldn't tell whether `replay-hub-org` was supposed to fire."
+
+1. `____`
+2. `____`
+3. `____`
+
+### What broke
+
+Anything that errored, hung, or produced an obviously-wrong result. Include the exact command and the error message. If it didn't break, write "nothing broke."
+
+`____`
+
+### Agent-readable surfaces
+
+- `treeship --version` returned a version string: ☐ yes / ☐ no
+- `treeship add --discover --format json` parsed cleanly: ☐ yes / ☐ no / ☐ NA
+- `treeship harness list --format json` parsed cleanly: ☐ yes / ☐ no
+- `treeship package inspect <pkg> --format json` parsed cleanly: ☐ yes / ☐ no / ☐ NA
+- Raw receipt JSON downloaded from the receipt URL: ☐ yes / ☐ no / ☐ NA
+- `.treeship` package downloaded from the receipt URL: ☐ yes / ☐ no / ☐ NA
+
+### Verification
+
+- `treeship verify <receipt_url>` returned `outcome: pass`: ☐ yes / ☐ no
+- `treeship package verify --strict <pkg>` returned exit 0: ☐ yes / ☐ no
+- Every approval-authority replay row matched expectations (no overclaim, no silent pass): ☐ yes / ☐ no / ☐ NA
+
+### Install / bootstrap (only if you started from zero)
+
+- `npm install -g treeship` completed in under 60s on a clean machine: ☐ yes / ☐ no / ☐ NA
+- `pip install treeship-sdk` completed without compiling Rust from source: ☐ yes / ☐ no / ☐ NA
+- AI agent (Claude, Codex, Kimi, Cursor) was able to set up Treeship without asking the human a clarifying question: ☐ yes / ☐ no / ☐ NA
+- An AI agent's `treeship-cli on crates.io` 404 confused them: ☐ yes / ☐ no / ☐ NA *(if yes, point them at [/guides/install](/guides/install))*
+
+## What to do with the answers
+
+The pattern from past releases:
+
+| Finding | Triage |
+|---|---|
+| A surface returned wrong/empty data, or a panel overclaimed | Hotfix in next patch |
+| A docs route 404'd or a sidebar link was broken | Docs PR; the `docs-route-health` CI gate should also fire |
+| Onboarding took more than 5 minutes from a fresh install | Investigate; agent-native bootstrap is the durable fix |
+| AI agent had to ask a clarifying question to install | Update [/guides/install](/guides/install) with the missing context |
+| Confusing copy in the panel or CLI output | Copy-only fix; can ride next release |
+| Test gap (something broke that no test would have caught) | Add regression test in next hardening PR |
+
+File a dogfood result for every release that changes the user-facing surface — a CHANGELOG-only release doesn't need one, but a release with new commands, new panel rows, or new install paths absolutely does. Save the file under `docs/dogfood/<version>.md` so the trail is durable.
+
+<Callout type="info">
+This checklist is a sibling of [release-adversarial review](/release-adversarial/README) — they cover different failure modes. Adversarial review hunts trust bypasses an attacker would exploit; dogfood hunts UX gaps a real user would hit. A release passes both gates before it's actually done.
+</Callout>
+
+## Mini-template (copy-paste into a comment)
+
+For drive-by dogfood runs that don't need the full structure:
+
+```
+## Dogfood: vX.Y.Z (date)
+host: ...
+agent: ...
+harness: ...
+receipt: <url>
+
+useful:
+  - ...
+  - ...
+  - ...
+
+confusing:
+  - ...
+  - ...
+  - ...
+
+broken:
+  - ... (or "nothing")
+```
+
+That's enough to drive the next hardening PR.

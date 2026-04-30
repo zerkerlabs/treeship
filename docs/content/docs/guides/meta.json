@@ -1,4 +1,4 @@
 {
   "title": "Get started",
-  "pages": ["introduction", "quickstart", "install", "first-run", "coverage-levels", "replay-levels", "how-it-works", "templates", "approvals", "handoffs", "workflows", "merkle-proofs", "edge-runtime"]
+  "pages": ["introduction", "quickstart", "install", "first-run", "coverage-levels", "replay-levels", "how-it-works", "templates", "approvals", "handoffs", "workflows", "merkle-proofs", "edge-runtime", "dogfood-checklist"]
 }
