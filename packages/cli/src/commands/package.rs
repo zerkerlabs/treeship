@@ -652,14 +652,73 @@ fn print_approval_authority_panel(
             ));
         }
 
-        // hub-org: PR 6 territory. Until then, never claim it.
-        printer.dim_info(
-            "    - hub-org              not checked (no Hub checkpoint in package)",
-        );
+        // hub-org: v0.9.9 PR 6 wires the consumer side. The release
+        // rule is non-negotiable -- PASS only when an embedded Hub
+        // checkpoint declares kind=hub-org, every required field is
+        // populated, signature verifies, AND the checkpoint covers
+        // this use_id via covered_use_ids. Otherwise: "not checked"
+        // (when no hub-org checkpoint is in the package) or "✗"
+        // (when one is present but a gate failed).
+        let hub_cps: Vec<&treeship_core::statements::JournalCheckpoint> = bundle
+            .checkpoints
+            .iter()
+            .filter(|cp| cp.checkpoint_kind == treeship_core::statements::CheckpointKind::HubOrg)
+            .collect();
+        if hub_cps.is_empty() {
+            printer.dim_info(
+                "    - hub-org              not checked (no Hub checkpoint in package)",
+            );
+        } else {
+            // For each use, check whether SOME hub-org checkpoint
+            // verifies AND covers this use_id. The strongest finding
+            // wins per use.
+            let mut all_uses_covered = true;
+            let mut summary: Vec<String> = Vec::new();
+            for u in uses.iter() {
+                let mut this_use_ok = false;
+                let mut this_use_detail: Option<String> = None;
+                for cp in &hub_cps {
+                    match treeship_core::statements::verify_hub_checkpoint_signature(cp) {
+                        treeship_core::statements::HubCheckpointVerification::Valid => {
+                            if cp.covered_use_ids.iter().any(|id| id == &u.use_id) {
+                                this_use_ok = true;
+                                this_use_detail = Some(format!(
+                                    "use {} signed by {}",
+                                    u.use_id, cp.hub_id,
+                                ));
+                                break;
+                            } else {
+                                this_use_detail = Some(format!(
+                                    "use {} not covered by {}",
+                                    u.use_id, cp.checkpoint_id,
+                                ));
+                            }
+                        }
+                        treeship_core::statements::HubCheckpointVerification::MissingFields(f) => {
+                            this_use_detail = Some(format!(
+                                "{} missing field {}", cp.checkpoint_id, f,
+                            ));
+                        }
+                        treeship_core::statements::HubCheckpointVerification::Tampered => {
+                            this_use_detail = Some(format!(
+                                "{} hub signature failed", cp.checkpoint_id,
+                            ));
+                        }
+                        treeship_core::statements::HubCheckpointVerification::NotHubKind => {}
+                    }
+                }
+                if !this_use_ok { all_uses_covered = false; }
+                if let Some(d) = this_use_detail { summary.push(d); }
+            }
+            let mark = if all_uses_covered { "✓" } else { "✗" };
+            let detail = if summary.is_empty() {
+                "no hub-signed coverage found".into()
+            } else {
+                summary.join("; ")
+            };
+            printer.dim_info(&format!("    {mark} hub-org              {detail}"));
+        }
 
-        // Suppress unused-import warning in builds where the symbol
-        // is feature-gated; this keeps the import path live so PR 6
-        // can flip the level on without re-declaring.
         let _ = ReplayCheckLevel::HubOrg;
     }
 
@@ -737,34 +796,57 @@ fn print_decision_cards(
     }
 
     // Replay-warning card. Trigger: at least one approval use exists
-    // AND there's no journal-level or checkpoint-level evidence we
-    // could speak to from THIS package alone. We can detect the
-    // "no checkpoint in package" condition cheaply; the no-journal
-    // condition is determined by the panel above and surfaced here
-    // by checking checkpoints + the absence of any journal records
-    // referenced in receipt.proofs (we don't have a direct receipt
-    // field for this in v0.9.9, so we fall back to "checkpoint
-    // missing" as the strict trigger).
-    if !bundle.uses.is_empty() && bundle.checkpoints.is_empty() {
+    // AND no Hub-signed checkpoint that covers every use is present.
+    // Local-journal-only is still a warning here (the v0.9.9 PR 6
+    // honesty rule: "global single-use" requires verified Hub
+    // coverage). When such coverage IS present, the card stays
+    // silent -- the Approval Authority panel already shows the
+    // happy ✓ row, no need to repeat.
+    let has_hub_coverage = bundle
+        .checkpoints
+        .iter()
+        .filter(|cp| cp.checkpoint_kind == treeship_core::statements::CheckpointKind::HubOrg)
+        .any(|cp| {
+            // Must verify AND cover every use.
+            matches!(
+                treeship_core::statements::verify_hub_checkpoint_signature(cp),
+                treeship_core::statements::HubCheckpointVerification::Valid,
+            ) && bundle.uses.iter().all(|u| cp.covered_use_ids.iter().any(|id| id == &u.use_id))
+        });
+    if !bundle.uses.is_empty() && !has_hub_coverage {
         printer.blank();
-        printer.info("  ⚠ Replay posture: package-local + local-journal only");
+        printer.info("  ⚠ Replay posture: no verified Hub coverage");
         printer.dim_info(
-            "      No JournalCheckpoint embedded in this package; verifiers without",
+            "      Verifiers without access to your workspace's local journal can",
         );
         printer.dim_info(
-            "      access to your workspace's local journal can only check package-local",
+            "      only check package-local replay (duplicate uses inside this package).",
         );
         printer.dim_info(
-            "      replay (duplicate uses inside this package). Hub-org replay is not",
+            "      Hub-org replay is not asserted -- a global single-use guarantee",
         );
         printer.dim_info(
-            "      checked -- a global single-use guarantee requires a signed Hub",
+            "      requires a signed Hub checkpoint that covers every use_id in this",
         );
-        printer.dim_info("      checkpoint, which v0.9.9 does not yet emit.");
+        printer.dim_info(
+            "      package. v0.9.9 supports verifying such checkpoints when present;",
+        );
+        printer.dim_info("      the Hub signer itself is out of scope for this release.");
         printer.dim_info("      evidence:");
         printer.dim_info(&format!(
             "        approval uses:   {} (see approval authority panel above)",
             bundle.uses.len(),
+        ));
+        printer.dim_info(&format!(
+            "        hub checkpoints: {} embedded ({})",
+            bundle.checkpoints.iter()
+                .filter(|cp| cp.checkpoint_kind == treeship_core::statements::CheckpointKind::HubOrg)
+                .count(),
+            if bundle.checkpoints.iter().any(|cp| cp.checkpoint_kind == treeship_core::statements::CheckpointKind::HubOrg) {
+                "see hub-org row above for per-checkpoint detail"
+            } else {
+                "none"
+            },
         ));
         printer.dim_info("        verify rows:     replay-package-local, replay-local-journal");
         cards_emitted += 1;

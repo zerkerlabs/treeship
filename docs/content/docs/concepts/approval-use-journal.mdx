@@ -67,7 +67,7 @@ The journal carries three sibling record types in the same chain:
 |---|---|---|
 | `treeship/approval-use/v1` | A grant was consumed by an action | v0.9.9 PR 2 |
 | `treeship/approval-revocation/v1` | An approver revoked a grant | v0.9.9 PR 1 (schema), wiring deferred |
-| `treeship/journal-checkpoint/v1` | Signed Merkle commitment over a record range | v0.9.9 PR 1 (schema), Hub-signed in v0.9.9 PR 6 |
+| `treeship/journal-checkpoint/v1` | Signed Merkle commitment over a record range | v0.9.9 PR 1 (schema), Hub-signed consumer-side verifier in v0.9.9 PR 6 |
 
 All three follow the same digest discipline. A future record type (e.g. delegation) plugs in as a fourth variant without breaking the chain check.
 
@@ -118,8 +118,8 @@ This means a flaky network or crashed CLI can retry safely without burning a use
 
 - **Not a public ledger.** No external publishing. The journal is private workspace memory.
 - **Not SQLite.** Source of truth is the JSON file tree, not a database.
-- **Not a Hub.** PR 6 will add a `hub-approval-checkpoint/v1` schema scaffold. Until then, no replay claim crosses machines.
-- **Not a global single-use enforcer.** The journal cannot speak for what happens on another machine. v0.9.9 verify reports `local-journal` honestly; it does not say `hub-org` or `global single-use`.
+- **Not a Hub server.** v0.9.9 PR 6 ships the consumer-side verifier for `JournalCheckpoint { kind: HubOrg }` records: when a package embeds an org-signed checkpoint that covers every use, `treeship verify` emits `replay-hub-org PASS`. The Hub server itself, the thing that signs those checkpoints, is out of scope for v0.9.9 and lives in a separate release.
+- **Not a global single-use enforcer on its own.** The local journal cannot speak for what happens on another machine. Without an embedded Hub-signed checkpoint, verify caps at `local-journal` and never claims `hub-org` or `global single-use`.
 
 <Callout type="info">
 **Records are truth, indexes are cache** is also the recovery story. If your machine drops the indexes (filesystem corruption, manual `rm`, etc.), `journal::rebuild_indexes` reconstructs them from records. The trust answer is unaffected.

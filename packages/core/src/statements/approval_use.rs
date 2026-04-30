@@ -186,15 +186,66 @@ pub struct ApprovalRevocation {
 // JournalCheckpoint
 // ---------------------------------------------------------------------------
 
+/// What a `JournalCheckpoint` is committing to. The discriminator lets a
+/// verifier physically distinguish a local-journal record from a
+/// Hub/org checkpoint, so a checkpoint can never accidentally promote
+/// `replay-hub-org` just because the on-disk shape happens to match.
+///
+/// PR 6 v0.9.9 release rule: a verifier emits `replay-hub-org` PASS
+/// ONLY when:
+///   1. checkpoint_kind == HubOrg AND
+///   2. hub_id is set AND
+///   3. hub_public_key is set AND
+///   4. hub_signature is set AND verifies AND
+///   5. covered_use_ids includes every use under verification
+///
+/// Default value is LocalJournal so checkpoints written before PR 6
+/// (which serialized without this field) deserialize as local-only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CheckpointKind {
+    /// Internal local-journal commitment. Cannot promote replay
+    /// posture beyond `included-checkpoint`.
+    #[default]
+    LocalJournal,
+    /// Signed by a Hub / org. May promote `replay-hub-org` if the
+    /// signature verifies and coverage is asserted.
+    HubOrg,
+}
+
+impl CheckpointKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::LocalJournal => "local-journal",
+            Self::HubOrg       => "hub-org",
+        }
+    }
+}
+
 /// A signed Merkle commitment to a contiguous range of journal records.
-/// Lets a verifier check journal continuity (and, with a future Hub
-/// layer, replay across machines) without reading every record. PR 2
-/// can ship without this; PR 6 wires the Hub-compatible signature.
+/// Lets a verifier check journal continuity (and, with a Hub-signed
+/// variant, replay across machines) without reading every record.
+///
+/// Two kinds with the same shape:
+///
+/// - `LocalJournal` (default): committed by the local journal as a
+///   compaction primitive. Verify only emits `replay-included-checkpoint`.
+///
+/// - `HubOrg`: signed by a Hub/org. Carries `hub_id`, `hub_public_key`,
+///   `hub_signature`, `signed_at`, and `covered_use_ids` listing every
+///   use the checkpoint asserts coverage over. Verify emits
+///   `replay-hub-org` PASS only when every Hub-signature check passes
+///   and every embedded use is in `covered_use_ids`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JournalCheckpoint {
     #[serde(rename = "type")]
     pub type_: String,
     pub checkpoint_id: String,
+
+    /// Discriminator. Defaults to LocalJournal for back-compat with
+    /// pre-PR-6 records that didn't serialize this field.
+    #[serde(default)]
+    pub checkpoint_kind: CheckpointKind,
 
     /// Inclusive range of `use_number`s (or revocation_ids) covered by
     /// this checkpoint, in journal order.
@@ -209,6 +260,41 @@ pub struct JournalCheckpoint {
     pub journal_id: String,
     pub created_at: String,
 
+    /// Hub identity (e.g. "hub://org-foo"). Required when
+    /// `checkpoint_kind == HubOrg`. Empty/absent for local-journal.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub hub_id: String,
+
+    /// Hub's signing public key. base64-url no-pad. Required for HubOrg.
+    /// Embedded so a verifier can check the signature without a
+    /// separate trust root lookup; PR 7+ adds a trusted issuer
+    /// registry that pins acceptable hub_public_keys.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub hub_public_key: String,
+
+    /// base64-url-no-pad Ed25519 signature over the canonical
+    /// signing payload (`canonical_hub_signing_bytes`). Required for
+    /// HubOrg.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub hub_signature: String,
+
+    /// RFC 3339 timestamp when the Hub signed this checkpoint.
+    /// Distinct from `created_at` (which is the local journal's
+    /// recorded creation time).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub signed_at: String,
+
+    /// Use IDs the Hub asserts this checkpoint covers. The verifier
+    /// MUST confirm every package use_id is in this list before
+    /// emitting `replay-hub-org` PASS.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub covered_use_ids: Vec<String>,
+
+    /// Grant IDs covered. Informational; the per-use check is what
+    /// gates the row.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub covered_grant_ids: Vec<String>,
+
     #[serde(default)]
     pub previous_record_digest: String,
     #[serde(default)]
@@ -220,6 +306,66 @@ pub struct JournalCheckpoint {
     pub signature_alg: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signing_key_id: Option<String>,
+}
+
+impl JournalCheckpoint {
+    /// True only when EVERY Hub field is populated -- the precondition
+    /// for `replay-hub-org` PASS to be considered. Signature
+    /// verification is a separate step.
+    pub fn is_hub_signed(&self) -> bool {
+        self.checkpoint_kind == CheckpointKind::HubOrg
+            && !self.hub_id.is_empty()
+            && !self.hub_public_key.is_empty()
+            && !self.hub_signature.is_empty()
+            && !self.signed_at.is_empty()
+    }
+
+    /// Canonical bytes the Hub signs. Stable JSON of every field
+    /// except `hub_signature` and `record_digest` (those depend on
+    /// the signature itself). Sibling helper to `record_digest`'s
+    /// approach in this same module.
+    pub fn canonical_hub_signing_bytes(&self) -> Vec<u8> {
+        // Build a serializable view that omits hub_signature and
+        // record_digest. The previous_record_digest is part of the
+        // chain link and SHOULD be signed -- changing it changes the
+        // checkpoint's identity in the journal.
+        #[derive(Serialize)]
+        struct Signing<'a> {
+            #[serde(rename = "type")]                    type_: &'a str,
+            checkpoint_id:           &'a str,
+            checkpoint_kind:         CheckpointKind,
+            from_record_index:       u64,
+            to_record_index:         u64,
+            merkle_root:             &'a str,
+            leaf_count:              u64,
+            journal_id:              &'a str,
+            created_at:              &'a str,
+            hub_id:                  &'a str,
+            hub_public_key:          &'a str,
+            signed_at:               &'a str,
+            covered_use_ids:         &'a [String],
+            covered_grant_ids:       &'a [String],
+            previous_record_digest:  &'a str,
+        }
+        let v = Signing {
+            type_:                   &self.type_,
+            checkpoint_id:           &self.checkpoint_id,
+            checkpoint_kind:         self.checkpoint_kind,
+            from_record_index:       self.from_record_index,
+            to_record_index:         self.to_record_index,
+            merkle_root:             &self.merkle_root,
+            leaf_count:              self.leaf_count,
+            journal_id:              &self.journal_id,
+            created_at:              &self.created_at,
+            hub_id:                  &self.hub_id,
+            hub_public_key:          &self.hub_public_key,
+            signed_at:               &self.signed_at,
+            covered_use_ids:         &self.covered_use_ids,
+            covered_grant_ids:       &self.covered_grant_ids,
+            previous_record_digest:  &self.previous_record_digest,
+        };
+        serde_json::to_vec(&v).unwrap_or_default()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -362,6 +508,76 @@ pub fn journal_checkpoint_record_digest(rec: &JournalCheckpoint) -> String {
         let _ = write!(hex, "{b:02x}");
     }
     hex
+}
+
+/// Outcome of `verify_hub_checkpoint_signature`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HubCheckpointVerification {
+    /// Signature verified. The checkpoint was genuinely signed by
+    /// `hub_public_key`. Coverage is the caller's job to assert.
+    Valid,
+    /// Checkpoint claims `kind=HubOrg` but is missing one of
+    /// `hub_id`, `hub_public_key`, `hub_signature`, or `signed_at`.
+    /// Verifiers MUST treat this the same as Tampered for the
+    /// purpose of emitting `replay-hub-org`.
+    MissingFields(&'static str),
+    /// Signature did not verify against the embedded public key.
+    /// Tampered or wrong key.
+    Tampered,
+    /// Checkpoint kind is `LocalJournal` -- nothing to verify here.
+    /// Caller should not have called this; surface as a programming
+    /// error.
+    NotHubKind,
+}
+
+/// Verify the embedded Hub signature on a `JournalCheckpoint`. Does NOT
+/// check coverage (`covered_use_ids`) -- that's the caller's job, since
+/// it depends on which uses the package contains.
+///
+/// Verification rule: the public key in the checkpoint must successfully
+/// validate the signature against `canonical_hub_signing_bytes()`. If
+/// any required field is empty or the signature decodes wrong, the
+/// result is `Tampered` (or `MissingFields` for upfront validation
+/// failures). Never returns `Valid` on a borderline -- the
+/// release rule "no global single-use claim without verified Hub
+/// checkpoint" is enforced here.
+pub fn verify_hub_checkpoint_signature(
+    cp: &JournalCheckpoint,
+) -> HubCheckpointVerification {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+
+    if cp.checkpoint_kind != CheckpointKind::HubOrg {
+        return HubCheckpointVerification::NotHubKind;
+    }
+    if cp.hub_id.is_empty()         { return HubCheckpointVerification::MissingFields("hub_id"); }
+    if cp.hub_public_key.is_empty() { return HubCheckpointVerification::MissingFields("hub_public_key"); }
+    if cp.hub_signature.is_empty()  { return HubCheckpointVerification::MissingFields("hub_signature"); }
+    if cp.signed_at.is_empty()      { return HubCheckpointVerification::MissingFields("signed_at"); }
+
+    let pk_bytes = match URL_SAFE_NO_PAD.decode(cp.hub_public_key.as_bytes()) {
+        Ok(b) if b.len() == 32 => b,
+        _ => return HubCheckpointVerification::Tampered,
+    };
+    let sig_bytes = match URL_SAFE_NO_PAD.decode(cp.hub_signature.as_bytes()) {
+        Ok(b) if b.len() == 64 => b,
+        _ => return HubCheckpointVerification::Tampered,
+    };
+    let mut pk_arr = [0u8; 32];
+    pk_arr.copy_from_slice(&pk_bytes);
+    let mut sig_arr = [0u8; 64];
+    sig_arr.copy_from_slice(&sig_bytes);
+
+    let vk = match VerifyingKey::from_bytes(&pk_arr) {
+        Ok(k)  => k,
+        Err(_) => return HubCheckpointVerification::Tampered,
+    };
+    let sig = Signature::from_bytes(&sig_arr);
+    let payload = cp.canonical_hub_signing_bytes();
+    match vk.verify(&payload, &sig) {
+        Ok(())  => HubCheckpointVerification::Valid,
+        Err(_)  => HubCheckpointVerification::Tampered,
+    }
 }
 
 /// sha256 over a raw approval nonce, prefixed `sha256:`. Used everywhere
@@ -516,25 +732,173 @@ mod tests {
         assert_eq!(d1, d2);
     }
 
-    #[test]
-    fn checkpoint_record_digest_stable() {
-        let cp = JournalCheckpoint {
+    fn sample_checkpoint(kind: CheckpointKind) -> JournalCheckpoint {
+        JournalCheckpoint {
             type_:                  TYPE_JOURNAL_CHECKPOINT.into(),
             checkpoint_id:          "cp_1".into(),
+            checkpoint_kind:        kind,
             from_record_index:      1,
             to_record_index:        10,
             merkle_root:            "sha256:abcd".into(),
             leaf_count:             10,
             journal_id:             "journal_1".into(),
             created_at:             "2026-04-30T06:02:00Z".into(),
+            hub_id:                 String::new(),
+            hub_public_key:         String::new(),
+            hub_signature:          String::new(),
+            signed_at:              String::new(),
+            covered_use_ids:        Vec::new(),
+            covered_grant_ids:      Vec::new(),
             previous_record_digest: "sha256:00".into(),
             record_digest:          String::new(),
             signature:              None,
             signature_alg:          None,
             signing_key_id:         None,
-        };
+        }
+    }
+
+    #[test]
+    fn checkpoint_record_digest_stable() {
+        let cp = sample_checkpoint(CheckpointKind::LocalJournal);
         let d1 = journal_checkpoint_record_digest(&cp);
         let d2 = journal_checkpoint_record_digest(&cp);
         assert_eq!(d1, d2);
+    }
+
+    #[test]
+    fn checkpoint_kind_defaults_to_local_journal() {
+        // Pre-PR-6 records serialized without the field; deserialize
+        // must default to LocalJournal so existing PR 4 packages
+        // verify identically.
+        let json = r#"{"type":"treeship/journal-checkpoint/v1","checkpoint_id":"cp_legacy",
+            "from_record_index":1,"to_record_index":10,"merkle_root":"sha256:00",
+            "leaf_count":10,"journal_id":"j","created_at":"2026-04-30T00:00:00Z"}"#;
+        let cp: JournalCheckpoint = serde_json::from_str(json).unwrap();
+        assert_eq!(cp.checkpoint_kind, CheckpointKind::LocalJournal);
+        assert!(!cp.is_hub_signed());
+    }
+
+    #[test]
+    fn checkpoint_kind_serializes_kebab_case() {
+        let cp = sample_checkpoint(CheckpointKind::HubOrg);
+        let v = serde_json::to_value(&cp).unwrap();
+        assert_eq!(v["checkpoint_kind"], "hub-org");
+    }
+
+    #[test]
+    fn local_journal_checkpoint_is_not_hub_signed() {
+        let cp = sample_checkpoint(CheckpointKind::LocalJournal);
+        assert!(!cp.is_hub_signed());
+        assert_eq!(
+            verify_hub_checkpoint_signature(&cp),
+            HubCheckpointVerification::NotHubKind,
+        );
+    }
+
+    #[test]
+    fn hub_kind_without_fields_is_missing() {
+        let cp = sample_checkpoint(CheckpointKind::HubOrg);
+        assert!(!cp.is_hub_signed());
+        assert!(matches!(
+            verify_hub_checkpoint_signature(&cp),
+            HubCheckpointVerification::MissingFields(_),
+        ));
+    }
+
+    /// End-to-end: sign a Hub checkpoint with a real Ed25519 key,
+    /// embed the signature, verify it round-trips. The release rule
+    /// pins on this path: replay-hub-org cannot pass without a real
+    /// signature here.
+    #[test]
+    fn hub_checkpoint_signature_round_trip() {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+        use ed25519_dalek::{Signer, SigningKey};
+
+        let mut sk_bytes = [0u8; 32];
+        for (i, b) in sk_bytes.iter_mut().enumerate() {
+            *b = i as u8 + 7;
+        }
+        let sk = SigningKey::from_bytes(&sk_bytes);
+        let pk = sk.verifying_key();
+        let pk_b64 = URL_SAFE_NO_PAD.encode(pk.to_bytes());
+
+        let mut cp = sample_checkpoint(CheckpointKind::HubOrg);
+        cp.hub_id          = "hub://zerker-org".into();
+        cp.hub_public_key  = pk_b64.clone();
+        cp.signed_at       = "2026-04-30T07:00:00Z".into();
+        cp.covered_use_ids = vec!["use_alpha".into(), "use_beta".into()];
+
+        let payload = cp.canonical_hub_signing_bytes();
+        let sig     = sk.sign(&payload);
+        cp.hub_signature = URL_SAFE_NO_PAD.encode(sig.to_bytes());
+
+        assert!(cp.is_hub_signed());
+        assert_eq!(
+            verify_hub_checkpoint_signature(&cp),
+            HubCheckpointVerification::Valid,
+        );
+    }
+
+    #[test]
+    fn tampered_hub_checkpoint_fails_verification() {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+        use ed25519_dalek::{Signer, SigningKey};
+
+        let sk = SigningKey::from_bytes(&[1u8; 32]);
+        let pk = sk.verifying_key();
+
+        let mut cp = sample_checkpoint(CheckpointKind::HubOrg);
+        cp.hub_id          = "hub://x".into();
+        cp.hub_public_key  = URL_SAFE_NO_PAD.encode(pk.to_bytes());
+        cp.signed_at       = "2026-04-30T07:00:00Z".into();
+        cp.covered_use_ids = vec!["use_alpha".into()];
+
+        let sig = sk.sign(&cp.canonical_hub_signing_bytes());
+        cp.hub_signature = URL_SAFE_NO_PAD.encode(sig.to_bytes());
+        // Sanity: signature is good before tamper.
+        assert_eq!(verify_hub_checkpoint_signature(&cp), HubCheckpointVerification::Valid);
+
+        // Tamper with covered_use_ids -- now the canonical bytes
+        // change, signature no longer applies.
+        cp.covered_use_ids.push("use_smuggled".into());
+        assert_eq!(
+            verify_hub_checkpoint_signature(&cp),
+            HubCheckpointVerification::Tampered,
+        );
+    }
+
+    #[test]
+    fn wrong_key_fails_verification() {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+        use ed25519_dalek::{Signer, SigningKey};
+
+        let sk_real = SigningKey::from_bytes(&[2u8; 32]);
+        let sk_imp  = SigningKey::from_bytes(&[3u8; 32]); // different key
+        let pk_imp  = sk_imp.verifying_key();
+
+        let mut cp = sample_checkpoint(CheckpointKind::HubOrg);
+        cp.hub_id          = "hub://x".into();
+        // Signature made by sk_real, but public key claims sk_imp.
+        cp.hub_public_key  = URL_SAFE_NO_PAD.encode(pk_imp.to_bytes());
+        cp.signed_at       = "2026-04-30T07:00:00Z".into();
+        let sig = sk_real.sign(&cp.canonical_hub_signing_bytes());
+        cp.hub_signature   = URL_SAFE_NO_PAD.encode(sig.to_bytes());
+        assert_eq!(
+            verify_hub_checkpoint_signature(&cp),
+            HubCheckpointVerification::Tampered,
+        );
+    }
+
+    #[test]
+    fn malformed_pubkey_or_signature_fails() {
+        let mut cp = sample_checkpoint(CheckpointKind::HubOrg);
+        cp.hub_id          = "hub://x".into();
+        cp.hub_public_key  = "not-base64!!".into();
+        cp.hub_signature   = "also-not-base64".into();
+        cp.signed_at       = "2026-04-30T07:00:00Z".into();
+        assert_eq!(
+            verify_hub_checkpoint_signature(&cp),
+            HubCheckpointVerification::Tampered,
+        );
     }
 }

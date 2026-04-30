@@ -631,15 +631,109 @@ pub(crate) fn add_approval_evidence_checks(
         checks.push(VerifyCheck::fail("approval-use-integrity", &detail));
     }
 
-    // -- replay-hub-org -- intentionally NOT emitted.
-    // PR 6 will add a signed-Hub-checkpoint check that produces this
-    // row when (and only when) such evidence exists. Adding nothing
-    // here is the right call: the printer should not render
-    // "global single-use" without signed proof, and a missing row is
-    // honestly silent rather than falsely passing.
-    let _ = ReplayCheckLevel::HubOrg; // keep import live; PR 6 binds this
-    let _ = approval_revocation_record_digest as fn(&ApprovalRevocation) -> String; // PR 5 binds
-    let _ = ReplayCheck::not_performed; // PR 5 binds
+    // -- replay-hub-org -- v0.9.9 PR 6.
+    // The strongest level Treeship can speak to today. The release
+    // rule is non-negotiable: PASS only when (1) at least one embedded
+    // checkpoint declares kind=HubOrg, (2) every required Hub field is
+    // populated, (3) the signature verifies against the embedded
+    // public key, AND (4) the checkpoint covers every embedded
+    // ApprovalUse via covered_use_ids. Anything short of that means
+    // "no row" or "fail" -- never silent pass.
+    //
+    // No row at all when the package has no Hub-kind checkpoint:
+    // matches the v0.9.9 PR 4-5 behavior where the panel renders
+    // "- hub-org   not checked (no Hub checkpoint in package)" so a
+    // reader doesn't misread an absent row as a failure.
+    let hub_checkpoints: Vec<&JournalCheckpoint> = bundle
+        .checkpoints
+        .iter()
+        .filter(|cp| cp.checkpoint_kind == crate::statements::CheckpointKind::HubOrg)
+        .collect();
+    if !hub_checkpoints.is_empty() {
+        let mut all_ok = true;
+        let mut details: Vec<String> = Vec::new();
+        let mut have_valid_signature = false;
+
+        for cp in &hub_checkpoints {
+            match crate::statements::verify_hub_checkpoint_signature(cp) {
+                crate::statements::HubCheckpointVerification::Valid => {
+                    have_valid_signature = true;
+                    // Coverage: every embedded use_id MUST appear in
+                    // this checkpoint's covered_use_ids. A checkpoint
+                    // that doesn't cover the package's uses cannot
+                    // promote replay-hub-org for those uses.
+                    let covered: std::collections::HashSet<&String> =
+                        cp.covered_use_ids.iter().collect();
+                    let missing: Vec<String> = bundle
+                        .uses
+                        .iter()
+                        .filter(|u| !covered.contains(&u.use_id))
+                        .map(|u| u.use_id.clone())
+                        .collect();
+                    if missing.is_empty() {
+                        details.push(format!(
+                            "{} signed by {} verifies; covers {} use(s)",
+                            cp.checkpoint_id,
+                            cp.hub_id,
+                            cp.covered_use_ids.len(),
+                        ));
+                    } else {
+                        all_ok = false;
+                        details.push(format!(
+                            "{} verifies but does not cover {} use(s): {}",
+                            cp.checkpoint_id,
+                            missing.len(),
+                            missing.join(", "),
+                        ));
+                    }
+                }
+                crate::statements::HubCheckpointVerification::MissingFields(field) => {
+                    all_ok = false;
+                    details.push(format!(
+                        "{} declares kind=hub-org but field `{}` is missing",
+                        cp.checkpoint_id, field,
+                    ));
+                }
+                crate::statements::HubCheckpointVerification::Tampered => {
+                    all_ok = false;
+                    details.push(format!(
+                        "{} hub signature failed verification (tampered or wrong key)",
+                        cp.checkpoint_id,
+                    ));
+                }
+                crate::statements::HubCheckpointVerification::NotHubKind => {
+                    // Filter ensures this is unreachable; keep the
+                    // arm so a future filter relaxation doesn't go
+                    // silent.
+                    all_ok = false;
+                    details.push(format!(
+                        "{} kind toggled out of hub-org during verify",
+                        cp.checkpoint_id,
+                    ));
+                }
+            }
+        }
+        if all_ok && have_valid_signature {
+            checks.push(VerifyCheck::pass(
+                "replay-hub-org",
+                &details.join("; "),
+            ));
+        } else {
+            // Hub checkpoint is present but does not satisfy every
+            // gate. Default mode warns; the CLI verify wrapper's
+            // --strict promotes to fail.
+            checks.push(VerifyCheck::warn(
+                "replay-hub-org",
+                &details.join("; "),
+            ));
+        }
+    }
+    // No hub-org checkpoints embedded -> no row. The Approval
+    // Authority panel still renders "- hub-org   not checked".
+
+    let _ = ReplayCheckLevel::HubOrg;
+    let _ = approval_revocation_record_digest as fn(&ApprovalRevocation) -> String;
+    let _ = ReplayCheck::not_performed;
 }
 
 /// A single verification check result.

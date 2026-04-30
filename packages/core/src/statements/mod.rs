@@ -24,11 +24,11 @@ pub const TYPE_DECISION:    &str = "treeship/decision/v1";
 // that verify uses to report what level of replay check actually ran.
 mod approval_use;
 pub use approval_use::{
-    ApprovalRevocation, ApprovalUse, JournalCheckpoint, ReplayCheck,
-    ReplayCheckLevel,
+    ApprovalRevocation, ApprovalUse, CheckpointKind, HubCheckpointVerification,
+    JournalCheckpoint, ReplayCheck, ReplayCheckLevel,
     TYPE_APPROVAL_REVOCATION, TYPE_APPROVAL_USE, TYPE_JOURNAL_CHECKPOINT,
     approval_revocation_record_digest, approval_use_record_digest,
-    journal_checkpoint_record_digest, nonce_digest,
+    journal_checkpoint_record_digest, nonce_digest, verify_hub_checkpoint_signature,
 };
 
 use serde::{Deserialize, Serialize};
