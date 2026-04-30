@@ -43,6 +43,12 @@ pub struct SetupOpts {
     pub skip_smoke: bool,
     /// Skip instrumentation entirely -- only detect + draft cards.
     pub no_instrument: bool,
+    /// Output format. `text` (default) prints the orchestrated setup
+    /// flow as a human-readable transcript; `json` returns a stable
+    /// agent-readable payload describing what was detected,
+    /// instrumented, and smoke-tested. AI agents call this with
+    /// `--yes --format json` to bootstrap Treeship without a TTY.
+    pub format: String,
 }
 
 impl Default for SetupOpts {
@@ -51,6 +57,7 @@ impl Default for SetupOpts {
             yes:           false,
             skip_smoke:    false,
             no_instrument: false,
+            format:        "text".into(),
         }
     }
 }
@@ -61,6 +68,15 @@ pub fn run(
     opts: SetupOpts,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let json_mode = opts.format == "json";
+    // Accumulator. When json_mode is on, the function fills this in as
+    // it proceeds and emits the structured payload at the end. When
+    // json_mode is off, the existing text printing is the canonical
+    // output and the accumulator goes unused. AI agents call
+    // `treeship setup --yes --format json` to bootstrap Treeship
+    // without a TTY; this is the response shape they branch on.
+    let mut result = SetupResult::default();
+
     printer.blank();
     printer.section("Treeship setup");
     printer.blank();
@@ -78,9 +94,15 @@ pub fn run(
             printer.hint("Run: treeship init   (or `treeship init --config <path>` for a project-local config)");
             printer.dim_info("  After init, re-run `treeship setup` and Treeship will pick up where you left off.");
             printer.blank();
+            if json_mode {
+                result.error = Some("not initialized -- run `treeship init` first".into());
+                emit_setup_json(&result);
+            }
             return Ok(());
         }
     };
+    result.ship_id    = Some(ctx.config.ship_id.clone());
+    result.config_path = Some(ctx.config_path.display().to_string());
     printer.dim_info(&format!("  config:    {}", ctx.config_path.display()));
     printer.dim_info(&format!("  ship:      {}", ctx.config.ship_id));
 
@@ -88,12 +110,27 @@ pub fn run(
     let env = Env::current();
     let agents = discovery::discover(&env);
 
+    // Always record what we detected -- json_mode consumers want
+    // visibility on "the machine had no agents" (which is itself
+    // useful info for an orchestration agent).
+    for agent in &agents {
+        result.detected.push(DetectedSummary {
+            surface:                agent.surface.kind().into(),
+            display_name:           agent.display_name.clone(),
+            confidence:             agent.confidence.label().into(),
+            recommended_harness_id: Some(agent.recommended_harness_id().to_string()),
+        });
+    }
+
     if agents.is_empty() {
         printer.blank();
         printer.dim_info("  No agents detected on this machine.");
         printer.blank();
         printer.hint("Treeship still works -- start a session with `treeship session start` and wrap commands with `treeship wrap`.");
         printer.blank();
+        if json_mode {
+            emit_setup_json(&result);
+        }
         return Ok(());
     }
 
@@ -128,6 +165,12 @@ pub fn run(
         printer.blank();
         printer.hint("Approve cards manually with `treeship agents review <id>` then `treeship agents approve <id>`.");
         printer.blank();
+        if json_mode {
+            populate_card_counts(&mut result, &written);
+            result.next_steps.push("treeship agents review <id>".into());
+            result.next_steps.push("treeship agents approve <id>".into());
+            emit_setup_json(&result);
+        }
         return Ok(());
     }
 
@@ -145,6 +188,11 @@ pub fn run(
     if !confirmed {
         printer.dim_info("  Skipping instrumentation. Run `treeship add` or re-run `treeship setup --yes` later.");
         printer.blank();
+        if json_mode {
+            populate_card_counts(&mut result, &written);
+            result.next_steps.push("treeship setup --yes".into());
+            emit_setup_json(&result);
+        }
         return Ok(());
     }
 
@@ -185,6 +233,9 @@ pub fn run(
     if names_for_add.is_empty() {
         printer.dim_info("  No agents in this set have an automated instrumenter yet.");
     } else {
+        // Capture instrumented surface names for the JSON shape before
+        // delegating; `add::run` doesn't return them as a value.
+        result.instrumented = names_for_add.clone();
         // `add::run` takes ownership of stdout for its own printing; let
         // it run. `--all` (true) skips its prompt since we already asked.
         crate::commands::add::run(names_for_add, true, false, printer)?;
@@ -226,19 +277,32 @@ pub fn run(
     if opts.skip_smoke {
         let final_cards = cards::list(&agents_dir).unwrap_or(written.clone());
         print_complete(&final_cards, false, printer);
+        if json_mode {
+            populate_card_counts(&mut result, &final_cards);
+            result.smoke = Some(SmokeSummary { ran: false, passed: false, error: None });
+            result.next_steps.push("treeship setup            (re-run later with --skip-smoke off to verify)".into());
+            emit_setup_json(&result);
+        }
         return Ok(());
     }
 
-    let smoke_ok = match run_smoke_session(printer) {
-        Ok(()) => true,
+    let smoke_start = std::time::Instant::now();
+    let (smoke_ok, smoke_err) = match run_smoke_session(printer) {
+        Ok(()) => (true, None),
         Err(e) => {
             printer.warn(
                 "smoke session did not complete; cards stay at draft / needs-review",
                 &[("error", &e.to_string())],
             );
-            false
+            (false, Some(e.to_string()))
         }
     };
+    result.smoke = Some(SmokeSummary {
+        ran:    true,
+        passed: smoke_ok,
+        error:  smoke_err,
+    });
+    let _ = smoke_start;
 
     if smoke_ok {
         // Trust-semantics note (v0.9.8 PR 5 patch):
@@ -303,7 +367,107 @@ pub fn run(
         Err(_) => written,
     };
     print_complete(&final_cards, smoke_ok, printer);
+    if json_mode {
+        populate_card_counts(&mut result, &final_cards);
+        result.next_steps.push("treeship session start --name <task>".into());
+        result.next_steps.push("treeship session report --share --format json".into());
+        emit_setup_json(&result);
+    }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Agent-readable JSON output (v0.10.0 PR 5 — Agent-Native Bootstrap)
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize, Default)]
+struct SetupResult {
+    schema:       String,
+    ship_id:      Option<String>,
+    config_path:  Option<String>,
+    detected:     Vec<DetectedSummary>,
+    cards:        CardCounts,
+    instrumented: Vec<String>,
+    smoke:        Option<SmokeSummary>,
+    next_steps:   Vec<String>,
+    error:        Option<String>,
+}
+
+#[derive(serde::Serialize)]
+struct DetectedSummary {
+    surface:                String,
+    display_name:           String,
+    confidence:             String,
+    recommended_harness_id: Option<String>,
+}
+
+#[derive(serde::Serialize, Default)]
+struct CardCounts {
+    total:        usize,
+    draft:        usize,
+    needs_review: usize,
+    active:       usize,
+    verified:     usize,
+}
+
+#[derive(serde::Serialize)]
+struct SmokeSummary {
+    ran:    bool,
+    passed: bool,
+    error:  Option<String>,
+}
+
+fn populate_card_counts(result: &mut SetupResult, cards_list: &[AgentCard]) {
+    let mut c = CardCounts::default();
+    c.total = cards_list.len();
+    for card in cards_list {
+        match card.status {
+            CardStatus::Draft       => c.draft        += 1,
+            CardStatus::NeedsReview => c.needs_review += 1,
+            CardStatus::Active      => c.active       += 1,
+            CardStatus::Verified    => c.verified     += 1,
+        }
+    }
+    result.cards = c;
+}
+
+fn emit_setup_json(result: &SetupResult) {
+    let mut payload = result.clone_with_schema();
+    payload.schema = "treeship/setup-result/v1".into();
+    if let Ok(s) = serde_json::to_string_pretty(&payload) {
+        println!("{}", s);
+    }
+}
+
+impl SetupResult {
+    fn clone_with_schema(&self) -> SetupResult {
+        SetupResult {
+            schema:       self.schema.clone(),
+            ship_id:      self.ship_id.clone(),
+            config_path:  self.config_path.clone(),
+            detected:     self.detected.iter().map(|d| DetectedSummary {
+                surface:                d.surface.clone(),
+                display_name:           d.display_name.clone(),
+                confidence:             d.confidence.clone(),
+                recommended_harness_id: d.recommended_harness_id.clone(),
+            }).collect(),
+            cards:        CardCounts {
+                total:        self.cards.total,
+                draft:        self.cards.draft,
+                needs_review: self.cards.needs_review,
+                active:       self.cards.active,
+                verified:     self.cards.verified,
+            },
+            instrumented: self.instrumented.clone(),
+            smoke:        self.smoke.as_ref().map(|s| SmokeSummary {
+                ran:    s.ran,
+                passed: s.passed,
+                error:  s.error.clone(),
+            }),
+            next_steps:   self.next_steps.clone(),
+            error:        self.error.clone(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

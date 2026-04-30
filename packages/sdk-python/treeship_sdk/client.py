@@ -6,6 +6,12 @@ import subprocess
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from treeship_sdk.bootstrap import (
+    BootstrapResult,
+    TreeshipBootstrapError,
+    ensure_cli,
+)
+
 
 class TreeshipError(Exception):
     """Error from the treeship CLI."""
@@ -57,11 +63,17 @@ class SessionReportResult:
     events: int = 0
 
 
-def _run(args: List[str], timeout: int = 10) -> Dict[str, Any]:
-    """Run a treeship CLI command and return parsed JSON."""
+def _run(args: List[str], timeout: int = 10, *, binary: str = "treeship") -> Dict[str, Any]:
+    """Run a treeship CLI command and return parsed JSON.
+
+    `binary` lets the caller override which executable is invoked --
+    used by the agent-native bootstrap path (Treeship(bot_mode=True))
+    so the SDK can shell out to a CLI it resolved itself rather than
+    relying on PATH.
+    """
     try:
         result = subprocess.run(
-            ["treeship"] + args,
+            [binary] + args,
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -74,7 +86,8 @@ def _run(args: List[str], timeout: int = 10) -> Dict[str, Any]:
         return json.loads(result.stdout)
     except FileNotFoundError:
         raise TreeshipError(
-            "treeship CLI not found. Install: curl -fsSL treeship.dev/install | sh",
+            "treeship CLI not found. Install: curl -fsSL treeship.dev/install | sh\n"
+            "  Or in a Python program: ts = Treeship(bot_mode=True)  # auto-resolves the CLI",
             args,
         )
     except json.JSONDecodeError:
@@ -89,13 +102,69 @@ class Treeship:
     Treeship SDK client.
 
     Wraps the treeship CLI binary for signing, verification, and Hub operations.
-    Requires the treeship binary in PATH.
 
-    Usage:
+    Two construction modes:
+
+      Treeship()
+        Default — assumes ``treeship`` is on PATH. Raises
+        :class:`TreeshipError` if the binary isn't found at call time.
+
+      Treeship(bot_mode=True)
+        Agent-native — calls :func:`ensure_cli` at construction time to
+        resolve the binary via env / PATH / cache / npm / GitHub Release
+        in that order. AI agents on a fresh machine should use this so
+        they don't have to ask a human "is the CLI installed?".
+
+    Usage::
+
+        # default
         ts = Treeship()
         result = ts.attest_action(actor="agent://my-agent", action="tool.call")
-        print(result.artifact_id)
+
+        # agent-native bootstrap
+        ts = Treeship(bot_mode=True)
+        # CLI resolved + ready, even on a fresh sandbox
     """
+
+    def __init__(self, *, bot_mode: bool = False) -> None:
+        # Default: use whatever's on PATH. The CLI lookup happens at
+        # call time inside _run(), so an unresolved binary fails on the
+        # first method call (with a recovery hint pointing at bot_mode).
+        self._binary: str = "treeship"
+        self._bootstrap: Optional[BootstrapResult] = None
+        if bot_mode:
+            try:
+                self._bootstrap = ensure_cli()
+                self._binary = self._bootstrap.binary
+            except TreeshipBootstrapError as exc:
+                raise TreeshipError(
+                    f"agent-native bootstrap failed: {exc} (reason={exc.reason})",
+                    [],
+                ) from exc
+
+    @classmethod
+    def ensure_cli(cls) -> BootstrapResult:
+        """Resolve a working CLI binary without instantiating the SDK.
+
+        Sugar around :func:`treeship_sdk.bootstrap.ensure_cli` so a
+        caller can do::
+
+            from treeship_sdk import Treeship
+            Treeship.ensure_cli()
+
+        without importing the bootstrap submodule.
+        """
+        return ensure_cli()
+
+    @property
+    def binary(self) -> str:
+        """Path to the resolved CLI binary. ``"treeship"`` when not bot-mode."""
+        return self._binary
+
+    @property
+    def bootstrap(self) -> Optional[BootstrapResult]:
+        """The resolution result when bot_mode=True; ``None`` otherwise."""
+        return self._bootstrap
 
     def attest_action(
         self,
