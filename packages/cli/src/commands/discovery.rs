@@ -165,6 +165,26 @@ pub struct DiscoveredAgent {
     pub note:             Option<String>,
 }
 
+impl DiscoveredAgent {
+    /// Recommended harness_id for this surface (PR 5). Stable kebab-case
+    /// matching what users type to `treeship add`. Setup uses this to
+    /// pre-fill `AgentCard.active_harness_id`.
+    pub fn recommended_harness_id(&self) -> &'static str {
+        match self.surface {
+            AgentSurface::ClaudeCode          => "claude-code",
+            AgentSurface::CursorAgent         => "cursor",
+            AgentSurface::Cline               => "cline",
+            AgentSurface::Codex               => "codex",
+            AgentSurface::Hermes              => "hermes",
+            AgentSurface::OpenClaw            => "openclaw",
+            AgentSurface::NinjatechSuperninja => "ninjatech-superninja",
+            AgentSurface::NinjatechNinjaDev   => "ninjatech-ninja-dev",
+            AgentSurface::GenericMcp          => "generic-mcp",
+            AgentSurface::ShellWrap           => "shell-wrap",
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Detection
 // ---------------------------------------------------------------------------

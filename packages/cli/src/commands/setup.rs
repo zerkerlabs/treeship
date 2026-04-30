@@ -242,20 +242,40 @@ pub fn run(
 
     if smoke_ok {
         // Smoke proved Treeship can capture on this machine. Promote
-        // every instrumented card straight to Verified. Cards we did not
-        // instrument (SuperNinja remote, generic-mcp without a known
-        // surface) stay at Draft -- smoke can't speak for them.
+        // every instrumented card straight to Verified, and reflect the
+        // same proof on the matching Harness State (PR 5) so
+        // `treeship harness inspect` shows the verification.
+        let now = now_rfc3339();
+        let harnesses_dir = crate::commands::harnesses::harnesses_dir_for(&ctx.config_path);
         for card in &instrumented_cards {
             if let Err(e) = cards::set_status(
                 &agents_dir,
                 &card.agent_id,
                 CardStatus::Verified,
-                &now_rfc3339(),
+                &now,
             ) {
                 printer.warn(
                     &format!("could not promote {} to verified", card.agent_id),
                     &[("error", &e.to_string())],
                 );
+            }
+            if let Some(harness_id) = card.active_harness_id.as_deref() {
+                if let Some(manifest) = crate::commands::harnesses::find(harness_id) {
+                    let mut state = crate::commands::harnesses::load_state(&harnesses_dir, harness_id)
+                        .unwrap_or_else(|_| crate::commands::harnesses::HarnessState::from_manifest(manifest, &now));
+                    state.status = crate::commands::harnesses::HarnessStatus::Verified;
+                    state.last_verified_at = Some(now.clone());
+                    state.last_smoke_result = Some(crate::commands::harnesses::SmokeResult {
+                        at:      now.clone(),
+                        passed:  true,
+                        summary: "setup smoke captured init+session+wrap+close+verify".into(),
+                    });
+                    if !state.linked_agent_ids.iter().any(|s| s == &card.agent_id) {
+                        state.linked_agent_ids.push(card.agent_id.clone());
+                        state.linked_agent_ids.sort();
+                    }
+                    let _ = crate::commands::harnesses::save_state(&harnesses_dir, &state);
+                }
             }
         }
     }

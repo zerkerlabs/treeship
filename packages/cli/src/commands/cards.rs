@@ -157,6 +157,12 @@ pub struct AgentCard {
     /// confirm the on-disk cert hasn't drifted from the card's claim.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub certificate_digest: Option<String>,
+    /// Harness this card is attached through (PR 5). For cards born
+    /// from discovery, defaults to `DiscoveredAgent::recommended_harness_id`.
+    /// For cards born from `treeship agent register`, the surface
+    /// mapping picks the recommended harness for the supplied --name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_harness_id: Option<String>,
     /// ID of the most recent session that involved this agent. None until
     /// a session closes referencing the card.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -193,6 +199,7 @@ impl AgentCard {
             model:                  None,
             description:            agent.note.clone(),
             certificate_digest:     None,
+            active_harness_id:      Some(agent.recommended_harness_id().to_string()),
             latest_session_id:      None,
             latest_receipt_digest:  None,
             created_at:             now.to_string(),
