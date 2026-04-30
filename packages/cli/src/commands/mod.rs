@@ -19,6 +19,7 @@ pub mod otel;
 pub mod template;
 pub mod add;
 pub mod agent;
+pub mod discovery;
 pub mod declare;
 pub mod package;
 pub mod prove;
