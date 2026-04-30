@@ -1,5 +1,95 @@
 # Changelog
 
+## 0.10.0 (2026-04-30)
+
+The **Agent-Native Receipt Sharing** release. Makes Treeship operable by AI agents end-to-end. A human can now say *"agent, set up Treeship and send me the receipt"* and the agent comes back with `receipt_url`, `raw_json_url`, `package_download_url`, `receipt_digest`, `package_digest`, `verification_status`, and `warnings` — without asking a clarifying question, without browser auth, without `sudo`, without modifying `PATH`. The previous releases made the receipt trustworthy (v0.9.6), the release process trustworthy (v0.9.7), the agent experience legible (v0.9.8), the approval surface complete (v0.9.9), the approval-evidence verifier honest (v0.9.10), and the docs reliable (v0.9.11). v0.10.0 closes the loop: every URL the agent returns leads somewhere a non-browser reader can use.
+
+The connective theme: **the receipt is not a webpage; it's a verifiable artifact that happens to render as one.** v0.9.x receipts existed but could only be inspected through a JS-required browser visit — `curl /receipt/<id>` returned literally `Loading receipt...`. AI agents, link unfurlers, search engines, offline reviewers, and any non-browser tool got nothing. v0.10.0 makes every output channel agent-readable: server-rendered HTML for humans and crawlers, a stable JSON contract for AI agents, a downloadable `.tar.gz` for offline verifiers, and a CLI bootstrap path so a sandboxed agent can install Treeship without human intervention.
+
+This is the first release where an AI agent in a fresh sandbox — no PATH, no installed CLI, no global state — can run `python -m treeship_sdk.bootstrap_cli --json`, get a working CLI, run `treeship setup --yes --format json`, run a session, share the result, and hand a human three URLs that all work. The Kimi dogfood failure that motivated this release ("CLI missing from PATH; install script timed out; agent had to ask human") is closed.
+
+### Added (server-rendered receipt page — `treeship.dev` PR 1)
+
+- **`/receipt/<sessionId>` is now SSR.** `curl https://www.treeship.dev/receipt/<id>` returns a useful summary in the initial HTML response: session id, name, status, verification (✓ verified / ✗ check), started timestamp, duration, agents (with names), tool count, files changed (written + read), artifact count, handoffs, Merkle root, Approval Authority counts (when present), warning decision cards, and the three agent-readable URLs. Hydrates over the SSR layout into the rich client UI for browser visitors; non-JS readers get the deterministic snapshot.
+- **OpenGraph + Twitter card metadata** generated from the receipt's facts so link unfurlers (Slack, Discord, Twitter, Mastodon) get useful previews without running JS. Title format: `Treeship receipt — <session_name> · <verified|check>`.
+- **Hub-direct fetch with demo fallback.** The page fetches the demo receipt inline for `ssn_a1b2c3d4` and proxies to `${HUB_API_URL}/v1/receipt/<id>` for real session ids — bypasses the same-origin self-fetch loop that breaks during local dev / build.
+
+### Added (stable agent-native JSON contract — `treeship.dev` PR 2)
+
+- **`/api/receipt/<id>/agent`** returns `treeship/receipt-agent/v1`: a documented, stable shape designed for AI agents and external orchestration. Sibling of `/api/receipt/<id>` (raw passthrough, kept untouched). Every URL absolute. Every nullable field stays `null` (not absent) so consumers can branch on presence without guessing whether a field was renamed.
+- Fields: `schema`, `session_id`, `receipt_url`, `raw_json_url`, `package_download_url`, `receipt_digest`, `package_digest`, `merkle_root`, `verification` (`{status, signatures_valid, merkle_root_valid, issues}`), `session_summary` (`{name, status, mode, started_at, ended_at, duration_ms, total_agents, handoffs, hosts}`), `agents` (with `instance_id`, `name`, `role`, `host`, `depth`, `tool_calls`, `status`, `model`, `provider`, `tokens_in`, `tokens_out`), `agent_cards`, `harnesses`, `approvals` (`{grants, uses, checkpoints, *_ids}`), `replay_checks`, `decision_cards`, `files_changed` (`{written, read, total_*}`), `tools`, `warnings`, `artifact_count`.
+- The `/agent` route projects from the raw hub receipt; reserved fields (`agent_cards`, `harnesses`, `package_digest`) stay null until the hub upgrades to serve them. The shape is stable now; agents code against it.
+
+### Added (downloadable `.treeship` package — `treeship.dev` PR 3)
+
+- **`/receipt/<id>/package`** returns a `.tar.gz` with the same `<id>.treeship/` directory layout `build_package_with_approvals` produces in the CLI core. Consumers run `curl -L | tar xz; treeship package verify ./<id>.treeship/` and get the full offline verification path.
+- Tarball contents: `receipt.json`, `merkle.json`, `render.json`, `proofs/<artifact_id>.proof.json` per artifact, `approvals/grants/`, `approvals/uses/`, `approvals/checkpoints/`, `approvals/index.json` when present.
+- `lib/tar.ts` is a pure-JS USTAR writer (~80 lines, zero deps). The route gzips via `zlib.gzipSync` and serves with `Content-Type: application/gzip`, `X-Package-Digest: sha256:...`, and platform-appropriate cache headers.
+
+### Added (CLI share command — `treeship` PR 4)
+
+- **`treeship session report --share --format json`** returns the agent-native share shape:
+  ```json
+  {
+    "schema": "treeship/share-result/v1",
+    "session_id": "ssn_...",
+    "receipt_url": "...", "raw_json_url": "...", "package_download_url": "...",
+    "receipt_digest": "sha256:...", "package_digest": "sha256:...",
+    "verification_status": "pass" | "warn" | "fail",
+    "warnings": [{ "kind", "headline", "status" }],
+    "error": null | "<message>"
+  }
+  ```
+- New flags: `--format <text|json>`, `--no-upload` (compute digests + run local verify, return URL fields null — useful for sandboxed CI without hub auth), `--share` (alias for the agent-native idiom).
+- **Local-first fallback** — when hub auth is missing in `--format json` mode, the response carries `error: "..."` plus the locally-derived digests and verify result. Text mode keeps the original recovery hint pointing at `treeship hub attach`. AI agents get a structured response either way.
+- `package_digest` computed as a content-addressed manifest digest: sha256 of sorted `<relpath>:<sha256_hex>` lines. Stable across builds; doesn't depend on tar/gzip non-determinism.
+- Derives `raw_json_url` and `package_download_url` from the hub-issued `receipt_url`'s origin so the three URLs always point at the same site.
+
+### Added (Python SDK + CLI bootstrap — `treeship` PR 5)
+
+- **`treeship setup --format json`** now returns a real shape. Previously `treeship setup --yes --format json` returned `{}`; the setup function ignored the global `--format` flag. The new `treeship/setup-result/v1` shape carries `schema`, `ship_id`, `config_path`, `detected[...]`, `cards{total, draft, needs_review, active, verified}`, `instrumented[]`, `smoke{ran, passed, error}`, `next_steps[]`, `error`. Every early-exit path populates the accumulator before emitting JSON.
+- **Python `Treeship.ensure_cli()` + `Treeship(bot_mode=True)`.** Resolves a working `treeship` binary via env / PATH / cache / npm / GitHub Release in that order. Each step sandboxed-safe: no `sudo`, no network unless steps 4/5 fire, no `PATH` modification.
+  ```python
+  from treeship_sdk import Treeship
+  ts = Treeship(bot_mode=True)  # CLI resolved; no human required
+  ```
+- **`python -m treeship_sdk.bootstrap_cli --json`** is the agent-friendly shell entry point. Returns `treeship/bootstrap-result/v1` with `ok`, `binary`, `version`, `source` (`env|path|cache|npm-cache|github-release`), `cache_dir`. `--no-install` disables network fallbacks for agents that should fail loudly.
+- New module structure under `packages/sdk-python/treeship_sdk/`:
+  - `bootstrap.py` — resolution helpers, `BootstrapResult`, `TreeshipBootstrapError`
+  - `bootstrap_cli.py` — `python -m` entry point
+  - `client.py` — `Treeship(bot_mode=True)` integration
+  - `__init__.py` — exports
+
+### Verification (release-gate T1–T7 smoke)
+
+| Test | Result |
+|---|---|
+| T1 Python bootstrap (CLI resolution without PATH/auth/sudo) | ✓ |
+| T2 `treeship setup --yes --no-instrument --format json` | ✓ schema + 5 detected agents + 5 draft cards |
+| T3 `treeship session report --share --format json` | ✓ all 9 required fields, `verification_status: pass` |
+| T4 `curl /receipt/ssn_a1b2c3d4` SSR | ✓ 84KB initial HTML, all expected fields, `Loading receipt...` gone |
+| T5 `curl /api/receipt/ssn_a1b2c3d4/agent` | ✓ `treeship/receipt-agent/v1` with all 18 required fields |
+| T6 `curl /receipt/ssn_a1b2c3d4/package` + `tar xz` + `treeship package verify` | ✓ 5 PASS / 0 FAIL / 1 WARN (whitespace-only) |
+| T7 Kimi-style end-to-end flow | ✓ no browser, no PATH mutation, no interactive prompts |
+
+### Honesty rule preserved
+
+- The agent-native JSON contract uses null (not absent) for fields the hub doesn't yet carry (`agent_cards`, `harnesses`, `package_digest`). Consumers know exactly what's missing and what's intentionally not yet provided.
+- Local-first fallback in the share command sets URL fields to null and includes `error: "<reason>"` rather than fabricating receipt URLs that would fail when followed.
+- The package endpoint synthesizes the `.treeship` tree from whatever the hub returns; demo fixtures that drift from the current schema produce parse errors at verify time (caught and fixed in `treeship.dev` follow-up #12).
+- Verification rows never silently downgrade. `treeship/share-result/v1` carries the local verify outcome, including warnings, so an AI agent that just shared a receipt can also tell its caller whether the sealed package verifies cleanly.
+
+### Intentionally NOT included
+
+- No new trust subsystem. No Hub server, no AgentGate runtime enforcement, no issuer/registry identity. Those remain the deferred items from v0.9.9.
+- No PATH modification, no `sudo`, no privilege escalation in the bootstrap path.
+- No `treeship-cli` on crates.io (still distributed via npm + GitHub Releases — see `/guides/install` from v0.9.11).
+- No mobile/desktop approval apps.
+
+### Migration
+
+Pre-v0.10.0 receipts published to a hub running v0.10.0+ render normally on `/receipt/<id>` with the SSR pipeline; the agent JSON contract gracefully nulls fields the older receipt didn't carry. Verifiers running v0.10.0 against pre-v0.10.0 packages keep working — the new endpoints are additive. The CLI's `session report` text mode is unchanged for existing users; `--format json` is opt-in.
+
 ## 0.9.11 (2026-04-30)
 
 The Docs Reliability + Agent Install Clarity release. **No product code.** Closes the docs-side findings from a third-party scan (Kimi) of the live docs surface and from the v0.9.6→v0.9.10 cadence's accumulated drift. Four PRs land on top of v0.9.10's trust-fix; this release wraps them into a versioned cutover so installs and the docs site move in lockstep.
