@@ -133,7 +133,7 @@ pub fn run(
 
     // Nonce binding: for each action with approval_nonce, find the matching
     // approval and verify the binding is valid.
-    let nonce_checks = verify_nonce_bindings(&chain_envelopes, &ctx.storage);
+    let nonce_checks = verify_nonce_bindings(&chain_envelopes, &ctx.storage, &ctx.config_path);
     checks.extend(nonce_checks);
 
     // Print results.
@@ -384,11 +384,40 @@ fn print_full_timeline(
             ));
         }
 
-        // Line 3: replay posture. Honest about what was (and wasn't) enforced.
-        printer.info(&format!(
-            "  {}",
-            printer.yellow("\u{26A0}  replay check     package-local only -- no global ledger consulted")
-        ));
+        // Line 3: replay posture. PR 3 upgraded this from
+        // "package-local only" to a stronger reading when the local
+        // Approval Use Journal had something to say. The printer
+        // shows the strongest level it actually achieved -- never
+        // overclaims, never silently downgrades.
+        let journal_check = checks.iter().find(|c| c.payload_type == "replay-local-journal");
+        match journal_check {
+            Some(c) if c.outcome == Outcome::Pass => {
+                let detail = c.reason.clone().unwrap_or_else(|| {
+                    "local Approval Use Journal passed".into()
+                });
+                printer.info(&format!(
+                    "  {}  {}",
+                    printer.green("\u{2713}  replay check"),
+                    detail,
+                ));
+            }
+            Some(c) /* fail */ => {
+                let detail = c.reason.clone().unwrap_or_else(|| {
+                    "local Approval Use Journal: max_uses exceeded".into()
+                });
+                printer.info(&format!(
+                    "  {}  {}",
+                    printer.red("\u{2717}  replay check"),
+                    detail,
+                ));
+            }
+            None => {
+                printer.info(&format!(
+                    "  {}",
+                    printer.yellow("\u{26A0}  replay check     package-local only -- no global ledger consulted")
+                ));
+            }
+        }
     }
 
     printer.info(&format!("  {rule}"));
@@ -825,8 +854,19 @@ fn verify_one(verifier: &Verifier, envelope: &Envelope, id: &str) -> ArtifactChe
 fn verify_nonce_bindings(
     chain: &[(String, Envelope)],
     storage: &Store,
+    config_path: &std::path::Path,
 ) -> Vec<ArtifactCheck> {
     let mut checks = Vec::new();
+    // Resolve the workspace's local Approval Use Journal once. Empty
+    // when no journal exists; check_replay returns NotPerformed in
+    // that case and the printer falls back to the v0.9.6
+    // "package-local only" message.
+    let journal_dir = config_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("journals")
+        .join("approval-use");
+    let journal = treeship_core::journal::Journal::new(&journal_dir);
 
     // Index approvals from the chain by nonce for O(1) lookup.
     let mut approvals_by_nonce: HashMap<String, ApprovalStatement> = HashMap::new();
@@ -944,6 +984,56 @@ fn verify_nonce_bindings(
             outcome:      Outcome::Pass,
             reason:       None,
         });
+
+        // Local journal replay check (PR 3). Reports the strongest
+        // level we can speak to. Resolve the grant_id by walking
+        // storage one more time (same approach as the binding check
+        // above; the cost is bounded by the small set of approvals).
+        // Stamp a synthesized check the printer reads.
+        if journal.exists() {
+            // The grant_id is the artifact id of the approval whose
+            // nonce matched. We don't have it in scope here, so
+            // re-derive from storage (cheap; few approvals per
+            // workspace and the lookup is by-type).
+            let approval_type = payload_type("approval");
+            let mut grant_id_opt: Option<String> = None;
+            for entry in storage.list_by_type(&approval_type) {
+                if let Ok(rec) = storage.read(&entry.id) {
+                    if let Ok(a) = rec.envelope.unmarshal_statement::<ApprovalStatement>() {
+                        if a.nonce == nonce {
+                            grant_id_opt = Some(entry.id);
+                            break;
+                        }
+                    }
+                }
+            }
+            if let Some(grant_id) = grant_id_opt {
+                let nonce_dig = treeship_core::statements::nonce_digest(&nonce);
+                let max_uses = approval.scope.as_ref().and_then(|s| s.max_actions);
+                // Verify-time question: "is the recorded use within
+                // max_uses?" Distinct from consume-time's "would the
+                // next use exceed?". find_use_for_action returns None
+                // when there's no journal record for this action,
+                // which simply means no journal-level evidence
+                // exists -- the printer falls back to the warning.
+                if let Ok(Some((_use_rec, replay))) = treeship_core::journal::find_use_for_action(
+                    &journal, &grant_id, &nonce_dig, max_uses,
+                ) {
+                    let outcome = match replay.passed {
+                        Some(false) => Outcome::Fail,
+                        Some(true) | None => Outcome::Pass,
+                    };
+                    let detail = replay.details.clone().unwrap_or_default();
+                    checks.push(ArtifactCheck {
+                        id:           id.clone(),
+                        payload_type: "replay-local-journal".into(),
+                        actor_or_sys: action.actor.clone(),
+                        outcome,
+                        reason:       Some(detail),
+                    });
+                }
+            }
+        }
     }
 
     checks
@@ -955,7 +1045,7 @@ fn verify_nonce_bindings(
 /// Empty `allowed_*` lists mean "no constraint on that axis." The order
 /// of checks is actor → action → subject → scope-level expiry; the
 /// first violation wins for a clear failure message.
-fn check_scope_violation(scope: &ApprovalScope, action: &ActionStatement) -> Option<String> {
+pub(crate) fn check_scope_violation(scope: &ApprovalScope, action: &ActionStatement) -> Option<String> {
     if !scope.allowed_actors.is_empty()
         && !scope.allowed_actors.contains(&action.actor)
     {
@@ -1007,7 +1097,7 @@ fn check_scope_violation(scope: &ApprovalScope, action: &ActionStatement) -> Opt
 }
 
 /// Search storage for an approval whose nonce matches.
-fn find_approval_by_nonce(nonce: &str, storage: &Store) -> Option<ApprovalStatement> {
+pub(crate) fn find_approval_by_nonce(nonce: &str, storage: &Store) -> Option<ApprovalStatement> {
     let approval_type = payload_type("approval");
     for entry in storage.list_by_type(&approval_type) {
         if let Ok(rec) = storage.read(&entry.id) {
@@ -1022,7 +1112,7 @@ fn find_approval_by_nonce(nonce: &str, storage: &Store) -> Option<ApprovalStatem
 }
 
 /// Minimal RFC 3339 "now" for expiry comparison.
-fn now_rfc3339() -> String {
+pub(crate) fn now_rfc3339() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)

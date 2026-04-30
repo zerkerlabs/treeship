@@ -649,6 +649,72 @@ fn load_use_record(j: &Journal, index: u64) -> Result<Option<ApprovalUse>, Journ
 // Public read helpers (CLI)
 // ---------------------------------------------------------------------------
 
+/// Find the recorded ApprovalUse for an already-signed action.
+/// Returns the matching use record plus a `ReplayCheck` that answers
+/// the *verify-time* question -- "is the recorded use within max_uses?"
+/// -- as opposed to `check_replay`'s consume-time question -- "would
+/// the next use exceed?". The two questions look the same but have
+/// different boundary semantics:
+///
+///   consume-time: passed = use_number_that_would_be_allocated <= max_uses
+///                 (i.e. current_count < max_uses, since next = current + 1)
+///   verify-time:  passed = recorded_use_number <= max_uses
+///
+/// Verify should call THIS, not check_replay, when reporting on an
+/// action that already has a journal record.
+pub fn find_use_for_action(
+    j: &Journal,
+    grant_id: &str,
+    nonce_digest: &str,
+    max_uses_hint: Option<u32>,
+) -> Result<Option<(ApprovalUse, ReplayCheck)>, JournalError> {
+    if !j.exists() {
+        return Ok(None);
+    }
+    let index_path = j.by_nonce_path(nonce_digest);
+    if !index_path.exists() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&index_path)?;
+    // The action under verification corresponds to the most recent use
+    // record sharing the same (grant_id, nonce_digest) -- callers can
+    // also disambiguate by `approval_use_id` from action.meta, which
+    // PR 4 wires in. For PR 3, returning the most recent matching use
+    // is sufficient and matches what verify can derive without that
+    // metadata link.
+    let mut latest: Option<ApprovalUse> = None;
+    for line in raw.lines() {
+        let idx: u64 = match line.trim().parse() { Ok(n) => n, Err(_) => continue };
+        if let Some(rec) = load_use_record(j, idx)? {
+            if rec.grant_id == grant_id {
+                latest = Some(rec);
+            }
+        }
+    }
+    let Some(rec) = latest else { return Ok(None) };
+
+    let stored_max = rec.max_uses;
+    let max_uses = max_uses_hint.or(stored_max);
+    let passed = match max_uses {
+        Some(m) => rec.use_number <= m,
+        None    => true,
+    };
+    let details = match max_uses {
+        Some(m) => format!("local Approval Use Journal passed, use {}/{}", rec.use_number, m),
+        None    => format!("local Approval Use Journal: use {} of unbounded grant", rec.use_number),
+    };
+    Ok(Some((
+        rec.clone(),
+        ReplayCheck {
+            level:      ReplayCheckLevel::LocalJournal,
+            use_number: Some(rec.use_number),
+            max_uses,
+            passed:     Some(passed),
+            details:    Some(details),
+        },
+    )))
+}
+
 /// Every ApprovalUse for `grant_id`. Reads the by-grant index, then
 /// loads each record. Quiet on missing journal.
 pub fn list_uses_for_grant(j: &Journal, grant_id: &str) -> Result<Vec<ApprovalUse>, JournalError> {
