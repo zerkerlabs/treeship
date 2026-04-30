@@ -301,6 +301,19 @@ enum Command {
     ///   treeship deny 2
     Deny(DenyArgs),
 
+    /// Inspect the local Approval Use Journal
+    ///
+    /// Workspace-local store of consumed Approval Grants. Read-only
+    /// surface in v0.9.9 PR 2; consume-before-action wiring inside
+    /// `treeship attest action` lands in PR 3.
+    ///
+    /// Examples:
+    ///   treeship approval uses art_grant_xyz
+    ///   treeship approval status art_grant_xyz
+    ///   treeship approval journal verify
+    #[command(subcommand)]
+    Approval(ApprovalCommand),
+
     /// Background daemon for automatic file watching
     ///
     /// The daemon watches your project for file changes and automatically
@@ -821,6 +834,25 @@ enum AgentsCommand {
 
     /// Delete an Agent Card from the store. Idempotent.
     Remove { agent_id: String },
+}
+
+// --- approval (Use Journal) ------------------------------------------------
+
+#[derive(Subcommand)]
+enum ApprovalCommand {
+    /// List every recorded use for a grant id.
+    Uses { grant_id: String },
+    /// Summary: use_count, max_uses, would-exceed flag.
+    Status { grant_id: String },
+    /// Run integrity checks on the local Approval Use Journal.
+    #[command(subcommand)]
+    Journal(ApprovalJournalCommand),
+}
+
+#[derive(Subcommand)]
+enum ApprovalJournalCommand {
+    /// Walk every record, recompute digests, check the chain.
+    Verify,
 }
 
 // --- harness ---------------------------------------------------------------
@@ -1814,6 +1846,28 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             cli.config.as_deref(),
             printer,
         ),
+
+        Command::Approval(sub) => match sub {
+            ApprovalCommand::Uses { grant_id } => commands::approval::uses(
+                grant_id,
+                cli.config.as_deref(),
+                Format::from_str(&cli.format),
+                printer,
+            ),
+            ApprovalCommand::Status { grant_id } => commands::approval::status(
+                grant_id,
+                cli.config.as_deref(),
+                Format::from_str(&cli.format),
+                printer,
+            ),
+            ApprovalCommand::Journal(j) => match j {
+                ApprovalJournalCommand::Verify => commands::approval::journal_verify(
+                    cli.config.as_deref(),
+                    Format::from_str(&cli.format),
+                    printer,
+                ),
+            },
+        },
 
         Command::Daemon(sub) => match sub {
             DaemonCommand::Start { foreground, no_push } => commands::daemon::start(
