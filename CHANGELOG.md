@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.9.11 (2026-04-30)
+
+The Docs Reliability + Agent Install Clarity release. **No product code.** Closes the docs-side findings from a third-party scan (Kimi) of the live docs surface and from the v0.9.6→v0.9.10 cadence's accumulated drift. Four PRs land on top of v0.9.10's trust-fix; this release wraps them into a versioned cutover so installs and the docs site move in lockstep.
+
+The connective theme: **make Treeship legible to the next AI agent that has to bootstrap it on a strange machine.** Every gap this release closes was something a human or AI would only see at install/inspection time — section roots that 404, CLI commands without reference pages, missing TypeScript SDK page, no single page documenting the registry topology, no post-ship review template. None of these were trust bugs (the v0.9.10 hotfix already closed those); they were UX-of-trust bugs.
+
+### Added (docs reliability)
+
+- **Three new section-root redirects + one alias** in `docs/next.config.mjs` — `/guides → /guides/introduction`, `/concepts → /concepts/trust-fabric`, `/integrations → /integrations/claude-code`, `/hub-api → /api/overview` (alias since the api/ section is titled "Hub API" in nav). The five existing redirects (`/cli`, `/sdk`, `/api`, `/commerce`, `/reference`) were already in production; these three were the genuine gaps.
+- **`scripts/check-docs-routes.py` + `docs-route-health` CI gate.** Static check, no network. Walks every `meta.json` under `docs/content/docs/` and asserts: every advertised page resolves to a real `.mdx` file or sub-section, every section root has either an `index.mdx` or a redirect, every redirect destination resolves to an existing page. Wired into `.github/workflows/ci.yml` as a sibling to `version-consistency`. PRs that delete a doc without updating its `meta.json` — or add a section without a redirect — now fail fast.
+
+### Added (CLI reference catch-up)
+
+- **`/cli/setup`** — `treeship setup [--yes] [--skip-smoke] [--no-instrument] [--format json]`. The orchestrated first-run flow (detect → draft cards → confirm → instrument → smoke). Documents the `Active` vs `Verified` status distinction (smoke promotes Draft → Active; only per-harness smokes write Verified).
+- **`/cli/add`** — `treeship add [agents]... [--all] [--dry-run] [--discover] [--format json]`. The focused instrumenter. Documents the `--discover` read-only mode AI agents use to inspect a machine, with the actual JSON shape the binary emits today.
+- **`/cli/agents`** — `treeship agents {list, review, approve, remove}`. Documents the four-stage status lifecycle (`Draft → NeedsReview → Active → Verified`) and the deterministic `agent_id` derivation. Honest callout that `--format json` returns `{}` today and points readers at the on-disk `~/.treeship/agents/<id>.json` files (which are stable schema-versioned JSON).
+- **`/cli/harness`** — `treeship harness {list, inspect, smoke}`. Documents the manifest/state split that prevents `PotentialCaptures` vs `VerifiedCaptures` confusion, and the privacy posture (record paths, never content).
+- **`/cli/attest`** — replaced the v0.9.6 deferred-Hub callout with the actual v0.9.10 surface: every replay row (`replay-package-local`, `replay-local-journal`, `replay-included-checkpoint`, `replay-hub-org`) and the four bundle-level binding rows (`approval-use-record-digest`, `approval-use-nonce-binding`, `approval-use-action-binding`, `approval-use-chain-continuity`).
+- **`/cli/verify`** — added an Approval Authority replay rows section. What each row proves, the honesty rule (`✓` only when evidence present and verified, `✗` only when present and failed, `-` when absent — never silent pass), and the `--strict` promotion list.
+- **CLI sidebar reordered** so the first-run flow comes first: `init → setup → add → agents → harness → wrap → attest → verify → ...`.
+
+### Added (SDK + install topology)
+
+- **`/sdk/typescript`** at its canonical URL parallel to `/sdk/python`. Previous content of `/sdk/overview` (363 lines of TypeScript SDK reference) renamed without losing material; the new `/sdk/overview` is a true section landing with cards linking to TypeScript, Python, Verify, and MCP.
+- **`/guides/install`** — registry topology page. Documents what's on each registry (npm, PyPI, crates.io, GitHub Releases) **and what's intentionally NOT** with explicit reasoning. AI agents (Codex, Claude, Kimi) sometimes flag `treeship-cli` 404 on crates.io as a release failure; the page has the explicit "this is not a release failure" callout so the next scanner that hits it gets the right answer. Also documents the sandbox / agent-friendly install paths (`npx`, tmpdir + `--config`).
+
+### Added (process)
+
+- **`/guides/dogfood-checklist`** — post-ship review template. Sibling to the release-adversarial discipline at `docs/release-adversarial/README.md` (which itself landed in v0.9.10). The two cover different failure modes: adversarial review hunts trust bypasses an attacker would exploit; dogfood hunts UX gaps a real user would hit. A release passes both gates before it's done. Saves under `docs/dogfood/<version>.md` parallel to `docs/release-adversarial/<version>.md`.
+- **`docs(cli) JSON-shape honesty fix`** baked into PR #60. Where the binary returns `{}` today (`treeship setup --format json`, `treeship agents list --format json`), the docs say so and point at the per-component commands that DO emit rich JSON (`treeship add --discover --format json`, `treeship harness list --format json`). Truth-in-advertising before the agent-mode shape stabilizes.
+
+### Intentionally deferred to a later release
+
+- **Agent-readable receipt page (`/receipt/<id>` SSR + `/receipt/<id>.json` + package download).** Requires the marketing-site (`treeship.dev`) repo, which lives separately from this codebase. Tracked for the next product release.
+- **Python SDK `ensure_cli` / bootstrap helper.** Substantive product work. Tracked for the next product release.
+- **`treeship setup --agent --yes --format json` rich-shape implementation.** Today it returns `{}`; the v0.9.11 docs flag this honestly. The richer shape lands in the next product release.
+- **`treeship session report --share --format json`** returning `{receipt_url, raw_json_url, package_url, receipt_digest, verification_status, warnings}`. Same release.
+
+The next product release theme will be **Agent-Native Bootstrap + Share** — the deferred items above. v0.9.11 makes Treeship's existing surface legible; the next release makes a fresh AI agent able to install, run, share, and verify it without asking a human a clarifying question.
+
+### Verification
+
+This is a docs-only release. Per the release-adversarial cadence policy at `docs/release-adversarial/README.md`, no targeted Codex pass is required — adversarial review is reserved for trust-semantics changes. The release machinery's own gates apply:
+
+- ✅ `python3 scripts/check-release-versions.py 0.9.11` — 21/21 sites at 0.9.11
+- ✅ `python3 scripts/check-docs-routes.py` — 9 meta.json files checked, all routes resolve (the new gate this release adds)
+- ✅ `cargo test --workspace` — every suite green (251 core unit + 17 binding integration + 7 hub-checkpoint integration + everything else, identical to v0.9.10 since no product code changed)
+- ✅ `bash tests/acceptance/trust-fabric.sh` — smoke pass
+
 ## 0.9.10 (2026-04-30)
 
 The Approval Authority patch release. Closes four trust-bypass paths and three adjacent hardenings that a targeted Codex adversarial review of v0.9.9 found in the new approval-evidence surface. **Verifiers running v0.9.9 should upgrade.** v0.9.9 packages still verify under v0.9.10, but the binding rows that v0.9.9 silently passed now report honestly: a v0.9.9 package's `approval-use-action-binding` row will read `not asserted by package` because v0.9.9 didn't ship the action envelopes the binding check needs. Under `--strict`, that's a fail — the intended upgrade signal.
