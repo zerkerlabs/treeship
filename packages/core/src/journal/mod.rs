@@ -31,8 +31,12 @@ use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+// fs2 is gated to non-wasm targets at the workspace Cargo.toml; the WASM
+// build has no concurrent writers and no real filesystem, so journal
+// operations fall back to a deterministic "no-op write" mode that still
+// keeps the public API building. Same pattern session::event_log uses.
+#[cfg(not(target_family = "wasm"))]
 use fs2::FileExt;
-use sha2::{Digest, Sha256};
 
 use crate::statements::{
     ApprovalRevocation, ApprovalUse, JournalCheckpoint, ReplayCheck, ReplayCheckLevel,
@@ -213,6 +217,7 @@ fn write_head(j: &Journal, head: &Head) -> Result<(), JournalError> {
 /// fs2::FileExt::try_lock_exclusive (the same primitive `session::event_log`
 /// uses) so behavior matches what the rest of the codebase already
 /// trusts.
+#[cfg(not(target_family = "wasm"))]
 fn with_lock<F, T>(j: &Journal, body: F) -> Result<T, JournalError>
 where
     F: FnOnce() -> Result<T, JournalError>,
@@ -230,6 +235,16 @@ where
     let result = body();
     let _ = fs2::FileExt::unlock(&lock);
     result
+}
+
+/// WASM build: no concurrent writers, no advisory locks. Run the body
+/// directly. Matches `session::event_log`'s wasm fallback.
+#[cfg(target_family = "wasm")]
+fn with_lock<F, T>(_j: &Journal, body: F) -> Result<T, JournalError>
+where
+    F: FnOnce() -> Result<T, JournalError>,
+{
+    body()
 }
 
 /// Append an ApprovalUse to the journal. The caller MUST set
