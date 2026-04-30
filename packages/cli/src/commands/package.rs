@@ -510,17 +510,119 @@ mod tests {
 
 pub fn verify(
     path: PathBuf,
+    config: Option<&str>,
+    strict: bool,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let checks = verify_package(&path)?;
+    let mut checks = verify_package(&path)?;
+
+    // v0.9.9 PR 4: layer the local-journal replay level on top of the
+    // package-local + included-checkpoint checks core::session::package
+    // already emits. The journal lookup needs workspace context; when
+    // there's no Treeship workspace at all we skip the check rather
+    // than failing -- offline / inbox verification of a bare package
+    // must keep working.
+    if let Ok(ctx_opened) = ctx::open(config) {
+        let journal_dir = ctx_opened.config_path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join("journals")
+            .join("approval-use");
+        let journal = treeship_core::journal::Journal::new(&journal_dir);
+        let bundle = treeship_core::session::read_approvals_bundle(&path)
+            .unwrap_or_default();
+        if !bundle.uses.is_empty() {
+            if !journal.exists() {
+                checks.push(treeship_core::session::VerifyCheck::warn(
+                    "replay-local-journal",
+                    "no local Approval Use Journal in this workspace; package-local replay only",
+                ));
+            } else {
+                let mut detail_parts: Vec<String> = Vec::new();
+                let mut all_pass = true;
+                for u in &bundle.uses {
+                    match treeship_core::journal::find_use_for_action(
+                        &journal,
+                        &u.grant_id,
+                        &u.nonce_digest,
+                        u.max_uses,
+                    ) {
+                        Ok(Some((_rec, replay))) => {
+                            if matches!(replay.passed, Some(false)) {
+                                all_pass = false;
+                                detail_parts.push(format!(
+                                    "use {} exceeds max_uses",
+                                    u.use_id,
+                                ));
+                            } else if let Some(d) = replay.details {
+                                detail_parts.push(d);
+                            }
+                        }
+                        Ok(None) => {
+                            // Journal exists but has no record for
+                            // this nonce. Could be a different
+                            // workspace's package; warn rather than
+                            // fail.
+                            detail_parts.push(format!(
+                                "use {} not present in this workspace's journal",
+                                u.use_id,
+                            ));
+                        }
+                        Err(e) => {
+                            all_pass = false;
+                            detail_parts.push(format!("journal error: {e}"));
+                        }
+                    }
+                }
+                let combined = detail_parts.join("; ");
+                checks.push(if all_pass {
+                    treeship_core::session::VerifyCheck::pass(
+                        "replay-local-journal",
+                        if combined.is_empty() {
+                            "local Approval Use Journal consulted".into()
+                        } else {
+                            combined.clone()
+                        }.as_str(),
+                    )
+                } else {
+                    treeship_core::session::VerifyCheck::fail(
+                        "replay-local-journal",
+                        &combined,
+                    )
+                });
+            }
+        }
+    }
 
     let pass_count = checks.iter().filter(|c| c.status == VerifyStatus::Pass).count();
-    let fail_count = checks.iter().filter(|c| c.status == VerifyStatus::Fail).count();
-    let warn_count = checks.iter().filter(|c| c.status == VerifyStatus::Warn).count();
+    let mut fail_count = checks.iter().filter(|c| c.status == VerifyStatus::Fail).count();
+    let mut warn_count = checks.iter().filter(|c| c.status == VerifyStatus::Warn).count();
+
+    // --strict promotes warnings touching approval evidence to
+    // failures. Existing receipt-determinism / event-log warnings
+    // stay warnings; only the approval rows are promoted, since the
+    // release rule is "strict mode fails on duplicate use, tampered
+    // record, broken checkpoint chain."
+    if strict {
+        let mut promoted = 0usize;
+        for c in checks.iter_mut() {
+            let approval_row = c.name.starts_with("replay-")
+                || c.name == "approval-use-integrity";
+            if approval_row && c.status == VerifyStatus::Warn {
+                c.status = VerifyStatus::Fail;
+                promoted += 1;
+            }
+        }
+        warn_count -= promoted;
+        fail_count += promoted;
+    }
 
     printer.blank();
     printer.section("package verification");
     printer.info(&format!("  package: {}", path.display()));
+    if strict {
+        printer.dim_info("  --strict: approval-evidence warnings promoted to failures");
+    }
     printer.blank();
 
     for check in &checks {
@@ -541,6 +643,7 @@ pub fn verify(
     if fail_count > 0 {
         printer.blank();
         printer.warn("package verification failed", &[]);
+        return Err("package verification failed".into());
     } else {
         printer.blank();
         printer.success("package verified", &[]);

@@ -11,9 +11,16 @@
 
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::receipt::{SessionReceipt, RECEIPT_TYPE};
+use crate::statements::{
+    ApprovalRevocation, ApprovalUse, JournalCheckpoint,
+    ReplayCheck, ReplayCheckLevel,
+    approval_revocation_record_digest, approval_use_record_digest,
+    journal_checkpoint_record_digest,
+};
 
 /// Errors from package operations.
 #[derive(Debug)]
@@ -49,6 +56,76 @@ const ARTIFACTS_DIR: &str = "artifacts";
 const PROOFS_DIR: &str = "proofs";
 const PREVIEW_FILE: &str = "preview.html";
 
+// Approval Authority package layout (v0.9.9 PR 4).
+// approvals/index.json -- top-level index of every approval evidence
+//                          file in this package
+// approvals/grants/<grant_id>.json    -- copy of the signed
+//                          ApprovalStatement envelope (already in
+//                          artifacts/ via the chain; mirrored here for
+//                          single-directory access during verify)
+// approvals/uses/<use_id>.json        -- ApprovalUse record from the
+//                          local journal at session-close time
+// approvals/checkpoints/<id>.json     -- JournalCheckpoint records that
+//                          cover the included uses (PR 6 Hub
+//                          checkpoint signing extends this)
+const APPROVALS_DIR:        &str = "approvals";
+const APPROVALS_GRANTS:     &str = "approvals/grants";
+const APPROVALS_USES:       &str = "approvals/uses";
+const APPROVALS_CHECKPOINTS:&str = "approvals/checkpoints";
+const APPROVALS_INDEX_FILE: &str = "approvals/index.json";
+
+/// Optional approval evidence to embed in the package alongside the
+/// receipt + artifacts. None means "no approvals consumed during this
+/// session, or none worth exporting." Empty vectors mean "we looked and
+/// found nothing"; the resulting package omits the `approvals/` dir
+/// entirely so absence is unambiguous.
+///
+/// Ownership of the evidence stays with the caller: `session::close`
+/// gathers the grant envelopes from the chain, the uses from the local
+/// journal, and any covering checkpoints, then hands them off here.
+#[derive(Debug, Clone, Default)]
+pub struct ApprovalsBundle {
+    /// Bytes of the signed ApprovalStatement envelopes that authorized
+    /// any consumed uses. Each entry is `(grant_id, raw_envelope_json)`.
+    /// Stored verbatim so the package's verifier can re-check the
+    /// signature without re-serializing.
+    pub grants:      Vec<(String, Vec<u8>)>,
+    /// ApprovalUse records pulled from the local journal at close time.
+    /// `action_artifact_id` should be backfilled before passing to
+    /// build_package (see `commands/session.rs`).
+    pub uses:        Vec<ApprovalUse>,
+    /// JournalCheckpoints that cover the included uses. Optional; may
+    /// be empty even when uses are present (PR 6 fills these in).
+    pub checkpoints: Vec<JournalCheckpoint>,
+    /// Explicit revocations we wanted to surface (e.g. a use whose
+    /// grant was revoked after consumption -- the package should still
+    /// show the consumed evidence and the revocation alongside).
+    /// Empty in PR 4; reserved.
+    pub revocations: Vec<ApprovalRevocation>,
+}
+
+/// `approvals/index.json` -- top-level inventory of evidence in the
+/// package. Lets a consumer pre-flight what's there before opening
+/// every file; doubles as a stable shape for downstream tooling.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalsIndex {
+    /// Stable schema marker so future versions can fan out cleanly.
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub schema_version: u32,
+    /// Stable kebab-case ids of grants present. Order matches
+    /// `grants/` filename order.
+    pub grants:      Vec<String>,
+    /// Use ids present.
+    pub uses:        Vec<String>,
+    pub checkpoints: Vec<String>,
+    pub revocations: Vec<String>,
+}
+
+impl ApprovalsIndex {
+    pub fn type_string() -> &'static str { "treeship/approvals-index/v1" }
+}
+
 /// Result of building a package.
 pub struct PackageOutput {
     /// Path to the package directory.
@@ -65,9 +142,25 @@ pub struct PackageOutput {
 ///
 /// Writes all package files into `output_dir/<session_id>.treeship/`.
 /// Returns metadata about the written package.
+///
+/// Backwards-compatible wrapper: callers that don't have approval
+/// evidence to export pass through here unchanged. Callers that do
+/// (`session::close` with consumed approvals) call
+/// `build_package_with_approvals` directly.
 pub fn build_package(
     receipt: &SessionReceipt,
     output_dir: &Path,
+) -> Result<PackageOutput, PackageError> {
+    build_package_with_approvals(receipt, output_dir, None)
+}
+
+/// Like `build_package` but also embeds approval evidence (PR 4 of v0.9.9).
+/// `bundle = None` is identical to `build_package`; the `approvals/`
+/// directory is omitted entirely so absence stays unambiguous.
+pub fn build_package_with_approvals(
+    receipt: &SessionReceipt,
+    output_dir: &Path,
+    bundle: Option<&ApprovalsBundle>,
 ) -> Result<PackageOutput, PackageError> {
     let session_id = &receipt.session.id;
     let pkg_dir = output_dir.join(format!("{session_id}.treeship"));
@@ -111,12 +204,150 @@ pub fn build_package(
         file_count += 1;
     }
 
+    // 6. Approval evidence (v0.9.9 PR 4). Only writes when the caller
+    // supplied a bundle AND that bundle has at least one entry; an empty
+    // bundle behaves the same as None so a session with no consumed
+    // approvals doesn't leave behind an empty `approvals/` directory.
+    if let Some(b) = bundle {
+        if !b.grants.is_empty() || !b.uses.is_empty() || !b.checkpoints.is_empty() || !b.revocations.is_empty() {
+            std::fs::create_dir_all(pkg_dir.join(APPROVALS_GRANTS))?;
+            std::fs::create_dir_all(pkg_dir.join(APPROVALS_USES))?;
+            std::fs::create_dir_all(pkg_dir.join(APPROVALS_CHECKPOINTS))?;
+
+            let mut grant_ids = Vec::with_capacity(b.grants.len());
+            for (grant_id, envelope_bytes) in &b.grants {
+                let safe = sanitize_filename(grant_id);
+                std::fs::write(
+                    pkg_dir.join(APPROVALS_GRANTS).join(format!("{safe}.json")),
+                    envelope_bytes,
+                )?;
+                grant_ids.push(grant_id.clone());
+                file_count += 1;
+            }
+
+            let mut use_ids = Vec::with_capacity(b.uses.len());
+            for u in &b.uses {
+                let safe = sanitize_filename(&u.use_id);
+                let bytes = serde_json::to_vec_pretty(u)?;
+                std::fs::write(
+                    pkg_dir.join(APPROVALS_USES).join(format!("{safe}.json")),
+                    &bytes,
+                )?;
+                use_ids.push(u.use_id.clone());
+                file_count += 1;
+            }
+
+            let mut checkpoint_ids = Vec::with_capacity(b.checkpoints.len());
+            for cp in &b.checkpoints {
+                let safe = sanitize_filename(&cp.checkpoint_id);
+                let bytes = serde_json::to_vec_pretty(cp)?;
+                std::fs::write(
+                    pkg_dir.join(APPROVALS_CHECKPOINTS).join(format!("{safe}.json")),
+                    &bytes,
+                )?;
+                checkpoint_ids.push(cp.checkpoint_id.clone());
+                file_count += 1;
+            }
+
+            let mut revocation_ids = Vec::with_capacity(b.revocations.len());
+            for rev in &b.revocations {
+                let safe = sanitize_filename(&rev.revocation_id);
+                let bytes = serde_json::to_vec_pretty(rev)?;
+                std::fs::write(
+                    pkg_dir.join(APPROVALS_DIR).join(format!("revocations-{safe}.json")),
+                    &bytes,
+                )?;
+                revocation_ids.push(rev.revocation_id.clone());
+                file_count += 1;
+            }
+
+            let index = ApprovalsIndex {
+                type_:          ApprovalsIndex::type_string().into(),
+                schema_version: 1,
+                grants:         grant_ids,
+                uses:           use_ids,
+                checkpoints:    checkpoint_ids,
+                revocations:    revocation_ids,
+            };
+            let index_bytes = serde_json::to_vec_pretty(&index)?;
+            std::fs::write(pkg_dir.join(APPROVALS_INDEX_FILE), &index_bytes)?;
+            file_count += 1;
+        }
+    }
+
     Ok(PackageOutput {
         path: pkg_dir,
         receipt_digest,
         merkle_root: receipt.merkle.root.clone(),
         file_count,
     })
+}
+
+/// Sanitize an id (artifact_id, use_id, checkpoint_id) into a filesystem-safe
+/// filename. Underscores everything that isn't alphanumeric, dash, or dot.
+/// Not a security boundary; the digest chain is the integrity check.
+fn sanitize_filename(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_' { c } else { '_' })
+        .collect()
+}
+
+/// Read approval evidence embedded in a package, if any. Returns
+/// `Ok(ApprovalsBundle::default())` when the package has no `approvals/`
+/// directory (the typical case for sessions that didn't consume any
+/// scoped approvals). Errors only on malformed JSON inside files that
+/// the index claims exist.
+///
+/// Quiet on missing-directory by design: PR 4 packages and pre-PR-4
+/// packages should both round-trip through verify without spurious
+/// failures.
+pub fn read_approvals_bundle(pkg_dir: &Path) -> Result<ApprovalsBundle, PackageError> {
+    let approvals_dir = pkg_dir.join(APPROVALS_DIR);
+    if !approvals_dir.is_dir() {
+        return Ok(ApprovalsBundle::default());
+    }
+
+    let mut bundle = ApprovalsBundle::default();
+
+    // Grants are raw envelopes by file; we don't parse here, the
+    // verify layer can re-check the signature.
+    let grants_dir = pkg_dir.join(APPROVALS_GRANTS);
+    if grants_dir.is_dir() {
+        for entry in std::fs::read_dir(&grants_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("json") { continue; }
+            let id = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+            let bytes = std::fs::read(&path)?;
+            bundle.grants.push((id, bytes));
+        }
+    }
+
+    let uses_dir = pkg_dir.join(APPROVALS_USES);
+    if uses_dir.is_dir() {
+        for entry in std::fs::read_dir(&uses_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("json") { continue; }
+            let bytes = std::fs::read(&path)?;
+            let u: ApprovalUse = serde_json::from_slice(&bytes)?;
+            bundle.uses.push(u);
+        }
+    }
+
+    let cps_dir = pkg_dir.join(APPROVALS_CHECKPOINTS);
+    if cps_dir.is_dir() {
+        for entry in std::fs::read_dir(&cps_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("json") { continue; }
+            let bytes = std::fs::read(&path)?;
+            let cp: JournalCheckpoint = serde_json::from_slice(&bytes)?;
+            bundle.checkpoints.push(cp);
+        }
+    }
+
+    Ok(bundle)
 }
 
 /// Read and parse a `.treeship` package from disk.
@@ -263,7 +494,152 @@ pub fn verify_package(pkg_dir: &Path) -> Result<Vec<VerifyCheck>, PackageError> 
         ));
     }
 
+    // 8. Approval evidence -- v0.9.9 PR 4. Three independent replay
+    // checks, each emitted as its own VerifyCheck row so the printer
+    // (and downstream tooling) can render them separately.
+    //
+    //   replay-package-local      duplicate uses INSIDE this package
+    //   replay-included-checkpoint  embedded JournalCheckpoints verify standalone
+    //
+    // The local-journal level requires access to the workspace journal,
+    // which the package alone doesn't carry; that check runs in the CLI
+    // verify_package wrapper that has Ctx access. The hub-org level is
+    // reserved for PR 6 -- not claimed without a real Hub checkpoint.
+    let bundle = read_approvals_bundle(pkg_dir).unwrap_or_default();
+    add_approval_evidence_checks(&mut checks, &bundle);
+
     Ok(checks)
+}
+
+/// Emit the package-local + included-checkpoint replay checks. Both are
+/// fully offline: package-local scans the embedded uses for duplicates;
+/// included-checkpoint walks the embedded checkpoint records and
+/// re-derives each `record_digest` against its stored value.
+///
+/// The local-journal check is NOT here -- it requires workspace access
+/// and is added by the CLI wrapper in `commands/package.rs` that has the
+/// resolved config_path. Keeping these two pure means an offline tool
+/// (Hub-side validator, third-party verifier) can run the same checks
+/// without needing a Treeship workspace.
+pub(crate) fn add_approval_evidence_checks(
+    checks: &mut Vec<VerifyCheck>,
+    bundle: &ApprovalsBundle,
+) {
+    if bundle.uses.is_empty() && bundle.checkpoints.is_empty() {
+        // Nothing to assert. Stay quiet rather than emit a "skipped"
+        // row -- session packages without approvals shouldn't drag in
+        // approval rows by accident.
+        return;
+    }
+
+    // -- replay-package-local --
+    // Two distinct violation cases inside the package:
+    //   (a) uses sharing (grant_id, nonce_digest) EXCEED max_uses on
+    //       that grant. Two uses of a max_uses=2 grant is fine; three
+    //       is the violation. max_uses is read from the use record's
+    //       own `max_uses` field (a snapshot from consume time).
+    //   (b) two ApprovalUse records with the same use_id -- a copy
+    //       artifact from a corrupt build, never legitimate.
+    use std::collections::HashMap;
+    let mut by_nonce: HashMap<(String, String), Vec<&ApprovalUse>> = HashMap::new();
+    let mut by_use_id: HashMap<&str, Vec<&ApprovalUse>> = HashMap::new();
+    for u in &bundle.uses {
+        by_nonce
+            .entry((u.grant_id.clone(), u.nonce_digest.clone()))
+            .or_default()
+            .push(u);
+        by_use_id.entry(&u.use_id).or_default().push(u);
+    }
+    let over_max: Vec<((String, String), Vec<&ApprovalUse>, u32)> = by_nonce
+        .iter()
+        .filter_map(|(key, uses)| {
+            let max = uses.iter().filter_map(|u| u.max_uses).next()?;
+            if (uses.len() as u32) > max {
+                Some((key.clone(), uses.iter().map(|u| *u).collect(), max))
+            } else {
+                None
+            }
+        })
+        .collect();
+    let dup_use_ids: Vec<(&&str, &Vec<&ApprovalUse>)> =
+        by_use_id.iter().filter(|(_, v)| v.len() > 1).collect();
+
+    if over_max.is_empty() && dup_use_ids.is_empty() {
+        checks.push(VerifyCheck::pass(
+            "replay-package-local",
+            &format!("no duplicate approval use inside package ({} uses scanned)", bundle.uses.len()),
+        ));
+    } else {
+        let mut detail = String::from("package-local replay violation:");
+        for ((grant_id, _nd), uses, max) in &over_max {
+            detail.push_str(&format!(
+                " grant {grant_id} consumed {} times in this package (max_uses={max});",
+                uses.len(),
+            ));
+        }
+        for (uid, uses) in &dup_use_ids {
+            detail.push_str(&format!(" use_id {uid} appears {} times;", uses.len()));
+        }
+        checks.push(VerifyCheck::fail("replay-package-local", &detail));
+    }
+
+    // -- replay-included-checkpoint --
+    // For each checkpoint, recompute its record_digest from canonical
+    // form. If the stored digest doesn't match, the checkpoint was
+    // tampered after sealing.
+    if !bundle.checkpoints.is_empty() {
+        let mut tampered = Vec::new();
+        for cp in &bundle.checkpoints {
+            let recomputed = journal_checkpoint_record_digest(cp);
+            if recomputed != cp.record_digest {
+                tampered.push((cp.checkpoint_id.clone(), cp.record_digest.clone(), recomputed));
+            }
+        }
+        if tampered.is_empty() {
+            checks.push(VerifyCheck::pass(
+                "replay-included-checkpoint",
+                &format!("{} included journal checkpoint(s) verify offline", bundle.checkpoints.len()),
+            ));
+        } else {
+            let detail = tampered.iter()
+                .map(|(id, expected, actual)| {
+                    format!("checkpoint {id} tampered (stored {expected}, recomputed {actual})")
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
+            checks.push(VerifyCheck::fail("replay-included-checkpoint", &detail));
+        }
+    }
+
+    // -- per-use record-digest integrity --
+    // Even without a checkpoint, each ApprovalUse carries its own
+    // record_digest; tampering with any field changes the digest.
+    let mut tampered_uses = Vec::new();
+    for u in &bundle.uses {
+        let recomputed = approval_use_record_digest(u);
+        if recomputed != u.record_digest {
+            tampered_uses.push((u.use_id.clone(), u.record_digest.clone(), recomputed));
+        }
+    }
+    if !tampered_uses.is_empty() {
+        let detail = tampered_uses.iter()
+            .map(|(id, expected, actual)| {
+                format!("use {id} tampered (stored {expected}, recomputed {actual})")
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        checks.push(VerifyCheck::fail("approval-use-integrity", &detail));
+    }
+
+    // -- replay-hub-org -- intentionally NOT emitted.
+    // PR 6 will add a signed-Hub-checkpoint check that produces this
+    // row when (and only when) such evidence exists. Adding nothing
+    // here is the right call: the printer should not render
+    // "global single-use" without signed proof, and a missing row is
+    // honestly silent rather than falsely passing.
+    let _ = ReplayCheckLevel::HubOrg; // keep import live; PR 6 binds this
+    let _ = approval_revocation_record_digest as fn(&ApprovalRevocation) -> String; // PR 5 binds
+    let _ = ReplayCheck::not_performed; // PR 5 binds
 }
 
 /// A single verification check result.
