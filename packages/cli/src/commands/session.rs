@@ -1275,6 +1275,9 @@ fn find_package_for_session(session_id: &str) -> Option<PathBuf> {
 pub fn report(
     session_id: Option<String>,
     config: Option<&str>,
+    format: &str,
+    no_upload: bool,
+    _share: bool, // accepted for `--share` compatibility; report is always sharing
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // 1. Resolve which package to upload.
@@ -1296,22 +1299,84 @@ pub fn report(
     let receipt_bytes = std::fs::read(&receipt_path)
         .map_err(|e| format!("failed to read {}: {e}", receipt_path.display()))?;
 
+    // Compute receipt_digest locally. This matches the canonical
+    // sha256 a downstream consumer would compute on the same bytes.
+    use sha2::{Digest, Sha256};
+    let receipt_digest = format!("sha256:{}", hex::encode(Sha256::digest(&receipt_bytes)));
+
+    // Compute package_digest as a content-addressed manifest digest:
+    // sha256 of "<relpath>:<sha256-of-content>\n" lines for every file
+    // in the package, sorted by path. Reproducible across builds and
+    // doesn't depend on tar/gzip non-determinism. The marketing-site
+    // `/receipt/<id>/package` route serves a tarball with its own
+    // separate hash; this digest is for offline use ("here's a sha256
+    // a verifier can use to confirm two clones of the same package
+    // are identical"). Empty when the package directory walk fails
+    // (e.g., partial close).
+    let package_digest = compute_package_manifest_digest(&pkg_dir).ok();
+
+    // Run local verification BEFORE attempting upload so we can
+    // populate verification_status and warnings whether or not the
+    // hub is reachable. The CLI reuses treeship_core's package verify
+    // -- same checks the offline verifier runs.
+    let (verification_status, warnings) =
+        local_verify_summary(&pkg_dir);
+
     // 3. Resolve the active hub connection.
     //
     // If the user hasn't attached a hub yet they'll hit this path right
     // after a successful `session close`, expecting `session report` to
     // "share the receipt." The default resolve_hub error mentions
     // `treeship hub attach` (a one-time browser flow), but that's a
-    // commitment some users don't want to make. Wrap the error with
-    // a session-report-specific recovery: hub attach for the share path,
-    // OR `package verify` for fully-local verification of the same
-    // sealed receipt. Either path keeps the receipt useful.
+    // commitment some users don't want to make. With --no-upload, we
+    // skip the hub entirely and return the agent-native shape with
+    // null URL fields (the receipt is still verifiable locally).
+    if no_upload {
+        return emit_report_output(
+            format,
+            None,
+            None,
+            None,
+            &resolved_id,
+            &receipt_digest,
+            package_digest.as_deref(),
+            &verification_status,
+            &warnings,
+            None,
+            None,
+            printer,
+        );
+    }
+
     let ctx = ctx::open(config)?;
-    let (hub_name, hub_entry) = ctx
-        .config
-        .resolve_hub(None)
-        .map_err(|e| -> Box<dyn std::error::Error> {
-            format!(
+    let hub_resolved = ctx.config.resolve_hub(None);
+    let (hub_name, hub_entry) = match hub_resolved {
+        Ok(t) => t,
+        Err(e) => {
+            // No hub attached. In `--format json` we degrade to a
+            // local-only response so AI agents can still consume the
+            // shape; in text mode we keep the original recovery
+            // hint that points the user at `hub attach` or local
+            // verify.
+            if format == "json" {
+                return emit_report_output(
+                    format,
+                    None,
+                    None,
+                    None,
+                    &resolved_id,
+                    &receipt_digest,
+                    package_digest.as_deref(),
+                    &verification_status,
+                    &warnings,
+                    Some(&format!(
+                        "hub not attached -- run `treeship hub attach` to publish; receipt verifies locally"
+                    )),
+                    None,
+                    printer,
+                );
+            }
+            return Err(format!(
                 "{e}\n\n  \
                  To publish (one-time browser flow):\n    \
                  treeship hub attach\n    \
@@ -1319,20 +1384,39 @@ pub fn report(
                  Or skip publishing and verify the sealed receipt locally:\n    \
                  treeship package verify {}",
                 pkg_dir.display(),
-            ).into()
-        })?;
+            ).into());
+        }
+    };
 
-    let hub_secret_hex = hub_entry
-        .hub_secret_key
-        .as_deref()
-        .ok_or_else(|| -> Box<dyn std::error::Error> {
-            format!(
+    let hub_secret_hex = match hub_entry.hub_secret_key.as_deref() {
+        Some(s) => s,
+        None => {
+            if format == "json" {
+                return emit_report_output(
+                    format,
+                    None,
+                    None,
+                    None,
+                    &resolved_id,
+                    &receipt_digest,
+                    package_digest.as_deref(),
+                    &verification_status,
+                    &warnings,
+                    Some(&format!(
+                        "hub connection '{hub_name}' has no hub_secret_key -- run `treeship hub attach`"
+                    )),
+                    None,
+                    printer,
+                );
+            }
+            return Err(format!(
                 "no hub_secret_key for connection '{hub_name}' -- run: treeship hub attach\n\n  \
                  Or verify the sealed receipt locally without publishing:\n    \
                  treeship package verify {}",
                 pkg_dir.display(),
-            ).into()
-        })?;
+            ).into());
+        }
+    };
 
     // 4. Build the PUT URL and DPoP proof.
     let put_url = format!("{}/v1/receipt/{}", hub_entry.endpoint, resolved_id);
@@ -1351,30 +1435,250 @@ pub fn report(
             let detail: serde_json::Value = r
                 .into_json()
                 .unwrap_or_else(|_| serde_json::json!({"error": "unknown"}));
-            let msg = detail["error"].as_str().unwrap_or("unknown error");
+            let msg = detail["error"].as_str().unwrap_or("unknown error").to_string();
+            if format == "json" {
+                return emit_report_output(
+                    format,
+                    None,
+                    None,
+                    None,
+                    &resolved_id,
+                    &receipt_digest,
+                    package_digest.as_deref(),
+                    &verification_status,
+                    &warnings,
+                    Some(&format!("hub returned {code}: {msg}")),
+                    None,
+                    printer,
+                );
+            }
             return Err(format!("hub returned {code}: {msg}").into());
         }
-        Err(e) => return Err(format!("failed to upload receipt: {e}").into()),
+        Err(e) => {
+            if format == "json" {
+                return emit_report_output(
+                    format,
+                    None,
+                    None,
+                    None,
+                    &resolved_id,
+                    &receipt_digest,
+                    package_digest.as_deref(),
+                    &verification_status,
+                    &warnings,
+                    Some(&format!("failed to upload receipt: {e}")),
+                    None,
+                    printer,
+                );
+            }
+            return Err(format!("failed to upload receipt: {e}").into());
+        }
     };
 
     let receipt_url = resp_json["receipt_url"]
         .as_str()
         .map(|s| s.to_string())
-        .unwrap_or_else(|| format!("https://treeship.dev/receipt/{resolved_id}"));
+        .unwrap_or_else(|| format!("https://www.treeship.dev/receipt/{resolved_id}"));
     let agents = resp_json["agents"].as_u64().unwrap_or(0);
     let events = resp_json["events"].as_u64().unwrap_or(0);
 
-    printer.blank();
-    printer.success("session receipt uploaded", &[]);
-    printer.info(&format!("  hub:      {}", hub_name));
-    printer.info(&format!("  session:  {}", resolved_id));
-    printer.info(&format!("  agents:   {}", agents));
-    printer.info(&format!("  events:   {}", events));
-    printer.blank();
-    printer.info(&format!("  receipt:  {}", receipt_url));
-    printer.blank();
-    printer.hint("share this URL freely -- it never expires and needs no auth");
-    printer.blank();
+    // Derive the raw JSON URL and package download URL from the
+    // receipt URL's origin. The marketing site routes them at known
+    // paths (PR 2 / PR 3 of this same release).
+    let (raw_json_url, package_download_url) = derive_share_urls(&receipt_url, &resolved_id);
+
+    emit_report_output(
+        format,
+        Some(&receipt_url),
+        Some(&raw_json_url),
+        Some(&package_download_url),
+        &resolved_id,
+        &receipt_digest,
+        package_digest.as_deref(),
+        &verification_status,
+        &warnings,
+        None,
+        Some((hub_name.as_ref(), agents, events)),
+        printer,
+    )
+}
+
+/// Derive `raw_json_url` and `package_download_url` from a hub-issued
+/// `receipt_url`. The convention: the marketing site serves
+///   /receipt/<id>             (the SSR page)
+///   /api/receipt/<id>         (raw JSON proxy of the hub receipt)
+///   /api/receipt/<id>/agent   (agent-native curated JSON)
+///   /receipt/<id>/package     (downloadable .treeship.tar.gz)
+///
+/// Stripping `/receipt/<id>` from the receipt_url gives us the origin;
+/// we attach the canonical paths from there. Falls back to
+/// www.treeship.dev when the receipt_url's origin can't be parsed.
+fn derive_share_urls(receipt_url: &str, session_id: &str) -> (String, String) {
+    // Find "/receipt/" in the URL and split there.
+    let origin = match receipt_url.find("/receipt/") {
+        Some(idx) => &receipt_url[..idx],
+        None => "https://www.treeship.dev",
+    };
+    let raw  = format!("{origin}/api/receipt/{session_id}");
+    let pkg  = format!("{origin}/receipt/{session_id}/package");
+    (raw, pkg)
+}
+
+/// Compute a content-addressed manifest digest for a package
+/// directory. Walks the dir, hashes each file's content, then hashes
+/// the sorted "<relpath>:<sha256_hex>\n" lines. Stable across builds.
+fn compute_package_manifest_digest(pkg_dir: &Path) -> std::io::Result<String> {
+    use sha2::{Digest, Sha256};
+    fn walk(root: &Path, dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                walk(root, &path, files)?;
+            } else {
+                files.push(path);
+            }
+        }
+        Ok(())
+    }
+    let mut files = Vec::new();
+    walk(pkg_dir, pkg_dir, &mut files)?;
+    files.sort();
+    let mut manifest = String::new();
+    for f in &files {
+        let rel = f.strip_prefix(pkg_dir).unwrap_or(f).to_string_lossy().replace('\\', "/");
+        let bytes = std::fs::read(f)?;
+        let h     = Sha256::digest(&bytes);
+        manifest.push_str(&format!("{rel}:{}\n", hex::encode(h)));
+    }
+    let final_h = Sha256::digest(manifest.as_bytes());
+    Ok(format!("sha256:{}", hex::encode(final_h)))
+}
+
+/// Run `verify_package` on the local package directory and project the
+/// result into the agent-native (status, warnings) tuple. status is
+/// one of "pass" / "warn" / "fail"; warnings is the list of failed
+/// or warning row names + details.
+fn local_verify_summary(pkg_dir: &Path) -> (String, Vec<serde_json::Value>) {
+    use treeship_core::session::{verify_package, VerifyStatus};
+    let checks = match verify_package(pkg_dir) {
+        Ok(c)  => c,
+        Err(_) => return ("fail".into(), vec![serde_json::json!({
+            "kind": "verify-error",
+            "headline": "package verify failed to run",
+        })]),
+    };
+    let mut any_fail = false;
+    let mut warnings = Vec::new();
+    for c in &checks {
+        match c.status {
+            VerifyStatus::Pass => {}
+            VerifyStatus::Warn => {
+                warnings.push(serde_json::json!({
+                    "kind":     c.name,
+                    "headline": c.detail,
+                    "status":   "warn",
+                }));
+            }
+            VerifyStatus::Fail => {
+                any_fail = true;
+                warnings.push(serde_json::json!({
+                    "kind":     c.name,
+                    "headline": c.detail,
+                    "status":   "fail",
+                }));
+            }
+        }
+    }
+    let status = if any_fail {
+        "fail"
+    } else if !warnings.is_empty() {
+        "warn"
+    } else {
+        "pass"
+    };
+    (status.into(), warnings)
+}
+
+/// Print the report output in the requested format.
+#[allow(clippy::too_many_arguments)]
+fn emit_report_output(
+    format: &str,
+    receipt_url: Option<&str>,
+    raw_json_url: Option<&str>,
+    package_download_url: Option<&str>,
+    session_id: &str,
+    receipt_digest: &str,
+    package_digest: Option<&str>,
+    verification_status: &str,
+    warnings: &[serde_json::Value],
+    error: Option<&str>,
+    upload_summary: Option<(&str, u64, u64)>,
+    printer: &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if format == "json" {
+        // Agent-native JSON shape -- the contract the user prompt
+        // specified. Fields stay null (not absent) when the data
+        // isn't available; consumers can branch on presence without
+        // guessing whether a field was renamed.
+        let body = serde_json::json!({
+            "schema":               "treeship/share-result/v1",
+            "session_id":           session_id,
+            "receipt_url":          receipt_url,
+            "raw_json_url":         raw_json_url,
+            "package_download_url": package_download_url,
+            "receipt_digest":       receipt_digest,
+            "package_digest":       package_digest,
+            "verification_status":  verification_status,
+            "warnings":             warnings,
+            "error":                error,
+        });
+        println!("{}", serde_json::to_string_pretty(&body)?);
+        return Ok(());
+    }
+
+    // Text mode: keep the existing user-friendly summary, plus the
+    // agent-readable URLs for completeness.
+    if let Some((hub_name, agents, events)) = upload_summary {
+        printer.blank();
+        printer.success("session receipt uploaded", &[]);
+        printer.info(&format!("  hub:      {hub_name}"));
+        printer.info(&format!("  session:  {session_id}"));
+        printer.info(&format!("  agents:   {agents}"));
+        printer.info(&format!("  events:   {events}"));
+        printer.blank();
+        if let Some(url) = receipt_url {
+            printer.info(&format!("  receipt:  {url}"));
+        }
+        if let Some(url) = raw_json_url {
+            printer.info(&format!("  raw json: {url}"));
+        }
+        if let Some(url) = package_download_url {
+            printer.info(&format!("  package:  {url}"));
+        }
+        printer.info(&format!("  verify:   {verification_status}"));
+        if !warnings.is_empty() {
+            printer.info(&format!("  warnings: {}", warnings.len()));
+        }
+        printer.blank();
+        printer.hint("share these URLs freely -- they never expire and need no auth");
+        printer.blank();
+    } else {
+        // No upload (--no-upload or hub error in text mode is unusual
+        // but we keep a reasonable summary).
+        printer.blank();
+        printer.info("session receipt (local only)");
+        printer.info(&format!("  session:  {session_id}"));
+        printer.info(&format!("  digest:   {receipt_digest}"));
+        if let Some(d) = package_digest {
+            printer.info(&format!("  package:  {d}"));
+        }
+        printer.info(&format!("  verify:   {verification_status}"));
+        if let Some(err) = error {
+            printer.info(&format!("  note:     {err}"));
+        }
+        printer.blank();
+    }
 
     Ok(())
 }

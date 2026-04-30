@@ -102,7 +102,7 @@ pub fn run(
             printer.blank();
             return Ok(());
         }
-        let report_result = super::session::report(None, config, printer);
+        let report_result = super::session::report(None, config, "text", false, false, printer);
         if let Err(e) = report_result {
             printer.warn(&format!("Report failed: {}", e), &[]);
             printer.hint("Run: treeship session report  to try again");
