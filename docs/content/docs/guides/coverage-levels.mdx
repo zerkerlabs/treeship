@@ -1,0 +1,115 @@
+---
+title: Coverage levels
+description: What each harness coverage tier actually claims — and what it doesn't.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+A harness's **coverage level** is a one-word promise about how much of an agent's behavior Treeship can observe through that harness. Each level documents both what it captures *and what it doesn't*, so readers of a session report aren't surprised by gaps.
+
+| Level | What's captured | Backstops | Typical harnesses |
+|---|---|---|---|
+| **High** | files.read, files.write, commands.run, mcp.call, model/provider | git-reconcile | Claude Code (native hook + MCP) |
+| **Medium** | files.write, commands.run, mcp.call (no files.read, no model attribution by default) | git-reconcile | Cursor, Cline, Codex, Hermes, OpenClaw, Ninja Dev |
+| **Basic** | files.write (via backstop), command boundary only | git-reconcile is doing most of the work | Shell-wrap custom agents, SuperNinja remote |
+| **Backstop only** | files.write only, after the fact | git-reconcile alone | Manual / unknown agents working in the same workspace |
+
+## Potential vs verified
+
+A harness manifest's coverage level is a *potential*: what the harness could capture if attached and working as designed. It is **not** a claim that the harness has actually captured anything in your workspace.
+
+Run `treeship harness inspect <id>` and you'll see two distinct rows:
+
+```
+potential captures (when attached and working):
+  files.read     yes
+  files.write    yes
+  commands.run   yes
+  mcp.call       yes
+  model/provider yes
+
+verified captures (proven by harness-specific smoke):
+  (none yet -- run a real session through this harness)
+```
+
+The `verified captures` row only fills in when a smoke session has exercised that specific signal end-to-end through the harness's own capture path. v0.9.8's `treeship setup` smoke is generic — it proves Treeship's signing pipeline works, not that Claude's native hook fired. Setup leaves verified captures empty and promotes harnesses to **Instrumented** rather than **Verified**.
+
+<Callout type="info">
+**The semantic split is enforced at the type level.** `PotentialCaptures` is `bool` per signal; `VerifiedCaptures` is `Option<bool>`. Nothing in the codebase can render one in the other's slot.
+</Callout>
+
+## High coverage in detail
+
+The Claude Code native hook harness is currently the only **high-coverage** integration. It captures:
+
+| Signal | How |
+|---|---|
+| **files.read** | PostToolUse hook fires on Read; `agent.read_file` event records path + digest. |
+| **files.write** | PostToolUse hook fires on Write/Edit; `agent.wrote_file` records path, digest, op (`created` / `modified` / `deleted`), additions/deletions. |
+| **commands.run** | PostToolUse hook fires on Bash; `agent.ran_process` records command (sanitized), exit code, duration. |
+| **mcp.call** | The bundled `@treeship/mcp` server records every MCP-routed tool call with sanitized inputs. |
+| **model/provider** | SessionEnd hook records the model that produced the session (`claude-opus-4-7`, etc.) and provider (`anthropic`). |
+
+Known gap: tools the user invokes manually inside a Bash command (e.g. `sed -i ...`) don't fire a per-tool hook. The git-reconcile backstop catches the resulting file changes at session close, tagging them with `[git-reconcile]` instead of `[hook]`.
+
+## Medium coverage in detail
+
+MCP harnesses (Cursor, Codex, Cline, Ninja Dev, generic-mcp) capture **what passes through MCP**:
+
+| Signal | How |
+|---|---|
+| **files.write** | MCP tool calls that touch files (`write_file`, `edit_file`) record path + digest. |
+| **commands.run** | MCP tool calls that exec processes record command + exit code. |
+| **mcp.call** | Every MCP-routed tool invocation is recorded with tool name and sanitized inputs. |
+| **files.read** | *Not captured by default.* Some clients route reads through MCP (Cursor's editor read). Most don't. |
+| **model/provider** | *Not captured by default.* Set via `meta.model` if the client emits it. |
+
+Known gap: anything the agent does outside the MCP channel (built-in editor actions, direct shell commands the IDE never routes through MCP) doesn't appear unless `treeship wrap` was used or git-reconcile catches the file change.
+
+Skill harnesses (Hermes, OpenClaw) work differently: they install a `SKILL.md` that tells the agent what to capture. Coverage depends on whether the agent reads the skill and follows its instructions; Treeship measures actual capture honestly via `verified_captures`.
+
+## Basic coverage in detail
+
+Shell-wrap and SuperNinja-remote harnesses see only the command boundary:
+
+| Signal | How |
+|---|---|
+| **files.write** | git-reconcile at session close — the agent's edits are visible only as a `git diff` against `HEAD`. |
+| **commands.run** | `treeship wrap -- <cmd>` records start/end + exit code. **Not the command line itself by default** — Treeship sanitizes that to avoid leaking secrets. |
+| **All other signals** | Not captured. |
+
+Known gap: an attacker (or a confused agent) could write files outside the workspace, set environment variables, or make network calls; only files.write under the workspace is recovered.
+
+## Backstop only
+
+git-reconcile in isolation. The session is essentially a "what did the workspace look like before vs after" diff. Useful as a last resort when nothing else is wired; not enough to prove what an agent did, only what happened in the directory.
+
+## How to raise coverage
+
+| Have | Want | How |
+|---|---|---|
+| **Cursor (medium)** | high | Cursor doesn't currently expose a native hook surface. The MCP-routed signals are the practical ceiling. |
+| **Codex (medium)** | high | Same — Codex's tool surface is MCP. |
+| **SuperNinja (basic)** | medium / high | Wait for v0.9.9's `treeship agent invite` / `treeship join --invite` so Treeship can run inside the remote VM. |
+| **Custom shell-wrap (basic)** | medium | Add an MCP server in front of your custom agent and route tool calls through it; `treeship harness inspect generic-mcp` for the shape. |
+
+## Reading coverage in a session report
+
+`treeship package inspect <pkg>` renders the harness coverage panel as part of the report:
+
+```
+harness coverage (4 attached)
+  Claude Code Native Hook Harness  (instrumented, coverage: high)
+    potential: read=y write=y cmd=y mcp=y model=y
+    verified:  (none yet -- run a real session through this harness)
+    last smoke (pass): setup generic trust-fabric smoke ok (does not prove harness-specific capture)
+    gap: Built-in tools the user invokes outside hooks (manual sed inside Bash) rely on git-reconcile.
+```
+
+Read top-to-bottom: `potential` is the harness's design, `verified` is your workspace's evidence. `last smoke` says exactly what was tested. `gap` lists the honest limits.
+
+## See also
+
+- [Agent Harnesses](/docs/concepts/harnesses)
+- [Agent Cards](/docs/concepts/agent-cards)
+- Integration-specific coverage details: [Claude Code](/docs/integrations/claude-code), [Cursor](/docs/integrations/cursor), [Codex](/docs/integrations/codex), [NinjaTech](/docs/integrations/ninjatech)

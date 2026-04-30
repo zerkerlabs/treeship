@@ -1,4 +1,4 @@
 {
   "title": "Concepts",
-  "pages": ["trust-fabric", "trust-model", "artifacts", "session-receipts", "agent-identity", "cross-verification", "command-artifacts", "zero-knowledge", "glossary", "security"]
+  "pages": ["trust-fabric", "trust-model", "agent-cards", "harnesses", "artifacts", "session-receipts", "agent-identity", "cross-verification", "command-artifacts", "zero-knowledge", "glossary", "security"]
 }

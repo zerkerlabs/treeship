@@ -1,0 +1,143 @@
+---
+title: First run
+description: From install to first signed receipt in five minutes. Local agents first, remote/VPS attach as an optional second step.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+The fastest path to a signed receipt is a single `treeship setup`. It detects the agents on your machine, draft Agent Cards for each, instruments the ones it can attach to, runs a smoke session to prove the trust-fabric pipeline works, and points you at `treeship session start` to capture your first real run.
+
+> Harnesses make agents observable. Cards make agents accountable. Receipts make their work verifiable.
+
+## Local agents first
+
+<Steps>
+
+<Step>
+
+### Install Treeship
+
+```bash
+npm install -g treeship
+```
+
+Or via Homebrew, Cargo, or the binary download — see [installation](/docs/guides/quickstart#install).
+
+</Step>
+
+<Step>
+
+### Initialize the workspace
+
+```bash
+treeship init
+```
+
+This creates `~/.treeship/` (or a project-local `.treeship/` if you pass `--config .treeship/config.json`), generates an Ed25519 signing key, and writes the config that everything else reads.
+
+</Step>
+
+<Step>
+
+### Run setup
+
+```bash
+treeship setup --yes
+```
+
+`treeship setup` runs four steps:
+
+1. **Detect** local agents (Claude Code, Cursor, Codex, Hermes, OpenClaw, Cline, Ninja Dev, generic MCP).
+2. **Draft Agent Cards** for each detection — one per surface per workspace, idempotent on re-run.
+3. **Confirm and instrument** the ones it can auto-attach to. Cards born from instrumentation move from Draft → Active.
+4. **Smoke** the trust-fabric pipeline (init → session start → wrap → close → package verify) inside an isolated tmpdir. Each instrumented harness moves Detected → Instrumented.
+
+`--yes` skips the confirmation prompt. `--skip-smoke` instruments without smoking. `--no-instrument` only writes draft cards.
+
+<Callout type="info">
+**"Verified" is harness-specific.** The setup smoke proves Treeship's signing pipeline works on this machine. It does *not* prove that any specific harness's capture path (Claude native hook, Cursor MCP, Codex shell-wrap) actually fires. That promotion to Verified is reserved for harness-specific smokes that exercise each capture signal individually. See [Coverage levels](/docs/guides/coverage-levels) for what each level actually claims.
+</Callout>
+
+</Step>
+
+<Step>
+
+### Your first session
+
+```bash
+treeship session start --name "first run"
+treeship wrap -- pytest tests/
+treeship session close --summary "tests pass"
+```
+
+Or just run your normal workflow with the agent of your choice — instrumented harnesses capture automatically, and `git-reconcile` at session close picks up anything that happened outside captured channels.
+
+</Step>
+
+<Step>
+
+### Read the report
+
+```bash
+treeship package inspect .treeship/sessions/ssn_*.treeship
+```
+
+The report has three panels worth scanning first:
+
+- **Agent cards** — every workspace agent, its harness, its status.
+- **Harness coverage** — what each harness *could* capture vs what's been *proven* in this workspace.
+- **Files changed** — every file the agent touched, tagged with the source that recorded it (`hook`, `mcp`, `git-reconcile`, `shell-wrap`).
+
+</Step>
+
+</Steps>
+
+## Remote / VPS / cloud agents come second
+
+Once you have local value — a signed receipt you can read — you can attach agents that don't run on this machine: VPS-based Codex, cloud VMs, NinjaTech / SuperNinja remotes, CI runners.
+
+<Callout type="warn">
+The remote attach flow (`treeship agent invite` and `treeship join --invite`) is **deferred to v0.9.9**. Today, remote agents show up as **draft** cards with `(none yet)` for verified captures. `treeship harness inspect ninjatech-superninja` is honest about what's possible vs what's actually proven.
+</Callout>
+
+The current honest path for remote agents:
+
+```bash
+treeship agent register \
+  --name codex-vps \
+  --tools read_file,write_file,bash \
+  --description "Codex on vps-01"
+```
+
+That writes a `.agent` package (signed certificate) and a card at `needs-review`. After v0.9.9 lands, `treeship agent invite` will replace this with a one-line join command on the remote machine.
+
+## What you'll see after setup
+
+Cards (run `treeship agents`):
+
+```
+Agent cards (5 in workspace)
+  ✓ Claude Code            (claude-code, harness: claude-code, active)
+  ✓ Cursor                 (cursor-agent, harness: cursor, active)
+  ✓ Codex CLI              (codex, harness: codex, active)
+  ✓ OpenClaw               (openclaw, harness: openclaw, active)
+  · SuperNinja             (ninjatech-superninja, harness: ninjatech-superninja, draft)
+```
+
+Harness coverage (run `treeship harness list`):
+
+```
+Harnesses (10 known)
+  ✓ Claude Code Native Hook Harness     id: claude-code      coverage: high      status: instrumented
+  ✓ Cursor MCP Harness                  id: cursor           coverage: medium    status: instrumented
+  ✓ Codex CLI MCP Harness               id: codex            coverage: medium    status: instrumented
+  · NinjaTech / SuperNinja Remote       id: ninjatech-superninja  coverage: basic   status: detected
+  ...
+```
+
+## What's next
+
+- [Agent Cards](/docs/concepts/agent-cards) — workspace trust objects.
+- [Agent Harnesses](/docs/concepts/harnesses) — how Treeship attaches.
+- [Coverage levels](/docs/guides/coverage-levels) — what each tier actually proves.
