@@ -31,4 +31,6 @@ hostname      = "0.4"
 fs2           = "0.4"
 
 [dev-dependencies]
-# Nothing extra needed — tests use the same crates
+# tempfile drives the journal tests (PR 2 of v0.9.9) — every test uses
+# an isolated tmpdir for the on-disk store so they can run in parallel.
+tempfile = "3"

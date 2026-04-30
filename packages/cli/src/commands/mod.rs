@@ -20,6 +20,7 @@ pub mod template;
 pub mod add;
 pub mod agent;
 pub mod agents;
+pub mod approval;
 pub mod cards;
 pub mod discovery;
 pub mod harness;
