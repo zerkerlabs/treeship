@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.9.10 (2026-04-30)
+
+The Approval Authority patch release. Closes four trust-bypass paths and three adjacent hardenings that a targeted Codex adversarial review of v0.9.9 found in the new approval-evidence surface. **Verifiers running v0.9.9 should upgrade.** v0.9.9 packages still verify under v0.9.10, but the binding rows that v0.9.9 silently passed now report honestly: a v0.9.9 package's `approval-use-action-binding` row will read `not asserted by package` because v0.9.9 didn't ship the action envelopes the binding check needs. Under `--strict`, that's a fail — the intended upgrade signal.
+
+The release-adversarial discipline that surfaced these gaps is now durable policy. `docs/release-adversarial/README.md` writes down the rule: **trust-semantics releases run a targeted adversarial review; bump-only releases don't.** Findings are saved per-version in `docs/release-adversarial/<version>.md`. The v0.9.9 file records every blocker with file:line + repro + verification step, and includes the round-2 / round-3 re-check verdicts that gated the v0.9.10 hotfix merge. Running adversarial review on every CHANGELOG bump would be wasted budget; running it on every receipt-format / approval-semantics / replay-behavior change is the discipline that catches the bugs CI doesn't.
+
+What v0.9.10 does NOT add: any new trust subsystem. Hub server, issuer/registry identity, AgentGate runtime enforcement, and mobile/desktop approval apps remain out of scope, carried over from v0.9.9's deferred list. The next product release (Agent-Native Bootstrap + Share + Docs Reliability) will pick up where v0.9.9 left off; v0.9.10 is purely the boring-but-correct patch in front of it.
+
+### Fixed (Approval Authority blockers — #57)
+
+- **TOCTOU race in `reserve_in_journal` bypassed `max_uses`** — `packages/core/src/journal/mod.rs`, `packages/cli/src/commands/attest.rs`. v0.9.9's `reserve_in_journal` ran `check_replay` and `list_uses_for_grant` *outside* `with_lock`, then called `append_use` which took the lock only for the write. Two parallel `treeship attest` invocations against a `max_uses=1` grant could both pass replay-check pre-lock, then queue serially through the lock, and both write — exceeding `max_uses`. Closed by a new `journal::reserve_use` that runs `check_replay` and `use_number` derivation *inside* `with_lock` and stamps `use_number` from the count observed at lock-acquire time. The CLI consume path now calls `reserve_use`; `append_use` is preserved for tests and trusted callers. Pinned by `journal::tests::reserve_use_concurrent_max_uses_1_only_one_succeeds` (8 threads contend; exactly one wins; on-disk record count is 1) and `reserve_use_retry_after_lock_busy_does_not_bypass_max_uses` (idempotency-retry safety).
+- **Action↔use binding ignored at verify time** — `packages/core/src/session/package.rs`, `packages/cli/src/commands/session.rs`. v0.9.9's `collect_approval_evidence` pulled every use for the grant and `verify_package` resolved by `(grant_id, nonce_digest)` only. Worse, the package format never shipped action envelopes, so the verifier could not see `meta.approval_use_id` even if it had wanted to. Closed by extending `ApprovalsBundle` with `action_envelopes: Vec<(String, Vec<u8>)>`, populating it during session close, writing each consuming action envelope to `pkg_dir/artifacts/<artifact_id>.json` (the directory existed but was empty pre-v0.9.10), and adding a new `approval-use-action-binding` verify row. The row PASSes only when every consuming action's `meta.approval_use_id` resolves to a use_id in the bundle AND the action's `approval_nonce` hashes to that use's `nonce_digest`. Round 2 added a content-addressing gate: the envelope's `artifact_id_from_pae(pae(payload_type, payload))` must equal the filename stem before any field is trusted. Without this gate an attacker controlling the package could write any forged unsigned action JSON to `artifacts/<id>.json` and the binding row would trust it.
+- **`nonce_digest` in ApprovalUse not cross-checked** — `packages/core/src/session/package.rs`. v0.9.9's package replay path read each use's `nonce_digest` verbatim and never compared it to `nonce_digest(grant.nonce)`. An attacker who controlled the package could mutate `nonce_digest` to claim consumption of any grant whose nonce they hadn't actually used — recompute the use's `record_digest` and the per-record check still passed. Closed by a new `approval-use-nonce-binding` verify row: for each use, find the matching grant in `bundle.grants`, parse its envelope, compute `nonce_digest(grant.nonce)`, compare. Round 2 added the same content-addressing gate to grant envelopes; a forged grant payload with any nonce now fails before the row's signed-nonce extraction runs.
+- **Embedded chain not walked in package replay** — `packages/core/src/session/package.rs`. v0.9.9's `replay-included-checkpoint` and per-use `record_digest` checks both recomputed individual digests, but neither walked the `previous_record_digest` chain across embedded records. An attacker could rewrite a chain consistently — recomputing each digest along the way — and every per-record check still passed. Closed by a new `approval-use-chain-continuity` verify row. Round 2 tightened the algorithm: requires exactly one record with `previous_record_digest == ""` (one genesis), no two records sharing a non-empty prev (no forks), no cycles detected during the walk from genesis, and every record reachable from the genesis (no disconnected subchains). Pinned by `multiple_genesis_records_fail_chain_continuity`, `forked_chain_two_records_share_prev_fails_chain_continuity`, `disconnected_subchain_fails_chain_continuity`, plus the original `dangling_previous_record_digest_fails_chain_continuity`.
+
+### Fixed (label hygiene — #57)
+
+- **Renamed `approval-use-integrity` → `approval-use-record-digest`** — `packages/core/src/session/package.rs`, `packages/cli/src/commands/package.rs`. The old label suggested the row covered nonce/action binding; it didn't, and Codex's review flagged the over-claim. The strict-mode promotion matcher keeps the old label too for backward compatibility with downstream tooling, but the live emitter uses the new name. Three new verify rows (`approval-use-nonce-binding`, `approval-use-action-binding`, `approval-use-chain-continuity`) carry the responsibilities the old label implied.
+- **Strict-mode promotion widened.** `--strict` now promotes every new approval-evidence row from warn → fail alongside the existing `replay-*` rows.
+
+### Added (release-adversarial cadence policy)
+
+- **`docs/release-adversarial/README.md`** — durable policy. Trust-semantics releases (receipt format, approval semantics, replay/journal, package verification, Hub checkpoint verification, MCP/A2A bridges, tool authorization, agent identity, harness coverage, public sharing, installer security) run a targeted Codex adversarial pass before or immediately after release. Bump-only releases don't. Findings save to `docs/release-adversarial/<version>.md`. Triage is a fixed scale: replay/signature bypass or secret leak → hotfix; docs overclaim → docs patch; missing test → next hardening PR. Codex output is verified against the actual code before being recorded as a confirmed blocker — file-path hallucinations don't become release-blocking findings.
+- **`docs/release-adversarial/v0.9.9.md`** — first instance. Records the four blockers, three round-2 sub-blockers, round-3 ship verdict, and the two non-blocking secondaries (duplicate grant_id last-wins, missing 3-cycle and self-loop chain test cases) deferred to the next hardening pass.
+
+### Tests
+
+- `journal::tests::reserve_use_first_call_succeeds_and_stamps_use_number`
+- `journal::tests::reserve_use_max_uses_1_serial_second_call_rejects`
+- `journal::tests::reserve_use_max_uses_2_two_uses_pass_third_rejects`
+- `journal::tests::reserve_use_concurrent_max_uses_1_only_one_succeeds`
+- `journal::tests::reserve_use_retry_after_lock_busy_does_not_bypass_max_uses`
+- 17 new integration tests in `packages/core/tests/approval_evidence_binding.rs` covering action-binding pass/fail/missing-pointer/no-envelopes/forged-envelope, nonce-binding pass/tamper/unknown-grant/forged-grant, chain-continuity pass/dangling/multiple-genesis/fork/disconnected, label rename, action-envelope round trip.
+- All 246+ pre-existing core tests still pass; the 7 `hub_checkpoint_verify` integration tests still pass; acceptance smoke (`tests/acceptance/trust-fabric.sh`) still passes.
+
+### Known follow-ups (non-blocking, deferred)
+
+- Duplicate `grant_id` entries in `bundle.grants` silently last-wins in the nonce-binding HashMap. Real packages produced by `build_package_with_approvals` deduplicate by sanitized filename, so this is hard to trigger in production, but a defensive explicit-failure check would harden the row.
+- Test coverage for 3-cycle (a→b→c→a) and self-loop (`record_digest == previous_record_digest`) chain shapes. The current algorithm should reject both via the visited-set walk; a regression test would pin that explicitly.
+
+### Intentionally NOT changed
+
+- Hub server / issuer registry / AgentGate runtime / mobile-desktop apps remain out of scope (carried over from v0.9.9 deferred list).
+- v0.9.9 packages still verify under v0.9.10. The new binding rows report honestly when the package doesn't ship the evidence; verifiers calling `--strict` against pre-v0.9.10 packages will fail `approval-use-action-binding`. That's the intended upgrade signal.
+
 ## 0.9.9 (2026-04-30)
 
 The Approval Authority release. v0.9.6 made the receipt trustworthy. v0.9.7 made the release process trustworthy. v0.9.8 made the agent experience legible. v0.9.9 makes **temporary authority** itself a first-class trust object: a human approves an agent for a bounded action; the agent consumes that approval at runtime; the receipt records the consumption; offline verifiers can replay the chain on any machine; and where a signed Hub checkpoint is embedded, the same verify run can attest to non-replay across machines. Six PRs (#50–#55) compose into the core trust answer for v0.9.9.
