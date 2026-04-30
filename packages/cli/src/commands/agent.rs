@@ -1,15 +1,97 @@
 //! Agent Identity Certificate: treeship agent register
 //!
 //! Produces a .agent package containing identity.json, capabilities.json,
-//! declaration.json, and certificate.html.
+//! declaration.json, and certificate.html. As of v0.9.8, also writes an
+//! Agent Card into the workspace's card store at `.treeship/agents/<id>.json`
+//! so the same registration is visible to `treeship agents` without the user
+//! having to run anything else.
 
 use std::path::Path;
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use sha2::{Digest, Sha256};
 
 use treeship_core::agent::*;
 
+use crate::commands::cards::{self, AgentCard, CardCapabilities, CardProvenance, CardStatus};
+use crate::commands::discovery::{
+    AgentSurface, ConnectionMode, CoverageLevel,
+};
 use crate::{ctx, printer::Printer};
+
+/// Map a user-supplied agent name (e.g. "claude-code", "hermes") to the
+/// canonical `AgentSurface`. Falls back to `ShellWrap` for unknown names so
+/// `treeship agent register --name my-custom-bot` still gets a card.
+fn surface_from_name(name: &str) -> (AgentSurface, Vec<ConnectionMode>, CoverageLevel) {
+    match name.to_ascii_lowercase().as_str() {
+        "claude-code" | "claude" => (
+            AgentSurface::ClaudeCode,
+            vec![ConnectionMode::NativeHook, ConnectionMode::Mcp],
+            CoverageLevel::High,
+        ),
+        "cursor" | "cursor-agent" => (
+            AgentSurface::CursorAgent,
+            vec![ConnectionMode::Mcp],
+            CoverageLevel::Medium,
+        ),
+        "cline" => (
+            AgentSurface::Cline,
+            vec![ConnectionMode::Mcp],
+            CoverageLevel::Medium,
+        ),
+        "codex" => (
+            AgentSurface::Codex,
+            vec![ConnectionMode::Mcp, ConnectionMode::ShellWrap],
+            CoverageLevel::Medium,
+        ),
+        "hermes" => (
+            AgentSurface::Hermes,
+            vec![ConnectionMode::Skill, ConnectionMode::Mcp],
+            CoverageLevel::Medium,
+        ),
+        "openclaw" => (
+            AgentSurface::OpenClaw,
+            vec![ConnectionMode::Skill, ConnectionMode::Mcp],
+            CoverageLevel::Medium,
+        ),
+        "ninjatech-superninja" | "superninja" => (
+            AgentSurface::NinjatechSuperninja,
+            vec![ConnectionMode::Mcp, ConnectionMode::GitReconcile],
+            CoverageLevel::Basic,
+        ),
+        "ninjatech-ninja-dev" | "ninja-dev" => (
+            AgentSurface::NinjatechNinjaDev,
+            vec![ConnectionMode::Mcp, ConnectionMode::ShellWrap],
+            CoverageLevel::Medium,
+        ),
+        "generic-mcp" => (
+            AgentSurface::GenericMcp,
+            vec![ConnectionMode::Mcp],
+            CoverageLevel::Medium,
+        ),
+        _ => (
+            AgentSurface::ShellWrap,
+            vec![ConnectionMode::ShellWrap, ConnectionMode::GitReconcile],
+            CoverageLevel::Basic,
+        ),
+    }
+}
+
+fn now_rfc3339() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    treeship_core::statements::unix_to_rfc3339(secs)
+}
+
+fn local_hostname() -> String {
+    // Falling back to "local" is safe because the agent ID derivation also
+    // uses workspace path; collisions would have to share both.
+    std::env::var("HOSTNAME")
+        .or_else(|_| std::env::var("COMPUTERNAME"))
+        .unwrap_or_else(|_| "local".to_string())
+}
 
 /// Register an agent and produce a .agent package.
 pub fn register(
@@ -128,6 +210,66 @@ pub fn register(
     let full_json = serde_json::to_string_pretty(&certificate)?;
     std::fs::write(pkg_dir.join("certificate.json"), &full_json)?;
 
+    // v0.9.8: also write an Agent Card into the workspace card store.
+    // Same data, different file -- the .agent package is the portable
+    // signed certificate users hand off; the card is the local trust
+    // object Treeship uses to show "this agent exists in this workspace,
+    // here's its status." Status starts at NeedsReview because the user
+    // explicitly asked for the agent (provenance: registered) but hasn't
+    // confirmed they want Treeship to act on it.
+    let agents_dir = cards::agents_dir_for(&ctx.config_path);
+    let workspace = ctx
+        .config_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+    let host = local_hostname();
+    let (surface, connection_modes, coverage) = surface_from_name(name);
+    let agent_id = cards::derive_agent_id(surface, &host, &workspace);
+
+    // Pin the certificate by its on-disk content digest. If the .agent
+    // package is later edited (rotation, re-sign, etc), the digest will
+    // diverge and `treeship agents review` can flag it.
+    let cert_digest = {
+        let mut h = Sha256::new();
+        h.update(full_json.as_bytes());
+        let bytes = h.finalize();
+        let mut hex = String::with_capacity(64);
+        for byte in &bytes[..] {
+            use std::fmt::Write;
+            write!(hex, "{byte:02x}").ok();
+        }
+        format!("sha256:{hex}")
+    };
+
+    let now = now_rfc3339();
+    let card = AgentCard {
+        agent_id,
+        agent_name:            name.to_string(),
+        surface,
+        connection_modes,
+        coverage,
+        capabilities: CardCapabilities {
+            bounded_tools:       tools.clone(),
+            escalation_required: declaration.escalation_required.clone(),
+            forbidden:           declaration.forbidden.clone(),
+        },
+        provenance:            CardProvenance::Registered,
+        status:                CardStatus::NeedsReview,
+        host,
+        workspace:             workspace.to_string_lossy().into_owned(),
+        model:                 model.clone(),
+        description:           description.clone(),
+        certificate_digest:    Some(cert_digest),
+        latest_session_id:     None,
+        latest_receipt_digest: None,
+        created_at:            now.clone(),
+        updated_at:            now.clone(),
+    };
+    // upsert preserves any pre-existing session linkage and never demotes
+    // a higher-status card.
+    let merged = cards::upsert(&agents_dir, card, &now)?;
+
     printer.blank();
     printer.success("agent certificate created", &[]);
     printer.info(&format!("  agent:      {}", name));
@@ -135,8 +277,10 @@ pub fn register(
     printer.info(&format!("  tools:      {}", tools.len()));
     printer.info(&format!("  valid:      {} days (until {})", valid_days, valid_until));
     printer.info(&format!("  package:    {}", pkg_dir.display()));
+    printer.info(&format!("  card:       {} ({})", merged.agent_id, merged.status.label()));
     printer.blank();
     printer.hint(&format!("open {}/certificate.html", pkg_dir.display()));
+    printer.dim_info(&format!("  review with: treeship agents review {}", merged.agent_id));
     printer.blank();
 
     Ok(())
