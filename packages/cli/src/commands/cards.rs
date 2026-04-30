@@ -313,26 +313,53 @@ pub fn save(agents_dir: &Path, card: &AgentCard) -> Result<(), CardError> {
 /// the new values winning; `created_at` is preserved from the existing
 /// record so a re-discovered card doesn't lose its original creation time.
 /// Returns the resulting card.
+///
+/// Trust invariant: if the incoming card carries a different
+/// `certificate_digest` than the stored card, the merged status is forced
+/// down to `NeedsReview`. Re-registering an agent produces a fresh
+/// signature and a fresh certificate; keeping a previously-Active card at
+/// Active when the certificate underneath it changed would let
+/// `treeship agents` lie about what the user has actually approved.
+/// `keep_higher_status` only applies when both cards refer to the same
+/// (or no) certificate.
 pub fn upsert(
     agents_dir: &Path,
     incoming: AgentCard,
     now: &str,
 ) -> Result<AgentCard, CardError> {
     let merged = match load(agents_dir, &incoming.agent_id) {
-        Ok(existing) => AgentCard {
-            created_at:             existing.created_at,
-            updated_at:             now.to_string(),
-            // Preserve user-meaningful state across re-discovery: don't
-            // demote an Active card back to Draft just because a fresh
-            // detection ran.
-            status:                 keep_higher_status(existing.status, incoming.status),
-            // Preserve session linkage: the new card from discovery has
-            // none, but the existing record might.
-            latest_session_id:      existing.latest_session_id.or(incoming.latest_session_id.clone()),
-            latest_receipt_digest:  existing.latest_receipt_digest.or(incoming.latest_receipt_digest.clone()),
-            certificate_digest:     incoming.certificate_digest.clone().or(existing.certificate_digest),
-            ..incoming
-        },
+        Ok(existing) => {
+            let cert_changed = match (&existing.certificate_digest, &incoming.certificate_digest) {
+                (Some(old), Some(new)) => old != new,
+                _ => false,
+            };
+            let status = if cert_changed {
+                // Demote: Active/Verified → NeedsReview. The user must
+                // review the new certificate before the card claims trust
+                // again. Cards that were already lower than NeedsReview
+                // (Draft) stay where they were.
+                match existing.status {
+                    CardStatus::Active | CardStatus::Verified => CardStatus::NeedsReview,
+                    other => other,
+                }
+            } else {
+                // Preserve user-meaningful state across re-discovery: don't
+                // demote an Active card back to Draft just because a fresh
+                // detection ran.
+                keep_higher_status(existing.status, incoming.status)
+            };
+            AgentCard {
+                created_at:             existing.created_at,
+                updated_at:             now.to_string(),
+                status,
+                // Preserve session linkage: the new card from discovery has
+                // none, but the existing record might.
+                latest_session_id:      existing.latest_session_id.or(incoming.latest_session_id.clone()),
+                latest_receipt_digest:  existing.latest_receipt_digest.or(incoming.latest_receipt_digest.clone()),
+                certificate_digest:     incoming.certificate_digest.clone().or(existing.certificate_digest),
+                ..incoming
+            }
+        }
         Err(CardError::NotFound(_)) => incoming,
         Err(e) => return Err(e),
     };
@@ -518,6 +545,79 @@ mod tests {
         incoming.status = CardStatus::NeedsReview;
         let merged = upsert(dir.path(), incoming, now()).unwrap();
         assert_eq!(merged.status, CardStatus::NeedsReview);
+    }
+
+    #[test]
+    fn upsert_demotes_active_when_certificate_digest_changes() {
+        // Trust invariant: re-registering an agent produces a different
+        // certificate. Keeping the card at Active would let
+        // `treeship agents` claim a certificate the user never approved.
+        let dir = tempdir().unwrap();
+        let mut active = AgentCard::from_discovery(
+            &sample_discovery(AgentSurface::ClaudeCode),
+            "h",
+            Path::new("/tmp/p"),
+            now(),
+        );
+        active.status = CardStatus::Active;
+        active.certificate_digest = Some("sha256:aaa".into());
+        save(dir.path(), &active).unwrap();
+
+        let mut incoming = active.clone();
+        incoming.certificate_digest = Some("sha256:bbb".into());
+        let merged = upsert(dir.path(), incoming, "2026-04-30T10:00:00Z").unwrap();
+
+        assert_eq!(
+            merged.status, CardStatus::NeedsReview,
+            "drift must demote Active to NeedsReview"
+        );
+        assert_eq!(
+            merged.certificate_digest.as_deref(),
+            Some("sha256:bbb"),
+            "the new digest is what's recorded; user must review it"
+        );
+    }
+
+    #[test]
+    fn upsert_demotes_verified_when_certificate_digest_changes() {
+        let dir = tempdir().unwrap();
+        let mut verified = AgentCard::from_discovery(
+            &sample_discovery(AgentSurface::ClaudeCode),
+            "h",
+            Path::new("/tmp/p"),
+            now(),
+        );
+        verified.status = CardStatus::Verified;
+        verified.certificate_digest = Some("sha256:aaa".into());
+        save(dir.path(), &verified).unwrap();
+
+        let mut incoming = verified.clone();
+        incoming.certificate_digest = Some("sha256:bbb".into());
+        let merged = upsert(dir.path(), incoming, now()).unwrap();
+        assert_eq!(merged.status, CardStatus::NeedsReview);
+    }
+
+    #[test]
+    fn upsert_preserves_active_when_digest_unchanged() {
+        // Regression guard for the no-demotion case: same cert, same
+        // surface → status stays Active. This is what makes idempotent
+        // re-discovery safe.
+        let dir = tempdir().unwrap();
+        let mut active = AgentCard::from_discovery(
+            &sample_discovery(AgentSurface::ClaudeCode),
+            "h",
+            Path::new("/tmp/p"),
+            now(),
+        );
+        active.status = CardStatus::Active;
+        active.certificate_digest = Some("sha256:aaa".into());
+        save(dir.path(), &active).unwrap();
+
+        let mut incoming = active.clone();
+        incoming.certificate_digest = Some("sha256:aaa".into());
+        incoming.status = CardStatus::Draft;
+        let merged = upsert(dir.path(), incoming, now()).unwrap();
+        assert_eq!(merged.status, CardStatus::Active);
     }
 
     #[test]
