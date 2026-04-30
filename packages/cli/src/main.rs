@@ -227,6 +227,20 @@ enum Command {
     #[command(subcommand)]
     Agent(AgentCommand),
 
+    /// Manage the local Agent Card store
+    ///
+    /// Cards are workspace trust objects -- who an agent is, where it
+    /// runs, how Treeship is attached. Distinct from the .agent package
+    /// (signed identity certificate produced by `treeship agent register`).
+    ///
+    /// Examples:
+    ///   treeship agents               # list every card
+    ///   treeship agents review <id>   # show full card details
+    ///   treeship agents approve <id>  # promote to active
+    ///   treeship agents remove <id>   # delete the card
+    #[command(subcommand)]
+    Agents(AgentsCommand),
+
     /// List pending approvals
     ///
     /// Shows actions that are blocked waiting for human approval.
@@ -757,6 +771,23 @@ struct AddArgs {
 enum AgentCommand {
     /// Register an agent and create an Identity Certificate
     Register(AgentRegisterArgs),
+}
+
+// --- agents (card store) ---------------------------------------------------
+
+#[derive(Subcommand)]
+enum AgentsCommand {
+    /// List every Agent Card in the workspace's card store.
+    List,
+
+    /// Show full details of one Agent Card by id.
+    Review { agent_id: String },
+
+    /// Promote a Draft or NeedsReview card to Active.
+    Approve { agent_id: String },
+
+    /// Delete an Agent Card from the store. Idempotent.
+    Remove { agent_id: String },
 }
 
 #[derive(Args)]
@@ -1648,6 +1679,30 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 a.description.clone(),
                 a.forbidden.clone(),
                 a.escalation.clone(),
+                cli.config.as_deref(),
+                printer,
+            ),
+        },
+
+        Command::Agents(sub) => match sub {
+            AgentsCommand::List => commands::agents::list(
+                cli.config.as_deref(),
+                Format::from_str(&cli.format),
+                printer,
+            ),
+            AgentsCommand::Review { agent_id } => commands::agents::review(
+                agent_id,
+                cli.config.as_deref(),
+                Format::from_str(&cli.format),
+                printer,
+            ),
+            AgentsCommand::Approve { agent_id } => commands::agents::approve(
+                agent_id,
+                cli.config.as_deref(),
+                printer,
+            ),
+            AgentsCommand::Remove { agent_id } => commands::agents::remove(
+                agent_id,
                 cli.config.as_deref(),
                 printer,
             ),

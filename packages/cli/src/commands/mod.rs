@@ -19,6 +19,8 @@ pub mod otel;
 pub mod template;
 pub mod add;
 pub mod agent;
+pub mod agents;
+pub mod cards;
 pub mod discovery;
 pub mod declare;
 pub mod package;
