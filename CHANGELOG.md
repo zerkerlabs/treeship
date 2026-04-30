@@ -1,6 +1,70 @@
 # Changelog
 
-## 0.9.8 (2026-04-30)
+## 0.9.9 (2026-04-30)
+
+The Approval Authority release. v0.9.6 made the receipt trustworthy. v0.9.7 made the release process trustworthy. v0.9.8 made the agent experience legible. v0.9.9 makes **temporary authority** itself a first-class trust object: a human approves an agent for a bounded action; the agent consumes that approval at runtime; the receipt records the consumption; offline verifiers can replay the chain on any machine; and where a signed Hub checkpoint is embedded, the same verify run can attest to non-replay across machines. Six PRs (#50–#55) compose into the core trust answer for v0.9.9.
+
+The framing every PR shares: **grants define authority, uses prove consumption, the journal enforces replay, packages carry evidence, checkpoints make evidence portable, Hub signatures extend evidence across machines.** Each level has its own row in `verify` output and never silently downgrades. The "honesty rule" baked into the codebase: a row is `✓` only when the matching evidence is present and verified, `✗` only when present and failed, and `-` (or absent) only when the evidence isn't in the package. No replay row ever pretends to a stronger guarantee than the embedded evidence supports.
+
+The single most load-bearing decision in v0.9.9 is the split between the **consumer side** of every Hub-related surface (which ships now) and the **Hub server** itself (which doesn't). v0.9.9 verifies a Hub-signed `JournalCheckpoint` and emits `replay-hub-org PASS` only when the four-gate rule below clears. The thing that *signs* checkpoints — the Hub server, its issuer registry, its signing key custody story — is out of scope for this release and lives in a separate one. Until a Hub starts signing, the `hub-org` row reads `not checked (no Hub checkpoint in package)` on every package, on every machine, and `verify` will physically refuse to print "global single-use enforced" or "replay-hub-org passed" without real signed evidence.
+
+### Added (Approval evidence schemas — #50)
+
+- **`treeship/approval-use/v1`** — a record that proves a grant was consumed by an action. Carries `use_id`, `use_number`, `grant_id`, `nonce_digest`, `actor`, `action_artifact_id`, `subject_ref`, `max_uses` snapshot, `package_id`, `created_at`, `previous_record_digest`, `record_digest`, optional Ed25519 `signature` / `signing_key_id`. The `previous_record_digest` chain link makes a journal a tamper-evident sequence rather than an unordered set.
+- **`treeship/approval-revocation/v1`** — schema for revoking grants. Wired in the schema layer; the runtime revocation flow stays deferred. Future-compatible without a schema bump.
+- **`treeship/journal-checkpoint/v1`** — Merkle commitment over a contiguous range of journal records. Two kinds with the same shape: `LocalJournal` (the journal's own compaction primitive; verify only emits `replay-included-checkpoint`) and `HubOrg` (signed by an org Hub; verify emits `replay-hub-org` when the four-gate rule clears).
+- **`canonical_*_record_digest` helpers** — every record type computes its digest from a stable JSON form that omits exactly the digest field and the signature. Same discipline as v0.9.6 receipts; now extended to journal records.
+
+### Added (Local Approval Use Journal — #51)
+
+- **`<config>/journals/approval-use/`** — append-only per-workspace journal of `ApprovalUse` records. Source of truth is the JSON file tree (`records/<use_id>.json`), with secondary indexes `by_grant/<grant_id>.json` and `by_nonce/<grant_id>/<nonce_digest>.json` rebuilt deterministically on startup. **Records are truth, indexes are cache** — `journal::rebuild_indexes` reconstructs every index from records alone, so a corrupted index can't degrade the trust answer.
+- **Per-grant `(grant_id, nonce_digest)` uniqueness** — the journal enforces single-recorded-use per nonce at write time. A re-issued nonce is the only legitimate way to consume the same grant twice.
+- **`journal::find_use_for_action(grant_id, nonce_digest, max_uses_hint)`** — verify-time question ("does the recorded use's `use_number` stay within bounds?"), distinct from consume-time's "would the next use exceed?". Two different invariants; two different code paths; covered by separate tests.
+- **`treeship journal list / inspect` (read-only)** — text + JSON output. No mutating CLI surface in v0.9.9; mutations happen only through the consume path.
+
+### Added (consume-before-action + local-journal replay check — #52)
+
+- **Consume-before-action ordering at attest time.** When an action carries an approval grant, the attest path appends the `ApprovalUse` to the journal **before** running the action. A crash mid-action leaves a recorded use without an artifact (visible at verify time), but cannot leave an artifact without a recorded use — the failure mode the journal is designed to prevent.
+- **`replay-local-journal` row in `treeship verify`.** When the verifier has access to a workspace journal, it asks `find_use_for_action` per embedded `ApprovalUse` and reports `PASS` (`use_number ≤ max_uses`), `FAIL` (record exists but exceeds `max_uses`), or `WARN` (no journal in this workspace; falls back to package-local). Bare-package verification in someone's inbox doesn't error here.
+
+### Added (package export + offline replay verify — #53)
+
+- **`approvals/uses/<use_id>.json` and `approvals/checkpoints/<checkpoint_id>.json` in the `.treeship` package.** Every use the package's actions consumed is exported alongside the receipt. Recipients without access to the originating workspace's journal can still verify `replay-package-local` and `replay-included-checkpoint` offline.
+- **`replay-package-local` and `replay-included-checkpoint` rows.** Package-local detects duplicate uses *inside* this package (an always-fails-or-passes invariant; never a warning). Included-checkpoint recomputes each embedded checkpoint's `record_digest` and rejects any tampered record. Both rows are always available, regardless of whether the verifier has a workspace.
+- **`session::package::read_approvals_bundle`** — single entry point that reads `approvals/uses/*.json`, `approvals/checkpoints/*.json`, and the receipt's referenced grants, returning a typed bundle every downstream consumer (`verify_package`, panel, decision cards) reads from. No two readers hand-roll the same parsing.
+
+### Added (Approval Authority panel + Decision Cards v0 + first-class docs — #54)
+
+- **Approval Authority panel** in `treeship package inspect`. Renders one block per grant the package consumed: who approved whom for what scope, the embedded grant_id, the subject ref, `max_uses` and uses recorded, and one row per replay level (`package-local`, `local-journal`, `included-checkpoint`, `hub-org`). The strongest finding wins per row; never silently downgrades.
+- **Decision Cards v0.** A "Key decisions" section beneath the panel surfaces the trust calls a reader needs to see: an Approval-scope card (when the grant scope is unbounded), a Replay-warning card (when no verified Hub coverage covers every embedded use), and structural cards for receipt-determinism / event-log anomalies. Every card carries explicit evidence pointers (grant_id, use_id, action_artifact_id, verify check rows) — no LLM, no invented intent; the narrative is generated mechanically.
+- **First-class docs.** `docs/content/docs/concepts/approval-authority.mdx`, `docs/content/docs/concepts/approval-use-journal.mdx`, `docs/content/docs/guides/replay-levels.mdx`, plus sidebar wiring. The docs spell out the four replay levels, the honesty rule, and what "global single-use" requires (a verified Hub checkpoint, never v0.9.9's local journal alone).
+
+### Added (Hub-signed checkpoint consumer-side verifier — #55)
+
+- **`CheckpointKind { LocalJournal, HubOrg }`** discriminator on `JournalCheckpoint`. `#[serde(default)]` keeps every pre-#55 record bytes-identical (covered by `checkpoint_kind_defaults_to_local_journal`).
+- **Hub-signature fields on `JournalCheckpoint`**: `hub_id`, `hub_public_key`, `hub_signature`, `signed_at`, `covered_use_ids` (+ informational `covered_grant_ids`). All optional via `skip_serializing_if`, so a `LocalJournal` checkpoint serializes byte-identical to #50.
+- **`canonical_hub_signing_bytes()`** — stable JSON over every signed field except `hub_signature` and `record_digest`. The `previous_record_digest` *is* signed (chain-linkage protection).
+- **`verify_hub_checkpoint_signature` → `Valid | MissingFields(field) | Tampered | NotHubKind`.** Decodes the embedded public key and signature, checks the Ed25519 signature against the canonical signing bytes, and reports the outcome. Coverage check (does this checkpoint actually cover the package's uses?) is a separate caller-side step.
+- **`replay-hub-org` row in `verify`.** Emits `PASS` only when **all four** of: (1) at least one embedded checkpoint declares `kind: hub-org`, (2) every required Hub field is populated, (3) the Ed25519 signature verifies against the embedded public key, AND (4) every embedded `ApprovalUse.use_id` is in `covered_use_ids`. Anything short → warn (default) or fail (`--strict`). When no Hub-kind checkpoint is embedded, no row is emitted; the panel renders `not checked (no Hub checkpoint in package)`.
+- **Per-use panel resolution.** The `hub-org` row resolves per-use: `✓ <detail>` (verified + covered for this use), `✗ <reason>` (Hub checkpoint present but a gate failed for this use), or `not checked` (no Hub-kind checkpoint at all). Multiple checkpoints can cover different uses; the panel reports the strongest finding for each.
+- **8 new unit tests + 7 integration tests** covering: backward-compat default, kebab-case serialization, signature round-trip with a real Ed25519 keypair, tamper detection (mutating `covered_use_ids`), wrong-key rejection, malformed-input rejection, end-to-end fixture-built `.treeship` package with a signed checkpoint embedded.
+
+### Changed (trust semantics)
+
+- **`replay-hub-org` is now a real check, not a placeholder.** v0.9.6–v0.9.8 left the row absent or "reserved." v0.9.9 makes it a real verification path with a non-negotiable four-gate rule. The change is consumer-side only: nothing in v0.9.9 generates a Hub-signed checkpoint, so existing packages keep printing `not checked`. Only packages that have been processed by a Hub (out of scope for this release) will see the row promote.
+- **Replay-warning Decision Card retitles to "Replay posture: no verified Hub coverage."** Previously fired only when no journal checkpoint was embedded; now fires when any embedded use lacks verified Hub coverage. When every use is covered by a verified Hub checkpoint, the card stays silent — the panel's `✓ hub-org` row already tells the story.
+- **Approval Use Journal records are append-only.** No mutating CLI; no in-place edits. Compaction (when it lands) will replace ranges of records with a single `LocalJournal` checkpoint; the chain-link `previous_record_digest` makes the replacement detectable.
+
+### Intentionally deferred to a later release
+
+- **The Hub server itself.** The thing that *signs* checkpoints — Hub signing-key custody, the issuer/registry identity surface, the signing API, federated trust roots — is out of scope for v0.9.9 and ships in a separate release. v0.9.9 is the consumer-side verifier in advance of that work.
+- **Issuer / registry identity (trusted-key pinning).** v0.9.9 verifies signatures against the public key embedded in the checkpoint. A trusted-issuer registry that pins acceptable `hub_public_key` values is the next layer; until it lands, an attacker who controls a checkpoint can declare any public key, and the signature will verify against it. Coverage and signature checks remain real; what's missing is the "and we trust this Hub" decision.
+- **AgentGate runtime enforcement.** Treeship today *records* approval consumption at attest time. Runtime *enforcement* — refusing to run an action whose grant has been spent or whose scope doesn't match — is the next AgentGate layer and stays out of v0.9.9.
+- **Mobile/desktop approval apps.** A human-facing surface for granting/revoking approvals out-of-band stays out of v0.9.9.
+- **`treeship agent invite` / `treeship join --invite`** for remote/VPS attach (carried over from v0.9.8).
+- **Per-harness verified-captures smokes** (carried over from v0.9.8).
+
+
 
 The agent-legibility release. v0.9.6 made the receipt trustworthy. v0.9.7 made the release process trustworthy. v0.9.8 makes the agent experience obvious: install Treeship, run one command, and immediately see which agents are on this machine, how Treeship is attached to each, what coverage to expect, and what's actually been proven on this workspace.
 
