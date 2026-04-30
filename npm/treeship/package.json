@@ -1,6 +1,6 @@
 {
   "name": "treeship",
-  "version": "0.9.8",
+  "version": "0.9.9",
   "description": "Portable trust receipts for agent workflows",
   "bin": {
     "treeship": "./bin/treeship.js"
@@ -19,9 +19,9 @@
     "linux"
   ],
   "optionalDependencies": {
-    "@treeship/cli-linux-x64": "0.9.8",
-    "@treeship/cli-darwin-arm64": "0.9.8",
-    "@treeship/cli-darwin-x64": "0.9.8"
+    "@treeship/cli-linux-x64": "0.9.9",
+    "@treeship/cli-darwin-arm64": "0.9.9",
+    "@treeship/cli-darwin-x64": "0.9.9"
   },
   "license": "Apache-2.0",
   "repository": {
