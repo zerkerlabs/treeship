@@ -141,14 +141,21 @@ fn print_inspect_json(m: &HarnessManifest, state: Option<&HarnessState>) {
     let install = m.install.as_ref().map(|i| serde_json::json!({
         "method": i.install_method.label(),
     }));
-    let captures = serde_json::to_value(m.captures).unwrap_or_default();
+    let potential_captures = serde_json::to_value(m.captures).unwrap_or_default();
+    // Verified captures live in state, defaulting to "all None" (nothing
+    // proven). Surface them as a distinct field so JSON consumers can
+    // never confuse "could capture" with "did capture."
+    let verified_captures = state
+        .map(|s| serde_json::to_value(s.verified_captures).unwrap_or_default())
+        .unwrap_or(serde_json::json!({}));
     let value = serde_json::json!({
         "harness_id":            m.harness_id,
         "surface":               m.surface,
         "display_name":          m.display_name,
         "connection_modes":      m.connection_modes.iter().map(|c| c.label()).collect::<Vec<_>>(),
         "coverage":              m.coverage.label(),
-        "captures":              captures,
+        "potential_captures":    potential_captures,
+        "verified_captures":     verified_captures,
         "known_gaps":            m.known_gaps,
         "privacy_posture":       m.privacy_posture,
         "recommended_backstops": m.recommended_backstops.iter().map(|c| c.label()).collect::<Vec<_>>(),
@@ -173,14 +180,30 @@ fn print_inspect_text(m: &HarnessManifest, state: Option<&HarnessState>, printer
         if m.install.is_some() { "yes (treeship add / treeship setup)" } else { "no -- register manually with treeship agent register" },
     ));
 
+    // Two distinct rows: what the harness *could* capture if attached
+    // and working, versus what a harness-specific smoke has actually
+    // proven on this machine. Don't conflate the two.
     printer.blank();
-    printer.dim_info("  captures:");
+    printer.dim_info("  potential captures (when attached and working):");
     let c = m.captures;
     printer.dim_info(&format!("    files.read     {}", yes_no(c.files_read)));
     printer.dim_info(&format!("    files.write    {}", yes_no(c.files_write)));
     printer.dim_info(&format!("    commands.run   {}", yes_no(c.commands_run)));
     printer.dim_info(&format!("    mcp.call       {}", yes_no(c.mcp_call)));
     printer.dim_info(&format!("    model/provider {}", yes_no(c.model_provider)));
+
+    printer.blank();
+    printer.dim_info("  verified captures (proven by harness-specific smoke):");
+    let vc = state.map(|s| s.verified_captures).unwrap_or_default();
+    if vc.is_empty() {
+        printer.dim_info("    (none yet -- run a real session through this harness)");
+    } else {
+        printer.dim_info(&format!("    files.read     {}", verified_label(vc.files_read)));
+        printer.dim_info(&format!("    files.write    {}", verified_label(vc.files_write)));
+        printer.dim_info(&format!("    commands.run   {}", verified_label(vc.commands_run)));
+        printer.dim_info(&format!("    mcp.call       {}", verified_label(vc.mcp_call)));
+        printer.dim_info(&format!("    model/provider {}", verified_label(vc.model_provider)));
+    }
 
     printer.blank();
     printer.dim_info("  privacy:");
@@ -230,6 +253,14 @@ fn print_inspect_text(m: &HarnessManifest, state: Option<&HarnessState>, printer
 
 fn yes_no(b: bool) -> &'static str { if b { "yes" } else { "no" } }
 
+fn verified_label(v: Option<bool>) -> &'static str {
+    match v {
+        Some(true)  => "yes",
+        Some(false) => "smoke ran but signal absent",
+        None        => "not yet proven",
+    }
+}
+
 // ---------------------------------------------------------------------------
 // smoke
 // ---------------------------------------------------------------------------
@@ -251,13 +282,29 @@ pub fn smoke(
     printer.section(&format!("Smoke: {}", manifest.display_name));
     printer.blank();
 
+    // Trust-semantics note (v0.9.8 PR 5 patch):
+    //
+    // This smoke is the GENERIC trust-fabric round-trip. It is identical
+    // for every harness: init, session start, wrap, close, package
+    // verify. It does not exercise any specific harness's capture path.
+    // Promoting to HarnessStatus::Verified here would mean "this harness
+    // is verified" when the truth is only "Treeship's pipeline works on
+    // this machine."
+    //
+    // Therefore:
+    //   - on success, status moves to Instrumented (or stays at a higher
+    //     value already proven by a previous harness-specific smoke)
+    //   - last_smoke_result records what was actually proven, in plain
+    //     language, so users aren't misled
+    //   - verified_captures stays untouched -- only a per-harness smoke
+    //     (v0.9.9) writes those bits
     let now = now_rfc3339();
     let outcome = run_smoke();
     let result = match &outcome {
         Ok(()) => SmokeResult {
             at:      now.clone(),
             passed:  true,
-            summary: "captured init+session+wrap+close+verify".into(),
+            summary: "generic trust-fabric smoke ok (init/session/wrap/close/verify); does not prove harness-specific capture".into(),
         },
         Err(e) => SmokeResult {
             at:      now.clone(),
@@ -270,14 +317,19 @@ pub fn smoke(
         .unwrap_or_else(|_| HarnessState::from_manifest(manifest, &now));
     let passed = result.passed;
     if passed {
-        state.status = HarnessStatus::Verified;
-        state.last_verified_at = Some(now.clone());
+        // Don't downgrade a state that was previously proven by a real
+        // per-harness smoke; only promote up to Instrumented.
+        if !matches!(state.status, HarnessStatus::Verified) {
+            state.status = HarnessStatus::Instrumented;
+        }
     }
     state.last_smoke_result = Some(result);
     harnesses::save_state(&dir, &state)?;
 
     if passed {
-        printer.success("smoke passed -- harness state -> verified", &[]);
+        printer.success("generic trust-fabric smoke passed", &[]);
+        printer.dim_info("  status: instrumented (harness-specific capture not yet proven)");
+        printer.dim_info("  Run a real session through this harness to populate verified_captures.");
     } else {
         printer.warn("smoke failed", &[]);
         if let Some(r) = state.last_smoke_result.as_ref() {

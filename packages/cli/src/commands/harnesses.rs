@@ -60,16 +60,61 @@ impl InstallMethod {
     }
 }
 
-/// What an instrumented harness can capture. Honest about which signals
-/// reach the receipt; consumers (PR 6 report) read this to render coverage
-/// without re-deriving the answer.
+/// What a harness *could* capture if attached and working as designed.
+/// This is a property of the harness manifest, not of any particular
+/// installation -- consumers must read it as "potential coverage,"
+/// distinct from `HarnessState.verified_captures` which records what a
+/// harness-specific smoke actually proved on this machine.
+///
+/// Renamed from `Captures` in the v0.9.8 trust-semantics tightening:
+/// PR 5's first cut showed manifest captures alongside a Verified status
+/// without distinguishing "could capture" from "did capture in this
+/// workspace." That conflated potential and verified coverage. The two
+/// are kept on separate types so UI code physically can't print the
+/// wrong one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub struct Captures {
+pub struct PotentialCaptures {
     pub files_read:     bool,
     pub files_write:    bool,
     pub commands_run:   bool,
     pub mcp_call:       bool,
     pub model_provider: bool,
+}
+
+/// What a harness-specific smoke actually proved on THIS machine. Each
+/// field is `Some(true)` when the relevant signal was observed during a
+/// smoke that exercised this harness's own capture path; `Some(false)`
+/// when a smoke ran but that signal didn't fire; `None` when no smoke
+/// has ever asserted on it (the default).
+///
+/// v0.9.8's setup runs a generic init/session/wrap/close/verify smoke.
+/// That smoke proves the trust-fabric pipeline works on this machine
+/// but does NOT prove any harness's specific hook/MCP path captured a
+/// real tool call. Setup therefore leaves every field `None` here,
+/// promotes only to `HarnessStatus::Instrumented`, and reserves
+/// `verified` for v0.9.9's per-harness smokes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct VerifiedCaptures {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files_read:     Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files_write:    Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commands_run:   Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_call:       Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_provider: Option<bool>,
+}
+
+impl VerifiedCaptures {
+    pub fn is_empty(&self) -> bool {
+        self.files_read.is_none()
+            && self.files_write.is_none()
+            && self.commands_run.is_none()
+            && self.mcp_call.is_none()
+            && self.model_provider.is_none()
+    }
 }
 
 /// Optional install rules. Present iff Treeship can auto-instrument this
@@ -101,7 +146,7 @@ pub struct HarnessManifest {
     /// HarnessState.
     pub connection_modes:      &'static [ConnectionMode],
     pub coverage:              CoverageLevel,
-    pub captures:              Captures,
+    pub captures:              PotentialCaptures,
     /// Things this harness *can't* observe. Surfaced in `harness inspect`
     /// so users see honest gaps rather than discovering them at receipt
     /// time.
@@ -185,7 +230,7 @@ fn openclaw_skill_path(home: &Path) -> PathBuf {
 // Captures presets
 // ---------------------------------------------------------------------------
 
-const CAPTURES_FULL: Captures = Captures {
+const CAPTURES_FULL: PotentialCaptures = PotentialCaptures {
     files_read:     true,
     files_write:    true,
     commands_run:   true,
@@ -193,7 +238,7 @@ const CAPTURES_FULL: Captures = Captures {
     model_provider: true,
 };
 
-const CAPTURES_MCP_BACKED: Captures = Captures {
+const CAPTURES_MCP_BACKED: PotentialCaptures = PotentialCaptures {
     files_read:     false,
     files_write:    true,
     commands_run:   true,
@@ -201,7 +246,7 @@ const CAPTURES_MCP_BACKED: Captures = Captures {
     model_provider: false,
 };
 
-const CAPTURES_BACKSTOP_ONLY: Captures = Captures {
+const CAPTURES_BACKSTOP_ONLY: PotentialCaptures = PotentialCaptures {
     files_read:     false,
     files_write:    true, // git-reconcile recovers writes
     commands_run:   false,
@@ -520,6 +565,12 @@ pub struct HarnessState {
     /// Agent IDs whose cards point at this harness via active_harness_id.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub linked_agent_ids:        Vec<String>,
+    /// Captures actually proven by a harness-specific smoke. Empty (all
+    /// fields `None`) until a smoke that exercises this harness's own
+    /// capture path runs and asserts on each signal. Setup's generic
+    /// session round-trip does NOT populate this.
+    #[serde(default, skip_serializing_if = "VerifiedCaptures::is_empty")]
+    pub verified_captures:       VerifiedCaptures,
 }
 
 impl HarnessState {
@@ -535,6 +586,7 @@ impl HarnessState {
             last_verified_at:        None,
             known_gaps:              m.known_gaps.iter().map(|s| s.to_string()).collect(),
             linked_agent_ids:        Vec::new(),
+            verified_captures:       VerifiedCaptures::default(),
         }
     }
 }
@@ -627,6 +679,17 @@ pub fn upsert_state(
             installed_at:      incoming.installed_at.clone().or(existing.installed_at),
             last_smoke_result: incoming.last_smoke_result.clone().or(existing.last_smoke_result),
             last_verified_at:  incoming.last_verified_at.clone().or(existing.last_verified_at),
+            // Verified captures only ever grow: a harness-specific smoke
+            // that proves files_read=true should not erase a previously
+            // proven mcp_call=true. Per-field merge with incoming taking
+            // precedence when set.
+            verified_captures: VerifiedCaptures {
+                files_read:     incoming.verified_captures.files_read.or(existing.verified_captures.files_read),
+                files_write:    incoming.verified_captures.files_write.or(existing.verified_captures.files_write),
+                commands_run:   incoming.verified_captures.commands_run.or(existing.verified_captures.commands_run),
+                mcp_call:       incoming.verified_captures.mcp_call.or(existing.verified_captures.mcp_call),
+                model_provider: incoming.verified_captures.model_provider.or(existing.verified_captures.model_provider),
+            },
             // Merge linked agent IDs (deduped) so previously-linked cards
             // don't disappear when a new install runs.
             linked_agent_ids:  {
@@ -793,6 +856,41 @@ mod tests {
         let listed = list_states(dir.path()).unwrap();
         assert_eq!(listed.len(), 2);
         assert!(listed[0].harness_id <= listed[1].harness_id);
+    }
+
+    #[test]
+    fn fresh_state_has_empty_verified_captures() {
+        // Trust invariant: a freshly-created HarnessState (the only kind
+        // setup writes today) MUST report no proven captures. The UI
+        // should never say "verified: yes" for a signal nothing has
+        // asserted on yet.
+        let m = find("claude-code").unwrap();
+        let s = HarnessState::from_manifest(m, "t");
+        assert!(s.verified_captures.is_empty());
+        assert_eq!(s.verified_captures.files_read,     None);
+        assert_eq!(s.verified_captures.files_write,    None);
+        assert_eq!(s.verified_captures.commands_run,   None);
+        assert_eq!(s.verified_captures.mcp_call,       None);
+        assert_eq!(s.verified_captures.model_provider, None);
+    }
+
+    #[test]
+    fn upsert_grows_verified_captures_monotonically() {
+        // Trust invariant: a per-harness smoke that proves files_read
+        // must not erase a previous run that proved mcp_call.
+        let dir = tempdir().unwrap();
+        let m = find("claude-code").unwrap();
+
+        let mut first = HarnessState::from_manifest(m, "t1");
+        first.verified_captures.mcp_call = Some(true);
+        save_state(dir.path(), &first).unwrap();
+
+        let mut second = HarnessState::from_manifest(m, "t2");
+        second.verified_captures.files_read = Some(true);
+        let merged = upsert_state(dir.path(), second).unwrap();
+
+        assert_eq!(merged.verified_captures.mcp_call,   Some(true));
+        assert_eq!(merged.verified_captures.files_read, Some(true));
     }
 
     #[test]
