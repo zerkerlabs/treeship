@@ -1,6 +1,6 @@
 {
   "name": "@treeship/a2a",
-  "version": "0.9.10",
+  "version": "0.9.11",
   "description": "Treeship attestation middleware for A2A (Agent2Agent) servers and clients",
   "license": "Apache-2.0",
   "repository": {
@@ -31,7 +31,7 @@
     }
   },
   "dependencies": {
-    "@treeship/core-wasm": "0.9.10"
+    "@treeship/core-wasm": "0.9.11"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
