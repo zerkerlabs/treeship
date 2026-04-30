@@ -2,12 +2,13 @@ use std::path::{Path, PathBuf};
 
 use treeship_core::{
     attestation::sign,
+    journal::{self, Journal},
     session::{
-        self, EventLog, EventType, SessionEvent, ReceiptComposer,
-        build_package,
+        self, ApprovalsBundle, EventLog, EventType, ReceiptComposer, SessionEvent,
+        build_package_with_approvals,
         event::{generate_event_id, generate_span_id, generate_trace_id},
     },
-    statements::{ActionStatement, payload_type},
+    statements::{ActionStatement, ApprovalStatement, payload_type},
     storage::Record,
 };
 
@@ -875,7 +876,16 @@ pub fn close(
     std::fs::create_dir_all(&pkg_dir)?;
     let mut sealed_pkg_path: Option<std::path::PathBuf> = None;
 
-    match build_package(&receipt, &pkg_dir) {
+    // v0.9.9 PR 4: gather approval evidence to embed alongside the
+    // receipt. Walks the chain for actions whose meta carries an
+    // `approval_use_id` (PR 3 stamps that), pulls the matching grant
+    // envelope from storage, the matching ApprovalUse from the local
+    // journal, and any covering checkpoint. Quiet on missing journal
+    // -- a session without consumed approvals produces an empty bundle
+    // and the resulting package omits the `approvals/` dir entirely.
+    let approvals = collect_approval_evidence(&ctx, &receipt);
+
+    match build_package_with_approvals(&receipt, &pkg_dir, Some(&approvals)) {
         Ok(pkg_output) => {
             // Package written successfully. Remove the closing marker
             // so start/close don't see a stale incomplete-close signal.
@@ -1368,3 +1378,119 @@ pub fn report(
 
     Ok(())
 }
+
+
+// ---------------------------------------------------------------------------
+// v0.9.9 PR 4 -- approval evidence collection
+// ---------------------------------------------------------------------------
+
+/// Gather Approval Grant + Approval Use + JournalCheckpoint records to
+/// embed in the .treeship package. Walks `receipt.timeline` for action
+/// events whose action artifact carries `approval_use_id` in its meta
+/// (set by PR 3's consume_approval), then resolves each through the
+/// workspace journal.
+///
+/// Quiet on missing journal: returns an empty `ApprovalsBundle` so
+/// `build_package_with_approvals` skips writing the `approvals/`
+/// directory entirely. Pre-PR-4 sessions and sessions without consumed
+/// approvals therefore produce identical packages.
+fn collect_approval_evidence(
+    ctx: &ctx::Ctx,
+    receipt: &treeship_core::session::SessionReceipt,
+) -> ApprovalsBundle {
+    let mut bundle = ApprovalsBundle::default();
+
+    // Resolve the workspace journal directory; same precedence rule as
+    // attest.rs uses (config_path.parent / journals / approval-use).
+    let journal_dir = ctx.config_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("journals")
+        .join("approval-use");
+    let journal = Journal::new(&journal_dir);
+
+    // Walk the chain: every action artifact may carry an
+    // approval_nonce, and PR 3 stamps approval_use_id into the
+    // action's meta. We pull from storage by artifact_id (the chain
+    // is an ordered list of ids on the receipt).
+    use std::collections::HashSet;
+    let mut grant_ids_seen: HashSet<String> = HashSet::new();
+    let mut use_ids_seen:   HashSet<String> = HashSet::new();
+    let mut checkpoint_ids: HashSet<String> = HashSet::new();
+
+    for art in &receipt.artifacts {
+        let rec = match ctx.storage.read(&art.artifact_id) {
+            Ok(r)  => r,
+            Err(_) => continue,
+        };
+        let action = match rec.envelope.unmarshal_statement::<ActionStatement>() {
+            Ok(a)  => a,
+            Err(_) => continue,
+        };
+        let raw_nonce = match action.approval_nonce.as_deref() {
+            Some(n) => n,
+            None    => continue,
+        };
+
+        // Find the grant by nonce -- mirror what verify does.
+        let approval_pt = payload_type("approval");
+        let mut grant_id_opt: Option<String> = None;
+        let mut grant_envelope: Option<Vec<u8>> = None;
+        for entry in ctx.storage.list_by_type(&approval_pt) {
+            if let Ok(grant_rec) = ctx.storage.read(&entry.id) {
+                if let Ok(approval) = grant_rec.envelope.unmarshal_statement::<ApprovalStatement>() {
+                    if approval.nonce == raw_nonce {
+                        grant_id_opt = Some(entry.id.clone());
+                        grant_envelope = grant_rec.envelope.to_json().ok();
+                        break;
+                    }
+                }
+            }
+        }
+        let Some(grant_id) = grant_id_opt else { continue };
+
+        if grant_ids_seen.insert(grant_id.clone()) {
+            if let Some(env_bytes) = grant_envelope {
+                bundle.grants.push((grant_id.clone(), env_bytes));
+            }
+        }
+
+        // Pull every Approval Use for this grant. Records are exported
+        // verbatim -- mutating `action_artifact_id` after the journal
+        // append would invalidate the record_digest, so the action↔use
+        // link is carried elsewhere:
+        //   * the action artifact's meta.approval_use_id points at the use
+        //   * the workspace sidecar at indexes/backfill/<use_id>.txt
+        //     gives the CLI a friendly display join (not exported)
+        if journal.exists() {
+            if let Ok(uses) = journal::list_uses_for_grant(&journal, &grant_id) {
+                for u in uses {
+                    if use_ids_seen.insert(u.use_id.clone()) {
+                        bundle.uses.push(u);
+                    }
+                }
+            }
+            // Read any journal-checkpoint records under records/ that
+            // we haven't already seen. PR 6 will sign these; PR 4
+            // just exports whatever is present.
+            if let Ok(rd) = std::fs::read_dir(journal.records_dir()) {
+                for entry in rd.flatten() {
+                    let path = entry.path();
+                    let name = match path.file_name().and_then(|n| n.to_str()) { Some(s) => s, None => continue };
+                    if !name.contains(".journal-checkpoint.") { continue; }
+                    let bytes = match std::fs::read(&path) { Ok(b) => b, Err(_) => continue };
+                    let cp: treeship_core::statements::JournalCheckpoint = match serde_json::from_slice(&bytes) {
+                        Ok(c)  => c,
+                        Err(_) => continue,
+                    };
+                    if checkpoint_ids.insert(cp.checkpoint_id.clone()) {
+                        bundle.checkpoints.push(cp);
+                    }
+                }
+            }
+        }
+    }
+
+    bundle
+}
+

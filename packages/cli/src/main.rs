@@ -777,10 +777,29 @@ enum PackageCommand {
     ///
     /// Runs local verification checks: receipt parsing, Merkle root
     /// recomputation, inclusion proof validation, and timeline ordering.
+    /// As of v0.9.9, also reports approval-replay evidence at three
+    /// distinct levels:
+    ///   * package-local       (duplicate uses inside the package)
+    ///   * local-journal       (workspace .treeship/journals/approval-use)
+    ///   * included-checkpoint (offline checkpoint records)
     ///
     /// Examples:
     ///   treeship package verify .treeship/sessions/ssn_abc.treeship
-    Verify(PackagePathArgs),
+    ///   treeship package verify --strict .treeship/sessions/ssn_abc.treeship
+    Verify(PackageVerifyArgs),
+}
+
+#[derive(Args)]
+struct PackageVerifyArgs {
+    /// Path to the .treeship package directory
+    #[arg(value_name = "PATH")]
+    path: std::path::PathBuf,
+
+    /// Promote approval-evidence warnings (missing journal records,
+    /// included-checkpoint anomalies) to verification failures.
+    /// Existing receipt-determinism / event-log warnings are unchanged.
+    #[arg(long)]
+    strict: bool,
 }
 
 #[derive(Args)]
@@ -1767,6 +1786,8 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             ),
             PackageCommand::Verify(a) => commands::package::verify(
                 a.path.clone(),
+                cli.config.as_deref(),
+                a.strict,
                 printer,
             ),
         },

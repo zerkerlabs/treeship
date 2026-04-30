@@ -23,5 +23,8 @@ pub use graph::{AgentGraph, AgentNode, AgentEdge, AgentEdgeType};
 pub use side_effects::{FileAccess, SideEffects};
 pub use receipt::{ArtifactEntry, ReceiptComposer, SessionReceipt};
 pub use render::RenderConfig;
-pub use package::{build_package, read_package, verify_package, VerifyCheck, VerifyStatus};
+pub use package::{
+    build_package, build_package_with_approvals, read_approvals_bundle, read_package,
+    verify_package, ApprovalsBundle, ApprovalsIndex, VerifyCheck, VerifyStatus,
+};
 pub use git::{reconcile_changes, current_head_sha, GitChange};
