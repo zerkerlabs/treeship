@@ -62,6 +62,11 @@ pub enum KeyError {
     NotFound(KeyId),
     EmptyKeyId,
     NoDefaultKey,
+    /// Private key file has insecure permissions (group- or world-readable).
+    /// Carries the path and the observed octal mode so the caller can show
+    /// an actionable error. Set `TREESHIP_ALLOW_INSECURE_KEY_PERMS=1` to
+    /// bypass during testing or controlled environments.
+    InsecureKeyPerms { path: PathBuf, mode: u32 },
 }
 
 impl std::fmt::Display for KeyError {
@@ -73,6 +78,14 @@ impl std::fmt::Display for KeyError {
             Self::NotFound(k) => write!(f, "key not found: {}", k),
             Self::EmptyKeyId  => write!(f, "key id must not be empty"),
             Self::NoDefaultKey => write!(f, "no default key — run treeship init"),
+            Self::InsecureKeyPerms { path, mode } => write!(
+                f,
+                "private key {} has insecure permissions (mode {:o}); \
+                 run `treeship doctor --fix` or chmod 600 the file. \
+                 Set TREESHIP_ALLOW_INSECURE_KEY_PERMS=1 to bypass.",
+                path.display(),
+                mode & 0o777,
+            ),
         }
     }
 }
@@ -388,7 +401,18 @@ impl Store {
     }
 
     /// Returns a boxed `Signer` for a specific key ID.
+    ///
+    /// Refuses to load if the on-disk key file has insecure permissions
+    /// (any group or world bits). This is the choke point for *all*
+    /// signing — public-key reads and successor lookups go through
+    /// `read_entry` / `public_key` and are not affected.
+    ///
+    /// Bypass with `TREESHIP_ALLOW_INSECURE_KEY_PERMS=1` for controlled
+    /// environments (CI sandboxes, recovery flows). The bypass should
+    /// not be set in normal operation.
     pub fn signer(&self, id: &str) -> Result<Box<dyn Signer>, KeyError> {
+        check_key_file_perms(&self.entry_path(id))?;
+
         let entry = self.load_entry(id)?;
 
         let secret = aes_gcm_decrypt(&self.machine_key, &entry.enc_priv_key, &entry.nonce)
@@ -863,6 +887,76 @@ fn hex_encode(b: &[u8]) -> String {
     })
 }
 
+/// Verify a private-key file has restrictive permissions before loading
+/// it for signing. Returns `Ok(())` on non-Unix platforms, when the
+/// `TREESHIP_ALLOW_INSECURE_KEY_PERMS=1` escape hatch is set, or when
+/// the file is not group/world accessible. Otherwise returns
+/// `KeyError::InsecureKeyPerms` with the offending path and mode.
+fn check_key_file_perms(path: &Path) -> Result<(), KeyError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if std::env::var_os("TREESHIP_ALLOW_INSECURE_KEY_PERMS")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+        {
+            return Ok(());
+        }
+        // Missing files are reported by the caller as NotFound -- don't
+        // mask that with a perm error.
+        let meta = match fs::metadata(path) {
+            Ok(m) => m,
+            Err(_) => return Ok(()),
+        };
+        let mode = meta.permissions().mode();
+        if mode & 0o077 != 0 {
+            return Err(KeyError::InsecureKeyPerms {
+                path: path.to_path_buf(),
+                mode,
+            });
+        }
+    }
+    let _ = path;
+    Ok(())
+}
+
+impl Store {
+    /// Repair file permissions on the keystore directory and every file
+    /// inside it: dir to 0700, key entry files and manifest to 0600.
+    /// Used by `treeship doctor --fix`. No-op on non-Unix.
+    ///
+    /// Returns the list of (path, old_mode, new_mode) tuples for paths
+    /// that were actually changed, so the caller can report what it did.
+    pub fn fix_perms(&self) -> Result<Vec<(PathBuf, u32, u32)>, KeyError> {
+        let mut changed: Vec<(PathBuf, u32, u32)> = Vec::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let dir_meta = fs::metadata(&self.dir)?;
+            let dir_mode = dir_meta.permissions().mode() & 0o777;
+            if dir_mode != 0o700 {
+                fs::set_permissions(&self.dir, fs::Permissions::from_mode(0o700))?;
+                changed.push((self.dir.clone(), dir_mode, 0o700));
+            }
+
+            for entry in fs::read_dir(&self.dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                if !entry.file_type()?.is_file() {
+                    continue;
+                }
+                let mode = entry.metadata()?.permissions().mode() & 0o777;
+                if mode != 0o600 {
+                    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+                    changed.push((path, mode, 0o600));
+                }
+            }
+        }
+        Ok(changed)
+    }
+}
+
 fn write_file_600(path: &Path, data: &[u8]) -> Result<(), KeyError> {
     let mut f = fs::OpenOptions::new()
         .write(true)
@@ -1257,6 +1351,115 @@ mod tests {
                 "missing successor_key_id must default to None on legacy entry");
         let signer = store2.default_signer().unwrap();
         assert_eq!(signer.key_id(), info.id);
+
+        cleanup(dir);
+    }
+
+    // --- keystore permission hardening (PR 1) -------------------------------
+
+    // The perm tests below mutate the process-global env var
+    // TREESHIP_ALLOW_INSECURE_KEY_PERMS. cargo test runs cases in
+    // parallel by default, so without serialization one test can set
+    // the bypass while another expects it unset and racefully fail.
+    // This mutex serializes them; everything else in the file remains
+    // parallel-safe.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    #[cfg(unix)]
+    fn write_entry_creates_file_with_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        let (store, dir) = make_store();
+        let info = store.generate(true).unwrap();
+        let mode = fs::metadata(store.entry_path(&info.id))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600, "freshly written key file must be 0600, got {:o}", mode);
+        cleanup(dir);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn signer_refuses_world_readable_key() {
+        use std::os::unix::fs::PermissionsExt;
+        // Mutex prevents the bypass var from being toggled by a
+        // sibling test mid-flight (cargo test parallel runner).
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // Make sure the bypass var is not leaking from the host env.
+        std::env::remove_var("TREESHIP_ALLOW_INSECURE_KEY_PERMS");
+
+        let (store, dir) = make_store();
+        let info = store.generate(true).unwrap();
+
+        // Loosen perms on the key file -- simulates a checkout, scp, or
+        // shared-volume mishap.
+        let path = store.entry_path(&info.id);
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        match store.signer(&info.id) {
+            Err(KeyError::InsecureKeyPerms { path: p, mode }) => {
+                assert_eq!(p, path);
+                assert_eq!(mode & 0o777, 0o644);
+            }
+            other => panic!("expected InsecureKeyPerms, got {:?}", other.map(|_| "ok")),
+        }
+        cleanup(dir);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn signer_bypass_via_env_var() {
+        use std::os::unix::fs::PermissionsExt;
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (store, dir) = make_store();
+        let info = store.generate(true).unwrap();
+        let path = store.entry_path(&info.id);
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        std::env::set_var("TREESHIP_ALLOW_INSECURE_KEY_PERMS", "1");
+        let result = store.signer(&info.id);
+        std::env::remove_var("TREESHIP_ALLOW_INSECURE_KEY_PERMS");
+
+        assert!(
+            result.is_ok(),
+            "bypass env var must allow signing: {:?}",
+            result.err()
+        );
+        cleanup(dir);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn fix_perms_repairs_loose_modes() {
+        use std::os::unix::fs::PermissionsExt;
+        let (store, dir) = make_store();
+        let info = store.generate(true).unwrap();
+        let key_path = store.entry_path(&info.id);
+
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(&key_path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        let changes = store.fix_perms().unwrap();
+        // dir + key file + manifest = 3 paths to fix (manifest may already be 0600
+        // depending on Manifest write path; we only assert the loose ones moved).
+        assert!(
+            changes.iter().any(|(p, _, _)| p == &dir),
+            "dir should be repaired"
+        );
+        assert!(
+            changes.iter().any(|(p, _, _)| p == &key_path),
+            "key file should be repaired"
+        );
+
+        let dir_mode = fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+        let key_mode = fs::metadata(&key_path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(dir_mode, 0o700);
+        assert_eq!(key_mode, 0o600);
+
+        // After repair, signing must work again.
+        store.signer(&info.id).expect("signing must work after fix_perms");
 
         cleanup(dir);
     }

@@ -332,9 +332,17 @@ enum Command {
     /// Checks initialization, keys, config, shell hooks, daemon,
     /// Hub connection, storage, and active sessions.
     ///
+    /// Pass --fix to repair insecure file permissions on the keystore
+    /// (dir to 0700, key files and config to 0600).
+    ///
     /// Examples:
     ///   treeship doctor
-    Doctor,
+    ///   treeship doctor --fix
+    Doctor {
+        /// Repair insecure permissions on the keystore directory and files.
+        #[arg(long)]
+        fix: bool,
+    },
 
     /// Create a signed checkpoint of the Merkle tree
     ///
@@ -1943,7 +1951,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             DaemonCommand::Status => commands::daemon::status(printer),
         },
 
-        Command::Doctor => commands::doctor::run(cli.config.as_deref(), printer),
+        Command::Doctor { fix } => commands::doctor::run(cli.config.as_deref(), printer, *fix),
 
         Command::Attest(sub) => match sub {
             AttestCommand::Action(a) => {

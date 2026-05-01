@@ -162,6 +162,7 @@ fn epoch_ms() -> u64 {
 pub fn run(
     config: Option<&str>,
     printer: &Printer,
+    fix: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut checks: Vec<Check> = Vec::new();
 
@@ -173,6 +174,74 @@ pub fn run(
 
     // 1. Is treeship initialized?
     let ctx_result = ctx::open(config);
+
+    // --fix: repair insecure keystore permissions before the rest of the
+    // checks run, so the keypair-load check below doesn't fail on perms
+    // we are about to repair.
+    if fix {
+        if let Ok(ref ctx) = ctx_result {
+            let mut all_changes: Vec<(std::path::PathBuf, u32, u32)> = Vec::new();
+
+            // Config dir (parent of config.json -- the user's ~/.treeship/) and
+            // the config file itself. Keystore::fix_perms only walks the keys/
+            // subdirectory; we have to repair these here.
+            if let Some(parent) = ctx.config_path.parent() {
+                if let Err(e) = fix_dir_perm(parent, 0o700, &mut all_changes) {
+                    checks.push(Check::fail(
+                        "doctor --fix",
+                        &format!("could not repair {}: {}", parent.display(), e),
+                        "check filesystem permissions / ownership",
+                    ));
+                }
+            }
+            if ctx.config_path.exists() {
+                if let Err(e) = fix_file_perm(&ctx.config_path, 0o600, &mut all_changes) {
+                    checks.push(Check::fail(
+                        "doctor --fix",
+                        &format!("could not repair {}: {}", ctx.config_path.display(), e),
+                        "check filesystem permissions / ownership",
+                    ));
+                }
+            }
+
+            // Keystore directory + every file inside.
+            match ctx.keys.fix_perms() {
+                Ok(changes) => all_changes.extend(changes),
+                Err(e) => {
+                    checks.push(Check::fail(
+                        "doctor --fix",
+                        &format!("could not repair keystore perms: {}", e),
+                        "check filesystem permissions / ownership",
+                    ));
+                }
+            }
+
+            if all_changes.is_empty() {
+                checks.push(Check::pass(
+                    "doctor --fix",
+                    "permissions already correct",
+                ));
+            } else {
+                let summary = all_changes
+                    .iter()
+                    .map(|(p, old, new)| {
+                        format!("{} ({:o}→{:o})", p.display(), old, new)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                checks.push(Check::info(
+                    "doctor --fix",
+                    &format!("repaired {} path(s): {}", all_changes.len(), summary),
+                ));
+            }
+        } else {
+            checks.push(Check::fail(
+                "doctor --fix",
+                "cannot repair: treeship is not initialized",
+                "treeship init",
+            ));
+        }
+    }
     match &ctx_result {
         Ok(ctx) => {
             checks.push(Check::pass(
@@ -600,6 +669,54 @@ fn check_directory_permissions(_ts_path: &Path, checks: &mut Vec<Check>) {
         ".treeship permissions",
         "permission check not available on this platform",
     ));
+}
+
+/// Set `path` to `target_mode` (e.g. 0o700, 0o600) and record the
+/// (path, old_mode, new_mode) in `changes` if the mode was actually
+/// different. No-op on non-Unix.
+#[cfg(unix)]
+fn fix_dir_perm(
+    path: &Path,
+    target_mode: u32,
+    changes: &mut Vec<(std::path::PathBuf, u32, u32)>,
+) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    if !path.exists() {
+        return Ok(());
+    }
+    let cur = std::fs::metadata(path)?.permissions().mode() & 0o777;
+    if cur != target_mode {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(target_mode))?;
+        changes.push((path.to_path_buf(), cur, target_mode));
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn fix_dir_perm(
+    _path: &Path,
+    _target_mode: u32,
+    _changes: &mut Vec<(std::path::PathBuf, u32, u32)>,
+) -> std::io::Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn fix_file_perm(
+    path: &Path,
+    target_mode: u32,
+    changes: &mut Vec<(std::path::PathBuf, u32, u32)>,
+) -> std::io::Result<()> {
+    fix_dir_perm(path, target_mode, changes)
+}
+
+#[cfg(not(unix))]
+fn fix_file_perm(
+    _path: &Path,
+    _target_mode: u32,
+    _changes: &mut Vec<(std::path::PathBuf, u32, u32)>,
+) -> std::io::Result<()> {
+    Ok(())
 }
 
 /// Check keys/ directory permissions (should be 0700).
