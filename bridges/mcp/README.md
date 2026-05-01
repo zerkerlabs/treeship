@@ -32,7 +32,27 @@ treeship package verify <path-to-receipt.treeship>
 
 The verify command is pure WASM — it does not phone home and does not require the hub. So once you have a receipt (your own or someone else's), you can confirm exactly what was captured, by whom, and that the signatures hold, entirely offline.
 
-## Usage
+## Two ways to use it
+
+**As an MCP server** (new in 0.10.1) — add it to your agent's MCP config:
+
+```json
+{
+  "mcpServers": {
+    "treeship": {
+      "command": "npx",
+      "args": ["-y", "@treeship/mcp"],
+      "env": { "TREESHIP_ACTOR": "agent://your-agent" }
+    }
+  }
+}
+```
+
+The server exposes 5 tools your agent can call: `treeship_session_status`, `treeship_session_event`, `treeship_attest_action`, `treeship_verify`, `treeship_session_report`. Use these to read or write the active Treeship session from any MCP-compatible client.
+
+**As a library** — wrap your existing MCP client. Every `callTool()` gets signed automatically.
+
+## Library usage
 
 Change one import. Everything else stays the same.
 

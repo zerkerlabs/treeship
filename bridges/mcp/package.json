@@ -22,15 +22,22 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "treeship-mcp": "./dist/server.js"
+  },
   "exports": {
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./server": {
+      "import": "./dist/server.js"
     }
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "@treeship/core-wasm": "0.10.0"
+    "@treeship/core-wasm": "0.10.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",

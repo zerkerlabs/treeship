@@ -6,6 +6,15 @@ Treeship is a **trust fabric**, not an agent. The product promise is:
 
 This document shows how to attach any MCP-compatible coding agent so its tool calls flow into a Treeship session and end up on a shareable receipt at `treeship.dev/receipt/<id>`.
 
+## What ships today (v0.10)
+
+`@treeship/mcp` ships in two modes:
+
+1. **MCP server mode** (new in 0.10.1) — add `npx -y @treeship/mcp` as an MCP server in your agent's config. The server exposes Treeship tools (`treeship_session_status`, `treeship_session_event`, `treeship_attest_action`, `treeship_verify`, `treeship_session_report`) so any MCP client can read/write the active session.
+2. **Library mode** — `import { Client } from '@treeship/mcp'` to drop-in replace your `@modelcontextprotocol/sdk` client; every `callTool()` it makes is signed and recorded automatically.
+
+The **transparent forwarder** model described below — where the bridge proxies every call to an upstream MCP server and attests in between — is roadmap (target v0.11). The diagram and "what the agent sees" sections describe that future shape, not today's behavior. If you need every MCP tool call attested today, use library mode.
+
 ## How it works (one diagram)
 
 ```
