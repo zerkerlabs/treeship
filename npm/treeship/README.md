@@ -12,7 +12,16 @@ npm install -g treeship
 
 This package downloads the prebuilt Treeship CLI binary for your platform. No Rust required.
 
-**Platform support:** macOS and Linux. Windows users: install via WSL (a native Windows binary is planned for v0.10.0). The package's `preinstall` script will exit with a clear message on Windows rather than yielding a broken install.
+**Platform support:**
+
+| Platform | Status |
+| --- | --- |
+| macOS arm64 / x64 | Supported |
+| Linux x86_64 (any distro, glibc or musl) | Supported as of v0.10.1. Single static binary covers Ubuntu, Debian, Fedora, RHEL/Rocky, Amazon Linux, Alpine. |
+| Linux ARM64 | Not yet shipped. |
+| Windows | Not supported natively. Use WSL. |
+
+The `preinstall` script exits with a clear message on Windows rather than yielding a broken install. The Linux build is statically linked against musl (verified at release time), so there is no GLIBC requirement; if you see `GLIBC_2.39 not found`, you have a pre-0.10.1 install — `npm install -g treeship@latest` to upgrade.
 
 ## Quick start
 

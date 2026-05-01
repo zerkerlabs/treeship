@@ -69,7 +69,7 @@ curl -fsSL treeship.dev/setup | sh
 npm install -g treeship
 ```
 
-`/setup` and `/install` are both POSIX shell. macOS and Linux native. Windows users: use WSL — a native Windows binary is planned for v0.10.0.
+`/setup` and `/install` are both POSIX shell. See the [supported platforms matrix](https://docs.treeship.dev/guides/install#supported-platforms) — macOS arm64/x64 and Linux x86_64 (any distro, glibc or musl, via a single statically linked binary as of v0.10.1) are supported. Linux ARM64 is not yet shipped. Windows is not supported natively; use WSL.
 
 ### Claude Code plugin (recommended for Claude Code users)
 
@@ -293,12 +293,24 @@ Realistic, version-tagged (see [`CHANGELOG.md`](./CHANGELOG.md) for what each re
 - **Cursor** — MCP via `treeship add` → `~/.cursor/mcp.json`, docs and templates in [`integrations/cursor/`](./integrations/cursor/)
 - **Universal SKILL.md** at <https://treeship.dev/SKILL.md> for AI agent self-onboarding
 
-**v0.9.5 / v0.10.0 (next)**
-- O(1) event-log append (counter sidecar instead of full file rescan; was deferred from earlier 0.9.x releases — see changelog)
-- Native Windows binary + PowerShell setup script
-- Anthropic plugin marketplace listing (broader reach for the Claude Code plugin; Zerker marketplace already works)
+**v0.10.1 (in flight) — platform, SDK, and supply-chain hardening**
+- Static `x86_64-unknown-linux-musl` binary so Debian 12, Ubuntu 22.04, Alpine, RHEL/Rocky 9, and Amazon Linux 2023 install cleanly (current GNU build requires GLIBC 2.39+)
+- npm postinstall verifies binary checksum (SHA-256), fails closed on tamper
+- Python SDK correctness pass (metadata-derived `__version__`, argv-list `wrap()`, `verify()` returncode handling, configurable `cli_path`/`timeout`)
+- SDK input validation for actor / artifact / nonce / approver fields (rejects option-injection patterns)
+- Keystore permission hardening: `init` writes 0700/0600, `doctor --fix` repairs, signing refuses world-readable private keys
+- MCP server in `@treeship/mcp` (`treeship_session_status`, `treeship_session_event`, `treeship_attest_action`, `treeship_verify`, `treeship_session_report`) — drop-in for Claude Code, Codex, Cursor, Cline
+- CLI correctness fixes: `init --force` no longer clobbers global config; project-level `extends:` honored; `attest action --format json` returns structured success/failure
+
+**Planned, post-v0.10.1**
+- Linux ARM64 (`aarch64`) binary
 - `treeship attach <agent>` — process detection for non-MCP agents
 - Selective disclosure (redactable receipts)
+- Anthropic plugin marketplace listing (broader reach for the Claude Code plugin; Zerker marketplace already works)
+- Transparent MCP forwarder mode in `@treeship/mcp` (today the bridge ships server mode + library mode)
+
+**Not on the roadmap**
+- Native Windows binary. Use WSL. Open an issue at <https://github.com/zerkerlabs/treeship/issues> if you have a strong use case.
 
 **Researching, no commitment**
 - ZK TLS (TLSNotary) — waiting on the TLSNotary alpha to stabilize
