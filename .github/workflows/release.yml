@@ -32,9 +32,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Linux x86_64 statically linked against musl. Runs on
+          # everything: glibc distros (Ubuntu, Debian, Fedora, RHEL),
+          # musl distros (Alpine), and minimal containers (distroless,
+          # busybox). Replaces the previous GNU build, which required
+          # GLIBC 2.39 and failed on Debian 12, Ubuntu 22.04, RHEL 9,
+          # Amazon Linux 2023, and every Alpine release.
           - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
+            target: x86_64-unknown-linux-musl
             artifact: treeship-linux-x86_64
+            apt: musl-tools
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: treeship-darwin-aarch64
@@ -51,8 +58,33 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      # musl-tools provides musl-gcc, the linker rust-musl uses for the
+      # final link step. No-op on macOS targets.
+      - name: Install musl-tools
+        if: matrix.apt
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.apt }}
+
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }} -p treeship-cli
+
+      # Sanity-check that musl builds are actually statically linked.
+      # If a transitive dependency ever sneaks in a dynamic-link
+      # requirement (gnu libc, libssl), the produced "static" binary
+      # silently falls back to runtime-loading and breaks on Alpine.
+      # We catch that here, not in user issues.
+      - name: Verify static linkage (Linux musl only)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          BIN="target/${{ matrix.target }}/release/treeship"
+          file "$BIN"
+          if file "$BIN" | grep -qE 'dynamically linked|interpreter'; then
+            echo "::error::treeship-linux-x86_64 is not statically linked. Aborting release."
+            file "$BIN"
+            exit 1
+          fi
+          echo "  ✓ statically linked"
 
       - name: Rename binary
         run: cp target/${{ matrix.target }}/release/treeship ${{ matrix.artifact }}
@@ -63,8 +95,87 @@ jobs:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}
 
-  release:
+  # Distro smoke MUST pass before any publish step runs. Blocks both
+  # `release` (which creates the public GitHub Release) and
+  # `publish-npm` (which is irreversible once it lands on the registry).
+  #
+  # If this matrix were below `release`, a release-day glibc regression
+  # would already be on GitHub Releases and partially on npm before
+  # anyone noticed. Gating it here keeps every "v0.10.1 doesn't run on
+  # Alpine" / "GLIBC_2.39 not found" failure mode pre-publish.
+  #
+  # The `release` and `publish-npm` jobs `needs: smoke` so a smoke
+  # failure aborts the entire pipeline before any user-visible artifact
+  # exists.
+  smoke:
     needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        distro:
+          # Each entry mounts the linux-x86_64 binary into a fresh
+          # container and runs install/init/sign/verify against it.
+          - { nick: debian12, image: 'debian:12',     pm: apt }
+          - { nick: ubuntu22, image: 'ubuntu:22.04',  pm: apt }
+          - { nick: ubuntu24, image: 'ubuntu:24.04',  pm: apt }
+          - { nick: alpine,   image: 'alpine:3.20',   pm: apk }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Linux binary artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: treeship-linux-x86_64
+          path: artifact
+
+      - name: Mark binary executable
+        run: chmod +x artifact/treeship-linux-x86_64
+
+      - name: Smoke ${{ matrix.distro.nick }} (${{ matrix.distro.image }})
+        run: |
+          set -e
+          BIN_HOST="$(pwd)/artifact/treeship-linux-x86_64"
+          test -x "$BIN_HOST" || { echo "::error::binary missing at $BIN_HOST"; exit 1; }
+
+          if [ "${{ matrix.distro.pm }}" = "apt" ]; then
+            PREP='set -e
+                  export DEBIAN_FRONTEND=noninteractive
+                  apt-get update -qq
+                  apt-get install -qq -y ca-certificates >/dev/null'
+          else
+            PREP='set -e
+                  apk add --no-cache ca-certificates >/dev/null'
+          fi
+
+          # Drop the binary into the container at /usr/local/bin and run
+          # the smoke. Using a mounted volume avoids a docker cp dance.
+          docker run --rm \
+            -v "$BIN_HOST:/usr/local/bin/treeship:ro" \
+            "${{ matrix.distro.image }}" \
+            sh -c "$PREP
+
+          echo '--- treeship --version'
+          treeship --version
+
+          echo '--- treeship init'
+          TMPHOME=\$(mktemp -d)
+          treeship --config \"\$TMPHOME/config.json\" init >/dev/null
+
+          echo '--- attest action (json)'
+          OUT=\$(treeship --config \"\$TMPHOME/config.json\" attest action \\
+            --actor agent://smoke --action smoke.sign --format json)
+          echo \"\$OUT\" | head -c 200; echo
+          ID=\$(echo \"\$OUT\" | sed -n 's/.*\"id\":\"\([a-z0-9_]\+\)\".*/\1/p')
+          test -n \"\$ID\" || { echo 'failed to extract id'; exit 1; }
+
+          echo '--- treeship verify'
+          treeship --config \"\$TMPHOME/config.json\" verify \"\$ID\" >/dev/null
+
+          echo \"  OK\""
+
+  release:
+    needs: smoke
     runs-on: ubuntu-latest
 
     outputs:
@@ -90,12 +201,15 @@ jobs:
         id: checksums
         run: |
           set -e
+          # Each artifact uploaded by the build job lives in a directory
+          # named after the artifact, with the binary inside.
           (
             cd treeship-linux-x86_64    && sha256sum treeship-linux-x86_64
             cd ../treeship-darwin-aarch64  && sha256sum treeship-darwin-aarch64
             cd ../treeship-darwin-x86_64   && sha256sum treeship-darwin-x86_64
           ) | sort > SHA256SUMS
           cat SHA256SUMS
+          # Surface the bare hex hashes as job outputs.
           echo "sha256_linux_x86_64=$(   awk '/treeship-linux-x86_64/    {print $1}' SHA256SUMS)" >> "$GITHUB_OUTPUT"
           echo "sha256_darwin_aarch64=$( awk '/treeship-darwin-aarch64/  {print $1}' SHA256SUMS)" >> "$GITHUB_OUTPUT"
           echo "sha256_darwin_x86_64=$(  awk '/treeship-darwin-x86_64/   {print $1}' SHA256SUMS)" >> "$GITHUB_OUTPUT"
@@ -111,7 +225,10 @@ jobs:
           generate_release_notes: true
 
   publish-npm:
-    needs: release
+    # Both `smoke` and `release` are needed:
+    #   - `smoke` proves the binary actually works on every supported distro
+    #   - `release` produces the SHA-256 outputs we embed into npm packages
+    needs: [smoke, release]
     runs-on: ubuntu-latest
     environment: npm-publish
     permissions:
@@ -241,7 +358,9 @@ jobs:
       # Embed the SHA-256 of each per-platform binary into the npm
       # package being published, so the postinstall script can verify
       # the binary it downloads from GitHub against the hash that
-      # arrived via npm.
+      # arrived via npm. The hashes were computed in the `release` job
+      # (see its `Compute SHA256SUMS` step) and surfaced as job
+      # outputs.
       #
       # Without this step the postinstall would refuse to install
       # ("expected-checksum.txt missing or malformed"). That refusal
@@ -293,7 +412,11 @@ jobs:
         run: .github/scripts/wait-for-npm-version.sh treeship "${GITHUB_REF_NAME#v}"
 
   publish-crates:
-    needs: release
+    # Gated on smoke too: a failed smoke means the release as a whole
+    # is bad, so all registries should refuse to publish. Better to
+    # have one cohesive aborted release than crates.io shipping while
+    # npm/pypi don't.
+    needs: [smoke, release]
     runs-on: ubuntu-latest
 
     steps:
@@ -342,7 +465,10 @@ jobs:
       # Or from source: cargo install --git https://github.com/zerkerlabs/treeship treeship-cli
 
   publish-pypi:
-    needs: release
+    # Same reason as publish-crates above — keep registries cohesive.
+    # The Python SDK shells out to the CLI, so if the CLI fails on
+    # Linux, treeship-sdk is unusable for those users anyway.
+    needs: [smoke, release]
     runs-on: ubuntu-latest
 
     steps:

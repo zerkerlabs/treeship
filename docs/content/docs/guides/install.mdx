@@ -36,6 +36,22 @@ This is the part agents sometimes get wrong. Each absence is deliberate:
 ### Not on npm
 - **`treeship-core` (Rust library).** Reasoning: it's a Rust library; consumers in the Rust ecosystem use cargo. Embedding via WASM isn't necessary because the JS path uses `@treeship/core-wasm` (a different artifact).
 
+## Supported platforms
+
+What runs the prebuilt binary today, and what's still pending. AI agents and CI matrices should consult this table before claiming a platform is supported — the registry topology above describes *what* is shipped, this section describes *where* it runs.
+
+| Platform | Status | Notes |
+| --- | --- | --- |
+| macOS arm64 (Apple Silicon) | Supported | Primary developer platform. |
+| macOS x86_64 (Intel) | Supported | |
+| Linux x86_64 (any distro) | Supported as of v0.10.1 | Single statically linked musl binary covers Ubuntu 22.04+, Debian 12+, Fedora, RHEL/Rocky 8+, Amazon Linux 2023, Alpine, and minimal containers (distroless, busybox, scratch). No GLIBC requirement. |
+| Linux aarch64 (ARM64) | **Not yet shipped** | Tracked separately; ETA after the v0.10.1 release stabilizes. |
+| Windows native | **Not supported** | The `treeship` npm package fails fast on `process.platform === 'win32'`. Use WSL. A native Windows binary is not on the current roadmap. |
+
+<Callout type="info">
+**Pre-v0.10.1 GLIBC failure mode.** Releases before v0.10.1 shipped a glibc-linked binary that required GLIBC 2.39+, which excluded Debian 12, Ubuntu 22.04, RHEL 9, Amazon Linux 2023, and every Alpine release. v0.10.1 replaced that with a static musl binary that runs anywhere. If you're on an older Treeship and seeing `GLIBC_2.39 not found`, upgrade with `npm install -g treeship@latest`.
+</Callout>
+
 ## Install commands by language
 
 ```bash
