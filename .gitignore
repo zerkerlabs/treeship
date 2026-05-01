@@ -9,3 +9,9 @@ tests/cross-sdk/corpus.json
 tests/cross-sdk/.ts-output.jsonl
 tests/cross-sdk/.py-output.jsonl
 tests/cross-sdk/.roundtrip-output.jsonl
+
+# Per-platform binary checksum populated by the release pipeline
+# (see .github/workflows/release.yml). Never committed; written only
+# at npm-publish time so the postinstall can verify the GitHub Release
+# binary against an npm-delivered hash.
+npm/@treeship/cli-*/expected-checksum.txt

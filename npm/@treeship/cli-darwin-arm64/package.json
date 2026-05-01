@@ -9,6 +9,12 @@
     "arm64"
   ],
   "license": "Apache-2.0",
+  "files": [
+    "postinstall.js",
+    "binary.js",
+    "expected-checksum.txt",
+    "README.md"
+  ],
   "scripts": {
     "postinstall": "node postinstall.js"
   },

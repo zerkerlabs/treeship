@@ -67,8 +67,38 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
 
+    outputs:
+      sha256_linux_x86_64:    ${{ steps.checksums.outputs.sha256_linux_x86_64 }}
+      sha256_darwin_aarch64:  ${{ steps.checksums.outputs.sha256_darwin_aarch64 }}
+      sha256_darwin_x86_64:   ${{ steps.checksums.outputs.sha256_darwin_x86_64 }}
+
     steps:
       - uses: actions/download-artifact@v4
+
+      # Compute SHA-256 of every binary that's about to be published.
+      # The hashes are:
+      #   1. uploaded to the GitHub Release as SHA256SUMS (auditors can
+      #      cross-check what the release actually contains).
+      #   2. surfaced as job outputs so the publish-npm job below can
+      #      embed each per-platform hash into its npm package without
+      #      re-downloading the binary.
+      # The npm postinstall verifies binary against the embedded hash;
+      # because the hash arrives via npm and the binary arrives via
+      # GitHub, an attacker would have to compromise both trust roots
+      # to slip a tampered binary past install.
+      - name: Compute SHA256SUMS
+        id: checksums
+        run: |
+          set -e
+          (
+            cd treeship-linux-x86_64    && sha256sum treeship-linux-x86_64
+            cd ../treeship-darwin-aarch64  && sha256sum treeship-darwin-aarch64
+            cd ../treeship-darwin-x86_64   && sha256sum treeship-darwin-x86_64
+          ) | sort > SHA256SUMS
+          cat SHA256SUMS
+          echo "sha256_linux_x86_64=$(   awk '/treeship-linux-x86_64/    {print $1}' SHA256SUMS)" >> "$GITHUB_OUTPUT"
+          echo "sha256_darwin_aarch64=$( awk '/treeship-darwin-aarch64/  {print $1}' SHA256SUMS)" >> "$GITHUB_OUTPUT"
+          echo "sha256_darwin_x86_64=$(  awk '/treeship-darwin-x86_64/   {print $1}' SHA256SUMS)" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -77,6 +107,7 @@ jobs:
             treeship-linux-x86_64/treeship-linux-x86_64
             treeship-darwin-aarch64/treeship-darwin-aarch64
             treeship-darwin-x86_64/treeship-darwin-x86_64
+            SHA256SUMS
           generate_release_notes: true
 
   publish-npm:
@@ -206,6 +237,32 @@ jobs:
 
       - name: Verify @treeship/verify version landed
         run: .github/scripts/wait-for-npm-version.sh @treeship/verify "${GITHUB_REF_NAME#v}"
+
+      # Embed the SHA-256 of each per-platform binary into the npm
+      # package being published, so the postinstall script can verify
+      # the binary it downloads from GitHub against the hash that
+      # arrived via npm.
+      #
+      # Without this step the postinstall would refuse to install
+      # ("expected-checksum.txt missing or malformed"). That refusal
+      # is the desired behavior — better to fail noisily here than to
+      # silently ship an unverifiable binary.
+      - name: Embed expected SHA-256 into platform npm packages
+        run: |
+          set -e
+          for slug in linux-x86_64 darwin-aarch64 darwin-x86_64; do
+            case "$slug" in
+              linux-x86_64)   pkg=cli-linux-x64    sha='${{ needs.release.outputs.sha256_linux_x86_64 }}';;
+              darwin-aarch64) pkg=cli-darwin-arm64 sha='${{ needs.release.outputs.sha256_darwin_aarch64 }}';;
+              darwin-x86_64)  pkg=cli-darwin-x64   sha='${{ needs.release.outputs.sha256_darwin_x86_64 }}';;
+            esac
+            if [ -z "$sha" ] || ! printf '%s' "$sha" | grep -Eq '^[0-9a-f]{64}$'; then
+              echo "::error::Missing or malformed SHA-256 for $pkg ($slug). Refusing to publish."
+              exit 1
+            fi
+            printf '%s\n' "$sha" > "npm/@treeship/$pkg/expected-checksum.txt"
+            echo "  $pkg → $sha"
+          done
 
       - name: Publish @treeship/cli-linux-x64
         working-directory: npm/@treeship/cli-linux-x64
