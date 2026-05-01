@@ -559,9 +559,23 @@ struct InitArgs {
     #[arg(long, value_name = "TEMPLATE")]
     template: Option<String>,
 
-    /// Overwrite an existing config
+    /// Overwrite an existing config.
+    ///
+    /// On its own, --force will not regenerate the global
+    /// (`~/.treeship/config.json`) keystore — that requires --global
+    /// --force. Without --global the operation is scoped to the
+    /// project-local config (the path passed via --config, or a fresh
+    /// `.treeship/` in the cwd).
     #[arg(long, default_value_t = false)]
     force: bool,
+
+    /// Explicitly target the user-global keystore (`~/.treeship/`).
+    ///
+    /// Required to overwrite the global config when combined with
+    /// --force. Without this flag, --force will refuse to clobber the
+    /// global keystore and recommend a project-local target instead.
+    #[arg(long, default_value_t = false)]
+    global: bool,
 }
 
 // --- hook -------------------------------------------------------------------
@@ -1720,7 +1734,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
         ),
 
         Command::Init(a) => commands::init::run(
-            a.name.clone(), cli.config.clone(), a.force, a.template.clone(), printer,
+            a.name.clone(), cli.config.clone(), a.force, a.global, a.template.clone(), printer,
         ),
 
         Command::Status => commands::status::run(cli.config.as_deref(), printer),

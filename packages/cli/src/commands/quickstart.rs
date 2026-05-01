@@ -25,7 +25,7 @@ pub fn run(
     let needs_init = crate::ctx::open(config).is_err();
     if needs_init {
         // Run init non-interactively
-        let result = super::init::run(None, None, false, None, printer);
+        let result = super::init::run(None, None, false, false, None, printer);
         if let Err(e) = result {
             // Already initialized is fine
             if !e.to_string().contains("already initialized") {
