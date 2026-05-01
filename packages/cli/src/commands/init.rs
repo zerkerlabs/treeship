@@ -6,7 +6,7 @@ use treeship_core::rules::ProjectConfig;
 use treeship_core::storage::Store as ArtifactStore;
 
 use crate::{
-    config::{self, default_config_path},
+    config::{self, default_config_path, global_config_path},
     printer::Printer,
 };
 
@@ -14,14 +14,51 @@ pub fn run(
     name:        Option<String>,
     config_path: Option<String>,
     force:       bool,
+    global:      bool,
     template:    Option<String>,
     printer:     &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
 
+    // Resolve target. Order:
+    //   1. --config <path>  (explicit user override; we never second-guess it)
+    //   2. --global         (forces user-level path even when a project
+    //                        stub would otherwise be discovered)
+    //   3. default          (walks up cwd for project-local; falls back to global)
     let config_path: PathBuf = match config_path {
         Some(p) => PathBuf::from(p),
+        None if global => global_config_path()?,
         None    => default_config_path()?,
     };
+
+    // Guard: refuse to clobber the global keystore unless the operator
+    // explicitly opted in with --global. The footgun: a user runs
+    // `treeship init --force` from a non-project cwd, default_config_path
+    // returns the global, --force happily regenerates the keys, and
+    // every previously-signed receipt the user produced is no longer
+    // signed by their default key. Past dogfooding sessions hit exactly
+    // this. Now we hard-stop unless --global is passed.
+    if force && !global && config_path.exists() {
+        let resolved_global = global_config_path().ok();
+        let is_global_target = resolved_global
+            .as_deref()
+            .map(|g| config_path == g)
+            .unwrap_or(false);
+        if is_global_target {
+            return Err(format!(
+                "refusing to overwrite the global keystore at {}.\n\n\
+                 --force without --global will not regenerate the user-level keystore.\n\
+                 Pick one:\n\
+                   • Project-local init:  cd <project> && treeship init --force\n\
+                   • Different path:      treeship init --config <path> --force\n\
+                   • Really regenerate the global keystore (DESTRUCTIVE):\n\
+                       treeship init --global --force\n\
+                 \n  This guard exists because earlier versions silently rotated the\n\
+                 global default_key_id under --force, breaking signature continuity\n\
+                 for every receipt that referenced the old key.",
+                config_path.display()
+            ).into());
+        }
+    }
 
     if config_path.exists() && !force {
         return Err(format!(
@@ -357,9 +394,23 @@ fn write_project_config(
         return Ok(());
     }
 
-    let global_config = crate::config::default_config_path()
+    // Use the GLOBAL path explicitly. default_config_path() walks up
+    // for project-local configs first, which here would resolve to the
+    // very file we're about to write -- producing a self-referencing
+    // `extends:` cycle that silently breaks every subsequent command
+    // until the file is hand-edited.
+    let global_config = crate::config::global_config_path()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default();
+
+    // Defense in depth: if the resolved global path somehow equals the
+    // marker we're about to write (e.g., a non-standard $HOME setup
+    // where the cwd is literally the home dir), refuse to write a stub
+    // that would self-reference.
+    if marker_path == std::path::Path::new(&global_config) {
+        return Ok(());
+    }
+
     let marker = serde_json::json!({
         "extends": global_config,
         "project": true,

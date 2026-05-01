@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs, path::{Path, PathBuf}};
+use std::{collections::{HashMap, HashSet}, fs, path::{Path, PathBuf}};
 use serde::{Deserialize, Serialize};
 
 // -- v0.4.0 Config ------------------------------------------------------------
@@ -187,6 +187,24 @@ pub fn default_config_path() -> Result<PathBuf, ConfigError> {
     Ok(resolve_config_path()?.0)
 }
 
+/// Returns ONLY the global config path (`~/.treeship/config.json`),
+/// ignoring any project-local `.treeship/config.json` in the cwd
+/// chain.
+///
+/// Use this when you specifically need the user-level config — most
+/// notably from `init`'s project-stub writer, which would otherwise
+/// resolve `default_config_path()` to the project stub it is about to
+/// create and produce a self-referencing `extends:` value.
+pub fn global_config_path() -> Result<PathBuf, ConfigError> {
+    if let Some(env) = std::env::var_os("TREESHIP_CONFIG") {
+        if !env.is_empty() {
+            return Ok(PathBuf::from(env));
+        }
+    }
+    let home = home::home_dir().ok_or(ConfigError::NoHome)?;
+    Ok(home.join(".treeship").join("config.json"))
+}
+
 /// Like `default_config_path` but also returns where the path came from.
 /// `doctor` uses the source label to explain unexpected resolution.
 pub fn resolve_config_path() -> Result<(PathBuf, ConfigSource), ConfigError> {
@@ -296,21 +314,242 @@ mod tests {
         );
         assert_eq!(found, Some(PathBuf::from("/a/b/.treeship/config.json")));
     }
+
+    // --- extends-chain handling (PR 5.B) ------------------------------------
+
+    fn write_real_config(dir: &Path, ship_id: &str) -> PathBuf {
+        std::fs::create_dir_all(dir).unwrap();
+        let path = dir.join("config.json");
+        let json = serde_json::json!({
+            "ship_id":        ship_id,
+            "name":           null,
+            "storage_dir":    dir.join("artifacts").to_string_lossy(),
+            "keys_dir":       dir.join("keys").to_string_lossy(),
+            "default_key_id": "key_test",
+            "hub_connections": {},
+        });
+        std::fs::write(&path, serde_json::to_vec_pretty(&json).unwrap()).unwrap();
+        path
+    }
+
+    fn write_stub(dir: &Path, extends_path: &Path) -> PathBuf {
+        std::fs::create_dir_all(dir).unwrap();
+        let path = dir.join("config.json");
+        let json = serde_json::json!({
+            "extends": extends_path.to_string_lossy(),
+            "project": true,
+        });
+        std::fs::write(&path, serde_json::to_vec_pretty(&json).unwrap()).unwrap();
+        path
+    }
+
+    fn temp_dir() -> PathBuf {
+        let mut p = std::env::temp_dir();
+        let mut b = [0u8; 8];
+        use rand::RngCore;
+        rand::thread_rng().fill_bytes(&mut b);
+        p.push(format!("treeship-cfgtest-{}", hex::encode(b)));
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn extends_resolves_parent_ship_id() {
+        let root = temp_dir();
+        let parent_dir = root.join("global");
+        let parent = write_real_config(&parent_dir, "ship_parent_xyz");
+
+        let project_dir = root.join("project");
+        let stub = write_stub(&project_dir, &parent);
+
+        let cfg = load(&stub).expect("stub with extends should resolve");
+        assert_eq!(cfg.ship_id, "ship_parent_xyz");
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn extends_self_reference_caught_by_cycle_detection() {
+        let root = temp_dir();
+        let project_dir = root.join("project");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        let stub = project_dir.join("config.json");
+        // Self-reference: extends path == own path.
+        std::fs::write(
+            &stub,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "extends": stub.to_string_lossy(),
+                "project": true,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let err = load(&stub).expect_err("self-referential stub must error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("cycle") || msg.contains("loops back"),
+            "expected cycle error, got: {msg}",
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn extends_chain_too_deep_caught() {
+        let root = temp_dir();
+        // Build a chain longer than EXTENDS_MAX_DEPTH.
+        let mut paths: Vec<PathBuf> = Vec::new();
+        // Innermost: a real Config so the chain has a proper terminal.
+        let real_dir = root.join("real");
+        let real = write_real_config(&real_dir, "ship_terminal");
+        paths.push(real);
+
+        for i in 0..(EXTENDS_MAX_DEPTH as usize + 2) {
+            let dir = root.join(format!("stub-{}", i));
+            let stub = write_stub(&dir, paths.last().unwrap());
+            paths.push(stub);
+        }
+
+        let outermost = paths.last().unwrap();
+        let err = load(outermost).expect_err("over-deep chain must error");
+        assert!(err.to_string().contains("chain exceeded"));
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    // --- global_config_path (PR 5.C) ----------------------------------------
+
+    #[test]
+    fn global_config_path_ignores_project_local_walk() {
+        // Even when cwd has a project-local stub, global_config_path
+        // must return the user-level path. The test relies on the
+        // function ignoring cwd entirely; we don't actually need to
+        // chdir to confirm that.
+        let p = global_config_path().expect("home should be resolvable in CI");
+        assert!(
+            p.ends_with(".treeship/config.json"),
+            "expected ~/.treeship/config.json, got {}",
+            p.display(),
+        );
+    }
 }
 
+/// Maximum depth of `extends:` chain. Caught separately from the
+/// visited-set cycle check: a chain of distinct paths longer than this
+/// is almost certainly a misconfiguration rather than legitimate use.
+const EXTENDS_MAX_DEPTH: u8 = 5;
+
 pub fn load(path: &Path) -> Result<Config, ConfigError> {
+    let mut visited: HashSet<PathBuf> = HashSet::new();
+    load_with_depth(path, 0, &mut visited)
+}
+
+fn load_with_depth(
+    path: &Path,
+    depth: u8,
+    visited: &mut HashSet<PathBuf>,
+) -> Result<Config, ConfigError> {
+    if depth > EXTENDS_MAX_DEPTH {
+        return Err(ConfigError::Json(serde_json::Error::io(
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "config `extends:` chain exceeded {} levels at {}",
+                    EXTENDS_MAX_DEPTH,
+                    path.display(),
+                ),
+            ),
+        )));
+    }
     if !path.exists() {
         return Err(ConfigError::NotFound(path.to_path_buf()));
     }
-    let bytes = fs::read(path)?;
-    let mut cfg: Config = serde_json::from_slice(&bytes)?;
 
-    // Auto-migrate v0.1/v0.2 hub config to v0.4 hub_connections format.
+    // Canonicalize to detect cycles even when paths are written with
+    // different shapes (relative vs absolute, /Users/... vs ~/, etc.).
+    // Falls back to the as-given path on canonicalize failure -- the
+    // visited check still works against either shape consistently.
+    let canon = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    if !visited.insert(canon.clone()) {
+        return Err(ConfigError::Json(serde_json::Error::io(
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "config `extends:` cycle: {} extends a file that loops back to it. \
+                     Edit the file and remove the self-reference, or run `treeship init --force` \
+                     in a directory that should be project-local.",
+                    canon.display(),
+                ),
+            ),
+        )));
+    }
+
+    let bytes = fs::read(path)?;
+
+    // Project-local stub configs use the shape:
+    //   {"extends": "/abs/or/relative/path", "project": true, "<override>": ...}
+    // We resolve that by loading the parent first, then layering this
+    // file's other fields on top. The keystore and storage stay where
+    // the parent points unless the project explicitly overrides them.
+    //
+    // Detect the stub by parsing as a generic Value first -- the full
+    // Config deserializer requires ship_id, which is absent in stubs.
+    let raw: serde_json::Value = serde_json::from_slice(&bytes)?;
+    if let Some(extends_value) = raw.get("extends") {
+        let extends_path = extends_value
+            .as_str()
+            .ok_or_else(|| ConfigError::Json(serde_json::Error::io(
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "config `extends` must be a string path",
+                ),
+            )))?;
+        let parent_path = resolve_extends(path, extends_path);
+        let mut cfg = load_with_depth(&parent_path, depth + 1, visited)?;
+        apply_overrides(&mut cfg, &raw);
+
+        if migrate_legacy_hub(&mut cfg) {
+            // Don't write back into the project stub; only the parent.
+            let _ = save(&cfg, &parent_path);
+        }
+        return Ok(cfg);
+    }
+
+    let mut cfg: Config = serde_json::from_slice(&bytes)?;
     if migrate_legacy_hub(&mut cfg) {
         let _ = save(&cfg, path);
     }
-
     Ok(cfg)
+}
+
+/// Resolve an `extends` path. Absolute paths are returned as-is;
+/// relative paths are joined against the *directory* containing the
+/// referring config so `{"extends": "../base.json"}` works the way an
+/// editor user expects.
+fn resolve_extends(referrer: &Path, extends: &str) -> PathBuf {
+    let p = Path::new(extends);
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        referrer
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(p)
+    }
+}
+
+/// Layer non-empty / non-default fields from the project stub onto the
+/// resolved parent. Today only `name` is overridable from a stub; the
+/// keystore-pointing fields (`storage_dir`, `keys_dir`,
+/// `default_key_id`) intentionally stay with the parent so two
+/// projects sharing a parent don't accidentally fork keystores.
+fn apply_overrides(cfg: &mut Config, raw: &serde_json::Value) {
+    if let Some(name) = raw.get("name").and_then(|v| v.as_str()) {
+        if !name.is_empty() {
+            cfg.name = Some(name.to_string());
+        }
+    }
 }
 
 pub fn save(cfg: &Config, path: &Path) -> Result<(), ConfigError> {
