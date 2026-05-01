@@ -1,6 +1,6 @@
 {
   "name": "@treeship/sdk",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "TypeScript SDK for Treeship - portable trust receipts for agent workflows",
   "license": "Apache-2.0",
   "repository": {
@@ -35,7 +35,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@treeship/core-wasm": "0.10.0"
+    "@treeship/core-wasm": "0.10.1"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
