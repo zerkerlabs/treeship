@@ -110,11 +110,70 @@ def pyproject_version(rel: str) -> str | None:
 
 
 def py_dunder_version(rel: str) -> str | None:
+    """Extract the version that ``__version__`` will resolve to at runtime.
+
+    Three accepted forms:
+
+      __version__ = "0.10.1"
+        Literal string. Returned as-is.
+
+      __version__ = _resolve_version()
+        v0.10.1+ pattern: runtime resolution from
+        importlib.metadata.version("treeship-sdk"). The metadata is
+        whatever pip / build wrote into the installed dist's
+        package metadata, which on every release pipeline is
+        synthesized from pyproject.toml's [project] version. So
+        when we see this pattern, treat pyproject.toml as
+        authoritative and return that version.
+
+      __version__ = importlib.metadata.version("treeship-sdk")
+        Same intent, inline. Treated identically.
+
+    Anything else (including absence of __version__) returns None,
+    which the caller reports as "not found" and the release blocks.
+
+    The check exists to catch drift across version sites; switching
+    __init__.py to a metadata-derived form removes the drift class
+    by construction (one source of truth, evaluated at runtime), so
+    this function honors that contract by reading pyproject.toml's
+    version when the metadata pattern is detected.
+    """
     text = read_text(rel)
     if text is None:
         return None
+
+    # Form 1: literal string.
     m = re.search(r'__version__\s*=\s*"([^"]+)"', text)
-    return m.group(1) if m else None
+    if m:
+        return m.group(1)
+
+    # Form 2 / Form 3: metadata-derived. Detect by name heuristic and
+    # fall back to pyproject.toml in the same package directory. The
+    # match is conservative -- we want a clear positive signal that
+    # the file is using the metadata pattern rather than e.g. a stray
+    # comment that mentions the words.
+    metadata_pattern = re.search(
+        r'__version__\s*=\s*('
+        r'_resolve_version\s*\(\s*\)'
+        r'|importlib\.metadata\.version\s*\('
+        r'|version\s*\(\s*"treeship-sdk"\s*\)'
+        r')',
+        text,
+    )
+    if metadata_pattern:
+        # Walk up to find the matching pyproject.toml. The Python SDK
+        # is the only consumer of this codepath today; the layout is
+        # packages/sdk-python/treeship_sdk/__init__.py and
+        # packages/sdk-python/pyproject.toml.
+        from pathlib import Path
+        rel_path = Path(rel)
+        for parent in rel_path.parents:
+            candidate = parent / "pyproject.toml"
+            if candidate.exists():
+                return pyproject_version(str(candidate))
+        return None
+
+    return None
 
 
 # ---------- site discovery ----------
