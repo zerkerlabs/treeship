@@ -33,4 +33,26 @@ __all__ = [
     "TreeshipError",
     "ensure_cli",
 ]
-__version__ = "0.10.0"
+
+
+def _resolve_version() -> str:
+    # Single source of truth: the package metadata. Hardcoding the
+    # string here forced two parallel version sites (this file and
+    # pyproject.toml) and the version-bump script regularly missed one
+    # of them, producing the v0.10 dogfood smoke where pip installed
+    # 0.10.0 but reported 0.9.x. importlib.metadata.version reads
+    # whichever metadata the active install came with.
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+    except ImportError:  # Python < 3.8 -- not supported, but defensive.
+        return "0.0.0+unknown"
+    try:
+        return version("treeship-sdk")
+    except PackageNotFoundError:
+        # Source checkout without an installed dist (`pip install -e .`
+        # not run yet, or a sys.path tweak). Returning a sentinel beats
+        # raising on import.
+        return "0.0.0+unknown"
+
+
+__version__ = _resolve_version()
