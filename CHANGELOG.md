@@ -1,5 +1,94 @@
 # Changelog
 
+## 0.10.1 (2026-05-01)
+
+The **Platform, SDK, Supply Chain, and MCP Hardening** release. v0.10.0 closed the agent-native loop end-to-end (sandboxed bootstrap → setup → session → share → verifiable URLs). v0.10.1 hardens the floor underneath that loop: the binary that gets installed, the keystore that signs receipts, the SDK that drives the CLI, the CLI itself, the npm path that delivers the binary, and the MCP integration that lets multi-agent sessions exist at all. Every fix in this release closes a finding from the v0.10.0 security and integration review or a bug surfaced during multi-agent dogfooding.
+
+The connective theme: **trust starts before the receipt is signed.** A receipt is only as trustworthy as the keystore that signed it, the binary that produced it, the SDK that called the binary, and the install path that delivered the binary. v0.10.0 made every receipt URL agent-readable. v0.10.1 makes every step *before* the receipt — install, key handling, SDK call, CLI invocation — equally honest.
+
+Six landed PRs ship in this release:
+
+- **PR 0 (#68)** — `@treeship/mcp` ships a real stdio MCP server alongside the existing client library
+- **PR 1 (#69)** — keystore permissions enforced at write, sign, and repair
+- **PR 2 (#70)** — Python SDK correctness pass plus input validation
+- **PR 3 (#71)** — CLI config/init/json correctness
+- **PR 4 (#72)** — npm binary integrity via two-trust-root SHA-256 verification
+- **PR 5 (#73)** — Linux x86_64 (any distro) via static musl binary, with a distro smoke gate that blocks publish on regression
+
+### Added (real `@treeship/mcp` stdio server — PR 0)
+
+- **`bridges/mcp/src/server.ts`** — the npm package now ships a real MCP server (`bin: treeship-mcp`). Configuring `npx -y @treeship/mcp` in Claude Code, Codex CLI, Cursor, or Cline now works as documented; v0.10.0's package was a client wrapper class only and silently failed to boot when added as a server.
+- Five tools exposed: `treeship_session_status`, `treeship_session_event`, `treeship_attest_action`, `treeship_verify`, `treeship_session_report`. Calls forward to the local `treeship` CLI with the configured `TREESHIP_ACTOR`.
+- `bridges/mcp/README.md` and `bridges/mcp/ATTACHING.md` distinguish three modes: server mode (this PR), library mode (existing `TreeshipMCPClient`), and the transparent forwarder model that was previously documented but never built and remains roadmap.
+
+### Added (keystore permission hardening — PR 1)
+
+- **Sign-time refusal of insecure private keys.** `Store::signer(&id)` checks the file mode of `~/.treeship/keys/key_<id>.json` before decrypting; any group or world bits return `KeyError::InsecureKeyPerms { path, mode }` with an actionable error.
+- **`treeship doctor --fix`** repairs a loose keystore in place: directory to 0700, key files and config.json to 0600. Reports every (path, old_mode, new_mode) triple it changed. Runs first when `--fix` is set so the rest of the diagnostic checks aren't tripped by the perms we are about to repair.
+- **`Store::fix_perms()`** — public API for callers that want the same repair without going through `doctor`. Returns the change list.
+- Bypass via `TREESHIP_ALLOW_INSECURE_KEY_PERMS=1` for sandboxed CI; documented in the error message.
+
+### Added (Python SDK correctness + input validation — PR 2)
+
+- **`__version__` derived from `importlib.metadata.version("treeship-sdk")`** instead of a hand-edited string. Removes the drift class of bug where `pyproject.toml` says 0.10.0 but `treeship_sdk.__version__` reports 0.9.x.
+- **`Treeship(cli_path=..., timeout=..., cwd=..., env=...)`** constructor parameters. Prior versions only accepted `bot_mode` and silently discarded the resolved binary at call time — `_run` (a free function) hardcoded `"treeship"`. **Fix surfaced a real bug:** every SDK user with `bot_mode=True` was actually still depending on PATH. Now `_run_cli_raw` / `_run_cli_json` are methods on `Treeship` and always call `self._binary`.
+- **`wrap()` accepts both `str` and `Sequence[str]`.** `str` path uses `shlex.split` for quoted-arg backwards compat; `Sequence[str]` passes argv exactly. Naive `command.split()` is gone.
+- **`session_report()` uses `--format json`** (CLI schema `treeship/share-result/v1`) with a text-format regex parse fallback for older CLIs.
+- **Empty `artifact_id` raises `TreeshipError`** instead of returning the empty string. The old `result.get("id") or result.get("artifact_id", "")` silently swallowed CLI-shape regressions.
+- **`_reject_option_like(name, value)`** rejects values shaped like CLI flags (`--format`, `-x`) before subprocess. Without shell expansion this isn't an injection vulnerability per se, but `clap` would silently parse such a value as a flag and produce a confusing CLI-side parse error far from the SDK call site.
+- **Length and range bounds** on actor / approver / model / nonce / artifact_id (256 chars), description / summary (4096 chars), tokens_in / tokens_out (0..100M), confidence (0.0..1.0, NaN-safe). Failures raise at the SDK boundary with a clear message.
+
+### Added (CLI config / init / json correctness — PR 3)
+
+- **Project-level `.treeship/config.json` `extends:` is honored.** A stub like `{"extends": "/path/to/parent", "project": true}` now resolves the parent and inherits `ship_id` / `keys_dir` / `default_key_id`. Prior versions tried to deserialize the stub directly and crashed with `missing field ship_id`. Cycle detection (canonicalized visited set) catches self-references; depth cap of 5 catches accidental chains.
+- **`treeship init --force` no longer clobbers the global keystore by default.** From any cwd that resolves to the global config, `--force` alone refuses with an actionable error pointing at project-local init, explicit `--config <path>`, or `--global --force` for explicit destructive intent. Two earlier dogfooding sessions hit the silent-clobber path; this guard closes it.
+- **`attest action --format json` returns structured success/failure.** v0.10.0 emitted `{}` and exited 1 on errors; the message was dropped entirely, and the `@treeship/mcp` bridge surfaced every CLI error as a generic `isError` with no actionable content. Now JSON mode emits `{"status": "error", "error": "<full message>", ...}` envelopes. Success keeps every existing field plus `status: "ok"` and `message`. Backwards compatible.
+- **`global_config_path()`** — new helper that returns ONLY `~/.treeship/config.json`, never walking up for a project-local match. Used by init's stub writer to prevent the self-referencing `extends:` bug at the source.
+
+### Added (npm binary integrity — PR 4)
+
+- **Two-trust-root SHA-256 verification.** The expected hash ships in the npm package as `expected-checksum.txt` (delivered via npm registry, signed by npm package integrity); the binary ships on GitHub Releases (independent trust root). Each platform's `postinstall.js` downloads to a `.partial` file, verifies the SHA-256, atomically renames into place on match, and **fails closed** on every error path: missing checksum, malformed checksum, hash mismatch, HTTP non-200, redirect chain > 5, network timeout. `exit(0)`-on-failure is gone.
+- **Release pipeline computes `SHA256SUMS`** in the `release` job, uploads it to the GitHub Release (auditors can cross-check), and surfaces per-platform hashes as job outputs. The `publish-npm` job has a new "Embed expected SHA-256" step that writes each hash into its matching npm package before `npm publish`. Refuses to publish if any hash is missing or malformed.
+- **Compromise of either trust root alone fails install.** A tampered binary on GitHub fails the embedded-hash check; a tampered hash on npm fails because the binary it claims doesn't match what's on GitHub.
+
+### Added (Linux musl + distro smoke gate + honest install docs — PR 5)
+
+- **Linux x86_64 binary is now a static musl build.** Replaces the v0.10.0 GNU build that required GLIBC 2.39 and silently failed on Debian 12, Ubuntu 22.04, RHEL/Rocky 9, Amazon Linux 2023, and every Alpine release. The musl binary runs everywhere: glibc distros, musl distros, minimal containers (distroless, busybox, scratch).
+- **CI static-linkage check.** A new `Verify static linkage` step in the build job aborts the release if `file` reports the produced binary as dynamically linked — a transitive dep drift could silently produce a "static" binary that runtime-loads glibc and breaks on Alpine. Catches it at release time, not in user issues.
+- **Distro smoke gate before publish.** A new `smoke` job runs after `build` and **before any publish step**. Pulls the `linux-x86_64` artifact, mounts it read-only into `debian:12`, `ubuntu:22.04`, `ubuntu:24.04`, and `alpine:3.20` containers, and exercises install / `--version` / `init` / `attest action` / `verify` against each. `release`, `publish-npm`, `publish-crates`, and `publish-pypi` all `needs: smoke`. **A smoke failure aborts the entire pipeline before any user-visible artifact (GitHub Release, npm tarball, crate, wheel) is produced.** The job graph is now `preflight → build → smoke → release → publish-{npm, crates, pypi}`.
+- **`scripts/smoke-platform-release.sh`** — local smoke harness with the same matrix as the CI gate, runs on the operator's machine via Docker. Useful for pre-tag validation against an existing version or against a locally-built artifact.
+- **Honest platform docs.** `README.md`, `npm/treeship/README.md`, and `docs/content/docs/guides/install.mdx` now declare a single Linux row: "x86_64 (any distro, glibc or musl) — Supported as of v0.10.1." The v0.9.x lie about a Windows binary "planned for v0.10.0" is gone from every doc that ever made it. Linux ARM64 is honestly marked "Not yet shipped." Windows is "Not supported natively. Use WSL."
+
+### Honesty rule preserved
+
+- **The transparent MCP forwarder model is roadmap, not present-tense.** PR 0 ships a server-of-Treeship-tools, not a forwarding gateway. Docs were updated to stop promising the forwarder shape.
+- **Linux ARM64 is honestly absent.** No fake "supported" row in any platform matrix. Users who need it can open an issue.
+- **Native Windows is honestly off the roadmap.** No "planned for vX.Y" in any doc. The npm preinstall guard prints a real link to file an issue if a Windows user lands on it.
+
+### Verification (release-gate)
+
+| Check | Result |
+|---|---|
+| version-consistency: 21 sites agree at 0.10.1 | preflight in `release.yml` |
+| cargo test --workspace | 270+ tests pass across core / cli / zk / sdk-ts |
+| Python SDK unittest | 28/28 pass |
+| `tests/acceptance/trust-fabric.sh` | 1/1 pass |
+| T1 Python bootstrap | ✓ resolves CLI without PATH/auth/sudo |
+| T2 `treeship setup --yes --no-instrument --format json` | ✓ schema + 5 detected agents + 5 draft cards |
+| T3 `treeship session report --share --format json --no-upload` | ✓ all required fields, `verification_status: pass` |
+| Linux distro smoke (Debian 12 / Ubuntu 22.04 / Ubuntu 24.04 / Alpine 3.20) | gates publish in CI on tag push |
+| npm binary integrity: tamper / mismatch / missing checksum | fails closed locally; full pipeline gate fires on first 0.10.1 publish |
+| `doctor --fix` repairs insecure keystore perms | ✓ end-to-end smoke against tmpdir keystore |
+
+### Intentionally NOT included
+
+- No new trust subsystem. No Hub server changes, no AgentGate runtime enforcement, no issuer/registry identity.
+- No Linux ARM64 binary (tracked separately; same musl approach will apply).
+- No native Windows binary (not on the roadmap).
+- No transparent MCP forwarder mode (still roadmap).
+- No Sigstore / cosign signatures of the binary (the two-trust-root SHA-256 model is the v0.10.x answer; Sigstore is future hardening).
+- No report intelligence / receipt redesign work (deferred until the hardening floor is in).
+
 ## 0.10.0 (2026-04-30)
 
 The **Agent-Native Receipt Sharing** release. Makes Treeship operable by AI agents end-to-end. A human can now say *"agent, set up Treeship and send me the receipt"* and the agent comes back with `receipt_url`, `raw_json_url`, `package_download_url`, `receipt_digest`, `package_digest`, `verification_status`, and `warnings` — without asking a clarifying question, without browser auth, without `sudo`, without modifying `PATH`. The previous releases made the receipt trustworthy (v0.9.6), the release process trustworthy (v0.9.7), the agent experience legible (v0.9.8), the approval surface complete (v0.9.9), the approval-evidence verifier honest (v0.9.10), and the docs reliable (v0.9.11). v0.10.0 closes the loop: every URL the agent returns leads somewhere a non-browser reader can use.
