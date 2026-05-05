@@ -1269,13 +1269,22 @@ struct AttestDecisionArgs {
     #[arg(long, required = true, value_name = "URI")]
     actor: String,
 
-    /// Model used for inference (e.g. claude-opus-4)
+    /// Model used for inference. Examples:
+    /// claude-opus-4-7, kimi-k2, gpt-5, gemini-3-pro.
     #[arg(long, value_name = "MODEL")]
     model: Option<String>,
 
     /// Model version if known
     #[arg(long, value_name = "VERSION")]
     model_version: Option<String>,
+
+    /// Provider that hosts the model. Examples:
+    /// anthropic, moonshot, openai, google, meta, mistral, ollama.
+    /// Decoupled from --model so attribution is correct when the
+    /// same model name lives behind multiple providers (e.g.
+    /// Bedrock vs Anthropic native, OpenRouter vs OpenAI).
+    #[arg(long, value_name = "NAME")]
+    provider: Option<String>,
 
     /// Number of input tokens consumed
     #[arg(long, value_name = "N")]
@@ -2029,6 +2038,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                     actor:         a.actor.clone(),
                     model:         a.model.clone(),
                     model_version: a.model_version.clone(),
+                    provider:      a.provider.clone(),
                     tokens_in:     a.tokens_in,
                     tokens_out:    a.tokens_out,
                     prompt_digest: a.prompt_digest.clone(),

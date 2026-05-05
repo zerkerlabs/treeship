@@ -983,6 +983,70 @@ pub fn close(
 // session event -- append a structured event to the active session's log
 // ---------------------------------------------------------------------------
 
+/// Append a fully-typed `EventType` into the active session's event log.
+///
+/// Best-effort: returns `Ok(false)` (not an error) when there is no
+/// active session. Callers like `attest::decision` use this to mirror
+/// a signed artifact into the session timeline without forcing the
+/// caller to first check for an active session.
+///
+/// Returns `Ok(true)` on a successful append, `Ok(false)` if there is
+/// no active session, and `Err(_)` for actual I/O / lock failures.
+///
+/// `actor` should be the agent URI (e.g. `agent://kimi-1`); the
+/// session manifest's actor is used as a fallback when None. `agent_name`
+/// is the human-readable name shown in agent_graph nodes.
+///
+/// The event's source is tagged `attest-cli` in meta so the receipt
+/// composer can distinguish artifact-derived events from
+/// `session-event-cli` (manual operator) and `wrap`-emitted ones.
+pub fn append_active_session_event(
+    event_type: EventType,
+    actor: Option<&str>,
+    agent_name: Option<&str>,
+    artifact_ref: Option<&str>,
+    source: &str,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let manifest = match load_session() {
+        Some(m) => m,
+        None => return Ok(false),
+    };
+    let ts_dir = match session_dir() {
+        Some(d) => d,
+        None => return Ok(false),
+    };
+    let evt_dir = ts_dir.join("sessions").join(&manifest.session_id);
+    let event_log = EventLog::open(&evt_dir)?;
+
+    let actor_uri = actor.unwrap_or(&manifest.actor);
+    let a_name = agent_name.unwrap_or("external");
+
+    let mut meta_obj = serde_json::Map::new();
+    meta_obj.insert("source".into(), serde_json::json!(source));
+    let meta = Some(serde_json::Value::Object(meta_obj));
+
+    let mut evt = SessionEvent {
+        session_id: manifest.session_id.clone(),
+        event_id: generate_event_id(),
+        timestamp: now_rfc3339(),
+        sequence_no: 0,
+        trace_id: generate_trace_id(),
+        span_id: generate_span_id(),
+        parent_span_id: None,
+        agent_id: actor_uri.into(),
+        agent_instance_id: a_name.into(),
+        agent_name: a_name.into(),
+        agent_role: Some("agent".into()),
+        host_id: local_host_id(),
+        tool_runtime_id: None,
+        event_type,
+        artifact_ref: artifact_ref.map(|s| s.into()),
+        meta,
+    };
+    event_log.append(&mut evt)?;
+    Ok(true)
+}
+
 pub fn event(
     event_type: &str,
     tool: Option<&str>,
