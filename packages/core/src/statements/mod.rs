@@ -365,13 +365,29 @@ pub struct DecisionStatement {
     #[serde(rename = "parentId", skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<String>,
 
-    /// Model used for inference. e.g. "claude-opus-4"
+    /// Model used for inference. e.g. "claude-opus-4-7", "kimi-k2", "gpt-5"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
 
     /// Model version if known.
     #[serde(rename = "modelVersion", skip_serializing_if = "Option::is_none")]
     pub model_version: Option<String>,
+
+    /// Provider that hosts the model. e.g. "anthropic", "moonshot",
+    /// "openai", "google", "meta", "mistral", "ollama".
+    ///
+    /// Distinct from `model`: a "surface" (the runtime that runs the
+    /// agent loop -- Claude Code, Cursor, Codex, OpenClaw, Hermes,
+    /// Cline) can be paired with any provider/model. Kimi for
+    /// example is `model = "kimi-k2"` with `provider = "moonshot"`,
+    /// runnable from any surface that speaks OpenAI-compatible APIs.
+    /// Attributing both lets a downstream auditor reason about
+    /// surface, model, and provider independently.
+    ///
+    /// Defaulted on deserialization so pre-v0.10.2 artifacts that
+    /// were signed without provider still parse cleanly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
 
     /// Number of input tokens consumed.
     #[serde(rename = "tokensIn", skip_serializing_if = "Option::is_none")]
@@ -490,6 +506,7 @@ impl DecisionStatement {
             parent_id: None,
             model: None,
             model_version: None,
+            provider: None,
             tokens_in: None,
             tokens_out: None,
             prompt_digest: None,
@@ -762,6 +779,45 @@ mod tests {
         assert_eq!(decoded.summary, Some("Contract looks standard.".into()));
         assert_eq!(decoded.confidence, Some(0.91));
         assert_eq!(decoded.type_, TYPE_DECISION);
+    }
+
+    #[test]
+    fn decision_statement_provider_roundtrips() {
+        // v0.10.2 added `provider` so Kimi (model=kimi-k2 / provider=moonshot)
+        // and similar split-model/provider attributions land on the
+        // signed artifact, not just on the unsigned session event.
+        let signer   = Ed25519Signer::generate("key_test").unwrap();
+        let verifier = Verifier::from_signer(&signer);
+
+        let mut stmt = DecisionStatement::new("agent://researcher");
+        stmt.model    = Some("kimi-k2".into());
+        stmt.provider = Some("moonshot".into());
+
+        let pt = payload_type("decision");
+        let result = sign(&pt, &stmt, &signer).unwrap();
+        verifier.verify(&result.envelope).unwrap();
+
+        let decoded: DecisionStatement = result.envelope.unmarshal_statement().unwrap();
+        assert_eq!(decoded.model,    Some("kimi-k2".into()));
+        assert_eq!(decoded.provider, Some("moonshot".into()));
+    }
+
+    #[test]
+    fn decision_statement_legacy_payload_without_provider_decodes() {
+        // Pre-v0.10.2 artifacts were signed without `provider`. The
+        // field MUST default to None on deserialize so an old receipt
+        // verifying against a fresh CLI doesn't fail with
+        // "missing field provider". Defaulting is configured via
+        // `#[serde(default)]` -- this test pins that contract.
+        let raw = serde_json::json!({
+            "type": TYPE_DECISION,
+            "timestamp": "2026-04-30T12:00:00Z",
+            "actor": "agent://legacy",
+            "model": "claude-opus-4",
+        });
+        let parsed: DecisionStatement = serde_json::from_value(raw).unwrap();
+        assert_eq!(parsed.model, Some("claude-opus-4".into()));
+        assert_eq!(parsed.provider, None);
     }
 
     #[test]

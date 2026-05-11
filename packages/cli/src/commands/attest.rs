@@ -12,6 +12,7 @@ use treeship_core::{
 
 use crate::commands::verify::{check_scope_violation, find_approval_by_nonce, now_rfc3339};
 use crate::{ctx, printer::Printer};
+use treeship_core::session::event::EventType;
 
 // --- action -----------------------------------------------------------------
 
@@ -379,6 +380,7 @@ pub struct DecisionArgs {
     pub actor:         String,
     pub model:         Option<String>,
     pub model_version: Option<String>,
+    pub provider:      Option<String>,
     pub tokens_in:     Option<u64>,
     pub tokens_out:    Option<u64>,
     pub prompt_digest: Option<String>,
@@ -395,6 +397,7 @@ pub fn decision(args: DecisionArgs, printer: &Printer) -> Result<(), Box<dyn std
     let mut stmt = DecisionStatement::new(&args.actor);
     stmt.model = args.model.clone();
     stmt.model_version = args.model_version.clone();
+    stmt.provider = args.provider.clone();
     stmt.tokens_in = args.tokens_in;
     stmt.tokens_out = args.tokens_out;
     stmt.prompt_digest = args.prompt_digest.clone();
@@ -422,6 +425,20 @@ pub fn decision(args: DecisionArgs, printer: &Printer) -> Result<(), Box<dyn std
     // Write .last for auto-chaining
     write_last(&ctx.config.storage_dir, &result.artifact_id);
 
+    // v0.10.2: also emit a SessionEvent::AgentDecision into the active
+    // session's event log (best-effort). Without this, model/provider
+    // attribution lived only on the signed artifact -- the session
+    // receipt's agent_graph saw the actor but had no idea what
+    // model/provider they were running. Now `treeship attest decision
+    // --actor agent://x --model kimi-k2 --provider moonshot` flows
+    // through to the session timeline and `agents` array directly.
+    //
+    // Best-effort: failure to emit (no active session, lock contention,
+    // missing .treeship dir) MUST NOT fail the action. The signed
+    // artifact and storage write above already succeeded; the session
+    // event is a derived view, not the source of truth.
+    emit_decision_session_event(&args, &result.artifact_id);
+
     printer.success("decision attested", &[
         ("id",    &result.artifact_id),
         ("actor", &args.actor),
@@ -436,6 +453,60 @@ pub fn decision(args: DecisionArgs, printer: &Printer) -> Result<(), Box<dyn std
     printer.hint(&format!("treeship verify {}", result.artifact_id));
     printer.blank();
     Ok(())
+}
+
+/// v0.10.2 helper: mirror a freshly-signed `attest decision` into the
+/// active session's event log so the receipt composer / agent_graph
+/// can attribute model + provider + tokens. Best-effort -- a missing
+/// session, lock contention, or write failure must not bubble up to
+/// fail the artifact path.
+///
+/// Without this, model/provider attribution lives only on the signed
+/// artifact and the session report says "agent X did N decisions"
+/// with the model/provider columns empty. Wiring it here closes the
+/// gap that v0.10.1's compatibility audit flagged.
+fn emit_decision_session_event(args: &DecisionArgs, artifact_id: &str) {
+    // Resolve env-var fallbacks so an integration that exports
+    // TREESHIP_MODEL once at session start still gets attribution
+    // even if the per-call --model isn't passed. Mirrors the logic
+    // in commands/session.rs::event for agent.decision.
+    let model = args.model.clone()
+        .or_else(|| std::env::var("TREESHIP_MODEL").ok());
+    let provider = args.provider.clone()
+        .or_else(|| std::env::var("TREESHIP_PROVIDER").ok());
+    let tokens_in = args.tokens_in
+        .or_else(|| std::env::var("TREESHIP_TOKENS_IN").ok().and_then(|s| s.parse().ok()));
+    let tokens_out = args.tokens_out
+        .or_else(|| std::env::var("TREESHIP_TOKENS_OUT").ok().and_then(|s| s.parse().ok()));
+
+    // If the operator gave us nothing about the inference (no model,
+    // no provider, no tokens, no summary, no confidence), there's
+    // nothing useful to put in the session event. The signed artifact
+    // already exists; skip the empty event.
+    if model.is_none() && provider.is_none() && tokens_in.is_none() && tokens_out.is_none()
+        && args.summary.is_none() && args.confidence.is_none()
+    {
+        return;
+    }
+
+    let et = EventType::AgentDecision {
+        model,
+        tokens_in,
+        tokens_out,
+        provider,
+        summary: args.summary.clone(),
+        confidence: args.confidence,
+    };
+
+    // Best-effort: ignore all errors. The artifact path already
+    // succeeded; this is a derived view.
+    let _ = crate::commands::session::append_active_session_event(
+        et,
+        Some(&args.actor),
+        Some(&args.actor.replace("agent://", "")),
+        Some(artifact_id),
+        "attest-cli",
+    );
 }
 
 // --- endorsement -----------------------------------------------------------
