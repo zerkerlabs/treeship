@@ -59,7 +59,7 @@ Every artifact Treeship produces is reproducible bit-for-bit from its inputs. Th
 - **Verification is deterministic.** The verifier runs offline on your machine. No network call, no clock skew tolerance applied silently — the caller passes `now` explicitly.
 - **Reconciliation is deterministic.** Git reconciliation at session close uses a `BTreeMap` ordering so two close runs against the same working tree produce byte-identical receipts.
 
-The result: anyone can take a `.treeship` package and an `.agent` certificate, run them through a verifier on a clean machine, and get the same answer Treeship's own renderer got. No server, no account, no trust required.
+The result: anyone can take a `.treeship` package and an `.agent` certificate, run them through a verifier on a clean machine, and get the same answer Treeship's own renderer got. No server and no account needed.
 
 ## How identity gets bound to activity
 

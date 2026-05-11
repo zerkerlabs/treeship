@@ -488,7 +488,7 @@ The DPoP JWT is signed by the hub connection's Ed25519 private key and contains 
 
 `/dock/activate` permanently redirects to `/hub/activate` for backward compat.
 
-Verification runs entirely client-side via WebAssembly (`treeship-core-wasm`). No server trust required.
+Verification runs entirely client-side via WebAssembly (`treeship-core-wasm`).
 
 ---
 

@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.10.2 (2026-05-11)
+
+The **Multi-Agent Attribution and Universal Skills** release. v0.10.0 made receipts agent-readable. v0.10.1 hardened the install path that delivers the binary which produces them. v0.10.2 closes two follow-on gaps the post-launch dogfooding surfaced: model/provider attribution silently disappearing on the signed-artifact path, and agents on every CLI re-learning how to use Treeship from scratch.
+
+The connective theme: **a receipt should say which model did the work, and any agent should know how to make one.** v0.10.0 made the receipt portable. v0.10.1 made the binary trustworthy. v0.10.2 makes the receipt's authorship honest, and gives every supported agent the same playbook for producing one.
+
+Two landed PRs ship in this release:
+
+- **PR 0 (#75)** — model+provider threaded through `treeship attest decision` into the session timeline
+- **PR 1 (#67)** — Treeship Agent Skills: one SKILL.md, every supported agent
+
+### Fixed (model+provider attribution on the signed-artifact path — #75)
+
+- **`DecisionStatement` gains optional `provider`.** Receipts produced via `treeship attest decision` now carry `provider` in the signed artifact. Pre-v0.10.2 artifacts without it still parse via `#[serde(default)]`, so verification of older receipts is unchanged.
+- **`treeship attest decision --provider` now accepted.** Previously rejected by clap (`--provider` only existed on `treeship session event`). The documented Kimi-attribution invocation — `--model kimi-k2 --provider moonshot` — actually works as documented.
+- **`attest decision` emits `SessionEvent::AgentDecision` into the active session timeline,** populating `model`, `provider`, `tokens_in`, `tokens_out`, `summary`, `confidence` from the same CLI args. Without this, the receipt's `agent_graph` carried `model: null, provider: null` even when both were specified on the attest call. The published receipt page now shows the correct provider pills and token counts for these agents.
+- **`commands::session::append_active_session_event`** — internal helper that lets artifact-producing paths mirror themselves into the active session log, best-effort. No active session is not an error.
+- New unit tests in `packages/core/src/statements/mod.rs`: `decision_statement_provider_roundtrips` and `decision_statement_legacy_payload_without_provider_decodes` pin both the new field and backwards-compat for pre-v0.10.2 artifacts.
+
+### Added (Treeship Agent Skills — #67)
+
+- **`skills/treeship/SKILL.md`** — one declarative skill teaches Kimi Code CLI, Claude Code, Codex, Cursor, OpenClaw, and Hermes how to use Treeship: CLI commands, both SDKs, MCP bridge wiring, approval-gated workflows, multi-agent handoffs, and Hub API.
+- **`integrations/agent-skills/README.md`** — per-agent setup guide for the six supported CLIs.
+- **`docs/content/docs/integrations/agent-skills.mdx`** — docs page surfaced at `treeship.dev/docs/integrations/agent-skills`.
+- **`docs/content/blog/multi-agent-skills.mdx`** — launch post.
+
+Pair the skill with the v0.10.0 receipt-sharing release: an agent on a fresh machine can install Treeship, run a session, share a receipt, and hand the user a verifiable URL — all from a single skill file, no re-explaining the API.
+
+### Compatibility
+
+- All v0.10.1 hardening (keystore perms, npm integrity, musl distro support, MCP stdio server, Python SDK correctness, CLI correctness) is unchanged. v0.10.2 is purely additive on top of v0.10.1.
+- Pre-v0.10.2 signed `DecisionStatement` artifacts continue to verify because the new `provider` field is `#[serde(default)]`.
+- The receipt page's per-agent rendering (model pills, token counts, agent-card links) already shipped in #7's server-rendering rebuild on `treeship.dev`. #75 closes the data side that those UI elements were reading from.
+
 ## 0.10.1 (2026-05-01)
 
 The **Platform, SDK, Supply Chain, and MCP Hardening** release. v0.10.0 closed the agent-native loop end-to-end (sandboxed bootstrap → setup → session → share → verifiable URLs). v0.10.1 hardens the floor underneath that loop: the binary that gets installed, the keystore that signs receipts, the SDK that drives the CLI, the CLI itself, the npm path that delivers the binary, and the MCP integration that lets multi-agent sessions exist at all. Every fix in this release closes a finding from the v0.10.0 security and integration review or a bug surfaced during multi-agent dogfooding.
