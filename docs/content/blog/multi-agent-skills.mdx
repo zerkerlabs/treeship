@@ -1,0 +1,176 @@
+---
+title: "Treeship Agent Skills: One Skill, Every Agent"
+description: "Install Treeship on Kimi Code CLI, Claude Code, Codex, Cursor, OpenClaw, and Hermes. One skill file teaches every agent how to create cryptographically signed trust receipts."
+date: 2026-05-01
+tags: ["skills", "integrations", "multi-agent", "release"]
+readTime: "5 min read"
+---
+
+# Treeship Agent Skills: One Skill, Every Agent
+
+Today we're shipping the Treeship Agent Skill: one Markdown file that teaches any coding agent — Kimi Code CLI, Claude Code, Codex, Cursor, OpenClaw, or Hermes — how to create cryptographically signed trust receipts.
+
+Install it once, and the agent can sign actions, verify chains, manage approvals, and push receipts to the Hub without you re-explaining the API every conversation.
+
+---
+
+## The Problem
+
+Agent conversations are not evidence. A chat log is a record of what an agent said, not what it did. When the agent runs `npm test` and reports "all green," the only thing you have is a sentence in a transcript. When the agent applies a database migration on your behalf, the only thing you have is a sentence in a transcript. When the agent claims a deployment succeeded, the only thing you have is a sentence in a transcript.
+
+Treeship turns those moments into receipts. `treeship wrap -- npm test` produces a signed Ed25519 attestation of the exact command, exit code, and outputs. `treeship verify last` checks the chain offline. `treeship hub push last` gives you a public URL anyone can verify without an account, an API key, or a browser extension.
+
+The catch was always the same: *the agent has to know about it*. If you have to explain the API every time you start a conversation, you'll stop using it. If the agent doesn't know which command to run when you say "deploy the staging service," it'll fall back to the chat-log answer — "I'll run the deploy script" — and the trust receipt never gets produced.
+
+The Agent Skill closes that gap.
+
+---
+
+## One Skill, Every Agent
+
+The skill is a single `SKILL.md` file. It teaches the agent the full Treeship surface: every CLI command, both SDKs, the MCP bridge wiring, the Hub API, the approval-gated workflow pattern, and the multi-agent handoff pattern. Drop it into the agent's skills directory and the agent treats it as durable knowledge — same as a long-lived `CLAUDE.md` or a system prompt, but loaded automatically by the agent's runtime.
+
+```bash
+# Kimi Code CLI
+npx skills add zerkerlabs/treeship --skill treeship --agent kimi-cli -g -y
+
+# Claude Code
+npx skills add zerkerlabs/treeship --skill treeship --agent claude-code -g -y
+
+# Codex
+npx skills add zerkerlabs/treeship --skill treeship --agent codex -g -y
+
+# Cursor
+npx skills add zerkerlabs/treeship --skill treeship --agent cursor -g -y
+
+# OpenClaw
+npx skills add zerkerlabs/treeship --skill treeship --agent openclaw -g -y
+
+# Hermes (manual install — Hermes loads from ~/.hermes/skills/<name>/)
+mkdir -p ~/.hermes/skills/treeship
+curl -fsSL https://raw.githubusercontent.com/zerkerlabs/treeship/main/skills/treeship/SKILL.md \
+  -o ~/.hermes/skills/treeship/SKILL.md
+```
+
+The `-g` flag installs globally (every project on the machine sees the skill), `-y` skips the confirmation prompt. Drop both for an interactive install scoped to a single project.
+
+---
+
+## How It Works
+
+Once the skill is installed, the agent stops needing the API explained to it. A typical conversation:
+
+> **You:** I'm about to deploy the staging service. Can you run the deploy and give me a verifiable receipt?
+>
+> **Agent:** I'll wrap the deploy with Treeship so you get a signed receipt:
+>
+> ```bash
+> treeship wrap --action deploy.staging -- ./scripts/deploy.sh staging
+> treeship session report
+> ```
+>
+> The first command runs the deploy and signs the result. The second uploads the receipt to the Hub and returns a public URL you can share. Want me to run them now?
+
+The agent didn't guess. The skill told it that `treeship wrap` is the right shape for "run a command and produce a signed receipt," and that `treeship session report` produces a shareable URL. It also knows the alternative paths — `treeship hub push last`, `treeship session start --name "..."`, the Python and TypeScript SDKs — and picks based on what fits your stack.
+
+When you ask "can you also have someone approve this first?", the skill knows the answer:
+
+```python
+# 1. Human creates approval
+approval = ts.attest_approval(
+    approver="human://alice",
+    description="approve staging deploy",
+    expires_in=3600
+)
+
+# 2. Agent uses the approval nonce
+result = ts.attest_action(
+    actor="agent://deployer",
+    action="deploy.staging",
+    approval_nonce=approval.nonce,
+    meta={"target": "staging"}
+)
+```
+
+The agent doesn't have to invent that flow. The skill spells it out, including the v0.9.9 replay-check semantics that make sure an approval can't be reused.
+
+---
+
+## MCP Bridge: Automatic Attestation
+
+The skill teaches the agent what to do. The MCP bridge ([`@treeship/mcp`](https://www.npmjs.com/package/@treeship/mcp)) captures whatever the agent does. Together they give High coverage without prompting — every Read, Write, Bash, and MCP tool call gets attested into the active session, no matter what the user asked for.
+
+```bash
+# Claude Code
+claude mcp add --transport stdio treeship -- npx -y @treeship/mcp
+
+# Kimi Code CLI
+kimi mcp add --transport stdio treeship -- npx -y @treeship/mcp
+```
+
+For Cursor, Codex, and OpenClaw, the wiring is in their respective MCP config files (the [agent-skills integration guide](https://github.com/zerkerlabs/treeship/blob/main/integrations/agent-skills/README.md) has the per-agent snippets). For Hermes, the skill is the bridge — Hermes routes commands through `treeship wrap` per the skill's guidance, capturing every wrapped command at Medium coverage.
+
+---
+
+## Coverage Levels
+
+| Level | What Treeship sees | When |
+|---|---|---|
+| **High** | Every Read, Write, Bash, MCP tool call | Skill + MCP bridge, or Claude Code plugin |
+| **Medium** | Commands the agent explicitly wraps with `treeship wrap` | Skill alone |
+| **Basic** | Explicit user-requested wraps | Fallback (no skill, no MCP) |
+
+The skill's job is to lift any agent from Basic to at least Medium. Adding the MCP bridge — or installing the [Claude Code plugin](https://docs.treeship.dev/integrations/claude-code) where available — lifts coverage to High.
+
+See the [coverage levels guide](https://docs.treeship.dev/guides/coverage-levels) for the full ladder, including how `verified_captures` differs from `potential_captures` (the v0.9.8 trust-semantics distinction that keeps "what a harness *could* observe if attached and working" separate from "what's actually been *proven* by a smoke run on this machine").
+
+---
+
+## What's in the Skill
+
+- **Every Treeship CLI command** — `wrap`, `verify`, `session report`, `approve`, `hub push`, `setup`, `add --discover`, `harness list`, and more.
+- **Python SDK shape** — `Treeship().attest_action()`, `attest_approval()`, `attest_decision()`, `verify()`, `dock_push()`, `session_report()`.
+- **TypeScript SDK shape** — `Ship.init()`, `attestAction()`, `attestHandoff()`, `createCheckpoint()`, `createBundle()`.
+- **Approval-gated workflows** — the create-approval / consume-with-nonce / verify-with-replay-checks pattern.
+- **Chained workflows** — multi-agent handoffs linked by `parent_id`, the chain walk that `treeship verify` runs.
+- **MCP bridge wiring per agent** — exact `claude mcp add`, `kimi mcp add`, Cursor `mcp.json`, Codex `config.toml` snippets.
+- **Hub API surface** — DPoP auth, public verification URLs, Merkle inclusion proofs.
+- **Standards reference** — Ed25519 (RFC 8032), DSSE, SHA-256, RFC 8785 canonicalization.
+
+The skill is **declarative, not procedural**: it doesn't run anything itself. It teaches the agent the API and the right shape for each use case. The agent decides when to call the CLI or SDK based on what the user actually asked for. That keeps the skill safe (it's just text) and portable (the same file lands on every agent).
+
+---
+
+## Try It Now
+
+Three steps:
+
+```bash
+# 1. Install Treeship itself (one-liner; idempotent)
+curl -fsSL treeship.dev/setup | sh
+
+# 2. Install the skill on your agent (pick yours)
+npx skills add zerkerlabs/treeship --skill treeship --agent claude-code -g -y
+
+# 3. Open your agent and ask:
+#    "wrap my next command with Treeship"
+```
+
+The agent now knows the API. Ask it to verify a chain, push a receipt, or set up an approval workflow — it'll pick the right command without you spelling it out.
+
+---
+
+## What's Next
+
+The skill is the first half of the agent-native experience. The second half — published in the [v0.10.0 release](https://github.com/zerkerlabs/treeship/releases) — is the agent-readable receipt surface: server-rendered receipt pages a non-browser tool can read, a stable JSON contract at `/api/receipt/<id>/agent`, and downloadable `.treeship` packages anyone can verify offline. Together they close the loop: an agent can install Treeship, run a session, share a receipt, and hand back URLs that work for humans, AI agents, link unfurlers, and offline verifiers alike.
+
+The skill ships today. Try it on your agent of choice and tell us where it gets the answer wrong — that's the feedback loop that pulls the next API surface into the skill.
+
+---
+
+## Resources
+
+- [Agent Skills integration guide](https://github.com/zerkerlabs/treeship/blob/main/integrations/agent-skills/README.md) — full per-agent setup
+- [`SKILL.md`](https://github.com/zerkerlabs/treeship/blob/main/skills/treeship/SKILL.md) — the skill content itself
+- [Treeship docs](https://docs.treeship.dev) — full reference
+- [GitHub repository](https://github.com/zerkerlabs/treeship) — source, issues, contributions
