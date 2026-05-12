@@ -1,5 +1,11 @@
 # Treeship + OpenClaw Integration
 
+> **For new installs, prefer the native plugin: [`integrations/openclaw-plugin/`](../openclaw-plugin/).**
+>
+> The plugin registers `before_tool_call` and `after_tool_call` hooks at the OpenClaw Gateway layer, so every tool call is captured automatically — no skill-side discipline required and no prompt-injection bypass surface. Install with `openclaw plugins install @treeship/openclaw-plugin`.
+>
+> The skill below is the fallback path for environments where the plugin can't be installed, or as supplementary documentation that teaches the agent how to author meaningful session headlines.
+
 ## Quick Install (recommended)
 
 The Treeship setup script auto-detects OpenClaw and installs this skill:

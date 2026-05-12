@@ -1,0 +1,50 @@
+{
+  "name": "@treeship/openclaw-plugin",
+  "version": "0.10.3",
+  "description": "Portable, cryptographically signed receipts for every OpenClaw session. Captures every tool call at the Gateway layer — below the agent — so receipts are complete regardless of agent discipline or prompt-injection state.",
+  "license": "Apache-2.0",
+  "author": {
+    "name": "Zerker Labs",
+    "email": "hello@treeship.dev",
+    "url": "https://treeship.dev"
+  },
+  "homepage": "https://treeship.dev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zerkerlabs/treeship.git",
+    "directory": "integrations/openclaw-plugin"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.4.0"
+  },
+  "peerDependencies": {
+    "openclaw": "*"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
+  "keywords": [
+    "treeship",
+    "openclaw",
+    "openclaw-plugin",
+    "receipts",
+    "attestation",
+    "verification",
+    "agent-trust",
+    "cryptographic-signing",
+    "session-receipts"
+  ]
+}
