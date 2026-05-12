@@ -107,15 +107,23 @@ Skill lands at `~/.cursor/skills/treeship/SKILL.md`. Cursor reads global skills 
 
 ### OpenClaw
 
+**Production path — native plugin** (zero-config, bypass-proof):
+
+```bash
+openclaw plugins install @treeship/openclaw-plugin
+```
+
+The plugin runs in the OpenClaw Gateway process and registers `before_tool_call` and `after_tool_call` hooks that automatically emit Treeship session events for every tool call. Sessions auto-open on first event, auto-close at session end. The agent never decides whether to attest. Reference: [`integrations/openclaw-plugin/`](../openclaw-plugin/).
+
+**Fallback path — skill + MCP** (for environments where the plugin can't be installed):
+
 ```bash
 npx skills add zerkerlabs/treeship --skill treeship --agent openclaw -g -y
 ```
 
-Skill lands at `~/.openclaw/skills/treeship/SKILL.md`. OpenClaw treats skills as durable instructions; the skill applies to every project where OpenClaw is active.
+Skill lands at `~/.openclaw/skills/treeship/SKILL.md`; pair with `@treeship/mcp` configured at `~/.openclaw/mcp.json` (same shape as Cursor). With the skill alone, capture depends on the agent calling MCP tools after each action — which a prompt-injected or forgetful agent can skip. The plugin removes this dependency.
 
-**MCP bridge** — OpenClaw is currently MCP-routed only; the skill provides the API knowledge, the MCP bridge provides the capture surface. Add it the same way as Cursor (config at `~/.openclaw/mcp.json`).
-
-**Coverage:** Medium with skill alone; High with skill + MCP bridge.
+**Coverage:** High with plugin; Medium with skill + MCP; Low with skill alone.
 
 ### Hermes
 
@@ -195,7 +203,7 @@ The skill leaves no other state behind — no daemons, no background processes, 
 | Claude Code | Medium | High | High |
 | Codex | Medium | High | — |
 | Cursor | Medium | High | — |
-| OpenClaw | Medium | High | — |
+| OpenClaw | Low | Medium | High |
 | Hermes | Medium | (no MCP today) | — |
 
 **Coverage levels** match Treeship's [coverage-levels guide](https://docs.treeship.dev/guides/coverage-levels):
