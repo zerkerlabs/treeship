@@ -18,7 +18,7 @@ need to know," not "fill in every box."
 
 <!--
 Concrete evidence. Examples:
-- `cargo test -p treeship-core` (177 passing, including new <test_name>)
+- `cargo test -p treeship-core` (257 passing, including new <test_name>)
 - `./tests/cross-sdk/run.sh` (4/4 vectors agree)
 - Smoke: ran `treeship session start && treeship wrap -- echo hi && treeship session close`,
   verified the resulting .treeship package

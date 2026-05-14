@@ -11,7 +11,7 @@ cargo build --bin treeship
 cargo test -p treeship-core
 ```
 
-If `cargo build` succeeds and `cargo test -p treeship-core` reports `177 passed`, your environment is good.
+If `cargo build` succeeds and `cargo test -p treeship-core` reports `257 passed`, your environment is good.
 
 ## Development setup
 
