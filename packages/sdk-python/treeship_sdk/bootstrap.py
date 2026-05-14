@@ -106,7 +106,11 @@ def _read_expected_checksum(asset: str) -> Optional[str]:
         if not resource.is_file():
             return None
         raw = resource.read_text(encoding="utf-8")
-    except (FileNotFoundError, ModuleNotFoundError, OSError):
+    except (FileNotFoundError, ModuleNotFoundError, OSError, ValueError):
+        # ValueError catches UnicodeDecodeError (a subclass) — a wheel
+        # that ships a checksum file with non-UTF-8 bytes must surface
+        # as "missing/malformed" (None) so the caller routes through the
+        # structured ``checksum-missing`` error path, not a stack trace.
         return None
     hex_str = raw.strip().lower()
     if not _HEX_SHA256_RE.match(hex_str):

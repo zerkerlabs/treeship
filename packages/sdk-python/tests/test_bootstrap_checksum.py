@@ -288,6 +288,31 @@ class ReadExpectedChecksumTests(unittest.TestCase):
         ):
             self.assertEqual(bootstrap._read_expected_checksum("anything"), good)
 
+    def test_returns_none_on_non_utf8_payload(self) -> None:
+        """A wheel that ships a checksum file with non-UTF-8 bytes must
+        surface as "missing/malformed", not a stack trace.
+
+        ``read_text(encoding="utf-8")`` raises ``UnicodeDecodeError`` on
+        bad bytes; that's a subclass of ``ValueError``. The helper's
+        contract is "missing or malformed → None" so the caller can
+        branch through the structured ``checksum-missing`` error path.
+        """
+        from treeship_sdk import bootstrap
+
+        class _StubResource:
+            def is_file(self): return True
+            def read_text(self, encoding="utf-8"):  # noqa: ARG002
+                raise UnicodeDecodeError("utf-8", b"\xff\xfe\x00malformed", 0, 1, "invalid start byte")
+
+        class _StubRoot:
+            def joinpath(self, _name): return _StubResource()
+
+        with patch(
+            "importlib.resources.files",
+            return_value=_StubRoot(),
+        ):
+            self.assertIsNone(bootstrap._read_expected_checksum("anything"))
+
     def test_normalizes_uppercase_hex_to_lowercase(self) -> None:
         from treeship_sdk import bootstrap
 
