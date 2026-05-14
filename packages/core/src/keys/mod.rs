@@ -462,7 +462,7 @@ impl Store {
         // in-memory secret is already valid. The next decrypt on a
         // fresh process will retry.
         if was_legacy {
-            if let Err(e) = self.migrate_entry_to_v2(&entry, &*secret_arr) {
+            if let Err(e) = self.migrate_entry_to_v2(&entry, &secret_arr) {
                 // Surface the failure as a tracing-style stderr note
                 // rather than an error -- the user's signing flow is
                 // unaffected, and we'd rather them know about it than
@@ -476,7 +476,7 @@ impl Store {
             }
         }
 
-        let signer = Ed25519Signer::from_bytes(&entry.id, &*secret_arr)
+        let signer = Ed25519Signer::from_bytes(&entry.id, &secret_arr)
             .map_err(|e| KeyError::Crypto(e.to_string()))?;
 
         Ok(Box::new(signer))
@@ -2221,7 +2221,7 @@ mod tests {
         for entry in fs::read_dir(&dir).unwrap() {
             let p = entry.unwrap().path();
             assert!(
-                !p.extension().is_some_and(|e| e == "tmp"),
+                p.extension().is_none_or(|e| e != "tmp"),
                 "no .tmp fragment must remain after migration, found: {}",
                 p.display()
             );
