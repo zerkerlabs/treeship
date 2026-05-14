@@ -40,7 +40,7 @@ Full detail: [Security -- concepts](https://docs.treeship.dev/concepts/security)
 
 Key properties:
 - Ed25519 signatures via ed25519-dalek (NCC Group audited)
-- AES-256-CTR + HMAC encrypted keystore, machine-bound
+- AES-256-GCM encrypted keystore, machine-bound (see [TS-2026-001](docs/security/TS-2026-001.md) for migration from prior construction)
 - Content-addressed artifact IDs derived from PAE bytes
 - Hub: device authorization for **enrollment**, **DPoP (RFC 9449)** for **every authenticated Hub write** (no bearer session tokens for that path)
 - Approval nonce binding prevents approval reuse
