@@ -92,6 +92,25 @@ def pkg_json_dep_version(rel: str, dep_name: str, *, group: str = "dependencies"
     return json.loads(text).get(group, {}).get(dep_name)
 
 
+def marketplace_metadata_version(rel: str) -> str | None:
+    """Read metadata.version from .claude-plugin/marketplace.json."""
+    text = read_text(rel)
+    if text is None:
+        return None
+    return json.loads(text).get("metadata", {}).get("version")
+
+
+def marketplace_plugin_version(rel: str, plugin_name: str) -> str | None:
+    """Read plugins[name=<plugin_name>].version from a marketplace.json."""
+    text = read_text(rel)
+    if text is None:
+        return None
+    for plugin in json.loads(text).get("plugins", []) or []:
+        if plugin.get("name") == plugin_name:
+            return plugin.get("version")
+    return None
+
+
 def pyproject_version(rel: str) -> str | None:
     text = read_text(rel)
     if text is None:
@@ -243,6 +262,25 @@ def collect_sites() -> list[Site]:
                     pin,
                 )
             )
+
+    # Claude Code plugin marketplace manifest: both metadata.version and the
+    # per-plugin version must track the release. Drift here was the 0.10.2
+    # miss — the plugin marketplace continued advertising 0.9.5 while every
+    # other site had moved on.
+    sites.append(
+        Site(
+            ".claude-plugin/marketplace.json",
+            "claude-plugin marketplace metadata.version",
+            marketplace_metadata_version(".claude-plugin/marketplace.json"),
+        )
+    )
+    sites.append(
+        Site(
+            ".claude-plugin/marketplace.json",
+            "claude-plugin marketplace plugins[treeship].version",
+            marketplace_plugin_version(".claude-plugin/marketplace.json", "treeship"),
+        )
+    )
 
     # Python SDK: distribution metadata + runtime __version__. Drift between
     # these two is what produced the 0.9.6 PyPI miss.
