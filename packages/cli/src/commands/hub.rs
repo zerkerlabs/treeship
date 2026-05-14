@@ -263,6 +263,45 @@ pub fn status(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
 
+    // JSON mode: emit a structured envelope that the SDK can parse.
+    //
+    // The SDK's `hub.status()` in @treeship/sdk reads `status`, `endpoint`,
+    // and `hub_id` (or legacy `dock_id`) off the top level. We surface a
+    // boolean `connected` too so future SDK callers can branch on a single
+    // key without re-deriving it from the string `status` field.
+    //
+    // Shape (no hub configured):
+    //   { "status": "detached", "connected": false }
+    // Shape (attached):
+    //   { "status": "attached", "connected": true,
+    //     "name": "...", "hub_id": "...", "key_id": "...",
+    //     "endpoint": "..." }
+    //
+    // Prior to this fix, `cmd_status` only emitted via `printer.info(...)`,
+    // which is a no-op in JSON mode (see printer.rs). That caused the SDK
+    // to receive empty stdout, throw a JSON.parse error, and silently
+    // return `{ connected: false }` for *every* invocation -- the
+    // hub.status() round-trip test passed for the wrong reason.
+    if printer.format == crate::printer::Format::Json {
+        let body = if let Some((name, entry)) = ctx.config.active_hub_connection() {
+            serde_json::json!({
+                "status":    "attached",
+                "connected": true,
+                "name":      name,
+                "hub_id":    entry.hub_id,
+                "key_id":    entry.key_id,
+                "endpoint":  entry.endpoint,
+            })
+        } else {
+            serde_json::json!({
+                "status":    "detached",
+                "connected": false,
+            })
+        };
+        printer.json(&body);
+        return Ok(());
+    }
+
     printer.blank();
 
     if let Some((name, entry)) = ctx.config.active_hub_connection() {
