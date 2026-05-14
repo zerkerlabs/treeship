@@ -78,7 +78,15 @@ class GithubReleaseChecksumTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.cache_dir = Path(self._tmp.name) / "cache"
         # _install_via_github_release will mkdir this itself, but we
-        # leave the parent in place so cleanup is unambiguous.
+        # leave the parent in place so cleanup is unambiguous. We
+        # pre-create with 0o700 so the F3 ownership check (which
+        # refuses group/world-writable cache dirs) passes regardless
+        # of the host umask. mkdir(exist_ok=True) inside the function
+        # is then a no-op.
+        import os as _os
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        if hasattr(_os, "chmod"):
+            _os.chmod(self.cache_dir, 0o700)
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
@@ -420,6 +428,14 @@ class UniquePartialFilenameTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.cache_dir = Path(self._tmp.name) / "cache"
+        # Pre-create cache_dir with 0o700 so the F3 ownership check
+        # (group/world-writable refusal) doesn't reject us on machines
+        # with a permissive umask. The function uses mkdir(exist_ok=
+        # True), so this is a no-op for it.
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        import os as _os
+        if hasattr(_os, "chmod"):
+            _os.chmod(self.cache_dir, 0o700)
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
@@ -488,6 +504,13 @@ class UniquePartialFilenameTests(unittest.TestCase):
         # addresses. Even with the same cache_dir the fix should hold.
         cache_a = Path(self._tmp.name) / "cache-a"
         cache_b = Path(self._tmp.name) / "cache-b"
+        # Pre-create with 0o700 so the F3 ownership check passes
+        # regardless of host umask.
+        import os as _os
+        cache_a.mkdir(parents=True, exist_ok=True)
+        cache_b.mkdir(parents=True, exist_ok=True)
+        _os.chmod(cache_a, 0o700)
+        _os.chmod(cache_b, 0o700)
 
         results: dict[str, object] = {}
         errors: dict[str, BaseException] = {}
