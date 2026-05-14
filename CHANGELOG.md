@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Security
+
+- **Keystore at-rest encryption replaced with real AES-256-GCM AEAD (TS-2026-001).** The pre-v0.10.3 keystore claimed AES-256-GCM in code and docs, but the implementation was a homemade SHA-256-CTR + HMAC-SHA-256 construction with a degenerate keystream (the same `enc_key` byte was reused once per plaintext byte modulo 32, so the construction was not a real stream cipher). Replaced with the RustCrypto `aes-gcm` 0.10 crate, which provides proper authenticated encryption with a 96-bit random nonce per write and a 128-bit GCM tag. New on-disk format: `[magic=0x54, version=0x02, nonce(12), ciphertext || tag(16)]`.
+- **Existing keystores are transparently migrated on first decrypt.** Pre-v0.10.3 keystore entries continue to load via the legacy decrypt path (`decrypt_legacy_v1`) and are immediately re-encrypted in the new v2 format and rewritten on disk. No user action required. If migration write fails (e.g. read-only filesystem), signing still succeeds for the current call and migration is retried on the next load. The `treeship-vi` sibling keystore retains the legacy public symbols (`aes_gcm_encrypt` / `aes_gcm_decrypt`) so its on-disk format remains byte-stable until it migrates on its own cadence.
+- **Local AEAD key buffer wrapped in `zeroize::Zeroizing`** so the stack copy is wiped on drop. The aes-gcm cipher's internal expanded key schedule is outside our control, but the raw 32-byte machine-derived key copy at the encrypt/decrypt scope is cleared.
+
 ## 0.10.2 (2026-05-11)
 
 The **Multi-Agent Attribution and Universal Skills** release. v0.10.0 made receipts agent-readable. v0.10.1 hardened the install path that delivers the binary which produces them. v0.10.2 closes two follow-on gaps the post-launch dogfooding surfaced: model/provider attribution silently disappearing on the signed-artifact path, and agents on every CLI re-learning how to use Treeship from scratch.
