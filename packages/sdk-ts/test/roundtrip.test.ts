@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, existsSync, readFileSync, writeFileSync, symlinkSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -18,8 +18,9 @@ import { ship } from "../src/index.js";
 //   1. Locate the workspace root by walking up from __dirname until we find
 //      `Cargo.toml` with a [workspace] table. Use that to resolve the release
 //      binary path: <workspace>/target/release/treeship.
-//   2. If the binary is missing, build it once with `cargo build --release -p
-//      treeship-cli`. If `cargo` itself is unavailable, skip the suite.
+//   2. If the binary is missing OR is from a different workspace version,
+//      build it once with `cargo build --release -p treeship-cli`. If `cargo`
+//      itself is unavailable, skip the suite.
 //   3. The SDK shells out to whatever `treeship` it finds on PATH. To pin it
 //      to our just-built binary we create a per-suite shim directory with a
 //      symlink named `treeship` -> our binary, and prepend that directory to
@@ -51,8 +52,39 @@ function cargoAvailable(): boolean {
   return r.status === 0;
 }
 
-function ensureBinary(workspaceRoot: string, binaryPath: string): void {
-  if (existsSync(binaryPath)) return;
+/**
+ * Read the canonical CLI version from packages/cli/Cargo.toml.
+ *
+ * We use the CLI's Cargo.toml as the source of truth (it's what
+ * `treeship version` reports via `env!("CARGO_PKG_VERSION")`). If the
+ * file is missing or unparseable we return null and skip the version
+ * pin -- better than erroring out an otherwise functional suite.
+ */
+function readCliCargoVersion(workspaceRoot: string): string | null {
+  const cargoToml = join(workspaceRoot, "packages", "cli", "Cargo.toml");
+  if (!existsSync(cargoToml)) return null;
+  const contents = readFileSync(cargoToml, "utf8");
+  // Match the [package].version line, not workspace deps' version fields.
+  // We look for `version = "X.Y.Z"` within the first ~30 lines (before
+  // [features] / [dependencies]).
+  const head = contents.split("\n").slice(0, 30).join("\n");
+  const m = head.match(/^version\s*=\s*"([^"]+)"/m);
+  return m ? m[1] : null;
+}
+
+/**
+ * Ask the binary for its version string. `treeship version` prints
+ *   "treeship <version> (rust)"
+ * Return null if the binary errors out or the format changes.
+ */
+function readBinaryVersion(binaryPath: string): string | null {
+  const r = spawnSync(binaryPath, ["version"], { encoding: "utf8" });
+  if (r.status !== 0) return null;
+  const m = (r.stdout || "").match(/treeship\s+(\S+)/);
+  return m ? m[1] : null;
+}
+
+function buildBinary(workspaceRoot: string, binaryPath: string): void {
   // Build the CLI in release mode. This is slow on a cold cache (minutes)
   // but cached afterwards. Tests will time out at the vitest level if cargo
   // is wedged -- that's the correct signal.
@@ -67,6 +99,32 @@ function ensureBinary(workspaceRoot: string, binaryPath: string): void {
   if (!existsSync(binaryPath)) {
     throw new Error(`cargo build succeeded but binary still missing at ${binaryPath}`);
   }
+}
+
+/**
+ * Ensure the binary exists AND matches the workspace's declared CLI
+ * version. A stale binary from a previous commit would otherwise sail
+ * through every assertion -- the whole point of this suite is to catch
+ * SDK <-> CLI drift, so a mismatched binary defeats the test.
+ *
+ * Mismatch policy: rebuild, then continue. Do NOT fail the test --
+ * rebuilding is the correct recovery, and forcing a fail would block
+ * `vitest --watch` workflows where the developer has just edited Rust
+ * code and expects the suite to pick it up.
+ */
+function ensureBinary(workspaceRoot: string, binaryPath: string): void {
+  const expected = readCliCargoVersion(workspaceRoot);
+
+  if (existsSync(binaryPath)) {
+    const actual = readBinaryVersion(binaryPath);
+    if (expected && actual && actual === expected) {
+      return; // up-to-date
+    }
+    // Mismatch (or couldn't read either side). Force a rebuild rather
+    // than silently passing the suite with stale bits.
+  }
+
+  buildBinary(workspaceRoot, binaryPath);
 }
 
 const WORKSPACE_ROOT = findWorkspaceRoot(__dirname);
@@ -84,34 +142,74 @@ describeOrSkip("@treeship/sdk round-trip vs real CLI", () => {
   let configPath:  string;
   let storageDir:  string;
   let originalPath: string | undefined;
+  let originalTreeshipConfig: string | undefined;
+  let setupSucceeded = false;
 
   beforeAll(() => {
-    ensureBinary(WORKSPACE_ROOT, BINARY_PATH);
+    // Capture env state up-front so the rollback path (if any step below
+    // throws) can restore it deterministically. Without this, a partial
+    // setup-then-throw leaves PATH and TREESHIP_CONFIG mutated for the
+    // rest of the vitest process, which is fine in CI (fresh process)
+    // but corrupts subsequent runs under `vitest --watch`.
+    originalPath           = process.env.PATH;
+    originalTreeshipConfig = process.env.TREESHIP_CONFIG;
 
-    // Per-suite scratch dir: holds both the PATH shim and the .treeship/
-    // config + keystore.
-    sessionDir = mkdtempSync(join(tmpdir(), "treeship-sdk-roundtrip-"));
-    shimDir    = join(sessionDir, "bin");
-    mkdirSync(shimDir, { recursive: true });
-    symlinkSync(BINARY_PATH, join(shimDir, "treeship"));
+    try {
+      ensureBinary(WORKSPACE_ROOT, BINARY_PATH);
 
-    configPath = join(sessionDir, ".treeship", "config.json");
-    storageDir = join(sessionDir, ".treeship", "artifacts");
+      // Per-suite scratch dir: holds both the PATH shim and the .treeship/
+      // config + keystore.
+      sessionDir = mkdtempSync(join(tmpdir(), "treeship-sdk-roundtrip-"));
+      shimDir    = join(sessionDir, "bin");
+      mkdirSync(shimDir, { recursive: true });
+      symlinkSync(BINARY_PATH, join(shimDir, "treeship"));
 
-    originalPath = process.env.PATH;
-    process.env.PATH         = `${shimDir}:${process.env.PATH ?? ""}`;
-    process.env.TREESHIP_CONFIG = configPath;
+      configPath = join(sessionDir, ".treeship", "config.json");
+      storageDir = join(sessionDir, ".treeship", "artifacts");
 
-    // Initialize a fresh ship. The SDK doesn't expose `init` -- it's a
-    // one-time setup step the operator runs via the CLI -- so we invoke
-    // the binary directly. --force is safe here because the path is in
-    // a tempdir; the global-keystore guard only trips on the user's
-    // resolved ~/.treeship.
-    execFileSync(BINARY_PATH, ["init", "--config", configPath, "--force"], {
-      stdio: "pipe",
-      env:   { ...process.env },
-    });
+      process.env.PATH            = `${shimDir}:${process.env.PATH ?? ""}`;
+      process.env.TREESHIP_CONFIG = configPath;
+
+      // Initialize a fresh ship. The SDK doesn't expose `init` -- it's a
+      // one-time setup step the operator runs via the CLI -- so we invoke
+      // the binary directly. --force is safe here because the path is in
+      // a tempdir; the global-keystore guard only trips on the user's
+      // resolved ~/.treeship.
+      execFileSync(BINARY_PATH, ["init", "--config", configPath, "--force"], {
+        stdio: "pipe",
+        env:   { ...process.env },
+      });
+
+      setupSucceeded = true;
+    } catch (err) {
+      // Roll back any partial mutations so afterAll's cleanup is a no-op
+      // and the rest of the test file (or other suites in the same proc)
+      // see clean state.
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      if (originalTreeshipConfig === undefined) delete process.env.TREESHIP_CONFIG;
+      else process.env.TREESHIP_CONFIG = originalTreeshipConfig;
+      if (sessionDir && existsSync(sessionDir)) {
+        rmSync(sessionDir, { recursive: true, force: true });
+      }
+      throw err;
+    }
   }, 300_000);  // 5 min: cold cargo build dominates on first run
+
+  afterAll(() => {
+    // Always restore env, even if beforeAll partially set things up and
+    // then threw -- in that case `setupSucceeded` stays false and the
+    // catch block above already rolled back, but a second restore is
+    // cheap and idempotent.
+    if (originalPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPath;
+    if (originalTreeshipConfig === undefined) delete process.env.TREESHIP_CONFIG;
+    else process.env.TREESHIP_CONFIG = originalTreeshipConfig;
+
+    if (setupSucceeded && sessionDir && existsSync(sessionDir)) {
+      rmSync(sessionDir, { recursive: true, force: true });
+    }
+  });
 
   it("CLI binary version is reachable from the SDK's PATH lookup", async () => {
     // checkCli does `treeship version`; the shim must resolve it.
@@ -184,25 +282,47 @@ describeOrSkip("@treeship/sdk round-trip vs real CLI", () => {
     expect(after.outcome).toBe("fail");
   });
 
-  it("hub.status reports disconnected when no hub is configured", async () => {
-    // A fresh init has no hub_connections + no active_hub. The SDK's
-    // status() catches the CLI's error path and reports { connected: false }
-    // rather than throwing -- giving callers a polled-status idiom that
-    // works whether or not a hub is reachable.
+  it("hub.status reports disconnected when no hub is configured AND the CLI actually answered", async () => {
+    // A fresh init has no hub_connections + no active_hub. With the CLI
+    // fix in place (`treeship hub status --format json` emits a real
+    // JSON envelope instead of empty stdout), the SDK successfully
+    // parses the response and returns `{ connected: false }` via the
+    // *happy path* -- NOT via the swallowed-exception fallback in
+    // hub.ts's catch block.
+    //
+    // Before the fix this test was a tautology: the CLI emitted nothing,
+    // exec.ts's JSON.parse("") threw, hub.ts swallowed it and returned
+    // `{ connected: false }` from its catch arm -- so the test passed
+    // regardless of what the CLI actually did.
+    //
+    // To prove the CLI fix is in effect, we drive the binary directly
+    // here and assert the stdout is non-empty parseable JSON with the
+    // expected shape. If a future regression breaks the CLI's JSON
+    // emission, this assertion fails *and* the SDK call below either
+    // throws or returns via the catch arm -- both detectable.
+
+    // 1. Direct CLI assertion: the binary must emit a non-empty JSON
+    //    envelope to stdout.
+    const cli = spawnSync(
+      BINARY_PATH,
+      ["hub", "status", "--config", configPath, "--format", "json"],
+      { encoding: "utf8" },
+    );
+    expect(cli.status).toBe(0);
+    expect(cli.stdout.trim().length).toBeGreaterThan(0);
+    const parsed = JSON.parse(cli.stdout) as Record<string, unknown>;
+    expect(parsed.status).toBe("detached");
+    expect(parsed.connected).toBe(false);
+
+    // 2. SDK assertion: the high-level API must reach the same answer
+    //    via the happy path. We can tell happy-vs-catch apart by the
+    //    presence of the `endpoint` key on the returned object --
+    //    hub.ts's try-arm includes it (even when undefined), the
+    //    catch-arm returns a bare { connected: false } with no
+    //    endpoint key at all.
     const s = ship();
     const status = await s.hub.status();
     expect(status.connected).toBe(false);
-  });
-
-  // Cleanup: restore PATH and remove the tempdir. We do this in an
-  // afterAll-equivalent inline rather than registering an afterAll hook,
-  // to keep the suite a single straight read. Vitest doesn't strictly
-  // need it (tempdir + reverted PATH don't leak between processes) but
-  // it's polite for repeated `vitest --watch` runs.
-  it("cleans up the per-suite scratch dir and PATH override", () => {
-    process.env.PATH = originalPath ?? "";
-    delete process.env.TREESHIP_CONFIG;
-    rmSync(sessionDir, { recursive: true, force: true });
-    expect(existsSync(sessionDir)).toBe(false);
+    expect("endpoint" in status).toBe(true);
   });
 });
