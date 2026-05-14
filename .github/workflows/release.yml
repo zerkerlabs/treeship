@@ -6,8 +6,7 @@ on:
       - 'v*'
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 
 jobs:
   # Preflight: fail the entire release if any package manifest, version file, or
@@ -177,6 +176,13 @@ jobs:
   release:
     needs: smoke
     runs-on: ubuntu-latest
+
+    # Only `release` creates the GitHub Release and uploads assets to it.
+    # `contents: write` is scoped here instead of workflow-wide so a
+    # compromised step in preflight/build/smoke/publish-* cannot push
+    # commits, move tags, or rewrite the release.
+    permissions:
+      contents: write
 
     outputs:
       sha256_linux_x86_64:    ${{ steps.checksums.outputs.sha256_linux_x86_64 }}
@@ -470,6 +476,15 @@ jobs:
     # Linux, treeship-sdk is unusable for those users anyway.
     needs: [smoke, release]
     runs-on: ubuntu-latest
+
+    # `id-token: write` preserves the ability to switch to PyPI OIDC
+    # trusted publishing without re-granting workflow-wide write. The
+    # current step uses TWINE_PASSWORD (a long-lived token); keeping
+    # the permission scoped here means migrating to OIDC is a one-line
+    # change in `steps:` and not a permissions audit.
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
