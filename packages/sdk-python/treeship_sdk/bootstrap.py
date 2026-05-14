@@ -471,14 +471,34 @@ def _install_via_github_release(
             [f"download:{url}", f"expected:{expected}", f"got:{got}"],
         )
 
-    # Hash matched: promote the partial to the final path atomically,
-    # then chmod. Order matters — never chmod the .partial path.
+    # Hash matched. Chmod the partial BEFORE the atomic rename so that
+    # `target` only ever appears on disk in its final, executable
+    # state. If we chmodded AFTER os.replace, a chmod failure (read-
+    # only FS, exotic perms, NFS race) would leave the bytes at
+    # `target` without the executable bit but already past
+    # verification — the next ensure_cli()'s _try_cache would happily
+    # return that path because it doesn't re-verify the SHA. By
+    # ordering chmod first, any chmod failure causes us to abort with
+    # the bytes still under the unique partial name, which we then
+    # unlink — so `target` never exists in an unverified state.
+    try:
+        os.chmod(partial_path, 0o755)
+    except OSError as exc:
+        _cleanup_partial()
+        raise TreeshipBootstrapError(
+            "binary-download-failed",
+            f"could not set executable bit on {asset}: {exc}",
+            [f"download:{url}", f"finalize:{partial_path}"],
+        ) from exc
+
     try:
         os.replace(partial_path, target)
-        os.chmod(target, 0o755)
     except OSError as exc:
-        # Replace/chmod failed even though bytes were correct. Treat as
-        # a download-side failure so the agent can branch on it.
+        # The bytes were correct and chmodded; rename failed (rare:
+        # cross-device, permission, target locked). Clean up the
+        # partial so we don't leave verified-but-orphaned bytes that
+        # a future _try_cache might pick up if a symlink shuffle
+        # happened.
         _cleanup_partial()
         raise TreeshipBootstrapError(
             "binary-download-failed",

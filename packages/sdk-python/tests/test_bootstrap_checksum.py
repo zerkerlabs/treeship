@@ -247,6 +247,66 @@ class GithubReleaseChecksumTests(unittest.TestCase):
             f"partials must be cleaned up on network error, found {leftover_partials}",
         )
 
+    # ------------------------------------------------------------------
+    # F4 — chmod failure must not leave a stale unverified target.
+    # ------------------------------------------------------------------
+
+    def test_chmod_failure_leaves_no_target_file(self) -> None:
+        """If chmod raises, `target` must not exist.
+
+        Pre-fix the order was os.replace(partial, target) then
+        os.chmod(target). A chmod failure after the rename left
+        `target` on disk with non-executable perms but already past
+        SHA-256 verification — the next ensure_cli()'s _try_cache
+        would return it without re-verifying. The fix chmods the
+        partial first, so a chmod failure aborts before the rename
+        and the unique partial is unlinked.
+        """
+        import os as _os
+
+        real_chmod = _os.chmod
+
+        def _boom_chmod(path, mode):  # noqa: ARG001
+            raise PermissionError("simulated chmod failure")
+
+        with patch(
+            "treeship_sdk.bootstrap.platform_release_asset",
+            return_value=(_ASSET, None),
+        ), patch(
+            "treeship_sdk.bootstrap._read_expected_checksum",
+            return_value=_FAKE_SHA256,
+        ), patch(
+            "treeship_sdk.bootstrap.urllib.request.urlopen",
+            side_effect=_fake_urlopen_ok,
+        ), patch(
+            "treeship_sdk.bootstrap.os.chmod",
+            side_effect=_boom_chmod,
+        ):
+            with self.assertRaises(TreeshipBootstrapError) as ctx:
+                _install_via_github_release(self.cache_dir, version="0.0.0-test")
+
+        # Best-signal: the final target path must not exist. If it
+        # did, the caller's next _try_cache would skip re-verification
+        # and exec stale bytes.
+        target = self.cache_dir / "treeship"
+        self.assertFalse(
+            target.exists(),
+            "target must not exist when chmod fails — _try_cache would skip re-verify",
+        )
+
+        # No partial file should be stranded either.
+        leftover_partials = list(self.cache_dir.glob("*.partial"))
+        self.assertEqual(
+            leftover_partials, [],
+            f"partial must be cleaned up on chmod failure, found {leftover_partials}",
+        )
+
+        # And the bootstrap should report this as a download-failed
+        # branch the agent can recover from.
+        self.assertEqual(ctx.exception.reason, "binary-download-failed")
+        # Restore (defensive; patch context already restores).
+        del real_chmod
+
 
 class ReadExpectedChecksumTests(unittest.TestCase):
     """Direct tests of the checksum-loading helper."""
