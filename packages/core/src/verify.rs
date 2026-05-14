@@ -109,10 +109,18 @@ pub fn verify_receipt_json_checks(receipt: &SessionReceipt) -> Vec<VerifyCheck> 
         ));
     }
 
-    checks.push(VerifyCheck::pass(
-        "chain_linkage",
-        "Receipt-level chain linkage intact",
-    ));
+    // P0 #7 (audit): the previous implementation pushed an unconditional
+    // `chain_linkage = pass` row regardless of receipt contents. That
+    // advertised a check that never ran — a verifier output row that
+    // could not fail is worse than no row at all. Each `TimelineEntry`
+    // currently carries `event_id` + `sequence_no` but no `prev_event_id`
+    // field, so the receipt JSON has no per-event linkage we can
+    // recompute. `timeline_order` above already validates the only
+    // ordering signal the receipt actually contains.
+    //
+    // TODO: real chain-linkage check (post-launch). Would require adding
+    // `prev_event_id` to `TimelineEntry` and a format-version bump —
+    // tracked separately from this audit lane.
 
     checks
 }
