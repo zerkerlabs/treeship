@@ -101,7 +101,10 @@ jobs:
       # workspace, not whatever was last published to npm). wasm-pack is
       # required.
       - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+        # Pinned crates.io install with a locked dependency graph,
+        # replacing the previous `curl … | sh` which executed whatever
+        # the rustwasm.github.io CDN served at job runtime.
+        run: cargo install wasm-pack --version 0.14.0 --locked
 
       - name: Install tsx
         run: |

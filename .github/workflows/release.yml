@@ -295,7 +295,12 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+        # `cargo install --locked` builds wasm-pack from a pinned crates.io
+        # version with a locked dependency graph. Replaces the previous
+        # `curl … | sh` which executed whatever the rustwasm.github.io
+        # CDN served at job runtime — a real supply-chain hole in a job
+        # that holds `id-token: write` for npm trusted publishing.
+        run: cargo install wasm-pack --version 0.14.0 --locked
 
       - name: Install wasm-opt (binaryen)
         run: |
