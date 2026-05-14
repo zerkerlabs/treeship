@@ -28,13 +28,17 @@
 //! the entire events.jsonl on every append, which made hooks O(N) in
 //! session length and dominated PostToolUse latency on long sessions.
 //!
-//! Fail-open semantics: if a writer cannot acquire the lock within the
-//! retry window (typically because a peer crashed while holding it, or a
-//! filesystem doesn't honor flock at all), the append still proceeds
-//! without the lock and writes a stderr warning. In that degenerate case
-//! the resulting `sequence_no` is best-effort rather than guaranteed
-//! monotonic, but the event itself is preserved -- the alternative
-//! (blocking the agent forever on a wedged peer) is strictly worse.
+//! Fail-closed semantics: the writer ALWAYS acquires the exclusive flock
+//! before reading the counter and writing the event. We use fs2's blocking
+//! `lock_exclusive()` (flock(2) without LOCK_NB on Unix, LockFileEx without
+//! LOCKFILE_FAIL_IMMEDIATELY on Windows) so contended writers queue rather
+//! than race. An earlier "best-effort, fall through on contention" path
+//! existed here -- it could produce duplicate `sequence_no` under hook
+//! contention (P0, audit lane F), so it was removed. Hook callers already
+//! sit under Claude Code's 60s hook timeout, which bounds wall-clock
+//! exposure to a wedged peer. Trading a bounded wait for guaranteed
+//! injective sequence numbers is the right call when receipts are the
+//! trust artifact.
 //!
 //! Lock file permissions are 0o600 (owner-only) on Unix, applied at file
 //! creation via `OpenOptionsExt::mode` and re-tightened on every open if
@@ -110,12 +114,26 @@ impl EventLog {
     /// sidecar `.lock` file, re-counts events.jsonl lines, assigns sequence_no,
     /// writes the new event, then releases the lock on drop.
     ///
-    /// Lock acquisition is bounded: tries to acquire for up to ~500ms via
-    /// `try_lock_exclusive` poll, then falls back to an unlocked append
-    /// with a stderr warning. A wedged or crashed writer must NOT hang
-    /// hook-driven invocations forever (PostToolUse hooks running per
-    /// tool call would freeze the agent). Better to lose strict
-    /// sequence_no monotonicity in the rare wedge case than to deadlock.
+    /// Locking is BLOCKING (`fs2::FileExt::lock_exclusive`, i.e. flock(2)
+    /// without LOCK_NB). A previous implementation polled `try_lock_exclusive`
+    /// for ~500ms and then fell through to an UNLOCKED write -- which under
+    /// hook contention (multiple PostToolUse invocations racing) could
+    /// assign duplicate `sequence_no` values to different events. That
+    /// broke the injective-sequence invariant receipts depend on, even
+    /// though local merkle verification still passed. Audit lane F (P0).
+    ///
+    /// The trade-off: a wedged peer holding the lock will now stall this
+    /// caller until the peer releases (e.g. by crashing -- flock is
+    /// released by the kernel when the holder's FD closes). Hook
+    /// invocations are bounded by Claude Code's hook timeout (60s by
+    /// default), so the worst-case wedge surfaces as a hook failure
+    /// rather than a duplicate sequence_no. That mirrors how
+    /// `journal/mod.rs` treats the journal append lock as a hard
+    /// correctness barrier rather than a soft hint.
+    ///
+    /// The locked region covers BOTH the counter read AND the file write,
+    /// so two concurrent writers cannot read the same count and append
+    /// twice with that count.
     ///
     /// Lock file is created mode 0o600 (owner-only) so the sidecar can
     /// never be opened by other users on a shared machine.
@@ -123,8 +141,6 @@ impl EventLog {
     /// Skipped on WASM (no fs, no concurrency).
     #[cfg(not(target_family = "wasm"))]
     fn append_locked(&self, event: &mut SessionEvent) -> Result<(), EventLogError> {
-        use std::time::{Duration, Instant};
-
         // Sidecar lock file: contention here doesn't block readers of events.jsonl.
         let lock_path = self.path.with_extension("jsonl.lock");
 
@@ -133,70 +149,56 @@ impl EventLog {
         // would otherwise be permissive on some setups.
         let lock_file = open_lock_file(&lock_path)?;
 
-        // Bounded retry. With 16 parallel writers the worst case is a
-        // queue of N short-held locks; 500ms is plenty. If we fail to
-        // acquire in that window something is wedged -- fall through and
-        // append without ordering rather than freezing the caller.
-        let mut acquired = false;
-        let start = Instant::now();
-        let deadline = Duration::from_millis(500);
-        loop {
-            match lock_file.try_lock_exclusive() {
-                Ok(()) => {
-                    acquired = true;
-                    break;
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    if start.elapsed() >= deadline {
-                        eprintln!(
-                            "[treeship] event_log: lock contention on {} \
-                             exceeded {}ms; appending without sequence ordering guarantee",
-                            lock_path.display(),
-                            deadline.as_millis()
-                        );
-                        break;
-                    }
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-                Err(e) => return Err(e.into()),
-            }
-        }
+        // Blocking flock. Returns when the lock is held exclusively, or
+        // propagates a real I/O error (filesystem that doesn't support
+        // flock, FD revoked, etc.). EINTR retry isn't needed -- fs2 wraps
+        // the syscall and retries internally on POSIX.
+        FileExt::lock_exclusive(&lock_file)?;
 
-        // Under the lock (or unlocked fallback): read sequence_no from the
-        // counter sidecar in O(1) when consistent with events.jsonl size.
-        // Stale or missing counters force a one-time O(N) rescan that also
-        // rewrites the counter, so subsequent appends return to O(1). Only
-        // the on-disk state (counter + size check) is authoritative when
-        // multiple processes are appending; the per-process AtomicU64 is a
-        // stale hint.
-        let count = read_counter_or_recount(&self.path)?;
-        event.sequence_no = count;
+        // From here until `lock_file` is dropped (end of function), we
+        // hold the exclusive flock. The counter read + event write + counter
+        // update MUST stay inside this block; any early return must still
+        // drop `lock_file`, which Rust guarantees by RAII.
+        let result = (|| -> Result<(), EventLogError> {
+            // Read sequence_no from the counter sidecar in O(1) when
+            // consistent with events.jsonl size. Stale or missing counters
+            // force a one-time O(N) rescan that also rewrites the counter,
+            // so subsequent appends return to O(1). Only the on-disk state
+            // (counter + size check) is authoritative when multiple
+            // processes are appending; the per-process AtomicU64 is a
+            // stale hint.
+            let count = read_counter_or_recount(&self.path)?;
+            event.sequence_no = count;
 
-        let mut line = serde_json::to_vec(event)?;
-        line.push(b'\n');
+            let mut line = serde_json::to_vec(event)?;
+            line.push(b'\n');
 
-        let mut file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)?;
-        file.write_all(&line)?;
-        file.flush()?;
+            let mut file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&self.path)?;
+            file.write_all(&line)?;
+            file.flush()?;
 
-        // Update the counter sidecar with the new count and the new
-        // events.jsonl size, so the next append can short-circuit the line
-        // scan. Failure to update the counter is non-fatal: the next reader
-        // will detect the size mismatch and recount.
-        let new_size = file.metadata().map(|m| m.len()).unwrap_or(0);
-        let _ = write_counter(&self.path, count + 1, new_size);
+            // Update the counter sidecar with the new count and the new
+            // events.jsonl size, so the next append can short-circuit the
+            // line scan. Failure to update the counter is non-fatal: the
+            // next reader will detect the size mismatch and recount.
+            let new_size = file.metadata().map(|m| m.len()).unwrap_or(0);
+            let _ = write_counter(&self.path, count + 1, new_size);
 
-        // Keep the in-process AtomicU64 in sync so non-contended callers
-        // see the right value via event_count() without re-reading.
-        self.sequence.store(count + 1, Ordering::SeqCst);
+            // Keep the in-process AtomicU64 in sync so non-contended callers
+            // see the right value via event_count() without re-reading.
+            self.sequence.store(count + 1, Ordering::SeqCst);
+            Ok(())
+        })();
 
-        // Suppress the unused-variable warning on the unlock-fallback path.
-        let _ = acquired;
-        // lock_file drops here -> flock released (no-op if we never acquired).
-        Ok(())
+        // Explicit unlock matches the journal precedent (journal/mod.rs
+        // also calls `unlock` before dropping). Drop alone would release
+        // the flock via close(2), but being explicit makes the lock
+        // window obvious to readers of this function.
+        let _ = FileExt::unlock(&lock_file);
+        result
     }
 
     /// WASM build: no filesystem locks available, no concurrent writers.
@@ -991,6 +993,132 @@ mod tests {
             mode, 0o600,
             "counter sidecar mode is {:o}, expected 0o600 (owner-only)",
             mode
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// P0 regression (audit lane F): under heavy hook contention, multiple
+    /// writers used to fall through and append without the flock when the
+    /// 500ms poll exhausted, producing duplicate `sequence_no` values. The
+    /// blocking `lock_exclusive` fix means every writer must hold the
+    /// flock across both the counter read and the event write.
+    ///
+    /// This test spawns 8 threads, each calling `append` 25 times on its
+    /// own `EventLog` (mimicking 8 separate hook processes each appending
+    /// a burst of events). After the join, the on-disk log must contain
+    /// exactly 8*25=200 events with `sequence_no` exactly the contiguous
+    /// range 0..200, no duplicates and no gaps.
+    #[cfg(not(target_family = "wasm"))]
+    #[test]
+    fn p0_no_duplicate_sequence_under_burst_contention() {
+        use std::sync::Arc;
+        use std::thread;
+
+        const THREADS: usize = 8;
+        const PER_THREAD: usize = 25;
+        const EXPECTED: usize = THREADS * PER_THREAD;
+
+        let dir = std::env::temp_dir().join(format!(
+            "treeship-evtlog-p0-burst-{}",
+            rand::random::<u32>()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir = Arc::new(dir);
+
+        let mut handles = Vec::with_capacity(THREADS);
+        for t in 0..THREADS {
+            let dir = Arc::clone(&dir);
+            handles.push(thread::spawn(move || -> Vec<u64> {
+                // Each thread opens its own EventLog -- this is the
+                // per-process model the audit flagged: every PostToolUse
+                // invocation is a fresh handle on the shared log.
+                let log = EventLog::open(&dir).unwrap();
+                let mut seen = Vec::with_capacity(PER_THREAD);
+                for i in 0..PER_THREAD {
+                    let mut e =
+                        make_event(&format!("ssn_burst_{}_{}", t, i), EventType::SessionStarted);
+                    log.append(&mut e).unwrap();
+                    seen.push(e.sequence_no);
+                }
+                seen
+            }));
+        }
+
+        // Collect what each thread saw locally.
+        let mut all_returned: Vec<u64> = handles
+            .into_iter()
+            .flat_map(|h| h.join().unwrap())
+            .collect();
+        all_returned.sort();
+
+        let expected: Vec<u64> = (0..EXPECTED as u64).collect();
+        assert_eq!(
+            all_returned, expected,
+            "returned sequence_no values must be a contiguous range 0..{} \
+             with no duplicates and no gaps",
+            EXPECTED
+        );
+
+        // Truth source: the on-disk log itself. Verify (a) count and
+        // (b) sequence_no is exactly 0..EXPECTED on the persisted events.
+        let log = EventLog::open(&dir).unwrap();
+        let events = log.read_all().unwrap();
+        assert_eq!(
+            events.len(),
+            EXPECTED,
+            "on-disk event count must be exactly {} (got {})",
+            EXPECTED,
+            events.len()
+        );
+        let mut on_disk: Vec<u64> = events.iter().map(|e| e.sequence_no).collect();
+        on_disk.sort();
+        assert_eq!(
+            on_disk, expected,
+            "on-disk sequence_no must be a contiguous range with no duplicates and no gaps"
+        );
+
+        // Counter sidecar must agree with both.
+        assert_eq!(log.event_count(), EXPECTED as u64);
+
+        let _ = std::fs::remove_dir_all(&*dir);
+    }
+
+    /// Companion stress test for the lock-file lifecycle. Each append
+    /// opens the lock file, locks it, writes, unlocks, and drops the FD.
+    /// Repeatedly creating + dropping `EventLog`s in a tight loop must
+    /// not panic, must not leak FDs we can detect (no `EMFILE` after
+    /// hundreds of iterations on a default ulimit), and must produce a
+    /// log with contiguous sequence numbers.
+    #[cfg(not(target_family = "wasm"))]
+    #[test]
+    fn lock_file_handles_drop_cleanly_under_churn() {
+        let dir = std::env::temp_dir().join(format!(
+            "treeship-evtlog-fd-churn-{}",
+            rand::random::<u32>()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // 500 sequential open + append + drop cycles. Far below the
+        // default macOS/Linux soft limit (256/1024) for a sustained
+        // leak, but plenty to catch one-per-iteration FD leaks.
+        const ITERS: usize = 500;
+        for i in 0..ITERS {
+            let log = EventLog::open(&dir).unwrap();
+            let mut e = make_event(&format!("ssn_churn_{}", i), EventType::SessionStarted);
+            log.append(&mut e).unwrap();
+            // log drops here -> lock_file FD already closed inside append.
+        }
+
+        let log = EventLog::open(&dir).unwrap();
+        let events = log.read_all().unwrap();
+        assert_eq!(events.len(), ITERS);
+        let mut seqs: Vec<u64> = events.iter().map(|e| e.sequence_no).collect();
+        seqs.sort();
+        let expected: Vec<u64> = (0..ITERS as u64).collect();
+        assert_eq!(
+            seqs, expected,
+            "no FD leak should still produce contiguous seqs"
         );
 
         let _ = std::fs::remove_dir_all(&dir);
