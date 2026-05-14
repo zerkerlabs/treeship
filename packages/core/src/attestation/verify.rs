@@ -93,6 +93,14 @@ impl Verifier {
     /// Use this for strict verification where all listed signers must be valid
     /// (e.g., hybrid Ed25519 + ML-DSA in v2 where both are required).
     pub fn verify(&self, envelope: &Envelope) -> Result<VerifyResult, VerifyError> {
+        // An envelope with zero signatures has nothing to verify. The for-loop
+        // below would be a no-op and `verified` would stay empty, returning
+        // `Ok` to any caller that only checks `Result::is_ok()`. Reject up
+        // front so an unsigned envelope cannot masquerade as verified.
+        if envelope.signatures.is_empty() {
+            return Err(VerifyError::NoValidSignature);
+        }
+
         let pae_bytes = self.reconstruct_pae(envelope)?;
         let mut verified = Vec::new();
 
@@ -324,6 +332,34 @@ mod tests {
         let signed = sign(PT, &stmt(), &signer).unwrap();
         let result = verifier.verify_any(&signed.envelope).unwrap();
         assert_eq!(result.verified_key_ids.len(), 1);
+    }
+
+    #[test]
+    fn verify_rejects_empty_signature_envelope() {
+        // P0 #4: an envelope with zero signatures must not verify. Without
+        // the explicit check, the for-loop is a no-op and `verify` returns
+        // `Ok(...)` with an empty `verified_key_ids` list — callers that
+        // only check `Result::is_ok()` would accept unsigned envelopes.
+        let signer   = make_signer();
+        let verifier = Verifier::from_signer(&signer);
+        let signed   = sign(PT, &stmt(), &signer).unwrap();
+
+        // Strip the signatures off an otherwise-valid envelope.
+        let mut unsigned = signed.envelope.clone();
+        unsigned.signatures.clear();
+
+        let err = verifier.verify(&unsigned).unwrap_err();
+        assert!(
+            matches!(err, VerifyError::NoValidSignature),
+            "expected NoValidSignature for zero-signature envelope, got: {err}"
+        );
+
+        // verify_any already rejects this via its `verified.is_empty()` guard,
+        // but assert it explicitly to keep both paths covered.
+        assert!(matches!(
+            verifier.verify_any(&unsigned).unwrap_err(),
+            VerifyError::NoValidSignature
+        ));
     }
 
     #[test]
