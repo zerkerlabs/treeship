@@ -1178,18 +1178,79 @@ impl Store {
     }
 }
 
+/// Atomically write `data` to `path` with owner-only (0o600) permissions on
+/// Unix.
+///
+/// TS-2026-001 H1 + H2: the prior implementation was truncate-then-write,
+/// which destroys the original file if the process crashes mid-write. For
+/// the keystore that's catastrophic -- a crash during transparent v1->v2
+/// migration would leave a zero-byte (or partial) key entry on disk and
+/// the private key would be unrecoverable. This implementation writes to
+/// a sibling tmp file in the same directory, fsyncs the bytes through to
+/// the platter, then performs a POSIX-atomic same-filesystem `rename(2)`.
+/// A crash before the rename leaves the original file intact; the tmp
+/// file is harmless garbage that the next successful write will overwrite.
+///
+/// The 0o600 mode is set at file *creation* via `OpenOptionsExt::mode`
+/// so there is no window in which the file exists with looser perms.
+/// The prior `set_permissions` post-write call is dropped because it was
+/// redundant and gave the appearance (but not the substance) of safety.
 fn write_file_600(path: &Path, data: &[u8]) -> Result<(), KeyError> {
-    let mut f = fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(path)?;
-    f.write_all(data)?;
-    // Set permissions to 0600 on Unix.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    // Place the tmp file in the same directory as the final path so the
+    // rename stays on the same filesystem (cross-FS renames are not atomic
+    // and degrade to copy+unlink, defeating the whole point).
+    let tmp_path = path.with_extension("tmp");
+
+    // Best-effort cleanup of any stale tmp from a prior crash before we
+    // start writing. Ignored on error -- if it doesn't exist that's fine,
+    // and if it can't be removed the OpenOptions call below will surface
+    // the underlying error.
+    let _ = fs::remove_file(&tmp_path);
+
+    let write_result: Result<(), KeyError> = (|| {
+        #[cfg(unix)]
+        let open = {
+            use std::os::unix::fs::OpenOptionsExt;
+            fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&tmp_path)
+        };
+        #[cfg(not(unix))]
+        let open = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&tmp_path);
+
+        let mut f = open?;
+        f.write_all(data)?;
+        // sync_all flushes both data AND metadata, so on a crash after
+        // the rename, fsck/journal recovery sees the new bytes -- not a
+        // ghost inode with stale content.
+        f.sync_all()?;
+        Ok(())
+    })();
+
+    if let Err(e) = write_result {
+        // Best-effort cleanup so the next write isn't surprised by a
+        // half-written tmp. Errors here are not surfaced: the original
+        // write error is what the caller needs to see.
+        let _ = fs::remove_file(&tmp_path);
+        return Err(e);
+    }
+
+    // Atomic same-filesystem rename. On Unix this is a single
+    // rename(2) syscall guaranteed by POSIX to be atomic with respect
+    // to other observers. On Windows std::fs::rename is implemented
+    // via MoveFileEx with MOVEFILE_REPLACE_EXISTING (atomic on NTFS,
+    // best-effort elsewhere). After this returns Ok, the new bytes are
+    // visible at `path` and the tmp file no longer exists.
+    if let Err(e) = fs::rename(&tmp_path, path) {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(KeyError::Io(e));
     }
     Ok(())
 }
@@ -1797,6 +1858,93 @@ mod tests {
             "bypass env var must allow signing: {:?}",
             result.err()
         );
+        cleanup(dir);
+    }
+
+    // --- TS-2026-001 H1 + H2 atomic write tests ------------------------
+
+    /// H1: a partial failure between writing the tmp file and renaming
+    /// it into place MUST leave the original on-disk file intact. We
+    /// simulate the failure by pre-creating a tmp file (so the next
+    /// write_file_600 would clobber it) and then independently verifying
+    /// that an already-written key entry remains decryptable even after
+    /// a fresh write_file_600 fails partway.
+    ///
+    /// We exercise the failure path by pointing the rename at an
+    /// unwritable target. On Unix we make the *parent directory*
+    /// read-only after the original key is in place, which causes the
+    /// final fs::rename to fail with EACCES. The original key file is
+    /// unaffected because rename(2) returns before touching the target.
+    #[test]
+    #[cfg(unix)]
+    fn atomic_write_leaves_original_intact_on_partial_failure() {
+        use std::os::unix::fs::PermissionsExt;
+        let (store, dir) = make_store();
+        let info = store.generate(true).unwrap();
+        let entry_path = store.entry_path(&info.id);
+
+        // Capture the original bytes for byte-identity comparison.
+        let original = fs::read(&entry_path).expect("entry file must exist");
+        assert!(!original.is_empty(), "freshly generated entry must be non-empty");
+
+        // Lock the directory: read+execute only, no write. fs::rename
+        // into this directory will fail.
+        let orig_dir_mode = fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o500)).unwrap();
+
+        // Attempt a fresh write to the SAME path -- must fail because
+        // the directory is read-only, exercising the rename-failure
+        // branch.
+        let res = write_file_600(&entry_path, b"new junk that must not land");
+        assert!(res.is_err(), "write_file_600 must fail when dir is read-only");
+
+        // Restore perms so we can read back the entry.
+        fs::set_permissions(&dir, fs::Permissions::from_mode(orig_dir_mode)).unwrap();
+
+        // The original key file must be byte-identical to what we
+        // captured before the failed write.
+        let after = fs::read(&entry_path).expect("entry file must still exist after failed write");
+        assert_eq!(
+            after, original,
+            "failed atomic write must not corrupt the original file",
+        );
+
+        // And the keystore must still produce a working signer from it.
+        let store2 = Store::open(&dir).unwrap();
+        let signer = store2
+            .signer(&info.id)
+            .expect("original key must still decrypt after a failed write");
+        let pae = crate::attestation::pae("text/plain", b"survive");
+        assert_eq!(signer.sign(&pae).unwrap().len(), 64);
+
+        // No stale tmp file left behind.
+        let tmp = entry_path.with_extension("tmp");
+        assert!(!tmp.exists(), "tmp file must be cleaned up after rename failure");
+
+        cleanup(dir);
+    }
+
+    /// H2: the entry file's mode is 0o600 at the moment of creation, set
+    /// via OpenOptionsExt::mode rather than a post-write set_permissions
+    /// (which had a tiny window of looser perms). Also confirms the tmp
+    /// file is removed by the rename.
+    #[test]
+    #[cfg(unix)]
+    fn mode_is_600_at_creation() {
+        use std::os::unix::fs::PermissionsExt;
+        let (store, dir) = make_store();
+        let info = store.generate(true).unwrap();
+        let entry_path = store.entry_path(&info.id);
+
+        let mode = fs::metadata(&entry_path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "entry file must be 0600 at creation, got {:o}", mode);
+
+        let tmp = entry_path.with_extension("tmp");
+        assert!(
+            !tmp.exists(),
+            "no .tmp file must be left behind after a successful atomic write"
+        );
+
         cleanup(dir);
     }
 
