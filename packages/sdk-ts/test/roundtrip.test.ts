@@ -260,7 +260,7 @@ describeOrSkip("@treeship/sdk round-trip vs real CLI", () => {
     expect(sigB64u.length).toBeGreaterThan(0);
 
     // Decode base64url (padded with the right number of '=' for Buffer),
-    // flip the high bit of byte 0, re-encode. A single-bit flip in an
+    // flip the low bit of byte 0, re-encode. A single-bit flip in an
     // Ed25519 signature with overwhelming probability produces an invalid
     // signature -- and ed25519-dalek's strict verifier definitely rejects it.
     const padded = sigB64u.replace(/-/g, "+").replace(/_/g, "/")
@@ -278,8 +278,70 @@ describeOrSkip("@treeship/sdk round-trip vs real CLI", () => {
     // signature but still emits structured JSON to stdout, which the SDK
     // parses and surfaces as outcome=fail. If this assertion ever flips
     // to pass, something is very wrong with the wiring.
+    //
+    // Also assert that at least one check actually *failed* in the
+    // chain. The SDK exposes the failed count via `chain` on a fail
+    // outcome (see verify.ts), so a non-zero value here proves we got
+    // here via a genuine signature-verification failure -- not via
+    // some other fail mode (empty chain, missing artifact, JSON parse
+    // error, etc).
     const after = await s.verify.verify(artifactId);
     expect(after.outcome).toBe("fail");
+    expect(after.chain).toBeGreaterThanOrEqual(1);
+  });
+
+  it("tampering with the envelope payload causes verify.verify to fail", async () => {
+    // Sister test to the sig-tamper case above. Proves that the
+    // signature is bound to the *payload bytes* and not just the keyid
+    // -- mutate a field inside the base64-encoded payload, leave the
+    // original signature untouched, and verify must reject.
+    //
+    // This catches a class of regression where (hypothetically) verify
+    // only validated the signature against the keyid table, or against
+    // a re-canonicalized form of the statement, and skipped the actual
+    // DSSE pre-authenticated-encoding check that binds sig -> payload
+    // bytes.
+    const s = ship();
+    const { artifactId } = await s.attest.action({
+      actor:  "agent:test-runner",
+      action: "sdk.roundtrip.payload-tamper",
+    });
+
+    const artifactPath = join(storageDir, `${artifactId}.json`);
+    expect(existsSync(artifactPath)).toBe(true);
+
+    const record = JSON.parse(readFileSync(artifactPath, "utf8"));
+
+    // DSSE payload is base64-encoded JSON of the statement.
+    // Decode -> mutate the `actor` field -> re-encode. Length may change,
+    // but DSSE's PAE prefixes lengths, so any change breaks the sig.
+    const payloadB64 = record.envelope.payload as string;
+    expect(typeof payloadB64).toBe("string");
+    expect(payloadB64.length).toBeGreaterThan(0);
+
+    // DSSE uses standard base64 (not base64url) for the payload field.
+    const payloadJsonBytes = Buffer.from(payloadB64, "base64");
+    const payloadObj = JSON.parse(payloadJsonBytes.toString("utf8"));
+
+    // Mutate a field that the statement actually contains. The action
+    // statement carries `actor`, so we change it. If a future schema
+    // change renames `actor`, the fallback branch still ensures the
+    // bytes diverge.
+    if (typeof payloadObj.actor === "string") {
+      payloadObj.actor = payloadObj.actor + "-tampered";
+    } else {
+      payloadObj.__tampered = true;
+    }
+
+    record.envelope.payload = Buffer
+      .from(JSON.stringify(payloadObj), "utf8")
+      .toString("base64");
+
+    writeFileSync(artifactPath, JSON.stringify(record, null, 2));
+
+    const after = await s.verify.verify(artifactId);
+    expect(after.outcome).toBe("fail");
+    expect(after.chain).toBeGreaterThanOrEqual(1);
   });
 
   it("hub.status reports disconnected when no hub is configured AND the CLI actually answered", async () => {
