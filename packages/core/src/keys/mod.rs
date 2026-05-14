@@ -7,7 +7,7 @@ use std::{
 };
 
 use aes_gcm::{
-    aead::{Aead, KeyInit, OsRng as AeadOsRng},
+    aead::{Aead, KeyInit, OsRng as AeadOsRng, Payload},
     AeadCore, Aes256Gcm, Key as AesKey, Nonce,
 };
 use rand::RngCore;
@@ -759,10 +759,32 @@ impl Store {
 const KEYSTORE_MAGIC: u8 = 0x54; // 'T'
 const KEYSTORE_VERSION_V2: u8 = 0x02;
 
+/// AAD for the v2 keystore AEAD. Binds the framing prefix
+/// `[KEYSTORE_MAGIC, KEYSTORE_VERSION_V2]` into the GCM tag so an
+/// attacker cannot strip, swap, or downgrade the framing without
+/// triggering authentication failure. Concretely: flipping the magic
+/// byte on disk, flipping the version byte, or prepending one format's
+/// framing to the other's ciphertext all produce different AAD and
+/// thus a different expected tag, so decrypt fails fast.
+///
+/// Why constant: the AAD must be byte-identical on encrypt and decrypt.
+/// Future versions (V3+) get their own const + AAD; the dispatcher
+/// picks which to use based on the framing prefix.
+const KEYSTORE_AAD_V2: &[u8] = &[KEYSTORE_MAGIC, KEYSTORE_VERSION_V2];
+
 /// AES-256-GCM (the real one) encrypt for at-rest keystore storage.
 /// Returns the framed v2 blob ready to drop into `EncryptedEntry::enc_priv_key`.
 ///
 /// Output: `[magic, version, nonce(12), ciphertext || tag(16)]`.
+///
+/// M2: the framing prefix is also bound into the AEAD's Associated
+/// Authenticated Data so a tag verification covers it as well as the
+/// ciphertext+nonce. Without AAD binding, an attacker who could flip
+/// bytes 0 and 1 (the magic/version) wouldn't change the recovered
+/// plaintext or trigger a tag mismatch, because the prefix is not an
+/// input to the cipher; the dispatcher might then route the resulting
+/// blob through the wrong format. Folding the prefix into AAD makes
+/// any such tampering surface as a clean MAC failure.
 fn encrypt_for_disk_v2(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>, String> {
     // Wrap the in-memory AEAD key in Zeroizing so the local stack copy
     // is wiped on drop. The aes-gcm cipher object owns its own internal
@@ -776,7 +798,13 @@ fn encrypt_for_disk_v2(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>, Stri
     let nonce = Aes256Gcm::generate_nonce(&mut AeadOsRng);
 
     let ciphertext = cipher
-        .encrypt(&nonce, plaintext)
+        .encrypt(
+            &nonce,
+            Payload {
+                msg: plaintext,
+                aad: KEYSTORE_AAD_V2,
+            },
+        )
         .map_err(|e| format!("aead encrypt failed: {e}"))?;
 
     let mut out = Vec::with_capacity(2 + 12 + ciphertext.len());
@@ -787,7 +815,10 @@ fn encrypt_for_disk_v2(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>, Stri
     Ok(out)
 }
 
-/// AES-256-GCM decrypt of a v2 framed blob.
+/// AES-256-GCM decrypt of a v2 framed blob. Uses the same AAD binding
+/// as `encrypt_for_disk_v2` (the framing prefix) so a tampered magic
+/// or version byte surfaces as a MAC failure rather than dispatch
+/// confusion.
 fn decrypt_v2(key: &[u8; 32], blob: &[u8]) -> Result<Vec<u8>, String> {
     // Minimum: magic(1) + version(1) + nonce(12) + tag(16) = 30 bytes.
     if blob.len() < 30 {
@@ -805,7 +836,13 @@ fn decrypt_v2(key: &[u8; 32], blob: &[u8]) -> Result<Vec<u8>, String> {
     let nonce = Nonce::from_slice(nonce_bytes);
 
     cipher
-        .decrypt(nonce, ct)
+        .decrypt(
+            nonce,
+            Payload {
+                msg: ct,
+                aad: KEYSTORE_AAD_V2,
+            },
+        )
         .map_err(|_| "MAC verification failed — key file may be corrupt or wrong machine".into())
 }
 
@@ -826,6 +863,15 @@ fn is_legacy_v1(blob: &[u8]) -> bool {
 /// we also try v1 — this defends against the (negligible) probability
 /// that a legacy ciphertext's random first two bytes happen to collide
 /// with our magic+version.
+///
+/// M1 (TS-2026-001 audit): when the blob is v2-shaped and BOTH the v2
+/// AEAD and the v1 fallback fail, surface the v2 error rather than the
+/// v1 error. v1's failure on a v2-shaped blob is mechanical (wrong
+/// MAC computed under the wrong construction) and tells the user
+/// nothing useful; v2's failure is the actually-relevant signal
+/// (MAC verification under the documented AEAD). The previous code
+/// would mask the meaningful error with a confused legacy error
+/// message that pointed at the wrong remediation.
 fn decrypt_from_disk(
     key: &[u8; 32],
     enc_data: &[u8],
@@ -834,12 +880,18 @@ fn decrypt_from_disk(
     if !is_legacy_v1(enc_data) {
         match decrypt_v2(key, enc_data) {
             Ok(pt) => return Ok(Zeroizing::new(pt)),
-            Err(_) => {
+            Err(v2_err) => {
                 // Collision fallback. v1 entries had random first bytes;
                 // there's a vanishing chance one looks like v2 framing.
-                // Don't surface the v2-shaped error to the user yet —
-                // try the legacy path first and surface its error if
-                // that also fails.
+                // Try v1 first; if it succeeds we have a legitimate
+                // legacy entry whose framing happens to look v2-shaped.
+                // If v1 also fails, surface the v2 error (the
+                // semantically meaningful one) rather than v1's
+                // mechanical-junk failure.
+                return match decrypt_legacy_v1(key, enc_data, legacy_nonce_field) {
+                    Ok(pt) => Ok(Zeroizing::new(pt)),
+                    Err(_) => Err(v2_err),
+                };
             }
         }
     }
@@ -1532,6 +1584,82 @@ mod tests {
             N,
             "all {} v2 nonces must be unique; collision => RNG defect",
             N
+        );
+    }
+
+    #[test]
+    fn v2_tamper_version_byte_fails() {
+        // M2: flipping the version byte must cause decryption to fail.
+        // The framing sanity check catches obvious flips immediately;
+        // the AAD-binding test below covers the case where the framing
+        // sanity check would otherwise pass.
+        let key = [7u8; 32];
+        let mut blob = encrypt_for_disk_v2(&key, b"super secret private key").unwrap();
+        assert_eq!(blob[1], KEYSTORE_VERSION_V2);
+        blob[1] = 0xff;
+        assert!(
+            decrypt_v2(&key, &blob).is_err(),
+            "altered version byte must be rejected"
+        );
+    }
+
+    #[test]
+    fn v2_aad_binding_detects_framing_substitution() {
+        // M2 direct check: encrypt a payload with v2 AAD, then construct
+        // a blob whose framing claims to be v2 but whose ciphertext was
+        // computed under a different AAD (empty). decrypt_v2 must
+        // reject with MAC failure rather than returning the plaintext.
+        let key = [7u8; 32];
+        let plaintext = b"M2 AAD bound material";
+
+        // Compute a v2-framed blob without supplying AAD -- mimics what
+        // the *pre-M2* code would have produced. This is the exact
+        // attack surface AAD closes: an old blob whose framing is v2
+        // but whose tag was computed empty.
+        use aes_gcm::aead::Aead;
+        let key_buf: Zeroizing<[u8; 32]> = Zeroizing::new(key);
+        let aead_key: &AesKey<Aes256Gcm> = AesKey::<Aes256Gcm>::from_slice(key_buf.as_slice());
+        let cipher = Aes256Gcm::new(aead_key);
+        let nonce = Aes256Gcm::generate_nonce(&mut AeadOsRng);
+        let ct_no_aad = cipher.encrypt(&nonce, plaintext.as_slice()).unwrap();
+
+        let mut forged = Vec::with_capacity(2 + 12 + ct_no_aad.len());
+        forged.push(KEYSTORE_MAGIC);
+        forged.push(KEYSTORE_VERSION_V2);
+        forged.extend_from_slice(nonce.as_slice());
+        forged.extend_from_slice(&ct_no_aad);
+
+        // Framing sanity passes. AAD does not. decrypt_v2 must reject.
+        assert_eq!(forged[0], KEYSTORE_MAGIC);
+        assert_eq!(forged[1], KEYSTORE_VERSION_V2);
+        let result = decrypt_v2(&key, &forged);
+        assert!(result.is_err(),
+                "ciphertext computed without AAD must fail to decrypt now that AAD is bound");
+    }
+
+    #[test]
+    fn dispatcher_surfaces_v2_error_on_corrupted_v2_blob() {
+        // M1: a v2-shaped blob whose AEAD verification fails (and
+        // whose v1 fallback also fails, since the bytes are garbage
+        // under both constructions) must surface the v2 MAC error, not
+        // the v1 "ciphertext too short" / random-junk error. The user
+        // sees a meaningful message that points at the right
+        // remediation.
+        let key = [7u8; 32];
+        let mut blob = encrypt_for_disk_v2(&key, b"hello").unwrap();
+        // Flip a byte in the GCM tag (last 16 bytes) so the v2 AEAD
+        // rejects but the framing still classifies as v2.
+        let last = blob.len() - 1;
+        blob[last] ^= 0x01;
+
+        let err = decrypt_from_disk(&key, &blob, &[]).unwrap_err();
+        // The dispatcher should bubble the v2 error string up. v2's
+        // error message contains "MAC verification failed"; v1's
+        // shape on garbage data is either "ciphertext too short" or
+        // a different MAC error. Match on the v2-specific tail.
+        assert!(
+            err.contains("MAC verification failed"),
+            "dispatcher must surface the v2 MAC error on corrupted v2 blob, got: {err}"
         );
     }
 
