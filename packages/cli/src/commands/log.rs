@@ -14,6 +14,51 @@ pub fn run(
 
     let entries = ctx.storage.list();
 
+    // JSON mode: emit a structured list envelope. The pretty path uses
+    // `printer.dim_info` / `printer.info`, both of which are no-ops in
+    // JSON mode, so without this branch `treeship log --format json`
+    // emits zero bytes -- breaking any SDK / automation caller that
+    // parses stdout.
+    //
+    // Shape:
+    //   {
+    //     "items": [
+    //       {
+    //         "id":            "...",
+    //         "payload_type":  "application/vnd.treeship.<kind>.v1+json",
+    //         "signed_at":     "...",
+    //       },
+    //       ...
+    //     ],
+    //     "count": <items.len()>,
+    //     "total": <entries.len()>
+    //   }
+    //
+    // `count` is the number actually returned (capped by --tail) and
+    // `total` is the underlying storage size, so callers can detect
+    // truncation without re-running with a larger tail.
+    if printer.format == crate::printer::Format::Json {
+        let count = entries.len().min(tail);
+        let items: Vec<serde_json::Value> = entries
+            .iter()
+            .take(count)
+            .map(|e| {
+                serde_json::json!({
+                    "id":           e.id,
+                    "payload_type": e.payload_type,
+                    "signed_at":    e.signed_at,
+                })
+            })
+            .collect();
+        let body = serde_json::json!({
+            "items": items,
+            "count": items.len(),
+            "total": entries.len(),
+        });
+        printer.json(&body);
+        return Ok(());
+    }
+
     if entries.is_empty() {
         printer.blank();
         printer.dim_info("  No receipts yet.");

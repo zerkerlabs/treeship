@@ -729,6 +729,46 @@ pub fn stop(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
 pub fn status(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     let ts = ts_dir().ok_or("no .treeship directory found")?;
 
+    // JSON mode: emit a structured envelope. Without this branch the
+    // pretty path emits via `printer.info` / `printer.section` /
+    // `printer.hint`, all of which are no-ops in JSON mode (see
+    // printer.rs), so callers parsing stdout get zero bytes and have
+    // no way to tell whether the daemon is running.
+    //
+    // Shape:
+    //   running:  {"status":"running","running":true,"pid":<u32>,
+    //              "uptime_secs":<u64> | null}
+    //   stopped:  {"status":"stopped","running":false}
+    //
+    // `status` matches Lane D's hub::status convention (enum string),
+    // and `running` is a boolean alias so callers can branch on a
+    // single field without parsing the string.
+    if printer.format == crate::printer::Format::Json {
+        let body = if is_running(&ts) {
+            let pid = read_pid(&ts).unwrap_or(0);
+            let uptime_secs = read_start_time(&ts)
+                .map(|start| epoch_secs().saturating_sub(start));
+            serde_json::json!({
+                "status":      "running",
+                "running":     true,
+                "pid":         pid,
+                "uptime_secs": uptime_secs,
+            })
+        } else {
+            // Clean up stale PID file even in JSON mode -- the side
+            // effect is unrelated to the output channel.
+            if pid_path(&ts).exists() {
+                let _ = std::fs::remove_file(pid_path(&ts));
+            }
+            serde_json::json!({
+                "status":  "stopped",
+                "running": false,
+            })
+        };
+        printer.json(&body);
+        return Ok(());
+    }
+
     printer.blank();
     printer.section("daemon");
 

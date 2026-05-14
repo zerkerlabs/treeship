@@ -209,6 +209,52 @@ pub fn ls(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
 
+    // JSON mode: emit a structured list. The pretty path uses
+    // `printer.info(...)` which is a no-op in JSON mode (see
+    // printer.rs), so without this branch `treeship hub ls --format
+    // json` emits zero bytes -- breaking the SDK and any automation
+    // that wants to enumerate configured hubs.
+    //
+    // Shape:
+    //   {
+    //     "items": [
+    //       {"name": "...", "hub_id": "...", "endpoint": "...",
+    //        "key_id": "...", "active": true|false},
+    //       ...
+    //     ],
+    //     "active": "<name>" | null,
+    //     "count":  <items.len()>
+    //   }
+    //
+    // Each entry includes both `active` (per-row boolean for filtering)
+    // and `key_id` so callers don't need to round-trip through `hub
+    // status` to know which connection is selected or what key it uses.
+    if printer.format == crate::printer::Format::Json {
+        let active = ctx.config.active_hub.as_deref();
+        let mut names: Vec<&String> = ctx.config.hub_connections.keys().collect();
+        names.sort();
+        let items: Vec<serde_json::Value> = names
+            .iter()
+            .map(|name| {
+                let entry = &ctx.config.hub_connections[name.as_str()];
+                serde_json::json!({
+                    "name":     name,
+                    "hub_id":   entry.hub_id,
+                    "key_id":   entry.key_id,
+                    "endpoint": entry.endpoint,
+                    "active":   active == Some(name.as_str()),
+                })
+            })
+            .collect();
+        let body = serde_json::json!({
+            "items":  items,
+            "active": active,
+            "count":  items.len(),
+        });
+        printer.json(&body);
+        return Ok(());
+    }
+
     printer.blank();
 
     if ctx.config.hub_connections.is_empty() {

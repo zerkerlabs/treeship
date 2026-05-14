@@ -17,6 +17,138 @@ pub fn run(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::e
     let ctx = ctx::open(config)?;
     let cfg = &ctx.config;
 
+    // JSON mode: emit a single structured envelope summarising the full
+    // workspace state. The pretty path below uses `printer.section`,
+    // `printer.info`, `printer.dim_info`, and `printer.hint` -- ALL of
+    // which are no-ops in JSON mode (see printer.rs). So before this
+    // branch, `treeship status --format json` produced zero stdout
+    // bytes and every SDK / automation caller silently treated the
+    // workspace as empty.
+    //
+    // Shape (top-level groups mirror the pretty sections so callers
+    // can map field-for-field):
+    //   {
+    //     "ship":    { "id": "...", "name": "..." | null },
+    //     "session": null | {
+    //       "session_id": "...", "name": "..." | null,
+    //       "started_at_ms": <u64>, "elapsed_ms": <u64>
+    //     },
+    //     "keys":    [{"id":"...","algorithm":"...","fingerprint":"...","is_default":bool}],
+    //     "artifacts": {
+    //       "items": [{"id":"...","payload_type":"...","signed_at":"..."}],
+    //       "count": <u64>,    // returned (capped at 5)
+    //       "total": <u64>     // underlying storage size
+    //     },
+    //     "daemon":  { "status": "running"|"stopped",
+    //                  "pid": <u32> | null, "uptime_secs": <u64> | null },
+    //     "hub":     { "status": "attached"|"detached"|"configured",
+    //                  "active": "<name>" | null, "hub_id": "..." | null,
+    //                  "endpoint": "..." | null, "count": <u64> }
+    //   }
+    //
+    // `daemon.status` and `hub.status` use the same enum-string convention
+    // as Lane D's `hub status` to keep the SDK consistent.
+    if printer.format == crate::printer::Format::Json {
+        let session = super::session::load_session().map(|m| {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            let elapsed_ms = now_ms.saturating_sub(m.started_at_ms);
+            serde_json::json!({
+                "session_id":    m.session_id,
+                "name":          m.name,
+                "started_at_ms": m.started_at_ms,
+                "elapsed_ms":    elapsed_ms,
+            })
+        });
+
+        let keys = ctx.keys.list()?;
+        let keys_json: Vec<serde_json::Value> = keys
+            .iter()
+            .map(|k| {
+                serde_json::json!({
+                    "id":          k.id,
+                    "algorithm":   k.algorithm,
+                    "fingerprint": k.fingerprint,
+                    "is_default":  k.is_default,
+                })
+            })
+            .collect();
+
+        let artifacts = ctx.storage.list();
+        let artifact_items: Vec<serde_json::Value> = artifacts
+            .iter()
+            .take(5)
+            .map(|a| {
+                serde_json::json!({
+                    "id":           a.id,
+                    "payload_type": a.payload_type,
+                    "signed_at":    a.signed_at,
+                })
+            })
+            .collect();
+
+        let (daemon_running, daemon_pid, daemon_uptime) = super::daemon::daemon_info();
+        let daemon = if daemon_running {
+            serde_json::json!({
+                "status":      "running",
+                "pid":         daemon_pid,
+                "uptime_secs": daemon_uptime,
+            })
+        } else {
+            serde_json::json!({
+                "status":      "stopped",
+                "pid":         serde_json::Value::Null,
+                "uptime_secs": serde_json::Value::Null,
+            })
+        };
+
+        let hub = if let Some((name, entry)) = cfg.active_hub_connection() {
+            serde_json::json!({
+                "status":   "attached",
+                "active":   name,
+                "hub_id":   entry.hub_id,
+                "endpoint": entry.endpoint,
+                "count":    cfg.hub_connections.len(),
+            })
+        } else if cfg.hub_connections.is_empty() {
+            serde_json::json!({
+                "status":   "detached",
+                "active":   serde_json::Value::Null,
+                "hub_id":   serde_json::Value::Null,
+                "endpoint": serde_json::Value::Null,
+                "count":    0,
+            })
+        } else {
+            serde_json::json!({
+                "status":   "configured",
+                "active":   serde_json::Value::Null,
+                "hub_id":   serde_json::Value::Null,
+                "endpoint": serde_json::Value::Null,
+                "count":    cfg.hub_connections.len(),
+            })
+        };
+
+        let body = serde_json::json!({
+            "ship": {
+                "id":   cfg.ship_id,
+                "name": cfg.name,
+            },
+            "session": session,
+            "keys":    keys_json,
+            "artifacts": {
+                "items": artifact_items,
+                "count": artifacts.len().min(5),
+                "total": artifacts.len(),
+            },
+            "daemon": daemon,
+            "hub":    hub,
+        });
+        printer.json(&body);
+        return Ok(());
+    }
+
     // Session info (if active)
     if let Some(manifest) = super::session::load_session() {
         let elapsed_ms = {

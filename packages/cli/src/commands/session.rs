@@ -355,7 +355,81 @@ pub fn status(
     config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let manifest = match load_session() {
+    let manifest_opt = load_session();
+
+    // JSON mode: emit a structured envelope. Without this branch the
+    // pretty path's `printer.dim_info` / `printer.info` / `printer.section`
+    // all no-op under `--format json` (see printer.rs), so the SDK and
+    // any automation parsing stdout get zero bytes -- silently treating
+    // every workspace as having no active session.
+    //
+    // Shape (no active session):
+    //   { "status": "inactive", "active": false }
+    //
+    // Shape (active session):
+    //   {
+    //     "status":     "active",
+    //     "active":     true,
+    //     "session_id": "...",
+    //     "name":       "..." | null,
+    //     "actor":      "...",
+    //     "started_at": "<RFC3339>",
+    //     "elapsed_ms": <u64>,
+    //     "receipts":   <u64>,        // verified from chain
+    //     "events":     <u64>,
+    //     "root_artifact_id": "..." | null,
+    //     "root_verified": true|false
+    //   }
+    //
+    // `status` matches the hub::status convention (enum string), and the
+    // boolean `active` is also surfaced so SDK callers can branch on a
+    // single field without string-matching.
+    if printer.format == crate::printer::Format::Json {
+        let Some(manifest) = manifest_opt else {
+            let body = serde_json::json!({
+                "status": "inactive",
+                "active": false,
+            });
+            printer.json(&body);
+            return Ok(());
+        };
+
+        let ctx = ctx::open(config)?;
+        let root_verified = if let Some(ref root_id) = manifest.root_artifact_id {
+            ctx.storage.read(root_id).is_ok()
+        } else {
+            false
+        };
+        let artifact_count = match &manifest.root_artifact_id {
+            Some(root_id) => count_chain_artifacts(&ctx, root_id),
+            None => 0,
+        };
+        let elapsed_ms = epoch_ms().saturating_sub(manifest.started_at_ms);
+        let evt_dir = session_dir()
+            .map(|d| d.join("sessions").join(&manifest.session_id));
+        let event_count = evt_dir
+            .and_then(|d| EventLog::open(&d).ok())
+            .map(|log| log.event_count())
+            .unwrap_or(0);
+
+        let body = serde_json::json!({
+            "status":           "active",
+            "active":           true,
+            "session_id":       manifest.session_id,
+            "name":             manifest.name,
+            "actor":            manifest.actor,
+            "started_at":       manifest.started_at,
+            "elapsed_ms":       elapsed_ms,
+            "receipts":         artifact_count,
+            "events":           event_count,
+            "root_artifact_id": manifest.root_artifact_id,
+            "root_verified":    root_verified,
+        });
+        printer.json(&body);
+        return Ok(());
+    }
+
+    let manifest = match manifest_opt {
         Some(m) => m,
         None => {
             printer.blank();
