@@ -475,13 +475,66 @@ impl Store {
     /// Re-encrypt a legacy v1 entry with the new v2 AEAD and persist
     /// it. Updates the in-memory cache so subsequent loads in the same
     /// process see the migrated entry. Idempotent; safe to invoke
-    /// concurrently because `write_entry` does an atomic create+truncate
-    /// write.
+    /// concurrently because the migration is serialized by a per-entry
+    /// advisory lock on `<entry>.migrate.lock` (TS-2026-001 H3).
+    ///
+    /// We lock a *sentinel* file rather than the entry file itself,
+    /// because the entry file is renamed-into-place during the atomic
+    /// write inside `write_entry`. Holding a flock on the entry's inode
+    /// while a sibling process renames a new inode into its path is
+    /// nonsensical (the lock would survive on the now-orphaned inode);
+    /// the sentinel sidecar has a stable identity for the whole
+    /// migration window.
+    ///
+    /// Same blocking-flock pattern as `packages/core/src/session/event_log.rs`
+    /// (Lane F): exclusive lock, then a same-thread re-read to settle
+    /// "did a peer already migrate while I was waiting?" cleanly.
     fn migrate_entry_to_v2(
         &self,
         old_entry: &EncryptedEntry,
         secret: &[u8; 32],
     ) -> Result<(), KeyError> {
+        let entry_path = self.entry_path(&old_entry.id);
+        let lock_path = entry_path.with_extension("migrate.lock");
+
+        // Open (or create) the sentinel lock file with restrictive perms
+        // and take an exclusive flock. We intentionally use the blocking
+        // `lock_exclusive` -- not `try_lock_exclusive` -- because the
+        // migration window is short (a single AEAD encrypt + atomic
+        // rename) and the worst case under contention is one writer
+        // serialized behind another. Pulling the
+        // try-with-bounded-retry pattern in here would buy us nothing:
+        // the second writer's re-read after the lock releases would
+        // observe the now-v2 entry and short-circuit.
+        let lock_file = open_migration_lock_file(&lock_path)
+            .map_err(KeyError::Io)?;
+
+        #[cfg(not(target_family = "wasm"))]
+        {
+            use fs2::FileExt;
+            lock_file.lock_exclusive().map_err(KeyError::Io)?;
+        }
+
+        // Under the lock: did a peer already complete the migration
+        // while we were waiting? If so, our work is done -- we must
+        // NOT rewrite, because we'd overwrite a peer's freshly-rotated
+        // v2 ciphertext with our own (semantically equivalent, but
+        // unnecessary I/O and an unnecessary cache update).
+        if let Ok(current) = self.read_entry(&old_entry.id) {
+            if !is_legacy_v1(&current.enc_priv_key) {
+                // Peer already migrated. Refresh the cache so subsequent
+                // loads in this process see the v2 entry rather than
+                // the stale legacy copy our caller passed in.
+                if let Ok(mut cache) = self.cache.write() {
+                    cache.insert(current.id.clone(), current);
+                }
+                // Lock drops at function exit; sentinel file remains on
+                // disk as a harmless inode (no migration data, idempotent
+                // for future invocations).
+                return Ok(());
+            }
+        }
+
         let new_ciphertext =
             encrypt_for_disk_v2(&self.machine_key, secret).map_err(KeyError::Crypto)?;
 
@@ -501,6 +554,20 @@ impl Store {
         if let Ok(mut cache) = self.cache.write() {
             cache.insert(migrated.id.clone(), migrated);
         }
+
+        // Best-effort cleanup of the sentinel lock file. We hold the
+        // lock until function exit (drop), so by the time we reach
+        // here it is safe to unlink the inode -- future migrations
+        // for this entry will succeed via the early-return path
+        // because the entry is now v2. Leaving the sentinel behind is
+        // also harmless; on Unix removing a flocked file is allowed
+        // and the lock is released on fd drop regardless.
+        let _ = std::fs::remove_file(&lock_path);
+
+        // Keep the lock_file binding alive to function exit so the
+        // flock is held across write_entry + remove_file. Explicit
+        // drop makes the intent obvious to readers.
+        drop(lock_file);
         Ok(())
     }
 
@@ -1176,6 +1243,37 @@ impl Store {
         }
         Ok(changed)
     }
+}
+
+/// Open (or create) the per-entry migration sentinel lock file with
+/// owner-only permissions (0o600 on Unix). The handle returned can be
+/// passed to `fs2::FileExt::lock_exclusive` to serialize concurrent
+/// v1->v2 migrations of the same entry across processes/threads
+/// (TS-2026-001 H3).
+///
+/// On Unix the mode is set at creation via `OpenOptionsExt::mode` so the
+/// sentinel never has a moment of looser perms. On non-Unix platforms the
+/// file inherits parent ACLs (the keystore dir is owner-scoped already).
+#[cfg(unix)]
+fn open_migration_lock_file(path: &Path) -> Result<fs::File, io::Error> {
+    use std::os::unix::fs::OpenOptionsExt;
+    fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn open_migration_lock_file(path: &Path) -> Result<fs::File, io::Error> {
+    fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(path)
 }
 
 /// Atomically write `data` to `path` with owner-only (0o600) permissions on
@@ -1858,6 +1956,105 @@ mod tests {
             "bypass env var must allow signing: {:?}",
             result.err()
         );
+        cleanup(dir);
+    }
+
+    // --- TS-2026-001 H3 migration-lock concurrency test -----------------
+
+    /// H3: two threads calling `Store::signer` on the same legacy v1
+    /// entry must both succeed, the on-disk entry must end up as a
+    /// valid v2 entry (decryptable via the v2 path), and no `.tmp`
+    /// fragment must be left in the keystore directory.
+    ///
+    /// Without the advisory lock around `migrate_entry_to_v2`, two
+    /// concurrent migrators would race the read-modify-rename cycle:
+    /// the loser's rename would clobber the winner's v2 entry with
+    /// its own (also-valid) v2 entry, but in between the two
+    /// renames a third reader could observe a v2 entry, decrypt
+    /// successfully, then have its in-memory state invalidated by
+    /// the second writer. The flock turns the race into a queue --
+    /// both writers produce identical v2 plaintext, only one rename
+    /// per entry is actually needed, and the second writer's
+    /// post-lock recheck observes the v2 state and exits cleanly.
+    #[test]
+    fn concurrent_migration_serializes_correctly() {
+        use std::sync::Arc;
+        use std::thread;
+
+        // Set up a legacy v1 entry on disk -- same shape as the
+        // store_signer_migrates_legacy_entry_to_v2 test, just shared
+        // with two threads.
+        let (store, dir) = make_store();
+        let info = store.generate(true).unwrap();
+        let entry_path = store.entry_path(&info.id);
+
+        let v2_entry: EncryptedEntry =
+            serde_json::from_slice(&fs::read(&entry_path).unwrap()).unwrap();
+        let secret = decrypt_from_disk(&store.machine_key, &v2_entry.enc_priv_key, &v2_entry.nonce)
+            .unwrap();
+        let (legacy_blob, legacy_nonce) =
+            legacy_v1_encrypt(&store.machine_key, &secret).unwrap();
+        let legacy_entry = EncryptedEntry {
+            id:               v2_entry.id.clone(),
+            algorithm:        v2_entry.algorithm.clone(),
+            created_at:       v2_entry.created_at.clone(),
+            public_key:       v2_entry.public_key.clone(),
+            enc_priv_key:     legacy_blob,
+            nonce:            legacy_nonce,
+            valid_until:      v2_entry.valid_until.clone(),
+            successor_key_id: v2_entry.successor_key_id.clone(),
+        };
+        fs::write(&entry_path, serde_json::to_vec_pretty(&legacy_entry).unwrap()).unwrap();
+
+        // Two independent Store instances racing on the same on-disk
+        // legacy entry. Using independent Store instances forces the
+        // lock-on-disk path to engage (a shared Store would serialize
+        // through the internal RwLock cache and we'd be testing the
+        // wrong thing).
+        let dir_a = Arc::new(dir.clone());
+        let dir_b = Arc::new(dir.clone());
+        let id_a = info.id.clone();
+        let id_b = info.id.clone();
+
+        let h1 = thread::spawn(move || -> Result<(), String> {
+            let s = Store::open(&*dir_a).map_err(|e| e.to_string())?;
+            let _signer = s.signer(&id_a).map_err(|e| e.to_string())?;
+            Ok(())
+        });
+        let h2 = thread::spawn(move || -> Result<(), String> {
+            let s = Store::open(&*dir_b).map_err(|e| e.to_string())?;
+            let _signer = s.signer(&id_b).map_err(|e| e.to_string())?;
+            Ok(())
+        });
+
+        h1.join().unwrap().expect("thread 1 signer load must succeed");
+        h2.join().unwrap().expect("thread 2 signer load must succeed");
+
+        // Post-condition: on-disk entry is v2 framed.
+        let after: EncryptedEntry =
+            serde_json::from_slice(&fs::read(&entry_path).unwrap()).unwrap();
+        assert!(
+            !is_legacy_v1(&after.enc_priv_key),
+            "post-concurrent-migration entry must be in v2 format"
+        );
+        assert_eq!(after.enc_priv_key[0], KEYSTORE_MAGIC);
+        assert_eq!(after.enc_priv_key[1], KEYSTORE_VERSION_V2);
+
+        // v2 decrypts cleanly.
+        let dec = decrypt_v2(&store.machine_key, &after.enc_priv_key)
+            .expect("v2 entry must decrypt cleanly after concurrent migration");
+        assert_eq!(dec.len(), 32, "decrypted secret must be a 32-byte ed25519 scalar");
+
+        // No stale .tmp file left behind.
+        for entry in fs::read_dir(&dir).unwrap() {
+            let p = entry.unwrap().path();
+            assert!(
+                !p.extension().is_some_and(|e| e == "tmp"),
+                "no .tmp fragment must remain after migration, found: {}",
+                p.display()
+            );
+        }
+
         cleanup(dir);
     }
 
