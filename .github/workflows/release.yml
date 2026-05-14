@@ -480,6 +480,38 @@ jobs:
       - name: Install build tools
         run: pip install build twine
 
+      # Embed the SHA-256 of each per-platform binary into the wheel
+      # being built, so treeship_sdk.bootstrap can verify the binary it
+      # downloads from GitHub against the hash that arrived via PyPI.
+      # Mirrors the equivalent step in publish-npm above — the hashes
+      # were computed in the `release` job (see its `Compute SHA256SUMS`
+      # step) and surfaced as job outputs.
+      #
+      # Without this step the bootstrap would refuse to install the CLI
+      # binary ("checksum-missing"). That refusal is the desired
+      # behavior — better to fail noisily here than to silently ship an
+      # unverifiable binary.
+      - name: Embed expected SHA-256 into treeship-sdk wheel
+        run: |
+          set -e
+          DATA_DIR="packages/sdk-python/treeship_sdk/_data"
+          mkdir -p "$DATA_DIR"
+          for slug in linux-x86_64 darwin-aarch64 darwin-x86_64; do
+            case "$slug" in
+              linux-x86_64)   asset=treeship-linux-x86_64    sha='${{ needs.release.outputs.sha256_linux_x86_64 }}';;
+              darwin-aarch64) asset=treeship-darwin-aarch64  sha='${{ needs.release.outputs.sha256_darwin_aarch64 }}';;
+              darwin-x86_64)  asset=treeship-darwin-x86_64   sha='${{ needs.release.outputs.sha256_darwin_x86_64 }}';;
+            esac
+            if [ -z "$sha" ] || ! printf '%s' "$sha" | grep -Eq '^[0-9a-f]{64}$'; then
+              echo "::error::Missing or malformed SHA-256 for $asset ($slug). Refusing to build wheel."
+              exit 1
+            fi
+            printf '%s\n' "$sha" > "$DATA_DIR/expected-checksum-${asset}.txt"
+            echo "  $asset → $sha"
+          done
+          echo "--- $DATA_DIR contents:"
+          ls -la "$DATA_DIR"
+
       - name: Build and publish treeship-sdk
         working-directory: packages/sdk-python
         run: |
@@ -536,6 +568,21 @@ jobs:
             echo "$UNEXPECTED"
             exit 1
           fi
+
+          # Verify the per-platform checksum files actually made it into
+          # the wheel. setuptools silently drops package-data entries
+          # when the directory layout disagrees with the manifest, which
+          # would ship an unverifiable wheel that fails install for
+          # every user. Catch it here instead.
+          for asset in treeship-linux-x86_64 treeship-darwin-aarch64 treeship-darwin-x86_64; do
+            if ! python -m zipfile -l "$EXPECTED_WHEEL" | grep -q "treeship_sdk/_data/expected-checksum-${asset}.txt"; then
+              echo "::error::built wheel is missing treeship_sdk/_data/expected-checksum-${asset}.txt"
+              echo "::error::wheel contents:"
+              python -m zipfile -l "$EXPECTED_WHEEL" || true
+              exit 1
+            fi
+          done
+          echo "  ✓ wheel contains all per-platform checksum files"
 
           # Validate package metadata (long-description rendering, required
           # fields, METADATA-Version compatibility) before upload. PyPI runs

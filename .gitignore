@@ -15,3 +15,9 @@ tests/cross-sdk/.roundtrip-output.jsonl
 # at npm-publish time so the postinstall can verify the GitHub Release
 # binary against an npm-delivered hash.
 npm/@treeship/cli-*/expected-checksum.txt
+
+# Same trust model on the Python side: the wheel embeds per-platform
+# SHA-256 hashes for the CLI binary, written at wheel-build time so
+# the bootstrap can verify the GitHub Release download against a
+# PyPI-delivered hash. Never committed.
+packages/sdk-python/treeship_sdk/_data/expected-checksum-*.txt

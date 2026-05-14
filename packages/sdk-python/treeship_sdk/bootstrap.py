@@ -39,13 +39,13 @@ agents that want to bootstrap without instantiating the SDK first.
 
 from __future__ import annotations
 
-import json
+import hashlib
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import urllib.request
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -59,6 +59,59 @@ __all__ = [
     "default_cache_dir",
     "platform_release_asset",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Binary integrity (SHA-256) — supply-chain hardening
+# ---------------------------------------------------------------------------
+#
+# When we fall back to downloading the CLI binary from a GitHub Release,
+# we must verify the bytes before we ever chmod +x and exec them.
+#
+# Trust roots:
+#   1. The expected SHA-256 ships with the wheel via PyPI. The release
+#      pipeline writes it into ``treeship_sdk/_data/expected-checksum-<asset>.txt``
+#      at build time (see .github/workflows/release.yml). It is never
+#      committed to the repo and never fetched at runtime.
+#   2. The binary arrives via GitHub Releases.
+#
+# Because the hash arrives via PyPI and the binary via GitHub, an
+# attacker would have to compromise both registries to slip a tampered
+# binary past install. If either is tampered, the hashes disagree and
+# we abort — loudly. No silent fallback.
+#
+# Earlier versions (<= 0.10.2) downloaded the binary, chmod +x'd it,
+# and executed it with zero integrity check. This module is the
+# Python-side mirror of the npm postinstall hardening from PR #72.
+
+_CHECKSUM_DATA_PACKAGE = "treeship_sdk._data"
+_HEX_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _read_expected_checksum(asset: str) -> Optional[str]:
+    """Return the expected SHA-256 hex for ``asset``, or None if missing/malformed.
+
+    Reads from the data file that the release pipeline embedded in the
+    wheel. Format: a single line, lowercase hex, 64 characters. An
+    absent or malformed file means the install is unverifiable; the
+    caller must refuse to proceed.
+    """
+    filename = f"expected-checksum-{asset}.txt"
+    try:
+        # importlib.resources.files() is available on Python >= 3.9.
+        from importlib.resources import files
+
+        data_root = files(_CHECKSUM_DATA_PACKAGE)
+        resource = data_root.joinpath(filename)
+        if not resource.is_file():
+            return None
+        raw = resource.read_text(encoding="utf-8")
+    except (FileNotFoundError, ModuleNotFoundError, OSError):
+        return None
+    hex_str = raw.strip().lower()
+    if not _HEX_SHA256_RE.match(hex_str):
+        return None
+    return hex_str
 
 
 # ---------------------------------------------------------------------------
@@ -237,40 +290,138 @@ def _install_via_github_release(
 ) -> Optional[BootstrapResult]:
     """Download the matching platform binary from the GitHub Release.
 
-    No `sudo`; writes only into ``cache_dir``. Returns None if the
-    download fails or the platform isn't supported. Uses the "latest"
+    No `sudo`; writes only into ``cache_dir``. Uses the "latest"
     release by default; pass ``version`` (e.g. ``"0.9.11"``) to pin.
+
+    Integrity:
+        Before the downloaded bytes are ever made executable, this
+        function verifies their SHA-256 against the expected hash that
+        the release pipeline embedded in the wheel (see
+        :func:`_read_expected_checksum`). On mismatch — or if the
+        expected hash is missing from the install — it raises
+        :class:`TreeshipBootstrapError`. Never falls back silently.
+
+    Returns:
+        ``BootstrapResult`` on success, ``None`` if the current
+        platform has no published release asset.
+
+    Raises:
+        :class:`TreeshipBootstrapError`: when the expected checksum is
+            missing, the download fails, or the hash disagrees. The
+            ``reason`` is one of ``checksum-missing``,
+            ``binary-download-failed``, ``binary-checksum-mismatch``.
     """
     asset, err = platform_release_asset()
     if err:
         return None
+
+    expected = _read_expected_checksum(asset)
+    if expected is None:
+        raise TreeshipBootstrapError(
+            "checksum-missing",
+            (
+                "treeship-sdk install is missing the expected SHA-256 for "
+                f"'{asset}'. The wheel was published without a binary "
+                "integrity hash and cannot install the CLI safely. "
+                "Recover: reinstall the SDK (`pip install --force-reinstall "
+                "treeship-sdk`); if that doesn't help, file an issue at "
+                "https://github.com/zerkerlabs/treeship/issues so we can "
+                "re-publish it. Alternatively, install the CLI directly: "
+                "`npm install -g treeship` or download from "
+                "https://github.com/zerkerlabs/treeship/releases."
+            ),
+            [f"checksum:{asset}"],
+        )
+
     cache_dir.mkdir(parents=True, exist_ok=True)
     target = cache_dir / "treeship"
-    base = (
+    partial = cache_dir / "treeship.partial"
+    url = (
         f"https://github.com/zerkerlabs/treeship/releases/download/v{version}/{asset}"
         if version
         else f"https://github.com/zerkerlabs/treeship/releases/latest/download/{asset}"
     )
-    # Stream into a temp file in the same dir so the final move is atomic.
-    tmp = tempfile.NamedTemporaryFile(dir=str(cache_dir), prefix=".treeship-", suffix=".part", delete=False)
-    tmp_path = Path(tmp.name)
+
+    # If a stale partial exists from a prior aborted download, clear it
+    # before we start — otherwise a hash mismatch later would refer to
+    # bytes we didn't just download.
     try:
-        with urllib.request.urlopen(base, timeout=30) as resp:  # nosec B310 (vetted https GitHub URL)
-            shutil.copyfileobj(resp, tmp)
-        tmp.close()
-        # Mark executable.
-        tmp_path.chmod(0o755)
-        tmp_path.replace(target)
-    except Exception:
+        partial.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
+
+    # Stream the download into <target>.partial, computing SHA-256
+    # incrementally so we never hold the full binary in memory.
+    hasher = hashlib.sha256()
+    try:
+        with urllib.request.urlopen(url, timeout=30) as resp:  # nosec B310 (vetted https GitHub URL)
+            with open(partial, "wb") as fp:
+                while True:
+                    chunk = resp.read(64 * 1024)
+                    if not chunk:
+                        break
+                    hasher.update(chunk)
+                    fp.write(chunk)
+    except Exception as exc:
+        # Clean up the partial so a retry can't pick up bad bytes.
         try:
-            tmp.close()
-        except Exception:
+            partial.unlink()
+        except OSError:
             pass
+        raise TreeshipBootstrapError(
+            "binary-download-failed",
+            (
+                f"could not download {asset} from {url}: {exc}. "
+                "Recover: re-run the install (transient network/CDN "
+                "issues clear up), or download the binary directly from "
+                "https://github.com/zerkerlabs/treeship/releases and "
+                "place it on PATH."
+            ),
+            [f"download:{url}"],
+        ) from exc
+
+    got = hasher.hexdigest()
+    if got != expected:
+        # Delete the partial BEFORE we abort. A retry must not be able
+        # to chmod the bad bytes that are sitting on disk.
         try:
-            tmp_path.unlink()
-        except Exception:
+            partial.unlink()
+        except OSError:
             pass
-        return None
+        raise TreeshipBootstrapError(
+            "binary-checksum-mismatch",
+            (
+                "SHA-256 mismatch on downloaded binary. Do not run it. "
+                f"url={url} expected={expected} got={got}. "
+                "This means either the GitHub Release was tampered with, "
+                "a CDN cached a stale or malicious binary, or the PyPI "
+                "wheel and the release are out of sync. Recover: "
+                "re-run the install in case it's a CDN race; if the "
+                "mismatch persists, file an issue at "
+                "https://github.com/zerkerlabs/treeship/issues."
+            ),
+            [f"download:{url}", f"expected:{expected}", f"got:{got}"],
+        )
+
+    # Hash matched: promote the partial to the final path atomically,
+    # then chmod. Order matters — never chmod the .partial path.
+    try:
+        os.replace(partial, target)
+        os.chmod(target, 0o755)
+    except OSError as exc:
+        # Replace/chmod failed even though bytes were correct. Treat as
+        # a download-side failure so the agent can branch on it.
+        try:
+            partial.unlink()
+        except OSError:
+            pass
+        raise TreeshipBootstrapError(
+            "binary-download-failed",
+            f"could not finalize {asset}: {exc}",
+            [f"download:{url}", f"finalize:{target}"],
+        ) from exc
 
     v = _probe_binary(str(target))
     if v is None:
