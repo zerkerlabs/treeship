@@ -46,6 +46,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.request
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -338,42 +339,106 @@ def _install_via_github_release(
         )
 
     cache_dir.mkdir(parents=True, exist_ok=True)
+
+    # Cache-dir ownership/perms check. A pre-existing cache_dir owned
+    # by another user (multi-user macOS box, shared dev VM, mounted
+    # volume, a sibling agent's home) means whoever owns it can
+    # pre-stage a malicious binary at the target path. The mkdir
+    # above is a no-op when the directory already exists, so we MUST
+    # validate the inode we got. On Windows there's no euid concept
+    # and `platform_release_asset` already refuses to serve Windows,
+    # so we skip the check there.
+    if hasattr(os, "geteuid"):
+        try:
+            st = cache_dir.stat()
+        except OSError as exc:
+            raise TreeshipBootstrapError(
+                "cache-dir-unsafe",
+                (
+                    f"could not stat cache_dir {cache_dir} to verify "
+                    f"ownership: {exc}. Refusing to install into a "
+                    "directory we can't inspect. Recover: set "
+                    "$TREESHIP_CACHE to a path you own, or remove the "
+                    "existing cache directory."
+                ),
+                [f"cache:{cache_dir}"],
+            ) from exc
+        euid = os.geteuid()
+        if st.st_uid != euid:
+            raise TreeshipBootstrapError(
+                "cache-dir-unsafe",
+                (
+                    f"cache_dir {cache_dir} is owned by uid {st.st_uid}, "
+                    f"not the current user (uid {euid}). Refusing to "
+                    "install — another user could pre-stage a malicious "
+                    "binary here. Recover: set $TREESHIP_CACHE to a path "
+                    "you own (e.g. under your home directory), or remove "
+                    "the existing cache directory and let treeship "
+                    "recreate it."
+                ),
+                [f"cache:{cache_dir}"],
+            )
+        if st.st_mode & 0o022 != 0:
+            raise TreeshipBootstrapError(
+                "cache-dir-unsafe",
+                (
+                    f"cache_dir {cache_dir} is group- or world-writable "
+                    f"(mode {oct(st.st_mode & 0o777)}). Refusing to "
+                    "install — another user could overwrite the binary "
+                    "between download and exec. Recover: `chmod 700 "
+                    f"{cache_dir}` or move the cache to a private path "
+                    "via $TREESHIP_CACHE."
+                ),
+                [f"cache:{cache_dir}"],
+            )
+
     target = cache_dir / "treeship"
-    partial = cache_dir / "treeship.partial"
     url = (
         f"https://github.com/zerkerlabs/treeship/releases/download/v{version}/{asset}"
         if version
         else f"https://github.com/zerkerlabs/treeship/releases/latest/download/{asset}"
     )
 
-    # If a stale partial exists from a prior aborted download, clear it
-    # before we start — otherwise a hash mismatch later would refer to
-    # bytes we didn't just download.
-    try:
-        partial.unlink()
-    except FileNotFoundError:
-        pass
-    except OSError:
-        pass
+    # Use a unique partial filename so two parallel ensure_cli() calls
+    # (pytest-xdist, two CI jobs sharing a cache mount, two Treeship
+    # SDK instances in the same process) can't overwrite each other's
+    # mid-stream bytes. The earlier fixed-name "treeship.partial"
+    # silently raced. tempfile.NamedTemporaryFile guarantees uniqueness
+    # within cache_dir.
+    partial = tempfile.NamedTemporaryFile(
+        dir=str(cache_dir),
+        prefix="treeship-",
+        suffix=".partial",
+        delete=False,
+    )
+    partial_path = partial.name
 
-    # Stream the download into <target>.partial, computing SHA-256
+    def _cleanup_partial() -> None:
+        """Best-effort removal of the in-progress partial file."""
+        try:
+            os.unlink(partial_path)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+
+    # Stream the download into the unique partial, computing SHA-256
     # incrementally so we never hold the full binary in memory.
     hasher = hashlib.sha256()
     try:
         with urllib.request.urlopen(url, timeout=30) as resp:  # nosec B310 (vetted https GitHub URL)
-            with open(partial, "wb") as fp:
+            try:
                 while True:
                     chunk = resp.read(64 * 1024)
                     if not chunk:
                         break
                     hasher.update(chunk)
-                    fp.write(chunk)
+                    partial.write(chunk)
+            finally:
+                partial.close()
     except Exception as exc:
         # Clean up the partial so a retry can't pick up bad bytes.
-        try:
-            partial.unlink()
-        except OSError:
-            pass
+        _cleanup_partial()
         raise TreeshipBootstrapError(
             "binary-download-failed",
             (
@@ -390,10 +455,7 @@ def _install_via_github_release(
     if got != expected:
         # Delete the partial BEFORE we abort. A retry must not be able
         # to chmod the bad bytes that are sitting on disk.
-        try:
-            partial.unlink()
-        except OSError:
-            pass
+        _cleanup_partial()
         raise TreeshipBootstrapError(
             "binary-checksum-mismatch",
             (
@@ -412,15 +474,12 @@ def _install_via_github_release(
     # Hash matched: promote the partial to the final path atomically,
     # then chmod. Order matters — never chmod the .partial path.
     try:
-        os.replace(partial, target)
+        os.replace(partial_path, target)
         os.chmod(target, 0o755)
     except OSError as exc:
         # Replace/chmod failed even though bytes were correct. Treat as
         # a download-side failure so the agent can branch on it.
-        try:
-            partial.unlink()
-        except OSError:
-            pass
+        _cleanup_partial()
         raise TreeshipBootstrapError(
             "binary-download-failed",
             f"could not finalize {asset}: {exc}",

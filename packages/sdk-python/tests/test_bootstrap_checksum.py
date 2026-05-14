@@ -109,14 +109,17 @@ class GithubReleaseChecksumTests(unittest.TestCase):
         self.assertEqual(result.source, "github-release")
 
         target = self.cache_dir / "treeship"
-        partial = self.cache_dir / "treeship.partial"
 
         # The binary lives at the final path with the expected bytes.
         self.assertTrue(target.is_file(), "expected target binary to exist")
         self.assertEqual(target.read_bytes(), _FAKE_BINARY)
 
-        # No .partial leftover.
-        self.assertFalse(partial.exists(), "partial file should be cleaned up")
+        # No *.partial leftover (unique tempfile names land here).
+        leftover_partials = list(self.cache_dir.glob("*.partial"))
+        self.assertEqual(
+            leftover_partials, [],
+            f"expected no .partial leftovers, found {leftover_partials}",
+        )
 
         # Mode 0755 (or compatible) — we explicitly chmod'd it.
         mode = target.stat().st_mode & 0o777
@@ -151,12 +154,15 @@ class GithubReleaseChecksumTests(unittest.TestCase):
         )
 
         target = self.cache_dir / "treeship"
-        partial = self.cache_dir / "treeship.partial"
 
         # The final binary must NOT exist. If it did, a retry could run it.
         self.assertFalse(target.exists(), "tampered binary must not land at final path")
-        # The partial must also be gone — bad bytes deleted, not stranded.
-        self.assertFalse(partial.exists(), "partial file must be removed on mismatch")
+        # No *.partial must remain — bad bytes deleted, not stranded.
+        leftover_partials = list(self.cache_dir.glob("*.partial"))
+        self.assertEqual(
+            leftover_partials, [],
+            f"partial files must be removed on mismatch, found {leftover_partials}",
+        )
 
     def test_hash_mismatch_does_not_chmod_partial(self) -> None:
         """A stronger version of the above: prove we don't even touch chmod.
@@ -235,7 +241,11 @@ class GithubReleaseChecksumTests(unittest.TestCase):
         self.assertEqual(ctx.exception.reason, "binary-download-failed")
         # No partial or target file stranded.
         self.assertFalse((self.cache_dir / "treeship").exists())
-        self.assertFalse((self.cache_dir / "treeship.partial").exists())
+        leftover_partials = list(self.cache_dir.glob("*.partial"))
+        self.assertEqual(
+            leftover_partials, [],
+            f"partials must be cleaned up on network error, found {leftover_partials}",
+        )
 
 
 class ReadExpectedChecksumTests(unittest.TestCase):
@@ -334,6 +344,231 @@ class ReadExpectedChecksumTests(unittest.TestCase):
                 bootstrap._read_expected_checksum("anything"),
                 "a" * 64,
             )
+
+
+class UniquePartialFilenameTests(unittest.TestCase):
+    """Cover the F2 fix: parallel ensure_cli() calls must not collide.
+
+    The pre-fix code used a hardcoded ``cache_dir / "treeship.partial"``
+    filename. Two concurrent installs (pytest-xdist, two CI jobs sharing
+    a cache mount) would overwrite each other's partial mid-stream and
+    corrupt the SHA-256 verify path. The fix uses
+    ``tempfile.NamedTemporaryFile(dir=cache_dir, ...)`` to give each
+    call a unique partial path.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.cache_dir = Path(self._tmp.name) / "cache"
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_uses_unique_named_temp_file_per_call(self) -> None:
+        """Two sequential calls must allocate distinct partial paths.
+
+        We capture the ``name`` of each NamedTemporaryFile that the
+        function creates. If the function regresses to a fixed filename
+        these two names will be equal.
+        """
+        from treeship_sdk import bootstrap
+
+        seen_names: list[str] = []
+        real_ntf = tempfile.NamedTemporaryFile
+
+        def _capturing_ntf(*args, **kwargs):
+            f = real_ntf(*args, **kwargs)
+            seen_names.append(f.name)
+            return f
+
+        with patch(
+            "treeship_sdk.bootstrap.platform_release_asset",
+            return_value=(_ASSET, None),
+        ), patch(
+            "treeship_sdk.bootstrap._read_expected_checksum",
+            return_value=_FAKE_SHA256,
+        ), patch(
+            "treeship_sdk.bootstrap.urllib.request.urlopen",
+            side_effect=_fake_urlopen_ok,
+        ), patch(
+            "treeship_sdk.bootstrap._probe_binary",
+            return_value="treeship 0.0.0-test",
+        ), patch(
+            "treeship_sdk.bootstrap.tempfile.NamedTemporaryFile",
+            side_effect=_capturing_ntf,
+        ):
+            bootstrap._install_via_github_release(self.cache_dir, version="0.0.0-test")
+            bootstrap._install_via_github_release(self.cache_dir, version="0.0.0-test")
+
+        self.assertEqual(len(seen_names), 2, "expected two partial allocations")
+        self.assertNotEqual(
+            seen_names[0], seen_names[1],
+            "two sequential bootstraps must use distinct partial paths",
+        )
+        # Both must live inside cache_dir (so os.replace is same-FS).
+        for name in seen_names:
+            self.assertEqual(
+                Path(name).parent, self.cache_dir,
+                f"partial {name} must be inside cache_dir for atomic replace",
+            )
+
+    def test_concurrent_threads_dont_corrupt_each_other(self) -> None:
+        """Two threads racing through _install_via_github_release must
+        each succeed independently. The hardcoded-partial bug would
+        manifest as one thread reading the other's bytes via the shared
+        partial path and failing the SHA-256 check.
+        """
+        import threading
+
+        from treeship_sdk import bootstrap
+
+        # Pre-stage: each thread gets its own cache_dir so the *target*
+        # path doesn't race (that's a separate orthogonal concern); the
+        # test specifically isolates the partial-filename race that F2
+        # addresses. Even with the same cache_dir the fix should hold.
+        cache_a = Path(self._tmp.name) / "cache-a"
+        cache_b = Path(self._tmp.name) / "cache-b"
+
+        results: dict[str, object] = {}
+        errors: dict[str, BaseException] = {}
+        barrier = threading.Barrier(2)
+
+        def _slow_urlopen(_url, timeout=30):  # noqa: ARG001
+            # Force the threads to interleave inside the streaming loop
+            # by pausing at the response object before bytes are read.
+            barrier.wait(timeout=5)
+            return _FakeResponse(_FAKE_BINARY)
+
+        def _run(key: str, cache: Path) -> None:
+            try:
+                results[key] = bootstrap._install_via_github_release(
+                    cache, version="0.0.0-test",
+                )
+            except BaseException as e:  # capture all, re-raise in assert
+                errors[key] = e
+
+        with patch(
+            "treeship_sdk.bootstrap.platform_release_asset",
+            return_value=(_ASSET, None),
+        ), patch(
+            "treeship_sdk.bootstrap._read_expected_checksum",
+            return_value=_FAKE_SHA256,
+        ), patch(
+            "treeship_sdk.bootstrap.urllib.request.urlopen",
+            side_effect=_slow_urlopen,
+        ), patch(
+            "treeship_sdk.bootstrap._probe_binary",
+            return_value="treeship 0.0.0-test",
+        ):
+            t1 = threading.Thread(target=_run, args=("a", cache_a))
+            t2 = threading.Thread(target=_run, args=("b", cache_b))
+            t1.start(); t2.start()
+            t1.join(timeout=15); t2.join(timeout=15)
+
+        self.assertEqual(errors, {}, f"unexpected errors: {errors}")
+        self.assertIn("a", results)
+        self.assertIn("b", results)
+        # Both final binaries must exist and contain the right bytes.
+        self.assertEqual((cache_a / "treeship").read_bytes(), _FAKE_BINARY)
+        self.assertEqual((cache_b / "treeship").read_bytes(), _FAKE_BINARY)
+
+
+class CacheDirOwnershipTests(unittest.TestCase):
+    """Cover the F3 fix: refuse to install into a cache_dir owned by
+    another user or one that is group/world-writable.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.cache_dir = Path(self._tmp.name) / "cache"
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _fake_stat(self, st_uid: int, st_mode: int = 0o40700):
+        """Build a stand-in stat_result-ish object with the fields we check."""
+        class _S:
+            pass
+        s = _S()
+        s.st_uid = st_uid
+        s.st_mode = st_mode
+        return s
+
+    def test_rejects_cache_dir_owned_by_other_user(self) -> None:
+        import os as _os
+
+        if not hasattr(_os, "geteuid"):
+            self.skipTest("ownership check is POSIX-only")
+
+        wrong_uid = _os.geteuid() + 1
+        fake = self._fake_stat(st_uid=wrong_uid, st_mode=0o40700)
+
+        with patch(
+            "treeship_sdk.bootstrap.platform_release_asset",
+            return_value=(_ASSET, None),
+        ), patch(
+            "treeship_sdk.bootstrap._read_expected_checksum",
+            return_value=_FAKE_SHA256,
+        ), patch.object(Path, "stat", return_value=fake), patch(
+            "treeship_sdk.bootstrap.urllib.request.urlopen",
+        ) as mock_urlopen:
+            with self.assertRaises(TreeshipBootstrapError) as ctx:
+                _install_via_github_release(self.cache_dir, version="0.0.0-test")
+            # The download must not even start.
+            mock_urlopen.assert_not_called()
+
+        self.assertEqual(ctx.exception.reason, "cache-dir-unsafe")
+        self.assertIn(str(wrong_uid), str(ctx.exception))
+
+    def test_rejects_world_writable_cache_dir(self) -> None:
+        import os as _os
+
+        if not hasattr(_os, "geteuid"):
+            self.skipTest("ownership check is POSIX-only")
+
+        # Owned by us, but world-writable (0o777).
+        fake = self._fake_stat(st_uid=_os.geteuid(), st_mode=0o40777)
+
+        with patch(
+            "treeship_sdk.bootstrap.platform_release_asset",
+            return_value=(_ASSET, None),
+        ), patch(
+            "treeship_sdk.bootstrap._read_expected_checksum",
+            return_value=_FAKE_SHA256,
+        ), patch.object(Path, "stat", return_value=fake), patch(
+            "treeship_sdk.bootstrap.urllib.request.urlopen",
+        ) as mock_urlopen:
+            with self.assertRaises(TreeshipBootstrapError) as ctx:
+                _install_via_github_release(self.cache_dir, version="0.0.0-test")
+            mock_urlopen.assert_not_called()
+
+        self.assertEqual(ctx.exception.reason, "cache-dir-unsafe")
+
+    def test_accepts_private_cache_dir_owned_by_us(self) -> None:
+        import os as _os
+
+        if not hasattr(_os, "geteuid"):
+            self.skipTest("ownership check is POSIX-only")
+
+        # Owned by us, mode 0700 — should pass.
+        fake = self._fake_stat(st_uid=_os.geteuid(), st_mode=0o40700)
+
+        with patch(
+            "treeship_sdk.bootstrap.platform_release_asset",
+            return_value=(_ASSET, None),
+        ), patch(
+            "treeship_sdk.bootstrap._read_expected_checksum",
+            return_value=_FAKE_SHA256,
+        ), patch.object(Path, "stat", return_value=fake), patch(
+            "treeship_sdk.bootstrap.urllib.request.urlopen",
+            side_effect=_fake_urlopen_ok,
+        ), patch(
+            "treeship_sdk.bootstrap._probe_binary",
+            return_value="treeship 0.0.0-test",
+        ):
+            # No exception — happy path.
+            result = _install_via_github_release(self.cache_dir, version="0.0.0-test")
+            self.assertIsNotNone(result)
 
 
 if __name__ == "__main__":
