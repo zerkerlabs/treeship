@@ -96,6 +96,23 @@ cmd_prepare() {
     fs.writeFileSync('npm/treeship/package.json', JSON.stringify(p, null, 2) + '\n');
   "
 
+  echo "Bumping .claude-plugin/marketplace.json..."
+  # Both metadata.version and plugins[name=treeship].version. The preflight
+  # in scripts/check-release-versions.py reads both sites; missing this bump
+  # is what produced the 0.10.2 plugin-marketplace drift we just fixed.
+  node -e "
+    const fs = require('fs');
+    const path = '.claude-plugin/marketplace.json';
+    const m = JSON.parse(fs.readFileSync(path, 'utf8'));
+    if (m.metadata) m.metadata.version = '${VERSION}';
+    if (Array.isArray(m.plugins)) {
+      for (const p of m.plugins) {
+        if (p && p.name === 'treeship') p.version = '${VERSION}';
+      }
+    }
+    fs.writeFileSync(path, JSON.stringify(m, null, 2) + '\n');
+  "
+
   echo "Updating Cargo.lock..."
   cargo check -p treeship-core 2>/dev/null || true
 
