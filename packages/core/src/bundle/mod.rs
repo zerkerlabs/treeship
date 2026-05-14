@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use crate::{
-    attestation::{sign, ArtifactId, Envelope, Signer, SignError},
+    attestation::{sign, ArtifactId, Envelope, Signer, SignError, Verifier, VerifyError},
     statements::{payload_type, ArtifactRef, BundleStatement},
     storage::{Record, Store, StorageError},
 };
@@ -15,6 +15,15 @@ pub enum BundleError {
     Json(serde_json::Error),
     ArtifactNotFound(String),
     InvalidBundle(String),
+    /// A signature on an imported envelope did not verify against the
+    /// configured trust root. Carries the offending envelope's index in
+    /// the export (0 = bundle envelope, 1..=N = artifact envelopes) and
+    /// the underlying verification error.
+    UnverifiedEnvelope { index: usize, source: VerifyError },
+    /// `import` was called with an empty trust root. Without trusted keys
+    /// there is nothing to verify signatures against, so import would
+    /// degenerate to "trust whatever the file says" — refused loudly.
+    NoTrustRoot,
 }
 
 impl std::fmt::Display for BundleError {
@@ -26,6 +35,16 @@ impl std::fmt::Display for BundleError {
             Self::Json(e)             => write!(f, "bundle json: {e}"),
             Self::ArtifactNotFound(id)=> write!(f, "artifact not found: {id}"),
             Self::InvalidBundle(msg)  => write!(f, "invalid bundle: {msg}"),
+            Self::UnverifiedEnvelope { index, source } => write!(
+                f,
+                "envelope {index} failed signature verification: {source}",
+            ),
+            Self::NoTrustRoot => write!(
+                f,
+                "bundle import requires a configured trust root: \
+                 generate or import a signer key (treeship init / treeship keys add) \
+                 before importing a .treeship bundle",
+            ),
         }
     }
 }
@@ -170,11 +189,20 @@ pub fn export(
 
 /// Import a .treeship file into local storage.
 ///
-/// Reads the export file, re-derives content-addressed IDs for each envelope,
-/// and stores everything locally. Returns the bundle's artifact ID.
+/// Reads the export file, verifies every envelope's signatures against the
+/// provided `verifier`, re-derives content-addressed IDs, and stores everything
+/// locally. Returns the bundle's artifact ID.
+///
+/// P0 #5 (audit): import previously called `record_from_envelope` with no
+/// signature check, which made imported bundles forged-record vectors. The
+/// `verifier` argument carries the caller's trust root — typically built from
+/// the local keystore's public keys. If verification fails for any envelope
+/// the entire import is rejected; partial writes are avoided by verifying all
+/// envelopes before writing any record.
 pub fn import(
-    path:    &Path,
-    storage: &Store,
+    path:     &Path,
+    storage:  &Store,
+    verifier: &Verifier,
 ) -> Result<ArtifactId, BundleError> {
     let bytes = std::fs::read(path)?;
     let export: ExportFile = serde_json::from_slice(&bytes)?;
@@ -186,13 +214,24 @@ pub fn import(
         )));
     }
 
-    // Import each artifact envelope.
+    // Verify every envelope before writing any record. `verify_any` (not
+    // `verify`) is the right primitive here: an envelope may carry multiple
+    // signatures from a rotation/co-sign setup and the local trust root only
+    // needs one to match. Index 0 = bundle envelope, 1..=N = artifact
+    // envelopes (matches the order shown in error messages and CLI output).
+    verifier.verify_any(&export.bundle)
+        .map_err(|source| BundleError::UnverifiedEnvelope { index: 0, source })?;
+    for (i, env) in export.artifacts.iter().enumerate() {
+        verifier.verify_any(env)
+            .map_err(|source| BundleError::UnverifiedEnvelope { index: i + 1, source })?;
+    }
+
+    // All signatures check out: now write.
     for env in &export.artifacts {
         let record = record_from_envelope(env)?;
         storage.write(&record)?;
     }
 
-    // Import the bundle envelope.
     let bundle_record = record_from_envelope(&export.bundle)?;
     let bundle_id = bundle_record.artifact_id.clone();
     storage.write(&bundle_record)?;
@@ -333,6 +372,7 @@ mod tests {
     fn export_and_import_roundtrip() {
         let (store, dir) = tmp_store();
         let signer = Ed25519Signer::generate("key_test").unwrap();
+        let verifier = crate::attestation::Verifier::from_signer(&signer);
 
         let a1 = sign_and_store(&store, &signer, &payload_type("action"),
             &ActionStatement::new("agent://a", "tool.call"));
@@ -354,7 +394,7 @@ mod tests {
 
         // Import into a fresh store
         let (store2, dir2) = tmp_store();
-        let imported_id = import(&export_path, &store2).unwrap();
+        let imported_id = import(&export_path, &store2, &verifier).unwrap();
         assert_eq!(imported_id, bundle.artifact_id);
 
         // All artifacts are now in the new store
@@ -382,6 +422,8 @@ mod tests {
     #[test]
     fn import_bad_version_fails() {
         let (store, dir) = tmp_store();
+        let signer   = Ed25519Signer::generate("key_test").unwrap();
+        let verifier = crate::attestation::Verifier::from_signer(&signer);
         let bad = ExportFile {
             version:   "bad/v99".into(),
             bundle:    Envelope {
@@ -394,8 +436,90 @@ mod tests {
         let path = dir.join("bad.treeship");
         std::fs::write(&path, serde_json::to_vec(&bad).unwrap()).unwrap();
 
-        let err = import(&path, &store).unwrap_err();
+        let err = import(&path, &store, &verifier).unwrap_err();
         assert!(err.to_string().contains("unsupported export version"));
         rm(dir);
+    }
+
+    #[test]
+    fn import_rejects_envelope_with_invalid_signature() {
+        // P0 #5: before this fix, `import` called `record_from_envelope`
+        // straight from the file with no verification — an attacker could
+        // hand-craft a `.treeship` whose envelopes pointed at any payload
+        // and the import would happily land it in storage. Now every
+        // envelope must verify against the caller's trust root.
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+
+        let (store, dir) = tmp_store();
+        let signer       = Ed25519Signer::generate("key_test").unwrap();
+        let verifier     = crate::attestation::Verifier::from_signer(&signer);
+
+        // Build a normal bundle so we have a valid export to start from.
+        let a1 = sign_and_store(&store, &signer, &payload_type("action"),
+            &ActionStatement::new("agent://a", "tool.call"));
+        let bundle = create(&[&a1], Some("tampered"), None, &store, &signer).unwrap();
+        let export_path = dir.join("tampered.treeship");
+        export(&bundle.artifact_id, &export_path, &store).unwrap();
+
+        // Tamper the *first* artifact envelope's signature bytes. The keyid
+        // remains correct (still our trusted key) but the cipher-bytes no
+        // longer verify against the PAE.
+        let raw = std::fs::read(&export_path).unwrap();
+        let mut ef: ExportFile = serde_json::from_slice(&raw).unwrap();
+        // Replace the 64-byte signature with all zeros — well-formed length,
+        // mathematically invalid.
+        ef.artifacts[0].signatures[0].sig = URL_SAFE_NO_PAD.encode([0u8; 64]);
+        std::fs::write(&export_path, serde_json::to_vec(&ef).unwrap()).unwrap();
+
+        // Import into a fresh store. The tamper must be detected and the
+        // import must fail; the fresh store must remain empty of the
+        // artifact and bundle.
+        let (store2, dir2) = tmp_store();
+        let err = import(&export_path, &store2, &verifier).unwrap_err();
+        assert!(
+            matches!(err, BundleError::UnverifiedEnvelope { index: 1, .. }),
+            "expected UnverifiedEnvelope{{index:1, ..}}, got: {err}"
+        );
+        // Verify nothing was written: signatures are checked before any
+        // record is persisted, so the destination store stays clean.
+        assert!(!store2.exists(&a1));
+        assert!(!store2.exists(&bundle.artifact_id));
+
+        rm(dir);
+        rm(dir2);
+    }
+
+    #[test]
+    fn import_rejects_unsigned_envelope() {
+        // Companion to the P0 #4 fix: a bundle file whose envelopes carry
+        // zero signatures must not import. The `Verifier` returns
+        // `NoValidSignature` and `import` propagates it as
+        // `UnverifiedEnvelope`.
+        let (store, dir) = tmp_store();
+        let signer       = Ed25519Signer::generate("key_test").unwrap();
+        let verifier     = crate::attestation::Verifier::from_signer(&signer);
+
+        let a1 = sign_and_store(&store, &signer, &payload_type("action"),
+            &ActionStatement::new("agent://a", "tool.call"));
+        let bundle = create(&[&a1], Some("unsigned"), None, &store, &signer).unwrap();
+        let export_path = dir.join("unsigned.treeship");
+        export(&bundle.artifact_id, &export_path, &store).unwrap();
+
+        // Strip every signature off every envelope in the export.
+        let raw = std::fs::read(&export_path).unwrap();
+        let mut ef: ExportFile = serde_json::from_slice(&raw).unwrap();
+        ef.bundle.signatures.clear();
+        for env in &mut ef.artifacts { env.signatures.clear(); }
+        std::fs::write(&export_path, serde_json::to_vec(&ef).unwrap()).unwrap();
+
+        let (store2, dir2) = tmp_store();
+        let err = import(&export_path, &store2, &verifier).unwrap_err();
+        assert!(
+            matches!(err, BundleError::UnverifiedEnvelope { index: 0, .. }),
+            "expected UnverifiedEnvelope{{index:0, ..}} (bundle envelope first), got: {err}"
+        );
+
+        rm(dir);
+        rm(dir2);
     }
 }

@@ -1,6 +1,9 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
+use treeship_core::attestation::Verifier;
 use treeship_core::bundle;
+use ed25519_dalek::VerifyingKey;
 
 use crate::{ctx, printer::Printer};
 
@@ -72,7 +75,15 @@ pub fn import(args: ImportArgs, printer: &Printer) -> Result<(), Box<dyn std::er
     let ctx = ctx::open(args.config.as_deref())?;
     let path = PathBuf::from(&args.file);
 
-    let bundle_id = bundle::import(&path, &ctx.storage)
+    // Build the trust root from the local keystore. Every public key the
+    // user has generated or added becomes a trusted signer for imports.
+    // To accept a bundle from a third party, the user must add that
+    // party's public key via `treeship keys add` first — which is the
+    // intended explicit-trust step, not a silent surprise.
+    let verifier = build_local_verifier(&ctx.keys)
+        .map_err(|e| format!("build verifier: {e}"))?;
+
+    let bundle_id = bundle::import(&path, &ctx.storage, &verifier)
         .map_err(|e| format!("{e}"))?;
 
     printer.success("bundle imported", &[
@@ -82,4 +93,31 @@ pub fn import(args: ImportArgs, printer: &Printer) -> Result<(), Box<dyn std::er
     printer.hint(&format!("treeship verify {}", bundle_id));
     printer.blank();
     Ok(())
+}
+
+/// Construct a `Verifier` from every key in the local keystore. Returns
+/// `bundle::BundleError::NoTrustRoot` if the keystore is empty so the caller
+/// can surface a useful "run `treeship init` first" message instead of a
+/// silent accept-everything.
+fn build_local_verifier(
+    keys: &treeship_core::keys::Store,
+) -> Result<Verifier, Box<dyn std::error::Error>> {
+    let infos = keys.list()?;
+    if infos.is_empty() {
+        return Err(Box::new(bundle::BundleError::NoTrustRoot));
+    }
+
+    let mut map: HashMap<String, VerifyingKey> = HashMap::new();
+    for info in infos {
+        let pk_arr: [u8; 32] = info.public_key.as_slice().try_into()
+            .map_err(|_| format!(
+                "key {} has malformed public key (expected 32 bytes, got {})",
+                info.id,
+                info.public_key.len(),
+            ))?;
+        let vk = VerifyingKey::from_bytes(&pk_arr)
+            .map_err(|e| format!("key {}: {e}", info.id))?;
+        map.insert(info.id, vk);
+    }
+    Ok(Verifier::new(map))
 }
