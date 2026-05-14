@@ -18,6 +18,13 @@ base64        = "0.22"
 rand          = "0.8"
 serde_yaml    = "0.9"
 hex           = "0.4"
+# Real authenticated encryption for the keystore at-rest path.
+# Replaces the homemade SHA-256-CTR + HMAC-SHA-256 construction that
+# previously masqueraded as "AES-256-GCM" (TS-2026-001). See
+# `keys/mod.rs` -> `encrypt_for_disk_v2` for the v2 format and the
+# legacy compat path.
+aes-gcm       = "0.10"
+zeroize       = "1"
 
 # hostname doesn't compile on WASM (no OS-level hostname APIs). Gate it to
 # non-wasm targets; the WASM build falls back to "host_unknown".

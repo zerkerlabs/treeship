@@ -6,9 +6,14 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+use aes_gcm::{
+    aead::{Aead, KeyInit, OsRng as AeadOsRng},
+    AeadCore, Aes256Gcm, Key as AesKey, Nonce,
+};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as Sha2Digest, Sha256};
+use zeroize::Zeroizing;
 
 use crate::attestation::{Ed25519Signer, Signer};
 
@@ -129,11 +134,18 @@ struct Manifest {
 
 /// Local encrypted keystore.
 ///
-/// Private keys are encrypted with AES-256-GCM before writing to disk.
-/// The encryption key is derived from a machine-specific secret so key
-/// files are useless if copied to another machine.
+/// Private keys are encrypted with AES-256-GCM (RustCrypto `aes-gcm`
+/// 0.10) before writing to disk. The encryption key is derived from a
+/// machine-specific secret so key files are useless if copied to
+/// another machine.
 ///
-/// v2 will delegate to OS credential stores (Secure Enclave / TPM 2.0).
+/// Pre-v0.10.3 keystores used a homemade SHA-256-CTR + HMAC-SHA-256
+/// construction (TS-2026-001) and are transparently migrated to the
+/// new AEAD format on first decrypt; see `encrypt_for_disk_v2` /
+/// `decrypt_from_disk` for the format dispatcher.
+///
+/// A future version will delegate to OS credential stores (Secure
+/// Enclave / TPM 2.0).
 pub struct Store {
     dir:         PathBuf,
     machine_key: [u8; 32],
@@ -168,8 +180,8 @@ impl Store {
         let secret  = signer.secret_bytes();
         let pub_key = signer.public_key_bytes();
 
-        let (enc, nonce) = aes_gcm_encrypt(&self.machine_key, &secret)
-            .map_err(|e| KeyError::Crypto(e))?;
+        let enc = encrypt_for_disk_v2(&self.machine_key, &secret)
+            .map_err(KeyError::Crypto)?;
 
         let entry = EncryptedEntry {
             id:               key_id.clone(),
@@ -177,7 +189,11 @@ impl Store {
             created_at:       crate::statements::unix_to_rfc3339(unix_now()),
             public_key:       pub_key.clone(),
             enc_priv_key:     enc,
-            nonce,
+            // v2 ciphertexts carry their nonce inline (bytes [2..14]).
+            // The separate `nonce` field is retained for v1 legacy
+            // compatibility; for fresh v2 entries we serialize an empty
+            // vec so the JSON stays well-formed.
+            nonce:            Vec::new(),
             valid_until:      None,
             successor_key_id: None,
         };
@@ -263,7 +279,7 @@ impl Store {
             .map_err(|e| KeyError::Crypto(e.to_string()))?;
         let succ_secret  = signer.secret_bytes();
         let succ_pub_key = signer.public_key_bytes();
-        let (succ_enc, succ_nonce) = aes_gcm_encrypt(&self.machine_key, &succ_secret)
+        let succ_enc = encrypt_for_disk_v2(&self.machine_key, &succ_secret)
             .map_err(KeyError::Crypto)?;
 
         let succ_created = crate::statements::unix_to_rfc3339(unix_now());
@@ -273,7 +289,9 @@ impl Store {
             created_at:       succ_created.clone(),
             public_key:       succ_pub_key.clone(),
             enc_priv_key:     succ_enc,
-            nonce:            succ_nonce,
+            // v2 ciphertexts carry their nonce inline; the legacy
+            // `nonce` field is left empty for fresh writes.
+            nonce:            Vec::new(),
             valid_until:      None,
             successor_key_id: None,
         };
@@ -415,16 +433,75 @@ impl Store {
 
         let entry = self.load_entry(id)?;
 
-        let secret = aes_gcm_decrypt(&self.machine_key, &entry.enc_priv_key, &entry.nonce)
+        // Dispatcher: v2 ciphertexts start with magic 0x54, version 0x02
+        // and use real AES-256-GCM. Older entries fall through to the
+        // legacy SHA-256-CTR+HMAC path (`decrypt_legacy_v1`) and are
+        // transparently re-encrypted in the new format below.
+        let was_legacy = is_legacy_v1(&entry.enc_priv_key);
+        let secret = decrypt_from_disk(&self.machine_key, &entry.enc_priv_key, &entry.nonce)
             .map_err(|e| self.enrich_crypto_error(e))?;
 
-        let secret_arr: [u8; 32] = secret.try_into()
+        let secret_arr: [u8; 32] = secret.as_slice().try_into()
             .map_err(|_| KeyError::Crypto("decrypted key is wrong length".into()))?;
+
+        // Transparent migration: if this entry was still in the legacy
+        // v1 format (the broken SHA-256-CTR construction from
+        // TS-2026-001), re-encrypt it with v2 AES-256-GCM and rewrite
+        // the file. We do this best-effort -- a migration failure here
+        // must NOT block signing for the current call, since the
+        // in-memory secret is already valid. The next decrypt on a
+        // fresh process will retry.
+        if was_legacy {
+            if let Err(e) = self.migrate_entry_to_v2(&entry, &secret_arr) {
+                // Surface the failure as a tracing-style stderr note
+                // rather than an error -- the user's signing flow is
+                // unaffected, and we'd rather them know about it than
+                // wedge the call.
+                eprintln!(
+                    "treeship: keystore entry {} could not be migrated \
+                     from legacy v1 format to v2 ({}); will retry next \
+                     load",
+                    entry.id, e
+                );
+            }
+        }
 
         let signer = Ed25519Signer::from_bytes(&entry.id, &secret_arr)
             .map_err(|e| KeyError::Crypto(e.to_string()))?;
 
         Ok(Box::new(signer))
+    }
+
+    /// Re-encrypt a legacy v1 entry with the new v2 AEAD and persist
+    /// it. Updates the in-memory cache so subsequent loads in the same
+    /// process see the migrated entry. Idempotent; safe to invoke
+    /// concurrently because `write_entry` does an atomic create+truncate
+    /// write.
+    fn migrate_entry_to_v2(
+        &self,
+        old_entry: &EncryptedEntry,
+        secret: &[u8; 32],
+    ) -> Result<(), KeyError> {
+        let new_ciphertext =
+            encrypt_for_disk_v2(&self.machine_key, secret).map_err(KeyError::Crypto)?;
+
+        let migrated = EncryptedEntry {
+            id:               old_entry.id.clone(),
+            algorithm:        old_entry.algorithm.clone(),
+            created_at:       old_entry.created_at.clone(),
+            public_key:       old_entry.public_key.clone(),
+            enc_priv_key:     new_ciphertext,
+            // v2 carries the nonce inline; clear the legacy field.
+            nonce:            Vec::new(),
+            valid_until:      old_entry.valid_until.clone(),
+            successor_key_id: old_entry.successor_key_id.clone(),
+        };
+
+        self.write_entry(&migrated)?;
+        if let Ok(mut cache) = self.cache.write() {
+            cache.insert(migrated.id.clone(), migrated);
+        }
+        Ok(())
     }
 
     /// Wrap a bare crypto error (typically "MAC verification failed ..." from
@@ -577,26 +654,168 @@ impl Store {
 }
 
 // --- Crypto helpers ---
+//
+// AEAD choice: AES-256-GCM via the RustCrypto `aes-gcm` 0.10 crate.
+// Reasons:
+//   - Matches the original (documented but never implemented) intent of
+//     the keystore, so audit reports and SECURITY.md don't need to be
+//     re-anchored on a different primitive.
+//   - Well-audited, widely deployed, no platform gotchas.
+//   - `chacha20poly1305` would have been a defensible alternative
+//     (slightly better software performance), but the migration cost of
+//     changing the documented primitive while we already have to ship a
+//     migration for the broken construction is not worth it.
+//
+// On-disk v2 format (`encrypt_for_disk_v2`):
+//   [ magic = 0x54 ('T') ]   1 byte
+//   [ version = 0x02     ]   1 byte
+//   [ nonce              ]  12 bytes (random per encryption)
+//   [ ciphertext || tag  ]  N + 16 bytes (tag appended by aead crate)
+//
+// The first byte (0x54) is a structural sentinel so we can dispatch on
+// the format without relying on length heuristics. v1 ciphertexts start
+// with the first byte of their random nonce, so the chance of an
+// accidental v1 entry that looks like v2 is ~1/2^16 (matching both magic
+// AND version byte) and we still re-validate by AEAD-decrypting; if the
+// AEAD fails on something that looks like v2, we fall back to v1.
 
-/// AES-256-GCM encryption.
-/// Returns (ciphertext, nonce).
+const KEYSTORE_MAGIC: u8 = 0x54; // 'T'
+const KEYSTORE_VERSION_V2: u8 = 0x02;
+
+/// AES-256-GCM (the real one) encrypt for at-rest keystore storage.
+/// Returns the framed v2 blob ready to drop into `EncryptedEntry::enc_priv_key`.
+///
+/// Output: `[magic, version, nonce(12), ciphertext || tag(16)]`.
+fn encrypt_for_disk_v2(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>, String> {
+    // Wrap the in-memory AEAD key in Zeroizing so the local stack copy
+    // is wiped on drop. The aes-gcm cipher object owns its own internal
+    // expanded key schedule; that's outside our control, but the raw
+    // 32-byte buffer at this scope is ours to clear.
+    let key_buf: Zeroizing<[u8; 32]> = Zeroizing::new(*key);
+    let aead_key: &AesKey<Aes256Gcm> = AesKey::<Aes256Gcm>::from_slice(key_buf.as_slice());
+    let cipher = Aes256Gcm::new(aead_key);
+
+    // 96-bit random nonce from the OS CSPRNG.
+    let nonce = Aes256Gcm::generate_nonce(&mut AeadOsRng);
+
+    let ciphertext = cipher
+        .encrypt(&nonce, plaintext)
+        .map_err(|e| format!("aead encrypt failed: {e}"))?;
+
+    let mut out = Vec::with_capacity(2 + 12 + ciphertext.len());
+    out.push(KEYSTORE_MAGIC);
+    out.push(KEYSTORE_VERSION_V2);
+    out.extend_from_slice(nonce.as_slice());
+    out.extend_from_slice(&ciphertext);
+    Ok(out)
+}
+
+/// AES-256-GCM decrypt of a v2 framed blob.
+fn decrypt_v2(key: &[u8; 32], blob: &[u8]) -> Result<Vec<u8>, String> {
+    // Minimum: magic(1) + version(1) + nonce(12) + tag(16) = 30 bytes.
+    if blob.len() < 30 {
+        return Err("v2 ciphertext too short".into());
+    }
+    if blob[0] != KEYSTORE_MAGIC || blob[1] != KEYSTORE_VERSION_V2 {
+        return Err("v2 ciphertext has wrong magic/version".into());
+    }
+    let nonce_bytes = &blob[2..14];
+    let ct = &blob[14..];
+
+    let key_buf: Zeroizing<[u8; 32]> = Zeroizing::new(*key);
+    let aead_key: &AesKey<Aes256Gcm> = AesKey::<Aes256Gcm>::from_slice(key_buf.as_slice());
+    let cipher = Aes256Gcm::new(aead_key);
+    let nonce = Nonce::from_slice(nonce_bytes);
+
+    cipher
+        .decrypt(nonce, ct)
+        .map_err(|_| "MAC verification failed — key file may be corrupt or wrong machine".into())
+}
+
+/// Returns true iff `blob` is shaped like a v1 (legacy) ciphertext.
+/// Used by the dispatcher to decide whether a successful decrypt should
+/// trigger a transparent re-encrypt to v2.
+fn is_legacy_v1(blob: &[u8]) -> bool {
+    // A v2 blob always starts with [magic, version]. Anything else
+    // (including the empty enc_priv_key case during partial writes) is
+    // treated as legacy and routed through the v1 path, which will fail
+    // cleanly on garbage.
+    !(blob.len() >= 2 && blob[0] == KEYSTORE_MAGIC && blob[1] == KEYSTORE_VERSION_V2)
+}
+
+/// Top-level decrypt dispatcher used by the keystore. Tries v2 if the
+/// blob carries the magic+version prefix, otherwise falls through to the
+/// legacy v1 path. If a blob looks like v2 but AEAD verification fails,
+/// we also try v1 — this defends against the (negligible) probability
+/// that a legacy ciphertext's random first two bytes happen to collide
+/// with our magic+version.
+fn decrypt_from_disk(
+    key: &[u8; 32],
+    enc_data: &[u8],
+    legacy_nonce_field: &[u8],
+) -> Result<Zeroizing<Vec<u8>>, String> {
+    if !is_legacy_v1(enc_data) {
+        match decrypt_v2(key, enc_data) {
+            Ok(pt) => return Ok(Zeroizing::new(pt)),
+            Err(_) => {
+                // Collision fallback. v1 entries had random first bytes;
+                // there's a vanishing chance one looks like v2 framing.
+                // Don't surface the v2-shaped error to the user yet —
+                // try the legacy path first and surface its error if
+                // that also fails.
+            }
+        }
+    }
+    decrypt_legacy_v1(key, enc_data, legacy_nonce_field).map(Zeroizing::new)
+}
+
+/// DEPRECATED: legacy at-rest decryption for keystores written before
+/// v0.10.3. This is the SHA-256-CTR + HMAC-SHA-256 construction that
+/// was mis-labelled as AES-256-GCM (TS-2026-001). The CTR keystream is
+/// also degenerate (the same `enc_key` byte is reused once per
+/// plaintext byte, since `block[i % 32]` indexes the same SHA-256 output
+/// modulo 32), so the construction is NOT a real stream cipher even
+/// ignoring the AEAD mislabelling.
+///
+/// Kept ONLY to migrate existing on-disk keystores forward to the v2
+/// AEAD format. Never call this for new writes. The encrypt counterpart
+/// has been removed from the v2 codepath — the only place v1
+/// ciphertexts come from is files written by older Treeship versions.
+pub fn aes_gcm_decrypt(
+    key: &[u8; 32],
+    enc_data: &[u8],
+    _nonce_unused: &[u8],
+) -> Result<Vec<u8>, String> {
+    // Preserved as a public symbol because the `treeship-vi` sibling
+    // crate calls it directly. Internally it now routes through the
+    // dispatcher so any v1 entries the vi crate has on disk will also
+    // decrypt under the new code, and any future v2 entries (if vi is
+    // upgraded to call `encrypt_for_disk_v2`) keep working.
+    decrypt_from_disk(key, enc_data, _nonce_unused).map(|z| z.to_vec())
+}
+
+/// DEPRECATED: legacy at-rest encryption. Same caveats as
+/// `aes_gcm_decrypt`. Kept ONLY as a public symbol for compatibility
+/// with the `treeship-vi` sibling crate; the core keystore no longer
+/// produces v1 ciphertexts.
+///
+/// New code MUST use `encrypt_for_disk_v2`. This function still
+/// produces v1-format output so the vi crate's on-disk format remains
+/// byte-stable until it migrates on its own cadence.
 pub fn aes_gcm_encrypt(key: &[u8; 32], plaintext: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
-    // Pure-Rust AES-256-GCM using the block-cipher and GCM construction
-    // from the RustCrypto project. We inline a minimal version here to
-    // avoid pulling in aes-gcm 0.10 which pulls in base64ct ≥ 1.7.
-    //
-    // For now we use a simpler XOR-then-HMAC construction until we can
-    // pin a compatible aes-gcm version. This is replaced with proper
-    // AES-256-GCM once the toolchain constraint is lifted.
-    //
-    // Production note: this is AES-256-CTR + HMAC-SHA256 (Encrypt-then-MAC),
-    // which is semantically secure and provides authenticated encryption.
+    legacy_v1_encrypt(key, plaintext)
+}
+
+/// Legacy v1 encrypt. SHA-256-CTR + HMAC-SHA-256. DO NOT USE for new
+/// writes — present only so vi-keystore callers keep working until
+/// they migrate. See `aes_gcm_encrypt` doc-comment for the security
+/// caveats.
+fn legacy_v1_encrypt(key: &[u8; 32], plaintext: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
     use sha2::Sha256;
 
     let mut nonce = [0u8; 12];
     rand::thread_rng().fill_bytes(&mut nonce);
 
-    // Derive per-nonce subkeys via HKDF-lite: sha256(key || nonce || "enc")
     let mut enc_key_input = key.to_vec();
     enc_key_input.extend_from_slice(&nonce);
     enc_key_input.extend_from_slice(b"enc");
@@ -607,7 +826,6 @@ pub fn aes_gcm_encrypt(key: &[u8; 32], plaintext: &[u8]) -> Result<(Vec<u8>, Vec
     mac_key_input.extend_from_slice(b"mac");
     let mac_key = Sha256::digest(&mac_key_input);
 
-    // CTR-mode keystream: sha256(enc_key || counter)
     let ciphertext: Vec<u8> = plaintext.iter().enumerate().map(|(i, &b)| {
         let mut block_input = enc_key.to_vec();
         block_input.extend_from_slice(&(i as u64).to_le_bytes());
@@ -615,13 +833,11 @@ pub fn aes_gcm_encrypt(key: &[u8; 32], plaintext: &[u8]) -> Result<(Vec<u8>, Vec
         b ^ block[i % 32]
     }).collect();
 
-    // MAC: sha256(mac_key || nonce || ciphertext)
     let mut mac_input = mac_key.to_vec();
     mac_input.extend_from_slice(&nonce);
     mac_input.extend_from_slice(&ciphertext);
     let mac = Sha256::digest(&mac_input);
 
-    // Output: nonce(12) || mac(32) || ciphertext
     let mut out = Vec::with_capacity(12 + 32 + ciphertext.len());
     out.extend_from_slice(&nonce);
     out.extend_from_slice(&mac);
@@ -630,7 +846,14 @@ pub fn aes_gcm_encrypt(key: &[u8; 32], plaintext: &[u8]) -> Result<(Vec<u8>, Vec
     Ok((out, nonce.to_vec()))
 }
 
-pub fn aes_gcm_decrypt(key: &[u8; 32], enc_data: &[u8], _nonce_unused: &[u8]) -> Result<Vec<u8>, String> {
+/// Legacy v1 decrypt. SHA-256-CTR + HMAC-SHA-256. See the module-level
+/// notes on TS-2026-001 for why this is broken; kept only to migrate
+/// existing keystores forward.
+fn decrypt_legacy_v1(
+    key: &[u8; 32],
+    enc_data: &[u8],
+    _nonce_unused: &[u8],
+) -> Result<Vec<u8>, String> {
     if enc_data.len() < 44 {
         return Err("ciphertext too short".into());
     }
@@ -652,13 +875,11 @@ pub fn aes_gcm_decrypt(key: &[u8; 32], enc_data: &[u8], _nonce_unused: &[u8]) ->
     mac_key_input.extend_from_slice(b"mac");
     let mac_key = Sha256::digest(&mac_key_input);
 
-    // Verify MAC before decrypting (Encrypt-then-MAC).
     let mut mac_input = mac_key.to_vec();
     mac_input.extend_from_slice(&nonce_arr);
     mac_input.extend_from_slice(ciphertext);
     let computed_mac = Sha256::digest(&mac_input);
 
-    // Constant-time comparison.
     let mac_ok = stored_mac.iter().zip(computed_mac.iter())
         .fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0;
 
@@ -1030,6 +1251,8 @@ mod tests {
 
     #[test]
     fn encrypt_decrypt_roundtrip() {
+        // Routes the legacy public API through the dispatcher; v1
+        // ciphertexts must still decrypt correctly.
         let key = [42u8; 32];
         let plaintext = b"super secret private key material here!";
         let (enc, nonce) = aes_gcm_encrypt(&key, plaintext).unwrap();
@@ -1043,6 +1266,153 @@ mod tests {
         let wrong = [99u8; 32];
         let (enc, nonce) = aes_gcm_encrypt(&key, b"secret").unwrap();
         assert!(aes_gcm_decrypt(&wrong, &enc, &nonce).is_err());
+    }
+
+    // --- v2 AEAD tests (TS-2026-001 fix) -----------------------------------
+
+    #[test]
+    fn v2_encrypt_decrypt_roundtrip() {
+        let key = [7u8; 32];
+        let plaintext = b"super secret private key material here!";
+        let blob = encrypt_for_disk_v2(&key, plaintext).unwrap();
+        // Structural check on the framing.
+        assert_eq!(blob[0], KEYSTORE_MAGIC, "magic byte");
+        assert_eq!(blob[1], KEYSTORE_VERSION_V2, "version byte");
+        assert_eq!(blob.len(), 2 + 12 + plaintext.len() + 16,
+                   "magic+version+nonce+ct+tag length");
+
+        let dec = decrypt_from_disk(&key, &blob, &[]).unwrap();
+        assert_eq!(&*dec, plaintext);
+    }
+
+    #[test]
+    fn v2_decrypt_wrong_key_fails() {
+        let key   = [7u8; 32];
+        let wrong = [99u8; 32];
+        let blob = encrypt_for_disk_v2(&key, b"secret").unwrap();
+        // Wrong key with v2 framing: AEAD must reject. Dispatcher will
+        // try v1 fallback (which also fails on garbage), so the final
+        // error surfaces as a MAC failure rather than wrong plaintext.
+        let result = decrypt_from_disk(&wrong, &blob, &[]);
+        assert!(result.is_err(), "wrong key must fail");
+    }
+
+    #[test]
+    fn v2_tamper_ciphertext_fails() {
+        let key = [7u8; 32];
+        let mut blob = encrypt_for_disk_v2(&key, b"super secret private key").unwrap();
+        // Flip one bit inside the ciphertext body (after the 14-byte
+        // framing). GCM authenticates ciphertext + nonce; any flip must
+        // fail.
+        let last = blob.len() - 5;
+        blob[last] ^= 0x01;
+        let result = decrypt_from_disk(&key, &blob, &[]);
+        assert!(result.is_err(), "tampered ciphertext must fail to decrypt");
+    }
+
+    #[test]
+    fn v2_tamper_nonce_fails() {
+        let key = [7u8; 32];
+        let mut blob = encrypt_for_disk_v2(&key, b"super secret private key").unwrap();
+        // Flip a bit in the nonce (bytes [2..14]).
+        blob[5] ^= 0x01;
+        let result = decrypt_from_disk(&key, &blob, &[]);
+        assert!(result.is_err(), "tampered nonce must fail to decrypt");
+    }
+
+    #[test]
+    fn v2_tamper_tag_fails() {
+        let key = [7u8; 32];
+        let mut blob = encrypt_for_disk_v2(&key, b"super secret private key").unwrap();
+        // Flip a bit in the trailing GCM tag (last 16 bytes).
+        let len = blob.len();
+        blob[len - 1] ^= 0x80;
+        let result = decrypt_from_disk(&key, &blob, &[]);
+        assert!(result.is_err(), "tampered GCM tag must fail to decrypt");
+    }
+
+    #[test]
+    fn v2_nonces_are_unique_across_writes() {
+        // Sanity check: two encryptions of identical plaintext under the
+        // same key must produce different blobs (random per-write nonce).
+        // Without this property, AES-GCM is catastrophically broken.
+        let key = [7u8; 32];
+        let blob_a = encrypt_for_disk_v2(&key, b"identical").unwrap();
+        let blob_b = encrypt_for_disk_v2(&key, b"identical").unwrap();
+        assert_ne!(blob_a, blob_b,
+                   "two v2 encryptions of the same plaintext must differ");
+        assert_ne!(&blob_a[2..14], &blob_b[2..14], "nonces must differ");
+    }
+
+    #[test]
+    fn legacy_v1_ciphertext_still_decrypts_via_dispatcher() {
+        // Simulates an on-disk keystore written by Treeship <= v0.10.2:
+        // the dispatcher must successfully route legacy ciphertexts
+        // through the v1 path so existing users are not locked out.
+        let key = [13u8; 32];
+        let plaintext = b"pre-v0.10.3 keystore entry";
+        let (legacy_blob, legacy_nonce) =
+            legacy_v1_encrypt(&key, plaintext).unwrap();
+
+        // Sanity: legacy blob does NOT start with v2 framing.
+        assert!(is_legacy_v1(&legacy_blob),
+                "legacy_v1_encrypt output must classify as legacy");
+
+        // Dispatcher must accept it.
+        let dec = decrypt_from_disk(&key, &legacy_blob, &legacy_nonce).unwrap();
+        assert_eq!(&*dec, plaintext);
+    }
+
+    #[test]
+    fn store_signer_migrates_legacy_entry_to_v2() {
+        // End-to-end: write a key entry with the legacy v1 ciphertext
+        // (as if upgrading from v0.10.2), call `signer()`, then verify
+        // the on-disk entry has been rewritten in v2 format.
+        let (store, dir) = make_store();
+
+        // Generate normally (this writes v2). Then re-encrypt the
+        // secret in v1 format and overwrite the entry on disk to
+        // simulate the upgrade scenario.
+        let info = store.generate(true).unwrap();
+        let entry_path = store.entry_path(&info.id);
+
+        // Pull the v2 entry off disk, decrypt to recover the secret,
+        // then re-encode in legacy v1 format and write it back.
+        let v2_entry: EncryptedEntry =
+            serde_json::from_slice(&fs::read(&entry_path).unwrap()).unwrap();
+        let secret = decrypt_from_disk(&store.machine_key, &v2_entry.enc_priv_key, &v2_entry.nonce)
+            .unwrap();
+        let (legacy_blob, legacy_nonce) =
+            legacy_v1_encrypt(&store.machine_key, &secret).unwrap();
+        let legacy_entry = EncryptedEntry {
+            id:               v2_entry.id.clone(),
+            algorithm:        v2_entry.algorithm.clone(),
+            created_at:       v2_entry.created_at.clone(),
+            public_key:       v2_entry.public_key.clone(),
+            enc_priv_key:     legacy_blob,
+            nonce:            legacy_nonce,
+            valid_until:      v2_entry.valid_until.clone(),
+            successor_key_id: v2_entry.successor_key_id.clone(),
+        };
+        fs::write(&entry_path, serde_json::to_vec_pretty(&legacy_entry).unwrap()).unwrap();
+
+        // Reload with a fresh Store so the cache doesn't paper over the
+        // on-disk change.
+        let store2 = Store::open(&dir).unwrap();
+        // Loading the signer must succeed (legacy path works) AND
+        // trigger the transparent migration to v2.
+        let _signer = store2.signer(&info.id).unwrap();
+
+        let after: EncryptedEntry =
+            serde_json::from_slice(&fs::read(&entry_path).unwrap()).unwrap();
+        assert!(!is_legacy_v1(&after.enc_priv_key),
+                "post-migration entry must be in v2 format");
+        assert_eq!(after.enc_priv_key[0], KEYSTORE_MAGIC);
+        assert_eq!(after.enc_priv_key[1], KEYSTORE_VERSION_V2);
+        assert!(after.nonce.is_empty(),
+                "v2 entries serialize an empty legacy nonce field");
+
+        cleanup(dir);
     }
 
     #[test]
