@@ -441,8 +441,18 @@ impl Store {
         let secret = decrypt_from_disk(&self.machine_key, &entry.enc_priv_key, &entry.nonce)
             .map_err(|e| self.enrich_crypto_error(e))?;
 
-        let secret_arr: [u8; 32] = secret.as_slice().try_into()
-            .map_err(|_| KeyError::Crypto("decrypted key is wrong length".into()))?;
+        // L3: wrap the on-stack copy of the decrypted secret in a
+        // `Zeroizing` so the byte buffer is wiped on drop. `secret`
+        // itself is already a `Zeroizing<Vec<u8>>` returned by
+        // `decrypt_from_disk`, but `try_into::<[u8; 32]>` produces an
+        // independent stack-allocated array that the Vec's Drop will
+        // not cover. Without this wrapper, returning from `signer()`
+        // would leave the secret scalar in stale stack memory until
+        // a future stack frame happens to overwrite it.
+        let secret_arr: Zeroizing<[u8; 32]> = Zeroizing::new(
+            secret.as_slice().try_into()
+                .map_err(|_| KeyError::Crypto("decrypted key is wrong length".into()))?
+        );
 
         // Transparent migration: if this entry was still in the legacy
         // v1 format (the broken SHA-256-CTR construction from
@@ -452,7 +462,7 @@ impl Store {
         // in-memory secret is already valid. The next decrypt on a
         // fresh process will retry.
         if was_legacy {
-            if let Err(e) = self.migrate_entry_to_v2(&entry, &secret_arr) {
+            if let Err(e) = self.migrate_entry_to_v2(&entry, &*secret_arr) {
                 // Surface the failure as a tracing-style stderr note
                 // rather than an error -- the user's signing flow is
                 // unaffected, and we'd rather them know about it than
@@ -466,7 +476,7 @@ impl Store {
             }
         }
 
-        let signer = Ed25519Signer::from_bytes(&entry.id, &secret_arr)
+        let signer = Ed25519Signer::from_bytes(&entry.id, &*secret_arr)
             .map_err(|e| KeyError::Crypto(e.to_string()))?;
 
         Ok(Box::new(signer))
@@ -1501,6 +1511,28 @@ mod tests {
         assert_ne!(blob_a, blob_b,
                    "two v2 encryptions of the same plaintext must differ");
         assert_ne!(&blob_a[2..14], &blob_b[2..14], "nonces must differ");
+
+        // L1 (TS-2026-001 audit): draw 10k nonces in a row and assert
+        // every one is distinct. A duplicate at this volume would be a
+        // strong (10k^2 / 2^96 ~ 2^-65 floor) signal that the OS CSPRNG
+        // backing aead::OsRng is misbehaving on this build. Cheap, fast,
+        // and catches a regression class (PRNG mis-seeding,
+        // accidentally-deterministic nonce, RNG getting forked across
+        // threads without re-seed) that the 2-sample check above can't.
+        const N: usize = 10_000;
+        let mut nonces: std::collections::HashSet<Vec<u8>> =
+            std::collections::HashSet::with_capacity(N);
+        for _ in 0..N {
+            let blob = encrypt_for_disk_v2(&key, b"x").unwrap();
+            // bytes [2..14] are the 12-byte GCM nonce.
+            nonces.insert(blob[2..14].to_vec());
+        }
+        assert_eq!(
+            nonces.len(),
+            N,
+            "all {} v2 nonces must be unique; collision => RNG defect",
+            N
+        );
     }
 
     #[test]
@@ -1570,6 +1602,18 @@ mod tests {
         assert_eq!(after.enc_priv_key[1], KEYSTORE_VERSION_V2);
         assert!(after.nonce.is_empty(),
                 "v2 entries serialize an empty legacy nonce field");
+
+        // L2 (TS-2026-001 audit): the framing check above proves the
+        // migrator *wrote* a v2-shaped blob, but a downstream
+        // assert_eq! on framing alone doesn't prove the v2 ciphertext
+        // is actually a working AEAD encryption of the right secret.
+        // Load the signer one more time through a fresh Store; this
+        // routes through the dispatcher's v2-first branch and would
+        // fail loudly if the migration had produced garbage.
+        let store3 = Store::open(&dir).unwrap();
+        let _signer = store3
+            .signer(&info.id)
+            .expect("post-migration v2 decrypt works");
 
         cleanup(dir);
     }
