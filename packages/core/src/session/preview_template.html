@@ -176,16 +176,38 @@ async function sha256(d){const b=typeof d==='string'?new TextEncoder().encode(d)
 function toHex(b){return Array.from(b).map(x=>x.toString(16).padStart(2,'0')).join('')}
 function fromHex(h){const b=new Uint8Array(h.length/2);for(let i=0;i<h.length;i+=2)b[i/2]=parseInt(h.substr(i,2),16);return b}
 function concat(a,b){const c=new Uint8Array(a.length+b.length);c.set(a);c.set(b,a.length);return c}
-async function computeRoot(ids){if(!ids.length)return null;let lv=[];for(const id of ids)lv.push(await sha256(id));while(lv.length>1){const nx=[];let i=0;while(i+1<lv.length){nx.push(await sha256(concat(lv[i],lv[i+1])));i+=2}if(i<lv.length)nx.push(lv[i]);lv=nx}return toHex(lv[0])}
+// Domain-separated hash primitives, mirroring packages/core/src/merkle/tree.rs.
+// version==2 prefixes leaves with 0x00 and internal nodes with 0x01 (RFC 9162).
+// version==1 omits both prefixes for byte-identity with v0.10.2 receipts.
+async function hashLeaf(version,artId){
+  if(version===2){const b=new TextEncoder().encode(artId);const buf=new Uint8Array(1+b.length);buf[0]=0;buf.set(b,1);return await sha256(buf)}
+  return await sha256(artId);
+}
+async function hashInternal(version,l,r){
+  if(version===2){const buf=new Uint8Array(1+l.length+r.length);buf[0]=1;buf.set(l,1);buf.set(r,1+l.length);return await sha256(buf)}
+  return await sha256(concat(l,r));
+}
+async function computeRoot(version,ids){
+  if(!ids.length)return null;
+  let lv=[];for(const id of ids)lv.push(await hashLeaf(version,id));
+  while(lv.length>1){const nx=[];let i=0;while(i+1<lv.length){nx.push(await hashInternal(version,lv[i],lv[i+1]));i+=2}if(i<lv.length)nx.push(lv[i]);lv=nx}
+  return toHex(lv[0]);
+}
 async function verifyProof(artId,proof,rootHex){
-  const algo=proof.algorithm||'sha256-duplicate-last';
-  if(algo!=='sha256-duplicate-last'&&algo!=='sha256-rfc9162')return false;
-  const lh=await sha256(artId);if(toHex(lh)!==proof.leaf_hash)return false;
+  // Dispatch on the proof's declared merkle version. Absent = v1 (legacy,
+  // pre-domain-separation). Anything other than 1 or 2 rejects.
+  const version=Number.isFinite(proof.merkle_version)?proof.merkle_version:1;
+  if(version!==1&&version!==2)return false;
+  const algo=proof.algorithm;
+  if(algo&&algo!=='sha256-duplicate-last'&&algo!=='sha256-rfc9162')return false;
+  // v2 rejects empty proof path unless leaf_index===0 (single-leaf tree).
+  if(version===2&&(!proof.path||proof.path.length===0)&&proof.leaf_index!==0)return false;
+  const lh=await hashLeaf(version,artId);if(toHex(lh)!==proof.leaf_hash)return false;
   let cur=lh;for(const s of(proof.path||proof.steps||[])){
     const sh=s.hash||s.sibling_hash;if(!sh)return false;const sib=fromHex(sh);
     const dir=(s.direction||'').toLowerCase();
-    if(dir==='right')cur=await sha256(concat(cur,sib));
-    else if(dir==='left')cur=await sha256(concat(sib,cur));
+    if(dir==='right')cur=await hashInternal(version,cur,sib);
+    else if(dir==='left')cur=await hashInternal(version,sib,cur);
     else return false;
   }return toHex(cur)===rootHex;
 }
@@ -195,7 +217,8 @@ async function runChecks(){
   c.push(R.type==='treeship/session-receipt/v1'?{n:'type',s:'pass',d:'Correct receipt type'}:{n:'type',s:'fail',d:'Expected treeship/session-receipt/v1'});
   const arts=R.artifacts||[];
   if(arts.length){
-    const root=await computeRoot(arts.map(a=>a.artifact_id));
+    const mkVer=Number.isFinite(R.merkle.merkle_version)?R.merkle.merkle_version:1;
+    const root=await computeRoot(mkVer,arts.map(a=>a.artifact_id));
     const stored=(R.merkle.root||'').replace('mroot_','');
     c.push(root===stored?{n:'merkle_root',s:'pass',d:'Merkle root matches recomputed value'}:{n:'merkle_root',s:'fail',d:'Root mismatch'});
     for(const e of(R.merkle.inclusion_proofs||[])){
