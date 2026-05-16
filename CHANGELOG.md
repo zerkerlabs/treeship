@@ -17,6 +17,10 @@
 - `treeship trust add` and `treeship trust remove` now require interactive y/N confirmation or an explicit `--yes` flag. Both print the affected key's 16-hex-character SHA-256 fingerprint before the change. Non-interactive stdin without `--yes` refuses; JSON output mode requires `--yes` (a y/N prompt does not compose with JSON). Replacements of an existing `(key_id, kind)` entry show both the existing and incoming fingerprints so an attempted swap is visible.
 - One-time stderr warning when `TREESHIP_TRUST_ROOTS` is set (path override) or `TREESHIP_ALLOW_INSECURE_KEY_PERMS=1` is honored (perms bypass). Deduplicated per-process via `std::sync::Once`. Both env vars are exactly the lever a supply-chain attacker would pull in a CI runner to redirect trust; the warning ensures the boundary move shows up in CI logs.
 
+### Changed
+
+- Merkle tree hashing now uses RFC 9162 domain separation (`0x00` byte prefix on leaves, `0x01` byte prefix on internal nodes). Receipts in v0.10.3+ include a `merkle_version: 2` field on the `merkle` section, on each inclusion proof, and on each checkpoint. v0.10.2 and earlier receipts continue to verify (dual-verify) because the field deserializes as `1` (legacy hashing) when absent. New receipts always emit `2`. v1 verification removed in v0.13.0 (~3 minor releases out). Closes the second-preimage attack where a 64-byte artifact ID whose `sha256` happened to equal a real internal-node hash could forge inclusion proofs, and the related single-leaf impersonation where a 32-byte internal hash plus an empty proof path appeared as a one-leaf tree.
+
 ### Changed (breaking)
 
 - Checkpoint, hub-org checkpoint, and agent-certificate verification now require the embedded public key to match a configured trust root. Previously they trusted the embedded key (self-signed forgeries always passed). Run `treeship trust add <key_id> <pubkey> --kind <hub_checkpoint|ship|agent_cert>` for each known issuer before verifying.
