@@ -49,6 +49,10 @@ Key properties:
 
 The trust boundary is the machine. Root access breaks all guarantees. **Hub "device" identity is key-based (dock + DPoP),** not bound to a specific physical machine unless we add platform attestation later. Hardware key support (YubiKey, Secure Enclave) is a possible future hardening. Copying `~/.treeship` with hub keys copies that identity.
 
+## Trust roots (issuer pinning)
+
+Three verification paths used to trust whichever public key was embedded inside the artifact they verified -- Merkle checkpoints, hub-org `JournalCheckpoint`s, and Agent Certificates. An attacker who minted their own keypair could self-sign any of these and verification returned success. Starting in v0.10.3, each of these surfaces requires the embedded pubkey to be present in the operator's local trust root store at `~/.treeship/trust_roots.json` (mode `0o600`, JSON schema v1). Configure via `treeship trust add <key_id> <pubkey> --kind <hub_checkpoint|ship|agent_cert>`. Fresh installs have no roots configured; verification fails closed until roots are pinned out-of-band.
+
 ## Known limitations
 
 - Hub connections are as strong as **key storage and revocation hygiene**; treat stolen config like stolen SSH keys.
