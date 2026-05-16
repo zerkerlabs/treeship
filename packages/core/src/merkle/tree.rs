@@ -108,27 +108,61 @@ pub struct InclusionProof {
     /// Algorithm used to build this proof. Missing = v1 (duplicate-last).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub algorithm: Option<String>,
+    /// Merkle format version byte. Drives the leaf and internal hash
+    /// dispatch at verify time. Missing on pre-v0.10.3 proofs — defaults
+    /// to `1` (no domain separation) so v0.10.2 receipts continue to
+    /// verify. New proofs always serialize `2`.
+    #[serde(default = "default_merkle_version_v1")]
+    pub merkle_version: u8,
 }
 
 /// An append-only binary Merkle tree.
 ///
-/// Leaves are `sha256(artifact_id)`. Odd leaf counts are handled by
-/// promoting the unpaired node to the next level without hashing,
-/// matching the RFC 9162 (Certificate Transparency) construction.
+/// Domain separation per RFC 9162 (when `version == 2`): leaves are
+/// `sha256(0x00 || artifact_id)` and internal nodes are
+/// `sha256(0x01 || left || right)`. Pre-domain-separation hashing
+/// (`version == 1`) is retained ONLY for the deprecation window so
+/// v0.10.2-and-earlier receipts continue to round-trip; new trees
+/// default to v2.
+///
+/// Odd leaf counts are handled by promoting the unpaired node to the
+/// next level without hashing, matching RFC 9162 (Certificate
+/// Transparency) construction.
 pub struct MerkleTree {
     /// All leaf hashes in insertion order.
     leaves: Vec<[u8; 32]>,
+    /// Hash version used for leaf + internal-node hashing.
+    version: u8,
+}
+
+impl Default for MerkleTree {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MerkleTree {
+    /// New tree using the current default version (v2, domain-separated).
     pub fn new() -> Self {
-        Self { leaves: Vec::new() }
+        Self::with_version(MERKLE_VERSION_V2)
+    }
+
+    /// New tree pinned to an explicit hash version. Use `MERKLE_VERSION_V1`
+    /// only in tests that need to reproduce pre-v0.10.3 byte output; all
+    /// production paths use `new()`.
+    pub fn with_version(version: u8) -> Self {
+        Self { leaves: Vec::new(), version }
+    }
+
+    /// Hash version this tree builds proofs under.
+    pub fn version(&self) -> u8 {
+        self.version
     }
 
     /// Append an artifact ID as a new leaf. Returns the leaf index.
     pub fn append(&mut self, artifact_id: &str) -> usize {
-        let hash = Sha256::digest(artifact_id.as_bytes());
-        self.leaves.push(hash.into());
+        let hash = hash_leaf(self.version, artifact_id);
+        self.leaves.push(hash);
         self.leaves.len() - 1
     }
 
@@ -190,10 +224,7 @@ impl MerkleTree {
             let mut next_level = Vec::with_capacity((level.len() + 1) / 2);
             let mut i = 0;
             while i + 1 < level.len() {
-                let mut h = Sha256::new();
-                h.update(level[i]);
-                h.update(level[i + 1]);
-                next_level.push(h.finalize().into());
+                next_level.push(hash_internal(self.version, &level[i], &level[i + 1]));
                 i += 2;
             }
             if i < level.len() {
@@ -208,7 +239,11 @@ impl MerkleTree {
             leaf_index,
             leaf_hash: hex::encode(self.leaves[leaf_index]),
             path,
-            algorithm: Some(MERKLE_ALGORITHM_V2.to_string()),
+            algorithm: Some(match self.version {
+                MERKLE_VERSION_V1 => MERKLE_ALGORITHM_V1.to_string(),
+                _ => MERKLE_ALGORITHM_V2.to_string(),
+            }),
+            merkle_version: self.version,
         })
     }
 
@@ -217,20 +252,44 @@ impl MerkleTree {
     /// Recomputes the root from `artifact_id` + the proof path and checks
     /// that it matches `root_hex`. Fully offline, no tree state needed.
     ///
-    /// Supports both v1 (sha256-duplicate-last) and v2 (sha256-rfc9162) proofs.
-    /// Rejects unknown algorithm values.
+    /// Dispatches on `proof.merkle_version` (defaulting to v1 for proofs
+    /// produced by v0.10.2-and-earlier code). Rejects:
+    /// - unknown versions (anything other than 1 or 2)
+    /// - in v2, an empty path with `leaf_index != 0` — this closes the
+    ///   internal-node-as-leaf impersonation that v1 permitted because
+    ///   the single-leaf root equals the leaf hash. With domain separation,
+    ///   the leaf hash already cannot collide with any internal node, but
+    ///   the explicit reject removes ambiguity for any future verifier
+    ///   that walks the proof without recomputing the leaf hash first.
     pub fn verify_proof(
         root_hex: &str,
         artifact_id: &str,
         proof: &InclusionProof,
     ) -> bool {
-        // Validate algorithm field. Missing = v1 (legacy), known values accepted.
-        let algo = proof.algorithm.as_deref().unwrap_or(MERKLE_ALGORITHM_V1);
-        if algo != MERKLE_ALGORITHM_V1 && algo != MERKLE_ALGORITHM_V2 {
-            return false; // unknown algorithm -- reject
+        let version = proof.merkle_version;
+        if version != MERKLE_VERSION_V1 && version != MERKLE_VERSION_V2 {
+            return false; // unknown version -- reject
         }
 
-        let current: [u8; 32] = Sha256::digest(artifact_id.as_bytes()).into();
+        // Validate algorithm string ONLY when present. v0.10.2 receipts
+        // carry `algorithm = "sha256-rfc9162"` even though no domain
+        // separation was applied — we no longer let the string drive
+        // dispatch; merkle_version does. Unknown strings still reject.
+        if let Some(algo) = proof.algorithm.as_deref() {
+            if algo != MERKLE_ALGORITHM_V1 && algo != MERKLE_ALGORITHM_V2 {
+                return false;
+            }
+        }
+
+        // v2 hardens the single-leaf path. An empty proof path is only
+        // legitimate when this leaf IS the root (single-leaf tree at
+        // index 0). In v1 we cannot enforce this without breaking
+        // legacy receipts, so the check is v2-only.
+        if version == MERKLE_VERSION_V2 && proof.path.is_empty() && proof.leaf_index != 0 {
+            return false;
+        }
+
+        let current: [u8; 32] = hash_leaf(version, artifact_id);
         // Verify leaf hash matches artifact
         if hex::encode(current) != proof.leaf_hash {
             return false;
@@ -247,18 +306,10 @@ impl MerkleTree {
                 _ => return false,
             };
 
-            let mut h = Sha256::new();
-            match step.direction {
-                Direction::Right => {
-                    h.update(current);
-                    h.update(sibling);
-                }
-                Direction::Left => {
-                    h.update(sibling);
-                    h.update(current);
-                }
-            }
-            current = h.finalize().into();
+            current = match step.direction {
+                Direction::Right => hash_internal(version, &current, &sibling),
+                Direction::Left => hash_internal(version, &sibling, &current),
+            };
         }
 
         hex::encode(current) == root_hex
@@ -275,10 +326,7 @@ impl MerkleTree {
             let mut next_level = Vec::with_capacity((level.len() + 1) / 2);
             let mut i = 0;
             while i + 1 < level.len() {
-                let mut h = Sha256::new();
-                h.update(level[i]);
-                h.update(level[i + 1]);
-                next_level.push(h.finalize().into());
+                next_level.push(hash_internal(self.version, &level[i], &level[i + 1]));
                 i += 2;
             }
             // RFC 9162: promote unpaired node without hashing
@@ -297,11 +345,22 @@ mod tests {
 
     #[test]
     fn single_leaf_root_is_leaf_hash() {
+        // Tree built with the current default (v2). The root of a
+        // single-leaf tree equals the v2 leaf hash of the artifact.
         let mut tree = MerkleTree::new();
         tree.append("art_abc123");
         let root = tree.root().unwrap();
-        let expected = Sha256::digest(b"art_abc123");
-        assert_eq!(root, expected.as_slice());
+        let expected = hash_leaf_v2("art_abc123");
+        assert_eq!(root, expected);
+    }
+
+    #[test]
+    fn single_leaf_root_is_leaf_hash_v1_legacy() {
+        let mut tree = MerkleTree::with_version(MERKLE_VERSION_V1);
+        tree.append("art_abc123");
+        let root = tree.root().unwrap();
+        let expected = hash_leaf_v1("art_abc123");
+        assert_eq!(root, expected);
     }
 
     #[test]
@@ -346,12 +405,11 @@ mod tests {
         assert!(!MerkleTree::verify_proof(&root, "art_a", &proof));
     }
 
-    // ── v1/v2 hash primitives ──────────────────────────────────────
+    // ── v2 hash primitives ─────────────────────────────────────────
     // These tests pin the byte-identical output of the new
-    // domain-separated leaf and internal hash functions, and document
-    // the v1 (legacy) hashing that v0.10.2 receipts continue to use.
-    // They are the anchor that cross-SDK verifiers can compare against
-    // to detect split-view attacks.
+    // domain-separated leaf and internal hash functions. They are the
+    // anchor that cross-SDK verifiers can compare against to detect
+    // split-view attacks.
 
     #[test]
     fn v2_leaf_uses_0x00_prefix() {
@@ -383,7 +441,7 @@ mod tests {
         let ids = ["art_a", "art_b", "art_c", "art_d"];
         let mut leaves: Vec<[u8; 32]> = ids.iter().map(|id| hash_leaf_v1(id)).collect();
         while leaves.len() > 1 {
-            let mut next = Vec::with_capacity(leaves.len().div_ceil(2));
+            let mut next = Vec::with_capacity((leaves.len() + 1) / 2);
             let mut i = 0;
             while i + 1 < leaves.len() {
                 next.push(hash_internal_v1(&leaves[i], &leaves[i + 1]));
@@ -394,6 +452,10 @@ mod tests {
             }
             leaves = next;
         }
+        // This expected root is computed from the *current* v0.10.2
+        // hashing (no domain separation, RFC 9162 promotion). If this
+        // value changes, every v0.10.2 receipt in the wild becomes
+        // unverifiable — that would be the definition of a regression.
         let got = hex::encode(leaves[0]);
         // Pinned literal: v0.10.2 hashing applied to the input set above.
         // Drift here means a previously-issued v0.10.2 receipt would no
@@ -415,15 +477,6 @@ mod tests {
     }
 
     #[test]
-    fn default_merkle_version_function_returns_one() {
-        // Documents the contract relied on by `#[serde(default = ...)]`
-        // for backward compatibility with v0.10.2 receipts.
-        assert_eq!(default_merkle_version_v1(), MERKLE_VERSION_V1);
-        assert_eq!(MERKLE_VERSION_V1, 1);
-        assert_eq!(MERKLE_VERSION_V2, 2);
-    }
-
-    #[test]
     fn odd_number_of_leaves() {
         // 5 leaves -- last leaf is duplicated for padding
         let mut tree = MerkleTree::new();
@@ -435,5 +488,151 @@ mod tests {
         let proof = tree.inclusion_proof(4).unwrap(); // last leaf
 
         assert!(MerkleTree::verify_proof(&root, "art_4", &proof));
+    }
+
+    // ── v2 round-trip + cross-version rejection ────────────────────
+
+    #[test]
+    fn v2_verify_round_trip() {
+        let mut tree = MerkleTree::new();
+        for id in &["art_a", "art_b", "art_c", "art_d"] {
+            tree.append(id);
+        }
+        assert_eq!(tree.version(), MERKLE_VERSION_V2);
+
+        let root = hex::encode(tree.root().unwrap());
+        let proof = tree.inclusion_proof(1).unwrap();
+        assert_eq!(proof.merkle_version, MERKLE_VERSION_V2);
+        assert!(MerkleTree::verify_proof(&root, "art_b", &proof));
+    }
+
+    #[test]
+    fn v2_rejects_v1_proof() {
+        // Build a v2 tree, take its proof, then mutate the proof to claim
+        // v1. Re-verification must fail: v1 hashing applied to the same
+        // artifact id will not match the v2-derived leaf hash.
+        let mut tree = MerkleTree::new();
+        for id in &["art_a", "art_b", "art_c", "art_d"] {
+            tree.append(id);
+        }
+        let root = hex::encode(tree.root().unwrap());
+        let mut proof = tree.inclusion_proof(1).unwrap();
+        proof.merkle_version = MERKLE_VERSION_V1;
+        assert!(
+            !MerkleTree::verify_proof(&root, "art_b", &proof),
+            "v2-built proof must NOT verify when reinterpreted as v1",
+        );
+    }
+
+    #[test]
+    fn v1_rejects_v2_proof() {
+        // Symmetric to v2_rejects_v1_proof: a v1 tree's proof reinterpreted
+        // as v2 must reject.
+        let mut tree = MerkleTree::with_version(MERKLE_VERSION_V1);
+        for id in &["art_a", "art_b", "art_c", "art_d"] {
+            tree.append(id);
+        }
+        let root = hex::encode(tree.root().unwrap());
+        let mut proof = tree.inclusion_proof(1).unwrap();
+        proof.merkle_version = MERKLE_VERSION_V2;
+        assert!(
+            !MerkleTree::verify_proof(&root, "art_b", &proof),
+            "v1-built proof must NOT verify when reinterpreted as v2",
+        );
+    }
+
+    #[test]
+    fn v2_rejects_internal_node_as_leaf() {
+        // Construct an internal-node hash (under v2 domain separation),
+        // hand-craft a fake "single-leaf proof" claiming this internal
+        // hash is the leaf. The verifier must reject because the
+        // computed v2 leaf hash for the supplied artifact_id cannot
+        // equal an internal-node hash (different domain prefix).
+        let left = [0x11u8; 32];
+        let right = [0x22u8; 32];
+        let internal = hash_internal_v2(&left, &right);
+        let internal_hex = hex::encode(internal);
+
+        let fake_proof = InclusionProof {
+            leaf_index: 0,
+            leaf_hash: internal_hex.clone(),
+            path: vec![],
+            algorithm: Some(MERKLE_ALGORITHM_V2.to_string()),
+            merkle_version: MERKLE_VERSION_V2,
+        };
+
+        assert!(
+            !MerkleTree::verify_proof(&internal_hex, "art_attacker", &fake_proof),
+            "v2 verifier must reject an internal-node hash impersonating a single-leaf tree",
+        );
+    }
+
+    #[test]
+    fn v2_rejects_empty_path_with_nonzero_leaf_index() {
+        // Empty proof path only makes sense for a single-leaf tree at
+        // leaf_index 0. A v2 verifier must reject any other shape.
+        let mut tree = MerkleTree::new();
+        tree.append("art_a");
+        let root = hex::encode(tree.root().unwrap());
+
+        // Synthesize a malformed proof: index 1 but no path.
+        let bad = InclusionProof {
+            leaf_index: 1,
+            leaf_hash: hex::encode(hash_leaf_v2("art_a")),
+            path: vec![],
+            algorithm: Some(MERKLE_ALGORITHM_V2.to_string()),
+            merkle_version: MERKLE_VERSION_V2,
+        };
+        assert!(!MerkleTree::verify_proof(&root, "art_a", &bad));
+    }
+
+    #[test]
+    fn unknown_merkle_version_rejected() {
+        let mut tree = MerkleTree::new();
+        tree.append("art_a");
+        tree.append("art_b");
+        let root = hex::encode(tree.root().unwrap());
+        let mut proof = tree.inclusion_proof(0).unwrap();
+        proof.merkle_version = 7; // not v1 or v2
+        assert!(!MerkleTree::verify_proof(&root, "art_a", &proof));
+    }
+
+    #[test]
+    fn default_merkle_version_function_returns_one() {
+        // Documents the contract relied on by `#[serde(default = ...)]`
+        // for backward compatibility with v0.10.2 receipts.
+        assert_eq!(default_merkle_version_v1(), MERKLE_VERSION_V1);
+    }
+
+    #[test]
+    fn missing_merkle_version_field_defaults_to_v1() {
+        // Deserialize an InclusionProof JSON produced before this field
+        // existed and confirm it falls back to v1.
+        let json = serde_json::json!({
+            "leaf_index": 0,
+            "leaf_hash": "00".repeat(32),
+            "path": [],
+            "algorithm": "sha256-duplicate-last",
+        });
+        let proof: InclusionProof = serde_json::from_value(json).unwrap();
+        assert_eq!(proof.merkle_version, MERKLE_VERSION_V1);
+    }
+
+    #[test]
+    fn mixed_version_in_receipt_explicit() {
+        // Round-trip a proof through JSON with `merkle_version: 2`
+        // explicitly set, then verify the deserialized proof routes
+        // through the v2 dispatch.
+        let mut tree = MerkleTree::new();
+        for id in &["art_a", "art_b"] {
+            tree.append(id);
+        }
+        let root = hex::encode(tree.root().unwrap());
+        let proof = tree.inclusion_proof(0).unwrap();
+        let json = serde_json::to_string(&proof).unwrap();
+        assert!(json.contains("\"merkle_version\":2"), "wire shape must include merkle_version=2");
+        let parsed: InclusionProof = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.merkle_version, MERKLE_VERSION_V2);
+        assert!(MerkleTree::verify_proof(&root, "art_a", &parsed));
     }
 }

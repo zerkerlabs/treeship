@@ -307,7 +307,11 @@ pub fn verify(
         ]);
         printer.blank();
 
-        // Print step-by-step verification
+        // Print step-by-step verification, dispatching on the proof's
+        // declared merkle version so v2 uses 0x01-prefixed internal
+        // hashing (RFC 9162). v1 (legacy) skips the prefix to remain
+        // byte-identical to v0.10.2-and-earlier output.
+        let version = proof_file.inclusion_proof.merkle_version;
         let mut current_hex = proof_file.inclusion_proof.leaf_hash.clone();
         for (i, step) in proof_file.inclusion_proof.path.iter().enumerate() {
             let sibling_short = short_hash(&step.hash);
@@ -317,6 +321,9 @@ pub fn verify(
             let current_bytes = hex::decode(&current_hex).unwrap_or_default();
             let sibling_bytes = hex::decode(&step.hash).unwrap_or_default();
             let mut hasher = Sha256::new();
+            if version == treeship_core::merkle::MERKLE_VERSION_V2 {
+                hasher.update([0x01u8]);
+            }
             match step.direction {
                 treeship_core::merkle::Direction::Right => {
                     hasher.update(&current_bytes);

@@ -27,6 +27,12 @@ pub struct Checkpoint {
     /// Merkle algorithm used. Missing = v1 (sha256-duplicate-last).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub algorithm: Option<String>,
+    /// Merkle format version byte (RFC 9162 domain separation). Absent
+    /// on v0.10.2-and-earlier checkpoints — `#[serde(default)]` fills it
+    /// with `1` so legacy checkpoints continue to verify under v1
+    /// hashing. New checkpoints emit `2`.
+    #[serde(default = "super::tree::default_merkle_version_v1")]
+    pub merkle_version: u8,
     /// Optional ZK chain proof result (added when proof is ready).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub zk_proof: Option<ChainProofSummary>,
@@ -100,6 +106,7 @@ impl Checkpoint {
             public_key,
             signature,
             algorithm: Some(super::tree::MERKLE_ALGORITHM_V2.to_string()),
+            merkle_version: tree.version(),
             zk_proof: None,
         })
     }

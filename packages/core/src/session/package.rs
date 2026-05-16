@@ -485,7 +485,11 @@ pub fn verify_package_with_trust(
 
     // 4. Merkle root re-computation
     if !receipt.artifacts.is_empty() {
-        let mut tree = crate::merkle::MerkleTree::new();
+        // Recompute under the receipt's declared merkle version so
+        // legacy (v0.10.2 and earlier, version=1, no domain separation)
+        // receipts continue to verify. New receipts always emit v2.
+        let version = receipt.merkle.merkle_version;
+        let mut tree = crate::merkle::MerkleTree::with_version(version);
         for art in &receipt.artifacts {
             tree.append(&art.artifact_id);
         }

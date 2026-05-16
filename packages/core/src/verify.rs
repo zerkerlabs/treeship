@@ -32,7 +32,12 @@ pub fn verify_receipt_json_checks(receipt: &SessionReceipt) -> Vec<VerifyCheck> 
     let mut checks: Vec<VerifyCheck> = Vec::new();
 
     if !receipt.artifacts.is_empty() {
-        let mut tree = MerkleTree::new();
+        // Recompute under the receipt's declared merkle version. v0.10.2
+        // receipts deserialize as v1 via the `#[serde(default)]` on the
+        // `merkle_version` field — recomputing under v2 would give a
+        // different root and falsely flag the receipt as tampered.
+        let version = receipt.merkle.merkle_version;
+        let mut tree = MerkleTree::with_version(version);
         for a in &receipt.artifacts {
             tree.append(&a.artifact_id);
         }
