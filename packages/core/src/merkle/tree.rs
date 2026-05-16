@@ -20,6 +20,84 @@ pub struct ProofStep {
 pub const MERKLE_ALGORITHM_V1: &str = "sha256-duplicate-last";
 pub const MERKLE_ALGORITHM_V2: &str = "sha256-rfc9162";
 
+/// Merkle format version byte. Distinguishes pre-domain-separation hashing
+/// (v1, used through v0.10.2) from RFC 9162 domain-separated hashing (v2,
+/// default from v0.10.3 onward).
+///
+/// - `1` — legacy: `sha256(artifact_id)` for leaves, `sha256(L || R)` for
+///   internal nodes. No domain separation. Vulnerable to second-preimage
+///   confusion between leaf and internal nodes when the artifact ID happens
+///   to be 32 or 64 bytes. Retained ONLY so v0.10.2-and-earlier receipts
+///   continue to verify during the deprecation window.
+/// - `2` — RFC 9162: `sha256(0x00 || artifact_id_bytes)` for leaves,
+///   `sha256(0x01 || L || R)` for internal nodes. Leaf and internal
+///   pre-images cannot collide.
+///
+/// v1 verification is scheduled for removal in v0.13.0.
+pub const MERKLE_VERSION_V1: u8 = 1;
+pub const MERKLE_VERSION_V2: u8 = 2;
+
+/// Default merkle version used by `#[serde(default = ...)]` so receipts
+/// produced before the field existed deserialize as v1 (the pre-domain-
+/// separation hashing that was in effect at the time).
+pub fn default_merkle_version_v1() -> u8 {
+    MERKLE_VERSION_V1
+}
+
+// ── Domain-separated hash primitives ─────────────────────────────────
+//
+// These are crate-internal so the version dispatch lives in one place.
+// Tests can reach them through `#[cfg(test)]` re-exports if they need
+// to pin a byte-identical output.
+
+/// v1 (legacy) leaf hash: `sha256(artifact_id_bytes)`. No domain prefix.
+pub(crate) fn hash_leaf_v1(artifact_id: &str) -> [u8; 32] {
+    Sha256::digest(artifact_id.as_bytes()).into()
+}
+
+/// v1 (legacy) internal node hash: `sha256(left || right)`. No domain prefix.
+pub(crate) fn hash_internal_v1(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
+    let mut h = Sha256::new();
+    h.update(left);
+    h.update(right);
+    h.finalize().into()
+}
+
+/// v2 leaf hash per RFC 9162: `sha256(0x00 || artifact_id_bytes)`.
+pub(crate) fn hash_leaf_v2(artifact_id: &str) -> [u8; 32] {
+    let mut h = Sha256::new();
+    h.update([0x00u8]);
+    h.update(artifact_id.as_bytes());
+    h.finalize().into()
+}
+
+/// v2 internal node hash per RFC 9162: `sha256(0x01 || left || right)`.
+pub(crate) fn hash_internal_v2(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
+    let mut h = Sha256::new();
+    h.update([0x01u8]);
+    h.update(left);
+    h.update(right);
+    h.finalize().into()
+}
+
+/// Version-dispatched leaf hash. Falls back to v1 on any unknown version
+/// so callers that pre-date this field do not silently mis-verify; the
+/// outer `verify_proof` still rejects unknown versions explicitly.
+pub(crate) fn hash_leaf(version: u8, artifact_id: &str) -> [u8; 32] {
+    match version {
+        MERKLE_VERSION_V2 => hash_leaf_v2(artifact_id),
+        _ => hash_leaf_v1(artifact_id),
+    }
+}
+
+/// Version-dispatched internal node hash.
+pub(crate) fn hash_internal(version: u8, left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
+    match version {
+        MERKLE_VERSION_V2 => hash_internal_v2(left, right),
+        _ => hash_internal_v1(left, right),
+    }
+}
+
 /// An inclusion proof: the sibling path from a leaf to the root.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InclusionProof {
@@ -266,6 +344,83 @@ mod tests {
         proof.path[0].hash = "0".repeat(64);
 
         assert!(!MerkleTree::verify_proof(&root, "art_a", &proof));
+    }
+
+    // ── v1/v2 hash primitives ──────────────────────────────────────
+    // These tests pin the byte-identical output of the new
+    // domain-separated leaf and internal hash functions, and document
+    // the v1 (legacy) hashing that v0.10.2 receipts continue to use.
+    // They are the anchor that cross-SDK verifiers can compare against
+    // to detect split-view attacks.
+
+    #[test]
+    fn v2_leaf_uses_0x00_prefix() {
+        let got = hash_leaf_v2("art_test");
+        let mut h = Sha256::new();
+        h.update([0x00u8]);
+        h.update(b"art_test");
+        let expected: [u8; 32] = h.finalize().into();
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn v2_internal_uses_0x01_prefix() {
+        let left = [0x11u8; 32];
+        let right = [0x22u8; 32];
+        let got = hash_internal_v2(&left, &right);
+        let mut h = Sha256::new();
+        h.update([0x01u8]);
+        h.update(left);
+        h.update(right);
+        let expected: [u8; 32] = h.finalize().into();
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn v1_legacy_root_unchanged() {
+        // Pin a known v1 root so existing v0.10.2 receipts continue to
+        // verify byte-identically against this code path.
+        let ids = ["art_a", "art_b", "art_c", "art_d"];
+        let mut leaves: Vec<[u8; 32]> = ids.iter().map(|id| hash_leaf_v1(id)).collect();
+        while leaves.len() > 1 {
+            let mut next = Vec::with_capacity(leaves.len().div_ceil(2));
+            let mut i = 0;
+            while i + 1 < leaves.len() {
+                next.push(hash_internal_v1(&leaves[i], &leaves[i + 1]));
+                i += 2;
+            }
+            if i < leaves.len() {
+                next.push(leaves[i]);
+            }
+            leaves = next;
+        }
+        let got = hex::encode(leaves[0]);
+        // Pinned literal: v0.10.2 hashing applied to the input set above.
+        // Drift here means a previously-issued v0.10.2 receipt would no
+        // longer verify under v1.
+        let expected = "cb4c9e4a9374ea3917b9ba75554ce8908a593db1183f1af48edf41fa3eb67b0d";
+        assert_eq!(
+            got, expected,
+            "v1 root drifted; v0.10.2 receipts will fail to verify",
+        );
+    }
+
+    #[test]
+    fn v2_differs_from_v1_for_same_input() {
+        // Sanity: domain separation must change the output.
+        assert_ne!(hash_leaf_v1("x"), hash_leaf_v2("x"));
+        let l = [0x33u8; 32];
+        let r = [0x44u8; 32];
+        assert_ne!(hash_internal_v1(&l, &r), hash_internal_v2(&l, &r));
+    }
+
+    #[test]
+    fn default_merkle_version_function_returns_one() {
+        // Documents the contract relied on by `#[serde(default = ...)]`
+        // for backward compatibility with v0.10.2 receipts.
+        assert_eq!(default_merkle_version_v1(), MERKLE_VERSION_V1);
+        assert_eq!(MERKLE_VERSION_V1, 1);
+        assert_eq!(MERKLE_VERSION_V2, 2);
     }
 
     #[test]
