@@ -11,8 +11,6 @@
 //! release; the planned `treeship hub sync-trust` is referenced in
 //! error messages but unimplemented.
 
-use std::path::Path;
-
 use treeship_core::trust::{
     encode_ed25519_pubkey, TrustRoot, TrustRootError, TrustRootKind, TrustRootStore,
 };
@@ -186,8 +184,3 @@ fn now_rfc3339() -> String {
         .as_secs();
     treeship_core::statements::unix_to_rfc3339(secs)
 }
-
-// Re-export so main.rs sees the same path even though we don't use
-// `Path` here at the moment. Keeps the import alive for future helpers.
-#[allow(dead_code)]
-fn _path_anchor(_p: &Path) {}
