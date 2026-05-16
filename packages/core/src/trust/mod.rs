@@ -198,6 +198,27 @@ impl TrustRootStore {
         Self { roots }
     }
 
+    /// Convenience wrapper for code paths that want to "load if
+    /// present, otherwise treat as no-trust-configured". Returns an
+    /// empty store on `NotConfigured`/`Empty`, propagates `Malformed`
+    /// and `PermissionsTooOpen` (operator misconfiguration that
+    /// shouldn't silently downgrade to empty).
+    pub fn open_or_empty(path: &Path) -> Result<Self, TrustRootError> {
+        match Self::open(path) {
+            Ok(s)                                          => Ok(s),
+            Err(TrustRootError::NotConfigured { .. })      => Ok(Self::empty()),
+            Err(TrustRootError::Empty { .. })              => Ok(Self::empty()),
+            Err(e)                                         => Err(e),
+        }
+    }
+
+    /// Convenience: open the default-path file or return empty if it's
+    /// missing. Loud on malformed/perms errors. Suitable for the
+    /// "thread trust through internal verify pipelines" use case.
+    pub fn open_default_or_empty() -> Result<Self, TrustRootError> {
+        Self::open_or_empty(&Self::default_path())
+    }
+
     /// Open the trust root file at `path`. Returns `NotConfigured` if it
     /// does not exist, `Empty` if it exists but has zero roots.
     pub fn open(path: &Path) -> Result<Self, TrustRootError> {

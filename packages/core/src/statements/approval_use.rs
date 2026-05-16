@@ -528,6 +528,12 @@ pub enum HubCheckpointVerification {
     /// Caller should not have called this; surface as a programming
     /// error.
     NotHubKind,
+    /// The embedded `hub_public_key` is not in the operator's trust root
+    /// store under kind `Ship`. The signature math may be internally
+    /// consistent, but the issuer is unknown -- self-signed forgeries
+    /// land here. Distinct from `Tampered` so callers can render the
+    /// actionable "configure trust" remediation.
+    UntrustedIssuer,
 }
 
 /// Verify the embedded Hub signature on a `JournalCheckpoint`. Does NOT
@@ -543,9 +549,11 @@ pub enum HubCheckpointVerification {
 /// checkpoint" is enforced here.
 pub fn verify_hub_checkpoint_signature(
     cp: &JournalCheckpoint,
+    trust: &crate::trust::TrustRootStore,
 ) -> HubCheckpointVerification {
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+    use crate::trust::TrustRootKind;
 
     if cp.checkpoint_kind != CheckpointKind::HubOrg {
         return HubCheckpointVerification::NotHubKind;
@@ -572,6 +580,17 @@ pub fn verify_hub_checkpoint_signature(
         Ok(k)  => k,
         Err(_) => return HubCheckpointVerification::Tampered,
     };
+
+    // Trust pin: the embedded hub_public_key MUST be in the operator's
+    // trust root store under kind `Ship` before we honor the signature.
+    // Without this an attacker-minted keypair can self-sign a hub-org
+    // checkpoint and promote `replay-local-journal` to
+    // `replay-hub-org`. With it, the operator decides which hubs they
+    // trust to vouch for global single-use claims.
+    if !trust.contains(&vk, TrustRootKind::Ship) {
+        return HubCheckpointVerification::UntrustedIssuer;
+    }
+
     let sig = Signature::from_bytes(&sig_arr);
     let payload = cp.canonical_hub_signing_bytes();
     match vk.verify(&payload, &sig) {
@@ -785,12 +804,26 @@ mod tests {
         assert_eq!(v["checkpoint_kind"], "hub-org");
     }
 
+    /// Build a one-entry trust store that pins `pk` for kind `Ship`.
+    /// Used by every test below now that hub-checkpoint verification
+    /// requires a pin.
+    fn trust_with(pk: &ed25519_dalek::VerifyingKey) -> crate::trust::TrustRootStore {
+        use crate::trust::{encode_ed25519_pubkey, TrustRoot, TrustRootKind, TrustRootStore};
+        TrustRootStore::with_roots(vec![TrustRoot {
+            key_id:     "test_hub".into(),
+            public_key: encode_ed25519_pubkey(pk),
+            kind:       TrustRootKind::Ship,
+            label:      "test pin".into(),
+            added_at:   "2026-05-15T00:00:00Z".into(),
+        }])
+    }
+
     #[test]
     fn local_journal_checkpoint_is_not_hub_signed() {
         let cp = sample_checkpoint(CheckpointKind::LocalJournal);
         assert!(!cp.is_hub_signed());
         assert_eq!(
-            verify_hub_checkpoint_signature(&cp),
+            verify_hub_checkpoint_signature(&cp, &crate::trust::TrustRootStore::empty()),
             HubCheckpointVerification::NotHubKind,
         );
     }
@@ -800,7 +833,7 @@ mod tests {
         let cp = sample_checkpoint(CheckpointKind::HubOrg);
         assert!(!cp.is_hub_signed());
         assert!(matches!(
-            verify_hub_checkpoint_signature(&cp),
+            verify_hub_checkpoint_signature(&cp, &crate::trust::TrustRootStore::empty()),
             HubCheckpointVerification::MissingFields(_),
         ));
     }
@@ -808,7 +841,7 @@ mod tests {
     /// End-to-end: sign a Hub checkpoint with a real Ed25519 key,
     /// embed the signature, verify it round-trips. The release rule
     /// pins on this path: replay-hub-org cannot pass without a real
-    /// signature here.
+    /// signature here AND a configured trust root.
     #[test]
     fn hub_checkpoint_signature_round_trip() {
         use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -833,8 +866,9 @@ mod tests {
         cp.hub_signature = URL_SAFE_NO_PAD.encode(sig.to_bytes());
 
         assert!(cp.is_hub_signed());
+        let trust = trust_with(&pk);
         assert_eq!(
-            verify_hub_checkpoint_signature(&cp),
+            verify_hub_checkpoint_signature(&cp, &trust),
             HubCheckpointVerification::Valid,
         );
     }
@@ -855,14 +889,15 @@ mod tests {
 
         let sig = sk.sign(&cp.canonical_hub_signing_bytes());
         cp.hub_signature = URL_SAFE_NO_PAD.encode(sig.to_bytes());
+        let trust = trust_with(&pk);
         // Sanity: signature is good before tamper.
-        assert_eq!(verify_hub_checkpoint_signature(&cp), HubCheckpointVerification::Valid);
+        assert_eq!(verify_hub_checkpoint_signature(&cp, &trust), HubCheckpointVerification::Valid);
 
         // Tamper with covered_use_ids -- now the canonical bytes
         // change, signature no longer applies.
         cp.covered_use_ids.push("use_smuggled".into());
         assert_eq!(
-            verify_hub_checkpoint_signature(&cp),
+            verify_hub_checkpoint_signature(&cp, &trust),
             HubCheckpointVerification::Tampered,
         );
     }
@@ -883,8 +918,12 @@ mod tests {
         cp.signed_at       = "2026-04-30T07:00:00Z".into();
         let sig = sk_real.sign(&cp.canonical_hub_signing_bytes());
         cp.hub_signature   = URL_SAFE_NO_PAD.encode(sig.to_bytes());
+        // Pin the impersonator's key so the trust pin doesn't short-circuit
+        // before we hit the signature mismatch -- this test exercises the
+        // signature-failure path, not the trust-pin path.
+        let trust = trust_with(&pk_imp);
         assert_eq!(
-            verify_hub_checkpoint_signature(&cp),
+            verify_hub_checkpoint_signature(&cp, &trust),
             HubCheckpointVerification::Tampered,
         );
     }
@@ -897,8 +936,61 @@ mod tests {
         cp.hub_signature   = "also-not-base64".into();
         cp.signed_at       = "2026-04-30T07:00:00Z".into();
         assert_eq!(
-            verify_hub_checkpoint_signature(&cp),
+            verify_hub_checkpoint_signature(&cp, &crate::trust::TrustRootStore::empty()),
             HubCheckpointVerification::Tampered,
+        );
+    }
+
+    /// Trust pin: a checkpoint signed by a key the operator never
+    /// trusted MUST return `UntrustedIssuer`, even though the
+    /// signature math is internally consistent. This is the headline
+    /// case from the v0.10.2 audit -- self-signed forgery was the
+    /// pre-fix behavior, post-fix it's quarantined.
+    #[test]
+    fn hub_checkpoint_rejects_untrusted_issuer() {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+        use ed25519_dalek::{Signer, SigningKey};
+
+        let attacker = SigningKey::from_bytes(&[42u8; 32]);
+        let pk = attacker.verifying_key();
+
+        let mut cp = sample_checkpoint(CheckpointKind::HubOrg);
+        cp.hub_id          = "hub://attacker-claims-zerker".into();
+        cp.hub_public_key  = URL_SAFE_NO_PAD.encode(pk.to_bytes());
+        cp.signed_at       = "2026-04-30T07:00:00Z".into();
+        cp.covered_use_ids = vec!["use_alpha".into()];
+        let sig = attacker.sign(&cp.canonical_hub_signing_bytes());
+        cp.hub_signature = URL_SAFE_NO_PAD.encode(sig.to_bytes());
+
+        // Operator trusts a different hub.
+        let honest = SigningKey::from_bytes(&[7u8; 32]);
+        let trust = trust_with(&honest.verifying_key());
+
+        assert_eq!(
+            verify_hub_checkpoint_signature(&cp, &trust),
+            HubCheckpointVerification::UntrustedIssuer,
+        );
+    }
+
+    /// With no trust configured at all, any hub-org checkpoint is
+    /// untrusted -- the fail-closed contract.
+    #[test]
+    fn hub_checkpoint_rejects_with_no_trust_configured() {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+        use ed25519_dalek::{Signer, SigningKey};
+
+        let sk = SigningKey::from_bytes(&[9u8; 32]);
+        let pk = sk.verifying_key();
+        let mut cp = sample_checkpoint(CheckpointKind::HubOrg);
+        cp.hub_id          = "hub://anything".into();
+        cp.hub_public_key  = URL_SAFE_NO_PAD.encode(pk.to_bytes());
+        cp.signed_at       = "2026-04-30T07:00:00Z".into();
+        let sig = sk.sign(&cp.canonical_hub_signing_bytes());
+        cp.hub_signature = URL_SAFE_NO_PAD.encode(sig.to_bytes());
+
+        assert_eq!(
+            verify_hub_checkpoint_signature(&cp, &crate::trust::TrustRootStore::empty()),
+            HubCheckpointVerification::UntrustedIssuer,
         );
     }
 }

@@ -111,6 +111,16 @@ pub enum CertificateVerifyError {
     UnsupportedAlgorithm(String),
     /// `signed_fields` does not name the expected payload composition.
     UnsupportedSignedFields(String),
+    /// The embedded `signature.public_key` is not pinned in the
+    /// operator's trust root store under kind `AgentCert`. The signature
+    /// math may be internally consistent, but the issuer is unknown.
+    /// Self-signed certificates an attacker mints to authorize their own
+    /// agent's tool calls land here.
+    UntrustedIssuer { key_id: String },
+    /// No trust roots configured at all (or none for kind `AgentCert`).
+    /// Distinct from `UntrustedIssuer` so the CLI can render the
+    /// "configure trust" remediation rather than "key not in store".
+    NoTrustConfigured,
 }
 
 impl std::fmt::Display for CertificateVerifyError {
@@ -124,6 +134,17 @@ impl std::fmt::Display for CertificateVerifyError {
             Self::UnsupportedSignedFields(s) => {
                 write!(f, "certificate signed_fields '{s}' not recognized")
             }
+            Self::UntrustedIssuer { key_id } => write!(
+                f,
+                "certificate issuer (key_id={key_id}) is not in the trust root store. \
+                 Run `treeship trust add <key_id> <pubkey> --kind agent_cert` if you trust this issuer.",
+            ),
+            Self::NoTrustConfigured => write!(
+                f,
+                "no trust roots configured for agent certificates. \
+                 Run `treeship trust add <key_id> <pubkey> --kind agent_cert` \
+                 or sync from your hub via `treeship hub sync-trust`.",
+            ),
         }
     }
 }
@@ -133,14 +154,26 @@ impl std::error::Error for CertificateVerifyError {}
 /// The signed payload composition used by v0.x agent certificates.
 const SIGNED_FIELDS_V1: &str = "identity+capabilities+declaration";
 
-/// Verify the Ed25519 signature on an `AgentCertificate` against the public
-/// key embedded in `signature.public_key`. Reconstructs the same canonical
-/// JSON the issuer signed and checks the bytes match.
+/// Verify the Ed25519 signature on an `AgentCertificate`. Requires the
+/// embedded `signature.public_key` to be present in `trust` under kind
+/// `AgentCert`, then reconstructs the canonical JSON the issuer signed
+/// and verifies the signature bytes match.
 ///
-/// This does NOT check certificate validity (issued_at / valid_until) or
-/// chain to a trusted issuer. Validity is the cross-verifier's job; trust
-/// chaining is out of scope for v0.9.0.
-pub fn verify_certificate(cert: &AgentCertificate) -> Result<(), CertificateVerifyError> {
+/// Trust pinning is mandatory. Before this, the function trusted whichever
+/// public key the certificate happened to carry -- making the certificate
+/// self-signed. With it, an operator pins which issuer keys are allowed to
+/// vouch for agents, and any other issuer's certificate is rejected with
+/// `UntrustedIssuer` (or `NoTrustConfigured` when the store has nothing
+/// for kind `AgentCert`).
+///
+/// This does NOT check certificate validity windows (issued_at /
+/// valid_until). That's the cross-verifier's job.
+pub fn verify_certificate(
+    cert: &AgentCertificate,
+    trust: &crate::trust::TrustRootStore,
+) -> Result<(), CertificateVerifyError> {
+    use crate::trust::TrustRootKind;
+
     if cert.signature.algorithm != "ed25519" {
         return Err(CertificateVerifyError::UnsupportedAlgorithm(
             cert.signature.algorithm.clone(),
@@ -161,6 +194,19 @@ pub fn verify_certificate(cert: &AgentCertificate) -> Result<(), CertificateVeri
         .map_err(|_| CertificateVerifyError::BadPublicKey(format!("expected 32 bytes, got {}", pk_bytes.len())))?;
     let verifying_key = VerifyingKey::from_bytes(&pk_arr)
         .map_err(|e| CertificateVerifyError::BadPublicKey(e.to_string()))?;
+
+    // Trust pin -- fail-closed before signature math runs. We
+    // distinguish "no trust configured at all (for this kind)" from
+    // "trust configured but this issuer isn't in it" so the CLI can
+    // render a more useful remediation.
+    if !trust.contains(&verifying_key, TrustRootKind::AgentCert) {
+        if trust.is_empty_for_kind(TrustRootKind::AgentCert) {
+            return Err(CertificateVerifyError::NoTrustConfigured);
+        }
+        return Err(CertificateVerifyError::UntrustedIssuer {
+            key_id: cert.signature.key_id.clone(),
+        });
+    }
 
     let sig_bytes = URL_SAFE_NO_PAD
         .decode(&cert.signature.signature)
@@ -244,6 +290,20 @@ mod tests {
         assert_eq!(effective_schema_version(parsed.schema_version.as_deref()), "0");
     }
 
+    /// Build a single-entry trust store pinning `pk_b64` for kind
+    /// `AgentCert`. Tests that exercise valid signatures use this so the
+    /// trust pin doesn't short-circuit before signature verification.
+    fn trust_with(pk_b64: &str) -> crate::trust::TrustRootStore {
+        use crate::trust::{TrustRoot, TrustRootKind, TrustRootStore};
+        TrustRootStore::with_roots(vec![TrustRoot {
+            key_id:     "key_demo".into(),
+            public_key: format!("ed25519:{pk_b64}"),
+            kind:       TrustRootKind::AgentCert,
+            label:      "test issuer".into(),
+            added_at:   "2026-05-15T00:00:00Z".into(),
+        }])
+    }
+
     #[test]
     fn verify_certificate_round_trip() {
         // Mint a cert, sign it the way the CLI does, then call verify.
@@ -286,13 +346,14 @@ mod tests {
             signature: CertificateSignature {
                 algorithm: "ed25519".into(),
                 key_id: "key_demo".into(),
-                public_key: pk_b64,
+                public_key: pk_b64.clone(),
                 signature: URL_SAFE_NO_PAD.encode(sig),
                 signed_fields: "identity+capabilities+declaration".into(),
             },
         };
 
-        verify_certificate(&cert).expect("freshly-signed cert must verify");
+        let trust = trust_with(&pk_b64);
+        verify_certificate(&cert, &trust).expect("freshly-signed cert must verify");
     }
 
     #[test]
@@ -347,13 +408,14 @@ mod tests {
             signature: CertificateSignature {
                 algorithm: "ed25519".into(),
                 key_id: "key_demo".into(),
-                public_key: pk_b64,
+                public_key: pk_b64.clone(),
                 signature: URL_SAFE_NO_PAD.encode(sig),
                 signed_fields: "identity+capabilities+declaration".into(),
             },
         };
 
-        let err = verify_certificate(&cert).unwrap_err();
+        let trust = trust_with(&pk_b64);
+        let err = verify_certificate(&cert, &trust).unwrap_err();
         assert!(matches!(err, CertificateVerifyError::InvalidSignature),
             "expected InvalidSignature, got: {err}");
     }
@@ -362,8 +424,123 @@ mod tests {
     fn verify_certificate_rejects_unsupported_algorithm() {
         let mut cert = sample_certificate(Some(CERTIFICATE_SCHEMA_VERSION));
         cert.signature.algorithm = "rsa-pss-sha256".into();
-        let err = verify_certificate(&cert).unwrap_err();
+        let err = verify_certificate(&cert, &crate::trust::TrustRootStore::empty()).unwrap_err();
         assert!(matches!(err, CertificateVerifyError::UnsupportedAlgorithm(_)));
+    }
+
+    /// Trust pin headline: a freshly-signed cert whose issuer key is
+    /// NOT in the operator's trust store must be rejected with
+    /// `UntrustedIssuer` -- even though the signature math is fine.
+    #[test]
+    fn verify_certificate_rejects_unknown_issuer() {
+        use crate::attestation::{Ed25519Signer, Signer};
+        let signer = Ed25519Signer::generate("key_attacker").unwrap();
+        let pk_b64 = URL_SAFE_NO_PAD.encode(signer.public_key_bytes());
+
+        let identity = AgentIdentity {
+            agent_name: "agent-007".into(),
+            ship_id: "ship_x".into(),
+            public_key: pk_b64.clone(),
+            issuer: "ship://attacker-claims-zerker".into(),
+            issued_at: "2026-04-15T00:00:00Z".into(),
+            valid_until: "2027-04-15T00:00:00Z".into(),
+            model: None,
+            description: None,
+        };
+        let capabilities = AgentCapabilities {
+            tools: vec![ToolCapability { name: "Bash".into(), description: None }],
+            api_endpoints: vec![],
+            mcp_servers: vec![],
+        };
+        let declaration = AgentDeclaration {
+            bounded_actions: vec!["Bash".into()],
+            forbidden: vec![],
+            escalation_required: vec![],
+        };
+        let payload = serde_json::json!({
+            "identity": identity, "capabilities": capabilities, "declaration": declaration,
+        });
+        let sig = signer.sign(&serde_json::to_vec(&payload).unwrap()).unwrap();
+        let cert = AgentCertificate {
+            r#type: CERTIFICATE_TYPE.into(),
+            schema_version: Some(CERTIFICATE_SCHEMA_VERSION.into()),
+            identity,
+            capabilities,
+            declaration,
+            signature: CertificateSignature {
+                algorithm: "ed25519".into(),
+                key_id: "key_attacker".into(),
+                public_key: pk_b64,
+                signature: URL_SAFE_NO_PAD.encode(sig),
+                signed_fields: "identity+capabilities+declaration".into(),
+            },
+        };
+
+        // Trust an unrelated issuer.
+        let honest = Ed25519Signer::generate("honest_issuer").unwrap();
+        let honest_pk = URL_SAFE_NO_PAD.encode(honest.public_key_bytes());
+        let trust = trust_with(&honest_pk);
+
+        let err = verify_certificate(&cert, &trust).unwrap_err();
+        assert!(matches!(err, CertificateVerifyError::UntrustedIssuer { .. }),
+            "expected UntrustedIssuer, got: {err}");
+    }
+
+    /// Empty trust store yields `NoTrustConfigured` so the CLI can
+    /// render the install-time remediation distinct from "this
+    /// particular key is wrong".
+    #[test]
+    fn verify_certificate_rejects_with_no_trust_configured() {
+        use crate::attestation::{Ed25519Signer, Signer};
+        let signer = Ed25519Signer::generate("key_demo").unwrap();
+        let pk_b64 = URL_SAFE_NO_PAD.encode(signer.public_key_bytes());
+
+        let identity = AgentIdentity {
+            agent_name: "agent-007".into(),
+            ship_id: "ship_x".into(),
+            public_key: pk_b64.clone(),
+            issuer: "ship://ship_x".into(),
+            issued_at: "2026-04-15T00:00:00Z".into(),
+            valid_until: "2027-04-15T00:00:00Z".into(),
+            model: None,
+            description: None,
+        };
+        let capabilities = AgentCapabilities {
+            tools: vec![ToolCapability { name: "Bash".into(), description: None }],
+            api_endpoints: vec![],
+            mcp_servers: vec![],
+        };
+        let declaration = AgentDeclaration {
+            bounded_actions: vec!["Bash".into()],
+            forbidden: vec![],
+            escalation_required: vec![],
+        };
+        let payload = serde_json::json!({
+            "identity": identity, "capabilities": capabilities, "declaration": declaration,
+        });
+        let sig = signer.sign(&serde_json::to_vec(&payload).unwrap()).unwrap();
+        let cert = AgentCertificate {
+            r#type: CERTIFICATE_TYPE.into(),
+            schema_version: Some(CERTIFICATE_SCHEMA_VERSION.into()),
+            identity,
+            capabilities,
+            declaration,
+            signature: CertificateSignature {
+                algorithm: "ed25519".into(),
+                key_id: "key_demo".into(),
+                public_key: pk_b64,
+                signature: URL_SAFE_NO_PAD.encode(sig),
+                signed_fields: "identity+capabilities+declaration".into(),
+            },
+        };
+
+        let err = verify_certificate(&cert, &crate::trust::TrustRootStore::empty()).unwrap_err();
+        assert!(matches!(err, CertificateVerifyError::NoTrustConfigured),
+            "expected NoTrustConfigured, got: {err}");
+        // And the error must reference the CLI remediation.
+        let msg = format!("{err}");
+        assert!(msg.contains("treeship trust add"),
+                "remediation must mention treeship trust add: {msg}");
     }
 
     #[test]

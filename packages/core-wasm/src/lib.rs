@@ -129,13 +129,18 @@ fn decode_inner(envelope_json: &str) -> Result<String, String> {
         .map_err(|e| format!("payload is not UTF-8: {}", e))
 }
 
-/// Verify a Merkle inclusion proof JSON.
+/// Verify a Merkle inclusion proof JSON. The `trust_roots_json` argument
+/// pins the checkpoint issuer; pass an empty string for "no trust
+/// configured" (which causes verification to fail-closed -- post-audit
+/// behavior, the checkpoint's embedded pubkey is no longer trusted on
+/// its own).
+///
 /// Returns JSON: { "valid": true/false, "message": "...", "artifact_id": "...",
 ///   "leaf_index": N, "checkpoint_index": N, "checkpoint_root": "...",
 ///   "signed_at": "...", "signer": "..." }
 #[wasm_bindgen]
-pub fn verify_merkle_proof(proof_json: &str) -> String {
-    match verify_merkle_inner(proof_json) {
+pub fn verify_merkle_proof(proof_json: &str, trust_roots_json: &str) -> String {
+    match verify_merkle_inner(proof_json, trust_roots_json) {
         Ok(result) => result,
         Err(e) => serde_json::json!({
             "valid": false,
@@ -144,12 +149,14 @@ pub fn verify_merkle_proof(proof_json: &str) -> String {
     }
 }
 
-fn verify_merkle_inner(proof_json: &str) -> Result<String, String> {
+fn verify_merkle_inner(proof_json: &str, trust_roots_json: &str) -> Result<String, String> {
     let proof_file: treeship_core::merkle::ProofFile = serde_json::from_str(proof_json)
         .map_err(|e| format!("invalid proof JSON: {}", e))?;
 
-    // 1. Verify checkpoint signature
-    if !proof_file.checkpoint.verify() {
+    let trust = parse_wasm_trust_roots(trust_roots_json)?;
+
+    // 1. Verify checkpoint signature against the pinned trust root.
+    if !proof_file.checkpoint.verify(&trust) {
         return Ok(serde_json::json!({
             "valid": false,
             "message": "checkpoint signature invalid",
@@ -401,7 +408,7 @@ pub fn verify_receipt(receipt_json: &str) -> String {
 /// }
 /// ```
 #[wasm_bindgen]
-pub fn verify_certificate(cert_json: &str, now_rfc3339: &str) -> String {
+pub fn verify_certificate(cert_json: &str, now_rfc3339: &str, trust_roots_json: &str) -> String {
     use treeship_core::agent::{verify_certificate as verify_cert, AgentCertificate};
 
     let cert: AgentCertificate = match serde_json::from_str(cert_json) {
@@ -409,7 +416,15 @@ pub fn verify_certificate(cert_json: &str, now_rfc3339: &str) -> String {
         Err(e) => return error_result("invalid_json", &format!("invalid certificate JSON: {e}")),
     };
 
-    let sig_ok = verify_cert(&cert).is_ok();
+    // Caller-supplied trust roots. Empty string = no trust configured,
+    // which makes verification fail closed -- matches the audit fix:
+    // the browser-side verifier no longer trusts whatever pubkey the
+    // certificate happens to carry.
+    let trust = match parse_wasm_trust_roots(trust_roots_json) {
+        Ok(t)  => t,
+        Err(e) => return error_result("invalid_trust_roots", &e),
+    };
+    let sig_ok = verify_cert(&cert, &trust).is_ok();
 
     let validity = if now_rfc3339.is_empty() {
         "not_checked".to_string()
@@ -464,7 +479,12 @@ pub fn verify_certificate(cert_json: &str, now_rfc3339: &str) -> String {
 /// }
 /// ```
 #[wasm_bindgen]
-pub fn cross_verify(receipt_json: &str, cert_json: &str, now_rfc3339: &str) -> String {
+pub fn cross_verify(
+    receipt_json: &str,
+    cert_json: &str,
+    now_rfc3339: &str,
+    trust_roots_json: &str,
+) -> String {
     use treeship_core::agent::{verify_certificate as verify_cert, AgentCertificate};
     use treeship_core::session::SessionReceipt;
     use treeship_core::verify::{
@@ -479,8 +499,12 @@ pub fn cross_verify(receipt_json: &str, cert_json: &str, now_rfc3339: &str) -> S
         Ok(c) => c,
         Err(e) => return error_result("invalid_json", &format!("invalid certificate JSON: {e}")),
     };
+    let trust = match parse_wasm_trust_roots(trust_roots_json) {
+        Ok(t)  => t,
+        Err(e) => return error_result("invalid_trust_roots", &e),
+    };
 
-    let cert_sig_ok = verify_cert(&cert).is_ok();
+    let cert_sig_ok = verify_cert(&cert, &trust).is_ok();
     let result = cross_verify_receipt_and_certificate(&receipt, &cert, now_rfc3339);
 
     let ship_label = match &result.ship_id_status {
@@ -516,6 +540,37 @@ fn error_result(error_code: &str, message: &str) -> String {
         "message": message,
     })
     .to_string()
+}
+
+/// Parse the `trust_roots_json` argument the WASM verify_* surfaces
+/// accept. The JSON shape mirrors the on-disk
+/// `~/.treeship/trust_roots.json`:
+///
+/// ```json
+/// { "version": 1, "roots": [ { "key_id": "...", "public_key": "ed25519:...", "kind": "agent_cert", ... } ] }
+/// ```
+///
+/// An empty string means "no trust roots configured" -- verifiers
+/// fail-closed in that state, which matches the audit fix.
+fn parse_wasm_trust_roots(s: &str) -> Result<treeship_core::trust::TrustRootStore, String> {
+    use treeship_core::trust::{TrustRoot, TrustRootStore};
+    if s.trim().is_empty() {
+        return Ok(TrustRootStore::empty());
+    }
+    #[derive(serde::Deserialize)]
+    struct File { version: u8, roots: Vec<TrustRoot> }
+    let file: File = serde_json::from_str(s)
+        .map_err(|e| format!("invalid trust_roots_json: {e}"))?;
+    if file.version != 1 {
+        return Err(format!("unsupported trust_roots schema version: {}", file.version));
+    }
+    // Validate every embedded pubkey parses now -- otherwise the
+    // verifier would silently ignore a malformed root.
+    for r in &file.roots {
+        treeship_core::trust::decode_ed25519_pubkey(&r.public_key)
+            .map_err(|m| format!("trust root {}: {m}", r.key_id))?;
+    }
+    Ok(TrustRootStore::with_roots(file.roots))
 }
 
 fn status_label(s: &treeship_core::session::VerifyStatus) -> &'static str {
@@ -597,7 +652,23 @@ mod tests {
         serde_json::to_string(&r).unwrap()
     }
 
-    fn sample_cert_json(valid_until: &str) -> String {
+    /// Build a trust_roots_json that pins `pk_b64` for kind `agent_cert`.
+    /// Every certificate-verifying WASM test below uses this so the trust
+    /// pin doesn't short-circuit before the signature math runs.
+    fn trust_roots_for(pk_b64: &str) -> String {
+        serde_json::json!({
+            "version": 1,
+            "roots": [{
+                "key_id":     "key_demo",
+                "public_key": format!("ed25519:{pk_b64}"),
+                "kind":       "agent_cert",
+                "label":      "test issuer",
+                "added_at":   "2026-05-15T00:00:00Z",
+            }]
+        }).to_string()
+    }
+
+    fn sample_cert_with_key(valid_until: &str) -> (String, String) {
         use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
         use treeship_core::agent::{
             AgentCapabilities, AgentCertificate, AgentDeclaration, AgentIdentity,
@@ -642,12 +713,16 @@ mod tests {
             signature: CertificateSignature {
                 algorithm: "ed25519".into(),
                 key_id: "key_demo".into(),
-                public_key: pk_b64,
+                public_key: pk_b64.clone(),
                 signature: URL_SAFE_NO_PAD.encode(sig),
                 signed_fields: "identity+capabilities+declaration".into(),
             },
         };
-        serde_json::to_string(&cert).unwrap()
+        (serde_json::to_string(&cert).unwrap(), pk_b64)
+    }
+
+    fn sample_cert_json(valid_until: &str) -> String {
+        sample_cert_with_key(valid_until).0
     }
 
     #[test]
@@ -685,9 +760,11 @@ mod tests {
 
     #[test]
     fn verify_certificate_passes_freshly_signed_cert() {
-        let cert = sample_cert_json("2027-01-01T00:00:00Z");
-        let out: serde_json::Value =
-            serde_json::from_str(&verify_certificate(&cert, "2026-06-01T00:00:00Z")).unwrap();
+        let (cert, pk) = sample_cert_with_key("2027-01-01T00:00:00Z");
+        let trust = trust_roots_for(&pk);
+        let out: serde_json::Value = serde_json::from_str(
+            &verify_certificate(&cert, "2026-06-01T00:00:00Z", &trust),
+        ).unwrap();
         assert_eq!(out["outcome"], "pass", "got: {out}");
         assert_eq!(out["signature_valid"], true);
         assert_eq!(out["validity"], "valid");
@@ -696,28 +773,65 @@ mod tests {
 
     #[test]
     fn verify_certificate_flags_expiry() {
-        let cert = sample_cert_json("2026-04-10T00:00:00Z");
-        let out: serde_json::Value =
-            serde_json::from_str(&verify_certificate(&cert, "2026-06-01T00:00:00Z")).unwrap();
+        let (cert, pk) = sample_cert_with_key("2026-04-10T00:00:00Z");
+        let trust = trust_roots_for(&pk);
+        let out: serde_json::Value = serde_json::from_str(
+            &verify_certificate(&cert, "2026-06-01T00:00:00Z", &trust),
+        ).unwrap();
         assert_eq!(out["outcome"], "fail");
         assert_eq!(out["validity"], "expired");
     }
 
     #[test]
     fn verify_certificate_empty_now_defers_validity() {
-        let cert = sample_cert_json("2027-01-01T00:00:00Z");
-        let out: serde_json::Value =
-            serde_json::from_str(&verify_certificate(&cert, "")).unwrap();
+        let (cert, pk) = sample_cert_with_key("2027-01-01T00:00:00Z");
+        let trust = trust_roots_for(&pk);
+        let out: serde_json::Value = serde_json::from_str(
+            &verify_certificate(&cert, "", &trust),
+        ).unwrap();
         assert_eq!(out["outcome"], "pass");
         assert_eq!(out["validity"], "not_checked");
+    }
+
+    /// Trust pin: with no trust_roots_json supplied, the WASM verifier
+    /// must reject a freshly-signed cert. This is the headline audit
+    /// fix on the browser-side path.
+    #[test]
+    fn verify_certificate_rejects_with_no_trust_roots() {
+        let cert = sample_cert_json("2027-01-01T00:00:00Z");
+        let out: serde_json::Value = serde_json::from_str(
+            &verify_certificate(&cert, "2026-06-01T00:00:00Z", ""),
+        ).unwrap();
+        assert_eq!(out["outcome"], "fail",
+                   "no trust roots must fail: {out}");
+        assert_eq!(out["signature_valid"], false);
+    }
+
+    /// Trust pin: cert whose issuer is not in the supplied trust set
+    /// must be rejected even though the signature math is good.
+    #[test]
+    fn verify_certificate_rejects_unknown_issuer() {
+        let cert = sample_cert_json("2027-01-01T00:00:00Z");
+        // Trust a totally unrelated public key.
+        let bogus_trust = trust_roots_for(
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", // 32 zero bytes
+        );
+        let out: serde_json::Value = serde_json::from_str(
+            &verify_certificate(&cert, "2026-06-01T00:00:00Z", &bogus_trust),
+        ).unwrap();
+        assert_eq!(out["outcome"], "fail",
+                   "unknown issuer must fail: {out}");
+        assert_eq!(out["signature_valid"], false);
     }
 
     #[test]
     fn cross_verify_rolls_up_pass() {
         let receipt = sample_receipt_json();
-        let cert = sample_cert_json("2027-01-01T00:00:00Z");
-        let out: serde_json::Value =
-            serde_json::from_str(&cross_verify(&receipt, &cert, "2026-06-01T00:00:00Z")).unwrap();
+        let (cert, pk) = sample_cert_with_key("2027-01-01T00:00:00Z");
+        let trust = trust_roots_for(&pk);
+        let out: serde_json::Value = serde_json::from_str(
+            &cross_verify(&receipt, &cert, "2026-06-01T00:00:00Z", &trust),
+        ).unwrap();
         assert_eq!(out["outcome"], "pass", "got: {out}");
         assert_eq!(out["ok"], true);
         assert_eq!(out["ship_id_status"], "match");
@@ -729,17 +843,20 @@ mod tests {
     #[test]
     fn cross_verify_fails_when_cert_expired() {
         let receipt = sample_receipt_json();
-        let cert = sample_cert_json("2026-04-10T00:00:00Z");
-        let out: serde_json::Value =
-            serde_json::from_str(&cross_verify(&receipt, &cert, "2026-06-01T00:00:00Z")).unwrap();
+        let (cert, pk) = sample_cert_with_key("2026-04-10T00:00:00Z");
+        let trust = trust_roots_for(&pk);
+        let out: serde_json::Value = serde_json::from_str(
+            &cross_verify(&receipt, &cert, "2026-06-01T00:00:00Z", &trust),
+        ).unwrap();
         assert_eq!(out["ok"], false);
         assert_eq!(out["certificate_status"], "expired");
     }
 
     #[test]
     fn cross_verify_returns_error_on_malformed_input() {
-        let out: serde_json::Value =
-            serde_json::from_str(&cross_verify("bad", "also bad", "2026-06-01T00:00:00Z")).unwrap();
+        let out: serde_json::Value = serde_json::from_str(
+            &cross_verify("bad", "also bad", "2026-06-01T00:00:00Z", ""),
+        ).unwrap();
         assert_eq!(out["outcome"], "error");
         assert_eq!(out["error_code"], "invalid_json");
     }

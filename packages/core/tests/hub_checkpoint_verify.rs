@@ -19,13 +19,28 @@ use serde_json::Value;
 
 use treeship_core::session::{
     build_package_with_approvals, read_approvals_bundle, verify_package,
-    ApprovalsBundle, VerifyStatus,
+    verify_package_with_trust, ApprovalsBundle, VerifyStatus,
 };
 use treeship_core::statements::{
     CheckpointKind, JournalCheckpoint, ApprovalUse, ReplayCheckLevel,
     TYPE_APPROVAL_USE, TYPE_JOURNAL_CHECKPOINT,
     approval_use_record_digest, journal_checkpoint_record_digest,
 };
+use treeship_core::trust::{encode_ed25519_pubkey, TrustRoot, TrustRootKind, TrustRootStore};
+
+/// Build a trust store that pins `pk` for hub-org-checkpoint verification.
+/// Every hub-org test below uses this -- post-pin, `verify_package` reads
+/// the operator's default trust roots from disk, but in-process tests need
+/// to thread an explicit store via `verify_package_with_trust`.
+fn trust_for_hub(pk: &ed25519_dalek::VerifyingKey) -> TrustRootStore {
+    TrustRootStore::with_roots(vec![TrustRoot {
+        key_id:     "hub_test".into(),
+        public_key: encode_ed25519_pubkey(pk),
+        kind:       TrustRootKind::Ship,
+        label:      "test hub".into(),
+        added_at:   "2026-05-15T00:00:00Z".into(),
+    }])
+}
 
 // ---------------------------------------------------------------------------
 // Fixture builders
@@ -167,6 +182,7 @@ fn no_hub_checkpoint_no_row() {
 #[test]
 fn valid_hub_checkpoint_passes() {
     let sk = SigningKey::from_bytes(&[7u8; 32]);
+    let trust = trust_for_hub(&sk.verifying_key());
 
     let mut bundle = ApprovalsBundle::default();
     let u = make_use("use_a", "art_g", 1);
@@ -175,7 +191,7 @@ fn valid_hub_checkpoint_passes() {
     bundle.checkpoints.push(cp);
 
     let pkg = build_package_with_bundle(bundle);
-    let checks = verify_package(&pkg).unwrap();
+    let checks = verify_package_with_trust(&pkg, &trust).unwrap();
     let hub = checks.iter().find(|c| c.name == "replay-hub-org")
         .expect("replay-hub-org row expected");
     assert_eq!(hub.status, VerifyStatus::Pass, "expected PASS, got: {hub:?}");
@@ -187,6 +203,7 @@ fn valid_hub_checkpoint_passes() {
 #[test]
 fn tampered_hub_signature_warns_default() {
     let sk = SigningKey::from_bytes(&[8u8; 32]);
+    let trust = trust_for_hub(&sk.verifying_key());
 
     let u = make_use("use_a", "art_g", 1);
     let mut cp = sign_hub_checkpoint(&sk, vec!["use_a".into()]);
@@ -199,7 +216,7 @@ fn tampered_hub_signature_warns_default() {
     bundle.checkpoints.push(cp);
 
     let pkg = build_package_with_bundle(bundle);
-    let checks = verify_package(&pkg).unwrap();
+    let checks = verify_package_with_trust(&pkg, &trust).unwrap();
     let hub = checks.iter().find(|c| c.name == "replay-hub-org")
         .expect("replay-hub-org row expected");
     assert_eq!(hub.status, VerifyStatus::Warn, "expected WARN on tamper, got: {hub:?}");
@@ -215,6 +232,7 @@ fn tampered_hub_signature_warns_default() {
 #[test]
 fn hub_checkpoint_missing_use_coverage_warns() {
     let sk = SigningKey::from_bytes(&[9u8; 32]);
+    let trust = trust_for_hub(&sk.verifying_key());
 
     let u_a = make_use("use_a", "art_g", 1);
     let u_b = make_use("use_b", "art_g", 1);
@@ -227,7 +245,7 @@ fn hub_checkpoint_missing_use_coverage_warns() {
     bundle.checkpoints.push(cp);
 
     let pkg = build_package_with_bundle(bundle);
-    let checks = verify_package(&pkg).unwrap();
+    let checks = verify_package_with_trust(&pkg, &trust).unwrap();
     let hub = checks.iter().find(|c| c.name == "replay-hub-org")
         .expect("replay-hub-org row expected");
     assert_eq!(hub.status, VerifyStatus::Warn, "expected WARN on missing coverage, got: {hub:?}");
@@ -240,6 +258,7 @@ fn hub_checkpoint_missing_use_coverage_warns() {
 #[test]
 fn hub_checkpoint_missing_field_warns() {
     let sk = SigningKey::from_bytes(&[10u8; 32]);
+    let trust = trust_for_hub(&sk.verifying_key());
 
     let u = make_use("use_a", "art_g", 1);
     let mut cp = sign_hub_checkpoint(&sk, vec!["use_a".into()]);
@@ -250,11 +269,36 @@ fn hub_checkpoint_missing_field_warns() {
     bundle.checkpoints.push(cp);
 
     let pkg = build_package_with_bundle(bundle);
-    let checks = verify_package(&pkg).unwrap();
+    let checks = verify_package_with_trust(&pkg, &trust).unwrap();
     let hub = checks.iter().find(|c| c.name == "replay-hub-org")
         .expect("replay-hub-org row expected");
     assert_eq!(hub.status, VerifyStatus::Warn);
     assert!(hub.detail.contains("hub_id"), "detail should name missing field: {}", hub.detail);
+}
+
+/// Trust pin: a checkpoint signed by a key not in the operator's
+/// trust store must surface as UntrustedIssuer (rendered as WARN, with
+/// detail referencing `treeship trust add`). This is the headline
+/// audit fix -- previously a self-signed checkpoint passed silently.
+#[test]
+fn hub_checkpoint_with_untrusted_issuer_warns() {
+    let attacker_sk = SigningKey::from_bytes(&[42u8; 32]);
+    // Operator trusts a DIFFERENT issuer.
+    let honest_sk = SigningKey::from_bytes(&[7u8; 32]);
+    let trust = trust_for_hub(&honest_sk.verifying_key());
+
+    let mut bundle = ApprovalsBundle::default();
+    bundle.uses.push(make_use("use_a", "art_g", 1));
+    bundle.checkpoints.push(sign_hub_checkpoint(&attacker_sk, vec!["use_a".into()]));
+
+    let pkg = build_package_with_bundle(bundle);
+    let checks = verify_package_with_trust(&pkg, &trust).unwrap();
+    let hub = checks.iter().find(|c| c.name == "replay-hub-org")
+        .expect("replay-hub-org row expected");
+    assert_eq!(hub.status, VerifyStatus::Warn,
+               "untrusted-issuer must not promote to Pass: {hub:?}");
+    assert!(hub.detail.contains("not a trusted root") || hub.detail.contains("treeship trust add"),
+            "detail must reference the trust remediation: {}", hub.detail);
 }
 
 /// Acceptance: a LocalJournal-kind checkpoint must NOT promote

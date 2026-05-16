@@ -414,7 +414,24 @@ pub fn read_package(pkg_dir: &Path) -> Result<SessionReceipt, PackageError> {
 /// Verify a `.treeship` package locally.
 ///
 /// Returns a list of check results. All must pass for the package to be valid.
+///
+/// Auto-loads the operator's trust roots from
+/// `TrustRootStore::default_path()`. Use
+/// [`verify_package_with_trust`] when the trust store is already in
+/// hand (CLI paths that take a `Ctx`, or tests).
 pub fn verify_package(pkg_dir: &Path) -> Result<Vec<VerifyCheck>, PackageError> {
+    let trust = crate::trust::TrustRootStore::open_default_or_empty()
+        .unwrap_or_else(|_| crate::trust::TrustRootStore::empty());
+    verify_package_with_trust(pkg_dir, &trust)
+}
+
+/// Like `verify_package` but takes an explicit `TrustRootStore` so the
+/// caller can verify with a constructed-in-memory trust set (tests) or
+/// a non-default location (CLI `--trust-roots`).
+pub fn verify_package_with_trust(
+    pkg_dir: &Path,
+    trust: &crate::trust::TrustRootStore,
+) -> Result<Vec<VerifyCheck>, PackageError> {
     let mut checks = Vec::new();
 
     // 1. receipt.json exists and parses
@@ -547,7 +564,7 @@ pub fn verify_package(pkg_dir: &Path) -> Result<Vec<VerifyCheck>, PackageError> 
     // verify_package wrapper that has Ctx access. The hub-org level is
     // reserved for PR 6 -- not claimed without a real Hub checkpoint.
     let bundle = read_approvals_bundle(pkg_dir).unwrap_or_default();
-    add_approval_evidence_checks(&mut checks, &bundle);
+    add_approval_evidence_checks(&mut checks, &bundle, trust);
 
     Ok(checks)
 }
@@ -565,6 +582,7 @@ pub fn verify_package(pkg_dir: &Path) -> Result<Vec<VerifyCheck>, PackageError> 
 pub(crate) fn add_approval_evidence_checks(
     checks: &mut Vec<VerifyCheck>,
     bundle: &ApprovalsBundle,
+    trust: &crate::trust::TrustRootStore,
 ) {
     if bundle.uses.is_empty() && bundle.checkpoints.is_empty() {
         // Nothing to assert. Stay quiet rather than emit a "skipped"
@@ -1060,7 +1078,7 @@ pub(crate) fn add_approval_evidence_checks(
         let mut have_valid_signature = false;
 
         for cp in &hub_checkpoints {
-            match crate::statements::verify_hub_checkpoint_signature(cp) {
+            match crate::statements::verify_hub_checkpoint_signature(cp, trust) {
                 crate::statements::HubCheckpointVerification::Valid => {
                     have_valid_signature = true;
                     // Coverage: every embedded use_id MUST appear in
@@ -1113,6 +1131,13 @@ pub(crate) fn add_approval_evidence_checks(
                     all_ok = false;
                     details.push(format!(
                         "{} kind toggled out of hub-org during verify",
+                        cp.checkpoint_id,
+                    ));
+                }
+                crate::statements::HubCheckpointVerification::UntrustedIssuer => {
+                    all_ok = false;
+                    details.push(format!(
+                        "{} hub_public_key is not a trusted root (configure via `treeship trust add`)",
                         cp.checkpoint_id,
                     ));
                 }
