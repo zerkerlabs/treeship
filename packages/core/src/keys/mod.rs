@@ -6,9 +6,14 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+use aes_gcm::{
+    aead::{Aead, KeyInit, OsRng as AeadOsRng, Payload},
+    AeadCore, Aes256Gcm, Key as AesKey, Nonce,
+};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as Sha2Digest, Sha256};
+use zeroize::Zeroizing;
 
 use crate::attestation::{Ed25519Signer, Signer};
 
@@ -129,11 +134,18 @@ struct Manifest {
 
 /// Local encrypted keystore.
 ///
-/// Private keys are encrypted with AES-256-GCM before writing to disk.
-/// The encryption key is derived from a machine-specific secret so key
-/// files are useless if copied to another machine.
+/// Private keys are encrypted with AES-256-GCM (RustCrypto `aes-gcm`
+/// 0.10) before writing to disk. The encryption key is derived from a
+/// machine-specific secret so key files are useless if copied to
+/// another machine.
 ///
-/// v2 will delegate to OS credential stores (Secure Enclave / TPM 2.0).
+/// Pre-v0.10.3 keystores used a homemade SHA-256-CTR + HMAC-SHA-256
+/// construction (TS-2026-001) and are transparently migrated to the
+/// new AEAD format on first decrypt; see `encrypt_for_disk_v2` /
+/// `decrypt_from_disk` for the format dispatcher.
+///
+/// A future version will delegate to OS credential stores (Secure
+/// Enclave / TPM 2.0).
 pub struct Store {
     dir:         PathBuf,
     machine_key: [u8; 32],
@@ -168,8 +180,8 @@ impl Store {
         let secret  = signer.secret_bytes();
         let pub_key = signer.public_key_bytes();
 
-        let (enc, nonce) = aes_gcm_encrypt(&self.machine_key, &secret)
-            .map_err(|e| KeyError::Crypto(e))?;
+        let enc = encrypt_for_disk_v2(&self.machine_key, key_id.as_str(), &pub_key, &secret)
+            .map_err(KeyError::Crypto)?;
 
         let entry = EncryptedEntry {
             id:               key_id.clone(),
@@ -177,7 +189,11 @@ impl Store {
             created_at:       crate::statements::unix_to_rfc3339(unix_now()),
             public_key:       pub_key.clone(),
             enc_priv_key:     enc,
-            nonce,
+            // v2 ciphertexts carry their nonce inline (bytes [2..14]).
+            // The separate `nonce` field is retained for v1 legacy
+            // compatibility; for fresh v2 entries we serialize an empty
+            // vec so the JSON stays well-formed.
+            nonce:            Vec::new(),
             valid_until:      None,
             successor_key_id: None,
         };
@@ -263,8 +279,9 @@ impl Store {
             .map_err(|e| KeyError::Crypto(e.to_string()))?;
         let succ_secret  = signer.secret_bytes();
         let succ_pub_key = signer.public_key_bytes();
-        let (succ_enc, succ_nonce) = aes_gcm_encrypt(&self.machine_key, &succ_secret)
-            .map_err(KeyError::Crypto)?;
+        let succ_enc =
+            encrypt_for_disk_v2(&self.machine_key, succ_id.as_str(), &succ_pub_key, &succ_secret)
+                .map_err(KeyError::Crypto)?;
 
         let succ_created = crate::statements::unix_to_rfc3339(unix_now());
         let succ_entry = EncryptedEntry {
@@ -273,7 +290,9 @@ impl Store {
             created_at:       succ_created.clone(),
             public_key:       succ_pub_key.clone(),
             enc_priv_key:     succ_enc,
-            nonce:            succ_nonce,
+            // v2 ciphertexts carry their nonce inline; the legacy
+            // `nonce` field is left empty for fresh writes.
+            nonce:            Vec::new(),
             valid_until:      None,
             successor_key_id: None,
         };
@@ -415,16 +434,163 @@ impl Store {
 
         let entry = self.load_entry(id)?;
 
-        let secret = aes_gcm_decrypt(&self.machine_key, &entry.enc_priv_key, &entry.nonce)
+        // Dispatcher: v2 ciphertexts start with magic 0x54, version 0x02
+        // and use real AES-256-GCM. Older entries fall through to the
+        // legacy SHA-256-CTR+HMAC path (`decrypt_legacy_v1`) and are
+        // transparently re-encrypted in the new format below.
+        let was_legacy = is_legacy_v1(&entry.enc_priv_key);
+        let secret = decrypt_from_disk(
+            &self.machine_key,
+            &entry.id,
+            &entry.public_key,
+            &entry.enc_priv_key,
+            &entry.nonce,
+        )
             .map_err(|e| self.enrich_crypto_error(e))?;
 
-        let secret_arr: [u8; 32] = secret.try_into()
-            .map_err(|_| KeyError::Crypto("decrypted key is wrong length".into()))?;
+        // L3: wrap the on-stack copy of the decrypted secret in a
+        // `Zeroizing` so the byte buffer is wiped on drop. `secret`
+        // itself is already a `Zeroizing<Vec<u8>>` returned by
+        // `decrypt_from_disk`, but `try_into::<[u8; 32]>` produces an
+        // independent stack-allocated array that the Vec's Drop will
+        // not cover. Without this wrapper, returning from `signer()`
+        // would leave the secret scalar in stale stack memory until
+        // a future stack frame happens to overwrite it.
+        let secret_arr: Zeroizing<[u8; 32]> = Zeroizing::new(
+            secret.as_slice().try_into()
+                .map_err(|_| KeyError::Crypto("decrypted key is wrong length".into()))?
+        );
+
+        // Transparent migration: if this entry was still in the legacy
+        // v1 format (the broken SHA-256-CTR construction from
+        // TS-2026-001), re-encrypt it with v2 AES-256-GCM and rewrite
+        // the file. We do this best-effort -- a migration failure here
+        // must NOT block signing for the current call, since the
+        // in-memory secret is already valid. The next decrypt on a
+        // fresh process will retry.
+        if was_legacy {
+            if let Err(e) = self.migrate_entry_to_v2(&entry, &secret_arr) {
+                // Surface the failure as a tracing-style stderr note
+                // rather than an error -- the user's signing flow is
+                // unaffected, and we'd rather them know about it than
+                // wedge the call.
+                eprintln!(
+                    "treeship: keystore entry {} could not be migrated \
+                     from legacy v1 format to v2 ({}); will retry next \
+                     load",
+                    entry.id, e
+                );
+            }
+        }
 
         let signer = Ed25519Signer::from_bytes(&entry.id, &secret_arr)
             .map_err(|e| KeyError::Crypto(e.to_string()))?;
 
         Ok(Box::new(signer))
+    }
+
+    /// Re-encrypt a legacy v1 entry with the new v2 AEAD and persist
+    /// it. Updates the in-memory cache so subsequent loads in the same
+    /// process see the migrated entry. Idempotent; safe to invoke
+    /// concurrently because the migration is serialized by a per-entry
+    /// advisory lock on `<entry>.migrate.lock` (TS-2026-001 H3).
+    ///
+    /// We lock a *sentinel* file rather than the entry file itself,
+    /// because the entry file is renamed-into-place during the atomic
+    /// write inside `write_entry`. Holding a flock on the entry's inode
+    /// while a sibling process renames a new inode into its path is
+    /// nonsensical (the lock would survive on the now-orphaned inode);
+    /// the sentinel sidecar has a stable identity for the whole
+    /// migration window.
+    ///
+    /// Same blocking-flock pattern as `packages/core/src/session/event_log.rs`
+    /// (Lane F): exclusive lock, then a same-thread re-read to settle
+    /// "did a peer already migrate while I was waiting?" cleanly.
+    fn migrate_entry_to_v2(
+        &self,
+        old_entry: &EncryptedEntry,
+        secret: &[u8; 32],
+    ) -> Result<(), KeyError> {
+        let entry_path = self.entry_path(&old_entry.id);
+        let lock_path = entry_path.with_extension("migrate.lock");
+
+        // Open (or create) the sentinel lock file with restrictive perms
+        // and take an exclusive flock. We intentionally use the blocking
+        // `lock_exclusive` -- not `try_lock_exclusive` -- because the
+        // migration window is short (a single AEAD encrypt + atomic
+        // rename) and the worst case under contention is one writer
+        // serialized behind another. Pulling the
+        // try-with-bounded-retry pattern in here would buy us nothing:
+        // the second writer's re-read after the lock releases would
+        // observe the now-v2 entry and short-circuit.
+        let lock_file = open_migration_lock_file(&lock_path)
+            .map_err(KeyError::Io)?;
+
+        #[cfg(not(target_family = "wasm"))]
+        {
+            use fs2::FileExt;
+            lock_file.lock_exclusive().map_err(KeyError::Io)?;
+        }
+
+        // Under the lock: did a peer already complete the migration
+        // while we were waiting? If so, our work is done -- we must
+        // NOT rewrite, because we'd overwrite a peer's freshly-rotated
+        // v2 ciphertext with our own (semantically equivalent, but
+        // unnecessary I/O and an unnecessary cache update).
+        if let Ok(current) = self.read_entry(&old_entry.id) {
+            if !is_legacy_v1(&current.enc_priv_key) {
+                // Peer already migrated. Refresh the cache so subsequent
+                // loads in this process see the v2 entry rather than
+                // the stale legacy copy our caller passed in.
+                if let Ok(mut cache) = self.cache.write() {
+                    cache.insert(current.id.clone(), current);
+                }
+                // Lock drops at function exit; sentinel file remains on
+                // disk as a harmless inode (no migration data, idempotent
+                // for future invocations).
+                return Ok(());
+            }
+        }
+
+        let new_ciphertext = encrypt_for_disk_v2(
+            &self.machine_key,
+            &old_entry.id,
+            &old_entry.public_key,
+            secret,
+        )
+        .map_err(KeyError::Crypto)?;
+
+        let migrated = EncryptedEntry {
+            id:               old_entry.id.clone(),
+            algorithm:        old_entry.algorithm.clone(),
+            created_at:       old_entry.created_at.clone(),
+            public_key:       old_entry.public_key.clone(),
+            enc_priv_key:     new_ciphertext,
+            // v2 carries the nonce inline; clear the legacy field.
+            nonce:            Vec::new(),
+            valid_until:      old_entry.valid_until.clone(),
+            successor_key_id: old_entry.successor_key_id.clone(),
+        };
+
+        self.write_entry(&migrated)?;
+        if let Ok(mut cache) = self.cache.write() {
+            cache.insert(migrated.id.clone(), migrated);
+        }
+
+        // Best-effort cleanup of the sentinel lock file. We hold the
+        // lock until function exit (drop), so by the time we reach
+        // here it is safe to unlink the inode -- future migrations
+        // for this entry will succeed via the early-return path
+        // because the entry is now v2. Leaving the sentinel behind is
+        // also harmless; on Unix removing a flocked file is allowed
+        // and the lock is released on fd drop regardless.
+        let _ = std::fs::remove_file(&lock_path);
+
+        // Keep the lock_file binding alive to function exit so the
+        // flock is held across write_entry + remove_file. Explicit
+        // drop makes the intent obvious to readers.
+        drop(lock_file);
+        Ok(())
     }
 
     /// Wrap a bare crypto error (typically "MAC verification failed ..." from
@@ -577,26 +743,271 @@ impl Store {
 }
 
 // --- Crypto helpers ---
+//
+// AEAD choice: AES-256-GCM via the RustCrypto `aes-gcm` 0.10 crate.
+// Reasons:
+//   - Matches the original (documented but never implemented) intent of
+//     the keystore, so audit reports and SECURITY.md don't need to be
+//     re-anchored on a different primitive.
+//   - Well-audited, widely deployed, no platform gotchas.
+//   - `chacha20poly1305` would have been a defensible alternative
+//     (slightly better software performance), but the migration cost of
+//     changing the documented primitive while we already have to ship a
+//     migration for the broken construction is not worth it.
+//
+// On-disk v2 format (`encrypt_for_disk_v2`):
+//   [ magic = 0x54 ('T') ]   1 byte
+//   [ version = 0x02     ]   1 byte
+//   [ nonce              ]  12 bytes (random per encryption)
+//   [ ciphertext || tag  ]  N + 16 bytes (tag appended by aead crate)
+//
+// The first byte (0x54) is a structural sentinel so we can dispatch on
+// the format without relying on length heuristics. v1 ciphertexts start
+// with the first byte of their random nonce, so the chance of an
+// accidental v1 entry that looks like v2 is ~1/2^16 (matching both magic
+// AND version byte) and we still re-validate by AEAD-decrypting; if the
+// AEAD fails on something that looks like v2, we fall back to v1.
 
-/// AES-256-GCM encryption.
-/// Returns (ciphertext, nonce).
+const KEYSTORE_MAGIC: u8 = 0x54; // 'T'
+const KEYSTORE_VERSION_V2: u8 = 0x02;
+
+/// Build the v2 keystore AEAD AAD.
+///
+/// The AAD binds two things into the GCM tag beyond ciphertext+nonce:
+///
+/// 1. **Framing prefix** (`[KEYSTORE_MAGIC, KEYSTORE_VERSION_V2]`) so
+///    flipping the magic or version byte on disk surfaces as a MAC
+///    failure rather than dispatcher confusion (the M2 audit finding).
+/// 2. **Entry identity** (`entry_id` and `public_key`) so an attacker
+///    with write access to `~/.treeship/keys/` cannot copy entry A's
+///    `enc_priv_key` ciphertext into entry B's JSON envelope. Without
+///    this binding, the swap would decrypt cleanly (same machine key,
+///    same framing-only AAD) and the signer for advertised key id A
+///    would silently sign with key B's secret scalar — un-binding
+///    `KeyInfo.public_key` from the actual scalar in use. This closes
+///    the "intra-keystore swap" class flagged in the post-merge audit
+///    of TS-2026-001.
+///
+/// Every variable-length field is length-prefixed with a big-endian
+/// u32 before its bytes. Concatenating variable-length fields without
+/// length prefixes is a forgery class (an attacker who controls field
+/// boundaries can shift bytes between fields and present a different
+/// `(entry_id, public_key)` pair whose AAD-bytes serialize identically).
+/// `entry_id` is a fixed-prefix `key_<hex>` string in practice, but we
+/// length-prefix it anyway to defend against future id schemes.
+///
+/// The AAD must be byte-identical on encrypt and decrypt. Future
+/// versions (V3+) get their own builder; the dispatcher picks which
+/// to use based on the framing prefix.
+fn build_aad_v2(entry_id: &str, public_key: &[u8]) -> Vec<u8> {
+    let mut aad = Vec::with_capacity(2 + 4 + entry_id.len() + 4 + public_key.len());
+    aad.push(KEYSTORE_MAGIC);
+    aad.push(KEYSTORE_VERSION_V2);
+    aad.extend_from_slice(&(entry_id.len() as u32).to_be_bytes());
+    aad.extend_from_slice(entry_id.as_bytes());
+    aad.extend_from_slice(&(public_key.len() as u32).to_be_bytes());
+    aad.extend_from_slice(public_key);
+    aad
+}
+
+/// AES-256-GCM (the real one) encrypt for at-rest keystore storage.
+/// Returns the framed v2 blob ready to drop into `EncryptedEntry::enc_priv_key`.
+///
+/// Output: `[magic, version, nonce(12), ciphertext || tag(16)]`.
+///
+/// The AEAD's Associated Authenticated Data binds:
+/// - the framing prefix (M2 — flipping magic/version surfaces as MAC failure)
+/// - the entry id and public key (post-merge audit fix-up — closes the
+///   intra-keystore swap class where a local attacker copies entry A's
+///   `enc_priv_key` into entry B's JSON envelope).
+///
+/// See `build_aad_v2` for the exact layout. `entry_id` and `public_key`
+/// must match what gets serialized into the `EncryptedEntry` JSON;
+/// `decrypt_for_disk_v2` reads them back from the deserialized entry
+/// to recompute the AAD.
+fn encrypt_for_disk_v2(
+    key: &[u8; 32],
+    entry_id: &str,
+    public_key: &[u8],
+    plaintext: &[u8],
+) -> Result<Vec<u8>, String> {
+    // Wrap the in-memory AEAD key in Zeroizing so the local stack copy
+    // is wiped on drop. The aes-gcm cipher object owns its own internal
+    // expanded key schedule; that's outside our control, but the raw
+    // 32-byte buffer at this scope is ours to clear.
+    let key_buf: Zeroizing<[u8; 32]> = Zeroizing::new(*key);
+    let aead_key: &AesKey<Aes256Gcm> = AesKey::<Aes256Gcm>::from_slice(key_buf.as_slice());
+    let cipher = Aes256Gcm::new(aead_key);
+
+    // 96-bit random nonce from the OS CSPRNG.
+    let nonce = Aes256Gcm::generate_nonce(&mut AeadOsRng);
+
+    let aad = build_aad_v2(entry_id, public_key);
+    let ciphertext = cipher
+        .encrypt(
+            &nonce,
+            Payload {
+                msg: plaintext,
+                aad: aad.as_slice(),
+            },
+        )
+        .map_err(|e| format!("aead encrypt failed: {e}"))?;
+
+    let mut out = Vec::with_capacity(2 + 12 + ciphertext.len());
+    out.push(KEYSTORE_MAGIC);
+    out.push(KEYSTORE_VERSION_V2);
+    out.extend_from_slice(nonce.as_slice());
+    out.extend_from_slice(&ciphertext);
+    Ok(out)
+}
+
+/// AES-256-GCM decrypt of a v2 framed blob. Uses the same AAD binding
+/// as `encrypt_for_disk_v2`:
+///   - framing prefix (so a tampered magic/version surfaces as MAC failure)
+///   - entry id + public key (so swapping `enc_priv_key` between entries
+///     in the same keystore surfaces as MAC failure).
+///
+/// `entry_id` and `public_key` come from the `EncryptedEntry` JSON
+/// envelope that holds `blob`. The caller is responsible for passing the
+/// *envelope's* id and pubkey, not values from some other source — that
+/// is precisely what binds the ciphertext to its envelope.
+fn decrypt_v2(
+    key: &[u8; 32],
+    entry_id: &str,
+    public_key: &[u8],
+    blob: &[u8],
+) -> Result<Vec<u8>, String> {
+    // Minimum: magic(1) + version(1) + nonce(12) + tag(16) = 30 bytes.
+    if blob.len() < 30 {
+        return Err("v2 ciphertext too short".into());
+    }
+    if blob[0] != KEYSTORE_MAGIC || blob[1] != KEYSTORE_VERSION_V2 {
+        return Err("v2 ciphertext has wrong magic/version".into());
+    }
+    let nonce_bytes = &blob[2..14];
+    let ct = &blob[14..];
+
+    let key_buf: Zeroizing<[u8; 32]> = Zeroizing::new(*key);
+    let aead_key: &AesKey<Aes256Gcm> = AesKey::<Aes256Gcm>::from_slice(key_buf.as_slice());
+    let cipher = Aes256Gcm::new(aead_key);
+    let nonce = Nonce::from_slice(nonce_bytes);
+
+    let aad = build_aad_v2(entry_id, public_key);
+    cipher
+        .decrypt(
+            nonce,
+            Payload {
+                msg: ct,
+                aad: aad.as_slice(),
+            },
+        )
+        .map_err(|_| "MAC verification failed — key file may be corrupt or wrong machine".into())
+}
+
+/// Returns true iff `blob` is shaped like a v1 (legacy) ciphertext.
+/// Used by the dispatcher to decide whether a successful decrypt should
+/// trigger a transparent re-encrypt to v2.
+fn is_legacy_v1(blob: &[u8]) -> bool {
+    // A v2 blob always starts with [magic, version]. Anything else
+    // (including the empty enc_priv_key case during partial writes) is
+    // treated as legacy and routed through the v1 path, which will fail
+    // cleanly on garbage.
+    !(blob.len() >= 2 && blob[0] == KEYSTORE_MAGIC && blob[1] == KEYSTORE_VERSION_V2)
+}
+
+/// Top-level decrypt dispatcher used by the keystore. Tries v2 if the
+/// blob carries the magic+version prefix, otherwise falls through to the
+/// legacy v1 path. If a blob looks like v2 but AEAD verification fails,
+/// we also try v1 — this defends against the (negligible) probability
+/// that a legacy ciphertext's random first two bytes happen to collide
+/// with our magic+version.
+///
+/// M1 (TS-2026-001 audit): when the blob is v2-shaped and BOTH the v2
+/// AEAD and the v1 fallback fail, surface the v2 error rather than the
+/// v1 error. v1's failure on a v2-shaped blob is mechanical (wrong
+/// MAC computed under the wrong construction) and tells the user
+/// nothing useful; v2's failure is the actually-relevant signal
+/// (MAC verification under the documented AEAD). The previous code
+/// would mask the meaningful error with a confused legacy error
+/// message that pointed at the wrong remediation.
+fn decrypt_from_disk(
+    key: &[u8; 32],
+    entry_id: &str,
+    public_key: &[u8],
+    enc_data: &[u8],
+    legacy_nonce_field: &[u8],
+) -> Result<Zeroizing<Vec<u8>>, String> {
+    if !is_legacy_v1(enc_data) {
+        match decrypt_v2(key, entry_id, public_key, enc_data) {
+            Ok(pt) => return Ok(Zeroizing::new(pt)),
+            Err(v2_err) => {
+                // Collision fallback. v1 entries had random first bytes;
+                // there's a vanishing chance one looks like v2 framing.
+                // Try v1 first; if it succeeds we have a legitimate
+                // legacy entry whose framing happens to look v2-shaped.
+                // If v1 also fails, surface the v2 error (the
+                // semantically meaningful one) rather than v1's
+                // mechanical-junk failure.
+                return match decrypt_legacy_v1(key, enc_data, legacy_nonce_field) {
+                    Ok(pt) => Ok(Zeroizing::new(pt)),
+                    Err(_) => Err(v2_err),
+                };
+            }
+        }
+    }
+    decrypt_legacy_v1(key, enc_data, legacy_nonce_field).map(Zeroizing::new)
+}
+
+/// DEPRECATED: legacy at-rest decryption for keystores written before
+/// v0.10.3. This is the SHA-256-CTR + HMAC-SHA-256 construction that
+/// was mis-labelled as AES-256-GCM (TS-2026-001). The CTR keystream is
+/// also degenerate (the same `enc_key` byte is reused once per
+/// plaintext byte, since `block[i % 32]` indexes the same SHA-256 output
+/// modulo 32), so the construction is NOT a real stream cipher even
+/// ignoring the AEAD mislabelling.
+///
+/// Kept ONLY to migrate existing on-disk keystores forward to the v2
+/// AEAD format. Never call this for new writes. The encrypt counterpart
+/// has been removed from the v2 codepath — the only place v1
+/// ciphertexts come from is files written by older Treeship versions.
+pub fn aes_gcm_decrypt(
+    key: &[u8; 32],
+    enc_data: &[u8],
+    _nonce_unused: &[u8],
+) -> Result<Vec<u8>, String> {
+    // Preserved as a public symbol because the `treeship-vi` sibling
+    // crate calls it directly. vi only ever produces v1 ciphertexts
+    // (its `aes_gcm_encrypt` shim calls `legacy_v1_encrypt`) and has
+    // no concept of the `EncryptedEntry` envelope that carries the
+    // entry id + public key the v2 AAD now requires. Route this shim
+    // directly through the legacy v1 path so vi's call site keeps
+    // working byte-for-byte; vi's eventual migration release will
+    // adopt its own AEAD path with its own envelope binding.
+    decrypt_legacy_v1(key, enc_data, _nonce_unused)
+}
+
+/// DEPRECATED: legacy at-rest encryption. Same caveats as
+/// `aes_gcm_decrypt`. Kept ONLY as a public symbol for compatibility
+/// with the `treeship-vi` sibling crate; the core keystore no longer
+/// produces v1 ciphertexts.
+///
+/// New code MUST use `encrypt_for_disk_v2`. This function still
+/// produces v1-format output so the vi crate's on-disk format remains
+/// byte-stable until it migrates on its own cadence.
 pub fn aes_gcm_encrypt(key: &[u8; 32], plaintext: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
-    // Pure-Rust AES-256-GCM using the block-cipher and GCM construction
-    // from the RustCrypto project. We inline a minimal version here to
-    // avoid pulling in aes-gcm 0.10 which pulls in base64ct ≥ 1.7.
-    //
-    // For now we use a simpler XOR-then-HMAC construction until we can
-    // pin a compatible aes-gcm version. This is replaced with proper
-    // AES-256-GCM once the toolchain constraint is lifted.
-    //
-    // Production note: this is AES-256-CTR + HMAC-SHA256 (Encrypt-then-MAC),
-    // which is semantically secure and provides authenticated encryption.
+    legacy_v1_encrypt(key, plaintext)
+}
+
+/// Legacy v1 encrypt. SHA-256-CTR + HMAC-SHA-256. DO NOT USE for new
+/// writes — present only so vi-keystore callers keep working until
+/// they migrate. See `aes_gcm_encrypt` doc-comment for the security
+/// caveats.
+fn legacy_v1_encrypt(key: &[u8; 32], plaintext: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
     use sha2::Sha256;
 
     let mut nonce = [0u8; 12];
     rand::thread_rng().fill_bytes(&mut nonce);
 
-    // Derive per-nonce subkeys via HKDF-lite: sha256(key || nonce || "enc")
     let mut enc_key_input = key.to_vec();
     enc_key_input.extend_from_slice(&nonce);
     enc_key_input.extend_from_slice(b"enc");
@@ -607,7 +1018,6 @@ pub fn aes_gcm_encrypt(key: &[u8; 32], plaintext: &[u8]) -> Result<(Vec<u8>, Vec
     mac_key_input.extend_from_slice(b"mac");
     let mac_key = Sha256::digest(&mac_key_input);
 
-    // CTR-mode keystream: sha256(enc_key || counter)
     let ciphertext: Vec<u8> = plaintext.iter().enumerate().map(|(i, &b)| {
         let mut block_input = enc_key.to_vec();
         block_input.extend_from_slice(&(i as u64).to_le_bytes());
@@ -615,13 +1025,11 @@ pub fn aes_gcm_encrypt(key: &[u8; 32], plaintext: &[u8]) -> Result<(Vec<u8>, Vec
         b ^ block[i % 32]
     }).collect();
 
-    // MAC: sha256(mac_key || nonce || ciphertext)
     let mut mac_input = mac_key.to_vec();
     mac_input.extend_from_slice(&nonce);
     mac_input.extend_from_slice(&ciphertext);
     let mac = Sha256::digest(&mac_input);
 
-    // Output: nonce(12) || mac(32) || ciphertext
     let mut out = Vec::with_capacity(12 + 32 + ciphertext.len());
     out.extend_from_slice(&nonce);
     out.extend_from_slice(&mac);
@@ -630,7 +1038,14 @@ pub fn aes_gcm_encrypt(key: &[u8; 32], plaintext: &[u8]) -> Result<(Vec<u8>, Vec
     Ok((out, nonce.to_vec()))
 }
 
-pub fn aes_gcm_decrypt(key: &[u8; 32], enc_data: &[u8], _nonce_unused: &[u8]) -> Result<Vec<u8>, String> {
+/// Legacy v1 decrypt. SHA-256-CTR + HMAC-SHA-256. See the module-level
+/// notes on TS-2026-001 for why this is broken; kept only to migrate
+/// existing keystores forward.
+fn decrypt_legacy_v1(
+    key: &[u8; 32],
+    enc_data: &[u8],
+    _nonce_unused: &[u8],
+) -> Result<Vec<u8>, String> {
     if enc_data.len() < 44 {
         return Err("ciphertext too short".into());
     }
@@ -652,13 +1067,11 @@ pub fn aes_gcm_decrypt(key: &[u8; 32], enc_data: &[u8], _nonce_unused: &[u8]) ->
     mac_key_input.extend_from_slice(b"mac");
     let mac_key = Sha256::digest(&mac_key_input);
 
-    // Verify MAC before decrypting (Encrypt-then-MAC).
     let mut mac_input = mac_key.to_vec();
     mac_input.extend_from_slice(&nonce_arr);
     mac_input.extend_from_slice(ciphertext);
     let computed_mac = Sha256::digest(&mac_input);
 
-    // Constant-time comparison.
     let mac_ok = stored_mac.iter().zip(computed_mac.iter())
         .fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0;
 
@@ -957,19 +1370,145 @@ impl Store {
     }
 }
 
-fn write_file_600(path: &Path, data: &[u8]) -> Result<(), KeyError> {
-    let mut f = fs::OpenOptions::new()
-        .write(true)
+/// Open (or create) the per-entry migration sentinel lock file with
+/// owner-only permissions (0o600 on Unix). The handle returned can be
+/// passed to `fs2::FileExt::lock_exclusive` to serialize concurrent
+/// v1->v2 migrations of the same entry across processes/threads
+/// (TS-2026-001 H3).
+///
+/// On Unix the mode is set at creation via `OpenOptionsExt::mode` so the
+/// sentinel never has a moment of looser perms. On non-Unix platforms the
+/// file inherits parent ACLs (the keystore dir is owner-scoped already).
+#[cfg(unix)]
+fn open_migration_lock_file(path: &Path) -> Result<fs::File, io::Error> {
+    use std::os::unix::fs::OpenOptionsExt;
+    fs::OpenOptions::new()
         .create(true)
-        .truncate(true)
-        .open(path)?;
-    f.write_all(data)?;
-    // Set permissions to 0600 on Unix.
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn open_migration_lock_file(path: &Path) -> Result<fs::File, io::Error> {
+    fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(path)
+}
+
+/// Atomically write `data` to `path` with owner-only (0o600) permissions on
+/// Unix.
+///
+/// TS-2026-001 H1 + H2: the prior implementation was truncate-then-write,
+/// which destroys the original file if the process crashes mid-write. For
+/// the keystore that's catastrophic -- a crash during transparent v1->v2
+/// migration would leave a zero-byte (or partial) key entry on disk and
+/// the private key would be unrecoverable. This implementation writes to
+/// a sibling tmp file in the same directory, fsyncs the bytes through to
+/// the platter, then performs a POSIX-atomic same-filesystem `rename(2)`.
+/// A crash before the rename leaves the original file intact; the tmp
+/// file is harmless garbage that the next successful write will overwrite.
+///
+/// The 0o600 mode is set at file *creation* via `OpenOptionsExt::mode`
+/// so there is no window in which the file exists with looser perms.
+/// The prior `set_permissions` post-write call is dropped because it was
+/// redundant and gave the appearance (but not the substance) of safety.
+fn write_file_600(path: &Path, data: &[u8]) -> Result<(), KeyError> {
+    // Place the tmp file in the same directory as the final path so the
+    // rename stays on the same filesystem (cross-FS renames are not atomic
+    // and degrade to copy+unlink, defeating the whole point).
+    let tmp_path = path.with_extension("tmp");
+
+    // Best-effort cleanup of any stale tmp from a prior crash before we
+    // start writing. Ignored on error -- if it doesn't exist that's fine,
+    // and if it can't be removed the OpenOptions call below will surface
+    // the underlying error.
+    let _ = fs::remove_file(&tmp_path);
+
+    let write_result: Result<(), KeyError> = (|| {
+        #[cfg(unix)]
+        let open = {
+            use std::os::unix::fs::OpenOptionsExt;
+            fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&tmp_path)
+        };
+        #[cfg(not(unix))]
+        let open = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&tmp_path);
+
+        let mut f = open?;
+        f.write_all(data)?;
+        // sync_all flushes both data AND metadata, so on a crash after
+        // the rename, fsck/journal recovery sees the new bytes -- not a
+        // ghost inode with stale content.
+        f.sync_all()?;
+        Ok(())
+    })();
+
+    if let Err(e) = write_result {
+        // Best-effort cleanup so the next write isn't surprised by a
+        // half-written tmp. Errors here are not surfaced: the original
+        // write error is what the caller needs to see.
+        let _ = fs::remove_file(&tmp_path);
+        return Err(e);
+    }
+
+    // Atomic same-filesystem rename. On Unix this is a single
+    // rename(2) syscall guaranteed by POSIX to be atomic with respect
+    // to other observers. On Windows std::fs::rename is implemented
+    // via MoveFileEx with MOVEFILE_REPLACE_EXISTING (atomic on NTFS,
+    // best-effort elsewhere). After this returns Ok, the new bytes are
+    // visible at `path` and the tmp file no longer exists.
+    if let Err(e) = fs::rename(&tmp_path, path) {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(KeyError::Io(e));
+    }
+
+    // fsync the parent directory so the rename's directory-entry update
+    // is itself persisted. The previous code only fsynced the tmp
+    // file's contents (via sync_all on the file handle) -- on ext4/xfs
+    // with default mount options, the rename can return to userspace
+    // before the dirent metadata has been written to the journal. A
+    // power loss in that window leaves the directory entry pointing at
+    // the OLD inode (or, worse, missing entirely if both old and new
+    // were unlinked from the parent), even though both the data bytes
+    // and the rename syscall ostensibly completed. The H1 doc-comment
+    // above promised stronger durability than the code delivered;
+    // fsyncing the parent dir closes that gap.
+    //
+    // Best-effort on Unix: a directory open + sync_all is the standard
+    // pattern (see e.g. SQLite's atomic-commit, leveldb, lmdb). On
+    // platforms where opening a directory for sync isn't supported, we
+    // silently skip -- the rename is still atomic-with-respect-to-
+    // observers, we just don't guarantee crash-durability of the
+    // dirent update.
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        if let Some(parent) = path.parent() {
+            // Errors here are non-fatal: the rename succeeded and the
+            // common case (no power loss before the next fs flush) is
+            // correct. We surface a failure to open/sync the dir only
+            // if the rename itself succeeded, since otherwise the
+            // caller would mistake a durability hint for a write
+            // failure. swallow silently rather than return.
+            if let Ok(dir) = fs::File::open(parent) {
+                let _ = dir.sync_all();
+            }
+        }
     }
+
     Ok(())
 }
 
@@ -1030,6 +1569,8 @@ mod tests {
 
     #[test]
     fn encrypt_decrypt_roundtrip() {
+        // Routes the legacy public API through the dispatcher; v1
+        // ciphertexts must still decrypt correctly.
         let key = [42u8; 32];
         let plaintext = b"super secret private key material here!";
         let (enc, nonce) = aes_gcm_encrypt(&key, plaintext).unwrap();
@@ -1043,6 +1584,297 @@ mod tests {
         let wrong = [99u8; 32];
         let (enc, nonce) = aes_gcm_encrypt(&key, b"secret").unwrap();
         assert!(aes_gcm_decrypt(&wrong, &enc, &nonce).is_err());
+    }
+
+    // --- v2 AEAD tests (TS-2026-001 fix) -----------------------------------
+
+    // Fixed entry id + pubkey for the unit-level v2 tests below. The AAD
+    // builder binds these into the GCM tag, so encrypt and decrypt must
+    // see identical values. Using constants keeps each test focused on
+    // its own bit-flip / tamper assertion without dragging Store setup
+    // into the picture.
+    const TEST_ENTRY_ID: &str = "key_unit_test_entry_0001";
+    const TEST_PUBLIC_KEY: &[u8; 32] = &[0xAA; 32];
+
+    #[test]
+    fn v2_encrypt_decrypt_roundtrip() {
+        let key = [7u8; 32];
+        let plaintext = b"super secret private key material here!";
+        let blob =
+            encrypt_for_disk_v2(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, plaintext).unwrap();
+        // Structural check on the framing.
+        assert_eq!(blob[0], KEYSTORE_MAGIC, "magic byte");
+        assert_eq!(blob[1], KEYSTORE_VERSION_V2, "version byte");
+        assert_eq!(blob.len(), 2 + 12 + plaintext.len() + 16,
+                   "magic+version+nonce+ct+tag length");
+
+        let dec =
+            decrypt_from_disk(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, &blob, &[]).unwrap();
+        assert_eq!(&*dec, plaintext);
+    }
+
+    #[test]
+    fn v2_decrypt_wrong_key_fails() {
+        let key   = [7u8; 32];
+        let wrong = [99u8; 32];
+        let blob = encrypt_for_disk_v2(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, b"secret").unwrap();
+        // Wrong key with v2 framing: AEAD must reject. Dispatcher will
+        // try v1 fallback (which also fails on garbage), so the final
+        // error surfaces as a MAC failure rather than wrong plaintext.
+        let result = decrypt_from_disk(&wrong, TEST_ENTRY_ID, TEST_PUBLIC_KEY, &blob, &[]);
+        assert!(result.is_err(), "wrong key must fail");
+    }
+
+    #[test]
+    fn v2_tamper_ciphertext_fails() {
+        let key = [7u8; 32];
+        let mut blob = encrypt_for_disk_v2(
+            &key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, b"super secret private key"
+        ).unwrap();
+        // Flip one bit inside the ciphertext body (after the 14-byte
+        // framing). GCM authenticates ciphertext + nonce; any flip must
+        // fail.
+        let last = blob.len() - 5;
+        blob[last] ^= 0x01;
+        let result = decrypt_from_disk(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, &blob, &[]);
+        assert!(result.is_err(), "tampered ciphertext must fail to decrypt");
+    }
+
+    #[test]
+    fn v2_tamper_nonce_fails() {
+        let key = [7u8; 32];
+        let mut blob = encrypt_for_disk_v2(
+            &key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, b"super secret private key"
+        ).unwrap();
+        // Flip a bit in the nonce (bytes [2..14]).
+        blob[5] ^= 0x01;
+        let result = decrypt_from_disk(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, &blob, &[]);
+        assert!(result.is_err(), "tampered nonce must fail to decrypt");
+    }
+
+    #[test]
+    fn v2_tamper_tag_fails() {
+        let key = [7u8; 32];
+        let mut blob = encrypt_for_disk_v2(
+            &key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, b"super secret private key"
+        ).unwrap();
+        // Flip a bit in the trailing GCM tag (last 16 bytes).
+        let len = blob.len();
+        blob[len - 1] ^= 0x80;
+        let result = decrypt_from_disk(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, &blob, &[]);
+        assert!(result.is_err(), "tampered GCM tag must fail to decrypt");
+    }
+
+    #[test]
+    fn v2_nonces_are_unique_across_writes() {
+        // Sanity check: two encryptions of identical plaintext under the
+        // same key must produce different blobs (random per-write nonce).
+        // Without this property, AES-GCM is catastrophically broken.
+        let key = [7u8; 32];
+        let blob_a =
+            encrypt_for_disk_v2(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, b"identical").unwrap();
+        let blob_b =
+            encrypt_for_disk_v2(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, b"identical").unwrap();
+        assert_ne!(blob_a, blob_b,
+                   "two v2 encryptions of the same plaintext must differ");
+        assert_ne!(&blob_a[2..14], &blob_b[2..14], "nonces must differ");
+
+        // L1 (TS-2026-001 audit): draw 10k nonces in a row and assert
+        // every one is distinct. A duplicate at this volume would be a
+        // strong (10k^2 / 2^96 ~ 2^-65 floor) signal that the OS CSPRNG
+        // backing aead::OsRng is misbehaving on this build. Cheap, fast,
+        // and catches a regression class (PRNG mis-seeding,
+        // accidentally-deterministic nonce, RNG getting forked across
+        // threads without re-seed) that the 2-sample check above can't.
+        const N: usize = 10_000;
+        let mut nonces: std::collections::HashSet<Vec<u8>> =
+            std::collections::HashSet::with_capacity(N);
+        for _ in 0..N {
+            let blob =
+                encrypt_for_disk_v2(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, b"x").unwrap();
+            // bytes [2..14] are the 12-byte GCM nonce.
+            nonces.insert(blob[2..14].to_vec());
+        }
+        assert_eq!(
+            nonces.len(),
+            N,
+            "all {} v2 nonces must be unique; collision => RNG defect",
+            N
+        );
+    }
+
+    #[test]
+    fn v2_tamper_version_byte_fails() {
+        // M2: flipping the version byte must cause decryption to fail.
+        // The framing sanity check catches obvious flips immediately;
+        // the AAD-binding test below covers the case where the framing
+        // sanity check would otherwise pass.
+        let key = [7u8; 32];
+        let mut blob = encrypt_for_disk_v2(
+            &key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, b"super secret private key"
+        ).unwrap();
+        assert_eq!(blob[1], KEYSTORE_VERSION_V2);
+        blob[1] = 0xff;
+        assert!(
+            decrypt_v2(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, &blob).is_err(),
+            "altered version byte must be rejected"
+        );
+    }
+
+    #[test]
+    fn v2_aad_binding_detects_framing_substitution() {
+        // M2 direct check: encrypt a payload with v2 AAD, then construct
+        // a blob whose framing claims to be v2 but whose ciphertext was
+        // computed under a different AAD (empty). decrypt_v2 must
+        // reject with MAC failure rather than returning the plaintext.
+        let key = [7u8; 32];
+        let plaintext = b"M2 AAD bound material";
+
+        // Compute a v2-framed blob without supplying AAD -- mimics what
+        // the *pre-M2* code would have produced. This is the exact
+        // attack surface AAD closes: an old blob whose framing is v2
+        // but whose tag was computed empty.
+        use aes_gcm::aead::Aead;
+        let key_buf: Zeroizing<[u8; 32]> = Zeroizing::new(key);
+        let aead_key: &AesKey<Aes256Gcm> = AesKey::<Aes256Gcm>::from_slice(key_buf.as_slice());
+        let cipher = Aes256Gcm::new(aead_key);
+        let nonce = Aes256Gcm::generate_nonce(&mut AeadOsRng);
+        let ct_no_aad = cipher.encrypt(&nonce, plaintext.as_slice()).unwrap();
+
+        let mut forged = Vec::with_capacity(2 + 12 + ct_no_aad.len());
+        forged.push(KEYSTORE_MAGIC);
+        forged.push(KEYSTORE_VERSION_V2);
+        forged.extend_from_slice(nonce.as_slice());
+        forged.extend_from_slice(&ct_no_aad);
+
+        // Framing sanity passes. AAD does not. decrypt_v2 must reject.
+        assert_eq!(forged[0], KEYSTORE_MAGIC);
+        assert_eq!(forged[1], KEYSTORE_VERSION_V2);
+        let result = decrypt_v2(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, &forged);
+        assert!(result.is_err(),
+                "ciphertext computed without AAD must fail to decrypt now that AAD is bound");
+    }
+
+    #[test]
+    fn dispatcher_surfaces_v2_error_on_corrupted_v2_blob() {
+        // M1: a v2-shaped blob whose AEAD verification fails (and
+        // whose v1 fallback also fails, since the bytes are garbage
+        // under both constructions) must surface the v2 MAC error, not
+        // the v1 "ciphertext too short" / random-junk error. The user
+        // sees a meaningful message that points at the right
+        // remediation.
+        let key = [7u8; 32];
+        let mut blob =
+            encrypt_for_disk_v2(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, b"hello").unwrap();
+        // Flip a byte in the GCM tag (last 16 bytes) so the v2 AEAD
+        // rejects but the framing still classifies as v2.
+        let last = blob.len() - 1;
+        blob[last] ^= 0x01;
+
+        let err =
+            decrypt_from_disk(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, &blob, &[]).unwrap_err();
+        // The dispatcher should bubble the v2 error string up. v2's
+        // error message contains "MAC verification failed"; v1's
+        // shape on garbage data is either "ciphertext too short" or
+        // a different MAC error. Match on the v2-specific tail.
+        assert!(
+            err.contains("MAC verification failed"),
+            "dispatcher must surface the v2 MAC error on corrupted v2 blob, got: {err}"
+        );
+    }
+
+    #[test]
+    fn legacy_v1_ciphertext_still_decrypts_via_dispatcher() {
+        // Simulates an on-disk keystore written by Treeship <= v0.10.2:
+        // the dispatcher must successfully route legacy ciphertexts
+        // through the v1 path so existing users are not locked out.
+        let key = [13u8; 32];
+        let plaintext = b"pre-v0.10.3 keystore entry";
+        let (legacy_blob, legacy_nonce) =
+            legacy_v1_encrypt(&key, plaintext).unwrap();
+
+        // Sanity: legacy blob does NOT start with v2 framing.
+        assert!(is_legacy_v1(&legacy_blob),
+                "legacy_v1_encrypt output must classify as legacy");
+
+        // Dispatcher must accept it. AAD inputs are irrelevant for the
+        // v1 path (it doesn't use them), but the signature requires them
+        // — pass the same placeholder constants used elsewhere.
+        let dec = decrypt_from_disk(
+            &key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, &legacy_blob, &legacy_nonce,
+        )
+        .unwrap();
+        assert_eq!(&*dec, plaintext);
+    }
+
+    #[test]
+    fn store_signer_migrates_legacy_entry_to_v2() {
+        // End-to-end: write a key entry with the legacy v1 ciphertext
+        // (as if upgrading from v0.10.2), call `signer()`, then verify
+        // the on-disk entry has been rewritten in v2 format.
+        let (store, dir) = make_store();
+
+        // Generate normally (this writes v2). Then re-encrypt the
+        // secret in v1 format and overwrite the entry on disk to
+        // simulate the upgrade scenario.
+        let info = store.generate(true).unwrap();
+        let entry_path = store.entry_path(&info.id);
+
+        // Pull the v2 entry off disk, decrypt to recover the secret,
+        // then re-encode in legacy v1 format and write it back.
+        let v2_entry: EncryptedEntry =
+            serde_json::from_slice(&fs::read(&entry_path).unwrap()).unwrap();
+        let secret = decrypt_from_disk(
+            &store.machine_key,
+            &v2_entry.id,
+            &v2_entry.public_key,
+            &v2_entry.enc_priv_key,
+            &v2_entry.nonce,
+        )
+            .unwrap();
+        let (legacy_blob, legacy_nonce) =
+            legacy_v1_encrypt(&store.machine_key, &secret).unwrap();
+        let legacy_entry = EncryptedEntry {
+            id:               v2_entry.id.clone(),
+            algorithm:        v2_entry.algorithm.clone(),
+            created_at:       v2_entry.created_at.clone(),
+            public_key:       v2_entry.public_key.clone(),
+            enc_priv_key:     legacy_blob,
+            nonce:            legacy_nonce,
+            valid_until:      v2_entry.valid_until.clone(),
+            successor_key_id: v2_entry.successor_key_id.clone(),
+        };
+        fs::write(&entry_path, serde_json::to_vec_pretty(&legacy_entry).unwrap()).unwrap();
+
+        // Reload with a fresh Store so the cache doesn't paper over the
+        // on-disk change.
+        let store2 = Store::open(&dir).unwrap();
+        // Loading the signer must succeed (legacy path works) AND
+        // trigger the transparent migration to v2.
+        let _signer = store2.signer(&info.id).unwrap();
+
+        let after: EncryptedEntry =
+            serde_json::from_slice(&fs::read(&entry_path).unwrap()).unwrap();
+        assert!(!is_legacy_v1(&after.enc_priv_key),
+                "post-migration entry must be in v2 format");
+        assert_eq!(after.enc_priv_key[0], KEYSTORE_MAGIC);
+        assert_eq!(after.enc_priv_key[1], KEYSTORE_VERSION_V2);
+        assert!(after.nonce.is_empty(),
+                "v2 entries serialize an empty legacy nonce field");
+
+        // L2 (TS-2026-001 audit): the framing check above proves the
+        // migrator *wrote* a v2-shaped blob, but a downstream
+        // assert_eq! on framing alone doesn't prove the v2 ciphertext
+        // is actually a working AEAD encryption of the right secret.
+        // Load the signer one more time through a fresh Store; this
+        // routes through the dispatcher's v2-first branch and would
+        // fail loudly if the migration had produced garbage.
+        let store3 = Store::open(&dir).unwrap();
+        let _signer = store3
+            .signer(&info.id)
+            .expect("post-migration v2 decrypt works");
+
+        cleanup(dir);
     }
 
     #[test]
@@ -1430,6 +2262,205 @@ mod tests {
         cleanup(dir);
     }
 
+    // --- TS-2026-001 H3 migration-lock concurrency test -----------------
+
+    /// H3: two threads calling `Store::signer` on the same legacy v1
+    /// entry must both succeed, the on-disk entry must end up as a
+    /// valid v2 entry (decryptable via the v2 path), and no `.tmp`
+    /// fragment must be left in the keystore directory.
+    ///
+    /// Without the advisory lock around `migrate_entry_to_v2`, two
+    /// concurrent migrators would race the read-modify-rename cycle:
+    /// the loser's rename would clobber the winner's v2 entry with
+    /// its own (also-valid) v2 entry, but in between the two
+    /// renames a third reader could observe a v2 entry, decrypt
+    /// successfully, then have its in-memory state invalidated by
+    /// the second writer. The flock turns the race into a queue --
+    /// both writers produce identical v2 plaintext, only one rename
+    /// per entry is actually needed, and the second writer's
+    /// post-lock recheck observes the v2 state and exits cleanly.
+    #[test]
+    fn concurrent_migration_serializes_correctly() {
+        use std::sync::Arc;
+        use std::thread;
+
+        // Set up a legacy v1 entry on disk -- same shape as the
+        // store_signer_migrates_legacy_entry_to_v2 test, just shared
+        // with two threads.
+        let (store, dir) = make_store();
+        let info = store.generate(true).unwrap();
+        let entry_path = store.entry_path(&info.id);
+
+        let v2_entry: EncryptedEntry =
+            serde_json::from_slice(&fs::read(&entry_path).unwrap()).unwrap();
+        let secret = decrypt_from_disk(
+            &store.machine_key,
+            &v2_entry.id,
+            &v2_entry.public_key,
+            &v2_entry.enc_priv_key,
+            &v2_entry.nonce,
+        )
+            .unwrap();
+        let (legacy_blob, legacy_nonce) =
+            legacy_v1_encrypt(&store.machine_key, &secret).unwrap();
+        let legacy_entry = EncryptedEntry {
+            id:               v2_entry.id.clone(),
+            algorithm:        v2_entry.algorithm.clone(),
+            created_at:       v2_entry.created_at.clone(),
+            public_key:       v2_entry.public_key.clone(),
+            enc_priv_key:     legacy_blob,
+            nonce:            legacy_nonce,
+            valid_until:      v2_entry.valid_until.clone(),
+            successor_key_id: v2_entry.successor_key_id.clone(),
+        };
+        fs::write(&entry_path, serde_json::to_vec_pretty(&legacy_entry).unwrap()).unwrap();
+
+        // Two independent Store instances racing on the same on-disk
+        // legacy entry. Using independent Store instances forces the
+        // lock-on-disk path to engage (a shared Store would serialize
+        // through the internal RwLock cache and we'd be testing the
+        // wrong thing).
+        let dir_a = Arc::new(dir.clone());
+        let dir_b = Arc::new(dir.clone());
+        let id_a = info.id.clone();
+        let id_b = info.id.clone();
+
+        let h1 = thread::spawn(move || -> Result<(), String> {
+            let s = Store::open(&*dir_a).map_err(|e| e.to_string())?;
+            let _signer = s.signer(&id_a).map_err(|e| e.to_string())?;
+            Ok(())
+        });
+        let h2 = thread::spawn(move || -> Result<(), String> {
+            let s = Store::open(&*dir_b).map_err(|e| e.to_string())?;
+            let _signer = s.signer(&id_b).map_err(|e| e.to_string())?;
+            Ok(())
+        });
+
+        h1.join().unwrap().expect("thread 1 signer load must succeed");
+        h2.join().unwrap().expect("thread 2 signer load must succeed");
+
+        // Post-condition: on-disk entry is v2 framed.
+        let after: EncryptedEntry =
+            serde_json::from_slice(&fs::read(&entry_path).unwrap()).unwrap();
+        assert!(
+            !is_legacy_v1(&after.enc_priv_key),
+            "post-concurrent-migration entry must be in v2 format"
+        );
+        assert_eq!(after.enc_priv_key[0], KEYSTORE_MAGIC);
+        assert_eq!(after.enc_priv_key[1], KEYSTORE_VERSION_V2);
+
+        // v2 decrypts cleanly. Use the post-migration entry's own id +
+        // pubkey — the migration must have re-encrypted with those bound
+        // into the AAD, or this assertion would surface a MAC failure.
+        let dec = decrypt_v2(
+            &store.machine_key,
+            &after.id,
+            &after.public_key,
+            &after.enc_priv_key,
+        )
+            .expect("v2 entry must decrypt cleanly after concurrent migration");
+        assert_eq!(dec.len(), 32, "decrypted secret must be a 32-byte ed25519 scalar");
+
+        // No stale .tmp file left behind.
+        for entry in fs::read_dir(&dir).unwrap() {
+            let p = entry.unwrap().path();
+            assert!(
+                p.extension().is_none_or(|e| e != "tmp"),
+                "no .tmp fragment must remain after migration, found: {}",
+                p.display()
+            );
+        }
+
+        cleanup(dir);
+    }
+
+    // --- TS-2026-001 H1 + H2 atomic write tests ------------------------
+
+    /// H1: a partial failure between writing the tmp file and renaming
+    /// it into place MUST leave the original on-disk file intact. We
+    /// simulate the failure by pre-creating a tmp file (so the next
+    /// write_file_600 would clobber it) and then independently verifying
+    /// that an already-written key entry remains decryptable even after
+    /// a fresh write_file_600 fails partway.
+    ///
+    /// We exercise the failure path by pointing the rename at an
+    /// unwritable target. On Unix we make the *parent directory*
+    /// read-only after the original key is in place, which causes the
+    /// final fs::rename to fail with EACCES. The original key file is
+    /// unaffected because rename(2) returns before touching the target.
+    #[test]
+    #[cfg(unix)]
+    fn atomic_write_leaves_original_intact_on_partial_failure() {
+        use std::os::unix::fs::PermissionsExt;
+        let (store, dir) = make_store();
+        let info = store.generate(true).unwrap();
+        let entry_path = store.entry_path(&info.id);
+
+        // Capture the original bytes for byte-identity comparison.
+        let original = fs::read(&entry_path).expect("entry file must exist");
+        assert!(!original.is_empty(), "freshly generated entry must be non-empty");
+
+        // Lock the directory: read+execute only, no write. fs::rename
+        // into this directory will fail.
+        let orig_dir_mode = fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o500)).unwrap();
+
+        // Attempt a fresh write to the SAME path -- must fail because
+        // the directory is read-only, exercising the rename-failure
+        // branch.
+        let res = write_file_600(&entry_path, b"new junk that must not land");
+        assert!(res.is_err(), "write_file_600 must fail when dir is read-only");
+
+        // Restore perms so we can read back the entry.
+        fs::set_permissions(&dir, fs::Permissions::from_mode(orig_dir_mode)).unwrap();
+
+        // The original key file must be byte-identical to what we
+        // captured before the failed write.
+        let after = fs::read(&entry_path).expect("entry file must still exist after failed write");
+        assert_eq!(
+            after, original,
+            "failed atomic write must not corrupt the original file",
+        );
+
+        // And the keystore must still produce a working signer from it.
+        let store2 = Store::open(&dir).unwrap();
+        let signer = store2
+            .signer(&info.id)
+            .expect("original key must still decrypt after a failed write");
+        let pae = crate::attestation::pae("text/plain", b"survive");
+        assert_eq!(signer.sign(&pae).unwrap().len(), 64);
+
+        // No stale tmp file left behind.
+        let tmp = entry_path.with_extension("tmp");
+        assert!(!tmp.exists(), "tmp file must be cleaned up after rename failure");
+
+        cleanup(dir);
+    }
+
+    /// H2: the entry file's mode is 0o600 at the moment of creation, set
+    /// via OpenOptionsExt::mode rather than a post-write set_permissions
+    /// (which had a tiny window of looser perms). Also confirms the tmp
+    /// file is removed by the rename.
+    #[test]
+    #[cfg(unix)]
+    fn mode_is_600_at_creation() {
+        use std::os::unix::fs::PermissionsExt;
+        let (store, dir) = make_store();
+        let info = store.generate(true).unwrap();
+        let entry_path = store.entry_path(&info.id);
+
+        let mode = fs::metadata(&entry_path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "entry file must be 0600 at creation, got {:o}", mode);
+
+        let tmp = entry_path.with_extension("tmp");
+        assert!(
+            !tmp.exists(),
+            "no .tmp file must be left behind after a successful atomic write"
+        );
+
+        cleanup(dir);
+    }
+
     #[test]
     #[cfg(unix)]
     fn fix_perms_repairs_loose_modes() {
@@ -1460,6 +2491,130 @@ mod tests {
 
         // After repair, signing must work again.
         store.signer(&info.id).expect("signing must work after fix_perms");
+
+        cleanup(dir);
+    }
+
+    // --- TS-2026-001 post-merge fix-up: entry-binding AAD ------------------
+
+    /// Post-merge audit fix: the v2 AAD now binds entry id + public key
+    /// into the GCM tag. Without that binding, a local attacker with
+    /// write access to ~/.treeship/keys/ could copy entry A's
+    /// `enc_priv_key` ciphertext into entry B's JSON envelope; the
+    /// decrypt would succeed (same machine key, same framing-only AAD)
+    /// and the signer for advertised key id A would silently sign with
+    /// key B's secret scalar.
+    ///
+    /// This test performs exactly that swap and asserts decryption now
+    /// fails. Before the fix this test would silently pass with the
+    /// wrong scalar -- a true regression guard.
+    #[test]
+    fn cross_entry_swap_fails_decryption() {
+        let (store, dir) = make_store();
+
+        // Two independent keys in the same store, same machine key.
+        let a = store.generate(true).unwrap();
+        let b = store.generate(false).unwrap();
+
+        // Snapshot both on-disk envelopes.
+        let path_a = store.entry_path(&a.id);
+        let path_b = store.entry_path(&b.id);
+        let entry_a: EncryptedEntry =
+            serde_json::from_slice(&fs::read(&path_a).unwrap()).unwrap();
+        let entry_b: EncryptedEntry =
+            serde_json::from_slice(&fs::read(&path_b).unwrap()).unwrap();
+
+        // Sanity: both are v2 framed, and the ciphertexts differ.
+        assert_eq!(entry_a.enc_priv_key[0], KEYSTORE_MAGIC);
+        assert_eq!(entry_a.enc_priv_key[1], KEYSTORE_VERSION_V2);
+        assert_eq!(entry_b.enc_priv_key[0], KEYSTORE_MAGIC);
+        assert_eq!(entry_b.enc_priv_key[1], KEYSTORE_VERSION_V2);
+        assert_ne!(
+            entry_a.enc_priv_key, entry_b.enc_priv_key,
+            "two freshly-generated entries must have distinct ciphertexts"
+        );
+
+        // The attack: copy B's enc_priv_key into A's envelope. Leave
+        // everything else (id, public_key, algorithm) as it was in A.
+        // This is the file an attacker with write access to the keys
+        // directory would produce.
+        let mut tampered_a = entry_a.clone();
+        tampered_a.enc_priv_key = entry_b.enc_priv_key.clone();
+        // The v2 nonce travels inline with the ciphertext (bytes
+        // [2..14] of enc_priv_key), so swapping the blob also swaps
+        // the nonce; the separate JSON `nonce` field is empty for v2
+        // entries either way.
+        fs::write(&path_a, serde_json::to_vec_pretty(&tampered_a).unwrap()).unwrap();
+
+        // Fresh Store so the in-memory cache doesn't paper over the
+        // on-disk tamper.
+        let store2 = Store::open(&dir).unwrap();
+        let err = match store2.signer(&a.id) {
+            Ok(_) => panic!(
+                "swapping B's ciphertext into A's envelope must fail decrypt; \
+                 got Ok which means the signer would silently sign with key B"
+            ),
+            Err(e) => e,
+        };
+
+        // The specific error must be a crypto/MAC failure, not (e.g.)
+        // a NotFound or InsecureKeyPerms surface that could mask the
+        // class of bug.
+        match err {
+            KeyError::Crypto(msg) => assert!(
+                msg.contains("MAC verification failed"),
+                "swap must surface MAC failure; got: {msg}"
+            ),
+            other => panic!("expected Crypto MAC error, got: {other:?}"),
+        }
+
+        cleanup(dir);
+    }
+
+    /// Companion to `cross_entry_swap_fails_decryption`: the id field
+    /// is also bound into the AAD, so editing the JSON `id` while
+    /// leaving the ciphertext alone must also fail. (An attacker who
+    /// renames a stolen entry file onto a victim's id without
+    /// re-encrypting would land here.)
+    #[test]
+    fn aad_tampered_entry_id_fails_decryption() {
+        let (store, dir) = make_store();
+        let info = store.generate(true).unwrap();
+        let path = store.entry_path(&info.id);
+
+        let mut entry: EncryptedEntry =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(entry.id, info.id, "sanity: id matches what generate returned");
+
+        // Pretend the attacker forged an id. Note we write this back to
+        // the SAME file path so Store::load_entry by the original id
+        // finds it; if we changed the path too we'd just be testing
+        // NotFound, which isn't the point.
+        entry.id = "key_attacker_substituted_id".to_string();
+        fs::write(&path, serde_json::to_vec_pretty(&entry).unwrap()).unwrap();
+
+        // Fresh Store so cache doesn't paper this over. Load via the
+        // tampered id (matching what's in the JSON) so we exercise the
+        // decrypt path rather than a path-vs-id mismatch.
+        let store2 = Store::open(&dir).unwrap();
+        // Drop the cache by opening fresh; load by the on-disk id.
+        // The entry_path for "key_attacker_substituted_id" doesn't
+        // exist, so we deliberately call the lower-level read by
+        // path-of-original and assert decrypt fails via the dispatcher.
+        // Easiest: bypass entry_path and invoke decrypt_from_disk with
+        // the tampered id directly.
+        let key_buf = store2.machine_key;
+        let result = decrypt_from_disk(
+            &key_buf,
+            &entry.id,          // tampered id (bound into AAD)
+            &entry.public_key,  // original pubkey
+            &entry.enc_priv_key,
+            &entry.nonce,
+        );
+        assert!(
+            result.is_err(),
+            "AAD-bound entry id mismatch must fail decrypt; got Ok"
+        );
 
         cleanup(dir);
     }
