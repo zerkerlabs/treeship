@@ -2494,4 +2494,128 @@ mod tests {
 
         cleanup(dir);
     }
+
+    // --- TS-2026-001 post-merge fix-up: entry-binding AAD ------------------
+
+    /// Post-merge audit fix: the v2 AAD now binds entry id + public key
+    /// into the GCM tag. Without that binding, a local attacker with
+    /// write access to ~/.treeship/keys/ could copy entry A's
+    /// `enc_priv_key` ciphertext into entry B's JSON envelope; the
+    /// decrypt would succeed (same machine key, same framing-only AAD)
+    /// and the signer for advertised key id A would silently sign with
+    /// key B's secret scalar.
+    ///
+    /// This test performs exactly that swap and asserts decryption now
+    /// fails. Before the fix this test would silently pass with the
+    /// wrong scalar -- a true regression guard.
+    #[test]
+    fn cross_entry_swap_fails_decryption() {
+        let (store, dir) = make_store();
+
+        // Two independent keys in the same store, same machine key.
+        let a = store.generate(true).unwrap();
+        let b = store.generate(false).unwrap();
+
+        // Snapshot both on-disk envelopes.
+        let path_a = store.entry_path(&a.id);
+        let path_b = store.entry_path(&b.id);
+        let entry_a: EncryptedEntry =
+            serde_json::from_slice(&fs::read(&path_a).unwrap()).unwrap();
+        let entry_b: EncryptedEntry =
+            serde_json::from_slice(&fs::read(&path_b).unwrap()).unwrap();
+
+        // Sanity: both are v2 framed, and the ciphertexts differ.
+        assert_eq!(entry_a.enc_priv_key[0], KEYSTORE_MAGIC);
+        assert_eq!(entry_a.enc_priv_key[1], KEYSTORE_VERSION_V2);
+        assert_eq!(entry_b.enc_priv_key[0], KEYSTORE_MAGIC);
+        assert_eq!(entry_b.enc_priv_key[1], KEYSTORE_VERSION_V2);
+        assert_ne!(
+            entry_a.enc_priv_key, entry_b.enc_priv_key,
+            "two freshly-generated entries must have distinct ciphertexts"
+        );
+
+        // The attack: copy B's enc_priv_key into A's envelope. Leave
+        // everything else (id, public_key, algorithm) as it was in A.
+        // This is the file an attacker with write access to the keys
+        // directory would produce.
+        let mut tampered_a = entry_a.clone();
+        tampered_a.enc_priv_key = entry_b.enc_priv_key.clone();
+        // The v2 nonce travels inline with the ciphertext (bytes
+        // [2..14] of enc_priv_key), so swapping the blob also swaps
+        // the nonce; the separate JSON `nonce` field is empty for v2
+        // entries either way.
+        fs::write(&path_a, serde_json::to_vec_pretty(&tampered_a).unwrap()).unwrap();
+
+        // Fresh Store so the in-memory cache doesn't paper over the
+        // on-disk tamper.
+        let store2 = Store::open(&dir).unwrap();
+        let err = match store2.signer(&a.id) {
+            Ok(_) => panic!(
+                "swapping B's ciphertext into A's envelope must fail decrypt; \
+                 got Ok which means the signer would silently sign with key B"
+            ),
+            Err(e) => e,
+        };
+
+        // The specific error must be a crypto/MAC failure, not (e.g.)
+        // a NotFound or InsecureKeyPerms surface that could mask the
+        // class of bug.
+        match err {
+            KeyError::Crypto(msg) => assert!(
+                msg.contains("MAC verification failed"),
+                "swap must surface MAC failure; got: {msg}"
+            ),
+            other => panic!("expected Crypto MAC error, got: {other:?}"),
+        }
+
+        cleanup(dir);
+    }
+
+    /// Companion to `cross_entry_swap_fails_decryption`: the id field
+    /// is also bound into the AAD, so editing the JSON `id` while
+    /// leaving the ciphertext alone must also fail. (An attacker who
+    /// renames a stolen entry file onto a victim's id without
+    /// re-encrypting would land here.)
+    #[test]
+    fn aad_tampered_entry_id_fails_decryption() {
+        let (store, dir) = make_store();
+        let info = store.generate(true).unwrap();
+        let path = store.entry_path(&info.id);
+
+        let mut entry: EncryptedEntry =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(entry.id, info.id, "sanity: id matches what generate returned");
+
+        // Pretend the attacker forged an id. Note we write this back to
+        // the SAME file path so Store::load_entry by the original id
+        // finds it; if we changed the path too we'd just be testing
+        // NotFound, which isn't the point.
+        entry.id = "key_attacker_substituted_id".to_string();
+        fs::write(&path, serde_json::to_vec_pretty(&entry).unwrap()).unwrap();
+
+        // Fresh Store so cache doesn't paper this over. Load via the
+        // tampered id (matching what's in the JSON) so we exercise the
+        // decrypt path rather than a path-vs-id mismatch.
+        let store2 = Store::open(&dir).unwrap();
+        // Drop the cache by opening fresh; load by the on-disk id.
+        // The entry_path for "key_attacker_substituted_id" doesn't
+        // exist, so we deliberately call the lower-level read by
+        // path-of-original and assert decrypt fails via the dispatcher.
+        // Easiest: bypass entry_path and invoke decrypt_from_disk with
+        // the tampered id directly.
+        let key_buf = store2.machine_key;
+        let result = decrypt_from_disk(
+            &key_buf,
+            &entry.id,          // tampered id (bound into AAD)
+            &entry.public_key,  // original pubkey
+            &entry.enc_priv_key,
+            &entry.nonce,
+        );
+        assert!(
+            result.is_err(),
+            "AAD-bound entry id mismatch must fail decrypt; got Ok"
+        );
+
+        cleanup(dir);
+    }
 }
