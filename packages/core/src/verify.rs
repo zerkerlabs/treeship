@@ -19,9 +19,9 @@ use crate::session::package::{VerifyCheck, VerifyStatus};
 
 /// Receipt-level checks derivable from the receipt JSON alone (no on-disk
 /// package). Runs Merkle root recomputation, inclusion proof verification,
-/// leaf-count parity, timeline ordering, and receipt-level chain linkage.
-/// Shared between the CLI's URL-fetch path and the WASM `verify_receipt`
-/// export so both surfaces apply the same rules.
+/// leaf-count parity, and timeline ordering. Shared between the CLI's
+/// URL-fetch path and the WASM `verify_receipt` export so both surfaces
+/// apply the same rules.
 ///
 /// Signature checks on individual envelopes are NOT part of this function:
 /// a raw receipt JSON does not carry envelope bytes. Use the local-storage

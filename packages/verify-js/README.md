@@ -16,7 +16,7 @@ Three functions. Each accepts a parsed object, a JSON string, or a URL.
 
 ### `verifyReceipt(target)`
 
-Runs the JSON-level checks a Treeship Session Receipt carries: Merkle root recomputation, inclusion proof verification, leaf-count parity, timeline ordering, chain linkage.
+Runs the JSON-level checks a Treeship Session Receipt carries: Merkle root recomputation, inclusion proof verification, leaf-count parity, timeline ordering.
 
 ```typescript
 import { verifyReceipt } from '@treeship/verify';

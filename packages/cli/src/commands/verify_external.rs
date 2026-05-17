@@ -402,7 +402,6 @@ fn format_check_label(c: &treeship_core::session::VerifyCheck) -> String {
         "inclusion_proofs" => c.detail.clone(),
         "leaf_count" => "Leaf count matches artifact count".into(),
         "timeline_order" => "Timeline ordering verified".into(),
-        "chain_linkage" => "Chain linkage intact".into(),
         n if n.starts_with("inclusion:") => format!("Inclusion proof {}", &n[10..]),
         other => other.to_string(),
     }
