@@ -174,12 +174,19 @@ pub fn inspect(
     let approvals_bundle = treeship_core::session::read_approvals_bundle(&path)
         .unwrap_or_default();
     let workspace_config_path = ctx::open(config).ok().map(|c| c.config_path);
+    // Load the operator's trust roots once; the approval-authority and
+    // replay-warning panels both pin embedded hub-org checkpoints
+    // against it. Missing file is fine -- the panels render "not
+    // trusted" rather than hiding the checkpoint.
+    let trust = treeship_core::trust::TrustRootStore::open_default_or_empty()
+        .unwrap_or_else(|_| treeship_core::trust::TrustRootStore::empty());
     print_approval_authority_panel(
         &approvals_bundle,
         workspace_config_path.as_deref(),
+        &trust,
         printer,
     );
-    print_decision_cards(&receipt, &approvals_bundle, printer);
+    print_decision_cards(&receipt, &approvals_bundle, &trust, printer);
 
     printer.blank();
     printer.section("timeline");
@@ -449,6 +456,7 @@ fn tri(v: Option<bool>) -> &'static str {
 fn print_approval_authority_panel(
     bundle: &ApprovalsBundle,
     workspace_config_path: Option<&Path>,
+    trust: &treeship_core::trust::TrustRootStore,
     printer: &Printer,
 ) {
     if bundle.uses.is_empty() && bundle.grants.is_empty() {
@@ -678,7 +686,7 @@ fn print_approval_authority_panel(
                 let mut this_use_ok = false;
                 let mut this_use_detail: Option<String> = None;
                 for cp in &hub_cps {
-                    match treeship_core::statements::verify_hub_checkpoint_signature(cp) {
+                    match treeship_core::statements::verify_hub_checkpoint_signature(cp, trust) {
                         treeship_core::statements::HubCheckpointVerification::Valid => {
                             if cp.covered_use_ids.iter().any(|id| id == &u.use_id) {
                                 this_use_ok = true;
@@ -702,6 +710,12 @@ fn print_approval_authority_panel(
                         treeship_core::statements::HubCheckpointVerification::Tampered => {
                             this_use_detail = Some(format!(
                                 "{} hub signature failed", cp.checkpoint_id,
+                            ));
+                        }
+                        treeship_core::statements::HubCheckpointVerification::UntrustedIssuer => {
+                            this_use_detail = Some(format!(
+                                "{} hub_public_key not in trust roots (run `treeship trust add`)",
+                                cp.checkpoint_id,
                             ));
                         }
                         treeship_core::statements::HubCheckpointVerification::NotHubKind => {}
@@ -844,6 +858,7 @@ fn print_approval_authority_panel(
 fn print_decision_cards(
     receipt: &SessionReceipt,
     bundle: &ApprovalsBundle,
+    trust: &treeship_core::trust::TrustRootStore,
     printer: &Printer,
 ) {
     use std::collections::HashSet;
@@ -909,7 +924,7 @@ fn print_decision_cards(
         .any(|cp| {
             // Must verify AND cover every use.
             matches!(
-                treeship_core::statements::verify_hub_checkpoint_signature(cp),
+                treeship_core::statements::verify_hub_checkpoint_signature(cp, trust),
                 treeship_core::statements::HubCheckpointVerification::Valid,
             ) && bundle.uses.iter().all(|u| cp.covered_use_ids.iter().any(|id| id == &u.use_id))
         });

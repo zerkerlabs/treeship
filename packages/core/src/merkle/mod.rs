@@ -12,7 +12,21 @@ pub use proof::{ProofFile, ArtifactSummary};
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::attestation::Ed25519Signer;
+    use crate::attestation::{Ed25519Signer, Signer};
+    use crate::trust::{encode_ed25519_pubkey, TrustRoot, TrustRootKind, TrustRootStore};
+
+    fn trust_for(signer: &Ed25519Signer) -> TrustRootStore {
+        use ed25519_dalek::VerifyingKey;
+        let pk_bytes: [u8; 32] = signer.public_key_bytes().try_into().unwrap();
+        let vk = VerifyingKey::from_bytes(&pk_bytes).unwrap();
+        TrustRootStore::with_roots(vec![TrustRoot {
+            key_id:     signer.key_id().to_string(),
+            public_key: encode_ed25519_pubkey(&vk),
+            kind:       TrustRootKind::HubCheckpoint,
+            label:      "test".into(),
+            added_at:   "2026-05-15T00:00:00Z".into(),
+        }])
+    }
 
     #[test]
     fn checkpoint_signs_and_verifies() {
@@ -21,9 +35,10 @@ mod tests {
         tree.append("art_b");
 
         let signer = Ed25519Signer::generate("key_test").unwrap();
+        let trust = trust_for(&signer);
         let checkpoint = Checkpoint::create(1, &tree, &signer).unwrap();
 
-        assert!(checkpoint.verify());
+        assert!(checkpoint.verify(&trust));
     }
 
     #[test]
@@ -32,11 +47,12 @@ mod tests {
         tree.append("art_a");
 
         let signer = Ed25519Signer::generate("key_test").unwrap();
+        let trust = trust_for(&signer);
         let mut checkpoint = Checkpoint::create(1, &tree, &signer).unwrap();
 
         checkpoint.tree_size = 999; // tamper
 
-        assert!(!checkpoint.verify());
+        assert!(!checkpoint.verify(&trust));
     }
 
     #[test]

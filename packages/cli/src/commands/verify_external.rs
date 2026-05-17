@@ -175,7 +175,23 @@ pub fn run(
             }
         };
 
-        match verify_certificate(&cert) {
+        // Audit lane J fix-up: propagate Malformed / PermissionsTooOpen
+        // rather than silently degrading to an empty trust store. A
+        // broken trust file deserves a clear "your trust file is
+        // unreadable" diagnostic, not a misleading downstream failure.
+        let trust = match treeship_core::trust::TrustRootStore::open_default_or_empty() {
+            Ok(t) => t,
+            Err(e) => {
+                emit_step(
+                    printer,
+                    false,
+                    "Trust store readable",
+                    Some(&format!("trust store unreadable: {e}")),
+                );
+                return ExternalExit::CrossVerifyFailed;
+            }
+        };
+        match verify_certificate(&cert, &trust) {
             Ok(()) => emit_step(printer, true, "Certificate verified", None),
             Err(e) => {
                 emit_step(printer, false, "Certificate verified", Some(&e.to_string()));
@@ -451,9 +467,11 @@ fn emit_json(
 ) -> ExternalExit {
     let receipt_failed = checks.iter().any(|c| c.status == VerifyStatus::Fail);
 
+    let trust = treeship_core::trust::TrustRootStore::open_default_or_empty()
+        .unwrap_or_else(|_| treeship_core::trust::TrustRootStore::empty());
     let cross = certificate.and_then(|cert_target| match load_certificate(cert_target) {
         Ok(cert) => {
-            let cert_sig_ok = verify_certificate(&cert).is_ok();
+            let cert_sig_ok = verify_certificate(&cert, &trust).is_ok();
             let now = now_rfc3339_utc();
             let result = cross_verify_receipt_and_certificate(receipt, &cert, &now);
             Some((cert_sig_ok, result))
@@ -533,8 +551,10 @@ fn verify_agent_package_only(path: &Path, printer: &Printer) -> ExternalExit {
         }
     };
 
+    let trust = treeship_core::trust::TrustRootStore::open_default_or_empty()
+        .unwrap_or_else(|_| treeship_core::trust::TrustRootStore::empty());
     if printer.format == Format::Json {
-        let sig_ok = verify_certificate(&cert).is_ok();
+        let sig_ok = verify_certificate(&cert, &trust).is_ok();
         printer.json(&serde_json::json!({
             "target": path.display().to_string(),
             "outcome": if sig_ok { "pass" } else { "fail" },
@@ -551,7 +571,7 @@ fn verify_agent_package_only(path: &Path, printer: &Printer) -> ExternalExit {
     }
 
     emit_step(printer, true, &format!("Loaded certificate from {}", path.display()), None);
-    match verify_certificate(&cert) {
+    match verify_certificate(&cert, &trust) {
         Ok(()) => emit_step(printer, true, "Certificate signature valid (Ed25519)", None),
         Err(e) => {
             emit_step(printer, false, "Certificate signature valid (Ed25519)", Some(&e.to_string()));

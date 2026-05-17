@@ -16,9 +16,44 @@
 // load cost; subsequent calls reuse cached bindings.
 type WasmBindings = {
   verify_receipt: (json: string) => string;
-  verify_certificate: (json: string, now: string) => string;
-  cross_verify: (receipt: string, cert: string, now: string) => string;
+  verify_certificate: (json: string, now: string, trustRoots: string) => string;
+  cross_verify: (
+    receipt: string,
+    cert: string,
+    now: string,
+    trustRoots: string,
+  ) => string;
 };
+
+/**
+ * Trust roots input shape. Mirrors the on-disk
+ * `~/.treeship/trust_roots.json` so the browser-side verifier sees the
+ * same data the CLI does.
+ */
+export interface TrustRootInput {
+  key_id: string;
+  /** `ed25519:<base64url-no-pad>` */
+  public_key: string;
+  kind: 'hub_checkpoint' | 'ship' | 'agent_cert';
+  label?: string;
+  added_at?: string;
+}
+
+export interface TrustRootsBundle {
+  version: 1;
+  roots: TrustRootInput[];
+}
+
+/** Empty bundle is valid input -- the verifier will fail-closed. */
+function serializeTrustRoots(
+  roots: TrustRootsBundle | TrustRootInput[] | undefined,
+): string {
+  if (!roots) return '';
+  if (Array.isArray(roots)) {
+    return JSON.stringify({ version: 1, roots });
+  }
+  return JSON.stringify(roots);
+}
 
 let wasmBindings: WasmBindings | null = null;
 
@@ -119,8 +154,14 @@ export async function verifyReceipt(
 
 /**
  * Verify an Agent Certificate. Checks the embedded Ed25519 signature
- * against the certificate's embedded public key, then optionally
+ * against a trust root the caller pins via `trustRoots`, then optionally
  * classifies the validity window relative to `now`.
+ *
+ * `trustRoots` is REQUIRED for the signature to be accepted: as of the
+ * v0.10.3 trust-root audit fix, the previous self-signed behavior (trust
+ * the embedded pubkey) is gone. Pass the same JSON shape your CLI uses
+ * (`~/.treeship/trust_roots.json`) or an array of `TrustRootInput`.
+ * Omit it to get a deliberate fail-closed result for diagnostic UIs.
  *
  * Omit `now` (or pass `undefined`) to defer validity classification
  * (signature-only). Pass a `Date` or RFC 3339 string to check expiry.
@@ -128,12 +169,15 @@ export async function verifyReceipt(
 export async function verifyCertificate(
   target: VerifyTarget,
   now?: Date | string,
+  trustRoots?: TrustRootsBundle | TrustRootInput[],
 ): Promise<VerifyCertificateResult> {
   const json = await normalizeToJson(target);
   const nowStr =
     now === undefined ? '' : now instanceof Date ? now.toISOString() : now;
   const wasm = await loadWasm();
-  return JSON.parse(wasm.verify_certificate(json, nowStr));
+  return JSON.parse(
+    wasm.verify_certificate(json, nowStr, serializeTrustRoots(trustRoots)),
+  );
 }
 
 /**
@@ -143,12 +187,15 @@ export async function verifyCertificate(
  * session called authorized by the certificate?
  *
  * The `ok` field is the roll-up: true iff all three checks pass. Defaults
- * `now` to `Date.now()` if omitted.
+ * `now` to `Date.now()` if omitted. As with `verifyCertificate`,
+ * `trustRoots` is required for the certificate's embedded signature to
+ * be accepted.
  */
 export async function crossVerify(
   receipt: VerifyTarget,
   certificate: VerifyTarget,
   now?: Date | string,
+  trustRoots?: TrustRootsBundle | TrustRootInput[],
 ): Promise<CrossVerifyResult> {
   const [receiptJson, certJson] = await Promise.all([
     normalizeToJson(receipt),
@@ -161,5 +208,7 @@ export async function crossVerify(
         ? now.toISOString()
         : now;
   const wasm = await loadWasm();
-  return JSON.parse(wasm.cross_verify(receiptJson, certJson, nowStr));
+  return JSON.parse(
+    wasm.cross_verify(receiptJson, certJson, nowStr, serializeTrustRoots(trustRoots)),
+  );
 }

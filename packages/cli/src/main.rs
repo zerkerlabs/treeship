@@ -140,6 +140,22 @@ enum Command {
     #[command(subcommand)]
     Keys(KeysCommand),
 
+    /// Manage pinned trust roots (issuer keys)
+    ///
+    /// Trust roots gate the three self-signed verification surfaces:
+    /// Merkle checkpoints, hub-org JournalCheckpoints, and Agent
+    /// Certificates. Before v0.10.3 these trusted whatever public key
+    /// they happened to carry -- self-signed forgeries verified. Now
+    /// every embedded pubkey must match a root configured here.
+    ///
+    /// Examples:
+    ///   treeship trust list
+    ///   treeship trust add hub_zerker ed25519:<pubkey> --kind hub_checkpoint
+    ///   treeship trust add ship_acme  ed25519:<pubkey> --kind ship --label "ACME hub"
+    ///   treeship trust remove hub_zerker
+    #[command(subcommand)]
+    Trust(TrustCommand),
+
     /// Connect to treeship.dev Hub -- push, pull, and share artifacts
     ///
     /// Examples:
@@ -1471,6 +1487,59 @@ struct KeysRotateArgs {
     no_default: bool,
 }
 
+// --- trust ------------------------------------------------------------------
+
+#[derive(Subcommand)]
+enum TrustCommand {
+    /// List every pinned trust root.
+    List,
+
+    /// Add or replace a trust root.
+    ///
+    /// Examples:
+    ///   treeship trust add hub_zerker ed25519:<b64> --kind hub_checkpoint
+    ///   treeship trust add ship_acme  ed25519:<b64> --kind ship --label "ACME hub"
+    Add(TrustAddArgs),
+
+    /// Remove a trust root by `key_id` (across all kinds).
+    Remove(TrustRemoveArgs),
+}
+
+#[derive(clap::Args)]
+struct TrustAddArgs {
+    /// Identifier for this root. Matches the existing key_id format but
+    /// human-readable labels are accepted.
+    key_id: String,
+
+    /// Ed25519 public key. Either `ed25519:<base64url>` or bare base64url.
+    public_key: String,
+
+    /// What this root is allowed to verify.
+    #[arg(long, value_parser = ["hub_checkpoint", "ship", "agent_cert"])]
+    kind: String,
+
+    /// Optional human-readable label. Shown by `treeship trust list`.
+    #[arg(long)]
+    label: Option<String>,
+
+    /// Skip the interactive confirmation prompt. Required for
+    /// non-interactive use (CI, scripts, JSON output mode).
+    #[arg(long)]
+    yes: bool,
+}
+
+#[derive(clap::Args)]
+struct TrustRemoveArgs {
+    /// Identifier to remove. Removes every entry with this `key_id`
+    /// regardless of kind.
+    key_id: String,
+
+    /// Skip the interactive confirmation prompt. Required for
+    /// non-interactive use (CI, scripts, JSON output mode).
+    #[arg(long)]
+    yes: bool,
+}
+
 // --- hub --------------------------------------------------------------------
 
 #[derive(Subcommand)]
@@ -2126,6 +2195,19 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 cli.config.as_deref(),
                 printer,
             ),
+        },
+
+        Command::Trust(sub) => match sub {
+            TrustCommand::List => commands::trust::list(printer),
+            TrustCommand::Add(a) => commands::trust::add(
+                &a.key_id,
+                &a.public_key,
+                &a.kind,
+                a.label.as_deref(),
+                a.yes,
+                printer,
+            ),
+            TrustCommand::Remove(a) => commands::trust::remove(&a.key_id, a.yes, printer),
         },
 
         Command::Hub(sub) => match sub {

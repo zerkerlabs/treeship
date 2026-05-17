@@ -9,6 +9,28 @@
 - **Local AEAD key buffer wrapped in `zeroize::Zeroizing`** so the stack copy is wiped on drop. The aes-gcm cipher's internal expanded key schedule is outside our control, but the raw 32-byte machine-derived key copy at the encrypt/decrypt scope is cleared.
 - **v2 AAD now binds entry id + public_key (closes intra-keystore swap).** The original v2 AAD covered only the framing prefix; a local attacker with write access to `~/.treeship/keys/` could copy entry A's `enc_priv_key` ciphertext into entry B's JSON envelope and silently un-bind `KeyInfo.public_key` from the actual scalar in use. The v2 AAD now also length-prefixes and binds the entry id and public key, so any envelope-vs-ciphertext swap surfaces as a MAC failure. `write_file_600` also now `fsync`s the parent directory after rename so the H1 atomic-write doc-comment's durability promise matches reality on ext4/xfs.
 
+### Added
+
+- `treeship trust` subcommand for managing pinned trust roots (`list`, `add`, `remove`).
+- `~/.treeship/trust_roots.json` config file (mode `0o600`, JSON schema version 1) listing trusted issuers for checkpoint, ship (hub-org), and agent-certificate verification. Path override via `TREESHIP_TRUST_ROOTS`.
+- `treeship_core::trust` module with `TrustRootStore`, `TrustRoot`, `TrustRootKind`, `TrustRootError`.
+- `treeship trust add` and `treeship trust remove` now require interactive y/N confirmation or an explicit `--yes` flag. Both print the affected key's 16-hex-character SHA-256 fingerprint before the change. Non-interactive stdin without `--yes` refuses; JSON output mode requires `--yes` (a y/N prompt does not compose with JSON). Replacements of an existing `(key_id, kind)` entry show both the existing and incoming fingerprints so an attempted swap is visible.
+- One-time stderr warning when `TREESHIP_TRUST_ROOTS` is set (path override) or `TREESHIP_ALLOW_INSECURE_KEY_PERMS=1` is honored (perms bypass). Deduplicated per-process via `std::sync::Once`. Both env vars are exactly the lever a supply-chain attacker would pull in a CI runner to redirect trust; the warning ensures the boundary move shows up in CI logs.
+
+### Changed (breaking)
+
+- Checkpoint, hub-org checkpoint, and agent-certificate verification now require the embedded public key to match a configured trust root. Previously they trusted the embedded key (self-signed forgeries always passed). Run `treeship trust add <key_id> <pubkey> --kind <hub_checkpoint|ship|agent_cert>` for each known issuer before verifying.
+- `Checkpoint::verify(&self)` → `Checkpoint::verify(&self, trust: &TrustRootStore)`.
+- `verify_hub_checkpoint_signature(&cp)` → `verify_hub_checkpoint_signature(&cp, trust: &TrustRootStore)`. New `HubCheckpointVerification::UntrustedIssuer` variant covers the unpinned-issuer case.
+- `verify_certificate(&cert)` → `verify_certificate(&cert, trust: &TrustRootStore)`. New `CertificateVerifyError::UntrustedIssuer { key_id }` and `CertificateVerifyError::NoTrustConfigured` variants.
+- `treeship_core::session::verify_package(path)` now auto-loads `~/.treeship/trust_roots.json`; tests that want an explicit store can call the new `verify_package_with_trust(path, &trust)`. If the trust file is malformed or has overly-open permissions the function emits a `trust-root` Fail check row instead of silently falling back to an empty store.
+- The `replay-hub-org` check row now emits `Fail` by default (not `Warn`) when the hub signature is untrusted, tampered, or has the wrong kind. Previously these were `Warn` and `--strict` promoted them to `Fail`, which meant a self-signed forgery exited 0 in default mode with only a yellow warning. Non-security shortcomings (missing field, coverage gap) still warn by default and `--strict` still promotes them.
+- WASM exports `verify_certificate`, `cross_verify`, and `verify_merkle_proof` take an additional `trust_roots_json: &str` argument (empty string = fail closed). `@treeship/verify` exposes this via an optional `trustRoots` parameter on `verifyCertificate` and `crossVerify`.
+
+### Migration notes
+
+- **v0.10.2 hub artifacts in the wild**: any receipt or hub-signed checkpoint produced before this version embedded a hub public key that the verifier accepted on the basis of the embedded key alone. After this release the verifier requires that key to appear in `~/.treeship/trust_roots.json` for the matching `kind`. Operators with existing hub artifacts must extract the embedded `signer`/`hub_public_key` value from one of their own trusted artifacts and add it via `treeship trust add <key_id> <pubkey> --kind <hub_checkpoint|ship|agent_cert>` before this version's verifier will accept their existing receipts. A `treeship trust extract <artifact>` convenience helper that pulls the embedded pubkey out of any signed artifact is tracked separately and not in this release; until then, extract by inspecting the `hub_public_key` (for hub-org checkpoints), `public_key` (for Merkle checkpoints), or `signature.public_key` (for agent certificates) field of the artifact JSON.
+
 ## 0.10.2 (2026-05-11)
 
 The **Multi-Agent Attribution and Universal Skills** release. v0.10.0 made receipts agent-readable. v0.10.1 hardened the install path that delivers the binary which produces them. v0.10.2 closes two follow-on gaps the post-launch dogfooding surfaced: model/provider attribution silently disappearing on the signed-artifact path, and agents on every CLI re-learning how to use Treeship from scratch.

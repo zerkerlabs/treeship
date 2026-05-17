@@ -25,6 +25,7 @@ pub use receipt::{ArtifactEntry, ReceiptComposer, SessionReceipt};
 pub use render::RenderConfig;
 pub use package::{
     build_package, build_package_with_approvals, read_approvals_bundle, read_package,
-    verify_package, ApprovalsBundle, ApprovalsIndex, VerifyCheck, VerifyStatus,
+    verify_package, verify_package_with_trust,
+    ApprovalsBundle, ApprovalsIndex, VerifyCheck, VerifyStatus,
 };
 pub use git::{reconcile_changes, current_head_sha, GitChange};
