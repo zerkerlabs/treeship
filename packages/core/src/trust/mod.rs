@@ -28,7 +28,7 @@
 
 use std::{
     fs,
-    io,
+    io::{self, Read},
     path::{Path, PathBuf},
     sync::Once,
 };
@@ -261,12 +261,25 @@ impl TrustRootStore {
 
     /// Open the trust root file at `path`. Returns `NotConfigured` if it
     /// does not exist, `Empty` if it exists but has zero roots.
+    ///
+    /// TOCTOU note: the file is opened ONCE, then the perm check runs
+    /// on the resulting `File` (fstat on the fd), and the JSON bytes
+    /// are read from the SAME fd. The path is never re-resolved after
+    /// the open, so an attacker with write access to `~/.treeship/`
+    /// cannot swap `trust_roots.json` between the perm gate and the
+    /// content read. Mirrors the keystore single-open shape in
+    /// `keys/mod.rs::read_entry_with_perm_check`.
     pub fn open(path: &Path) -> Result<Self, TrustRootError> {
-        if !path.exists() {
-            return Err(TrustRootError::NotConfigured { path: path.to_path_buf() });
-        }
-        check_trust_file_perms(path)?;
-        let bytes = fs::read(path)?;
+        let mut file = match fs::File::open(path) {
+            Ok(f) => f,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                return Err(TrustRootError::NotConfigured { path: path.to_path_buf() });
+            }
+            Err(e) => return Err(TrustRootError::Io(e)),
+        };
+        check_open_trust_file_perms(path, &file)?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
         let file: TrustRootFile = serde_json::from_slice(&bytes)
             .map_err(|e| TrustRootError::Malformed {
                 path: path.to_path_buf(),
@@ -411,6 +424,7 @@ pub fn encode_ed25519_pubkey(key: &VerifyingKey) -> String {
     format!("ed25519:{}", URL_SAFE_NO_PAD.encode(key.to_bytes()))
 }
 
+#[allow(dead_code)]
 fn check_trust_file_perms(path: &Path) -> Result<(), TrustRootError> {
     #[cfg(unix)]
     {
@@ -437,6 +451,41 @@ fn check_trust_file_perms(path: &Path) -> Result<(), TrustRootError> {
         }
     }
     let _ = path;
+    Ok(())
+}
+
+/// Race-free perm gate for the trust root file: fstat on the
+/// already-open `File`. The caller opens the file once, hands the
+/// resulting `File` to this function, then reads JSON from the SAME
+/// `File`. The path is never re-resolved, so a swap between the perm
+/// check and the read cannot influence which bytes back the trust
+/// roots we hand to the verifier.
+///
+/// `path` is carried only for error reporting; the gate operates on
+/// the fd's inode, not the path. Bypass via
+/// `TREESHIP_ALLOW_INSECURE_KEY_PERMS=1` is honored identically to
+/// `check_trust_file_perms`.
+#[allow(unused_variables)]
+fn check_open_trust_file_perms(path: &Path, file: &fs::File) -> Result<(), TrustRootError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if std::env::var_os("TREESHIP_ALLOW_INSECURE_KEY_PERMS")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+        {
+            warn_insecure_perms_if_bypassed();
+            return Ok(());
+        }
+        let meta = file.metadata()?;
+        let mode = meta.permissions().mode();
+        if mode & 0o077 != 0 {
+            return Err(TrustRootError::PermissionsTooOpen {
+                path: path.to_path_buf(),
+                mode,
+            });
+        }
+    }
     Ok(())
 }
 
@@ -555,6 +604,41 @@ mod tests {
             TrustRootError::PermissionsTooOpen { path: p, mode } => {
                 assert_eq!(p, path);
                 assert_eq!(mode & 0o777, 0o644);
+            }
+            other => panic!("expected PermissionsTooOpen, got {other:?}"),
+        }
+        cleanup(&dir);
+    }
+
+    /// v0.10.4 P2 sibling fix: the trust root loader now opens the
+    /// file ONCE and fstat's the resulting fd, mirroring the keystore
+    /// single-open shape. This test pins the gate behavior on a
+    /// loose-perm file: the single-open `open()` path must reject
+    /// without ever parsing the body. (The pre-fix path-based check
+    /// also rejected on loose perms; what changed is that the gate
+    /// now runs on the SAME inode the body read would use, closing
+    /// the TOCTOU window.)
+    #[test]
+    #[cfg(unix)]
+    fn open_rejects_loose_perms_on_open_fd() {
+        use std::os::unix::fs::PermissionsExt;
+        std::env::remove_var("TREESHIP_ALLOW_INSECURE_KEY_PERMS");
+
+        let dir = tmp_dir("perms-fd");
+        let path = dir.join("trust_roots.json");
+        let (_, r) = fresh_root("hub_b", TrustRootKind::HubCheckpoint);
+        let file = TrustRootFile { version: SCHEMA_VERSION, roots: vec![r] };
+        // Valid JSON body -- proves the gate stops us before we
+        // parse, since a successful parse would have returned a
+        // populated store rather than the perms error.
+        fs::write(&path, serde_json::to_vec_pretty(&file).unwrap()).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+
+        let err = TrustRootStore::open(&path).unwrap_err();
+        match err {
+            TrustRootError::PermissionsTooOpen { path: p, mode } => {
+                assert_eq!(p, path);
+                assert_eq!(mode & 0o777, 0o640);
             }
             other => panic!("expected PermissionsTooOpen, got {other:?}"),
         }

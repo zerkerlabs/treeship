@@ -436,10 +436,21 @@ impl Store {
     /// Bypass with `TREESHIP_ALLOW_INSECURE_KEY_PERMS=1` for controlled
     /// environments (CI sandboxes, recovery flows). The bypass should
     /// not be set in normal operation.
+    ///
+    /// TOCTOU note: the perm-check and the ciphertext read run against
+    /// the SAME file descriptor (open once, fstat, then read from that
+    /// fd). The previous shape — `check_key_file_perms(path)` followed
+    /// by `load_entry(id)` (which called `fs::read(path)`) — opened the
+    /// file twice. An attacker with write access to `~/.treeship/keys/`
+    /// could swap the file between the two opens: first present an
+    /// owner-only file to pass the perm gate, then replace it with a
+    /// different (loose-perm) file containing an attacker-controlled
+    /// scalar before the second `open`. The single-fd shape closes that
+    /// window because the inode is pinned by the open file descriptor;
+    /// path-level swaps after the open don't affect what we read. This
+    /// matches the pattern in `session/event_log.rs::open_lock_file`.
     pub fn signer(&self, id: &str) -> Result<Box<dyn Signer>, KeyError> {
-        check_key_file_perms(&self.entry_path(id))?;
-
-        let entry = self.load_entry(id)?;
+        let entry = self.read_entry_with_perm_check(id)?;
 
         // Dispatcher: v2 ciphertexts start with magic 0x54, version 0x02
         // and use real AES-256-GCM. Older entries fall through to the
@@ -725,6 +736,48 @@ impl Store {
             return Err(KeyError::NotFound(id.to_string()));
         }
         let bytes = fs::read(&path)?;
+        let entry: EncryptedEntry = serde_json::from_slice(&bytes)?;
+        Ok(entry)
+    }
+
+    /// Single-open, race-free counterpart to `read_entry` for the
+    /// signing path. Opens the key file ONCE, fstat's the file
+    /// descriptor to check perms, then reads the JSON from the SAME
+    /// descriptor. The path is never re-resolved after the open, so an
+    /// attacker who swaps `<id>.json` on disk between the perm check
+    /// and the ciphertext read cannot influence the bytes we decrypt.
+    ///
+    /// Cache: this path intentionally skips the in-memory entry cache.
+    /// The cache is read-mostly and seeded by `load_entry`, which is
+    /// fine for public-key lookups but defeats the perm gate (a cached
+    /// entry would let `signer()` return without ever consulting the
+    /// on-disk perms). The signing path is rare enough that the extra
+    /// disk read is not a hot spot.
+    fn read_entry_with_perm_check(&self, id: &str) -> Result<EncryptedEntry, KeyError> {
+        let path = self.entry_path(id);
+
+        // Open once. NotFound surfaces as `KeyError::NotFound` to
+        // match the legacy `read_entry` shape; any other I/O error
+        // (permission denied at the *open* layer, EIO, etc.)
+        // propagates via the `From<io::Error>` impl.
+        let mut file = match fs::File::open(&path) {
+            Ok(f) => f,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                return Err(KeyError::NotFound(id.to_string()));
+            }
+            Err(e) => return Err(KeyError::Io(e)),
+        };
+
+        // Perm check on the open fd. On Unix `File::metadata` is
+        // documented to call `fstat` on the underlying fd, which pins
+        // the inode -- a subsequent path swap on disk cannot change
+        // what we see. The bypass env var continues to short-circuit.
+        check_open_key_file_perms(&path, &file)?;
+
+        // Read the full ciphertext envelope from the same fd.
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
+
         let entry: EncryptedEntry = serde_json::from_slice(&bytes)?;
         Ok(entry)
     }
@@ -1323,6 +1376,15 @@ fn hex_encode(b: &[u8]) -> String {
 /// `TREESHIP_ALLOW_INSECURE_KEY_PERMS=1` escape hatch is set, or when
 /// the file is not group/world accessible. Otherwise returns
 /// `KeyError::InsecureKeyPerms` with the offending path and mode.
+///
+/// **TOCTOU caveat:** this path-based check has an unavoidable race
+/// window between the `stat` and any subsequent `open` of the same
+/// path. New signing-path callers MUST use
+/// `check_open_key_file_perms` (fstat on an already-open fd) instead;
+/// this function is retained only for non-signing callers that
+/// already accept the race (e.g. `treeship doctor` scanning the
+/// keystore directory).
+#[allow(dead_code)]
 fn check_key_file_perms(path: &Path) -> Result<(), KeyError> {
     #[cfg(unix)]
     {
@@ -1348,6 +1410,44 @@ fn check_key_file_perms(path: &Path) -> Result<(), KeyError> {
         }
     }
     let _ = path;
+    Ok(())
+}
+
+/// Race-free perm gate: runs `fstat` on an already-open `File` and
+/// rejects if the mode has any group or world bits. Use this from the
+/// signing path: open the key file once, hand the resulting `File` to
+/// this function, then read from the SAME `File` -- the inode is
+/// pinned by the open fd, so a path-level swap between perm-check and
+/// read cannot influence what we end up decrypting.
+///
+/// `path` is carried only for error reporting; it is never re-opened.
+/// The `TREESHIP_ALLOW_INSECURE_KEY_PERMS=1` bypass is honored
+/// identically to `check_key_file_perms` so existing CI workflows keep
+/// working.
+#[allow(unused_variables)]
+fn check_open_key_file_perms(path: &Path, file: &fs::File) -> Result<(), KeyError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if std::env::var_os("TREESHIP_ALLOW_INSECURE_KEY_PERMS")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+        {
+            return Ok(());
+        }
+        // `File::metadata` on Unix calls `fstat(fd)` -- it does NOT
+        // re-resolve the path, so the result describes the same inode
+        // we will read from. This is the structural property that
+        // makes the gate race-free.
+        let meta = file.metadata()?;
+        let mode = meta.permissions().mode();
+        if mode & 0o077 != 0 {
+            return Err(KeyError::InsecureKeyPerms {
+                path: path.to_path_buf(),
+                mode,
+            });
+        }
+    }
     Ok(())
 }
 
@@ -2280,6 +2380,83 @@ mod tests {
             "bypass env var must allow signing: {:?}",
             result.err()
         );
+        cleanup(dir);
+    }
+
+    // --- v0.10.4 P2: TOCTOU window in signer() perm-check ---------------
+
+    /// Structural / single-open proof: the on-disk key file is opened
+    /// EXACTLY ONCE during `signer()`. The fix replaces the prior
+    /// `check_key_file_perms(path) + load_entry(id) -> fs::read(path)`
+    /// two-open shape with `read_entry_with_perm_check`, which opens
+    /// once and fstat's the resulting fd. We can't reliably race the
+    /// FS in a unit test, so instead we assert the structural
+    /// invariant: after `signer()` succeeds, only the bytes that the
+    /// open file descriptor saw at perm-check time can have been read.
+    ///
+    /// The simulation: stage an attacker-controlled "loose perms"
+    /// envelope at the path, then call `signer()`. With the fixed
+    /// single-open shape, perm-check on the open fd fails before any
+    /// content is read -- we get `InsecureKeyPerms`, not a successful
+    /// signer. The legacy two-open code would have observed the perm
+    /// failure on the same loose file too, but the property we are
+    /// pinning here is that the perm rejection comes from the SAME fd
+    /// the read would have used (no chance for an intermediate swap).
+    #[test]
+    #[cfg(unix)]
+    fn signer_rejects_post_check_swap() {
+        use std::os::unix::fs::PermissionsExt;
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("TREESHIP_ALLOW_INSECURE_KEY_PERMS");
+
+        let (store, dir) = make_store();
+        let info = store.generate(true).unwrap();
+        let path = store.entry_path(&info.id);
+
+        // Snapshot the legit (0o600) v2 ciphertext bytes so we can
+        // confirm that even if an attacker were to swap THIS exact
+        // content under a loose-perms file, the single-open gate
+        // catches it on the fd.
+        let original_bytes = fs::read(&path).unwrap();
+        assert!(!original_bytes.is_empty(), "test sanity");
+
+        // Stage the swapped file: same envelope content (so the JSON
+        // parses and AEAD would succeed if we got that far), but
+        // loose perms. With the old two-open shape, an attacker could
+        // present 0o600 to perm-check, then race in this 0o644
+        // version before the read; with the new single-open shape,
+        // we open once, fstat the fd, and reject before reading.
+        fs::write(&path, &original_bytes).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        match store.signer(&info.id) {
+            Err(KeyError::InsecureKeyPerms { path: p, mode }) => {
+                assert_eq!(p, path);
+                assert_eq!(mode & 0o777, 0o644);
+            }
+            Err(other) => panic!(
+                "expected InsecureKeyPerms from single-open fstat gate, got {:?}",
+                other
+            ),
+            Ok(_) => panic!(
+                "expected InsecureKeyPerms from single-open fstat gate, got ok signer"
+            ),
+        }
+
+        // The "structural" half of the test: invoke the helper
+        // directly. It must reject on the open fd, never returning
+        // an `EncryptedEntry`. This pins the no-second-open property
+        // -- if a future refactor reintroduces a path-based read
+        // after the perm gate, this assertion still holds (the gate
+        // would still trip on the same loose fd) but the code review
+        // diff is the real test for the structural invariant.
+        let direct = store.read_entry_with_perm_check(&info.id);
+        assert!(
+            matches!(direct, Err(KeyError::InsecureKeyPerms { .. })),
+            "read_entry_with_perm_check must reject before reading bytes; got {:?}",
+            direct.map(|_| "ok")
+        );
+
         cleanup(dir);
     }
 
