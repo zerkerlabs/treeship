@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Documentation
+
+- **Documented subcrate version policy (`docs/architecture/subcrate-versions.md`).** `packages/vi`, `packages/zk-circom`, and `packages/zk-risc0` follow independent release cadences from the main Treeship monorepo (each is `publish = false` and not a hard dependency of the CLI release path). The version-consistency preflight (`scripts/check-release-versions.py`) intentionally does not cover them. `CONTRIBUTING.md` now points at the new doc and the project-structure table calls out the sibling-cadence crates. Closes a v0.10.3 audit P2 flagging version skew between `packages/core` (0.10.3) and `packages/vi` (0.6.0) / `packages/zk-*` (0.5.0). No genuine drift found; the stale `packages/zk-circom/package.json` at 1.0.0 (npm scaffolding default, never published, never consumed) is documented as cosmetic cleanup, not skew.
+
 ## 0.10.3 (2026-05-17)
 
 The **Audit Hardening** release. A post-launch security audit of v0.10.2 surfaced eleven P0 findings across the crypto, trust, and supply-chain surfaces. v0.10.3 closes every one of them.
