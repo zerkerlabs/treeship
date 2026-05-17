@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.10.4 (unreleased)
+
+The **Audit Follow-ups (P1)** release. v0.10.3 closed the P0 findings; v0.10.4 closes the P1 follow-ups that surfaced while landing them.
+
+### Security
+
+- **Approval signing paths no longer fall back to empty bytes on serde encode failure (`packages/core/src/statements/approval_use.rs:367, 466, 483, 500`).** Previously, `serde_json::to_vec(...).unwrap_or_default()` in `canonical_hub_signing_bytes`, `approval_use_record_digest`, `approval_revocation_record_digest`, and `journal_checkpoint_record_digest` would silently sign or verify against `Vec<u8>::default()` on an encode failure. The failure mode was catastrophic in shape (all empty-byte signatures verify against each other, so two different artifacts that both hit the encode failure would falsely cross-validate) even though unreachable in the current type system. Encoding failures now panic with a clear "report bug" message at the four sites rather than silently producing a forgery vector. A regression test (`record_digests_never_match_empty_bytes_sha256`) pins that no record digest ever matches the sha256 of empty bytes, so a future re-introduction of the silent fallback would fail the test. Signature changes were deliberately not propagated to the digest functions' callers because all four functions return non-Result types that thread through 50+ call sites; a panic at the sign site is strictly better than silent forgery, and the failure case is unreachable until a schema change introduces a fallible field (e.g. f32/f64).
 
 ### Documentation
 

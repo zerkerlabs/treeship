@@ -364,7 +364,18 @@ impl JournalCheckpoint {
             covered_grant_ids:       &self.covered_grant_ids,
             previous_record_digest:  &self.previous_record_digest,
         };
-        serde_json::to_vec(&v).unwrap_or_default()
+        // v0.10.4 audit lane C: this function feeds Hub-signature
+        // verification. Falling back to `Vec<u8>::default()` on encode
+        // failure would silently produce empty signing bytes — two
+        // failed-to-encode checkpoints would cross-validate against each
+        // other's signatures. Every field above is a primitive, &str,
+        // enum, or slice of String, so serde_json::to_vec is infallible
+        // for this type in the current type system; if a future schema
+        // change introduces a fallible field (f32/f64 NaN, custom
+        // Serialize), we want to fail loud at sign/verify time, not
+        // emit a forgery vector.
+        serde_json::to_vec(&v)
+            .expect("approval_use canonical_hub_signing_bytes encode must not fail; report bug")
     }
 }
 
@@ -463,7 +474,15 @@ pub fn approval_use_record_digest(rec: &ApprovalUse) -> String {
     use sha2::{Digest, Sha256};
     let mut canon = rec.clone();
     canon.record_digest = String::new();
-    let bytes = serde_json::to_vec(&canon).unwrap_or_default();
+    // v0.10.4 audit lane C: never fall back to empty bytes here. The
+    // returned digest is used to seal `record_digest` and as the
+    // previous-record link in the journal hash chain; an empty-byte
+    // fallback would let two failed-to-encode records share a digest
+    // and silently cross-validate. ApprovalUse fields are all
+    // primitives, String, Option, or u32 — encode is infallible in the
+    // current type system; panic loud if that ever changes.
+    let bytes = serde_json::to_vec(&canon)
+        .expect("approval_use_record_digest encode must not fail; report bug");
     let mut hasher = Sha256::new();
     hasher.update(&bytes);
     let digest = hasher.finalize();
@@ -480,7 +499,11 @@ pub fn approval_revocation_record_digest(rec: &ApprovalRevocation) -> String {
     use sha2::{Digest, Sha256};
     let mut canon = rec.clone();
     canon.record_digest = String::new();
-    let bytes = serde_json::to_vec(&canon).unwrap_or_default();
+    // v0.10.4 audit lane C: see approval_use_record_digest. Same
+    // forgery vector applies — empty-byte fallback would let revocation
+    // records cross-validate against each other in the hash chain.
+    let bytes = serde_json::to_vec(&canon)
+        .expect("approval_revocation_record_digest encode must not fail; report bug");
     let mut hasher = Sha256::new();
     hasher.update(&bytes);
     let digest = hasher.finalize();
@@ -497,7 +520,13 @@ pub fn journal_checkpoint_record_digest(rec: &JournalCheckpoint) -> String {
     use sha2::{Digest, Sha256};
     let mut canon = rec.clone();
     canon.record_digest = String::new();
-    let bytes = serde_json::to_vec(&canon).unwrap_or_default();
+    // v0.10.4 audit lane C: see approval_use_record_digest. Same
+    // forgery vector applies — empty-byte fallback would let checkpoint
+    // records cross-validate against each other in the hash chain, and
+    // would also let `replay-included-checkpoint` PASS on a tampered
+    // checkpoint that happened to hit an encode failure path.
+    let bytes = serde_json::to_vec(&canon)
+        .expect("journal_checkpoint_record_digest encode must not fail; report bug");
     let mut hasher = Sha256::new();
     hasher.update(&bytes);
     let digest = hasher.finalize();
@@ -782,6 +811,83 @@ mod tests {
         let d1 = journal_checkpoint_record_digest(&cp);
         let d2 = journal_checkpoint_record_digest(&cp);
         assert_eq!(d1, d2);
+    }
+
+    /// v0.10.4 audit lane C regression: the three record-digest helpers
+    /// and `canonical_hub_signing_bytes` used to fall back to
+    /// `Vec<u8>::default()` on serde encode failure. That meant two
+    /// different records that both hit the (rare) failure path would
+    /// produce the SAME digest (sha256 of empty bytes), letting them
+    /// cross-validate against each other in the journal hash chain and
+    /// against each other's Hub signatures. Post-fix, the failure case
+    /// panics rather than silently emitting empty bytes; in the current
+    /// type system the failure case is genuinely unreachable, but this
+    /// test pins the *property* that distinct records produce distinct
+    /// digests and none of them match the sha256 of empty bytes (which
+    /// is what the old fallback would have produced).
+    #[test]
+    fn record_digests_never_match_empty_bytes_sha256() {
+        use sha2::{Digest, Sha256};
+
+        // The fingerprint of the old silent-fallback failure mode:
+        // sha256 of an empty input. If a future regression
+        // re-introduces .unwrap_or_default() here, the digest of
+        // anything would match this value, and the test below would
+        // catch it.
+        let mut hasher = Sha256::new();
+        let empty: &[u8] = &[];
+        hasher.update(empty);
+        let empty_digest = hasher.finalize();
+        let mut empty_hex = String::with_capacity(64 + 7);
+        empty_hex.push_str("sha256:");
+        for b in empty_digest.as_slice() {
+            use std::fmt::Write;
+            let _ = write!(empty_hex, "{b:02x}");
+        }
+
+        let u = sample_use();
+        let use_digest = approval_use_record_digest(&u);
+        assert_ne!(
+            use_digest, empty_hex,
+            "approval_use_record_digest must never match sha256-of-empty (audit lane C)",
+        );
+
+        let rev = ApprovalRevocation {
+            type_:                  TYPE_APPROVAL_REVOCATION.into(),
+            revocation_id:          "rev_x".into(),
+            grant_id:               "art_grant_x".into(),
+            grant_digest:           "sha256:00".into(),
+            revoker:                "human://x".into(),
+            reason:                 None,
+            created_at:             "2026-04-30T06:01:00Z".into(),
+            previous_record_digest: "sha256:00".into(),
+            record_digest:          String::new(),
+            signature:              None,
+            signature_alg:          None,
+            signing_key_id:         None,
+        };
+        let rev_digest = approval_revocation_record_digest(&rev);
+        assert_ne!(rev_digest, empty_hex);
+
+        let cp = sample_checkpoint(CheckpointKind::LocalJournal);
+        let cp_digest = journal_checkpoint_record_digest(&cp);
+        assert_ne!(cp_digest, empty_hex);
+
+        // And the canonical hub signing bytes must be non-empty.
+        let cp_hub = sample_checkpoint(CheckpointKind::HubOrg);
+        let signing_bytes = cp_hub.canonical_hub_signing_bytes();
+        assert!(
+            !signing_bytes.is_empty(),
+            "canonical_hub_signing_bytes must never be empty (would let two checkpoints cross-validate)",
+        );
+
+        // And two distinct records must produce distinct digests --
+        // the property the empty-byte fallback would have broken.
+        let mut u2 = sample_use();
+        u2.use_id = "use_zzz".into();
+        u2.use_number = 99;
+        let use_digest_2 = approval_use_record_digest(&u2);
+        assert_ne!(use_digest, use_digest_2);
     }
 
     #[test]
