@@ -1,6 +1,34 @@
 use sha2::{Sha256, Digest};
 use serde::{Deserialize, Serialize};
 
+/// Errors raised by Merkle primitives and tree construction.
+///
+/// Currently only one variant: an unknown `merkle_version` byte. Kept as
+/// an enum so future version-specific validation can be added without
+/// breaking the public signature.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MerkleError {
+    /// The supplied `merkle_version` is neither v1 nor v2 (the only
+    /// recognised versions). Surfaces at `MerkleTree::with_version`,
+    /// at every callsite that constructs a tree from a receipt, and
+    /// at proof verification.
+    UnknownVersion(u8),
+}
+
+impl std::fmt::Display for MerkleError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnknownVersion(v) => write!(
+                f,
+                "unknown merkle_version {} (expected {} or {})",
+                v, MERKLE_VERSION_V1, MERKLE_VERSION_V2,
+            ),
+        }
+    }
+}
+
+impl std::error::Error for MerkleError {}
+
 /// Direction of a sibling in the Merkle proof path.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Direction {
@@ -80,21 +108,29 @@ pub(crate) fn hash_internal_v2(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
     h.finalize().into()
 }
 
-/// Version-dispatched leaf hash. Falls back to v1 on any unknown version
-/// so callers that pre-date this field do not silently mis-verify; the
-/// outer `verify_proof` still rejects unknown versions explicitly.
-pub(crate) fn hash_leaf(version: u8, artifact_id: &str) -> [u8; 32] {
+/// Version-dispatched leaf hash. Rejects unknown versions instead of
+/// falling back: a silent fallback to v1 was the original downgrade
+/// vector — a receipt could claim `merkle_version: 99` and get
+/// recomputed under v1 hashing.
+pub(crate) fn hash_leaf(version: u8, artifact_id: &str) -> Result<[u8; 32], MerkleError> {
     match version {
-        MERKLE_VERSION_V2 => hash_leaf_v2(artifact_id),
-        _ => hash_leaf_v1(artifact_id),
+        MERKLE_VERSION_V1 => Ok(hash_leaf_v1(artifact_id)),
+        MERKLE_VERSION_V2 => Ok(hash_leaf_v2(artifact_id)),
+        other => Err(MerkleError::UnknownVersion(other)),
     }
 }
 
-/// Version-dispatched internal node hash.
-pub(crate) fn hash_internal(version: u8, left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
+/// Version-dispatched internal node hash. Rejects unknown versions
+/// for the same reason as [`hash_leaf`].
+pub(crate) fn hash_internal(
+    version: u8,
+    left: &[u8; 32],
+    right: &[u8; 32],
+) -> Result<[u8; 32], MerkleError> {
     match version {
-        MERKLE_VERSION_V2 => hash_internal_v2(left, right),
-        _ => hash_internal_v1(left, right),
+        MERKLE_VERSION_V1 => Ok(hash_internal_v1(left, right)),
+        MERKLE_VERSION_V2 => Ok(hash_internal_v2(left, right)),
+        other => Err(MerkleError::UnknownVersion(other)),
     }
 }
 
@@ -144,14 +180,21 @@ impl Default for MerkleTree {
 impl MerkleTree {
     /// New tree using the current default version (v2, domain-separated).
     pub fn new() -> Self {
+        // SAFETY: V2 is a recognised version, so with_version cannot fail.
         Self::with_version(MERKLE_VERSION_V2)
+            .expect("MERKLE_VERSION_V2 is always a valid version")
     }
 
-    /// New tree pinned to an explicit hash version. Use `MERKLE_VERSION_V1`
-    /// only in tests that need to reproduce pre-v0.10.3 byte output; all
-    /// production paths use `new()`.
-    pub fn with_version(version: u8) -> Self {
-        Self { leaves: Vec::new(), version }
+    /// New tree pinned to an explicit hash version. Returns
+    /// `Err(MerkleError::UnknownVersion)` if `version` is anything other
+    /// than [`MERKLE_VERSION_V1`] or [`MERKLE_VERSION_V2`]. Validating
+    /// at construction time is what lets `append`, `root`, and
+    /// `inclusion_proof` keep their infallible signatures.
+    pub fn with_version(version: u8) -> Result<Self, MerkleError> {
+        if version != MERKLE_VERSION_V1 && version != MERKLE_VERSION_V2 {
+            return Err(MerkleError::UnknownVersion(version));
+        }
+        Ok(Self { leaves: Vec::new(), version })
     }
 
     /// Hash version this tree builds proofs under.
@@ -161,7 +204,10 @@ impl MerkleTree {
 
     /// Append an artifact ID as a new leaf. Returns the leaf index.
     pub fn append(&mut self, artifact_id: &str) -> usize {
-        let hash = hash_leaf(self.version, artifact_id);
+        // Invariant: `self.version` was validated by `with_version`, so
+        // hash_leaf cannot return UnknownVersion here.
+        let hash = hash_leaf(self.version, artifact_id)
+            .expect("tree version validated at construction");
         self.leaves.push(hash);
         self.leaves.len() - 1
     }
@@ -220,11 +266,16 @@ impl MerkleTree {
             }
             // else: unpaired last node, no sibling step needed
 
-            // Move up: compute parent hashes (RFC 9162 promotion)
+            // Move up: compute parent hashes (RFC 9162 promotion). The
+            // tree-version invariant guarantees hash_internal cannot
+            // return UnknownVersion.
             let mut next_level = Vec::with_capacity((level.len() + 1) / 2);
             let mut i = 0;
             while i + 1 < level.len() {
-                next_level.push(hash_internal(self.version, &level[i], &level[i + 1]));
+                next_level.push(
+                    hash_internal(self.version, &level[i], &level[i + 1])
+                        .expect("tree version validated at construction"),
+                );
                 i += 2;
             }
             if i < level.len() {
@@ -252,23 +303,37 @@ impl MerkleTree {
     /// Recomputes the root from `artifact_id` + the proof path and checks
     /// that it matches `root_hex`. Fully offline, no tree state needed.
     ///
-    /// Dispatches on `proof.merkle_version` (defaulting to v1 for proofs
-    /// produced by v0.10.2-and-earlier code). Rejects:
-    /// - unknown versions (anything other than 1 or 2)
-    /// - in v2, an empty path with `leaf_index != 0` — this closes the
-    ///   internal-node-as-leaf impersonation that v1 permitted because
-    ///   the single-leaf root equals the leaf hash. With domain separation,
-    ///   the leaf hash already cannot collide with any internal node, but
-    ///   the explicit reject removes ambiguity for any future verifier
-    ///   that walks the proof without recomputing the leaf hash first.
+    /// `expected_version` is the **trusted** merkle version — typically the
+    /// merkle_version pulled from a signature-verified checkpoint or from
+    /// the parent receipt's merkle section. The verifier hashes under
+    /// `expected_version` and *additionally* rejects the proof if
+    /// `proof.merkle_version != expected_version`. This is what closes
+    /// the downgrade vector: the version that drives hashing is taken
+    /// from a trusted source, not from the (attacker-controlled) proof
+    /// blob.
+    ///
+    /// Rejects:
+    /// - `expected_version` outside {1, 2}
+    /// - `proof.merkle_version != expected_version`
+    /// - in v2, an empty path with `leaf_index != 0` — closes the
+    ///   internal-node-as-leaf impersonation that v1 permitted.
     pub fn verify_proof(
+        expected_version: u8,
         root_hex: &str,
         artifact_id: &str,
         proof: &InclusionProof,
     ) -> bool {
-        let version = proof.merkle_version;
-        if version != MERKLE_VERSION_V1 && version != MERKLE_VERSION_V2 {
-            return false; // unknown version -- reject
+        // The trusted version itself must be a known one. Unknown =
+        // misconfiguration upstream; reject loudly.
+        if expected_version != MERKLE_VERSION_V1 && expected_version != MERKLE_VERSION_V2 {
+            return false;
+        }
+
+        // The proof's self-declared version must agree with the trusted
+        // version. Mismatch = downgrade attempt (or honest drift —
+        // either way, refuse).
+        if proof.merkle_version != expected_version {
+            return false;
         }
 
         // Validate algorithm string ONLY when present. v0.10.2 receipts
@@ -285,11 +350,14 @@ impl MerkleTree {
         // legitimate when this leaf IS the root (single-leaf tree at
         // index 0). In v1 we cannot enforce this without breaking
         // legacy receipts, so the check is v2-only.
-        if version == MERKLE_VERSION_V2 && proof.path.is_empty() && proof.leaf_index != 0 {
+        if expected_version == MERKLE_VERSION_V2 && proof.path.is_empty() && proof.leaf_index != 0 {
             return false;
         }
 
-        let current: [u8; 32] = hash_leaf(version, artifact_id);
+        let current: [u8; 32] = match hash_leaf(expected_version, artifact_id) {
+            Ok(h) => h,
+            Err(_) => return false,
+        };
         // Verify leaf hash matches artifact
         if hex::encode(current) != proof.leaf_hash {
             return false;
@@ -307,8 +375,14 @@ impl MerkleTree {
             };
 
             current = match step.direction {
-                Direction::Right => hash_internal(version, &current, &sibling),
-                Direction::Left => hash_internal(version, &sibling, &current),
+                Direction::Right => match hash_internal(expected_version, &current, &sibling) {
+                    Ok(h) => h,
+                    Err(_) => return false,
+                },
+                Direction::Left => match hash_internal(expected_version, &sibling, &current) {
+                    Ok(h) => h,
+                    Err(_) => return false,
+                },
             };
         }
 
@@ -326,7 +400,11 @@ impl MerkleTree {
             let mut next_level = Vec::with_capacity((level.len() + 1) / 2);
             let mut i = 0;
             while i + 1 < level.len() {
-                next_level.push(hash_internal(self.version, &level[i], &level[i + 1]));
+                // Invariant: tree version validated at construction.
+                next_level.push(
+                    hash_internal(self.version, &level[i], &level[i + 1])
+                        .expect("tree version validated at construction"),
+                );
                 i += 2;
             }
             // RFC 9162: promote unpaired node without hashing
@@ -356,7 +434,7 @@ mod tests {
 
     #[test]
     fn single_leaf_root_is_leaf_hash_v1_legacy() {
-        let mut tree = MerkleTree::with_version(MERKLE_VERSION_V1);
+        let mut tree = MerkleTree::with_version(MERKLE_VERSION_V1).unwrap();
         tree.append("art_abc123");
         let root = tree.root().unwrap();
         let expected = hash_leaf_v1("art_abc123");
@@ -374,7 +452,7 @@ mod tests {
         let root = hex::encode(tree.root().unwrap());
         let proof = tree.inclusion_proof(1).unwrap(); // art_b at index 1
 
-        assert!(MerkleTree::verify_proof(&root, "art_b", &proof));
+        assert!(MerkleTree::verify_proof(MERKLE_VERSION_V2, &root, "art_b", &proof));
     }
 
     #[test]
@@ -387,7 +465,7 @@ mod tests {
         let proof = tree.inclusion_proof(0).unwrap(); // proof for art_a
 
         // Try to verify art_WRONG against art_a's proof
-        assert!(!MerkleTree::verify_proof(&root, "art_WRONG", &proof));
+        assert!(!MerkleTree::verify_proof(MERKLE_VERSION_V2, &root, "art_WRONG", &proof));
     }
 
     #[test]
@@ -402,7 +480,7 @@ mod tests {
         // Tamper with a sibling hash
         proof.path[0].hash = "0".repeat(64);
 
-        assert!(!MerkleTree::verify_proof(&root, "art_a", &proof));
+        assert!(!MerkleTree::verify_proof(MERKLE_VERSION_V2, &root, "art_a", &proof));
     }
 
     // ── v2 hash primitives ─────────────────────────────────────────
@@ -487,7 +565,7 @@ mod tests {
         let root = hex::encode(tree.root().unwrap());
         let proof = tree.inclusion_proof(4).unwrap(); // last leaf
 
-        assert!(MerkleTree::verify_proof(&root, "art_4", &proof));
+        assert!(MerkleTree::verify_proof(MERKLE_VERSION_V2, &root, "art_4", &proof));
     }
 
     // ── v2 round-trip + cross-version rejection ────────────────────
@@ -503,14 +581,14 @@ mod tests {
         let root = hex::encode(tree.root().unwrap());
         let proof = tree.inclusion_proof(1).unwrap();
         assert_eq!(proof.merkle_version, MERKLE_VERSION_V2);
-        assert!(MerkleTree::verify_proof(&root, "art_b", &proof));
+        assert!(MerkleTree::verify_proof(MERKLE_VERSION_V2, &root, "art_b", &proof));
     }
 
     #[test]
     fn v2_rejects_v1_proof() {
         // Build a v2 tree, take its proof, then mutate the proof to claim
-        // v1. Re-verification must fail: v1 hashing applied to the same
-        // artifact id will not match the v2-derived leaf hash.
+        // v1. Re-verification under v2 (the trusted version) must fail
+        // because proof.merkle_version mismatches expected_version.
         let mut tree = MerkleTree::new();
         for id in &["art_a", "art_b", "art_c", "art_d"] {
             tree.append(id);
@@ -519,8 +597,8 @@ mod tests {
         let mut proof = tree.inclusion_proof(1).unwrap();
         proof.merkle_version = MERKLE_VERSION_V1;
         assert!(
-            !MerkleTree::verify_proof(&root, "art_b", &proof),
-            "v2-built proof must NOT verify when reinterpreted as v1",
+            !MerkleTree::verify_proof(MERKLE_VERSION_V2, &root, "art_b", &proof),
+            "v2 verifier must reject a proof that downgrades itself to v1",
         );
     }
 
@@ -528,7 +606,7 @@ mod tests {
     fn v1_rejects_v2_proof() {
         // Symmetric to v2_rejects_v1_proof: a v1 tree's proof reinterpreted
         // as v2 must reject.
-        let mut tree = MerkleTree::with_version(MERKLE_VERSION_V1);
+        let mut tree = MerkleTree::with_version(MERKLE_VERSION_V1).unwrap();
         for id in &["art_a", "art_b", "art_c", "art_d"] {
             tree.append(id);
         }
@@ -536,8 +614,8 @@ mod tests {
         let mut proof = tree.inclusion_proof(1).unwrap();
         proof.merkle_version = MERKLE_VERSION_V2;
         assert!(
-            !MerkleTree::verify_proof(&root, "art_b", &proof),
-            "v1-built proof must NOT verify when reinterpreted as v2",
+            !MerkleTree::verify_proof(MERKLE_VERSION_V1, &root, "art_b", &proof),
+            "v1 verifier must reject a proof that upgrades itself to v2",
         );
     }
 
@@ -562,7 +640,7 @@ mod tests {
         };
 
         assert!(
-            !MerkleTree::verify_proof(&internal_hex, "art_attacker", &fake_proof),
+            !MerkleTree::verify_proof(MERKLE_VERSION_V2, &internal_hex, "art_attacker", &fake_proof),
             "v2 verifier must reject an internal-node hash impersonating a single-leaf tree",
         );
     }
@@ -583,7 +661,7 @@ mod tests {
             algorithm: Some(MERKLE_ALGORITHM_V2.to_string()),
             merkle_version: MERKLE_VERSION_V2,
         };
-        assert!(!MerkleTree::verify_proof(&root, "art_a", &bad));
+        assert!(!MerkleTree::verify_proof(MERKLE_VERSION_V2, &root, "art_a", &bad));
     }
 
     #[test]
@@ -594,7 +672,12 @@ mod tests {
         let root = hex::encode(tree.root().unwrap());
         let mut proof = tree.inclusion_proof(0).unwrap();
         proof.merkle_version = 7; // not v1 or v2
-        assert!(!MerkleTree::verify_proof(&root, "art_a", &proof));
+        // Trusted version is v2 here; proof claims 7 — must reject.
+        assert!(!MerkleTree::verify_proof(MERKLE_VERSION_V2, &root, "art_a", &proof));
+        // And separately: if the *trusted* version is unknown, also reject.
+        let mut proof2 = tree.inclusion_proof(0).unwrap();
+        proof2.merkle_version = 7;
+        assert!(!MerkleTree::verify_proof(7, &root, "art_a", &proof2));
     }
 
     #[test]
@@ -633,6 +716,6 @@ mod tests {
         assert!(json.contains("\"merkle_version\":2"), "wire shape must include merkle_version=2");
         let parsed: InclusionProof = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.merkle_version, MERKLE_VERSION_V2);
-        assert!(MerkleTree::verify_proof(&root, "art_a", &parsed));
+        assert!(MerkleTree::verify_proof(MERKLE_VERSION_V2, &root, "art_a", &parsed));
     }
 }

@@ -193,21 +193,25 @@ async function computeRoot(version,ids){
   while(lv.length>1){const nx=[];let i=0;while(i+1<lv.length){nx.push(await hashInternal(version,lv[i],lv[i+1]));i+=2}if(i<lv.length)nx.push(lv[i]);lv=nx}
   return toHex(lv[0]);
 }
-async function verifyProof(artId,proof,rootHex){
-  // Dispatch on the proof's declared merkle version. Absent = v1 (legacy,
-  // pre-domain-separation). Anything other than 1 or 2 rejects.
-  const version=Number.isFinite(proof.merkle_version)?proof.merkle_version:1;
-  if(version!==1&&version!==2)return false;
+async function verifyProof(expectedVersion,artId,proof,rootHex){
+  // expectedVersion is the TRUSTED merkle version, taken from the
+  // receipt's merkle section — NOT from the (untrusted) proof blob.
+  // The proof's self-declared merkle_version must match; mismatch is
+  // rejected to close the downgrade vector that previously let a v1
+  // proof verify against a v2-signed receipt.
+  if(expectedVersion!==1&&expectedVersion!==2)return false;
+  const proofVersion=Number.isFinite(proof.merkle_version)?proof.merkle_version:1;
+  if(proofVersion!==expectedVersion)return false;
   const algo=proof.algorithm;
   if(algo&&algo!=='sha256-duplicate-last'&&algo!=='sha256-rfc9162')return false;
   // v2 rejects empty proof path unless leaf_index===0 (single-leaf tree).
-  if(version===2&&(!proof.path||proof.path.length===0)&&proof.leaf_index!==0)return false;
-  const lh=await hashLeaf(version,artId);if(toHex(lh)!==proof.leaf_hash)return false;
+  if(expectedVersion===2&&(!proof.path||proof.path.length===0)&&proof.leaf_index!==0)return false;
+  const lh=await hashLeaf(expectedVersion,artId);if(toHex(lh)!==proof.leaf_hash)return false;
   let cur=lh;for(const s of(proof.path||proof.steps||[])){
     const sh=s.hash||s.sibling_hash;if(!sh)return false;const sib=fromHex(sh);
     const dir=(s.direction||'').toLowerCase();
-    if(dir==='right')cur=await hashInternal(version,cur,sib);
-    else if(dir==='left')cur=await hashInternal(version,sib,cur);
+    if(dir==='right')cur=await hashInternal(expectedVersion,cur,sib);
+    else if(dir==='left')cur=await hashInternal(expectedVersion,sib,cur);
     else return false;
   }return toHex(cur)===rootHex;
 }
@@ -222,7 +226,9 @@ async function runChecks(){
     const stored=(R.merkle.root||'').replace('mroot_','');
     c.push(root===stored?{n:'merkle_root',s:'pass',d:'Merkle root matches recomputed value'}:{n:'merkle_root',s:'fail',d:'Root mismatch'});
     for(const e of(R.merkle.inclusion_proofs||[])){
-      const v=await verifyProof(e.artifact_id,e.proof||e,stored);
+      // Pass mkVer (the trusted version from the receipt section) into
+      // verifyProof so dispatch comes from the receipt, not the proof.
+      const v=await verifyProof(mkVer,e.artifact_id,e.proof||e,stored);
       c.push({n:'proof:'+e.artifact_id.slice(0,12),s:v?'pass':'fail',d:v?'Inclusion proof valid':'Proof failed'});
     }
   }else c.push({n:'merkle',s:'warn',d:'No artifacts'});

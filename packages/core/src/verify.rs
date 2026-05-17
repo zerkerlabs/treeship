@@ -32,12 +32,23 @@ pub fn verify_receipt_json_checks(receipt: &SessionReceipt) -> Vec<VerifyCheck> 
     let mut checks: Vec<VerifyCheck> = Vec::new();
 
     if !receipt.artifacts.is_empty() {
-        // Recompute under the receipt's declared merkle version. v0.10.2
-        // receipts deserialize as v1 via the `#[serde(default)]` on the
-        // `merkle_version` field — recomputing under v2 would give a
-        // different root and falsely flag the receipt as tampered.
+        // The receipt's declared merkle_version drives both recomputation
+        // and per-proof dispatch. Construct the tree through the
+        // validating `with_version` so an unknown version surfaces as a
+        // fail check rather than silently falling back to v1 hashing.
         let version = receipt.merkle.merkle_version;
-        let mut tree = MerkleTree::with_version(version);
+        let mut tree = match MerkleTree::with_version(version) {
+            Ok(t) => t,
+            Err(e) => {
+                checks.push(VerifyCheck::fail(
+                    "merkle_root",
+                    &format!("receipt declared unknown merkle_version: {e}"),
+                ));
+                // Still emit the other checks below — but we cannot
+                // recompute the root, so skip the merkle-specific work.
+                return finish_with_leaf_count_and_timeline(receipt, checks);
+            }
+        };
         for a in &receipt.artifacts {
             tree.append(&a.artifact_id);
         }
@@ -62,12 +73,28 @@ pub fn verify_receipt_json_checks(receipt: &SessionReceipt) -> Vec<VerifyCheck> 
 
         let proof_total = receipt.merkle.inclusion_proofs.len();
         let mut proofs_passed = 0usize;
+        let mut drift_detected = false;
         for entry in &receipt.merkle.inclusion_proofs {
-            if MerkleTree::verify_proof(&root_hex, &entry.artifact_id, &entry.proof) {
+            // Per-proof version must match the receipt section's
+            // declared version. Smuggling a v1-flavored proof inside a
+            // v2-declared receipt would otherwise dispatch through the
+            // wrong hashing path; reject loudly.
+            if entry.proof.merkle_version != version {
+                drift_detected = true;
+                continue;
+            }
+            if MerkleTree::verify_proof(version, &root_hex, &entry.artifact_id, &entry.proof) {
                 proofs_passed += 1;
             }
         }
-        if proofs_passed == proof_total {
+        if drift_detected {
+            checks.push(VerifyCheck::fail(
+                "inclusion_proofs",
+                &format!(
+                    "per-proof merkle_version drift detected (section declares v{version})",
+                ),
+            ));
+        } else if proofs_passed == proof_total {
             checks.push(VerifyCheck::pass(
                 "inclusion_proofs",
                 &format!("{proofs_passed}/{proof_total} inclusion proofs passed"),
@@ -82,6 +109,16 @@ pub fn verify_receipt_json_checks(receipt: &SessionReceipt) -> Vec<VerifyCheck> 
         checks.push(VerifyCheck::warn("merkle_root", "No artifacts to verify"));
     }
 
+    finish_with_leaf_count_and_timeline(receipt, checks)
+}
+
+/// Tail of `verify_receipt_json_checks` shared between the happy path and
+/// the early-return path used when an unknown merkle version aborts the
+/// Merkle-specific block.
+fn finish_with_leaf_count_and_timeline(
+    receipt: &SessionReceipt,
+    mut checks: Vec<VerifyCheck>,
+) -> Vec<VerifyCheck> {
     if receipt.merkle.leaf_count == receipt.artifacts.len() {
         checks.push(VerifyCheck::pass(
             "leaf_count",

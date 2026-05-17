@@ -6,7 +6,7 @@ pub mod checkpoint;
 pub mod proof;
 
 pub use tree::{
-    MerkleTree, InclusionProof, Direction, ProofStep,
+    MerkleTree, MerkleError, InclusionProof, Direction, ProofStep,
     MERKLE_ALGORITHM_V1, MERKLE_ALGORITHM_V2, MERKLE_VERSION_V1, MERKLE_VERSION_V2,
     default_merkle_version_v1,
 };
