@@ -1076,6 +1076,15 @@ pub(crate) fn add_approval_evidence_checks(
         let mut all_ok = true;
         let mut details: Vec<String> = Vec::new();
         let mut have_valid_signature = false;
+        // Security-critical failures (untrusted-issuer / tampered /
+        // not-hub-kind) must FAIL unconditionally, not warn. Audit
+        // lane J fix-up: previously these emitted WARN and the CLI
+        // wrapper's --strict promoted to FAIL, which meant the
+        // headline audit case (self-signed hub-org forgery) passed
+        // green-but-yellow in default mode. The release rule is
+        // "trust pinning is on by default"; expressed in this row
+        // as "any signature/issuer failure is a hard fail."
+        let mut security_fatal = false;
 
         for cp in &hub_checkpoints {
             match crate::statements::verify_hub_checkpoint_signature(cp, trust) {
@@ -1119,6 +1128,7 @@ pub(crate) fn add_approval_evidence_checks(
                 }
                 crate::statements::HubCheckpointVerification::Tampered => {
                     all_ok = false;
+                    security_fatal = true;
                     details.push(format!(
                         "{} hub signature failed verification (tampered or wrong key)",
                         cp.checkpoint_id,
@@ -1129,6 +1139,7 @@ pub(crate) fn add_approval_evidence_checks(
                     // arm so a future filter relaxation doesn't go
                     // silent.
                     all_ok = false;
+                    security_fatal = true;
                     details.push(format!(
                         "{} kind toggled out of hub-org during verify",
                         cp.checkpoint_id,
@@ -1136,6 +1147,7 @@ pub(crate) fn add_approval_evidence_checks(
                 }
                 crate::statements::HubCheckpointVerification::UntrustedIssuer => {
                     all_ok = false;
+                    security_fatal = true;
                     details.push(format!(
                         "{} hub_public_key is not a trusted root (configure via `treeship trust add`)",
                         cp.checkpoint_id,
@@ -1148,10 +1160,19 @@ pub(crate) fn add_approval_evidence_checks(
                 "replay-hub-org",
                 &details.join("; "),
             ));
+        } else if security_fatal {
+            // Untrusted issuer or tampered signature: fail-by-default
+            // regardless of --strict. Self-signed forgeries must not
+            // pass yellow.
+            checks.push(VerifyCheck::fail(
+                "replay-hub-org",
+                &details.join("; "),
+            ));
         } else {
             // Hub checkpoint is present but does not satisfy every
-            // gate. Default mode warns; the CLI verify wrapper's
-            // --strict promotes to fail.
+            // non-security gate (missing-field, coverage gap).
+            // Default mode warns; the CLI verify wrapper's --strict
+            // promotes to fail.
             checks.push(VerifyCheck::warn(
                 "replay-hub-org",
                 &details.join("; "),

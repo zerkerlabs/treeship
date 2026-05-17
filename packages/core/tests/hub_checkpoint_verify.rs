@@ -198,10 +198,11 @@ fn valid_hub_checkpoint_passes() {
     assert!(hub.detail.contains("verifies"), "detail should mention verification: {}", hub.detail);
 }
 
-/// Acceptance: tampered signature -> default WARN (CLI --strict promotes
-/// to FAIL; tested in the CLI integration tests).
+/// Acceptance: tampered signature -> FAIL by default (audit lane J
+/// fix-up). Previously this was WARN and --strict promoted to FAIL,
+/// which let forged signatures exit 0 in default mode.
 #[test]
-fn tampered_hub_signature_warns_default() {
+fn tampered_hub_signature_fails_default() {
     let sk = SigningKey::from_bytes(&[8u8; 32]);
     let trust = trust_for_hub(&sk.verifying_key());
 
@@ -219,7 +220,8 @@ fn tampered_hub_signature_warns_default() {
     let checks = verify_package_with_trust(&pkg, &trust).unwrap();
     let hub = checks.iter().find(|c| c.name == "replay-hub-org")
         .expect("replay-hub-org row expected");
-    assert_eq!(hub.status, VerifyStatus::Warn, "expected WARN on tamper, got: {hub:?}");
+    assert_eq!(hub.status, VerifyStatus::Fail,
+               "tampered signature must FAIL by default (not warn): {hub:?}");
     assert!(
         hub.detail.contains("hub signature failed") || hub.detail.contains("tampered"),
         "detail should mention signature failure: {}",
@@ -277,11 +279,14 @@ fn hub_checkpoint_missing_field_warns() {
 }
 
 /// Trust pin: a checkpoint signed by a key not in the operator's
-/// trust store must surface as UntrustedIssuer (rendered as WARN, with
-/// detail referencing `treeship trust add`). This is the headline
-/// audit fix -- previously a self-signed checkpoint passed silently.
+/// trust store must surface as UntrustedIssuer and FAIL by default
+/// (not warn). This is the headline audit fix -- previously a
+/// self-signed checkpoint passed silently, then was downgraded to a
+/// WARN that exited 0 unless the user remembered `--strict`. Now any
+/// untrusted-issuer or tampered hub signature is a hard failure
+/// regardless of strict mode.
 #[test]
-fn hub_checkpoint_with_untrusted_issuer_warns() {
+fn hub_checkpoint_with_untrusted_issuer_fails() {
     let attacker_sk = SigningKey::from_bytes(&[42u8; 32]);
     // Operator trusts a DIFFERENT issuer.
     let honest_sk = SigningKey::from_bytes(&[7u8; 32]);
@@ -295,8 +300,8 @@ fn hub_checkpoint_with_untrusted_issuer_warns() {
     let checks = verify_package_with_trust(&pkg, &trust).unwrap();
     let hub = checks.iter().find(|c| c.name == "replay-hub-org")
         .expect("replay-hub-org row expected");
-    assert_eq!(hub.status, VerifyStatus::Warn,
-               "untrusted-issuer must not promote to Pass: {hub:?}");
+    assert_eq!(hub.status, VerifyStatus::Fail,
+               "untrusted-issuer must FAIL by default (not warn): {hub:?}");
     assert!(hub.detail.contains("not a trusted root") || hub.detail.contains("treeship trust add"),
             "detail must reference the trust remediation: {}", hub.detail);
 }
