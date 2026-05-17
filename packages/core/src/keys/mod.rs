@@ -1475,6 +1475,40 @@ fn write_file_600(path: &Path, data: &[u8]) -> Result<(), KeyError> {
         let _ = fs::remove_file(&tmp_path);
         return Err(KeyError::Io(e));
     }
+
+    // fsync the parent directory so the rename's directory-entry update
+    // is itself persisted. The previous code only fsynced the tmp
+    // file's contents (via sync_all on the file handle) -- on ext4/xfs
+    // with default mount options, the rename can return to userspace
+    // before the dirent metadata has been written to the journal. A
+    // power loss in that window leaves the directory entry pointing at
+    // the OLD inode (or, worse, missing entirely if both old and new
+    // were unlinked from the parent), even though both the data bytes
+    // and the rename syscall ostensibly completed. The H1 doc-comment
+    // above promised stronger durability than the code delivered;
+    // fsyncing the parent dir closes that gap.
+    //
+    // Best-effort on Unix: a directory open + sync_all is the standard
+    // pattern (see e.g. SQLite's atomic-commit, leveldb, lmdb). On
+    // platforms where opening a directory for sync isn't supported, we
+    // silently skip -- the rename is still atomic-with-respect-to-
+    // observers, we just don't guarantee crash-durability of the
+    // dirent update.
+    #[cfg(unix)]
+    {
+        if let Some(parent) = path.parent() {
+            // Errors here are non-fatal: the rename succeeded and the
+            // common case (no power loss before the next fs flush) is
+            // correct. We surface a failure to open/sync the dir only
+            // if the rename itself succeeded, since otherwise the
+            // caller would mistake a durability hint for a write
+            // failure. swallow silently rather than return.
+            if let Ok(dir) = fs::File::open(parent) {
+                let _ = dir.sync_all();
+            }
+        }
+    }
+
     Ok(())
 }
 
