@@ -533,3 +533,389 @@ mod trust_pin_tests {
                 "self-signed forgery must not verify against operator's trust set");
     }
 }
+
+// ---------------------------------------------------------------------------
+// v0.10.4 canonical v3 tests
+//
+// These pin the fix for the second canonical break: v0.10.3's v2 form bound
+// merkle_version but left `algorithm` and `zk_proof` wire-mutable. v3 binds
+// both, plus the canonical_version itself (to prevent downgrade-by-relabel).
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod canonical_v3_tests {
+    use super::*;
+    use crate::attestation::{Ed25519Signer, Signer};
+    use crate::merkle::tree::{MerkleTree, MERKLE_ALGORITHM_V2, MERKLE_VERSION_V1, MERKLE_VERSION_V2};
+    use crate::trust::{encode_ed25519_pubkey, TrustRoot, TrustRootKind, TrustRootStore};
+
+    fn signer_and_tree() -> (Ed25519Signer, MerkleTree) {
+        let mut tree = MerkleTree::new();
+        tree.append("art_alpha");
+        tree.append("art_beta");
+        let signer = Ed25519Signer::generate("key_test").unwrap();
+        (signer, tree)
+    }
+
+    fn trust_with(signer: &Ed25519Signer) -> TrustRootStore {
+        use ed25519_dalek::VerifyingKey;
+        let pk_bytes: [u8; 32] = signer.public_key_bytes().try_into().unwrap();
+        let vk = VerifyingKey::from_bytes(&pk_bytes).unwrap();
+        TrustRootStore::with_roots(vec![TrustRoot {
+            key_id:     signer.key_id().to_string(),
+            public_key: encode_ed25519_pubkey(&vk),
+            kind:       TrustRootKind::HubCheckpoint,
+            label:      "trusted hub".into(),
+            added_at:   "2026-05-15T00:00:00Z".into(),
+        }])
+    }
+
+    fn sample_zk_proof() -> ChainProofSummary {
+        ChainProofSummary {
+            image_id: "sha256:beef".into(),
+            all_signatures_valid: true,
+            chain_intact: true,
+            approval_nonces_matched: true,
+            artifact_count: 7,
+            public_key_digest: "sha256:cafe".into(),
+            proved_at: "2026-05-17T01:23:45Z".into(),
+        }
+    }
+
+    /// Sanity: a freshly-created checkpoint is v3.
+    #[test]
+    fn fresh_checkpoint_is_v3() {
+        let (signer, tree) = signer_and_tree();
+        let cp = Checkpoint::create(1, &tree, &signer).unwrap();
+        assert_eq!(cp.canonical_version, CANONICAL_VERSION_V3);
+        assert_eq!(cp.merkle_version, MERKLE_VERSION_V2);
+        assert!(cp.algorithm.is_some());
+    }
+
+    /// The headline v0.10.4 audit fix: mutating `algorithm` on the wire
+    /// of a v3-signed checkpoint must invalidate the signature.
+    #[test]
+    fn algorithm_tamper_detected() {
+        let (signer, tree) = signer_and_tree();
+        let trust = trust_with(&signer);
+        let mut cp = Checkpoint::create(1, &tree, &signer).unwrap();
+        assert!(cp.verify(&trust), "baseline must verify");
+
+        cp.algorithm = Some("sha256-attacker".into());
+        assert!(
+            !cp.verify(&trust),
+            "algorithm field mutation on the wire must break the v3 signature"
+        );
+
+        // Also: clearing the field to None must break it.
+        let mut cp2 = Checkpoint::create(1, &tree, &signer).unwrap();
+        cp2.algorithm = None;
+        assert!(
+            !cp2.verify(&trust),
+            "removing algorithm on the wire must break the v3 signature"
+        );
+    }
+
+    /// Same fix for `zk_proof`: an attacker attaching, swapping, or
+    /// removing a ChainProofSummary on the wire must invalidate the
+    /// signature.
+    #[test]
+    fn zk_proof_tamper_detected() {
+        let (signer, tree) = signer_and_tree();
+        let trust = trust_with(&signer);
+
+        // Case A: attacker attaches a fabricated proof to a checkpoint
+        // that was signed with zk_proof: None.
+        let mut cp_attach = Checkpoint::create(1, &tree, &signer).unwrap();
+        assert!(cp_attach.zk_proof.is_none(), "fresh checkpoint must have no proof");
+        cp_attach.zk_proof = Some(sample_zk_proof());
+        assert!(
+            !cp_attach.verify(&trust),
+            "attaching a zk_proof on the wire must break the v3 signature"
+        );
+
+        // Case B: sign a checkpoint, then mutate a field inside the
+        // proof on the wire. Needs a small re-sign helper because
+        // Checkpoint::create only sets zk_proof to None.
+        let (signer_b, tree_b) = signer_and_tree();
+        let trust_b = trust_with(&signer_b);
+        let mut cp_swap = checkpoint_signed_with_proof(
+            &signer_b, &tree_b, 1, Some(sample_zk_proof()),
+        );
+        assert!(cp_swap.verify(&trust_b), "freshly signed v3+proof must verify");
+
+        // Mutate one field on the embedded proof.
+        let mut tampered = sample_zk_proof();
+        tampered.chain_intact = false;
+        cp_swap.zk_proof = Some(tampered);
+        assert!(
+            !cp_swap.verify(&trust_b),
+            "mutating a zk_proof field on the wire must break the v3 signature"
+        );
+
+        // Case C: strip the proof entirely.
+        let mut cp_strip = checkpoint_signed_with_proof(
+            &signer_b, &tree_b, 1, Some(sample_zk_proof()),
+        );
+        cp_strip.zk_proof = None;
+        assert!(
+            !cp_strip.verify(&trust_b),
+            "stripping zk_proof on the wire must break the v3 signature"
+        );
+    }
+
+    /// v0.10.3-era v2 checkpoints (no canonical_version field on disk;
+    /// algorithm present, zk_proof absent) must continue to verify under
+    /// v0.10.4 code. This is the legacy-compat guarantee.
+    #[test]
+    fn v2_legacy_checkpoint_still_verifies() {
+        let (signer, tree) = signer_and_tree();
+        let trust = trust_with(&signer);
+
+        let cp_v2 = sign_legacy_v2(&signer, &tree, 1);
+        assert_eq!(cp_v2.canonical_version, CANONICAL_VERSION_V2);
+        assert_eq!(cp_v2.merkle_version, MERKLE_VERSION_V2);
+        assert!(
+            cp_v2.verify(&trust),
+            "v0.10.3-era v2-canonical checkpoint must still verify"
+        );
+
+        // And the wire form (no canonical_version field at all) round-trips
+        // through #[serde(default)] back to canonical_version: 2.
+        let mut json = serde_json::to_value(&cp_v2).unwrap();
+        json.as_object_mut().unwrap().remove("canonical_version");
+        let reparsed: Checkpoint = serde_json::from_value(json).unwrap();
+        assert_eq!(reparsed.canonical_version, CANONICAL_VERSION_V2);
+        assert!(
+            reparsed.verify(&trust),
+            "v2 checkpoint deserialized without canonical_version field must verify"
+        );
+    }
+
+    /// Pre-v0.10.3 v1 checkpoints (legacy hashing, no canonical tag,
+    /// no merkle_version on the wire) must continue to verify under
+    /// v0.10.4 code.
+    #[test]
+    fn v1_legacy_checkpoint_still_verifies() {
+        let signer = Ed25519Signer::generate("legacy_key").unwrap();
+        let trust = trust_with(&signer);
+
+        // Build a v1 tree so the canonical dispatch forces the legacy
+        // form. canonical_version field is informational only for v1.
+        let cp_v1 = sign_legacy_v1(&signer, 99, "sha256:legacy_root", 4, 2);
+        assert_eq!(cp_v1.merkle_version, MERKLE_VERSION_V1);
+        assert!(
+            cp_v1.verify(&trust),
+            "pre-v0.10.3 v1-canonical checkpoint must still verify"
+        );
+
+        // And the wire form without the v1-vintage missing-fields still
+        // round-trips and verifies.
+        let mut json = serde_json::to_value(&cp_v1).unwrap();
+        json.as_object_mut().unwrap().remove("canonical_version");
+        json.as_object_mut().unwrap().remove("merkle_version");
+        json.as_object_mut().unwrap().remove("algorithm");
+        let reparsed: Checkpoint = serde_json::from_value(json).unwrap();
+        assert_eq!(reparsed.merkle_version, MERKLE_VERSION_V1);
+        assert!(
+            reparsed.verify(&trust),
+            "pre-v0.10.3 v1 checkpoint stripped of new fields must verify"
+        );
+    }
+
+    /// Cross-version downgrade: an attacker takes a legitimately
+    /// v3-signed checkpoint, relabels it as canonical_version: 2 on
+    /// the wire (and strips the new bindings to make the v2 canonical
+    /// reproducible), and tries to verify. Must fail — the signature
+    /// covers v3-canonical bytes, not v2-canonical bytes.
+    #[test]
+    fn cross_version_downgrade_v3_to_v2_rejected() {
+        let (signer, tree) = signer_and_tree();
+        let trust = trust_with(&signer);
+        let mut cp = Checkpoint::create(1, &tree, &signer).unwrap();
+        assert_eq!(cp.canonical_version, CANONICAL_VERSION_V3);
+        assert!(cp.verify(&trust), "baseline v3 must verify");
+
+        // Attacker downgrade: flip the canonical_version tag.
+        cp.canonical_version = CANONICAL_VERSION_V2;
+        assert!(
+            !cp.verify(&trust),
+            "v3->v2 canonical_version downgrade must fail (signature covers v3 bytes)"
+        );
+
+        // And the attacker can't recover by also stripping algorithm
+        // (since v2 doesn't bind it, they might hope the v2 canonical
+        // matches the original v3 signature anyway — it must not).
+        let (signer2, tree2) = signer_and_tree();
+        let trust2 = trust_with(&signer2);
+        let mut cp2 = Checkpoint::create(1, &tree2, &signer2).unwrap();
+        cp2.canonical_version = CANONICAL_VERSION_V2;
+        cp2.algorithm = None;
+        assert!(
+            !cp2.verify(&trust2),
+            "v3->v2 downgrade + strip algorithm must still fail"
+        );
+    }
+
+    /// Unknown canonical_version (a future format this verifier doesn't
+    /// understand) must fail closed.
+    #[test]
+    fn unknown_canonical_version_rejected() {
+        let (signer, tree) = signer_and_tree();
+        let trust = trust_with(&signer);
+        let mut cp = Checkpoint::create(1, &tree, &signer).unwrap();
+        cp.canonical_version = 99;
+        assert!(
+            !cp.verify(&trust),
+            "unknown canonical_version must fail closed (no silent fallback)"
+        );
+    }
+
+    // ── test helpers ─────────────────────────────────────────────────
+
+    /// Sign a v3 checkpoint with a chosen zk_proof. Mirrors
+    /// `Checkpoint::create` but lets the test supply zk_proof so it
+    /// can be tampered with after the fact.
+    fn checkpoint_signed_with_proof(
+        signer: &Ed25519Signer,
+        tree: &MerkleTree,
+        index: u64,
+        zk_proof: Option<ChainProofSummary>,
+    ) -> Checkpoint {
+        let root_bytes = tree.root().expect("non-empty tree");
+        let root = format!("sha256:{}", hex::encode(root_bytes));
+        let signed_at = "2026-05-17T00:00:00Z".to_string();
+        let algorithm = Some(MERKLE_ALGORITHM_V2.to_string());
+
+        let canonical = Checkpoint::canonical_for_signing(
+            CANONICAL_VERSION_V3,
+            tree.version(),
+            algorithm.as_deref(),
+            zk_proof.as_ref(),
+            index,
+            &root,
+            tree.len(),
+            tree.height(),
+            signer.key_id(),
+            &signed_at,
+        );
+        let sig_bytes = signer.sign(canonical.as_bytes()).unwrap();
+        Checkpoint {
+            index,
+            root,
+            tree_size: tree.len(),
+            height: tree.height(),
+            signed_at,
+            signer: signer.key_id().to_string(),
+            public_key: URL_SAFE_NO_PAD.encode(signer.public_key_bytes()),
+            signature: URL_SAFE_NO_PAD.encode(&sig_bytes),
+            algorithm,
+            merkle_version: tree.version(),
+            zk_proof,
+            canonical_version: CANONICAL_VERSION_V3,
+        }
+    }
+
+    /// Sign a checkpoint under the v0.10.3-era v2 canonical (no
+    /// algorithm/zk_proof binding, no canonical_version on the wire).
+    /// Used to verify legacy compat.
+    fn sign_legacy_v2(
+        signer: &Ed25519Signer,
+        tree: &MerkleTree,
+        index: u64,
+    ) -> Checkpoint {
+        let root_bytes = tree.root().expect("non-empty tree");
+        let root = format!("sha256:{}", hex::encode(root_bytes));
+        let signed_at = "2026-05-17T00:00:00Z".to_string();
+
+        // Reproduce the v0.10.3 v2 canonical byte-for-byte. Note: in v2
+        // the canonical function takes neither algorithm nor zk_proof.
+        let canonical = Checkpoint::canonical_for_signing(
+            CANONICAL_VERSION_V2,
+            tree.version(),
+            None,   // ignored under v2 dispatch
+            None,   // ignored under v2 dispatch
+            index,
+            &root,
+            tree.len(),
+            tree.height(),
+            signer.key_id(),
+            &signed_at,
+        );
+        // Sanity: v2 canonical must NOT include algorithm even if
+        // we passed Some() here — the v2 branch ignores it.
+        assert!(canonical.starts_with("v2|"));
+
+        let sig_bytes = signer.sign(canonical.as_bytes()).unwrap();
+        Checkpoint {
+            index,
+            root,
+            tree_size: tree.len(),
+            height: tree.height(),
+            signed_at,
+            signer: signer.key_id().to_string(),
+            public_key: URL_SAFE_NO_PAD.encode(signer.public_key_bytes()),
+            signature: URL_SAFE_NO_PAD.encode(&sig_bytes),
+            // v0.10.3-era checkpoints had algorithm present even though
+            // it wasn't bound — that's the on-wire shape we need to
+            // reproduce.
+            algorithm: Some(MERKLE_ALGORITHM_V2.to_string()),
+            merkle_version: MERKLE_VERSION_V2,
+            zk_proof: None,
+            canonical_version: CANONICAL_VERSION_V2,
+        }
+    }
+
+    /// Sign a pre-v0.10.3 v1 checkpoint using the bare legacy canonical.
+    /// The tree must NOT be exercised through MerkleTree::new (which is
+    /// v2 by default); instead we construct the canonical directly.
+    fn sign_legacy_v1(
+        signer: &Ed25519Signer,
+        index: u64,
+        root: &str,
+        tree_size: usize,
+        height: usize,
+    ) -> Checkpoint {
+        let signed_at = "2026-04-01T00:00:00Z".to_string();
+        // Bare legacy canonical.
+        let canonical = Checkpoint::canonical_for_signing(
+            CANONICAL_VERSION_V1,
+            MERKLE_VERSION_V1,
+            None,
+            None,
+            index,
+            root,
+            tree_size,
+            height,
+            signer.key_id(),
+            &signed_at,
+        );
+        assert_eq!(
+            canonical,
+            format!(
+                "{}|{}|{}|{}|{}|{}",
+                index, root, tree_size, height, signer.key_id(), signed_at
+            ),
+            "v1 canonical must remain byte-identical to legacy"
+        );
+
+        let sig_bytes = signer.sign(canonical.as_bytes()).unwrap();
+        Checkpoint {
+            index,
+            root: root.to_string(),
+            tree_size,
+            height,
+            signed_at,
+            signer: signer.key_id().to_string(),
+            public_key: URL_SAFE_NO_PAD.encode(signer.public_key_bytes()),
+            signature: URL_SAFE_NO_PAD.encode(&sig_bytes),
+            algorithm: None,
+            merkle_version: MERKLE_VERSION_V1,
+            zk_proof: None,
+            // Pre-v0.10.4 checkpoints have no canonical_version on the
+            // wire; serde would default it to 2, but merkle_version == 1
+            // forces v1 dispatch anyway. We set it to 1 here for clarity.
+            canonical_version: CANONICAL_VERSION_V1,
+        }
+    }
+}
