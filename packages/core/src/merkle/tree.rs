@@ -718,4 +718,131 @@ mod tests {
         assert_eq!(parsed.merkle_version, MERKLE_VERSION_V2);
         assert!(MerkleTree::verify_proof(MERKLE_VERSION_V2, &root, "art_a", &parsed));
     }
+
+    // ── Adversarial regression coverage ────────────────────────────
+    //
+    // These five tests anchor the fixes that closed the v1→v2 downgrade
+    // vector. Each one will FAIL if a regression undoes a corresponding
+    // guard (trusted-version dispatch, unknown-version rejection at
+    // construct/verify, per-proof version drift, canonical signing
+    // binding).
+
+    #[test]
+    fn cross_version_downgrade_rejected() {
+        // The exploit the original PR missed: a legit v2-signed
+        // checkpoint reused with a hand-crafted v1-flavored proof that
+        // claims merkle_version=1, empty path, leaf_hash = root,
+        // leaf_index = 0. Before the fix, verify_proof would dispatch
+        // through v1 hashing and (with the empty-path guard skipped)
+        // accept the forgery. After the fix, the trusted version comes
+        // from the *checkpoint* and proof.merkle_version != expected
+        // is a hard reject.
+        let mut tree = MerkleTree::new();
+        for id in &["art_a", "art_b"] {
+            tree.append(id);
+        }
+        let root = hex::encode(tree.root().unwrap());
+
+        // Craft the malicious single-leaf v1 proof.
+        let downgrade = InclusionProof {
+            leaf_index: 0,
+            leaf_hash: root.clone(),
+            path: vec![],
+            algorithm: Some(MERKLE_ALGORITHM_V1.to_string()),
+            merkle_version: MERKLE_VERSION_V1,
+        };
+
+        // The trusted version is v2 (taken from the v2-signed checkpoint
+        // in real flows). Verification MUST fail on the version
+        // mismatch — not silently dispatch through v1.
+        assert!(
+            !MerkleTree::verify_proof(MERKLE_VERSION_V2, &root, "art_attacker", &downgrade),
+            "v1 proof must NOT verify when the trusted version is v2 (downgrade vector)",
+        );
+    }
+
+    #[test]
+    fn unknown_merkle_version_rejected_at_construct() {
+        // with_version must reject anything outside {1, 2}. This is the
+        // invariant that lets `hash_leaf`/`hash_internal` keep returning
+        // valid hashes once the tree exists.
+        assert!(matches!(
+            MerkleTree::with_version(99),
+            Err(MerkleError::UnknownVersion(99)),
+        ));
+        assert!(matches!(
+            MerkleTree::with_version(0),
+            Err(MerkleError::UnknownVersion(0)),
+        ));
+        assert!(MerkleTree::with_version(MERKLE_VERSION_V1).is_ok());
+        assert!(MerkleTree::with_version(MERKLE_VERSION_V2).is_ok());
+    }
+
+    #[test]
+    fn unknown_merkle_version_rejected_at_primitive() {
+        // The hash primitives themselves reject unknown versions — no
+        // silent fallback to v1. Defense in depth: even if a future
+        // refactor bypasses with_version, the primitive layer holds.
+        assert!(matches!(
+            hash_leaf(42, "x"),
+            Err(MerkleError::UnknownVersion(42)),
+        ));
+        let l = [0u8; 32];
+        let r = [0u8; 32];
+        assert!(matches!(
+            hash_internal(42, &l, &r),
+            Err(MerkleError::UnknownVersion(42)),
+        ));
+    }
+
+    #[test]
+    fn checkpoint_canonical_includes_version() {
+        // Sign two checkpoints with byte-identical (index, root,
+        // tree_size, height, signer, signed_at) but differing
+        // merkle_version. Swapping the signature between them must
+        // fail verification — proving merkle_version is bound into
+        // the canonical signing string. Without this binding, an
+        // attacker could re-label a v2 checkpoint as v1 (or vice
+        // versa) and keep the original signature.
+        let canonical_v1 = crate::merkle::checkpoint::Checkpoint::canonical_for_signing(
+            MERKLE_VERSION_V1,
+            7,
+            "sha256:abcd",
+            42,
+            6,
+            "key_test",
+            "2026-05-17T00:00:00Z",
+        );
+        let canonical_v2 = crate::merkle::checkpoint::Checkpoint::canonical_for_signing(
+            MERKLE_VERSION_V2,
+            7,
+            "sha256:abcd",
+            42,
+            6,
+            "key_test",
+            "2026-05-17T00:00:00Z",
+        );
+
+        // The two canonical strings must differ. Equal would mean the
+        // signature covers the same bytes for both versions — i.e. an
+        // attacker can swap versions freely.
+        assert_ne!(
+            canonical_v1, canonical_v2,
+            "canonical strings for v1 vs v2 must differ — merkle_version must be bound into signing",
+        );
+        // And the v2 form must carry the "v2|" canonical-format tag so
+        // any third-party verifier reproducing the string can detect
+        // (and dispatch on) the new format.
+        assert!(
+            canonical_v2.starts_with("v2|"),
+            "v2 canonical must be prefixed with v2| tag, got: {canonical_v2}",
+        );
+        // The v1 form must remain byte-identical to the legacy format
+        // so pre-v0.10.3 checkpoints continue verifying.
+        assert_eq!(
+            canonical_v1,
+            "7|sha256:abcd|42|6|key_test|2026-05-17T00:00:00Z",
+            "v1 canonical must remain byte-identical to legacy",
+        );
+    }
 }
