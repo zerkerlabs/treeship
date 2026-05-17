@@ -1,10 +1,12 @@
 # Changelog
 
-## 0.10.4 (unreleased)
+## 0.10.4 (2026-05-17)
 
-The **Audit Follow-ups (P1)** release. v0.10.3 closed the P0 findings; v0.10.4 closes the P1 follow-ups that surfaced while landing them.
+The **Audit Follow-ups (P1)** release. v0.10.3 closed the P0 findings; v0.10.4 closes the P1 follow-ups that surfaced while landing them, plus an OpenClaw event-capture fix and the Codex contributor skill.
 
-The connective theme: v0.10.3 fixed the headline downgrade (`merkle_version`), v0.10.4 fixes the long tail. Same bug class, same fix shape — bind every wire-controllable field that participates in dispatch or display.
+The connective theme: v0.10.3 fixed the headline downgrade (`merkle_version`), v0.10.4 fixes the long tail. Same bug class, same fix shape: bind every wire-controllable field that participates in dispatch or display.
+
+Eight PRs from the v0.10.3 audit follow-up wave ship in this release: five P1s (#93, #94, #95, #96, #98) and three P2s (#92, #97, #99). Plus two unrelated improvements that landed alongside: an OpenClaw integration hook-capture fix (commit `41271cd`) and the Codex contributor skill docs.
 
 ### Security
 
@@ -26,6 +28,7 @@ The connective theme: v0.10.3 fixed the headline downgrade (`merkle_version`), v
 ### Fixed
 
 - **CLI no longer panics on unexpected enum variants in `treeship prove` and `treeship verify --external` (`prove.rs:127`, `verify_external.rs:224`).** The two `unreachable!()` calls were reachable via clap-parsed input; replaced with explicit `Err` returns with actionable messages.
+- **OpenClaw plugin now captures tool calls under OpenClaw v0.10.3's hook API.** Three issues fixed in one pass. (1) Hook registration: OpenClaw v0.10.3 switched to camelCase hook names (`beforeToolCall`/`afterToolCall`) with an `api.on()` registration method; the plugin now registers under BOTH the snake_case + camelCase names AND via both `registerHook` + `api.on()`, so events are captured regardless of which hook surface OpenClaw uses at runtime. (2) Event types: `before_tool_call` now emits `agent.called_tool` with `phase=intent` metadata (not the unsupported `agent.requested_tool`); the bash handler emits `agent.called_tool` with `command` metadata (not the unsupported `agent.ran_shell`); the network handler emits `agent.connected_network` with `--destination`. (3) Type safety: dynamic hook registration sites use `as any` casts for TypeScript without runtime impact. End-to-end verified on a real OpenClaw session: paired intent + result events captured correctly for `read`, `exec`, and network calls.
 
 ### Internal
 
@@ -35,6 +38,7 @@ The connective theme: v0.10.3 fixed the headline downgrade (`merkle_version`), v
 
 ### Documentation
 
+- **Codex contributor skill added.** `skills/treeship-dev/SKILL.md` plus `plugins/treeship-dev/.codex-plugin/plugin.json` give Codex (and any other agent that consumes the Codex plugin format) a single declarative skill describing how to work safely in the Treeship source repo: scope, required read order, crypto invariants, CLI UX rules, validation commands. Mirrors the structure of the `skills/treeship` agent skill from v0.10.2 (#67); same shape, different audience (contributor vs. end-user). `docs/content/docs/integrations/codex.mdx` is the docs page; `integrations/codex/README.md` covers local setup. Closes the v0.10.2 follow-on of "every supported agent gets a Treeship skill" by adding Codex to the list.
 - **Documented subcrate version policy (`docs/architecture/subcrate-versions.md`).** `packages/vi`, `packages/zk-circom`, and `packages/zk-risc0` follow independent release cadences from the main Treeship monorepo (each is `publish = false` and not a hard dependency of the CLI release path). The version-consistency preflight (`scripts/check-release-versions.py`) intentionally does not cover them. `CONTRIBUTING.md` now points at the new doc and the project-structure table calls out the sibling-cadence crates. Closes a v0.10.3 audit P2 flagging version skew between `packages/core` (0.10.3) and `packages/vi` (0.6.0) / `packages/zk-*` (0.5.0). No genuine drift found; the stale `packages/zk-circom/package.json` at 1.0.0 (npm scaffolding default, never published, never consumed) is documented as cosmetic cleanup, not skew.
 
 ## 0.10.3 (2026-05-17)
