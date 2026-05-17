@@ -39,9 +39,10 @@ agents that want to bootstrap without instantiating the SDK first.
 
 from __future__ import annotations
 
-import json
+import hashlib
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -59,6 +60,63 @@ __all__ = [
     "default_cache_dir",
     "platform_release_asset",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Binary integrity (SHA-256) — supply-chain hardening
+# ---------------------------------------------------------------------------
+#
+# When we fall back to downloading the CLI binary from a GitHub Release,
+# we must verify the bytes before we ever chmod +x and exec them.
+#
+# Trust roots:
+#   1. The expected SHA-256 ships with the wheel via PyPI. The release
+#      pipeline writes it into ``treeship_sdk/_data/expected-checksum-<asset>.txt``
+#      at build time (see .github/workflows/release.yml). It is never
+#      committed to the repo and never fetched at runtime.
+#   2. The binary arrives via GitHub Releases.
+#
+# Because the hash arrives via PyPI and the binary via GitHub, an
+# attacker would have to compromise both registries to slip a tampered
+# binary past install. If either is tampered, the hashes disagree and
+# we abort — loudly. No silent fallback.
+#
+# Earlier versions (<= 0.10.2) downloaded the binary, chmod +x'd it,
+# and executed it with zero integrity check. This module is the
+# Python-side mirror of the npm postinstall hardening from PR #72.
+
+_CHECKSUM_DATA_PACKAGE = "treeship_sdk._data"
+_HEX_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _read_expected_checksum(asset: str) -> Optional[str]:
+    """Return the expected SHA-256 hex for ``asset``, or None if missing/malformed.
+
+    Reads from the data file that the release pipeline embedded in the
+    wheel. Format: a single line, lowercase hex, 64 characters. An
+    absent or malformed file means the install is unverifiable; the
+    caller must refuse to proceed.
+    """
+    filename = f"expected-checksum-{asset}.txt"
+    try:
+        # importlib.resources.files() is available on Python >= 3.9.
+        from importlib.resources import files
+
+        data_root = files(_CHECKSUM_DATA_PACKAGE)
+        resource = data_root.joinpath(filename)
+        if not resource.is_file():
+            return None
+        raw = resource.read_text(encoding="utf-8")
+    except (FileNotFoundError, ModuleNotFoundError, OSError, ValueError):
+        # ValueError catches UnicodeDecodeError (a subclass) — a wheel
+        # that ships a checksum file with non-UTF-8 bytes must surface
+        # as "missing/malformed" (None) so the caller routes through the
+        # structured ``checksum-missing`` error path, not a stack trace.
+        return None
+    hex_str = raw.strip().lower()
+    if not _HEX_SHA256_RE.match(hex_str):
+        return None
+    return hex_str
 
 
 # ---------------------------------------------------------------------------
@@ -237,40 +295,216 @@ def _install_via_github_release(
 ) -> Optional[BootstrapResult]:
     """Download the matching platform binary from the GitHub Release.
 
-    No `sudo`; writes only into ``cache_dir``. Returns None if the
-    download fails or the platform isn't supported. Uses the "latest"
+    No `sudo`; writes only into ``cache_dir``. Uses the "latest"
     release by default; pass ``version`` (e.g. ``"0.9.11"``) to pin.
+
+    Integrity:
+        Before the downloaded bytes are ever made executable, this
+        function verifies their SHA-256 against the expected hash that
+        the release pipeline embedded in the wheel (see
+        :func:`_read_expected_checksum`). On mismatch — or if the
+        expected hash is missing from the install — it raises
+        :class:`TreeshipBootstrapError`. Never falls back silently.
+
+    Returns:
+        ``BootstrapResult`` on success, ``None`` if the current
+        platform has no published release asset.
+
+    Raises:
+        :class:`TreeshipBootstrapError`: when the expected checksum is
+            missing, the download fails, or the hash disagrees. The
+            ``reason`` is one of ``checksum-missing``,
+            ``binary-download-failed``, ``binary-checksum-mismatch``.
     """
     asset, err = platform_release_asset()
     if err:
         return None
+
+    expected = _read_expected_checksum(asset)
+    if expected is None:
+        raise TreeshipBootstrapError(
+            "checksum-missing",
+            (
+                "treeship-sdk install is missing the expected SHA-256 for "
+                f"'{asset}'. The wheel was published without a binary "
+                "integrity hash and cannot install the CLI safely. "
+                "Recover: reinstall the SDK (`pip install --force-reinstall "
+                "treeship-sdk`); if that doesn't help, file an issue at "
+                "https://github.com/zerkerlabs/treeship/issues so we can "
+                "re-publish it. Alternatively, install the CLI directly: "
+                "`npm install -g treeship` or download from "
+                "https://github.com/zerkerlabs/treeship/releases."
+            ),
+            [f"checksum:{asset}"],
+        )
+
     cache_dir.mkdir(parents=True, exist_ok=True)
+
+    # Cache-dir ownership/perms check. A pre-existing cache_dir owned
+    # by another user (multi-user macOS box, shared dev VM, mounted
+    # volume, a sibling agent's home) means whoever owns it can
+    # pre-stage a malicious binary at the target path. The mkdir
+    # above is a no-op when the directory already exists, so we MUST
+    # validate the inode we got. On Windows there's no euid concept
+    # and `platform_release_asset` already refuses to serve Windows,
+    # so we skip the check there.
+    if hasattr(os, "geteuid"):
+        try:
+            st = cache_dir.stat()
+        except OSError as exc:
+            raise TreeshipBootstrapError(
+                "cache-dir-unsafe",
+                (
+                    f"could not stat cache_dir {cache_dir} to verify "
+                    f"ownership: {exc}. Refusing to install into a "
+                    "directory we can't inspect. Recover: set "
+                    "$TREESHIP_CACHE to a path you own, or remove the "
+                    "existing cache directory."
+                ),
+                [f"cache:{cache_dir}"],
+            ) from exc
+        euid = os.geteuid()
+        if st.st_uid != euid:
+            raise TreeshipBootstrapError(
+                "cache-dir-unsafe",
+                (
+                    f"cache_dir {cache_dir} is owned by uid {st.st_uid}, "
+                    f"not the current user (uid {euid}). Refusing to "
+                    "install — another user could pre-stage a malicious "
+                    "binary here. Recover: set $TREESHIP_CACHE to a path "
+                    "you own (e.g. under your home directory), or remove "
+                    "the existing cache directory and let treeship "
+                    "recreate it."
+                ),
+                [f"cache:{cache_dir}"],
+            )
+        if st.st_mode & 0o022 != 0:
+            raise TreeshipBootstrapError(
+                "cache-dir-unsafe",
+                (
+                    f"cache_dir {cache_dir} is group- or world-writable "
+                    f"(mode {oct(st.st_mode & 0o777)}). Refusing to "
+                    "install — another user could overwrite the binary "
+                    "between download and exec. Recover: `chmod 700 "
+                    f"{cache_dir}` or move the cache to a private path "
+                    "via $TREESHIP_CACHE."
+                ),
+                [f"cache:{cache_dir}"],
+            )
+
     target = cache_dir / "treeship"
-    base = (
+    url = (
         f"https://github.com/zerkerlabs/treeship/releases/download/v{version}/{asset}"
         if version
         else f"https://github.com/zerkerlabs/treeship/releases/latest/download/{asset}"
     )
-    # Stream into a temp file in the same dir so the final move is atomic.
-    tmp = tempfile.NamedTemporaryFile(dir=str(cache_dir), prefix=".treeship-", suffix=".part", delete=False)
-    tmp_path = Path(tmp.name)
+
+    # Use a unique partial filename so two parallel ensure_cli() calls
+    # (pytest-xdist, two CI jobs sharing a cache mount, two Treeship
+    # SDK instances in the same process) can't overwrite each other's
+    # mid-stream bytes. The earlier fixed-name "treeship.partial"
+    # silently raced. tempfile.NamedTemporaryFile guarantees uniqueness
+    # within cache_dir.
+    partial = tempfile.NamedTemporaryFile(
+        dir=str(cache_dir),
+        prefix="treeship-",
+        suffix=".partial",
+        delete=False,
+    )
+    partial_path = partial.name
+
+    def _cleanup_partial() -> None:
+        """Best-effort removal of the in-progress partial file."""
+        try:
+            os.unlink(partial_path)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+
+    # Stream the download into the unique partial, computing SHA-256
+    # incrementally so we never hold the full binary in memory.
+    hasher = hashlib.sha256()
     try:
-        with urllib.request.urlopen(base, timeout=30) as resp:  # nosec B310 (vetted https GitHub URL)
-            shutil.copyfileobj(resp, tmp)
-        tmp.close()
-        # Mark executable.
-        tmp_path.chmod(0o755)
-        tmp_path.replace(target)
-    except Exception:
-        try:
-            tmp.close()
-        except Exception:
-            pass
-        try:
-            tmp_path.unlink()
-        except Exception:
-            pass
-        return None
+        with urllib.request.urlopen(url, timeout=30) as resp:  # nosec B310 (vetted https GitHub URL)
+            try:
+                while True:
+                    chunk = resp.read(64 * 1024)
+                    if not chunk:
+                        break
+                    hasher.update(chunk)
+                    partial.write(chunk)
+            finally:
+                partial.close()
+    except Exception as exc:
+        # Clean up the partial so a retry can't pick up bad bytes.
+        _cleanup_partial()
+        raise TreeshipBootstrapError(
+            "binary-download-failed",
+            (
+                f"could not download {asset} from {url}: {exc}. "
+                "Recover: re-run the install (transient network/CDN "
+                "issues clear up), or download the binary directly from "
+                "https://github.com/zerkerlabs/treeship/releases and "
+                "place it on PATH."
+            ),
+            [f"download:{url}"],
+        ) from exc
+
+    got = hasher.hexdigest()
+    if got != expected:
+        # Delete the partial BEFORE we abort. A retry must not be able
+        # to chmod the bad bytes that are sitting on disk.
+        _cleanup_partial()
+        raise TreeshipBootstrapError(
+            "binary-checksum-mismatch",
+            (
+                "SHA-256 mismatch on downloaded binary. Do not run it. "
+                f"url={url} expected={expected} got={got}. "
+                "This means either the GitHub Release was tampered with, "
+                "a CDN cached a stale or malicious binary, or the PyPI "
+                "wheel and the release are out of sync. Recover: "
+                "re-run the install in case it's a CDN race; if the "
+                "mismatch persists, file an issue at "
+                "https://github.com/zerkerlabs/treeship/issues."
+            ),
+            [f"download:{url}", f"expected:{expected}", f"got:{got}"],
+        )
+
+    # Hash matched. Chmod the partial BEFORE the atomic rename so that
+    # `target` only ever appears on disk in its final, executable
+    # state. If we chmodded AFTER os.replace, a chmod failure (read-
+    # only FS, exotic perms, NFS race) would leave the bytes at
+    # `target` without the executable bit but already past
+    # verification — the next ensure_cli()'s _try_cache would happily
+    # return that path because it doesn't re-verify the SHA. By
+    # ordering chmod first, any chmod failure causes us to abort with
+    # the bytes still under the unique partial name, which we then
+    # unlink — so `target` never exists in an unverified state.
+    try:
+        os.chmod(partial_path, 0o755)
+    except OSError as exc:
+        _cleanup_partial()
+        raise TreeshipBootstrapError(
+            "binary-download-failed",
+            f"could not set executable bit on {asset}: {exc}",
+            [f"download:{url}", f"finalize:{partial_path}"],
+        ) from exc
+
+    try:
+        os.replace(partial_path, target)
+    except OSError as exc:
+        # The bytes were correct and chmodded; rename failed (rare:
+        # cross-device, permission, target locked). Clean up the
+        # partial so we don't leave verified-but-orphaned bytes that
+        # a future _try_cache might pick up if a symlink shuffle
+        # happened.
+        _cleanup_partial()
+        raise TreeshipBootstrapError(
+            "binary-download-failed",
+            f"could not finalize {asset}: {exc}",
+            [f"download:{url}", f"finalize:{target}"],
+        ) from exc
 
     v = _probe_binary(str(target))
     if v is None:

@@ -22,3 +22,14 @@ classifiers = [
 Homepage = "https://treeship.dev"
 Repository = "https://github.com/zerkerlabs/treeship"
 Documentation = "https://docs.treeship.dev"
+
+[tool.setuptools.packages.find]
+include = ["treeship_sdk*"]
+
+# Ship the per-platform expected-checksum-*.txt files written by the
+# release pipeline (see .github/workflows/release.yml). These embed
+# the SHA-256 of each GitHub Release binary so the bootstrap can
+# verify the download before it's ever marked executable. The files
+# are gitignored — they exist only inside the published wheel.
+[tool.setuptools.package-data]
+"treeship_sdk._data" = ["expected-checksum-*.txt"]
