@@ -18,7 +18,8 @@
   "types": "dist/index.d.ts",
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "openclaw.plugin.json"
   ],
   "scripts": {
     "build": "tsc",
@@ -26,7 +27,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
-    "typescript": "^5.4.0"
+    "typescript": "^5.9.3"
   },
   "peerDependencies": {
     "openclaw": "*"
@@ -35,6 +36,11 @@
     "openclaw": {
       "optional": true
     }
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ]
   },
   "keywords": [
     "treeship",

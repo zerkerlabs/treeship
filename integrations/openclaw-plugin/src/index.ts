@@ -15,8 +15,8 @@
 //   SessionEnd hook          -> close session, surface report URL
 //
 // OpenClaw exposes richer hooks than Claude Code:
-//   before_tool_call         -> agent.requested_tool (intent, can block)
-//   after_tool_call          -> agent.completed_tool (result, with exit code)
+//   before_tool_call         -> agent.called_tool (intent, can block)
+//   after_tool_call          -> typed result events (with exit code)
 //
 // That gives OpenClaw receipts a tighter timeline than Claude Code today --
 // every tool call is paired (intent, result) rather than result-only.
@@ -32,9 +32,9 @@ import { homedir } from "node:os";
 // definePluginEntry signature; if the names below drift from the runtime
 // SDK after this is published, update this block to match what the OpenClaw
 // types package actually exports. The hook handler signatures are
-// pattern-based -- OpenClaw passes a single context object whose shape
-// varies per hook -- so we keep the types loose with `unknown` and narrow
-// inside each handler.
+// (event, ctx) -- OpenClaw passes the event payload first and a context
+// object second, whose shapes vary per hook -- so we keep the types loose
+// with `unknown` and narrow inside each handler.
 // ---------------------------------------------------------------------------
 
 type Hook =
@@ -46,7 +46,11 @@ type Hook =
   | "session_end";
 
 interface PluginApi {
-  registerHook(hook: Hook, handler: (ctx: unknown) => unknown | Promise<unknown>): void;
+  registerHook(
+    hook: Hook,
+    handler: (event: unknown, ctx: unknown) => unknown | Promise<unknown>,
+    opts?: { name?: string; description?: string }
+  ): void;
 }
 
 // The OpenClaw entry point. If `openclaw` exports `definePluginEntry`, prefer
@@ -78,6 +82,15 @@ function treeshipAvailable(): boolean {
 }
 
 function projectInitialized(): boolean {
+  // Check multiple locations: process.env.TREESHIP_PROJECT_ROOT, then
+  // homedir/.treeship, then current working dir for backward compat.
+  if (process.env.TREESHIP_PROJECT_ROOT && existsSync(process.env.TREESHIP_PROJECT_ROOT)) {
+    return true;
+  }
+  const homeDir = homedir();
+  if (existsSync(homeDir + "/.treeship")) {
+    return true;
+  }
   return existsSync("./.treeship");
 }
 
@@ -115,11 +128,15 @@ function runAsync(args: string[]): void {
   // Fire-and-forget. Errors are swallowed -- the receipt either records the
   // event or it doesn't; either way the agent's tool call should not block
   // on Treeship.
-  const child = execFile("treeship", args, { timeout: TIMEOUT_MS }, () => {
-    /* swallow */
+  const child = execFile("treeship", args, { timeout: TIMEOUT_MS }, (err, stdout, stderr) => {
+    if (err || (stderr && stderr.length > 0)) {
+      console.error(`[treeship] event failed: treeship ${args.join(" ")} — ${stderr || err?.message || "unknown error"}`);
+    } else {
+      console.log(`[treeship] event ok: treeship ${args.join(" ")} — ${stdout?.trim() || "ok"}`);
+    }
   });
-  child.on("error", () => {
-    /* swallow */
+  child.on("error", (err) => {
+    console.error(`[treeship] spawn error: treeship ${args.join(" ")} — ${err.message}`);
   });
   child.unref();
 }
@@ -161,6 +178,7 @@ const BASH_TOOLS = new Set([
   "bash",
   "shell",
   "exec",
+  "execFile",
   "run",
   "run_command",
   "terminal",
@@ -241,45 +259,46 @@ function hostFromUrl(url: string): string {
 // Hook handlers
 // ---------------------------------------------------------------------------
 
-function onBeforeToolCall(ctx: unknown): void {
+function onBeforeToolCall(event: unknown, _ctx: unknown): void {
   if (!treeshipAvailable() || !projectInitialized() || !sessionActive()) return;
 
-  // Common hook-context shapes across plugin SDKs: { tool: { name, input } }
-  // or { tool_name, tool_input } or { name, args }. Try them all.
   const toolName =
-    pickString(ctx, ["tool.name", "tool_name", "name"]) || "unknown";
+    pickString(event, ["toolName", "tool.name", "tool_name", "name"]) || "unknown";
 
-  // Intent event. Records WHAT the agent attempted -- including attempts
-  // that may later fail or be denied at the policy layer. This is the
-  // signal Claude Code's PostToolUse can't capture.
+  // Record intent as agent.called_tool with phase metadata.
   runAsync([
     "session",
     "event",
     "--type",
-    "agent.requested_tool",
+    "agent.called_tool",
     "--tool",
     toolName,
+    "--meta",
+    '{"phase":"intent"}',
     "--agent-name",
     "openclaw",
   ]);
 }
 
-function onAfterToolCall(ctx: unknown): void {
+function onAfterToolCall(event: unknown, _ctx: unknown): void {
   if (!treeshipAvailable() || !projectInitialized() || !sessionActive()) return;
 
+  // OpenClaw event shape: { toolName, params, runId, toolCallId, result, error?, durationMs }
   const toolName =
-    pickString(ctx, ["tool.name", "tool_name", "name"]) || "unknown";
+    pickString(event, ["toolName", "tool.name", "tool_name", "name"]) || "unknown";
   const kind = classify(toolName);
+
+  // Tool params are in event.params
+  const params = (event && typeof event === "object" && "params" in event)
+    ? (event as Record<string, unknown>).params
+    : {};
 
   switch (kind) {
     case "read": {
-      const file = pickString(ctx, [
-        "tool.input.file_path",
-        "tool_input.file_path",
-        "tool_input.path",
-        "args.path",
-        "args.file",
-        "input.path",
+      const file = pickString(params, [
+        "file_path",
+        "path",
+        "file",
       ]);
       if (file) {
         runAsync([
@@ -297,14 +316,11 @@ function onAfterToolCall(ctx: unknown): void {
       break;
     }
     case "write": {
-      const file = pickString(ctx, [
-        "tool.input.file_path",
-        "tool_input.file_path",
-        "tool_input.path",
-        "tool_input.notebook_path",
-        "args.path",
-        "args.file",
-        "input.path",
+      const file = pickString(params, [
+        "file_path",
+        "path",
+        "notebook_path",
+        "file",
       ]);
       if (file) {
         runAsync([
@@ -322,66 +338,38 @@ function onAfterToolCall(ctx: unknown): void {
       break;
     }
     case "bash": {
-      const cmd =
-        pickString(ctx, [
-          "tool.input.command",
-          "tool_input.command",
-          "args.command",
-          "input.command",
-          "args.cmd",
-        ]) || "shell";
-      const procName = cmd.slice(0, 120);
-      let exitCode = pickNumber(ctx, [
-        "tool.output.exit_code",
-        "tool_response.exit_code",
-        "result.exit_code",
-        "exit_code",
-      ]);
-      if (exitCode === null) {
-        const isError = pickString(ctx, [
-          "tool.output.is_error",
-          "tool_response.is_error",
-          "result.is_error",
-          "is_error",
+      const cmd = pickString(params, ["command", "cmd", "shell"]);
+      if (cmd) {
+        runAsync([
+          "session",
+          "event",
+          "--type",
+          "agent.called_tool",
+          "--tool",
+          "bash",
+          "--meta",
+          JSON.stringify({ command: cmd, phase: "result" }),
+          "--agent-name",
+          "openclaw",
         ]);
-        exitCode = isError === "true" ? 1 : 0;
+        return;
       }
-      runAsync([
-        "session",
-        "event",
-        "--type",
-        "agent.completed_process",
-        "--tool",
-        procName,
-        "--exit-code",
-        String(exitCode),
-        "--agent-name",
-        "openclaw",
-      ]);
-      return;
+      break;
     }
     case "network": {
-      const url = pickString(ctx, [
-        "tool.input.url",
-        "tool_input.url",
-        "args.url",
-        "input.url",
-      ]);
+      const url = pickString(params, ["url", "href", "endpoint"]);
       if (url) {
-        const host = hostFromUrl(url);
-        if (host) {
-          runAsync([
-            "session",
-            "event",
-            "--type",
-            "agent.connected_network",
-            "--destination",
-            host,
-            "--agent-name",
-            "openclaw",
-          ]);
-          return;
-        }
+        runAsync([
+          "session",
+          "event",
+          "--type",
+          "agent.connected_network",
+          "--destination",
+          hostFromUrl(url),
+          "--agent-name",
+          "openclaw",
+        ]);
+        return;
       }
       break;
     }
@@ -500,18 +488,45 @@ function inferProviderFromModel(model: string): string | null {
 // ---------------------------------------------------------------------------
 
 const entry: PluginEntry = (api: PluginApi) => {
-  // Tool-call hooks (the core integrity guarantee).
-  api.registerHook("before_tool_call", onBeforeToolCall);
-  api.registerHook("after_tool_call", onAfterToolCall);
-
-  // Session-lifecycle hooks. Register every name we've seen used across
-  // plugin SDK versions; the runtime simply ignores hooks it doesn't fire.
-  // If your OpenClaw version uses a different name and a session never
-  // opens, drop it into this list.
-  api.registerHook("session_start", onSessionStart);
-  api.registerHook("before_session_start", onSessionStart);
-  api.registerHook("session_end", onSessionEnd);
-  api.registerHook("after_session_end", onSessionEnd);
+  // Tool-call hooks: register with both snake_case and camelCase names
+  // via both registerHook and api.on for maximum runtime compatibility.
+  const beforeNames = ["before_tool_call", "beforeToolCall"];
+  for (const name of beforeNames) {
+    if (typeof api.registerHook === "function") {
+      try { api.registerHook(name as any, onBeforeToolCall, { name: `treeship-before-${name}` }); } catch (e) {}
+    }
+    if (typeof (api as any).on === "function") {
+      try { (api as any).on(name, onBeforeToolCall, { name: `treeship-before-${name}` }); } catch (e) {}
+    }
+  }
+  const afterNames = ["after_tool_call", "afterToolCall"];
+  for (const name of afterNames) {
+    if (typeof api.registerHook === "function") {
+      try { api.registerHook(name as any, onAfterToolCall, { name: `treeship-after-${name}` }); } catch (e) {}
+    }
+    if (typeof (api as any).on === "function") {
+      try { (api as any).on(name, onAfterToolCall, { name: `treeship-after-${name}` }); } catch (e) {}
+    }
+  }
+  // Session-lifecycle hooks
+  const sessionNames = ["session_start", "sessionStart", "before_session_start", "beforeSessionStart"];
+  for (const name of sessionNames) {
+    if (typeof api.registerHook === "function") {
+      try { api.registerHook(name as any, onSessionStart, { name: `treeship-${name}` }); } catch (e) {}
+    }
+    if (typeof (api as any).on === "function") {
+      try { (api as any).on(name, onSessionStart, { name: `treeship-${name}` }); } catch (e) {}
+    }
+  }
+  const endNames = ["session_end", "sessionEnd", "after_session_end", "afterSessionEnd"];
+  for (const name of endNames) {
+    if (typeof api.registerHook === "function") {
+      try { api.registerHook(name as any, onSessionEnd, { name: `treeship-${name}` }); } catch (e) {}
+    }
+    if (typeof (api as any).on === "function") {
+      try { (api as any).on(name, onSessionEnd, { name: `treeship-${name}` }); } catch (e) {}
+    }
+  }
 };
 
 export default entry;
@@ -526,9 +541,14 @@ export const register = entry;
 // resolution is non-standard (vendored builds, test harnesses, etc.).
 try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const sdk = require("openclaw") as { definePluginEntry?: (e: PluginEntry) => unknown };
+  const sdk = require("openclaw") as { definePluginEntry?: (opts: { id: string; name: string; description: string; register: PluginEntry }) => unknown };
   if (sdk && typeof sdk.definePluginEntry === "function") {
-    module.exports = sdk.definePluginEntry(entry);
+    module.exports = sdk.definePluginEntry({
+      id: "treeship",
+      name: "Treeship",
+      description: "Auto-capture OpenClaw tool calls into Treeship receipts",
+      register: entry
+    });
     // Preserve named exports so `import { register }` still works.
     (module.exports as { register: PluginEntry }).register = entry;
     (module.exports as { default: PluginEntry }).default = entry;
