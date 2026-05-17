@@ -99,9 +99,9 @@ export interface CrossVerifyResult {
 /**
  * Verify a Treeship Session Receipt. Runs the checks derivable from the
  * receipt JSON alone (Merkle root recomputation, inclusion proofs, leaf
- * count, timeline ordering, chain linkage). Signature verification on
- * individual envelopes requires the original envelope bytes and is out of
- * scope for URL-fetched receipts; use the `treeship verify` CLI for that.
+ * count, timeline ordering). Signature verification on individual envelopes
+ * requires the original envelope bytes and is out of scope for URL-fetched
+ * receipts; use the `treeship verify` CLI for that.
  *
  * Accepts:
  * - a parsed receipt object (best for callers that already have the JSON)

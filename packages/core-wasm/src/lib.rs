@@ -330,9 +330,9 @@ fn verify_risc0_proof_inner(proof: &serde_json::Value) -> Result<String, String>
 
 /// Verify a Session Receipt JSON document. Runs the receipt-level checks
 /// derivable from JSON alone (Merkle root recomputation, inclusion proofs,
-/// leaf count, timeline ordering, chain linkage). Signature verification on
-/// individual envelopes requires the original envelope bytes and is NOT
-/// part of this function — use the CLI's local-storage path for that.
+/// leaf count, timeline ordering). Signature verification on individual
+/// envelopes requires the original envelope bytes and is NOT part of this
+/// function — use the CLI's local-storage path for that.
 ///
 /// Returns JSON:
 /// ```json

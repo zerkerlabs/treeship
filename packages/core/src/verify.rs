@@ -19,9 +19,9 @@ use crate::session::package::{VerifyCheck, VerifyStatus};
 
 /// Receipt-level checks derivable from the receipt JSON alone (no on-disk
 /// package). Runs Merkle root recomputation, inclusion proof verification,
-/// leaf-count parity, timeline ordering, and receipt-level chain linkage.
-/// Shared between the CLI's URL-fetch path and the WASM `verify_receipt`
-/// export so both surfaces apply the same rules.
+/// leaf-count parity, and timeline ordering. Shared between the CLI's
+/// URL-fetch path and the WASM `verify_receipt` export so both surfaces
+/// apply the same rules.
 ///
 /// Signature checks on individual envelopes are NOT part of this function:
 /// a raw receipt JSON does not carry envelope bytes. Use the local-storage
@@ -109,10 +109,18 @@ pub fn verify_receipt_json_checks(receipt: &SessionReceipt) -> Vec<VerifyCheck> 
         ));
     }
 
-    checks.push(VerifyCheck::pass(
-        "chain_linkage",
-        "Receipt-level chain linkage intact",
-    ));
+    // P0 #7 (audit): the previous implementation pushed an unconditional
+    // `chain_linkage = pass` row regardless of receipt contents. That
+    // advertised a check that never ran — a verifier output row that
+    // could not fail is worse than no row at all. Each `TimelineEntry`
+    // currently carries `event_id` + `sequence_no` but no `prev_event_id`
+    // field, so the receipt JSON has no per-event linkage we can
+    // recompute. `timeline_order` above already validates the only
+    // ordering signal the receipt actually contains.
+    //
+    // TODO: real chain-linkage check (post-launch). Would require adding
+    // `prev_event_id` to `TimelineEntry` and a format-version bump —
+    // tracked separately from this audit lane.
 
     checks
 }
@@ -472,5 +480,74 @@ mod tests {
         assert!(r.unauthorized_tool_calls.is_empty());
         assert_eq!(r.authorized_tools_never_called, vec!["Bash"]);
         assert!(r.ok());
+    }
+
+    // P0 #7 regression guard: `verify_receipt_json_checks` previously pushed
+    // an unconditional `chain_linkage = pass` row that advertised a check
+    // which never ran. The fix removed the row; this test pins it down so a
+    // future "helpful" refactor cannot silently restore the lie. We exercise
+    // both branches of the function: the empty-artifacts path and the
+    // populated-artifacts path. Neither must emit a check named
+    // `"chain_linkage"`.
+    #[test]
+    fn chain_linkage_check_never_emitted() {
+        use crate::session::receipt::{ArtifactEntry, TimelineEntry};
+
+        // Branch 1: empty artifacts + empty timeline (the warn-only path).
+        let rec_empty = receipt(Some("ship_a"), &[]);
+        let checks_empty = verify_receipt_json_checks(&rec_empty);
+        assert!(
+            !checks_empty.iter().any(|c| c.name == "chain_linkage"),
+            "chain_linkage check must not be emitted (empty receipt). got: {:?}",
+            checks_empty.iter().map(|c| &c.name).collect::<Vec<_>>(),
+        );
+
+        // Branch 2: a receipt with real artifacts and timeline entries so
+        // the merkle/inclusion/leaf-count/timeline branches all run.
+        let mut rec_full = receipt(Some("ship_a"), &[]);
+        rec_full.artifacts = vec![
+            ArtifactEntry {
+                artifact_id:  "art_aaaa".into(),
+                payload_type: "treeship.dev/v0/action".into(),
+                digest:       None,
+                signed_at:    None,
+            },
+            ArtifactEntry {
+                artifact_id:  "art_bbbb".into(),
+                payload_type: "treeship.dev/v0/action".into(),
+                digest:       None,
+                signed_at:    None,
+            },
+        ];
+        rec_full.merkle.leaf_count = 2;
+        rec_full.timeline = vec![
+            TimelineEntry {
+                sequence_no:       1,
+                timestamp:         "2026-04-10T00:00:01Z".into(),
+                event_id:          "evt_1".into(),
+                event_type:        "tool.call".into(),
+                agent_instance_id: "ai_1".into(),
+                agent_name:        "a".into(),
+                host_id:           "h_1".into(),
+                summary:           None,
+            },
+            TimelineEntry {
+                sequence_no:       2,
+                timestamp:         "2026-04-10T00:00:02Z".into(),
+                event_id:          "evt_2".into(),
+                event_type:        "tool.call".into(),
+                agent_instance_id: "ai_1".into(),
+                agent_name:        "a".into(),
+                host_id:           "h_1".into(),
+                summary:           None,
+            },
+        ];
+
+        let checks_full = verify_receipt_json_checks(&rec_full);
+        assert!(
+            !checks_full.iter().any(|c| c.name == "chain_linkage"),
+            "chain_linkage check must not be emitted (populated receipt). got: {:?}",
+            checks_full.iter().map(|c| &c.name).collect::<Vec<_>>(),
+        );
     }
 }
