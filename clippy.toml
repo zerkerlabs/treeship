@@ -1,0 +1,21 @@
+# Project clippy config. Pins MSRV so clippy's MSRV-sensitive lints
+# (e.g. `manual_let_else`, `unnecessary_lazy_evaluations`) suggest only
+# patterns that compile on every rustc version we support, instead of
+# suggesting new-version syntax that would break the build on older
+# toolchains.
+#
+# CI does NOT currently run `cargo clippy`; the project relies on
+# CONTRIBUTING.md asking contributors to run `cargo clippy --all-targets`
+# locally before commit. A pre-existing ~40-warning clippy debt against
+# `-D warnings` (mostly `clippy::manual_map`, `clippy::doc_overindented_list_items`,
+# and similar style nits in `packages/core` and `packages/cli`) is
+# documented in the v0.10.4 audit lane G PR; this file does not add
+# `deny`/`allow` lists so merging it does not change the workspace lint
+# surface. Once the debt is paid, a follow-up PR can enable
+# `cargo clippy --workspace -- -D warnings` in ci.yml and tighten this
+# config accordingly.
+
+# MSRV: matches the `channel` pin in rust-toolchain.toml. Keep these two
+# in lockstep when bumping; out-of-sync values silently disable lints
+# that would have caught real bugs.
+msrv = "1.94"
