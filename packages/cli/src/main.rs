@@ -1521,6 +1521,11 @@ struct TrustAddArgs {
     /// Optional human-readable label. Shown by `treeship trust list`.
     #[arg(long)]
     label: Option<String>,
+
+    /// Skip the interactive confirmation prompt. Required for
+    /// non-interactive use (CI, scripts, JSON output mode).
+    #[arg(long)]
+    yes: bool,
 }
 
 #[derive(clap::Args)]
@@ -1528,6 +1533,11 @@ struct TrustRemoveArgs {
     /// Identifier to remove. Removes every entry with this `key_id`
     /// regardless of kind.
     key_id: String,
+
+    /// Skip the interactive confirmation prompt. Required for
+    /// non-interactive use (CI, scripts, JSON output mode).
+    #[arg(long)]
+    yes: bool,
 }
 
 // --- hub --------------------------------------------------------------------
@@ -2194,9 +2204,10 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 &a.public_key,
                 &a.kind,
                 a.label.as_deref(),
+                a.yes,
                 printer,
             ),
-            TrustCommand::Remove(a) => commands::trust::remove(&a.key_id, printer),
+            TrustCommand::Remove(a) => commands::trust::remove(&a.key_id, a.yes, printer),
         },
 
         Command::Hub(sub) => match sub {
