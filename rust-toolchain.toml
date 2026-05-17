@@ -1,0 +1,23 @@
+# Pin the local toolchain so contributors compile and lint against the same
+# rustc CI uses. Without this file, contributors silently drift onto whatever
+# `stable` is on their machine, and lints / suggestions / MIR-level diagnostics
+# diverge from what GitHub Actions sees on a PR.
+#
+# Channel rationale:
+#   CI uses `dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8`,
+#   the action's `stable` branch as of v0.10.3 (audit lane C, #80). That branch
+#   tracks whatever the latest stable is at the moment GitHub re-resolves the
+#   action SHA. As of 2026-05-17 that is 1.94.1 (release date 2026-03-25;
+#   confirmed via `curl -s https://static.rust-lang.org/dist/channel-rust-stable.toml`).
+#
+#   Pinning a specific version locally rather than `stable` keeps local builds
+#   deterministic. When CI's stable advances, bump this file in the same PR
+#   that bumps the dtolnay/rust-toolchain SHA so the two move in lockstep.
+#
+# Components: rustup automatically installs `clippy` and `rustfmt` for the
+# pinned channel on first cargo invocation, so local devs do not need to run
+# `rustup component add` manually.
+[toolchain]
+channel    = "1.94.1"
+components = ["clippy", "rustfmt"]
+profile    = "minimal"

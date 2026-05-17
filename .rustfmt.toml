@@ -1,0 +1,23 @@
+# Project rustfmt config. Intentionally minimal: it pins only the two
+# style choices the codebase has organically settled on, so `cargo fmt`
+# behaves identically across contributor machines and rustfmt versions
+# without forcing a workspace-wide reformat as a side effect of merging
+# this file.
+#
+# CI does NOT currently run `cargo fmt --check` (see .github/workflows/ci.yml).
+# CONTRIBUTING.md asks contributors to run `cargo fmt` before committing.
+# A pre-existing ~1.4k-line fmt drift between `cargo fmt` defaults and the
+# checked-in code is documented in the v0.10.4 audit lane G PR and is out
+# of scope for this file; mass-reformatting in the same PR that adds this
+# config would bury the toolchain-pinning signal. Future PR can either
+# enable `cargo fmt --check` in CI after a clean reformat commit, or add
+# style options here once we want them enforced.
+
+# edition: pin so rustfmt is not at the mercy of how it auto-detects from
+# Cargo.toml. All workspace crates use edition 2021.
+edition = "2021"
+
+# max_width: matches the codebase's prevailing line length. This is also
+# the rustfmt default, but spelling it out makes it survive any future
+# default change in a new rustfmt release.
+max_width = 100

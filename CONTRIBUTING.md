@@ -15,7 +15,7 @@ If `cargo build` succeeds and `cargo test -p treeship-core` reports `257 passed`
 
 ## Development setup
 
-- Rust 1.75+ for core and CLI
+- Rust toolchain pinned via `rust-toolchain.toml` at repo root (currently `1.94.1`). If you have rustup installed, the first `cargo` invocation in the repo will automatically install the pinned channel and the `clippy` + `rustfmt` components — no manual `rustup component add` needed. CI uses the same channel via `dtolnay/rust-toolchain` (see `.github/workflows/ci.yml`); when CI's pin advances, `rust-toolchain.toml` advances in the same PR.
 - Go 1.22+ for Hub server
 - Node.js 20+ for SDK, MCP bridge, and docs
 - Python 3.9+ for Python SDK
@@ -85,7 +85,7 @@ The body should explain WHY (motivation, previous behavior, evidence) more than 
 
 ## Code style
 
-- Rust: `cargo fmt && cargo clippy --all-targets` -- both must be clean
+- Rust: run `cargo fmt` and `cargo clippy --all-targets` before committing. Style is governed by `.rustfmt.toml` and `clippy.toml` at repo root; the toolchain that produces those checks is pinned by `rust-toolchain.toml`. (CI does not yet gate on either; an existing fmt + clippy debt is tracked for cleanup. New code should still be clean against both.)
 - TypeScript: standard ES modules; no compiler warnings
 - Go: `go fmt`
 - Docs and code comments: no em dashes, direct language, real CLI examples (not invented flags)
