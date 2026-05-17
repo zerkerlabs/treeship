@@ -10,7 +10,10 @@ pub use tree::{
     MERKLE_ALGORITHM_V1, MERKLE_ALGORITHM_V2, MERKLE_VERSION_V1, MERKLE_VERSION_V2,
     default_merkle_version_v1,
 };
-pub use checkpoint::{Checkpoint, CheckpointError};
+pub use checkpoint::{
+    Checkpoint, CheckpointError,
+    CANONICAL_VERSION_V1, CANONICAL_VERSION_V2, CANONICAL_VERSION_V3,
+};
 pub use proof::{ProofFile, ArtifactSummary};
 
 #[cfg(test)]
