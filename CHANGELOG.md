@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.10.3 (2026-05-17)
+
+The **Audit Hardening** release. A post-launch security audit of v0.10.2 surfaced eleven P0 findings across the crypto, trust, and supply-chain surfaces. v0.10.3 closes every one of them.
+
+The connective theme: v0.10.0 made the receipt portable, v0.10.1 made the binary trustworthy, v0.10.2 made the receipt's authorship honest. v0.10.3 makes the underlying crypto and trust paths actually live up to what the protocol claimed. The keystore now uses real AEAD instead of a homemade construction. The Merkle tree has RFC 9162 domain separation, and the version selector is bound into the signed canonical so it cannot be downgraded. Checkpoint, hub-checkpoint, and agent-certificate verification require pinned trust roots, and untrusted issuers fail by default instead of warning. The verifier refuses zero-signature envelopes and unverified bundle imports. Supply chain: the Python SDK now verifies the CLI binary's SHA-256 before exec, GitHub Actions are pinned to commit SHAs, and the release workflow's write permissions are scoped to the release job only.
+
+Ten landed PRs ship in this release. Five close P0 audit findings (#83, #86, #87, #88, #89); five close the supporting hardening and visibility lanes (#80, #81, #82, #84, #85). See **TS-2026-001** (`docs/security/TS-2026-001.md`) for the keystore advisory and **`docs/security/threat-model.md`** for the in-repo threat model added in this release.
 
 ### Security
 
@@ -8,6 +14,9 @@
 - **Existing keystores are transparently migrated on first decrypt.** Pre-v0.10.3 keystore entries continue to load via the legacy decrypt path (`decrypt_legacy_v1`) and are immediately re-encrypted in the new v2 format and rewritten on disk. No user action required. If migration write fails (e.g. read-only filesystem), signing still succeeds for the current call and migration is retried on the next load. The `treeship-vi` sibling keystore retains the legacy public symbols (`aes_gcm_encrypt` / `aes_gcm_decrypt`) so its on-disk format remains byte-stable until it migrates on its own cadence.
 - **Local AEAD key buffer wrapped in `zeroize::Zeroizing`** so the stack copy is wiped on drop. The aes-gcm cipher's internal expanded key schedule is outside our control, but the raw 32-byte machine-derived key copy at the encrypt/decrypt scope is cleared.
 - **v2 AAD now binds entry id + public_key (closes intra-keystore swap).** The original v2 AAD covered only the framing prefix; a local attacker with write access to `~/.treeship/keys/` could copy entry A's `enc_priv_key` ciphertext into entry B's JSON envelope and silently un-bind `KeyInfo.public_key` from the actual scalar in use. The v2 AAD now also length-prefixes and binds the entry id and public key, so any envelope-vs-ciphertext swap surfaces as a MAC failure. `write_file_600` also now `fsync`s the parent directory after rename so the H1 atomic-write doc-comment's durability promise matches reality on ext4/xfs.
+- **Verifier refuses zero-signature envelopes and unverified bundle imports (audit lane H, #86).** `Verifier::verify` previously returned `Ok` on envelopes whose signature list was empty because the verification loop simply did not run. `bundle::import` wrote every envelope to storage without verifying signatures. After this release, both paths reject before any state mutation. The fake `chain_linkage = pass` row that advertised a check the verifier never actually performed is gone, with a regression test pinning it down. `bundle::import` now uses a verifier built from the local keystore and filters by `algorithm == "ed25519"` to stay forward-compatible with non-Ed25519 keys.
+- **Python SDK verifies the CLI binary's SHA-256 before exec (audit lane B, #82).** `treeship_sdk.bootstrap` now ships three expected-checksum files (one per supported platform: linux-x86_64, darwin-aarch64, darwin-x86_64), embedded in the wheel from PyPI as one trust root, with the binary fetched from GitHub Releases as a second independent trust root. The bootstrap downloads to a unique temp `.partial` path, verifies SHA-256, fails closed on any mismatch (no `chmod`, no rename), and only then renames the verified bytes into place. Closes the asymmetric supply-chain gap the npm side closed in v0.10.1 (#72).
+- **Event log file lock can never be skipped under contention (audit lane F, P0, #83).** `session/event_log.rs::append` previously fell through a lock-acquisition timeout and wrote events without holding the lock, colliding `sequence_no` values under PostToolUse hook concurrency. The fix uses blocking `lock_exclusive()` (callers are fire-and-forget `let _ = log.append(...)`, so erroring on contention would silently drop receipts; Claude Code's 60s hook timeout bounds wedge risk). Locked region tightened to a closure between `lock_exclusive` and `unlock`. 8-thread × 25-append concurrency test asserts `sequence_no` is exactly `0..200` with no duplicates or gaps.
 
 ### Added
 
@@ -34,9 +43,21 @@
 - **`MerkleTree::verify_proof` signature changed.** It now takes `expected_version: u8` as its first argument (the trusted version, sourced from a signature-verified checkpoint or parent receipt section) and rejects if `proof.merkle_version != expected_version`. The old form that read the version straight off the proof blob is gone — `proof.merkle_version` is attacker-controllable, so dispatching on it was the downgrade primitive.
 - **`MerkleTree::with_version` now returns `Result<Self, MerkleError>`** and rejects anything outside `{1, 2}`. Receipts declaring an unknown `merkle_version` surface as a hard fail in both `verify_receipt_json_checks` and `verify_package` instead of silently being treated as v1.
 
+### Fixed
+
+- **CLI JSON output for `hub` and `session` subcommands (audit lane G, #84).** `treeship hub ls`, `hub status`, `session`, and `session log` previously emitted nothing on `--format json` because they routed through `printer.info(...)` which is a no-op in JSON mode. SDK consumers calling `JSON.parse("")` got swallowed errors and silent fallback values (e.g. `hub.status()` always returned `{connected: false}`). All four commands now emit structured JSON envelopes.
+
+### Internal
+
+- **GitHub Actions pinned to commit SHAs (audit lane C, #80).** All 28 `uses:` lines across `ci.yml` and `release.yml` now reference 40-char SHAs with the version tag in a comment. Workflow-level `contents: write` removed; scoped to the `release` job only. `id-token: write` scoped per-job. `wasm-pack` install switched from `curl | sh` to `cargo install wasm-pack --version 0.14.0 --locked` in both workflows.
+- **TS SDK real CLI round-trip test (audit lane D, #85).** `packages/sdk-ts/test/roundtrip.test.ts` exercises `ship().attest()` against a real built `treeship` binary, asserts the receipt verifies, then mutates a byte and asserts verification fails. Five new tests including a tamper assertion the author sanity-checked by inverting it before restoring.
+- **Version-consistency preflight now covers `marketplace.json` (audit lane A, #81).** `scripts/check-release-versions.py` walks both `metadata.version` and `plugins[name=treeship].version` in `.claude-plugin/marketplace.json`, and `scripts/release.sh prepare` bumps them. Closes the drift class that left v0.10.2 advertising 0.9.5 in the plugin marketplace. Stale "177 tests" mentions in `CONTRIBUTING.md`, `AGENTS.md`, and `.github/PULL_REQUEST_TEMPLATE.md` aligned to current count; `SECURITY.md` supported-versions table aligned to 0.10.x.
+- **In-repo threat model (`docs/security/threat-model.md`)** and **TS-2026-001 advisory (`docs/security/TS-2026-001.md`)** added under `docs/security/`. `SECURITY.md` updated to point at both.
+
 ### Migration notes
 
 - **v0.10.2 hub artifacts in the wild**: any receipt or hub-signed checkpoint produced before this version embedded a hub public key that the verifier accepted on the basis of the embedded key alone. After this release the verifier requires that key to appear in `~/.treeship/trust_roots.json` for the matching `kind`. Operators with existing hub artifacts must extract the embedded `signer`/`hub_public_key` value from one of their own trusted artifacts and add it via `treeship trust add <key_id> <pubkey> --kind <hub_checkpoint|ship|agent_cert>` before this version's verifier will accept their existing receipts. A `treeship trust extract <artifact>` convenience helper that pulls the embedded pubkey out of any signed artifact is tracked separately and not in this release; until then, extract by inspecting the `hub_public_key` (for hub-org checkpoints), `public_key` (for Merkle checkpoints), or `signature.public_key` (for agent certificates) field of the artifact JSON.
+- **Keystore v1 → v2 migration is automatic and silent.** Existing keystores load via the legacy decrypt path and are immediately re-encrypted in the v2 AEAD format on first decrypt. No operator action required. If migration write fails (e.g. read-only filesystem), signing still succeeds for the current call and migration is retried on the next load.
 
 ## 0.10.2 (2026-05-11)
 
