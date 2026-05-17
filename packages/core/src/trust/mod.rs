@@ -30,11 +30,45 @@ use std::{
     fs,
     io,
     path::{Path, PathBuf},
+    sync::Once,
 };
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use ed25519_dalek::VerifyingKey;
 use serde::{Deserialize, Serialize};
+
+// Audit lane J fix-up: warn once per process when an env var override
+// is in effect. Silently honoring TREESHIP_TRUST_ROOTS or
+// TREESHIP_ALLOW_INSECURE_KEY_PERMS is exactly the kind of thing a
+// supply-chain attacker would set in a CI runner to redirect trust to
+// a key they control. The warning shows up in stderr at every load
+// (once, deduplicated) so it lands in CI logs.
+static WARN_TRUST_PATH_OVERRIDE_ONCE: Once = Once::new();
+static WARN_INSECURE_PERMS_ONCE: Once = Once::new();
+
+fn warn_trust_path_override_if_set() {
+    if let Some(p) = std::env::var_os("TREESHIP_TRUST_ROOTS") {
+        WARN_TRUST_PATH_OVERRIDE_ONCE.call_once(|| {
+            eprintln!(
+                "treeship: WARNING: trust store path overridden by TREESHIP_TRUST_ROOTS={} (not the default ~/.treeship/trust_roots.json)",
+                std::path::Path::new(&p).display(),
+            );
+        });
+    }
+}
+
+fn warn_insecure_perms_if_bypassed() {
+    if std::env::var_os("TREESHIP_ALLOW_INSECURE_KEY_PERMS")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
+        WARN_INSECURE_PERMS_ONCE.call_once(|| {
+            eprintln!(
+                "treeship: WARNING: trust file permission check bypassed by TREESHIP_ALLOW_INSECURE_KEY_PERMS=1 -- this opens a supply-chain hole if not a deliberate CI sandbox override"
+            );
+        });
+    }
+}
 
 /// What this trust root is allowed to verify. Encoded kebab-case in JSON
 /// because the rest of the codebase (CheckpointKind, etc.) does the same.
@@ -175,7 +209,13 @@ impl From<io::Error> for TrustRootError {
 
 impl TrustRootStore {
     /// Default file location: `~/.treeship/trust_roots.json`.
+    ///
+    /// The `TREESHIP_TRUST_ROOTS` env var overrides the path. When set,
+    /// a one-time warning is emitted on stderr (deduplicated per
+    /// process via `std::sync::Once`) so CI logs show that the trust
+    /// boundary moved.
     pub fn default_path() -> PathBuf {
+        warn_trust_path_override_if_set();
         std::env::var_os("TREESHIP_TRUST_ROOTS")
             .map(PathBuf::from)
             .unwrap_or_else(|| {
@@ -377,10 +417,14 @@ fn check_trust_file_perms(path: &Path) -> Result<(), TrustRootError> {
         use std::os::unix::fs::PermissionsExt;
         // Honour the same bypass the keystore honors -- CI sandboxes and
         // recovery flows occasionally need to load on a loose-perm file.
+        // Audit lane J fix-up: this bypass is a supply-chain hole if
+        // set by a malicious build script. Emit a one-time stderr
+        // warning every time it's honoured so CI logs surface it.
         if std::env::var_os("TREESHIP_ALLOW_INSECURE_KEY_PERMS")
             .map(|v| v == "1")
             .unwrap_or(false)
         {
+            warn_insecure_perms_if_bypassed();
             return Ok(());
         }
         let meta = fs::metadata(path)?;
