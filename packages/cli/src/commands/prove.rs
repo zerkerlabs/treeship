@@ -124,7 +124,16 @@ pub fn prove_circuit(
 
             prover.prove_spend_limit(&artifact_id, amount_cents, max_spend_cents)?
         }
-        _ => unreachable!(),
+        // Defensive: the outer `match circuit` above maps user-supplied
+        // strings to a fixed set of internal_name values. If a new circuit
+        // is added to that map without a matching arm here, we surface a
+        // clear error instead of panicking on user input.
+        other => return Err(format!(
+            "internal error: circuit {:?} (internal name {:?}) is not wired into the prover dispatch; \
+             this should not occur with the current CLI. Please file a bug at \
+             https://github.com/zerkerlabs/treeship/issues.",
+            circuit, other,
+        ).into()),
     };
 
     let elapsed = start.elapsed();
