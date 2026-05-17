@@ -212,17 +212,16 @@ pub fn run(
         };
         emit_step(printer, ship_ok, &ship_msg, None);
 
-        let cert_valid = matches!(result.certificate_status, CertificateStatus::Valid);
-        if !cert_valid {
-            let detail = match &result.certificate_status {
-                CertificateStatus::Expired { valid_until, now } => {
-                    format!("Certificate expired at {valid_until} (now: {now})")
-                }
-                CertificateStatus::NotYetValid { issued_at, now } => {
-                    format!("Certificate not yet valid (issued_at={issued_at}, now={now})")
-                }
-                CertificateStatus::Valid => unreachable!(),
-            };
+        let cert_detail: Option<String> = match &result.certificate_status {
+            CertificateStatus::Valid => None,
+            CertificateStatus::Expired { valid_until, now } => {
+                Some(format!("Certificate expired at {valid_until} (now: {now})"))
+            }
+            CertificateStatus::NotYetValid { issued_at, now } => {
+                Some(format!("Certificate not yet valid (issued_at={issued_at}, now={now})"))
+            }
+        };
+        if let Some(detail) = cert_detail {
             emit_step(printer, false, "Certificate validity", Some(&detail));
         }
 
