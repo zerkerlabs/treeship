@@ -251,13 +251,25 @@ pub fn verify(
     let proof_file: ProofFile = serde_json::from_slice(&bytes)
         .map_err(|e| format!("invalid proof JSON: {}", e))?;
 
-    // 1. Verify checkpoint signature. Load the operator's trust roots
-    //    (missing file = empty store, which makes verification fail
-    //    closed -- matches the audit fix: a checkpoint signed by an
+    // 1. Verify checkpoint signature. Load the operator's trust roots.
+    //    Missing file = empty store, which makes verification fail
+    //    closed (matches the audit fix: a checkpoint signed by an
     //    unpinned issuer is no longer accepted just because the
     //    signature math is internally consistent).
+    //
+    //    Audit lane J fix-up: propagate Malformed / PermissionsTooOpen
+    //    instead of silently degrading to an empty store. An operator
+    //    with a broken trust file deserves a clear "your trust file
+    //    is unreadable" error, not a misleading "untrusted issuer"
+    //    further down the pipeline.
     let trust = treeship_core::trust::TrustRootStore::open_default_or_empty()
-        .unwrap_or_else(|_| treeship_core::trust::TrustRootStore::empty());
+        .map_err(|e| -> Box<dyn std::error::Error> {
+            printer.failure("trust store unreadable", &[
+                ("path",   &treeship_core::trust::TrustRootStore::default_path().display().to_string()),
+                ("reason", &e.to_string()),
+            ]);
+            format!("trust-root: {e}").into()
+        })?;
     let sig_valid = proof_file.checkpoint.verify(&trust);
 
     // 2. Verify inclusion proof

@@ -175,8 +175,22 @@ pub fn run(
             }
         };
 
-        let trust = treeship_core::trust::TrustRootStore::open_default_or_empty()
-            .unwrap_or_else(|_| treeship_core::trust::TrustRootStore::empty());
+        // Audit lane J fix-up: propagate Malformed / PermissionsTooOpen
+        // rather than silently degrading to an empty trust store. A
+        // broken trust file deserves a clear "your trust file is
+        // unreadable" diagnostic, not a misleading downstream failure.
+        let trust = match treeship_core::trust::TrustRootStore::open_default_or_empty() {
+            Ok(t) => t,
+            Err(e) => {
+                emit_step(
+                    printer,
+                    false,
+                    "Trust store readable",
+                    Some(&format!("trust store unreadable: {e}")),
+                );
+                return ExternalExit::CrossVerifyFailed;
+            }
+        };
         match verify_certificate(&cert, &trust) {
             Ok(()) => emit_step(printer, true, "Certificate verified", None),
             Err(e) => {

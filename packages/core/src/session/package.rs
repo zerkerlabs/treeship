@@ -419,9 +419,28 @@ pub fn read_package(pkg_dir: &Path) -> Result<SessionReceipt, PackageError> {
 /// `TrustRootStore::default_path()`. Use
 /// [`verify_package_with_trust`] when the trust store is already in
 /// hand (CLI paths that take a `Ctx`, or tests).
+///
+/// Audit lane J fix-up: `open_default_or_empty` propagates `Malformed`
+/// and `PermissionsTooOpen` errors -- those are operator
+/// misconfiguration that must NOT be silently downgraded to an empty
+/// trust store (an empty store fails verification of any hub-org
+/// checkpoint, which is the right end-state, but the operator needs a
+/// clear "your trust file is broken" diagnostic instead of a misleading
+/// "untrusted issuer" message). Surface the error as a `trust-root`
+/// fail row and stop before doing real work that depends on trust.
 pub fn verify_package(pkg_dir: &Path) -> Result<Vec<VerifyCheck>, PackageError> {
-    let trust = crate::trust::TrustRootStore::open_default_or_empty()
-        .unwrap_or_else(|_| crate::trust::TrustRootStore::empty());
+    let trust = match crate::trust::TrustRootStore::open_default_or_empty() {
+        Ok(t) => t,
+        Err(e) => {
+            // Build a minimal check list so the caller's printer still
+            // renders a coherent failure rather than silently routing
+            // through a fake empty store.
+            return Ok(vec![VerifyCheck::fail(
+                "trust-root",
+                &format!("trust store unreadable: {e}"),
+            )]);
+        }
+    };
     verify_package_with_trust(pkg_dir, &trust)
 }
 
