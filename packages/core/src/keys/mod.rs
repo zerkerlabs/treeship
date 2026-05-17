@@ -180,7 +180,7 @@ impl Store {
         let secret  = signer.secret_bytes();
         let pub_key = signer.public_key_bytes();
 
-        let enc = encrypt_for_disk_v2(&self.machine_key, &secret)
+        let enc = encrypt_for_disk_v2(&self.machine_key, key_id.as_str(), &pub_key, &secret)
             .map_err(KeyError::Crypto)?;
 
         let entry = EncryptedEntry {
@@ -279,8 +279,9 @@ impl Store {
             .map_err(|e| KeyError::Crypto(e.to_string()))?;
         let succ_secret  = signer.secret_bytes();
         let succ_pub_key = signer.public_key_bytes();
-        let succ_enc = encrypt_for_disk_v2(&self.machine_key, &succ_secret)
-            .map_err(KeyError::Crypto)?;
+        let succ_enc =
+            encrypt_for_disk_v2(&self.machine_key, succ_id.as_str(), &succ_pub_key, &succ_secret)
+                .map_err(KeyError::Crypto)?;
 
         let succ_created = crate::statements::unix_to_rfc3339(unix_now());
         let succ_entry = EncryptedEntry {
@@ -438,7 +439,13 @@ impl Store {
         // legacy SHA-256-CTR+HMAC path (`decrypt_legacy_v1`) and are
         // transparently re-encrypted in the new format below.
         let was_legacy = is_legacy_v1(&entry.enc_priv_key);
-        let secret = decrypt_from_disk(&self.machine_key, &entry.enc_priv_key, &entry.nonce)
+        let secret = decrypt_from_disk(
+            &self.machine_key,
+            &entry.id,
+            &entry.public_key,
+            &entry.enc_priv_key,
+            &entry.nonce,
+        )
             .map_err(|e| self.enrich_crypto_error(e))?;
 
         // L3: wrap the on-stack copy of the decrypted secret in a
@@ -545,8 +552,13 @@ impl Store {
             }
         }
 
-        let new_ciphertext =
-            encrypt_for_disk_v2(&self.machine_key, secret).map_err(KeyError::Crypto)?;
+        let new_ciphertext = encrypt_for_disk_v2(
+            &self.machine_key,
+            &old_entry.id,
+            &old_entry.public_key,
+            secret,
+        )
+        .map_err(KeyError::Crypto)?;
 
         let migrated = EncryptedEntry {
             id:               old_entry.id.clone(),
@@ -759,33 +771,66 @@ impl Store {
 const KEYSTORE_MAGIC: u8 = 0x54; // 'T'
 const KEYSTORE_VERSION_V2: u8 = 0x02;
 
-/// AAD for the v2 keystore AEAD. Binds the framing prefix
-/// `[KEYSTORE_MAGIC, KEYSTORE_VERSION_V2]` into the GCM tag so an
-/// attacker cannot strip, swap, or downgrade the framing without
-/// triggering authentication failure. Concretely: flipping the magic
-/// byte on disk, flipping the version byte, or prepending one format's
-/// framing to the other's ciphertext all produce different AAD and
-/// thus a different expected tag, so decrypt fails fast.
+/// Build the v2 keystore AEAD AAD.
 ///
-/// Why constant: the AAD must be byte-identical on encrypt and decrypt.
-/// Future versions (V3+) get their own const + AAD; the dispatcher
-/// picks which to use based on the framing prefix.
-const KEYSTORE_AAD_V2: &[u8] = &[KEYSTORE_MAGIC, KEYSTORE_VERSION_V2];
+/// The AAD binds two things into the GCM tag beyond ciphertext+nonce:
+///
+/// 1. **Framing prefix** (`[KEYSTORE_MAGIC, KEYSTORE_VERSION_V2]`) so
+///    flipping the magic or version byte on disk surfaces as a MAC
+///    failure rather than dispatcher confusion (the M2 audit finding).
+/// 2. **Entry identity** (`entry_id` and `public_key`) so an attacker
+///    with write access to `~/.treeship/keys/` cannot copy entry A's
+///    `enc_priv_key` ciphertext into entry B's JSON envelope. Without
+///    this binding, the swap would decrypt cleanly (same machine key,
+///    same framing-only AAD) and the signer for advertised key id A
+///    would silently sign with key B's secret scalar — un-binding
+///    `KeyInfo.public_key` from the actual scalar in use. This closes
+///    the "intra-keystore swap" class flagged in the post-merge audit
+///    of TS-2026-001.
+///
+/// Every variable-length field is length-prefixed with a big-endian
+/// u32 before its bytes. Concatenating variable-length fields without
+/// length prefixes is a forgery class (an attacker who controls field
+/// boundaries can shift bytes between fields and present a different
+/// `(entry_id, public_key)` pair whose AAD-bytes serialize identically).
+/// `entry_id` is a fixed-prefix `key_<hex>` string in practice, but we
+/// length-prefix it anyway to defend against future id schemes.
+///
+/// The AAD must be byte-identical on encrypt and decrypt. Future
+/// versions (V3+) get their own builder; the dispatcher picks which
+/// to use based on the framing prefix.
+fn build_aad_v2(entry_id: &str, public_key: &[u8]) -> Vec<u8> {
+    let mut aad = Vec::with_capacity(2 + 4 + entry_id.len() + 4 + public_key.len());
+    aad.push(KEYSTORE_MAGIC);
+    aad.push(KEYSTORE_VERSION_V2);
+    aad.extend_from_slice(&(entry_id.len() as u32).to_be_bytes());
+    aad.extend_from_slice(entry_id.as_bytes());
+    aad.extend_from_slice(&(public_key.len() as u32).to_be_bytes());
+    aad.extend_from_slice(public_key);
+    aad
+}
 
 /// AES-256-GCM (the real one) encrypt for at-rest keystore storage.
 /// Returns the framed v2 blob ready to drop into `EncryptedEntry::enc_priv_key`.
 ///
 /// Output: `[magic, version, nonce(12), ciphertext || tag(16)]`.
 ///
-/// M2: the framing prefix is also bound into the AEAD's Associated
-/// Authenticated Data so a tag verification covers it as well as the
-/// ciphertext+nonce. Without AAD binding, an attacker who could flip
-/// bytes 0 and 1 (the magic/version) wouldn't change the recovered
-/// plaintext or trigger a tag mismatch, because the prefix is not an
-/// input to the cipher; the dispatcher might then route the resulting
-/// blob through the wrong format. Folding the prefix into AAD makes
-/// any such tampering surface as a clean MAC failure.
-fn encrypt_for_disk_v2(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>, String> {
+/// The AEAD's Associated Authenticated Data binds:
+/// - the framing prefix (M2 — flipping magic/version surfaces as MAC failure)
+/// - the entry id and public key (post-merge audit fix-up — closes the
+///   intra-keystore swap class where a local attacker copies entry A's
+///   `enc_priv_key` into entry B's JSON envelope).
+///
+/// See `build_aad_v2` for the exact layout. `entry_id` and `public_key`
+/// must match what gets serialized into the `EncryptedEntry` JSON;
+/// `decrypt_for_disk_v2` reads them back from the deserialized entry
+/// to recompute the AAD.
+fn encrypt_for_disk_v2(
+    key: &[u8; 32],
+    entry_id: &str,
+    public_key: &[u8],
+    plaintext: &[u8],
+) -> Result<Vec<u8>, String> {
     // Wrap the in-memory AEAD key in Zeroizing so the local stack copy
     // is wiped on drop. The aes-gcm cipher object owns its own internal
     // expanded key schedule; that's outside our control, but the raw
@@ -797,12 +842,13 @@ fn encrypt_for_disk_v2(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>, Stri
     // 96-bit random nonce from the OS CSPRNG.
     let nonce = Aes256Gcm::generate_nonce(&mut AeadOsRng);
 
+    let aad = build_aad_v2(entry_id, public_key);
     let ciphertext = cipher
         .encrypt(
             &nonce,
             Payload {
                 msg: plaintext,
-                aad: KEYSTORE_AAD_V2,
+                aad: aad.as_slice(),
             },
         )
         .map_err(|e| format!("aead encrypt failed: {e}"))?;
@@ -816,10 +862,21 @@ fn encrypt_for_disk_v2(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>, Stri
 }
 
 /// AES-256-GCM decrypt of a v2 framed blob. Uses the same AAD binding
-/// as `encrypt_for_disk_v2` (the framing prefix) so a tampered magic
-/// or version byte surfaces as a MAC failure rather than dispatch
-/// confusion.
-fn decrypt_v2(key: &[u8; 32], blob: &[u8]) -> Result<Vec<u8>, String> {
+/// as `encrypt_for_disk_v2`:
+///   - framing prefix (so a tampered magic/version surfaces as MAC failure)
+///   - entry id + public key (so swapping `enc_priv_key` between entries
+///     in the same keystore surfaces as MAC failure).
+///
+/// `entry_id` and `public_key` come from the `EncryptedEntry` JSON
+/// envelope that holds `blob`. The caller is responsible for passing the
+/// *envelope's* id and pubkey, not values from some other source — that
+/// is precisely what binds the ciphertext to its envelope.
+fn decrypt_v2(
+    key: &[u8; 32],
+    entry_id: &str,
+    public_key: &[u8],
+    blob: &[u8],
+) -> Result<Vec<u8>, String> {
     // Minimum: magic(1) + version(1) + nonce(12) + tag(16) = 30 bytes.
     if blob.len() < 30 {
         return Err("v2 ciphertext too short".into());
@@ -835,12 +892,13 @@ fn decrypt_v2(key: &[u8; 32], blob: &[u8]) -> Result<Vec<u8>, String> {
     let cipher = Aes256Gcm::new(aead_key);
     let nonce = Nonce::from_slice(nonce_bytes);
 
+    let aad = build_aad_v2(entry_id, public_key);
     cipher
         .decrypt(
             nonce,
             Payload {
                 msg: ct,
-                aad: KEYSTORE_AAD_V2,
+                aad: aad.as_slice(),
             },
         )
         .map_err(|_| "MAC verification failed — key file may be corrupt or wrong machine".into())
@@ -874,11 +932,13 @@ fn is_legacy_v1(blob: &[u8]) -> bool {
 /// message that pointed at the wrong remediation.
 fn decrypt_from_disk(
     key: &[u8; 32],
+    entry_id: &str,
+    public_key: &[u8],
     enc_data: &[u8],
     legacy_nonce_field: &[u8],
 ) -> Result<Zeroizing<Vec<u8>>, String> {
     if !is_legacy_v1(enc_data) {
-        match decrypt_v2(key, enc_data) {
+        match decrypt_v2(key, entry_id, public_key, enc_data) {
             Ok(pt) => return Ok(Zeroizing::new(pt)),
             Err(v2_err) => {
                 // Collision fallback. v1 entries had random first bytes;
@@ -916,11 +976,14 @@ pub fn aes_gcm_decrypt(
     _nonce_unused: &[u8],
 ) -> Result<Vec<u8>, String> {
     // Preserved as a public symbol because the `treeship-vi` sibling
-    // crate calls it directly. Internally it now routes through the
-    // dispatcher so any v1 entries the vi crate has on disk will also
-    // decrypt under the new code, and any future v2 entries (if vi is
-    // upgraded to call `encrypt_for_disk_v2`) keep working.
-    decrypt_from_disk(key, enc_data, _nonce_unused).map(|z| z.to_vec())
+    // crate calls it directly. vi only ever produces v1 ciphertexts
+    // (its `aes_gcm_encrypt` shim calls `legacy_v1_encrypt`) and has
+    // no concept of the `EncryptedEntry` envelope that carries the
+    // entry id + public key the v2 AAD now requires. Route this shim
+    // directly through the legacy v1 path so vi's call site keeps
+    // working byte-for-byte; vi's eventual migration release will
+    // adopt its own AEAD path with its own envelope binding.
+    decrypt_legacy_v1(key, enc_data, _nonce_unused)
 }
 
 /// DEPRECATED: legacy at-rest encryption. Same caveats as
@@ -1491,18 +1554,28 @@ mod tests {
 
     // --- v2 AEAD tests (TS-2026-001 fix) -----------------------------------
 
+    // Fixed entry id + pubkey for the unit-level v2 tests below. The AAD
+    // builder binds these into the GCM tag, so encrypt and decrypt must
+    // see identical values. Using constants keeps each test focused on
+    // its own bit-flip / tamper assertion without dragging Store setup
+    // into the picture.
+    const TEST_ENTRY_ID: &str = "key_unit_test_entry_0001";
+    const TEST_PUBLIC_KEY: &[u8; 32] = &[0xAA; 32];
+
     #[test]
     fn v2_encrypt_decrypt_roundtrip() {
         let key = [7u8; 32];
         let plaintext = b"super secret private key material here!";
-        let blob = encrypt_for_disk_v2(&key, plaintext).unwrap();
+        let blob =
+            encrypt_for_disk_v2(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, plaintext).unwrap();
         // Structural check on the framing.
         assert_eq!(blob[0], KEYSTORE_MAGIC, "magic byte");
         assert_eq!(blob[1], KEYSTORE_VERSION_V2, "version byte");
         assert_eq!(blob.len(), 2 + 12 + plaintext.len() + 16,
                    "magic+version+nonce+ct+tag length");
 
-        let dec = decrypt_from_disk(&key, &blob, &[]).unwrap();
+        let dec =
+            decrypt_from_disk(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, &blob, &[]).unwrap();
         assert_eq!(&*dec, plaintext);
     }
 
@@ -1510,45 +1583,51 @@ mod tests {
     fn v2_decrypt_wrong_key_fails() {
         let key   = [7u8; 32];
         let wrong = [99u8; 32];
-        let blob = encrypt_for_disk_v2(&key, b"secret").unwrap();
+        let blob = encrypt_for_disk_v2(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, b"secret").unwrap();
         // Wrong key with v2 framing: AEAD must reject. Dispatcher will
         // try v1 fallback (which also fails on garbage), so the final
         // error surfaces as a MAC failure rather than wrong plaintext.
-        let result = decrypt_from_disk(&wrong, &blob, &[]);
+        let result = decrypt_from_disk(&wrong, TEST_ENTRY_ID, TEST_PUBLIC_KEY, &blob, &[]);
         assert!(result.is_err(), "wrong key must fail");
     }
 
     #[test]
     fn v2_tamper_ciphertext_fails() {
         let key = [7u8; 32];
-        let mut blob = encrypt_for_disk_v2(&key, b"super secret private key").unwrap();
+        let mut blob = encrypt_for_disk_v2(
+            &key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, b"super secret private key"
+        ).unwrap();
         // Flip one bit inside the ciphertext body (after the 14-byte
         // framing). GCM authenticates ciphertext + nonce; any flip must
         // fail.
         let last = blob.len() - 5;
         blob[last] ^= 0x01;
-        let result = decrypt_from_disk(&key, &blob, &[]);
+        let result = decrypt_from_disk(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, &blob, &[]);
         assert!(result.is_err(), "tampered ciphertext must fail to decrypt");
     }
 
     #[test]
     fn v2_tamper_nonce_fails() {
         let key = [7u8; 32];
-        let mut blob = encrypt_for_disk_v2(&key, b"super secret private key").unwrap();
+        let mut blob = encrypt_for_disk_v2(
+            &key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, b"super secret private key"
+        ).unwrap();
         // Flip a bit in the nonce (bytes [2..14]).
         blob[5] ^= 0x01;
-        let result = decrypt_from_disk(&key, &blob, &[]);
+        let result = decrypt_from_disk(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, &blob, &[]);
         assert!(result.is_err(), "tampered nonce must fail to decrypt");
     }
 
     #[test]
     fn v2_tamper_tag_fails() {
         let key = [7u8; 32];
-        let mut blob = encrypt_for_disk_v2(&key, b"super secret private key").unwrap();
+        let mut blob = encrypt_for_disk_v2(
+            &key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, b"super secret private key"
+        ).unwrap();
         // Flip a bit in the trailing GCM tag (last 16 bytes).
         let len = blob.len();
         blob[len - 1] ^= 0x80;
-        let result = decrypt_from_disk(&key, &blob, &[]);
+        let result = decrypt_from_disk(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, &blob, &[]);
         assert!(result.is_err(), "tampered GCM tag must fail to decrypt");
     }
 
@@ -1558,8 +1637,10 @@ mod tests {
         // same key must produce different blobs (random per-write nonce).
         // Without this property, AES-GCM is catastrophically broken.
         let key = [7u8; 32];
-        let blob_a = encrypt_for_disk_v2(&key, b"identical").unwrap();
-        let blob_b = encrypt_for_disk_v2(&key, b"identical").unwrap();
+        let blob_a =
+            encrypt_for_disk_v2(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, b"identical").unwrap();
+        let blob_b =
+            encrypt_for_disk_v2(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, b"identical").unwrap();
         assert_ne!(blob_a, blob_b,
                    "two v2 encryptions of the same plaintext must differ");
         assert_ne!(&blob_a[2..14], &blob_b[2..14], "nonces must differ");
@@ -1575,7 +1656,8 @@ mod tests {
         let mut nonces: std::collections::HashSet<Vec<u8>> =
             std::collections::HashSet::with_capacity(N);
         for _ in 0..N {
-            let blob = encrypt_for_disk_v2(&key, b"x").unwrap();
+            let blob =
+                encrypt_for_disk_v2(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, b"x").unwrap();
             // bytes [2..14] are the 12-byte GCM nonce.
             nonces.insert(blob[2..14].to_vec());
         }
@@ -1594,11 +1676,13 @@ mod tests {
         // the AAD-binding test below covers the case where the framing
         // sanity check would otherwise pass.
         let key = [7u8; 32];
-        let mut blob = encrypt_for_disk_v2(&key, b"super secret private key").unwrap();
+        let mut blob = encrypt_for_disk_v2(
+            &key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, b"super secret private key"
+        ).unwrap();
         assert_eq!(blob[1], KEYSTORE_VERSION_V2);
         blob[1] = 0xff;
         assert!(
-            decrypt_v2(&key, &blob).is_err(),
+            decrypt_v2(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, &blob).is_err(),
             "altered version byte must be rejected"
         );
     }
@@ -1632,7 +1716,7 @@ mod tests {
         // Framing sanity passes. AAD does not. decrypt_v2 must reject.
         assert_eq!(forged[0], KEYSTORE_MAGIC);
         assert_eq!(forged[1], KEYSTORE_VERSION_V2);
-        let result = decrypt_v2(&key, &forged);
+        let result = decrypt_v2(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, &forged);
         assert!(result.is_err(),
                 "ciphertext computed without AAD must fail to decrypt now that AAD is bound");
     }
@@ -1646,13 +1730,15 @@ mod tests {
         // sees a meaningful message that points at the right
         // remediation.
         let key = [7u8; 32];
-        let mut blob = encrypt_for_disk_v2(&key, b"hello").unwrap();
+        let mut blob =
+            encrypt_for_disk_v2(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, b"hello").unwrap();
         // Flip a byte in the GCM tag (last 16 bytes) so the v2 AEAD
         // rejects but the framing still classifies as v2.
         let last = blob.len() - 1;
         blob[last] ^= 0x01;
 
-        let err = decrypt_from_disk(&key, &blob, &[]).unwrap_err();
+        let err =
+            decrypt_from_disk(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, &blob, &[]).unwrap_err();
         // The dispatcher should bubble the v2 error string up. v2's
         // error message contains "MAC verification failed"; v1's
         // shape on garbage data is either "ciphertext too short" or
@@ -1677,8 +1763,13 @@ mod tests {
         assert!(is_legacy_v1(&legacy_blob),
                 "legacy_v1_encrypt output must classify as legacy");
 
-        // Dispatcher must accept it.
-        let dec = decrypt_from_disk(&key, &legacy_blob, &legacy_nonce).unwrap();
+        // Dispatcher must accept it. AAD inputs are irrelevant for the
+        // v1 path (it doesn't use them), but the signature requires them
+        // — pass the same placeholder constants used elsewhere.
+        let dec = decrypt_from_disk(
+            &key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, &legacy_blob, &legacy_nonce,
+        )
+        .unwrap();
         assert_eq!(&*dec, plaintext);
     }
 
@@ -1699,7 +1790,13 @@ mod tests {
         // then re-encode in legacy v1 format and write it back.
         let v2_entry: EncryptedEntry =
             serde_json::from_slice(&fs::read(&entry_path).unwrap()).unwrap();
-        let secret = decrypt_from_disk(&store.machine_key, &v2_entry.enc_priv_key, &v2_entry.nonce)
+        let secret = decrypt_from_disk(
+            &store.machine_key,
+            &v2_entry.id,
+            &v2_entry.public_key,
+            &v2_entry.enc_priv_key,
+            &v2_entry.nonce,
+        )
             .unwrap();
         let (legacy_blob, legacy_nonce) =
             legacy_v1_encrypt(&store.machine_key, &secret).unwrap();
@@ -2162,7 +2259,13 @@ mod tests {
 
         let v2_entry: EncryptedEntry =
             serde_json::from_slice(&fs::read(&entry_path).unwrap()).unwrap();
-        let secret = decrypt_from_disk(&store.machine_key, &v2_entry.enc_priv_key, &v2_entry.nonce)
+        let secret = decrypt_from_disk(
+            &store.machine_key,
+            &v2_entry.id,
+            &v2_entry.public_key,
+            &v2_entry.enc_priv_key,
+            &v2_entry.nonce,
+        )
             .unwrap();
         let (legacy_blob, legacy_nonce) =
             legacy_v1_encrypt(&store.machine_key, &secret).unwrap();
@@ -2212,8 +2315,15 @@ mod tests {
         assert_eq!(after.enc_priv_key[0], KEYSTORE_MAGIC);
         assert_eq!(after.enc_priv_key[1], KEYSTORE_VERSION_V2);
 
-        // v2 decrypts cleanly.
-        let dec = decrypt_v2(&store.machine_key, &after.enc_priv_key)
+        // v2 decrypts cleanly. Use the post-migration entry's own id +
+        // pubkey — the migration must have re-encrypted with those bound
+        // into the AAD, or this assertion would surface a MAC failure.
+        let dec = decrypt_v2(
+            &store.machine_key,
+            &after.id,
+            &after.public_key,
+            &after.enc_priv_key,
+        )
             .expect("v2 entry must decrypt cleanly after concurrent migration");
         assert_eq!(dec.len(), 32, "decrypted secret must be a 32-byte ed25519 scalar");
 
