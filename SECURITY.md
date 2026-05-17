@@ -28,11 +28,11 @@ We will acknowledge your report within 48 hours and aim to release a fix within 
 
 ## Supported versions
 
-| Version | Supported            |
+| Version | Supported              |
 |---------|------------------------|
-| 0.9.x   | Yes (current)          |
-| 0.8.x   | Security fixes only     |
-| < 0.8   | No longer supported     |
+| 0.10.x  | Yes (current)          |
+| 0.9.x   | Security fixes only    |
+| < 0.9   | No longer supported    |
 
 ## Security model
 

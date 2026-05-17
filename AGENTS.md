@@ -1,7 +1,7 @@
 # TREESHIP --AGENT INSTRUCTIONS
 
 > **Read this file first. Every time. It is the single source of truth.**
-> Last updated: April 2026 · 177 core lib tests passing · CLI + Hub + SDK + MCP + Claude Code plugin shipped (v0.9.5).
+> Last updated: May 2026 · 257 core lib tests passing · CLI + Hub + SDK + MCP + Claude Code plugin shipped (v0.10.2).
 
 ---
 
@@ -25,7 +25,7 @@ Treeship is a portable trust layer for AI agent workflows. Every action, approva
 
 | Component | Location | Status |
 |-----------|----------|--------|
-| Rust core library | `packages/core/` | 177 tests passing |
+| Rust core library | `packages/core/` | 257 tests passing |
 | Rust CLI binary | `packages/cli/` | 25+ commands |
 | TUI (Ratatui) | `packages/cli/` | Interactive terminal dashboard (`treeship ui`) |
 | OTel export | `packages/cli/` | OpenTelemetry span export (feature-flagged) |
@@ -57,7 +57,7 @@ treeship/                           # monorepo root
 ├── AGENTS.md                       # this file
 │
 ├── packages/
-│   ├── core/                       # Rust library (177 tests)
+│   ├── core/                       # Rust library (257 tests)
 │   │   └── src/
 │   │       ├── attestation/        # DSSE, PAE, Ed25519, content-addressed IDs
 │   │       ├── statements/         # 8 statement types (action, approval, handoff, endorsement, receipt, bundle, decision, declaration), nonce binding
