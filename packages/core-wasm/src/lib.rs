@@ -156,6 +156,8 @@ fn verify_merkle_inner(proof_json: &str, trust_roots_json: &str) -> Result<Strin
     let trust = parse_wasm_trust_roots(trust_roots_json)?;
 
     // 1. Verify checkpoint signature against the pinned trust root.
+    // The signature now binds merkle_version (see Checkpoint::canonical_for_signing),
+    // so a tampered version on the checkpoint reaches us as an invalid signature.
     if !proof_file.checkpoint.verify(&trust) {
         return Ok(serde_json::json!({
             "valid": false,
@@ -165,12 +167,16 @@ fn verify_merkle_inner(proof_json: &str, trust_roots_json: &str) -> Result<Strin
         }).to_string());
     }
 
-    // 2. Verify inclusion proof
+    // 2. Verify inclusion proof. The trusted merkle_version comes from
+    // the signature-verified checkpoint above — NOT from the
+    // (attacker-controllable) inclusion proof. verify_proof additionally
+    // rejects if proof.merkle_version != checkpoint.merkle_version.
     let root = proof_file.checkpoint.root
         .strip_prefix("sha256:")
         .unwrap_or(&proof_file.checkpoint.root);
 
     let valid = treeship_core::merkle::MerkleTree::verify_proof(
+        proof_file.checkpoint.merkle_version,
         root,
         &proof_file.artifact_id,
         &proof_file.inclusion_proof,

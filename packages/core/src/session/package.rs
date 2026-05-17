@@ -485,7 +485,25 @@ pub fn verify_package_with_trust(
 
     // 4. Merkle root re-computation
     if !receipt.artifacts.is_empty() {
-        let mut tree = crate::merkle::MerkleTree::new();
+        // Recompute under the receipt's declared merkle version so
+        // legacy (v0.10.2 and earlier, version=1, no domain separation)
+        // receipts continue to verify. New receipts always emit v2.
+        // Construct through the validating `with_version` so an unknown
+        // version surfaces as a hard fail rather than silently falling
+        // back to v1.
+        let version = receipt.merkle.merkle_version;
+        let mut tree = match crate::merkle::MerkleTree::with_version(version) {
+            Ok(t) => t,
+            Err(e) => {
+                checks.push(VerifyCheck::fail(
+                    "merkle_root",
+                    &format!("receipt declared unknown merkle_version: {e}"),
+                ));
+                // Skip the remaining merkle/inclusion work; emit the
+                // leaf_count + timeline tail and return.
+                return Ok(finish_package_checks(checks, &receipt));
+            }
+        };
         for art in &receipt.artifacts {
             tree.append(&art.artifact_id);
         }
@@ -508,9 +526,23 @@ pub fn verify_package_with_trust(
             ));
         }
 
-        // 5. Verify each inclusion proof
+        // 5. Verify each inclusion proof. Per-proof merkle_version must
+        // match the receipt section's declared version — drift is a
+        // hard fail (smuggled v1 proof inside a v2 receipt would
+        // otherwise dispatch through the weaker hashing path).
         for proof_entry in &receipt.merkle.inclusion_proofs {
+            if proof_entry.proof.merkle_version != version {
+                checks.push(VerifyCheck::fail(
+                    &format!("inclusion:{}", proof_entry.artifact_id),
+                    &format!(
+                        "proof merkle_version {} != receipt section v{}",
+                        proof_entry.proof.merkle_version, version,
+                    ),
+                ));
+                continue;
+            }
             let verified = crate::merkle::MerkleTree::verify_proof(
+                version,
                 &root_hex,
                 &proof_entry.artifact_id,
                 &proof_entry.proof,
@@ -586,6 +618,39 @@ pub fn verify_package_with_trust(
     add_approval_evidence_checks(&mut checks, &bundle, trust);
 
     Ok(checks)
+}
+
+/// Tail of `verify_package`: emit leaf_count and timeline-order checks.
+/// Used by the early-return path when an unknown merkle version aborts
+/// Merkle recomputation — those two checks are independent of the tree
+/// version and still meaningful to surface.
+fn finish_package_checks(
+    mut checks: Vec<VerifyCheck>,
+    receipt: &SessionReceipt,
+) -> Vec<VerifyCheck> {
+    if receipt.merkle.leaf_count == receipt.artifacts.len() {
+        checks.push(VerifyCheck::pass("leaf_count", "Leaf count matches artifact count"));
+    } else {
+        checks.push(VerifyCheck::fail(
+            "leaf_count",
+            &format!(
+                "leaf_count {} != artifact count {}",
+                receipt.merkle.leaf_count, receipt.artifacts.len(),
+            ),
+        ));
+    }
+
+    let ordered = receipt.timeline.windows(2).all(|w| {
+        (&w[0].timestamp, w[0].sequence_no, &w[0].event_id)
+            <= (&w[1].timestamp, w[1].sequence_no, &w[1].event_id)
+    });
+    if ordered {
+        checks.push(VerifyCheck::pass("timeline_order", "Timeline is correctly ordered"));
+    } else {
+        checks.push(VerifyCheck::fail("timeline_order", "Timeline entries are not in deterministic order"));
+    }
+
+    checks
 }
 
 /// Emit the package-local + included-checkpoint replay checks. Both are

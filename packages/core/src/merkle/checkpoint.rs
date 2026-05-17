@@ -6,7 +6,7 @@ use crate::attestation::{Signer, SignerError};
 use crate::statements::unix_to_rfc3339;
 use crate::trust::{TrustRootKind, TrustRootStore};
 
-use super::tree::MerkleTree;
+use super::tree::{MerkleTree, MERKLE_VERSION_V1};
 
 /// A signed snapshot of the Merkle tree at a point in time.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,6 +27,12 @@ pub struct Checkpoint {
     /// Merkle algorithm used. Missing = v1 (sha256-duplicate-last).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub algorithm: Option<String>,
+    /// Merkle format version byte (RFC 9162 domain separation). Absent
+    /// on v0.10.2-and-earlier checkpoints — `#[serde(default)]` fills it
+    /// with `1` so legacy checkpoints continue to verify under v1
+    /// hashing. New checkpoints emit `2`.
+    #[serde(default = "super::tree::default_merkle_version_v1")]
+    pub merkle_version: u8,
     /// Optional ZK chain proof result (added when proof is ready).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub zk_proof: Option<ChainProofSummary>,
@@ -68,9 +74,62 @@ impl From<SignerError> for CheckpointError {
 }
 
 impl Checkpoint {
+    /// Build the canonical string for signing/verification.
+    ///
+    /// Two formats coexist by design:
+    ///
+    /// * **Legacy (`merkle_version == 1`):** the original pre-v0.10.3 form,
+    ///   `"{index}|{root}|{tree_size}|{height}|{signer}|{signed_at}"`. Old
+    ///   checkpoints in the wild were signed under this exact string and
+    ///   must continue to verify byte-identically.
+    ///
+    /// * **v2 and later (`merkle_version >= 2`):** prefixed with the
+    ///   canonical-format tag and the merkle version,
+    ///   `"v2|{merkle_version}|{index}|{root}|{tree_size}|{height}|{signer}|{signed_at}"`.
+    ///   Binding `merkle_version` *into the signature* is what closes the
+    ///   downgrade vector: an attacker can no longer take a v2-signed
+    ///   checkpoint and reinterpret it as v1 to dispatch verification
+    ///   through the weaker hashing.
+    ///
+    /// The `v2|` literal is a canonical-format version (not the merkle
+    /// version). Future canonical revisions would use `v3|`, `v4|`, etc.
+    /// — keeping the merkle version negotiable independently.
+    ///
+    /// **Breaking change note:** any third-party verifier that reproduces
+    /// the canonical string outside this Rust core (e.g. a hand-rolled
+    /// JavaScript checker) must mirror this dispatch. The `verify-js`
+    /// package consumes WASM and inherits the change automatically.
+    pub(crate) fn canonical_for_signing(
+        merkle_version: u8,
+        index: u64,
+        root: &str,
+        tree_size: usize,
+        height: usize,
+        signer: &str,
+        signed_at: &str,
+    ) -> String {
+        if merkle_version == MERKLE_VERSION_V1 {
+            // Legacy format. Reproduced byte-identically so pre-v0.10.3
+            // checkpoints still verify.
+            format!(
+                "{}|{}|{}|{}|{}|{}",
+                index, root, tree_size, height, signer, signed_at,
+            )
+        } else {
+            // v2+ canonical. `v2|` is the canonical-format tag; the
+            // following field is the actual merkle version byte, bound
+            // into the signature.
+            format!(
+                "v2|{}|{}|{}|{}|{}|{}|{}",
+                merkle_version, index, root, tree_size, height, signer, signed_at,
+            )
+        }
+    }
+
     /// Create a signed checkpoint from the current tree state.
     ///
-    /// The canonical form for signing is: `{root}|{tree_size}|{signed_at}`
+    /// The canonical signing string is built by [`Self::canonical_for_signing`]
+    /// and binds `merkle_version` for v2+ trees.
     pub fn create(
         index: u64,
         tree: &MerkleTree,
@@ -85,7 +144,15 @@ impl Checkpoint {
             .as_secs();
         let signed_at = unix_to_rfc3339(secs);
 
-        let canonical = format!("{}|{}|{}|{}|{}|{}", index, root, tree.len(), tree.height(), signer.key_id(), signed_at);
+        let canonical = Self::canonical_for_signing(
+            tree.version(),
+            index,
+            &root,
+            tree.len(),
+            tree.height(),
+            signer.key_id(),
+            &signed_at,
+        );
         let sig_bytes = signer.sign(canonical.as_bytes())?;
         let signature = URL_SAFE_NO_PAD.encode(&sig_bytes);
         let public_key = URL_SAFE_NO_PAD.encode(signer.public_key_bytes());
@@ -100,6 +167,7 @@ impl Checkpoint {
             public_key,
             signature,
             algorithm: Some(super::tree::MERKLE_ALGORITHM_V2.to_string()),
+            merkle_version: tree.version(),
             zk_proof: None,
         })
     }
@@ -134,7 +202,15 @@ impl Checkpoint {
             return false;
         }
 
-        let canonical = format!("{}|{}|{}|{}|{}|{}", self.index, self.root, self.tree_size, self.height, self.signer, self.signed_at);
+        let canonical = Self::canonical_for_signing(
+            self.merkle_version,
+            self.index,
+            &self.root,
+            self.tree_size,
+            self.height,
+            &self.signer,
+            &self.signed_at,
+        );
 
         let sig_bytes = match URL_SAFE_NO_PAD.decode(&self.signature) {
             Ok(b) => b,

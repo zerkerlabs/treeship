@@ -174,7 +174,7 @@ pub struct ProofsSection {
 fn is_zero_u32(n: &u32) -> bool { *n == 0 }
 
 /// Merkle section of the receipt.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MerkleSection {
     pub leaf_count: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -183,6 +183,27 @@ pub struct MerkleSection {
     pub checkpoint_id: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inclusion_proofs: Vec<InclusionProofEntry>,
+    /// Merkle format version byte. Drives the leaf/internal hash dispatch
+    /// at verify time. Absent on pre-v0.10.3 receipts — defaults to `1`
+    /// (no domain separation) so v0.10.2 receipts continue to verify.
+    /// New receipts always serialize `2` (RFC 9162 domain separation).
+    #[serde(default = "crate::merkle::tree::default_merkle_version_v1")]
+    pub merkle_version: u8,
+}
+
+impl Default for MerkleSection {
+    fn default() -> Self {
+        // Default newly-constructed sections to v2 — the in-the-wild
+        // "default = v1" behavior only triggers when serde fills the
+        // field for a JSON that omitted it (legacy receipts).
+        Self {
+            leaf_count: 0,
+            root: None,
+            checkpoint_id: None,
+            inclusion_proofs: Vec::new(),
+            merkle_version: crate::merkle::tree::MERKLE_VERSION_V2,
+        }
+    }
 }
 
 /// A Merkle inclusion proof entry.
@@ -453,6 +474,7 @@ fn build_merkle(artifacts: &[ArtifactEntry]) -> (MerkleSection, Option<MerkleTre
         root,
         checkpoint_id: None,
         inclusion_proofs,
+        merkle_version: tree.version(),
     };
 
     (section, Some(tree))

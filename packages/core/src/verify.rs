@@ -32,7 +32,23 @@ pub fn verify_receipt_json_checks(receipt: &SessionReceipt) -> Vec<VerifyCheck> 
     let mut checks: Vec<VerifyCheck> = Vec::new();
 
     if !receipt.artifacts.is_empty() {
-        let mut tree = MerkleTree::new();
+        // The receipt's declared merkle_version drives both recomputation
+        // and per-proof dispatch. Construct the tree through the
+        // validating `with_version` so an unknown version surfaces as a
+        // fail check rather than silently falling back to v1 hashing.
+        let version = receipt.merkle.merkle_version;
+        let mut tree = match MerkleTree::with_version(version) {
+            Ok(t) => t,
+            Err(e) => {
+                checks.push(VerifyCheck::fail(
+                    "merkle_root",
+                    &format!("receipt declared unknown merkle_version: {e}"),
+                ));
+                // Still emit the other checks below — but we cannot
+                // recompute the root, so skip the merkle-specific work.
+                return finish_with_leaf_count_and_timeline(receipt, checks);
+            }
+        };
         for a in &receipt.artifacts {
             tree.append(&a.artifact_id);
         }
@@ -57,12 +73,28 @@ pub fn verify_receipt_json_checks(receipt: &SessionReceipt) -> Vec<VerifyCheck> 
 
         let proof_total = receipt.merkle.inclusion_proofs.len();
         let mut proofs_passed = 0usize;
+        let mut drift_detected = false;
         for entry in &receipt.merkle.inclusion_proofs {
-            if MerkleTree::verify_proof(&root_hex, &entry.artifact_id, &entry.proof) {
+            // Per-proof version must match the receipt section's
+            // declared version. Smuggling a v1-flavored proof inside a
+            // v2-declared receipt would otherwise dispatch through the
+            // wrong hashing path; reject loudly.
+            if entry.proof.merkle_version != version {
+                drift_detected = true;
+                continue;
+            }
+            if MerkleTree::verify_proof(version, &root_hex, &entry.artifact_id, &entry.proof) {
                 proofs_passed += 1;
             }
         }
-        if proofs_passed == proof_total {
+        if drift_detected {
+            checks.push(VerifyCheck::fail(
+                "inclusion_proofs",
+                &format!(
+                    "per-proof merkle_version drift detected (section declares v{version})",
+                ),
+            ));
+        } else if proofs_passed == proof_total {
             checks.push(VerifyCheck::pass(
                 "inclusion_proofs",
                 &format!("{proofs_passed}/{proof_total} inclusion proofs passed"),
@@ -77,6 +109,16 @@ pub fn verify_receipt_json_checks(receipt: &SessionReceipt) -> Vec<VerifyCheck> 
         checks.push(VerifyCheck::warn("merkle_root", "No artifacts to verify"));
     }
 
+    finish_with_leaf_count_and_timeline(receipt, checks)
+}
+
+/// Tail of `verify_receipt_json_checks` shared between the happy path and
+/// the early-return path used when an unknown merkle version aborts the
+/// Merkle-specific block.
+fn finish_with_leaf_count_and_timeline(
+    receipt: &SessionReceipt,
+    mut checks: Vec<VerifyCheck>,
+) -> Vec<VerifyCheck> {
     if receipt.merkle.leaf_count == receipt.artifacts.len() {
         checks.push(VerifyCheck::pass(
             "leaf_count",
@@ -548,6 +590,99 @@ mod tests {
             !checks_full.iter().any(|c| c.name == "chain_linkage"),
             "chain_linkage check must not be emitted (populated receipt). got: {:?}",
             checks_full.iter().map(|c| &c.name).collect::<Vec<_>>(),
+        );
+    }
+
+    // ── Adversarial regression coverage for verify_receipt_json_checks ──
+
+    /// Build a small receipt populated with a real v2 merkle tree + one
+    /// inclusion proof so the tests below can mutate fields and
+    /// observe whether `verify_receipt_json_checks` catches the drift.
+    fn receipt_with_v2_merkle() -> SessionReceipt {
+        use crate::merkle::MerkleTree;
+        use crate::session::receipt::{
+            ArtifactEntry, InclusionProofEntry, MerkleSection,
+        };
+
+        let mut tree = MerkleTree::new();
+        tree.append("art_a");
+        tree.append("art_b");
+        let root_bytes = tree.root().unwrap();
+        let inclusion = tree.inclusion_proof(0).unwrap();
+
+        let mut rec = receipt(Some("ship_a"), &[]);
+        rec.artifacts = vec![
+            ArtifactEntry {
+                artifact_id: "art_a".into(),
+                payload_type: "test".into(),
+                digest: None,
+                signed_at: None,
+            },
+            ArtifactEntry {
+                artifact_id: "art_b".into(),
+                payload_type: "test".into(),
+                digest: None,
+                signed_at: None,
+            },
+        ];
+        rec.merkle = MerkleSection {
+            leaf_count: 2,
+            root: Some(format!("mroot_{}", hex::encode(root_bytes))),
+            checkpoint_id: None,
+            inclusion_proofs: vec![InclusionProofEntry {
+                artifact_id: "art_a".into(),
+                leaf_index: 0,
+                proof: inclusion,
+            }],
+            merkle_version: crate::merkle::MERKLE_VERSION_V2,
+        };
+        rec
+    }
+
+    #[test]
+    fn unknown_merkle_version_rejected_at_verify() {
+        // Receipt declares merkle_version = 99 on its merkle section.
+        // verify_receipt_json_checks must surface a hard fail rather
+        // than silently treating it as v1.
+        let mut rec = receipt_with_v2_merkle();
+        rec.merkle.merkle_version = 99;
+
+        let checks = verify_receipt_json_checks(&rec);
+        let merkle_root = checks
+            .iter()
+            .find(|c| c.name == "merkle_root")
+            .expect("merkle_root check should be emitted");
+        assert_eq!(
+            merkle_root.status,
+            VerifyStatus::Fail,
+            "unknown merkle_version must hard-fail, got: {:?}",
+            merkle_root,
+        );
+        assert!(
+            merkle_root.detail.contains("unknown merkle_version"),
+            "fail message should explain the unknown version, got: {}",
+            merkle_root.detail,
+        );
+    }
+
+    #[test]
+    fn per_proof_version_drift_rejected() {
+        // Receipt section claims v2 but one inclusion proof has
+        // merkle_version smuggled down to v1. The verifier must refuse
+        // to dispatch through the weaker hashing.
+        let mut rec = receipt_with_v2_merkle();
+        rec.merkle.inclusion_proofs[0].proof.merkle_version = crate::merkle::MERKLE_VERSION_V1;
+
+        let checks = verify_receipt_json_checks(&rec);
+        let proofs = checks
+            .iter()
+            .find(|c| c.name == "inclusion_proofs")
+            .expect("inclusion_proofs check should be emitted");
+        assert_eq!(
+            proofs.status,
+            VerifyStatus::Fail,
+            "per-proof merkle_version drift must hard-fail, got: {:?}",
+            proofs,
         );
     }
 }

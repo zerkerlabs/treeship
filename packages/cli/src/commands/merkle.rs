@@ -251,17 +251,17 @@ pub fn verify(
     let proof_file: ProofFile = serde_json::from_slice(&bytes)
         .map_err(|e| format!("invalid proof JSON: {}", e))?;
 
-    // 1. Verify checkpoint signature. Load the operator's trust roots.
-    //    Missing file = empty store, which makes verification fail
-    //    closed (matches the audit fix: a checkpoint signed by an
-    //    unpinned issuer is no longer accepted just because the
-    //    signature math is internally consistent).
+    // 1. Verify checkpoint signature against pinned trust roots.
+    //    The signature now also binds merkle_version (see
+    //    Checkpoint::canonical_for_signing), so any tampered version
+    //    on the checkpoint reaches us as an invalid signature.
     //
-    //    Audit lane J fix-up: propagate Malformed / PermissionsTooOpen
-    //    instead of silently degrading to an empty store. An operator
-    //    with a broken trust file deserves a clear "your trust file
-    //    is unreadable" error, not a misleading "untrusted issuer"
-    //    further down the pipeline.
+    //    Missing trust file = empty store, which makes verification
+    //    fail closed (audit lane J: a checkpoint signed by an unpinned
+    //    issuer is no longer accepted just because the signature math
+    //    is internally consistent). Audit lane J fix-up: propagate
+    //    Malformed / PermissionsTooOpen instead of silently degrading
+    //    to an empty store.
     let trust = treeship_core::trust::TrustRootStore::open_default_or_empty()
         .map_err(|e| -> Box<dyn std::error::Error> {
             printer.failure("trust store unreadable", &[
@@ -272,12 +272,15 @@ pub fn verify(
         })?;
     let sig_valid = proof_file.checkpoint.verify(&trust);
 
-    // 2. Verify inclusion proof
+    // 2. Verify inclusion proof. The trusted merkle_version is the one
+    // bound into the checkpoint signature, NOT the one in the proof
+    // blob. verify_proof additionally rejects on per-proof drift.
     let root_hex = proof_file.checkpoint.root
         .strip_prefix("sha256:")
         .unwrap_or(&proof_file.checkpoint.root);
 
     let proof_valid = MerkleTree::verify_proof(
+        proof_file.checkpoint.merkle_version,
         root_hex,
         &proof_file.artifact_id,
         &proof_file.inclusion_proof,
@@ -307,7 +310,11 @@ pub fn verify(
         ]);
         printer.blank();
 
-        // Print step-by-step verification
+        // Print step-by-step verification, dispatching on the proof's
+        // declared merkle version so v2 uses 0x01-prefixed internal
+        // hashing (RFC 9162). v1 (legacy) skips the prefix to remain
+        // byte-identical to v0.10.2-and-earlier output.
+        let version = proof_file.inclusion_proof.merkle_version;
         let mut current_hex = proof_file.inclusion_proof.leaf_hash.clone();
         for (i, step) in proof_file.inclusion_proof.path.iter().enumerate() {
             let sibling_short = short_hash(&step.hash);
@@ -317,6 +324,9 @@ pub fn verify(
             let current_bytes = hex::decode(&current_hex).unwrap_or_default();
             let sibling_bytes = hex::decode(&step.hash).unwrap_or_default();
             let mut hasher = Sha256::new();
+            if version == treeship_core::merkle::MERKLE_VERSION_V2 {
+                hasher.update([0x01u8]);
+            }
             match step.direction {
                 treeship_core::merkle::Direction::Right => {
                     hasher.update(&current_bytes);
