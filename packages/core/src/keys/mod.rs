@@ -10,7 +10,7 @@ use aes_gcm::{
     aead::{Aead, KeyInit, OsRng as AeadOsRng, Payload},
     AeadCore, Aes256Gcm, Key as AesKey, Nonce,
 };
-use rand::RngCore;
+use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as Sha2Digest, Sha256};
 use zeroize::Zeroizing;
@@ -1013,7 +1013,11 @@ fn legacy_v1_encrypt(key: &[u8; 32], plaintext: &[u8]) -> Result<(Vec<u8>, Vec<u
     use sha2::Sha256;
 
     let mut nonce = [0u8; 12];
-    rand::thread_rng().fill_bytes(&mut nonce);
+    // v0.10.4 P1 audit: nonce reuse breaks AEAD. Read directly from the OS
+    // CSPRNG via OsRng rather than the userland thread_rng, which can mis-seed
+    // across forks / on some WASM targets. Legacy v1 write path is kept for
+    // treeship-vi byte-stability but still needs sound nonces.
+    OsRng.fill_bytes(&mut nonce);
 
     let mut enc_key_input = key.to_vec();
     enc_key_input.extend_from_slice(&nonce);
@@ -1174,7 +1178,9 @@ pub fn derive_machine_key(store_dir: &Path) -> Result<[u8; 32], KeyError> {
         fs::read_to_string(&global_seed_path).map_err(KeyError::Io)?
     } else {
         let mut bytes = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut bytes);
+        // v0.10.4 P1 audit: this seed becomes the machine-key fallback used to
+        // wrap on-disk private keys. Source straight from the OS entropy pool.
+        OsRng.fill_bytes(&mut bytes);
         let seed_hex = hex_encode(&bytes);
 
         // Prefer creating the seed locally. Falls back to the global
@@ -1268,7 +1274,9 @@ pub fn derive_machine_key_stable(store_dir: &Path) -> Result<[u8; 32], KeyError>
         fs::read_to_string(&seed_path).map_err(KeyError::Io)?
     } else {
         let mut bytes = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut bytes);
+        // v0.10.4 P1 audit: machine_seed_v2 backs the v2 machine-key
+        // fallback. Same OsRng rationale as the v1 seed above.
+        OsRng.fill_bytes(&mut bytes);
         let seed_hex = hex_encode(&bytes);
         fs::write(&seed_path, &seed_hex).map_err(KeyError::Io)?;
         #[cfg(unix)]
@@ -1291,7 +1299,10 @@ pub fn derive_machine_key_stable(store_dir: &Path) -> Result<[u8; 32], KeyError>
 
 fn new_key_id() -> KeyId {
     let mut b = [0u8; 8];
-    rand::thread_rng().fill_bytes(&mut b);
+    // v0.10.4 P1 audit: key_id is mixed into AAD by encrypt_for_disk_v2, so
+    // collisions or low-entropy ids would weaken the AAD binding. Use OsRng
+    // directly so the id is OS-CSPRNG-quality even under fork or odd targets.
+    OsRng.fill_bytes(&mut b);
     format!("key_{}", hex_encode(&b))
 }
 
@@ -1535,6 +1546,9 @@ mod tests {
         let mut p = std::env::temp_dir();
         p.push(format!("treeship-test-{}", {
             let mut b = [0u8; 4];
+            // v0.10.4 P1 audit: thread_rng acceptable here. This is a
+            // test-only temp-dir suffix to avoid collisions between parallel
+            // test runs. Not a cryptographic input; entropy quality irrelevant.
             rand::thread_rng().fill_bytes(&mut b);
             hex_encode(&b)
         }));
