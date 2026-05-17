@@ -11,6 +11,7 @@ The skill covers the full Treeship surface: CLI commands (`treeship wrap`, `tree
 | Kimi Code CLI | `npx skills add zerkerlabs/treeship --skill treeship --agent kimi-cli -g -y` | `kimi-cli` | `~/.config/agents/skills/` |
 | Claude Code | `npx skills add zerkerlabs/treeship --skill treeship --agent claude-code -g -y` | `claude-code` | `~/.claude/skills/` |
 | Codex | `npx skills add zerkerlabs/treeship --skill treeship --agent codex -g -y` | `codex` | `~/.codex/skills/` |
+| Codex contributor | `npx skills add zerkerlabs/treeship --skill treeship-dev --agent codex -g -y` | `codex` | `~/.codex/skills/` |
 | Cursor | `npx skills add zerkerlabs/treeship --skill treeship --agent cursor -g -y` | `cursor` | `~/.cursor/skills/` |
 | OpenClaw | `npx skills add zerkerlabs/treeship --skill treeship --agent openclaw -g -y` | `openclaw` | `~/.openclaw/skills/` |
 | Hermes | Manual curl (see below) | — | `~/.hermes/skills/` |
@@ -65,6 +66,14 @@ npx skills add zerkerlabs/treeship --skill treeship --agent codex -g -y
 ```
 
 Skill lands at `~/.codex/skills/treeship/SKILL.md`. Codex picks up new skills on the next conversation; no restart required.
+
+If Codex is contributing to this repository, install the repo-specific guardrail skill too:
+
+```bash
+npx skills add zerkerlabs/treeship --skill treeship-dev --agent codex -g -y
+```
+
+That skill lands at `~/.codex/skills/treeship-dev/SKILL.md` and tells Codex to read `AGENTS.md`, preserve the DSSE and artifact ID invariants, and run focused validation. A Codex plugin candidate that bundles the contributor skill lives at [`plugins/treeship-dev`](../../plugins/treeship-dev/).
 
 **MCP bridge (optional)** — Codex's MCP config lives at `~/.codex/config.toml`:
 

@@ -1,8 +1,31 @@
 # Treeship + Codex CLI
 
+Codex has two Treeship paths:
+
+1. **Skills** teach Codex how to use Treeship or how to work safely in this repo.
+2. **MCP** captures MCP-routed tool calls into a Treeship session.
+
 Codex CLI talks to MCP servers via TOML config in `~/.codex/config.toml`. The same [`@treeship/mcp`](../../bridges/mcp/) bridge that powers the Claude Code and Cursor integrations works here too: every MCP `callTool` is attested and appears in the session timeline when a Treeship session is active.
 
-## Method 1: CLI (recommended)
+## Method 1: Install the Codex skills
+
+Use the public Treeship skill when you want Codex to sign actions, verify chains, manage approvals, push receipts, or explain Treeship APIs:
+
+```bash
+npx skills add zerkerlabs/treeship --skill treeship --agent codex -g -y
+```
+
+Use the contributor skill when Codex is working inside this source repo:
+
+```bash
+npx skills add zerkerlabs/treeship --skill treeship-dev --agent codex -g -y
+```
+
+The contributor skill tells Codex to read `AGENTS.md` and `ONBOARDING.md`, preserve cryptographic invariants, keep CLI UX rules intact, and run focused validation.
+
+Open a fresh Codex conversation after installing skills.
+
+## Method 2: CLI (recommended for MCP)
 
 From a project with `treeship init` already run:
 
@@ -19,9 +42,21 @@ This appends a `[mcp_servers.treeship]` block to `~/.codex/config.toml` (creatin
 
 `treeship add` also drops `./TREESHIP.md` in the project (once) with the trust and capture details — read that before enabling the server.
 
-## Method 2: Copy the template
+## Method 3: Copy the MCP template
 
 If you prefer to edit config by hand, append the contents of `config.toml` in this directory to your existing `~/.codex/config.toml`.
+
+## Method 4: Codex plugin candidate
+
+The repo includes a candidate Codex plugin package at [`plugins/treeship-dev`](../../plugins/treeship-dev/). It bundles the `treeship-dev` skill and a `.codex-plugin/plugin.json` manifest for local testing and future plugin submission.
+
+Until that plugin is accepted into an official marketplace, the direct skill install is the stable path:
+
+```bash
+npx skills add zerkerlabs/treeship --skill treeship-dev --agent codex -g -y
+```
+
+Maintainers preparing submission should keep the plugin-bundled skill in sync with [`skills/treeship-dev/SKILL.md`](../../skills/treeship-dev/SKILL.md), review the manifest metadata, test in a fresh Codex session, and submit `plugins/treeship-dev/` through the current Codex plugin submission process.
 
 ## Prerequisites
 
