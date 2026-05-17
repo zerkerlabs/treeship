@@ -27,6 +27,9 @@ npx skills add zerkerlabs/treeship --skill treeship --agent claude-code -g -y
 # Codex
 npx skills add zerkerlabs/treeship --skill treeship --agent codex -g -y
 
+# Codex contributor skill for this repo
+npx skills add zerkerlabs/treeship --skill treeship-dev --agent codex -g -y
+
 # Cursor
 npx skills add zerkerlabs/treeship --skill treeship --agent cursor -g -y
 
@@ -81,6 +84,16 @@ Codex's MCP config lives at `~/.codex/config.toml`; Hermes routes commands throu
 
 The skill's job is to lift any agent from "doesn't know about Treeship" to at least Medium. Adding the MCP bridge — or installing the [Claude Code plugin](/integrations/claude-code) where available — lifts coverage to High. See the [coverage levels guide](/guides/coverage-levels) for the full ladder.
 
+## Contributor Skill for Codex
+
+The public `treeship` skill teaches agents how to use Treeship. The `treeship-dev` skill is narrower: it teaches Codex how to work inside the `zerkerlabs/treeship` source repo without violating protocol invariants.
+
+```bash
+npx skills add zerkerlabs/treeship --skill treeship-dev --agent codex -g -y
+```
+
+Use it when an agent is editing `packages/core`, `packages/cli`, `packages/hub`, SDKs, docs, or integration packages in this repo. It tells Codex to read `AGENTS.md` and `ONBOARDING.md`, preserve DSSE/PAE and artifact ID rules, keep CLI UX stable, and choose focused validation commands. A Codex plugin candidate that bundles this contributor skill lives at [`plugins/treeship-dev`](https://github.com/zerkerlabs/treeship/tree/main/plugins/treeship-dev).
+
 ## How It Works
 
 `SKILL.md` is a [YAML-frontmatter Markdown file](https://github.com/anthropics/skills) the agent loads as durable instructions. The frontmatter has a `name` and a `description`; the description is what the agent matches against the user's intent to decide when the skill applies. The body is regular Markdown — code blocks, tables, headings — that the agent reads as authoritative reference for the API.
@@ -114,7 +127,9 @@ The skill leaves no other state behind — no daemons, no background processes, 
 ## Resources
 
 - [`skills/treeship/SKILL.md`](https://github.com/zerkerlabs/treeship/blob/main/skills/treeship/SKILL.md) — the skill content
+- [`skills/treeship-dev/SKILL.md`](https://github.com/zerkerlabs/treeship/blob/main/skills/treeship-dev/SKILL.md) — Codex contributor guardrails for this repo
 - [`integrations/agent-skills/README.md`](https://github.com/zerkerlabs/treeship/blob/main/integrations/agent-skills/README.md) — full multi-agent integration guide
+- [Codex integration](/integrations/codex) — Codex skill, MCP, and plugin candidate setup
 - [Claude Code integration](/integrations/claude-code) — higher-coverage path for Claude Code (plugin)
 - [Coverage levels](/guides/coverage-levels) — what High / Medium / Basic mean
 - [Install + registry topology](/guides/install) — what's on each registry and how to install Treeship itself

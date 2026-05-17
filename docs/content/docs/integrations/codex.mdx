@@ -1,0 +1,117 @@
+---
+title: Codex
+description: Install the Treeship Codex skill, attach the MCP bridge, or test the Codex plugin candidate.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+# Codex
+
+Codex has two Treeship paths today. The skill teaches Codex how to use Treeship and how to work safely in this repo. The MCP bridge captures MCP-routed tool calls into a Treeship session.
+
+<Callout type="info">
+For users building with Treeship, install the public `treeship` skill. For contributors working on this repository, install `treeship-dev`.
+</Callout>
+
+## Method 1: Install the skill
+
+<Steps>
+<Step>
+### Install the public Treeship skill
+
+```bash
+npx skills add zerkerlabs/treeship --skill treeship --agent codex -g -y
+```
+
+Use this when you want Codex to sign actions, verify chains, manage approvals, push receipts, or explain the Treeship CLI and SDKs.
+</Step>
+<Step>
+### Install the contributor skill
+
+```bash
+npx skills add zerkerlabs/treeship --skill treeship-dev --agent codex -g -y
+```
+
+Use this inside a `zerkerlabs/treeship` checkout. It tells Codex to read `AGENTS.md` and `ONBOARDING.md`, preserve DSSE and artifact ID invariants, keep CLI UX rules intact, and run focused validation.
+</Step>
+<Step>
+### Start a fresh Codex conversation
+
+Codex discovers new skills at conversation start. Open the Treeship repo and say:
+
+```text
+Use treeship-dev. Read AGENTS.md first, then update the Codex integration docs.
+```
+</Step>
+</Steps>
+
+## Method 2: Attach the MCP bridge
+
+From a project with `treeship init` already run:
+
+```bash
+curl -fsSL treeship.dev/install | sh
+treeship init
+treeship add codex
+```
+
+This appends a `[mcp_servers.treeship]` block to `~/.codex/config.toml`, creating the file and parent directories if needed.
+
+Manual config:
+
+```toml
+[mcp_servers.treeship]
+command = "npx"
+args = ["-y", "@treeship/mcp"]
+
+[mcp_servers.treeship.env]
+TREESHIP_ACTOR = "agent://codex"
+TREESHIP_HUB_ENDPOINT = "https://api.treeship.dev"
+```
+
+Restart Codex after changing MCP config.
+
+## Method 3: Codex plugin candidate
+
+The repo includes a candidate Codex plugin package at:
+
+```text
+plugins/treeship-dev/
+```
+
+It bundles the `treeship-dev` skill and a `.codex-plugin/plugin.json` manifest for local testing and future plugin submission. Until the plugin is accepted into an official marketplace, the direct skill install above is the stable path for users.
+
+For maintainers preparing submission:
+
+1. Keep `plugins/treeship-dev/skills/treeship-dev/SKILL.md` in sync with `skills/treeship-dev/SKILL.md`.
+2. Review `plugins/treeship-dev/.codex-plugin/plugin.json` for current version, URLs, policy links, and screenshots/assets if the marketplace requires them.
+3. Test in a fresh Codex session against a clean Treeship checkout.
+4. Submit the plugin package from `plugins/treeship-dev/` using the current Codex plugin submission process.
+
+## What Gets Captured
+
+The skill itself is just instructions. It does not capture anything. The MCP bridge captures MCP `callTool` activity while a Treeship session is active:
+
+- signed intent attestation before the call
+- signed result receipt after the call
+- session timeline event for the Codex actor
+
+Codex built-in shell and file tools do not currently route through this MCP bridge. Use `treeship wrap -- <command>` for commands that need explicit receipts until Codex exposes hook coverage similar to the Claude Code plugin.
+
+## Coverage
+
+| Setup | Coverage |
+|---|---|
+| `treeship` skill only | Medium: Codex knows when and how to use Treeship |
+| `treeship-dev` skill only | Medium: Codex follows repo guardrails and validation |
+| Skill + MCP bridge | High for MCP-routed tool calls |
+| Future Codex plugin | Intended to bundle the contributor skill and any future Codex-native capture points |
+
+## See Also
+
+- [`skills/treeship/SKILL.md`](https://github.com/zerkerlabs/treeship/blob/main/skills/treeship/SKILL.md)
+- [`skills/treeship-dev/SKILL.md`](https://github.com/zerkerlabs/treeship/blob/main/skills/treeship-dev/SKILL.md)
+- [`integrations/codex/`](https://github.com/zerkerlabs/treeship/tree/main/integrations/codex)
+- [Agent Skills](/integrations/agent-skills)
+- [MCP bridge](/integrations/mcp)

@@ -1,0 +1,38 @@
+{
+  "name": "treeship-dev",
+  "version": "0.1.0",
+  "description": "Codex contributor skill for working safely in the Treeship source repository.",
+  "author": {
+    "name": "Zerker",
+    "url": "https://treeship.dev"
+  },
+  "homepage": "https://docs.treeship.dev/integrations/codex",
+  "repository": "https://github.com/zerkerlabs/treeship",
+  "license": "Apache-2.0",
+  "keywords": [
+    "treeship",
+    "codex",
+    "agent-skills",
+    "developer-tools",
+    "attestation"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Treeship Dev",
+    "shortDescription": "Work safely in the Treeship repo.",
+    "longDescription": "Loads Treeship contributor guidance for Codex: required repo read order, cryptographic invariants, CLI UX rules, and focused validation commands.",
+    "developerName": "Zerker",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Code",
+      "Review",
+      "Documentation"
+    ],
+    "websiteURL": "https://treeship.dev",
+    "defaultPrompt": [
+      "Use Treeship Dev and review this change.",
+      "Use Treeship Dev and update the CLI docs.",
+      "Use Treeship Dev and fix the failing test."
+    ]
+  }
+}
