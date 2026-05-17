@@ -177,10 +177,14 @@ impl Store {
         let signer = Ed25519Signer::generate(&key_id)
             .map_err(|e| KeyError::Crypto(e.to_string()))?;
 
+        // `secret` is a Zeroizing<[u8; 32]> -- the caller-side copy of the
+        // signer's secret scalar is wiped on scope exit. `signer` is dropped
+        // at end of fn, which wipes its own copy via the Drop impl in
+        // attestation::signer.
         let secret  = signer.secret_bytes();
         let pub_key = signer.public_key_bytes();
 
-        let enc = encrypt_for_disk_v2(&self.machine_key, key_id.as_str(), &pub_key, &secret)
+        let enc = encrypt_for_disk_v2(&self.machine_key, key_id.as_str(), &pub_key, secret.as_slice())
             .map_err(KeyError::Crypto)?;
 
         let entry = EncryptedEntry {
@@ -277,10 +281,13 @@ impl Store {
         let succ_id = new_key_id();
         let signer = Ed25519Signer::generate(&succ_id)
             .map_err(|e| KeyError::Crypto(e.to_string()))?;
+        // `succ_secret` is a Zeroizing<[u8; 32]>; the caller-side copy is
+        // wiped on scope exit, and `signer` is dropped at end of fn (which
+        // wipes its own copy via the attestation::signer Drop impl).
         let succ_secret  = signer.secret_bytes();
         let succ_pub_key = signer.public_key_bytes();
         let succ_enc =
-            encrypt_for_disk_v2(&self.machine_key, succ_id.as_str(), &succ_pub_key, &succ_secret)
+            encrypt_for_disk_v2(&self.machine_key, succ_id.as_str(), &succ_pub_key, succ_secret.as_slice())
                 .map_err(KeyError::Crypto)?;
 
         let succ_created = crate::statements::unix_to_rfc3339(unix_now());

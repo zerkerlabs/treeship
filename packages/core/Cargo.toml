@@ -10,7 +10,7 @@ keywords = ["treeship", "attestation", "trust", "agents", "cryptography"]
 categories = ["cryptography", "authentication"]
 
 [dependencies]
-ed25519-dalek = { version = "2", features = ["rand_core"] }
+ed25519-dalek = { version = "2", features = ["rand_core", "zeroize"] }
 sha2          = "0.10"
 serde         = { version = "1", features = ["derive"] }
 serde_json    = "1"
