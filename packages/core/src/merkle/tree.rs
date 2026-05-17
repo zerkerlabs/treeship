@@ -804,8 +804,14 @@ mod tests {
         // the canonical signing string. Without this binding, an
         // attacker could re-label a v2 checkpoint as v1 (or vice
         // versa) and keep the original signature.
-        let canonical_v1 = crate::merkle::checkpoint::Checkpoint::canonical_for_signing(
+        use crate::merkle::checkpoint::{
+            Checkpoint, CANONICAL_VERSION_V1, CANONICAL_VERSION_V2, CANONICAL_VERSION_V3,
+        };
+        let canonical_v1 = Checkpoint::canonical_for_signing(
+            CANONICAL_VERSION_V1,
             MERKLE_VERSION_V1,
+            None,
+            None,
             7,
             "sha256:abcd",
             42,
@@ -813,8 +819,23 @@ mod tests {
             "key_test",
             "2026-05-17T00:00:00Z",
         );
-        let canonical_v2 = crate::merkle::checkpoint::Checkpoint::canonical_for_signing(
+        let canonical_v2 = Checkpoint::canonical_for_signing(
+            CANONICAL_VERSION_V2,
             MERKLE_VERSION_V2,
+            None,
+            None,
+            7,
+            "sha256:abcd",
+            42,
+            6,
+            "key_test",
+            "2026-05-17T00:00:00Z",
+        );
+        let canonical_v3 = Checkpoint::canonical_for_signing(
+            CANONICAL_VERSION_V3,
+            MERKLE_VERSION_V2,
+            Some(MERKLE_ALGORITHM_V2),
+            None,
             7,
             "sha256:abcd",
             42,
@@ -823,19 +844,25 @@ mod tests {
             "2026-05-17T00:00:00Z",
         );
 
-        // The two canonical strings must differ. Equal would mean the
-        // signature covers the same bytes for both versions — i.e. an
-        // attacker can swap versions freely.
+        // The canonical strings must all differ. Equal would mean an
+        // attacker can swap canonical or merkle versions freely.
         assert_ne!(
             canonical_v1, canonical_v2,
             "canonical strings for v1 vs v2 must differ — merkle_version must be bound into signing",
         );
-        // And the v2 form must carry the "v2|" canonical-format tag so
-        // any third-party verifier reproducing the string can detect
-        // (and dispatch on) the new format.
+        assert_ne!(
+            canonical_v2, canonical_v3,
+            "canonical strings for v2 vs v3 must differ — canonical_version must be bound into signing",
+        );
+        // Format tags so any third-party verifier reproducing the
+        // string can detect (and dispatch on) the format in use.
         assert!(
             canonical_v2.starts_with("v2|"),
             "v2 canonical must be prefixed with v2| tag, got: {canonical_v2}",
+        );
+        assert!(
+            canonical_v3.starts_with("v3|"),
+            "v3 canonical must be prefixed with v3| tag, got: {canonical_v3}",
         );
         // The v1 form must remain byte-identical to the legacy format
         // so pre-v0.10.3 checkpoints continue verifying.

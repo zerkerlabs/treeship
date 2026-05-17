@@ -922,6 +922,21 @@ fn process_proof_queue(ts: &std::path::Path, ctx: &crate::ctx::Ctx) {
 
 /// Update the latest Merkle checkpoint with a ZK proof summary.
 /// Called by the daemon after a chain proof completes successfully.
+///
+/// **WARNING (v0.10.4 P1 audit, lane A):** this function mutates a
+/// signed checkpoint on disk after the fact. Under canonical v3 (the
+/// v0.10.4 fix that binds `zk_proof` into the signature), attaching a
+/// proof here invalidates the original signature. The right fix is
+/// either (a) re-sign the checkpoint with the original hub signer
+/// (requires daemon to hold or proxy that key), or (b) write the
+/// zk_proof to a sibling file that's signed independently and refers
+/// to the checkpoint by digest. Both are larger refactors than the
+/// P1 fix permits, so this path is left intentionally broken-by-
+/// design: the resulting checkpoint will fail verification, which is
+/// the correct fail-closed behavior. Operators who currently rely on
+/// this code path (zk feature is opt-in) should expect verification
+/// to start failing on proof-augmented checkpoints until the
+/// follow-up lands. Tracked as v0.10.5 follow-up.
 #[cfg(feature = "zk")]
 fn update_checkpoint_with_proof(ts: &std::path::Path, session_id: &str) {
     use treeship_core::merkle::checkpoint::{Checkpoint, ChainProofSummary};
