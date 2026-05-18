@@ -1,0 +1,1 @@
+{"toolName":"bash","params":{"command":"echo hello"},"runId":"r-3","toolCallId":"t-3","result":{"stdout":"hello\n","exit_code":0},"durationMs":8}

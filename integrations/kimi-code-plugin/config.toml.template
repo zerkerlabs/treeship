@@ -1,0 +1,27 @@
+# Treeship Kimi Code CLI plugin -- hook registrations
+#
+# Append (or merge) this block into ~/.kimi/config.toml. The TREESHIP_PLUGIN_ROOT
+# placeholder is replaced by `treeship integrations install kimi-code` with the
+# absolute path where the scripts were copied (default:
+# ~/.treeship/integrations/kimi-code-plugin/scripts).
+#
+# After merging, restart Kimi Code so it reloads the TOML config.
+#
+# Each hook receives the Kimi event payload as JSON on stdin. Exit code 0 = allow,
+# exit code 2 = block. Scripts fail open (always exit 0).
+
+[[hooks]]
+event = "SessionStart"
+command = "TREESHIP_PLUGIN_ROOT/session-start.sh"
+
+[[hooks]]
+event = "SessionEnd"
+command = "TREESHIP_PLUGIN_ROOT/session-end.sh"
+
+[[hooks]]
+event = "PreToolUse"
+command = "TREESHIP_PLUGIN_ROOT/pre-tool-use.sh"
+
+[[hooks]]
+event = "PostToolUse"
+command = "TREESHIP_PLUGIN_ROOT/post-tool-use.sh"

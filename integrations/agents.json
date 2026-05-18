@@ -1,0 +1,207 @@
+{
+  "$schema": "https://treeship.dev/schemas/agents.v1.json",
+  "schema_version": "1",
+  "description": "Single source of truth for Treeship agent integrations. Consumers: integrations/agent-skills/README.md (generated table), treeship.dev/integrations docs page, /.well-known/treeship-agents.json, integrations/tests/parity.sh. Hand-edits here propagate everywhere.",
+  "release_status_taxonomy": {
+    "shipped": "Installable and end-to-end verified today. May be self-hosted (this repo) or first-party listed; check marketplace_url for the latter.",
+    "candidate": "In this repo, install path documented, but a vendor-marketplace submission is pending or not yet attempted. Works for users who run the install command; not yet discoverable in the agent's native UI.",
+    "unavailable": "This tier does not exist for this agent because the runtime does not expose the required surface (e.g., hook-based plugin where the runtime has no hooks)."
+  },
+  "agents": [
+    {
+      "id": "claude-code",
+      "display_name": "Claude Code",
+      "vendor": "Anthropic",
+      "homepage": "https://claude.ai/code",
+      "actor_uri": "agent://claude-code",
+      "receipt_agent_name": "claude-code",
+      "skill": {
+        "available": true,
+        "install": "treeship add claude-code",
+        "install_path": "~/.claude/skills/treeship/",
+        "source_path": "skills/treeship",
+        "release_status": "shipped",
+        "marketplace_url": null
+      },
+      "mcp": {
+        "available": true,
+        "install": "treeship add claude-code",
+        "config_path": "~/.claude/mcp.json",
+        "release_status": "shipped"
+      },
+      "plugin": {
+        "available": true,
+        "type": "hook",
+        "install": "claude plugin marketplace add zerkerlabs/treeship && claude plugin install treeship@treeship",
+        "source_path": "integrations/claude-code-plugin",
+        "release_status": "shipped",
+        "marketplace_url": null,
+        "notes": "Hooks: SessionStart, PostToolUse, SessionEnd via ~/.claude/settings.json. Bypass-proof: runs outside LLM context."
+      }
+    },
+    {
+      "id": "openclaw",
+      "display_name": "OpenClaw",
+      "vendor": "OpenClaw",
+      "homepage": "https://openclaw.ai",
+      "actor_uri": "agent://openclaw",
+      "receipt_agent_name": "openclaw",
+      "skill": {
+        "available": true,
+        "install": "treeship add openclaw",
+        "install_path": "~/.openclaw/skills/treeship/",
+        "source_path": "skills/treeship",
+        "release_status": "shipped",
+        "marketplace_url": null
+      },
+      "mcp": {
+        "available": true,
+        "install": "treeship add openclaw",
+        "config_path": "~/.openclaw/config.json",
+        "release_status": "shipped"
+      },
+      "plugin": {
+        "available": true,
+        "type": "hook",
+        "install": "openclaw plugins install @treeship/openclaw-plugin",
+        "source_path": "integrations/openclaw-plugin",
+        "release_status": "shipped",
+        "marketplace_url": null,
+        "notes": "Hooks: before_tool_call + after_tool_call in Gateway process. Captures paired intent+result. Multi-registered snake_case+camelCase via registerHook+api.on. Landed in v0.10.4 (#77, fix 41271cd)."
+      }
+    },
+    {
+      "id": "codex",
+      "display_name": "Codex CLI",
+      "vendor": "OpenAI",
+      "homepage": "https://github.com/openai/codex",
+      "actor_uri": "agent://codex",
+      "receipt_agent_name": "codex",
+      "skill": {
+        "available": true,
+        "install": "treeship add codex",
+        "install_path": "~/.codex/skills/treeship/",
+        "source_path": "skills/treeship",
+        "release_status": "shipped",
+        "marketplace_url": null
+      },
+      "mcp": {
+        "available": true,
+        "install": "treeship add codex",
+        "config_path": "~/.codex/config.toml",
+        "release_status": "shipped"
+      },
+      "plugin": {
+        "available": true,
+        "type": "skill-bundle",
+        "install": "npx skills add zerkerlabs/treeship --skill treeship-dev --agent codex -g -y",
+        "source_path": "plugins/treeship-dev",
+        "release_status": "candidate",
+        "marketplace_url": null,
+        "notes": "treeship-dev plugin candidate at plugins/treeship-dev/.codex-plugin/. Marketplace submission pending. Hook-tier plugin not available — Codex CLI does not yet expose pre/post-tool-call hooks."
+      }
+    },
+    {
+      "id": "kimi-code",
+      "display_name": "Kimi Code CLI",
+      "vendor": "Moonshot AI",
+      "homepage": "https://www.kimi-cli.com",
+      "actor_uri": "agent://kimi-code",
+      "receipt_agent_name": "kimi-code",
+      "skill": {
+        "available": true,
+        "install": "npx skills add zerkerlabs/treeship --skill treeship --agent kimi-cli -g -y",
+        "install_path": "~/.config/agents/skills/treeship/",
+        "source_path": "skills/treeship",
+        "release_status": "shipped",
+        "marketplace_url": null,
+        "notes": "Skills CLI flag is --agent kimi-cli; the receipt agent name is kimi-code."
+      },
+      "mcp": {
+        "available": true,
+        "install": "kimi mcp add --transport stdio treeship --env TREESHIP_ACTOR=agent://kimi-code -- npx -y @treeship/mcp",
+        "config_path": "~/.kimi/config.toml",
+        "release_status": "shipped",
+        "notes": "TREESHIP_ACTOR env is required — without it the MCP bridge falls back to agent_name=mcp. If your Kimi CLI doesn't support --env on `kimi mcp add`, hand-edit ~/.kimi/config.toml to add TREESHIP_ACTOR = \"agent://kimi-code\" under [mcp_servers.treeship.env]."
+      },
+      "plugin": {
+        "available": true,
+        "type": "hook",
+        "install": "treeship integrations install kimi-code",
+        "source_path": "integrations/kimi-code-plugin",
+        "release_status": "candidate",
+        "marketplace_url": null,
+        "notes": "Hooks: PreToolUse + PostToolUse via [[hooks]] arrays in ~/.kimi/config.toml. Kimi Code CLI exposes 13 lifecycle events (Beta). Plugin mirrors openclaw-plugin pattern. End-to-end parity-test verified."
+      }
+    },
+    {
+      "id": "cursor",
+      "display_name": "Cursor",
+      "vendor": "Anysphere",
+      "homepage": "https://cursor.com",
+      "actor_uri": "agent://cursor",
+      "receipt_agent_name": "cursor",
+      "skill": {
+        "available": true,
+        "install": "treeship add cursor",
+        "install_path": "~/.cursor/skills/",
+        "source_path": "skills/treeship",
+        "release_status": "shipped",
+        "marketplace_url": null
+      },
+      "mcp": {
+        "available": true,
+        "install": "treeship add cursor",
+        "config_path": "~/.cursor/mcp.json",
+        "release_status": "shipped"
+      },
+      "plugin": {
+        "available": false,
+        "type": null,
+        "install": null,
+        "source_path": null,
+        "release_status": "unavailable",
+        "notes": "Cursor extends VS Code's extension API. Hook-tier plugin would require a VS Code extension intercepting Cursor's tool events; surface not yet confirmed stable."
+      }
+    },
+    {
+      "id": "hermes",
+      "display_name": "Hermes",
+      "vendor": "Nous Research",
+      "homepage": "https://nousresearch.com",
+      "actor_uri": "agent://hermes",
+      "receipt_agent_name": "hermes",
+      "skill": {
+        "available": true,
+        "install": "treeship add hermes",
+        "install_path": "~/.hermes/skills/treeship/SKILL.md",
+        "source_path": "integrations/hermes/treeship.skill",
+        "release_status": "shipped",
+        "marketplace_url": null,
+        "notes": "Installed via treeship-native CLI (packages/cli/src/commands/harnesses.rs:346-364). Idempotent."
+      },
+      "mcp": {
+        "available": true,
+        "install": "see integrations/hermes/README.md (yaml config with TREESHIP_ACTOR=agent://hermes)",
+        "config_path": "~/.hermes/config.yaml",
+        "release_status": "shipped",
+        "notes": "TREESHIP_ACTOR=agent://hermes is required — without it the MCP bridge falls back to agent_name=mcp."
+      },
+      "plugin": {
+        "available": false,
+        "type": null,
+        "install": null,
+        "source_path": null,
+        "release_status": "unavailable",
+        "notes": "Hermes gateway hook surface not yet confirmed. Skill + MCP is the ceiling until proven otherwise."
+      }
+    }
+  ],
+  "partnership_track": [
+    {"id": "kimi-web", "display_name": "Kimi (web / kimi.com)", "vendor": "Moonshot AI", "status": "no_public_surface", "notes": "No public third-party plugin SDK. Skills on kimi.com are user-uploaded docs, not executable code."},
+    {"id": "kimi-mobile", "display_name": "Kimi (iOS / Android)", "vendor": "Moonshot AI", "status": "no_public_surface"},
+    {"id": "kimi-agent-swarm", "display_name": "Kimi Agent Swarm (K2.6+)", "vendor": "Moonshot AI", "status": "api_only", "notes": "OpenAI-compatible API at platform.moonshot.ai. No hook-injection below the model's instruction surface."},
+    {"id": "perplexity-computer", "display_name": "Perplexity Computer / Comet", "vendor": "Perplexity", "status": "partner_shipping", "notes": "Perplexity shipping the official Treeship Computer skill (per founder, May 2026). Receipt agent_name: perplexity-computer."},
+    {"id": "perplexity-pro", "display_name": "Perplexity Pro Search", "vendor": "Perplexity", "status": "no_public_surface", "notes": "First-party Connectors only; no third-party connector SDK."}
+  ]
+}
