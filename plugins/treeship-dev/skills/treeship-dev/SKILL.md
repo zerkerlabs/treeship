@@ -13,8 +13,9 @@ Read these files before code changes:
 
 1. `AGENTS.md`
 2. `ONBOARDING.md`
+3. `docs/quality/ai-assisted-development.md`
 
-Treat `AGENTS.md` as the source of truth. If these skill instructions conflict with `AGENTS.md`, follow `AGENTS.md`.
+Treat `AGENTS.md` as the source of truth. If these skill instructions conflict with `AGENTS.md`, follow `AGENTS.md`. The code-quality policy in `docs/quality/ai-assisted-development.md` is not optional; it targets the specific failure modes AI-generated code is prone to in this cryptographic codebase.
 
 ## What Treeship Is
 
@@ -103,5 +104,7 @@ For TypeScript or MCP packages, inspect package scripts first, then run the rele
 ## Working Style
 
 Keep edits narrow. Do not refactor unrelated crypto, storage, or schema code while solving a task. Avoid changing generated IDs, signed payload shape, schema field casing, or verification semantics unless the user explicitly asks and the change is reconciled with `AGENTS.md`.
+
+The full rules for scope, silent fallbacks, verifier preconditions, wire-bound dispatch fields, TOCTOU, RNG, test rigor, and theater commits live in [`docs/quality/ai-assisted-development.md`](../../../../docs/quality/ai-assisted-development.md). Follow that policy.
 
 Use direct, concise writing. Avoid corporate phrasing.
