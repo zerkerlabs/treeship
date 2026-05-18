@@ -83,6 +83,12 @@ Use clear, descriptive messages, ideally with a conventional-commits-style prefi
 
 The body should explain WHY (motivation, previous behavior, evidence) more than WHAT (the diff already shows that).
 
+## Code quality policy
+
+All contributions, human or AI-authored, follow the [AI-assisted development policy](docs/quality/ai-assisted-development.md). The policy applies equally to AI agents (Claude Code, Codex, Cursor, OpenClaw, Hermes, etc.) and human contributors. It targets the failure modes specific to AI-generated code in a cryptographic codebase: silent fallbacks that produce signed empty bytes, verifier loops that pass vacuously on empty input, wire-controllable dispatch fields that aren't bound into canonical signing bytes, TOCTOU between permission check and read, fabricated test vectors, and scope drift in security-sensitive code.
+
+Reviewers (human and AI) are expected to refuse PRs that exhibit the patterns the policy names, even if tests pass.
+
 ## Code style
 
 - Rust: run `cargo fmt` and `cargo clippy --all-targets` before committing. Style is governed by `.rustfmt.toml` and `clippy.toml` at repo root; the toolchain that produces those checks is pinned by `rust-toolchain.toml`. (CI does not yet gate on either; an existing fmt + clippy debt is tracked for cleanup. New code should still be clean against both.)

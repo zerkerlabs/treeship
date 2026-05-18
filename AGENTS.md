@@ -5,6 +5,14 @@
 
 ---
 
+## 0. CODE QUALITY
+
+You are expected to follow [the AI-assisted development policy](docs/quality/ai-assisted-development.md). It's not optional. It targets the failure modes that AI-generated code is specifically prone to in this codebase: silent `unwrap_or_default()` in signed-bytes paths, verifier loops that pass vacuously on empty input, wire-controllable dispatch fields not bound into the canonical, TOCTOU on permission-sensitive file reads, mixed RNG sources, fabricated test vectors, and scope drift in security-sensitive code.
+
+The policy applies to: code you write, tests you add, docs you change, commits you make, PRs you open. When in doubt, prefer the policy over speed.
+
+---
+
 ## 1. WHAT TREESHIP IS
 
 Treeship is a portable trust layer for AI agent workflows. Every action, approval, and handoff gets a **cryptographically signed artifact** --a tamper-proof receipt verifiable by anyone, anywhere, without trusting any infrastructure.

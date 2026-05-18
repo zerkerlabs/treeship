@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Documentation
+
+- **AI-assisted development policy moved into repo governance.** `docs/quality/ai-assisted-development.md` is the single source of truth for code-quality expectations across human and AI contributors; `CONTRIBUTING.md`, `CLAUDE.md`, `AGENTS.md`, and the `treeship-dev` contributor skill (both `skills/treeship-dev` and `plugins/treeship-dev`) now reference it instead of duplicating policy text. Targets the diligence failure mode of AI-generated code that passes review but fails in production: silent `unwrap_or_default()` in signed-bytes paths, verifier loops that pass vacuously on empty input, wire-controllable dispatch fields not bound into the canonical, TOCTOU between permission check and read, mixed RNG sources, fabricated test vectors, and scope drift in security-sensitive code. Concrete anti-patterns and examples are drawn from the v0.10.3 and v0.10.4 audit waves.
+
 ## 0.10.4 (2026-05-17)
 
 The **Audit Follow-ups (P1)** release. v0.10.3 closed the P0 findings; v0.10.4 closes the P1 follow-ups that surfaced while landing them, plus an OpenClaw event-capture fix and the Codex contributor skill.
