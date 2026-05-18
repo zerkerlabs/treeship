@@ -1,5 +1,7 @@
 # Treeship + Hermes Integration
 
+Hermes integrates via the universal MCP bridge and a declarative skill file — there is **no Hermes-native plugin** (no in-process hooks, no compiled extension). Coverage is skill-driven + MCP-routed; if you need hook-based bypass-proof capture, that lives in the Claude Code, Kimi Code, or OpenClaw plugins.
+
 Two integration methods for Hermes agents:
 
 ## Method 1: Skill file (instruction-based)
@@ -30,10 +32,11 @@ mcp_servers:
     command: npx
     args: ["-y", "@treeship/mcp"]
     env:
+      TREESHIP_ACTOR: "agent://hermes"
       TREESHIP_HUB_ENDPOINT: "https://api.treeship.dev"
 ```
 
-This intercepts every MCP tool call and creates signed artifacts + session events automatically.
+This intercepts every MCP tool call and creates signed artifacts + session events automatically. The `TREESHIP_ACTOR` env is required — without it, Hermes events fall back to the generic `agent_name=mcp` in receipts instead of `hermes`.
 
 ## Prerequisites
 
