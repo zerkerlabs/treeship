@@ -71,7 +71,18 @@ treeship add --discover                 # discover agents
 treeship harness list                   # list harnesses
 treeship harness inspect <id>           # inspect harness
 treeship harness smoke <id>             # smoke test
+treeship trust list                     # list pinned issuers (v0.10.3+)
+treeship trust add <key_id> <pubkey> --kind <hub_checkpoint|ship|agent_cert>
+treeship trust remove <key_id>
 ```
+
+> **Note (v0.10.3+):** Hub-checkpoint and agent-certificate verification
+> require the embedded public key to match a configured trust root. After
+> importing artifacts produced by a different ship/hub, expect
+> `treeship verify` to fail with "untrusted issuer" until the issuer is
+> pinned via `treeship trust add`. Pre-v0.10.3 the verifier trusted the
+> embedded key, which made self-signed forgeries pass; the new gate
+> closes that.
 
 ## Actor URIs
 
