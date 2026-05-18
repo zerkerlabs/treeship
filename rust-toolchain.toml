@@ -17,7 +17,17 @@
 # Components: rustup automatically installs `clippy` and `rustfmt` for the
 # pinned channel on first cargo invocation, so local devs do not need to run
 # `rustup component add` manually.
+#
+# Targets: the release workflow cross-compiles for x86_64-apple-darwin
+# (from macOS arm64 runners), aarch64-apple-darwin (native), and
+# x86_64-unknown-linux-musl (from ubuntu glibc runners). Without these
+# listed, the `profile = "minimal"` toolchain ships only the runner's
+# native stdlib and cross-compile builds fail with `can't find crate for
+# 'core'`. The initial v0.10.4 release push (commit cf13139, tag pushed
+# 2026-05-18) failed for exactly this reason; this line restores parity
+# with what the dtolnay/rust-toolchain action sets up in CI.
 [toolchain]
 channel    = "1.94.1"
 components = ["clippy", "rustfmt"]
 profile    = "minimal"
+targets    = ["x86_64-apple-darwin", "aarch64-apple-darwin", "x86_64-unknown-linux-musl"]
