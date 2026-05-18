@@ -1,0 +1,2 @@
+session status --check
+session event --type agent.called_tool --tool read --meta {"phase":"intent"} --agent-name kimi-code

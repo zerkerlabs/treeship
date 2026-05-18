@@ -1,0 +1,2 @@
+session status --check
+session event --type agent.completed_process --tool echo hello --exit-code 0 --agent-name claude-code

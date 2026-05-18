@@ -1,0 +1,2 @@
+session status --check
+session event --type agent.wrote_file --file /tmp/out.txt --agent-name claude-code

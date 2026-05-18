@@ -1,0 +1,2 @@
+session status --check
+session event --type agent.connected_network --destination api.treeship.dev --agent-name kimi-code

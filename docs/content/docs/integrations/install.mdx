@@ -1,0 +1,60 @@
+---
+title: Install matrix
+description: One-liner install command per agent, plus the bypass-proof plugin where available.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+# Install matrix
+
+This page is generated from [`integrations/agents.json`](https://github.com/zerkerlabs/treeship/blob/main/integrations/agents.json) — the single source of truth for every Treeship integration. Machine-readable mirror: [`/.well-known/treeship-agents.json`](/.well-known/treeship-agents.json).
+
+<Callout type="info">
+  Tier definitions (`release_status`):
+  - **🟢 shipped** — installable and end-to-end verified today.
+  - **🟡 candidate** — works via the documented install, vendor marketplace submission pending.
+  - **⚪ unavailable** — this tier does not exist because the agent's runtime does not expose the required surface.
+</Callout>
+
+## The matrix
+
+| Agent | Skill | MCP | Plugin (hook-based) | Plugin status |
+|---|---|---|---|---|
+| **Claude Code** | `treeship add claude-code` | `treeship add claude-code` | `claude plugin marketplace add zerkerlabs/treeship && claude plugin install treeship@treeship` | 🟢 shipped |
+| **OpenClaw** | `treeship add openclaw` | `treeship add openclaw` | `openclaw plugins install @treeship/openclaw-plugin` | 🟢 shipped |
+| **Codex CLI** | `treeship add codex` | `treeship add codex` | `npx skills add zerkerlabs/treeship --skill treeship-dev --agent codex -g -y` | 🟡 candidate |
+| **Kimi Code CLI** | `npx skills add zerkerlabs/treeship --skill treeship --agent kimi-cli -g -y` | `kimi mcp add --transport stdio treeship --env TREESHIP_ACTOR=agent://kimi-code -- npx -y @treeship/mcp` | `treeship integrations install kimi-code` | 🟡 candidate |
+| **Cursor** | `treeship add cursor` | `treeship add cursor` | — | ⚪ unavailable |
+| **Hermes** | `treeship add hermes` | `see integrations/hermes/README.md (yaml config with TREESHIP_ACTOR=agent://hermes)` | — | ⚪ unavailable |
+
+## What each tier means
+
+- **Skill** — drops a `SKILL.md` instruction file into the agent's skills directory. The agent reads it and follows the instructions to call `treeship` CLI commands. **Bypass-able by prompt injection** — the same agent being attested is the one deciding whether to attest.
+- **MCP** — exposes Treeship as MCP tools the agent can call. Captures every MCP-routed tool call automatically. Stronger than skill alone (no agent discipline required for MCP-routed work) but doesn't cover the agent's built-in non-MCP tools.
+- **Plugin (hook-based)** — runs *below* the agent in the host process. Pre/post-tool-call hooks fire regardless of what the agent says, remembers, or has been prompt-injected to do. **Bypass-proof.** This is the integrity gold standard.
+
+## Run it from anywhere
+
+```bash
+curl -fsSL treeship.dev/setup | sh
+treeship init
+treeship add       # detects and instruments every supported agent on this machine
+```
+
+Or pick one:
+
+- `treeship add claude-code`
+- `treeship add openclaw`
+- `treeship add codex`
+- `treeship add cursor`
+- `treeship add hermes`
+
+## Partnership track
+
+Surfaces where the vendor controls the runtime and a third-party plugin is not currently possible:
+
+- **Kimi (web / kimi.com)** (Moonshot AI) — *no_public_surface*. No public third-party plugin SDK. Skills on kimi.com are user-uploaded docs, not executable code.
+- **Kimi (iOS / Android)** (Moonshot AI) — *no_public_surface*
+- **Kimi Agent Swarm (K2.6+)** (Moonshot AI) — *api_only*. OpenAI-compatible API at platform.moonshot.ai. No hook-injection below the model's instruction surface.
+- **Perplexity Computer / Comet** (Perplexity) — *partner_shipping*. Perplexity shipping the official Treeship Computer skill (per founder, May 2026). Receipt agent_name: perplexity-computer.
+- **Perplexity Pro Search** (Perplexity) — *no_public_surface*. First-party Connectors only; no third-party connector SDK.

@@ -1,0 +1,2 @@
+session status --check
+session event --type agent.read_file --file /tmp/SOUL.md --agent-name kimi-code
