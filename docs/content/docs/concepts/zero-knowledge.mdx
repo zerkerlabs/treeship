@@ -7,6 +7,30 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 Treeship stacks four ZK-adjacent layers. Each one answers a different question, and each one has different performance characteristics. You pick the layers you need; Ed25519 signatures are always on.
 
+<Callout type="warn">
+**Current status (v0.10.4).** Only the first two layers ship enabled by
+default. Layers 3 and 4 are behind the `--features zk` build flag and have
+additional runtime requirements:
+
+- **Layer 1 (Ed25519 signatures):** stable, always on.
+- **Layer 2 (Merkle audit log):** stable, always on.
+- **Layer 3 (Circom):** wired but uses an external toolchain. `treeship
+  prove` and `treeship verify-proof` shell out to the `circom`, `node`, and
+  `snarkjs` binaries -- they must be installed on PATH. A pure-Rust
+  `ark-circom` proving path is scaffolded in `packages/zk-circom/src/native.rs`
+  but the dependencies are currently commented out in
+  `packages/zk-circom/Cargo.toml` pending ark-crate version alignment.
+- **Layer 4 (RISC Zero):** local zkVM proving via `treeship prove-chain` is
+  wired and runs end-to-end with `--features zk`. Bonsai hosted proving is
+  roadmap only -- setting `BONSAI_API_KEY` today logs "Bonsai integration is
+  coming in v0.6.0" and falls back to the local prover.
+- **TLSNotary:** not implemented. Roadmap only.
+
+Browser-side proof verification at `treeship.dev/verify` does use the pure-Rust
+`ark-groth16` pairing math compiled to WASM with verification keys embedded at
+compile time -- that part of the trust story is real today.
+</Callout>
+
 ## The four layers
 
 ### Layer 1: Ed25519 signatures (always on)
@@ -33,17 +57,35 @@ A Circom circuit takes an artifact's content and a policy, and produces a zero-k
 
 **What it does not prove:** anything about the sequence of artifacts or the overall session integrity.
 
-**Performance:** proof generation takes 1-5 seconds depending on circuit complexity. Verification is under 100ms.
+**Performance:** proof generation typically takes 1-5 seconds depending on circuit complexity and on how fast the local `snarkjs` shell-out completes. CLI verification (also via `snarkjs`) is roughly in the same range; browser-side Groth16 pairing verification via the embedded `ark-groth16` WASM is under 100ms.
+
+**Requirements today:** the CLI must be built with `--features zk`, and the
+`circom`, `node`, and `snarkjs` binaries must be installed on PATH. If they
+are not, `treeship prove` and `treeship verify-proof` will fail at the
+shell-out step. Run `treeship zk-setup` to see what is detected on your
+system.
 
 ### Layer 4: RISC Zero (minutes, per-session, background)
 
-A RISC Zero proof covers an entire session: a sequence of artifacts, their Merkle positions, their Circom proofs, and the session's causal chain. This is the most expensive layer and runs in the background.
+A RISC Zero proof covers an entire session: a sequence of artifacts, their Merkle positions, and the session's causal chain. This is the most expensive layer and is intended to run in the background.
 
-**What it proves:** the entire session -- every artifact, every policy check, every ordering constraint -- is valid. A single proof covers the whole chain.
+**What it proves:** the session chain is intact and every artifact's Ed25519 signature verifies against the same public key, all checked inside the zkVM. The verifier learns the chain is well-formed without re-running every per-artifact check itself.
 
-**What it does not prove:** anything about network interactions or external API responses (that's TLSNotary's job).
+**What it does not prove today:** the per-artifact Circom policy proofs are
+not currently re-verified inside the RISC Zero guest. Composing the two layers
+end-to-end is roadmap work, not a property of the v0.10.4 receipt.
 
-**Performance:** proof generation takes 2-10 minutes depending on session length. This runs in the background and does not block your workflow. Verification is under 200ms.
+**What it does not prove at all:** anything about network interactions or external API responses (that's TLSNotary's job, and TLSNotary is not yet implemented in this repo).
+
+**Performance:** local CPU proving takes several minutes per session and is
+expected to run in the background -- the daemon kicks off chain proofs
+asynchronously. Verification of a finished receipt is well under a second.
+Bonsai hosted proving would be faster but is not wired yet (see status callout
+at the top of this page).
+
+**Requirements today:** `--features zk` build flag. The RISC Zero zkVM links
+in via `treeship-zk-risc0`. The image ID is embedded at compile time, so
+verification is fully offline once a receipt exists.
 
 ## How layers compose
 
@@ -77,49 +119,59 @@ You don't need all layers for every use case. A simple audit trail needs only la
 
 ## Verification commands
 
-Verify an artifact's signature:
+Verify an artifact's signature (always available):
 
 ```bash
 treeship verify artifact.json
 ```
 
-Verify a Merkle inclusion proof:
+Verify a Merkle inclusion proof (always available):
 
 ```bash
 treeship verify --merkle artifact.json
 ```
 
-Verify a Circom policy proof:
+Verify a Circom policy proof (requires `--features zk` build and `snarkjs`
+installed on PATH):
 
 ```bash
-treeship verify-proof <file>
+treeship verify-proof art_xxx.policy-checker.zkproof
 ```
 
-Prove a full session chain:
+Generate a Circom proof for a single artifact (same build requirements as
+above, plus `circom` and `node` on PATH):
+
+```bash
+treeship prove --circuit policy-checker --artifact art_xxx --policy ./policy.json
+```
+
+Prove a full session chain via RISC Zero (requires `--features zk`, runs for
+several minutes on CPU):
 
 ```bash
 treeship prove-chain <session_id>
 ```
 
-## TLSNotary (commerce only)
+## TLSNotary (roadmap)
 
-TLSNotary proves that a specific HTTPS request and response occurred between an agent and an external API. This is useful for commerce workflows where you need to prove that a payment API returned a specific confirmation, or that a price quote was real.
+TLSNotary would prove that a specific HTTPS request and response occurred between an agent and an external API. This is intended for commerce workflows where you need to prove that a payment API returned a specific confirmation, or that a price quote was real.
 
-TLSNotary requires a notary server. Treeship will run a public notary for commerce use cases, but you can also run your own.
+TLSNotary is **not yet implemented in Treeship.** There is no notary integration in `packages/` today; the section here describes the intended shape, not shipping code.
 
 <Callout type="info">
-TLSNotary is scoped to commerce workflows. Most agent attestation use cases do not need it.
+TLSNotary is scoped to commerce workflows and is roadmap only. Most agent attestation use cases do not need it.
 </Callout>
 
 ## Status
 
-| Layer | Status | Since |
+| Layer | Status | Notes |
 |---|---|---|
-| Ed25519 signatures | Stable | v0.1.0 |
-| Merkle audit log | Stable | v0.2.0 |
-| Circom proofs | Beta | v0.5.0 |
-| RISC Zero proofs | Coming | v0.6.0 (planned) |
-| TLSNotary | Coming | v0.7.0 (planned) |
+| Ed25519 signatures | Stable, always on | Since v0.1.0 |
+| Merkle audit log | Stable, always on | Since v0.2.0 |
+| Circom proofs | Wired, external toolchain required | `--features zk` build, plus `circom` + `node` + `snarkjs` on PATH. Pure-Rust `ark-circom` proving path is scaffolded but the dependencies are commented out in `packages/zk-circom/Cargo.toml`. |
+| RISC Zero chain proofs (local) | Wired | `--features zk` build. Local CPU proving via `risc0-zkvm::default_prover()`. Several minutes per chain. |
+| RISC Zero Bonsai (hosted) | Roadmap | `BONSAI_API_KEY` is detected but unused; logs "coming in v0.6.0" and falls back to the local prover. |
+| TLSNotary | Roadmap | Not implemented in this repo. |
 
 ## Build flag
 
@@ -133,25 +185,49 @@ The Ed25519 and Merkle layers are always included.
 
 ## Trust model
 
-Every ZK layer in Treeship is designed to work locally without external services.
+Every ZK layer in Treeship is designed to work locally without contacting a Treeship-operated service to produce or verify a proof.
 
 **Fully local, no external trust:**
-- Ed25519 signatures -- your key, your machine
-- Merkle proofs -- your key, your machine, self-contained proof file
-- Circom proving -- runs on your CPU via ark-circom (pure Rust, no Node.js)
-- Circom verification -- your machine or browser WASM (ark-groth16 pairing math)
-- RISC Zero verification -- your machine, hardcoded image ID
+- **Ed25519 signatures** -- your key, your machine.
+- **Merkle proofs** -- your key, your machine, self-contained proof file.
+- **Circom proving (today)** -- runs on your CPU via a local `snarkjs` + `node`
+  + `circom` shell-out. The witness, proof, and verification keys never leave
+  your machine, but the toolchain dependency is real and is your responsibility
+  to install. A pure-Rust `ark-circom` path is scaffolded in
+  `packages/zk-circom/src/native.rs`; once the ark-crate version alignment is
+  resolved (`# native = [...]` in `packages/zk-circom/Cargo.toml`) the Node.js
+  dependency goes away.
+- **Circom verification in the CLI** -- shells out to local `snarkjs`. Same
+  Node.js dependency as proving.
+- **Circom verification in the browser (`treeship.dev/verify`)** -- pure Rust
+  via `ark-groth16` compiled to WASM, with verification keys embedded at
+  compile time in `packages/core-wasm/src/zk.rs`. No network call. Hub cannot
+  forge a passing result.
+- **RISC Zero chain proving and verification** -- local zkVM via the
+  `risc0-zkvm` crate. The image ID is embedded at compile time, so a finished
+  receipt can be verified offline.
 
 **One-time trust assumption (acceptable):**
-- Groth16 trusted setup uses the Hermez powers-of-tau ceremony (thousands of participants). This is done once by Treeship maintainers and the zkeys are committed to the repo. Users never run the ceremony.
+- Groth16 trusted setup uses the Hermez powers-of-tau ceremony (thousands of
+  participants). Maintainers ran the per-circuit phase 2 once and the finished
+  `*.zkey` / `*_vk.json` files are committed under
+  `packages/zk-circom/zkeys/`. Users never run the ceremony.
 
-**Optional external service (opt-in only):**
-- RISC Zero Bonsai (v0.6.0): set `BONSAI_API_KEY` environment variable to use RISC Zero's hosted prover for faster chain proofs. Artifact content is sent to RISC Zero's servers. The proof output is cryptographically identical to local proving. **Bonsai is never the default.** If no API key is set, local CPU proving is used automatically.
+**Roadmap (not opt-in today):**
+- **RISC Zero Bonsai** would be a hosted prover for chain proofs. Setting
+  `BONSAI_API_KEY` is detected by the prover but is not yet wired -- the code
+  logs "Bonsai integration is coming in v0.6.0" and runs the local prover
+  instead. Track this as roadmap, not as an available opt-in.
 
-**Verify offline with no server trust:**
+**Verify offline with no server trust (requires `--features zk` build and
+`snarkjs` on PATH):**
 
 ```bash
 treeship verify-proof art_xxx.policy-checker.zkproof
 ```
 
-This works air-gapped. The verification key is embedded in the binary. No network call. No Treeship server. The browser verification at treeship.dev/verify runs the same math via WASM -- Hub cannot forge a passing result.
+This works air-gapped today via the local `snarkjs` verifier. The browser
+verifier at `treeship.dev/verify` runs the equivalent Groth16 pairing check
+in pure Rust WASM with no shell-out and no network call -- Hub cannot forge a
+passing result. Once the in-repo `ark-circom` path lands, the CLI will offer
+the same pure-Rust verification with no toolchain dependency.
