@@ -1,0 +1,95 @@
+---
+title: Feature matrix
+description: Every shipped Treeship capability, with status, CLI surface, and docs.
+---
+
+This page is the canonical list of what Treeship actually ships today. If a capability is described in a blog post or a CHANGELOG entry but does not appear here, treat it as not present.
+
+## Source of truth
+
+The hand-maintained source is [`docs/feature-inventory.yml`](https://github.com/zerkerlabs/treeship/blob/main/docs/feature-inventory.yml) in the repo. A small linter at [`scripts/check-feature-inventory.py`](https://github.com/zerkerlabs/treeship/blob/main/scripts/check-feature-inventory.py) walks every entry and warns when a listed CLI command, docs page, test file, or package manifest cannot be found. The linter does not fail builds today; that is a deliberate later step once the inventory has burned in.
+
+This MDX page is hand-maintained from the YAML. Auto-generation from YAML at build time is on the roadmap but intentionally not in the bootstrap PR. If you change one, change the other.
+
+## Status taxonomy
+
+| Status | Meaning |
+|---|---|
+| `stable` | Shipped, documented, tested. No known gaps. Safe to depend on. |
+| `beta` | Shipped and used in practice. Rough edges or thin docs. |
+| `experimental` | Shipped behind a build flag or with explicit caveats. May change. |
+| `roadmap` | Designed or specced. Not implemented. Listed here so you know it is on the radar. |
+| `internal` | Exists in code but is not a user-facing feature. Supports something else. |
+| `deprecated` | Still supported, but discouraged. A replacement exists. |
+
+Pick `stable` only when the code, docs, and tests all line up. If the docs page is missing, the right status is `beta`, not `stable`.
+
+## Core protocol
+
+| Feature | Status | CLI | Docs |
+|---|---|---|---|
+| Receipts (signed artifacts) | `stable` | `treeship attest action`, `treeship wrap`, `treeship log` | [Artifacts](/docs/concepts/artifacts) |
+| Session reports | `stable` | `treeship session start / close / report` | [Session receipts](/docs/concepts/session-receipts) |
+| Session packages (.treeship bundles) | `stable` | `treeship package inspect / verify`, `treeship bundle export / import` | [Package CLI](/docs/cli/package) |
+| Offline verifier (Rust CLI) | `stable` | `treeship verify`, `treeship package verify`, `treeship merkle verify` | [Verify CLI](/docs/cli/verify) |
+| WASM verifier (`@treeship/verify`) | `stable` | -- | [Verify SDK](/docs/sdk/verify), [Edge runtime guide](/docs/guides/edge-runtime) |
+| Merkle checkpoints | `stable` | `treeship checkpoint`, `treeship merkle proof / status / publish` | [Merkle proofs](/docs/guides/merkle-proofs) |
+| Hub-checkpoint consumer verifier | `stable` | -- | [Merkle checkpoint API](/docs/api/merkle-checkpoint) |
+| Trust roots | `beta` | `treeship trust list / add / remove` | covered inline in security notes; no dedicated page yet |
+
+## Identity, approval, attribution
+
+| Feature | Status | CLI | Docs |
+|---|---|---|---|
+| Approval Use Journal | `stable` | `treeship approval uses / status`, `treeship approval journal verify` | [Approval Use Journal](/docs/concepts/approval-use-journal) |
+| Agent Identity Certificates | `beta` | `treeship agent register` | [Agent identity](/docs/concepts/agent-identity) |
+| Agent Cards | `stable` | `treeship agents`, `agents review / approve / remove` | [Agent Cards](/docs/concepts/agent-cards) |
+| Harness Manager | `stable` | `treeship harness list / inspect / smoke` | [Harnesses](/docs/concepts/harnesses) |
+
+## Capture surfaces
+
+| Feature | Status | CLI | Docs |
+|---|---|---|---|
+| Background daemon | `beta` | `treeship daemon start / stop / status` | [Daemon CLI](/docs/cli/daemon) |
+| OpenTelemetry bridge | `experimental` | `treeship otel test / status / export` (behind `--features otel`) | [OTel CLI](/docs/cli/otel) |
+| MCP stdio server (`@treeship/mcp`) | `stable` | -- | [MCP integration](/docs/integrations/mcp), [MCP SDK](/docs/sdk/mcp) |
+| A2A bridge (`@treeship/a2a`) | `beta` | -- | [A2A integration](/docs/integrations/a2a) |
+
+## Supply chain
+
+| Feature | Status | CLI | Docs |
+|---|---|---|---|
+| npm binary SHA-256 integrity check | `stable` | -- (runs at `npm install`) | covered in [Install guide](/docs/guides/install) |
+
+## Agent integrations
+
+| Feature | Status | CLI | Docs |
+|---|---|---|---|
+| Claude Code | `stable` | `treeship add` | [Claude Code](/docs/integrations/claude-code) |
+| Cursor | `stable` | `treeship add` | [Cursor](/docs/integrations/cursor) |
+| Codex | `stable` | `treeship add` | [Codex](/docs/integrations/codex) |
+| OpenClaw | `beta` | `treeship add` | [OpenClaw](/docs/integrations/openclaw) |
+| Hermes | `beta` | `treeship add` | [Hermes](/docs/integrations/hermes) |
+| Generic MCP client | `stable` | -- | [MCP integration](/docs/integrations/mcp) |
+| Universal Treeship SKILL.md | `stable` | -- | [Agent skills](/docs/integrations/agent-skills) |
+
+Kimi Code CLI consumes the universal SKILL.md but is not a detected surface in `treeship add --discover`. Tracked under the agent-skills entry.
+
+## Zero-knowledge proofs
+
+| Feature | Status | CLI | Docs |
+|---|---|---|---|
+| Circom Groth16 (snarkjs shell-out) | `experimental` | `treeship prove`, `treeship verify-proof`, `treeship zk-setup` | [Zero knowledge](/docs/concepts/zero-knowledge) |
+| RISC Zero local prover (prove-chain) | `experimental` | `treeship prove-chain` | [Zero knowledge](/docs/concepts/zero-knowledge) |
+| Circom native pure-Rust (ark-circom) | `roadmap` | -- | -- |
+| RISC Zero Bonsai (hosted proving) | `roadmap` | -- | -- |
+| TLSNotary (verifiable TLS evidence) | `roadmap` | `treeship zk-tls-setup` (setup stub) | -- |
+
+Both `zk` CLI paths require the `--features zk` build flag. The Bonsai path is gated on a v0.6.x milestone per `packages/zk-risc0/src/prover.rs`; the README is explicit that TLSNotary is waiting on the upstream alpha to stabilize.
+
+## How to update this page
+
+1. Edit `docs/feature-inventory.yml`.
+2. Run `python3 scripts/check-feature-inventory.py` -- fix any warnings about your own entries.
+3. Mirror the change in this MDX file. (Auto-generation from YAML is roadmap.)
+4. If you are adding a new feature, surface it in the next CHANGELOG entry too.
