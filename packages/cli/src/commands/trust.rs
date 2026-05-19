@@ -44,7 +44,7 @@ pub fn list(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
                 "no trust roots configured (would be at {})",
                 path.display(),
             ));
-            printer.hint("treeship trust add <key_id> <pubkey> --kind <hub_checkpoint|ship|agent_cert>");
+            printer.hint("treeship trust add <key_id> <pubkey> --kind <hub_checkpoint|ship|agent_cert|session_host>");
             return Ok(());
         }
         Err(e) => return Err(e.into()),
@@ -96,7 +96,7 @@ pub fn add(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let kind = TrustRootKind::parse(kind)
         .ok_or_else(|| format!(
-            "unknown trust root kind '{kind}'. Expected one of: hub_checkpoint, ship, agent_cert",
+            "unknown trust root kind '{kind}'. Expected one of: hub_checkpoint, ship, agent_cert, session_host",
         ))?;
 
     // Accept both `ed25519:<b64>` and bare base64url for ergonomics.
