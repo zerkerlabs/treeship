@@ -267,24 +267,42 @@ treeship session event --type agent.decision \
 
 ### Token Counting (Context)
 
-The Anthropic `count_tokens` API is available at `client.messages.count_tokens(model, messages)`:
+Accurate token usage IS capturable. The trick is reading the right fields.
 
-```python
-from anthropic import Anthropic
-client = Anthropic()
+**Input tokens — sum three fields, never read one.** Claude Code (and any
+Anthropic-backed runtime) caches the prompt, so a turn's `usage.input_tokens`
+holds only the *fresh, non-cached* delta — `≤ 10` on ~98% of real turns. The
+real input lives in the cache fields. Compute:
 
-response = client.messages.count_tokens(
-    model="claude-sonnet-4",
-    messages=[{"role": "user", "content": "Analyze this codebase"}]
-)
-print(response.input_tokens)  # 1847
+```
+input_total = usage.input_tokens
+            + usage.cache_read_input_tokens
+            + usage.cache_creation_input_tokens
 ```
 
-**Important limitation:** `count_tokens` counts only what you pass to it. The actual billed tokens per Claude Code turn include system prompt + conversation history + tool definitions — 10-100x larger than just the tool arguments. For accurate token capture, Treeship needs the full message context, not just tool input.
+Example from a real turn: `input_tokens=6, cache_read=14906, cache_creation=19721`
+→ true input `34633`. Reading `input_tokens` alone (`6`) is ~100x too low. The
+data is in the session transcript (`transcript_path` in the hook payload); it
+was never missing, just distributed across three fields.
 
-**Honest approach:** Treeship leaves tokens empty by default rather than reporting synthetic under-counts. Capture via:
-- `TREESHIP_TOKENS_IN` / `TREESHIP_TOKENS_OUT` env vars (user-provided)
-- Claude Code plugin if/when hooks expose `usage` object
+**Output tokens:** read `usage.output_tokens`, but treat it as a *floor* — it
+may exclude extended-thinking tokens. Mark provenance, don't claim it as exact
+until validated against the API's billed usage.
+
+**`count_tokens` is for pre-flight estimates only, not receipts.** The Anthropic
+`count_tokens` API estimates *input* tokens for a message set you pass it —
+useful for "how big is this prompt before I send it," but it's an estimate, it's
+input-only, and it needs an API key. Never record a `count_tokens` result in a
+receipt as actual usage.
+
+**Provider-neutral note:** Anthropic *adds* cache fields to bare input; OpenAI
+and Gemini *nest* cached tokens as a subset of the prompt total (do not add). See
+`docs/specs/token-capture.md` for the canonical schema and per-provider
+normalization table.
+
+**Honest fallback:** leave tokens empty only when the runtime genuinely doesn't
+log a `usage` object. When it does, sum the fields above — don't report synthetic
+under-counts, and don't give up on data that's present.
 
 ### Decision Cards & Coverage Levels
 
@@ -330,11 +348,12 @@ Treeship exposes an MCP server for Claude Code and other MCP-compatible agents:
 }
 ```
 
-Available tools via MCP:
-- `treeship_attest_action` — Create attestation for an action
-- `treeship_verify` — Verify an artifact
-- `treeship_push_hub` — Push artifact to Treeship Hub
-- `treeship_session_report` — Generate session report
+Available tools via MCP (the five the `@treeship/mcp` server actually registers):
+- `treeship_session_status` — Report the active session and its current state
+- `treeship_session_event` — Emit a structured event into the active session timeline
+- `treeship_attest_action` — Sign an agent action into a verifiable receipt
+- `treeship_verify` — Verify an artifact chain
+- `treeship_session_report` — Seal and upload the session receipt, returning a public verify URL
 
 ## Hub API
 
