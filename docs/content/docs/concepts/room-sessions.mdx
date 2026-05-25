@@ -1,0 +1,299 @@
+---
+title: Room Sessions
+description: Shared multi-agent sessions with separate identities, one report, and Merkle-sealed evidence.
+---
+
+# Room Sessions
+
+Room Sessions are the proposed model for a shared multi-agent workspace:
+
+> One room, many agents, one Merkle-sealed report.
+
+A room session lets several agents and humans collaborate in the same logical room while Treeship keeps identities, handoffs, approvals, events, artifacts, and final reporting verifiable. Each participant keeps a separate actor identity. The room produces one shared report.
+
+## Design goals
+
+- Preserve separate identities for each agent, human, host, and room provider.
+- Produce one shared report for the whole room, not disconnected per-agent fragments.
+- Make Merkle integrity the default: events and artifacts should be independently recomputable.
+- Stay local-first: a room can be captured, closed, packaged, and verified without Hub.
+- Support cascading proof from room-level checkpoints down to individual actions.
+- Default to privacy-preserving capture, with explicit redaction and missing-evidence rows.
+- Fit agent-native UX: Slack rooms, MCP rooms, A2A handoffs, terminal sessions, and custom providers should map into the same receipt shape.
+
+## Trust layers
+
+Room Sessions use four layers of trust:
+
+| Layer | What it proves | Example |
+| --- | --- | --- |
+| Semantic | What happened in the room | agent joined, human approved, file changed |
+| Artifact | Which signed Treeship artifacts back the claim | action, approval, handoff, receipt |
+| Merkle | That the room report includes the exact event or artifact | event and artifact inclusion proofs |
+| Anchor | That a checkpoint existed at or before an external time | Bitcoin or transparency-log anchor |
+
+The verifier should be able to start from an external anchor, verify the room checkpoint, verify inclusion proofs, verify signed artifacts, and finally interpret the actor, approval, handoff, or event semantics.
+
+## Identity model
+
+Actors are identified with stable URIs:
+
+| Actor | URI shape |
+| --- | --- |
+| Human | `human://<provider>/<stable_subject>` |
+| Agent | `agent://<provider>/<agent_name>` |
+| Agent instance | `agent-instance://<session_id>/<instance_id>` |
+| Host | `host://<host_id>` |
+| Room | `room://<provider>/<room_id>` |
+
+An agent instance is session-scoped. The same underlying agent can appear in many rooms, but each room session records a fresh instance ID so events remain attributable within the session.
+
+Room metadata should include:
+
+- `room_id`
+- `room_provider`
+- `room_uri`
+- `host_id`
+- `started_at`
+- `closed_at`
+- `participants`
+- `privacy_mode`
+- `capture_policy`
+
+## Event model
+
+Room providers normalize their native activity into room events. The v1 target providers are:
+
+- Slack channels and threads
+- MCP-hosted room contexts
+- A2A collaboration rooms
+- Terminal multiplexers
+- Custom room providers
+
+Core event families:
+
+| Event | Purpose |
+| --- | --- |
+| `room.opened` | Starts a room session |
+| `room.closed` | Seals the room session |
+| `actor.joined` | Adds a human, agent, or host |
+| `actor.left` | Records departure |
+| `message.sent` | Captures a chat message or normalized message summary |
+| `agent.called_tool` | Captures a tool invocation |
+| `agent.wrote_file` | Captures a file write |
+| `agent.read_file` | Captures a file read |
+| `network.requested` | Captures network access |
+| `process.started` | Captures subprocess execution |
+| `approval.requested` | Links an action to a required human approval |
+| `approval.granted` | Links approval artifact and approving actor |
+| `approval.denied` | Records denial |
+| `handoff.requested` | Transfers responsibility from one actor to another |
+| `handoff.accepted` | Records acceptance |
+| `evidence.missing` | States that expected evidence is absent |
+| `evidence.redacted` | States that evidence exists but was intentionally withheld |
+
+Events should carry enough fields for deterministic ordering and attribution:
+
+- `event_id`
+- `sequence`
+- `timestamp`
+- `room_id`
+- `actor_uri`
+- `agent_instance_id`
+- `host_id`
+- `event_type`
+- `summary`
+- `artifact_ids`
+- `evidence_refs`
+- `privacy`
+
+## Handoffs
+
+A handoff is a semantic transfer of responsibility inside the room. It should link:
+
+- the source actor
+- the target actor
+- the reason
+- the task or scope
+- the prior artifact chain
+- the acceptance event
+- the handoff artifact
+
+The report should render handoffs as edges in the agent graph and as timeline events. Verification should confirm that every accepted handoff has the expected signed handoff artifact, or else surface a missing-evidence row.
+
+## Human approvals
+
+Approvals remain nonce-bound Treeship approval artifacts. Room Sessions add room context around them:
+
+- who requested the approval
+- who granted or denied it
+- which room event required it
+- which action artifact was approved
+- whether the approval was reused, expired, missing, or out of scope
+
+The report should make approval gaps obvious. A room can still close with missing approvals, but the final trust verdict must degrade honestly.
+
+## Report shape
+
+A closed room session produces one report with:
+
+- Overview
+- Participants
+- Agent graph
+- Timeline
+- Handoffs
+- Approvals
+- Side effects
+- Artifacts and proofs
+- Integrity rows
+- Missing evidence
+- Redactions
+
+Integrity rows should say exactly what was verified:
+
+- receipt parses
+- canonical bytes match
+- event Merkle root matches
+- artifact Merkle root matches
+- inclusion proofs verify
+- signed artifacts verify
+- approval nonce bindings verify
+- handoff links verify
+- external anchor verifies or is absent
+
+Missing evidence is part of the report, not a hidden failure mode. If a provider could not supply message content, file contents, a tool input, an approval artifact, or an external timestamp, the report records that absence explicitly.
+
+## Merkle and anchoring strategy
+
+Room Sessions use checkpoint-first anchoring.
+
+1. Events and artifacts are captured locally.
+2. Closing the room builds event and artifact Merkle trees.
+3. The room report stores roots, leaf counts, and inclusion proofs.
+4. A room checkpoint is signed.
+5. Hub or a local worker can anchor the checkpoint to OpenTimestamps, Bitcoin, or a transparency log.
+
+High-value evidence can also be anchored directly. Direct anchoring should be reserved for evidence that needs its own timestamp independent of the room checkpoint.
+
+OpenTimestamps lifecycle states:
+
+| State | Meaning |
+| --- | --- |
+| `absent` | No timestamp was requested |
+| `pending` | Timestamp was submitted but not completed |
+| `complete` | Timestamp verifies |
+| `failed` | Timestamp was attempted and failed |
+
+Timestamp semantics are intentionally limited: they prove data existed no later than the timestamp. They do not prove who created it, whether the data is true, or whether the capture was complete.
+
+## Proposed CLI
+
+```bash
+treeship room start [--provider slack|mcp|a2a|terminal|custom] [--room <uri>]
+treeship room status [room_id]
+treeship room event <room_id> --type <event_type> --json <event.json>
+treeship room handoff <room_id> --to <actor_uri> --scope <scope>
+treeship room approve <room_id> <artifact_id>
+treeship room close [room_id]
+treeship room report [room_id] [--format text|json|html]
+treeship room verify <room-report-or-package>
+treeship room anchor <room_id>
+```
+
+## MCP propagation
+
+Room-aware MCP tools should propagate room context through environment variables:
+
+```bash
+TREESHIP_ROOM_ID=room_...
+TREESHIP_ROOM_URI=room://mcp/...
+TREESHIP_ROOM_PROVIDER=mcp
+TREESHIP_SESSION_ID=ssn_...
+TREESHIP_ACTOR_URI=agent://...
+TREESHIP_AGENT_INSTANCE_ID=agi_...
+TREESHIP_HOST_ID=host_...
+```
+
+Tools should treat these values as context, not trust roots. Signed artifacts and verifier checks remain authoritative.
+
+## Hub API sketch
+
+```http
+POST /v1/rooms
+GET /v1/rooms/{room_id}
+POST /v1/rooms/{room_id}/events
+POST /v1/rooms/{room_id}/close
+GET /v1/rooms/{room_id}/report
+GET /v1/rooms/{room_id}/proofs/{leaf_id}
+POST /v1/rooms/{room_id}/anchor
+```
+
+Hub is an index and distribution layer. It should not become the trust root.
+
+## Local storage
+
+```text
+~/.treeship/rooms/
+  room_<id>/
+    room.json
+    events.jsonl
+    artifacts/
+    checkpoints/
+    report.json
+    report.html
+    proofs/
+    anchors/
+```
+
+The portable package should include the report, proofs, artifacts, render hints, and verification metadata required to verify offline.
+
+## Privacy modes
+
+| Mode | Behavior |
+| --- | --- |
+| `full` | Capture message and evidence content where available |
+| `metadata` | Capture event metadata, actor attribution, hashes, and summaries |
+| `redacted` | Capture only explicitly allowed fields and redaction markers |
+| `off` | Do not capture room events |
+
+Privacy mode belongs in the signed report. A verifier should distinguish "not captured by policy" from "expected evidence is missing."
+
+## Rendering requirements
+
+The HTML report should:
+
+- show the room verdict before the narrative
+- keep participant identities visible on every event
+- distinguish live, closed, anchored, missing, and redacted states
+- render handoffs as graph edges and timeline rows
+- make approval failures visually prominent
+- support offline viewing from the package
+- avoid requiring Hub or account state
+
+## Implementation phases
+
+1. Define the room report schema and local storage layout.
+2. Add room event ingestion for local custom providers.
+3. Add room close/report/verify commands.
+4. Add MCP room context propagation.
+5. Add Slack and A2A adapters.
+6. Add Hub room APIs and public report rendering.
+7. Add checkpoint anchoring and OTS lifecycle display.
+
+## Open questions
+
+- Should room events be signed individually, or is signing the room checkpoint enough for v1?
+- Should message bodies be included by default, hashed by default, or provider-specific?
+- How should cross-host clock drift be represented in timeline verification?
+- Which providers can supply stable actor identifiers without leaking private account data?
+- What is the minimum room package needed for offline verification?
+
+## Recommended v1 defaults
+
+- Capture metadata by default.
+- Sign artifacts and the final room checkpoint.
+- Build separate event and artifact Merkle roots.
+- Treat Hub as an index only.
+- Allow room close with missing evidence, but surface a degraded verdict.
+- Prefer checkpoint anchoring over direct artifact anchoring.
+- Render one shared report with separate actor attribution.
