@@ -686,6 +686,99 @@ enum SessionCommand {
     ///   treeship session event --type agent.called_tool --tool read_file --format json
     ///   treeship session event --type agent.wrote_file --file src/main.rs
     Event(SessionEventArgs),
+
+    /// Mint a single-use, expiring invitation for another agent to join
+    /// this session (Phase 1 of the agent-invitations spec).
+    ///
+    /// Examples:
+    ///   treeship session invite ssn_abc --invitee-cert "ed25519:ISSUER:org-x" --expires 1h
+    ///   treeship session invite ssn_abc --invitee-pubkey deadbeefdeadbeef --capabilities tool.call
+    ///   treeship session invite ssn_abc --open --expires 30m
+    Invite(SessionInviteArgs),
+
+    /// Redeem an invitation and emit a pending participant event.
+    ///
+    /// Examples:
+    ///   treeship session join --invite-file ./invite.blob --actor agent://researcher
+    ///   cat ./invite.blob | treeship session join --invite - --actor agent://qa
+    Join(SessionJoinArgs),
+
+    /// Host countersigns a pending participant event. After this runs,
+    /// the participant envelope carries two signatures (joining agent +
+    /// host) and verifies as a finalized join.
+    ///
+    /// Examples:
+    ///   treeship session countersign art_part_abc123
+    Countersign(SessionCountersignArgs),
+}
+
+#[derive(Args)]
+struct SessionInviteArgs {
+    /// Session id to mint an invitation for. Defaults to the currently
+    /// active session.
+    #[arg(default_value = "")]
+    session_id: String,
+
+    /// Cert-restricted invitation. Format: <issuer_pubkey>:<subject1,subject2,...>
+    #[arg(long, value_name = "ISSUER:SUBJECTS")]
+    invitee_cert: Option<String>,
+
+    /// Pubkey-restricted invitation. Either a 16-hex fingerprint or
+    /// a full canonical pubkey (`ed25519:<b64>` or bare base64url).
+    #[arg(long, value_name = "FP_OR_PUBKEY")]
+    invitee_pubkey: Option<String>,
+
+    /// Open invitation -- anyone holding the blob can redeem. Opt-in
+    /// only; required because Open invitations are the loosest setting.
+    #[arg(long)]
+    open: bool,
+
+    /// Comma-separated action types to grant. Defaults to "tool.call".
+    #[arg(long, value_name = "TYPES")]
+    capabilities: Option<String>,
+
+    /// Lifetime of the invitation (e.g. "30s", "5m", "1h", "7d").
+    /// Defaults to 1 hour; the protocol max is 7 days.
+    #[arg(long, value_name = "DURATION")]
+    expires: Option<String>,
+
+    /// Output format: text (default) or json.
+    #[arg(long, value_name = "FORMAT", default_value = "text")]
+    format: String,
+
+    /// Emit raw JSON instead of the armored
+    /// `-----BEGIN TREESHIP INVITATION-----` blob.
+    #[arg(long)]
+    no_armor: bool,
+}
+
+#[derive(Args)]
+struct SessionJoinArgs {
+    /// Paste the bootstrap blob inline (use `-` to read from stdin).
+    #[arg(long, value_name = "BLOB")]
+    invite: Option<String>,
+
+    /// Read the bootstrap blob from a file.
+    #[arg(long, value_name = "PATH")]
+    invite_file: Option<String>,
+
+    /// Joining agent's actor URI (e.g. agent://researcher).
+    #[arg(long, value_name = "URI")]
+    actor: String,
+
+    /// Output format: text (default) or json.
+    #[arg(long, value_name = "FORMAT", default_value = "text")]
+    format: String,
+}
+
+#[derive(Args)]
+struct SessionCountersignArgs {
+    /// Participant artifact id (output of `treeship session join`).
+    participant_id: String,
+
+    /// Output format: text (default) or json.
+    #[arg(long, value_name = "FORMAT", default_value = "text")]
+    format: String,
 }
 
 #[derive(Args)]
@@ -1515,7 +1608,7 @@ struct TrustAddArgs {
     public_key: String,
 
     /// What this root is allowed to verify.
-    #[arg(long, value_parser = ["hub_checkpoint", "ship", "agent_cert"])]
+    #[arg(long, value_parser = ["hub_checkpoint", "ship", "agent_cert", "session_host"])]
     kind: String,
 
     /// Optional human-readable label. Shown by `treeship trust list`.
@@ -1902,6 +1995,38 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 a.provider.as_deref(),
                 a.tokens_in,
                 a.tokens_out,
+                printer,
+            ),
+            SessionCommand::Invite(a) => commands::invitation::invite(
+                cli.config.as_deref(),
+                commands::invitation::InviteArgs {
+                    session_id:     a.session_id.clone(),
+                    invitee_cert:   a.invitee_cert.clone(),
+                    invitee_pubkey: a.invitee_pubkey.clone(),
+                    open:           a.open,
+                    capabilities:   a.capabilities.clone(),
+                    expires:        a.expires.clone(),
+                    format:         a.format.clone(),
+                    no_armor:       a.no_armor,
+                },
+                printer,
+            ),
+            SessionCommand::Join(a) => commands::invitation::join(
+                cli.config.as_deref(),
+                commands::invitation::JoinArgs {
+                    invite:      a.invite.clone(),
+                    invite_file: a.invite_file.clone(),
+                    actor:       a.actor.clone(),
+                    format:      a.format.clone(),
+                },
+                printer,
+            ),
+            SessionCommand::Countersign(a) => commands::invitation::countersign(
+                cli.config.as_deref(),
+                commands::invitation::CountersignArgs {
+                    participant_id: a.participant_id.clone(),
+                    format:         a.format.clone(),
+                },
                 printer,
             ),
         },

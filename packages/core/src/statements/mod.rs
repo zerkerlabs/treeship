@@ -31,6 +31,22 @@ pub use approval_use::{
     journal_checkpoint_record_digest, nonce_digest, verify_hub_checkpoint_signature,
 };
 
+// Phase 1 of the agent-invitations spec (docs/specs/agent-invitations-rooms.md).
+// `invitation` carries the single-use grant; `session_participant`
+// carries the two-sig join event. The two compose with the Approval
+// Use Journal (consume-before-action) without any journal-side schema
+// change.
+pub mod invitation;
+pub mod session_participant;
+pub use invitation::{
+    GrantedCapabilities, InvitationError, InvitationStatement, InviteeRestriction,
+    TYPE_INVITATION, DEFAULT_INVITATION_LIFETIME_SECS, MAX_INVITATION_LIFETIME_SECS,
+};
+pub use session_participant::{
+    ParticipantVerifyError, SessionParticipantStatement, TYPE_SESSION_PARTICIPANT,
+    verify_participant_envelope,
+};
+
 use serde::{Deserialize, Serialize};
 
 /// A reference to content being attested, approved, or receipted.

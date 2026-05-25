@@ -32,3 +32,4 @@ pub mod prove;
 pub mod quickstart;
 pub mod trust;
 pub mod zk;
+pub mod invitation;

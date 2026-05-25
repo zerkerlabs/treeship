@@ -72,6 +72,12 @@ fn warn_insecure_perms_if_bypassed() {
 
 /// What this trust root is allowed to verify. Encoded kebab-case in JSON
 /// because the rest of the codebase (CheckpointKind, etc.) does the same.
+///
+/// Adding a variant is a wire-format event: every JSON consumer that
+/// matches exhaustively on this enum must add the new arm in the same
+/// release. Phase 1 of the agent-invitations spec adds `SessionHost`
+/// for invitation issuer pinning; that addition is called out as a
+/// breaking change in the CHANGELOG for the same release.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TrustRootKind {
@@ -84,6 +90,14 @@ pub enum TrustRootKind {
     Ship,
     /// `AgentCertificate` issued by a ship to one of its agents.
     AgentCert,
+    /// Phase 1 of agent invitations: the host's signing key that mints
+    /// `InvitationStatement` envelopes. Verifiers (and the
+    /// `treeship session join` flow) require the invitation's issuer
+    /// pubkey to be present in the trust root store under this kind
+    /// before honoring the invitation. Separate from `Ship` so a
+    /// machine can trust hub-org checkpoints without implicitly
+    /// trusting that hub to host multi-agent rooms.
+    SessionHost,
 }
 
 impl TrustRootKind {
@@ -92,6 +106,7 @@ impl TrustRootKind {
             Self::HubCheckpoint => "hub_checkpoint",
             Self::Ship          => "ship",
             Self::AgentCert     => "agent_cert",
+            Self::SessionHost   => "session_host",
         }
     }
 
@@ -100,6 +115,7 @@ impl TrustRootKind {
             "hub_checkpoint" => Some(Self::HubCheckpoint),
             "ship"           => Some(Self::Ship),
             "agent_cert"     => Some(Self::AgentCert),
+            "session_host"   => Some(Self::SessionHost),
             _                => None,
         }
     }

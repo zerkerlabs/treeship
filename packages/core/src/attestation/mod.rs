@@ -11,4 +11,4 @@ pub use id::{artifact_id_from_pae, digest_from_pae, ArtifactId};
 pub use signer::{Signer, Ed25519Signer, SignerError};
 pub use envelope::{Envelope, Signature};
 pub use sign::{sign, SignResult, SignError};
-pub use verify::{Verifier, VerifyResult, VerifyError};
+pub use verify::{Verifier, VerifyResult, VerifyError, verify_with_key};
