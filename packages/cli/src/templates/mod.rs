@@ -53,6 +53,12 @@ static TEMPLATES: &[Template] = &[
         category: "Development",
         yaml: include_str!("hermes_agent.yaml"),
     },
+    Template {
+        name: "robinhood-agentic-trading",
+        description: "Receipts and approvals for Robinhood Trading MCP agents",
+        category: "Finance",
+        yaml: include_str!("robinhood_agentic_trading.yaml"),
+    },
 ];
 
 /// List all available templates.

@@ -390,6 +390,18 @@ enum Command {
     ///   treeship ui
     Ui,
 
+    /// Open the local browser dashboard
+    ///
+    /// Serves sealed `.treeship` session packages from localhost as a
+    /// read-only dashboard. Hub is not involved; receipt.json stays the
+    /// trust anchor and preview.html is rendered directly from the package.
+    ///
+    /// Examples:
+    ///   treeship dashboard
+    ///   treeship dashboard ssn_01HR --port 9347
+    ///   treeship dashboard --root ../other-repo
+    Dashboard(DashboardArgs),
+
     /// OpenTelemetry export -- send artifacts as OTel spans
     ///
     /// Requires the `otel` feature flag at build time.
@@ -1813,6 +1825,24 @@ struct OtelExportArgs {
     id: String,
 }
 
+#[derive(Args)]
+struct DashboardArgs {
+    /// Session ID to open directly. Defaults to the dashboard index.
+    session_id: Option<String>,
+
+    /// Local host to bind. Defaults to 127.0.0.1.
+    #[arg(long, default_value = "127.0.0.1")]
+    host: String,
+
+    /// Local port to bind. Use 0 to ask the OS for a free port.
+    #[arg(long, default_value_t = 9347)]
+    port: u16,
+
+    /// Additional workspace or .treeship root to include. May be repeated.
+    #[arg(long = "root", value_name = "PATH")]
+    roots: Vec<std::path::PathBuf>,
+}
+
 // --- main -------------------------------------------------------------------
 
 fn main() {
@@ -1831,6 +1861,16 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
     match &cli.command {
 
         Command::Ui => tui::run(cli.config.as_deref()),
+
+        Command::Dashboard(args) => commands::dashboard::run(
+            commands::dashboard::DashboardOptions {
+                host: args.host.clone(),
+                port: args.port,
+                session_id: args.session_id.clone(),
+                roots: args.roots.clone(),
+            },
+            printer,
+        ),
 
         Command::Otel(sub) => {
             #[cfg(feature = "otel")]

@@ -1,0 +1,152 @@
+---
+title: dashboard
+description: Local control-plane dashboard for sealed receipts, agent work, reports, review queues, and trust capabilities.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`treeship dashboard` starts a read-only localhost control plane over local Treeship instances and their sealed `.treeship` session packages. It is the browser companion to [`treeship ui`](/docs/cli/ui): the terminal UI is for live terminal operation, while the browser dashboard is for reviewing Treeships, attached agents, receipts, reports, trust status, and workspace capabilities.
+
+## Usage
+
+```bash
+treeship dashboard
+treeship dashboard --port 55339
+treeship dashboard ssn_42e740bd9eb238f6
+treeship dashboard --root ../another-project --root /srv/agents/.treeship
+```
+
+### Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `session_id` | Optional session id to open directly. Defaults to the dashboard index. |
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--host <host>` | Host to bind. Defaults to `127.0.0.1`. |
+| `--port <port>` | Port to bind. Defaults to `9347`. Use `0` to let the OS choose a free port. |
+| `--root <path>` | Additional workspace or `.treeship` root to include. May be repeated. |
+
+## What It Shows
+
+The dashboard reads from `.treeship/sessions/*.treeship/` for the current workspace and any extra `--root` workspaces, then renders:
+
+- The current Treeship instance, including `ship_id`, local root, Hub status, receipt count, report count, proof package count, and attached agents
+- Trust status with local verification, review load, agent attribution, and capability readiness
+- A receipt index with local verification status
+- The latest report summary
+- An agent work map showing which agents did work across receipts
+- Collaboration and handoff edges from receipt agent graphs
+- Receipt anatomy: report, canonical `receipt.json`, Merkle proof data, and local verification
+- A review queue for warnings, failed checks, failed commands, sensitive reads, network calls, and missing capture signals
+- Treeship capability status for daemon evidence, MCP/tool capture, model/token capture, Hub sharing, and local verification
+- Raw `receipt.json` links for automation
+- Receipt reports rendered from the current embedded template
+
+## Control-Plane Shape
+
+The dashboard follows a local-first control-plane model:
+
+- The CLI process serves the browser UI and API from one local process.
+- Local `.treeship` packages remain the source of truth.
+- The dashboard is a client of the same JSON data that scripts and agents can consume.
+- Commands shown in the UI are copyable so a builder can leave the browser and reproduce the same action in a terminal.
+- Remote sharing through Hub is optional; local verification is still the trust anchor.
+
+## Review Queue
+
+The review queue is the daily operator surface. It answers: "What do I need to inspect before I trust or share this agent run?"
+
+Rows can include:
+
+- Package verification failures or warnings
+- Failed commands
+- Sensitive file reads
+- Network connections
+- Ports opened
+- Missing model/token capture
+
+When a row has a concrete fix, the dashboard shows a copyable command such as:
+
+```bash
+treeship package verify .treeship/sessions/ssn_42e740bd9eb238f6.treeship
+treeship daemon start
+treeship add
+treeship hub attach
+```
+
+## Agent Work
+
+The agent work map answers: "Which agent did what?"
+
+It aggregates each captured agent identity across sealed receipts inside the current Treeship and shows:
+
+- Latest receipt link
+- Which receipts/reports the agent appears in
+- Sessions seen
+- Action count
+- Files read and written
+- Commands run
+- Network or review signals
+- Captured model information when present
+
+## Collaboration
+
+The collaboration view answers: "Which agents worked with which?"
+
+It reads `agent_graph.edges` from receipts and surfaces parent-child spawns, handoffs, returns, and collaboration edges. If no edges are shown, the current receipts did not capture multi-agent relationship events.
+
+## Receipt Anatomy
+
+Receipt anatomy answers: "What is the full Treeship receipt and report?"
+
+It maps the selected run into four layers:
+
+- Report: the human-readable summary
+- Receipt JSON: the canonical package record
+- Merkle: leaf count, inclusion proofs, and root
+- Verify: local package checks and signature count
+
+## Treeship Capabilities
+
+Treeship capabilities answer: "How well is this workspace instrumented?"
+
+It checks whether:
+
+- Sealed receipts exist
+- Local package verification is passing
+- Daemon evidence appears in receipts
+- Agent or MCP tool events appear in receipts
+- Model/token usage is captured
+- Hub sharing is configured
+
+<Callout type="info">
+Capability warnings do not always mean a receipt is invalid. They mean future receipts can be more useful if the workspace captures more evidence.
+</Callout>
+
+## Data Source
+
+The dashboard is local-first:
+
+- It binds to localhost.
+- It reads sealed `.treeship` packages from disk.
+- It serves package files read-only.
+- It does not make Hub the trust root.
+
+The dashboard exposes read-only local JSON endpoints for scripts, agents, IDEs, and future UI clients:
+
+| Endpoint | Description |
+|----------|-------------|
+| `/api/status` | Runtime mode, Treeship count, trust summary, review load, capability readiness, and primary session root. |
+| `/api/treeships` | Local Treeship instance summaries with agents, receipts, reports, proof package counts, and Hub status. Includes extra `--root` instances. |
+| `/api/sessions` | Indexed receipt/session rows. |
+| `/api/agents` | Aggregated agent work map. |
+| `/api/collaboration` | Agent graph edges across receipts. |
+| `/api/capabilities` | Local Treeship capability status and suggested commands. |
+
+## Relationship to `preview.html`
+
+Every `.treeship` package can contain a generated `preview.html`. The dashboard renders receipt reports from `receipt.json` with the current embedded template, so older packages still benefit from the latest report design when viewed locally.

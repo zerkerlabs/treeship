@@ -1,0 +1,161 @@
+---
+title: "Robinhood Agentic Trading Needs Receipts"
+description: "How Treeship can provide local proofs, approvals, and audit trails for agents connected to Robinhood Trading MCP."
+date: 2026-05-27
+tags: ["mcp", "finance", "approvals", "receipts"]
+readTime: "7 min read"
+---
+
+Robinhood Agentic Trading makes the boundary very real: an AI agent can connect to a dedicated brokerage account through MCP, inspect account data, reason about a strategy, and place trades.
+
+That is exactly the kind of workflow where "the agent had access" is not enough.
+
+The operator needs to know:
+
+- Which agent was connected?
+- Which account data did it ask for?
+- What strategy or instruction was it following?
+- Did it produce an order intent before execution?
+- Did a human approve the action?
+- What happened after the tool call?
+- Can another person verify the evidence later?
+
+That is the role Treeship should play.
+
+## Robinhood owns execution. Treeship owns evidence.
+
+Robinhood's architecture is MCP-native. The agent connects to Robinhood's Trading MCP endpoint from a platform like Claude Code, Codex, Cursor, ChatGPT, or another MCP-compatible runtime. Robinhood handles account authentication, Agentic account onboarding, account access, and order placement.
+
+Treeship should not sit in that flow as a broker. It should not make recommendations. It should not custody funds. It should not pretend a receipt means a trade was suitable.
+
+Treeship should do what trust infrastructure is supposed to do:
+
+- record the agent identity
+- record the operator intent
+- record the approval boundary
+- record the MCP tool call
+- seal the session into a portable receipt package
+- make the proof locally verifiable
+
+In other words: Robinhood executes the trade. Treeship proves what the agent was asked to do and what evidence existed around the action.
+
+## The dangerous gap is not just execution
+
+Most people focus on "can the agent place an order?" That is the obvious risk, but not the only one.
+
+Before an order, the agent may read account numbers, positions, balances, transactions, and order history. It may combine that data with external market research. It may summarize risks or produce a strategy. It may decide that an order is consistent with a user instruction.
+
+Every one of those steps matters.
+
+If something goes wrong, the useful question is not merely "was there a trade?" It is:
+
+> What chain of reasoning, data access, approval, and tool execution led to that trade?
+
+That chain should be portable. It should not live only in a model transcript, a vendor log, or a brokerage app notification.
+
+## A receipt model for agentic trading
+
+A good Treeship receipt for Robinhood Agentic Trading should have at least five layers.
+
+### 1. Strategy intent
+
+The operator or agent records the goal:
+
+```bash
+treeship attest decision \
+  --actor agent://trading-operator \
+  --summary "Review the dedicated Agentic account and propose a rebalance under the configured budget." \
+  --confidence 0.80
+```
+
+This does not prove the strategy is good. It proves what the agent was supposed to be doing.
+
+### 2. Data access
+
+When the agent queries account or market data through MCP, Treeship should record the tool name, timestamp, actor, and digests of sensitive inputs and outputs.
+
+The receipt should avoid storing raw balances or account numbers unless the operator explicitly chooses to keep them locally.
+
+### 3. Order intent
+
+Before execution, the agent should produce a structured order intent. This is the checkpoint where a human or policy can inspect:
+
+- symbol
+- side
+- order type
+- estimated notional amount
+- time in force
+- reason
+- linked strategy prompt
+
+### 4. Approval
+
+For order placement, the default should be explicit approval. Treeship already has approval nonce binding: a human approval produces a nonce, and the execution receipt must echo it.
+
+```bash
+treeship attest approval \
+  --approver human://operator \
+  --description "Approve one Robinhood Agentic account order under the reviewed budget."
+```
+
+The nonce prevents a generic "approval" from becoming a reusable blank check.
+
+### 5. Execution receipt
+
+After the MCP tool call, Treeship records the tool result digest, status, elapsed time, actor, and session context. The sealed `.treeship` package then becomes a local audit artifact.
+
+## The dashboard should start with Treeships, not files
+
+This is also why the local dashboard should be organized around Treeship instances.
+
+A Treeship is the trust container. Inside it are agents, sessions, receipts, reports, approvals, and proof packages. For a Robinhood setup, a user should be able to open the dashboard and see:
+
+- the trading-agent Treeship
+- which agents are attached
+- which receipts each agent produced
+- whether any order-placement action is missing approval
+- which reports are ready to review
+- whether Hub sharing is disabled or enabled
+
+That mental model is much clearer than a flat folder of receipt files.
+
+## Recommended default posture
+
+For agentic trading, Treeship should be conservative by default:
+
+- portfolio/account reads: receipt and hash sensitive payloads
+- market-data reads: receipt with source and timestamp
+- order intent: require a decision artifact
+- order placement: require human approval nonce
+- automation: require a session policy and review window
+- sharing: redact or hash sensitive account details
+
+This is not about slowing agents down for its own sake. It is about making the agent's authority explicit and reviewable.
+
+## What Treeship should build next
+
+The first version can be mostly documentation and templates:
+
+- a Robinhood Agentic Trading integration guide
+- a policy template that marks order placement as approval-required
+- dashboard sections that show Treeship -> agents -> receipts -> reports
+- receipt rendering that highlights strategy intent, approval, and execution evidence
+
+The second version should understand Robinhood MCP activity more specifically:
+
+- classify tools as account read, market read, order preview, or order placement
+- flag order placement without an approval nonce
+- show trading sessions in the local dashboard review queue
+- produce sanitized reports suitable for sharing
+
+The goal is not to make Treeship a trading platform.
+
+The goal is to make agentic trading auditable enough that builders, developers, and operators can answer the uncomfortable questions after the fact:
+
+- what did the agent know?
+- what did it decide?
+- who approved it?
+- what did it do?
+- can we prove it?
+
+That is what receipts are for.

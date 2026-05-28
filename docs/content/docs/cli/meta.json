@@ -19,6 +19,7 @@
     "log",
     "daemon",
     "doctor",
+    "dashboard",
     "ui",
     "otel",
     "merkle"

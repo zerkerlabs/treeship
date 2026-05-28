@@ -1,0 +1,77 @@
+name: robinhood-agentic-trading
+version: 1
+description: >
+  Conservative local receipts, approvals, and review posture for agents
+  connected to Robinhood Trading MCP.
+tags: [mcp, finance, approvals, trading]
+audience: [developer, operator]
+
+session:
+  actor: agent://robinhood-trading-agent
+  auto_start: true
+  auto_checkpoint: true
+  auto_push: false
+
+attest:
+  commands:
+    - pattern: "claude mcp add robinhood-trading*"
+      label: robinhood mcp connection
+      require_approval: true
+      capture_output_digest: true
+    - pattern: "codex mcp add robinhood-trading*"
+      label: robinhood mcp connection
+      require_approval: true
+      capture_output_digest: true
+    - pattern: "*robinhood*order*"
+      label: robinhood order placement
+      require_approval: true
+      capture_output_digest: true
+
+  paths:
+    - path: ".cursor/**"
+      on: change
+      label: agent mcp configuration
+      alert: true
+    - path: ".mcp/**"
+      on: change
+      label: agent mcp configuration
+      alert: true
+    - path: "*.env*"
+      on: access
+      label: sensitive trading environment
+      alert: true
+
+capture:
+  output_digest: true
+  file_changes: true
+  git_state: true
+  lockfile_changes: false
+  environment: false
+  model_metadata: true
+
+approvals:
+  require_for:
+    - label: robinhood mcp connection
+    - label: robinhood order placement
+    - label: sensitive trading environment
+
+hub:
+  auto_push: false
+  push_on: []
+
+onboarding: |
+  This template is for local evidence around Robinhood Agentic Trading.
+  It does not place trades, provide financial advice, or replace Robinhood controls.
+
+  Connect your agent to Robinhood Trading MCP using Robinhood's official URL:
+    https://agent.robinhood.com/mcp/trading
+
+  Recommended flow:
+    treeship session start --name "robinhood agentic trading review"
+    treeship attest decision --actor agent://trading-operator --summary "Review strategy before order placement"
+    treeship attest approval --approver human://operator --description "Approve one reviewed order placement"
+    export TREESHIP_APPROVAL_NONCE=<nonce>
+    treeship session close --summary "Sealed Robinhood Agentic Trading review"
+
+  Use the local dashboard to review agents, receipts, reports, and approval gaps:
+    treeship dashboard
