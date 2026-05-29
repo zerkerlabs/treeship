@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.11.1 (2026-05-29)
+
 ### Added
 
 - **`treeship session abandon` for wedged sessions.** The command quarantines an active or closing session marker plus its event directory under `.treeship/quarantine-*` so a fresh session can start without deleting the evidence needed to debug the failure.
