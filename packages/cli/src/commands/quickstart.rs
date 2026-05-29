@@ -50,7 +50,7 @@ pub fn run(
     }
     super::session::start(
         Some("quickstart session".into()),
-        None, config, printer,
+        None, false, config, printer,
     )?;
     printer.blank();
 

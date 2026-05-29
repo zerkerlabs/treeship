@@ -169,6 +169,10 @@ pub struct ProofsSection {
     /// they still verify byte-identical.
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub event_log_skipped: u32,
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub reconcile_untracked_truncated: u32,
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub reconcile_untracked_cap: u32,
 }
 
 fn is_zero_u32(n: &u32) -> bool { *n == 0 }
@@ -282,6 +286,8 @@ impl ReceiptComposer {
             inclusion_proofs_count: merkle_section.inclusion_proofs.len() as u32,
             zk_proofs_present: false,
             event_log_skipped: 0, // Set by caller after compose (Codex #8)
+            reconcile_untracked_truncated: 0,
+            reconcile_untracked_cap: 0,
         };
 
         // Compute cost/token totals from agent graph

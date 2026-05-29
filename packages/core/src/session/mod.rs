@@ -28,4 +28,7 @@ pub use package::{
     render_preview_html, verify_package, verify_package_with_trust,
     ApprovalsBundle, ApprovalsIndex, VerifyCheck, VerifyStatus,
 };
-pub use git::{reconcile_changes, current_head_sha, GitChange};
+pub use git::{
+    reconcile_changes, reconcile_changes_with_options, current_head_sha, git_toplevel,
+    GitChange, ReconcileOptions, ReconcileResult, ReconcileSummary,
+};
