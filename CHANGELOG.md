@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.11.0 (2026-05-28)
+
 ### Added
 
 - **Phase 1 of agent invitations: signed, single-use, expiring grants that let a second agent join an existing session.** Adds two canonical statement types -- `treeship/invitation/v1` and `treeship/session-participant/v1` -- both under `packages/core/src/statements/`. Invitations carry `session_ref`, `issuer` (host pubkey), `invitee_restriction` (one of `Pubkey { fingerprint }`, `Cert { issuer_pubkey, allowed_subjects }`, or `Open`), `granted_capabilities.action_types`, `expires_at`, `max_uses` (always 1 in Phase 1), and a random `nonce`. The canonical signing string mirrors the v0.10.4 pipe-delimited shape (`"v1|invitation|{session_ref}|{issuer}|{restriction_digest}|{capabilities_digest}|{expires_at}|{max_uses}|{nonce_digest}"`); variable-length fields fold into `sha256:<hex>` digests so the canonical stays single-line and unambiguous. Participant envelopes require exactly two DSSE signatures: the joining agent first (assertion of "I'm joining"), then the host countersign over the same canonical bytes (assertion of "I observed this join"); either signature alone is invalid. `verify_participant_envelope` rejects `MissingHostCountersign`, `TooManySignatures`, any sig that doesn't verify, and any countersign whose key doesn't match the invitation's issuer pubkey. Mint-time validation enforces a 7-day protocol ceiling on lifetime (`MAX_INVITATION_LIFETIME_SECS`); the default is 1 hour (`DEFAULT_INVITATION_LIFETIME_SECS`). Spec: [`docs/specs/agent-invitations-rooms.md`](docs/specs/agent-invitations-rooms.md). 14 unit tests in `invitation.rs` + 6 in `session_participant.rs` pin the canonical-binding, signature, expiry, single-use, and immutability properties.
