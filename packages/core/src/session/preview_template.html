@@ -20,6 +20,8 @@ code{font-family:var(--mono);font-size:.75rem;background:var(--surface-2);paddin
 .topbar-right{display:flex;align-items:center;gap:.5rem}
 .btn-sm{display:inline-flex;align-items:center;gap:.4rem;font-size:.72rem;font-weight:600;padding:.4rem .8rem;border-radius:8px;border:1px solid var(--border);color:var(--muted);background:transparent;cursor:pointer;transition:.15s}
 .btn-sm:hover{color:var(--text);border-color:var(--border-a);background:var(--surface-2)}
+.btn-sm.primary{color:var(--primary);background:var(--primary-s);border-color:rgba(93,184,163,.28)}
+.topbar-pill{font-family:var(--mono);font-size:.62rem;color:var(--faint);padding:.25rem .55rem;border:1px solid var(--border);border-radius:999px;background:var(--surface-2)}
 
 /* ── Layout ── */
 .layout{display:flex;margin-top:56px;min-height:calc(100dvh - 56px)}
@@ -78,6 +80,17 @@ code{font-family:var(--mono);font-size:.75rem;background:var(--surface-2);paddin
 .narrative-card{padding:1.1rem 1.25rem;background:var(--surface-2);border:1px solid var(--border);border-radius:12px}
 .narrative-label{font-family:var(--mono);font-size:.58rem;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin-bottom:.5rem}
 .narrative-text{font-size:.82rem;color:var(--text);line-height:1.6}
+
+/* ── Operator brief ── */
+.brief-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.65rem;margin-bottom:3.5rem}
+@media(max-width:1100px){.brief-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:640px){.brief-grid{grid-template-columns:1fr}}
+.brief-card{padding:1rem 1.1rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);text-decoration:none;color:var(--text);display:block}
+.brief-card:hover{border-color:var(--border-a);text-decoration:none}
+.brief-card.attn{border-color:rgba(212,146,74,.32);background:linear-gradient(180deg,var(--surface),rgba(212,146,74,.055))}
+.brief-k{font-family:var(--mono);font-size:.58rem;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);margin-bottom:.35rem}
+.brief-v{font-size:1.05rem;font-weight:750;letter-spacing:-.03em}
+.brief-d{font-size:.7rem;color:var(--muted);margin-top:.25rem;line-height:1.45}
 
 /* ── Agent cards ── */
 .agent-card{display:flex;gap:1rem;padding:1.1rem 1.25rem;border-bottom:1px solid var(--border);align-items:flex-start}
@@ -167,7 +180,15 @@ code{font-family:var(--mono);font-size:.75rem;background:var(--surface-2);paddin
 <div id="loading">Verifying receipt...</div>
 
 <script>
-const R=JSON.parse(document.getElementById('receipt-data').textContent);
+let R=null;
+try{
+  const rawReceipt=document.getElementById('receipt-data').textContent.trim();
+  if(rawReceipt==='__RECEIPT_JSON__')throw new Error('template placeholder');
+  R=JSON.parse(rawReceipt);
+}catch(e){
+  document.getElementById('loading').innerHTML='<div style="max-width:560px;padding:2rem;text-align:left"><div style="font-size:1.15rem;font-weight:700;color:var(--text);margin-bottom:.5rem">This is the receipt template</div><div style="font-size:.86rem;color:var(--muted);line-height:1.7">Open a generated <code>preview.html</code> from a <code>.treeship</code> package, or run <code>treeship dashboard</code> and open a receipt from there. The source template has no embedded <code>receipt.json</code>, so there is nothing to verify yet.</div></div>';
+  throw e;
+}
 document.title='Session Receipt: '+(R.session&&R.session.id?R.session.id:'unknown');
 function num(v){const n=Number(v);return Number.isFinite(n)?n:0}
 
@@ -255,6 +276,18 @@ function buildFindings(se){
   (se.ports_opened||[]).forEach(p=>{f.push({title:'Port opened: '+num(p.port),desc:'Agent '+p.agent_instance_id+' opened port '+num(p.port)+'. Verify this was intentional.',path:'port '+num(p.port)+' \u00b7 agent: '+p.agent_instance_id+' \u00b7 '+timeOf(p.timestamp),sev:'warn'})});
   return f;
 }
+function financialSignal(v){
+  v=(v||'').toLowerCase();
+  return v.includes('agent.robinhood.com')||v.includes('robinhood-trading')||v.includes('robinhood trading')||v.includes('trading mcp')||(v.includes('robinhood')&&v.includes('order'));
+}
+function financialActionEvidence(se,arts){
+  const rows=[];
+  (se.tool_invocations||[]).forEach(t=>{if(financialSignal(t.tool_name))rows.push({kind:'tool call',label:t.tool_name,agent:t.agent_instance_id,time:t.timestamp,review:'Confirm strategy intent and approval before trusting this tool call.'})});
+  (se.network_connections||[]).forEach(n=>{if(financialSignal(n.destination))rows.push({kind:'network',label:n.destination+(n.port?':'+num(n.port):''),agent:n.agent_instance_id,time:n.timestamp,review:'Confirm account-data handling and whether this connection was expected.'})});
+  (se.processes||[]).forEach(p=>{const cmd=p.command||p.process_name;if(financialSignal(cmd))rows.push({kind:'command',label:cmd,agent:p.agent_instance_id,time:p.started_at,review:'Confirm this command was reviewed and bound to approval if it could place orders.'})});
+  const approvals=(arts||[]).filter(a=>a.payload_type&&a.payload_type.includes('approval'));
+  return {rows,approvals};
+}
 // Auto-generate summary from receipt data when --summary not provided
 function autoSummary(se,procs,nodes){
   const parts=[];
@@ -310,7 +343,11 @@ async function render(){
 
   // ── TOPBAR ──
   h+='<header class="topbar"><span class="brand">treeship</span><div class="topbar-right">';
-  h+='<button class="btn-sm" onclick="navigator.clipboard.writeText(JSON.stringify(R,null,2))">Copy JSON</button>';
+  h+='<span class="topbar-pill">local receipt</span>';
+  if(location.protocol==='http:'||location.protocol==='https:')h+='<a class="btn-sm primary" href="/">Dashboard</a>';
+  h+='<a class="btn-sm" href="#verification">Verify</a>';
+  h+='<a class="btn-sm" href="#raw">JSON</a>';
+  h+='<button class="btn-sm" onclick="navigator.clipboard.writeText(JSON.stringify(R,null,2))">Copy</button>';
   h+='</div></header>';
   h+='<div class="layout">';
 
@@ -325,6 +362,8 @@ async function render(){
   h+='<a class="nav-item" href="#commands" data-section="commands">Commands <span class="nav-count">'+procs.length+'</span></a>';
   h+='</div><div class="nav-group"><div class="nav-label">Trust</div>';
   h+='<a class="nav-item" href="#security" data-section="security">Findings <span class="nav-count"'+(findings.length?' style="color:var(--warn)"':'')+'>'+findings.length+'</span></a>';
+  const finNav=financialActionEvidence(se,arts);
+  if(finNav.rows.length)h+='<a class="nav-item" href="#financial" data-section="financial">Financial <span class="nav-count" style="color:var(--risk)">'+finNav.rows.length+'</span></a>';
   h+='<a class="nav-item" href="#trust-chain" data-section="trust-chain">Trust chain</a>';
   h+='<a class="nav-item" href="#verification" data-section="verification">Checks <span class="nav-count">'+checks.length+'</span></a>';
   h+='<a class="nav-item" href="#raw" data-section="raw">Raw receipt</a>';
@@ -366,6 +405,17 @@ async function render(){
   h+='<div class="narrative-card"><div class="narrative-label">Actually done</div><div class="narrative-text">'+esc(done)+'</div></div>';
   h+='<div class="narrative-card"><div class="narrative-label">What to check</div><div class="narrative-text">'+esc(review)+'</div></div>';
   h+='</div>';
+  h+='</section>';
+
+  // ── OPERATOR BRIEF ──
+  const failedChecks=checks.filter(c=>c.s==='fail').length;
+  const warnedChecks=checks.filter(c=>c.s==='warn').length;
+  const failedCmds=procs.filter(p=>p.exit_code!=null&&p.exit_code!==0).length;
+  h+='<section class="brief-grid" aria-label="Operator brief">';
+  h+='<a class="brief-card '+(failedChecks?'attn':'')+'" href="#verification"><div class="brief-k">Trust verdict</div><div class="brief-v" style="color:'+(failedChecks?'var(--risk)':'var(--ok)')+'">'+(failedChecks?'Needs review':'Verified')+'</div><div class="brief-d">'+checks.length+' structural checks · '+warnedChecks+' warning'+(warnedChecks===1?'':'s')+'</div></a>';
+  h+='<a class="brief-card '+(findings.length?'attn':'')+'" href="#security"><div class="brief-k">Review queue</div><div class="brief-v">'+findings.length+' finding'+(findings.length===1?'':'s')+'</div><div class="brief-d">'+(findings.length?'Open this first before trusting output':'No sensitive reads, ports, or network findings detected')+'</div></a>';
+  h+='<a class="brief-card" href="#files"><div class="brief-k">Work product</div><div class="brief-v">'+(se.files_written||[]).length+' file'+((se.files_written||[]).length===1?'':'s')+'</div><div class="brief-d">'+(se.files_read||[]).length+' reads · '+arts.length+' signed artifact'+(arts.length===1?'':'s')+'</div></a>';
+  h+='<a class="brief-card '+(failedCmds?'attn':'')+'" href="#commands"><div class="brief-k">Execution</div><div class="brief-v">'+procs.length+' command'+(procs.length===1?'':'s')+'</div><div class="brief-d">'+failedCmds+' failed · '+detectRetries(procs).size+' retry-linked events</div></a>';
   h+='</section>';
 
   // ── AGENTS ──
@@ -533,6 +583,22 @@ async function render(){
   }
   h+='</section>';
 
+  // ── FINANCIAL ACTION EVIDENCE ──
+  const fin=financialActionEvidence(se,arts);
+  if(fin.rows.length){
+    h+='<section class="section" id="financial"><div class="section-head"><div class="section-title">Financial action evidence</div><div class="section-sub">Trading/payment-like MCP activity detected. Review intent, approvals, and sensitive account data handling.</div></div>';
+    h+='<div class="card">';
+    fin.rows.forEach(r=>{
+      h+='<div class="finding"><div style="padding-top:2px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--risk)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7H14a3.5 3.5 0 0 1 0 7H6"/></svg></div><div>';
+      h+='<div style="font-size:.78rem;font-weight:600;margin-bottom:3px">'+esc(r.kind)+': '+esc(r.label)+'</div>';
+      h+='<div style="font-size:.7rem;color:var(--muted);line-height:1.5">'+esc(r.review)+'</div>';
+      h+='<div class="mono" style="font-size:.62rem;color:var(--faint);margin-top:3px">agent: '+esc(r.agent)+' \u00b7 '+timeOf(r.time)+'</div>';
+      h+='</div><span class="badge '+(fin.approvals.length?'badge-warn':'badge-risk')+'">'+(fin.approvals.length?'approval present':'approval needed')+'</span></div>';
+    });
+    h+='<div style="padding:1rem 1.25rem;border-top:1px solid var(--border);font-size:.72rem;color:var(--muted)">Recommended guardrail: apply <code>treeship template apply robinhood-agentic-trading</code> and require approval nonce binding for order placement.</div>';
+    h+='</div></section>';
+  }
+
   // ── APPROVALS ──
   const approvalArts=arts.filter(a=>a.payload_type&&a.payload_type.includes('approval'));
   h+='<section class="section" id="approvals"><div class="section-head"><div class="section-title">Approval gates</div><div class="section-sub">Human approval checkpoints during the session.</div></div>';
@@ -594,7 +660,7 @@ async function render(){
   h+='<div class="edu-card"><div class="edu-num">03 INCLUSION PROOFS</div><div class="edu-title">Prove any artifact belongs</div><div class="edu-text">Each artifact carries an inclusion proof: sibling hashes that walk from the leaf to the root. Anyone can verify that a specific artifact was part of this session without needing the full tree. The verification section above checks every proof against the recomputed root.</div></div>';
   h+='</div></section>';
 
-  h+='<div class="footer">Merkle structure verified client-side via Web Crypto API. Ed25519 signature verification requires <code>treeship package verify</code> or the WASM verifier.<br>No network calls. No server trust. Generated by <a href="https://treeship.dev">Treeship</a> Session Receipt v1</div>';
+  h+='<div class="footer">Merkle structure verified client-side via Web Crypto API. Ed25519 signature verification requires <code>treeship package verify</code> or the WASM verifier.<br>No network calls. No server trust. Open a local report index with <code>treeship dashboard</code>. Generated by <a href="https://treeship.dev">Treeship</a> Session Receipt v1</div>';
   h+='</main></div>';
 
   document.getElementById('loading').style.display='none';

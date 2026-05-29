@@ -13,6 +13,7 @@ pub mod log;
 pub mod session;
 pub mod approve;
 pub mod daemon;
+pub mod dashboard;
 pub mod doctor;
 pub mod merkle;
 pub mod otel;

@@ -208,7 +208,7 @@ pub fn build_package_with_approvals(
 
     // 5. preview.html stub
     if receipt.render.generate_preview {
-        let preview = generate_preview_html(receipt);
+        let preview = render_preview_html(receipt);
         std::fs::write(pkg_dir.join(PREVIEW_FILE), preview.as_bytes())?;
         file_count += 1;
     }
@@ -1315,7 +1315,7 @@ const PREVIEW_TEMPLATE: &str = include_str!("preview_template.html");
 /// The HTML works fully air-gapped: no network calls, no CDN, no server.
 /// Open it in any modern browser and it automatically verifies the receipt
 /// and shows pass/fail for each check.
-fn generate_preview_html(receipt: &SessionReceipt) -> String {
+pub fn render_preview_html(receipt: &SessionReceipt) -> String {
     let receipt_json = serde_json::to_string_pretty(receipt)
         .unwrap_or_else(|_| "{}".to_string());
     // Defense-in-depth: escape </script sequences so a malicious receipt
@@ -1443,7 +1443,7 @@ mod tests {
     #[test]
     fn preview_html_contains_session_info() {
         let receipt = make_receipt();
-        let html = generate_preview_html(&receipt);
+        let html = render_preview_html(&receipt);
         assert!(html.contains("ssn_pkg_test"));
         assert!(html.contains("treeship.dev"));
         assert!(html.contains("Timeline"));
