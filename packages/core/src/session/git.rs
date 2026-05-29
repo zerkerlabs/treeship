@@ -20,8 +20,11 @@
 //! empty list. The receipt is still produced; reconciliation is a
 //! best-effort enhancement, never a gate.
 
-use std::path::Path;
+use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+
+pub const DEFAULT_UNTRACKED_MAX: usize = 5_000;
 
 /// One file change observed via git that wasn't already captured by a
 /// tool channel. Mapped 1:1 into a synthetic `AgentWroteFile` event
@@ -34,6 +37,30 @@ pub struct GitChange {
     pub operation: String,
     pub additions: Option<u32>,
     pub deletions: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReconcileOptions {
+    pub untracked_max: usize,
+}
+
+impl Default for ReconcileOptions {
+    fn default() -> Self {
+        Self { untracked_max: DEFAULT_UNTRACKED_MAX }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ReconcileSummary {
+    pub untracked_seen: usize,
+    pub untracked_cap: usize,
+    pub untracked_truncated: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ReconcileResult {
+    pub changes: Vec<GitChange>,
+    pub summary: ReconcileSummary,
 }
 
 /// Run `git` in `repo_dir` with the given args, returning stdout
@@ -59,11 +86,44 @@ fn git_capture(repo_dir: &Path, args: &[&str]) -> Option<String> {
     Some(s)
 }
 
+fn git_capture_lines_limited(repo_dir: &Path, args: &[&str], limit: usize) -> Option<(Vec<String>, bool)> {
+    let mut child = Command::new("git")
+        .arg("-C").arg(repo_dir)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let stdout = child.stdout.take()?;
+    let reader = BufReader::new(stdout);
+    let mut lines = Vec::new();
+    let mut truncated = false;
+    for line in reader.lines() {
+        let line = line.ok()?;
+        if lines.len() >= limit {
+            truncated = true;
+            let _ = child.kill();
+            break;
+        }
+        lines.push(line);
+    }
+    let status = child.wait().ok()?;
+    if !truncated && !status.success() {
+        return None;
+    }
+    Some((lines, truncated))
+}
+
 /// Fast probe: is this directory inside a git repo?
 fn is_git_repo(repo_dir: &Path) -> bool {
     git_capture(repo_dir, &["rev-parse", "--is-inside-work-tree"])
         .as_deref()
         == Some("true")
+}
+
+pub fn git_toplevel(repo_dir: &Path) -> Option<PathBuf> {
+    git_capture(repo_dir, &["rev-parse", "--show-toplevel"]).map(PathBuf::from)
 }
 
 /// Translate a git diff/status name-status code to our operation
@@ -181,8 +241,24 @@ fn is_treeship_runtime_artifact(path: &str) -> bool {
 /// available -- callers (i.e. session close) should treat absence as
 /// "nothing to reconcile" and continue.
 pub fn reconcile_changes(repo_dir: &Path, since_sha: Option<&str>) -> Vec<GitChange> {
+    reconcile_changes_with_options(repo_dir, since_sha, &ReconcileOptions::default()).changes
+}
+
+pub fn reconcile_changes_with_options(
+    repo_dir: &Path,
+    since_sha: Option<&str>,
+    options: &ReconcileOptions,
+) -> ReconcileResult {
+    let mut result = ReconcileResult {
+        summary: ReconcileSummary {
+            untracked_cap: options.untracked_max,
+            ..ReconcileSummary::default()
+        },
+        ..ReconcileResult::default()
+    };
+
     if !is_git_repo(repo_dir) {
-        return Vec::new();
+        return result;
     }
 
     use std::collections::BTreeMap;
@@ -229,9 +305,19 @@ pub fn reconcile_changes(repo_dir: &Path, since_sha: Option<&str>) -> Vec<GitCha
     // 3. Untracked files (new files the agent added but didn't `git
     //    add`). These never show in `git diff` so they need their own
     //    pass.
-    if let Some(out) = git_capture(repo_dir, &["ls-files", "--others", "--exclude-standard"]) {
-        for path in out.lines().filter(|l| !l.is_empty()) {
-            record(path.to_string(), "untracked");
+    if let Some((lines, truncated)) = git_capture_lines_limited(
+        repo_dir,
+        &["ls-files", "--others", "--exclude-standard"],
+        options.untracked_max.saturating_add(1),
+    ) {
+        result.summary.untracked_seen = lines.len();
+        result.summary.untracked_truncated = truncated || lines.len() > options.untracked_max;
+        if result.summary.untracked_truncated {
+            result.summary.untracked_seen = result.summary.untracked_seen.max(options.untracked_max.saturating_add(1));
+        } else {
+            for path in lines.iter().filter(|l| !l.is_empty()) {
+                record(path.to_string(), "untracked");
+            }
         }
     }
 
@@ -262,7 +348,8 @@ pub fn reconcile_changes(repo_dir: &Path, since_sha: Option<&str>) -> Vec<GitCha
         }
     }
 
-    by_path.into_values().collect()
+    result.changes = by_path.into_values().collect();
+    result
 }
 
 /// Capture the current HEAD commit SHA so it can be stored in the
@@ -461,6 +548,50 @@ mod tests {
         assert!(!paths.contains(&".treeship/sessions/ssn_x/events.jsonl"), "leaked: {paths:?}");
         assert!(!paths.contains(&".treeship/artifacts/foo.json"), "leaked: {paths:?}");
         assert!(!paths.contains(&".treeship/session.closing"), "leaked: {paths:?}");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn reconcile_truncates_untracked_without_promoting_per_file_events() {
+        let tmp = std::env::temp_dir().join(format!("treeship-reconcile-cap-{}", rand::random::<u32>()));
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let run = |args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C").arg(&tmp)
+                .args(args)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .ok();
+        };
+
+        run(&["init", "-q"]);
+        run(&["config", "user.email", "test@example.com"]);
+        run(&["config", "user.name", "Test"]);
+        std::fs::write(tmp.join("README.md"), "hi\n").unwrap();
+        run(&["add", "."]);
+        run(&["commit", "-q", "-m", "init"]);
+
+        std::fs::write(tmp.join("a.txt"), "a\n").unwrap();
+        std::fs::write(tmp.join("b.txt"), "b\n").unwrap();
+        std::fs::write(tmp.join("c.txt"), "c\n").unwrap();
+
+        let result = reconcile_changes_with_options(
+            &tmp,
+            None,
+            &ReconcileOptions { untracked_max: 2 },
+        );
+
+        assert!(result.summary.untracked_truncated);
+        assert_eq!(result.summary.untracked_cap, 2);
+        assert!(result.summary.untracked_seen >= 3);
+        assert!(
+            result.changes.iter().all(|c| c.operation != "untracked"),
+            "truncated untracked files must not be emitted one-per-file: {:?}",
+            result.changes,
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

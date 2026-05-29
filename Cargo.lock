@@ -4000,6 +4000,7 @@ dependencies = [
  "clap",
  "crossterm",
  "ed25519-dalek",
+ "fs2",
  "hex",
  "home",
  "libc",

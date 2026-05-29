@@ -17,6 +17,7 @@ Start a new session.
 treeship session start
 treeship session start --name "fix auth bug"
 treeship session start --actor agent://coder
+treeship session start --allow-dangerous-root
 ```
 
 ### Options
@@ -25,8 +26,13 @@ treeship session start --actor agent://coder
 |--------|-------------|
 | `--name <text>` | Human-readable session name |
 | `--actor <uri>` | Default actor URI for attestations in this session |
+| `--allow-dangerous-root` | Permit a session whose git root is your home directory |
 
 Starting a session writes `.treeship/session.json`, initializes an append-only event log at `.treeship/sessions/<session_id>/events.jsonl`, and emits a `session.started` event. All subsequent attestations and wrap calls are linked to the session.
+
+<Callout type="warn">
+Treeship refuses to start a session when the git toplevel is your home directory. Start from a project checkout instead. Use `--allow-dangerous-root` only when you intentionally want a home-scoped session.
+</Callout>
 
 ## treeship session status
 
@@ -64,6 +70,8 @@ On close, Treeship:
 5. Signs a `session.close` chain artifact as before.
 6. Prints the package path, the canonical receipt digest, and the Merkle root.
 
+Close is guarded by a lock so only one close or abandon operation can mutate session state at a time. Git reconciliation is also bounded: if the untracked-file scan exceeds the cap, Treeship skips per-file untracked events, records the truncation in the receipt proofs section, and `treeship package verify` reports a `reconcile_completeness` warning.
+
 Example output:
 
 ```
@@ -81,6 +89,16 @@ Example output:
 ```
 
 After close, run [`treeship package verify`](/docs/cli/package) against the package path to confirm the receipt is locally verifiable.
+
+## treeship session abandon
+
+Quarantine a wedged active or closing session without deleting evidence.
+
+```bash
+treeship session abandon
+```
+
+The command moves `.treeship/session.json` or `.treeship/session.closing` plus the session event directory into `.treeship/quarantine-*`. Use it when a close was interrupted or a session is poisoned and you need the next `session start` to begin cleanly. The quarantined files remain available for debugging.
 
 ## treeship session report
 
@@ -103,6 +121,8 @@ The command:
 2. Reads `receipt.json` verbatim so the digest signed by `session close` is preserved bit-for-bit.
 3. DPoP-signs a `PUT {hub_endpoint}/v1/receipt/{session_id}` request using the active hub connection's private key.
 4. Prints the permanent receipt URL.
+
+If a package directory exists but `receipt.json` was never written, `session report` reports the package as incomplete instead of treating it as a missing closed session.
 
 Example output:
 

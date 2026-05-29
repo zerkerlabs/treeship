@@ -603,6 +603,18 @@ pub fn verify_package_with_trust(
         ));
     }
 
+    if receipt.proofs.reconcile_untracked_truncated > 0 {
+        checks.push(VerifyCheck::warn(
+            "reconcile_completeness",
+            &format!(
+                "untracked git reconcile exceeded cap {} (saw at least {}). \
+                 Per-file synthetic events were skipped and the receipt is bounded, not complete for untracked files.",
+                receipt.proofs.reconcile_untracked_cap,
+                receipt.proofs.reconcile_untracked_truncated,
+            ),
+        ));
+    }
+
     // 8. Approval evidence -- v0.9.9 PR 4. Three independent replay
     // checks, each emitted as its own VerifyCheck row so the printer
     // (and downstream tooling) can render them separately.

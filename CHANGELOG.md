@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Added
+
+- **`treeship session abandon` for wedged sessions.** The command quarantines an active or closing session marker plus its event directory under `.treeship/quarantine-*` so a fresh session can start without deleting the evidence needed to debug the failure.
+- **Dangerous-root override for intentional home-scoped sessions.** `treeship session start` now refuses to start when the git toplevel is the user's home directory unless `--allow-dangerous-root` is passed.
+
+### Fixed
+
+- **Bounded close-time git reconciliation.** `treeship session close` no longer promotes an unbounded set of untracked files into per-file receipt events. If the untracked scan exceeds the cap, close records an in-band receipt warning and keeps tracked changes bounded.
+- **Clearer report errors for incomplete packages.** `treeship session report` now distinguishes an incomplete `.treeship` package missing `receipt.json` from "no closed sessions found."
+
 ## 0.11.0 (2026-05-28)
 
 ### Added

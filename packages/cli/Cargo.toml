@@ -29,6 +29,7 @@ rand          = "0.8"
 home = "0.5"
 base64 = "0.22"
 hex = "0.4"
+fs2 = "0.4"
 ureq = { version = "2", features = ["json"] }
 sha2 = "0.10"
 treeship-zk-circom = { version = "0.5.0", path = "../zk-circom", optional = true }

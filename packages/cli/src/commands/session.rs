@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use fs2::FileExt;
 use treeship_core::{
     attestation::sign,
     journal::{self, Journal},
@@ -57,6 +58,53 @@ fn session_dir() -> Option<PathBuf> {
 
 fn sessions_dir() -> Option<PathBuf> {
     session_dir().map(|d| d.join("sessions"))
+}
+
+fn home_dir() -> Option<PathBuf> {
+    home::home_dir().and_then(|p| p.canonicalize().ok())
+}
+
+fn is_home_git_root(path: &Path) -> bool {
+    let Some(home) = home_dir() else { return false; };
+    let Ok(path) = path.canonicalize() else { return false; };
+    path == home
+}
+
+fn dangerous_root_message(root: &Path) -> String {
+    format!(
+        "refusing to start a session from dangerous git root {}\n\n  \
+         This usually means your home directory is a git repo. Close-time reconcile would scan a huge tree.\n  \
+         Fix: cd into the real project repo and run `treeship session start` there.\n  \
+         Override only if intentional: treeship session start --allow-dangerous-root",
+        root.display(),
+    )
+}
+
+struct CloseLock {
+    file: std::fs::File,
+}
+
+impl CloseLock {
+    fn acquire(ts_dir: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+        let lock_path = ts_dir.join("session.close.lock");
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(&lock_path)?;
+        file.try_lock_exclusive().map_err(|_| {
+            "another `treeship session close` is already running\n\n  \
+             Wait for it to finish, then run `treeship session status` or `treeship session report`."
+                .to_string()
+        })?;
+        Ok(Self { file })
+    }
+}
+
+impl Drop for CloseLock {
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+    }
 }
 
 fn generate_session_id() -> String {
@@ -121,6 +169,11 @@ fn write_last(storage_dir: &str, artifact_id: &str) {
     let last_path = Path::new(storage_dir).join(".last");
     let _ = std::fs::write(&last_path, artifact_id);
     set_restrictive_permissions(&last_path);
+}
+
+fn read_manifest_at(path: &Path) -> Option<SessionManifest> {
+    let data = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&data).ok()
 }
 
 fn resolve_last(storage_dir: &str) -> Option<String> {
@@ -219,6 +272,7 @@ fn base_event(
 pub fn start(
     name: Option<String>,
     actor: Option<String>,
+    allow_dangerous_root: bool,
     config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -237,6 +291,16 @@ pub fn start(
     };
 
     let ctx = ctx::open(config)?;
+
+    if !allow_dangerous_root {
+        if let Ok(cwd) = std::env::current_dir() {
+            if let Some(root) = session::git_toplevel(&cwd) {
+                if is_home_git_root(&root) {
+                    return Err(dangerous_root_message(&root).into());
+                }
+            }
+        }
+    }
 
     let session_id = generate_session_id();
     let actor_uri = actor.unwrap_or_else(|| format!("ship://{}", ctx.config.ship_id));
@@ -349,6 +413,49 @@ pub fn status_check() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         std::process::exit(1);
     }
+}
+
+pub fn abandon(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
+    let path = session_path().ok_or("no .treeship directory found -- run treeship init first")?;
+    let ts_dir = path.parent().ok_or("invalid .treeship session path")?.to_path_buf();
+    let _close_lock = CloseLock::acquire(&ts_dir)?;
+    let closing = ts_dir.join("session.closing");
+
+    let manifest_path = if path.exists() {
+        Some(path.clone())
+    } else if closing.exists() {
+        Some(closing.clone())
+    } else {
+        None
+    };
+    let Some(manifest_path) = manifest_path else {
+        return Err("no active or closing session to abandon".into());
+    };
+
+    let manifest = read_manifest_at(&manifest_path);
+    let session_id = manifest
+        .as_ref()
+        .map(|m| m.session_id.clone())
+        .unwrap_or_else(|| format!("unknown-{}", epoch_ms()));
+    let quarantine = ts_dir.join(format!("quarantine-{}-{}", now_rfc3339().replace(':', ""), session_id));
+    std::fs::create_dir_all(&quarantine)?;
+
+    let target = quarantine.join(manifest_path.file_name().unwrap_or_default());
+    std::fs::rename(&manifest_path, target)?;
+
+    let event_dir = ts_dir.join("sessions").join(&session_id);
+    if event_dir.exists() {
+        std::fs::rename(&event_dir, quarantine.join(&session_id))?;
+    }
+
+    printer.blank();
+    printer.success("session abandoned", &[]);
+    printer.info(&format!("  id:         {}", session_id));
+    printer.info(&format!("  quarantine: {}", quarantine.display()));
+    printer.blank();
+    printer.hint("treeship session start --name \"next task\"  to begin cleanly");
+
+    Ok(())
 }
 
 pub fn status(
@@ -743,8 +850,10 @@ pub fn close(
     let trace_id = generate_trace_id();
     let host_id = local_host_id();
 
-    // Write session.closed event to the event log
     let ts_dir = session_dir().ok_or("no .treeship directory found")?;
+    let _close_lock = CloseLock::acquire(&ts_dir)?;
+
+    // Write session.closed event to the event log
     let evt_dir = ts_dir.join("sessions").join(&manifest.session_id);
     let event_log = EventLog::open(&evt_dir)?;
 
@@ -836,6 +945,7 @@ pub fn close(
     // Fail-open: if not in a git repo, git binary missing, or any
     // git command errors, reconcile_changes returns an empty Vec and
     // close proceeds normally.
+    let mut reconcile_summary = session::ReconcileSummary::default();
     if let Ok(cwd) = std::env::current_dir() {
         // Dedupe ONLY against prior writes, never reads.
         //
@@ -861,7 +971,13 @@ pub fn close(
             .collect();
         let host_id = local_host_id();
         let trace_id = generate_trace_id();
-        let changes = session::reconcile_changes(&cwd, manifest.start_commit_sha.as_deref());
+        let reconcile = session::reconcile_changes_with_options(
+            &cwd,
+            manifest.start_commit_sha.as_deref(),
+            &session::ReconcileOptions::default(),
+        );
+        reconcile_summary = reconcile.summary.clone();
+        let changes = reconcile.changes;
         let mut reconciled = 0usize;
         for change in changes {
             if already_captured.contains(&change.file_path) {
@@ -904,6 +1020,16 @@ pub fn close(
                 if reconciled == 1 { "" } else { "s" },
             ));
         }
+        if reconcile_summary.untracked_truncated {
+            printer.warn(
+                &format!(
+                    "untracked git reconcile exceeded cap {} (saw at least {}); per-file untracked events were summarized",
+                    reconcile_summary.untracked_cap,
+                    reconcile_summary.untracked_seen,
+                ),
+                &[],
+            );
+        }
     }
 
     // Build artifact entries from the chain
@@ -922,6 +1048,12 @@ pub fn close(
     // when the event log was clean stay byte-identical to receipts
     // produced before this PR landed.
     receipt.proofs.event_log_skipped = event_log_skipped as u32;
+    if reconcile_summary.untracked_truncated {
+        receipt.proofs.reconcile_untracked_truncated =
+            reconcile_summary.untracked_seen.min(u32::MAX as usize) as u32;
+        receipt.proofs.reconcile_untracked_cap =
+            reconcile_summary.untracked_cap.min(u32::MAX as usize) as u32;
+    }
 
     // Override narrative with explicit --headline/--review if provided
     if headline.is_some() || review.is_some() {
@@ -1399,6 +1531,35 @@ fn find_latest_package() -> Option<(PathBuf, String)> {
     latest.map(|(p, id, _)| (p, id))
 }
 
+fn find_incomplete_package() -> Option<(PathBuf, String)> {
+    let ts_dir = session_dir()?;
+    let sessions_root = ts_dir.join("sessions");
+    if !sessions_root.is_dir() {
+        return None;
+    }
+
+    let mut newest: Option<(PathBuf, String, std::time::SystemTime)> = None;
+    for entry in std::fs::read_dir(&sessions_root).ok()?.flatten() {
+        let path = entry.path();
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy().to_string();
+        if !path.is_dir() || !name_str.ends_with(".treeship") || path.join("receipt.json").exists() {
+            continue;
+        }
+        let modified = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        let session_id = name_str.trim_end_matches(".treeship").to_string();
+        match &newest {
+            None => newest = Some((path, session_id, modified)),
+            Some((_, _, prev)) if modified > *prev => newest = Some((path, session_id, modified)),
+            _ => {}
+        }
+    }
+    newest.map(|(p, id, _)| (p, id))
+}
+
 /// Locate the package directory for an explicit session_id.
 fn find_package_for_session(session_id: &str) -> Option<PathBuf> {
     let ts_dir = session_dir()?;
@@ -1408,6 +1569,11 @@ fn find_package_for_session(session_id: &str) -> Option<PathBuf> {
     } else {
         None
     }
+}
+
+fn package_dir_for_session(session_id: &str) -> Option<PathBuf> {
+    let ts_dir = session_dir()?;
+    Some(ts_dir.join("sessions").join(format!("{session_id}.treeship")))
 }
 
 pub fn report(
@@ -1421,15 +1587,35 @@ pub fn report(
     // 1. Resolve which package to upload.
     let (pkg_dir, resolved_id) = match session_id {
         Some(id) => {
-            let pkg = find_package_for_session(&id)
-                .ok_or_else(|| format!(
-                    "no .treeship package found for session {id}\n\n  expected: .treeship/sessions/{id}.treeship/receipt.json"
-                ))?;
+            let pkg = find_package_for_session(&id).ok_or_else(|| {
+                let expected = package_dir_for_session(&id)
+                    .map(|p| p.join("receipt.json"))
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| format!(".treeship/sessions/{id}.treeship/receipt.json"));
+                if let Some(dir) = package_dir_for_session(&id) {
+                    if dir.is_dir() && !dir.join("receipt.json").exists() {
+                        return format!(
+                            "incomplete .treeship package for session {id}: missing receipt.json\n\n  package: {}\n  Fix: re-run `treeship session close`; if it is wedged, quarantine the session before starting a new one.",
+                            dir.display(),
+                        );
+                    }
+                }
+                format!("no .treeship package found for session {id}\n\n  expected: {expected}")
+            })?;
             (pkg, id)
         }
-        None => find_latest_package().ok_or(
-            "no closed sessions found -- run `treeship session close` first",
-        )?,
+        None => match find_latest_package() {
+            Some(pkg) => pkg,
+            None => {
+                if let Some((dir, id)) = find_incomplete_package() {
+                    return Err(format!(
+                        "found incomplete .treeship package for session {id}: missing receipt.json\n\n  package: {}\n  Fix: re-run `treeship session close`; if it is wedged, quarantine the session before starting a new one.",
+                        dir.display(),
+                    ).into());
+                }
+                return Err("no closed sessions found -- run `treeship session close` first".into());
+            }
+        },
     };
 
     // 2. Read receipt.json bytes (we PUT them verbatim so the digest is preserved).
@@ -1960,4 +2146,3 @@ fn collect_approval_evidence(
 
     bundle
 }
-
