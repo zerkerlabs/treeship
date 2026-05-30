@@ -9,17 +9,23 @@
 //! - `proofs/`        -- inclusion proofs and zk proofs
 //! - `preview.html`   -- static preview (optional)
 
-use std::path::{Path, PathBuf};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::{Path, PathBuf},
+};
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use ed25519_dalek::VerifyingKey;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::receipt::{SessionReceipt, RECEIPT_TYPE};
+use crate::attestation::{sign, Envelope, Signer, Verifier};
 use crate::statements::{
-    ApprovalRevocation, ApprovalUse, JournalCheckpoint,
+    ApprovalRevocation, ApprovalUse, JournalCheckpoint, ReceiptStatement, SubjectRef,
     ReplayCheck, ReplayCheckLevel,
     approval_revocation_record_digest, approval_use_record_digest,
-    journal_checkpoint_record_digest,
+    journal_checkpoint_record_digest, payload_type,
 };
 
 /// Errors from package operations.
@@ -52,9 +58,12 @@ impl From<serde_json::Error> for PackageError {
 const RECEIPT_FILE: &str = "receipt.json";
 const MERKLE_FILE: &str = "merkle.json";
 const RENDER_FILE: &str = "render.json";
+const PACKAGE_MANIFEST_FILE: &str = "package-manifest.json";
+const PACKAGE_MANIFEST_DSSE_FILE: &str = "package-manifest.dsse.json";
 const ARTIFACTS_DIR: &str = "artifacts";
 const PROOFS_DIR: &str = "proofs";
 const PREVIEW_FILE: &str = "preview.html";
+const PACKAGE_MANIFEST_TYPE: &str = "treeship/package-manifest/v1";
 
 // Approval Authority package layout (v0.9.9 PR 4).
 // approvals/index.json -- top-level index of every approval evidence
@@ -135,6 +144,39 @@ impl ApprovalsIndex {
     pub fn type_string() -> &'static str { "treeship/approvals-index/v1" }
 }
 
+/// Signed inventory of the files that make up a `.treeship` package.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PackageManifest {
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub schema_version: u32,
+    pub session_id: String,
+    pub receipt_digest: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub merkle_root: Option<String>,
+    pub files: Vec<PackageFile>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence_planes: Vec<EvidencePlane>,
+}
+
+/// One file committed by `PackageManifest`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PackageFile {
+    pub path: String,
+    pub role: String,
+    pub size: u64,
+    pub digest: String,
+}
+
+/// Coarse evidence-plane index for report consumers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvidencePlane {
+    pub name: String,
+    pub path_prefix: String,
+    pub file_count: usize,
+    pub required: bool,
+}
+
 /// Result of building a package.
 pub struct PackageOutput {
     /// Path to the package directory.
@@ -143,6 +185,10 @@ pub struct PackageOutput {
     pub receipt_digest: String,
     /// Merkle root hex (if present).
     pub merkle_root: Option<String>,
+    /// SHA-256 digest of `package-manifest.json`, when present.
+    pub package_manifest_digest: Option<String>,
+    /// Artifact ID of `package-manifest.dsse.json`, when present.
+    pub package_manifest_artifact_id: Option<String>,
     /// Number of files in the package.
     pub file_count: usize,
 }
@@ -160,7 +206,7 @@ pub fn build_package(
     receipt: &SessionReceipt,
     output_dir: &Path,
 ) -> Result<PackageOutput, PackageError> {
-    build_package_with_approvals(receipt, output_dir, None)
+    build_package_inner(receipt, output_dir, None, None)
 }
 
 /// Like `build_package` but also embeds approval evidence (PR 4 of v0.9.9).
@@ -170,6 +216,35 @@ pub fn build_package_with_approvals(
     receipt: &SessionReceipt,
     output_dir: &Path,
     bundle: Option<&ApprovalsBundle>,
+) -> Result<PackageOutput, PackageError> {
+    build_package_inner(receipt, output_dir, bundle, None)
+}
+
+/// Build a package and sign its manifest with the provided Treeship signer.
+pub fn build_signed_package(
+    receipt: &SessionReceipt,
+    output_dir: &Path,
+    signer: &dyn Signer,
+) -> Result<PackageOutput, PackageError> {
+    build_signed_package_with_approvals(receipt, output_dir, None, signer)
+}
+
+/// Like `build_package_with_approvals`, but also writes
+/// `package-manifest.json` and `package-manifest.dsse.json`.
+pub fn build_signed_package_with_approvals(
+    receipt: &SessionReceipt,
+    output_dir: &Path,
+    bundle: Option<&ApprovalsBundle>,
+    signer: &dyn Signer,
+) -> Result<PackageOutput, PackageError> {
+    build_package_inner(receipt, output_dir, bundle, Some(signer))
+}
+
+fn build_package_inner(
+    receipt: &SessionReceipt,
+    output_dir: &Path,
+    bundle: Option<&ApprovalsBundle>,
+    signer: Option<&dyn Signer>,
 ) -> Result<PackageOutput, PackageError> {
     let session_id = &receipt.session.id;
     let pkg_dir = output_dir.join(format!("{session_id}.treeship"));
@@ -298,11 +373,99 @@ pub fn build_package_with_approvals(
         }
     }
 
+    let mut package_manifest_digest = None;
+    let mut package_manifest_artifact_id = None;
+    if let Some(signer) = signer {
+        let signed = write_signed_package_manifest(&pkg_dir, receipt, signer)?;
+        package_manifest_digest = Some(signed.manifest_digest);
+        package_manifest_artifact_id = Some(signed.artifact_id);
+        file_count += 2;
+    }
+
     Ok(PackageOutput {
         path: pkg_dir,
         receipt_digest,
         merkle_root: receipt.merkle.root.clone(),
+        package_manifest_digest,
+        package_manifest_artifact_id,
         file_count,
+    })
+}
+
+struct SignedPackageManifestOutput {
+    manifest_digest: String,
+    artifact_id: String,
+}
+
+fn write_signed_package_manifest(
+    pkg_dir: &Path,
+    receipt: &SessionReceipt,
+    signer: &dyn Signer,
+) -> Result<SignedPackageManifestOutput, PackageError> {
+    let manifest = build_package_manifest(pkg_dir, receipt)?;
+    let manifest_bytes = serde_json::to_vec_pretty(&manifest)?;
+    std::fs::write(pkg_dir.join(PACKAGE_MANIFEST_FILE), &manifest_bytes)?;
+    let manifest_digest = sha256_digest(&manifest_bytes);
+
+    let signer_public_key = URL_SAFE_NO_PAD.encode(signer.public_key_bytes());
+    let mut stmt = ReceiptStatement::new("system://treeship/session-package", "package-manifest");
+    stmt.subject = Some(SubjectRef {
+        digest: Some(manifest_digest.clone()),
+        uri: Some(format!("treeship://session/{}/package-manifest", receipt.session.id)),
+        artifact_id: None,
+    });
+    stmt.payload_digest = Some(manifest_digest.clone());
+    stmt.payload = Some(serde_json::json!({
+        "manifest_path": PACKAGE_MANIFEST_FILE,
+        "manifest_type": PACKAGE_MANIFEST_TYPE,
+        "session_id": receipt.session.id,
+        "file_count": manifest.files.len(),
+    }));
+    stmt.meta = Some(serde_json::json!({
+        "signer_key_id": signer.key_id(),
+        "signer_public_key": signer_public_key,
+        "signer_public_key_encoding": "base64url-ed25519-raw",
+    }));
+
+    let result = sign(&payload_type("receipt"), &stmt, signer)
+        .map_err(|e| PackageError::InvalidPackage(format!("sign package manifest: {e}")))?;
+    let envelope_bytes = serde_json::to_vec_pretty(&result.envelope)?;
+    std::fs::write(pkg_dir.join(PACKAGE_MANIFEST_DSSE_FILE), &envelope_bytes)?;
+
+    Ok(SignedPackageManifestOutput {
+        manifest_digest,
+        artifact_id: result.artifact_id,
+    })
+}
+
+fn build_package_manifest(
+    pkg_dir: &Path,
+    receipt: &SessionReceipt,
+) -> Result<PackageManifest, PackageError> {
+    let files: Vec<PackageFile> = collect_package_files(pkg_dir, false)?
+        .into_iter()
+        .map(|f| PackageFile {
+            role: package_role_for_path(&f.path).into(),
+            path: f.path,
+            size: f.size,
+            digest: f.digest,
+        })
+        .collect();
+
+    let receipt_digest = files
+        .iter()
+        .find(|f| f.path == RECEIPT_FILE)
+        .map(|f| f.digest.clone())
+        .unwrap_or_else(|| "sha256:".into());
+
+    Ok(PackageManifest {
+        type_: PACKAGE_MANIFEST_TYPE.into(),
+        schema_version: 1,
+        session_id: receipt.session.id.clone(),
+        receipt_digest,
+        merkle_root: receipt.merkle.root.clone(),
+        files: files.clone(),
+        evidence_planes: evidence_planes_for_files(&files),
     })
 }
 
@@ -313,6 +476,158 @@ fn sanitize_filename(s: &str) -> String {
     s.chars()
         .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_' { c } else { '_' })
         .collect()
+}
+
+#[derive(Debug, Clone)]
+struct CollectedPackageFile {
+    path: String,
+    size: u64,
+    digest: String,
+}
+
+fn collect_package_files(
+    pkg_dir: &Path,
+    include_manifest_files: bool,
+) -> Result<Vec<CollectedPackageFile>, PackageError> {
+    let mut files = Vec::new();
+    collect_package_files_inner(pkg_dir, pkg_dir, include_manifest_files, &mut files)?;
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(files)
+}
+
+fn collect_package_files_inner(
+    root: &Path,
+    dir: &Path,
+    include_manifest_files: bool,
+    files: &mut Vec<CollectedPackageFile>,
+) -> Result<(), PackageError> {
+    let mut entries = std::fs::read_dir(dir)?.collect::<Result<Vec<_>, _>>()?;
+    entries.sort_by_key(|e| e.file_name());
+
+    for entry in entries {
+        let path = entry.path();
+        let meta = std::fs::symlink_metadata(&path)?;
+        if meta.file_type().is_symlink() {
+            return Err(PackageError::InvalidPackage(format!(
+                "package contains symlink: {}",
+                path.display(),
+            )));
+        }
+        if meta.is_dir() {
+            collect_package_files_inner(root, &path, include_manifest_files, files)?;
+            continue;
+        }
+        if !meta.is_file() {
+            continue;
+        }
+
+        let rel = relative_package_path(root, &path)?;
+        if !include_manifest_files
+            && (rel == PACKAGE_MANIFEST_FILE || rel == PACKAGE_MANIFEST_DSSE_FILE)
+        {
+            continue;
+        }
+
+        let bytes = std::fs::read(&path)?;
+        files.push(CollectedPackageFile {
+            path: rel,
+            size: bytes.len() as u64,
+            digest: sha256_digest(&bytes),
+        });
+    }
+
+    Ok(())
+}
+
+fn relative_package_path(root: &Path, path: &Path) -> Result<String, PackageError> {
+    let rel = path.strip_prefix(root).map_err(|_| {
+        PackageError::InvalidPackage(format!(
+            "package path {} is outside {}",
+            path.display(),
+            root.display(),
+        ))
+    })?;
+
+    let mut parts = Vec::new();
+    for component in rel.components() {
+        let part = component.as_os_str().to_str().ok_or_else(|| {
+            PackageError::InvalidPackage(format!("package path is not utf-8: {}", path.display()))
+        })?;
+        parts.push(part.to_string());
+    }
+    Ok(parts.join("/"))
+}
+
+fn sha256_digest(bytes: &[u8]) -> String {
+    let hash = Sha256::digest(bytes);
+    format!("sha256:{}", hex::encode(hash))
+}
+
+fn package_role_for_path(path: &str) -> &'static str {
+    match path {
+        RECEIPT_FILE => "receipt",
+        MERKLE_FILE => "merkle",
+        RENDER_FILE => "render",
+        PREVIEW_FILE => "preview",
+        APPROVALS_INDEX_FILE => "approval_index",
+        _ if path.starts_with("proofs/") => "inclusion_proof",
+        _ if path.starts_with("artifacts/") => "artifact_envelope",
+        _ if path.starts_with("approvals/grants/") => "approval_grant",
+        _ if path.starts_with("approvals/uses/") => "approval_use",
+        _ if path.starts_with("approvals/checkpoints/") => "approval_checkpoint",
+        _ if path.starts_with("approvals/") => "approval_evidence",
+        _ => "other",
+    }
+}
+
+fn evidence_planes_for_files(files: &[PackageFile]) -> Vec<EvidencePlane> {
+    let planes = [
+        ("receipt", "", true),
+        ("merkle", "", true),
+        ("render", "", true),
+        ("proofs", "proofs/", false),
+        ("artifacts", "artifacts/", false),
+        ("approvals", "approvals/", false),
+    ];
+
+    planes
+        .iter()
+        .filter_map(|(name, prefix, required)| {
+            let file_count = if prefix.is_empty() {
+                files.iter().filter(|f| f.role == *name).count()
+            } else {
+                files.iter().filter(|f| f.path.starts_with(prefix)).count()
+            };
+            if file_count == 0 && !required {
+                return None;
+            }
+            Some(EvidencePlane {
+                name: (*name).into(),
+                path_prefix: (*prefix).into(),
+                file_count,
+                required: *required,
+            })
+        })
+        .collect()
+}
+
+/// Digest of the signed package manifest when present, or a legacy directory
+/// digest for pre-manifest packages.
+pub fn compute_package_manifest_digest(pkg_dir: &Path) -> Result<String, PackageError> {
+    let manifest_path = pkg_dir.join(PACKAGE_MANIFEST_FILE);
+    if manifest_path.exists() {
+        return Ok(sha256_digest(&std::fs::read(manifest_path)?));
+    }
+
+    let files = collect_package_files(pkg_dir, true)?;
+    let mut manifest = String::new();
+    for f in files {
+        manifest.push_str(&f.path);
+        manifest.push('\0');
+        manifest.push_str(&f.digest);
+        manifest.push('\n');
+    }
+    Ok(sha256_digest(manifest.as_bytes()))
 }
 
 /// Read approval evidence embedded in a package, if any. Returns
@@ -472,6 +787,8 @@ pub fn verify_package_with_trust(
         checks.push(VerifyCheck::fail("type", &format!("Expected {RECEIPT_TYPE}, got {}", receipt.type_)));
     }
 
+    add_package_manifest_checks(&mut checks, pkg_dir, &receipt)?;
+
     // 3. Determinism: re-serialize and check digest matches
     let receipt_path = pkg_dir.join(RECEIPT_FILE);
     let on_disk = std::fs::read(&receipt_path)?;
@@ -630,6 +947,282 @@ pub fn verify_package_with_trust(
     add_approval_evidence_checks(&mut checks, &bundle, trust);
 
     Ok(checks)
+}
+
+fn add_package_manifest_checks(
+    checks: &mut Vec<VerifyCheck>,
+    pkg_dir: &Path,
+    receipt: &SessionReceipt,
+) -> Result<(), PackageError> {
+    let manifest_path = pkg_dir.join(PACKAGE_MANIFEST_FILE);
+    let dsse_path = pkg_dir.join(PACKAGE_MANIFEST_DSSE_FILE);
+
+    if !manifest_path.exists() && !dsse_path.exists() {
+        checks.push(VerifyCheck::warn(
+            "package_manifest",
+            "No signed package manifest found; using legacy v1 package checks",
+        ));
+        return Ok(());
+    }
+
+    if !manifest_path.exists() {
+        checks.push(VerifyCheck::fail(
+            "package_manifest",
+            "Missing package-manifest.json while package-manifest.dsse.json is present",
+        ));
+        return Ok(());
+    }
+
+    let manifest_bytes = std::fs::read(&manifest_path)?;
+    let manifest_digest = sha256_digest(&manifest_bytes);
+    let manifest: PackageManifest = match serde_json::from_slice(&manifest_bytes) {
+        Ok(m) => {
+            checks.push(VerifyCheck::pass("package_manifest", "package-manifest.json parses"));
+            m
+        }
+        Err(e) => {
+            checks.push(VerifyCheck::fail(
+                "package_manifest",
+                &format!("package-manifest.json does not parse: {e}"),
+            ));
+            return Ok(());
+        }
+    };
+
+    if manifest.type_ == PACKAGE_MANIFEST_TYPE && manifest.schema_version == 1 {
+        checks.push(VerifyCheck::pass("package_manifest_type", "Correct package manifest type"));
+    } else {
+        checks.push(VerifyCheck::fail(
+            "package_manifest_type",
+            &format!(
+                "Expected {PACKAGE_MANIFEST_TYPE} schema 1, got {} schema {}",
+                manifest.type_, manifest.schema_version,
+            ),
+        ));
+    }
+
+    if manifest.session_id == receipt.session.id {
+        checks.push(VerifyCheck::pass(
+            "package_manifest_session",
+            "Manifest session_id matches receipt",
+        ));
+    } else {
+        checks.push(VerifyCheck::fail(
+            "package_manifest_session",
+            &format!(
+                "manifest session_id {} != receipt session_id {}",
+                manifest.session_id, receipt.session.id,
+            ),
+        ));
+    }
+
+    add_package_manifest_file_checks(checks, pkg_dir, receipt, &manifest)?;
+
+    if !dsse_path.exists() {
+        checks.push(VerifyCheck::warn(
+            "package_manifest_signature",
+            "Missing package-manifest.dsse.json; using unsigned manifest plus legacy v1 checks",
+        ));
+        return Ok(());
+    }
+
+    let envelope = match Envelope::from_json(&std::fs::read(&dsse_path)?) {
+        Ok(e) => e,
+        Err(e) => {
+            checks.push(VerifyCheck::fail(
+                "package_manifest_signature",
+                &format!("package-manifest.dsse.json is not a valid DSSE envelope: {e}"),
+            ));
+            return Ok(());
+        }
+    };
+
+    let stmt: ReceiptStatement = match envelope.unmarshal_statement() {
+        Ok(s) => s,
+        Err(e) => {
+            checks.push(VerifyCheck::fail(
+                "package_manifest_signature",
+                &format!("manifest DSSE payload is not a receipt statement: {e}"),
+            ));
+            return Ok(());
+        }
+    };
+
+    let expected_pt = payload_type("receipt");
+    if envelope.payload_type != expected_pt {
+        checks.push(VerifyCheck::fail(
+            "package_manifest_signature",
+            &format!("manifest DSSE payloadType {} != {expected_pt}", envelope.payload_type),
+        ));
+        return Ok(());
+    }
+    if stmt.kind != "package-manifest" {
+        checks.push(VerifyCheck::fail(
+            "package_manifest_signature",
+            &format!("manifest receipt kind {} != package-manifest", stmt.kind),
+        ));
+        return Ok(());
+    }
+    if stmt.payload_digest.as_deref() != Some(manifest_digest.as_str()) {
+        checks.push(VerifyCheck::fail(
+            "package_manifest_signature",
+            &format!(
+                "signed payloadDigest {:?} does not match package-manifest.json digest {manifest_digest}",
+                stmt.payload_digest,
+            ),
+        ));
+        return Ok(());
+    }
+    if stmt.subject.as_ref().and_then(|s| s.digest.as_deref()) != Some(manifest_digest.as_str()) {
+        checks.push(VerifyCheck::fail(
+            "package_manifest_signature",
+            "manifest DSSE subject digest does not match package-manifest.json",
+        ));
+        return Ok(());
+    }
+
+    let Some((key_id, public_key)) = manifest_signature_key_material(&envelope, &stmt) else {
+        checks.push(VerifyCheck::fail(
+            "package_manifest_signature",
+            "manifest DSSE is missing embedded signer key material",
+        ));
+        return Ok(());
+    };
+    let verifying_key = match decode_manifest_public_key(&public_key) {
+        Ok(k) => k,
+        Err(e) => {
+            checks.push(VerifyCheck::fail(
+                "package_manifest_signature",
+                &format!("manifest signer public key is invalid: {e}"),
+            ));
+            return Ok(());
+        }
+    };
+
+    let mut keys = HashMap::new();
+    keys.insert(key_id, verifying_key);
+    match Verifier::new(keys).verify(&envelope) {
+        Ok(result) => checks.push(VerifyCheck::pass(
+            "package_manifest_signature",
+            &format!(
+                "Manifest DSSE signature verifies as {} ({})",
+                result.artifact_id, result.digest,
+            ),
+        )),
+        Err(e) => checks.push(VerifyCheck::fail(
+            "package_manifest_signature",
+            &format!("manifest DSSE signature failed: {e}"),
+        )),
+    }
+
+    Ok(())
+}
+
+fn add_package_manifest_file_checks(
+    checks: &mut Vec<VerifyCheck>,
+    pkg_dir: &Path,
+    receipt: &SessionReceipt,
+    manifest: &PackageManifest,
+) -> Result<(), PackageError> {
+    let actual_by_path: BTreeMap<String, CollectedPackageFile> = collect_package_files(pkg_dir, false)?
+        .into_iter()
+        .map(|f| (f.path.clone(), f))
+        .collect();
+    let expected_by_path: BTreeMap<String, &PackageFile> = manifest
+        .files
+        .iter()
+        .map(|f| (f.path.clone(), f))
+        .collect();
+
+    let mut problems = Vec::new();
+    for (path, expected) in &expected_by_path {
+        match actual_by_path.get(path) {
+            Some(actual) => {
+                if actual.size != expected.size {
+                    problems.push(format!("{path} size {} != manifest {}", actual.size, expected.size));
+                }
+                if actual.digest != expected.digest {
+                    problems.push(format!("{path} digest {} != manifest {}", actual.digest, expected.digest));
+                }
+            }
+            None => problems.push(format!("{path} missing from package")),
+        }
+    }
+    for path in actual_by_path.keys() {
+        if !expected_by_path.contains_key(path) {
+            problems.push(format!("{path} present but not listed in manifest"));
+        }
+    }
+
+    if problems.is_empty() {
+        checks.push(VerifyCheck::pass(
+            "package_manifest_files",
+            &format!("{} package file(s) match manifest digests", expected_by_path.len()),
+        ));
+    } else {
+        checks.push(VerifyCheck::fail("package_manifest_files", &problems.join("; ")));
+    }
+
+    let receipt_digest = actual_by_path.get(RECEIPT_FILE).map(|f| f.digest.as_str());
+    if receipt_digest == Some(manifest.receipt_digest.as_str()) {
+        checks.push(VerifyCheck::pass(
+            "package_manifest_receipt",
+            "Manifest receipt digest matches receipt.json",
+        ));
+    } else {
+        checks.push(VerifyCheck::fail(
+            "package_manifest_receipt",
+            &format!(
+                "manifest receipt_digest {} != receipt.json digest {:?}",
+                manifest.receipt_digest, receipt_digest,
+            ),
+        ));
+    }
+
+    if manifest.merkle_root == receipt.merkle.root {
+        checks.push(VerifyCheck::pass(
+            "package_manifest_merkle",
+            "Manifest merkle root matches receipt",
+        ));
+    } else {
+        checks.push(VerifyCheck::fail(
+            "package_manifest_merkle",
+            &format!(
+                "manifest merkle_root {:?} != receipt merkle_root {:?}",
+                manifest.merkle_root, receipt.merkle.root,
+            ),
+        ));
+    }
+
+    Ok(())
+}
+
+fn manifest_signature_key_material(
+    envelope: &Envelope,
+    stmt: &ReceiptStatement,
+) -> Option<(String, String)> {
+    let signature_key_id = envelope.signatures.first()?.keyid.clone();
+    let meta = stmt.meta.as_ref()?;
+    let public_key = meta.get("signer_public_key")?.as_str()?.to_string();
+    let signer_key_id = meta
+        .get("signer_key_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or(signature_key_id.as_str());
+    if signer_key_id != signature_key_id {
+        return None;
+    }
+    Some((signature_key_id, public_key))
+}
+
+fn decode_manifest_public_key(encoded: &str) -> Result<VerifyingKey, String> {
+    let bytes = URL_SAFE_NO_PAD
+        .decode(encoded)
+        .map_err(|e| format!("base64url decode: {e}"))?;
+    let arr: [u8; 32] = bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| format!("expected 32 bytes, got {}", bytes.len()))?;
+    VerifyingKey::from_bytes(&arr).map_err(|e| e.to_string())
 }
 
 /// Tail of `verify_package`: emit leaf_count and timeline-order checks.
@@ -1349,6 +1942,7 @@ pub fn render_preview_html(receipt: &SessionReceipt) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::attestation::Ed25519Signer;
     use crate::session::event::*;
     use crate::session::manifest::SessionManifest;
     use crate::session::receipt::{ArtifactEntry, ReceiptComposer};
@@ -1437,6 +2031,90 @@ mod tests {
 
         let passes: Vec<_> = checks.iter().filter(|c| c.status == VerifyStatus::Pass).collect();
         assert!(passes.len() >= 5, "expected at least 5 pass checks, got {}", passes.len());
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn signed_package_writes_manifest_and_signature() {
+        let receipt = make_receipt();
+        let signer = Ed25519Signer::generate("key_pkg_manifest").unwrap();
+        let tmp = std::env::temp_dir().join(format!("treeship-pkg-signed-{}", rand::random::<u32>()));
+
+        let output = build_signed_package(&receipt, &tmp, &signer).unwrap();
+
+        assert!(output.path.join(PACKAGE_MANIFEST_FILE).exists());
+        assert!(output.path.join(PACKAGE_MANIFEST_DSSE_FILE).exists());
+        assert!(output.package_manifest_digest.as_deref().unwrap().starts_with("sha256:"));
+        assert!(output.package_manifest_artifact_id.as_deref().unwrap().starts_with("art_"));
+
+        let checks = verify_package(&output.path).unwrap();
+        assert!(
+            checks.iter().any(|c| c.name == "package_manifest_signature" && c.status == VerifyStatus::Pass),
+            "expected signed manifest pass row: {checks:?}",
+        );
+        let fails: Vec<_> = checks.iter().filter(|c| c.status == VerifyStatus::Fail).collect();
+        assert!(fails.is_empty(), "unexpected failures: {fails:?}");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn signed_package_detects_tampered_file() {
+        let receipt = make_receipt();
+        let signer = Ed25519Signer::generate("key_pkg_manifest").unwrap();
+        let tmp = std::env::temp_dir().join(format!("treeship-pkg-tamper-file-{}", rand::random::<u32>()));
+
+        let output = build_signed_package(&receipt, &tmp, &signer).unwrap();
+        std::fs::write(output.path.join(RENDER_FILE), br#"{"tampered":true}"#).unwrap();
+
+        let checks = verify_package(&output.path).unwrap();
+        assert!(
+            checks.iter().any(|c| c.name == "package_manifest_files" && c.status == VerifyStatus::Fail),
+            "expected manifest file digest failure: {checks:?}",
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn signed_package_detects_tampered_manifest() {
+        let receipt = make_receipt();
+        let signer = Ed25519Signer::generate("key_pkg_manifest").unwrap();
+        let tmp = std::env::temp_dir().join(format!("treeship-pkg-tamper-manifest-{}", rand::random::<u32>()));
+
+        let output = build_signed_package(&receipt, &tmp, &signer).unwrap();
+        let manifest_path = output.path.join(PACKAGE_MANIFEST_FILE);
+        let mut manifest: PackageManifest =
+            serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+        manifest.session_id = "ssn_attacker".into();
+        std::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest).unwrap()).unwrap();
+
+        let checks = verify_package(&output.path).unwrap();
+        assert!(
+            checks.iter().any(|c| c.name == "package_manifest_signature" && c.status == VerifyStatus::Fail),
+            "expected manifest signature failure: {checks:?}",
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn missing_manifest_signature_warns_without_failure() {
+        let receipt = make_receipt();
+        let signer = Ed25519Signer::generate("key_pkg_manifest").unwrap();
+        let tmp = std::env::temp_dir().join(format!("treeship-pkg-missing-dsse-{}", rand::random::<u32>()));
+
+        let output = build_signed_package(&receipt, &tmp, &signer).unwrap();
+        std::fs::remove_file(output.path.join(PACKAGE_MANIFEST_DSSE_FILE)).unwrap();
+
+        let checks = verify_package(&output.path).unwrap();
+        assert!(
+            checks.iter().any(|c| c.name == "package_manifest_signature" && c.status == VerifyStatus::Warn),
+            "expected missing signature warning: {checks:?}",
+        );
+        let fails: Vec<_> = checks.iter().filter(|c| c.status == VerifyStatus::Fail).collect();
+        assert!(fails.is_empty(), "unexpected failures: {fails:?}");
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

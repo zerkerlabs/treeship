@@ -16,18 +16,19 @@ These terms come up in the docs and the code. Keep them distinct:
 | Name | What it is |
 |------|------|
 | **Session Report** | The human-facing visual rendering. Explorer, `preview.html`, or the future hub UI. |
-| **Session Receipt** | The cryptographic artifact: canonical JSON with Merkle root and inclusion proofs. |
-| **`.treeship` package** | The portable directory that bundles the receipt with the proof files and a static preview. |
+| **Session Receipt** | The canonical `receipt.json`: deterministic JSON with Merkle root, inclusion proofs, timeline, side effects, and render hints. |
+| **`.treeship` package** | The portable directory that bundles the receipt with proof files, render files, and the signed package manifest. |
 
-The receipt is the trust anchor. The report is a view. The package is a transport format.
+The package is the strongest offline verification unit. The receipt is the
+canonical summary inside it. The report is a view.
 
 ## Lifecycle
 
 A session flows through three states:
 
 1. **Active.** Started by [`treeship session start`](/docs/cli/session#treeship-session-start) or by a registered agent. Events are appended to `.treeship/sessions/<session_id>/events.jsonl` in real time. The artifact chain grows under `.treeship/artifacts/`.
-2. **Closed.** [`treeship session close`](/docs/cli/session#treeship-session-close) composes the receipt, writes a `.treeship` package, and seals the chain with a `session.close` attestation. The package is self-contained and immutable from this point forward.
-3. **Published.** [`treeship session report`](/docs/cli/session#treeship-session-report) uploads the receipt to the configured hub. The hub serves it at a permanent public URL: `https://treeship.dev/receipt/<session_id>`.
+2. **Closed.** [`treeship session close`](/docs/cli/session#treeship-session-close) composes the receipt, writes a `.treeship` package, seals the chain with a `session.close` attestation, and signs the package manifest. The package is self-contained and immutable from this point forward.
+3. **Published.** [`treeship session report`](/docs/cli/session#treeship-session-report) uploads the receipt JSON to the configured hub. The hub serves it at a permanent public URL: `https://treeship.dev/receipt/<session_id>`.
 
 Publishing is optional. A session is equally valid sitting on disk as a `.treeship` directory that you `treeship package verify` locally.
 
@@ -135,17 +136,22 @@ A `.treeship` package is a directory:
 ```
 ssn_42e740bd9eb238f6.treeship/
 ├── receipt.json          canonical Session Receipt v1
+├── package-manifest.json signed inventory of package files
+├── package-manifest.dsse.json
 ├── merkle.json           standalone copy of the Merkle section
 ├── render.json           Explorer render hints
 ├── preview.html          self-contained static HTML preview
-├── artifacts/            reserved for future artifact payloads
+├── artifacts/            artifact envelopes when the package carries them
 └── proofs/
     ├── art_6c7ff9c5a8d20e0f18f504375ef28a24.proof.json
     ├── art_d9823ce56401fa900ac3adbf63bc5125.proof.json
     └── ...
 ```
 
-`receipt.json` is authoritative. Everything else is derived and can be regenerated from it deterministically. `preview.html` is a self-contained dark-themed HTML file you can open in a browser without any build step.
+`receipt.json` is the canonical session summary. `package-manifest.json` commits
+to the package file inventory by digest, and `package-manifest.dsse.json` signs
+that inventory. `preview.html` is a self-contained dark-themed HTML file you can
+open in a browser without any build step.
 
 ## Local verification
 
@@ -154,6 +160,9 @@ Running [`treeship package verify <path>`](/docs/cli/package#treeship-package-ve
 ```
 PASS receipt.json  -- Parses as valid Session Receipt
 PASS type          -- Correct receipt type
+PASS package_manifest -- package-manifest.json parses
+PASS package_manifest_files -- package file(s) match manifest digests
+PASS package_manifest_signature -- Manifest DSSE signature verifies
 PASS determinism   -- receipt.json round-trips identically
 PASS merkle_root   -- Merkle root matches recomputed value
 PASS inclusion:... -- Inclusion proof valid (one per artifact)
@@ -161,10 +170,14 @@ PASS leaf_count    -- Leaf count matches artifact count
 PASS timeline_order -- Timeline is correctly ordered
 ```
 
-There is no "partial trust" for receipts. Any FAIL means the package was modified after signing and the trust anchor is broken.
+Verification is row-based. Any FAIL means at least one invariant did not verify
+and the package should not be trusted as a complete proof. WARN means the package
+is internally readable but a weaker posture is being reported explicitly, such as
+a legacy package without a signed manifest or a bounded/truncated evidence
+source.
 
 <Callout type="info">
-Hubs are convenience. The receipt itself is the trust anchor. A hub serving the receipt at `https://treeship.dev/receipt/<session_id>` does not add cryptographic guarantees. The guarantees come from running `treeship package verify` on the downloaded package.
+Hubs are convenience. A hub serving the receipt at `https://treeship.dev/receipt/<session_id>` does not add cryptographic guarantees. The strongest guarantees come from running `treeship package verify` on the `.treeship` package.
 </Callout>
 
 ## Public receipt URLs
@@ -183,6 +196,10 @@ The URL:
 - Is cached immutably (`Cache-Control: public, max-age=86400, immutable`)
 
 A2A agents, dashboards, and automated verifiers can fetch this URL programmatically and make pre-delegation trust decisions.
+
+Raw receipt URLs are useful for summary-level checks. Full offline verification
+uses the local `.treeship` package, including the signed package manifest and any
+side evidence the package carries.
 
 See [`GET /v1/receipt/{session_id}`](/docs/api/receipt-get) for the API reference.
 

@@ -6,7 +6,7 @@ use treeship_core::{
     journal::{self, Journal},
     session::{
         self, ApprovalsBundle, EventLog, EventType, ReceiptComposer, SessionEvent,
-        build_package_with_approvals,
+        build_signed_package_with_approvals, compute_package_manifest_digest,
         event::{generate_event_id, generate_span_id, generate_trace_id},
     },
     statements::{ActionStatement, ApprovalStatement, payload_type},
@@ -1091,7 +1091,7 @@ pub fn close(
     // and the resulting package omits the `approvals/` dir entirely.
     let approvals = collect_approval_evidence(&ctx, &receipt);
 
-    match build_package_with_approvals(&receipt, &pkg_dir, Some(&approvals)) {
+    match build_signed_package_with_approvals(&receipt, &pkg_dir, Some(&approvals), signer.as_ref()) {
         Ok(pkg_output) => {
             // Package written successfully. Remove the closing marker
             // so start/close don't see a stale incomplete-close signal.
@@ -1102,6 +1102,12 @@ pub fn close(
             printer.success("session receipt composed", &[]);
             printer.info(&format!("  package:   {}", pkg_output.path.display()));
             printer.info(&format!("  digest:    {}", pkg_output.receipt_digest));
+            if let Some(ref digest) = pkg_output.package_manifest_digest {
+                printer.info(&format!("  manifest:  {}", digest));
+            }
+            if let Some(ref id) = pkg_output.package_manifest_artifact_id {
+                printer.info(&format!("  signed:    {}", id));
+            }
             if let Some(ref root) = pkg_output.merkle_root {
                 printer.info(&format!("  merkle:    {}", root));
             }
@@ -1846,37 +1852,6 @@ fn derive_share_urls(receipt_url: &str, session_id: &str) -> (String, String) {
     let raw  = format!("{origin}/api/receipt/{session_id}");
     let pkg  = format!("{origin}/receipt/{session_id}/package");
     (raw, pkg)
-}
-
-/// Compute a content-addressed manifest digest for a package
-/// directory. Walks the dir, hashes each file's content, then hashes
-/// the sorted "<relpath>:<sha256_hex>\n" lines. Stable across builds.
-fn compute_package_manifest_digest(pkg_dir: &Path) -> std::io::Result<String> {
-    use sha2::{Digest, Sha256};
-    fn walk(root: &Path, dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
-        for entry in std::fs::read_dir(dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_dir() {
-                walk(root, &path, files)?;
-            } else {
-                files.push(path);
-            }
-        }
-        Ok(())
-    }
-    let mut files = Vec::new();
-    walk(pkg_dir, pkg_dir, &mut files)?;
-    files.sort();
-    let mut manifest = String::new();
-    for f in &files {
-        let rel = f.strip_prefix(pkg_dir).unwrap_or(f).to_string_lossy().replace('\\', "/");
-        let bytes = std::fs::read(f)?;
-        let h     = Sha256::digest(&bytes);
-        manifest.push_str(&format!("{rel}:{}\n", hex::encode(h)));
-    }
-    let final_h = Sha256::digest(manifest.as_bytes());
-    Ok(format!("sha256:{}", hex::encode(final_h)))
 }
 
 /// Run `verify_package` on the local package directory and project the

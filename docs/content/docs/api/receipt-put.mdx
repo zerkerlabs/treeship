@@ -5,7 +5,7 @@ description: Upload a Session Receipt v1 to the hub. DPoP authenticated. Idempot
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Uploads a [Session Receipt v1](/docs/concepts/session-receipts) to the hub and makes it available at the permanent public URL `https://treeship.dev/receipt/{session_id}`.
+Uploads a [Session Receipt v1](/docs/concepts/session-receipts) JSON document to the hub and makes it available at the permanent public URL `https://treeship.dev/receipt/{session_id}`.
 
 In practice you do not call this directly. Run [`treeship session report`](/docs/cli/session#treeship-session-report) and the CLI handles package discovery, body serialization, and DPoP signing for you.
 
@@ -18,7 +18,9 @@ DPoP: eyJhbGciOiJFZERTQSIsInR5cCI6ImRwb3Arand0In0...
 Content-Type: application/json
 ```
 
-The request body is the canonical `receipt.json` from the `.treeship` package, sent verbatim.
+The request body is the canonical `receipt.json` from the `.treeship` package,
+sent verbatim. This v1 endpoint stores the receipt JSON only. It does not upload
+the full `.treeship` package, `package-manifest.json`, or side evidence.
 
 ### Path parameters
 
@@ -46,7 +48,9 @@ See the [Hub API overview](/docs/api/overview) for full DPoP details.
 
 ## Idempotency
 
-PUT is idempotent for the owning dock. A second PUT from the same dock for the same `session_id` overwrites the first and refreshes the agent registry.
+PUT is write-once for a `session_id`. A byte-identical retry by the owning dock
+is accepted as an idempotent replay. A different body for an already stored
+`session_id` is rejected instead of overwriting the original receipt.
 
 A PUT from a **different** dock for a `session_id` that already exists is rejected with `403`. Session ids are owned by the first dock to upload a receipt for them.
 
@@ -105,4 +109,11 @@ curl -X PUT https://api.treeship.dev/v1/receipt/$SESSION_ID \
 
 <Callout type="info">
 The receipt body is sent verbatim from disk. Do not re-serialize it, because re-serializing would produce different whitespace and break the determinism check that `treeship package verify` runs on the receiving end.
+</Callout>
+
+<Callout type="warn">
+This endpoint is a share/index endpoint, not a package-verification endpoint. For
+the strongest offline proof, distribute the `.treeship` package and run
+`treeship package verify` so the signed package manifest and package-local
+evidence are checked.
 </Callout>

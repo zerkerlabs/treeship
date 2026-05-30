@@ -94,6 +94,11 @@ treeship package verify .treeship/sessions/ssn_42e740bd9eb238f6.treeship
 |-------|------|
 | `receipt.json` | File exists and parses as a valid Session Receipt |
 | `type` | Receipt type is `treeship/session-receipt/v1` |
+| `package_manifest` | `package-manifest.json` parses, or the package is marked as a legacy v1 package |
+| `package_manifest_files` | Every manifest-listed file exists with the expected size and digest, with no unlisted package files |
+| `package_manifest_receipt` | Manifest `receipt_digest` matches the on-disk `receipt.json` digest |
+| `package_manifest_merkle` | Manifest Merkle root matches the receipt Merkle root |
+| `package_manifest_signature` | `package-manifest.dsse.json` signs the manifest digest |
 | `determinism` | Re-serializing the parsed receipt byte-matches the on-disk file |
 | `merkle_root` | Recomputing the Merkle tree over the artifact ids produces the root stored in the receipt |
 | `inclusion:<id>` | Each stored inclusion proof verifies against the recomputed root |
@@ -108,6 +113,9 @@ package verification
 
   PASS receipt.json -- Parses as valid Session Receipt
   PASS type -- Correct receipt type
+  PASS package_manifest -- package-manifest.json parses
+  PASS package_manifest_files -- 8 package file(s) match manifest digests
+  PASS package_manifest_signature -- Manifest DSSE signature verifies as art_...
   PASS determinism -- receipt.json round-trips identically
   PASS merkle_root -- Merkle root matches recomputed value
   PASS inclusion:art_6c7ff9c5a8d20e0f18f504375ef28a24 -- Inclusion proof valid
@@ -117,15 +125,17 @@ package verification
   PASS leaf_count -- Leaf count matches artifact count
   PASS timeline_order -- Timeline is correctly ordered
 
-  10 passed, 0 failed, 0 warnings
+  15 passed, 0 failed, 0 warnings
 
 ✓ package verified
 ```
 
-Any FAIL causes the command to print a warning summary. WARNs (for example, "no artifacts to verify") are non-fatal and still allow the package to be considered valid for inspection.
+Any FAIL causes the command to print a warning summary. WARNs are non-fatal but
+they name a weaker verification posture. For example, a package created before
+signed package manifests will warn and continue with legacy v1 checks.
 
 <Callout type="info">
-Local verification is the trust anchor. A hub serving a receipt at `https://treeship.dev/receipt/<session_id>` is a convenience layer; the cryptographic trust comes from running `treeship package verify` on the downloaded package and getting 10 PASS.
+Local package verification is the trust anchor. A hub serving a receipt at `https://treeship.dev/receipt/<session_id>` is a convenience layer; the strongest cryptographic trust comes from running `treeship package verify` on the `.treeship` package and getting only PASS rows.
 </Callout>
 
 ## Package format
@@ -135,16 +145,20 @@ A `.treeship` package is a directory containing:
 ```
 <session_id>.treeship/
 ├── receipt.json          canonical Session Receipt v1
+├── package-manifest.json signed package file inventory
+├── package-manifest.dsse.json
 ├── merkle.json           standalone copy of the Merkle section
 ├── render.json           Explorer render hints
 ├── preview.html          static preview you can open in a browser
-├── artifacts/            reserved for artifact payloads
+├── artifacts/            artifact envelopes when present
 └── proofs/
     ├── art_xxx.proof.json
     └── ...
 ```
 
-`receipt.json` is the authoritative artifact. Everything else is derived from it and can be regenerated deterministically.
+`receipt.json` is the canonical session summary. The signed package manifest is
+the package-level integrity layer: it commits to the other files by digest and
+lets verification detect file edits, additions, or removals after close.
 
 ## Sharing packages
 

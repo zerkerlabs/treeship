@@ -66,9 +66,9 @@ On close, Treeship:
 1. Appends a `session.closed` event to the event log.
 2. Walks the artifact chain from `.last` back to the session's root artifact.
 3. Composes a canonical [Session Receipt v1](/docs/concepts/session-receipts) from the events, the artifact chain, and the agent graph.
-4. Builds a [`.treeship` package](/docs/concepts/session-receipts#package-format) under `.treeship/sessions/<session_id>.treeship/` with `receipt.json`, `merkle.json`, `render.json`, per-artifact inclusion proofs, and a static `preview.html`.
+4. Builds a [`.treeship` package](/docs/concepts/session-receipts#package-format) under `.treeship/sessions/<session_id>.treeship/` with `receipt.json`, `merkle.json`, `render.json`, per-artifact inclusion proofs, a signed package manifest, and a static `preview.html`.
 5. Signs a `session.close` chain artifact as before.
-6. Prints the package path, the canonical receipt digest, and the Merkle root.
+6. Prints the package path, the canonical receipt digest, the signed manifest digest, and the Merkle root.
 
 Close is guarded by a lock so only one close or abandon operation can mutate session state at a time. Git reconciliation is also bounded: if the untracked-file scan exceeds the cap, Treeship skips per-file untracked events, records the truncation in the receipt proofs section, and `treeship package verify` reports a `reconcile_completeness` warning.
 
@@ -78,8 +78,10 @@ Example output:
 ✓ session receipt composed
   package:   .treeship/sessions/ssn_42e740bd9eb238f6.treeship
   digest:    sha256:942e6b2bfcbe860223fbae57ee7d9b73400a278ccfb0f1d5ca865aec9ce9aba6
+  manifest:  sha256:4c0f2d9d8f18e3a0b1c2d3e4f5a60718293a4b5c6d7e8f90123456789abcdef01
+  signed:    art_7c75660cfc939a5bcd1a5b8a17c8f3d4
   merkle:    mroot_effc020c67548f53
-  files:     8
+  files:     10
 
 ✓ session closed
   id:       ssn_42e740bd9eb238f6
@@ -102,7 +104,7 @@ The command moves `.treeship/session.json` or `.treeship/session.closing` plus t
 
 ## treeship session report
 
-Upload a closed session's receipt to the configured hub and print the permanent public URL.
+Upload a closed session's receipt JSON to the configured hub and print the permanent public URL.
 
 ```bash
 treeship session report
@@ -119,8 +121,9 @@ The command:
 
 1. Locates the `.treeship` package for the requested session (or the most recently modified one).
 2. Reads `receipt.json` verbatim so the digest signed by `session close` is preserved bit-for-bit.
-3. DPoP-signs a `PUT {hub_endpoint}/v1/receipt/{session_id}` request using the active hub connection's private key.
-4. Prints the permanent receipt URL.
+3. Runs local package verification and includes the verification posture in JSON output.
+4. DPoP-signs a `PUT {hub_endpoint}/v1/receipt/{session_id}` request using the active hub connection's private key.
+5. Prints the permanent receipt URL.
 
 If a package directory exists but `receipt.json` was never written, `session report` reports the package as incomplete instead of treating it as a missing closed session.
 
@@ -139,7 +142,7 @@ Example output:
 ```
 
 <Callout type="info">
-The receipt URL is permanent and public. No token, no expiry, no auth required to fetch it. A2A clients, dashboards, and offline verifiers can all `curl` it programmatically. See [`GET /v1/receipt/{session_id}`](/docs/api/receipt-get) for the API reference.
+The receipt URL is permanent and public. No token, no expiry, no auth required to fetch it. It is useful for summary-level checks. Full verification still uses `treeship package verify` on the local `.treeship` package. See [`GET /v1/receipt/{session_id}`](/docs/api/receipt-get) for the API reference.
 </Callout>
 
 ## What gets sealed in a receipt
