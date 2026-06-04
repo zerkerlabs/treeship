@@ -10,7 +10,7 @@ const siteDescription =
   'Cryptographic receipts for AI agent actions. Verifiable proofs of what an agent did, when, and to which inputs.';
 
 export const metadata: Metadata = {
-  metadataBase: new URL(siteUrl),
+  metadataBase: new URL('https://docs.treeship.dev'),
   title: {
     default: 'Treeship Docs',
     template: '%s -- Treeship',
