@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.11.2 (2026-06-05)
+
+### Fixed
+
+- **Receipt preview no longer hangs on "Verifying receipt...".** `render_preview_html` filled the placeholder with a global string replace, but the template carried that token twice (the data slot and a JS placeholder check), so the receipt JSON was injected into a JS string literal and produced an uncaught SyntaxError that aborted the whole client-side verification script. The local `treeship dashboard` Session Receipt view, which re-renders from the current template, was affected; sealed previews generated before the JS check was added still worked. The template's check now uses a split sentinel that survives substitution, and `render_preview_html` fills only the first (data-slot) occurrence. Covered by a regression assertion in `session::package` tests. (#118)
+
 ## 0.11.1 (2026-05-29)
 
 ### Added
