@@ -1339,11 +1339,14 @@ pub fn render_preview_html(receipt: &SessionReceipt) -> String {
     // This is bulletproof: no HTML parser can see a tag open inside the JSON.
     let safe_json = receipt_json.replace('<', r"\u003c");
 
-    // Only one placeholder: __RECEIPT_JSON__ inside the data block.
-    // The page title is set at runtime from the parsed JSON to avoid
-    // a second replacement pass that could re-inject content.
+    // The only placeholder that must take the receipt JSON is the data
+    // block. replacen(.., 1) substitutes exactly that first occurrence, so
+    // even if the token is ever reused elsewhere in the template (e.g. a JS
+    // placeholder check) the receipt body is never injected into it. The
+    // template's own placeholder check uses a split sentinel for the same
+    // reason. The page title is set at runtime from the parsed JSON.
     PREVIEW_TEMPLATE
-        .replace("__RECEIPT_JSON__", &safe_json)
+        .replacen("__RECEIPT_JSON__", &safe_json, 1)
 }
 
 #[cfg(test)]
@@ -1459,5 +1462,31 @@ mod tests {
         assert!(html.contains("ssn_pkg_test"));
         assert!(html.contains("treeship.dev"));
         assert!(html.contains("Timeline"));
+
+        // Regression: the receipt JSON must land ONLY in the data block,
+        // never in the inline JS. A prior bug used replace() (all matches)
+        // against a template that carried the placeholder token twice (data
+        // slot + a JS placeholder check), injecting the receipt body into a
+        // JS string literal. That produced an uncaught SyntaxError, so the
+        // whole script never ran and the preview hung on "Verifying
+        // receipt...". The JS check now uses a split sentinel that must
+        // survive substitution verbatim, and replacen(.., 1) fills only the
+        // first occurrence.
+        assert!(
+            html.contains("'__RECEIPT'+'_JSON__'"),
+            "JS placeholder check was clobbered by the receipt substitution",
+        );
+        assert!(
+            !html.contains("application/json\">__RECEIPT_JSON__</script>"),
+            "data slot was not substituted with the receipt JSON",
+        );
+        // The session id (a receipt value) must appear inside the data block,
+        // not leak into executable JS, so a quick structural sanity check:
+        // there is exactly one unsubstituted token left at most (none here).
+        assert_eq!(
+            html.matches("__RECEIPT_JSON__").count(),
+            0,
+            "no raw placeholder token should remain after substitution",
+        );
     }
 }
