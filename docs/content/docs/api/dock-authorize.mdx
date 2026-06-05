@@ -30,19 +30,21 @@ Content-Type: application/json
 
 ```json
 {
+  "state": "approved",
   "status": "approved"
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `status` | string | Approval status. Always `"approved"` on success. |
+| `state` | string | Device-flow state. `"approved"` once the browser approves. |
+| `status` | string | Legacy alias for `state`, kept for older clients. |
 
 No hub_id is returned. The browser's job is just to approve -- the CLI completes registration in the next step.
 
 ## CLI call (with keys)
 
-When the CLI calls this endpoint with Treeship and hub public keys, Hub verifies the challenge is already browser-approved, validates the nonce, atomically consumes the challenge, creates the Treeship record (if new), and returns a hub_id.
+When the CLI calls this endpoint with Treeship and hub public keys, Hub verifies the challenge is already browser-approved, validates the nonce, atomically claims the challenge for a new `dock_id`, creates the Treeship record, and returns it. The claim is single-use: a concurrent or replayed finalize is rejected as `already_attached`.
 
 The challenge **must** already be approved by the browser before the CLI calls this endpoint. The CLI must also provide the `nonce` that was returned by `GET /v1/hub/challenge`.
 
@@ -73,27 +75,42 @@ Content-Type: application/json
 
 ```json
 {
-  "hub_id": "hub_9f8e7d6c"
+  "state": "attached",
+  "dock_id": "hub_9f8e7d6c",
+  "next_steps": [
+    "treeship status",
+    "treeship attest receipt --system system://<your-system> --kind <kind> --payload-file <file>",
+    "treeship hub push <artifact-id>",
+    "treeship verify <artifact-id>"
+  ],
+  "example": "treeship attest receipt --system system://zmem --kind memory.proof --payload-file proof.json"
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `hub_id` | string | Unique identifier for this hub connection (format: `hub_` + 32 hex chars) |
+| `state` | string | `"attached"` on success. |
+| `dock_id` | string | Unique identifier for this hub connection (format: `dck_`/`hub_` + 32 hex chars) |
+| `next_steps` | string[] | Provider-neutral command templates to surface on the success page. |
+| `example` | string | One illustrative invocation. The placeholders are real; `system://zmem` and `memory.proof` are an example customer's memory-proof workflow, not built-in behavior. `--system` and `--kind` accept any value. |
+
+The challenge is **claimed**, not deleted, on success. The row is retained (with its `dock_id`) until well past expiry so a still-polling activation page reports `attached` rather than a misleading `not found`.
 
 ## Errors
 
-| Status | Body | Cause |
-|--------|------|-------|
-| `400` | `{"error": "missing device_code"}` | Request body is missing the `device_code` field |
-| `400` | `{"error": "missing nonce -- required for hub finalization"}` | CLI sent keys but omitted the `nonce` field |
-| `400` | `{"error": "invalid ship_public_key hex"}` | `ship_public_key` is not valid hex |
-| `400` | `{"error": "invalid hub_public_key hex"}` | `hub_public_key` is not valid hex |
-| `403` | `{"error": "challenge not yet approved -- complete browser activation first"}` | Keys were sent but the browser has not approved the challenge yet |
-| `403` | `{"error": "nonce mismatch"}` | The `nonce` does not match the one stored with the challenge |
-| `404` | `{"error": "device_code not found"}` | No challenge exists for this device code |
-| `409` | `{"error": "challenge already consumed"}` | Another request already consumed this challenge (prevents double-registration) |
-| `410` | `{"error": "device_code expired"}` | The challenge has passed its 5-minute expiry window |
+Every state-bearing response carries a stable `state` field so the activation page can distinguish outcomes precisely.
+
+| Status | Body | State | Cause |
+|--------|------|-------|-------|
+| `400` | `{"error": "missing device_code"}` | -- | Request body is missing the `device_code` field |
+| `400` | `{"error": "missing nonce -- required for dock finalization"}` | -- | CLI sent keys but omitted the `nonce` field |
+| `400` | `{"error": "invalid ship_public_key hex"}` | -- | `ship_public_key` is not valid hex |
+| `400` | `{"error": "invalid dock_public_key hex"}` | -- | `dock_public_key` is not valid hex |
+| `403` | `{"state": "pending", "error": "challenge not yet approved -- complete browser activation first"}` | `pending` | Keys were sent but the browser has not approved the challenge yet |
+| `403` | `{"error": "nonce mismatch"}` | -- | The `nonce` does not match the one stored with the challenge |
+| `404` | `{"state": "invalid", "error": "device_code not found"}` | `invalid` | No challenge exists for this device code |
+| `409` | `{"state": "already_attached", "error": "device code already used"}` | `already_attached` | This challenge was already finalized (prevents double-registration) |
+| `410` | `{"state": "expired", "error": "device_code expired"}` | `expired` | The challenge has passed its 5-minute expiry window |
 
 ## Examples
 
@@ -125,6 +142,6 @@ curl -X POST https://api.treeship.dev/v1/hub/authorize \
 - The Treeship public key and hub public key must be different Ed25519 keys
 - The Treeship key is stored for identification only. Hub never receives any private key
 - The hub key is used to verify DPoP JWT signatures on subsequent API requests
-- Each device code can only be authorized once -- the nonce is atomically consumed on success
+- Each device code can only be authorized once -- the challenge is atomically claimed (by `dock_id`) on success, and the row is kept so the activation page can still poll and read `attached`
 - If the `ship_public_key` already exists on Hub, the existing Treeship record is reused and a new hub connection is attached to it
 - The `nonce` field prevents replay attacks and binds the CLI request to the specific challenge session

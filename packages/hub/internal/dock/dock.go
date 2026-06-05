@@ -34,6 +34,12 @@ func jsonError(w http.ResponseWriter, msg string, code int) {
 
 // Challenge handles GET /v1/dock/challenge
 func (h *Handlers) Challenge(w http.ResponseWriter, r *http.Request) {
+	// Opportunistically purge challenges well past expiry. A 1-hour grace
+	// window keeps recently-expired and recently-attached codes queryable so
+	// in-flight activation pages still see a precise state. Mirrors the
+	// per-request cleanup used for dpop_jtis and workspace_sessions.
+	_ = db.CleanExpiredChallenges(h.DB, time.Now().Unix()-3600)
+
 	nonce := randomHex(16)
 	deviceCode := randomHex(8)
 	expiresAt := time.Now().Unix() + 300
@@ -51,51 +57,100 @@ func (h *Handlers) Challenge(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// writeJSON writes a JSON body with an explicit status code.
+func writeJSON(w http.ResponseWriter, code int, body interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(body)
+}
+
+// attachGuidance returns provider-neutral next steps shown after a device is
+// attached. The commands use placeholders (<your-system>, <kind>, <file>,
+// <artifact-id>) so the guidance describes Treeship behavior, not any one
+// customer. `example` is a single illustrative invocation; ZMem is an example
+// customer here, not built-in product behavior.
+func attachGuidance() map[string]interface{} {
+	return map[string]interface{}{
+		"next_steps": []string{
+			"treeship status",
+			"treeship attest receipt --system system://<your-system> --kind <kind> --payload-file <file>",
+			"treeship hub push <artifact-id>",
+			"treeship verify <artifact-id>",
+		},
+		"example": "treeship attest receipt --system system://zmem --kind memory.proof --payload-file proof.json",
+	}
+}
+
 // Authorized handles GET /v1/dock/authorized?device_code=XXX
+//
+// It reports a single, unambiguous `state` for the device code so the
+// activation page can render distinct messaging instead of collapsing several
+// outcomes into one "not found":
+//
+//	invalid  (400) malformed device_code
+//	invalid  (404) no such challenge (never issued, or purged long after expiry)
+//	attached (200) terminal success -- the CLI finalized; dock_id is present
+//	expired  (410) the challenge passed its expiry window before being attached
+//	pending  (202) issued, browser has not approved yet
+//	approved (200) browser approved; the CLI has not finalized yet
+//
+// `attached` is checked before `expired` so a device that completed near the
+// expiry boundary still reports success rather than flipping to expired.
 func (h *Handlers) Authorized(w http.ResponseWriter, r *http.Request) {
 	deviceCode := r.URL.Query().Get("device_code")
 	if deviceCode == "" || !isValidDeviceCode(deviceCode) {
-		jsonError(w, "missing or invalid device_code", http.StatusBadRequest)
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"state": "invalid",
+			"error": "missing or invalid device_code",
+		})
 		return
 	}
 
 	challenge, err := db.GetChallenge(h.DB, deviceCode)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"state": "invalid",
+			"error": "unknown device code",
+		})
+		return
+	}
+
+	// Terminal success. Checked before expiry so a just-attached device near
+	// the expiry boundary does not momentarily read as expired.
+	if challenge.DockID != "" {
+		body := map[string]interface{}{
+			"state":   "attached",
+			"dock_id": challenge.DockID,
+		}
+		for k, v := range attachGuidance() {
+			body[k] = v
+		}
+		writeJSON(w, http.StatusOK, body)
 		return
 	}
 
 	if time.Now().Unix() > challenge.ExpiresAt {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "expired"})
+		writeJSON(w, http.StatusGone, map[string]string{
+			"state": "expired",
+			"error": "device code expired",
+		})
 		return
 	}
 
 	if !challenge.Approved {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusAccepted)
-		json.NewEncoder(w).Encode(map[string]string{"status": "pending"})
+		writeJSON(w, http.StatusAccepted, map[string]string{
+			"state":  "pending",
+			"status": "pending", // legacy field, kept for existing clients
+		})
 		return
 	}
 
-	// Challenge is approved. Return 200 with status "approved".
-	w.Header().Set("Content-Type", "application/json")
-
-	row := h.DB.QueryRow(
-		`SELECT s.dock_id FROM ships s
-		 JOIN dock_challenges dc ON dc.ship_public_key = s.ship_public_key AND dc.dock_public_key = s.dock_public_key
-		 WHERE dc.device_code = ?`, challenge.DeviceCode,
-	)
-	var dockID string
-	if err := row.Scan(&dockID); err != nil {
-		json.NewEncoder(w).Encode(map[string]string{"status": "approved"})
-		return
-	}
-
-	json.NewEncoder(w).Encode(map[string]string{"dock_id": dockID})
+	// Browser approved; the CLI has not finalized yet. 200 so the CLI poll
+	// loop (which breaks on HTTP 200) proceeds to the authorize step.
+	writeJSON(w, http.StatusOK, map[string]string{
+		"state":  "approved",
+		"status": "approved", // legacy field, kept for existing clients
+	})
 }
 
 type authorizeRequest struct {
@@ -118,18 +173,32 @@ func (h *Handlers) Authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify device_code exists and not expired.
+	// Verify device_code exists.
 	challenge, err := db.GetChallenge(h.DB, req.DeviceCode)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "device_code not found"})
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"state": "invalid",
+			"error": "device_code not found",
+		})
 		return
 	}
+
+	// If the device was already finalized, report the terminal state instead
+	// of a generic error. A browser that re-submits, or a duplicate CLI
+	// finalize, lands here. This is the "already-used" case.
+	if challenge.DockID != "" {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"state": "already_attached",
+			"error": "device code already used",
+		})
+		return
+	}
+
 	if time.Now().Unix() > challenge.ExpiresAt {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusGone)
-		json.NewEncoder(w).Encode(map[string]string{"error": "device_code expired"})
+		writeJSON(w, http.StatusGone, map[string]string{
+			"state": "expired",
+			"error": "device_code expired",
+		})
 		return
 	}
 
@@ -139,39 +208,33 @@ func (h *Handlers) Authorize(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "failed to approve challenge", http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "approved"})
+		writeJSON(w, http.StatusOK, map[string]string{
+			"state":  "approved",
+			"status": "approved", // legacy field, kept for existing clients
+		})
 		return
 	}
 
 	// CLI flow: keys provided. Challenge MUST already be approved by browser.
 	if !challenge.Approved {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusForbidden)
-		json.NewEncoder(w).Encode(map[string]string{"error": "challenge not yet approved -- complete browser activation first"})
+		writeJSON(w, http.StatusForbidden, map[string]string{
+			"state": "pending",
+			"error": "challenge not yet approved -- complete browser activation first",
+		})
 		return
 	}
 
 	// Nonce is mandatory for key-bearing finalization.
 	if req.Nonce == "" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "missing nonce -- required for dock finalization"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "missing nonce -- required for dock finalization",
+		})
 		return
 	}
 	if req.Nonce != challenge.Nonce {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusForbidden)
-		json.NewEncoder(w).Encode(map[string]string{"error": "nonce mismatch"})
-		return
-	}
-
-	// Atomically consume the challenge so concurrent requests cannot reuse it.
-	consumed, err := db.ConsumeChallenge(h.DB, challenge.DeviceCode, challenge.Nonce)
-	if err != nil || !consumed {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusConflict)
-		json.NewEncoder(w).Encode(map[string]string{"error": "challenge already consumed"})
+		writeJSON(w, http.StatusForbidden, map[string]string{
+			"error": "nonce mismatch",
+		})
 		return
 	}
 
@@ -186,16 +249,41 @@ func (h *Handlers) Authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create the ship record.
+	// Atomically claim the challenge for this dock_id. The claim is the
+	// single-use gate: only one caller can transition an approved challenge
+	// from unclaimed (dock_id NULL) to claimed, so concurrent or replayed
+	// finalizes are rejected as "already used".
 	dockID := "dck_" + randomHex(16)
+	claimed, err := db.FinalizeChallenge(h.DB, challenge.DeviceCode, challenge.Nonce, dockID)
+	if err != nil {
+		jsonError(w, "failed to finalize challenge", http.StatusInternalServerError)
+		return
+	}
+	if !claimed {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"state": "already_attached",
+			"error": "device code already used",
+		})
+		return
+	}
+
+	// Create the ship record. If this fails, release the claim so the device
+	// code is not stranded pointing at a ship that does not exist.
 	now := time.Now().Unix()
 	if err := db.InsertShip(h.DB, dockID, shipPubKey, dockPubKey, now); err != nil {
+		_ = db.ReleaseChallenge(h.DB, challenge.DeviceCode, dockID)
 		jsonError(w, "failed to create ship", http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"dock_id": dockID})
+	body := map[string]interface{}{
+		"state":   "attached",
+		"dock_id": dockID,
+	}
+	for k, v := range attachGuidance() {
+		body[k] = v
+	}
+	writeJSON(w, http.StatusOK, body)
 }
 
 func randomHex(n int) string {

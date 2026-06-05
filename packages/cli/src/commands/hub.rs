@@ -107,8 +107,19 @@ pub fn attach(
                 }
                 // 202 = pending, keep polling
             }
-            Err(ureq::Error::Status(404, _)) => {
-                return Err("device code expired or not found\n\n  Fix: run treeship hub attach again to get a new code".into());
+            Err(ureq::Error::Status(code, _)) => {
+                // The Hub reports distinct terminal states so we can tell the
+                // user exactly what happened instead of a catch-all message.
+                //   404 unknown code   410 expired   409 already used
+                let reason = match code {
+                    404 => "device code not found",
+                    410 => "device code expired",
+                    409 => "device code already used",
+                    _   => "hub activation failed",
+                };
+                return Err(format!(
+                    "{reason}\n\n  Fix: run treeship hub attach again to get a new code"
+                ).into());
             }
             Err(e) => {
                 return Err(format!("polling error: {e}").into());
@@ -167,10 +178,33 @@ pub fn attach(
         ("hub id",   &final_hub_id),
         ("endpoint", &endpoint),
     ]);
+    printer.blank();
+    print_attach_next_steps(printer);
     printer.hint("view your workspace: treeship hub open");
     printer.blank();
 
     Ok(())
+}
+
+/// Print concrete next steps after a successful attach.
+///
+/// The commands are provider-neutral templates: signing an external system
+/// receipt, pushing it, and verifying it anywhere. The example uses
+/// `system://zmem` with a `memory.proof` kind purely to illustrate one
+/// customer's memory-proof workflow -- ZMem is an example, not built-in
+/// behavior, and `--system`/`--kind` accept any value.
+fn print_attach_next_steps(printer: &Printer) {
+    printer.info("next steps:");
+    printer.info("  treeship status                                check ship + hub state");
+    printer.info("  treeship attest receipt --system system://<your-system> \\");
+    printer.info("    --kind <kind> --payload-file <file>          sign an external receipt");
+    printer.info("  treeship hub push <artifact-id>                share a signed artifact");
+    printer.info("  treeship verify <artifact-id>                  verify it anywhere");
+    printer.blank();
+    printer.dim_info("  example (memory proof):");
+    printer.dim_info("    treeship attest receipt --system system://zmem --kind memory.proof \\");
+    printer.dim_info("      --payload-file proof.json");
+    printer.blank();
 }
 
 // ---------------------------------------------------------------------------

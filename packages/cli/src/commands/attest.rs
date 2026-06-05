@@ -95,6 +95,15 @@ pub fn action(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std
         obj.insert("approval_use_id".into(), Value::String(use_id.clone()));
         meta = Some(Value::Object(obj));
     }
+    if let Some(ref output_digest) = args.output_digest {
+        let mut obj = match meta.take() {
+            Some(Value::Object(map)) => map,
+            Some(_other) => return Err("--meta must be a JSON object when --output-digest is set".into()),
+            None => serde_json::Map::new(),
+        };
+        obj.insert("output_digest".into(), Value::String(output_digest.clone()));
+        meta = Some(Value::Object(obj));
+    }
     stmt.meta = meta;
 
     let signer = ctx.keys.default_signer()?;
@@ -323,23 +332,33 @@ pub fn handoff(args: HandoffArgs, printer: &Printer) -> Result<(), Box<dyn std::
 // --- receipt ----------------------------------------------------------------
 
 pub struct ReceiptArgs {
-    pub system:     String,
-    pub kind:       String,
-    pub subject_id: Option<String>,
-    pub payload:    Option<String>,
-    pub config:     Option<String>,
+    pub system:         String,
+    pub kind:           String,
+    pub subject_id:     Option<String>,
+    pub payload:        Option<String>,
+    pub payload_file:   Option<String>,
+    pub payload_digest: Option<String>,
+    pub config:         Option<String>,
 }
 
 pub fn receipt(args: ReceiptArgs, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(args.config.as_deref())?;
 
-    let payload_val: Option<Value> = args.payload.as_deref()
+    let payload_text = match (&args.payload, &args.payload_file) {
+        (Some(payload), None) => Some(payload.clone()),
+        (None, Some(path)) => Some(std::fs::read_to_string(path)
+            .map_err(|e| format!("could not read --payload-file {path}: {e}"))?),
+        (None, None) => None,
+        (Some(_), Some(_)) => return Err("--payload and --payload-file cannot be used together".into()),
+    };
+    let payload_val: Option<Value> = payload_text.as_deref()
         .map(serde_json::from_str)
         .transpose()
-        .map_err(|e| format!("--payload is not valid JSON: {e}"))?;
+        .map_err(|e| format!("receipt payload is not valid JSON: {e}"))?;
 
     let mut stmt = ReceiptStatement::new(&args.system, &args.kind);
     stmt.payload = payload_val;
+    stmt.payload_digest = args.payload_digest.clone();
     if let Some(id) = &args.subject_id {
         stmt.subject = Some(SubjectRef {
             artifact_id: Some(id.clone()),

@@ -1,0 +1,165 @@
+---
+title: Memory Providers
+description: Use Treeship as the portable proof layer for agent memory systems.
+---
+
+# Memory Providers
+
+Agent memory systems should own memory selection, ranking, policy, storage, and local recall. Treeship should own portable proof: signed artifacts, offline verification, bundles, handoffs, and Hub sharing.
+
+This page is a provider contract. ZMem can use it, but so can Mem0, Zep, Letta, a SQLite memory store, or an in-house retrieval layer.
+
+The rule is simple:
+
+- Use a Treeship action artifact for the memory operation itself.
+- Use a Treeship receipt artifact when the memory provider already produced its own local proof and wants that proof to travel.
+- Sign URIs, digests, and proof summaries by default. Do not put raw private memories, embeddings, or prompts into Treeship artifacts unless the operator explicitly chooses to.
+
+## Provider Identity
+
+Each provider chooses a stable system URI:
+
+```text
+system://zmem
+system://mem0
+system://zep
+system://letta
+system://acme-memory
+```
+
+Use that URI consistently in receipt artifacts and metadata. For individual memory subjects, use stable memory URIs:
+
+```text
+memory://zmem/default/task-preferences
+memory://mem0/users/u_123/facts/fact_456
+memory://zep/sessions/s_123/messages/m_456
+memory://acme-memory/project-alpha/decision/d_789
+```
+
+The URI names the thing. The digest proves which private content or query/result payload was used.
+
+## Memory Actions
+
+Memory providers can attest reads, writes, deletes, compactions, retrievals, and injections without exposing private memory content:
+
+```bash
+treeship attest action \
+  --actor agent://codex \
+  --action memory.read \
+  --subject memory://<provider>/<namespace>/<key> \
+  --input-digest sha256:... \
+  --output-digest sha256:... \
+  --meta '{"memory_provider":"system://<provider>","namespace":"default","query_digest":"sha256:...","result_digest":"sha256:..."}'
+```
+
+Treeship signs the actor, operation, subject URI, input digest, output digest, timestamp, and metadata. The memory provider decides what the digests mean and how to re-check them.
+
+Recommended action labels:
+
+```text
+memory.read
+memory.write
+memory.delete
+memory.query
+memory.retrieve
+memory.inject
+memory.compact
+memory.handoff
+```
+
+For sensitive writes or deletes, mint a scoped approval first:
+
+```bash
+treeship attest approval \
+  --approver human://owner \
+  --allowed-action memory.delete \
+  --allowed-subject memory://<provider>/<namespace>/<key> \
+  --max-uses 1
+```
+
+The memory system can then consume the approval nonce when it signs the action.
+
+## Provider Receipts
+
+Use provider receipts when the memory system has its own local proof, such as a Merkle root, append-only event log checkpoint, policy decision, retrieval trace, or index commit.
+
+Use:
+
+```text
+system = system://<provider>
+kind   = memory.proof
+```
+
+The receipt payload should be a JSON object with enough information for a verifier to understand the memory decision without trusting the provider UI:
+
+```json
+{
+  "schema": "com.example.memory.proof.v1",
+  "provider": "system://acme-memory",
+  "subject": {
+    "type": "memory_action",
+    "id": "mem_action_123",
+    "agent_id": "codex"
+  },
+  "object": {
+    "retrieved_memory_ids": ["mem_a", "mem_b"],
+    "injected_memory_ids": ["mem_a"],
+    "withheld_memory_ids": []
+  },
+  "evidence": {
+    "query_digest": "sha256:...",
+    "result_digest": "sha256:...",
+    "merkle_root": "...",
+    "event_log_checkpoint": "..."
+  }
+}
+```
+
+Then sign it:
+
+```bash
+treeship attest receipt \
+  --system system://acme-memory \
+  --kind memory.proof \
+  --payload-file memory-proof.json \
+  --payload-digest sha256:...
+```
+
+The resulting Treeship artifact is the portable proof handle. Push it to Hub when you need a shareable URL:
+
+```bash
+treeship hub push art_...
+```
+
+## ZMem Example
+
+ZMem uses the same provider contract with:
+
+```text
+system = system://zmem
+kind   = memory.proof
+```
+
+Its receipt payload includes the ZMem action id, retrieved/injected/withheld memory ids, policy checks, event Merkle root, bundle hash, and local verification result. Treeship does not need to understand those ZMem semantics; it signs and verifies the receipt payload, then makes it portable.
+
+## Division Of Responsibility
+
+A memory provider proves:
+
+- which memories were retrieved,
+- which memories were injected,
+- which memories were withheld,
+- which policy checks ran,
+- which event logs, index commits, Merkle roots, or local receipts backed the decision.
+
+Treeship proves:
+
+- which actor signed a memory operation,
+- which memory URI or digest the operation targeted,
+- who signed the memory proof,
+- when it was signed,
+- that the payload was not modified,
+- that the proof can be verified offline,
+- that the proof can be bundled, handed off, or shared.
+
+Do not duplicate provider-specific memory semantics inside Treeship. Treeship signs and verifies the memory proof payload; the provider remains responsible for recall, policy, indexing, and proof interpretation.

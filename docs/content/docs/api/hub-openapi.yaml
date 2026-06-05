@@ -57,15 +57,43 @@ paths:
           schema: { type: string }
       responses:
         '200':
-          description: Approved
+          description: |
+            Browser approved (state `approved`) or device attached (state
+            `attached`). `attached` includes `dock_id` plus provider-neutral
+            `next_steps` and an illustrative `example`.
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  hub_id: { type: string, example: "hub_9f8e7d6c" }
+                  state:      { type: string, enum: [approved, attached] }
+                  dock_id:    { type: string, example: "hub_9f8e7d6c" }
+                  next_steps: { type: array, items: { type: string } }
+                  example:    { type: string }
         '202':
           description: Pending -- user has not approved yet
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  state: { type: string, example: "pending" }
+        '404':
+          description: Unknown device code (never issued, or purged past expiry)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  state: { type: string, example: "invalid" }
+        '410':
+          description: Device code expired before it was attached
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  state: { type: string, example: "expired" }
 
   /v1/hub/authorize:
     post:
@@ -86,13 +114,34 @@ paths:
                 hub_public_key:   { type: string, description: "hex-encoded Ed25519 public key" }
       responses:
         '200':
-          description: Attached
+          description: |
+            Browser approval (state `approved`) or device attached
+            (state `attached`, with `dock_id`, `next_steps`, `example`).
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  hub_id: { type: string }
+                  state:      { type: string, enum: [approved, attached] }
+                  dock_id:    { type: string }
+                  next_steps: { type: array, items: { type: string } }
+                  example:    { type: string }
+        '409':
+          description: Device code already used (challenge already finalized)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  state: { type: string, example: "already_attached" }
+        '410':
+          description: Device code expired
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  state: { type: string, example: "expired" }
 
   /v1/artifacts:
     post:
