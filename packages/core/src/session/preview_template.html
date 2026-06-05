@@ -183,7 +183,10 @@ code{font-family:var(--mono);font-size:.75rem;background:var(--surface-2);paddin
 let R=null;
 try{
   const rawReceipt=document.getElementById('receipt-data').textContent.trim();
-  if(rawReceipt==='__RECEIPT_JSON__')throw new Error('template placeholder');
+  // The sentinel is split so the build-time substitution of the data-slot
+  // token only matches the data block above, never this comparison. It
+  // reassembles at runtime to still detect an unsubstituted template.
+  if(rawReceipt==='__RECEIPT'+'_JSON__')throw new Error('template placeholder');
   R=JSON.parse(rawReceipt);
 }catch(e){
   document.getElementById('loading').innerHTML='<div style="max-width:560px;padding:2rem;text-align:left"><div style="font-size:1.15rem;font-weight:700;color:var(--text);margin-bottom:.5rem">This is the receipt template</div><div style="font-size:.86rem;color:var(--muted);line-height:1.7">Open a generated <code>preview.html</code> from a <code>.treeship</code> package, or run <code>treeship dashboard</code> and open a receipt from there. The source template has no embedded <code>receipt.json</code>, so there is nothing to verify yet.</div></div>';
