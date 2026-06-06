@@ -1393,6 +1393,14 @@ struct AttestReceiptArgs {
     /// Receipt payload as a JSON object
     #[arg(long, value_name = r#"'{"key":"val"}'"#)]
     payload: Option<String>,
+
+    /// Read receipt payload JSON from a file
+    #[arg(long, value_name = "PATH", conflicts_with = "payload")]
+    payload_file: Option<String>,
+
+    /// Digest of the external payload, for example sha256:<hex>
+    #[arg(long, value_name = "DIGEST")]
+    payload_digest: Option<String>,
 }
 
 #[derive(Args)]
@@ -2272,11 +2280,13 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             ),
             AttestCommand::Receipt(a) => commands::attest::receipt(
                 commands::attest::ReceiptArgs {
-                    system:     a.system.clone(),
-                    kind:       a.kind.clone(),
-                    subject_id: a.subject.clone(),
-                    payload:    a.payload.clone(),
-                    config:     cli.config.clone(),
+                    system:         a.system.clone(),
+                    kind:           a.kind.clone(),
+                    subject_id:     a.subject.clone(),
+                    payload:        a.payload.clone(),
+                    payload_file:   a.payload_file.clone(),
+                    payload_digest: a.payload_digest.clone(),
+                    config:         cli.config.clone(),
                 },
                 printer,
             ),

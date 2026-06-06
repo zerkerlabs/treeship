@@ -46,6 +46,76 @@ Outputs session id, name, actor, started-at timestamp, artifact count verified a
 
 If no session is active, exits cleanly with a hint to run `session start`.
 
+## treeship session invite
+
+Mint a single-use, expiring invitation that lets a second agent join an existing session. This is the host side of the [multi-agent session](/docs/concepts/multi-agent-sessions) lifecycle.
+
+```bash
+treeship session invite ssn_abc --invitee-cert "ed25519:ISSUER:org-x" --expires 1h
+treeship session invite ssn_abc --invitee-pubkey deadbeefdeadbeef --capabilities tool.call
+treeship session invite ssn_abc --open --expires 30m
+```
+
+### Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `[session_id]` | Session to mint the invitation for. Defaults to the active session. |
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--invitee-cert <issuer:subjects>` | Cert-restricted invitation. Format is `<issuer_pubkey>:<subject1,subject2,...>`. |
+| `--invitee-pubkey <fp-or-pubkey>` | Pubkey-restricted invitation. A 16-hex fingerprint or a full canonical pubkey. |
+| `--open` | Open invitation that anyone holding the blob can redeem. Opt-in only. |
+| `--capabilities <types>` | Comma-separated action types to grant. Defaults to `tool.call`. |
+| `--expires <duration>` | Lifetime such as `30s`, `5m`, `1h`, `7d`. Defaults to 1 hour. The protocol max is 7 days. |
+| `--format <text\|json>` | Output format. JSON returns `{ invitation_id, bootstrap_blob, session_ref, expires_at }`. |
+| `--no-armor` | Emit raw JSON instead of the armored blob. |
+
+Exactly one of `--invitee-cert`, `--invitee-pubkey`, or `--open` is required. The command signs the invitation with the keystore's default key (the session host), persists it under the artifact store, and prints an armored `-----BEGIN TREESHIP INVITATION-----` bootstrap blob on stdout.
+
+<Callout type="info">
+A joining agent only honors the invitation if the host's issuer key is pinned locally as a `session_host` trust root. Pin it with `treeship trust add <key_id> ed25519:<pubkey> --kind session_host --yes`. See [Multi-Agent Sessions](/docs/concepts/multi-agent-sessions#the-sessionhost-trust-root).
+</Callout>
+
+## treeship session join
+
+Redeem an invitation and emit a pending participant event. This is the joiner side of the lifecycle.
+
+```bash
+treeship session join --invite-file ./invite.blob --actor agent://researcher
+cat ./invite.blob | treeship session join --invite - --actor agent://qa
+```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--invite <blob>` | Paste the bootstrap blob inline. Use `-` to read from stdin. |
+| `--invite-file <path>` | Read the bootstrap blob from a file. |
+| `--actor <uri>` | Joining agent's actor URI, such as `agent://researcher` (required). |
+| `--format <text\|json>` | Output format. |
+
+The command pins the issuer against the local `SessionHost` trust roots, verifies the invitation signature, checks expiry and restriction, records the nonce in the Approval Use Journal with `max_uses=1`, and emits a single-signature participant envelope that is pending the host countersign. It prints the participant artifact id to pass to `session countersign`. A second join against the same invitation fails through the journal's single-use path.
+
+## treeship session countersign
+
+Host countersigns a pending participant event. After this runs, the participant envelope carries two signatures (joining agent plus host) and verifies as a finalized join.
+
+```bash
+treeship session countersign art_part_abc123
+```
+
+### Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `participant_id` | Participant artifact id produced by `session join`. |
+
+The command confirms the running default key matches the invitation's issuer, attaches the host countersign over the same canonical bytes, self-verifies, and overwrites the storage record with the finalized two-signature envelope. A participant envelope is invalid until both signatures are present.
+
 ## treeship session close
 
 Close the active session, compose the Session Receipt, and write a `.treeship` package.

@@ -1,0 +1,65 @@
+---
+title: Multi-Agent Sessions
+description: Let a second agent join an existing session through a signed, single-use, expiring invitation that the host countersigns.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+A multi-agent session lets a second agent join a session that another agent already started, with the join recorded as a signed, verifiable fact. Phase 1 of this model ships three CLI subcommands that wire one lifecycle: the host mints an invitation, a second agent joins against it, and the host countersigns the join.
+
+The result is a participant envelope that carries two signatures: the joining agent's assertion of "I am joining" and the host's countersign of "I observed this join." Either signature alone is invalid, so a join cannot be forged by the joiner and cannot be fabricated by the host after the fact.
+
+## The lifecycle
+
+```text
+host:    treeship session invite <session_id>   ->  prints an invitation blob
+joiner:  treeship session join --invite <blob> --actor agent://...
+host:    treeship session countersign <participant_artifact_id>
+```
+
+### 1. Invite
+
+The host runs [`treeship session invite`](/docs/cli/session#treeship-session-invite) against the active session. It mints and signs an invitation with the keystore's default key, persists it under the artifact store, and prints an armored bootstrap blob beginning with `-----BEGIN TREESHIP INVITATION-----`.
+
+Every invitation is restricted. You pick exactly one restriction:
+
+| Restriction | Flag | Who can redeem |
+|-------------|------|----------------|
+| Certificate | `--invitee-cert <issuer_pubkey>:<subjects>` | A holder whose certificate is issued by the named issuer for one of the allowed subjects. |
+| Public key | `--invitee-pubkey <fingerprint-or-pubkey>` | The single agent that holds the named key. |
+| Open | `--open` | Anyone holding the blob. Opt-in only, because it accepts any holder. |
+
+An invitation also carries the granted capability action types, an expiry, a `max_uses` of 1, and a random nonce. The default lifetime is 1 hour and the protocol ceiling is 7 days.
+
+### 2. Join
+
+The second agent runs [`treeship session join`](/docs/cli/session#treeship-session-join) with the blob and its own actor URI. The command:
+
+- Decodes the blob and pins the issuer against the local `SessionHost` trust roots.
+- Verifies the invitation signature, then checks expiry and restriction.
+- Writes the invitation's nonce into the Approval Use Journal with `max_uses=1`, so a second join attempt fails through the journal's existing single-use path.
+- Emits a single-signature, pending-countersign participant envelope and prints its artifact id.
+
+### 3. Countersign
+
+The host runs [`treeship session countersign`](/docs/cli/session#treeship-session-countersign) with that participant artifact id. The command confirms the running default key matches the invitation's issuer, attaches the host countersign over the same canonical bytes, self-verifies, and overwrites the storage record with the finalized two-signature envelope.
+
+A participant envelope is only valid once both signatures are present. Verification rejects an envelope that is missing the host countersign, carries too many signatures, has any signature that does not verify, or whose countersign key does not match the invitation's issuer.
+
+## The SessionHost trust root
+
+The invitation issuer's public key is embedded in every invitation. Before `treeship session join` honors an invitation, that key must be pinned locally as a `session_host` trust root. Without the pin, a self-signed forgery would verify cryptographically but be quarantined by trust-root enforcement.
+
+Pin a host with:
+
+```bash
+treeship trust add <key_id> ed25519:<pubkey> --kind session_host --yes
+```
+
+<Callout type="info">
+`session_host` is a separate trust kind from `ship`, `hub_checkpoint`, and `agent_cert`. A machine can trust a hub org's checkpoints without implicitly trusting that org to host multi-agent sessions. The trust kinds do not cross over.
+</Callout>
+
+## Inspecting sessions locally
+
+[`treeship dashboard`](/docs/cli/dashboard) is the read-only, localhost-only way to inspect sessions and their participants. It reads sealed `.treeship` packages from disk and surfaces trust status, agent membership, receipts, reports, and capabilities without requiring a hub. It also exposes JSON endpoints so the same data is scriptable.

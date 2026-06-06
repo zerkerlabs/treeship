@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -36,7 +37,13 @@ CREATE TABLE IF NOT EXISTS dock_challenges (
   expires_at      INTEGER NOT NULL,
   approved        INTEGER DEFAULT 0,
   dock_public_key BLOB,
-  ship_public_key BLOB
+  ship_public_key BLOB,
+  -- dock_id is NULL until the CLI finalizes the device flow. A non-NULL
+  -- dock_id is the terminal "attached" state: the challenge has been
+  -- consumed and the ship record created. We keep the row (rather than
+  -- deleting on finalize) so the browser activation page can poll and see
+  -- "attached" instead of a misleading "not found" 404.
+  dock_id         TEXT
 );
 
 CREATE TABLE IF NOT EXISTS dpop_jtis (
@@ -146,7 +153,32 @@ func Open() (*sql.DB, error) {
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
 
+	if err := migrate(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
+
 	return db, nil
+}
+
+// migrate applies idempotent schema additions for databases created before a
+// column existed. CREATE TABLE IF NOT EXISTS never alters an existing table,
+// so new columns must be added explicitly. Each ALTER tolerates the
+// "duplicate column name" error so re-running against an up-to-date DB is a
+// no-op.
+func migrate(db *sql.DB) error {
+	addColumns := []string{
+		`ALTER TABLE dock_challenges ADD COLUMN dock_id TEXT`,
+	}
+	for _, stmt := range addColumns {
+		if _, err := db.Exec(stmt); err != nil {
+			if strings.Contains(err.Error(), "duplicate column name") {
+				continue
+			}
+			return fmt.Errorf("%s: %w", stmt, err)
+		}
+	}
+	return nil
 }
 
 // --- dock_challenges ---
@@ -168,23 +200,24 @@ func InsertChallenge(db *sql.DB, deviceCode, nonce string, expiresAt int64) erro
 }
 
 func GetChallenge(db *sql.DB, deviceCode string) (*Challenge, error) {
+	const cols = `device_code, nonce, expires_at, approved, COALESCE(dock_id, '')`
 	// Try exact match first (full 16-char code).
 	row := db.QueryRow(
-		`SELECT device_code, nonce, expires_at, approved FROM dock_challenges WHERE device_code = ?`,
+		`SELECT `+cols+` FROM dock_challenges WHERE device_code = ?`,
 		deviceCode,
 	)
 	c := &Challenge{}
 	var approved int
-	if err := row.Scan(&c.DeviceCode, &c.Nonce, &c.ExpiresAt, &approved); err != nil {
+	if err := row.Scan(&c.DeviceCode, &c.Nonce, &c.ExpiresAt, &approved, &c.DockID); err != nil {
 		// If exact match fails and input is 8 chars (legacy CLI prefix),
 		// try prefix match. LIKE is safe here because we already validated
 		// the input as ^[0-9a-f]{8,16}$ before calling this function.
 		if len(deviceCode) < 16 {
 			row = db.QueryRow(
-				`SELECT device_code, nonce, expires_at, approved FROM dock_challenges WHERE device_code LIKE ? LIMIT 1`,
+				`SELECT `+cols+` FROM dock_challenges WHERE device_code LIKE ? LIMIT 1`,
 				deviceCode+"%",
 			)
-			if err2 := row.Scan(&c.DeviceCode, &c.Nonce, &c.ExpiresAt, &approved); err2 != nil {
+			if err2 := row.Scan(&c.DeviceCode, &c.Nonce, &c.ExpiresAt, &approved, &c.DockID); err2 != nil {
 				return nil, err // return original error
 			}
 			c.Approved = approved == 1
@@ -209,12 +242,23 @@ func DeleteChallenge(db *sql.DB, deviceCode string) error {
 	return err
 }
 
-// ConsumeChallenge atomically deletes a challenge by device_code + nonce.
-// Returns true if exactly one row was deleted (single-use guarantee).
-func ConsumeChallenge(db *sql.DB, deviceCode string, nonce string) (bool, error) {
+// FinalizeChallenge atomically claims an approved challenge for a dock_id.
+// It is the single-use gate for the device flow: the UPDATE only matches when
+// the challenge is approved and not yet finalized (dock_id IS NULL), so a
+// concurrent or replayed finalize sees zero rows affected and must be rejected.
+//
+// This replaces the previous delete-on-consume behavior. Keeping the row and
+// recording the resulting dock_id lets GET /v1/dock/authorized report a
+// terminal "attached" state instead of a misleading "not found" once the CLI
+// has completed, which was the source of the dogfooded "device_code not found
+// then Attached" flash on the activation page.
+//
+// Returns true if this call won the claim (exactly one row updated).
+func FinalizeChallenge(db *sql.DB, deviceCode string, nonce string, dockID string) (bool, error) {
 	result, err := db.Exec(
-		`DELETE FROM dock_challenges WHERE device_code = ? AND nonce = ? AND approved = 1`,
-		deviceCode, nonce,
+		`UPDATE dock_challenges SET dock_id = ?
+		 WHERE device_code = ? AND nonce = ? AND approved = 1 AND dock_id IS NULL`,
+		dockID, deviceCode, nonce,
 	)
 	if err != nil {
 		return false, err
@@ -224,6 +268,29 @@ func ConsumeChallenge(db *sql.DB, deviceCode string, nonce string) (bool, error)
 		return false, err
 	}
 	return rows == 1, nil
+}
+
+// ReleaseChallenge clears a previously claimed dock_id. It is a best-effort
+// rollback used only when ship creation fails after FinalizeChallenge has
+// already claimed the challenge, so the device code is not left stuck in a
+// half-finalized state pointing at a ship that was never created.
+func ReleaseChallenge(db *sql.DB, deviceCode string, dockID string) error {
+	_, err := db.Exec(
+		`UPDATE dock_challenges SET dock_id = NULL WHERE device_code = ? AND dock_id = ?`,
+		deviceCode, dockID,
+	)
+	return err
+}
+
+// CleanExpiredChallenges purges challenge rows whose expiry has passed beyond a
+// grace window. The grace window keeps recently-expired and recently-attached
+// codes queryable long enough for in-flight activation pages to render a
+// precise "expired" or "attached" state before the row disappears. Once a code
+// is well past expiry it is purged, after which it correctly reads as an
+// unknown (invalid) code.
+func CleanExpiredChallenges(db *sql.DB, before int64) error {
+	_, err := db.Exec(`DELETE FROM dock_challenges WHERE expires_at < ?`, before)
+	return err
 }
 
 // --- ships ---
@@ -386,16 +453,16 @@ func CleanExpiredWorkspaceSessions(db *sql.DB, now int64) error {
 // --- merkle_checkpoints ---
 
 type MerkleCheckpoint struct {
-	ID            int64   `json:"id"`
-	RootHex       string  `json:"root"`
-	TreeSize      int64   `json:"tree_size"`
-	Height        int     `json:"height"`
-	SignedAt      string  `json:"signed_at"`
-	SignerKeyID   string  `json:"signer"`
-	SignatureB64  string  `json:"signature"`
-	PublicKeyB64  string  `json:"public_key"`
-	RekorIndex    *int64  `json:"rekor_index"`
-	DockID        *string `json:"dock_id"`
+	ID           int64   `json:"id"`
+	RootHex      string  `json:"root"`
+	TreeSize     int64   `json:"tree_size"`
+	Height       int     `json:"height"`
+	SignedAt     string  `json:"signed_at"`
+	SignerKeyID  string  `json:"signer"`
+	SignatureB64 string  `json:"signature"`
+	PublicKeyB64 string  `json:"public_key"`
+	RekorIndex   *int64  `json:"rekor_index"`
+	DockID       *string `json:"dock_id"`
 }
 
 func InsertCheckpoint(database *sql.DB, cp *MerkleCheckpoint, dockID string) (int64, error) {
@@ -445,11 +512,11 @@ func GetLatestCheckpoint(database *sql.DB, dockID string) (*MerkleCheckpoint, er
 // --- merkle_proofs ---
 
 type MerkleProof struct {
-	ArtifactID   string `json:"artifact_id"`
-	CheckpointID int64  `json:"checkpoint_id"`
-	LeafIndex    int64  `json:"leaf_index"`
-	LeafHash     string `json:"leaf_hash"`
-	ProofJSON    string `json:"proof_json"`
+	ArtifactID   string  `json:"artifact_id"`
+	CheckpointID int64   `json:"checkpoint_id"`
+	LeafIndex    int64   `json:"leaf_index"`
+	LeafHash     string  `json:"leaf_hash"`
+	ProofJSON    string  `json:"proof_json"`
 	DockID       *string `json:"dock_id"`
 }
 
@@ -467,17 +534,17 @@ func InsertProof(database *sql.DB, artifactID string, checkpointID int64, leafIn
 // Session represents a row in the sessions table.
 // ReceiptJSON is nil when the session is open (registered but no receipt yet).
 type Session struct {
-	SessionID    string
-	DockID       string
-	Name         *string
-	StartedAt    *string
-	EndedAt      *string
-	DurationMS   *int64
-	Status       string
-	AgentCount   int
-	ActionCount  int
-	ReceiptJSON  *string
-	UploadedAt   *int64
+	SessionID   string
+	DockID      string
+	Name        *string
+	StartedAt   *string
+	EndedAt     *string
+	DurationMS  *int64
+	Status      string
+	AgentCount  int
+	ActionCount int
+	ReceiptJSON *string
+	UploadedAt  *int64
 }
 
 // InsertSessionWriteOnce atomically inserts a session with its receipt.

@@ -200,6 +200,16 @@ treeship attest receipt \
   --payload '{"eventId":"evt_abc","status":"succeeded"}'
 ```
 
+For larger structured receipts, read the payload from a file:
+
+```bash
+treeship attest receipt \
+  --system system://acme-memory \
+  --kind memory.proof \
+  --payload-file memory-proof.json \
+  --payload-digest sha256:...
+```
+
 ### Options
 
 | Option | Description |
@@ -208,5 +218,7 @@ treeship attest receipt \
 | `--kind <type>` | Receipt kind: confirmation, timestamp, inclusion, webhook (required) |
 | `--subject <id>` | Subject artifact ID |
 | `--payload <json>` | Receipt payload as a JSON object |
+| `--payload-file <path>` | Read receipt payload JSON from a file |
+| `--payload-digest <digest>` | Digest of the external payload, for example `sha256:<hex>` |
 </Tab>
 </Tabs>

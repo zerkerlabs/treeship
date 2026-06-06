@@ -42,8 +42,22 @@ attached
   name:      default
   hub id:    hub_661e5463912d
   endpoint:  api.treeship.dev
-  workspace: treeship.dev/workspace/hub_661e5463912d
+
+next steps:
+  treeship status                                check ship + hub state
+  treeship attest receipt --system system://<your-system> \
+    --kind <kind> --payload-file <file>          sign an external receipt
+  treeship hub push <artifact-id>                share a signed artifact
+  treeship verify <artifact-id>                  verify it anywhere
+
+  example (memory proof):
+    treeship attest receipt --system system://zmem --kind memory.proof \
+      --payload-file proof.json
+
+  view your workspace: treeship hub open
 ```
+
+The `next steps` commands are provider-neutral templates. The example shows one customer's memory-proof workflow (`system://zmem`, `memory.proof`); `--system` and `--kind` accept any value.
 </Tab>
 <Tab value="Named">
 ```bash

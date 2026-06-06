@@ -21,3 +21,4 @@ npm/@treeship/cli-*/expected-checksum.txt
 # the bootstrap can verify the GitHub Release download against a
 # PyPI-delivered hash. Never committed.
 packages/sdk-python/treeship_sdk/_data/expected-checksum-*.txt
+.gstack/
