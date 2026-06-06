@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.12.0 (2026-06-06)
+
+### Added
+
+- **`treeship attest receipt --payload-file` and `--payload-digest` for external proof receipts.** Providers can now sign a receipt over a JSON payload read from a file (mutually exclusive with `--payload`) and record a `payload_digest` for large or out-of-band payloads. `treeship attest action` gains `--output-digest`, folded into the action's `meta`. The flags are provider-neutral: `--system` and `--kind` accept any value. New docs describe the provider contract at [`integrations/memory-proofs`](docs/content/docs/integrations/memory-proofs.mdx) (usable by ZMem, Mem0, Zep, Letta, a SQLite store, or an in-house layer) and [`concepts/multi-agent-sessions`](docs/content/docs/concepts/multi-agent-sessions.mdx). ZMem is one worked example, not built-in behavior.
+- **Explicit Hub device-flow states.** `GET /v1/dock/authorized` and `POST /v1/dock/authorize` now return a stable `state` field covering `invalid`, `expired`, `pending`, `approved`, `attached`, and `already_attached`, plus provider-neutral `next_steps` on attach. `treeship hub attach` reports distinct poll errors (404 / 410 / 409) and concrete next steps (`status`, `attest receipt`, `hub push`, `verify`). New `packages/hub/internal/dock/dock_test.go` covers every state and the regression below.
+
+### Fixed
+
+- **Hub activation no longer flashes "device_code not found" before attaching.** Device-flow finalization deleted the challenge row on consume, so a browser still polling `GET /v1/dock/authorized` after the CLI finalized received a 404 that rendered as "device_code not found" even though attach had succeeded. Finalization now atomically claims the challenge by `dock_id` (preserving the single-use guarantee) and retains the row behind a bounded grace window, so the activation page reads the terminal `attached` state. DPoP and Hub auth invariants are unchanged. An idempotent `ALTER TABLE` migration adds the `dock_id` column to existing Hub databases. (#119)
+
 ## 0.11.2 (2026-06-05)
 
 ### Fixed
