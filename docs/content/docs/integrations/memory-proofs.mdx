@@ -142,6 +142,37 @@ kind   = memory.proof
 
 Its receipt payload includes the ZMem action id, retrieved/injected/withheld memory ids, policy checks, event Merkle root, bundle hash, and local verification result. Treeship does not need to understand those ZMem semantics; it signs and verifies the receipt payload, then makes it portable.
 
+## Boundary Proofs
+
+When the memory decision is itself an evaluation, a gate deciding which memories to inject and which to withhold, the receipt payload should follow the [`treeship.boundary.v1`](/docs/concepts/actor-checker-boundaries) shape. A boundary proof records what the gate was allowed to see, what the policy denied, and the decision it reached, split into a proven zone (digests, keys, ordering) and an asserted zone (human-readable detail). It is how a reviewer confirms the gate was independent without trusting the provider.
+
+The same memory-proof fields map directly onto the boundary shape:
+
+```json
+{
+  "schema": "treeship.boundary.v1",
+  "subject_ref": "art_<actor-signed-memory-action>",
+  "actor":   { "uri": "agent://codex", "keyid": "key_actor..." },
+  "checker": { "uri": "system://zmem", "keyid": "key_zmem..." },
+  "decision": "partial",
+  "outcome":  { "profile": "memory.proof", "injected": 3, "withheld": 2 },
+  "policy":   { "ref": "policy://zmem/default#v1", "digest": "sha256:..." },
+  "diet_root": "sha256:...",
+  "diet": [
+    { "type": "memory_bundle", "digest": "sha256:..." },
+    { "type": "query",         "digest": "sha256:..." }
+  ],
+  "committed_at": { "anchor": "merkle://zmem/...#<index>", "ts": "..." },
+  "asserted": {
+    "policy_excludes_echo": ["chain_of_thought", "scratchpad"],
+    "injected_memory_ids": ["mem_a", "mem_b", "mem_c"],
+    "withheld_memory_ids": ["mem_d", "mem_e"]
+  }
+}
+```
+
+The injected and withheld ids live in the asserted zone because they are the provider's account of the outcome. What is proven is the committed diet, the policy digest, the keys, and that the diet was frozen before the decision. Exclusion (no chain of thought, no scratchpad) is checked against the signed policy and the committed diet, not against the echo list. See [Actor-Checker Boundaries](/docs/concepts/actor-checker-boundaries) for the full schema and the honest limits.
+
 ## Division Of Responsibility
 
 A memory provider proves:

@@ -1,0 +1,164 @@
+---
+title: Actor-Checker Boundaries
+description: A portable, verifiable record of what a checker saw, what it was denied, and what it decided. Treeship proves the boundary; it does not draw it.
+---
+
+# Actor-Checker Boundaries
+
+A boundary proof records the moment one party (the checker) evaluates the work of another party (the actor): what the checker was allowed to see, what it was denied, the policy it applied, and the decision it reached. It is a receipt of an evaluation, not the evaluation itself.
+
+Treeship's job here is narrow and exact:
+
+> Treeship makes actor-checker boundaries portable and verifiable. The checker draws the boundary. Treeship proves the receipt.
+
+Treeship does not decide whether an action was correct, aligned, or safe. It signs a tamper-evident record from which a third party can later check that a boundary held, on different hardware, without trusting the checker, the actor, or any infrastructure.
+
+## Why the boundary matters
+
+A checker that shares too much context with the actor stops being a checker. If it reads the actor's chain of thought, preferred plan, or self-justifying narrative before forming its own judgment, it tends to ratify what the actor already decided. The result looks like oversight and behaves like a rubber stamp.
+
+The defense is separation, and separation is only meaningful if it can be inspected after the fact. "Our checker is independent" has the same weight as "our agent is aligned" until there is a record showing what the checker actually saw, when it saw it, and whether the actor could have shaped that evidence. A boundary proof is that record.
+
+## Two zones: proven and asserted
+
+Every boundary proof is split into two zones, and the split is the whole discipline.
+
+- **Proven.** Digests, signatures, identities, and ordering. These are facts a verifier can recompute and check. The actor cannot author them differently while the underlying reality stays the same.
+- **Asserted.** Anything the checker or actor says about itself in natural language. Recorded faithfully, never load-bearing for verification, and never rendered as if it were proof.
+
+The test for which zone a field belongs in: could the producer have written it differently while reality stayed identical? If yes, it is asserted. If it is a hash, a quote, a key, or a position in an ordered log, it is proven.
+
+This is why a boundary proof never carries a free-text field like "inputs I promise I did not read." A negative claim about your own behavior is not a proof. Exclusion is established a different way (see [Information diet](#information-diet)).
+
+## The `treeship.boundary.v1` payload
+
+A boundary proof is carried as the `payload` of a Treeship receipt artifact. It needs no new statement type and no new CLI surface.
+
+```json
+{
+  "schema": "treeship.boundary.v1",
+
+  "subject_ref": "art_<actor-signed-proposal>",
+  "actor":   { "uri": "agent://codex", "keyid": "key_actor..." },
+  "checker": { "uri": "system://zmem", "keyid": "key_checker..." },
+
+  "decision": "allow",
+  "outcome":  { "profile": "memory.proof", "injected": 3, "withheld": 2 },
+
+  "policy":   { "ref": "policy://zmem/default#v1", "digest": "sha256:..." },
+
+  "diet_root": "sha256:...",
+  "diet": [
+    { "type": "memory_bundle", "digest": "sha256:..." },
+    { "type": "tool_result",   "digest": "sha256:..." }
+  ],
+
+  "committed_at": { "anchor": "merkle://...#<index>", "ts": "2026-06-06T00:00:00Z" },
+
+  "asserted": {
+    "policy_excludes_echo": ["chain_of_thought", "scratchpad", "agent_self_narration"],
+    "note": "human-readable summary of the decision"
+  }
+}
+```
+
+### Proven fields
+
+| Field | Meaning |
+|-------|---------|
+| `subject_ref` | Content-addressed id of the actor-signed proposal this boundary evaluated. Binds the proof to a specific action. |
+| `actor.keyid` / `checker.keyid` | The signing keys of the two parties. The receipt is signed by `checker.keyid`. A verifier checks that the two keys differ and are rooted under their own trust anchors. The asymmetry lives in the signature, not in the URIs. |
+| `decision` | The neutral verdict: `allow`, `deny`, `partial`, or `abstain`. |
+| `policy.digest` | Content-addressed digest of the exact policy that was applied. Bound the way an action binds an approval: by hash, not by a version string a producer could mislabel. |
+| `diet_root` | Merkle root over the ordered set of inputs the checker committed to (the information diet). |
+| `diet[].digest` | Per-input digests that compose `diet_root`. |
+| `committed_at` | The anchor (Merkle checkpoint position and timestamp) proving the diet was frozen before the decision was produced. |
+
+### Asserted fields
+
+| Field | Meaning |
+|-------|---------|
+| `outcome` | Provider-specific detail (for example a memory gate's injected and withheld counts). Useful, but not a substitute for the proven fields. |
+| `asserted.policy_excludes_echo` | A human-readable echo of what the policy forbids. This is a convenience for display. It is **not** proof that those inputs were excluded. Exclusion is checked against the signed policy and the committed diet, never against this list. |
+| `asserted.note` | Free text. Display only. |
+
+## Identity and separation
+
+The `actor.uri` and `checker.uri` labels (`agent://codex`, `system://zmem`) are narrative metadata. They are human-readable conveniences, anyone can write any URI, and a verifier never treats them as evidence of anything.
+
+What proves separation is the keys. The receipt is signed by `checker.keyid`. Independence holds only when that key is distinct from `actor.keyid` and the two are pinned under their own trust roots. A boundary proof whose checker key equals the actor key, or whose keys share a trust root the verifier does not accept, is not independent no matter what the URIs say. Separation you can check beats separation you merely label.
+
+## Information diet
+
+The information diet is the set of inputs the checker committed to before deciding. It is recorded two ways, and only one of them is a proof:
+
+1. **What was included** is proven. `diet` lists the digests, `diet_root` commits them, and `committed_at` anchors the commitment before the decision. A verifier can confirm the checker decided over exactly this set and not a set assembled afterward to fit the verdict.
+2. **What was excluded** is derived, not asserted. The signed `policy` declares the allowed input classes. A verifier checks that every entry in `diet` is a class the policy permits. "The chain of thought was excluded" is then a checkable consequence of "the policy forbids it and the committed diet contains only permitted classes," not a promise the checker made about itself.
+
+This is the answer to the operator-visibility problem: a boundary proof shows what the checker saw and what it was denied, as facts, so a reviewer never has to take the checker's word for its own independence.
+
+A boundary proof records what the checker committed to reading. It does not, on its own, prove the diet was exhaustive. See [What a boundary proof does not prove](#what-a-boundary-proof-does-not-prove).
+
+## Decision and disagreement
+
+`decision` is a small neutral set:
+
+- `allow` the action proceeds.
+- `deny` the action is blocked.
+- `partial` some of the action proceeds (for example a memory gate that injects three memories and withholds two). Detail goes in `outcome`.
+- `abstain` the committed diet was insufficient for the checker to safely issue `allow` or `deny`. This is an explicit non-authorization, not a silent `allow`. An enforcer must fail closed on `abstain` (do not let the action proceed on its strength) and may escalate it, but the routing of that escalation is an enforcement concern and is deliberately not encoded in the proof. The proof records only the checker's epistemic verdict: given this evidence, it could not rule.
+
+Forcing every evaluation into `allow` or `deny` is itself a pressure toward `allow`. A checker that can honestly register "not enough to decide" is a checker that is not being quietly coerced into ratifying the actor.
+
+Disagreement is first class. A proof system that only records approvals is weak, because the only evidence that a checker is more than a notary is that it has, at least sometimes, said no. Denials and withholdings are signed with the same rigor and the same anchoring as approvals, so they can be counted as a class over time. "Has this checker ever blocked something the actor was confident about" becomes a query over the record rather than a matter of trust.
+
+## How it travels
+
+A boundary proof is the payload of a standard receipt artifact:
+
+```bash
+treeship attest receipt \
+  --system system://<checker> \
+  --kind memory.proof \
+  --payload-file boundary.json \
+  --payload-digest sha256:...
+```
+
+The resulting artifact is the portable proof handle. Push it to Hub for a shareable, third-party-verifiable URL:
+
+```bash
+treeship hub push art_...
+```
+
+## What a verifier checks
+
+Given a boundary proof, an independent party with no shared state can confirm:
+
+1. The receipt is signed by `checker.keyid`, and that key differs from `actor.keyid` and is rooted under its own trust anchor.
+2. `subject_ref` resolves to an actor-signed proposal, so the boundary is bound to a real action.
+3. `diet_root` matches the listed `diet`, and every `diet` entry is an input class the signed `policy` permits.
+4. `committed_at` anchors the diet before the decision, so the inputs were frozen rather than retrofitted.
+5. The `policy.digest` matches the policy the verifier expects (or one it is willing to accept).
+
+None of these checks require trusting the checker. They require only the receipt and the public verifier.
+
+## What a boundary proof does not prove
+
+Stating the limits is what keeps this from becoming the green-checkmark theater it is meant to replace.
+
+- **Authorization is not correctness.** A boundary proof can show that an action was permitted under a frozen policy and that the checker was independent. It cannot show that the policy was right, or that the authorized action served the user's actual goal. A signed, policy-compliant action can still be the wrong action.
+- **A committed diet is not an exhaustive diet.** The proof shows the checker decided over exactly the inputs it committed to. It does not, by itself, prove the checker had no side channel. Preventing off-diet reads is a property of the checker's runtime (input isolation), not of the receipt. The receipt makes the committed diet auditable and revocable; it does not make the runtime honest.
+- **Faithfulness depends on the registrar.** The proof's guarantee begins at signing. Whatever captured the diet and the decision (a gateway, an integration hook, a provider's own pipeline) must be trustworthy at capture time. A compromised registrar can sign a tidy lie. Treeship makes that record tamper-evident and attributable after the fact; closing the capture-time gap is the job of where you place capture, not of the signature. Record which registrar produced the proof so that trust is at least an inspectable fact.
+
+The honest claim, stated plainly, is stronger than "we verified the agent": to forge or omit without detection, you would have to compromise parties with different incentives, and the proof makes the size and identity of that required collusion auditable.
+
+## Scope today
+
+For the current launch, the division is concrete:
+
+- A memory provider such as ZMem governs memory influence. It decides what to retrieve, inject, and withhold.
+- Treeship proves the receipt: the boundary, the diet, the policy binding, the decision, signed and portable.
+
+Enforcement of the boundary at runtime belongs to the provider today, and to [Guard](https://www.zerkerlabs.com) for general tool actions later. Treeship's role does not change as that grows: it proves boundaries, it does not draw them.
+
+See also: [Memory Providers](/docs/integrations/memory-proofs) for the provider contract, [Artifacts](/docs/concepts/artifacts) for the underlying receipt shape, and [Approval Authority](/docs/concepts/approval-authority) for the nonce-binding primitive that boundary proofs generalize.
