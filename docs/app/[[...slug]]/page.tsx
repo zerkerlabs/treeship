@@ -68,8 +68,25 @@ export async function generateMetadata(props: {
 
   const data = page.data as unknown as DocPageData;
 
+  // Top-level title is the bare page title; the root layout's title.template
+  // ("%s -- Treeship") adds the suffix. Returning the suffixed title here too
+  // produced "Title -- Treeship -- Treeship". openGraph/twitter titles do not
+  // inherit the template, so set the full title explicitly there.
+  const fullTitle = `${data.title} -- Treeship`;
+  const url = `/${(params.slug ?? []).join('/')}`;
+
   return {
-    title: `${data.title} -- Treeship`,
+    title: data.title,
     description: data.description,
+    openGraph: {
+      type: 'article',
+      title: fullTitle,
+      description: data.description,
+      url,
+    },
+    twitter: {
+      title: fullTitle,
+      description: data.description,
+    },
   };
 }
