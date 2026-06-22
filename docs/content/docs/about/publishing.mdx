@@ -1,0 +1,83 @@
+---
+title: Publishing a release
+description: The Treeship release-and-publish workflow. A reproducible procedure so a maintainer, or the next session picking up release work, can cut a release with confidence.
+---
+
+# Publishing a release
+
+This page documents the release-publish workflow. It exists so the maintainer can run a release with confidence and so the next session (human or agent) picking up release work has a reproducible procedure.
+
+Treeship ships from a single repo to three package registries (crates.io, npm, PyPI) plus a hosted Hub and a docs site. Tagging is the irreversible action that triggers the publish pipeline, so the release script splits **prepare** (safe, reversible) from **tag** (gated, audited).
+
+## The two-phase model
+
+The release script (`scripts/release.sh`) is deliberately split so accidental tagging is impossible:
+
+- `scripts/release.sh prepare <version>` bumps every version site, runs preflight, and commits. It **never tags**. Safe to run inside a normal feature workflow.
+- `scripts/release.sh tag <version> --sha <sha> [--yes]` creates the annotated tag. It requires an explicit subcommand, an explicit target SHA (never implicit `HEAD`), a clean working tree, no pre-existing local or remote tag, and either `--yes` or interactive confirmation. It **never pushes**; you run `git push origin v<version>` after reviewing.
+
+This split exists because tagging triggers the entire publish pipeline. It must require an explicit, audited gesture.
+
+## Triggering a release
+
+1. **Bump and verify every version site.** Run the preparer, which bumps the Rust crates, the npm packages (`packages/sdk-ts`, `bridges/mcp`, `bridges/a2a`, `packages/verify-js`), and the npm wrapper (`treeship` plus the `@treeship/*` platform packages), then commits:
+
+   ```bash
+   scripts/release.sh prepare 0.12.0
+   ```
+
+   The preparer runs the version preflight for you. You can also run it directly to confirm every manifest, version file, and internal dependency pin agrees:
+
+   ```bash
+   scripts/check-release-versions.py 0.12.0
+   ```
+
+   It exits `0` when every site matches and `1` (with a table of disagreements) when any disagree.
+
+2. **Update the changelog.** Add a section for the new version with `Added / Changed / Deprecated / Removed / Fixed` subsections, following the existing entries in [`CHANGELOG.md`](https://github.com/zerkerlabs/treeship/blob/main/CHANGELOG.md). The [Changelog](/about/changelog) docs page mirrors this file.
+
+3. **Open the bump + changelog PR and merge to `main`.** Land the version bump as a normal reviewed PR. Do not tag the feature branch.
+
+4. **Tag from the merged `main` SHA.** After CI is green on `main`, create the annotated tag against the explicit merged SHA:
+
+   ```bash
+   git checkout main && git pull
+   scripts/release.sh tag 0.12.0 --sha <merged-main-sha> --yes
+   ```
+
+   The tag string uses the human-facing form (`v0.12.0`); the version strings in the manifests use the same numeric form (`0.12.0`).
+
+5. **Push the tag to start the publish pipeline.** The script does not push for you. Review the tag, then:
+
+   ```bash
+   git push origin v0.12.0
+   ```
+
+   The tag push triggers `.github/workflows/release.yml`, which builds and publishes the crates, npm packages, and PyPI distribution.
+
+## After the publish
+
+1. **Verify the CLI installs from a clean machine** across every supported target. The platform smoke (`scripts/smoke-platform-release.sh`) confirms, per distro, that `npm install -g treeship@<version>` exits `0`, `treeship --version` prints the expected version, `treeship init` succeeds in a tmpdir, and `treeship attest action` signs and returns an artifact id.
+
+   ```bash
+   python -m venv /tmp/verify-publish
+   source /tmp/verify-publish/bin/activate
+   pip install treeship-sdk==0.12.0
+   deactivate && rm -rf /tmp/verify-publish
+   ```
+
+2. **Redeploy the Hub / API** so the hosted device-flow and `/v1/dock/*` endpoints match the released CLI.
+
+3. **Deploy the docs.** `docs.treeship.dev` rebuilds automatically on push to `main` via Vercel's Git integration; no separate publish step is needed there.
+
+4. **Run a fresh customer-path smoke:** activate a dock, attest a receipt, push to the Hub, and verify, so the released CLI, Hub, and docs agree end to end.
+
+If `npm install` or `pip install` fails, the usual causes are: the registry has not indexed the new version yet (transient, usually under a minute), the wheel or package build omitted a required file (check the package manifests), or a version-string mismatch between the tag and the published package.
+
+## Rolling back
+
+Package registries do not allow re-uploading the same version once published. If a release ships broken, **do not delete or yank silently and re-tag the same number.** Cut a new patch version (`0.12.1`) with the fix, run the full prepare → tag → push flow again, and note the superseded release in the changelog. The original tag and its receipts stay in history; the fix moves forward.
+
+## Why a gated tag
+
+The version bump is reversible: it is a commit on a branch, reviewed like any other change. The tag is not. A pushed tag triggers irreversible publishes to crates.io, npm, and PyPI, none of which allow re-uploading a version. The `prepare` / `tag` split, the required explicit `--sha`, the clean-tree guard, and the no-auto-push rule all exist so that the irreversible step is a deliberate, audited gesture, not a side effect of running a script.
