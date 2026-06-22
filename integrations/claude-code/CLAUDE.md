@@ -2,7 +2,7 @@
 
 This project uses Treeship for signed, verifiable session receipts. Treeship records what AI agents do during a coding session and produces cryptographic proofs you can verify offline.
 
-Source: <https://github.com/zerkerlabs/treeship> · Apache 2.0 · npm: `treeship`, `@treeship/mcp`
+Source: <https://github.com/zerkerlabs/treeship> · MIT · npm: `treeship`, `@treeship/mcp`
 
 ## What `@treeship/mcp` captures
 

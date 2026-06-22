@@ -152,4 +152,4 @@ For read-only consumers (dashboards, third-party MCP audit tools) that only need
 
 ## License
 
-Apache-2.0
+MIT

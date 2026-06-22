@@ -1,7 +1,7 @@
 ---
 name: treeship-perplexity
 description: "Use Treeship (treeship.dev) from Perplexity Computer — install, configure, sign agent actions, verify receipts, push to the Hub, run approval-gated workflows, and work on the zerkerlabs/treeship source repo via GitHub. Trigger on any mention of Treeship, treeship.dev, signed receipts, agent attestation, verifiable agent actions, cryptographic proof of agent work, DSSE artifacts, Merkle proofs, approval-gated actions, session receipts, or the treeship CLI. Also load when asked to contribute to or inspect the zerkerlabs/treeship GitHub repository."
-license: Apache-2.0
+license: MIT
 metadata:
   author: zerkerlabs
   version: '1.0'

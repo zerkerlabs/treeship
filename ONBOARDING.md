@@ -22,7 +22,7 @@ The loop: `treeship wrap -- your-command` -> signed artifact -> `treeship hub pu
 | Contributing | https://github.com/zerkerlabs/treeship/blob/main/CONTRIBUTING.md |
 | Security | https://github.com/zerkerlabs/treeship/blob/main/SECURITY.md |
 | Changelog | https://github.com/zerkerlabs/treeship/blob/main/CHANGELOG.md |
-| License | Apache 2.0 |
+| License | MIT |
 
 ## Quick Start
 
@@ -62,7 +62,7 @@ treeship/
   CONTRIBUTING.md          How to contribute
   SECURITY.md              Security policy
   CHANGELOG.md             Version history
-  LICENSE                  Apache 2.0
+  LICENSE                  MIT
 
   packages/
     core/                  Rust library (120 tests)

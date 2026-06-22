@@ -10,7 +10,7 @@ This file is written for any reader, human or agent, who needs to evaluate Trees
 - A set of agent integrations: Claude Code (`@treeship/mcp`), Cursor, Hermes, OpenClaw — each one captures the agent's tool calls and writes them into the same session timeline as the wrapped commands.
 - A local artifact store (`.treeship/`) where receipts live until you explicitly push them.
 
-Source: <https://github.com/zerkerlabs/treeship> · License: Apache 2.0 · npm: `treeship`, `@treeship/mcp`, `@treeship/sdk`
+Source: <https://github.com/zerkerlabs/treeship> · License: MIT · npm: `treeship`, `@treeship/mcp`, `@treeship/sdk`
 
 ## What `@treeship/mcp` captures
 

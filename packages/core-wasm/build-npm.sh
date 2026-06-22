@@ -53,7 +53,7 @@ Object.assign(pkg, {
   name: '@treeship/core-wasm',
   version,
   description: 'WebAssembly bindings for Treeship cryptographic verification. Runs anywhere WASM runs: Node, browser, Vercel Edge, Cloudflare Workers, AWS Lambda.',
-  license: 'Apache-2.0',
+  license: 'MIT',
   homepage: 'https://treeship.dev',
   repository: {
     type: 'git',

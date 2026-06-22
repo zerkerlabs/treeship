@@ -3,7 +3,7 @@ name = "treeship-zk-circom"
 version = "0.5.0"
 edition = "2021"
 description = "Zero-knowledge proof circuits for Treeship"
-license = "Apache-2.0"
+license = "MIT"
 publish = false  # Not published to crates.io yet
 
 [features]

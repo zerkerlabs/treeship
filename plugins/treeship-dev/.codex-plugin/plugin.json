@@ -8,7 +8,7 @@
   },
   "homepage": "https://docs.treeship.dev/integrations/codex",
   "repository": "https://github.com/zerkerlabs/treeship",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "keywords": [
     "treeship",
     "codex",

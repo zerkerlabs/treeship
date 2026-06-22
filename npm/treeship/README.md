@@ -69,4 +69,4 @@ What's **not** captured: raw argument values, raw output content, file contents,
 
 ## License
 
-Apache-2.0
+MIT

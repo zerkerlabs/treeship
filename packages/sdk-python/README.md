@@ -81,4 +81,4 @@ The SDK calls the `treeship` CLI binary via `subprocess`. All signing happens in
 
 ## License
 
-Apache-2.0
+MIT

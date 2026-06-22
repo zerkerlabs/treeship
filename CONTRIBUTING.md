@@ -113,4 +113,4 @@ See [SECURITY.md](SECURITY.md). Do not file public issues for security bugs -- u
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under Apache 2.0.
+By contributing, you agree that your contributions will be licensed under MIT.

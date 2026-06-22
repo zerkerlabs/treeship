@@ -6,7 +6,7 @@
 **Version:** 0.4.0
 **Date:** April 1, 2026
 **Maintainer:** Zerker Labs (@zerkerlabs)
-**License:** Apache-2.0
+**License:** MIT
 
 ---
 

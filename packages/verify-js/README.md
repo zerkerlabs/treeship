@@ -140,4 +140,4 @@ renderChecks(result.checks);
 
 ## License
 
-Apache-2.0
+MIT

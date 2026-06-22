@@ -170,4 +170,4 @@ Attest paths (`onTaskReceived`, `onTaskCompleted`, `onHandoff`, `decorateArtifac
 
 ## License
 
-Apache-2.0
+MIT

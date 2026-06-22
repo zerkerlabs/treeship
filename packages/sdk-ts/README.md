@@ -123,4 +123,4 @@ Attestation and other stateful paths: the SDK shells out to the `treeship` CLI b
 
 ## License
 
-Apache-2.0
+MIT

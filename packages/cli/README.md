@@ -101,4 +101,4 @@ cargo build --bin treeship
 
 ## License
 
-Apache-2.0. See [LICENSE](https://github.com/zerkerlabs/treeship/blob/main/LICENSE).
+MIT. See [LICENSE](https://github.com/zerkerlabs/treeship/blob/main/LICENSE).

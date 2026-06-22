@@ -7,7 +7,7 @@
 [![Crates.io](https://img.shields.io/crates/v/treeship-core.svg)](https://crates.io/crates/treeship-core)
 [![npm](https://img.shields.io/npm/v/treeship.svg)](https://www.npmjs.com/package/treeship)
 [![PyPI](https://img.shields.io/pypi/v/treeship-sdk.svg)](https://pypi.org/project/treeship-sdk/)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/zerkerlabs/treeship/actions/workflows/ci.yml/badge.svg)](https://github.com/zerkerlabs/treeship/actions/workflows/ci.yml)
 
 Treeship turns every AI agent session into a portable, signed receipt.
@@ -323,6 +323,6 @@ See [`CONTRIBUTING.md`](./CONTRIBUTING.md). All contributions welcome — code, 
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE).
+MIT License. See [LICENSE](LICENSE).
 
 Copyright 2025–2026 Zerker Labs, Inc.
