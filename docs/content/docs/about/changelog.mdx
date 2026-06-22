@@ -1,0 +1,67 @@
+---
+title: Changelog
+description: All notable changes to Treeship, newest first. Mirrors CHANGELOG.md at the repo root; the format follows Keep a Changelog and versioning follows Semantic Versioning.
+---
+
+# Changelog
+
+All notable changes to Treeship are documented here.
+
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The canonical source is [`CHANGELOG.md`](https://github.com/zerkerlabs/treeship/blob/main/CHANGELOG.md) at the repo root. Edit that file, not this page.
+
+For the complete history back to `0.1.0`, see the [full changelog on GitHub](https://github.com/zerkerlabs/treeship/blob/main/CHANGELOG.md).
+
+## Unreleased
+
+No unreleased changes are pending.
+
+## 0.12.0 (2026-06-06)
+
+### Added
+
+- **`treeship attest receipt --payload-file` and `--payload-digest` for external proof receipts.** Providers can sign a receipt over a JSON payload read from a file (mutually exclusive with `--payload`) and record a `payload_digest` for large or out-of-band payloads. `treeship attest action` gains `--output-digest`, folded into the action's `meta`. The flags are provider-neutral: `--system` and `--kind` accept any value. See the provider contract in [Memory Proofs](/integrations/memory-proofs). ZMem is one worked example, not built-in behavior.
+- **Explicit Hub device-flow states.** `GET /v1/dock/authorized` and `POST /v1/dock/authorize` return a stable `state` field covering `invalid`, `expired`, `pending`, `approved`, `attached`, and `already_attached`, plus provider-neutral `next_steps` on attach. `treeship hub attach` reports distinct poll errors (404 / 410 / 409) and concrete next steps (`status`, `attest receipt`, `hub push`, `verify`).
+
+### Fixed
+
+- **Hub activation no longer flashes "device_code not found" before attaching.** Device-flow finalization deleted the challenge row on consume, so a browser still polling after the CLI finalized received a 404 rendered as "device_code not found" even though attach had succeeded. Finalization now atomically claims the challenge by `dock_id` (preserving the single-use guarantee) and retains the row behind a bounded grace window, so the activation page reads the terminal `attached` state. DPoP and Hub auth invariants are unchanged. (#119)
+
+## 0.11.2 (2026-06-05)
+
+### Fixed
+
+- **Receipt preview no longer hangs on "Verifying receipt...".** A template placeholder token appeared twice (the data slot and a JS placeholder check); a global string replace injected the receipt JSON into a JS string literal and aborted client-side verification with a `SyntaxError`. The check now uses a split sentinel that survives substitution, and only the data slot is filled. Covered by a regression assertion in `session::package` tests. (#118)
+
+## 0.11.1 (2026-05-29)
+
+### Added
+
+- **`treeship session abandon` for wedged sessions.** Quarantines an active or closing session marker plus its event directory under `.treeship/quarantine-*` so a fresh session can start without deleting the evidence needed to debug the failure.
+- **Dangerous-root override for intentional home-scoped sessions.** `treeship session start` refuses to start when the git toplevel is the user's home directory unless `--allow-dangerous-root` is passed.
+
+### Fixed
+
+- **Bounded close-time git reconciliation.** `treeship session close` no longer promotes an unbounded set of untracked files into per-file receipt events. If the untracked scan exceeds the cap, close records an in-band receipt warning and keeps tracked changes bounded.
+- **Clearer report errors for incomplete packages.** `treeship session report` distinguishes an incomplete `.treeship` package missing `receipt.json` from "no closed sessions found."
+
+## 0.11.0 (2026-05-28)
+
+### Added
+
+- **Phase 1 of agent invitations:** signed, single-use, expiring grants that let a second agent join an existing session. Adds two canonical statement types, `treeship/invitation/v1` and `treeship/session-participant/v1`. Participant envelopes require exactly two DSSE signatures: the joining agent first, then the host countersign over the same canonical bytes. Either signature alone is invalid. Mint-time validation enforces a 7-day protocol ceiling on lifetime; the default is 1 hour.
+- **Three new CLI subcommands wire the lifecycle:** `treeship session invite`, `treeship session join`, and `treeship session countersign`.
+- **`SessionHost` trust root kind.** The invitation issuer pubkey must be pinned under this kind before `treeship session join` honors it, so a self-signed forgery is quarantined by trust-root enforcement.
+- **Local Treeship dashboard.** `treeship dashboard`, a localhost-only, read-only browser control plane over sealed `.treeship` session packages, with documented JSON endpoints.
+- **Robinhood Agentic Trading receipt template and docs.** Treeship-side receipt support for agentic trading workflows; brokerage execution and policy enforcement stay outside this repo.
+
+### Changed (breaking)
+
+- **`TrustRootKind` gained the `SessionHost` variant.** Exhaustive `match` arms in third-party code must add the new arm. The on-disk JSON wire format gains `"session_host"` as a permitted `kind` value. No existing roots are migrated; operators add session-host pins explicitly via `treeship trust add`.
+
+## Earlier releases
+
+Full notes for each version live in [`CHANGELOG.md`](https://github.com/zerkerlabs/treeship/blob/main/CHANGELOG.md). Release dates:
+
+- `0.10.4` (2026-05-17), `0.10.3` (2026-05-17), `0.10.2` (2026-05-11), `0.10.1` (2026-05-01), `0.10.0` (2026-04-30)
+- `0.9.11`, `0.9.10`, `0.9.9` (2026-04-30), `0.9.7` (2026-04-29), `0.9.6` (2026-04-27), `0.9.5` (2026-04-25), `0.9.4` (2026-04-21), `0.9.3` (2026-04-20), `0.9.2` (2026-04-20), `0.9.1` (2026-04-18), `0.9.0` (2026-04-18)
+- `0.8.0` (2026-04-18), `0.7.2` (2026-04-15), `0.7.1` / `0.7.0` (2026-04-09), `0.5.0` (2026-04-04), `0.4.0`, `0.3.1`, `0.3.0`, `0.2.1`, `0.1.0` (2026-03-31)
