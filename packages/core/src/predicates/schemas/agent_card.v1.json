@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://treeship.dev/schemas/agent_card.v1.json",
+  "title": "agent_card.v1",
+  "description": "A signed, verifiable agent capability card: a key attests an identity and a capability set. Carried as the payload of a Treeship receipt with kind=agent_card.v1. A card is 'key-bound' only when its keyid is the envelope signer pinned under AgentCert; self-signed cards are self-asserted. See docs/specs/agent-capability-cards.md.",
+  "type": "object",
+  "required": ["schema", "agent", "keyid", "version", "capabilities"],
+  "properties": {
+    "schema": {
+      "description": "Schema identifier. Must be exactly this value.",
+      "const": "agent_card.v1"
+    },
+    "agent": {
+      "description": "Actor URI the card claims, e.g. agent://deployer.",
+      "type": "string"
+    },
+    "keyid": {
+      "description": "Key the card binds to. Meaningful only when it equals the envelope signer; AgentCert-pinned = key-bound, otherwise self-asserted.",
+      "type": "string"
+    },
+    "owner": {
+      "description": "Optional URI of the human or org that operates the agent.",
+      "type": "string"
+    },
+    "version": {
+      "description": "Card version (the agent decides the scheme, e.g. semver).",
+      "type": "string"
+    },
+    "supersedes": {
+      "description": "Content-addressed id of the card this one replaces, or null.",
+      "type": ["string", "null"]
+    },
+    "capabilities": {
+      "description": "What the agent claims it can do. Asserted, not proven; checked against evidence by verify-capability. `tools` entries may be exact (file.write) or glob families (file.*).",
+      "type": "object"
+    },
+    "constraints": {
+      "description": "Self-declared operating constraints, e.g. data_access, requires_human_approval. Asserted.",
+      "type": "object"
+    },
+    "attestations": {
+      "description": "References to third-party attestations about this card (audit, compliance). Proven only when the referenced receipt is signed by an independent key.",
+      "type": "array"
+    },
+    "evidence_anchor": {
+      "description": "Optional commitment to the agent's receipt set at mint time (count, latest_receipt_id, merkle_root). Asserted, but commits the agent to a set so post-hoc omission is detectable.",
+      "type": "object"
+    },
+    "policy_ref": {
+      "description": "Optional policy this card operates under. Narrative reference; Guard consumes it at enforcement time.",
+      "type": "string"
+    }
+  }
+}
