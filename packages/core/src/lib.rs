@@ -1,4 +1,5 @@
 pub mod attestation;
+pub mod predicates;
 pub mod statements;
 pub mod keys;
 pub mod storage;

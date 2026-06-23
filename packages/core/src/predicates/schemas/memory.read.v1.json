@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://treeship.dev/schemas/memory.read.v1.json",
+  "title": "memory.read.v1",
+  "description": "Receipt payload recording a memory read/retrieval: which memories an agent retrieved for an action, and the query that produced them. Carried as the payload of a Treeship receipt artifact with kind=memory.read.v1.",
+  "type": "object",
+  "required": ["zmem_receipt_id", "trace_sha256", "query_hash", "retrieval_mode", "memories_returned"],
+  "properties": {
+    "zmem_receipt_id": {
+      "description": "Identifier of the ZMem (or other provider) retrieval receipt this read corresponds to.",
+      "type": "string"
+    },
+    "trace_sha256": {
+      "description": "SHA-256 over the retrieval trace the producer committed to.",
+      "type": "string"
+    },
+    "activegraph_event_id": {
+      "description": "Optional ActiveGraph event id this read corresponds to.",
+      "type": "string"
+    },
+    "activegraph_run_id": {
+      "description": "Optional ActiveGraph run id this read belongs to.",
+      "type": "string"
+    },
+    "query_hash": {
+      "description": "Hash of the query/prompt that drove the retrieval.",
+      "type": "string"
+    },
+    "retrieval_mode": {
+      "description": "Producer-defined retrieval mode, e.g. 'semantic', 'lexical', 'hybrid'.",
+      "type": "string"
+    },
+    "memories_returned": {
+      "description": "Number of memories returned by the retrieval.",
+      "type": "integer"
+    },
+    "scope": {
+      "description": "Tenant/workspace/session scope the retrieval ran in.",
+      "type": "string"
+    }
+  }
+}

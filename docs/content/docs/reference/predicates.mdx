@@ -1,0 +1,80 @@
+---
+title: Predicate registry
+description: Typed, schema-validated receipt payloads. Registered predicate kinds are validated against a JSON Schema at attest time; unregistered kinds attest sign-on-submit, exactly as before.
+---
+
+# Predicate registry
+
+A Treeship receipt (`treeship/receipt/v1`) carries a free-form `kind` and an opaque JSON `payload`. The **predicate registry** makes specific `kind` values *typed*: each registered suffix is bound to a JSON Schema, and at attest time the payload is validated against that schema **before** the receipt is signed. A downstream verifier can then rely on the shape of a registered predicate, not just the signature.
+
+This is additive and backward compatible:
+
+- If `kind` is **registered**, the payload must conform to its schema. A failure rejects the attest with a clear error, nothing is signed.
+- If `kind` is **not registered**, the receipt attests sign-on-submit, exactly as before. Existing artifact types, signing logic, and chain structure are untouched.
+
+```bash
+# Registered: validated, then signed.
+treeship attest receipt --system system://zmem --kind memory.write.v1 \
+  --payload '{"memory_id":"mem_1","content_hash":"sha256:ab","memory_type":"episodic","scope":"tenant://acme"}'
+
+# Missing a required field: rejected before signing.
+treeship attest receipt --system system://zmem --kind memory.write.v1 \
+  --payload '{"memory_id":"mem_1","memory_type":"episodic","scope":"tenant://acme"}'
+# -> predicate validation failed: memory.write.v1: missing required field `content_hash`
+
+# Unregistered kind: still works, sign-on-submit.
+treeship attest receipt --system system://stripe --kind webhook.confirmation --payload '{"...":"..."}'
+```
+
+## Validation depth
+
+Core runs a small, dependency-free **structural** check: every `required` field is present, and each present field whose schema declares a primitive `type` matches it (including unions like `["string","null"]`). That is the *complete* contract for the flat memory predicates below.
+
+`boundary.v1` is a richer schema (`const`/`enum`/`pattern`/`$ref`). Core enforces its required-field and type structure; the full constraint set is delegated to the canonical published schema for external validators. The core validator is kept dependency-free on purpose so the security-critical signing path and the WASM verifier stay lean.
+
+## Registered predicates
+
+### `memory.write.v1`
+
+A specific agent committed a specific memory at a specific time.
+
+| Field | Type | Required |
+|---|---|---|
+| `memory_id` | string | yes |
+| `content_hash` | string | yes |
+| `memory_type` | string | yes |
+| `scope` | string | yes |
+| `activegraph_event_id` | string | no |
+| `activegraph_run_id` | string | no |
+| `supersedes` | string or null | no |
+
+### `memory.read.v1`
+
+Which memories an agent retrieved for an action, and the query that produced them.
+
+| Field | Type | Required |
+|---|---|---|
+| `zmem_receipt_id` | string | yes |
+| `trace_sha256` | string | yes |
+| `query_hash` | string | yes |
+| `retrieval_mode` | string | yes |
+| `memories_returned` | integer | yes |
+| `activegraph_event_id` | string | no |
+| `activegraph_run_id` | string | no |
+| `scope` | string | no |
+
+### `boundary.v1`
+
+A provider-neutral actor-checker evaluation boundary: what a checker was allowed to see, what policy denied, and the decision it reached. See [Actor-Checker Boundaries](/concepts/actor-checker-boundaries) for the model. The full schema is `treeship.boundary.v1`.
+
+## Actor URI schemes
+
+A receipt or statement `actor` is an opaque string; Treeship does not enforce the scheme. These prefixes are the recognized conventions:
+
+| Scheme | Meaning | Example |
+|---|---|---|
+| `human://` | A human principal | `human://alice` |
+| `agent://` | An autonomous agent | `agent://support-bot` |
+| `farcaster://` | A Farcaster identity, addressed by numeric FID | `farcaster://fid:12345` |
+
+`farcaster://fid:<numeric_fid>` works today with no special handling, it is a documented convention, not a validated type.

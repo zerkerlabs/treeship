@@ -1,4 +1,8 @@
 {
   "title": "Reference",
-  "pages": ["feature-matrix", "schema"]
+  "pages": [
+    "feature-matrix",
+    "schema",
+    "predicates"
+  ]
 }
