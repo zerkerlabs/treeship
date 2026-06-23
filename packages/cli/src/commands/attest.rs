@@ -356,6 +356,13 @@ pub fn receipt(args: ReceiptArgs, printer: &Printer) -> Result<(), Box<dyn std::
         .transpose()
         .map_err(|e| format!("receipt payload is not valid JSON: {e}"))?;
 
+    // Typed-predicate validation: if `kind` is a registered predicate, the
+    // payload must conform to its schema before we sign. Unregistered kinds
+    // attest sign-on-submit, exactly as before (backward compatible). This
+    // runs before signing and does not touch the signature path.
+    treeship_core::predicates::validate(&args.kind, payload_val.as_ref())
+        .map_err(|e| format!("predicate validation failed: {e}"))?;
+
     let mut stmt = ReceiptStatement::new(&args.system, &args.kind);
     stmt.payload = payload_val;
     stmt.payload_digest = args.payload_digest.clone();

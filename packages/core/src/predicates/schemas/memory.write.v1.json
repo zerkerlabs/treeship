@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://treeship.dev/schemas/memory.write.v1.json",
+  "title": "memory.write.v1",
+  "description": "Receipt payload recording a memory write: a specific agent committed a specific memory at a specific time. Carried as the payload of a Treeship receipt artifact with kind=memory.write.v1.",
+  "type": "object",
+  "required": ["memory_id", "content_hash", "memory_type", "scope"],
+  "properties": {
+    "memory_id": {
+      "description": "Opaque identifier of the memory record in the producing system.",
+      "type": "string"
+    },
+    "content_hash": {
+      "description": "Hash of the memory content (the producer chooses the algorithm; bind it in the value, e.g. sha256:...).",
+      "type": "string"
+    },
+    "memory_type": {
+      "description": "Producer-defined memory class, e.g. 'episodic', 'semantic', 'fact'.",
+      "type": "string"
+    },
+    "scope": {
+      "description": "Tenant/workspace/session scope the memory belongs to.",
+      "type": "string"
+    },
+    "activegraph_event_id": {
+      "description": "Optional ActiveGraph event id this write corresponds to.",
+      "type": "string"
+    },
+    "activegraph_run_id": {
+      "description": "Optional ActiveGraph run id this write belongs to.",
+      "type": "string"
+    },
+    "supersedes": {
+      "description": "Optional memory_id this write replaces, or null if it supersedes nothing.",
+      "type": ["string", "null"]
+    }
+  }
+}
