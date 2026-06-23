@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "sync:changelog": "node scripts/sync-changelog.mjs",
+    "predev": "node scripts/sync-changelog.mjs",
+    "prebuild": "node scripts/sync-changelog.mjs",
     "dev": "next dev --port 3001",
     "build": "next build",
     "start": "next start",
