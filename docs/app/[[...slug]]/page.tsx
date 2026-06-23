@@ -7,6 +7,7 @@ import {
 } from 'fumadocs-ui/page';
 import { notFound, redirect } from 'next/navigation';
 import defaultMdxComponents from 'fumadocs-ui/mdx';
+import { LLMActions } from '@/components/llm-actions';
 import type { FC } from 'react';
 import type { MDXProps } from 'mdx/types';
 import type { TableOfContents } from 'fumadocs-core/server';
@@ -45,6 +46,7 @@ export default async function Page(props: {
     >
       <DocsTitle>{data.title}</DocsTitle>
       <DocsDescription>{data.description}</DocsDescription>
+      <LLMActions url={page.url} />
       <DocsBody>
         <MDX components={{ ...defaultMdxComponents }} />
       </DocsBody>
