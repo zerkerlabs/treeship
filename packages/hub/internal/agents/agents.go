@@ -122,11 +122,25 @@ func (h *Handlers) Resolve(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Transparency: if the current card has a Merkle inclusion proof, include
+	// it (the CLI's own ProofFile, stored verbatim) so the client can confirm
+	// the card is in the log. Absent when the card has not been anchored.
+	var transparency interface{}
+	if current != nil {
+		if proof, _, err := db.GetProof(h.DB, current.ArtifactID); err == nil && proof != nil {
+			var pf interface{}
+			if json.Unmarshal([]byte(proof.ProofJSON), &pf) == nil {
+				transparency = pf
+			}
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"agent":        agent,
 		"current_card": current,
 		"cards":        cards,
 		"revocations":  revocations,
+		"transparency": transparency,
 		"note":         "raw signed envelopes; the client re-verifies and grades them offline. the Hub performs no verification or authorization here.",
 	})
 }

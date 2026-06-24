@@ -69,13 +69,19 @@ func TestResolve_BundlesAgentCardsAndRevocations(t *testing.T) {
 		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
 	}
 	var body struct {
-		Agent       string          `json:"agent"`
-		CurrentCard *envelopeEntry  `json:"current_card"`
-		Cards       []envelopeEntry `json:"cards"`
-		Revocations []envelopeEntry `json:"revocations"`
+		Agent        string          `json:"agent"`
+		CurrentCard  *envelopeEntry  `json:"current_card"`
+		Cards        []envelopeEntry `json:"cards"`
+		Revocations  []envelopeEntry `json:"revocations"`
+		Transparency interface{}     `json:"transparency"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
+	}
+
+	// No Merkle proof was seeded, so transparency must be null (not anchored).
+	if body.Transparency != nil {
+		t.Errorf("transparency = %v, want null (no proof seeded)", body.Transparency)
 	}
 
 	if body.Agent != "agent://deployer" {
