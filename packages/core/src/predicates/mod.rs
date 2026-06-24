@@ -43,6 +43,10 @@ const REGISTRY: &[(&str, &str)] = &[
         include_str!("schemas/memory.read.v1.json"),
     ),
     ("boundary.v1", include_str!("schemas/boundary.v1.json")),
+    (
+        "agent_card.v1",
+        include_str!("schemas/agent_card.v1.json"),
+    ),
 ];
 
 /// Returns the raw JSON Schema text for a registered predicate suffix, if any.
@@ -202,6 +206,7 @@ mod tests {
         assert!(suffixes.contains(&"memory.write.v1"));
         assert!(suffixes.contains(&"memory.read.v1"));
         assert!(suffixes.contains(&"boundary.v1"));
+        assert!(suffixes.contains(&"agent_card.v1"));
         assert!(schema_json("memory.write.v1").is_some());
         assert!(schema_json("nope.v1").is_none());
     }
@@ -354,6 +359,55 @@ mod tests {
         assert!(matches!(
             validate("boundary.v1", Some(&missing)).unwrap_err(),
             PredicateError::MissingField { field, .. } if field == "decision"
+        ));
+    }
+
+    #[test]
+    fn agent_card_valid_passes() {
+        let card = json!({
+            "schema": "agent_card.v1",
+            "agent": "agent://deployer",
+            "keyid": "key_9f8e7d6c",
+            "owner": "human://alice",
+            "version": "1.2.0",
+            "capabilities": {
+                "tools": ["file.read", "file.write", "db.*"],
+                "models": ["claude-sonnet-4"],
+                "can_delegate": true
+            },
+            "evidence_anchor": { "receipt_count": 1247, "merkle_root": "mroot_a0be" },
+            "supersedes": null
+        });
+        assert!(validate("agent_card.v1", Some(&card)).is_ok());
+    }
+
+    #[test]
+    fn agent_card_missing_keyid_fails_closed() {
+        // keyid is the binding; a card without it is meaningless.
+        let card = json!({
+            "schema": "agent_card.v1",
+            "agent": "agent://deployer",
+            "version": "1.0.0",
+            "capabilities": { "tools": ["file.read"] }
+        });
+        assert!(matches!(
+            validate("agent_card.v1", Some(&card)).unwrap_err(),
+            PredicateError::MissingField { field, .. } if field == "keyid"
+        ));
+    }
+
+    #[test]
+    fn agent_card_capabilities_must_be_an_object() {
+        let card = json!({
+            "schema": "agent_card.v1",
+            "agent": "agent://deployer",
+            "keyid": "key_1",
+            "version": "1.0.0",
+            "capabilities": ["file.read"] // array, not the required object
+        });
+        assert!(matches!(
+            validate("agent_card.v1", Some(&card)).unwrap_err(),
+            PredicateError::TypeMismatch { field, .. } if field == "capabilities"
         ));
     }
 }
