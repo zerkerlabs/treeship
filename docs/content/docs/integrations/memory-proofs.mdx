@@ -9,6 +9,8 @@ Agent memory systems should own memory selection, ranking, policy, storage, and 
 
 This page is a provider contract. ZMem can use it, but so can Mem0, Zep, Letta, a SQLite memory store, or an in-house retrieval layer.
 
+**The clean split.** The memory provider is the *memory authority*: it answers what memory was available, injected, withheld, revoked, restored, and handed off. Treeship is the *proof authority*: it answers who signed the proof, when, what payload digest was attested, and whether it verifies offline. Treeship does not prove that a memory is semantically true, only that a specific signer attested a specific digest at a specific time. Keep that line crisp and Treeship stays the portable proof rail rather than any one provider's helper.
+
 The rule is simple:
 
 - Use a Treeship action artifact for the memory operation itself.
@@ -54,18 +56,29 @@ treeship attest action \
 
 Treeship signs the actor, operation, subject URI, input digest, output digest, timestamp, and metadata. The memory provider decides what the digests mean and how to re-check them.
 
-Recommended action labels:
+Recommended action labels. Memory is not just CRUD, it has a lifecycle, so the transition verbs are first-class: a proof should say whether a memory was *proposed*, *promoted*, *rejected*, or *forgotten*, not just "written" or "deleted".
 
 ```text
+# access
 memory.read
-memory.write
-memory.delete
 memory.query
 memory.retrieve
 memory.inject
-memory.compact
-memory.handoff
+
+# lifecycle / transitions
+memory.write       # commit a memory
+memory.propose     # suggest a memory, not yet authoritative
+memory.promote     # elevate a proposed memory to authoritative
+memory.reject      # decline a proposed memory
+memory.revoke      # withdraw a previously authoritative memory
+memory.forget      # delete / expire a memory
+memory.restore     # bring back a revoked or forgotten memory
+
+# movement
+memory.handoff     # transfer memory between agents/sessions
 ```
+
+These are conventions, not enforced types, `--action` accepts any string. Treeship signs the verb, the subject, and the digests; the memory provider decides what each transition means and how to re-check it. Treeship does not assert the memory is semantically true, only that this signer attested this transition over this digest at this time.
 
 For sensitive writes or deletes, mint a scoped approval first:
 

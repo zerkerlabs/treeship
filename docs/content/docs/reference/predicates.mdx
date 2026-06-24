@@ -67,6 +67,37 @@ Which memories an agent retrieved for an action, and the query that produced the
 
 A provider-neutral actor-checker evaluation boundary: what a checker was allowed to see, what policy denied, and the decision it reached. See [Actor-Checker Boundaries](/concepts/actor-checker-boundaries) for the model. The full schema is `treeship.boundary.v1`.
 
+### `agent_card.v1`
+
+A signed, verifiable agent capability card: a key attests an identity and a capability set. Carried as the payload of a receipt with `kind=agent_card.v1`. A card is **key-bound** only when its `keyid` is the envelope signer pinned under `AgentCert`; self-signed cards are reported `self-asserted`. Mint with `treeship attest card`; check against captured evidence with `treeship verify-capability`. See [Capability Cards](/docs/concepts/capability-cards).
+
+| Field | Type | Required |
+|---|---|---|
+| `schema` | const `agent_card.v1` | yes |
+| `agent` | string (actor URI) | yes |
+| `keyid` | string | yes |
+| `version` | string | yes |
+| `capabilities` | object (`tools`: exact or `family.*`) | yes |
+| `owner` | string | no |
+| `supersedes` | string or null | no |
+| `constraints` | object | no |
+| `attestations` | array | no |
+| `evidence_anchor` | object | no |
+| `policy_ref` | string | no |
+
+### `agent_card_revocation.v1`
+
+Revokes a previously-minted `agent_card.v1`. Mint with `treeship revoke-capability`. `verify-capability` honors a revocation **only when its signer is authorized** — the card's own key (self-revocation) or a `Ship` trust root (issuer revocation); any other signer is ignored (fail-closed).
+
+| Field | Type | Required |
+|---|---|---|
+| `schema` | const `agent_card_revocation.v1` | yes |
+| `card` | string (`art_…` of the revoked card) | yes |
+| `revoked_at` | string (RFC3339) | yes |
+| `keyid` | string | no |
+| `reason` | string | no |
+| `supersedes` | string or null | no |
+
 ## Actor URI schemes
 
 A receipt or statement `actor` is an opaque string; Treeship does not enforce the scheme. These prefixes are the recognized conventions:

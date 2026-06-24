@@ -153,6 +153,16 @@ The function takes `now` as an explicit argument so the check is deterministic a
 
 The agent card at `treeship.dev/agent/<slug>` runs this on every recent receipt and surfaces the result as a `✓ no unauthorized calls` badge per row.
 
+## Per-actor signing: making the `actor` provable
+
+By default an agent's actions are signed by the shared ship key, so the `actor` on a receipt (`agent://deployer`) is an asserted label, anyone holding the ship key could write it. **Per-actor signing** closes that gap. Registering with `--own-key` mints a dedicated per-agent key, certifies it (the ship signs as issuer), and pins it under `AgentCert`:
+
+```bash
+treeship agent register --name deployer --tools file.write --own-key
+```
+
+After that, `treeship attest action --actor agent://deployer …` signs with the agent's own key, and `treeship verify` reports `actor proof: proven (key-bound)` instead of `asserted`. The same key makes a [capability card](/docs/concepts/capability-cards) key-bound rather than self-asserted. It is strictly additive: agents without a per-agent key keep signing with the ship key. See [Capability Cards](/docs/concepts/capability-cards) for the full mint → sign → verify → revoke flow.
+
 ## Initial scope: how `bounded_actions` gets determined
 
 Three sources, in order of trust:

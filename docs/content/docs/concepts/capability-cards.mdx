@@ -1,0 +1,103 @@
+---
+title: Capability Cards
+description: A signed, verifiable agent capability card. A key attests what an agent is and what it can do, and verify-capability checks that claim against the agent's actual evidence. Covers agent_card.v1, key binding, per-actor signing, revocation, and browser verification.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+A **capability card** is a signed receipt in which a key declares an agent's identity and its capability set, carried as the payload of an `agent_card.v1` receipt. It answers a question no static descriptor format (A2A's `AgentCard`, NANDA) can: not just *what does this agent claim it can do*, but *does its actual evidence match the claim, and is the claim cryptographically bound to a key you trust?*
+
+<Callout title="Two different things called a card">
+This page is about the typed, signed **capability card** (`agent_card.v1`), a portable proof object. It is distinct from the local [Agent Card](/docs/concepts/agent-cards), which is a workspace trust object Treeship keeps on disk to track an agent's lifecycle. A capability card is something you mint, verify, and revoke; an Agent Card is local inventory.
+</Callout>
+
+## The two questions
+
+`treeship verify-capability <card>` answers two things:
+
+1. **Is the card key-bound?** A card is *key-bound* only when its `keyid` is the key that signed the envelope **and** that key is pinned under `AgentCert`. Otherwise the card is **self-asserted**, a claim anyone holding the signing key could have made. Binding strength is always reported; it is never silently assumed.
+2. **Do the agent's captured actions stay within the declared capability set?** Every action receipt signed by the card's key is checked: its action label or `meta.tool` must match a declared capability, either exactly (`db.query`) or as a `family.*` glob (`file.*` matches `file.write`). The result is an in-scope / out-of-scope count.
+
+<Callout type="warn" title="The honest contract">
+verify-capability proves **consistency over captured evidence**: that the actions Treeship recorded are in or out of scope. It does **not** prove the agent took no off-card action, that completeness guarantee is a runtime enforcement job, not something a signature can deliver. The output says so on every run.
+</Callout>
+
+## Minting a card
+
+```bash
+treeship attest card \
+  --agent agent://deployer \
+  --tools file.*,db.query \
+  --models claude-sonnet-4
+```
+
+This builds the `agent_card.v1` payload from typed flags, validates it against the [registered predicate](/docs/reference/predicates#agent_cardv1), signs it, and reports whether the card is key-bound at mint time. The card's `keyid` defaults to the signing key.
+
+## Key binding and per-actor signing
+
+A card is only as strong as the key behind it. By default every action in a workspace is signed by the single ship key, so a card's `keyid` is the shared key and the card is `self-asserted`. **Per-actor signing** makes the binding real:
+
+```bash
+# Give the agent its own key, certified by the ship and pinned under AgentCert.
+treeship agent register --name deployer --tools file.write --own-key
+```
+
+`--own-key` mints a dedicated per-agent key, certifies it (the ship signs as issuer), pins it under `AgentCert`, and records it on the agent card. After that, `treeship attest action --actor agent://deployer …` and `treeship attest card --agent agent://deployer …` sign with the **agent's own key**. Now the card's `keyid` is the agent's pinned key, and verify-capability reports `key-bound: yes`.
+
+The same binding makes a plain action's `actor` provable. `treeship verify <action>` reports:
+
+```
+actor:         agent://deployer
+actor proof:   proven (key-bound)
+```
+
+`proven` means the receipt's signer is the actor's registered, `AgentCert`-pinned key. `asserted` means a free-text label signed by the shared key. This is a display label only, it never changes whether `verify` returns pass or fail.
+
+<Callout title="Strictly additive">
+Per-actor signing is opt-in. An agent without a registered per-agent key signs with the ship key exactly as before, and existing receipts keep verifying. See [Agent Identity](/docs/concepts/agent-identity) for the certificate model the per-agent key plugs into.
+</Callout>
+
+## Verifying a card
+
+```bash
+treeship verify-capability art_<agent_card_id>
+```
+
+```
+✓ capability card
+  card:              art_…
+  agent:             agent://deployer
+  key-bound:         yes (AgentCert)
+  declared tools:    file.*, db.query
+  in-scope actions:  2
+  out-of-scope:      1
+  status:            verified
+```
+
+The optional `evidence_anchor` on a card commits the agent to a receipt set (a count, a tip, a Merkle root) at mint time, so post-hoc omission or backfill is detectable, verify-capability flags a mismatch between the committed count and what it observes.
+
+## Revoking a card
+
+```bash
+treeship revoke-capability art_<agent_card_id> --reason key-rotation
+```
+
+This mints a signed `agent_card_revocation.v1` receipt. verify-capability honors a revocation **only when its signer is authorized**: the card's own key (self-revocation) or a `Ship` trust root (issuer revocation). An unauthorized revocation, signed by any other key, is ignored. When an authorized revocation is present the card's status becomes `REVOKED` and a "do not honor" warning is shown. A stranger cannot revoke your card.
+
+## Verifying in the browser
+
+The same check runs client-side. `@treeship/verify-js` exposes `verifyCapability(card, actions, trustRoots)`, backed by a WASM export, that returns the **same verdict the CLI does**, key-bound status, declared tools, and the in/out-of-scope cross-check. The matching logic lives in one shared Rust module (`treeship_core::capability`) used by both the CLI and the WASM verifier, so a browser receipt viewer and the command line cannot disagree.
+
+```ts
+import { verifyCapability } from '@treeship/verify-js';
+
+const result = await verifyCapability(cardEnvelope, actionEnvelopes, trustRoots);
+// { key_bound: true, in_scope: 2, out_of_scope: 1, status: 'verified', ... }
+```
+
+## See also
+
+- [Predicate registry](/docs/reference/predicates) — the `agent_card.v1` and `agent_card_revocation.v1` schemas
+- [Agent Identity](/docs/concepts/agent-identity) — the certificate that binds an agent to its key
+- [Agent Cards](/docs/concepts/agent-cards) — the local workspace trust object (a different thing)
+- [Trust fabric](/docs/concepts/trust-fabric) — how identity, capability, and receipts compose
