@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- **Predicate registry: typed, schema-validated receipt payloads.** Registered `kind` suffixes are bound to a JSON Schema and validated at attest time, **before** the receipt is signed; unregistered kinds attest sign-on-submit exactly as before (additive, backward compatible). Registered predicates: `memory.write.v1`, `memory.read.v1`, `boundary.v1`, `agent_card.v1`, `agent_card_revocation.v1`. The validator is dependency-free on purpose so the signing path and the WASM verifier stay lean. See [`reference/predicates`](docs/content/docs/reference/predicates.mdx).
+- **Agent capability cards (`agent_card.v1`).** `treeship attest card` mints a signed, typed card declaring an agent's identity and capability set; `treeship verify-capability <card>` checks it against the agent's captured action receipts. The card is **key-bound** only when its `keyid` is the envelope signer pinned under `AgentCert`; otherwise it is reported `self-asserted`. The cross-check reports in-scope / out-of-scope actions (exact or `family.*` glob) plus an optional `evidence_anchor`. Honest contract: consistency over captured evidence, never a completeness guarantee. (#127, #129, #130, #131, #132)
+- **Per-actor signing: a provable `actor`.** `treeship agent register --own-key` mints a dedicated per-agent key, certifies it (the ship signs as issuer), and pins it under `AgentCert`. `treeship attest action` / `attest card` / `attest decision` / `attest handoff` then sign with the **agent's own key** when the actor has one, so the `actor` is cryptographically provable rather than an asserted label. `treeship verify` reports `actor proof: proven (key-bound) | asserted`. Strictly additive: agents without a per-agent key sign with the ship key exactly as before. (#134, #135, #136)
+- **Capability-card revocation (`agent_card_revocation.v1`).** `treeship revoke-capability <card> --reason …` mints a signed revocation. `verify-capability` honors it **only when its signer is authorized** (the card's own key, or a `Ship` trust root) and then reports `status: REVOKED`; an unauthorized revocation is ignored (fail-closed). (#137)
+- **Browser verification of capability cards.** A new `verify_capability(card, actions, trust_roots)` WASM export and a typed `verifyCapability()` in `@treeship/verify-js` let a browser receipt viewer show key-bound status and the in/out-of-scope cross-check, returning the **same verdict the CLI does**. The matching logic lives in a shared `treeship_core::capability` module so the browser and CLI verifiers cannot drift. (#138)
+
 ## 0.12.0 (2026-06-06)
 
 ### Added

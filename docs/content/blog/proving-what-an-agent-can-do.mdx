@@ -1,0 +1,146 @@
+---
+title: "Capability Cards: Proving What an Agent Can Do, Not Just What It Says"
+description: "Descriptor formats like A2A's AgentCard tell you what an agent claims it can do. None of them tell you whether the claim is bound to a key you trust, or whether the agent's actual behavior matches. Here is the arc we shipped to close that gap: a predicate registry, signed capability cards, per-actor signing that makes an agent's identity provable, revocation, and the same verdict in the browser as on the command line."
+date: 2026-06-24
+tags: ["agents", "attestation", "capability", "identity", "trust", "verification"]
+readTime: "12 min read"
+---
+
+Every agent framework now has a way for an agent to describe itself. A2A has the `AgentCard`. NANDA has its registry entries. Model cards, tool manifests, skill descriptors, the list keeps growing. They all answer the same question: *what does this agent say it can do?*
+
+None of them answer the two questions that actually matter when you are about to let an agent touch production:
+
+1. Is that claim **bound to a key you trust**, or could anyone have written it?
+2. Does the agent's **actual behavior** match what it claimed?
+
+A descriptor is a business card. It is a starting point for a conversation, not evidence. This post walks through the arc we just shipped in Treeship to turn the business card into something you can verify, mint it, bind it to a key, check it against real evidence, revoke it, and get the same answer in a browser that you get on the command line.
+
+## Start with the honest version of the problem
+
+Here is the uncomfortable default in almost every agent system today. An agent says "I am `agent://deployer` and I am allowed to write files and query the database." You write that down. Later, a receipt shows up that says `actor: agent://deployer, action: command.run`. Was that really the deployer? Was `command.run` ever in its remit?
+
+In a system where one shared key signs everything, you cannot tell. The `actor` field is a free-text label. Any process holding the signing key can write any label it likes. The capability list is a claim with nothing behind it. This is not a Treeship-specific problem, it is the structural ceiling of every descriptor format: a description is not a proof.
+
+We shipped four layers to raise that ceiling. Each one is additive, each one fails closed, and each one is honest about exactly what it does and does not prove.
+
+## Layer 1: Typed receipts (the predicate registry)
+
+A Treeship receipt carries a free-form `kind` and an opaque JSON `payload`. That flexibility is good, it means any provider can record any kind of proof, but it means a verifier can only check the signature, not the shape.
+
+The **predicate registry** makes specific `kind` values typed. A registered suffix is bound to a JSON Schema, and at attest time the payload is validated against that schema *before* the receipt is signed. If it does not conform, nothing is signed and you get a clear error. Unregistered kinds keep working exactly as before, this is strictly additive.
+
+```bash
+treeship attest receipt --system system://example --kind memory.write.v1 \
+  --payload '{"memory_id":"m1"}'
+# -> predicate validation failed: memory.write.v1: missing required field `content_hash`
+```
+
+We kept the validator dependency-free on purpose. The security-critical signing path and the WASM verifier both stay lean, and there is no schema-validation library sitting in the trusted computing base. `agent_card.v1` is one of the registered predicates, which is what makes the next layer possible.
+
+## Layer 2: Capability cards
+
+A **capability card** is a signed receipt in which a key declares an agent's identity and capability set. You mint one with a single command:
+
+```bash
+treeship attest card \
+  --agent agent://deployer \
+  --tools file.*,db.query \
+  --models claude-sonnet-4
+```
+
+That validates against the `agent_card.v1` schema, signs it, and tells you something a descriptor format never does, **whether the card is key-bound**. A card is key-bound only when its `keyid` is the key that signed it *and* that key is pinned as a trusted agent certificate. Otherwise it is `self-asserted`, and we say so. The binding strength is reported on every card, every time. It is never silently assumed.
+
+Then you check the card against the agent's actual evidence:
+
+```bash
+treeship verify-capability art_<card_id>
+```
+
+```
+✓ capability card
+  agent:             agent://deployer
+  key-bound:         yes (AgentCert)
+  declared tools:    file.*, db.query
+  in-scope actions:  2
+  out-of-scope:      1
+  status:            verified
+```
+
+Every action receipt signed by the card's key gets checked: its action label, or its `meta.tool`, has to match a declared capability, either exactly (`db.query`) or as a glob family (`file.*` covers `file.write`). You get an in-scope and out-of-scope count, and an optional `evidence_anchor` lets the agent commit to a receipt set at mint time so later omission is detectable.
+
+### The contract we refuse to overstate
+
+verify-capability proves **consistency over captured evidence**. It tells you the actions Treeship recorded are in or out of scope. It does **not** prove the agent took no off-card action, that completeness guarantee belongs to runtime enforcement, and no signature can deliver it. We print that caveat on every run, because the fastest way to lose a trust product is to let it imply more than it proves.
+
+## Layer 3: Per-actor signing, the part that makes it real
+
+Here is the subtle thing. Everything above is only as strong as the key behind the card. If every agent in a workspace signs with one shared key, then every card's `keyid` is that shared key, and every card is forever `self-asserted`. The cross-check still works, but the identity is asserted, not proven.
+
+So we made the agent's identity provable. Registering with `--own-key` mints a dedicated per-agent key, certifies it (the ship signs as issuer), and pins it as a trusted agent certificate:
+
+```bash
+treeship agent register --name deployer --tools file.write --own-key
+```
+
+Now `treeship attest action --actor agent://deployer …` signs with the agent's *own* key. The `actor` stops being a label and becomes a signature. `treeship verify` reports it directly:
+
+```
+actor:         agent://deployer
+actor proof:   proven (key-bound)
+```
+
+`proven` means the receipt was signed by the actor's registered, pinned key. `asserted` means a free-text label signed by the shared key. And critically, this is a display label, it never changes whether `verify` itself returns pass or fail. The cryptography decides validity; the label just tells you how much the `actor` is worth.
+
+This is the layer that closes the actor-forgery gap. Once an agent has its own pinned key, a card minted for it is key-bound, its actions are provable, and a different process holding the shared key can no longer impersonate it.
+
+It is also strictly additive. An agent without a per-agent key signs with the ship key exactly as before, and every existing receipt keeps verifying. You opt into stronger identity when you want it.
+
+## Layer 4: Revocation, with real authorization
+
+Keys rotate. Agents get decommissioned. Cards get compromised. So a card you can mint is a card you need to be able to revoke:
+
+```bash
+treeship revoke-capability art_<card_id> --reason key-rotation
+```
+
+The interesting design question is not *how to revoke*, it is *who is allowed to*. A revocation is honored only when its signer is authorized: the card's own key (self-revocation) or a ship trust root (issuer revocation). A revocation signed by any other key is ignored. A stranger cannot revoke your card, and we tested exactly that, an attacker's revocation of an agent-key-bound card leaves the status untouched. Fail closed, every time.
+
+## Same verdict in the browser
+
+A trust property that only holds on your machine is not a trust property, it is a convenience. So the capability check runs client-side too. `@treeship/verify-js` exposes `verifyCapability(card, actions, trustRoots)`, backed by a WASM build, that returns the **same verdict the CLI does**:
+
+```ts
+import { verifyCapability } from '@treeship/verify-js';
+
+const result = await verifyCapability(cardEnvelope, actionEnvelopes, trustRoots);
+// { key_bound: true, in_scope: 2, out_of_scope: 1, status: 'verified', ... }
+```
+
+The way we guarantee "same verdict" is not by being careful to keep two implementations in sync, that always drifts. The matching logic lives in exactly one place, a shared Rust module compiled into both the CLI and the WASM verifier. A browser receipt viewer and the command line are running the same code. We proved it with a test that signs real envelopes and asserts the browser path returns the identical key-bound, in-scope, and out-of-scope result, fails closed without trust roots, and rejects a non-card rather than passing it.
+
+## Where this leaves Treeship
+
+Step back and the arc is one straight line:
+
+```
+typed receipts  →  signed capability cards  →  provable actor (per-actor signing)
+                →  authorized revocation     →  same verdict in the browser
+```
+
+It takes Treeship from "we stamp receipts" to "an agent's identity and capability set are mint-able, verifiable, revocable, and browser-checkable, with a key binding you can trust." And it does it without stepping outside the lane: Treeship proves things. It does not enforce them at runtime, it does not store your memories, it does not decide your policy. Those are other layers' jobs, and the honest contract on every command says exactly where the line is.
+
+A descriptor tells you what an agent claims. A capability card, bound to a key, checked against evidence, lets you decide whether to believe it. That difference is the whole point.
+
+## Try it
+
+Everything in this post runs on a clean machine with no network call:
+
+```bash
+treeship init
+treeship agent register --name deployer --tools file.write,db.query --own-key
+treeship attest card --agent agent://deployer --tools file.*,db.query
+treeship attest action --actor agent://deployer --action file.write
+treeship verify-capability art_<card_id>
+```
+
+See [Capability Cards](/docs/concepts/capability-cards) for the full model, and the [predicate registry](/docs/reference/predicates) for the schemas.
