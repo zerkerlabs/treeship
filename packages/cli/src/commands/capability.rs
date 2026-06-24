@@ -13,7 +13,9 @@
 
 use crate::{ctx, printer::Printer};
 use treeship_core::{
+    attestation::sign,
     statements::{payload_type, ActionStatement, ReceiptStatement},
+    storage::Record,
     trust::{TrustRootKind, TrustRootStore},
 };
 
@@ -112,8 +114,16 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
             }
         });
 
+    // --- Revocation: honor an authorized agent_card_revocation.v1 ----------
+    // A revocation counts only when its signer is the card's own key
+    // (self-revocation) or a Ship trust root (issuer revocation). A stranger
+    // cannot revoke your card.
+    let revocation = find_revocation(&ctx, card_id, card_keyid, &trust);
+
     // --- Report ------------------------------------------------------------
-    let status = if !key_bound {
+    let status = if revocation.is_some() {
+        "REVOKED"
+    } else if !key_bound {
         "self-asserted"
     } else if violations.is_empty() {
         "verified"
@@ -144,6 +154,12 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
             ("status", status),
         ],
     );
+    if let Some((reason, who)) = &revocation {
+        printer.warn(
+            "capability card REVOKED — do not honor",
+            &[("by", who), ("reason", reason)],
+        );
+    }
     if let Some(note) = &anchor_note {
         printer.hint(note);
     }
@@ -168,6 +184,142 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
     );
     printer.blank();
     Ok(())
+}
+
+/// `treeship revoke-capability <card_id>` — mint a signed revocation of a card.
+///
+/// The revocation is itself an `agent_card_revocation.v1` receipt, signed with
+/// the agent's own key (self-revocation) when the card's actor has a registered
+/// key, else the ship's default key. verify-capability honors it only when the
+/// signer is authorized (the card's key, or a Ship root), so this is a real
+/// authorization act, not a free-floating note.
+pub fn revoke_capability(
+    card_id: &str,
+    reason: Option<&str>,
+    config: Option<&str>,
+    printer: &Printer,
+) -> CmdResult {
+    let ctx = ctx::open(config)?;
+
+    // Read the card so the revocation records its keyid + actor.
+    let record = ctx.storage.read(card_id)?;
+    let card_stmt: ReceiptStatement = record.envelope.unmarshal_statement()?;
+    if card_stmt.kind != "agent_card.v1" {
+        return Err(format!(
+            "{card_id} is kind `{}`, not an agent_card.v1 receipt",
+            card_stmt.kind
+        )
+        .into());
+    }
+    let card = card_stmt
+        .payload
+        .ok_or("agent_card.v1 receipt has no payload")?;
+    let card_keyid = card.get("keyid").and_then(|v| v.as_str()).unwrap_or("");
+    let card_agent = card.get("agent").and_then(|v| v.as_str()).unwrap_or("");
+
+    let revoked_at = crate::commands::verify::now_rfc3339();
+    let mut payload = serde_json::Map::new();
+    payload.insert("schema".into(), "agent_card_revocation.v1".into());
+    payload.insert("card".into(), card_id.into());
+    payload.insert("keyid".into(), card_keyid.into());
+    if let Some(r) = reason {
+        payload.insert("reason".into(), r.into());
+    }
+    payload.insert("revoked_at".into(), revoked_at.clone().into());
+    let payload = serde_json::Value::Object(payload);
+
+    treeship_core::predicates::validate("agent_card_revocation.v1", Some(&payload))
+        .map_err(|e| format!("invalid revocation: {e}"))?;
+
+    let mut stmt = ReceiptStatement::new("system://registry", "agent_card_revocation.v1");
+    stmt.payload = Some(payload);
+
+    // Sign as the agent (self-revocation) when the card's actor has a key.
+    let signer = crate::commands::attest::resolve_actor_signer(&ctx, card_agent)?;
+    let pt = payload_type("receipt");
+    let result = sign(&pt, &stmt, signer.as_ref())?;
+    ctx.storage.write(&Record {
+        artifact_id:  result.artifact_id.clone(),
+        digest:       result.digest.clone(),
+        payload_type: pt,
+        key_id:       signer.key_id().to_string(),
+        signed_at:    stmt.timestamp.clone(),
+        parent_id:    Some(card_id.to_string()),
+        envelope:     result.envelope,
+        hub_url:      None,
+    })?;
+
+    let self_revoke = signer.key_id() == card_keyid;
+    printer.success(
+        "capability card revoked",
+        &[
+            ("revocation", &result.artifact_id),
+            ("card", card_id),
+            ("agent", card_agent),
+            ("authority", if self_revoke { "self (agent key)" } else { "ship default key" }),
+            ("reason", reason.unwrap_or("(none)")),
+        ],
+    );
+    if !self_revoke {
+        printer.hint(
+            "signed with the ship's default key: verify-capability honors this only if that key is a Ship trust root; otherwise register the agent with --own-key and revoke as the agent.",
+        );
+    }
+    printer.hint(&format!("treeship verify-capability {card_id}"));
+    printer.blank();
+    Ok(())
+}
+
+/// Find an authorized revocation of `card_id`, if any. Authorized = signed by
+/// the card's own key (self-revocation) or a Ship trust root (issuer
+/// revocation); a stranger's revocation is ignored. Returns (reason, who).
+fn find_revocation(
+    ctx: &ctx::Ctx,
+    card_id: &str,
+    card_keyid: &str,
+    trust: &TrustRootStore,
+) -> Option<(String, String)> {
+    let receipt_pt = payload_type("receipt");
+    for entry in ctx.storage.list_by_type(&receipt_pt) {
+        let Ok(rec) = ctx.storage.read(&entry.id) else {
+            continue;
+        };
+        let Ok(stmt) = rec.envelope.unmarshal_statement::<ReceiptStatement>() else {
+            continue;
+        };
+        if stmt.kind != "agent_card_revocation.v1" {
+            continue;
+        }
+        let Some(payload) = stmt.payload else { continue };
+        if payload.get("card").and_then(|v| v.as_str()) != Some(card_id) {
+            continue;
+        }
+        let rsigner = rec
+            .envelope
+            .signatures
+            .first()
+            .map(|s| s.keyid.as_str())
+            .unwrap_or("");
+        let self_revoke = !card_keyid.is_empty() && rsigner == card_keyid;
+        let issuer_revoke = trust
+            .roots()
+            .iter()
+            .any(|r| r.key_id == rsigner && r.kind == TrustRootKind::Ship);
+        if self_revoke || issuer_revoke {
+            let reason = payload
+                .get("reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or("(no reason given)")
+                .to_string();
+            let who = if self_revoke {
+                "self-revoked".to_string()
+            } else {
+                "issuer (ship) revoked".to_string()
+            };
+            return Some((reason, who));
+        }
+    }
+    None
 }
 
 /// A card is **key-bound** only when its `keyid` is the signer of the envelope

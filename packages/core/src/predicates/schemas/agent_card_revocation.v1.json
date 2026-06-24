@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://treeship.dev/schemas/agent_card_revocation.v1.json",
+  "title": "agent_card_revocation.v1",
+  "description": "Revokes a previously-minted agent_card.v1. Carried as the payload of a Treeship receipt with kind=agent_card_revocation.v1. A revocation is honored by verify-capability only when its signer is authorized: the card's own key (self-revocation) or a Ship trust root (issuer revocation). See docs/specs/agent-capability-cards.md.",
+  "type": "object",
+  "required": ["schema", "card", "revoked_at"],
+  "properties": {
+    "schema": {
+      "description": "Schema identifier. Must be exactly this value.",
+      "const": "agent_card_revocation.v1"
+    },
+    "card": {
+      "description": "Content-addressed id (art_...) of the agent_card.v1 receipt being revoked.",
+      "type": "string"
+    },
+    "keyid": {
+      "description": "Key the revoked card was bound to. Recorded so verify can match a self-revocation (signer == this key) without re-reading the card.",
+      "type": "string"
+    },
+    "reason": {
+      "description": "Optional human-readable reason, e.g. key-rotation, compromised, decommissioned.",
+      "type": "string"
+    },
+    "revoked_at": {
+      "description": "RFC3339 timestamp the revocation was issued.",
+      "type": "string"
+    },
+    "supersedes": {
+      "description": "Optional id of the agent_card.v1 that replaces the revoked one, or null.",
+      "type": ["string", "null"]
+    }
+  }
+}

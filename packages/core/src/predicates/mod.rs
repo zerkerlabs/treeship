@@ -47,6 +47,10 @@ const REGISTRY: &[(&str, &str)] = &[
         "agent_card.v1",
         include_str!("schemas/agent_card.v1.json"),
     ),
+    (
+        "agent_card_revocation.v1",
+        include_str!("schemas/agent_card_revocation.v1.json"),
+    ),
 ];
 
 /// Returns the raw JSON Schema text for a registered predicate suffix, if any.
@@ -408,6 +412,31 @@ mod tests {
         assert!(matches!(
             validate("agent_card.v1", Some(&card)).unwrap_err(),
             PredicateError::TypeMismatch { field, .. } if field == "capabilities"
+        ));
+    }
+
+    #[test]
+    fn agent_card_revocation_valid_passes() {
+        let rev = json!({
+            "schema": "agent_card_revocation.v1",
+            "card": "art_deadbeefdeadbeef",
+            "keyid": "key_1",
+            "reason": "key-rotation",
+            "revoked_at": "2026-06-23T00:00:00Z"
+        });
+        assert!(validate("agent_card_revocation.v1", Some(&rev)).is_ok());
+    }
+
+    #[test]
+    fn agent_card_revocation_requires_card_id() {
+        let rev = json!({
+            "schema": "agent_card_revocation.v1",
+            "revoked_at": "2026-06-23T00:00:00Z"
+            // missing `card`
+        });
+        assert!(matches!(
+            validate("agent_card_revocation.v1", Some(&rev)).unwrap_err(),
+            PredicateError::MissingField { field, .. } if field == "card"
         ));
     }
 }
