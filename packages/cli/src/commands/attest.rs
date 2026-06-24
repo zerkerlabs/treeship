@@ -1,6 +1,6 @@
 use serde_json::Value;
 use treeship_core::{
-    attestation::sign,
+    attestation::{sign, Signer},
     journal::{self, Journal},
     statements::{
         ActionStatement, ApprovalScope, ApprovalStatement, ApprovalUse, DecisionStatement,
@@ -8,11 +8,49 @@ use treeship_core::{
         SubjectRef, TYPE_APPROVAL_USE, payload_type, nonce_digest,
     },
     storage::Record,
+    trust::{TrustRootKind, TrustRootStore},
 };
 
 use crate::commands::verify::{check_scope_violation, find_approval_by_nonce, now_rfc3339};
 use crate::{ctx, printer::Printer};
 use treeship_core::session::event::EventType;
+
+/// Resolve which key signs for a given actor URI. An `agent://<name>` whose
+/// agent card carries a registered per-agent key that is pinned under
+/// AgentCert signs with **that** key, so the actor is provable (the receipt's
+/// signer is the agent's certified key). Every other actor, and any agent
+/// without a registered/pinned key, signs with the ship's default key, exactly
+/// as before. This is the load-bearing half of per-actor signing.
+fn resolve_actor_signer(
+    ctx: &ctx::Ctx,
+    actor: &str,
+) -> Result<Box<dyn Signer>, Box<dyn std::error::Error>> {
+    let Some(name) = actor.strip_prefix("agent://") else {
+        return Ok(ctx.keys.default_signer()?);
+    };
+    let agents_dir = crate::commands::cards::agents_dir_for(&ctx.config_path);
+    let key_id = crate::commands::cards::list(&agents_dir)
+        .unwrap_or_default()
+        .into_iter()
+        .find(|c| c.agent_name == name && c.key_id.is_some())
+        .and_then(|c| c.key_id);
+    let Some(key_id) = key_id else {
+        return Ok(ctx.keys.default_signer()?);
+    };
+    // Only sign as the agent if its key is actually pinned under AgentCert.
+    let pinned = TrustRootStore::open_default_or_empty()?
+        .roots()
+        .iter()
+        .any(|r| r.key_id == key_id && r.kind == TrustRootKind::AgentCert);
+    if !pinned {
+        return Ok(ctx.keys.default_signer()?);
+    }
+    // Sign with the agent's own key; fall back to default if the entry is gone.
+    Ok(ctx
+        .keys
+        .signer(&key_id)
+        .or_else(|_| ctx.keys.default_signer())?)
+}
 
 // --- action -----------------------------------------------------------------
 
@@ -106,7 +144,9 @@ pub fn action(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std
     }
     stmt.meta = meta;
 
-    let signer = ctx.keys.default_signer()?;
+    // Sign with the actor's own key when it has a registered, pinned one;
+    // otherwise the ship's default key (unchanged behavior).
+    let signer = resolve_actor_signer(&ctx, &args.actor)?;
     let pt     = payload_type("action");
     let result = sign(&pt, &stmt, signer.as_ref())?;
 
@@ -418,7 +458,10 @@ pub struct CardArgs {
 /// signs it, and reports whether the card is key-bound at mint time.
 pub fn card(args: CardArgs, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(args.config.as_deref())?;
-    let signer = ctx.keys.default_signer()?;
+    // Sign the card with the agent's own key when it has a registered, pinned
+    // one, so the card and the agent's actions share a signer and the card is
+    // key-bound. Falls back to the ship's default key.
+    let signer = resolve_actor_signer(&ctx, &args.agent)?;
     // Default the card's keyid to the signing key, so a freshly minted card is
     // key-bound-eligible by default (pin it under AgentCert to make it strong).
     let keyid = args.keyid.clone().unwrap_or_else(|| signer.key_id().to_string());
