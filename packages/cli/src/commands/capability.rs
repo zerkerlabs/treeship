@@ -274,7 +274,7 @@ pub fn revoke_capability(
 /// Find an authorized revocation of `card_id`, if any. Authorized = signed by
 /// the card's own key (self-revocation) or a Ship trust root (issuer
 /// revocation); a stranger's revocation is ignored. Returns (reason, who).
-fn find_revocation(
+pub(crate) fn find_revocation(
     ctx: &ctx::Ctx,
     card_id: &str,
     card_keyid: &str,
