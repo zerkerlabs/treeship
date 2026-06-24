@@ -49,6 +49,10 @@
     "policy_ref": {
       "description": "Optional policy this card operates under. Narrative reference; Guard consumes it at enforcement time.",
       "type": "string"
+    },
+    "capability_provenance": {
+      "description": "Optional per-capability provenance: a map from a capability (same string as in capabilities.tools) to { grade, source?, evidence? }. grade is 'captured' (the tool is wired into the agent's harness, read from config at mint time), 'exercised' (computed by verify-capability from captured receipts), or 'declared'. Cards without this block are treated as fully declared. See docs/specs/capability-provenance.md.",
+      "type": "object"
     }
   }
 }
