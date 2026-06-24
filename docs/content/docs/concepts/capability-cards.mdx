@@ -76,6 +76,27 @@ treeship verify-capability art_<agent_card_id>
 
 The optional `evidence_anchor` on a card commits the agent to a receipt set (a count, a tip, a Merkle root) at mint time, so post-hoc omission or backfill is detectable, verify-capability flags a mismatch between the committed count and what it observes.
 
+## Capability provenance
+
+A capability is only as trustworthy as where its claim came from. By default `--tools file.*` is just *declared*, an operator typed it, or a model emitted it. **Capability provenance** grades every declared capability by its source, so a registry of claims becomes a registry of captured truth:
+
+- **captured** — the tool is actually wired into the agent's harness, read from real config (`mcp.json`, a Claude Code `settings.json` `permissions.allow` list) at mint time.
+- **exercised** — the capability is backed by real captured action receipts (computed by the cross-check above).
+- **declared-only** — asserted, never wired and never exercised.
+
+Mint a card whose capabilities are captured from config, not typed by hand:
+
+```bash
+treeship attest card --agent agent://deployer \
+  --from-harness ./.claude/settings.json
+```
+
+`verify-capability` and `resolve` then report the breakdown, for example `provenance: 2 captured, 0 exercised, 1 declared-only`. A declared `deploy.prod` that is wired nowhere and never used is visibly weaker than the tools backed by evidence.
+
+<Callout title="Provenance grades, it does not block">
+`captured` proves a tool is *wired*, not that the agent is *confined* to it (confinement is runtime enforcement). `exercised` proves *use*, not the capability ceiling. Provenance reports the strength of a claim; it never rejects a card. See the [capability-provenance spec](https://github.com/zerkerlabs/treeship/blob/main/docs/specs/capability-provenance.md).
+</Callout>
+
 ## Revoking a card
 
 ```bash
