@@ -1123,6 +1123,12 @@ struct AgentRegisterArgs {
     /// Comma-separated list of actions requiring escalation
     #[arg(long, value_name = "ACTIONS", value_delimiter = ',')]
     escalation: Vec<String>,
+
+    /// Mint a dedicated per-agent signing key and pin it under AgentCert,
+    /// instead of certifying the shared ship key. Makes the agent's actor
+    /// provable once it signs with that key (see verify-capability).
+    #[arg(long, default_value_t = false)]
+    own_key: bool,
 }
 
 // --- declare ---------------------------------------------------------------
@@ -2182,6 +2188,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 a.description.clone(),
                 a.forbidden.clone(),
                 a.escalation.clone(),
+                a.own_key,
                 cli.config.as_deref(),
                 printer,
             ),
