@@ -393,6 +393,29 @@ func ListArtifactsByDock(db *sql.DB, dockID string) ([]Artifact, error) {
 	return out, rows.Err()
 }
 
+// ListArtifactsByPayloadType returns every artifact of a given payload type,
+// newest first. Used by the agent resolver to scan receipts. Bounded scans are
+// acceptable for now; an agent-indexed lookup is a later optimization.
+func ListArtifactsByPayloadType(db *sql.DB, payloadType string) ([]Artifact, error) {
+	rows, err := db.Query(
+		`SELECT artifact_id, payload_type, envelope_json, digest, signed_at, parent_id, hub_url, rekor_index, dock_id
+		 FROM artifacts WHERE payload_type = ? ORDER BY signed_at DESC`, payloadType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Artifact
+	for rows.Next() {
+		var a Artifact
+		if err := rows.Scan(&a.ArtifactID, &a.PayloadType, &a.EnvelopeJSON, &a.Digest, &a.SignedAt, &a.ParentID, &a.HubURL, &a.RekorIndex, &a.DockID); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 func SetRekorIndex(db *sql.DB, artifactID string, logIndex int64) error {
 	_, err := db.Exec(`UPDATE artifacts SET rekor_index = ? WHERE artifact_id = ?`, logIndex, artifactID)
 	return err
