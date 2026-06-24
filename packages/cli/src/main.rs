@@ -1677,6 +1677,11 @@ struct RevokeCapabilityArgs {
 struct ResolveArgs {
     /// Agent URI to resolve, e.g. agent://deployer.
     agent: String,
+
+    /// Resolve from a Hub over the network instead of the local store. The
+    /// returned bundle is re-verified client-side against your trust roots.
+    #[arg(long, value_name = "URL")]
+    hub: Option<String>,
 }
 
 // --- keys -------------------------------------------------------------------
@@ -2481,7 +2486,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
         ),
 
         Command::Resolve(a) => {
-            commands::resolve::resolve(&a.agent, cli.config.as_deref(), printer)
+            commands::resolve::resolve(&a.agent, a.hub.as_deref(), cli.config.as_deref(), printer)
         }
 
         Command::Verify(a) => {

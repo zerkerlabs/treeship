@@ -10,15 +10,28 @@
 use crate::{ctx, printer::Printer};
 use std::collections::{HashMap, HashSet};
 
+use ed25519_dalek::VerifyingKey;
+use treeship_core::attestation::{Envelope, Verifier};
 use treeship_core::capability::{declared_tools, is_key_bound, matched_capability};
 use treeship_core::statements::{payload_type, ActionStatement, ReceiptStatement};
-use treeship_core::trust::TrustRootStore;
+use treeship_core::trust::{decode_ed25519_pubkey, TrustRootKind, TrustRootStore};
 
 type CmdResult = Result<(), Box<dyn std::error::Error>>;
 
-pub fn resolve(agent: &str, config: Option<&str>, printer: &Printer) -> CmdResult {
+pub fn resolve(
+    agent: &str,
+    hub: Option<&str>,
+    config: Option<&str>,
+    printer: &Printer,
+) -> CmdResult {
     let ctx = ctx::open(config)?;
     let trust = TrustRootStore::open_default_or_empty()?;
+
+    // Remote resolution: pull the bundle from a Hub and re-verify it against
+    // OUR trust roots. The Hub's word is never trusted; the client decides.
+    if let Some(hub_url) = hub {
+        return resolve_remote(hub_url, agent, &trust, printer);
+    }
 
     // --- Identity: the agent's per-agent key --------------------------------
     let agents_dir = crate::commands::cards::agents_dir_for(&ctx.config_path);
@@ -191,6 +204,170 @@ pub fn resolve(agent: &str, config: Option<&str>, printer: &Printer) -> CmdResul
     printer.blank();
     printer.hint(
         "every field is re-derived from local artifacts, not a stored verdict. captured = the machine observed it; checked = a claim cross-verified against captured evidence; asserted = a bare claim.",
+    );
+    printer.blank();
+    Ok(())
+}
+
+/// Build an offline Verifier from the client's pinned trust roots. An agent
+/// whose key the client has not pinned simply will not verify, which is the
+/// honest answer, not an error.
+fn verifier_from_trust(trust: &TrustRootStore) -> Verifier {
+    let mut map: HashMap<String, VerifyingKey> = HashMap::new();
+    for r in trust.roots() {
+        if let Ok(vk) = decode_ed25519_pubkey(&r.public_key) {
+            map.insert(r.key_id.clone(), vk);
+        }
+    }
+    Verifier::new(map)
+}
+
+/// Resolve an agent over the network: pull the bundle from `hub`, then
+/// re-verify and grade it locally. The Hub serves raw signed envelopes; this
+/// function, against the client's own trust roots, decides what to believe.
+/// The exercised grade is local-only (the bundle carries no action receipts).
+fn resolve_remote(hub: &str, agent: &str, trust: &TrustRootStore, printer: &Printer) -> CmdResult {
+    let base = hub.trim_end_matches('/');
+    let bundle: serde_json::Value = ureq::get(&format!("{base}/v1/agents"))
+        .query("agent", agent)
+        .call()
+        .map_err(|e| format!("could not reach hub {base}: {e}"))?
+        .into_json()
+        .map_err(|e| format!("hub returned invalid JSON: {e}"))?;
+
+    let verifier = verifier_from_trust(trust);
+
+    let Some(card_entry) = bundle.get("current_card").filter(|v| !v.is_null()) else {
+        printer.warn("no capability card", &[("agent", agent), ("hub", base)]);
+        printer.hint("the hub holds no agent_card.v1 for this agent.");
+        printer.blank();
+        return Ok(());
+    };
+    let card_id = card_entry
+        .get("artifact_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let env_json = card_entry
+        .get("envelope_json")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let env: Envelope = serde_json::from_str(env_json)
+        .map_err(|e| format!("hub returned an unparseable card envelope: {e}"))?;
+
+    // Re-verify the signature against OUR trust roots.
+    let sig_ok = verifier.verify_any(&env).is_ok();
+    let stmt: ReceiptStatement = env.unmarshal_statement()?;
+    if stmt.kind != "agent_card.v1" {
+        return Err(format!("hub returned a `{}`, not an agent_card.v1", stmt.kind).into());
+    }
+    let card = stmt.payload.unwrap_or(serde_json::Value::Null);
+    let card_keyid = card.get("keyid").and_then(|v| v.as_str()).unwrap_or("");
+    let signer = env
+        .signatures
+        .first()
+        .map(|s| s.keyid.as_str())
+        .unwrap_or("");
+    let tools = declared_tools(&card);
+    let key_bound = sig_ok && is_key_bound(card_keyid, signer, trust);
+
+    // Honor an authorized, verifying revocation from the bundle.
+    let mut revocation: Option<String> = None;
+    if let Some(revs) = bundle.get("revocations").and_then(|v| v.as_array()) {
+        for rev in revs {
+            let rev_json = rev.get("envelope_json").and_then(|v| v.as_str()).unwrap_or("");
+            let Ok(rev_env) = serde_json::from_str::<Envelope>(rev_json) else {
+                continue;
+            };
+            if verifier.verify_any(&rev_env).is_err() {
+                continue; // unverified revocation -> ignored
+            }
+            let Ok(rev_stmt) = rev_env.unmarshal_statement::<ReceiptStatement>() else {
+                continue;
+            };
+            if rev_stmt.kind != "agent_card_revocation.v1" {
+                continue;
+            }
+            let rev_signer = rev_env
+                .signatures
+                .first()
+                .map(|s| s.keyid.as_str())
+                .unwrap_or("");
+            let self_revoke = !card_keyid.is_empty() && rev_signer == card_keyid;
+            let issuer = trust
+                .roots()
+                .iter()
+                .any(|r| r.key_id == rev_signer && r.kind == TrustRootKind::Ship);
+            if self_revoke || issuer {
+                revocation = Some(
+                    rev_stmt
+                        .payload
+                        .as_ref()
+                        .and_then(|p| p.get("reason"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("(no reason given)")
+                        .to_string(),
+                );
+                break;
+            }
+        }
+    }
+
+    // Capability provenance from the card (captured grades travel with it).
+    let captured: HashSet<String> = card
+        .get("capability_provenance")
+        .and_then(|v| v.as_object())
+        .map(|m| {
+            m.iter()
+                .filter(|(_, v)| v.get("grade").and_then(|g| g.as_str()) == Some("captured"))
+                .map(|(k, _)| k.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    let n_captured = tools.iter().filter(|t| captured.contains(*t)).count();
+    let n_other = tools.len().saturating_sub(n_captured);
+
+    let sig_str = if sig_ok {
+        "verified (trusted key)"
+    } else {
+        "UNVERIFIED (key not in your trust roots)"
+    };
+    let key_bound_str = if key_bound { "yes (AgentCert)" } else { "no" };
+    let tools_str = if tools.is_empty() {
+        "(none)".to_string()
+    } else {
+        tools.join(", ")
+    };
+    let mix_str = format!("{n_captured} captured, {n_other} declared (exercised n/a remotely)");
+    let status = if revocation.is_some() {
+        "REVOKED"
+    } else if key_bound {
+        "resolved (key-bound)"
+    } else if sig_ok {
+        "resolved (verified sig, not key-bound)"
+    } else {
+        "resolved (UNVERIFIED)"
+    };
+
+    printer.success(
+        "agent resolved (remote)",
+        &[
+            ("agent", agent),
+            ("hub", base),
+            ("current card", &card_id),
+            ("signature", sig_str),
+            ("key-bound", key_bound_str),
+            ("declared tools", &tools_str),
+            ("capability mix", &mix_str),
+            ("status", status),
+        ],
+    );
+    if let Some(reason) = &revocation {
+        printer.warn("card REVOKED — do not honor", &[("reason", reason.as_str())]);
+    }
+    printer.blank();
+    printer.hint(
+        "re-verified client-side against YOUR trust roots; the hub's word is not trusted. the exercised grade needs the agent's receipts (run `treeship resolve` locally).",
     );
     printer.blank();
     Ok(())
