@@ -101,6 +101,85 @@ func TestResolve_BundlesAgentCardsAndRevocations(t *testing.T) {
 	}
 }
 
+// makeActionEnvelope builds an envelope whose payload is an ActionStatement
+// directly ({actor, action}), the way `attest action` produces it.
+func makeActionEnvelope(t *testing.T, actor, action string) string {
+	t.Helper()
+	stmtBytes, _ := json.Marshal(map[string]any{"actor": actor, "action": action})
+	env := map[string]any{
+		"payload":     base64.RawURLEncoding.EncodeToString(stmtBytes),
+		"payloadType": actionPayloadType,
+		"signatures":  []map[string]string{{"keyid": "key_d", "sig": "AAAA"}},
+	}
+	envBytes, _ := json.Marshal(env)
+	return string(envBytes)
+}
+
+func insertAction(t *testing.T, database *sql.DB, id, envJSON string, signedAt int64) {
+	t.Helper()
+	if err := db.InsertArtifact(database, &db.Artifact{
+		ArtifactID:   id,
+		PayloadType:  actionPayloadType,
+		EnvelopeJSON: envJSON,
+		Digest:       "sha256:00",
+		SignedAt:     signedAt,
+		HubURL:       "https://hub.test",
+	}); err != nil {
+		t.Fatalf("insert %s: %v", id, err)
+	}
+}
+
+func TestLog_AgentHistory(t *testing.T) {
+	t.Setenv("TREESHIP_HUB_DB", filepath.Join(t.TempDir(), "hub.db"))
+	database, err := db.Open()
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer database.Close()
+
+	insertAction(t, database, "art_a1", makeActionEnvelope(t, "agent://deployer", "file.write"), 100)
+	insertAction(t, database, "art_a2", makeActionEnvelope(t, "agent://deployer", "db.query"), 200)
+	insertAction(t, database, "art_ghost", makeActionEnvelope(t, "agent://ghost", "x"), 150)
+	insertReceipt(t, database, "art_card",
+		makeEnvelope(t, "agent_card.v1", map[string]any{
+			"agent":           "agent://deployer",
+			"keyid":           "key_d",
+			"evidence_anchor": map[string]any{"receipt_count": 2},
+		}, "key_d"), 300)
+
+	h := &Handlers{DB: database}
+	rec := httptest.NewRecorder()
+	h.Log(rec, httptest.NewRequest(http.MethodGet, "/v1/agents/log?agent=agent://deployer", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (body %s)", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Entries         []logEntry             `json:"entries"`
+		CommittedAnchor map[string]interface{} `json:"committed_anchor"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// 2 actions + 1 card = 3 entries; ghost's action excluded.
+	if len(body.Entries) != 3 {
+		t.Errorf("entries = %d, want 3", len(body.Entries))
+	}
+	// Newest-first across kinds: the card (signed_at 300) is first.
+	if len(body.Entries) > 0 && body.Entries[0].ArtifactID != "art_card" {
+		t.Errorf("first entry = %s, want art_card (newest)", body.Entries[0].ArtifactID)
+	}
+	// No proof seeded, so every anchor is null.
+	for _, e := range body.Entries {
+		if e.MerkleAnchor != nil {
+			t.Errorf("entry %s anchor = %v, want null", e.ArtifactID, e.MerkleAnchor)
+		}
+	}
+	// The committed anchor is captured off the card.
+	if body.CommittedAnchor["receipt_count"] != float64(2) {
+		t.Errorf("committed_anchor = %v, want receipt_count 2", body.CommittedAnchor)
+	}
+}
+
 func TestResolve_MissingAgentParam(t *testing.T) {
 	t.Setenv("TREESHIP_HUB_DB", filepath.Join(t.TempDir(), "hub.db"))
 	database, err := db.Open()

@@ -88,6 +88,10 @@ func main() {
 	// revocations as raw signed envelopes; the client re-verifies). Public.
 	r.Get("/v1/agents", agentHandlers.Resolve)
 
+	// Agent transparency log: an agent's append-only receipt history (metadata
+	// + Merkle anchors only, never payloads). Public; the client re-verifies.
+	r.Get("/v1/agents/log", agentHandlers.Log)
+
 	// Well-known revocation list.
 	r.Get("/.well-known/treeship/revoked.json", revokedHandler)
 
