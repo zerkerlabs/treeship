@@ -25,16 +25,9 @@ fn resolve_actor_signer(
     ctx: &ctx::Ctx,
     actor: &str,
 ) -> Result<Box<dyn Signer>, Box<dyn std::error::Error>> {
-    let Some(name) = actor.strip_prefix("agent://") else {
-        return Ok(ctx.keys.default_signer()?);
-    };
     let agents_dir = crate::commands::cards::agents_dir_for(&ctx.config_path);
-    let key_id = crate::commands::cards::list(&agents_dir)
-        .unwrap_or_default()
-        .into_iter()
-        .find(|c| c.agent_name == name && c.key_id.is_some())
-        .and_then(|c| c.key_id);
-    let Some(key_id) = key_id else {
+    let Some(key_id) = crate::commands::cards::registered_key_for_actor(&agents_dir, actor)
+    else {
         return Ok(ctx.keys.default_signer()?);
     };
     // Only sign as the agent if its key is actually pinned under AgentCert.
@@ -341,7 +334,8 @@ pub fn handoff(args: HandoffArgs, printer: &Printer) -> Result<(), Box<dyn std::
     stmt.approval_ids = args.approvals.clone();
     stmt.obligations  = args.obligations.clone();
 
-    let signer = ctx.keys.default_signer()?;
+    // The handing-off agent (`from`) signs; use its own key when registered.
+    let signer = resolve_actor_signer(&ctx, &args.from)?;
     let pt     = payload_type("handoff");
     let result = sign(&pt, &stmt, signer.as_ref())?;
 
@@ -539,7 +533,8 @@ pub struct DecisionArgs {
 
 pub fn decision(args: DecisionArgs, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(args.config.as_deref())?;
-    let signer = ctx.keys.default_signer()?;
+    // The deciding agent signs; use its own key when registered.
+    let signer = resolve_actor_signer(&ctx, &args.actor)?;
 
     let mut stmt = DecisionStatement::new(&args.actor);
     stmt.model = args.model.clone();

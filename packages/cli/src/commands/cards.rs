@@ -311,6 +311,20 @@ pub fn list(agents_dir: &Path) -> Result<Vec<AgentCard>, CardError> {
     Ok(out)
 }
 
+/// The registered per-agent signing key for an `agent://<name>` actor, if any
+/// card carries one. None for non-agent actors (`human://`, `farcaster://`)
+/// or agents registered without a per-agent key. This is the actor -> key
+/// binding `attest` resolves to sign, and `verify` checks to label the actor
+/// proven vs asserted.
+pub fn registered_key_for_actor(agents_dir: &Path, actor: &str) -> Option<String> {
+    let name = actor.strip_prefix("agent://")?;
+    list(agents_dir)
+        .ok()?
+        .into_iter()
+        .find(|c| c.agent_name == name && c.key_id.is_some())
+        .and_then(|c| c.key_id)
+}
+
 /// Load one card by ID.
 pub fn load(agents_dir: &Path, agent_id: &str) -> Result<AgentCard, CardError> {
     let path = card_path(agents_dir, agent_id);

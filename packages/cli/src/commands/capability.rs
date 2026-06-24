@@ -182,6 +182,23 @@ pub fn is_key_bound(card_keyid: &str, signer_keyid: &str, trust: &TrustRootStore
             .any(|r| r.key_id == card_keyid && r.kind == TrustRootKind::AgentCert)
 }
 
+/// Is a receipt's `actor` cryptographically proven, i.e. signed by the actor's
+/// registered, AgentCert-pinned per-agent key? Used by `verify` to label the
+/// actor proven vs asserted. False for non-agent actors, unregistered agents,
+/// a signer that isn't the registered key, or an unpinned key.
+pub fn actor_proven(ctx: &crate::ctx::Ctx, actor: &str, signer_keyid: &str) -> bool {
+    let agents_dir = crate::commands::cards::agents_dir_for(&ctx.config_path);
+    let Some(registered) =
+        crate::commands::cards::registered_key_for_actor(&agents_dir, actor)
+    else {
+        return false;
+    };
+    registered == signer_keyid
+        && TrustRootStore::open_default_or_empty()
+            .map(|t| is_key_bound(signer_keyid, signer_keyid, &t))
+            .unwrap_or(false)
+}
+
 /// `family.*` matches `family.write`; otherwise an exact match. A bare `*`
 /// matches anything.
 fn tool_matches(declared: &str, actual: &str) -> bool {

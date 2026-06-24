@@ -178,8 +178,27 @@ pub fn run(
             let mut fields: Vec<(&str, String)> = Vec::new();
             fields.push(("target", short_id(target)));
 
+            // Whether the actor is proven (signed by the actor's registered,
+            // AgentCert-pinned per-agent key) or merely asserted (free-text
+            // label signed by the shared key). The signer is the envelope's key.
+            let signer_kid = env
+                .signatures
+                .first()
+                .map(|s| s.keyid.clone())
+                .unwrap_or_default();
+            let proof = |actor: &str| -> (&'static str, String) {
+                let label = if crate::commands::capability::actor_proven(&ctx, actor, &signer_kid)
+                {
+                    "proven (key-bound)".to_string()
+                } else {
+                    "asserted".to_string()
+                };
+                ("actor proof", label)
+            };
+
             if let Ok(action) = env.unmarshal_statement::<ActionStatement>() {
                 fields.push(("actor", action.actor.clone()));
+                fields.push(proof(&action.actor));
                 fields.push(("action", action.action.clone()));
                 fields.push(("time", action.timestamp.clone()));
                 // Check for approval
@@ -193,12 +212,14 @@ pub fn run(
                 fields.push(("time", approval.timestamp.clone()));
             } else if let Ok(handoff) = env.unmarshal_statement::<HandoffStatement>() {
                 fields.push(("actor", format!("{} -> {}", handoff.from, handoff.to)));
+                fields.push(proof(&handoff.from));
                 fields.push(("time", handoff.timestamp.clone()));
             } else if let Ok(receipt) = env.unmarshal_statement::<ReceiptStatement>() {
                 fields.push(("system", receipt.system.clone()));
                 fields.push(("time", receipt.timestamp.clone()));
             } else if let Ok(decision) = env.unmarshal_statement::<DecisionStatement>() {
                 fields.push(("actor", decision.actor.clone()));
+                fields.push(proof(&decision.actor));
                 if let Some(ref model) = decision.model {
                     fields.push(("model", model.clone()));
                 }
