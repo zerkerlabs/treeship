@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/treeship/hub/internal/agents"
 	"github.com/treeship/hub/internal/artifacts"
 	"github.com/treeship/hub/internal/db"
 	"github.com/treeship/hub/internal/dock"
@@ -33,6 +34,7 @@ func main() {
 	merkleHandlers := &merkle.Handlers{DB: database}
 	receiptHandlers := &receipts.Handlers{DB: database}
 	shipHandlers := &ship.Handlers{DB: database}
+	agentHandlers := &agents.Handlers{DB: database}
 
 	r := chi.NewRouter()
 
@@ -81,6 +83,10 @@ func main() {
 	// Per-ship registry endpoints (DPoP-authenticated).
 	r.Get("/v1/ship/agents", shipHandlers.ListAgents)
 	r.Get("/v1/ship/sessions", shipHandlers.ListSessions)
+
+	// Agent resolver: resolve an agent URI to its verifiable bundle (cards +
+	// revocations as raw signed envelopes; the client re-verifies). Public.
+	r.Get("/v1/agents", agentHandlers.Resolve)
 
 	// Well-known revocation list.
 	r.Get("/.well-known/treeship/revoked.json", revokedHandler)
