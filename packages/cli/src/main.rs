@@ -149,6 +149,13 @@ enum Command {
     ///   treeship resolve agent://deployer
     Resolve(ResolveArgs),
 
+    /// Publish an agent's resolvable set (current card + revocations) to the
+    /// Hub, so it can be resolved over the network with `resolve --hub`
+    ///
+    /// Example:
+    ///   treeship publish agent://deployer
+    Publish(PublishArgs),
+
     /// Create, export, and import artifact bundles
     ///
     /// Bundles group artifacts into a signed, portable package.
@@ -1684,6 +1691,12 @@ struct ResolveArgs {
     hub: Option<String>,
 }
 
+#[derive(Args)]
+struct PublishArgs {
+    /// Agent URI to publish, e.g. agent://deployer.
+    agent: String,
+}
+
 // --- keys -------------------------------------------------------------------
 
 #[derive(Subcommand)]
@@ -2487,6 +2500,10 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
 
         Command::Resolve(a) => {
             commands::resolve::resolve(&a.agent, a.hub.as_deref(), cli.config.as_deref(), printer)
+        }
+
+        Command::Publish(a) => {
+            commands::publish::publish(&a.agent, cli.config.as_deref(), printer)
         }
 
         Command::Verify(a) => {

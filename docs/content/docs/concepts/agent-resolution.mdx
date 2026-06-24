@@ -1,0 +1,73 @@
+---
+title: Agent Resolution
+description: Resolve an agent URI to a verifiable bundle, its current capability card, key, revocation status, and transparency anchor, re-verified offline against your own trust roots. The DNS, OCSP, and Certificate Transparency of the agentic web.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+A [capability card](/docs/concepts/capability-cards) proves what an agent is and can do. **Agent resolution** is how anyone, holding nothing but the agent's URI, *finds* that card and decides whether to believe it. It is the lookup layer: DNS, OCSP, and Certificate Transparency, for agents.
+
+```bash
+treeship resolve agent://deployer                 # from the local store
+treeship resolve --hub https://api.treeship.dev agent://deployer   # over the network
+```
+
+## What you get back
+
+Resolution returns a **verifiable bundle**, re-derived from the bytes, never a stored verdict:
+
+```
+✓ agent resolved (remote)
+  agent:           agent://deployer
+  current card:    art_…
+  signature:       verified (trusted key)
+  key-bound:       yes (AgentCert)
+  declared tools:  file.*, db.query
+  capability mix:  2 captured, 0 declared (exercised n/a remotely)
+  transparency:    anchored & verified (checkpoint #42)
+  status:          resolved (key-bound)
+```
+
+Each line is a different question the lookup answers:
+
+| Field | The TLS analogue | What it means |
+|---|---|---|
+| `signature` | the cert chain | the card's Ed25519 signature re-verifies against **your** trust roots |
+| `key-bound` | the key binding | the card's keyid is the signer, pinned under `AgentCert` |
+| `capability mix` | cert extensions | how the capabilities are graded ([provenance](/docs/concepts/capability-cards#capability-provenance)) |
+| `transparency` | Certificate Transparency | the card is provably **in the Merkle log**, not just signed |
+| `status` (revocation) | OCSP | whether an authorized revocation has been issued |
+
+## The load-bearing invariant
+
+<Callout type="warn" title="The Hub creates nothing">
+When you resolve over the network, the Hub returns **raw signed envelopes**. It performs no verification, no grading, no authorization. Your machine re-verifies every byte, the Ed25519 signature, the key binding, the revocation authorization, and the Merkle inclusion proof, against **your own trust roots**. If the Hub is wrong, lying, or gone, you still reach the correct verdict from the bytes alone.
+</Callout>
+
+This is why the local and remote results agree: the capability and verification logic lives in one shared Rust module used by the CLI, the Hub-less local path, and the WASM browser verifier. The server is a convenience cache over portable proof, never a source of truth. An agent whose key you have not pinned resolves with `signature: UNVERIFIED`, the honest answer, not an error.
+
+## Local vs remote
+
+- **Local** (`treeship resolve <agent>`): resolves from your local artifact store. Because it has the agent's full receipt history, it also computes the `exercised` capability grade (which declared tools are backed by real action receipts).
+- **Remote** (`treeship resolve --hub <url> <agent>`): pulls the bundle from a Hub and re-verifies it offline. The bundle carries the card, revocations, and transparency proof, but not the agent's action receipts, so the `exercised` grade is local-only and shown as `n/a remotely`.
+
+## Publishing an agent
+
+For others to resolve an agent, its card and revocations have to be on a Hub. One command pushes the resolvable set:
+
+```bash
+treeship publish agent://deployer
+```
+
+This finds the agent's current card and any revocations in the local store and pushes them through the authenticated `hub push` path. After that, `treeship resolve --hub <url> agent://deployer` works for anyone.
+
+## Naming
+
+Today an `agent://<name>` is workspace-local. Global, collision-free naming, namespacing under the issuing ship, or DNS-style delegation gated on the domain-ownership amplifier, is the next step for the resolver; see the [agent-resolver spec](https://github.com/zerkerlabs/treeship/blob/main/docs/specs/agent-resolver.md).
+
+## See also
+
+- [Capability Cards](/docs/concepts/capability-cards) — what gets resolved
+- [Agent Identity](/docs/concepts/agent-identity) — the certificate behind the key
+- [Merkle Proofs](/docs/concepts/merkle-proofs) — the transparency log the anchor verifies against
+- [Trust fabric](/docs/concepts/trust-fabric) — how identity, capability, and resolution compose
