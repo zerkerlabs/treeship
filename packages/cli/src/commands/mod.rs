@@ -1,6 +1,7 @@
 pub mod init;
 pub mod attest;
 pub mod capability;
+pub mod resolve;
 pub mod verify;
 pub mod verify_external;
 pub mod keys;

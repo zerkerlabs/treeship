@@ -142,6 +142,13 @@ enum Command {
     ///   treeship revoke-capability art_<agent_card_id> --reason key-rotation
     RevokeCapability(RevokeCapabilityArgs),
 
+    /// Resolve an agent URI to a verifiable bundle (identity, current card,
+    /// revocation, provenance grades), re-derived from local artifacts
+    ///
+    /// Example:
+    ///   treeship resolve agent://deployer
+    Resolve(ResolveArgs),
+
     /// Create, export, and import artifact bundles
     ///
     /// Bundles group artifacts into a signed, portable package.
@@ -1660,6 +1667,12 @@ struct RevokeCapabilityArgs {
     reason: Option<String>,
 }
 
+#[derive(Args)]
+struct ResolveArgs {
+    /// Agent URI to resolve, e.g. agent://deployer.
+    agent: String,
+}
+
 // --- keys -------------------------------------------------------------------
 
 #[derive(Subcommand)]
@@ -2459,6 +2472,10 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             cli.config.as_deref(),
             printer,
         ),
+
+        Command::Resolve(a) => {
+            commands::resolve::resolve(&a.agent, cli.config.as_deref(), printer)
+        }
 
         Command::Verify(a) => {
             // External targets (URL, file path to a .treeship/.agent package)
