@@ -157,6 +157,13 @@ pub struct AgentCard {
     /// confirm the on-disk cert hasn't drifted from the card's claim.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub certificate_digest: Option<String>,
+    /// Key id of the agent's own signing key, when registered with a
+    /// per-agent key (`agent register --own-key`). This is the binding
+    /// `attest` resolves to sign an agent's actions with its own key, and
+    /// what makes the agent's `actor` provable rather than asserted. None
+    /// for agents that sign with the shared default key (the legacy path).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_id: Option<String>,
     /// Harness this card is attached through (PR 5). For cards born
     /// from discovery, defaults to `DiscoveredAgent::recommended_harness_id`.
     /// For cards born from `treeship agent register`, the surface
@@ -199,6 +206,7 @@ impl AgentCard {
             model:                  None,
             description:            agent.note.clone(),
             certificate_digest:     None,
+            key_id:                 None,
             active_harness_id:      Some(agent.recommended_harness_id().to_string()),
             latest_session_id:      None,
             latest_receipt_digest:  None,
@@ -374,6 +382,9 @@ pub fn upsert(
                 latest_session_id:      existing.latest_session_id.or(incoming.latest_session_id.clone()),
                 latest_receipt_digest:  existing.latest_receipt_digest.or(incoming.latest_receipt_digest.clone()),
                 certificate_digest:     incoming.certificate_digest.clone().or(existing.certificate_digest),
+                // Preserve a registered per-agent key binding across upserts;
+                // a later discovery upsert must not wipe it.
+                key_id:                 incoming.key_id.clone().or(existing.key_id),
                 ..incoming
             }
         }

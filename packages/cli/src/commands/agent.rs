@@ -12,6 +12,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use sha2::{Digest, Sha256};
 
 use treeship_core::agent::*;
+use treeship_core::trust::{TrustRoot, TrustRootKind, TrustRootStore};
 
 use crate::commands::cards::{self, AgentCard, CardCapabilities, CardProvenance, CardStatus};
 use crate::commands::discovery::{
@@ -95,10 +96,12 @@ pub fn register(
     description: Option<String>,
     forbidden: Vec<String>,
     escalation: Vec<String>,
+    own_key: bool,
     config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
+    // The ship's default key is the issuer: it signs the certificate.
     let signer = ctx.keys.default_signer()?;
 
     let now_secs = std::time::SystemTime::now()
@@ -109,14 +112,26 @@ pub fn register(
         now_secs + (valid_days as u64) * 86400,
     );
 
-    let pub_key_bytes = signer.public_key_bytes();
-    let pub_key_b64 = URL_SAFE_NO_PAD.encode(&pub_key_bytes);
+    let ship_pub_b64 = URL_SAFE_NO_PAD.encode(signer.public_key_bytes());
 
-    // Build identity
+    // Subject key. With --own-key, mint a dedicated per-agent key and certify
+    // THAT as the agent's identity (the ship still signs as issuer). Without
+    // the flag, the subject is the ship key -- the legacy behavior, unchanged.
+    let (subject_pub_b64, agent_key_id) = if own_key {
+        let agent_key = ctx.keys.generate(false)?;
+        (
+            URL_SAFE_NO_PAD.encode(&agent_key.public_key),
+            Some(agent_key.id.to_string()),
+        )
+    } else {
+        (ship_pub_b64.clone(), None)
+    };
+
+    // Build identity (subject = the agent's own key when --own-key)
     let identity = AgentIdentity {
         agent_name: name.into(),
         ship_id: ctx.config.ship_id.clone(),
-        public_key: pub_key_b64.clone(),
+        public_key: subject_pub_b64.clone(),
         issuer: format!("ship://{}", ctx.config.ship_id),
         issued_at: issued_at.clone(),
         valid_until: valid_until.clone(),
@@ -159,8 +174,9 @@ pub fn register(
         declaration: declaration.clone(),
         signature: CertificateSignature {
             algorithm: "ed25519".into(),
+            // Issuer = the ship's key (it signed the canonical bytes).
             key_id: signer.key_id().to_string(),
-            public_key: pub_key_b64,
+            public_key: ship_pub_b64.clone(),
             signature: sig_b64,
             signed_fields: "identity+capabilities+declaration".into(),
         },
@@ -236,6 +252,22 @@ pub fn register(
     };
 
     let now = now_rfc3339();
+
+    // Pin the per-agent key under AgentCert (only with --own-key) so that
+    // verify (and verify-capability) can treat this agent's actions as
+    // key-bound rather than self-asserted, once attest signs with it.
+    if let Some(kid) = &agent_key_id {
+        let mut trust = TrustRootStore::open_default_or_empty()?;
+        trust.add(TrustRoot {
+            key_id:     kid.clone(),
+            public_key: format!("ed25519:{subject_pub_b64}"),
+            kind:       TrustRootKind::AgentCert,
+            label:      name.to_string(),
+            added_at:   now.clone(),
+        });
+        trust.save(&TrustRootStore::default_path())?;
+    }
+
     let card = AgentCard {
         agent_id,
         agent_name:            name.to_string(),
@@ -254,6 +286,7 @@ pub fn register(
         model:                 model.clone(),
         description:           description.clone(),
         certificate_digest:    Some(cert_digest),
+        key_id:                agent_key_id.clone(),
         // surface.kind() ("cursor-agent") and harness_id ("cursor") are
         // distinct namespaces; harnesses::recommended_id is the right
         // lookup so cards always point at a real entry in HARNESSES.
@@ -296,6 +329,9 @@ pub fn register(
     printer.info(&format!("  valid:      {} days (until {})", valid_days, valid_until));
     printer.info(&format!("  package:    {}", pkg_dir.display()));
     printer.info(&format!("  card:       {} ({})", merged.agent_id, merged.status.label()));
+    if let Some(kid) = &agent_key_id {
+        printer.info(&format!("  agent key:  {kid} (pinned under AgentCert)"));
+    }
     printer.blank();
     printer.hint(&format!("open {}/certificate.html", pkg_dir.display()));
     printer.dim_info(&format!("  review with: treeship agents review {}", merged.agent_id));
