@@ -11,8 +11,10 @@
 // completeness gap is Guard's runtime job, never a signature's. The output says
 // so.
 
+use std::collections::{HashMap, HashSet};
+
 use crate::{ctx, printer::Printer};
-use treeship_core::capability::action_in_scope;
+use treeship_core::capability::matched_capability;
 // Re-exported: attest.rs (attest card) resolves is_key_bound through this path.
 pub use treeship_core::capability::is_key_bound;
 use treeship_core::{
@@ -66,6 +68,8 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
     let mut in_scope = 0usize;
     let mut total = 0usize;
     let mut violations: Vec<(String, String)> = Vec::new();
+    // Per-capability exercise counts: how many captured actions back each tool.
+    let mut exercised: HashMap<String, usize> = HashMap::new();
     for entry in ctx.storage.list_by_type(&action_pt) {
         let Ok(arec) = ctx.storage.read(&entry.id) else {
             continue;
@@ -86,8 +90,9 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
         // In scope if the action label OR meta.tool matches a declared
         // capability (exact or `family.*` glob). Shared with the WASM verifier
         // via treeship_core::capability so browser and CLI agree.
-        if action_in_scope(&action, &tools) {
+        if let Some(matched) = matched_capability(&action, &tools) {
             in_scope += 1;
+            *exercised.entry(matched).or_insert(0) += 1;
         } else {
             let mut label = action.action.clone();
             if let Some(tool) = action
@@ -121,6 +126,33 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
     // cannot revoke your card.
     let revocation = find_revocation(&ctx, card_id, card_keyid, &trust);
 
+    // --- Capability provenance: captured vs exercised vs declared-only ------
+    // `captured` is read off the card (set at mint from harness config);
+    // `exercised` is computed here from captured receipts; everything else is
+    // `declared`. See docs/specs/capability-provenance.md.
+    let captured: HashSet<String> = card
+        .get("capability_provenance")
+        .and_then(|v| v.as_object())
+        .map(|m| {
+            m.iter()
+                .filter(|(_, v)| v.get("grade").and_then(|g| g.as_str()) == Some("captured"))
+                .map(|(k, _)| k.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    let (mut n_captured, mut n_exercised, mut n_declared) = (0usize, 0usize, 0usize);
+    for tool in &tools {
+        if captured.contains(tool) {
+            n_captured += 1;
+        } else if exercised.get(tool).copied().unwrap_or(0) > 0 {
+            n_exercised += 1;
+        } else {
+            n_declared += 1;
+        }
+    }
+    let provenance_str =
+        format!("{n_captured} captured, {n_exercised} exercised, {n_declared} declared-only");
+
     // --- Report ------------------------------------------------------------
     let status = if revocation.is_some() {
         "REVOKED"
@@ -150,6 +182,7 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
             ("agent", card_agent),
             ("key-bound", key_bound_str),
             ("declared tools", &tools_str),
+            ("provenance", &provenance_str),
             ("in-scope actions", &in_scope_str),
             ("out-of-scope", &oos_str),
             ("status", status),

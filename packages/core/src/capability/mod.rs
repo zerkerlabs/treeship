@@ -49,6 +49,25 @@ pub fn action_in_scope(action: &ActionStatement, declared_tools: &[String]) -> b
         .any(|c| declared_tools.iter().any(|d| tool_matches(d, c)))
 }
 
+/// The first declared capability an action matches, if any. Same matching as
+/// [`action_in_scope`], but returns *which* capability matched, so callers can
+/// grade each declared capability by whether captured receipts exercise it.
+pub fn matched_capability(action: &ActionStatement, declared_tools: &[String]) -> Option<String> {
+    let mut candidates: Vec<&str> = vec![action.action.as_str()];
+    if let Some(tool) = action
+        .meta
+        .as_ref()
+        .and_then(|m| m.get("tool"))
+        .and_then(|v| v.as_str())
+    {
+        candidates.push(tool);
+    }
+    declared_tools
+        .iter()
+        .find(|decl| candidates.iter().any(|c| tool_matches(decl, c)))
+        .cloned()
+}
+
 /// Extract the declared `capabilities.tools` from an agent_card.v1 payload.
 pub fn declared_tools(card_payload: &serde_json::Value) -> Vec<String> {
     card_payload
@@ -107,5 +126,14 @@ mod tests {
         a.action = "tool.call".into();
         a.meta = Some(serde_json::json!({ "tool": "db.query" }));
         assert!(action_in_scope(&a, &["db.query".to_string()]));
+    }
+
+    #[test]
+    fn matched_capability_returns_the_declared_glob() {
+        let a = ActionStatement::new("agent://x", "file.write");
+        let tools = vec!["db.query".to_string(), "file.*".to_string()];
+        assert_eq!(matched_capability(&a, &tools).as_deref(), Some("file.*"));
+        let b = ActionStatement::new("agent://x", "command.run");
+        assert_eq!(matched_capability(&b, &tools), None);
     }
 }
