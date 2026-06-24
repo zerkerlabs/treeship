@@ -400,6 +400,84 @@ pub fn receipt(args: ReceiptArgs, printer: &Printer) -> Result<(), Box<dyn std::
     Ok(())
 }
 
+// --- card -------------------------------------------------------------------
+
+pub struct CardArgs {
+    pub agent:      String,
+    pub tools:      Vec<String>,
+    pub models:     Vec<String>,
+    pub keyid:      Option<String>,
+    pub owner:      Option<String>,
+    pub version:    String,
+    pub policy_ref: Option<String>,
+    pub config:     Option<String>,
+}
+
+/// Mint a signed agent_card.v1 capability card from typed flags. Thin, typed
+/// wrapper over the agent_card.v1 predicate: builds the payload, validates it,
+/// signs it, and reports whether the card is key-bound at mint time.
+pub fn card(args: CardArgs, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = ctx::open(args.config.as_deref())?;
+    let signer = ctx.keys.default_signer()?;
+    // Default the card's keyid to the signing key, so a freshly minted card is
+    // key-bound-eligible by default (pin it under AgentCert to make it strong).
+    let keyid = args.keyid.clone().unwrap_or_else(|| signer.key_id().to_string());
+
+    let mut capabilities = serde_json::Map::new();
+    capabilities.insert("tools".into(), serde_json::json!(args.tools));
+    if !args.models.is_empty() {
+        capabilities.insert("models".into(), serde_json::json!(args.models));
+    }
+
+    let mut card = serde_json::Map::new();
+    card.insert("schema".into(), serde_json::json!("agent_card.v1"));
+    card.insert("agent".into(), serde_json::json!(args.agent));
+    card.insert("keyid".into(), serde_json::json!(keyid));
+    if let Some(owner) = &args.owner {
+        card.insert("owner".into(), serde_json::json!(owner));
+    }
+    card.insert("version".into(), serde_json::json!(args.version));
+    card.insert("capabilities".into(), Value::Object(capabilities));
+    if let Some(policy_ref) = &args.policy_ref {
+        card.insert("policy_ref".into(), serde_json::json!(policy_ref));
+    }
+    let payload = Value::Object(card);
+
+    // Validate against the registered agent_card.v1 schema before signing.
+    treeship_core::predicates::validate("agent_card.v1", Some(&payload))
+        .map_err(|e| format!("invalid capability card: {e}"))?;
+
+    let mut stmt = ReceiptStatement::new("system://registry", "agent_card.v1");
+    stmt.payload = Some(payload);
+
+    let pt = payload_type("receipt");
+    let result = sign(&pt, &stmt, signer.as_ref())?;
+    ctx.storage.write(&Record {
+        artifact_id:  result.artifact_id.clone(),
+        digest:       result.digest.clone(),
+        payload_type: pt,
+        key_id:       signer.key_id().to_string(),
+        signed_at:    stmt.timestamp.clone(),
+        parent_id:    None,
+        envelope:     result.envelope,
+        hub_url:      None,
+    })?;
+    write_last(&ctx.config.storage_dir, &result.artifact_id);
+
+    let trust = treeship_core::trust::TrustRootStore::open_default_or_empty()?;
+    let key_bound = crate::commands::capability::is_key_bound(&keyid, signer.key_id(), &trust);
+
+    printer.success("capability card attested", &[
+        ("id",        &result.artifact_id),
+        ("agent",     &args.agent),
+        ("key-bound", if key_bound { "yes (AgentCert)" } else { "no (self-asserted)" }),
+        ("tools",     &args.tools.join(", ")),
+    ]);
+    printer.hint(&format!("treeship verify-capability {}", result.artifact_id));
+    printer.blank();
+    Ok(())
+}
+
 // --- decision ---------------------------------------------------------------
 
 pub struct DecisionArgs {
