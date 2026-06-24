@@ -8,7 +8,9 @@
 //! invariant is that the client, not the server, decides what to believe.
 
 use crate::{ctx, printer::Printer};
-use treeship_core::capability::{action_in_scope, declared_tools, is_key_bound};
+use std::collections::{HashMap, HashSet};
+
+use treeship_core::capability::{declared_tools, is_key_bound, matched_capability};
 use treeship_core::statements::{payload_type, ActionStatement, ReceiptStatement};
 use treeship_core::trust::TrustRootStore;
 
@@ -87,6 +89,7 @@ pub fn resolve(agent: &str, config: Option<&str>, printer: &Printer) -> CmdResul
     // --- Capabilities grade: cross-check captured actions -------------------
     let action_pt = payload_type("action");
     let (mut in_scope, mut total) = (0usize, 0usize);
+    let mut exercised: HashMap<String, usize> = HashMap::new();
     for entry in ctx.storage.list_by_type(&action_pt) {
         let Ok(arec) = ctx.storage.read(&entry.id) else {
             continue;
@@ -104,12 +107,38 @@ pub fn resolve(agent: &str, config: Option<&str>, printer: &Printer) -> CmdResul
             continue;
         };
         total += 1;
-        if action_in_scope(&action, &tools) {
+        if let Some(matched) = matched_capability(&action, &tools) {
             in_scope += 1;
+            *exercised.entry(matched).or_insert(0) += 1;
         }
     }
     let out_of_scope = total - in_scope;
     let card_key_bound = is_key_bound(card_keyid, &card_signer, &trust);
+
+    // Capability provenance: captured (read off the card) vs exercised (from
+    // captured receipts) vs declared-only. See docs/specs/capability-provenance.md.
+    let captured: HashSet<String> = card
+        .get("capability_provenance")
+        .and_then(|v| v.as_object())
+        .map(|m| {
+            m.iter()
+                .filter(|(_, v)| v.get("grade").and_then(|g| g.as_str()) == Some("captured"))
+                .map(|(k, _)| k.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    let (mut n_captured, mut n_exercised, mut n_declared) = (0usize, 0usize, 0usize);
+    for tool in &tools {
+        if captured.contains(tool) {
+            n_captured += 1;
+        } else if exercised.get(tool).copied().unwrap_or(0) > 0 {
+            n_exercised += 1;
+        } else {
+            n_declared += 1;
+        }
+    }
+    let provenance_str =
+        format!("{n_captured} captured, {n_exercised} exercised, {n_declared} declared-only");
 
     let cap_grade = if revocation.is_some() {
         "revoked".to_string()
@@ -148,6 +177,7 @@ pub fn resolve(agent: &str, config: Option<&str>, printer: &Printer) -> CmdResul
             ("current card", &card_id),
             ("declared tools", &tools_str),
             ("capabilities", &cap_grade),
+            ("capability mix", &provenance_str),
             ("behavior", &behavior_str),
             ("status", status),
         ],
