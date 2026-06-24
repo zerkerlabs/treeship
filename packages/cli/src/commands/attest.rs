@@ -21,7 +21,7 @@ use treeship_core::session::event::EventType;
 /// signer is the agent's certified key). Every other actor, and any agent
 /// without a registered/pinned key, signs with the ship's default key, exactly
 /// as before. This is the load-bearing half of per-actor signing.
-fn resolve_actor_signer(
+pub(crate) fn resolve_actor_signer(
     ctx: &ctx::Ctx,
     actor: &str,
 ) -> Result<Box<dyn Signer>, Box<dyn std::error::Error>> {

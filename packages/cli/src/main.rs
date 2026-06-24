@@ -132,6 +132,16 @@ enum Command {
     ///   treeship verify-capability art_<agent_card_id>
     VerifyCapability(VerifyCapabilityArgs),
 
+    /// Revoke a capability card (agent_card_revocation.v1)
+    ///
+    /// Mints a signed revocation of an agent_card.v1. Signed with the agent's
+    /// own key when the card's actor has one (self-revocation), else the ship
+    /// key. verify-capability then reports the card as REVOKED.
+    ///
+    /// Example:
+    ///   treeship revoke-capability art_<agent_card_id> --reason key-rotation
+    RevokeCapability(RevokeCapabilityArgs),
+
     /// Create, export, and import artifact bundles
     ///
     /// Bundles group artifacts into a signed, portable package.
@@ -1640,6 +1650,16 @@ struct VerifyCapabilityArgs {
     card_id: String,
 }
 
+#[derive(Args)]
+struct RevokeCapabilityArgs {
+    /// Artifact id of the agent_card.v1 receipt to revoke.
+    card_id: String,
+
+    /// Optional reason, e.g. key-rotation, compromised, decommissioned.
+    #[arg(long, value_name = "REASON")]
+    reason: Option<String>,
+}
+
 // --- keys -------------------------------------------------------------------
 
 #[derive(Subcommand)]
@@ -2432,6 +2452,13 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
         Command::VerifyCapability(a) => {
             commands::capability::verify_capability(&a.card_id, cli.config.as_deref(), printer)
         }
+
+        Command::RevokeCapability(a) => commands::capability::revoke_capability(
+            &a.card_id,
+            a.reason.as_deref(),
+            cli.config.as_deref(),
+            printer,
+        ),
 
         Command::Verify(a) => {
             // External targets (URL, file path to a .treeship/.agent package)
