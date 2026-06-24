@@ -121,6 +121,17 @@ enum Command {
     ///   treeship verify ./export.treeship
     Verify(VerifyArgs),
 
+    /// Verify an agent capability card against the agent's evidence
+    ///
+    /// Reports whether the card is key-bound (its keyid is the envelope signer
+    /// and pinned under AgentCert) and whether the agent's captured actions
+    /// stay within the declared capability set. This is a consistency check
+    /// over captured evidence, not a completeness guarantee.
+    ///
+    /// Example:
+    ///   treeship verify-capability art_<agent_card_id>
+    VerifyCapability(VerifyCapabilityArgs),
+
     /// Create, export, and import artifact bundles
     ///
     /// Bundles group artifacts into a signed, portable package.
@@ -1575,6 +1586,12 @@ struct VerifyArgs {
     full: bool,
 }
 
+#[derive(Args)]
+struct VerifyCapabilityArgs {
+    /// Artifact id of the agent_card.v1 receipt to check.
+    card_id: String,
+}
+
 // --- keys -------------------------------------------------------------------
 
 #[derive(Subcommand)]
@@ -2349,6 +2366,10 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 printer,
             ),
         },
+
+        Command::VerifyCapability(a) => {
+            commands::capability::verify_capability(&a.card_id, cli.config.as_deref(), printer)
+        }
 
         Command::Verify(a) => {
             // External targets (URL, file path to a .treeship/.agent package)
