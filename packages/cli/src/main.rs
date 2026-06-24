@@ -1477,6 +1477,12 @@ struct AttestCardArgs {
     /// Policy this card operates under
     #[arg(long = "policy-ref", value_name = "REF")]
     policy_ref: Option<String>,
+
+    /// Capture the tool set from a harness config (e.g. a Claude Code
+    /// settings.json). Its `permissions.allow` entries are stamped `captured`
+    /// in capability_provenance -- read from real config, not declared.
+    #[arg(long = "from-harness", value_name = "PATH")]
+    from_harness: Option<String>,
 }
 
 #[derive(Args)]
@@ -2391,14 +2397,15 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             ),
             AttestCommand::Card(a) => commands::attest::card(
                 commands::attest::CardArgs {
-                    agent:      a.agent.clone(),
-                    tools:      a.tools.clone(),
-                    models:     a.models.clone(),
-                    keyid:      a.keyid.clone(),
-                    owner:      a.owner.clone(),
-                    version:    a.version.clone(),
-                    policy_ref: a.policy_ref.clone(),
-                    config:     cli.config.clone(),
+                    agent:        a.agent.clone(),
+                    tools:        a.tools.clone(),
+                    models:       a.models.clone(),
+                    keyid:        a.keyid.clone(),
+                    owner:        a.owner.clone(),
+                    version:      a.version.clone(),
+                    policy_ref:   a.policy_ref.clone(),
+                    from_harness: a.from_harness.clone(),
+                    config:       cli.config.clone(),
                 },
                 printer,
             ),
