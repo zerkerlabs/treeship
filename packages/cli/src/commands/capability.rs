@@ -12,6 +12,9 @@
 // so.
 
 use crate::{ctx, printer::Printer};
+use treeship_core::capability::action_in_scope;
+// Re-exported: attest.rs (attest card) resolves is_key_bound through this path.
+pub use treeship_core::capability::is_key_bound;
 use treeship_core::{
     attestation::sign,
     statements::{payload_type, ActionStatement, ReceiptStatement},
@@ -80,24 +83,22 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
             continue;
         };
         total += 1;
-        // A receipt is in scope if its action category OR its meta.tool matches
-        // any declared capability (exact, or a `family.*` glob).
-        let mut candidates = vec![action.action.clone()];
-        if let Some(tool) = action
-            .meta
-            .as_ref()
-            .and_then(|m| m.get("tool"))
-            .and_then(|v| v.as_str())
-        {
-            candidates.push(tool.to_string());
-        }
-        let matched = candidates
-            .iter()
-            .any(|c| tools.iter().any(|decl| tool_matches(decl, c)));
-        if matched {
+        // In scope if the action label OR meta.tool matches a declared
+        // capability (exact or `family.*` glob). Shared with the WASM verifier
+        // via treeship_core::capability so browser and CLI agree.
+        if action_in_scope(&action, &tools) {
             in_scope += 1;
         } else {
-            violations.push((entry.id.clone(), candidates.join(" / ")));
+            let mut label = action.action.clone();
+            if let Some(tool) = action
+                .meta
+                .as_ref()
+                .and_then(|m| m.get("tool"))
+                .and_then(|v| v.as_str())
+            {
+                label = format!("{} / {tool}", action.action);
+            }
+            violations.push((entry.id.clone(), label));
         }
     }
 
@@ -322,18 +323,6 @@ fn find_revocation(
     None
 }
 
-/// A card is **key-bound** only when its `keyid` is the signer of the envelope
-/// AND that key is pinned under `AgentCert`. Anything else is self-asserted.
-/// Shared by `verify-capability` and `attest card` so mint and verify agree.
-pub fn is_key_bound(card_keyid: &str, signer_keyid: &str, trust: &TrustRootStore) -> bool {
-    !card_keyid.is_empty()
-        && signer_keyid == card_keyid
-        && trust
-            .roots()
-            .iter()
-            .any(|r| r.key_id == card_keyid && r.kind == TrustRootKind::AgentCert)
-}
-
 /// Is a receipt's `actor` cryptographically proven, i.e. signed by the actor's
 /// registered, AgentCert-pinned per-agent key? Used by `verify` to label the
 /// actor proven vs asserted. False for non-agent actors, unregistered agents,
@@ -351,54 +340,3 @@ pub fn actor_proven(ctx: &crate::ctx::Ctx, actor: &str, signer_keyid: &str) -> b
             .unwrap_or(false)
 }
 
-/// `family.*` matches `family.write`; otherwise an exact match. A bare `*`
-/// matches anything.
-fn tool_matches(declared: &str, actual: &str) -> bool {
-    if let Some(prefix) = declared.strip_suffix('*') {
-        actual.starts_with(prefix)
-    } else {
-        declared == actual
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{is_key_bound, tool_matches};
-    use treeship_core::trust::{TrustRoot, TrustRootKind, TrustRootStore};
-
-    #[test]
-    fn exact_and_glob_matching() {
-        assert!(tool_matches("file.write", "file.write"));
-        assert!(!tool_matches("file.write", "file.read"));
-        assert!(tool_matches("file.*", "file.write"));
-        assert!(tool_matches("file.*", "file.read"));
-        assert!(!tool_matches("file.*", "db.query"));
-        assert!(tool_matches("*", "anything.at.all"));
-    }
-
-    fn root(key_id: &str, kind: TrustRootKind) -> TrustRoot {
-        TrustRoot {
-            key_id: key_id.into(),
-            public_key: "ed25519:AAAA".into(),
-            kind,
-            label: String::new(),
-            added_at: String::new(),
-        }
-    }
-
-    #[test]
-    fn key_bound_needs_signer_match_and_agentcert() {
-        let agentcert = TrustRootStore::with_roots(vec![root("key_x", TrustRootKind::AgentCert)]);
-        // signer == card keyid AND pinned under AgentCert -> key-bound
-        assert!(is_key_bound("key_x", "key_x", &agentcert));
-        // envelope signer differs from the card's keyid -> not bound
-        assert!(!is_key_bound("key_x", "key_y", &agentcert));
-        // empty card keyid -> not bound
-        assert!(!is_key_bound("", "", &agentcert));
-        // pinned, but under a different kind (Ship, not AgentCert) -> not bound
-        let ship = TrustRootStore::with_roots(vec![root("key_x", TrustRootKind::Ship)]);
-        assert!(!is_key_bound("key_x", "key_x", &ship));
-        // not pinned at all -> not bound (self-asserted)
-        assert!(!is_key_bound("key_x", "key_x", &TrustRootStore::with_roots(vec![])));
-    }
-}

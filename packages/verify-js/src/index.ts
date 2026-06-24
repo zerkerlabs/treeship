@@ -23,6 +23,11 @@ type WasmBindings = {
     now: string,
     trustRoots: string,
   ) => string;
+  verify_capability: (
+    card: string,
+    actions: string,
+    trustRoots: string,
+  ) => string;
 };
 
 /**
@@ -210,5 +215,46 @@ export async function crossVerify(
   const wasm = await loadWasm();
   return JSON.parse(
     wasm.cross_verify(receiptJson, certJson, nowStr, serializeTrustRoots(trustRoots)),
+  );
+}
+
+/** Result of {@link verifyCapability}. Mirrors the WASM JSON output. */
+export interface CapabilityVerifyResult {
+  outcome: 'pass' | 'fail' | 'error';
+  /** The actor the card claims, e.g. `agent://deployer`. */
+  agent?: string;
+  /** True iff the card's keyid is its signer AND pinned under AgentCert. */
+  key_bound?: boolean;
+  declared_tools?: string[];
+  in_scope?: number;
+  out_of_scope?: number;
+  violations?: { tool: string }[];
+  status?: 'verified' | 'self-asserted' | 'violations';
+  error_code?: string;
+  message?: string;
+}
+
+/**
+ * Verify an agent_card.v1 capability card in the browser, the same check
+ * `treeship verify-capability` runs (shared Rust logic via
+ * `treeship_core::capability`). Pass the card envelope and the action
+ * envelopes to cross-check; `trustRoots` is required for `key_bound` to be
+ * true (otherwise the card is reported self-asserted).
+ *
+ * Honest contract: this is consistency over the actions you provide, not a
+ * completeness guarantee. It cannot prove the agent took no off-card action.
+ */
+export async function verifyCapability(
+  card: VerifyTarget,
+  actions: VerifyTarget[],
+  trustRoots?: TrustRootsBundle | TrustRootInput[],
+): Promise<CapabilityVerifyResult> {
+  const cardJson = await normalizeToJson(card);
+  const actionJsons = await Promise.all((actions ?? []).map(normalizeToJson));
+  // Each normalized action is a JSON object; assemble them into a JSON array.
+  const actionsJson = `[${actionJsons.join(',')}]`;
+  const wasm = await loadWasm();
+  return JSON.parse(
+    wasm.verify_capability(cardJson, actionsJson, serializeTrustRoots(trustRoots)),
   );
 }
