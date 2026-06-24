@@ -1233,6 +1233,17 @@ enum AttestCommand {
     ///     --payload '{"eventId":"evt_abc","status":"succeeded"}'
     Receipt(AttestReceiptArgs),
 
+    /// Mint a signed agent capability card (agent_card.v1)
+    ///
+    /// Declares an agent's identity and capability set as a typed, signed
+    /// receipt. Reports whether the card is key-bound (pin its key under
+    /// AgentCert to make it strong). Check it later with verify-capability.
+    ///
+    /// Example:
+    ///   treeship attest card --agent agent://deployer \
+    ///     --tools file.*,db.query --models claude-sonnet-4
+    Card(AttestCardArgs),
+
     /// Record an agent's reasoning and decision context
     ///
     /// Examples:
@@ -1412,6 +1423,37 @@ struct AttestReceiptArgs {
     /// Digest of the external payload, for example sha256:<hex>
     #[arg(long, value_name = "DIGEST")]
     payload_digest: Option<String>,
+}
+
+#[derive(Args)]
+struct AttestCardArgs {
+    /// Actor URI the card claims, e.g. agent://deployer
+    #[arg(long, required = true, value_name = "URI")]
+    agent: String,
+
+    /// Capabilities: tool categories or `family.*` globs (comma-separated)
+    #[arg(long, value_name = "TOOLS", value_delimiter = ',')]
+    tools: Vec<String>,
+
+    /// Models the agent uses (comma-separated)
+    #[arg(long, value_name = "MODELS", value_delimiter = ',')]
+    models: Vec<String>,
+
+    /// Key this card binds to. Defaults to the signing key.
+    #[arg(long, value_name = "KEYID")]
+    keyid: Option<String>,
+
+    /// Owner URI, e.g. human://alice
+    #[arg(long, value_name = "URI")]
+    owner: Option<String>,
+
+    /// Card version
+    #[arg(long, default_value = "1.0.0", value_name = "VERSION")]
+    version: String,
+
+    /// Policy this card operates under
+    #[arg(long = "policy-ref", value_name = "REF")]
+    policy_ref: Option<String>,
 }
 
 #[derive(Args)]
@@ -2304,6 +2346,19 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                     payload_file:   a.payload_file.clone(),
                     payload_digest: a.payload_digest.clone(),
                     config:         cli.config.clone(),
+                },
+                printer,
+            ),
+            AttestCommand::Card(a) => commands::attest::card(
+                commands::attest::CardArgs {
+                    agent:      a.agent.clone(),
+                    tools:      a.tools.clone(),
+                    models:     a.models.clone(),
+                    keyid:      a.keyid.clone(),
+                    owner:      a.owner.clone(),
+                    version:    a.version.clone(),
+                    policy_ref: a.policy_ref.clone(),
+                    config:     cli.config.clone(),
                 },
                 printer,
             ),
