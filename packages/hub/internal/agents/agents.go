@@ -13,12 +13,16 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"sort"
 
 	"github.com/treeship/hub/internal/db"
 )
 
 // receiptPayloadType is the MIME type of treeship receipt envelopes.
 const receiptPayloadType = "application/vnd.treeship.receipt.v1+json"
+
+// actionPayloadType is the MIME type of treeship action envelopes.
+const actionPayloadType = "application/vnd.treeship.action.v1+json"
 
 type Handlers struct {
 	DB *sql.DB
@@ -142,6 +146,142 @@ func (h *Handlers) Resolve(w http.ResponseWriter, r *http.Request) {
 		"revocations":  revocations,
 		"transparency": transparency,
 		"note":         "raw signed envelopes; the client re-verifies and grades them offline. the Hub performs no verification or authorization here.",
+	})
+}
+
+// actionStatement is the minimal shape needed to read an action's actor + label.
+type actionStatement struct {
+	Actor  string `json:"actor"`
+	Action string `json:"action"`
+}
+
+// logEntry is one row of an agent's history: metadata + Merkle anchor, never
+// the payload.
+type logEntry struct {
+	ArtifactID   string      `json:"artifact_id"`
+	Kind         string      `json:"kind"`
+	Actor        string      `json:"actor"`
+	Action       string      `json:"action,omitempty"`
+	SignedAt     int64       `json:"signed_at"`
+	Digest       string      `json:"digest"`
+	MerkleAnchor interface{} `json:"merkle_anchor"`
+}
+
+// decodeStatementPayload base64url-decodes an envelope's payload and returns
+// the statement JSON bytes (and the signer keyid), or nil on any failure.
+func decodeStatementPayload(envelopeJSON string) ([]byte, string) {
+	var env dsseEnvelope
+	if json.Unmarshal([]byte(envelopeJSON), &env) != nil {
+		return nil, ""
+	}
+	b, err := base64.RawURLEncoding.DecodeString(env.Payload)
+	if err != nil {
+		return nil, ""
+	}
+	signer := ""
+	if len(env.Signatures) > 0 {
+		signer = env.Signatures[0].KeyID
+	}
+	return b, signer
+}
+
+// anchorFor returns the Merkle anchor for an artifact, or nil if not anchored.
+func (h *Handlers) anchorFor(artifactID string) interface{} {
+	proof, _, err := db.GetProof(h.DB, artifactID)
+	if err != nil || proof == nil {
+		return nil
+	}
+	return map[string]interface{}{
+		"checkpoint_id": proof.CheckpointID,
+		"leaf_index":    proof.LeafIndex,
+	}
+}
+
+// Log serves an agent's append-only receipt history:
+// GET /v1/agents/log?agent=<uri>. Metadata and Merkle anchors only, never
+// payloads. The client re-verifies each anchored entry's inclusion and checks
+// completeness against the agent's committed evidence_anchor.
+func (h *Handlers) Log(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	agent := r.URL.Query().Get("agent")
+	if agent == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing agent query parameter"})
+		return
+	}
+
+	var entries []logEntry
+	var committed interface{}
+
+	// Actions the agent performed.
+	actions, err := db.ListArtifactsByPayloadType(h.DB, actionPayloadType)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "query failed"})
+		return
+	}
+	for _, a := range actions {
+		payload, _ := decodeStatementPayload(a.EnvelopeJSON)
+		if payload == nil {
+			continue
+		}
+		var stmt actionStatement
+		if json.Unmarshal(payload, &stmt) != nil || stmt.Actor != agent {
+			continue
+		}
+		entries = append(entries, logEntry{
+			ArtifactID:   a.ArtifactID,
+			Kind:         "action",
+			Actor:        agent,
+			Action:       stmt.Action,
+			SignedAt:     a.SignedAt,
+			Digest:       a.Digest,
+			MerkleAnchor: h.anchorFor(a.ArtifactID),
+		})
+	}
+
+	// Cards the agent published; capture the latest evidence_anchor as committed.
+	receipts, err := db.ListArtifactsByPayloadType(h.DB, receiptPayloadType)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "query failed"})
+		return
+	}
+	for _, a := range receipts {
+		payload, _ := decodeStatementPayload(a.EnvelopeJSON)
+		if payload == nil {
+			continue
+		}
+		var stmt receiptStatement
+		if json.Unmarshal(payload, &stmt) != nil || stmt.Kind != "agent_card.v1" {
+			continue
+		}
+		var p struct {
+			Agent          string      `json:"agent"`
+			EvidenceAnchor interface{} `json:"evidence_anchor"`
+		}
+		if json.Unmarshal(stmt.Payload, &p) != nil || p.Agent != agent {
+			continue
+		}
+		entries = append(entries, logEntry{
+			ArtifactID:   a.ArtifactID,
+			Kind:         "agent_card.v1",
+			Actor:        agent,
+			SignedAt:     a.SignedAt,
+			Digest:       a.Digest,
+			MerkleAnchor: h.anchorFor(a.ArtifactID),
+		})
+		// receipts come newest-first, so the first card's anchor is the current one.
+		if committed == nil && p.EvidenceAnchor != nil {
+			committed = p.EvidenceAnchor
+		}
+	}
+
+	// Newest first across both kinds.
+	sort.Slice(entries, func(i, j int) bool { return entries[i].SignedAt > entries[j].SignedAt })
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"agent":            agent,
+		"entries":          entries,
+		"committed_anchor": committed,
+		"note":             "metadata + Merkle anchors only, never payloads. the client re-verifies each anchored entry's inclusion and checks completeness against committed_anchor.",
 	})
 }
 
