@@ -156,6 +156,13 @@ enum Command {
     ///   treeship publish agent://deployer
     Publish(PublishArgs),
 
+    /// Audit an agent's transparency log from a Hub: re-verify each anchored
+    /// entry's inclusion offline and check completeness against its anchor
+    ///
+    /// Example:
+    ///   treeship audit --hub https://api.treeship.dev agent://deployer
+    Audit(AuditArgs),
+
     /// Create, export, and import artifact bundles
     ///
     /// Bundles group artifacts into a signed, portable package.
@@ -1697,6 +1704,16 @@ struct PublishArgs {
     agent: String,
 }
 
+#[derive(Args)]
+struct AuditArgs {
+    /// Agent URI to audit, e.g. agent://deployer.
+    agent: String,
+
+    /// Hub URL whose transparency log to audit.
+    #[arg(long, value_name = "URL")]
+    hub: Option<String>,
+}
+
 // --- keys -------------------------------------------------------------------
 
 #[derive(Subcommand)]
@@ -2504,6 +2521,10 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
 
         Command::Publish(a) => {
             commands::publish::publish(&a.agent, cli.config.as_deref(), printer)
+        }
+
+        Command::Audit(a) => {
+            commands::audit::audit(&a.agent, a.hub.as_deref(), cli.config.as_deref(), printer)
         }
 
         Command::Verify(a) => {
