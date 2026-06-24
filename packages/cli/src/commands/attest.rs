@@ -437,14 +437,37 @@ pub fn receipt(args: ReceiptArgs, printer: &Printer) -> Result<(), Box<dyn std::
 // --- card -------------------------------------------------------------------
 
 pub struct CardArgs {
-    pub agent:      String,
-    pub tools:      Vec<String>,
-    pub models:     Vec<String>,
-    pub keyid:      Option<String>,
-    pub owner:      Option<String>,
-    pub version:    String,
-    pub policy_ref: Option<String>,
-    pub config:     Option<String>,
+    pub agent:        String,
+    pub tools:        Vec<String>,
+    pub models:       Vec<String>,
+    pub keyid:        Option<String>,
+    pub owner:        Option<String>,
+    pub version:      String,
+    pub policy_ref:   Option<String>,
+    /// Path to a harness config (e.g. a Claude Code settings.json) whose
+    /// `permissions.allow` list is the agent's real, wired tool set. Those
+    /// capabilities are stamped `captured` -- read from config, not declared.
+    pub from_harness: Option<String>,
+    pub config:       Option<String>,
+}
+
+/// Read a harness config's `permissions.allow` list -- the deterministic
+/// capture source for a capability card. Today: the Claude Code settings.json
+/// shape (`{ "permissions": { "allow": [...] } }`).
+fn read_harness_allow(path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("could not read --from-harness {path}: {e}"))?;
+    let json: Value = serde_json::from_str(&text)
+        .map_err(|e| format!("--from-harness {path} is not valid JSON: {e}"))?;
+    let allow = json
+        .get("permissions")
+        .and_then(|p| p.get("allow"))
+        .and_then(|a| a.as_array())
+        .ok_or_else(|| format!("--from-harness {path} has no permissions.allow array"))?;
+    Ok(allow
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect())
 }
 
 /// Mint a signed agent_card.v1 capability card from typed flags. Thin, typed
@@ -460,8 +483,27 @@ pub fn card(args: CardArgs, printer: &Printer) -> Result<(), Box<dyn std::error:
     // key-bound-eligible by default (pin it under AgentCert to make it strong).
     let keyid = args.keyid.clone().unwrap_or_else(|| signer.key_id().to_string());
 
+    // Capability set: --tools entries are declared; --from-harness entries are
+    // captured from the agent's real config and stamped with their provenance.
+    let mut all_tools = args.tools.clone();
+    let mut provenance = serde_json::Map::new();
+    let mut captured_count = 0usize;
+    if let Some(path) = &args.from_harness {
+        let source = format!("harness:{path}#permissions.allow");
+        for tool in read_harness_allow(path)? {
+            if !all_tools.contains(&tool) {
+                all_tools.push(tool.clone());
+            }
+            provenance.insert(
+                tool,
+                serde_json::json!({ "grade": "captured", "source": source }),
+            );
+        }
+        captured_count = provenance.len();
+    }
+
     let mut capabilities = serde_json::Map::new();
-    capabilities.insert("tools".into(), serde_json::json!(args.tools));
+    capabilities.insert("tools".into(), serde_json::json!(all_tools));
     if !args.models.is_empty() {
         capabilities.insert("models".into(), serde_json::json!(args.models));
     }
@@ -477,6 +519,9 @@ pub fn card(args: CardArgs, printer: &Printer) -> Result<(), Box<dyn std::error:
     card.insert("capabilities".into(), Value::Object(capabilities));
     if let Some(policy_ref) = &args.policy_ref {
         card.insert("policy_ref".into(), serde_json::json!(policy_ref));
+    }
+    if !provenance.is_empty() {
+        card.insert("capability_provenance".into(), Value::Object(provenance));
     }
     let payload = Value::Object(card);
 
@@ -504,11 +549,14 @@ pub fn card(args: CardArgs, printer: &Printer) -> Result<(), Box<dyn std::error:
     let trust = treeship_core::trust::TrustRootStore::open_default_or_empty()?;
     let key_bound = crate::commands::capability::is_key_bound(&keyid, signer.key_id(), &trust);
 
+    let tools_str = all_tools.join(", ");
+    let captured_str = format!("{captured_count} of {} captured from harness", all_tools.len());
     printer.success("capability card attested", &[
         ("id",        &result.artifact_id),
         ("agent",     &args.agent),
         ("key-bound", if key_bound { "yes (AgentCert)" } else { "no (self-asserted)" }),
-        ("tools",     &args.tools.join(", ")),
+        ("tools",     &tools_str),
+        ("provenance", &captured_str),
     ]);
     printer.hint(&format!("treeship verify-capability {}", result.artifact_id));
     printer.blank();
