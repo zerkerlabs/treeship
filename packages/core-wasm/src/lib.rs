@@ -548,6 +548,125 @@ fn error_result(error_code: &str, message: &str) -> String {
     .to_string()
 }
 
+/// Verify an `agent_card.v1` capability card in the browser. Mirrors
+/// `treeship verify-capability` but takes the receipts as input (no storage):
+///   - `card_json`: the agent_card.v1 DSSE envelope
+///   - `actions_json`: a JSON array of action DSSE envelopes to cross-check
+///   - `trust_roots_json`: trust roots, for the AgentCert key-bound check
+///
+/// Shares the matching logic with the CLI via `treeship_core::capability`, so a
+/// receipt viewer in the browser reaches the same key-bound / in-scope verdict
+/// the CLI does. Honest contract: consistency over the *provided* actions, not
+/// completeness. Returns JSON:
+/// ```json
+/// {
+///   "outcome": "pass" | "fail" | "error",
+///   "agent": "agent://...", "key_bound": true|false,
+///   "declared_tools": [...], "in_scope": N, "out_of_scope": M,
+///   "violations": [{ "tool": "..." }], "status": "verified|self-asserted|violations"
+/// }
+/// ```
+#[wasm_bindgen]
+pub fn verify_capability(card_json: &str, actions_json: &str, trust_roots_json: &str) -> String {
+    use treeship_core::capability::{action_in_scope, declared_tools, is_key_bound};
+    use treeship_core::statements::{ActionStatement, ReceiptStatement};
+
+    let card_env: Envelope = match serde_json::from_str(card_json) {
+        Ok(e) => e,
+        Err(e) => {
+            return error_result("invalid_json", &format!("invalid card envelope JSON: {e}"))
+        }
+    };
+    let card_stmt: ReceiptStatement = match card_env.unmarshal_statement() {
+        Ok(s) => s,
+        Err(e) => return error_result("invalid_card", &format!("card is not a receipt: {e}")),
+    };
+    if card_stmt.kind != "agent_card.v1" {
+        return error_result(
+            "not_a_card",
+            &format!("kind `{}` is not agent_card.v1", card_stmt.kind),
+        );
+    }
+    let payload = match card_stmt.payload {
+        Some(p) => p,
+        None => return error_result("invalid_card", "agent_card.v1 has no payload"),
+    };
+    let card_keyid = payload.get("keyid").and_then(|v| v.as_str()).unwrap_or("");
+    let card_agent = payload.get("agent").and_then(|v| v.as_str()).unwrap_or("");
+    let tools = declared_tools(&payload);
+
+    let card_signer = card_env
+        .signatures
+        .first()
+        .map(|s| s.keyid.as_str())
+        .unwrap_or("");
+    let trust = match parse_wasm_trust_roots(trust_roots_json) {
+        Ok(t) => t,
+        Err(e) => return error_result("invalid_trust_roots", &e),
+    };
+    let key_bound = is_key_bound(card_keyid, card_signer, &trust);
+
+    // Cross-check the provided action envelopes signed by the card's key.
+    let actions: Vec<Envelope> = match serde_json::from_str(actions_json) {
+        Ok(a) => a,
+        Err(e) => {
+            return error_result(
+                "invalid_json",
+                &format!("invalid actions JSON (expected array of envelopes): {e}"),
+            )
+        }
+    };
+    let mut in_scope = 0usize;
+    let mut violations: Vec<serde_json::Value> = Vec::new();
+    for env in &actions {
+        let signer = env
+            .signatures
+            .first()
+            .map(|s| s.keyid.as_str())
+            .unwrap_or("");
+        if signer != card_keyid {
+            continue; // only the card key's actions count toward its card
+        }
+        let Ok(action) = env.unmarshal_statement::<ActionStatement>() else {
+            continue;
+        };
+        if action_in_scope(&action, &tools) {
+            in_scope += 1;
+        } else {
+            let mut label = action.action.clone();
+            if let Some(t) = action
+                .meta
+                .as_ref()
+                .and_then(|m| m.get("tool"))
+                .and_then(|v| v.as_str())
+            {
+                label = format!("{} / {t}", action.action);
+            }
+            violations.push(serde_json::json!({ "tool": label }));
+        }
+    }
+
+    let status = if !key_bound {
+        "self-asserted"
+    } else if violations.is_empty() {
+        "verified"
+    } else {
+        "violations"
+    };
+
+    serde_json::json!({
+        "outcome": if status == "violations" { "fail" } else { "pass" },
+        "agent": card_agent,
+        "key_bound": key_bound,
+        "declared_tools": tools,
+        "in_scope": in_scope,
+        "out_of_scope": violations.len(),
+        "violations": violations,
+        "status": status,
+    })
+    .to_string()
+}
+
 /// Parse the `trust_roots_json` argument the WASM verify_* surfaces
 /// accept. The JSON shape mirrors the on-disk
 /// `~/.treeship/trust_roots.json`:
@@ -865,5 +984,66 @@ mod tests {
         ).unwrap();
         assert_eq!(out["outcome"], "error");
         assert_eq!(out["error_code"], "invalid_json");
+    }
+
+    #[test]
+    fn verify_capability_matches_cli_verdict() {
+        use treeship_core::attestation::{sign, Ed25519Signer};
+        use treeship_core::statements::{payload_type, ActionStatement, ReceiptStatement};
+
+        let signer = Ed25519Signer::generate("key_agent_test").unwrap();
+        let keyid = "key_agent_test";
+
+        // agent_card.v1 declaring file.*
+        let mut card = ReceiptStatement::new("system://registry", "agent_card.v1");
+        card.payload = Some(serde_json::json!({
+            "schema": "agent_card.v1",
+            "agent": "agent://deployer",
+            "keyid": keyid,
+            "version": "1.0.0",
+            "capabilities": { "tools": ["file.*"] }
+        }));
+        let card_env = sign(&payload_type("receipt"), &card, &signer).unwrap().envelope;
+        let card_json = serde_json::to_string(&card_env).unwrap();
+
+        // file.write (in scope via file.*) and command.run (out of scope)
+        let a1 = sign(&payload_type("action"),
+            &ActionStatement::new("agent://deployer", "file.write"), &signer).unwrap().envelope;
+        let a2 = sign(&payload_type("action"),
+            &ActionStatement::new("agent://deployer", "command.run"), &signer).unwrap().envelope;
+        let actions_json = serde_json::to_string(&vec![a1, a2]).unwrap();
+
+        // Pin the key under agent_cert.
+        let trust_json = serde_json::json!({
+            "version": 1,
+            "roots": [{
+                "key_id": keyid,
+                "public_key": "ed25519:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                "kind": "agent_cert",
+                "label": "",
+                "added_at": ""
+            }]
+        }).to_string();
+
+        // With trust roots: key-bound, 1 in / 1 out, status violations -- the
+        // exact verdict the CLI verify-capability returns for the same inputs.
+        let out: serde_json::Value =
+            serde_json::from_str(&verify_capability(&card_json, &actions_json, &trust_json)).unwrap();
+        assert_eq!(out["key_bound"], true, "{out}");
+        assert_eq!(out["in_scope"], 1);
+        assert_eq!(out["out_of_scope"], 1);
+        assert_eq!(out["status"], "violations");
+        assert_eq!(out["agent"], "agent://deployer");
+
+        // Without trust roots, the same card is self-asserted (fail-closed).
+        let out2: serde_json::Value =
+            serde_json::from_str(&verify_capability(&card_json, &actions_json, "")).unwrap();
+        assert_eq!(out2["key_bound"], false);
+        assert_eq!(out2["status"], "self-asserted");
+
+        // A non-card receipt is rejected, not silently passed.
+        let err: serde_json::Value =
+            serde_json::from_str(&verify_capability("{}", "[]", "")).unwrap();
+        assert_eq!(err["outcome"], "error");
     }
 }
