@@ -13,6 +13,7 @@ use std::collections::{HashMap, HashSet};
 use ed25519_dalek::VerifyingKey;
 use treeship_core::attestation::{Envelope, Verifier};
 use treeship_core::capability::{declared_tools, is_key_bound, matched_capability};
+use treeship_core::merkle::{MerkleTree, ProofFile};
 use treeship_core::statements::{payload_type, ActionStatement, ReceiptStatement};
 use treeship_core::trust::{decode_ed25519_pubkey, TrustRootKind, TrustRootStore};
 
@@ -339,6 +340,38 @@ fn resolve_remote(hub: &str, agent: &str, trust: &TrustRootStore, printer: &Prin
         tools.join(", ")
     };
     let mix_str = format!("{n_captured} captured, {n_other} declared (exercised n/a remotely)");
+
+    // Transparency: if the bundle carries a Merkle inclusion proof, re-verify
+    // it offline (checkpoint signature against our trust roots + inclusion in
+    // the signed root). Proves the card is in the log, not just signed.
+    let transparency_str = match bundle.get("transparency").filter(|v| !v.is_null()) {
+        Some(tp) => match serde_json::from_value::<ProofFile>(tp.clone()) {
+            Ok(pf) => {
+                let cp_ok = pf.checkpoint.verify(trust);
+                let root_hex = pf
+                    .checkpoint
+                    .root
+                    .strip_prefix("sha256:")
+                    .unwrap_or(&pf.checkpoint.root);
+                let incl_ok = MerkleTree::verify_proof(
+                    pf.checkpoint.merkle_version,
+                    root_hex,
+                    &pf.artifact_id,
+                    &pf.inclusion_proof,
+                );
+                if cp_ok && incl_ok {
+                    format!("anchored & verified (checkpoint #{})", pf.checkpoint.index)
+                } else if !cp_ok {
+                    "anchored, but checkpoint signature INVALID".to_string()
+                } else {
+                    "anchored, but inclusion proof INVALID".to_string()
+                }
+            }
+            Err(_) => "anchored (proof unparseable)".to_string(),
+        },
+        None => "not anchored (no Merkle proof at the hub)".to_string(),
+    };
+
     let status = if revocation.is_some() {
         "REVOKED"
     } else if key_bound {
@@ -359,6 +392,7 @@ fn resolve_remote(hub: &str, agent: &str, trust: &TrustRootStore, printer: &Prin
             ("key-bound", key_bound_str),
             ("declared tools", &tools_str),
             ("capability mix", &mix_str),
+            ("transparency", &transparency_str),
             ("status", status),
         ],
     );
