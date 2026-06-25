@@ -13,7 +13,14 @@ use treeship_core::trust::TrustRootStore;
 
 type CmdResult = Result<(), Box<dyn std::error::Error>>;
 
-pub fn audit(agent: &str, hub: Option<&str>, config: Option<&str>, printer: &Printer) -> CmdResult {
+pub fn audit(
+    agent: &str,
+    hub: Option<&str>,
+    watch: bool,
+    interval: u64,
+    config: Option<&str>,
+    printer: &Printer,
+) -> CmdResult {
     let _ctx = ctx::open(config)?;
     let trust = TrustRootStore::open_default_or_empty()?;
     let Some(hub) = hub else {
@@ -24,6 +31,26 @@ pub fn audit(agent: &str, hub: Option<&str>, config: Option<&str>, printer: &Pri
     };
     let base = hub.trim_end_matches('/');
 
+    // One-shot, or monitor mode: re-run on an interval and keep alerting on
+    // omission. "Monitors catch anomalies." Ctrl-C to stop.
+    if !watch {
+        return audit_once(base, agent, &trust, printer);
+    }
+    printer.hint(&format!(
+        "watching {agent} on {base} every {interval}s (Ctrl-C to stop)"
+    ));
+    loop {
+        printer.blank();
+        if let Err(e) = audit_once(base, agent, &trust, printer) {
+            printer.warn("audit cycle failed", &[("error", &e.to_string())]);
+        }
+        std::thread::sleep(std::time::Duration::from_secs(interval.max(1)));
+    }
+}
+
+/// A single audit pass: pull the history, re-verify anchored inclusions, check
+/// completeness against the agent's committed anchor.
+fn audit_once(base: &str, agent: &str, trust: &TrustRootStore, printer: &Printer) -> CmdResult {
     let log: serde_json::Value = ureq::get(&format!("{base}/v1/agents/log"))
         .query("agent", agent)
         .call()
@@ -51,7 +78,7 @@ pub fn audit(agent: &str, hub: Option<&str>, config: Option<&str>, printer: &Pri
 
         let mark = if has_anchor {
             anchored += 1;
-            match verify_inclusion(base, id, &trust) {
+            match verify_inclusion(base, id, trust) {
                 Ok(true) => {
                     verified += 1;
                     "anchored ✓"
