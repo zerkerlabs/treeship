@@ -15,9 +15,7 @@ use treeship_core::agent::*;
 use treeship_core::trust::{TrustRoot, TrustRootKind, TrustRootStore};
 
 use crate::commands::cards::{self, AgentCard, CardCapabilities, CardProvenance, CardStatus};
-use crate::commands::discovery::{
-    AgentSurface, ConnectionMode, CoverageLevel,
-};
+use crate::commands::discovery::{AgentSurface, ConnectionMode, CoverageLevel};
 use crate::{ctx, printer::Printer};
 
 /// Map a user-supplied agent name (e.g. "claude-code", "hermes") to the
@@ -86,7 +84,6 @@ fn now_rfc3339() -> String {
     treeship_core::statements::unix_to_rfc3339(secs)
 }
 
-
 /// Register an agent and produce a .agent package.
 pub fn register(
     name: &str,
@@ -97,6 +94,7 @@ pub fn register(
     forbidden: Vec<String>,
     escalation: Vec<String>,
     own_key: bool,
+    quiet: bool,
     config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -108,23 +106,35 @@ pub fn register(
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs();
     let issued_at = treeship_core::statements::unix_to_rfc3339(now_secs);
-    let valid_until = treeship_core::statements::unix_to_rfc3339(
-        now_secs + (valid_days as u64) * 86400,
-    );
+    let valid_until =
+        treeship_core::statements::unix_to_rfc3339(now_secs + (valid_days as u64) * 86400);
 
     let ship_pub_b64 = URL_SAFE_NO_PAD.encode(signer.public_key_bytes());
 
     // Subject key. With --own-key, mint a dedicated per-agent key and certify
     // THAT as the agent's identity (the ship still signs as issuer). Without
     // the flag, the subject is the ship key -- the legacy behavior, unchanged.
-    let (subject_pub_b64, agent_key_id) = if own_key {
-        let agent_key = ctx.keys.generate(false)?;
-        (
-            URL_SAFE_NO_PAD.encode(&agent_key.public_key),
-            Some(agent_key.id.to_string()),
-        )
+    //
+    // Idempotent: if this agent already has a registered per-agent key, reuse
+    // it instead of minting a second one. This lets callers that run on every
+    // startup (the MCP/A2A bridges) register safely without piling up keys.
+    let (subject_pub_b64, agent_key_id, key_is_new) = if own_key {
+        let agents_dir = cards::agents_dir_for(&ctx.config_path);
+        if let Some(existing) =
+            cards::registered_key_for_actor(&agents_dir, &format!("agent://{name}"))
+        {
+            let pub_bytes = ctx.keys.public_key(&existing)?;
+            (URL_SAFE_NO_PAD.encode(&pub_bytes), Some(existing), false)
+        } else {
+            let agent_key = ctx.keys.generate(false)?;
+            (
+                URL_SAFE_NO_PAD.encode(&agent_key.public_key),
+                Some(agent_key.id.to_string()),
+                true,
+            )
+        }
     } else {
-        (ship_pub_b64.clone(), None)
+        (ship_pub_b64.clone(), None, false)
     };
 
     // Build identity (subject = the agent's own key when --own-key)
@@ -141,10 +151,13 @@ pub fn register(
 
     // Build capabilities
     let capabilities = AgentCapabilities {
-        tools: tools.iter().map(|t| ToolCapability {
-            name: t.clone(),
-            description: None,
-        }).collect(),
+        tools: tools
+            .iter()
+            .map(|t| ToolCapability {
+                name: t.clone(),
+                description: None,
+            })
+            .collect(),
         api_endpoints: Vec::new(),
         mcp_servers: Vec::new(),
     };
@@ -193,31 +206,44 @@ pub fn register(
     if safe_name.is_empty() {
         return Err("agent name must contain at least one alphanumeric character".into());
     }
-    let pkg_name = format!("{}.agent", safe_name);
-    let pkg_dir = std::env::current_dir()?.join(&pkg_name);
-    std::fs::create_dir_all(&pkg_dir)?;
 
-    // identity.json
-    let identity_json = serde_json::to_string_pretty(&identity)?;
-    std::fs::write(pkg_dir.join("identity.json"), &identity_json)?;
-
-    // capabilities.json
-    let capabilities_json = serde_json::to_string_pretty(&capabilities)?;
-    std::fs::write(pkg_dir.join("capabilities.json"), &capabilities_json)?;
-
-    // declaration.json
-    let declaration_json = serde_json::to_string_pretty(&declaration)?;
-    std::fs::write(pkg_dir.join("declaration.json"), &declaration_json)?;
-
-    // certificate.html
-    let cert_json = serde_json::to_string_pretty(&certificate)?;
-    let safe_json = cert_json.replace('<', r"\u003c");
-    let html = CERTIFICATE_TEMPLATE.replace("__CERTIFICATE_JSON__", &safe_json);
-    std::fs::write(pkg_dir.join("certificate.html"), html.as_bytes())?;
-
-    // Also write the full certificate.json
+    // Full certificate JSON, needed for the certificate digest below regardless
+    // of whether the portable .agent package is written to disk.
     let full_json = serde_json::to_string_pretty(&certificate)?;
-    std::fs::write(pkg_dir.join("certificate.json"), &full_json)?;
+
+    // --quiet skips the on-disk .agent package. Programmatic callers (the
+    // MCP/A2A bridges, which register on every startup) do not want a `.agent`
+    // directory dropped into the user's working directory each time; they only
+    // need the card + key + pin, which happen below regardless.
+    let pkg_dir: Option<std::path::PathBuf> = if quiet {
+        None
+    } else {
+        Some(std::env::current_dir()?.join(format!("{}.agent", safe_name)))
+    };
+    if let Some(pkg_dir) = &pkg_dir {
+        std::fs::create_dir_all(pkg_dir)?;
+
+        // identity.json
+        let identity_json = serde_json::to_string_pretty(&identity)?;
+        std::fs::write(pkg_dir.join("identity.json"), &identity_json)?;
+
+        // capabilities.json
+        let capabilities_json = serde_json::to_string_pretty(&capabilities)?;
+        std::fs::write(pkg_dir.join("capabilities.json"), &capabilities_json)?;
+
+        // declaration.json
+        let declaration_json = serde_json::to_string_pretty(&declaration)?;
+        std::fs::write(pkg_dir.join("declaration.json"), &declaration_json)?;
+
+        // certificate.html
+        let cert_json = serde_json::to_string_pretty(&certificate)?;
+        let safe_json = cert_json.replace('<', r"\u003c");
+        let html = CERTIFICATE_TEMPLATE.replace("__CERTIFICATE_JSON__", &safe_json);
+        std::fs::write(pkg_dir.join("certificate.html"), html.as_bytes())?;
+
+        // Also write the full certificate.json
+        std::fs::write(pkg_dir.join("certificate.json"), &full_json)?;
+    }
 
     // v0.9.8: also write an Agent Card into the workspace card store.
     // Same data, different file -- the .agent package is the portable
@@ -253,49 +279,51 @@ pub fn register(
 
     let now = now_rfc3339();
 
-    // Pin the per-agent key under AgentCert (only with --own-key) so that
-    // verify (and verify-capability) can treat this agent's actions as
-    // key-bound rather than self-asserted, once attest signs with it.
-    if let Some(kid) = &agent_key_id {
-        let mut trust = TrustRootStore::open_default_or_empty()?;
-        trust.add(TrustRoot {
-            key_id:     kid.clone(),
-            public_key: format!("ed25519:{subject_pub_b64}"),
-            kind:       TrustRootKind::AgentCert,
-            label:      name.to_string(),
-            added_at:   now.clone(),
-        });
-        trust.save(&TrustRootStore::default_path())?;
+    // Pin the per-agent key under AgentCert (only with a NEWLY-minted --own-key
+    // key) so that verify (and verify-capability) can treat this agent's actions
+    // as key-bound rather than self-asserted, once attest signs with it. A
+    // reused key is already pinned, so re-registering does not duplicate roots.
+    if key_is_new {
+        if let Some(kid) = &agent_key_id {
+            let mut trust = TrustRootStore::open_default_or_empty()?;
+            trust.add(TrustRoot {
+                key_id: kid.clone(),
+                public_key: format!("ed25519:{subject_pub_b64}"),
+                kind: TrustRootKind::AgentCert,
+                label: name.to_string(),
+                added_at: now.clone(),
+            });
+            trust.save(&TrustRootStore::default_path())?;
+        }
     }
 
     let card = AgentCard {
         agent_id,
-        agent_name:            name.to_string(),
+        agent_name: name.to_string(),
         surface,
         connection_modes,
         coverage,
         capabilities: CardCapabilities {
-            bounded_tools:       tools.clone(),
+            bounded_tools: tools.clone(),
             escalation_required: declaration.escalation_required.clone(),
-            forbidden:           declaration.forbidden.clone(),
+            forbidden: declaration.forbidden.clone(),
         },
-        provenance:            CardProvenance::Registered,
-        status:                CardStatus::NeedsReview,
+        provenance: CardProvenance::Registered,
+        status: CardStatus::NeedsReview,
         host,
-        workspace:             workspace.to_string_lossy().into_owned(),
-        model:                 model.clone(),
-        description:           description.clone(),
-        certificate_digest:    Some(cert_digest),
-        key_id:                agent_key_id.clone(),
+        workspace: workspace.to_string_lossy().into_owned(),
+        model: model.clone(),
+        description: description.clone(),
+        certificate_digest: Some(cert_digest),
+        key_id: agent_key_id.clone(),
         // surface.kind() ("cursor-agent") and harness_id ("cursor") are
         // distinct namespaces; harnesses::recommended_id is the right
         // lookup so cards always point at a real entry in HARNESSES.
-        active_harness_id:     crate::commands::harnesses::recommended_id(surface)
-            .map(str::to_string),
-        latest_session_id:     None,
+        active_harness_id: crate::commands::harnesses::recommended_id(surface).map(str::to_string),
+        latest_session_id: None,
         latest_receipt_digest: None,
-        created_at:            now.clone(),
-        updated_at:            now.clone(),
+        created_at: now.clone(),
+        updated_at: now.clone(),
     };
     // upsert preserves any pre-existing session linkage and never demotes
     // a higher-status card.
@@ -326,15 +354,29 @@ pub fn register(
     printer.info(&format!("  agent:      {}", name));
     printer.info(&format!("  ship:       {}", ctx.config.ship_id));
     printer.info(&format!("  tools:      {}", tools.len()));
-    printer.info(&format!("  valid:      {} days (until {})", valid_days, valid_until));
-    printer.info(&format!("  package:    {}", pkg_dir.display()));
-    printer.info(&format!("  card:       {} ({})", merged.agent_id, merged.status.label()));
+    printer.info(&format!(
+        "  valid:      {} days (until {})",
+        valid_days, valid_until
+    ));
+    if let Some(dir) = &pkg_dir {
+        printer.info(&format!("  package:    {}", dir.display()));
+    }
+    printer.info(&format!(
+        "  card:       {} ({})",
+        merged.agent_id,
+        merged.status.label()
+    ));
     if let Some(kid) = &agent_key_id {
         printer.info(&format!("  agent key:  {kid} (pinned under AgentCert)"));
     }
     printer.blank();
-    printer.hint(&format!("open {}/certificate.html", pkg_dir.display()));
-    printer.dim_info(&format!("  review with: treeship agents review {}", merged.agent_id));
+    if let Some(dir) = &pkg_dir {
+        printer.hint(&format!("open {}/certificate.html", dir.display()));
+    }
+    printer.dim_info(&format!(
+        "  review with: treeship agents review {}",
+        merged.agent_id
+    ));
     printer.blank();
 
     Ok(())
