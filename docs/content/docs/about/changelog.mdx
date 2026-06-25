@@ -12,6 +12,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
 
 ## Unreleased
 
+## 0.14.0 (2026-06-25)
+
 ### Added
 - **Merkle consistency proofs (`core`, transparency-log slice 3 foundation).** `MerkleTree::consistency_proof(old_size)` and `verify_consistency(version, old_size, old_root, new_size, new_root, proof)`: prove (and verify offline) that a later tree **extends** an earlier one, the first `m` leaves unchanged, only appends. This is the append-only / no-rewrite guarantee for the transparency log. Derived and validated for this tree's exact level-by-level-promotion shape: round-trip tested against `compute_root` (ground truth) for every `(m, n)` up to 20 across both v1 and v2, plus tamper rejection (wrong roots, mutated proof) and edge cases. See [merkle-consistency spec](docs/specs/merkle-consistency.md).
 - **`treeship audit --watch` — transparency-log monitor mode.** Re-audits an agent's history on an interval (`--interval`, default 30s) and keeps alerting on omission, the "monitors catch anomalies" piece of the transparency log. Transparency-log slice 4.
