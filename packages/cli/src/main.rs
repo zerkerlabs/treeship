@@ -1712,6 +1712,14 @@ struct AuditArgs {
     /// Hub URL whose transparency log to audit.
     #[arg(long, value_name = "URL")]
     hub: Option<String>,
+
+    /// Monitor mode: re-audit on an interval and keep alerting on omission.
+    #[arg(long, default_value_t = false)]
+    watch: bool,
+
+    /// Seconds between re-audits in --watch mode.
+    #[arg(long, default_value_t = 30, value_name = "SECS")]
+    interval: u64,
 }
 
 // --- keys -------------------------------------------------------------------
@@ -2523,9 +2531,14 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             commands::publish::publish(&a.agent, cli.config.as_deref(), printer)
         }
 
-        Command::Audit(a) => {
-            commands::audit::audit(&a.agent, a.hub.as_deref(), cli.config.as_deref(), printer)
-        }
+        Command::Audit(a) => commands::audit::audit(
+            &a.agent,
+            a.hub.as_deref(),
+            a.watch,
+            a.interval,
+            cli.config.as_deref(),
+            printer,
+        ),
 
         Command::Verify(a) => {
             // External targets (URL, file path to a .treeship/.agent package)
