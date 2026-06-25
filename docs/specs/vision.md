@@ -25,17 +25,17 @@ The discipline that makes this real, and distinguishes Treeship from a registry 
 
 The core "TLS for agents" stack is functionally complete: an agent has a provable identity, a capability card graded by real provenance, revocation, and resolves over the network with offline re-verification including a transparency anchor. The load-bearing invariant throughout: **the Hub creates nothing; the client re-verifies every byte against its own trust roots and decides.**
 
-## Frontiers (not yet built)
+## Frontiers
 
 These are the next big chunks, from the original TLS-for-agents vision. Each gets a spec before any code, the same rhythm that produced the shipped work.
 
-### 1. Transparency-log surface (Certificate Transparency for agents)
+### 1. Transparency-log surface (Certificate Transparency for agents) — mostly shipped (0.14.0)
 
-We anchor cards in a Merkle log and verify inclusion. The missing piece is the *queryable* surface: "what has agent X done?", an append-only, monitorable history a third party can audit, with **completeness** detectable (the agent's `evidence_anchor` commits it to a receipt set, so omission is visible). Honest constraint: a log of **digests and commitments, not contents**, consistent with the memory-proof safe-default rule. Compounds everything already built. Spec: [transparency-log](./transparency-log.md).
+The queryable surface is live: `GET /v1/agents/log` + `treeship audit` give an append-only, monitorable history a third party can audit, with **omission detectable** against the agent's `evidence_anchor`, and `audit --watch` for continuous monitoring. The Merkle **consistency-proof primitive** (append-only, no-rewrite guarantee) is built and test-gated in `core`. Remaining: the slice-3 *plumbing* (Hub consistency endpoint + `audit` checkpoint-witnessing) on top of the primitive. Specs: [transparency-log](./transparency-log.md), [merkle-consistency](./merkle-consistency.md).
 
-### 2. Protocol integration (the distribution flywheel)
+### 2. Protocol integration (the distribution flywheel) — specced, next to build
 
-Wire per-actor signing into the protocols real agents already speak, the MCP plugin (exists, needs the per-actor-signing update) and an A2A integration, so agents emit provable, key-bound receipts *by default*. This is reach, not depth: the cryptographic core is done; this makes it used. Needs a spec before building.
+Provision a per-agent identity inside the protocols real agents already speak (MCP, A2A) so they emit provable, key-bound receipts and become resolvable **by default**. The bridges already shell to the CLI and pass `--actor`, so per-actor signing flows through the moment the agent has a key, this is provisioning (register key → capture card → publish), not rewiring. Reach, not depth: the cryptographic core is done; this makes it used. Spec: [protocol-integration](./protocol-integration.md).
 
 ## What is explicitly out of scope (for now)
 
