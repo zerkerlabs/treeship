@@ -150,7 +150,38 @@ server.registerTool(
   },
 );
 
+/**
+ * Provision a per-agent signing key for this bridge's actor on startup.
+ *
+ * This is what makes the receipts the bridge already emits *provable*: once the
+ * agent has its own key pinned under AgentCert, `attest action --actor <agent>`
+ * (which every tool below already calls) signs with that key, so the actor
+ * reads `proven (key-bound)` instead of `asserted`. Without it, the bridge
+ * still works -- receipts are just signed by the shared ship key.
+ *
+ * Idempotent and best-effort: `agent register --own-key` reuses an existing
+ * per-agent key (no key pile-up across restarts), `--quiet` skips the on-disk
+ * .agent package so nothing is dropped into the user's working directory, and
+ * any failure (CLI missing, no `treeship init`) is logged and swallowed so it
+ * never blocks the MCP server from starting.
+ */
+async function provisionAgentKey(): Promise<void> {
+  const name = ACTOR.replace(/^agent:\/\//, '');
+  if (!name) return;
+  const { code, stderr } = await runTreeship([
+    'agent', 'register', '--own-key', '--quiet', '--name', name,
+  ]);
+  if (code !== 0) {
+    process.stderr.write(
+      `[treeship-mcp] per-agent key not provisioned for ${ACTOR}; ` +
+        `receipts will be signed by the shared key (actor asserted). ` +
+        `${stderr.trim()}\n`,
+    );
+  }
+}
+
 async function main() {
+  await provisionAgentKey();
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
