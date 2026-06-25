@@ -1,12 +1,12 @@
-mod printer;
+mod commands;
 mod config;
 mod ctx;
-mod commands;
-mod tui;
 mod otel;
+mod printer;
 mod templates;
+mod tui;
 
-use clap::{Parser, Subcommand, Args};
+use clap::{Args, Parser, Subcommand};
 use printer::{Format, Printer};
 
 /// Portable trust receipts for agent workflows.
@@ -1160,6 +1160,13 @@ struct AgentRegisterArgs {
     /// provable once it signs with that key (see verify-capability).
     #[arg(long, default_value_t = false)]
     own_key: bool,
+
+    /// Skip writing the on-disk .agent package; still create the card, key,
+    /// and AgentCert pin. For programmatic callers (the MCP/A2A bridges
+    /// register on every startup) that do not want a `.agent` directory
+    /// dropped into the working directory each time.
+    #[arg(long, default_value_t = false)]
+    quiet: bool,
 }
 
 // --- declare ---------------------------------------------------------------
@@ -2014,7 +2021,7 @@ struct DashboardArgs {
 fn main() {
     let cli = Cli::parse();
 
-    let format  = Format::from_str(&cli.format);
+    let format = Format::from_str(&cli.format);
     let printer = Printer::new(format, cli.quiet, cli.no_color);
 
     if let Err(e) = dispatch(&cli, &printer) {
@@ -2025,7 +2032,6 @@ fn main() {
 
 fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     match &cli.command {
-
         Command::Ui => tui::run(cli.config.as_deref()),
 
         Command::Dashboard(args) => commands::dashboard::run(
@@ -2042,13 +2048,13 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             #[cfg(feature = "otel")]
             {
                 match sub {
-                    OtelCommand::Test => commands::otel::test_connection(
-                        cli.config.as_deref(), printer,
-                    )?,
+                    OtelCommand::Test => {
+                        commands::otel::test_connection(cli.config.as_deref(), printer)?
+                    }
                     OtelCommand::Status => commands::otel::status(printer),
-                    OtelCommand::Export(a) => commands::otel::export_artifact(
-                        &a.id, cli.config.as_deref(), printer,
-                    )?,
+                    OtelCommand::Export(a) => {
+                        commands::otel::export_artifact(&a.id, cli.config.as_deref(), printer)?
+                    }
                     OtelCommand::Enable => commands::otel::enable(printer),
                     OtelCommand::Disable => commands::otel::disable(printer),
                 }
@@ -2081,16 +2087,11 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             printer,
         ),
 
-        Command::ProveChain(a) => commands::prove::prove_chain(
-            &a.session_id,
-            cli.config.as_deref(),
-            printer,
-        ),
+        Command::ProveChain(a) => {
+            commands::prove::prove_chain(&a.session_id, cli.config.as_deref(), printer)
+        }
 
-        Command::VerifyProof(a) => commands::prove::verify_proof(
-            &a.file,
-            printer,
-        ),
+        Command::VerifyProof(a) => commands::prove::verify_proof(&a.file, printer),
 
         Command::ZkSetup => commands::zk::setup(printer),
         Command::ZkTlsSetup => commands::zk::tls_notary_setup(printer),
@@ -2104,22 +2105,19 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             if a.discover {
                 commands::add::run_discover(Format::from_str(&cli.format), printer)
             } else {
-                commands::add::run(
-                    a.agents.clone(),
-                    a.all,
-                    a.dry_run,
-                    printer,
-                )
+                commands::add::run(a.agents.clone(), a.all, a.dry_run, printer)
             }
         }
 
-        Command::Quickstart => commands::quickstart::run(
-            cli.config.as_deref(),
-            printer,
-        ),
+        Command::Quickstart => commands::quickstart::run(cli.config.as_deref(), printer),
 
         Command::Init(a) => commands::init::run(
-            a.name.clone(), cli.config.clone(), a.force, a.global, a.template.clone(), printer,
+            a.name.clone(),
+            cli.config.clone(),
+            a.force,
+            a.global,
+            a.template.clone(),
+            printer,
         ),
 
         Command::Status => commands::status::run(cli.config.as_deref(), printer),
@@ -2148,12 +2146,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             ),
         },
 
-        Command::Log(a) => commands::log::run(
-            a.follow,
-            a.tail,
-            cli.config.as_deref(),
-            printer,
-        ),
+        Command::Log(a) => commands::log::run(a.follow, a.tail, cli.config.as_deref(), printer),
 
         Command::Session(sub) => match sub {
             SessionCommand::Start(a) => commands::session::start(
@@ -2171,7 +2164,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 } else {
                     commands::session::status(cli.config.as_deref(), printer)
                 }
-            },
+            }
             SessionCommand::Close(a) => commands::session::close(
                 a.summary.clone(),
                 a.headline.clone(),
@@ -2208,24 +2201,24 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             SessionCommand::Invite(a) => commands::invitation::invite(
                 cli.config.as_deref(),
                 commands::invitation::InviteArgs {
-                    session_id:     a.session_id.clone(),
-                    invitee_cert:   a.invitee_cert.clone(),
+                    session_id: a.session_id.clone(),
+                    invitee_cert: a.invitee_cert.clone(),
                     invitee_pubkey: a.invitee_pubkey.clone(),
-                    open:           a.open,
-                    capabilities:   a.capabilities.clone(),
-                    expires:        a.expires.clone(),
-                    format:         a.format.clone(),
-                    no_armor:       a.no_armor,
+                    open: a.open,
+                    capabilities: a.capabilities.clone(),
+                    expires: a.expires.clone(),
+                    format: a.format.clone(),
+                    no_armor: a.no_armor,
                 },
                 printer,
             ),
             SessionCommand::Join(a) => commands::invitation::join(
                 cli.config.as_deref(),
                 commands::invitation::JoinArgs {
-                    invite:      a.invite.clone(),
+                    invite: a.invite.clone(),
                     invite_file: a.invite_file.clone(),
-                    actor:       a.actor.clone(),
-                    format:      a.format.clone(),
+                    actor: a.actor.clone(),
+                    format: a.format.clone(),
                 },
                 printer,
             ),
@@ -2233,33 +2226,34 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 cli.config.as_deref(),
                 commands::invitation::CountersignArgs {
                     participant_id: a.participant_id.clone(),
-                    format:         a.format.clone(),
+                    format: a.format.clone(),
                 },
                 printer,
             ),
         },
 
         Command::Package(sub) => match sub {
-            PackageCommand::Inspect(a) => commands::package::inspect(
-                a.path.clone(),
-                cli.config.as_deref(),
-                printer,
-            ),
-            PackageCommand::Verify(a) => commands::package::verify(
-                a.path.clone(),
-                cli.config.as_deref(),
-                a.strict,
-                printer,
-            ),
+            PackageCommand::Inspect(a) => {
+                commands::package::inspect(a.path.clone(), cli.config.as_deref(), printer)
+            }
+            PackageCommand::Verify(a) => {
+                commands::package::verify(a.path.clone(), cli.config.as_deref(), a.strict, printer)
+            }
         },
 
         Command::Declare(a) => {
             if a.show {
                 commands::declare::show(printer)
             } else {
-                commands::declare::create(a.tools.clone(), a.forbidden.clone(), a.escalation.clone(), a.valid_until.clone(), printer)
+                commands::declare::create(
+                    a.tools.clone(),
+                    a.forbidden.clone(),
+                    a.escalation.clone(),
+                    a.valid_until.clone(),
+                    printer,
+                )
             }
-        },
+        }
 
         Command::Agent(sub) => match sub {
             AgentCommand::Register(a) => commands::agent::register(
@@ -2271,6 +2265,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 a.forbidden.clone(),
                 a.escalation.clone(),
                 a.own_key,
+                a.quiet,
                 cli.config.as_deref(),
                 printer,
             ),
@@ -2288,20 +2283,18 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 Format::from_str(&cli.format),
                 printer,
             ),
-            HarnessCommand::Smoke { harness_id } => commands::harness::smoke(
-                harness_id,
-                cli.config.as_deref(),
-                printer,
-            ),
+            HarnessCommand::Smoke { harness_id } => {
+                commands::harness::smoke(harness_id, cli.config.as_deref(), printer)
+            }
         },
 
         Command::Setup(a) => commands::setup::run(
             cli.config.as_deref(),
             commands::setup::SetupOpts {
-                yes:           a.yes,
-                skip_smoke:    a.skip_smoke,
+                yes: a.yes,
+                skip_smoke: a.skip_smoke,
                 no_instrument: a.no_instrument,
-                format:        cli.format.clone(),
+                format: cli.format.clone(),
             },
             printer,
         ),
@@ -2318,31 +2311,19 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 Format::from_str(&cli.format),
                 printer,
             ),
-            AgentsCommand::Approve { agent_id } => commands::agents::approve(
-                agent_id,
-                cli.config.as_deref(),
-                printer,
-            ),
-            AgentsCommand::Remove { agent_id } => commands::agents::remove(
-                agent_id,
-                cli.config.as_deref(),
-                printer,
-            ),
+            AgentsCommand::Approve { agent_id } => {
+                commands::agents::approve(agent_id, cli.config.as_deref(), printer)
+            }
+            AgentsCommand::Remove { agent_id } => {
+                commands::agents::remove(agent_id, cli.config.as_deref(), printer)
+            }
         },
 
         Command::Pending => commands::approve::pending(printer),
 
-        Command::Approve(a) => commands::approve::approve(
-            a.n,
-            cli.config.as_deref(),
-            printer,
-        ),
+        Command::Approve(a) => commands::approve::approve(a.n, cli.config.as_deref(), printer),
 
-        Command::Deny(a) => commands::approve::deny(
-            a.n,
-            cli.config.as_deref(),
-            printer,
-        ),
+        Command::Deny(a) => commands::approve::deny(a.n, cli.config.as_deref(), printer),
 
         Command::Approval(sub) => match sub {
             ApprovalCommand::Uses { grant_id } => commands::approval::uses(
@@ -2367,12 +2348,10 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
         },
 
         Command::Daemon(sub) => match sub {
-            DaemonCommand::Start { foreground, no_push } => commands::daemon::start(
-                cli.config.as_deref(),
-                *foreground,
-                *no_push,
-                printer,
-            ),
+            DaemonCommand::Start {
+                foreground,
+                no_push,
+            } => commands::daemon::start(cli.config.as_deref(), *foreground, *no_push, printer),
             DaemonCommand::Stop => commands::daemon::stop(printer),
             DaemonCommand::Status => commands::daemon::status(printer),
         },
@@ -2385,101 +2364,104 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 // legacy name. Either populates the subject URI; --subject
                 // wins if both are set.
                 let subject_uri = a.subject.clone().or(a.content_uri.clone());
-                commands::attest::action(commands::attest::ActionArgs {
-                    actor:           a.actor.clone(),
-                    action:          a.action.clone(),
-                    input_digest:    a.input_digest.clone(),
-                    output_digest:   a.output_digest.clone(),
-                    content_uri:     subject_uri,
-                    parent_id:       a.parent.clone(),
-                    approval_nonce:  a.approval_nonce.clone(),
-                    idempotency_key: a.idempotency_key.clone(),
-                    meta:            a.meta.clone(),
-                    out:             a.out.clone(),
-                    config:          cli.config.clone(),
-                }, printer)?;
+                commands::attest::action(
+                    commands::attest::ActionArgs {
+                        actor: a.actor.clone(),
+                        action: a.action.clone(),
+                        input_digest: a.input_digest.clone(),
+                        output_digest: a.output_digest.clone(),
+                        content_uri: subject_uri,
+                        parent_id: a.parent.clone(),
+                        approval_nonce: a.approval_nonce.clone(),
+                        idempotency_key: a.idempotency_key.clone(),
+                        meta: a.meta.clone(),
+                        out: a.out.clone(),
+                        config: cli.config.clone(),
+                    },
+                    printer,
+                )?;
                 Ok(())
             }
             AttestCommand::Approval(a) => commands::attest::approval(
                 commands::attest::ApprovalArgs {
-                    approver:         a.approver.clone(),
-                    subject_id:       a.subject.clone(),
-                    description:      a.description.clone(),
-                    expires:          a.expires.clone(),
-                    allowed_actors:   a.allowed_actor.clone(),
-                    allowed_actions:  a.allowed_action.clone(),
+                    approver: a.approver.clone(),
+                    subject_id: a.subject.clone(),
+                    description: a.description.clone(),
+                    expires: a.expires.clone(),
+                    allowed_actors: a.allowed_actor.clone(),
+                    allowed_actions: a.allowed_action.clone(),
                     allowed_subjects: a.allowed_subject.clone(),
-                    max_uses:         a.max_uses,
-                    unscoped:         a.unscoped,
-                    config:           cli.config.clone(),
+                    max_uses: a.max_uses,
+                    unscoped: a.unscoped,
+                    config: cli.config.clone(),
                 },
                 printer,
             ),
             AttestCommand::Handoff(a) => commands::attest::handoff(
                 commands::attest::HandoffArgs {
-                    from:        a.from.clone(),
-                    to:          a.to.clone(),
-                    artifacts:   a.artifacts.clone(),
-                    approvals:   a.approvals.clone(),
+                    from: a.from.clone(),
+                    to: a.to.clone(),
+                    artifacts: a.artifacts.clone(),
+                    approvals: a.approvals.clone(),
                     obligations: a.obligations.clone(),
-                    config:      cli.config.clone(),
+                    config: cli.config.clone(),
                 },
                 printer,
             ),
             AttestCommand::Receipt(a) => commands::attest::receipt(
                 commands::attest::ReceiptArgs {
-                    system:         a.system.clone(),
-                    kind:           a.kind.clone(),
-                    subject_id:     a.subject.clone(),
-                    payload:        a.payload.clone(),
-                    payload_file:   a.payload_file.clone(),
+                    system: a.system.clone(),
+                    kind: a.kind.clone(),
+                    subject_id: a.subject.clone(),
+                    payload: a.payload.clone(),
+                    payload_file: a.payload_file.clone(),
                     payload_digest: a.payload_digest.clone(),
-                    config:         cli.config.clone(),
+                    config: cli.config.clone(),
                 },
                 printer,
             ),
             AttestCommand::Card(a) => commands::attest::card(
                 commands::attest::CardArgs {
-                    agent:        a.agent.clone(),
-                    tools:        a.tools.clone(),
-                    models:       a.models.clone(),
-                    keyid:        a.keyid.clone(),
-                    owner:        a.owner.clone(),
-                    version:      a.version.clone(),
-                    policy_ref:   a.policy_ref.clone(),
+                    agent: a.agent.clone(),
+                    tools: a.tools.clone(),
+                    models: a.models.clone(),
+                    keyid: a.keyid.clone(),
+                    owner: a.owner.clone(),
+                    version: a.version.clone(),
+                    policy_ref: a.policy_ref.clone(),
                     from_harness: a.from_harness.clone(),
-                    config:       cli.config.clone(),
+                    config: cli.config.clone(),
                 },
                 printer,
             ),
             AttestCommand::Decision(a) => commands::attest::decision(
                 commands::attest::DecisionArgs {
-                    actor:         a.actor.clone(),
-                    model:         a.model.clone(),
+                    actor: a.actor.clone(),
+                    model: a.model.clone(),
                     model_version: a.model_version.clone(),
-                    provider:      a.provider.clone(),
-                    tokens_in:     a.tokens_in,
-                    tokens_out:    a.tokens_out,
+                    provider: a.provider.clone(),
+                    tokens_in: a.tokens_in,
+                    tokens_out: a.tokens_out,
                     prompt_digest: a.prompt_digest.clone(),
-                    summary:       a.summary.clone(),
-                    confidence:    a.confidence,
-                    parent_id:     a.parent.clone(),
-                    config:        cli.config.clone(),
+                    summary: a.summary.clone(),
+                    confidence: a.confidence,
+                    parent_id: a.parent.clone(),
+                    config: cli.config.clone(),
                 },
                 printer,
             ),
             AttestCommand::Endorsement(a) => commands::attest::endorsement(
                 commands::attest::EndorsementArgs {
-                    endorser:   a.endorser.clone(),
+                    endorser: a.endorser.clone(),
                     subject_id: a.subject.clone(),
-                    kind:       a.kind.clone(),
-                    rationale:  a.rationale.clone(),
-                    expires:    a.expires.clone(),
+                    kind: a.kind.clone(),
+                    rationale: a.rationale.clone(),
+                    expires: a.expires.clone(),
                     policy_ref: a.policy_ref.clone(),
-                    meta:       a.meta.clone(),
-                    parent_id:  a.parent.clone(),
-                    out:        a.out.clone(),
-                    config:     cli.config.clone(),
+                    meta: a.meta.clone(),
+                    parent_id: a.parent.clone(),
+                    out: a.out.clone(),
+                    config: cli.config.clone(),
                 },
                 printer,
             ),
@@ -2488,24 +2470,24 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
         Command::Bundle(sub) => match sub {
             BundleCommand::Create(a) => commands::bundle::create(
                 commands::bundle::CreateArgs {
-                    artifacts:   a.artifacts.clone(),
-                    tag:         a.tag.clone(),
+                    artifacts: a.artifacts.clone(),
+                    tag: a.tag.clone(),
                     description: a.description.clone(),
-                    config:      cli.config.clone(),
+                    config: cli.config.clone(),
                 },
                 printer,
             ),
             BundleCommand::Export(a) => commands::bundle::export(
                 commands::bundle::ExportArgs {
                     bundle_id: a.bundle_id.clone(),
-                    out:       a.out.clone(),
-                    config:    cli.config.clone(),
+                    out: a.out.clone(),
+                    config: cli.config.clone(),
                 },
                 printer,
             ),
             BundleCommand::Import(a) => commands::bundle::import(
                 commands::bundle::ImportArgs {
-                    file:   a.file.clone(),
+                    file: a.file.clone(),
                     config: cli.config.clone(),
                 },
                 printer,
@@ -2527,9 +2509,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             commands::resolve::resolve(&a.agent, a.hub.as_deref(), cli.config.as_deref(), printer)
         }
 
-        Command::Publish(a) => {
-            commands::publish::publish(&a.agent, cli.config.as_deref(), printer)
-        }
+        Command::Publish(a) => commands::publish::publish(&a.agent, cli.config.as_deref(), printer),
 
         Command::Audit(a) => commands::audit::audit(
             &a.agent,
@@ -2548,18 +2528,20 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 || commands::verify_external::is_local_path(&a.target)
                 || a.certificate.is_some()
             {
-                let exit = commands::verify_external::run(
-                    &a.target,
-                    a.certificate.as_deref(),
-                    printer,
-                );
+                let exit =
+                    commands::verify_external::run(&a.target, a.certificate.as_deref(), printer);
                 if exit != commands::verify_external::ExternalExit::Ok {
                     std::process::exit(exit.code());
                 }
                 Ok(())
             } else {
                 commands::verify::run(
-                    &a.target, a.no_chain, a.max_depth, a.full, cli.config.as_deref(), printer,
+                    &a.target,
+                    a.no_chain,
+                    a.max_depth,
+                    a.full,
+                    cli.config.as_deref(),
+                    printer,
                 )
             }
         }
@@ -2595,23 +2577,12 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 cli.config.as_deref(),
                 printer,
             ),
-            HubCommand::Detach => commands::hub::detach(
-                cli.config.as_deref(),
-                printer,
-            ),
-            HubCommand::Ls => commands::hub::ls(
-                cli.config.as_deref(),
-                printer,
-            ),
-            HubCommand::Status => commands::hub::status(
-                cli.config.as_deref(),
-                printer,
-            ),
-            HubCommand::Use(a) => commands::hub::use_hub(
-                &a.name_or_id,
-                cli.config.as_deref(),
-                printer,
-            ),
+            HubCommand::Detach => commands::hub::detach(cli.config.as_deref(), printer),
+            HubCommand::Ls => commands::hub::ls(cli.config.as_deref(), printer),
+            HubCommand::Status => commands::hub::status(cli.config.as_deref(), printer),
+            HubCommand::Use(a) => {
+                commands::hub::use_hub(&a.name_or_id, cli.config.as_deref(), printer)
+            }
             HubCommand::Push(a) => commands::hub::push(
                 &a.id,
                 a.hub.as_deref(),
@@ -2619,37 +2590,23 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 cli.config.as_deref(),
                 printer,
             ),
-            HubCommand::Pull(a) => commands::hub::pull(
-                &a.id,
-                a.hub.as_deref(),
-                cli.config.as_deref(),
-                printer,
-            ),
-            HubCommand::Open(a) => commands::hub::open(
-                a.hub.as_deref(),
-                a.no_open,
-                cli.config.as_deref(),
-                printer,
-            ),
-            HubCommand::Kill(a) => commands::hub::kill(
-                &a.name,
-                a.force,
-                cli.config.as_deref(),
-                printer,
-            ),
+            HubCommand::Pull(a) => {
+                commands::hub::pull(&a.id, a.hub.as_deref(), cli.config.as_deref(), printer)
+            }
+            HubCommand::Open(a) => {
+                commands::hub::open(a.hub.as_deref(), a.no_open, cli.config.as_deref(), printer)
+            }
+            HubCommand::Kill(a) => {
+                commands::hub::kill(&a.name, a.force, cli.config.as_deref(), printer)
+            }
         },
 
-        Command::Checkpoint => commands::merkle::checkpoint(
-            cli.config.as_deref(),
-            printer,
-        ),
+        Command::Checkpoint => commands::merkle::checkpoint(cli.config.as_deref(), printer),
 
         Command::Merkle(sub) => match sub {
-            MerkleCommand::Proof(a) => commands::merkle::proof(
-                &a.artifact_id,
-                cli.config.as_deref(),
-                printer,
-            ),
+            MerkleCommand::Proof(a) => {
+                commands::merkle::proof(&a.artifact_id, cli.config.as_deref(), printer)
+            }
             MerkleCommand::Verify(a) => {
                 let (root, path) = if a.args.len() == 2 {
                     (Some(a.args[0].as_str()), a.args[1].as_str())
@@ -2659,21 +2616,19 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                     return Err("usage: treeship merkle verify [root] <proof.json>".into());
                 };
                 commands::merkle::verify(root, path, printer)
-            },
-            MerkleCommand::Status => commands::merkle::status(
-                cli.config.as_deref(),
-                printer,
-            ),
-            MerkleCommand::Publish => commands::merkle::publish(
-                cli.config.as_deref(),
-                printer,
-            ),
+            }
+            MerkleCommand::Status => commands::merkle::status(cli.config.as_deref(), printer),
+            MerkleCommand::Publish => commands::merkle::publish(cli.config.as_deref(), printer),
         },
     }
 }
 
 fn exit_code(msg: &str) -> i32 {
-    if msg.contains("not initialized") || msg.contains("treeship init") { 3 }
-    else if msg.contains("required") || msg.contains("no command given") { 4 }
-    else { 1 }
+    if msg.contains("not initialized") || msg.contains("treeship init") {
+        3
+    } else if msg.contains("required") || msg.contains("no command given") {
+        4
+    } else {
+        1
+    }
 }

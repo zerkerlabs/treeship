@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+- **MCP bridge emits provable receipts by default (protocol-integration slice 1).** On startup the `@treeship/mcp` bridge provisions a per-agent signing key for its actor (`agent register --own-key --quiet`), so the `attest action --actor <agent>` calls it already makes sign with that agent's own key. Receipts now verify as `actor proof: proven (key-bound)` instead of `asserted`, with no change to the attestation path, per-actor signing already did the work once the key exists. Best-effort and idempotent: if `treeship` is missing or uninitialized the bridge still runs (receipts fall back to the shared key, with a one-line note), and restarts reuse the same key rather than minting new ones. The first step of wiring the shipped identity stack into the protocols real agents already speak. See [protocol-integration spec](docs/specs/protocol-integration.md).
+- **`treeship agent register --own-key` is now idempotent**, and a new `--quiet` flag skips the on-disk `.agent` package. Re-registering an agent that already has a per-agent key reuses that key (no key pile-up, no duplicate AgentCert pins) instead of minting a second one, and `--quiet` produces the card + key + pin without dropping a `.agent` directory into the working directory. Both exist so programmatic callers (the MCP/A2A bridges, which register on every startup) can provision identity safely and quietly; interactive `register` is unchanged.
+
 ## 0.14.0 (2026-06-25)
 
 ### Added
