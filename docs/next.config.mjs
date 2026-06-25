@@ -27,6 +27,7 @@ const config = {
       { source: '/guides',       destination: '/guides/introduction',     permanent: false },
       { source: '/concepts',     destination: '/concepts/trust-fabric',   permanent: false },
       { source: '/integrations', destination: '/integrations/claude-code', permanent: false },
+      { source: '/about',        destination: '/about/changelog',         permanent: false },
       // Friendly alias: the api/ section's title is "Hub API"; agents
       // crawling the sidebar often try /hub-api as the canonical URL.
       { source: '/hub-api',      destination: '/api/overview',            permanent: false },
