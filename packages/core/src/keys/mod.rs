@@ -149,6 +149,12 @@ struct Manifest {
 pub struct Store {
     dir:         PathBuf,
     machine_key: [u8; 32],
+    /// Legacy machine key derived from the raw (non-canonicalized) keystore
+    /// path. `Some` only when the canonical path differs from the raw one
+    /// (i.e. the path contains a symlink). Used as a decrypt-only fallback so
+    /// keystores written before path canonicalization still open; never used
+    /// to encrypt. See `open` and `derive_machine_key`.
+    legacy_machine_key: Option<[u8; 32]>,
     /// In-memory cache — avoids disk reads on hot paths.
     cache:       Arc<RwLock<HashMap<KeyId, EncryptedEntry>>>,
 }
@@ -159,11 +165,32 @@ impl Store {
         let dir = dir.as_ref().to_path_buf();
         fs::create_dir_all(&dir)?;
 
-        let machine_key = derive_machine_key(&dir)?;
+        // Canonicalize the keystore path before deriving the machine key. The
+        // derivation hashes the store path into the key, so the SAME logical
+        // directory must produce the SAME path string every time -- otherwise
+        // `init` and a later command can hash different strings for one
+        // directory (e.g. macOS `/var` -> `/private/var`, or a symlinked
+        // `$HOME`) and decryption fails with a misleading "wrong machine" MAC
+        // error. canonicalize resolves symlinks to a stable absolute path;
+        // create_dir_all above guarantees it exists.
+        //
+        // The raw-path key is retained as a DECRYPT-ONLY fallback so any
+        // keystore written before this change (encrypted under the raw path)
+        // still opens -- this hardening must never lock an existing user out.
+        // Encryption always uses the canonical key, so entries migrate to it
+        // as they are rewritten.
+        let canonical = fs::canonicalize(&dir).unwrap_or_else(|_| dir.clone());
+        let machine_key = derive_machine_key(&canonical)?;
+        let legacy_machine_key = if canonical != dir {
+            Some(derive_machine_key(&dir)?)
+        } else {
+            None
+        };
 
         Ok(Self {
             dir,
             machine_key,
+            legacy_machine_key,
             cache: Arc::new(RwLock::new(HashMap::new())),
         })
     }
@@ -457,14 +484,32 @@ impl Store {
         // legacy SHA-256-CTR+HMAC path (`decrypt_legacy_v1`) and are
         // transparently re-encrypted in the new format below.
         let was_legacy = is_legacy_v1(&entry.enc_priv_key);
-        let secret = decrypt_from_disk(
+        let secret = match decrypt_from_disk(
             &self.machine_key,
             &entry.id,
             &entry.public_key,
             &entry.enc_priv_key,
             &entry.nonce,
-        )
-            .map_err(|e| self.enrich_crypto_error(e))?;
+        ) {
+            Ok(secret) => secret,
+            Err(primary_err) => {
+                // Fall back to the legacy raw-path key for keystores written
+                // before path canonicalization. Only when one exists (the path
+                // contained a symlink); otherwise surface the primary error,
+                // enriched, so the diagnosis is unchanged for normal failures.
+                match &self.legacy_machine_key {
+                    Some(legacy) => decrypt_from_disk(
+                        legacy,
+                        &entry.id,
+                        &entry.public_key,
+                        &entry.enc_priv_key,
+                        &entry.nonce,
+                    )
+                    .map_err(|_| self.enrich_crypto_error(primary_err))?,
+                    None => return Err(self.enrich_crypto_error(primary_err)),
+                }
+            }
+        };
 
         // L3: wrap the on-stack copy of the decrypted secret in a
         // `Zeroizing` so the byte buffer is wiped on drop. `secret`
@@ -1686,6 +1731,95 @@ mod tests {
         let sig = signer.sign(&pae).unwrap();
         assert_eq!(sig.len(), 64);
         cleanup(dir);
+    }
+
+    /// Regression: a keystore whose path contains a symlink must decrypt
+    /// consistently no matter which path string is used to open it. Before
+    /// path canonicalization in `open`, deriving the machine key from the raw
+    /// path string produced different keys for the same directory (e.g. open
+    /// via a symlink vs. the real path), surfacing as a misleading
+    /// "MAC verification failed -- wrong machine" error on a perfectly good
+    /// keystore on the same machine.
+    #[cfg(unix)]
+    #[test]
+    fn machine_key_stable_across_symlinked_path() {
+        let real = temp_dir_path();
+        fs::create_dir_all(&real).unwrap();
+        let link = temp_dir_path();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        // Mint a default key via the SYMLINK path.
+        {
+            let store = Store::open(&link).unwrap();
+            store.generate(true).unwrap();
+        }
+
+        // Re-open via the REAL (canonical) path and decrypt. Pre-fix this
+        // failed because the raw path strings ("link" vs "real") hashed to
+        // different machine keys.
+        let via_real = Store::open(&real).unwrap();
+        via_real
+            .default_signer()
+            .expect("decrypt via the canonical path must succeed");
+
+        // And via the symlink again (fresh Store, re-derives the key).
+        let via_link = Store::open(&link).unwrap();
+        via_link
+            .default_signer()
+            .expect("decrypt via the symlink path must succeed");
+
+        fs::remove_file(&link).ok();
+        cleanup(real);
+    }
+
+    /// A keystore encrypted under the RAW path key (as the pre-canonicalization
+    /// code wrote it) must still open after the change -- the legacy fallback
+    /// must never lock an existing user out.
+    #[cfg(unix)]
+    #[test]
+    fn legacy_raw_path_key_still_decrypts() {
+        let real = temp_dir_path();
+        fs::create_dir_all(&real).unwrap();
+        let link = temp_dir_path();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        // Simulate a pre-fix keystore: encrypt a key under the machine key
+        // derived from the RAW (symlink) path, bypassing canonicalization.
+        let key_id = new_key_id();
+        let signer = Ed25519Signer::generate(&key_id).unwrap();
+        let raw_key = derive_machine_key(&link).unwrap();
+        let canon_key = derive_machine_key(&fs::canonicalize(&link).unwrap()).unwrap();
+        assert_ne!(raw_key, canon_key, "symlink must change the raw path key");
+        let enc = encrypt_for_disk_v2(
+            &raw_key,
+            key_id.as_str(),
+            &signer.public_key_bytes(),
+            signer.secret_bytes().as_slice(),
+        )
+        .unwrap();
+        let entry = EncryptedEntry {
+            id:               key_id.clone(),
+            algorithm:        "ed25519".into(),
+            created_at:       crate::statements::unix_to_rfc3339(unix_now()),
+            public_key:       signer.public_key_bytes(),
+            enc_priv_key:     enc,
+            nonce:            Vec::new(),
+            valid_until:      None,
+            successor_key_id: None,
+        };
+
+        // The store opened via the symlink has the canonical key as primary and
+        // the raw-path key as the legacy fallback. The entry above is encrypted
+        // under the raw key, so decryption must fall back rather than fail.
+        let store = Store::open(&link).unwrap();
+        store.write_entry(&entry).unwrap();
+        let got = store
+            .signer(key_id.as_str())
+            .expect("legacy raw-path key must decrypt via the fallback");
+        assert_eq!(got.public_key_bytes(), signer.public_key_bytes());
+
+        fs::remove_file(&link).ok();
+        cleanup(real);
     }
 
     #[test]
