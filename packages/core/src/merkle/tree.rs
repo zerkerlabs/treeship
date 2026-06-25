@@ -415,11 +415,255 @@ impl MerkleTree {
         }
         level[0]
     }
+
+    /// Generate a consistency proof from this tree (current size `n`) back to an
+    /// earlier `old_size` `m` (`0 < m <= n`): a minimal set of subtree hashes
+    /// that lets a verifier reconstruct **both** the size-`m` root and the
+    /// size-`n` root, proving the first `m` leaves were not rewritten (the
+    /// log only appended). Returns `None` for `old_size == 0` or `> n`; an
+    /// empty proof for `old_size == n`. See docs/specs/merkle-consistency.md.
+    pub fn consistency_proof(&self, old_size: usize) -> Option<Vec<String>> {
+        let n = self.leaves.len();
+        if old_size == 0 || old_size > n {
+            return None;
+        }
+        if old_size == n {
+            return Some(Vec::new());
+        }
+        Some(
+            subproof(self.version, &self.leaves[..n], old_size, true)
+                .into_iter()
+                .map(hex::encode)
+                .collect(),
+        )
+    }
+}
+
+/// Merkle Tree Hash of a slice of leaf hashes, the same level-by-level
+/// promotion `compute_root` uses, free-standing and version-parameterized.
+fn merkle_root(version: u8, leaves: &[[u8; 32]]) -> [u8; 32] {
+    if leaves.len() == 1 {
+        return leaves[0];
+    }
+    let mut level = leaves.to_vec();
+    while level.len() > 1 {
+        let mut next = Vec::with_capacity(level.len().div_ceil(2));
+        let mut i = 0;
+        while i + 1 < level.len() {
+            next.push(
+                hash_internal(version, &level[i], &level[i + 1])
+                    .expect("tree version validated at construction"),
+            );
+            i += 2;
+        }
+        if i < level.len() {
+            next.push(level[i]);
+        }
+        level = next;
+    }
+    level[0]
+}
+
+/// Largest power of two strictly less than `n` (requires `n >= 2`).
+fn largest_pow2_lt(n: usize) -> usize {
+    let mut k = 1usize;
+    while k < n {
+        k <<= 1;
+    }
+    k >> 1
+}
+
+/// RFC 6962 SUBPROOF over the first `n` leaves, committing to the first `m`.
+/// `b` tracks whether the `m`-subtree is the one being proved as a prefix.
+fn subproof(version: u8, leaves: &[[u8; 32]], m: usize, b: bool) -> Vec<[u8; 32]> {
+    let n = leaves.len();
+    if m == n {
+        return if b {
+            Vec::new()
+        } else {
+            vec![merkle_root(version, leaves)]
+        };
+    }
+    let k = largest_pow2_lt(n);
+    if m <= k {
+        let mut p = subproof(version, &leaves[..k], m, b);
+        p.push(merkle_root(version, &leaves[k..]));
+        p
+    } else {
+        let mut p = subproof(version, &leaves[k..], m - k, false);
+        p.push(merkle_root(version, &leaves[..k]));
+        p
+    }
+}
+
+fn decode_hash(hex_str: &str) -> Option<[u8; 32]> {
+    let bytes = hex::decode(hex_str).ok()?;
+    if bytes.len() != 32 {
+        return None;
+    }
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(&bytes);
+    Some(arr)
+}
+
+/// Verify, offline, that the tree of `new_size`/`new_root_hex` **extends** the
+/// tree of `old_size`/`old_root_hex`: the proof reconstructs both roots and
+/// they match. RFC 6962 consistency verification, hashing under the trusted
+/// `version`. Rejects on any mismatch, bad hex, or leftover proof elements.
+pub fn verify_consistency(
+    version: u8,
+    old_size: usize,
+    old_root_hex: &str,
+    new_size: usize,
+    new_root_hex: &str,
+    proof: &[String],
+) -> bool {
+    if version != MERKLE_VERSION_V1 && version != MERKLE_VERSION_V2 {
+        return false;
+    }
+    let (Some(old_root), Some(new_root)) =
+        (decode_hash(old_root_hex), decode_hash(new_root_hex))
+    else {
+        return false;
+    };
+    if old_size > new_size {
+        return false;
+    }
+    if old_size == new_size {
+        return proof.is_empty() && old_root == new_root;
+    }
+    if old_size == 0 {
+        return proof.is_empty();
+    }
+
+    let mut it = proof.iter();
+    let mut node = old_size - 1;
+    let mut last = new_size - 1;
+    // Walk up to the first node that is a left child / a fork between m and n.
+    while node & 1 == 1 {
+        node >>= 1;
+        last >>= 1;
+    }
+    // Seed: if old_size is a power of two (node == 0) the old root seeds both;
+    // otherwise the first proof element does.
+    let (mut old_hash, mut new_hash) = if node != 0 {
+        let Some(seed) = it.next().and_then(|s| decode_hash(s)) else {
+            return false;
+        };
+        (seed, seed)
+    } else {
+        (old_root, old_root)
+    };
+    while node != 0 {
+        if node & 1 == 1 {
+            let Some(sib) = it.next().and_then(|s| decode_hash(s)) else {
+                return false;
+            };
+            old_hash = hash_internal(version, &sib, &old_hash).expect("version validated");
+            new_hash = hash_internal(version, &sib, &new_hash).expect("version validated");
+        } else if node < last {
+            let Some(sib) = it.next().and_then(|s| decode_hash(s)) else {
+                return false;
+            };
+            new_hash = hash_internal(version, &new_hash, &sib).expect("version validated");
+        }
+        node >>= 1;
+        last >>= 1;
+    }
+    // Fold the remaining right-edge siblings into the new root.
+    while last != 0 {
+        let Some(sib) = it.next().and_then(|s| decode_hash(s)) else {
+            return false;
+        };
+        new_hash = hash_internal(version, &new_hash, &sib).expect("version validated");
+        last >>= 1;
+    }
+    it.next().is_none() && old_hash == old_root && new_hash == new_root
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The root of a tree built from the first `m` ids, hex-encoded.
+    fn prefix_root(version: u8, ids: &[String], m: usize) -> String {
+        let mut t = MerkleTree::with_version(version).unwrap();
+        for id in &ids[..m] {
+            t.append(id);
+        }
+        hex::encode(t.root().unwrap())
+    }
+
+    /// The validating test: for every (m, n), the consistency proof from m must
+    /// reconstruct BOTH real roots (compute_root is ground truth for this tree
+    /// shape). A wrong algorithm fails here loudly. Tampering must be rejected.
+    #[test]
+    fn consistency_roundtrip_and_tamper() {
+        // 1..=20 covers every structural case: power-of-two boundaries
+        // (2/4/8/16), the post-boundary sizes (17..20), and all promotion
+        // patterns. Kept bounded so the O(n^2) prefix rebuilds stay CI-fast.
+        for &version in &[MERKLE_VERSION_V1, MERKLE_VERSION_V2] {
+            for n in 1..=20usize {
+                let ids: Vec<String> = (0..n).map(|i| format!("art_{i:06x}")).collect();
+                let mut tree = MerkleTree::with_version(version).unwrap();
+                for id in &ids {
+                    tree.append(id);
+                }
+                let root_n = hex::encode(tree.root().unwrap());
+
+                for m in 1..=n {
+                    let root_m = prefix_root(version, &ids, m);
+                    let proof = tree.consistency_proof(m).expect("proof exists");
+
+                    assert!(
+                        verify_consistency(version, m, &root_m, n, &root_n, &proof),
+                        "v{version}: consistency m={m} n={n} should verify"
+                    );
+
+                    if m < n {
+                        let zero = "00".repeat(32);
+                        // Wrong old root, wrong new root -> reject.
+                        assert!(
+                            !verify_consistency(version, m, &zero, n, &root_n, &proof),
+                            "v{version} m={m} n={n}: tampered old_root must reject"
+                        );
+                        assert!(
+                            !verify_consistency(version, m, &root_m, n, &zero, &proof),
+                            "v{version} m={m} n={n}: tampered new_root must reject"
+                        );
+                        // Mutated proof element (if any) -> reject.
+                        if !proof.is_empty() {
+                            let mut bad = proof.clone();
+                            bad[0] = zero.clone();
+                            assert!(
+                                !verify_consistency(version, m, &root_m, n, &root_n, &bad),
+                                "v{version} m={m} n={n}: mutated proof must reject"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn consistency_edge_cases() {
+        let mut t = MerkleTree::default();
+        for i in 0..5 {
+            t.append(&format!("art_{i}"));
+        }
+        let root5 = hex::encode(t.root().unwrap());
+        // old_size == new_size: empty proof, equal roots.
+        assert_eq!(t.consistency_proof(5), Some(Vec::new()));
+        assert!(verify_consistency(t.version(), 5, &root5, 5, &root5, &[]));
+        // out of range.
+        assert_eq!(t.consistency_proof(0), None);
+        assert_eq!(t.consistency_proof(6), None);
+        // old_size > new_size rejected at verify time.
+        assert!(!verify_consistency(t.version(), 6, &root5, 5, &root5, &[]));
+        // unknown version rejected.
+        assert!(!verify_consistency(99, 1, &root5, 5, &root5, &[]));
+    }
 
     #[test]
     fn single_leaf_root_is_leaf_hash() {
