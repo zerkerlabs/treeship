@@ -91,6 +91,14 @@ treeship attest card --agent agent://deployer \
   --from-harness ./.claude/settings.json
 ```
 
+When the capability set is an operator's explicit declaration rather than something captured from a config, declare it from a JSON file with `--tools-json`. It is the runtime companion to `--from-harness`: each entry is stamped `declared` with the file as its `source`, an operator's claim, honestly labeled and traceable to where it came from, never presented as captured. (This is how programmatic callers such as the protocol bridges supply a capability set: a bridge that exposes Treeship's own meta-tools must not pass *those* off as the agent's capabilities, so it declares, it does not auto-capture.)
+
+```bash
+# capabilities.json: ["deploy.run", "db.query"]  (or { "tools": [...] })
+treeship attest card --agent agent://deployer \
+  --tools-json ./capabilities.json
+```
+
 `verify-capability` and `resolve` then report the breakdown, for example `provenance: 2 captured, 0 exercised, 1 declared-only`. A declared `deploy.prod` that is wired nowhere and never used is visibly weaker than the tools backed by evidence.
 
 <Callout title="Provenance grades, it does not block">

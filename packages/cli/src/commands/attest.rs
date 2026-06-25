@@ -448,6 +448,12 @@ pub struct CardArgs {
     /// `permissions.allow` list is the agent's real, wired tool set. Those
     /// capabilities are stamped `captured` -- read from config, not declared.
     pub from_harness: Option<String>,
+    /// Path to an explicit operator-supplied capability list (a JSON array of
+    /// tool strings, or `{ "tools": [...] }`). The runtime companion to
+    /// `--from-harness`: where `--from-harness` *captures* tools observed in a
+    /// config, this records an operator's *declaration*. Entries are stamped
+    /// `declared` with the file as their `source`, never presented as captured.
+    pub tools_json:   Option<String>,
     pub config:       Option<String>,
 }
 
@@ -470,6 +476,82 @@ fn read_harness_allow(path: &str) -> Result<Vec<String>, Box<dyn std::error::Err
         .collect())
 }
 
+/// Read an operator-supplied capability list for `--tools-json`. Accepts either
+/// a bare JSON array of strings (`["deploy.run", "db.query"]`) or an object
+/// with a `tools` array (`{ "tools": [...] }`). This is an explicit operator
+/// declaration, not a capture: the caller stamps the result `declared`.
+fn read_tools_json(path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("could not read --tools-json {path}: {e}"))?;
+    parse_tools_json(&text, path)
+}
+
+/// Pure parser for `--tools-json` content, split from IO so it is unit-testable.
+fn parse_tools_json(text: &str, path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let json: Value = serde_json::from_str(text)
+        .map_err(|e| format!("--tools-json {path} is not valid JSON: {e}"))?;
+    let arr = match &json {
+        Value::Array(a) => a,
+        Value::Object(o) => o
+            .get("tools")
+            .and_then(|t| t.as_array())
+            .ok_or_else(|| format!("--tools-json {path} object has no `tools` array"))?,
+        _ => {
+            return Err(format!(
+                "--tools-json {path} must be a JSON array of strings or {{ \"tools\": [...] }}"
+            )
+            .into())
+        }
+    };
+    let tools: Vec<String> = arr
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect();
+    if tools.is_empty() {
+        return Err(format!("--tools-json {path} contains no tool strings").into());
+    }
+    Ok(tools)
+}
+
+#[cfg(test)]
+mod tools_json_tests {
+    use super::parse_tools_json;
+
+    #[test]
+    fn parses_bare_array() {
+        let got = parse_tools_json(r#"["deploy.run", "db.query"]"#, "x").unwrap();
+        assert_eq!(got, vec!["deploy.run", "db.query"]);
+    }
+
+    #[test]
+    fn parses_object_with_tools() {
+        let got = parse_tools_json(r#"{ "tools": ["a", "b"] }"#, "x").unwrap();
+        assert_eq!(got, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn rejects_non_array_non_object() {
+        assert!(parse_tools_json(r#""just a string""#, "x").is_err());
+    }
+
+    #[test]
+    fn rejects_object_without_tools_array() {
+        assert!(parse_tools_json(r#"{ "nope": 1 }"#, "x").is_err());
+    }
+
+    #[test]
+    fn rejects_empty_and_non_string_entries() {
+        assert!(parse_tools_json(r#"[]"#, "x").is_err());
+        // non-string entries are filtered, leaving nothing -> error
+        assert!(parse_tools_json(r#"[1, 2, 3]"#, "x").is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_json() {
+        assert!(parse_tools_json("{not json", "x").is_err());
+    }
+}
+
 /// Mint a signed agent_card.v1 capability card from typed flags. Thin, typed
 /// wrapper over the agent_card.v1 predicate: builds the payload, validates it,
 /// signs it, and reports whether the card is key-bound at mint time.
@@ -488,6 +570,7 @@ pub fn card(args: CardArgs, printer: &Printer) -> Result<(), Box<dyn std::error:
     let mut all_tools = args.tools.clone();
     let mut provenance = serde_json::Map::new();
     let mut captured_count = 0usize;
+    let mut declared_count = 0usize;
     if let Some(path) = &args.from_harness {
         let source = format!("harness:{path}#permissions.allow");
         for tool in read_harness_allow(path)? {
@@ -500,6 +583,26 @@ pub fn card(args: CardArgs, printer: &Printer) -> Result<(), Box<dyn std::error:
             );
         }
         captured_count = provenance.len();
+    }
+
+    // --tools-json: an explicit operator declaration. Stamped `declared` (not
+    // captured) with the file as its source, so the card records *that* these
+    // are an operator's claim and *where* it came from. A capability already
+    // captured from a harness keeps the stronger `captured` grade.
+    if let Some(path) = &args.tools_json {
+        let source = format!("operator:{path}");
+        for tool in read_tools_json(path)? {
+            if !all_tools.contains(&tool) {
+                all_tools.push(tool.clone());
+            }
+            if !provenance.contains_key(&tool) {
+                provenance.insert(
+                    tool,
+                    serde_json::json!({ "grade": "declared", "source": source }),
+                );
+                declared_count += 1;
+            }
+        }
     }
 
     let mut capabilities = serde_json::Map::new();
@@ -550,7 +653,14 @@ pub fn card(args: CardArgs, printer: &Printer) -> Result<(), Box<dyn std::error:
     let key_bound = crate::commands::capability::is_key_bound(&keyid, signer.key_id(), &trust);
 
     let tools_str = all_tools.join(", ");
-    let captured_str = format!("{captured_count} of {} captured from harness", all_tools.len());
+    let captured_str = if declared_count > 0 {
+        format!(
+            "{captured_count} of {} captured from harness, {declared_count} operator-declared (--tools-json)",
+            all_tools.len()
+        )
+    } else {
+        format!("{captured_count} of {} captured from harness", all_tools.len())
+    };
     printer.success("capability card attested", &[
         ("id",        &result.artifact_id),
         ("agent",     &args.agent),
