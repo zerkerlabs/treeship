@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Fixed
+- **Keystore: canonicalize the store path before deriving the machine key.** The machine key that wraps on-disk private keys hashes the keystore directory path, so the *same* directory referenced by two different path strings (a symlink in the path: macOS `/var` → `/private/var`, or a symlinked `$HOME`) derived two different keys and failed to decrypt with a misleading `MAC verification failed — wrong machine` error on a perfectly valid keystore. `Store::open` now canonicalizes the path first, so one directory always yields one key. The raw-path key is retained as a **decrypt-only fallback**, so any keystore written before this change still opens, this hardening never locks an existing user out. Regression-tested both ways (symlinked-path consistency + legacy raw-path fallback).
+
 ## 0.14.0 (2026-06-25)
 
 ### Added
