@@ -72,6 +72,26 @@ CREATE TABLE IF NOT EXISTS merkle_checkpoints (
   dock_id         TEXT REFERENCES ships(dock_id)
 );
 
+-- Client-computed Merkle consistency proofs (transparency-log slice 3b). The
+-- Hub stores and serves these; it never generates or verifies them (it holds
+-- no tree). Each row proves the tree at to_size EXTENDS the tree at from_size
+-- (append-only, no rewrite). The auditing client re-verifies offline with the
+-- shipped consistency primitive. Keyed by signer (the checkpoint signing key)
+-- so an auditor that witnessed a checkpoint can fetch the chain forward.
+CREATE TABLE IF NOT EXISTS merkle_consistency (
+  id          INTEGER PRIMARY KEY,
+  signer      TEXT NOT NULL,
+  from_size   INTEGER NOT NULL,
+  from_root   TEXT NOT NULL,
+  to_size     INTEGER NOT NULL,
+  to_root     TEXT NOT NULL,
+  version     INTEGER NOT NULL,
+  proof_json  TEXT NOT NULL,
+  signed_at   TEXT NOT NULL,
+  dock_id     TEXT REFERENCES ships(dock_id)
+);
+CREATE INDEX IF NOT EXISTS idx_merkle_consistency_signer_from ON merkle_consistency(signer, from_size);
+
 CREATE TABLE IF NOT EXISTS merkle_proofs (
   artifact_id     TEXT NOT NULL,
   checkpoint_id   INTEGER NOT NULL REFERENCES merkle_checkpoints(id),
@@ -530,6 +550,75 @@ func GetLatestCheckpoint(database *sql.DB, dockID string) (*MerkleCheckpoint, er
 		return nil, err
 	}
 	return cp, nil
+}
+
+// --- merkle_consistency (transparency-log slice 3b) ---
+//
+// The Hub stores client-computed consistency proofs and serves them back. It
+// never generates or verifies them (it holds no Merkle tree). proof_json is a
+// JSON array of hex node hashes; the auditing client re-verifies offline.
+
+type MerkleConsistency struct {
+	ID        int64   `json:"id"`
+	Signer    string  `json:"signer"`
+	FromSize  int64   `json:"from_size"`
+	FromRoot  string  `json:"from_root"`
+	ToSize    int64   `json:"to_size"`
+	ToRoot    string  `json:"to_root"`
+	Version   int     `json:"version"`
+	ProofJSON string  `json:"proof_json"`
+	SignedAt  string  `json:"signed_at"`
+	DockID    *string `json:"dock_id"`
+}
+
+// InsertConsistency stores one client-computed proof. Idempotent on
+// (signer, from_size, to_size): a re-push of the same transition is ignored so
+// republishing does not duplicate rows.
+func InsertConsistency(database *sql.DB, c *MerkleConsistency, dockID string) (int64, error) {
+	var existing int64
+	err := database.QueryRow(
+		`SELECT id FROM merkle_consistency WHERE signer = ? AND from_size = ? AND to_size = ?`,
+		c.Signer, c.FromSize, c.ToSize,
+	).Scan(&existing)
+	if err == nil {
+		return existing, nil
+	}
+	if err != sql.ErrNoRows {
+		return 0, err
+	}
+	res, err := database.Exec(
+		`INSERT INTO merkle_consistency (signer, from_size, from_root, to_size, to_root, version, proof_json, signed_at, dock_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.Signer, c.FromSize, c.FromRoot, c.ToSize, c.ToRoot, c.Version, c.ProofJSON, c.SignedAt, dockID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// GetConsistencyChain returns every stored proof for a signer with
+// from_size >= fromSize, ordered ascending -- the consecutive transitions an
+// auditor walks from the checkpoint it last witnessed up to the latest.
+func GetConsistencyChain(database *sql.DB, signer string, fromSize int64) ([]MerkleConsistency, error) {
+	rows, err := database.Query(
+		`SELECT id, signer, from_size, from_root, to_size, to_root, version, proof_json, signed_at, dock_id
+		 FROM merkle_consistency WHERE signer = ? AND from_size >= ? ORDER BY from_size ASC`,
+		signer, fromSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []MerkleConsistency
+	for rows.Next() {
+		var c MerkleConsistency
+		if err := rows.Scan(&c.ID, &c.Signer, &c.FromSize, &c.FromRoot, &c.ToSize, &c.ToRoot, &c.Version, &c.ProofJSON, &c.SignedAt, &c.DockID); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
 
 // --- merkle_proofs ---
