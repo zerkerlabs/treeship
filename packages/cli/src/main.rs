@@ -1504,6 +1504,14 @@ struct AttestCardArgs {
     /// in capability_provenance -- read from real config, not declared.
     #[arg(long = "from-harness", value_name = "PATH")]
     from_harness: Option<String>,
+
+    /// Declare the tool set from an explicit operator-supplied JSON file (a
+    /// JSON array of tool strings, or `{ "tools": [...] }`). The runtime
+    /// companion to --from-harness: entries are stamped `declared` with the
+    /// file as their source -- an operator's claim, honestly labeled, never
+    /// presented as captured/discovered.
+    #[arg(long = "tools-json", value_name = "PATH")]
+    tools_json: Option<String>,
 }
 
 #[derive(Args)]
@@ -2430,6 +2438,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                     version: a.version.clone(),
                     policy_ref: a.policy_ref.clone(),
                     from_harness: a.from_harness.clone(),
+                    tools_json: a.tools_json.clone(),
                     config: cli.config.clone(),
                 },
                 printer,
