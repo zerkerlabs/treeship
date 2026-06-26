@@ -54,7 +54,14 @@ Pulls the history, **re-verifies each anchored entry's Merkle inclusion offline*
 
 1. **History query + `treeship audit` (local + remote).** `GET /v1/agents/{agent}/log` returns the metadata+anchor entries; `treeship audit` pulls and renders the timeline, re-verifying each anchored entry's inclusion. The minimum that makes an agent's history auditable by a third party. (Local half mirrors `resolve`'s offline path.)
 2. **Completeness check against `committed_anchor`.** Compare the observed anchored set to the agent's committed `evidence_anchor`; flag omission/backfill. This is the property that makes the log *worth* auditing.
-3. **Consistency proof (append-only).** Verify that a later checkpoint extends an earlier one (no history rewritten), the true CT property. Reuses the Merkle consistency primitive.
+3. **Consistency proof (append-only).** Verify that a later checkpoint extends an earlier one (no history rewritten), the true CT property. Reuses the Merkle consistency primitive (`consistency_proof` / `verify_consistency`, shipped in 0.14.0).
+
+   **Design correction (the Hub creates nothing).** The Hub stores *client-computed* checkpoints and inclusion proofs; it holds no Merkle tree and so **cannot generate consistency proofs**. Therefore:
+   - **Publish side generates.** When the publishing client cuts checkpoint *n* (it holds all leaves), it also computes `consistency_proof(prev_size)` from the previous checkpoint *m* to *n* and pushes `{from_size, from_root, to_size, to_root, proof, version}` alongside the checkpoint. No Go Merkle re-implementation, the existing Rust primitive is the only generator, the same way inclusion proofs are computed client-side today.
+   - **Hub stores + serves.** A new `merkle_consistency` record per dock keyed by `(from_size → to_size)`; `GET /v1/merkle/consistency?dock=&from=<size>` returns the consecutive proof(s).
+   - **Audit witnesses a chain.** `treeship audit` persists the highest checkpoint it has witnessed per `(hub, dock)`. On re-audit it fetches the consecutive consistency proofs from the witnessed size up to current and verifies the chain offline with `verify_consistency`, reporting `consistent (history extends checkpoint #m, no rewrite)` or `INCONSISTENT — history was rewritten`.
+
+   Sub-slices: **3a** client-side *checkpoint witnessing* (persist witnessed checkpoints; flag equivocation: two roots at one `tree_size`, or a non-monotonic regression), self-contained, no Hub change, catches a lying/forking Hub. **3b** the full publish-side proof generation + Hub serving + audit chain verification above (the cryptographic no-rewrite proof). 3a is shippable alone and is the honest first increment; 3b is the complete CT property.
 4. **Monitor mode.** `treeship audit --watch` (or a scheduled check) that re-runs completeness/consistency and alerts on divergence, the "monitors catch anomalies" piece of the vision.
 
 ## Open questions
