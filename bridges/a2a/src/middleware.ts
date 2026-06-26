@@ -1,4 +1,10 @@
-import { attestAction, attestHandoff, attestReceipt, currentSessionId } from './attest.js';
+import {
+  attestAction,
+  attestHandoff,
+  attestReceipt,
+  currentSessionId,
+  provisionAgentKey,
+} from './attest.js';
 import { hashPayload, stableStringify } from './utils.js';
 import type {
   HandoffContext,
@@ -37,6 +43,14 @@ export class TreeshipA2AMiddleware {
     this.attestComplete = opts.attestOnTaskComplete ?? true;
     this.attestHandoffs = opts.attestOnHandoff ?? true;
     this.publishReceipt = opts.publishReceipt ?? true;
+
+    // Provision this agent's per-agent key so its receipts are key-bound and
+    // its actor verifies as `proven` rather than `asserted`. Fire-and-forget:
+    // it must not make the constructor async or block agent setup, and it is
+    // idempotent + best-effort (a missing/uninitialized CLI is swallowed). The
+    // key is needed before the first attestation; provisioning is fast and the
+    // worst case (a race on the very first task) is one `asserted` receipt.
+    void provisionAgentKey(this.actor);
   }
 
   /**

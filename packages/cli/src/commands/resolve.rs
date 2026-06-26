@@ -131,28 +131,43 @@ pub fn resolve(
 
     // Capability provenance: captured (read off the card) vs exercised (from
     // captured receipts) vs declared-only. See docs/specs/capability-provenance.md.
-    let captured: HashSet<String> = card
-        .get("capability_provenance")
-        .and_then(|v| v.as_object())
-        .map(|m| {
-            m.iter()
-                .filter(|(_, v)| v.get("grade").and_then(|g| g.as_str()) == Some("captured"))
-                .map(|(k, _)| k.clone())
-                .collect()
-        })
-        .unwrap_or_default();
-    let (mut n_captured, mut n_exercised, mut n_declared) = (0usize, 0usize, 0usize);
+    let grade_set = |grade: &str| -> HashSet<String> {
+        card.get("capability_provenance")
+            .and_then(|v| v.as_object())
+            .map(|m| {
+                m.iter()
+                    .filter(|(_, v)| v.get("grade").and_then(|g| g.as_str()) == Some(grade))
+                    .map(|(k, _)| k.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let captured: HashSet<String> = grade_set("captured");
+    // `discovered` (e.g. --from-a2a) is the agent's own published descriptor:
+    // a real source, never silently lumped into operator-`declared`.
+    let discovered: HashSet<String> = grade_set("discovered");
+    let (mut n_captured, mut n_exercised, mut n_discovered, mut n_declared) =
+        (0usize, 0usize, 0usize, 0usize);
     for tool in &tools {
         if captured.contains(tool) {
             n_captured += 1;
         } else if exercised.get(tool).copied().unwrap_or(0) > 0 {
             n_exercised += 1;
+        } else if discovered.contains(tool) {
+            n_discovered += 1;
         } else {
             n_declared += 1;
         }
     }
-    let provenance_str =
-        format!("{n_captured} captured, {n_exercised} exercised, {n_declared} declared-only");
+    let mut prov_parts = vec![
+        format!("{n_captured} captured"),
+        format!("{n_exercised} exercised"),
+    ];
+    if n_discovered > 0 {
+        prov_parts.push(format!("{n_discovered} discovered"));
+    }
+    prov_parts.push(format!("{n_declared} declared-only"));
+    let provenance_str = prov_parts.join(", ");
 
     let cap_grade = if revocation.is_some() {
         "revoked".to_string()
@@ -314,19 +329,27 @@ fn resolve_remote(hub: &str, agent: &str, trust: &TrustRootStore, printer: &Prin
         }
     }
 
-    // Capability provenance from the card (captured grades travel with it).
-    let captured: HashSet<String> = card
-        .get("capability_provenance")
-        .and_then(|v| v.as_object())
-        .map(|m| {
-            m.iter()
-                .filter(|(_, v)| v.get("grade").and_then(|g| g.as_str()) == Some("captured"))
-                .map(|(k, _)| k.clone())
-                .collect()
-        })
-        .unwrap_or_default();
+    // Capability provenance from the card (captured/discovered grades travel
+    // with it; exercised needs receipts and is unavailable over the network).
+    let grade_set = |grade: &str| -> HashSet<String> {
+        card.get("capability_provenance")
+            .and_then(|v| v.as_object())
+            .map(|m| {
+                m.iter()
+                    .filter(|(_, v)| v.get("grade").and_then(|g| g.as_str()) == Some(grade))
+                    .map(|(k, _)| k.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let captured: HashSet<String> = grade_set("captured");
+    let discovered: HashSet<String> = grade_set("discovered");
     let n_captured = tools.iter().filter(|t| captured.contains(*t)).count();
-    let n_other = tools.len().saturating_sub(n_captured);
+    let n_discovered = tools
+        .iter()
+        .filter(|t| !captured.contains(*t) && discovered.contains(*t))
+        .count();
+    let n_other = tools.len().saturating_sub(n_captured).saturating_sub(n_discovered);
 
     let sig_str = if sig_ok {
         "verified (trusted key)"
@@ -339,7 +362,11 @@ fn resolve_remote(hub: &str, agent: &str, trust: &TrustRootStore, printer: &Prin
     } else {
         tools.join(", ")
     };
-    let mix_str = format!("{n_captured} captured, {n_other} declared (exercised n/a remotely)");
+    let mix_str = if n_discovered > 0 {
+        format!("{n_captured} captured, {n_discovered} discovered, {n_other} declared (exercised n/a remotely)")
+    } else {
+        format!("{n_captured} captured, {n_other} declared (exercised n/a remotely)")
+    };
 
     // Transparency: if the bundle carries a Merkle inclusion proof, re-verify
     // it offline (checkpoint signature against our trust roots + inclusion in

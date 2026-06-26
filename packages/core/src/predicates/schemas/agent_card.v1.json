@@ -51,7 +51,7 @@
       "type": "string"
     },
     "capability_provenance": {
-      "description": "Optional per-capability provenance: a map from a capability (same string as in capabilities.tools) to { grade, source?, evidence? }. grade is 'captured' (the tool is wired into the agent's harness, read from config at mint time), 'exercised' (computed by verify-capability from captured receipts), or 'declared'. Cards without this block are treated as fully declared. See docs/specs/capability-provenance.md.",
+      "description": "Optional per-capability provenance: a map from a capability (same string as in capabilities.tools) to { grade, source?, evidence? }. grade is 'captured' (the tool is wired into the agent's harness, read from config at mint time), 'exercised' (computed by verify-capability from captured receipts), 'discovered' (read from the agent's own published descriptor, e.g. an A2A AgentCard's skills via --from-a2a; a real source, weaker than exercised, stronger than a bare declaration), or 'declared' (an operator's bare assertion). Cards without this block are treated as fully declared. See docs/specs/capability-provenance.md.",
       "type": "object"
     }
   }

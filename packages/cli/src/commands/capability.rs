@@ -130,28 +130,45 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
     // `captured` is read off the card (set at mint from harness config);
     // `exercised` is computed here from captured receipts; everything else is
     // `declared`. See docs/specs/capability-provenance.md.
-    let captured: HashSet<String> = card
-        .get("capability_provenance")
-        .and_then(|v| v.as_object())
-        .map(|m| {
-            m.iter()
-                .filter(|(_, v)| v.get("grade").and_then(|g| g.as_str()) == Some("captured"))
-                .map(|(k, _)| k.clone())
-                .collect()
-        })
-        .unwrap_or_default();
-    let (mut n_captured, mut n_exercised, mut n_declared) = (0usize, 0usize, 0usize);
+    let grade_set = |grade: &str| -> HashSet<String> {
+        card.get("capability_provenance")
+            .and_then(|v| v.as_object())
+            .map(|m| {
+                m.iter()
+                    .filter(|(_, v)| v.get("grade").and_then(|g| g.as_str()) == Some(grade))
+                    .map(|(k, _)| k.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let captured: HashSet<String> = grade_set("captured");
+    // `discovered` (e.g. --from-a2a: the agent's own AgentCard skills) is a real
+    // provenance source, weaker than receipt-backed `exercised` but stronger
+    // than a bare `declared`. Counted in its own bucket so it is never silently
+    // reported as operator-declared.
+    let discovered: HashSet<String> = grade_set("discovered");
+    let (mut n_captured, mut n_exercised, mut n_discovered, mut n_declared) =
+        (0usize, 0usize, 0usize, 0usize);
     for tool in &tools {
         if captured.contains(tool) {
             n_captured += 1;
         } else if exercised.get(tool).copied().unwrap_or(0) > 0 {
             n_exercised += 1;
+        } else if discovered.contains(tool) {
+            n_discovered += 1;
         } else {
             n_declared += 1;
         }
     }
-    let provenance_str =
-        format!("{n_captured} captured, {n_exercised} exercised, {n_declared} declared-only");
+    let mut prov_parts = vec![
+        format!("{n_captured} captured"),
+        format!("{n_exercised} exercised"),
+    ];
+    if n_discovered > 0 {
+        prov_parts.push(format!("{n_discovered} discovered"));
+    }
+    prov_parts.push(format!("{n_declared} declared-only"));
+    let provenance_str = prov_parts.join(", ");
 
     // --- Report ------------------------------------------------------------
     let status = if revocation.is_some() {

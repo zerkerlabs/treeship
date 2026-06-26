@@ -17,6 +17,11 @@ export {
 
 export { fetchReceipt, verifyReceipt, verifyArtifact } from './verify.js';
 
+// Provision a per-agent key so this agent's receipts verify as `proven`. The
+// middleware calls it on construction; exported so it can also be run
+// explicitly (e.g. at deploy time) if preferred.
+export { provisionAgentKey } from './attest.js';
+
 export {
   TREESHIP_EXTENSION_URI,
   type AgentCard,

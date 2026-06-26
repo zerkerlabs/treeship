@@ -454,6 +454,13 @@ pub struct CardArgs {
     /// config, this records an operator's *declaration*. Entries are stamped
     /// `declared` with the file as their `source`, never presented as captured.
     pub tools_json:   Option<String>,
+    /// Path to an A2A `AgentCard` JSON. The agent's own published `skills` are
+    /// mapped to capabilities and stamped `discovered` with the AgentCard's
+    /// `url` as their `source` -- read from the agent's own descriptor, a real
+    /// provenance source distinct from operator-`declared` and harness-
+    /// `captured`. Protocol-level `capabilities` (streaming, ...) are not the
+    /// agent's domain capabilities and are excluded.
+    pub from_a2a:     Option<String>,
     pub config:       Option<String>,
 }
 
@@ -552,6 +559,104 @@ mod tools_json_tests {
     }
 }
 
+/// Read an A2A `AgentCard` for `--from-a2a`. Returns the agent's declared
+/// `skills` (as capability strings) and the `source` to record on each, the
+/// AgentCard's own `url` when present, else the file path. The agent's `skills`
+/// are its *domain* capabilities; protocol-level `capabilities` (streaming,
+/// pushNotifications, ...) are deliberately excluded, they describe transport,
+/// not what the agent does.
+fn read_a2a_skills(path: &str) -> Result<(Vec<String>, String), Box<dyn std::error::Error>> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("could not read --from-a2a {path}: {e}"))?;
+    parse_a2a_skills(&text, path)
+}
+
+/// Pure parser for an A2A AgentCard, split from IO so it is unit-testable. Each
+/// skill's `id` is the capability string (stable identifier); the AgentCard's
+/// `url` is the provenance source (where the descriptor was published).
+fn parse_a2a_skills(text: &str, path: &str) -> Result<(Vec<String>, String), Box<dyn std::error::Error>> {
+    let json: Value = serde_json::from_str(text)
+        .map_err(|e| format!("--from-a2a {path} is not valid JSON: {e}"))?;
+    let obj = json
+        .as_object()
+        .ok_or_else(|| format!("--from-a2a {path} is not a JSON object (expected an AgentCard)"))?;
+    // Source: the agent's own published URL, falling back to the file path.
+    let source = obj
+        .get("url")
+        .and_then(|u| u.as_str())
+        .map(|u| format!("a2a:{u}"))
+        .unwrap_or_else(|| format!("a2a-card:{path}"));
+    let skills = obj
+        .get("skills")
+        .and_then(|s| s.as_array())
+        .ok_or_else(|| format!("--from-a2a {path} has no `skills` array"))?;
+    let mut tools: Vec<String> = Vec::new();
+    for skill in skills {
+        // A2A skills carry a stable `id`; use it as the capability string.
+        if let Some(id) = skill.get("id").and_then(|v| v.as_str()) {
+            if !id.is_empty() && !tools.contains(&id.to_string()) {
+                tools.push(id.to_string());
+            }
+        }
+    }
+    if tools.is_empty() {
+        return Err(format!("--from-a2a {path}: no skills with an `id` to map").into());
+    }
+    Ok((tools, source))
+}
+
+#[cfg(test)]
+mod a2a_card_tests {
+    use super::parse_a2a_skills;
+
+    #[test]
+    fn maps_skills_to_tools_with_url_source() {
+        let card = r#"{
+            "name": "trader", "version": "1.0", "url": "https://agents.example/trader",
+            "capabilities": { "streaming": true },
+            "skills": [
+                { "id": "stock.trade", "name": "Stock Trading" },
+                { "id": "report.analyze", "name": "Report Analysis" }
+            ]
+        }"#;
+        let (tools, source) = parse_a2a_skills(card, "x").unwrap();
+        assert_eq!(tools, vec!["stock.trade", "report.analyze"]);
+        assert_eq!(source, "a2a:https://agents.example/trader");
+    }
+
+    #[test]
+    fn excludes_protocol_capabilities() {
+        // `capabilities.streaming` etc. must NOT become capability strings.
+        let card = r#"{ "name": "x", "version": "1", "url": "u",
+            "capabilities": { "streaming": true, "pushNotifications": true },
+            "skills": [{ "id": "only.skill", "name": "S" }] }"#;
+        let (tools, _) = parse_a2a_skills(card, "x").unwrap();
+        assert_eq!(tools, vec!["only.skill"]);
+    }
+
+    #[test]
+    fn falls_back_to_path_source_when_no_url() {
+        let card = r#"{ "name": "x", "version": "1", "skills": [{ "id": "s" }] }"#;
+        let (_, source) = parse_a2a_skills(card, "card.json").unwrap();
+        assert_eq!(source, "a2a-card:card.json");
+    }
+
+    #[test]
+    fn rejects_missing_skills() {
+        assert!(parse_a2a_skills(r#"{ "name": "x", "url": "u" }"#, "x").is_err());
+    }
+
+    #[test]
+    fn rejects_skills_without_ids() {
+        assert!(parse_a2a_skills(r#"{ "skills": [{ "name": "no id" }] }"#, "x").is_err());
+    }
+
+    #[test]
+    fn rejects_non_object() {
+        assert!(parse_a2a_skills(r#"["not", "a", "card"]"#, "x").is_err());
+    }
+}
+
 /// Mint a signed agent_card.v1 capability card from typed flags. Thin, typed
 /// wrapper over the agent_card.v1 predicate: builds the payload, validates it,
 /// signs it, and reports whether the card is key-bound at mint time.
@@ -605,6 +710,28 @@ pub fn card(args: CardArgs, printer: &Printer) -> Result<(), Box<dyn std::error:
         }
     }
 
+    // --from-a2a: the agent's own A2A AgentCard skills. Stamped `discovered`
+    // (read from the agent's published descriptor) with the AgentCard's url as
+    // source -- a real provenance source, distinct from operator-`declared` and
+    // weaker than receipt-`exercised`. A capability already captured or declared
+    // keeps its existing grade; discovery does not overwrite a stronger source.
+    let mut discovered_count = 0usize;
+    if let Some(path) = &args.from_a2a {
+        let (skills, source) = read_a2a_skills(path)?;
+        for tool in skills {
+            if !all_tools.contains(&tool) {
+                all_tools.push(tool.clone());
+            }
+            if !provenance.contains_key(&tool) {
+                provenance.insert(
+                    tool,
+                    serde_json::json!({ "grade": "discovered", "source": source }),
+                );
+                discovered_count += 1;
+            }
+        }
+    }
+
     let mut capabilities = serde_json::Map::new();
     capabilities.insert("tools".into(), serde_json::json!(all_tools));
     if !args.models.is_empty() {
@@ -653,14 +780,14 @@ pub fn card(args: CardArgs, printer: &Printer) -> Result<(), Box<dyn std::error:
     let key_bound = crate::commands::capability::is_key_bound(&keyid, signer.key_id(), &trust);
 
     let tools_str = all_tools.join(", ");
-    let captured_str = if declared_count > 0 {
-        format!(
-            "{captured_count} of {} captured from harness, {declared_count} operator-declared (--tools-json)",
-            all_tools.len()
-        )
-    } else {
-        format!("{captured_count} of {} captured from harness", all_tools.len())
-    };
+    let mut prov_parts = vec![format!("{captured_count} of {} captured from harness", all_tools.len())];
+    if declared_count > 0 {
+        prov_parts.push(format!("{declared_count} operator-declared (--tools-json)"));
+    }
+    if discovered_count > 0 {
+        prov_parts.push(format!("{discovered_count} discovered from A2A AgentCard"));
+    }
+    let captured_str = prov_parts.join(", ");
     printer.success("capability card attested", &[
         ("id",        &result.artifact_id),
         ("agent",     &args.agent),

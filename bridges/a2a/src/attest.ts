@@ -36,6 +36,33 @@ function warnOnce(context: string, err: unknown): void {
 }
 
 /**
+ * Provision a per-agent signing key for this middleware's actor, so the
+ * receipts it already emits become key-bound and the actor verifies as
+ * `proven (key-bound)` instead of `asserted`. The `attest action --actor`
+ * calls below already pass the actor; per-actor signing (shipped) signs with
+ * the agent's own key the moment that key exists, so this is provisioning,
+ * not rewiring.
+ *
+ * Idempotent and best-effort, mirrors the MCP bridge: `--own-key` reuses an
+ * existing per-agent key (no pile-up across restarts), `--quiet` writes no
+ * on-disk `.agent` package, and any failure (CLI missing, no `treeship init`)
+ * is swallowed so attestation never breaks the agent path -- receipts just
+ * fall back to the shared key until the key exists.
+ */
+export async function provisionAgentKey(actor: string): Promise<void> {
+  if (process.env.TREESHIP_DISABLE === '1') return;
+  const name = actor.replace(/^agent:\/\//, '');
+  if (!name) return;
+  try {
+    await exec('treeship', ['agent', 'register', '--own-key', '--quiet', '--name', name], {
+      timeout: 5000,
+    });
+  } catch (err) {
+    warnOnce(`provisionAgentKey(${actor})`, err);
+  }
+}
+
+/**
  * Invoke `treeship attest action` and return the resulting artifact ID.
  * Failures are swallowed. Treeship attestation must never break the agent path.
  */
