@@ -71,8 +71,12 @@ func main() {
 	// Merkle endpoints.
 	r.Post("/v1/merkle/checkpoint", merkleHandlers.PublishCheckpoint)
 	r.Post("/v1/merkle/proof", merkleHandlers.PublishProof)
+	r.Post("/v1/merkle/consistency", merkleHandlers.PublishConsistency)
 	r.Get("/v1/merkle/checkpoint/latest", merkleHandlers.GetLatestCheckpoint)
 	r.Get("/v1/merkle/checkpoint/{id}", merkleHandlers.GetCheckpoint)
+	// Register the literal /consistency GET before the {artifactId} catch-all
+	// below, or "consistency" would be matched as an artifact id.
+	r.Get("/v1/merkle/consistency", merkleHandlers.GetConsistency)
 	r.Get("/v1/merkle/{artifactId}", merkleHandlers.GetProof)
 
 	// Session receipt endpoints.

@@ -179,6 +179,103 @@ func (h *Handlers) GetLatestCheckpoint(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, cp)
 }
 
+// --- POST /v1/merkle/consistency [DPoP authenticated] ---
+//
+// Stores a client-computed consistency proof (transparency-log slice 3b). The
+// Hub does not generate or verify it -- it holds no Merkle tree. The proof
+// proves the tree at to_size extends the tree at from_size (append-only); the
+// auditing client re-verifies offline against its own trust roots.
+
+type consistencyRequest struct {
+	Signer    string `json:"signer"`
+	FromSize  int64  `json:"from_size"`
+	FromRoot  string `json:"from_root"`
+	ToSize    int64  `json:"to_size"`
+	ToRoot    string `json:"to_root"`
+	Version   int    `json:"version"`
+	ProofJSON string `json:"proof_json"`
+	SignedAt  string `json:"signed_at"`
+}
+
+func (h *Handlers) PublishConsistency(w http.ResponseWriter, r *http.Request) {
+	dockID := dpop.Verify(h.DB, w, r)
+	if dockID == "" {
+		return
+	}
+
+	var req consistencyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+		return
+	}
+	if req.Signer == "" || req.FromRoot == "" || req.ToRoot == "" || req.ProofJSON == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing required consistency fields"})
+		return
+	}
+	// A consistency proof only makes sense for a forward, non-empty extension.
+	if req.FromSize <= 0 || req.ToSize < req.FromSize {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "from_size must be > 0 and <= to_size"})
+		return
+	}
+
+	c := &db.MerkleConsistency{
+		Signer:    req.Signer,
+		FromSize:  req.FromSize,
+		FromRoot:  req.FromRoot,
+		ToSize:    req.ToSize,
+		ToRoot:    req.ToRoot,
+		Version:   req.Version,
+		ProofJSON: req.ProofJSON,
+		SignedAt:  req.SignedAt,
+	}
+	id, err := db.InsertConsistency(h.DB, c, dockID)
+	if err != nil {
+		log.Printf("insert consistency error: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to store consistency proof"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"id":              id,
+		"hub_received_at": time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+// --- GET /v1/merkle/consistency?signer=<>&from=<size> [public] ---
+//
+// Returns the consecutive consistency proofs for a signer from `from` onward --
+// the chain an auditor walks from the checkpoint it last witnessed up to the
+// latest, verifying each link offline.
+
+func (h *Handlers) GetConsistency(w http.ResponseWriter, r *http.Request) {
+	signer := r.URL.Query().Get("signer")
+	if signer == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing signer"})
+		return
+	}
+	var fromSize int64
+	if s := r.URL.Query().Get("from"); s != "" {
+		v, err := strconv.ParseInt(s, 10, 64)
+		if err != nil || v < 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid from size"})
+			return
+		}
+		fromSize = v
+	}
+
+	chain, err := db.GetConsistencyChain(h.DB, signer, fromSize)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to read consistency chain"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"signer": signer,
+		"from":   fromSize,
+		"chain":  chain,
+		"note":   "client-computed consistency proofs; the hub stores but never verifies them. re-verify each link offline against your trust roots.",
+	})
+}
+
 // --- helpers ---
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
