@@ -8,7 +8,7 @@
 //! anchors; this command, not the Hub, decides what holds.
 
 use crate::{ctx, printer::Printer};
-use treeship_core::merkle::{Checkpoint, MerkleTree, ProofFile};
+use treeship_core::merkle::{verify_consistency, Checkpoint, MerkleTree, ProofFile};
 use treeship_core::trust::TrustRootStore;
 
 type CmdResult = Result<(), Box<dyn std::error::Error>>;
@@ -165,9 +165,21 @@ fn audit_once(base: &str, agent: &str, trust: &TrustRootStore, printer: &Printer
 
     // Witness the current checkpoint against what we have seen before: catch a
     // Hub that equivocates (two roots at one tree_size) or regresses.
-    let (consistency, anomaly) = match &current_cp {
+    let (consistency, anomaly, prior_witness) = match &current_cp {
         Some(cp) => witness_checkpoint(base, cp),
-        None => ("no verified checkpoint to witness".to_string(), false),
+        None => ("no verified checkpoint to witness".to_string(), false, None),
+    };
+
+    // 3b: cryptographic append-only. When the checkpoint advanced past a prior
+    // witness, fetch the Hub's consistency chain and re-verify it proves the
+    // current tree extends the one we last witnessed (no rewrite).
+    let (append_only, append_anomaly) = match (&current_cp, &prior_witness) {
+        (Some(cp), Some(p)) if cp.tree_size > p.tree_size => {
+            verify_consistency_chain(base, &cp.signer, p.tree_size, &p.root, cp.tree_size, &cp.root)
+        }
+        (Some(_), Some(_)) => ("append-only: no new checkpoints since last audit".to_string(), false),
+        (Some(_), None) => ("append-only: first witness, nothing to extend from yet".to_string(), false),
+        _ => ("append-only: no checkpoint to prove".to_string(), false),
     };
 
     let receipts_str = observed.to_string();
@@ -181,6 +193,7 @@ fn audit_once(base: &str, agent: &str, trust: &TrustRootStore, printer: &Printer
             ("anchored", &anchored_str),
             ("completeness", &completeness),
             ("consistency", &consistency),
+            ("append-only", &append_only),
         ],
     );
     if committed_count.is_some_and(|c| observed < c) {
@@ -195,6 +208,12 @@ fn audit_once(base: &str, agent: &str, trust: &TrustRootStore, printer: &Printer
             &[("consistency", &consistency)],
         );
     }
+    if append_anomaly {
+        printer.warn(
+            "the hub could not prove the log only appended — possible history rewrite",
+            &[("append-only", &append_only)],
+        );
+    }
     printer.blank();
     if lines.is_empty() {
         printer.hint("no history for this agent on the hub.");
@@ -206,7 +225,7 @@ fn audit_once(base: &str, agent: &str, trust: &TrustRootStore, printer: &Printer
     }
     printer.blank();
     printer.hint(
-        "metadata + anchors only, never payloads. each anchored entry's inclusion is re-verified offline against your trust roots; completeness is checked against the agent's committed evidence_anchor (omission detectable for committed sets, not absolute). consistency witnesses the checkpoint across audits to catch a forking/regressing hub; the cryptographic append-only (no-rewrite) proof is the consistency proof, coming next.",
+        "metadata + anchors only, never payloads. each anchored entry's inclusion is re-verified offline against your trust roots; completeness is checked against the agent's committed evidence_anchor (omission detectable for committed sets, not absolute). consistency witnesses the checkpoint across audits to catch a forking/regressing hub; append-only re-verifies the hub's Merkle consistency chain offline to prove the log only appended since you last witnessed it (no rewrite).",
     );
     printer.blank();
     Ok(())
@@ -242,10 +261,13 @@ type CmdResult2 = Result<(bool, Checkpoint), Box<dyn std::error::Error>>;
 /// consistency line and whether an anomaly was detected (so the caller can
 /// warn). Honest framing: this catches equivocation and regression; it does not
 /// cryptographically prove append-only (that is the consistency proof, 3b).
-fn witness_checkpoint(base: &str, current: &Checkpoint) -> (String, bool) {
+/// Returns `(line, anomaly, prior)`. `prior` is the record as it was BEFORE
+/// this audit (so the caller can verify a consistency chain from it to
+/// `current`), even though the record may have just been advanced on disk.
+fn witness_checkpoint(base: &str, current: &Checkpoint) -> (String, bool, Option<WitnessRecord>) {
     let path = match witness_path(base, &current.signer) {
         Ok(p) => p,
-        Err(e) => return (format!("witness unavailable ({e})"), false),
+        Err(e) => return (format!("witness unavailable ({e})"), false, None),
     };
     let prior = load_witness(&path);
     let (line, anomaly, should_save) =
@@ -259,10 +281,130 @@ fn witness_checkpoint(base: &str, current: &Checkpoint) -> (String, bool) {
             signer:    current.signer.clone(),
         };
         if let Err(e) = save_witness(&path, &rec) {
-            return (format!("{line}; (could not persist witness: {e})"), anomaly);
+            return (format!("{line}; (could not persist witness: {e})"), anomaly, prior);
         }
     }
-    (line, anomaly)
+    (line, anomaly, prior)
+}
+
+/// One link of a consistency chain as served by the Hub. The Hub stores these
+/// verbatim from the publisher; this client re-verifies every one offline.
+#[derive(serde::Deserialize)]
+struct ChainLink {
+    from_size: usize,
+    from_root: String,
+    to_size:   usize,
+    to_root:   String,
+    version:   u8,
+    proof_json: String,
+}
+
+fn strip_sha(s: &str) -> &str {
+    s.strip_prefix("sha256:").unwrap_or(s)
+}
+
+/// Verify, offline, that the current checkpoint's tree **extends** the one we
+/// last witnessed, fetching the Hub's consistency chain and re-verifying every
+/// link. Returns `(line, anomaly)`. anomaly is true ONLY when the Hub served a
+/// chain that fails to prove the extension (a possible rewrite); a missing
+/// chain is reported honestly but is not an anomaly (the publisher may simply
+/// not have pushed proofs yet).
+///
+/// Four properties are enforced so a malicious Hub cannot pass a valid-but-
+/// irrelevant chain: it must START at the witnessed `(size, root)`, every link's
+/// proof must verify, links must be CONTIGUOUS, and it must END at the current
+/// checkpoint.
+fn verify_consistency_chain(
+    base: &str,
+    signer: &str,
+    from_size: usize,
+    from_root: &str,
+    to_size: usize,
+    to_root: &str,
+) -> (String, bool) {
+    let resp: serde_json::Value = match ureq::get(&format!("{base}/v1/merkle/consistency"))
+        .query("signer", signer)
+        .query("from", &from_size.to_string())
+        .call()
+        .and_then(|r| r.into_json().map_err(Into::into))
+    {
+        Ok(v) => v,
+        Err(_) => return ("append-only: consistency endpoint unavailable".to_string(), false),
+    };
+    let links: Vec<ChainLink> = resp
+        .get("chain")
+        .and_then(|c| serde_json::from_value(c.clone()).ok())
+        .unwrap_or_default();
+    verify_chain_links(&links, from_size, from_root, to_size, to_root)
+}
+
+/// Pure verification of a fetched consistency chain, split from IO so it is
+/// unit-testable. Enforces the four properties (start at the witnessed point,
+/// every link's proof valid, contiguous, ends at the current checkpoint).
+fn verify_chain_links(
+    links: &[ChainLink],
+    from_size: usize,
+    from_root: &str,
+    to_size: usize,
+    to_root: &str,
+) -> (String, bool) {
+    if links.is_empty() {
+        return (
+            format!("append-only NOT PROVEN — no consistency proof published from tree_size {from_size} (publisher has not pushed one)"),
+            false,
+        );
+    }
+
+    let (mut cur_size, mut cur_root) = (from_size, strip_sha(from_root).to_string());
+    let mut verified_links = 0usize;
+    for link in links {
+        if verified_links > 100_000 {
+            return ("append-only INVALID — consistency chain too long".to_string(), true);
+        }
+        // Contiguity: this link must start exactly where the previous one ended
+        // (and the first link at the witnessed point).
+        if link.from_size != cur_size || strip_sha(&link.from_root) != cur_root {
+            return (
+                format!("append-only INVALID — chain not contiguous at tree_size {cur_size} (possible rewrite)"),
+                true,
+            );
+        }
+        let proof: Vec<String> = match serde_json::from_str(&link.proof_json) {
+            Ok(p) => p,
+            Err(_) => return ("append-only INVALID — malformed proof in chain".to_string(), true),
+        };
+        if !verify_consistency(
+            link.version,
+            link.from_size,
+            strip_sha(&link.from_root),
+            link.to_size,
+            strip_sha(&link.to_root),
+            &proof,
+        ) {
+            return (
+                format!("append-only INVALID — consistency proof failed for #{}→#{} (possible rewrite)", link.from_size, link.to_size),
+                true,
+            );
+        }
+        cur_size = link.to_size;
+        cur_root = strip_sha(&link.to_root).to_string();
+        verified_links += 1;
+        if cur_size >= to_size {
+            break;
+        }
+    }
+
+    // The chain must reach the current checkpoint exactly.
+    if cur_size != to_size || cur_root != strip_sha(to_root) {
+        return (
+            format!("append-only INVALID — chain ends at tree_size {cur_size}, not the current {to_size}"),
+            true,
+        );
+    }
+    (
+        format!("append-only VERIFIED — current tree cryptographically extends tree_size {from_size} ({verified_links} link(s), no rewrite)"),
+        false,
+    )
 }
 
 /// Pure witness decision, split from IO so it is unit-testable. Compares the
@@ -377,5 +519,102 @@ mod witness_tests {
         let (line, anomaly, save) = witness_decision(Some(&p), 5, "sha256:aa", 0);
         assert!(anomaly && !save);
         assert!(line.contains("REGRESSION"));
+    }
+}
+
+#[cfg(test)]
+mod chain_tests {
+    use super::{verify_chain_links, ChainLink};
+    use treeship_core::merkle::MerkleTree;
+
+    const IDS: &[&str] = &["a", "b", "c", "d", "e", "f", "g", "h"];
+
+    fn root(n: usize) -> String {
+        let mut t = MerkleTree::new();
+        for id in &IDS[..n] {
+            t.append(id);
+        }
+        hex::encode(t.root().unwrap())
+    }
+
+    // A real consistency link from size m to size n, generated exactly as the
+    // publish side does (consistency_proof over the size-n tree).
+    fn link(m: usize, n: usize) -> ChainLink {
+        let mut t = MerkleTree::new();
+        for id in &IDS[..n] {
+            t.append(id);
+        }
+        let proof = t.consistency_proof(m).unwrap();
+        ChainLink {
+            from_size: m,
+            from_root: root(m),
+            to_size: n,
+            to_root: root(n),
+            version: t.version(),
+            proof_json: serde_json::to_string(&proof).unwrap(),
+        }
+    }
+
+    #[test]
+    fn single_link_verifies() {
+        let (line, anomaly) = verify_chain_links(&[link(2, 8)], 2, &root(2), 8, &root(8));
+        assert!(!anomaly, "{line}");
+        assert!(line.contains("VERIFIED"));
+    }
+
+    #[test]
+    fn multi_link_chain_verifies() {
+        let (line, anomaly) =
+            verify_chain_links(&[link(2, 5), link(5, 8)], 2, &root(2), 8, &root(8));
+        assert!(!anomaly, "{line}");
+        assert!(line.contains("VERIFIED"));
+    }
+
+    #[test]
+    fn non_contiguous_chain_rejected() {
+        // gap: second link starts at 6, not 5.
+        let (line, anomaly) =
+            verify_chain_links(&[link(2, 5), link(6, 8)], 2, &root(2), 8, &root(8));
+        assert!(anomaly, "{line}");
+        assert!(line.contains("not contiguous"));
+    }
+
+    #[test]
+    fn wrong_start_rejected() {
+        // Chain proves 2->8 but we witnessed size 3.
+        let (_l, anomaly) = verify_chain_links(&[link(2, 8)], 3, &root(3), 8, &root(8));
+        assert!(anomaly);
+    }
+
+    #[test]
+    fn short_of_endpoint_rejected() {
+        // Chain reaches 5, current checkpoint claims 8.
+        let (line, anomaly) = verify_chain_links(&[link(2, 5)], 2, &root(2), 8, &root(8));
+        assert!(anomaly, "{line}");
+        assert!(line.contains("ends at"));
+    }
+
+    #[test]
+    fn wrong_current_root_rejected() {
+        // The link verifies 2->8 internally, but the current checkpoint root we
+        // hold differs -- the hub served a valid chain for a different head.
+        let bogus = "ab".repeat(32);
+        let (_l, anomaly) = verify_chain_links(&[link(2, 8)], 2, &root(2), 8, &bogus);
+        assert!(anomaly);
+    }
+
+    #[test]
+    fn tampered_proof_rejected() {
+        let mut l = link(2, 8);
+        l.proof_json = serde_json::to_string(&vec!["00".repeat(32)]).unwrap();
+        let (_l, anomaly) = verify_chain_links(&[l], 2, &root(2), 8, &root(8));
+        assert!(anomaly);
+    }
+
+    #[test]
+    fn empty_chain_not_proven_but_not_anomaly() {
+        let (line, anomaly) = verify_chain_links(&[], 2, &root(2), 8, &root(8));
+        assert!(!anomaly);
+        assert!(line.contains("NOT PROVEN"));
     }
 }

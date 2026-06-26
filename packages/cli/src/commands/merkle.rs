@@ -538,6 +538,20 @@ pub fn publish(
     }
 
     printer.info(&format!("  {} {} proofs published", printer.green("ok"), published_count));
+
+    // 4. Publish a consistency proof from the previous checkpoint (3b): proves
+    //    this checkpoint's tree EXTENDS the previous one (append-only, no
+    //    rewrite). Best-effort: a failure here never blocks proof publishing.
+    if let Err(e) = publish_consistency(
+        &checkpoint,
+        &artifact_ids,
+        endpoint,
+        hub_id,
+        hub_secret_hex,
+        printer,
+    ) {
+        printer.hint(&format!("consistency proof not published: {e}"));
+    }
     printer.blank();
 
     if let Some(first_id) = artifact_ids.first() {
@@ -545,6 +559,100 @@ pub fn publish(
     }
     printer.blank();
 
+    Ok(())
+}
+
+/// Load the checkpoint immediately before `index` (i.e. `index - 1`), if it
+/// exists on disk. Used to compute the consistency proof from the previous
+/// published tree to the current one.
+fn load_prev_checkpoint(index: u64) -> Result<Option<Checkpoint>, Box<dyn std::error::Error>> {
+    if index == 0 {
+        return Ok(None);
+    }
+    let path = checkpoints_dir()?.join(format!("{:04}.json", index - 1));
+    if !path.exists() {
+        return Ok(None);
+    }
+    Ok(Some(serde_json::from_slice(&fs::read(&path)?)?))
+}
+
+/// Compute and push the Merkle consistency proof from the previous checkpoint
+/// (size `from`) to this one (size `to`), proving the log only appended.
+///
+/// Correctness is load-bearing here, so the proof is computed over the tree
+/// **truncated to exactly `to_size` leaves** (the tree as it was at this
+/// checkpoint), and its root is **cross-checked against the checkpoint's own
+/// root** before anything is pushed. On any mismatch or degenerate range we
+/// skip rather than publish a proof that would not verify. The Hub stores it
+/// verbatim; the auditing client re-verifies offline with `verify_consistency`.
+fn publish_consistency(
+    checkpoint: &Checkpoint,
+    artifact_ids: &[String],
+    endpoint: &str,
+    hub_id: &str,
+    hub_secret_hex: &str,
+    printer: &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(prev) = load_prev_checkpoint(checkpoint.index)? else {
+        return Ok(()); // first checkpoint: nothing to extend from
+    };
+    let from_size = prev.tree_size;
+    let to_size = checkpoint.tree_size;
+    // A consistency proof only makes sense for a forward, non-empty extension
+    // whose leaves we actually hold.
+    if from_size == 0 || from_size > to_size || to_size > artifact_ids.len() {
+        return Ok(());
+    }
+
+    // Rebuild the tree EXACTLY as it was at this checkpoint (first `to_size`
+    // leaves), so the proof's upper tree matches the published checkpoint.
+    let mut cp_tree = MerkleTree::new();
+    for id in &artifact_ids[..to_size] {
+        cp_tree.append(id);
+    }
+    // Cross-check: the truncated tree's root MUST equal the checkpoint's root.
+    // If it does not (e.g. artifacts changed since checkpointing), skip rather
+    // than push a proof that cannot verify.
+    let computed_root = match cp_tree.root() {
+        Some(r) => hex::encode(r),
+        None => return Ok(()),
+    };
+    let cp_root = checkpoint.root.strip_prefix("sha256:").unwrap_or(&checkpoint.root);
+    if computed_root != cp_root {
+        printer.hint("consistency proof skipped: tree does not match checkpoint root (re-checkpoint before publishing)");
+        return Ok(());
+    }
+
+    let Some(proof) = cp_tree.consistency_proof(from_size) else {
+        return Ok(());
+    };
+
+    let from_root = prev.root.strip_prefix("sha256:").unwrap_or(&prev.root);
+    let url = format!("{}/v1/merkle/consistency", endpoint);
+    let dpop_jwt = build_dpop_jwt(hub_secret_hex, "POST", &url)?;
+    let body = serde_json::json!({
+        "signer":     checkpoint.signer,
+        "from_size":  from_size,
+        "from_root":  from_root,
+        "to_size":    to_size,
+        "to_root":    cp_root,
+        "version":    checkpoint.merkle_version,
+        "proof_json": serde_json::to_string(&proof)?,
+        "signed_at":  checkpoint.signed_at,
+    });
+    ureq::post(&url)
+        .set("Authorization", &format!("DPoP {}", hub_id))
+        .set("DPoP", &dpop_jwt)
+        .send_json(&body)?;
+
+    printer.info(&format!(
+        "  {} consistency proof published (#{:04} → #{:04}, tree_size {} → {})",
+        printer.green("ok"),
+        prev.index,
+        checkpoint.index,
+        from_size,
+        to_size
+    ));
     Ok(())
 }
 
