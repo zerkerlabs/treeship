@@ -18,10 +18,11 @@ The discipline that makes this real, and distinguishes Treeship from a registry 
 | Capability cards (`agent_card.v1`) | the certificate | ✅ | [agent-capability-cards](./agent-capability-cards.md) |
 | Per-actor signing (provable `actor`) | the key binding | ✅ | [per-actor-signing](./per-actor-signing.md) |
 | Revocation (`agent_card_revocation.v1`) | OCSP | ✅ | agent-capability-cards |
-| Capability provenance (captured/exercised/declared) | mis-issuance control | ✅ | [capability-provenance](./capability-provenance.md) |
+| Capability provenance (captured/exercised/discovered/declared) | mis-issuance control | ✅ | [capability-provenance](./capability-provenance.md) |
 | Predicate registry (typed receipts) | — | ✅ | — |
 | Browser verification (WASM, same verdict as CLI) | the lock icon | ✅ | — |
 | Agent resolver (local + Hub + remote + transparency anchor + publish) | DNS + OCSP + CT lookup | ✅ | [agent-resolver](./agent-resolver.md) |
+| Protocol integration (MCP + A2A bridges: provable receipts, `--from-a2a` cards) | TLS in the browser/server | ✅ | [protocol-integration](./protocol-integration.md) |
 
 The core "TLS for agents" stack is functionally complete: an agent has a provable identity, a capability card graded by real provenance, revocation, and resolves over the network with offline re-verification including a transparency anchor. The load-bearing invariant throughout: **the Hub creates nothing; the client re-verifies every byte against its own trust roots and decides.**
 
@@ -33,9 +34,14 @@ These are the next big chunks, from the original TLS-for-agents vision. Each get
 
 The queryable surface is live: `GET /v1/agents/log` + `treeship audit` give an append-only, monitorable history a third party can audit, with **omission detectable** against the agent's `evidence_anchor`, and `audit --watch` for continuous monitoring. The Merkle **consistency-proof primitive** (append-only, no-rewrite guarantee) is built and test-gated in `core`. Remaining: the slice-3 *plumbing* (Hub consistency endpoint + `audit` checkpoint-witnessing) on top of the primitive. Specs: [transparency-log](./transparency-log.md), [merkle-consistency](./merkle-consistency.md).
 
-### 2. Protocol integration (the distribution flywheel) — specced, next to build
+### 2. Protocol integration (the distribution flywheel) — shipped (slices 1–3)
 
-Provision a per-agent identity inside the protocols real agents already speak (MCP, A2A) so they emit provable, key-bound receipts and become resolvable **by default**. The bridges already shell to the CLI and pass `--actor`, so per-actor signing flows through the moment the agent has a key, this is provisioning (register key → capture card → publish), not rewiring. Reach, not depth: the cryptographic core is done; this makes it used. Spec: [protocol-integration](./protocol-integration.md).
+Provision a per-agent identity inside the protocols real agents already speak so they emit provable, key-bound receipts **by default**. Shipped:
+- **MCP** (slice 1): the `@treeship/mcp` bridge provisions a per-agent key on startup, so its receipts verify as `proven (key-bound)`, not `asserted`. The bridges already shell `--actor`, so per-actor signing flowed through the moment the key existed, provisioning, not rewiring.
+- **Capability declaration** (slice 2): `attest card --tools-json`, an operator's explicit, honestly-labeled `declared` capability set. Deliberately *not* auto-captured from the MCP bridge, whose tools are Treeship's own meta-tools; capturing those would be the attestation layer attesting to itself.
+- **A2A** (slice 3): `attest card --from-a2a` maps an agent's own `AgentCard.skills` to a key-bound, verifiable card with the new `discovered` grade; the `@treeship/a2a` middleware provisions its key too.
+
+The provenance vocabulary is now coherent end to end: `captured` (harness) > `exercised` (receipts) > `discovered` (the agent's own descriptor) > `declared` (a bare assertion), each labeled, none laundered. **Deferred** (gated on demand, vocabulary already in place): slice 4 auto-discovery from an agent's *own* tool server (the transparent-proxy case, `discovered:<protocol>`), and slice 5 ACP/others. Publishing stays an explicit operator action, never on bridge startup. Spec: [protocol-integration](./protocol-integration.md).
 
 ## What is explicitly out of scope (for now)
 
