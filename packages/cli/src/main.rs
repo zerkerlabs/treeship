@@ -1512,6 +1512,13 @@ struct AttestCardArgs {
     /// presented as captured/discovered.
     #[arg(long = "tools-json", value_name = "PATH")]
     tools_json: Option<String>,
+
+    /// Map an A2A `AgentCard` JSON file's `skills` to capabilities, stamped
+    /// `discovered` with the AgentCard's `url` as their source (the agent's
+    /// own published descriptor). Protocol-level `capabilities` (streaming,
+    /// ...) are excluded -- they are transport, not domain capabilities.
+    #[arg(long = "from-a2a", value_name = "PATH")]
+    from_a2a: Option<String>,
 }
 
 #[derive(Args)]
@@ -2439,6 +2446,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                     policy_ref: a.policy_ref.clone(),
                     from_harness: a.from_harness.clone(),
                     tools_json: a.tools_json.clone(),
+                    from_a2a: a.from_a2a.clone(),
                     config: cli.config.clone(),
                 },
                 printer,

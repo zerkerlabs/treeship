@@ -82,6 +82,7 @@ A capability is only as trustworthy as where its claim came from. By default `--
 
 - **captured** — the tool is actually wired into the agent's harness, read from real config (`mcp.json`, a Claude Code `settings.json` `permissions.allow` list) at mint time.
 - **exercised** — the capability is backed by real captured action receipts (computed by the cross-check above).
+- **discovered** — read from the agent's own published descriptor (an A2A `AgentCard`'s `skills`, via `--from-a2a`). A real provenance source, the agent declared it about itself, weaker than receipt-backed `exercised` but never a bare operator claim.
 - **declared-only** — asserted, never wired and never exercised.
 
 Mint a card whose capabilities are captured from config, not typed by hand:
@@ -97,6 +98,13 @@ When the capability set is an operator's explicit declaration rather than someth
 # capabilities.json: ["deploy.run", "db.query"]  (or { "tools": [...] })
 treeship attest card --agent agent://deployer \
   --tools-json ./capabilities.json
+```
+
+For an [A2A](https://a2a-protocol.org) agent, map its published `AgentCard` directly. Its `skills` become capabilities stamped `discovered` with the AgentCard's `url` as their source, while protocol-level `capabilities` (streaming, push notifications) are excluded as transport, not domain capabilities. An A2A agent's self-description thus becomes a key-bound, verifiable Treeship card:
+
+```bash
+treeship attest card --agent agent://trader --from-a2a ./agentcard.json
+#   provenance:  0 of 2 captured from harness, 2 discovered from A2A AgentCard
 ```
 
 `verify-capability` and `resolve` then report the breakdown, for example `provenance: 2 captured, 0 exercised, 1 declared-only`. A declared `deploy.prod` that is wired nowhere and never used is visibly weaker than the tools backed by evidence.
