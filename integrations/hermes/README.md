@@ -1,29 +1,47 @@
 # Treeship + Hermes Integration
 
-Hermes integrates via the universal MCP bridge and a declarative skill file — there is **no Hermes-native plugin** (no in-process hooks, no compiled extension). Coverage is skill-driven + MCP-routed; if you need hook-based bypass-proof capture, that lives in the Claude Code, Kimi Code, or OpenClaw plugins.
+Hermes integrates via the universal MCP bridge and a declarative skill file — there is **no Hermes-native in-process plugin** today. Coverage is skill-driven + MCP-routed; if you need hook-based bypass-proof capture, that lives in the Claude Code, Kimi Code, or OpenClaw plugins.
 
-Two integration methods for Hermes agents:
+The target outcome is a **provable Hermes session**: Hermes has its own Treeship agent identity, MCP-routed tool calls are signed as `agent://hermes`, important shell commands are wrapped, and the final session report verifies offline.
+
+## Prerequisites
+
+```bash
+curl -fsSL https://treeship.dev/install | sh
+treeship init
+npm install -g @treeship/mcp
+```
 
 ## Method 1: Skill file (instruction-based)
 
-Copy the skill file to your Hermes skills directory:
+Copy this integration skill into Hermes:
 
 ```bash
-cp -r treeship.skill ~/.hermes/skills/
+mkdir -p ~/.hermes/skills/treeship
+cp integrations/hermes/treeship.skill/SKILL.md ~/.hermes/skills/treeship/SKILL.md
 ```
 
-Or install from the repo:
+Or install from GitHub:
 
 ```bash
-curl -sL https://raw.githubusercontent.com/zerkerlabs/treeship/main/integrations/hermes/treeship.skill/SKILL.md \
-  -o ~/.hermes/skills/treeship.skill/SKILL.md --create-dirs
+mkdir -p ~/.hermes/skills/treeship
+curl -fsSL https://raw.githubusercontent.com/zerkerlabs/treeship/main/integrations/hermes/treeship.skill/SKILL.md \
+  -o ~/.hermes/skills/treeship/SKILL.md
 ```
 
-The Hermes agent reads the skill and follows the instructions to wrap commands, set env vars, and manage session lifecycle automatically.
+The Hermes agent reads the skill and follows the instructions to start/close sessions, wrap side-effectful shell commands, record approvals and handoffs, and avoid publishing secrets.
 
 ## Method 2: MCP server (tool-call interception)
 
-Add Treeship as an MCP server in your Hermes config:
+Add Treeship as an MCP server in Hermes:
+
+```bash
+hermes mcp add treeship --command npx \
+  --env TREESHIP_ACTOR=agent://hermes TREESHIP_HUB_ENDPOINT=https://api.treeship.dev \
+  --args -y @treeship/mcp
+```
+
+Then ensure the MCP server env contains the Hermes actor:
 
 ```yaml
 # ~/.hermes/config.yaml
@@ -36,34 +54,38 @@ mcp_servers:
       TREESHIP_HUB_ENDPOINT: "https://api.treeship.dev"
 ```
 
-This intercepts every MCP tool call and creates signed artifacts + session events automatically. The `TREESHIP_ACTOR` env is required — without it, Hermes events fall back to the generic `agent_name=mcp` in receipts instead of `hermes`.
+`TREESHIP_ACTOR=agent://hermes` is required — without it, MCP receipts may fall back to a generic MCP identity instead of Hermes.
 
-## Prerequisites
+## Recommended setup
 
 ```bash
-curl -fsSL treeship.dev/install | sh
-treeship init
-npm install -g @treeship/mcp  # for Method 2
+# Give Hermes its own key-bound identity for provable receipts.
+treeship agent register --name hermes --own-key --tools mcp,terminal,file,git --description "Hermes Agent"
+
+# Start a session before meaningful work.
+treeship session start --name "hermes-test"
 ```
 
 ## Testing
 
 ```bash
-# Start a session
-treeship session start --name "hermes-test"
+# Run Hermes with the skill active and MCP configured.
+hermes chat -q "Use Treeship to record a short non-secret test note, then stop."
 
-# Run Hermes with the skill active
-hermes run "research the latest AI safety papers"
-
-# Close and verify
+# Close, verify, and optionally publish a report.
 treeship session close --summary "Tested Hermes integration"
-treeship package verify .treeship/sessions/ssn_*.treeship
+treeship verify last
 treeship session report
 ```
 
 ## Expected receipt contents
 
-- Agent: hermes (or hermes-2 if TREESHIP_MODEL is set)
-- Timeline: every wrapped command or MCP tool call
-- Commands: full command strings with exit codes
-- Provider: populated if TREESHIP_PROVIDER is set
+- Agent: `agent://hermes`.
+- Actor proof: key-bound/proven when Hermes has an `--own-key` identity and the MCP path signs with that actor.
+- Timeline: MCP-routed tool calls plus explicit session events.
+- Commands: side-effectful shell commands when run through `treeship wrap`.
+- Approvals/handoffs: explicit artifacts when sensitive work or agent transitions happen.
+
+## Honest coverage
+
+Hermes skill coverage is not bypass-proof because it depends on the agent following instructions. Pair it with MCP for automatic MCP tool-call receipts and `treeship wrap` for shell commands. Use session reports and git reconcile as backstops for file-level evidence.

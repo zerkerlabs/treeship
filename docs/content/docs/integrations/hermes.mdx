@@ -1,12 +1,16 @@
 ---
 title: Hermes
-description: Integrate Treeship with Hermes agents via skill file or MCP server.
+description: Integrate Treeship with Hermes agents via skill file and MCP server.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Steps, Step } from 'fumadocs-ui/components/steps';
 
-Hermes agents support two integration methods: a skill file (instruction-based) and an MCP server (tool-call interception).
+Hermes agents support two integration methods: a skill file for session discipline and the Treeship MCP server for MCP-routed tool-call receipts. The best setup uses both.
+
+<Callout type="warn">
+Hermes does not currently have a Treeship-native in-process hook. Coverage is skill-driven plus MCP-routed, so use `treeship wrap` for important shell commands and session reports as a backstop.
+</Callout>
 
 ## Method 1: Skill file
 
@@ -15,7 +19,7 @@ Hermes agents support two integration methods: a skill file (instruction-based) 
 ### Install Treeship CLI
 
 ```bash
-curl -fsSL treeship.dev/install | sh
+curl -fsSL https://treeship.dev/install | sh
 treeship init
 ```
 </Step>
@@ -23,17 +27,26 @@ treeship init
 ### Install the Treeship skill
 
 ```bash
-curl -sL https://raw.githubusercontent.com/zerkerlabs/treeship/main/integrations/hermes/treeship.skill/SKILL.md \
-  -o ~/.hermes/skills/treeship.skill/SKILL.md --create-dirs
+mkdir -p ~/.hermes/skills/treeship
+curl -fsSL https://raw.githubusercontent.com/zerkerlabs/treeship/main/integrations/hermes/treeship.skill/SKILL.md \
+  -o ~/.hermes/skills/treeship/SKILL.md
 ```
 
-The Hermes agent reads the skill and follows the instructions to wrap commands, set env vars, and manage session lifecycle.
+The Hermes agent reads the skill and follows the instructions to start/close sessions, wrap side-effectful shell commands, record approvals and handoffs, and avoid publishing secrets.
 </Step>
 </Steps>
 
 ## Method 2: MCP server
 
-Add Treeship as an MCP server in your Hermes config:
+Add Treeship as an MCP server in Hermes:
+
+```bash
+hermes mcp add treeship --command npx \
+  --env TREESHIP_ACTOR=agent://hermes TREESHIP_HUB_ENDPOINT=https://api.treeship.dev \
+  --args -y @treeship/mcp
+```
+
+Then make sure the configured server has the Hermes actor in its environment:
 
 ```yaml
 # ~/.hermes/config.yaml
@@ -42,21 +55,30 @@ mcp_servers:
     command: npx
     args: ["-y", "@treeship/mcp"]
     env:
+      TREESHIP_ACTOR: "agent://hermes"
       TREESHIP_HUB_ENDPOINT: "https://api.treeship.dev"
 ```
 
-This intercepts every MCP tool call and creates signed artifacts + session events automatically.
+`TREESHIP_ACTOR=agent://hermes` is required. Without it, receipts may fall back to a generic MCP identity.
+
+## Recommended setup
+
+```bash
+treeship agent register --name hermes --own-key --tools mcp,terminal,file,git --description "Hermes Agent"
+treeship session start --name "hermes: first verified session"
+```
 
 ## What appears in the receipt
 
 | Section | Skill file | MCP server |
 |---------|-----------|------------|
-| Commands | Via `treeship wrap` `[AUTO]` | Not applicable |
-| Tool calls | Not applicable | Every MCP tool call `[AUTO]` |
-| Model/cost | Via env vars `[EXPLICIT]` | Via env vars `[EXPLICIT]` |
-| File operations | File snapshot diff `[AUTO]` | Not applicable |
-| Handoffs | Via `treeship session event` `[EXPLICIT]` | Via `treeship session event` `[EXPLICIT]` |
+| Commands | Via `treeship wrap` `[EXPLICIT]` | Not applicable |
+| Tool calls | Not applicable | MCP-routed tool calls `[AUTO]` |
+| Agent identity | `agent://hermes` in events `[EXPLICIT]` | `TREESHIP_ACTOR=agent://hermes` `[AUTO]` |
+| File operations | Session report / git reconcile backstop `[AUTO]` | Routed file-tool metadata when available `[AUTO]` |
+| Approvals | `treeship approve` + approval nonce `[EXPLICIT]` | Not applicable |
+| Handoffs | `treeship attest handoff` or session event `[EXPLICIT]` | Not applicable |
 
 <Callout type="info">
-**Integration status**: Skill file and MCP server packages are ready. Full end-to-end testing with a live Hermes server is pending. If you test it, please report results at github.com/zerkerlabs/treeship/issues.
+**Expected outcome**: a Hermes session can produce a local-verifiable Treeship receipt and optional Hub report. MCP-routed tool calls can verify as Hermes-owned when the bridge signs with a registered `agent://hermes` key.
 </Callout>
