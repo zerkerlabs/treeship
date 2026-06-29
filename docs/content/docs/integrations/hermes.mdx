@@ -6,13 +6,34 @@ description: Integrate Treeship with Hermes agents via skill file and MCP server
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Steps, Step } from 'fumadocs-ui/components/steps';
 
-Hermes agents support two integration methods: a skill file for session discipline and the Treeship MCP server for MCP-routed tool-call receipts. The best setup uses both.
+Hermes agents support two integration methods: a Treeship skill file for session discipline and the Treeship MCP server for MCP-routed tool-call receipts. The best setup uses both.
 
 <Callout type="warn">
 Hermes does not currently have a Treeship-native in-process hook. Coverage is skill-driven plus MCP-routed, so use `treeship wrap` for important shell commands and session reports as a backstop.
 </Callout>
 
-## Method 1: Skill file
+## Fast path
+
+For Treeship `v0.15.0` or later, use the native installer:
+
+```bash
+treeship init
+treeship add hermes
+```
+
+That writes the Hermes skill to:
+
+```text
+~/.hermes/skills/treeship/SKILL.md
+```
+
+and adds a project-local `TREESHIP.md` so Hermes can see what Treeship captures when it works inside the repo.
+
+<Callout type="info">
+If you are testing with a temporary `HOME` on macOS, prefer a canonical path such as `/private/tmp/...`; `/tmp` is a symlink to `/private/tmp`, and Treeship intentionally refuses to write integration files through symlinked config paths.
+</Callout>
+
+## Full provable setup
 
 <Steps>
 <Step>
@@ -24,7 +45,24 @@ treeship init
 ```
 </Step>
 <Step>
-### Install the Treeship skill
+### Give Hermes a key-bound identity
+
+```bash
+treeship agent register --name hermes --own-key --tools mcp,terminal,file,git --description "Hermes Agent"
+```
+
+Use `--own-key` so Hermes receipts can be attributed to a dedicated agent key instead of only the workspace ship key.
+</Step>
+<Step>
+### Install the Hermes skill
+
+Preferred:
+
+```bash
+treeship add hermes
+```
+
+Manual fallback:
 
 ```bash
 mkdir -p ~/.hermes/skills/treeship
@@ -34,17 +72,18 @@ curl -fsSL https://raw.githubusercontent.com/zerkerlabs/treeship/main/integratio
 
 The Hermes agent reads the skill and follows the instructions to start/close sessions, wrap side-effectful shell commands, record approvals and handoffs, and avoid publishing secrets.
 </Step>
-</Steps>
-
-## Method 2: MCP server
-
-Add Treeship as an MCP server in Hermes:
+<Step>
+### Add the Treeship MCP server
 
 ```bash
 hermes mcp add treeship --command npx \
   --env TREESHIP_ACTOR=agent://hermes TREESHIP_HUB_ENDPOINT=https://api.treeship.dev \
   --args -y @treeship/mcp
 ```
+
+`--args` must come last in the Hermes CLI command.
+</Step>
+</Steps>
 
 Then make sure the configured server has the Hermes actor in its environment:
 
@@ -61,11 +100,63 @@ mcp_servers:
 
 `TREESHIP_ACTOR=agent://hermes` is required. Without it, receipts may fall back to a generic MCP identity.
 
-## Recommended setup
+## Smoke test the release path
+
+This is the minimal offline check for the released CLI and Hermes skill install path:
 
 ```bash
+TMP=$(mktemp -d /tmp/treeship-v015-smoke.XXXXXX)
+TMP_REAL=$(cd "$TMP" && pwd -P)
+HOME_TMP="$TMP_REAL/home"
+mkdir -p "$HOME_TMP" "$TMP_REAL/work"
+
+curl -fsSL https://github.com/zerkerlabs/treeship/releases/download/v0.15.0/treeship-darwin-aarch64 \
+  -o "$TMP_REAL/treeship"
+chmod +x "$TMP_REAL/treeship"
+
+cd "$TMP_REAL/work"
+HOME="$HOME_TMP" "$TMP_REAL/treeship" init
+HOME="$HOME_TMP" "$TMP_REAL/treeship" add hermes
+
+test -f "$HOME_TMP/.hermes/skills/treeship/SKILL.md"
+grep 'TREESHIP_ACTOR=agent://hermes' "$HOME_TMP/.hermes/skills/treeship/SKILL.md"
+```
+
+Expected outcome:
+
+```text
+✓ Hermes Skill Harness configured
+✓ ./TREESHIP.md written
+```
+
+## Provable Hermes session demo
+
+Use this when you want a local-verifiable session package before publishing anything to Hub:
+
+```bash
+treeship init
 treeship agent register --name hermes --own-key --tools mcp,terminal,file,git --description "Hermes Agent"
+treeship add hermes
+
+hermes mcp add treeship --command npx \
+  --env TREESHIP_ACTOR=agent://hermes TREESHIP_HUB_ENDPOINT=https://api.treeship.dev \
+  --args -y @treeship/mcp
+
 treeship session start --name "hermes: first verified session"
+treeship wrap -- /bin/echo "hello from a provable Hermes session"
+treeship session close
+```
+
+`session close` prints the `.treeship` package path. Verify it offline:
+
+```bash
+treeship package verify .treeship/sessions/<session-id>.treeship
+```
+
+You should see inclusion-proof and Merkle-root checks pass. If you are attached to Hub, publish the report:
+
+```bash
+treeship session report
 ```
 
 ## What appears in the receipt
