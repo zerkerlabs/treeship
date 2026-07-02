@@ -1,0 +1,41 @@
+---
+title: "What Farcaster Can Be"
+description: "We've gotten very good at building agents and very bad at building the plumbing between them. Farcaster is the traffic path for AI agents -- self-hosted, in the path, and honest about every call."
+date: 2026-07-01
+tags: ["agents", "infrastructure"]
+readTime: "6 min read"
+---
+
+A few months ago I was staring at a docker-compose file with six services in it, each one calling out to some agent or tool, each one with its own idea of how credentials should be passed in, and none of them logging anything useful when a call failed. I knew which agent had run, but I had no idea what it had actually done, how long it took, or whether the token I'd handed it was still good. That's the normal state of things right now. We've gotten very good at building agents and very bad at building the plumbing between them.
+
+So we built Farcaster.
+
+We didn't set out to build a "gateway" in the abstract sense. Our team has built gateways before, and I know how easily they turn into a pile of middleware nobody wants to own. What we wanted was something narrower and more useful: a single place that sits between whatever is calling an agent and whatever the agent actually is, that I could run myself, and that would tell me the truth about what happened on every call. That's what Farcaster is today, and it's worth being honest about what "today" actually means before I get into where I think this goes.
+
+## Not a directory. A path.
+
+Most tools in this space stop at the registry. You get a place to list your agents, maybe some metadata, maybe a search box. That's kinda useful, and Farcaster can do it -- our Agent Catalog is multi-tenant and OAuth-gated, so you can register agents and let the right people discover them without exposing everything to everyone. But a catalog by itself is a phone book. It tells you who to call. It doesn't place the call for you, and it definitely doesn't know what happened after you dialed.
+
+The part I actually care about is that Farcaster sits directly in the traffic path. When an agent gets invoked (either by a single request-response or a long-lived stream) it goes through Farcaster, not around it. That's a deliberate choice and it's the harder one to build, because it means Farcaster has to handle both transactional calls and streaming ones without getting in the way, inject credentials on the agent's behalf without ever handing them to the caller, and do it per-tenant with envelope encryption so one tenant's secrets are never reachable from another account. It also means guarding against SSRF, because the moment you're proxying arbitrary outbound calls on someone's behalf, you've built a tool that, unguarded, would happily let an agent reach into infrastructure it has no business touching. None of this is glamorous. It's the kind of work that only shows up when it's missing.
+
+I keep coming back to this because it's the difference between a tool that describes your agent traffic and a tool that *is* your agent traffic. A registry can go stale. A traffic path can't -- if it's wrong, nothing works, so it has to stay correct by construction. That's a much stronger guarantee than a dashboard that's supposed to be kept up to date.
+
+## Observability that isn't bolted on
+
+The other thing I got tired of was finding out an agent was slow or wrong from a user complaint instead of from a metric. Most setups treat observability as something you add later -- a sidecar, a logging library someone forgets to instrument, a dashboard that only covers half your calls because the other half went around it somehow.
+
+Because Farcaster is already in the path, every invocation gets captured as a byproduct of doing its job, not as an extra thing bolted onto it. That gives you latency, time-to-first-token on the streaming calls, and error rates without asking anyone to remember to add a metric. I don't think this is a small thing. Time-to-first-token in particular is the number that actually tells you whether an agent *feels* fast, and it's the number that's hardest to get right when you're stitching together logging from three different services after the fact. When the gateway is the path, the gateway is also, for free, the record of what happened on that path.
+
+## The control plane you actually own
+
+Here's where I want to talk about where this goes, because what exists today is the foundation, not the ceiling.
+
+The pattern we keep seeing in this space is a hosted service that wants to be the place where all your agent traffic lives... which is fine, until you think about what that actually means. Your credentials, your invocation history, your latency data, all living on infrastructure you don't control, subject to a roadmap you don't set. We don't think that's a tenable place for something as central as "how my agents talk to the outside world" to live. Farcaster is a single Go binary. You can self-host it, put it on infrastructure you already run, and own the thing that owns your agent traffic. Sovereignty over your agent infrastructure shouldn't be a premium tier you pay extra for; it should be the default, and a single binary is what makes that default achievable instead of aspirational.
+
+What I want Farcaster to become is the control plane *and* the traffic path -- one thing, not two things you have to reconcile. Discover an agent, route to it, secure the call, and observe what happened, all from the same place, running on hardware you control. Nobody has really done this properly, mostly because the registry half and the proxy half tend to get built by different people with different incentives, and the observability half gets bolted onto whichever one wins. Farcaster started as all three at once, which is why it can actually be whole thing.
+
+There's a longer-term thread here, too: because every call already carries per-tenant credentials and gets captured on its way through, sitting in the traffic path opens the door to metering and, eventually, monetizing agent-tool access. This is a natural extension of a gateway that's already monitoring every call that goes through.
+
+Farcaster is part of a broader push at Zerker toward infrastructure agents can actually trust -- provenance and receipts on one side, memory on another, and Farcaster as the layer where the traffic itself lives. The pieces are still finding their edges, but the shape is there: agent calls that carry not just data but a verifiable record of what happened, running on infrastructure the people who need it can actually own.
+
+None of this requires a leap of faith about what Farcaster might someday do. The catalog, the proxy, and the observability are running now, in one binary, and we're using it today. A self-hosted, sovereign traffic path is where agent infrastructure has to end up eventually, not because anyone told us to build it that way. I'd rather get there first.
