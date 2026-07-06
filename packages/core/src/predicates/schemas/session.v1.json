@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://treeship.dev/schemas/session.v1.json",
+  "title": "session.v1",
+  "description": "A completed work session as a typed, signed record: the atom of an agent's work history. Minted by `treeship session close` from the session's own sealed evidence (never hand-written), and carried as the payload of a Treeship receipt artifact with kind=session.v1. See docs/specs/work-history.md.",
+  "type": "object",
+  "required": [
+    "session_id",
+    "actor",
+    "outcome",
+    "started_at",
+    "closed_at",
+    "attestation_class",
+    "receipt_digest"
+  ],
+  "properties": {
+    "session_id": {
+      "description": "The session this record summarizes.",
+      "type": "string"
+    },
+    "actor": {
+      "description": "Actor URI the session ran as, e.g. agent://hermes.",
+      "type": "string"
+    },
+    "headline": {
+      "description": "One-line human narrative of the session, from the sealed receipt.",
+      "type": ["string", "null"]
+    },
+    "outcome": {
+      "description": "How the session ended: completed | abandoned | failed.",
+      "type": "string",
+      "enum": ["completed", "abandoned", "failed"]
+    },
+    "started_at": {
+      "description": "RFC 3339 session start.",
+      "type": "string"
+    },
+    "closed_at": {
+      "description": "RFC 3339 session close.",
+      "type": "string"
+    },
+    "duration_ms": {
+      "description": "Session wall-clock duration in milliseconds.",
+      "type": "number"
+    },
+    "harness": {
+      "description": "Capture surface(s) the session ran under: distinct tool runtime ids from the sealed receipt (e.g. 'claude-code'), or 'cli' when no tool runtime was involved.",
+      "type": "string"
+    },
+    "attestation_class": {
+      "description": "How the record's evidence was captured, per the work-history ladder: self (the agent's own receipts, no external signal), runtime (events emitted by a harness hook or bridge the agent cannot forge or omit), countersigned (a second party signed evidence in the package, e.g. consumed human approvals). Labeled, never laundered; 'anchored' is a later, derivable state (publish + witness), not set at close.",
+      "type": "string",
+      "enum": ["self", "runtime", "countersigned"]
+    },
+    "action_count": {
+      "description": "Signed artifacts in the session chain.",
+      "type": "number"
+    },
+    "approval_count": {
+      "description": "Approval uses consumed during the session (each backed by a signed grant embedded in the package).",
+      "type": "number"
+    },
+    "handoff_count": {
+      "description": "Agent-to-agent handoffs during the session.",
+      "type": "number"
+    },
+    "event_count": {
+      "description": "Events in the sealed session event log.",
+      "type": "number"
+    },
+    "tools_exercised": {
+      "description": "Tool names actually invoked during the session, computed from captured events (never hand-written). Feeds capability cards' `exercised` grade.",
+      "type": "array"
+    },
+    "receipt_digest": {
+      "description": "Digest of the sealed session receipt (receipt.json) this record summarizes; binds the record to its evidence.",
+      "type": "string"
+    },
+    "receipt_merkle_root": {
+      "description": "Merkle root of the sealed .treeship package, when composed.",
+      "type": ["string", "null"]
+    },
+    "report_url": {
+      "description": "Published session report URL, when one exists.",
+      "type": ["string", "null"]
+    }
+  }
+}

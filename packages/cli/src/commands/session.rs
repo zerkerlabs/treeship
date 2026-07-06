@@ -9,7 +9,7 @@ use treeship_core::{
         build_package_with_approvals,
         event::{generate_event_id, generate_span_id, generate_trace_id},
     },
-    statements::{ActionStatement, ApprovalStatement, payload_type},
+    statements::{ActionStatement, ApprovalStatement, ReceiptStatement, SubjectRef, payload_type},
     storage::Record,
 };
 
@@ -813,6 +813,149 @@ pub fn watch(
 // session close
 // ---------------------------------------------------------------------------
 
+/// The work-history attestation class for a sealed session, computed from
+/// capture-path evidence actually present in the package
+/// (docs/specs/work-history.md): consumed approvals mean a second party
+/// signed evidence embedded alongside the receipt (`countersigned`);
+/// tool-runtime involvement means a harness hook or bridge the agent cannot
+/// forge or omit emitted the event log (`runtime`); otherwise the evidence
+/// is the agent's own word (`self`). `anchored` is a later, derivable state
+/// (publish + checkpoint witness), never set at close. Labeled, never
+/// laundered: the class records how the evidence was captured, it does not
+/// grade its quality.
+pub(crate) fn session_attestation_class(
+    tool_runtimes: u32,
+    consumed_approvals: usize,
+) -> &'static str {
+    if consumed_approvals > 0 {
+        "countersigned"
+    } else if tool_runtimes > 0 {
+        "runtime"
+    } else {
+        "self"
+    }
+}
+
+/// Build the `session.v1` payload from the sealed session evidence
+/// (docs/specs/work-history.md slice 1). Every field is computed from the
+/// composed receipt and package output, never hand-written: `tools_exercised`
+/// comes from captured tool usage, the class from the capture path, and
+/// `receipt_digest` binds the record to the exact sealed evidence it
+/// summarizes.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn session_record_payload(
+    receipt: &treeship_core::session::SessionReceipt,
+    session_id: &str,
+    actor: &str,
+    artifact_count: u64,
+    event_count: usize,
+    consumed_approvals: usize,
+    duration_ms: u64,
+    receipt_digest: &str,
+    receipt_merkle_root: Option<&str>,
+) -> serde_json::Value {
+    // Capture surface(s): distinct tool runtime ids, or "cli" when the
+    // session involved no tool runtime at all.
+    let mut runtimes: Vec<String> = receipt
+        .tools
+        .iter()
+        .filter_map(|t| t.tool_runtime_id.clone())
+        .collect();
+    runtimes.sort();
+    runtimes.dedup();
+    let harness = if runtimes.is_empty() {
+        "cli".to_string()
+    } else {
+        runtimes.join("+")
+    };
+
+    // Tools actually invoked, from captured usage; falls back to the
+    // session's tool list when no usage summary was composed.
+    let tools_exercised: Vec<String> = match &receipt.tool_usage {
+        Some(usage) if !usage.actual.is_empty() => {
+            usage.actual.iter().map(|t| t.tool_name.clone()).collect()
+        }
+        _ => receipt.tools.iter().map(|t| t.tool_name.clone()).collect(),
+    };
+
+    let class =
+        session_attestation_class(receipt.participants.tool_runtimes, consumed_approvals);
+
+    serde_json::json!({
+        "session_id": session_id,
+        "actor": actor,
+        "headline": receipt
+            .session
+            .narrative
+            .as_ref()
+            .and_then(|n| n.headline.clone()),
+        "outcome": "completed",
+        "started_at": receipt.session.started_at,
+        "closed_at": receipt
+            .session
+            .ended_at
+            .clone()
+            .unwrap_or_else(now_rfc3339),
+        "duration_ms": duration_ms,
+        "harness": harness,
+        "attestation_class": class,
+        "action_count": artifact_count,
+        "approval_count": consumed_approvals,
+        "handoff_count": receipt.participants.handoffs,
+        "event_count": event_count,
+        "tools_exercised": tools_exercised,
+        "receipt_digest": receipt_digest,
+        "receipt_merkle_root": receipt_merkle_root,
+        "report_url": null,
+    })
+}
+
+/// Mint the signed `session.v1` record: validate against the registered
+/// predicate schema (fail-closed -- an invalid payload is never signed),
+/// sign with the actor's own key when it has one (so registered agents get
+/// a key-bound work-history record), and chain it to the session-close
+/// artifact. Returns the record artifact id and its attestation class.
+fn mint_session_record(
+    ctx: &ctx::Ctx,
+    actor: &str,
+    close_artifact_id: &str,
+    payload: serde_json::Value,
+) -> Result<(String, String), Box<dyn std::error::Error>> {
+    treeship_core::predicates::validate("session.v1", Some(&payload))
+        .map_err(|e| format!("predicate validation failed: {e}"))?;
+
+    let class = payload
+        .get("attestation_class")
+        .and_then(|v| v.as_str())
+        .unwrap_or("self")
+        .to_string();
+
+    let mut stmt = ReceiptStatement::new("system://treeship-session", "session.v1");
+    stmt.subject = Some(SubjectRef {
+        artifact_id: Some(close_artifact_id.to_string()),
+        ..Default::default()
+    });
+    stmt.payload = Some(payload);
+
+    let signer = crate::commands::attest::resolve_actor_signer(ctx, actor)?;
+    let pt = payload_type("receipt");
+    let result = sign(&pt, &stmt, signer.as_ref())?;
+
+    ctx.storage.write(&Record {
+        artifact_id:  result.artifact_id.clone(),
+        digest:       result.digest.clone(),
+        payload_type: pt,
+        key_id:       signer.key_id().to_string(),
+        signed_at:    stmt.timestamp.clone(),
+        parent_id:    Some(close_artifact_id.to_string()),
+        envelope:     result.envelope,
+        hub_url:      None,
+    })?;
+    write_last(&ctx.config.storage_dir, &result.artifact_id);
+
+    Ok((result.artifact_id, class))
+}
+
 pub fn close(
     summary: Option<String>,
     headline: Option<String>,
@@ -1108,6 +1251,38 @@ pub fn close(
             printer.info(&format!("  files:     {}", pkg_output.file_count));
 
             sealed_pkg_path = Some(pkg_output.path.clone());
+
+            // ── Work-history record (session.v1) ────────────────────
+            // docs/specs/work-history.md slice 1: the sealed session
+            // becomes a typed, signed record in the agent's chain --
+            // the atom of its work history. Every field is computed
+            // from the sealed evidence (never hand-written), validated
+            // against the registered schema before signing, and signed
+            // with the actor's own key when it has one, so registered
+            // agents get a key-bound record. Best-effort: a record
+            // failure warns and never wedges the close -- the sealed
+            // package above is already the source of truth.
+            let record_payload = session_record_payload(
+                &receipt,
+                &manifest.session_id,
+                &manifest.actor,
+                artifact_count,
+                events.len(),
+                approvals.uses.len(),
+                elapsed_ms,
+                &pkg_output.receipt_digest,
+                pkg_output.merkle_root.as_deref(),
+            );
+            match mint_session_record(&ctx, &manifest.actor, &result.artifact_id, record_payload) {
+                Ok((record_id, class)) => {
+                    printer.info(&format!(
+                        "  record:    {record_id}  (session.v1, class={class})"
+                    ));
+                }
+                Err(e) => {
+                    printer.warn(&format!("session.v1 record not minted: {e}"), &[]);
+                }
+            }
 
             // Auto-open preview.html if running in a terminal
             let preview_path = pkg_output.path.join("preview.html");
@@ -2145,4 +2320,116 @@ fn collect_approval_evidence(
     }
 
     bundle
+}
+
+#[cfg(test)]
+mod work_history_tests {
+    use super::*;
+
+    /// The attestation-class ladder, per docs/specs/work-history.md:
+    /// countersigned > runtime > self, computed only from evidence present.
+    #[test]
+    fn attestation_class_ladder() {
+        assert_eq!(session_attestation_class(0, 0), "self");
+        assert_eq!(session_attestation_class(2, 0), "runtime");
+        assert_eq!(session_attestation_class(2, 1), "countersigned");
+        assert_eq!(session_attestation_class(0, 3), "countersigned");
+    }
+
+    fn receipt_fixture() -> treeship_core::session::SessionReceipt {
+        serde_json::from_value(serde_json::json!({
+            "type": "treeship/session-receipt/v1",
+            "session": {
+                "id": "ssn_test1",
+                "mode": "manual",
+                "started_at": "2026-07-06T14:00:00Z",
+                "ended_at": "2026-07-06T15:30:00Z",
+                "status": "completed",
+                "duration_ms": 5400000u64,
+                "narrative": { "headline": "Fixed the thing" }
+            },
+            "participants": { "tool_runtimes": 1, "handoffs": 2 },
+            "hosts": [],
+            "tools": [
+                { "tool_id": "t1", "tool_name": "Bash", "tool_runtime_id": "rt_claude-code" },
+                { "tool_id": "t2", "tool_name": "Edit", "tool_runtime_id": "rt_claude-code" }
+            ],
+            "agent_graph": { "nodes": [], "edges": [] },
+            "timeline": [],
+            "side_effects": {
+                "files_read": [], "files_written": [], "ports_opened": [],
+                "network_connections": [], "processes": [], "tool_invocations": []
+            },
+            "artifacts": [],
+            "proofs": {},
+            "merkle": { "leaf_count": 0 },
+            "render": {},
+            "tool_usage": {
+                "actual": [
+                    { "tool_name": "Bash(git:*)", "count": 3 },
+                    { "tool_name": "Edit(*)", "count": 5 }
+                ]
+            }
+        }))
+        .expect("fixture receipt must deserialize")
+    }
+
+    /// The builder computes every field from sealed evidence, and its output
+    /// always conforms to the registered session.v1 schema -- the same
+    /// fail-closed validation `mint_session_record` runs before signing.
+    #[test]
+    fn session_record_payload_conforms_to_registered_schema() {
+        let receipt = receipt_fixture();
+        let payload = session_record_payload(
+            &receipt,
+            "ssn_test1",
+            "agent://hermes",
+            42,
+            120,
+            0,
+            5400000,
+            "sha256:deadbeef",
+            Some("sha256:cafebabe"),
+        );
+
+        treeship_core::predicates::validate("session.v1", Some(&payload))
+            .expect("builder output must conform to the registered schema");
+
+        assert_eq!(payload["attestation_class"], "runtime");
+        assert_eq!(payload["harness"], "rt_claude-code");
+        assert_eq!(payload["headline"], "Fixed the thing");
+        assert_eq!(payload["outcome"], "completed");
+        assert_eq!(
+            payload["tools_exercised"],
+            serde_json::json!(["Bash(git:*)", "Edit(*)"])
+        );
+        assert_eq!(payload["receipt_digest"], "sha256:deadbeef");
+        assert_eq!(payload["handoff_count"], 2);
+    }
+
+    /// Consumed approvals upgrade the class to countersigned; a session with
+    /// no tool runtime and no approvals is honestly labeled self.
+    #[test]
+    fn session_record_class_reflects_capture_evidence() {
+        let receipt = receipt_fixture();
+        let countersigned = session_record_payload(
+            &receipt, "ssn_test1", "agent://hermes", 1, 1, 2, 1000,
+            "sha256:aa", None,
+        );
+        assert_eq!(countersigned["attestation_class"], "countersigned");
+
+        let mut bare = receipt_fixture();
+        bare.participants.tool_runtimes = 0;
+        bare.tools.clear();
+        bare.tool_usage = None;
+        let selfish = session_record_payload(
+            &bare, "ssn_test1", "agent://hermes", 1, 1, 0, 1000,
+            "sha256:aa", None,
+        );
+        assert_eq!(selfish["attestation_class"], "self");
+        assert_eq!(selfish["harness"], "cli");
+        assert_eq!(selfish["tools_exercised"], serde_json::json!([]));
+        treeship_core::predicates::validate("session.v1", Some(&selfish))
+            .expect("bare-session record must also conform");
+    }
 }
