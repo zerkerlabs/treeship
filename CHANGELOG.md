@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+- **`treeship onboard` — an agent goes from nothing to verifiable in one command.** Composes the existing lifecycle — `agent register --own-key`, `attest card` (`--from-harness` / `--tools-json` / `--from-a2a` / `--tools`), and with `--publish` the full `publish` + `merkle checkpoint` + `merkle publish` anchor — into one idempotent pass, and ends by printing the **trust bundle**: the exact `trust add` command(s) a counterparty runs (`agent_cert` for the agent key, `hub_checkpoint` for the ship key) plus the `resolve`/`audit` commands that verify the agent. One name in, one URI out: `onboard deployer` and `onboard agent://deployer` are the same call, closing the register-takes-a-name / everything-else-takes-a-URI trap. Adds no new attestation surface — every artifact is minted by the same code paths as the individual commands. Born directly from the 13-item friction ledger of a real end-to-end dogfood run.
+
+### Fixed
+- **Hub: re-pushing an already-published artifact no longer 500s.** `InsertArtifact` was a bare `INSERT`, so re-publishing an agent's resolvable set (exactly what an idempotent `onboard --publish` on every agent boot does) hit the `artifact_id` primary key and surfaced as a 500 to the pushing client, aborting the publish. Artifacts are content-addressed, signed envelopes — a re-push of the same id is the same bytes — so the insert is now `ON CONFLICT(artifact_id) DO NOTHING`: idempotent, and deliberately *never* an update, so a colliding id can never overwrite bytes the hub already serves. Regression-tested both ways (duplicate no-op + overwrite rejection).
+
 ## 0.16.0 (2026-07-06)
 
 ### Added
