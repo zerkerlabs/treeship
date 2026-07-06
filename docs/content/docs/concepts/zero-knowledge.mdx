@@ -8,9 +8,12 @@ import { Callout } from 'fumadocs-ui/components/callout';
 Treeship stacks four ZK-adjacent layers. Each one answers a different question, and each one has different performance characteristics. You pick the layers you need; Ed25519 signatures are always on.
 
 <Callout type="warn">
-**Current status (v0.10.4).** Only the first two layers ship enabled by
-default. Layers 3 and 4 are behind the `--features zk` build flag and have
-additional runtime requirements:
+**Current status (v0.17.0, re-audited 2026-07-06).** Unchanged since this
+callout was first written at v0.10.4: only the first two layers ship enabled
+by default, and no ZK development has occurred since — deliberately. The ZK
+layers are maintained but not advanced; demand pulls them forward, not
+roadmap pressure. Layers 3 and 4 remain behind the `--features zk` build
+flag with additional runtime requirements:
 
 - **Layer 1 (Ed25519 signatures):** stable, always on.
 - **Layer 2 (Merkle audit log):** stable, always on.

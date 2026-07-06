@@ -1,0 +1,39 @@
+---
+title: keys
+description: List, export, and rotate signing keys. keys export prints the pinnable public key and the exact trust add command a counterparty runs.
+---
+
+## Usage
+
+```bash
+treeship keys list
+treeship keys export [--key <id> | --agent <uri>] [--format json]
+treeship keys rotate [--key <id>] [--grace-hours <n>] [--no-default]
+```
+
+## keys export
+
+The out-of-band half of the trust model. Every remote verification (resolve, audit, presentations) is checked against the *verifier's* own trust roots, `keys export` produces the key material those roots need, with the exact command to pin it:
+
+```bash
+treeship keys export
+```
+
+```
+✓ public key export
+  key:      key_b4be…
+  subject:  ship default
+  pubkey:   ed25519:050j2M0Q…
+
+  a counterparty pins it with:
+    treeship trust add key_b4be… ed25519:050j2M0Q… --kind ship --yes
+    treeship trust add key_b4be… ed25519:050j2M0Q… --kind hub_checkpoint --yes
+```
+
+The ship key exports **two** pin lines because a remote verifier needs both roles: `ship` verifies certificate chains and authorized revocations; `hub_checkpoint` verifies Merkle checkpoints (the transparency anchor). A per-agent key (`--agent agent://deployer`) exports one `agent_cert` line, though with the certificate chain published, counterparties rarely need per-agent pins at all — pinning the ship suffices. See [The Agent Handshake](/docs/concepts/agent-handshake).
+
+The private key never leaves the store. `--format json` for scripts.
+
+## keys list / keys rotate
+
+`list` shows every signing key with fingerprint, default marker, and rotation lifecycle. `rotate` mints a successor, stamps the predecessor with a grace-period `valid_until`, and (by default) promotes the successor to default signer.

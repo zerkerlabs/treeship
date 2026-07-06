@@ -1,0 +1,54 @@
+---
+title: present / verify-presentation
+description: Package an agent's proof into a file it hands to any counterparty, and verify one fully offline, with optional challenge-response for live key control.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+## Usage
+
+```bash
+treeship present <AGENT> [--out <path>] [--challenge <nonce>]
+treeship verify-presentation <PATH> [--max-staple-age <duration>] [--challenge <nonce>]
+```
+
+## present
+
+Writes one file containing everything a counterparty needs to verify the agent **offline**: the current capability card, the certificate chain to its ship, any known revocations referencing the card (included, never filtered, the verifier judges their authority), and the **Merkle staple**, the latest signed checkpoint plus the card's inclusion proof, computed over the tree exactly as it was at that checkpoint and root-cross-checked before anything is written.
+
+```bash
+treeship present agent://deployer
+# → deployer.presentation.json
+```
+
+If the current card is newer than the latest checkpoint, `present` refuses and tells you to run `treeship checkpoint` first, a staple that does not verify is worse than none.
+
+### `--challenge <nonce>`: answer a handshake
+
+Signs the verifier's nonce with the **agent's own key** over a canonical that binds the agent URI, the exact card, the nonce, and a timestamp. Requires a per-agent key (`agent register --own-key`); there is deliberately no fallback to the ship key, that would prove the operator is present while claiming the agent is.
+
+## verify-presentation
+
+Re-verifies everything against **your** trust roots, no network required:
+
+```
+✓ presentation
+  signature:   verified (chain to pinned ship root)
+  key-bound:   yes (AgentCert via ship chain)
+  staple:      checkpoint #5 verified, inclusion verified (9m old)
+  challenge:   verified — bearer controls key_… (response 2s old)
+  revocation:  none included — current as of the staple (9m old); for currency, audit a log
+  status:      verified (key-bound, anchored, live)
+```
+
+- **Signature / key-bound** — direct pin, or the certificate-chain walk to a pinned `ship` root (see [The Agent Handshake](/docs/concepts/agent-handshake)).
+- **Staple** — checkpoint signature checked against your `hub_checkpoint` roots; the card's inclusion re-proved offline. `--max-staple-age 30s|15m|2h|1d` turns your freshness tolerance into an enforced verdict (`STALE` past it; unknown age fails closed under a bound).
+- **Challenge** — pass the nonce **you** issued; the response is checked only against the key the card verification itself established. A replayed response reports `answers a DIFFERENT challenge (replay?)`.
+- **Revocation** — authorized revocations (the card's own key, or a pinned `ship` root) flip the status to `REVOKED`. Absence is honestly bounded: `current as of the staple`.
+
+<Callout type="warn">
+A presentation without `--challenge` proves the **record**, not the
+**bearer**, the file is replayable by anyone who holds it. If you are about
+to act on the verification (release a tool call, accept a handoff), demand
+the challenge.
+</Callout>

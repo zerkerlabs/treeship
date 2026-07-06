@@ -1,0 +1,59 @@
+---
+title: onboard
+description: Take an agent from nothing to verifiable in one command, identity, capability card, publish, anchor, and the trust bundle a counterparty needs.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+## Usage
+
+```bash
+treeship onboard <NAME> [--from-harness <path>] [--tools-json <path>] [--from-a2a <path>] [--tools <list>] [--models <list>] [--description <text>] [--publish]
+```
+
+## What it does
+
+Composes the full agent lifecycle into one idempotent pass:
+
+1. **Identity** — `agent register --own-key` (reuses an existing key; safe to run on every agent boot)
+2. **Capability card** — from whichever provenance source you pass (`--from-harness` captures a real config; `--tools-json` records an operator declaration; `--from-a2a` reads the agent's own AgentCard; `--tools` declares inline). At least one source is required, a card with no capability source is a vacuous declaration and `onboard` refuses to mint one.
+3. **Publish + anchor** (with `--publish`) — pushes the card and certificate chain to the attached Hub, seals a Merkle checkpoint, and anchors it.
+4. **The trust bundle** — prints the exact `treeship trust add` command(s) a counterparty runs, plus the `resolve`/`audit` commands that verify the agent.
+
+```bash
+treeship onboard deployer --from-harness ~/.claude/settings.json --publish
+```
+
+```
+[1/4] identity — registering agent://deployer with its own key
+      key: key_… (pinned under AgentCert)
+[2/4] capability card
+      key-bound: yes (AgentCert) · 9 of 9 captured from harness
+[3/4] publish + anchor to Hub
+[4/4] trust bundle — hand these to a counterparty:
+    treeship trust add key_… ed25519:… --kind agent_cert --yes
+    treeship trust add key_… ed25519:… --kind hub_checkpoint --yes
+✓ agent onboarded
+    treeship resolve --hub https://api.treeship.dev agent://deployer
+```
+
+`onboard deployer` and `onboard agent://deployer` are the same call, one name in, one URI out.
+
+<Callout>
+Because the ship publishes a certificate chain for every `--own-key` agent, a
+counterparty who pins the **ship key** can verify every agent it certifies,
+the trust bundle stays two lines regardless of fleet size. See
+[The Agent Handshake](/docs/concepts/agent-handshake).
+</Callout>
+
+## Options
+
+| Flag | Meaning |
+|---|---|
+| `--from-harness <path>` | Capture the capability set from a harness config (e.g. a Claude Code `settings.json`); graded `captured` |
+| `--tools-json <path>` | Operator-declared capability list (JSON array or `{ "tools": [...] }`); graded `declared` |
+| `--from-a2a <path>` | Map an A2A AgentCard's skills; graded `discovered` |
+| `--tools <list>` | Inline comma-separated capabilities; graded `declared` |
+| `--models <list>` | Models the agent uses |
+| `--description <text>` | Agent description |
+| `--publish` | Also publish + checkpoint + anchor to the attached Hub (requires `treeship hub attach`); fails loudly if no hub is attached rather than silently staying local |
