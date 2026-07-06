@@ -285,6 +285,17 @@ enum Command {
     #[command(subcommand)]
     Agent(AgentCommand),
 
+    /// Onboard an agent end to end in one command: register it with its
+    /// own key, mint its capability card, optionally publish + anchor to
+    /// the attached Hub, and print the trust bundle a counterparty runs
+    /// to verify it. Idempotent -- safe to run on every agent boot.
+    ///
+    /// Examples:
+    ///   treeship onboard deployer --from-harness ~/.claude/settings.json
+    ///   treeship onboard agent://hermes --tools-json tools.json --publish
+    ///   treeship onboard scout --from-a2a AgentCard.json --models claude-fable-5
+    Onboard(OnboardCliArgs),
+
     /// Manage the local Agent Card store
     ///
     /// Cards are workspace trust objects -- who an agent is, where it
@@ -1746,6 +1757,42 @@ struct AuditArgs {
 
 // --- keys -------------------------------------------------------------------
 
+#[derive(clap::Args)]
+struct OnboardCliArgs {
+    /// Agent name or agent:// URI (normalized either way)
+    #[arg(value_name = "NAME")]
+    name: String,
+
+    /// Harness config (e.g. a Claude Code settings.json) whose
+    /// permissions.allow list is captured as the capability set
+    #[arg(long, value_name = "PATH")]
+    from_harness: Option<String>,
+
+    /// Operator-declared capability list (JSON array or { "tools": [...] })
+    #[arg(long, value_name = "PATH")]
+    tools_json: Option<String>,
+
+    /// A2A AgentCard JSON whose skills become `discovered` capabilities
+    #[arg(long, value_name = "PATH")]
+    from_a2a: Option<String>,
+
+    /// Capabilities: tool categories or family.* globs (comma-separated)
+    #[arg(long, value_name = "TOOLS", value_delimiter = ',')]
+    tools: Vec<String>,
+
+    /// Models the agent uses (comma-separated)
+    #[arg(long, value_name = "MODELS", value_delimiter = ',')]
+    models: Vec<String>,
+
+    /// Agent description
+    #[arg(long, value_name = "TEXT")]
+    description: Option<String>,
+
+    /// Also publish the agent + checkpoint + anchor to the attached Hub
+    #[arg(long)]
+    publish: bool,
+}
+
 #[derive(Subcommand)]
 enum KeysCommand {
     /// List all signing keys
@@ -2308,6 +2355,21 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 printer,
             ),
         },
+
+        Command::Onboard(a) => commands::onboard::onboard(
+            commands::onboard::OnboardArgs {
+                name: a.name.clone(),
+                from_harness: a.from_harness.clone(),
+                tools_json: a.tools_json.clone(),
+                from_a2a: a.from_a2a.clone(),
+                tools: a.tools.clone(),
+                models: a.models.clone(),
+                description: a.description.clone(),
+                publish: a.publish,
+                config: cli.config.clone(),
+            },
+            printer,
+        ),
 
         Command::Harness(sub) => match sub {
             HarnessCommand::List => commands::harness::list(

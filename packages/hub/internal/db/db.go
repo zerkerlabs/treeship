@@ -347,9 +347,16 @@ type Artifact struct {
 }
 
 func InsertArtifact(db *sql.DB, a *Artifact) error {
+	// Idempotent on artifact_id: artifacts are content-addressed, signed
+	// envelopes, so a re-push of the same id is by definition the same
+	// bytes — re-publishing an agent's resolvable set (e.g. `treeship
+	// onboard` running on every agent boot) must not 500 on the primary
+	// key. DO NOTHING rather than DO UPDATE so a colliding id can never
+	// overwrite previously served bytes (same rule as dock_challenges).
 	_, err := db.Exec(
 		`INSERT INTO artifacts (artifact_id, payload_type, envelope_json, digest, signed_at, parent_id, hub_url, rekor_index, dock_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(artifact_id) DO NOTHING`,
 		a.ArtifactID, a.PayloadType, a.EnvelopeJSON, a.Digest, a.SignedAt, a.ParentID, a.HubURL, a.RekorIndex, a.DockID,
 	)
 	return err
