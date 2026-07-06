@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Fixed
+- **Capability matching now understands harness-captured glob patterns (`Bash(git:*)`).** `tool_matches` only expanded a *trailing* `*`, but the patterns `attest card --from-harness` captures from a Claude Code `settings.json` carry the wildcard *inside* the permission scope, `Bash(git:*)`, `Read(*)`, so every such pattern silently degraded to an exact string match that could never fire, and a card captured from a real config reported **every** real action out-of-scope. The wildcard may now sit anywhere in the pattern (one `*`, prefix and suffix must both hold), so `Bash(git:*)` matches `Bash(git:status)` and still rejects `Bash(gh:pr)`; the falsifiable cross-check keeps flagging genuinely off-card actions (`payments.charge`). Trailing-glob (`family.*`), bare-`*`, and exact matching are unchanged. Shared `treeship_core::capability` fix, so the CLI and the WASM browser verifier keep returning the same verdict. Found by dogfooding the full TLS-for-agents flow end to end.
+
 ## 0.15.0 (2026-06-26)
 
 ### Added

@@ -12,11 +12,24 @@ use crate::trust::{TrustRootKind, TrustRootStore};
 
 /// `family.*` matches `family.write`; otherwise an exact match. A bare `*`
 /// matches anything.
+///
+/// The `*` may sit anywhere in the pattern, not only at the end: harness
+/// permission patterns captured by `attest card --from-harness` carry the
+/// glob *inside* a delimiter — `Bash(git:*)` — where a trailing-`*`-only
+/// matcher silently degrades to an exact match that can never fire, and a
+/// card captured from a real config then reports every real action
+/// out-of-scope. One wildcard is supported (the first, matching greedily);
+/// the text before it must prefix the action and the text after it must
+/// suffix the remainder, so `Bash(git:*)` matches `Bash(git:status)` but
+/// not `Bash(gh:pr)` or a `Bash(git:` with the closing paren missing.
 pub fn tool_matches(declared: &str, actual: &str) -> bool {
-    if let Some(prefix) = declared.strip_suffix('*') {
-        actual.starts_with(prefix)
-    } else {
-        declared == actual
+    match declared.split_once('*') {
+        Some((prefix, suffix)) => {
+            actual.len() >= prefix.len() + suffix.len()
+                && actual.starts_with(prefix)
+                && actual.ends_with(suffix)
+        }
+        None => declared == actual,
     }
 }
 
@@ -94,6 +107,26 @@ mod tests {
         assert!(tool_matches("file.*", "file.write"));
         assert!(!tool_matches("file.*", "db.query"));
         assert!(tool_matches("*", "anything.at.all"));
+    }
+
+    #[test]
+    fn harness_patterns_with_internal_glob_match() {
+        // The shape `attest card --from-harness` captures from a Claude Code
+        // settings.json permissions.allow list: the `*` sits inside the
+        // parenthesized scope, not at the end of the pattern.
+        assert!(tool_matches("Bash(git:*)", "Bash(git:status)"));
+        assert!(tool_matches("Bash(git:*)", "Bash(git:log --oneline)"));
+        assert!(tool_matches("Read(*)", "Read(/etc/hosts)"));
+        // prefix and suffix must both hold — no cross-family bleed, no
+        // matching a truncated action that drops the closing delimiter
+        assert!(!tool_matches("Bash(git:*)", "Bash(gh:pr)"));
+        assert!(!tool_matches("Bash(git:*)", "Bash(git:"));
+        assert!(!tool_matches("Bash(git:*)", "payments.charge"));
+        // the wildcard may match empty: the family root itself is in scope
+        assert!(tool_matches("Bash(git:*)", "Bash(git:)"));
+        // trailing-glob and exact behavior unchanged
+        assert!(tool_matches("file.*", "file.*"));
+        assert!(!tool_matches("Bash(git:status)", "Bash(git:log)"));
     }
 
     fn root(key_id: &str, kind: TrustRootKind) -> TrustRoot {
