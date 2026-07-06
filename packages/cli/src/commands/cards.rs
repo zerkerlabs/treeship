@@ -9,8 +9,9 @@
 //! receipts; the card is the workspace inventory.
 //!
 //! Cards live at `.treeship/agents/<id>.json`. The id is deterministic from
-//! (surface, host, workspace) so re-running `treeship setup` doesn't
-//! duplicate entries.
+//! (name, surface, host, workspace) so re-running `treeship setup` doesn't
+//! duplicate entries — and so two differently-named agents in one workspace
+//! never collapse into one card (see `derive_agent_id`).
 //!
 //! v0.9.8 scope:
 //!   - persistent JSON store
@@ -118,8 +119,8 @@ impl CardProvenance {
 /// understands what each field means.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentCard {
-    /// Stable identifier derived from (surface, host, workspace). Filename
-    /// stem in `.treeship/agents/`. Persistent across re-runs.
+    /// Stable identifier derived from (name, surface, host, workspace).
+    /// Filename stem in `.treeship/agents/`. Persistent across re-runs.
     pub agent_id: String,
     /// Free-form display name. User-editable; defaults to surface display.
     pub agent_name: String,
@@ -193,7 +194,7 @@ impl AgentCard {
         now: &str,
     ) -> Self {
         Self {
-            agent_id:               derive_agent_id(agent.surface, host, workspace),
+            agent_id:               derive_agent_id(&agent.display_name, agent.surface, host, workspace),
             agent_name:             agent.display_name.clone(),
             surface:                agent.surface,
             connection_modes:       agent.connection_modes.clone(),
@@ -230,9 +231,18 @@ pub fn local_hostname() -> String {
 /// hex chars prefixed with `agent_`. Same surface on the same host+workspace
 /// always collapses to the same ID, which is what makes idempotent
 /// re-discovery possible.
-pub fn derive_agent_id(surface: AgentSurface, host: &str, workspace: &Path) -> String {
+pub fn derive_agent_id(name: &str, surface: AgentSurface, host: &str, workspace: &Path) -> String {
     let workspace_canon = workspace.to_string_lossy();
     let mut hasher = Sha256::new();
+    // The agent NAME is part of its identity. Without it, two agents
+    // registered from the same surface+host+workspace collapsed into one
+    // card id, and the last `register` silently overwrote the other's
+    // actor -> key mapping — the lookup per-actor signing resolves through
+    // (`registered_key_for_actor`) — downgrading the clobbered agent's
+    // future receipts to self-asserted and orphaning its certificate.
+    // Found live: fable-scout's registration destroyed fable-code's.
+    hasher.update(name.as_bytes());
+    hasher.update(b"|");
     hasher.update(surface.kind().as_bytes());
     hasher.update(b"|");
     hasher.update(host.as_bytes());
@@ -318,10 +328,15 @@ pub fn list(agents_dir: &Path) -> Result<Vec<AgentCard>, CardError> {
 /// proven vs asserted.
 pub fn registered_key_for_actor(agents_dir: &Path, actor: &str) -> Option<String> {
     let name = actor.strip_prefix("agent://")?;
+    // Newest match wins, deterministically. Multiple cards can share a name
+    // (a stale card from the pre-name id derivation lingering next to a
+    // re-registered one); fs iteration order must not decide which key an
+    // actor signs with.
     list(agents_dir)
         .ok()?
         .into_iter()
-        .find(|c| c.agent_name == name && c.key_id.is_some())
+        .filter(|c| c.agent_name == name && c.key_id.is_some())
+        .max_by(|a, b| a.updated_at.cmp(&b.updated_at))
         .and_then(|c| c.key_id)
 }
 
@@ -479,8 +494,8 @@ mod tests {
     #[test]
     fn agent_id_is_stable() {
         let workspace = Path::new("/home/u/projects/proj-a");
-        let id1 = derive_agent_id(AgentSurface::ClaudeCode, "machine-1", workspace);
-        let id2 = derive_agent_id(AgentSurface::ClaudeCode, "machine-1", workspace);
+        let id1 = derive_agent_id("bot", AgentSurface::ClaudeCode, "machine-1", workspace);
+        let id2 = derive_agent_id("bot", AgentSurface::ClaudeCode, "machine-1", workspace);
         assert_eq!(id1, id2);
         assert!(id1.starts_with("agent_"));
     }
@@ -488,13 +503,15 @@ mod tests {
     #[test]
     fn agent_id_changes_with_inputs() {
         let ws = Path::new("/home/u/projects/proj-a");
-        let base = derive_agent_id(AgentSurface::ClaudeCode, "host", ws);
+        let base = derive_agent_id("bot", AgentSurface::ClaudeCode, "host", ws);
         // surface change
-        assert_ne!(base, derive_agent_id(AgentSurface::CursorAgent, "host", ws));
+        assert_ne!(base, derive_agent_id("bot", AgentSurface::CursorAgent, "host", ws));
         // host change
-        assert_ne!(base, derive_agent_id(AgentSurface::ClaudeCode, "other", ws));
+        assert_ne!(base, derive_agent_id("bot", AgentSurface::ClaudeCode, "other", ws));
         // workspace change
-        assert_ne!(base, derive_agent_id(AgentSurface::ClaudeCode, "host", Path::new("/elsewhere")));
+        assert_ne!(base, derive_agent_id("bot", AgentSurface::ClaudeCode, "host", Path::new("/elsewhere")));
+        // name change — two agents in one workspace must NOT collapse
+        assert_ne!(base, derive_agent_id("other-bot", AgentSurface::ClaudeCode, "host", ws));
     }
 
     #[test]
