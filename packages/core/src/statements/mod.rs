@@ -41,6 +41,7 @@ pub mod session_participant;
 pub use invitation::{
     GrantedCapabilities, InvitationError, InvitationStatement, InviteeRestriction,
     TYPE_INVITATION, DEFAULT_INVITATION_LIFETIME_SECS, MAX_INVITATION_LIFETIME_SECS,
+    parse_rfc3339_to_unix,
 };
 pub use session_participant::{
     ParticipantVerifyError, SessionParticipantStatement, TYPE_SESSION_PARTICIPANT,
