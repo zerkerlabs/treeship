@@ -389,7 +389,29 @@ fn resolve_remote(hub: &str, agent: &str, trust: &TrustRootStore, printer: &Prin
                 if cp_ok && incl_ok {
                     format!("anchored & verified (checkpoint #{})", pf.checkpoint.index)
                 } else if !cp_ok {
-                    "anchored, but checkpoint signature INVALID".to_string()
+                    // Distinguish "you have not pinned this signer" from a
+                    // genuinely failing signature. Checkpoint::verify fails
+                    // closed on both, but they demand opposite reactions:
+                    // pinning a root vs distrusting the hub. Labeling an
+                    // unpinned signer INVALID is a mislabel this codebase
+                    // cannot afford.
+                    let signer_pinned = {
+                        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+                        URL_SAFE_NO_PAD
+                            .decode(&pf.checkpoint.public_key)
+                            .ok()
+                            .and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok())
+                            .map(|arr| trust.contains_bytes(&arr, TrustRootKind::HubCheckpoint))
+                            .unwrap_or(false)
+                    };
+                    if signer_pinned {
+                        "anchored, but checkpoint signature INVALID".to_string()
+                    } else {
+                        format!(
+                            "anchored, but checkpoint signer not in your trust roots\n                   → pin it: treeship trust add <name> ed25519:{} --kind hub_checkpoint --yes",
+                            pf.checkpoint.public_key
+                        )
+                    }
                 } else {
                     "anchored, but inclusion proof INVALID".to_string()
                 }

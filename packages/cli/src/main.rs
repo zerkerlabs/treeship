@@ -1751,6 +1751,17 @@ enum KeysCommand {
     /// List all signing keys
     List,
 
+    /// Export a key's PUBLIC half in pinnable form, with the exact
+    /// `treeship trust add` command a counterparty runs to pin it.
+    /// The private key never leaves the store.
+    ///
+    /// Examples:
+    ///   treeship keys export                          # ship default key
+    ///   treeship keys export --agent agent://deployer # an agent's key
+    ///   treeship keys export --key key_a1b2c3d4
+    ///   treeship keys export --format json
+    Export(KeysExportArgs),
+
     /// Rotate a signing key, minting a successor and stamping the
     /// predecessor with a grace-period valid_until.
     ///
@@ -1760,6 +1771,18 @@ enum KeysCommand {
     ///   treeship keys rotate --key key_a1b2c3d4
     ///   treeship keys rotate --no-default
     Rotate(KeysRotateArgs),
+}
+
+#[derive(clap::Args)]
+struct KeysExportArgs {
+    /// Specific key id to export. Defaults to the current default key.
+    #[arg(long)]
+    key: Option<String>,
+
+    /// Export the registered per-agent key for this actor URI
+    /// (e.g. agent://deployer). Mutually exclusive with --key.
+    #[arg(long)]
+    agent: Option<String>,
 }
 
 #[derive(clap::Args)]
@@ -2565,6 +2588,12 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
 
         Command::Keys(sub) => match sub {
             KeysCommand::List => commands::keys::list(cli.config.as_deref(), printer),
+            KeysCommand::Export(a) => commands::keys::export(
+                a.key.as_deref(),
+                a.agent.as_deref(),
+                cli.config.as_deref(),
+                printer,
+            ),
             KeysCommand::Rotate(a) => commands::keys::rotate(
                 a.key.as_deref(),
                 a.grace_hours,
