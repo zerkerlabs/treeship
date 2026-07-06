@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Fixed
+- **Keystore survives macOS hostname renames (self-healing machine key).** The machine key wrapping on-disk private keys was derived from `hostname` + username, and macOS silently renames `kern.hostname` (network name collisions, DHCP), after which the keystore failed with a misleading `MAC verification failed — wrong machine` and the documented recovery was to abandon it. The keystore's own TODO predicted exactly this; it is now implemented. The primary machine key is derived from a **hardware identifier** (`/etc/machine-id` on Linux, `IOPlatformSerialNumber` on macOS), which survives hostname and network changes; machines with neither identifier keep the v1 derivation with its co-located seed file, preserving project-local keystore isolation. Decryption tries an ordered fallback chain covering every wrapping an existing keystore may carry — the v1 key under the current hostname, the raw-path key (pre-canonicalization symlinks), and on macOS the v1 key under `scutil LocalHostName` variants, which typically retain the name the store was written under after `kern.hostname` drifts away. **Any entry that decrypts via a fallback is transparently rewrapped under the primary** (same locked, idempotent migration path as the v1-format upgrade), so the fix both recovers already-drifted keystores with no user action and immunizes them against the next rename. Verified against a real keystore bricked by three successive hostname renames: it self-healed on first use. Note: entries rewrapped under the hardware key are not decryptable by older Treeship binaries; keep one CLI version per machine.
+
 ## 0.15.0 (2026-06-26)
 
 ### Added

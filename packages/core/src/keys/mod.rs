@@ -149,12 +149,17 @@ struct Manifest {
 pub struct Store {
     dir:         PathBuf,
     machine_key: [u8; 32],
-    /// Legacy machine key derived from the raw (non-canonicalized) keystore
-    /// path. `Some` only when the canonical path differs from the raw one
-    /// (i.e. the path contains a symlink). Used as a decrypt-only fallback so
-    /// keystores written before path canonicalization still open; never used
-    /// to encrypt. See `open` and `derive_machine_key`.
-    legacy_machine_key: Option<[u8; 32]>,
+    /// Decrypt-only fallback machine keys, tried in order when the primary
+    /// fails. These cover every wrapping an existing keystore may carry:
+    /// the v1 hostname+username key under the current hostname, the same
+    /// under the raw (non-canonicalized) path when the path contains a
+    /// symlink, and — on macOS — the v1 key under `scutil LocalHostName`
+    /// variants, because macOS renames `kern.hostname` out from under a
+    /// running machine (network collisions, DHCP) while `LocalHostName`
+    /// keeps the name the keystore was written under. Never used to
+    /// encrypt: any entry that decrypts via a fallback is transparently
+    /// rewrapped under the primary. See `open` and `signer`.
+    fallback_machine_keys: Vec<[u8; 32]>,
     /// In-memory cache — avoids disk reads on hot paths.
     cache:       Arc<RwLock<HashMap<KeyId, EncryptedEntry>>>,
 }
@@ -180,17 +185,64 @@ impl Store {
         // Encryption always uses the canonical key, so entries migrate to it
         // as they are rewritten.
         let canonical = fs::canonicalize(&dir).unwrap_or_else(|_| dir.clone());
-        let machine_key = derive_machine_key(&canonical)?;
-        let legacy_machine_key = if canonical != dir {
-            Some(derive_machine_key(&dir)?)
-        } else {
-            None
+
+        // Primary (encrypt) key: hardware-stable when the machine offers a
+        // stable identifier (/etc/machine-id, IOPlatformSerialNumber), so a
+        // hostname rename can never invalidate the keystore again. Machines
+        // with neither identifier keep the v1 derivation, whose seed-file
+        // fallback is CO-LOCATED with the keystore -- switching those to the
+        // stable derivation would move their seed to the global
+        // ~/.treeship/.internal/ and silently break project-local keystore
+        // isolation (the v0.9.6 property).
+        let machine_key = match stable_hardware_key(&canonical) {
+            Some(k) => k,
+            None => derive_machine_key(&canonical)?,
         };
+
+        // Decrypt-only fallbacks, most-likely first. Existing keystores are
+        // wrapped under one of these; the first successful decrypt rewraps
+        // the entry under the primary (see `signer`), so the fallbacks are
+        // a migration path, not a permanent second key.
+        let mut fallback_machine_keys: Vec<[u8; 32]> = Vec::new();
+        // v1 under the current hostname (every pre-migration keystore).
+        if let Ok(k) = derive_machine_key(&canonical) {
+            fallback_machine_keys.push(k);
+        }
+        // v1 under the raw path, for keystores written before path
+        // canonicalization through a symlink.
+        if canonical != dir {
+            if let Ok(k) = derive_machine_key(&dir) {
+                fallback_machine_keys.push(k);
+            }
+        }
+        // macOS: v1 under the mDNS LocalHostName variants. When macOS
+        // renames kern.hostname (the usual keystore-bricking event),
+        // LocalHostName typically still holds the name the store was
+        // written under, so these recover a drifted keystore with no
+        // user action.
+        if let Ok(user) = std::env::var("USER") {
+            for h in local_hostname_variants() {
+                fallback_machine_keys
+                    .push(derive_machine_key_v1_from_parts(&h, &user, &canonical));
+            }
+        }
+        // Order-preserving dedupe (Vec::dedup only folds adjacent repeats),
+        // and drop any candidate equal to the primary -- retrying the same
+        // key can only re-fail.
+        let mut seen: Vec<[u8; 32]> = vec![machine_key];
+        fallback_machine_keys.retain(|k| {
+            if seen.contains(k) {
+                false
+            } else {
+                seen.push(*k);
+                true
+            }
+        });
 
         Ok(Self {
             dir,
             machine_key,
-            legacy_machine_key,
+            fallback_machine_keys,
             cache: Arc::new(RwLock::new(HashMap::new())),
         })
     }
@@ -484,6 +536,7 @@ impl Store {
         // legacy SHA-256-CTR+HMAC path (`decrypt_legacy_v1`) and are
         // transparently re-encrypted in the new format below.
         let was_legacy = is_legacy_v1(&entry.enc_priv_key);
+        let mut used_fallback = false;
         let secret = match decrypt_from_disk(
             &self.machine_key,
             &entry.id,
@@ -493,19 +546,30 @@ impl Store {
         ) {
             Ok(secret) => secret,
             Err(primary_err) => {
-                // Fall back to the legacy raw-path key for keystores written
-                // before path canonicalization. Only when one exists (the path
-                // contained a symlink); otherwise surface the primary error,
-                // enriched, so the diagnosis is unchanged for normal failures.
-                match &self.legacy_machine_key {
-                    Some(legacy) => decrypt_from_disk(
-                        legacy,
+                // The entry may be wrapped under an older machine-key
+                // derivation: the v1 hostname key (any pre-stable keystore),
+                // the raw-path key (pre-canonicalization through a symlink),
+                // or a v1 key under a hostname macOS has since renamed away
+                // (the LocalHostName candidates). Try each in order; the
+                // first hit marks the entry for rewrapping under the
+                // primary. All misses surface the PRIMARY error, enriched,
+                // so the diagnosis is unchanged for normal failures.
+                let mut recovered = None;
+                for candidate in &self.fallback_machine_keys {
+                    if let Ok(secret) = decrypt_from_disk(
+                        candidate,
                         &entry.id,
                         &entry.public_key,
                         &entry.enc_priv_key,
                         &entry.nonce,
-                    )
-                    .map_err(|_| self.enrich_crypto_error(primary_err))?,
+                    ) {
+                        recovered = Some(secret);
+                        used_fallback = true;
+                        break;
+                    }
+                }
+                match recovered {
+                    Some(secret) => secret,
                     None => return Err(self.enrich_crypto_error(primary_err)),
                 }
             }
@@ -531,15 +595,15 @@ impl Store {
         // must NOT block signing for the current call, since the
         // in-memory secret is already valid. The next decrypt on a
         // fresh process will retry.
-        if was_legacy {
-            if let Err(e) = self.migrate_entry_to_v2(&entry, &secret_arr) {
+        if was_legacy || used_fallback {
+            if let Err(e) = self.migrate_entry_to_primary(&entry, &secret_arr) {
                 // Surface the failure as a tracing-style stderr note
                 // rather than an error -- the user's signing flow is
                 // unaffected, and we'd rather them know about it than
                 // wedge the call.
                 eprintln!(
-                    "treeship: keystore entry {} could not be migrated \
-                     from legacy v1 format to v2 ({}); will retry next \
+                    "treeship: keystore entry {} could not be rewrapped \
+                     under the current machine key ({}); will retry next \
                      load",
                     entry.id, e
                 );
@@ -569,7 +633,7 @@ impl Store {
     /// Same blocking-flock pattern as `packages/core/src/session/event_log.rs`
     /// (Lane F): exclusive lock, then a same-thread re-read to settle
     /// "did a peer already migrate while I was waiting?" cleanly.
-    fn migrate_entry_to_v2(
+    fn migrate_entry_to_primary(
         &self,
         old_entry: &EncryptedEntry,
         secret: &[u8; 32],
@@ -601,10 +665,24 @@ impl Store {
         // v2 ciphertext with our own (semantically equivalent, but
         // unnecessary I/O and an unnecessary cache update).
         if let Ok(current) = self.read_entry(&old_entry.id) {
-            if !is_legacy_v1(&current.enc_priv_key) {
+            // "Already migrated" now means: v2 format AND decryptable under
+            // the PRIMARY machine key. The format check alone is not enough
+            // since this path also rewraps v2 entries that a fallback
+            // machine key decrypted (hostname drift, raw-path legacy); the
+            // primary-decrypt probe is what proves a peer finished the job.
+            let already_primary = !is_legacy_v1(&current.enc_priv_key)
+                && decrypt_from_disk(
+                    &self.machine_key,
+                    &current.id,
+                    &current.public_key,
+                    &current.enc_priv_key,
+                    &current.nonce,
+                )
+                .is_ok();
+            if already_primary {
                 // Peer already migrated. Refresh the cache so subsequent
-                // loads in this process see the v2 entry rather than
-                // the stale legacy copy our caller passed in.
+                // loads in this process see the rewrapped entry rather
+                // than the stale copy our caller passed in.
                 if let Ok(mut cache) = self.cache.write() {
                     cache.insert(current.id.clone(), current);
                 }
@@ -683,9 +761,11 @@ impl Store {
              machine-key derivation has since changed. The ciphertext is \
              intact but cannot be decrypted under the current derivation."
         } else {
-            "the keystore cannot be decrypted. Usual causes: the key file \
-             was copied from a different machine, the hostname or username \
-             changed, or the file was corrupted."
+            "the keystore cannot be decrypted under any known machine-key \
+             derivation (hardware id, current hostname, mDNS LocalHostName, \
+             raw path). Usual causes: the key file was copied from a \
+             different machine, the username changed, or the file was \
+             corrupted."
         };
 
         // Resolve the user's ~/.treeship path for the recovery command, so
@@ -1231,14 +1311,9 @@ pub fn derive_machine_key(store_dir: &Path) -> Result<[u8; 32], KeyError> {
             .unwrap_or_default();
         let username = std::env::var("USER").unwrap_or_default();
         if !hostname.is_empty() && !username.is_empty() {
-            let mut h = Sha256::new();
-            h.update(b"treeship-machine-key:");
-            h.update(hostname.as_bytes());
-            h.update(b":");
-            h.update(username.as_bytes());
-            h.update(b":");
-            h.update(store_dir.to_string_lossy().as_bytes());
-            return Ok(h.finalize().into());
+            return Ok(derive_machine_key_v1_from_parts(
+                &hostname, &username, store_dir,
+            ));
         }
     }
 
@@ -1311,11 +1386,62 @@ pub fn derive_machine_key(store_dir: &Path) -> Result<[u8; 32], KeyError> {
     Ok(h.finalize().into())
 }
 
-/// Stable machine key derivation for NEW keys (VI P-256, etc).
-/// Uses hardware identifiers that survive hostname/user changes.
-/// For legacy ship Ed25519 keys, use `derive_machine_key()` instead.
-pub fn derive_machine_key_stable(store_dir: &Path) -> Result<[u8; 32], KeyError> {
-    // 1. Linux: /etc/machine-id
+/// The v1 hostname+username machine-key derivation, as a pure function of
+/// its inputs. This is the exact construction the macOS branch of
+/// [`derive_machine_key`] has always used; extracting it lets `Store::open`
+/// derive decrypt-only fallback candidates for hostnames the machine no
+/// longer reports (macOS renames `kern.hostname` on network collisions,
+/// which used to brick the keystore) without shelling `hostname` twice.
+pub fn derive_machine_key_v1_from_parts(
+    hostname: &str,
+    username: &str,
+    store_dir: &Path,
+) -> [u8; 32] {
+    let mut h = Sha256::new();
+    h.update(b"treeship-machine-key:");
+    h.update(hostname.as_bytes());
+    h.update(b":");
+    h.update(username.as_bytes());
+    h.update(b":");
+    h.update(store_dir.to_string_lossy().as_bytes());
+    h.finalize().into()
+}
+
+/// Hostname candidates a drifted macOS keystore may be wrapped under.
+///
+/// `scutil --get LocalHostName` holds the user-visible mDNS name, which
+/// usually retains the value `hostname` reported when the keystore was
+/// written even after macOS renames `kern.hostname` (DHCP, name-collision
+/// auto-renames). `hostname` historically reported it with and without the
+/// `.local` suffix depending on network state, so both variants are
+/// candidates. Non-macOS platforms have no such drift (machine-id is
+/// stable) and return no candidates.
+#[cfg(target_os = "macos")]
+fn local_hostname_variants() -> Vec<String> {
+    let lh = std::process::Command::new("scutil")
+        .args(["--get", "LocalHostName"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    if lh.is_empty() {
+        return Vec::new();
+    }
+    vec![format!("{lh}.local"), lh]
+}
+
+#[cfg(not(target_os = "macos"))]
+fn local_hostname_variants() -> Vec<String> {
+    Vec::new()
+}
+
+/// The hardware-identifier half of [`derive_machine_key_stable`]: machine-id
+/// (Linux) or IOPlatformSerialNumber (macOS), `None` when the machine offers
+/// neither. Split out so `Store::open` can pick a hardware-stable PRIMARY
+/// key without inheriting the stable derivation's seed-file fallback, whose
+/// seed lives under the global `~/.treeship/.internal/` and would break
+/// project-local keystore isolation (the v1 seed is co-located with the
+/// keystore on purpose).
+fn stable_hardware_key(store_dir: &Path) -> Option<[u8; 32]> {
     if let Ok(id) = fs::read_to_string("/etc/machine-id") {
         let trimmed = id.trim();
         if !trimmed.is_empty() {
@@ -1324,12 +1450,10 @@ pub fn derive_machine_key_stable(store_dir: &Path) -> Result<[u8; 32], KeyError>
             h.update(trimmed.as_bytes());
             h.update(b":");
             h.update(store_dir.to_string_lossy().as_bytes());
-            return Ok(h.finalize().into());
+            return Some(h.finalize().into());
         }
     }
 
-    // 2. macOS: IOPlatformSerialNumber (hardware serial, stable across
-    //    hostname changes, user renames, non-interactive shells)
     #[cfg(target_os = "macos")]
     {
         if let Ok(output) = std::process::Command::new("ioreg")
@@ -1346,12 +1470,27 @@ pub fn derive_machine_key_stable(store_dir: &Path) -> Result<[u8; 32], KeyError>
                             h.update(serial.as_bytes());
                             h.update(b":");
                             h.update(store_dir.to_string_lossy().as_bytes());
-                            return Ok(h.finalize().into());
+                            return Some(h.finalize().into());
                         }
                     }
                 }
             }
         }
+    }
+
+    None
+}
+
+/// Stable machine key derivation for NEW keys (VI P-256, etc).
+/// Uses hardware identifiers that survive hostname/user changes.
+/// For legacy ship Ed25519 keys, use `derive_machine_key()` instead.
+pub fn derive_machine_key_stable(store_dir: &Path) -> Result<[u8; 32], KeyError> {
+    // 1./2. Hardware identifiers: /etc/machine-id (Linux) or
+    //    IOPlatformSerialNumber (macOS) -- stable across hostname changes,
+    //    user renames, non-interactive shells. Shared with `Store::open`'s
+    //    primary-key selection via `stable_hardware_key`.
+    if let Some(k) = stable_hardware_key(store_dir) {
+        return Ok(k);
     }
 
     // 3. Fallback: persistent random seed in ~/.treeship/.internal/
@@ -1820,6 +1959,142 @@ mod tests {
 
         fs::remove_file(&link).ok();
         cleanup(real);
+    }
+
+    /// A keystore wrapped under the v1 hostname+username machine key (every
+    /// keystore written before the stable-primary change) must decrypt via
+    /// the fallback chain AND be transparently rewrapped under the primary,
+    /// so a later hostname rename can no longer brick it. This is the
+    /// migration path for the recurring real-world failure where macOS
+    /// renames `kern.hostname` (network collision, DHCP) and the keystore
+    /// dies with "MAC verification failed -- wrong machine".
+    #[test]
+    fn v1_wrapped_keystore_decrypts_and_rewraps_under_primary() {
+        let dir = temp_dir_path();
+        fs::create_dir_all(&dir).unwrap();
+        let canonical = fs::canonicalize(&dir).unwrap();
+
+        // Only meaningful where a hardware-stable primary exists; on
+        // machines without machine-id/serial the primary IS the v1 key
+        // and there is nothing to migrate.
+        let Some(primary) = stable_hardware_key(&canonical) else {
+            cleanup(dir);
+            return;
+        };
+        let v1_key = derive_machine_key(&canonical).unwrap();
+        assert_ne!(primary, v1_key, "stable and v1 derivations must differ");
+
+        // Simulate the pre-fix keystore: entry wrapped under the v1 key.
+        let key_id = new_key_id();
+        let signer = Ed25519Signer::generate(&key_id).unwrap();
+        let enc = encrypt_for_disk_v2(
+            &v1_key,
+            key_id.as_str(),
+            &signer.public_key_bytes(),
+            signer.secret_bytes().as_slice(),
+        )
+        .unwrap();
+        let entry = EncryptedEntry {
+            id:               key_id.clone(),
+            algorithm:        "ed25519".into(),
+            created_at:       crate::statements::unix_to_rfc3339(unix_now()),
+            public_key:       signer.public_key_bytes(),
+            enc_priv_key:     enc,
+            nonce:            Vec::new(),
+            valid_until:      None,
+            successor_key_id: None,
+        };
+
+        let store = Store::open(&dir).unwrap();
+        store.write_entry(&entry).unwrap();
+        let got = store
+            .signer(key_id.as_str())
+            .expect("v1-wrapped entry must decrypt via the fallback chain");
+        assert_eq!(got.public_key_bytes(), signer.public_key_bytes());
+
+        // The successful fallback decrypt must have rewrapped the on-disk
+        // entry under the PRIMARY key: after migration the entry decrypts
+        // with the primary directly and no longer with the old v1 key.
+        let migrated = store.read_entry(key_id.as_str()).unwrap();
+        assert!(
+            decrypt_from_disk(
+                &primary,
+                &migrated.id,
+                &migrated.public_key,
+                &migrated.enc_priv_key,
+                &migrated.nonce,
+            )
+            .is_ok(),
+            "entry must be rewrapped under the primary machine key"
+        );
+        assert!(
+            decrypt_from_disk(
+                &v1_key,
+                &migrated.id,
+                &migrated.public_key,
+                &migrated.enc_priv_key,
+                &migrated.nonce,
+            )
+            .is_err(),
+            "rewrapped entry must no longer decrypt under the old v1 key"
+        );
+
+        cleanup(dir);
+    }
+
+    /// A keystore wrapped under a v1 key derived from the mDNS
+    /// LocalHostName (the hostname the machine reported before macOS
+    /// renamed `kern.hostname` away from it) must decrypt via the
+    /// LocalHostName fallback candidates. This is the exact drift shape
+    /// that repeatedly bricked real keystores.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn local_hostname_variant_recovers_drifted_keystore() {
+        let variants = local_hostname_variants();
+        let Some(old_hostname) = variants.first() else {
+            // No LocalHostName on this machine; nothing to test.
+            return;
+        };
+        let Ok(user) = std::env::var("USER") else {
+            return;
+        };
+
+        let dir = temp_dir_path();
+        fs::create_dir_all(&dir).unwrap();
+        let canonical = fs::canonicalize(&dir).unwrap();
+
+        let drifted_key =
+            derive_machine_key_v1_from_parts(old_hostname, &user, &canonical);
+
+        let key_id = new_key_id();
+        let signer = Ed25519Signer::generate(&key_id).unwrap();
+        let enc = encrypt_for_disk_v2(
+            &drifted_key,
+            key_id.as_str(),
+            &signer.public_key_bytes(),
+            signer.secret_bytes().as_slice(),
+        )
+        .unwrap();
+        let entry = EncryptedEntry {
+            id:               key_id.clone(),
+            algorithm:        "ed25519".into(),
+            created_at:       crate::statements::unix_to_rfc3339(unix_now()),
+            public_key:       signer.public_key_bytes(),
+            enc_priv_key:     enc,
+            nonce:            Vec::new(),
+            valid_until:      None,
+            successor_key_id: None,
+        };
+
+        let store = Store::open(&dir).unwrap();
+        store.write_entry(&entry).unwrap();
+        let got = store.signer(key_id.as_str()).expect(
+            "keystore wrapped under the LocalHostName-derived v1 key must \
+             decrypt via the drift-recovery candidates",
+        );
+        assert_eq!(got.public_key_bytes(), signer.public_key_bytes());
+
+        cleanup(dir);
     }
 
     #[test]
