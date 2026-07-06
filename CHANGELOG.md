@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+- **`treeship keys export` — hand a counterparty your public key.** Prints a key's PUBLIC half in the pinnable `ed25519:<base64url>` form together with the exact `treeship trust add` command(s) the counterparty runs: `--kind agent_cert` for a per-agent key (`--agent agent://deployer`), `--kind ship` + `--kind hub_checkpoint` for the ship key — a remote verifier needs both to get `verified` on resolve and `anchored & verified` on the transparency check. This is the out-of-band half of the trust model: every remote verification is checked against the verifier's own trust roots, and until now there was no sanctioned command that produced the key material those roots need. The private key never leaves the store. `--format json` for scripts.
+
+### Fixed
+- **`resolve` no longer labels an unpinned checkpoint signer "signature INVALID".** Checkpoint verification fails closed both when the signature is genuinely bad and when the signer simply is not pinned under `hub_checkpoint` in *your* trust roots — but those demand opposite reactions (distrust the hub vs pin a root), and reporting the second as "INVALID" is a mislabel. `resolve` now distinguishes them: an unpinned signer reports `checkpoint signer not in your trust roots` with the ready-to-run `trust add … --kind hub_checkpoint` command (the pubkey comes from the served checkpoint; pinning remains your explicit decision, and verification still happens on your machine), while a pinned signer whose signature fails still reports `INVALID`.
+
 ## 0.15.0 (2026-06-26)
 
 ### Added
