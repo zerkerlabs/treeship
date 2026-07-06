@@ -332,7 +332,7 @@ pub fn register(
         .to_path_buf();
     let host = cards::local_hostname();
     let (surface, connection_modes, coverage) = surface_from_name(name);
-    let agent_id = cards::derive_agent_id(surface, &host, &workspace);
+    let agent_id = cards::derive_agent_id(name, surface, &host, &workspace);
 
     // Pin the certificate by its on-disk content digest. If the .agent
     // package is later edited (rotation, re-sign, etc), the digest will
