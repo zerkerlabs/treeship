@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- **`session.v1` — every closed session becomes a typed, signed work-history record (work-history slice 1).** `treeship session close` now mints a `session.v1` receipt into the agent's chain alongside the sealed package: headline, outcome, duration, `tools_exercised` (computed from captured tool usage, never hand-written), counts, and a `receipt_digest` binding the record to the exact sealed evidence it summarizes. Each record carries an **attestation class** from the work-history ladder — `self` (the agent's own receipts), `runtime` (a harness hook or bridge the agent cannot forge emitted the log), `countersigned` (a second party signed evidence embedded in the package, e.g. consumed human approvals) — computed from capture-path evidence actually present, labeled, never laundered (`anchored` is a later, derivable state). The record is validated against the registered `session.v1` predicate schema before signing (fail-closed), signed with the actor's own key when it has one (key-bound history for registered agents), and chained to the session-close artifact. Best-effort: a record failure warns and never wedges the close — the sealed package remains the source of truth. This is the atom of the [work-history spec](docs/specs/work-history.md): identity says who the agent is, capability says what it claims, work history says what it has demonstrably done.
+
 ## 0.15.0 (2026-06-26)
 
 ### Added

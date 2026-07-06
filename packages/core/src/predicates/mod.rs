@@ -51,6 +51,7 @@ const REGISTRY: &[(&str, &str)] = &[
         "agent_card_revocation.v1",
         include_str!("schemas/agent_card_revocation.v1.json"),
     ),
+    ("session.v1", include_str!("schemas/session.v1.json")),
 ];
 
 /// Returns the raw JSON Schema text for a registered predicate suffix, if any.
@@ -228,6 +229,66 @@ mod tests {
         // No schema -> attest proceeds as today, even with no payload.
         assert!(validate("custom.kind.v1", None).is_ok());
         assert!(validate("custom.kind.v1", Some(&json!({"anything": 1}))).is_ok());
+    }
+
+    #[test]
+    fn session_record_valid_passes() {
+        let payload = json!({
+            "session_id": "ssn_abc123",
+            "actor": "agent://hermes",
+            "headline": "Fixed keystore hostname-drift bug",
+            "outcome": "completed",
+            "started_at": "2026-07-06T14:00:00Z",
+            "closed_at": "2026-07-06T15:30:00Z",
+            "duration_ms": 5400000,
+            "harness": "claude-code",
+            "attestation_class": "runtime",
+            "action_count": 212,
+            "approval_count": 2,
+            "handoff_count": 0,
+            "event_count": 340,
+            "tools_exercised": ["Bash(git:*)", "Edit(*)"],
+            "receipt_digest": "sha256:deadbeef",
+            "receipt_merkle_root": "sha256:cafebabe",
+            "report_url": null
+        });
+        assert!(validate("session.v1", Some(&payload)).is_ok());
+    }
+
+    #[test]
+    fn session_record_missing_required_fails_closed() {
+        let payload = json!({
+            "session_id": "ssn_abc123",
+            "actor": "agent://hermes",
+            "outcome": "completed",
+            "started_at": "2026-07-06T14:00:00Z",
+            "closed_at": "2026-07-06T15:30:00Z",
+            "receipt_digest": "sha256:deadbeef"
+        }); // attestation_class missing
+        let err = validate("session.v1", Some(&payload)).unwrap_err();
+        assert_eq!(
+            err,
+            PredicateError::MissingField {
+                suffix: "session.v1".into(),
+                field: "attestation_class".into()
+            }
+        );
+    }
+
+    #[test]
+    fn session_record_wrong_type_fails_closed() {
+        let payload = json!({
+            "session_id": "ssn_abc123",
+            "actor": "agent://hermes",
+            "outcome": "completed",
+            "started_at": "2026-07-06T14:00:00Z",
+            "closed_at": "2026-07-06T15:30:00Z",
+            "attestation_class": "runtime",
+            "receipt_digest": "sha256:deadbeef",
+            "tools_exercised": "Bash(git:*)"
+        }); // tools_exercised must be an array, not a string
+        let err = validate("session.v1", Some(&payload)).unwrap_err();
+        assert!(matches!(err, PredicateError::TypeMismatch { .. }));
     }
 
     #[test]
