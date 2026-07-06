@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://treeship.dev/schemas/agent_cert.v1.json",
+  "title": "agent_cert.v1",
+  "description": "The protocol-native Agent Certificate: the ship (issuer) binds an agent URI to its per-agent public key, as the payload of a Treeship receipt whose ENVELOPE signature by the ship key IS the certification. This is the intermediate link of the trust chain (card -> agent key -> ship root): a verifier who pins only the ship key can verify any of its agents' cards by walking through this artifact. Minted by `treeship agent register --own-key`; pushed by `treeship publish`; walked by `treeship resolve`. See docs/specs/registry-topology.md slice 1.",
+  "type": "object",
+  "required": [
+    "agent",
+    "subject_key_id",
+    "subject_public_key",
+    "issuer",
+    "issued_at",
+    "valid_until"
+  ],
+  "properties": {
+    "agent": {
+      "description": "Actor URI this certificate binds, e.g. agent://deployer.",
+      "type": "string"
+    },
+    "subject_key_id": {
+      "description": "Key id of the agent's own signing key (the key this cert certifies).",
+      "type": "string"
+    },
+    "subject_public_key": {
+      "description": "The agent key's public half, ed25519 base64url (no padding). A verifier uses THIS key to check the agent's card and receipts after verifying the cert envelope against a pinned Ship root.",
+      "type": "string"
+    },
+    "issuer": {
+      "description": "Issuer URI, e.g. ship://<ship_id>. The envelope signer must be this ship's key.",
+      "type": "string"
+    },
+    "issued_at": {
+      "description": "RFC 3339 issuance time.",
+      "type": "string"
+    },
+    "valid_until": {
+      "description": "RFC 3339 expiry. Verifiers fail closed on expired certs.",
+      "type": "string"
+    },
+    "model": {
+      "description": "Model the agent runs, when declared at registration.",
+      "type": ["string", "null"]
+    },
+    "description": {
+      "description": "Agent description, when declared at registration.",
+      "type": ["string", "null"]
+    }
+  }
+}

@@ -69,6 +69,7 @@ func (h *Handlers) Resolve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var cards []envelopeEntry
+	var certs []envelopeEntry               // agent_cert.v1 chain for this agent
 	revByCard := map[string]envelopeEntry{} // revoked card_id -> revocation entry
 	cardIDs := map[string]bool{}            // this agent's card ids
 	for _, a := range receipts {
@@ -108,6 +109,18 @@ func (h *Handlers) Resolve(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			revByCard[p.Card] = entry
+		case "agent_cert.v1":
+			// The certificate chain: ship-signed bindings of this agent's
+			// URI to its per-agent key. Served verbatim so a client that
+			// pins only the ship key can walk card -> cert -> ship root.
+			// The Hub does not verify them; the client decides.
+			var p struct {
+				Agent string `json:"agent"`
+			}
+			if json.Unmarshal(stmt.Payload, &p) != nil || p.Agent != agent {
+				continue
+			}
+			certs = append(certs, entry)
 		}
 	}
 
@@ -143,6 +156,7 @@ func (h *Handlers) Resolve(w http.ResponseWriter, r *http.Request) {
 		"agent":        agent,
 		"current_card": current,
 		"cards":        cards,
+		"certs":        certs,
 		"revocations":  revocations,
 		"transparency": transparency,
 		"note":         "raw signed envelopes; the client re-verifies and grades them offline. the Hub performs no verification or authorization here.",
