@@ -465,7 +465,7 @@ jobs:
           fi
           exit 1
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
       - name: Verify treeship-core on crates.io
         run: .github/scripts/wait-for-crates-version.sh treeship-core "${GITHUB_REF_NAME#v}"
