@@ -1789,6 +1789,11 @@ struct PresentCliArgs {
     /// Output path (default: <name>.presentation.json)
     #[arg(long, value_name = "PATH")]
     out: Option<String>,
+
+    /// Sign the verifier's nonce with the agent's own key (the handshake:
+    /// proves live key control, not just the record). Requires --own-key.
+    #[arg(long, value_name = "NONCE")]
+    challenge: Option<String>,
 }
 
 #[derive(clap::Args)]
@@ -1801,6 +1806,11 @@ struct VerifyPresentationCliArgs {
     /// the age without enforcing.
     #[arg(long, value_name = "DURATION")]
     max_staple_age: Option<String>,
+
+    /// The nonce YOU issued for this handshake. The presentation's challenge
+    /// response must answer exactly this nonce, signed by the card's key.
+    #[arg(long, value_name = "NONCE")]
+    challenge: Option<String>,
 }
 
 #[derive(clap::Args)]
@@ -2405,6 +2415,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
         Command::Present(a) => commands::present::present(
             &a.agent,
             a.out.as_deref(),
+            a.challenge.as_deref(),
             cli.config.as_deref(),
             printer,
         ),
@@ -2412,6 +2423,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
         Command::VerifyPresentation(a) => commands::present::verify_presentation(
             &a.file,
             a.max_staple_age.as_deref(),
+            a.challenge.as_deref(),
             printer,
         ),
 
