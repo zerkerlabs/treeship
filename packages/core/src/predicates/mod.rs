@@ -52,6 +52,7 @@ const REGISTRY: &[(&str, &str)] = &[
         include_str!("schemas/agent_card_revocation.v1.json"),
     ),
     ("session.v1", include_str!("schemas/session.v1.json")),
+    ("agent_cert.v1", include_str!("schemas/agent_cert.v1.json")),
 ];
 
 /// Returns the raw JSON Schema text for a registered predicate suffix, if any.
@@ -229,6 +230,40 @@ mod tests {
         // No schema -> attest proceeds as today, even with no payload.
         assert!(validate("custom.kind.v1", None).is_ok());
         assert!(validate("custom.kind.v1", Some(&json!({"anything": 1}))).is_ok());
+    }
+
+    #[test]
+    fn agent_cert_valid_passes() {
+        let payload = json!({
+            "agent": "agent://deployer",
+            "subject_key_id": "key_abc123",
+            "subject_public_key": "vEQfSDqVCz4rtqbu5iuhpFuYrah6QALUSCGJYdOKeCY",
+            "issuer": "ship://ship_b49ff5f291a279c7",
+            "issued_at": "2026-07-06T12:00:00Z",
+            "valid_until": "2027-07-06T12:00:00Z",
+            "model": "claude-fable-5",
+            "description": null
+        });
+        assert!(validate("agent_cert.v1", Some(&payload)).is_ok());
+    }
+
+    #[test]
+    fn agent_cert_missing_subject_key_fails_closed() {
+        let payload = json!({
+            "agent": "agent://deployer",
+            "subject_key_id": "key_abc123",
+            "issuer": "ship://ship_x",
+            "issued_at": "2026-07-06T12:00:00Z",
+            "valid_until": "2027-07-06T12:00:00Z"
+        }); // subject_public_key missing — the field the whole chain hangs on
+        let err = validate("agent_cert.v1", Some(&payload)).unwrap_err();
+        assert_eq!(
+            err,
+            PredicateError::MissingField {
+                suffix: "agent_cert.v1".into(),
+                field: "subject_public_key".into()
+            }
+        );
     }
 
     #[test]

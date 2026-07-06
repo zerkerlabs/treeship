@@ -41,6 +41,30 @@ pub fn publish(agent: &str, config: Option<&str>, printer: &Printer) -> CmdResul
         }
     }
 
+    // The agent's certificate chain: agent_cert.v1 receipts binding this
+    // agent's URI to its per-agent key, signed by the ship (registry-topology
+    // slice 1). Pushing the chain is what lets a remote verifier who pins
+    // only the ship key verify this agent's card — without it, verifiers
+    // must pin every leaf key directly.
+    for entry in ctx.storage.list_by_type(&receipt_pt) {
+        let Ok(rec) = ctx.storage.read(&entry.id) else {
+            continue;
+        };
+        let Ok(stmt) = rec.envelope.unmarshal_statement::<ReceiptStatement>() else {
+            continue;
+        };
+        if stmt.kind == "agent_cert.v1"
+            && stmt
+                .payload
+                .as_ref()
+                .and_then(|p| p.get("agent"))
+                .and_then(|v| v.as_str())
+                == Some(agent)
+        {
+            to_push.push(entry.id.clone());
+        }
+    }
+
     // Revocations referencing one of those cards.
     for entry in ctx.storage.list_by_type(&receipt_pt) {
         let Ok(rec) = ctx.storage.read(&entry.id) else {

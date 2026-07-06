@@ -12,6 +12,9 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use sha2::{Digest, Sha256};
 
 use treeship_core::agent::*;
+use treeship_core::attestation::{sign, Signer};
+use treeship_core::statements::{payload_type, ReceiptStatement};
+use treeship_core::storage::Record;
 use treeship_core::trust::{TrustRoot, TrustRootKind, TrustRootStore};
 
 use crate::commands::cards::{self, AgentCard, CardCapabilities, CardProvenance, CardStatus};
@@ -85,6 +88,75 @@ fn now_rfc3339() -> String {
 }
 
 /// Register an agent and produce a .agent package.
+/// Mint the protocol-native agent_cert.v1 receipt: the ship key signs an
+/// envelope whose payload binds `agent://<name>` to its per-agent public key.
+/// Validated against the registered predicate schema before signing
+/// (fail-closed). Idempotent per (agent, subject key): an existing cert in
+/// the store short-circuits, so register-on-every-boot callers (bridges,
+/// `onboard`) never pile up duplicates.
+#[allow(clippy::too_many_arguments)]
+fn mint_cert_receipt(
+    ctx: &ctx::Ctx,
+    name: &str,
+    subject_key_id: &str,
+    subject_pub_b64: &str,
+    issued_at: &str,
+    valid_until: &str,
+    model: Option<&str>,
+    description: Option<&str>,
+    signer: &dyn Signer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let agent_uri = format!("agent://{name}");
+    let receipt_pt = payload_type("receipt");
+
+    // Idempotency scan: one cert per (agent, subject key).
+    for entry in ctx.storage.list_by_type(&receipt_pt) {
+        let Ok(rec) = ctx.storage.read(&entry.id) else { continue };
+        let Ok(stmt) = rec.envelope.unmarshal_statement::<ReceiptStatement>() else { continue };
+        if stmt.kind != "agent_cert.v1" {
+            continue;
+        }
+        let Some(p) = stmt.payload else { continue };
+        if p.get("agent").and_then(|v| v.as_str()) == Some(agent_uri.as_str())
+            && p.get("subject_key_id").and_then(|v| v.as_str()) == Some(subject_key_id)
+        {
+            return Ok(());
+        }
+    }
+
+    let payload = serde_json::json!({
+        "agent": agent_uri,
+        "subject_key_id": subject_key_id,
+        "subject_public_key": subject_pub_b64,
+        "issuer": format!("ship://{}", ctx.config.ship_id),
+        "issued_at": issued_at,
+        "valid_until": valid_until,
+        "model": model,
+        "description": description,
+    });
+    treeship_core::predicates::validate("agent_cert.v1", Some(&payload))
+        .map_err(|e| format!("agent_cert.v1 validation failed: {e}"))?;
+
+    let mut stmt = ReceiptStatement::new(
+        &format!("ship://{}", ctx.config.ship_id),
+        "agent_cert.v1",
+    );
+    stmt.payload = Some(payload);
+
+    let result = sign(&receipt_pt, &stmt, signer)?;
+    ctx.storage.write(&Record {
+        artifact_id:  result.artifact_id.clone(),
+        digest:       result.digest,
+        payload_type: receipt_pt,
+        key_id:       signer.key_id().to_string(),
+        signed_at:    stmt.timestamp.clone(),
+        parent_id:    None,
+        envelope:     result.envelope,
+        hub_url:      None,
+    })?;
+    Ok(())
+}
+
 pub fn register(
     name: &str,
     tools: Vec<String>,
@@ -295,6 +367,30 @@ pub fn register(
             });
             trust.save(&TrustRootStore::default_path())?;
         }
+    }
+
+    // Protocol-native certificate: a typed agent_cert.v1 receipt whose
+    // ENVELOPE signature by the ship key IS the certification (the .agent
+    // package cert above is the human-portable rendering; this is the wire
+    // artifact). It is the intermediate link of the trust chain — a remote
+    // verifier who pins only the ship key verifies this envelope, reads the
+    // subject key out of it, and can then verify the agent's card and
+    // receipts without pinning the leaf (registry-topology spec, slice 1).
+    // `publish` pushes it with the resolvable set. Idempotent: one cert per
+    // (agent, subject key) in the store; a reused key re-registering does
+    // not mint duplicates.
+    if let Some(kid) = &agent_key_id {
+        mint_cert_receipt(
+            &ctx,
+            name,
+            kid,
+            &subject_pub_b64,
+            &issued_at,
+            &valid_until,
+            model.as_deref(),
+            description.as_deref(),
+            signer.as_ref(),
+        )?;
     }
 
     let card = AgentCard {
