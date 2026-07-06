@@ -285,7 +285,7 @@ Realistic, version-tagged (see [`CHANGELOG.md`](./CHANGELOG.md) for what each re
 - MCP bridge (`@treeship/mcp`) and A2A bridge (`@treeship/a2a`)
 - Merkle tree with inclusion proofs and checkpoints
 - DSSE envelopes, Ed25519 signing, hash-only payload defaults
-- ZK proofs (Circom Groth16, RISC Zero chain proofs)
+- ZK proofs (Circom Groth16, RISC Zero chain proofs) — experimental, feature-gated behind `--features zk`; see [the honest status breakdown](https://docs.treeship.dev/docs/concepts/zero-knowledge)
 - Hub authentication (DPoP, device flow), multi-hub support
 - OpenTelemetry export (feature-flagged)
 - Cross-process safe event log (flock + fail-open under contention)

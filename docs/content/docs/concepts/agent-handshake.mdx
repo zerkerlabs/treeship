@@ -1,0 +1,110 @@
+---
+title: The Agent Handshake
+description: Verify an agent with no registry in the loop, pin one ship key, walk the certificate chain, verify a presentation offline, and challenge the bearer to prove live key control. Mutual TLS for agents.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+[Agent resolution](/docs/concepts/agent-resolution) answers "who is this agent?" by looking it up. The **handshake** answers the same question the way TLS does: the agent *hands you* its proof, and you verify everything on your own machine, against your own trust roots, with no registry in the loop.
+
+Three pieces make that work, and they layer:
+
+| Piece | Command | What it proves |
+|---|---|---|
+| Certificate chain | (automatic, via `agent_cert.v1`) | this agent key belongs to that ship |
+| Presentation | `treeship present` / `verify-presentation` | the agent's record: card, chain, anchor, all offline |
+| Challenge | `--challenge <nonce>` on both commands | the party you are talking to controls the key, right now |
+
+## Pin one key, verify the fleet
+
+When an agent registers with its own key, the ship signs a protocol-native certificate, an `agent_cert.v1` receipt binding `agent://<name>` to the agent's public key. That certificate is the intermediate link of a chain, exactly like TLS intermediates:
+
+```
+capability card  →  signed by the agent's key
+agent_cert.v1    →  binds that key to the agent URI, signed by the ship
+ship key         →  the one thing a counterparty pins
+```
+
+A counterparty pins the ship key once (the two lines `treeship keys export` prints) and can then verify **every agent that ship ever certifies**. Verdicts say so explicitly:
+
+```
+signature:  verified (chain to pinned ship root)
+key-bound:  yes (AgentCert via ship chain)
+```
+
+The chain walk fails closed at every step: the certificate's own signature is checked against the *pinned* ship key before any field in it is believed, the certificate must bind this exact agent URI to this exact card-signing key, expired or not-yet-valid certificates are rejected, and the certified key must itself verify the card.
+
+## Presentation: carry your proof
+
+```bash
+treeship present agent://deployer
+# → deployer.presentation.json
+```
+
+One file containing the agent's current card, its certificate chain, any known revocations referencing the card (included, never filtered, the verifier judges their authority), and a **Merkle staple**: the latest signed checkpoint plus the card's inclusion proof, so the card is provably *in the log*, not just signed.
+
+The counterparty verifies it fully offline:
+
+```bash
+treeship verify-presentation deployer.presentation.json --max-staple-age 1h
+```
+
+```
+✓ presentation
+  signature:   verified (chain to pinned ship root)
+  key-bound:   yes (AgentCert via ship chain)
+  staple:      checkpoint #5 verified, inclusion verified (9m old)
+  revocation:  none included — current as of the staple (9m old); for currency, audit a log
+  status:      verified (key-bound, anchored)
+```
+
+<Callout type="warn">
+**Freshness is a bound, not a guarantee.** Offline, absence cannot be proven: a
+revocation minted after the staple is invisible until you check a log. The
+output names the bound (`current as of the staple`) instead of pretending
+otherwise, and `--max-staple-age` turns your tolerance into an enforced
+verdict, `STALE` past the bound. A trading counterparty demands minutes and
+audits a log asynchronously; a code-review bot accepts a day. That trade-off
+is fundamental to every offline verification scheme; Treeship's contribution
+is stating it on every verdict line.
+</Callout>
+
+## Challenge: prove it is really you
+
+A presentation file is **replayable**. Anyone who obtains it can show it around, which is fine for what it proves: this identity exists, holds this card, has this anchored history. It does *not* prove the party across the wire is that agent. Both commands print this caveat so nobody mistakes a document for a handshake.
+
+For that, challenge the bearer:
+
+```bash
+# verifier: mint a fresh nonce
+NONCE=$(openssl rand -hex 16)
+
+# agent: answer it — signs the nonce with its own key
+treeship present agent://deployer --challenge $NONCE
+
+# verifier: check the answer against the SAME nonce
+treeship verify-presentation deployer.presentation.json --challenge $NONCE
+```
+
+```
+challenge:   verified — bearer controls key_… (response 2s old)
+status:      verified (key-bound, anchored, live)
+```
+
+This is TLS's `CertificateVerify` step. The signature covers a domain-separated canonical binding the agent URI, the exact card, your nonce, and a bearer-signed timestamp, so a captured response cannot be replayed against a new challenge, for a different card, or for a different agent. And the verifier checks it **only against the key the card verification itself established** (the chain verdict or your own pinned root), never a key the file supplied.
+
+Fail-closed rules worth knowing:
+
+- Answering a challenge requires the agent's **own** key. There is no fallback to the ship key, a ship signature would prove the *operator* is present while claiming the *agent* is.
+- If the card did not verify key-bound, the challenge fails rather than "verifying" against nothing.
+- A replayed response reports exactly what happened: `answers a DIFFERENT challenge (replay?)`.
+
+## When to use which
+
+- **`resolve --hub`**, when you want the registry's convenience and the latest state (freshness bound: the hub's log).
+- **`verify-presentation`**, when the agent hands you its proof: air-gapped verification, CI checks, attaching proof to a PR or an A2A AgentCard (freshness bound: the staple).
+- **`--challenge`**, whenever you are about to *act* on the verification: releasing a tool call, accepting a handoff, joining a room. If the next step has consequences, demand liveness.
+
+## The honest contract
+
+Every verdict line reports how it knows: `chain to pinned ship root` vs `trusted key`, `current as of the staple` vs a log audit, `live` vs record-only. Nothing is laundered into a stronger claim than the evidence supports, the same [provenance discipline](/docs/concepts/capability-cards) that grades capabilities, applied to the handshake itself.
