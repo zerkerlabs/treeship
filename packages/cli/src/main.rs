@@ -296,6 +296,29 @@ enum Command {
     ///   treeship onboard scout --from-a2a AgentCard.json --models claude-fable-5
     Onboard(OnboardCliArgs),
 
+    /// Package an agent's proof into a file it can hand to any counterparty:
+    /// current card + certificate chain + known revocations + a Merkle
+    /// staple (checkpoint + inclusion proof). The counterparty verifies it
+    /// fully offline with `verify-presentation` — no registry in the loop.
+    ///
+    /// Static presentations prove the RECORD, not the bearer (they are
+    /// replayable); challenge mode for live key-control proof is next.
+    ///
+    /// Examples:
+    ///   treeship present agent://deployer
+    ///   treeship present deployer --out deployer.presentation.json
+    Present(PresentCliArgs),
+
+    /// Verify a presentation file fully offline against YOUR trust roots:
+    /// leaf pin or certificate-chain walk to a pinned ship root, authorized
+    /// revocations honored, staple checkpoint + inclusion re-verified, and
+    /// freshness reported as an explicit bound.
+    ///
+    /// Examples:
+    ///   treeship verify-presentation deployer.presentation.json
+    ///   treeship verify-presentation deployer.presentation.json --max-staple-age 1h
+    VerifyPresentation(VerifyPresentationCliArgs),
+
     /// Manage the local Agent Card store
     ///
     /// Cards are workspace trust objects -- who an agent is, where it
@@ -1758,6 +1781,29 @@ struct AuditArgs {
 // --- keys -------------------------------------------------------------------
 
 #[derive(clap::Args)]
+struct PresentCliArgs {
+    /// Agent name or agent:// URI
+    #[arg(value_name = "AGENT")]
+    agent: String,
+
+    /// Output path (default: <name>.presentation.json)
+    #[arg(long, value_name = "PATH")]
+    out: Option<String>,
+}
+
+#[derive(clap::Args)]
+struct VerifyPresentationCliArgs {
+    /// Path to a .presentation.json file
+    #[arg(value_name = "PATH")]
+    file: String,
+
+    /// Reject staples older than this (30s, 15m, 2h, 1d). Unset = report
+    /// the age without enforcing.
+    #[arg(long, value_name = "DURATION")]
+    max_staple_age: Option<String>,
+}
+
+#[derive(clap::Args)]
 struct OnboardCliArgs {
     /// Agent name or agent:// URI (normalized either way)
     #[arg(value_name = "NAME")]
@@ -2355,6 +2401,19 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 printer,
             ),
         },
+
+        Command::Present(a) => commands::present::present(
+            &a.agent,
+            a.out.as_deref(),
+            cli.config.as_deref(),
+            printer,
+        ),
+
+        Command::VerifyPresentation(a) => commands::present::verify_presentation(
+            &a.file,
+            a.max_staple_age.as_deref(),
+            printer,
+        ),
 
         Command::Onboard(a) => commands::onboard::onboard(
             commands::onboard::OnboardArgs {

@@ -392,7 +392,7 @@ fn nonce_digest_hex(raw_nonce: &str) -> String {
 /// We deliberately do not pull in `chrono` here -- the statements module
 /// is dep-light by design and already implements `unix_to_rfc3339`. This
 /// is the inverse.
-fn parse_rfc3339_to_unix(s: &str) -> Option<u64> {
+pub fn parse_rfc3339_to_unix(s: &str) -> Option<u64> {
     // Strict shape: 20 bytes, "YYYY-MM-DDTHH:MM:SSZ".
     let b = s.as_bytes();
     if b.len() != 20 || b[10] != b'T' || b[19] != b'Z'

@@ -34,7 +34,7 @@ fn checkpoints_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
 }
 
 /// Build a MerkleTree from all artifacts in the store, sorted by signed_at.
-fn build_tree(
+pub(crate) fn build_tree(
     ctx: &ctx::Ctx,
 ) -> Result<(MerkleTree, Vec<String>), Box<dyn std::error::Error>> {
     let mut entries = ctx.storage.list();
@@ -76,7 +76,7 @@ fn next_checkpoint_index() -> Result<u64, Box<dyn std::error::Error>> {
 }
 
 /// Load the latest checkpoint from disk.
-fn load_latest_checkpoint() -> Result<Option<Checkpoint>, Box<dyn std::error::Error>> {
+pub(crate) fn load_latest_checkpoint() -> Result<Option<Checkpoint>, Box<dyn std::error::Error>> {
     let path = checkpoints_dir()?.join("latest.json");
     if !path.exists() {
         return Ok(None);

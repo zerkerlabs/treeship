@@ -228,7 +228,7 @@ pub fn resolve(
 /// Build an offline Verifier from the client's pinned trust roots. An agent
 /// whose key the client has not pinned simply will not verify, which is the
 /// honest answer, not an error.
-fn verifier_from_trust(trust: &TrustRootStore) -> Verifier {
+pub(crate) fn verifier_from_trust(trust: &TrustRootStore) -> Verifier {
     let mut map: HashMap<String, VerifyingKey> = HashMap::new();
     for r in trust.roots() {
         if let Ok(vk) = decode_ed25519_pubkey(&r.public_key) {
