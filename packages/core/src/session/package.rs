@@ -639,6 +639,21 @@ pub fn verify_package_with_trust(
         ));
     }
 
+    // AUD-07: the git-diff backstop was disabled between session start and
+    // close (git worked at start — a HEAD was captured — but not at close).
+    // A file changed via a non-AgentWroteFile channel could be missing from
+    // the "Files changed" ledger with no other signal, so this must not read
+    // as a clean, complete audit trail.
+    if receipt.proofs.reconcile_degraded {
+        checks.push(VerifyCheck::warn(
+            "reconcile_degraded",
+            "the git reconcile backstop was UNAVAILABLE at session close although git worked at start \
+             (.git removed, corrupt index, or git not on PATH). Files changed outside a captured \
+             AgentWroteFile event may be MISSING from this receipt's file ledger — treat the \
+             \"Files changed\" list as incomplete.",
+        ));
+    }
+
     // 8. Approval evidence -- v0.9.9 PR 4. Three independent replay
     // checks, each emitted as its own VerifyCheck row so the printer
     // (and downstream tooling) can render them separately.
@@ -1465,6 +1480,41 @@ mod tests {
         let passes: Vec<_> = checks.iter().filter(|c| c.status == VerifyStatus::Pass).collect();
         assert!(passes.len() >= 5, "expected at least 5 pass checks, got {}", passes.len());
 
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // AUD-07: a receipt stamped reconcile_degraded must surface a WARN on
+    // verify, so a consumer is told the file ledger may be incomplete rather
+    // than reading the package as a clean, complete audit trail.
+    #[test]
+    fn verify_warns_when_reconcile_degraded() {
+        let mut receipt = make_receipt();
+        receipt.proofs.reconcile_degraded = true;
+        let tmp = std::env::temp_dir().join(format!("treeship-pkg-degraded-{}", rand::random::<u32>()));
+
+        let output = build_package(&receipt, &tmp).unwrap();
+        let checks = verify_package(&output.path).unwrap();
+
+        let warned = checks.iter().any(|c| c.name == "reconcile_degraded" && c.status == VerifyStatus::Warn);
+        assert!(warned, "expected a reconcile_degraded WARN, got {checks:?}");
+        // It is a WARN, not a hard fail (the signatures/Merkle are still valid).
+        let fails: Vec<_> = checks.iter().filter(|c| c.status == VerifyStatus::Fail).collect();
+        assert!(fails.is_empty(), "must not hard-fail: {fails:?}");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn verify_no_degraded_warn_when_clean() {
+        // The default receipt has reconcile_degraded=false: no such WARN.
+        let receipt = make_receipt();
+        let tmp = std::env::temp_dir().join(format!("treeship-pkg-clean-{}", rand::random::<u32>()));
+        let output = build_package(&receipt, &tmp).unwrap();
+        let checks = verify_package(&output.path).unwrap();
+        assert!(
+            !checks.iter().any(|c| c.name == "reconcile_degraded"),
+            "clean receipt must not emit a reconcile_degraded check"
+        );
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

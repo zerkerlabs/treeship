@@ -55,6 +55,16 @@ pub struct ReconcileSummary {
     pub untracked_seen: usize,
     pub untracked_cap: usize,
     pub untracked_truncated: bool,
+    /// Whether a git work tree was actually present when reconcile ran
+    /// (AUD-07). `false` means `is_git_repo` returned false — not in a repo,
+    /// git binary missing/PATH-poisoned, or `.git` removed/corrupted — so the
+    /// git-diff backstop produced NO changes for a reason other than "clean
+    /// tree". The close path cross-checks this against the session's
+    /// start-of-session HEAD: if git worked at start but not at close, the
+    /// backstop was disabled mid-session and the receipt is stamped degraded.
+    /// Defaults to false so a `ReconcileSummary::default()` (reconcile never
+    /// ran) is treated as "git not confirmed present", not a clean tree.
+    pub git_repo_present: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -258,8 +268,11 @@ pub fn reconcile_changes_with_options(
     };
 
     if !is_git_repo(repo_dir) {
+        // git_repo_present stays false: the caller can distinguish "clean tree
+        // in a real repo" from "no repo / git unavailable" (AUD-07).
         return result;
     }
+    result.summary.git_repo_present = true;
 
     use std::collections::BTreeMap;
     // path -> change. BTreeMap so output is deterministic across runs,
@@ -398,6 +411,33 @@ mod tests {
         std::fs::create_dir_all(&tmp).unwrap();
         let result = reconcile_changes(&tmp, None);
         assert!(result.is_empty());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // AUD-07: git_repo_present distinguishes "clean tree in a real repo" from
+    // "no repo / git unavailable" so the close path can detect a backstop that
+    // was disabled mid-session.
+    #[test]
+    fn git_repo_present_false_outside_repo() {
+        let tmp = std::env::temp_dir().join(format!("treeship-nogit-{}", rand::random::<u32>()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let r = reconcile_changes_with_options(&tmp, None, &ReconcileOptions::default());
+        assert!(!r.summary.git_repo_present, "no git repo -> git_repo_present must be false");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn git_repo_present_true_in_real_repo() {
+        let tmp = std::env::temp_dir().join(format!("treeship-git-{}", rand::random::<u32>()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let inited = Command::new("git")
+            .arg("-C").arg(&tmp).arg("init")
+            .stdout(Stdio::null()).stderr(Stdio::null())
+            .status().map(|s| s.success()).unwrap_or(false);
+        if inited {
+            let r = reconcile_changes_with_options(&tmp, None, &ReconcileOptions::default());
+            assert!(r.summary.git_repo_present, "real git repo -> git_repo_present must be true");
+        }
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

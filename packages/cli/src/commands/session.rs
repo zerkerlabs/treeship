@@ -1197,6 +1197,14 @@ pub fn close(
         receipt.proofs.reconcile_untracked_cap =
             reconcile_summary.untracked_cap.min(u32::MAX as usize) as u32;
     }
+    // AUD-07: git worked at session start (we captured a HEAD) but the reconcile
+    // backstop found no git repo at close — it was disabled mid-session
+    // (`.git` removed, corrupt index, PATH-poisoned git). A file changed via a
+    // non-AgentWroteFile channel could be missing from the ledger with no other
+    // signal, so stamp the receipt degraded and let `package verify` WARN.
+    if manifest.start_commit_sha.is_some() && !reconcile_summary.git_repo_present {
+        receipt.proofs.reconcile_degraded = true;
+    }
 
     // Override narrative with explicit --headline/--review if provided
     if headline.is_some() || review.is_some() {
