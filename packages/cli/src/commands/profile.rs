@@ -27,6 +27,55 @@ type CmdResult = Result<(), Box<dyn std::error::Error>>;
 /// Pure — the entire recomputability guarantee rests on this function being
 /// a function of exactly these inputs. `computed_at` is deliberately NOT
 /// part of the comparable aggregate (verify-profile ignores it).
+/// Normalize a self-declared class to a known ladder value; anything outside
+/// the vocabulary folds to `self` so it can never be tallied as a trusted
+/// bucket or outrank a real class.
+fn normalize_class(class: &str) -> &'static str {
+    match class {
+        "countersigned" => "countersigned",
+        "runtime" => "runtime",
+        _ => "self",
+    }
+}
+
+/// Ladder rank: self < runtime < countersigned.
+fn class_rank(class: &str) -> u8 {
+    match class {
+        "countersigned" => 2,
+        "runtime" => 1,
+        _ => 0,
+    }
+}
+
+/// The strongest class a session.v1 payload's OWN counts substantiate, using
+/// the same rule `session close` mints by: countersigned requires a consumed
+/// approval; runtime requires a non-cli harness. A self-consistency floor,
+/// not a full evidence check (AUD-06).
+fn justified_class(p: &serde_json::Value) -> &'static str {
+    let approvals = p.get("approval_count").and_then(|v| v.as_u64()).unwrap_or(0);
+    let harness = p.get("harness").and_then(|v| v.as_str()).unwrap_or("cli");
+    if approvals > 0 {
+        "countersigned"
+    } else if !harness.is_empty() && harness != "cli" {
+        "runtime"
+    } else {
+        "self"
+    }
+}
+
+/// Cap a declared class to what the payload's own evidence justifies: the
+/// weaker of (normalized declared, justified). A record claiming
+/// `countersigned` with zero approvals is tallied as what its counts support.
+pub(crate) fn cap_class_to_evidence(declared: &str, p: &serde_json::Value) -> &'static str {
+    let declared = normalize_class(declared);
+    let justified = justified_class(p);
+    if class_rank(declared) <= class_rank(justified) {
+        declared
+    } else {
+        justified
+    }
+}
+
 pub(crate) fn aggregate_profile(
     agent: &str,
     checkpoint: &Checkpoint,
@@ -39,11 +88,20 @@ pub(crate) fn aggregate_profile(
     let mut span: Vec<String> = Vec::new();
 
     for p in session_payloads {
-        let class = p
+        let declared = p
             .get("attestation_class")
             .and_then(|v| v.as_str())
-            .unwrap_or("self")
-            .to_string();
+            .unwrap_or("self");
+        // AUD-06: do not tally a self-declared class higher than the payload's
+        // own evidence counts justify. `session close` derives `countersigned`
+        // only when approvals were consumed and `runtime` only under a real
+        // tool runtime; a record claiming a stronger class than its own
+        // approval_count / harness support is internally inconsistent, so we
+        // cap it to what it can substantiate rather than laundering it into
+        // the higher trust bucket. (Full cross-checking against the embedded
+        // signed grants requires the sealed packages, not just these payloads;
+        // that deeper dereference is tracked as a follow-up.)
+        let class = cap_class_to_evidence(declared, p).to_string();
         *by_class.entry(class).or_insert(0u64) += 1;
         actions += p.get("action_count").and_then(|v| v.as_u64()).unwrap_or(0);
         approvals += p.get("approval_count").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -341,6 +399,55 @@ mod tests {
             "tools_exercised": tools,
             "closed_at": closed,
         })
+    }
+
+    // AUD-06: a self-declared class must not be tallied higher than the
+    // payload's own counts justify.
+    #[test]
+    fn forged_countersigned_without_approvals_is_capped_to_self() {
+        let forged = serde_json::json!({
+            "attestation_class": "countersigned",
+            "action_count": 9999,
+            "approval_count": 0,   // no consumed approval backs the claim
+            "harness": "cli",      // no runtime either
+            "closed_at": "2026-07-06T00:00:00Z",
+        });
+        assert_eq!(cap_class_to_evidence("countersigned", &forged), "self");
+
+        let c = cp(1, 10, "sha256:aa");
+        let out = aggregate_profile("agent://x", &c, &[forged], "T");
+        assert_eq!(out["sessions_countersigned"], 0, "forge must not land in countersigned");
+        assert_eq!(out["sessions_self"], 1);
+    }
+
+    #[test]
+    fn forged_runtime_without_harness_is_capped_to_self() {
+        let forged = serde_json::json!({
+            "attestation_class": "runtime",
+            "approval_count": 0,
+            "harness": "cli",
+            "closed_at": "2026-07-06T00:00:00Z",
+        });
+        assert_eq!(cap_class_to_evidence("runtime", &forged), "self");
+    }
+
+    #[test]
+    fn honest_countersigned_with_approval_is_kept() {
+        let honest = serde_json::json!({
+            "attestation_class": "countersigned",
+            "approval_count": 2,
+            "harness": "claude-code",
+            "closed_at": "2026-07-06T00:00:00Z",
+        });
+        assert_eq!(cap_class_to_evidence("countersigned", &honest), "countersigned");
+    }
+
+    #[test]
+    fn unknown_class_folds_to_self() {
+        let p = serde_json::json!({ "approval_count": 5, "harness": "claude-code" });
+        // Even though evidence would justify countersigned, an unrecognized
+        // declared label never outranks; it normalizes to self.
+        assert_eq!(cap_class_to_evidence("super-trusted", &p), "self");
     }
 
     #[test]
