@@ -47,6 +47,16 @@ impl ExternalExit {
     }
 }
 
+/// AUD-01: the honest machine outcome for the receipt/URL/package surface.
+/// This surface runs only keyless, self-referential checks (recomputed Merkle
+/// root, inclusion proofs, leaf count, timeline) and never verifies a
+/// signature, so it MUST NOT return "pass" (which a consumer could read as
+/// authenticity). A consistent receipt is "structural-pass"; a failed check
+/// or an empty receipt (nothing to prove) is "fail".
+fn structural_outcome(receipt_failed: bool, empty_receipt: bool) -> &'static str {
+    if receipt_failed || empty_receipt { "fail" } else { "structural-pass" }
+}
+
 /// Heuristic: does this look like a URL we should fetch?
 pub fn is_url(s: &str) -> bool {
     s.starts_with("http://") || s.starts_with("https://")
@@ -142,13 +152,35 @@ pub fn run(
     emit_step(printer, true, &load_label, None);
     emit_checks_as_steps(printer, &checks);
 
+    // AUD-01: this path performs only keyless, self-referential checks
+    // (recomputed Merkle root vs the receipt's own root, inclusion proofs
+    // against that same recomputed root, leaf-count parity, timeline order).
+    // It never opens the trust store and never verifies a signature, so a
+    // structurally-consistent forgery — or an empty receipt — passes. We must
+    // NOT call that "authentic". An empty receipt has nothing to check, so it
+    // is not even structurally meaningful.
+    let has_content = !receipt.artifacts.is_empty();
     let mut overall = if receipt_ok { ExternalExit::Ok } else { ExternalExit::VerifyFailed };
 
-    if receipt_ok {
+    if receipt_ok && has_content {
         printer.blank();
-        printer.info(&printer.green("Verified. This receipt is authentic."));
+        printer.info(&printer.green("Structurally consistent."));
+        printer.warn(
+            "signatures and issuer were NOT verified from this source",
+            &[("checked", "Merkle root, inclusion proofs, leaf count, timeline order"),
+              ("not checked", "who signed this receipt (no signature or trust-root check)")],
+        );
+        printer.hint("to verify signatures against your trust roots, use the local artifact form: treeship verify <artifact-id>");
         printer.blank();
         emit_summary(printer, &receipt);
+    } else if receipt_ok && !has_content {
+        printer.blank();
+        printer.warn(
+            "receipt is empty — nothing to verify",
+            &[("artifacts", "0"),
+              ("note", "an internally-consistent receipt with no artifacts proves nothing")],
+        );
+        overall = ExternalExit::VerifyFailed;
     } else {
         printer.blank();
         printer.failure("verification failed", &[("target", target)]);
@@ -156,8 +188,9 @@ pub fn run(
 
     // Cross-verify path.
     if let Some(cert_target) = certificate {
-        if !receipt_ok {
-            // Don't try to cross-verify against an unverified receipt.
+        if !receipt_ok || !has_content {
+            // Don't cross-verify against an unverified or empty receipt:
+            // an empty receipt has no tool calls to authorize.
             printer.blank();
             printer.warn("skipping cross-verification because receipt did not verify", &[]);
             return overall;
@@ -465,6 +498,9 @@ fn emit_json(
     certificate: Option<&str>,
 ) -> ExternalExit {
     let receipt_failed = checks.iter().any(|c| c.status == VerifyStatus::Fail);
+    // AUD-01: an internally-consistent receipt with no artifacts proves
+    // nothing; treat it as a failure rather than a pass.
+    let empty_receipt = receipt.artifacts.is_empty();
 
     let trust = treeship_core::trust::TrustRootStore::open_default_or_empty()
         .unwrap_or_else(|_| treeship_core::trust::TrustRootStore::empty());
@@ -478,10 +514,20 @@ fn emit_json(
         Err(_) => None,
     });
 
+    // Outcome is deliberately NOT "pass": this path never verifies a
+    // signature or consults the trust store, so the strongest honest claim
+    // is "structural-pass" (internally consistent, issuer unverified). A
+    // failed check is "fail"; an empty receipt is "fail" (nothing to prove).
+    let outcome = structural_outcome(receipt_failed, empty_receipt);
     let mut out = serde_json::json!({
         "target": target,
         "source": source_label,
-        "outcome": if receipt_failed { "fail" } else { "pass" },
+        "outcome": outcome,
+        // Explicit so no consumer mistakes structural consistency for an
+        // authenticity/signature result on this surface.
+        "signatures_verified": false,
+        "issuer_verified": false,
+        "note": "structural checks only (Merkle root, inclusion proofs, leaf count, timeline). Signatures and issuer are NOT verified from a fetched receipt; use the local artifact-ID verify path for signature verification.",
         "receipt": {
             "session_id": receipt.session.id,
             "ship_id": receipt.session.ship_id,
@@ -517,7 +563,7 @@ fn emit_json(
 
     printer.json(&out);
 
-    if receipt_failed {
+    if receipt_failed || empty_receipt {
         ExternalExit::VerifyFailed
     } else if let Some((cert_ok, ref result)) = cross {
         if !cert_ok || !result.ok() {
@@ -656,5 +702,23 @@ mod tests {
         assert_eq!(ExternalExit::VerifyFailed.code(), 1);
         assert_eq!(ExternalExit::CrossVerifyFailed.code(), 2);
         assert_eq!(ExternalExit::IoError.code(), 3);
+    }
+
+    // AUD-01: the JSON outcome must never be "pass" on this surface, because
+    // no signature is ever verified here.
+    #[test]
+    fn structural_outcome_never_claims_plain_pass() {
+        // Consistent, non-empty receipt: structural-pass, NOT pass.
+        assert_eq!(structural_outcome(false, false), "structural-pass");
+        // A failed check is a fail.
+        assert_eq!(structural_outcome(true, false), "fail");
+        // An empty (but internally consistent) receipt proves nothing.
+        assert_eq!(structural_outcome(false, true), "fail");
+        // Never, under any input, "pass".
+        for &f in &[true, false] {
+            for &e in &[true, false] {
+                assert_ne!(structural_outcome(f, e), "pass");
+            }
+        }
     }
 }
