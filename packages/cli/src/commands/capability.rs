@@ -338,6 +338,39 @@ pub fn revoke_capability(
 
     // Sign as the agent (self-revocation) when the card's actor has a key.
     let signer = crate::commands::attest::resolve_actor_signer(&ctx, card_agent)?;
+
+    // A revocation is honored by verify-capability ONLY when its signer is the
+    // card's own key (self-revoke) or a pinned Ship root. If the resolved
+    // signer is neither — e.g. the agent's per-agent key was rotated or
+    // de-registered after a key-bound card was minted, so resolve_actor_signer
+    // fell back to the shared ship key, which is not pinned as a Ship root
+    // locally — then this revocation will be silently IGNORED by every
+    // verifier. Refuse to mint it rather than print a success banner for a
+    // revocation nobody will honor (fail-open masquerading as done).
+    let will_be_honored = {
+        let signer_kid = signer.key_id();
+        let self_revoke = !card_keyid.is_empty() && signer_kid == card_keyid;
+        let trust = TrustRootStore::open_default_or_empty()?;
+        let issuer_revoke = trust
+            .roots()
+            .iter()
+            .any(|r| r.key_id == signer_kid && r.kind == TrustRootKind::Ship);
+        self_revoke || issuer_revoke
+    };
+    if !will_be_honored {
+        return Err(format!(
+            "revocation would be IGNORED by verifiers: the resolved signer ({}) is \
+             neither the card's key ({}) nor a pinned Ship root.\n\n  This usually \
+             means the agent's per-agent key was rotated or removed after the card \
+             was minted. Re-register the agent's key, or pin a Ship trust root that \
+             is authorized to revoke, then retry — do not rely on a revocation that \
+             will not be honored.",
+            signer.key_id(),
+            if card_keyid.is_empty() { "(none)" } else { card_keyid },
+        )
+        .into());
+    }
+
     let pt = payload_type("receipt");
     let result = sign(&pt, &stmt, signer.as_ref())?;
     ctx.storage.write(&Record {
