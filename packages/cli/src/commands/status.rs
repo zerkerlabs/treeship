@@ -131,6 +131,10 @@ pub fn run(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::e
         };
 
         let body = serde_json::json!({
+            "store": {
+                "source":      ctx.config_source.label(),
+                "config_path": ctx.config_path.display().to_string(),
+            },
             "ship": {
                 "id":   cfg.ship_id,
                 "name": cfg.name,
@@ -175,6 +179,15 @@ pub fn run(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::e
     if let Some(name) = &cfg.name {
         printer.dim_info(&format!("  {name}"));
     }
+    // WHICH store this command resolved. Store discovery walks up from the
+    // working directory and silently switches between project-local and
+    // global config — invisible everywhere but `doctor` until now, and the
+    // root cause of a whole class of "wrong keystore" confusion.
+    printer.dim_info(&format!(
+        "  store: {} -- {}",
+        ctx.config_source.label(),
+        ctx.config_path.display()
+    ));
     printer.blank();
 
     // Keys

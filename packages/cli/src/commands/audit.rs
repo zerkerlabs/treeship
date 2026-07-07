@@ -178,9 +178,9 @@ fn audit_once(base: &str, agent: &str, trust: &TrustRootStore, printer: &Printer
 
     // Witness the current checkpoint against what we have seen before: catch a
     // Hub that equivocates (two roots at one tree_size) or regresses.
-    let (consistency, anomaly, prior_witness) = match &current_cp {
+    let (consistency, anomaly, prior_witness, pending_witness) = match &current_cp {
         Some(cp) => witness_checkpoint(base, cp),
-        None => ("no verified checkpoint to witness".to_string(), false, None),
+        None => ("no verified checkpoint to witness".to_string(), false, None, None),
     };
 
     // 3b: cryptographic append-only. When the checkpoint advanced past a prior
@@ -194,6 +194,20 @@ fn audit_once(base: &str, agent: &str, trust: &TrustRootStore, printer: &Printer
         (Some(_), None) => ("append-only: first witness, nothing to extend from yet".to_string(), false),
         _ => ("append-only: no checkpoint to prove".to_string(), false),
     };
+
+    // Advance the witness ONLY when nothing contradicted it: on an
+    // equivocation/regression or a failed append-only proof the old witness
+    // stays, so every subsequent audit keeps alarming until the hub actually
+    // proves the extension. (Previously the witness advanced regardless, so
+    // the rewrite alarm fired once and then auto-forgave.)
+    let mut consistency = consistency;
+    if let Some((path, rec)) = pending_witness {
+        if anomaly || append_anomaly {
+            consistency = format!("{consistency}; witness NOT advanced (extension unproven)");
+        } else if let Err(e) = save_witness(&path, &rec) {
+            consistency = format!("{consistency}; (could not persist witness: {e})");
+        }
+    }
 
     let omission = committed_count.is_some_and(|c| observed < c);
     let hostile = omission || invalid > 0 || anomaly || append_anomaly;
@@ -308,27 +322,39 @@ type CmdResult2 = Result<(bool, Checkpoint), Box<dyn std::error::Error>>;
 /// Returns `(line, anomaly, prior)`. `prior` is the record as it was BEFORE
 /// this audit (so the caller can verify a consistency chain from it to
 /// `current`), even though the record may have just been advanced on disk.
-fn witness_checkpoint(base: &str, current: &Checkpoint) -> (String, bool, Option<WitnessRecord>) {
+/// Decide the witness verdict WITHOUT persisting. Persisting is the caller's
+/// job, and only after the append-only proof holds: a monitor that advances
+/// its witness past a checkpoint whose extension the hub could not prove
+/// fires the rewrite alarm exactly once and then auto-forgives — the next
+/// audit compares against the new witness and reports clean. The witness is
+/// the monitor's memory of the last state the hub PROVED; an unproven state
+/// must never become the baseline.
+fn witness_checkpoint(
+    base: &str,
+    current: &Checkpoint,
+) -> (String, bool, Option<WitnessRecord>, Option<(std::path::PathBuf, WitnessRecord)>) {
     let path = match witness_path(base, &current.signer) {
         Ok(p) => p,
-        Err(e) => return (format!("witness unavailable ({e})"), false, None),
+        Err(e) => return (format!("witness unavailable ({e})"), false, None, None),
     };
     let prior = load_witness(&path);
     let (line, anomaly, should_save) =
         witness_decision(prior.as_ref(), current.tree_size, &current.root, current.index);
-    if should_save {
-        let rec = WitnessRecord {
-            tree_size: current.tree_size,
-            root:      current.root.clone(),
-            index:     current.index,
-            signed_at: current.signed_at.clone(),
-            signer:    current.signer.clone(),
-        };
-        if let Err(e) = save_witness(&path, &rec) {
-            return (format!("{line}; (could not persist witness: {e})"), anomaly, prior);
-        }
-    }
-    (line, anomaly, prior)
+    let pending = if should_save {
+        Some((
+            path,
+            WitnessRecord {
+                tree_size: current.tree_size,
+                root:      current.root.clone(),
+                index:     current.index,
+                signed_at: current.signed_at.clone(),
+                signer:    current.signer.clone(),
+            },
+        ))
+    } else {
+        None
+    };
+    (line, anomaly, prior, pending)
 }
 
 /// One link of a consistency chain as served by the Hub. The Hub stores these
