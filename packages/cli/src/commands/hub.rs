@@ -30,20 +30,49 @@ pub fn attach(
     let hub_name = name.unwrap_or("default");
     let endpoint  = endpoint.unwrap_or("https://api.treeship.dev").to_string();
 
-    // If hub connection name already exists with keys, reconnect
+    // If a connection with stored keys exists, PROBE the hub before claiming
+    // "reconnected". Cached keys can outlive the server's dock registration
+    // (e.g. the hub's database was reset): the old shape trusted them
+    // blindly, reported success, and the user's next push 401'd — after the
+    // CLI had already told them they were connected. One authenticated,
+    // read-only request against the same DPoP path every push uses is the
+    // difference between reporting a fact and reporting a hope. On probe
+    // failure we fall through to the full device flow rather than lying.
     if let Some(existing) = ctx.config.hub_connections.get(hub_name) {
-        if existing.hub_secret_key.is_some() {
-            let mut cfg = ctx.config.clone();
-            cfg.active_hub = Some(hub_name.to_string());
-            config::save(&cfg, &ctx.config_path)?;
+        if let Some(secret_hex) = existing.hub_secret_key.as_deref() {
+            let probe_endpoint = existing.endpoint.trim_end_matches('/');
+            let probe_url = format!("{probe_endpoint}/v1/ship/agents");
+            let probe_ok = build_dpop_jwt(secret_hex, "GET", &probe_url)
+                .ok()
+                .and_then(|jwt| {
+                    ureq::get(&probe_url)
+                        .set("Authorization", &format!("DPoP {}", existing.hub_id))
+                        .set("DPoP", &jwt)
+                        .call()
+                        .ok()
+                })
+                .is_some();
 
-            printer.success("reconnected", &[
-                ("hub", hub_name),
-                ("hub id", &existing.hub_id),
-            ]);
-            printer.hint("view your workspace: treeship hub open");
-            printer.blank();
-            return Ok(());
+            if probe_ok {
+                let mut cfg = ctx.config.clone();
+                cfg.active_hub = Some(hub_name.to_string());
+                config::save(&cfg, &ctx.config_path)?;
+
+                printer.success("reconnected", &[
+                    ("hub", hub_name),
+                    ("hub id", &existing.hub_id),
+                    ("probe", "authenticated OK"),
+                ]);
+                printer.hint("view your workspace: treeship hub open");
+                printer.blank();
+                return Ok(());
+            }
+            printer.warn(
+                "stored hub keys no longer authenticate (the hub may have been reset) — starting a fresh device flow",
+                &[("hub", hub_name), ("hub id", &existing.hub_id)],
+            );
+            // Fall through to the device flow below; on success it
+            // overwrites this connection with freshly-registered keys.
         }
     }
 
