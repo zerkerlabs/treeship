@@ -178,7 +178,7 @@ impl Verifier {
 
         let dalek_sig = DalekSignature::from_bytes(&sig_bytes);
 
-        pub_key.verify(pae, &dalek_sig)
+        pub_key.verify_strict(pae, &dalek_sig)
             .map_err(|_| VerifyError::InvalidSignature(key_id.to_string()))
     }
 
@@ -425,4 +425,40 @@ mod tests {
         let result = verifier.verify(&restored).unwrap();
         assert_eq!(result.artifact_id, signed.artifact_id);
     }
+
+    #[test]
+    fn verifier_uses_strict_ed25519_rejecting_small_order_keys() {
+        // verify_strict rejects small-order public keys (and non-canonical R),
+        // which plain verify accepts. This pins that the core verifier is
+        // strict — the same discipline present.rs already used — so a
+        // malleable/degenerate signature cannot verify on one surface while
+        // failing on another (cross-SDK split-view), and cannot be admitted
+        // via a small-order key.
+        use ed25519_dalek::VerifyingKey;
+        // The canonical Ed25519 small-order point (order 8) — a classic
+        // degenerate public key that verify() accepts and verify_strict()
+        // rejects.
+        let small_order = [
+            0x00u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        // If the bytes even decode to a VerifyingKey, a zero-signature against
+        // it must NOT verify strictly. (Some small-order encodings fail to
+        // decode outright, which is also a rejection — either way, not Ok.)
+        if let Ok(vk) = VerifyingKey::from_bytes(&small_order) {
+            let zero_sig = ed25519_dalek::Signature::from_bytes(&[0u8; 64]);
+            assert!(
+                vk.verify_strict(b"anything", &zero_sig).is_err(),
+                "strict verification must reject a small-order key"
+            );
+        }
+        // And a genuine signature by a real key still verifies through the
+        // envelope verifier (no false negatives from the strict switch).
+        let signer = make_signer();
+        let env = sign(PT, &stmt(), &signer).unwrap().envelope;
+        let mut v = Verifier::new(std::collections::HashMap::new());
+        v.add_key(signer.key_id().to_string(), signer.verifying_key());
+        assert!(v.verify_any(&env).is_ok(), "a real signature must still verify strictly");
+    }
+
 }

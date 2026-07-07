@@ -136,6 +136,15 @@ pub fn run(
     let nonce_checks = verify_nonce_bindings(&chain_envelopes, &ctx.storage, &ctx.config_path);
     checks.extend(nonce_checks);
 
+    // Signed chain-linkage: the walk followed unsigned storage metadata, so
+    // cross-check each child's signed parent_id before claiming the chain is
+    // intact. A broken linkage is tampering even when every artifact verifies.
+    let (linkage_ok, linkage_detail) = if no_chain {
+        (true, String::new())
+    } else {
+        compute_chain_linkage(&chain_envelopes)
+    };
+
     // Print results.
     let total  = checks.len();
     let passed = checks.iter().filter(|c| c.outcome == Outcome::Pass).count();
@@ -148,23 +157,30 @@ pub fn run(
             "reason":  c.reason,
         })).collect();
         printer.json(&serde_json::json!({
-            "outcome": if failed == 0 { "pass" } else { "fail" },
+            "outcome": if failed == 0 && linkage_ok { "pass" } else { "fail" },
             "total": total, "passed": passed, "failed": failed,
+            "chain_linkage_ok": linkage_ok,
+            "chain_linkage_detail": if linkage_ok { serde_json::Value::Null } else { serde_json::json!(linkage_detail) },
             "checks": out,
         }));
-        if failed > 0 { std::process::exit(1); }
+        if failed > 0 || !linkage_ok { std::process::exit(1); }
         return Ok(());
     }
 
     // --- Full chain timeline display ---
     if full {
-        print_full_timeline(&chain_envelopes, &checks, &ctx.storage, printer, target);
-        if failed > 0 { std::process::exit(1); }
+        let chain_ok = print_full_timeline(&chain_envelopes, &checks, &ctx.storage, printer, target, linkage_ok, &linkage_detail);
+        if failed > 0 || !chain_ok { std::process::exit(1); }
         return Ok(());
     }
 
     // --- Improved short output ---
     let chain_count = chain_envelopes.len();
+    if !linkage_ok {
+        printer.warn("chain SIGNED LINKAGE BROKEN — possible tampering", &[("detail", &linkage_detail)]);
+        printer.blank();
+        std::process::exit(1);
+    }
     if failed == 0 {
         let header = format!(
             "verified  ({} artifact{} . chain intact)",
@@ -277,13 +293,52 @@ pub fn run(
 
 const BOX_WIDTH: usize = 58;
 
+/// Verify the SIGNED linkage of a chain: each child's parent_id (read from
+/// its verified envelope) must name the artifact walked as its parent. The
+/// walk follows UNSIGNED storage metadata, editable by a local attacker to
+/// truncate or rearrange a chain of individually-valid artifacts; this is the
+/// check that turns "no tampering detected" from a claim into a fact. `chain`
+/// is in walk order (root first). Returns (ok, detail-on-first-break).
+fn compute_chain_linkage(chain: &[(String, Envelope)]) -> (bool, String) {
+    for pair in chain.windows(2) {
+        let (parent_id, _) = &pair[0];
+        let (child_id, child_env) = &pair[1];
+        let signed_parent = child_env
+            .unmarshal_statement::<serde_json::Value>()
+            .ok()
+            .and_then(|v| {
+                v.get("parentId")
+                    .or_else(|| v.get("parent_id"))
+                    .and_then(|p| p.as_str())
+                    .map(str::to_string)
+            });
+        if signed_parent.as_deref() != Some(parent_id.as_str()) {
+            return (
+                false,
+                format!(
+                    "{} claims parent {}, walked from {}",
+                    &child_id[..child_id.len().min(16)],
+                    signed_parent.as_deref().unwrap_or("(none)"),
+                    &parent_id[..parent_id.len().min(16)]
+                ),
+            );
+        }
+    }
+    (true, String::new())
+}
+
 fn print_full_timeline(
     chain: &[(String, Envelope)],
     checks: &[ArtifactCheck],
     storage: &Store,
     printer: &Printer,
     target: &str,
-) {
+    linkage_ok: bool,
+    linkage_detail: &str,
+) -> bool {
+    // Returns whether the CHAIN is intact (no gaps + signed linkage). The
+    // caller must exit nonzero when this is false, even if every individual
+    // artifact verified — a broken linkage is tampering.
     let passed = checks.iter().filter(|c| c.outcome == Outcome::Pass).count();
     let failed = checks.len() - passed;
 
@@ -351,14 +406,26 @@ fn print_full_timeline(
     };
     printer.info(&format!("  {id_status}"));
 
-    // Chain integrity
-    let chain_ok = !checks.iter().any(|c| {
+    // Chain integrity: two independent properties.
+    //   (a) no gaps  — every artifact in the walk was found and verified.
+    //   (b) linkage  — each child's SIGNED parent_id (inside its verified
+    //       envelope) equals its parent's id. The walk itself follows the
+    //       UNSIGNED `parent_id` storage metadata, which a local attacker can
+    //       edit to truncate or rearrange a chain of individually-valid
+    //       artifacts; without (b), "no tampering detected" would be a check
+    //       we never ran. We only claim tamper-freedom when (b) holds.
+    let no_gaps = !checks.iter().any(|c| {
         c.outcome == Outcome::Fail && c.reason.as_deref().map_or(false, |r| r.contains("not found"))
     });
+    let chain_ok = no_gaps && linkage_ok;
     let chain_status = if chain_ok {
-        printer.green("\u{2713}  chain integrity no gaps, no tampering detected")
-    } else {
+        printer.green("\u{2713}  chain integrity no gaps, signed linkage verified")
+    } else if !no_gaps {
         printer.red("\u{2717}  chain integrity gaps detected in chain")
+    } else {
+        printer.red(&format!(
+            "\u{2717}  chain integrity SIGNED LINKAGE BROKEN — possible tampering ({linkage_detail})"
+        ))
     };
     printer.info(&format!("  {chain_status}"));
 
@@ -443,6 +510,7 @@ fn print_full_timeline(
 
     printer.info(&format!("  {rule}"));
     printer.info(&printer.dim(&format!("  treeship.dev/verify/{}", short_id(target))));
+    chain_ok
 }
 
 fn print_step_card(step: &StepInfo, printer: &Printer) {

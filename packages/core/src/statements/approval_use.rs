@@ -622,7 +622,7 @@ pub fn verify_hub_checkpoint_signature(
 
     let sig = Signature::from_bytes(&sig_arr);
     let payload = cp.canonical_hub_signing_bytes();
-    match vk.verify(&payload, &sig) {
+    match vk.verify_strict(&payload, &sig) {
         Ok(())  => HubCheckpointVerification::Valid,
         Err(_)  => HubCheckpointVerification::Tampered,
     }

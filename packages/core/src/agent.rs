@@ -229,7 +229,7 @@ pub fn verify_certificate(
         .map_err(|e| CertificateVerifyError::PayloadEncode(e.to_string()))?;
 
     verifying_key
-        .verify(&canonical, &signature)
+        .verify_strict(&canonical, &signature)
         .map_err(|_| CertificateVerifyError::InvalidSignature)
 }
 
