@@ -3,6 +3,16 @@ title: Verifiable Intent
 description: Treeship as the agent_attestation scheme for Verifiable Intent credentials
 ---
 
+<Callout type="warn">
+**The `treeship vi` command set is not yet shipped.** The `packages/vi`
+library (P-256 keys, credential types) exists in the repository, but no
+`treeship vi` subcommand is wired into the CLI at the current release — the
+commands on this page describe the intended design, not something you can
+run today. This page stays published as the integration spec; treat every
+command block below as roadmap.
+</Callout>
+
+
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Steps, Step } from 'fumadocs-ui/components/steps';
 
@@ -109,10 +119,11 @@ This produces the `agent_attestation` payload ready to embed in the L3 credentia
 
 ## Status
 
-| Version | Capability |
+| Stage | Capability |
 |---------|-----------|
-| v0.6.0 | Foundation: P-256 keygen, session linking, basic `agent_attestation` field generation |
-| v0.7.0 | Full L3 builder: complete credential assembly, ZK proof embedding, mandate validation |
+| library (shipped) | P-256 key + credential types in `packages/vi` — no CLI surface yet |
+| planned | `treeship vi` keygen / keys list / attest wiring |
+| planned | Full L3 builder: complete credential assembly, mandate validation |
 
 ## Compatible with Lobster Cash
 

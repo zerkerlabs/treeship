@@ -5,7 +5,7 @@ description: Using Treeship artifacts for regulatory compliance, audit trails, a
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Treeship artifacts provide a tamper-proof audit trail that supports regulatory compliance. Each action, approval, and handoff is signed and chained, creating evidence that auditors and regulators can independently verify.
+Treeship artifacts provide a tamper-evident audit trail that supports regulatory compliance. Each action, approval, and handoff is signed and chained, creating evidence that auditors and regulators can independently verify.
 
 ## What Treeship provides
 
@@ -33,7 +33,7 @@ treeship attest action \
   --approval-nonce <nonce>
 ```
 
-The approval is bound to the action by nonce, scoped to a specific actor / action / subject when the approver sets `--allowed-actor` / `--allowed-action` / `--allowed-subject`, and verifiers report exactly what was checked: binding (always), scope (when present), and replay posture (`package-local only -- no global ledger consulted` as of v0.9.6). A local Approval Use Journal for cross-package replay enforcement ships in v0.10.
+The approval is bound to the action by nonce, scoped to a specific actor / action / subject when the approver sets `--allowed-actor` / `--allowed-action` / `--allowed-subject`, and verifiers report exactly what was checked: binding (always), scope (when present), and replay posture. Replay is enforced beyond the package by the **Approval Use Journal** (shipped, `stable`): `treeship attest action` consumes a grant use *before* signing, and `treeship approval uses` inspects the ledger. Distributed multi-hub replay coordination remains in progress.
 
 ## Compliance patterns
 

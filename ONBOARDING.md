@@ -5,7 +5,7 @@ Read this file to understand what Treeship is, how the repo is organized, and ho
 
 ## What Treeship Is
 
-Portable trust layer for AI agent workflows. Every action, approval, and handoff gets a cryptographically signed receipt -- tamper-proof, verifiable by anyone, works offline.
+Portable trust layer for AI agent workflows. Every action, approval, and handoff gets a cryptographically signed receipt -- tamper-evident, verifiable by anyone, works offline.
 
 The loop: `treeship wrap -- your-command` -> signed artifact -> `treeship hub push` -> `https://treeship.dev/verify/art_xxx`
 
