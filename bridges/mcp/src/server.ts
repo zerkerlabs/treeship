@@ -2,10 +2,17 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { execFile } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
 import { z } from 'zod';
 
 const exec = promisify(execFile);
+
+// The version clients see in the MCP handshake. Read from the package
+// manifest so it rides the release train instead of drifting (it was
+// hardcoded at 0.10.0 seven releases past that).
+const PKG_VERSION: string =
+  createRequire(import.meta.url)('../package.json').version ?? '0.0.0';
 
 const TREESHIP_BIN = process.env.TREESHIP_BIN || 'treeship';
 const ACTOR = process.env.TREESHIP_ACTOR || 'agent://mcp';
@@ -42,7 +49,7 @@ function formatExec({ stdout, stderr, code }: ExecResult): { content: any[]; isE
 }
 
 const server = new McpServer(
-  { name: 'treeship', version: '0.10.0' },
+  { name: 'treeship', version: PKG_VERSION },
   { capabilities: { tools: {} } },
 );
 
