@@ -76,7 +76,7 @@ npm install @treeship/mcp
 **CLI via package managers:**
 ```bash
 npm install -g treeship
-cargo install treeship-cli
+npm install -g treeship   # (do NOT `cargo install treeship-cli` — that crate is an orphaned 0.4.0 stub)
 ```
 
 ## Python SDK API

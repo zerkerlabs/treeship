@@ -263,6 +263,27 @@ def collect_sites() -> list[Site]:
                 )
             )
 
+    # The plugins' OWN manifests — the version users actually see when they
+    # install the plugin. These were the 0.17.0 miss: the marketplace entry
+    # below was guarded and current while the Claude Code plugin's own
+    # plugin.json still advertised 0.9.5, eight releases stale, invisible to
+    # both this preflight and release.sh.
+    for rel, label in [
+        (
+            "integrations/claude-code-plugin/.claude-plugin/plugin.json",
+            "claude-code plugin.json version",
+        ),
+        (
+            "integrations/openclaw-plugin/package.json",
+            "openclaw plugin package.json version",
+        ),
+        (
+            "integrations/openclaw-plugin/openclaw.plugin.json",
+            "openclaw.plugin.json version",
+        ),
+    ]:
+        sites.append(Site(rel, label, pkg_json_version(rel)))
+
     # Claude Code plugin marketplace manifest: both metadata.version and the
     # per-plugin version must track the release. Drift here was the 0.10.2
     # miss — the plugin marketplace continued advertising 0.9.5 while every

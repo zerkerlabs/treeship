@@ -189,7 +189,7 @@ For Hermes (manual install), re-run the curl one-liner.
 The skill content is versioned with the Treeship release — each `treeship` release that changes the CLI surface or SDK shape pushes a matching skill update. Pin to a specific release tag if you need stability:
 
 ```bash
-npx skills add zerkerlabs/treeship@v0.10.0 --skill treeship --agent <agent> -g -y
+npx skills add zerkerlabs/treeship@v0.17.0 --skill treeship --agent <agent> -g -y
 ```
 
 ## Removing
