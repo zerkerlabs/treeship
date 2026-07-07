@@ -104,6 +104,32 @@ func (h *Handlers) PublishProof(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// AUD-04: object-level authorization. Before this check, any authenticated
+	// dock could publish a proof row keyed on (artifact_id, checkpoint_id) it
+	// did not own. Because InsertProof is INSERT OR REPLACE and GetProof serves
+	// the highest checkpoint_id, an attacker could shadow or destroy another
+	// dock's inclusion proof so its anchored artifacts read as un-anchored.
+	// Require the caller to own BOTH the artifact and the checkpoint the proof
+	// binds them to.
+	cp, err := db.GetCheckpoint(h.DB, req.CheckpointID)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "checkpoint not found"})
+		return
+	}
+	if cp.DockID == nil || *cp.DockID != dockID {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "checkpoint is not owned by this dock"})
+		return
+	}
+	art, err := db.GetArtifact(h.DB, req.ArtifactID)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "artifact not found"})
+		return
+	}
+	if art.DockID == nil || *art.DockID != dockID {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "artifact is not owned by this dock"})
+		return
+	}
+
 	if err := db.InsertProof(h.DB, req.ArtifactID, req.CheckpointID, req.LeafIndex, req.LeafHash, req.ProofJSON, dockID); err != nil {
 		log.Printf("insert proof error: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to store proof"})
@@ -221,6 +247,22 @@ func (h *Handlers) PublishConsistency(w http.ResponseWriter, r *http.Request) {
 	// A consistency proof only makes sense for a forward, non-empty extension.
 	if req.FromSize <= 0 || req.ToSize < req.FromSize {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "from_size must be > 0 and <= to_size"})
+		return
+	}
+
+	// AUD-11: `signer` is free-form. Without this check an attacker could
+	// pre-publish a bogus consistency row under a victim's signer and, since
+	// InsertConsistency is first-writer-wins, permanently shadow the victim's
+	// real transition. Bind the signer to the authenticated dock: the caller
+	// must own a checkpoint signed by that signer.
+	owns, err := db.DockOwnsCheckpointSigner(h.DB, dockID, req.Signer)
+	if err != nil {
+		log.Printf("consistency signer ownership check error: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to verify signer ownership"})
+		return
+	}
+	if !owns {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "signer is not owned by this dock"})
 		return
 	}
 
