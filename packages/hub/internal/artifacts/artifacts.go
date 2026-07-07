@@ -51,6 +51,9 @@ func (h *Handlers) Push(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req pushRequest
+	// Cap request body at 10 MB (same rule as receipts): an authenticated
+	// dock must not be able to buffer arbitrary gigabytes into hub memory.
+	r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)

@@ -119,6 +119,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   receipt_json  TEXT,
   uploaded_at   INTEGER
 );
+CREATE INDEX IF NOT EXISTS idx_artifacts_payload_type ON artifacts(payload_type, signed_at);
+CREATE INDEX IF NOT EXISTS idx_artifacts_dock_id ON artifacts(dock_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_dock_id ON sessions(dock_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_uploaded_at ON sessions(uploaded_at);
 
@@ -160,6 +162,13 @@ func Open() (*sql.DB, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
+	}
+
+	// Enforce the schema's REFERENCES clauses — SQLite ignores them unless
+	// this pragma is on, so without it every foreign key is decorative.
+	if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("enable foreign keys: %w", err)
 	}
 
 	// WAL mode for better concurrency.
@@ -516,6 +525,23 @@ type MerkleCheckpoint struct {
 }
 
 func InsertCheckpoint(database *sql.DB, cp *MerkleCheckpoint, dockID string) (int64, error) {
+	// Idempotent on the checkpoint's natural key (signer, root, tree_size):
+	// re-running `merkle publish` re-POSTs the same checkpoint, and before
+	// this guard every re-publish inserted a duplicate row forever (the
+	// autoincrement PK never collides). Same select-first shape as
+	// InsertConsistency; returns the existing row's id so callers behave
+	// identically on the repeat.
+	var existing int64
+	err := database.QueryRow(
+		`SELECT id FROM merkle_checkpoints
+		 WHERE signer_key_id = ? AND root_hex = ? AND tree_size = ?
+		 LIMIT 1`,
+		cp.SignerKeyID, cp.RootHex, cp.TreeSize,
+	).Scan(&existing)
+	if err == nil {
+		return existing, nil
+	}
+
 	res, err := database.Exec(
 		`INSERT INTO merkle_checkpoints (root_hex, tree_size, height, signed_at, signer_key_id, signature_b64, public_key_b64, rekor_index, dock_id)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
