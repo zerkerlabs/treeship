@@ -14,6 +14,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/treeship/hub/internal/db"
 )
@@ -369,5 +371,135 @@ func (h *Handlers) History(w http.ResponseWriter, r *http.Request) {
 		"entries": entries,
 		"count":   len(entries),
 		"note":    "raw signed session.v1 envelopes + Merkle anchors. the client re-verifies signatures and inclusion against its own trust roots; the Hub filters and serves, never interprets.",
+	})
+}
+
+// toolGlobMatches mirrors treeship_core::capability::tool_matches: a single
+// '*' anywhere in the pattern (prefix before it must prefix the value, suffix
+// after must suffix it); otherwise exact. Kept byte-identical in behavior so
+// the Hub's index filter cannot disagree with the client's verification.
+func toolGlobMatches(pattern, value string) bool {
+	star := strings.IndexByte(pattern, '*')
+	if star < 0 {
+		return pattern == value
+	}
+	prefix, suffix := pattern[:star], pattern[star+1:]
+	return len(value) >= len(prefix)+len(suffix) &&
+		strings.HasPrefix(value, prefix) &&
+		strings.HasSuffix(value, suffix)
+}
+
+// Match handles GET /v1/agents/match?exercised=<glob>&class=<c>&min_sessions=<n>
+// — the evidence-matching query (docs/specs/work-history.md slice 4). It scans
+// session.v1 records, groups by actor, and returns agents whose EXERCISED
+// evidence (tools actually recorded in their sessions) matches the glob, with
+// each candidate's matching records as raw signed envelopes so the client
+// re-verifies them itself. This is a metadata index over data the Hub already
+// holds; it grades nothing. "Declared capability gets you found; exercised
+// history gets you chosen" — and the Hub only proposes candidates, the client
+// decides.
+func (h *Handlers) Match(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	exercised := r.URL.Query().Get("exercised")
+	if exercised == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing exercised query parameter (a tool glob, e.g. payments.*)"})
+		return
+	}
+	classFilter := r.URL.Query().Get("class")
+	minSessions := 1
+	if v := r.URL.Query().Get("min_sessions"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			minSessions = n
+		}
+	}
+
+	receipts, err := db.ListArtifactsByPayloadType(h.DB, receiptPayloadType)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "query failed"})
+		return
+	}
+
+	type record struct {
+		ArtifactID   string      `json:"artifact_id"`
+		EnvelopeJSON string      `json:"envelope_json"`
+		MerkleAnchor interface{} `json:"merkle_anchor"`
+	}
+	type candidate struct {
+		Agent          string   `json:"agent"`
+		MatchedTools   []string `json:"matched_tools"`
+		MatchedSessions int     `json:"matched_sessions"`
+		Records        []record `json:"records"`
+		toolSet        map[string]bool
+	}
+	cands := map[string]*candidate{}
+
+	for _, a := range receipts {
+		payload, _ := decodeStatementPayload(a.EnvelopeJSON)
+		if payload == nil {
+			continue
+		}
+		var stmt receiptStatement
+		if json.Unmarshal(payload, &stmt) != nil || stmt.Kind != "session.v1" {
+			continue
+		}
+		var p struct {
+			Actor            string   `json:"actor"`
+			AttestationClass string   `json:"attestation_class"`
+			ToolsExercised   []string `json:"tools_exercised"`
+		}
+		if json.Unmarshal(stmt.Payload, &p) != nil || p.Actor == "" {
+			continue
+		}
+		if classFilter != "" && p.AttestationClass != classFilter {
+			continue
+		}
+		var hit []string
+		for _, tool := range p.ToolsExercised {
+			if toolGlobMatches(exercised, tool) {
+				hit = append(hit, tool)
+			}
+		}
+		if len(hit) == 0 {
+			continue
+		}
+		c := cands[p.Actor]
+		if c == nil {
+			c = &candidate{Agent: p.Actor, toolSet: map[string]bool{}}
+			cands[p.Actor] = c
+		}
+		c.MatchedSessions++
+		for _, t := range hit {
+			if !c.toolSet[t] {
+				c.toolSet[t] = true
+				c.MatchedTools = append(c.MatchedTools, t)
+			}
+		}
+		c.Records = append(c.Records, record{
+			ArtifactID:   a.ArtifactID,
+			EnvelopeJSON: a.EnvelopeJSON,
+			MerkleAnchor: h.anchorFor(a.ArtifactID),
+		})
+	}
+
+	out := []*candidate{}
+	for _, c := range cands {
+		if c.MatchedSessions >= minSessions {
+			sort.Strings(c.MatchedTools)
+			out = append(out, c)
+		}
+	}
+	// Rank by matched session count (most exercised first), then agent URI.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].MatchedSessions != out[j].MatchedSessions {
+			return out[i].MatchedSessions > out[j].MatchedSessions
+		}
+		return out[i].Agent < out[j].Agent
+	})
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"exercised":  exercised,
+		"candidates": out,
+		"count":      len(out),
+		"note":       "candidates whose exercised evidence matches, ranked by matched session count. raw signed envelopes included; the client re-verifies every record. the Hub indexes metadata it holds and grades nothing.",
 	})
 }

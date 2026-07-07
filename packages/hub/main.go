@@ -96,6 +96,7 @@ func main() {
 	// + Merkle anchors only, never payloads). Public; the client re-verifies.
 	r.Get("/v1/agents/log", agentHandlers.Log)
 	r.Get("/v1/agents/history", agentHandlers.History)
+	r.Get("/v1/agents/match", agentHandlers.Match)
 
 	// Well-known revocation list.
 	r.Get("/.well-known/treeship/revoked.json", revokedHandler)

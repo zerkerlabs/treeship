@@ -29,6 +29,8 @@ pub mod onboard;
 pub mod present;
 pub mod history;
 pub mod profile;
+#[path = "match.rs"]
+pub mod match_cmd;
 pub mod approval;
 pub mod cards;
 pub mod discovery;
