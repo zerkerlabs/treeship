@@ -496,8 +496,7 @@ pub fn publish(
 
     let endpoint = &hub_entry.endpoint;
     let hub_id = &hub_entry.hub_id;
-    let hub_secret_hex = hub_entry.hub_secret_key.as_deref()
-        .ok_or("no hub_secret_key in config -- run: treeship hub attach")?;
+    let hub_secret_hex = super::hub::resolve_dpop_secret_hex(hub_entry, &ctx.keys)?;
 
     // 1. Load latest checkpoint
     let checkpoint = load_latest_checkpoint()?
@@ -509,7 +508,7 @@ pub fn publish(
 
     // 2. POST checkpoint to Hub
     let checkpoint_url = format!("{}/v1/merkle/checkpoint", endpoint);
-    let dpop_jwt = build_dpop_jwt(hub_secret_hex, "POST", &checkpoint_url)?;
+    let dpop_jwt = build_dpop_jwt(&hub_secret_hex, "POST", &checkpoint_url)?;
 
     let cp_body = serde_json::json!({
         "root":       checkpoint.root,
@@ -580,7 +579,7 @@ pub fn publish(
 
         let proof_json_str = serde_json::to_string(&proof_file)?;
 
-        let dpop_jwt = build_dpop_jwt(hub_secret_hex, "POST", &proof_url)?;
+        let dpop_jwt = build_dpop_jwt(&hub_secret_hex, "POST", &proof_url)?;
 
         let proof_body = serde_json::json!({
             "artifact_id":   artifact_id,
@@ -608,7 +607,7 @@ pub fn publish(
         &artifact_ids,
         endpoint,
         hub_id,
-        hub_secret_hex,
+        &hub_secret_hex,
         printer,
     ) {
         printer.hint(&format!("consistency proof not published: {e}"));
