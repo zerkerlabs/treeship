@@ -114,8 +114,17 @@ export async function attestReceipt(params: AttestReceiptParams): Promise<string
 }
 
 /**
- * Invoke `treeship attest handoff` to record an A2A delegation boundary.
- * The CLI returns a JSON object containing the artifact ID.
+ * Record an A2A delegation boundary as a signed handoff.
+ *
+ * Two steps, both real CLI primitives: `attest handoff` requires
+ * `--artifacts` (the things being transferred) and has no task/context
+ * flags — an A2A delegation hands off a *task*, so we first attest the
+ * delegation itself as an action (task/context/message ids in `meta`,
+ * signed by the sender's key) and then hand off THAT artifact. The
+ * previous single-call shape passed flags the CLI does not have
+ * (`--task-id`, `--context`, `--a2a-message-id`) and omitted the required
+ * `--artifacts`, so every invocation failed — silently, because errors
+ * here are deliberately swallowed. Handoffs were never recorded.
  */
 export async function attestHandoff(opts: {
   from: string;
@@ -126,6 +135,26 @@ export async function attestHandoff(opts: {
 }): Promise<string | undefined> {
   if (process.env.TREESHIP_DISABLE === '1') return undefined;
 
+  // 1. The delegation event, signed by the sender.
+  const delegationId = await attestAction({
+    actor: opts.from,
+    action: 'a2a.delegate',
+    meta: {
+      a2a_task_id: opts.taskId,
+      a2a_context_id: opts.context,
+      a2a_message_id: opts.messageId,
+      to: opts.to,
+    },
+  });
+  if (!delegationId) {
+    warnOnce(
+      `attestHandoff(${opts.from} -> ${opts.to})`,
+      new Error('delegation action failed to attest; skipping handoff'),
+    );
+    return undefined;
+  }
+
+  // 2. The handoff transferring the attested delegation.
   const args = [
     'attest',
     'handoff',
@@ -133,13 +162,11 @@ export async function attestHandoff(opts: {
     opts.from,
     '--to',
     opts.to,
-    '--task-id',
-    opts.taskId,
+    '--artifacts',
+    delegationId,
     '--format',
     'json',
   ];
-  if (opts.context) args.push('--context', opts.context);
-  if (opts.messageId) args.push('--a2a-message-id', opts.messageId);
 
   try {
     const { stdout } = await exec('treeship', args, { timeout: 5000 });
