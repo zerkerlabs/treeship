@@ -1754,6 +1754,14 @@ struct VerifyArgs {
     /// Only applies to the artifact-ID form.
     #[arg(long, default_value_t = false)]
     full: bool,
+
+    /// Fail closed on a receipt whose signature was not verified against a
+    /// trust root. Without --strict, an internally-consistent but unsigned
+    /// receipt reports "internally consistent" (exit 0, not "authentic");
+    /// with --strict it is a hard verification failure. Applies to the
+    /// receipt-URL and .treeship-package forms.
+    #[arg(long, default_value_t = false)]
+    strict: bool,
 }
 
 #[derive(Args)]
@@ -2795,7 +2803,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 || a.certificate.is_some()
             {
                 let exit =
-                    commands::verify_external::run(&a.target, a.certificate.as_deref(), printer);
+                    commands::verify_external::run(&a.target, a.certificate.as_deref(), a.strict, printer);
                 if exit != commands::verify_external::ExternalExit::Ok {
                     std::process::exit(exit.code());
                 }

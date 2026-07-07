@@ -51,7 +51,10 @@ export interface VerifyCheck {
 }
 
 export interface VerifyReceiptResult {
-  outcome: "pass" | "fail" | "error";
+  // "unverified" (AUD-01): the receipt is internally consistent (Merkle root,
+  // inclusion proofs, timeline) but no signature was verified against a trust
+  // root — structural checks alone cannot establish authenticity.
+  outcome: "pass" | "fail" | "error" | "unverified";
   checks: VerifyCheck[];
   session: {
     id: string;
@@ -64,6 +67,14 @@ export interface VerifyReceiptResult {
   error_code?: string;
   message?: string;
 }
+
+// Compile-time regression guard (AUD-01): core-wasm's verify_receipt emits
+// "unverified" for a receipt whose signature was not verified against a trust
+// root. If the union above ever drops that member, this fails to compile.
+type _AssertTrue<T extends true> = T;
+type _Aud01ReceiptOutcomeHasUnverified = _AssertTrue<
+  "unverified" extends VerifyReceiptResult["outcome"] ? true : false
+>;
 
 export interface VerifyCertificateResult {
   outcome: "pass" | "fail" | "error";

@@ -350,7 +350,7 @@ fn verify_risc0_proof_inner(proof: &serde_json::Value) -> Result<String, String>
 /// Returns JSON:
 /// ```json
 /// {
-///   "outcome": "pass" | "fail" | "error",
+///   "outcome": "pass" | "fail" | "error" | "unverified",
 ///   "checks": [{"step": "...", "status": "pass"|"fail"|"warn", "detail": "..."}],
 ///   "session": {"id": "...", "ship_id": "...", "agent": "...", "duration_ms": 0, "actions": 0},
 ///   "error_code": "...",   // only on error
@@ -359,8 +359,8 @@ fn verify_risc0_proof_inner(proof: &serde_json::Value) -> Result<String, String>
 /// ```
 #[wasm_bindgen]
 pub fn verify_receipt(receipt_json: &str) -> String {
-    use treeship_core::session::{SessionReceipt, VerifyStatus};
-    use treeship_core::verify::verify_receipt_json_checks;
+    use treeship_core::session::SessionReceipt;
+    use treeship_core::verify::{receipt_verdict, verify_receipt_json_checks, ReceiptVerdict};
 
     let receipt: SessionReceipt = match serde_json::from_str(receipt_json) {
         Ok(r) => r,
@@ -368,7 +368,9 @@ pub fn verify_receipt(receipt_json: &str) -> String {
     };
 
     let checks = verify_receipt_json_checks(&receipt);
-    let any_fail = checks.iter().any(|c| c.status == VerifyStatus::Fail);
+    // AUD-01: never report "pass" for a receipt whose signature was not verified.
+    // An internally-consistent-but-unsigned receipt is "unverified", not "pass".
+    let verdict = receipt_verdict(&checks, false);
 
     let agent_name = receipt
         .agent_graph
@@ -378,7 +380,11 @@ pub fn verify_receipt(receipt_json: &str) -> String {
         .unwrap_or_default();
 
     serde_json::json!({
-        "outcome": if any_fail { "fail" } else { "pass" },
+        "outcome": match verdict {
+            ReceiptVerdict::Authentic => "pass",
+            ReceiptVerdict::StructuralOnly => "unverified",
+            ReceiptVerdict::Failed => "fail",
+        },
         "checks": checks.iter().map(|c| serde_json::json!({
             "step": c.name,
             "status": status_label(&c.status),

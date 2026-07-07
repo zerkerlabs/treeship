@@ -17,6 +17,51 @@ use crate::agent::AgentCertificate;
 use crate::session::receipt::SessionReceipt;
 use crate::session::package::{VerifyCheck, VerifyStatus};
 
+/// Outcome of interpreting a receipt's verification checks. Distinguishes a
+/// signature-verified receipt (`Authentic`) from one that is only internally
+/// consistent (`StructuralOnly`) — the distinction AUD-01 collapsed, letting a
+/// forged receipt be reported as authentic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReceiptVerdict {
+    /// A trust-anchored signature over the receipt verified. Safe to call "authentic".
+    Authentic,
+    /// No Fail rows, but no signature was verified. Internally consistent only —
+    /// an attacker can fabricate a receipt in this state, so it MUST NOT be
+    /// presented as authentic.
+    StructuralOnly,
+    /// At least one check failed (or `strict` rejected an unverified receipt).
+    Failed,
+}
+
+/// True only when an explicit `authenticity` check PASSED — i.e. a signature was
+/// verified against a trust root. The self-referential merkle/leaf/timeline
+/// checks a forged receipt satisfies never set this.
+pub fn receipt_is_authenticated(checks: &[VerifyCheck]) -> bool {
+    checks
+        .iter()
+        .any(|c| c.name == "authenticity" && c.status == VerifyStatus::Pass)
+}
+
+/// Interpret a receipt's checks into a single verdict. `strict` treats a receipt
+/// with no verified signature as a failure rather than a warning.
+///
+/// Invariant (AUD-01): the verdict is `Authentic` ONLY when a signature was
+/// actually verified. Absent that, an internally-consistent receipt is
+/// `StructuralOnly`, never `Authentic`.
+pub fn receipt_verdict(checks: &[VerifyCheck], strict: bool) -> ReceiptVerdict {
+    if checks.iter().any(|c| c.status == VerifyStatus::Fail) {
+        return ReceiptVerdict::Failed;
+    }
+    if receipt_is_authenticated(checks) {
+        return ReceiptVerdict::Authentic;
+    }
+    if strict {
+        ReceiptVerdict::Failed
+    } else {
+        ReceiptVerdict::StructuralOnly
+    }
+}
+
 /// Receipt-level checks derivable from the receipt JSON alone (no on-disk
 /// package). Runs Merkle root recomputation, inclusion proof verification,
 /// leaf-count parity, and timeline ordering. Shared between the CLI's
@@ -30,6 +75,16 @@ pub fn verify_receipt_json_checks(receipt: &SessionReceipt) -> Vec<VerifyCheck> 
     use crate::merkle::MerkleTree;
 
     let mut checks: Vec<VerifyCheck> = Vec::new();
+
+    // AUD-01: a raw receipt JSON carries no envelope bytes, so this path verifies
+    // NO signature and cannot establish authenticity. Emit an explicit non-pass
+    // row so no caller (CLI verdict, WASM `verify_receipt`) mistakes internal
+    // consistency for a verified signature. Layer 2 (a signed receipt root
+    // verified against the TrustRootStore) will upgrade this to a Pass.
+    checks.push(VerifyCheck::warn(
+        "authenticity",
+        "no signature verified from this source; receipt is internally consistent only",
+    ));
 
     if !receipt.artifacts.is_empty() {
         // The receipt's declared merkle_version drives both recomputation
@@ -601,6 +656,70 @@ mod tests {
             "chain_linkage check must not be emitted (populated receipt). got: {:?}",
             checks_full.iter().map(|c| &c.name).collect::<Vec<_>>(),
         );
+    }
+
+    // ── AUD-01 regression: verification must never claim authenticity without
+    //    a verified signature. A forged receipt (attacker-authored JSON with a
+    //    self-computed merkle root) previously produced only pass/warn rows, so
+    //    the CLI printed "This receipt is authentic." over a fabricated session.
+    //    These tests pin the fix: an explicit non-pass `authenticity` row, and a
+    //    verdict that is StructuralOnly (never Authentic) unless a signature was
+    //    actually verified against a trust root. ──
+
+    #[test]
+    fn receipt_json_checks_emit_unverified_authenticity_row() {
+        let rec = receipt(Some("ship_forged"), &[]);
+        let checks = verify_receipt_json_checks(&rec);
+        let auth = checks
+            .iter()
+            .find(|c| c.name == "authenticity")
+            .expect("verify_receipt_json_checks must emit an 'authenticity' check");
+        assert_eq!(
+            auth.status,
+            VerifyStatus::Warn,
+            "raw receipt JSON carries no signature; authenticity must be Warn, never Pass",
+        );
+    }
+
+    #[test]
+    fn receipt_is_authenticated_requires_a_passing_authenticity_row() {
+        // The self-referential checks a forged receipt satisfies (merkle/leaf/
+        // timeline all pass) must NOT count as authenticated.
+        let structural = vec![
+            VerifyCheck::pass("merkle_root", "matches recomputed"),
+            VerifyCheck::pass("timeline_order", "ordered"),
+            VerifyCheck::warn("authenticity", "no signature verified"),
+        ];
+        assert!(!receipt_is_authenticated(&structural));
+
+        // Only an explicit passing authenticity row counts (Layer 2 signs it).
+        let signed = vec![VerifyCheck::pass(
+            "authenticity",
+            "signature verified vs trust root",
+        )];
+        assert!(receipt_is_authenticated(&signed));
+    }
+
+    #[test]
+    fn receipt_verdict_never_authentic_without_a_verified_signature() {
+        // A fully self-consistent forgery: no Fail rows, but no verified sig.
+        let forged = verify_receipt_json_checks(&receipt(Some("ship_forged"), &[]));
+        assert!(
+            matches!(receipt_verdict(&forged, false), ReceiptVerdict::StructuralOnly),
+            "unsigned receipt must be StructuralOnly, never Authentic",
+        );
+        // --strict fails closed on the same input.
+        assert!(matches!(receipt_verdict(&forged, true), ReceiptVerdict::Failed));
+        // A hard Fail row always fails, regardless of strict.
+        let mut bad = forged.clone();
+        bad.push(VerifyCheck::fail("merkle_root", "recomputed != declared"));
+        assert!(matches!(receipt_verdict(&bad, false), ReceiptVerdict::Failed));
+        // A verified signature earns Authentic.
+        let signed = vec![VerifyCheck::pass(
+            "authenticity",
+            "signature verified vs trust root",
+        )];
+        assert!(matches!(receipt_verdict(&signed, false), ReceiptVerdict::Authentic));
     }
 
     // ── Adversarial regression coverage for verify_receipt_json_checks ──

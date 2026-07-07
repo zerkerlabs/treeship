@@ -21,8 +21,8 @@ use std::path::{Path, PathBuf};
 use treeship_core::agent::{verify_certificate, AgentCertificate};
 use treeship_core::session::{read_package, verify_package, SessionReceipt, VerifyStatus};
 use treeship_core::verify::{
-    cross_verify_receipt_and_certificate, verify_receipt_json_checks, CertificateStatus,
-    CrossVerifyResult, ShipIdStatus,
+    cross_verify_receipt_and_certificate, receipt_verdict, verify_receipt_json_checks,
+    CertificateStatus, CrossVerifyResult, ReceiptVerdict, ShipIdStatus,
 };
 
 use crate::printer::{Format, Printer};
@@ -62,6 +62,7 @@ pub fn is_local_path(s: &str) -> bool {
 pub fn run(
     target: &str,
     certificate: Option<&str>,
+    strict: bool,
     printer: &Printer,
 ) -> ExternalExit {
     // Resolve the target into a parsed receipt or certificate.
@@ -121,7 +122,19 @@ pub fn run(
 
     // Combine. URL mode uses json_checks; package mode uses package_checks
     // (which is a superset). Pick the bigger one.
-    let checks = if package_checks.is_empty() { json_checks } else { package_checks };
+    let mut checks = if package_checks.is_empty() { json_checks } else { package_checks };
+
+    // AUD-01: the "authentic" verdict must be gated on a verified signature, not
+    // on the absence of Fail rows among self-referential checks. The package
+    // path may not carry an authenticity row; ensure the dimension is always
+    // present so the verdict and the displayed checks agree. `receipt_verdict`
+    // treats an absent/non-pass authenticity row as unverified.
+    if !checks.iter().any(|c| c.name == "authenticity") {
+        checks.push(treeship_core::session::VerifyCheck::warn(
+            "authenticity",
+            "no signature verified against a trust root; internal consistency only",
+        ));
+    }
 
     let receipt = match receipt {
         Some(r) => r,
@@ -133,30 +146,43 @@ pub fn run(
 
     // JSON output mode short-circuits the rest.
     if printer.format == Format::Json {
-        return emit_json(printer, target, &source_label, &receipt, &checks, certificate);
+        return emit_json(printer, target, &source_label, &receipt, &checks, strict, certificate);
     }
 
     // Header + per-step output.
-    let receipt_ok = checks.iter().all(|c| c.status != VerifyStatus::Fail);
+    let verdict = receipt_verdict(&checks, strict);
+    let receipt_passed = !matches!(verdict, ReceiptVerdict::Failed);
     let load_label = source_label_to_step(target_kind_label(&target_kind));
     emit_step(printer, true, &load_label, None);
     emit_checks_as_steps(printer, &checks);
 
-    let mut overall = if receipt_ok { ExternalExit::Ok } else { ExternalExit::VerifyFailed };
+    let mut overall = if receipt_passed { ExternalExit::Ok } else { ExternalExit::VerifyFailed };
 
-    if receipt_ok {
-        printer.blank();
-        printer.info(&printer.green("Verified. This receipt is authentic."));
-        printer.blank();
-        emit_summary(printer, &receipt);
-    } else {
-        printer.blank();
-        printer.failure("verification failed", &[("target", target)]);
+    printer.blank();
+    match verdict {
+        ReceiptVerdict::Authentic => {
+            printer.info(&printer.green("Verified. This receipt is authentic."));
+            printer.blank();
+            emit_summary(printer, &receipt);
+        }
+        ReceiptVerdict::StructuralOnly => {
+            // Internally consistent, but nothing tied it to a key. Do NOT claim
+            // authenticity — a receipt in this state can be fabricated.
+            printer.warn(
+                "Receipt is internally consistent, but no signature was verified — authenticity is NOT established.",
+                &[("hint", "this source carries no trust-anchored signature; treat the contents as unverified. Use --strict to fail closed.")],
+            );
+            printer.blank();
+            emit_summary(printer, &receipt);
+        }
+        ReceiptVerdict::Failed => {
+            printer.failure("verification failed", &[("target", target)]);
+        }
     }
 
     // Cross-verify path.
     if let Some(cert_target) = certificate {
-        if !receipt_ok {
+        if !receipt_passed {
             // Don't try to cross-verify against an unverified receipt.
             printer.blank();
             printer.warn("skipping cross-verification because receipt did not verify", &[]);
@@ -400,10 +426,20 @@ fn emit_step(printer: &Printer, ok: bool, label: &str, detail: Option<&str>) {
 
 fn emit_checks_as_steps(printer: &Printer, checks: &[treeship_core::session::VerifyCheck]) {
     for c in checks {
-        let ok = c.status != VerifyStatus::Fail;
         let label = format_check_label(c);
-        let detail = if ok { None } else { Some(c.detail.as_str()) };
-        emit_step(printer, ok, &label, detail);
+        match c.status {
+            // A Warn must not render as a green check — that is the misleading
+            // "green check nobody investigates" (AUD-01). Show ⚠ + the reason.
+            VerifyStatus::Warn => {
+                if printer.quiet || printer.format == Format::Json {
+                    continue;
+                }
+                let icon = printer.yellow("⚠");
+                println!("  {icon}  {label}\n       {}", printer.dim(&c.detail));
+            }
+            VerifyStatus::Pass => emit_step(printer, true, &label, None),
+            VerifyStatus::Fail => emit_step(printer, false, &label, Some(c.detail.as_str())),
+        }
     }
 }
 
@@ -462,9 +498,14 @@ fn emit_json(
     source_label: &str,
     receipt: &SessionReceipt,
     checks: &[treeship_core::session::VerifyCheck],
+    strict: bool,
     certificate: Option<&str>,
 ) -> ExternalExit {
-    let receipt_failed = checks.iter().any(|c| c.status == VerifyStatus::Fail);
+    // AUD-01: "pass" is reserved for a signature-verified receipt. An
+    // internally-consistent-but-unsigned receipt reports "unverified", never
+    // "pass", so machine consumers cannot mistake it for authenticity.
+    let verdict = receipt_verdict(checks, strict);
+    let receipt_failed = matches!(verdict, ReceiptVerdict::Failed);
 
     let trust = treeship_core::trust::TrustRootStore::open_default_or_empty()
         .unwrap_or_else(|_| treeship_core::trust::TrustRootStore::empty());
@@ -481,7 +522,11 @@ fn emit_json(
     let mut out = serde_json::json!({
         "target": target,
         "source": source_label,
-        "outcome": if receipt_failed { "fail" } else { "pass" },
+        "outcome": match verdict {
+            ReceiptVerdict::Authentic => "pass",
+            ReceiptVerdict::StructuralOnly => "unverified",
+            ReceiptVerdict::Failed => "fail",
+        },
         "receipt": {
             "session_id": receipt.session.id,
             "ship_id": receipt.session.ship_id,
