@@ -99,11 +99,13 @@ pub fn history(
         if p.get("actor").and_then(|v| v.as_str()) != Some(agent.as_str()) {
             continue;
         }
-        let class = p
-            .get("attestation_class")
-            .and_then(|v| v.as_str())
-            .unwrap_or("?")
-            .to_string();
+        // AUD-06: cap the displayed class to what the payload's own counts
+        // justify, so a forged `countersigned`/`runtime` label does not render
+        // as such. A record with no class at all still shows "?".
+        let class = match p.get("attestation_class").and_then(|v| v.as_str()) {
+            Some(declared) => super::profile::cap_class_to_evidence(declared, &p).to_string(),
+            None => "?".to_string(),
+        };
         if let Some(cf) = class_filter {
             if class != cf {
                 continue;

@@ -80,6 +80,14 @@ pub enum PredicateError {
     },
     /// The payload was not a JSON object (registered predicates require one).
     NotAnObject { suffix: String },
+    /// A present field's value was not among the schema's `enum` (or did not
+    /// equal its `const`). This is what stops a self-declared field from
+    /// carrying an out-of-vocabulary value (AUD-06).
+    NotInEnum {
+        suffix: String,
+        field: String,
+        allowed: String,
+    },
     /// The embedded schema itself failed to parse (a build-time bug).
     SchemaParse { suffix: String, detail: String },
 }
@@ -101,6 +109,10 @@ impl fmt::Display for PredicateError {
             PredicateError::NotAnObject { suffix } => {
                 write!(f, "{suffix}: payload must be a JSON object")
             }
+            PredicateError::NotInEnum { suffix, field, allowed } => write!(
+                f,
+                "{suffix}: field `{field}` has a value outside its allowed set ({allowed})"
+            ),
             PredicateError::SchemaParse { suffix, detail } => {
                 write!(f, "{suffix}: registered schema is invalid JSON: {detail}")
             }
@@ -156,15 +168,40 @@ pub fn validate(suffix: &str, payload: Option<&Value>) -> Result<(), PredicateEr
             let Some(actual) = map.get(field) else {
                 continue; // optional-and-absent; `required` already enforced presence
             };
-            let Some(type_decl) = subschema.get("type") else {
-                continue; // no declared primitive type (e.g. const/enum/$ref) -> not structurally checked
-            };
-            if !type_matches(actual, type_decl) {
-                return Err(PredicateError::TypeMismatch {
-                    suffix: suffix.to_string(),
-                    field: field.to_string(),
-                    expected: type_decl.to_string(),
-                });
+
+            // Primitive type, when declared.
+            if let Some(type_decl) = subschema.get("type") {
+                if !type_matches(actual, type_decl) {
+                    return Err(PredicateError::TypeMismatch {
+                        suffix: suffix.to_string(),
+                        field: field.to_string(),
+                        expected: type_decl.to_string(),
+                    });
+                }
+            }
+
+            // AUD-06: enforce `enum` and `const`, independently of whether a
+            // `type` is also declared. Before this, a field with a declared
+            // enum (e.g. session.v1 `attestation_class`) passed on type alone,
+            // so an out-of-vocabulary value slipped through. A missing type is
+            // no longer a free pass either.
+            if let Some(allowed) = subschema.get("enum").and_then(Value::as_array) {
+                if !allowed.iter().any(|a| a == actual) {
+                    return Err(PredicateError::NotInEnum {
+                        suffix: suffix.to_string(),
+                        field: field.to_string(),
+                        allowed: Value::Array(allowed.clone()).to_string(),
+                    });
+                }
+            }
+            if let Some(constant) = subschema.get("const") {
+                if actual != constant {
+                    return Err(PredicateError::NotInEnum {
+                        suffix: suffix.to_string(),
+                        field: field.to_string(),
+                        allowed: constant.to_string(),
+                    });
+                }
             }
         }
     }
@@ -289,6 +326,45 @@ mod tests {
             "report_url": null
         });
         assert!(validate("session.v1", Some(&payload)).is_ok());
+    }
+
+    #[test]
+    fn session_record_out_of_enum_class_fails_closed() {
+        // AUD-06: before enum enforcement, an out-of-vocabulary
+        // attestation_class passed on type (string) alone. It must now be
+        // rejected against the schema's enum.
+        let payload = json!({
+            "session_id": "ssn_abc123",
+            "actor": "agent://hermes",
+            "outcome": "completed",
+            "started_at": "2026-07-06T14:00:00Z",
+            "closed_at": "2026-07-06T15:30:00Z",
+            "attestation_class": "super-trusted",
+            "receipt_digest": "sha256:deadbeef"
+        });
+        let err = validate("session.v1", Some(&payload)).unwrap_err();
+        assert!(
+            matches!(err, PredicateError::NotInEnum { ref field, .. } if field == "attestation_class"),
+            "expected NotInEnum for attestation_class, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn session_record_out_of_enum_outcome_fails_closed() {
+        // `outcome` also carries an enum; a bogus value must be rejected.
+        let payload = json!({
+            "session_id": "ssn_abc123",
+            "actor": "agent://hermes",
+            "outcome": "totally-shipped",
+            "started_at": "2026-07-06T14:00:00Z",
+            "closed_at": "2026-07-06T15:30:00Z",
+            "attestation_class": "self",
+            "receipt_digest": "sha256:deadbeef"
+        });
+        assert!(matches!(
+            validate("session.v1", Some(&payload)).unwrap_err(),
+            PredicateError::NotInEnum { .. }
+        ));
     }
 
     #[test]

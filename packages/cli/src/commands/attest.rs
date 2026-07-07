@@ -15,6 +15,19 @@ use crate::commands::verify::{check_scope_violation, find_approval_by_nonce, now
 use crate::{ctx, printer::Printer};
 use treeship_core::session::event::EventType;
 
+/// Receipt kinds that are minted only by a dedicated command from sealed
+/// evidence and must never be hand-signed through the generic attest path
+/// (AUD-06). Returns the owning command for the error message, or None if the
+/// kind is freely attestable.
+pub(crate) fn close_only_kind_owner(kind: &str) -> Option<&'static str> {
+    match kind {
+        // session.v1 records carry a self-declared `attestation_class` that
+        // `session close` derives from consumed approvals / tool runtimes.
+        "session.v1" => Some("treeship session close"),
+        _ => None,
+    }
+}
+
 /// Resolve which key signs for a given actor URI. An `agent://<name>` whose
 /// agent card carries a registered per-agent key that is pinned under
 /// AgentCert signs with **that** key, so the actor is provable (the receipt's
@@ -389,6 +402,24 @@ pub fn receipt(args: ReceiptArgs, printer: &Printer) -> Result<(), Box<dyn std::
         .map(serde_json::from_str)
         .transpose()
         .map_err(|e| format!("receipt payload is not valid JSON: {e}"))?;
+
+    // AUD-06: some receipt kinds are minted ONLY by a command that derives
+    // every field from sealed session evidence (e.g. `session close` computes
+    // `attestation_class` from consumed approvals / tool runtimes). Letting a
+    // caller hand-sign them through the generic attest path is a trust-ladder
+    // laundering vector: an attacker mints `session.v1` with
+    // `attestation_class:"countersigned"` and an inflated `action_count`, no
+    // countersignature or runtime evidence, and it aggregates into the highest
+    // trust classes. Refuse those kinds here.
+    if let Some(owner) = close_only_kind_owner(&args.kind) {
+        return Err(format!(
+            "kind '{}' is minted only by `{owner}` from sealed session evidence; \
+             it cannot be hand-signed via `attest receipt`. This prevents forging a \
+             work-history record with a self-declared attestation_class. \
+             See docs/specs/work-history.md.",
+            args.kind
+        ).into());
+    }
 
     // Typed-predicate validation: if `kind` is a registered predicate, the
     // payload must conform to its schema before we sign. Unregistered kinds
@@ -1276,5 +1307,25 @@ fn write_last(storage_dir: &str, artifact_id: &str) {
     {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(&last_path, std::fs::Permissions::from_mode(0o600));
+    }
+}
+
+#[cfg(test)]
+mod aud06_tests {
+    use super::close_only_kind_owner;
+
+    // AUD-06: session.v1 must be refused by the generic attest path so a
+    // work-history record with a self-declared attestation_class cannot be
+    // hand-signed.
+    #[test]
+    fn session_v1_is_close_only() {
+        assert_eq!(close_only_kind_owner("session.v1"), Some("treeship session close"));
+    }
+
+    #[test]
+    fn ordinary_kinds_are_freely_attestable() {
+        assert_eq!(close_only_kind_owner("note.v1"), None);
+        assert_eq!(close_only_kind_owner("deploy"), None);
+        assert_eq!(close_only_kind_owner(""), None);
     }
 }
