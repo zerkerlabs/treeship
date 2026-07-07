@@ -195,3 +195,60 @@ func TestResolve_MissingAgentParam(t *testing.T) {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
 }
+
+func TestHistory_FiltersToAgentSessionRecords(t *testing.T) {
+	t.Setenv("TREESHIP_HUB_DB", filepath.Join(t.TempDir(), "hub.db"))
+	database, err := db.Open()
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer database.Close()
+
+	// Two session records for hermes (out of order), one for another agent,
+	// and a non-session receipt — only hermes's two come back, newest first.
+	insertReceipt(t, database, "art_s1",
+		makeEnvelope(t, "session.v1", map[string]any{"actor": "agent://hermes", "headline": "first"}, "key_h"), 100)
+	insertReceipt(t, database, "art_s2",
+		makeEnvelope(t, "session.v1", map[string]any{"actor": "agent://hermes", "headline": "second"}, "key_h"), 200)
+	insertReceipt(t, database, "art_other_agent",
+		makeEnvelope(t, "session.v1", map[string]any{"actor": "agent://ghost"}, "key_g"), 150)
+	insertReceipt(t, database, "art_not_session",
+		makeEnvelope(t, "agent_card.v1", map[string]any{"agent": "agent://hermes"}, "key_h"), 160)
+
+	h := &Handlers{DB: database}
+	r := httptest.NewRequest("GET", "/v1/agents/history?agent=agent://hermes", nil)
+	w := httptest.NewRecorder()
+	h.History(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d", w.Code)
+	}
+	var resp struct {
+		Agent   string `json:"agent"`
+		Count   int    `json:"count"`
+		Entries []struct {
+			ArtifactID   string `json:"artifact_id"`
+			EnvelopeJSON string `json:"envelope_json"`
+			Signer       string `json:"signer"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if resp.Count != 2 || len(resp.Entries) != 2 {
+		t.Fatalf("want 2 hermes records, got count=%d len=%d", resp.Count, len(resp.Entries))
+	}
+	if resp.Entries[0].ArtifactID != "art_s2" || resp.Entries[1].ArtifactID != "art_s1" {
+		t.Fatalf("want newest-first [art_s2, art_s1], got [%s, %s]",
+			resp.Entries[0].ArtifactID, resp.Entries[1].ArtifactID)
+	}
+	if resp.Entries[0].Signer != "key_h" || resp.Entries[0].EnvelopeJSON == "" {
+		t.Fatalf("entries must carry signer + raw envelope")
+	}
+
+	// Missing agent param is a 400.
+	w2 := httptest.NewRecorder()
+	h.History(w2, httptest.NewRequest("GET", "/v1/agents/history", nil))
+	if w2.Code != http.StatusBadRequest {
+		t.Fatalf("missing agent must 400, got %d", w2.Code)
+	}
+}

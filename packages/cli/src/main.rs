@@ -319,6 +319,18 @@ enum Command {
     ///   treeship verify-presentation deployer.presentation.json --max-staple-age 1h
     VerifyPresentation(VerifyPresentationCliArgs),
 
+    /// An agent's work history: its transparency log filtered to signed
+    /// session.v1 records, sortable and filterable. Each record's envelope
+    /// is re-verified on this machine; anchored entries' Merkle inclusion
+    /// is re-proved offline. History proves what was recorded, never
+    /// everything that happened.
+    ///
+    /// Examples:
+    ///   treeship history agent://hermes
+    ///   treeship history hermes --hub https://api.treeship.dev
+    ///   treeship history hermes --class countersigned --since 2026-07-01T00:00:00Z
+    History(HistoryCliArgs),
+
     /// Manage the local Agent Card store
     ///
     /// Cards are workspace trust objects -- who an agent is, where it
@@ -1814,6 +1826,29 @@ struct VerifyPresentationCliArgs {
 }
 
 #[derive(clap::Args)]
+struct HistoryCliArgs {
+    /// Agent name or agent:// URI
+    #[arg(value_name = "AGENT")]
+    agent: String,
+
+    /// Pull history from a Hub instead of the local store
+    #[arg(long, value_name = "URL")]
+    hub: Option<String>,
+
+    /// Only records with this attestation class (self | runtime | countersigned)
+    #[arg(long, value_name = "CLASS")]
+    class: Option<String>,
+
+    /// Only records closed at or after this RFC 3339 timestamp
+    #[arg(long, value_name = "TIMESTAMP")]
+    since: Option<String>,
+
+    /// Maximum records to show (newest first)
+    #[arg(long, default_value = "50", value_name = "N")]
+    limit: usize,
+}
+
+#[derive(clap::Args)]
 struct OnboardCliArgs {
     /// Agent name or agent:// URI (normalized either way)
     #[arg(value_name = "NAME")]
@@ -2424,6 +2459,16 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             &a.file,
             a.max_staple_age.as_deref(),
             a.challenge.as_deref(),
+            printer,
+        ),
+
+        Command::History(a) => commands::history::history(
+            &a.agent,
+            a.hub.as_deref(),
+            a.class.as_deref(),
+            a.since.as_deref(),
+            a.limit,
+            cli.config.as_deref(),
             printer,
         ),
 
