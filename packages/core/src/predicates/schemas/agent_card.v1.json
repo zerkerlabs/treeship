@@ -51,8 +51,22 @@
       "type": "string"
     },
     "capability_provenance": {
-      "description": "Optional per-capability provenance: a map from a capability (same string as in capabilities.tools) to { grade, source?, evidence? }. grade is 'captured' (the tool is wired into the agent's harness, read from config at mint time), 'exercised' (computed by verify-capability from captured receipts), 'discovered' (read from the agent's own published descriptor, e.g. an A2A AgentCard's skills via --from-a2a; a real source, weaker than exercised, stronger than a bare declaration), or 'declared' (an operator's bare assertion). Cards without this block are treated as fully declared. See docs/specs/capability-provenance.md.",
-      "type": "object"
+      "description": "Optional per-capability provenance: a map from a capability (same string as in capabilities.tools) to { grade, source?, evidence? }. grade is 'captured' (the tool is wired into the agent's harness, read from config at mint time), 'exercised' (computed by verify-capability from captured receipts), 'discovered' (read from the agent's own published descriptor, e.g. an A2A AgentCard's skills via --from-a2a; a real source, weaker than exercised, stronger than a bare declaration), or 'declared' (an operator's bare assertion). Cards without this block are treated as fully declared. NOTE: a signed grade is only trustworthy when the card is key-bound; verify-capability marks captured/discovered as SELF-ASSERTED for a card that is not key-bound, since a self-asserted card could carry a fabricated grade. See docs/specs/capability-provenance.md.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["grade"],
+        "properties": {
+          "grade": {
+            "description": "How this capability is known. Constrained to the four defined grades.",
+            "enum": ["captured", "exercised", "discovered", "declared"]
+          },
+          "source": {
+            "description": "Where the grade came from (a config path, an A2A URL, etc).",
+            "type": "string"
+          }
+        }
+      }
     }
   }
 }
