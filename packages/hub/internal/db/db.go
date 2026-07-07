@@ -565,6 +565,22 @@ func GetCheckpoint(database *sql.DB, id int64) (*MerkleCheckpoint, error) {
 	return cp, nil
 }
 
+// DockOwnsCheckpointSigner reports whether dockID has published at least one
+// checkpoint signed by signerKeyID. Used to bind the otherwise free-form
+// `signer` field of a consistency proof to the authenticated dock (AUD-11),
+// so an attacker cannot pre-publish a consistency row under a victim's signer.
+func DockOwnsCheckpointSigner(database *sql.DB, dockID, signerKeyID string) (bool, error) {
+	var n int
+	err := database.QueryRow(
+		`SELECT COUNT(1) FROM merkle_checkpoints WHERE dock_id = ? AND signer_key_id = ?`,
+		dockID, signerKeyID,
+	).Scan(&n)
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 func GetLatestCheckpoint(database *sql.DB, dockID string) (*MerkleCheckpoint, error) {
 	var row *sql.Row
 	if dockID != "" {

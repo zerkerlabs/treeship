@@ -391,16 +391,43 @@ pub fn run(
     }
     printer.blank();
 
-    // Propagate the subprocess exit code
-    if let Ok(s) = status {
-        if !s.success() {
-            if let Some(code) = s.code() {
-                process::exit(code);
-            }
+    // Propagate the subprocess exit status.
+    //
+    // AUD-10: a process killed by a signal (SIGSEGV / SIGABRT / OOM-SIGKILL /
+    // SIGTERM) has no `code()` — it returns None. The old shape only exited
+    // when `code()` was Some, so a signal death fell through to `Ok(())` and
+    // treeship exited 0, silently converting a crashed/killed command into
+    // "success" and bypassing any gate that keys on `treeship wrap`'s exit
+    // code (the receipt meanwhile records exitCode -1/failed). Exit non-zero
+    // in every non-success case: propagate the real code, or map a signal to
+    // the conventional 128 + signum.
+    match status {
+        Ok(s) if s.success() => {}
+        Ok(s) => {
+            let code = s.code().unwrap_or_else(|| signal_exit_code(&s));
+            process::exit(code);
         }
+        // We failed to even collect the child's status; treat as failure.
+        Err(_) => process::exit(1),
     }
 
     Ok(())
+}
+
+/// Map a signal-terminated child to the conventional `128 + signum` exit code
+/// so a crash or kill surfaces as a non-zero wrap exit. Falls back to 1 on
+/// non-unix or when the signal is somehow unavailable.
+fn signal_exit_code(status: &std::process::ExitStatus) -> i32 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        return 128 + status.signal().unwrap_or(1);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = status;
+        1
+    }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -713,6 +740,32 @@ fn format_elapsed(d: std::time::Duration) -> String {
             let mins = secs as u64 / 60;
             let rem  = secs as u64 % 60;
             format!("{}m{}s", mins, rem)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // AUD-10: a signal-killed child must produce a non-zero wrap exit, not 0.
+    #[cfg(unix)]
+    #[test]
+    fn signal_death_maps_to_128_plus_signum() {
+        use std::os::unix::process::ExitStatusExt;
+        // Raw wait status whose low 7 bits are the terminating signal (9).
+        let st = std::process::ExitStatus::from_raw(9);
+        assert_eq!(st.code(), None, "a signal death has no exit code()");
+        assert_eq!(signal_exit_code(&st), 128 + 9);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn signal_exit_code_is_always_nonzero() {
+        use std::os::unix::process::ExitStatusExt;
+        for sig in [1, 6, 9, 11, 15] {
+            let st = std::process::ExitStatus::from_raw(sig);
+            assert!(signal_exit_code(&st) > 0, "signal {sig} must map to nonzero");
         }
     }
 }
