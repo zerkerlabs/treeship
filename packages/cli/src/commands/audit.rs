@@ -279,7 +279,7 @@ fn audit_once(base: &str, agent: &str, trust: &TrustRootStore, printer: &Printer
 /// the checkpoint signature against our trust roots + inclusion in the signed
 /// root. Returns `(both-hold, checkpoint)` so the caller can also witness the
 /// checkpoint when it is fully verified.
-fn verify_inclusion(base: &str, artifact_id: &str, trust: &TrustRootStore) -> CmdResult2 {
+pub(crate) fn verify_inclusion(base: &str, artifact_id: &str, trust: &TrustRootStore) -> CmdResult2 {
     let pf: ProofFile = ureq::get(&format!("{base}/v1/merkle/{artifact_id}"))
         .call()?
         .into_json()?;

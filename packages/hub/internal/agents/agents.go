@@ -303,3 +303,71 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }
+
+// History handles GET /v1/agents/history?agent=<uri> — the work-history
+// projection (docs/specs/work-history.md slice 2): the transparency log
+// filtered to the agent's session.v1 records, served as raw signed envelopes
+// plus Merkle anchors. The Hub filters and serves; the client re-verifies
+// every envelope and every anchored entry's inclusion against its OWN trust
+// roots and renders the typed fields itself — the Hub never interprets a
+// record, so it cannot misrepresent one.
+func (h *Handlers) History(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	agent := r.URL.Query().Get("agent")
+	if agent == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing agent query parameter"})
+		return
+	}
+
+	receipts, err := db.ListArtifactsByPayloadType(h.DB, receiptPayloadType)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "query failed"})
+		return
+	}
+
+	type historyEntry struct {
+		ArtifactID   string      `json:"artifact_id"`
+		EnvelopeJSON string      `json:"envelope_json"`
+		Signer       string      `json:"signer"`
+		SignedAt     int64       `json:"signed_at"`
+		MerkleAnchor interface{} `json:"merkle_anchor"`
+	}
+	var entries []historyEntry
+	for _, a := range receipts {
+		payload, _ := decodeStatementPayload(a.EnvelopeJSON)
+		if payload == nil {
+			continue
+		}
+		var stmt receiptStatement
+		if json.Unmarshal(payload, &stmt) != nil || stmt.Kind != "session.v1" {
+			continue
+		}
+		var p struct {
+			Actor string `json:"actor"`
+		}
+		if json.Unmarshal(stmt.Payload, &p) != nil || p.Actor != agent {
+			continue
+		}
+		var env dsseEnvelope
+		signer := ""
+		if json.Unmarshal([]byte(a.EnvelopeJSON), &env) == nil && len(env.Signatures) > 0 {
+			signer = env.Signatures[0].KeyID
+		}
+		entries = append(entries, historyEntry{
+			ArtifactID:   a.ArtifactID,
+			EnvelopeJSON: a.EnvelopeJSON,
+			Signer:       signer,
+			SignedAt:     a.SignedAt,
+			MerkleAnchor: h.anchorFor(a.ArtifactID),
+		})
+	}
+
+	sort.Slice(entries, func(i, j int) bool { return entries[i].SignedAt > entries[j].SignedAt })
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"agent":   agent,
+		"entries": entries,
+		"count":   len(entries),
+		"note":    "raw signed session.v1 envelopes + Merkle anchors. the client re-verifies signatures and inclusion against its own trust roots; the Hub filters and serves, never interprets.",
+	})
+}
