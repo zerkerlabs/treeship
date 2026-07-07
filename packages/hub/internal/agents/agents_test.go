@@ -252,3 +252,79 @@ func TestHistory_FiltersToAgentSessionRecords(t *testing.T) {
 		t.Fatalf("missing agent must 400, got %d", w2.Code)
 	}
 }
+
+func TestMatch_ByExercisedEvidence(t *testing.T) {
+	t.Setenv("TREESHIP_HUB_DB", filepath.Join(t.TempDir(), "hub.db"))
+	database, err := db.Open()
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer database.Close()
+
+	// hermes: two sessions exercising payment-ish tools (one countersigned).
+	insertReceipt(t, database, "m1", makeEnvelope(t, "session.v1", map[string]any{
+		"actor": "agent://hermes", "attestation_class": "runtime",
+		"tools_exercised": []string{"payments.charge", "Read(*)"},
+	}, "key_h"), 100)
+	insertReceipt(t, database, "m2", makeEnvelope(t, "session.v1", map[string]any{
+		"actor": "agent://hermes", "attestation_class": "countersigned",
+		"tools_exercised": []string{"payments.refund"},
+	}, "key_h"), 200)
+	// scout: one payment session.
+	insertReceipt(t, database, "m3", makeEnvelope(t, "session.v1", map[string]any{
+		"actor": "agent://scout", "attestation_class": "self",
+		"tools_exercised": []string{"payments.charge"},
+	}, "key_s"), 150)
+	// ghost: exercises something else entirely -> must not match payments.*
+	insertReceipt(t, database, "m4", makeEnvelope(t, "session.v1", map[string]any{
+		"actor": "agent://ghost", "attestation_class": "runtime",
+		"tools_exercised": []string{"Bash(git:status)"},
+	}, "key_g"), 160)
+
+	h := &Handlers{DB: database}
+	get := func(q string) map[string]any {
+		r := httptest.NewRequest("GET", "/v1/agents/match?"+q, nil)
+		w := httptest.NewRecorder()
+		h.Match(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status %d for %q", w.Code, q)
+		}
+		var resp map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		return resp
+	}
+
+	// payments.* -> hermes (2 sessions) ranked above scout (1); ghost absent.
+	resp := get("exercised=payments.*")
+	cands := resp["candidates"].([]any)
+	if len(cands) != 2 {
+		t.Fatalf("want 2 candidates, got %d", len(cands))
+	}
+	first := cands[0].(map[string]any)
+	if first["agent"] != "agent://hermes" || int(first["matched_sessions"].(float64)) != 2 {
+		t.Fatalf("hermes must rank first with 2 sessions, got %v", first["agent"])
+	}
+
+	// class filter narrows hermes to its one countersigned session.
+	resp = get("exercised=payments.*&class=countersigned")
+	cands = resp["candidates"].([]any)
+	if len(cands) != 1 || cands[0].(map[string]any)["agent"] != "agent://hermes" {
+		t.Fatalf("countersigned filter must yield only hermes, got %d", len(cands))
+	}
+
+	// min_sessions=2 drops scout.
+	resp = get("exercised=payments.*&min_sessions=2")
+	if int(resp["count"].(float64)) != 1 {
+		t.Fatalf("min_sessions=2 must yield 1 candidate, got %v", resp["count"])
+	}
+
+	// missing exercised -> 400.
+	r := httptest.NewRequest("GET", "/v1/agents/match", nil)
+	w := httptest.NewRecorder()
+	h.Match(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("missing exercised must 400, got %d", w.Code)
+	}
+}

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+- **`treeship match --exercised <glob>` + `GET /v1/agents/match` — find agents by exercised evidence (work-history slice 4, completing the spec).** Declared capability gets an agent *found*; exercised history gets it *chosen*. The Hub indexes `tools_exercised` from the signed `session.v1` records it already holds and proposes candidates (filterable by `--class` and `--min-sessions`, ranked by matched session count); it grades nothing. The client **re-verifies every candidate's records on this machine** — each envelope signature against your own trust roots, and the glob match recomputed locally with the shared `tool_matches` (never trusting the Hub's own match) — then re-ranks by *verified* sessions, showing a Hub-proposed candidate whose records don't verify honestly as `unverified` rather than silently trusting it. The honest version of an agent marketplace: the search is a lead, the verdict is always recomputed locally. Gated on record density by design — it is only as good as the published history under it. Hub handler covered by tests (glob match, class filter, min-sessions, ranking, missing-param 400). See the [work-history spec](docs/specs/work-history.md).
+
+
 ## 0.18.0 (2026-07-07)
 
 ### Added

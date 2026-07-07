@@ -348,6 +348,16 @@ enum Command {
     ///   treeship verify-profile art_a1b2c3
     VerifyProfile(VerifyProfileCliArgs),
 
+    /// Find agents by their EXERCISED evidence: which agents actually ran
+    /// tools matching a glob, ranked by verified session count. The hub
+    /// proposes candidates from its index; every record is re-verified on
+    /// this machine against your trust roots.
+    ///
+    /// Examples:
+    ///   treeship match --hub https://api.treeship.dev --exercised "payments.*"
+    ///   treeship match --hub <url> --exercised "Bash(git:*)" --class countersigned --min-sessions 2
+    Match(MatchCliArgs),
+
     /// Manage the local Agent Card store
     ///
     /// Cards are workspace trust objects -- who an agent is, where it
@@ -1843,6 +1853,25 @@ struct VerifyPresentationCliArgs {
 }
 
 #[derive(clap::Args)]
+struct MatchCliArgs {
+    /// Hub to query
+    #[arg(long, required = true, value_name = "URL")]
+    hub: String,
+
+    /// Tool glob the agent must have exercised (e.g. "payments.*")
+    #[arg(long, required = true, value_name = "GLOB")]
+    exercised: String,
+
+    /// Only sessions with this attestation class (self | runtime | countersigned)
+    #[arg(long, value_name = "CLASS")]
+    class: Option<String>,
+
+    /// Minimum matching sessions a candidate must have
+    #[arg(long, default_value = "1", value_name = "N")]
+    min_sessions: usize,
+}
+
+#[derive(clap::Args)]
 struct ProfileCliArgs {
     /// Agent name or agent:// URI
     #[arg(value_name = "AGENT")]
@@ -2494,6 +2523,14 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             &a.file,
             a.max_staple_age.as_deref(),
             a.challenge.as_deref(),
+            printer,
+        ),
+
+        Command::Match(a) => commands::match_cmd::match_agents(
+            &a.hub,
+            &a.exercised,
+            a.class.as_deref(),
+            a.min_sessions,
             printer,
         ),
 
