@@ -1887,9 +1887,11 @@ pub fn report(
         }
     };
 
-    let hub_secret_hex = match hub_entry.hub_secret_key.as_deref() {
-        Some(s) => s,
-        None => {
+    // Resolve the DPoP key (sealed at rest under the machine key, AUD-02).
+    // A missing key or one sealed on a different machine both surface here.
+    let hub_secret_hex = match super::hub::resolve_dpop_secret_hex(hub_entry, &ctx.keys) {
+        Ok(s) => s,
+        Err(e) => {
             if format == "json" {
                 return emit_report_output(
                     format,
@@ -1901,15 +1903,13 @@ pub fn report(
                     package_digest.as_deref(),
                     &verification_status,
                     &warnings,
-                    Some(&format!(
-                        "hub connection '{hub_name}' has no hub_secret_key -- run `treeship hub attach`"
-                    )),
+                    Some(&format!("hub connection '{hub_name}': {e}")),
                     None,
                     printer,
                 );
             }
             return Err(format!(
-                "no hub_secret_key for connection '{hub_name}' -- run: treeship hub attach\n\n  \
+                "{e} (connection '{hub_name}')\n\n  \
                  Or verify the sealed receipt locally without publishing:\n    \
                  treeship package verify {}",
                 pkg_dir.display(),
@@ -1919,7 +1919,7 @@ pub fn report(
 
     // 4. Build the PUT URL and DPoP proof.
     let put_url = format!("{}/v1/receipt/{}", hub_entry.endpoint, resolved_id);
-    let dpop_jwt = super::hub::build_dpop_jwt(hub_secret_hex, "PUT", &put_url)?;
+    let dpop_jwt = super::hub::build_dpop_jwt(&hub_secret_hex, "PUT", &put_url)?;
 
     // 5. Send the receipt body verbatim with content-type application/json.
     let resp = ureq::put(&put_url)

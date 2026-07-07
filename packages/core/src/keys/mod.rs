@@ -832,6 +832,46 @@ impl Store {
         Ok(self.load_entry(id)?.public_key)
     }
 
+    /// Encrypt an arbitrary secret for at-rest storage OUTSIDE the keystore
+    /// (for example, the hub DPoP signing key that lives in `config.json`).
+    ///
+    /// The secret is sealed under this machine's key with the same
+    /// AES-256-GCM v2 framing the keystore uses for private keys, so a
+    /// stolen `config.json` is useless on another machine — the same
+    /// guarantee AGENTS.md §7 already makes for the ship key. `context` is
+    /// bound as AEAD associated data: a blob sealed for one context (e.g.
+    /// `"hub-dpop:v1:<hub_id>"`) will not decrypt under another, so a local
+    /// attacker cannot swap a ciphertext between two hub connections in the
+    /// same file. Store the returned bytes base64-encoded; recover the
+    /// plaintext with [`KeyStore::decrypt_secret`] using the same `context`.
+    pub fn encrypt_secret(&self, context: &str, plaintext: &[u8]) -> Result<Vec<u8>, KeyError> {
+        // public_key is empty: for a non-keystore secret there is no
+        // associated pubkey to bind, but `context` (carried as the AAD
+        // entry_id) plus the framing prefix still bind machine + purpose.
+        encrypt_for_disk_v2(&self.machine_key, context, &[], plaintext)
+            .map_err(KeyError::Crypto)
+    }
+
+    /// Decrypt a blob produced by [`KeyStore::encrypt_secret`] with the same
+    /// `context`. Tries the primary machine key first, then the same
+    /// migration fallbacks used for keystore entries, so a machine whose
+    /// hostname/username drifted still recovers the secret. A wrong
+    /// `context`, a tampered blob, or a different machine each fail closed
+    /// with a MAC error rather than returning wrong bytes.
+    pub fn decrypt_secret(&self, context: &str, blob: &[u8]) -> Result<Vec<u8>, KeyError> {
+        match decrypt_v2(&self.machine_key, context, &[], blob) {
+            Ok(pt) => Ok(pt),
+            Err(primary_err) => {
+                for candidate in &self.fallback_machine_keys {
+                    if let Ok(pt) = decrypt_v2(candidate, context, &[], blob) {
+                        return Ok(pt);
+                    }
+                }
+                Err(KeyError::Crypto(primary_err))
+            }
+        }
+    }
+
     // --- private ---
 
     fn load_entry(&self, id: &str) -> Result<EncryptedEntry, KeyError> {
@@ -2141,6 +2181,43 @@ mod tests {
         let dec =
             decrypt_from_disk(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, &blob, &[]).unwrap();
         assert_eq!(&*dec, plaintext);
+    }
+
+    // ── KeyStore::encrypt_secret / decrypt_secret (AUD-02) ─────────────
+    // The hub DPoP key used to be written to config.json as plaintext hex.
+    // These lock the machine-bound, context-bound at-rest sealing that
+    // replaces it.
+
+    #[test]
+    fn encrypt_secret_roundtrips_and_hides_plaintext() {
+        let (store, dir) = make_store();
+        // A 32-byte Ed25519 secret, the actual thing we are protecting.
+        let secret = [0x42u8; 32];
+        let ctx = "hub-dpop:v1:hub_abc";
+        let blob = store.encrypt_secret(ctx, &secret).unwrap();
+
+        // Fail-before-fix invariant: the sealed blob must NOT contain the
+        // raw secret bytes. (The old code stored them verbatim.)
+        assert!(
+            !blob.windows(secret.len()).any(|w| w == secret),
+            "sealed blob must not contain the raw secret"
+        );
+
+        let recovered = store.decrypt_secret(ctx, &blob).unwrap();
+        assert_eq!(recovered.as_slice(), &secret, "roundtrip must recover the secret");
+        cleanup(dir);
+    }
+
+    #[test]
+    fn decrypt_secret_wrong_context_fails_closed() {
+        let (store, dir) = make_store();
+        let secret = [0x11u8; 32];
+        let blob = store.encrypt_secret("hub-dpop:v1:hub_A", &secret).unwrap();
+        // A blob sealed for hub A must not open under hub B's context —
+        // this is what prevents an intra-file ciphertext swap.
+        let r = store.decrypt_secret("hub-dpop:v1:hub_B", &blob);
+        assert!(r.is_err(), "wrong context must fail closed, not return wrong bytes");
+        cleanup(dir);
     }
 
     #[test]

@@ -39,10 +39,13 @@ pub fn attach(
     // difference between reporting a fact and reporting a hope. On probe
     // failure we fall through to the full device flow rather than lying.
     if let Some(existing) = ctx.config.hub_connections.get(hub_name) {
-        if let Some(secret_hex) = existing.hub_secret_key.as_deref() {
+        // A sealed key that cannot be decrypted here (different machine)
+        // resolves to Err and falls through to a fresh device flow, exactly
+        // as a missing key did before.
+        if let Ok(secret_hex) = resolve_dpop_secret_hex(existing, &ctx.keys) {
             let probe_endpoint = existing.endpoint.trim_end_matches('/');
             let probe_url = format!("{probe_endpoint}/v1/ship/agents");
-            let probe_ok = build_dpop_jwt(secret_hex, "GET", &probe_url)
+            let probe_ok = build_dpop_jwt(&secret_hex, "GET", &probe_url)
                 .ok()
                 .and_then(|jwt| {
                     ureq::get(&probe_url)
@@ -195,7 +198,8 @@ pub fn attach(
             created_at,
             last_push:       None,
             hub_public_key: Some(hub_public_hex),
-            hub_secret_key: Some(hub_secret_hex),
+            // Sealed at rest under the machine key (AUD-02), not plaintext hex.
+            hub_secret_key: Some(seal_dpop_secret(&hub_secret_hex, &final_hub_id, &ctx.keys)?),
         },
     );
     cfg.active_hub = Some(hub_name.to_string());
@@ -570,14 +574,13 @@ pub fn open(
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
     // We need the dock's private key to DPoP-sign the session mint request.
-    let hub_secret_hex = entry.hub_secret_key.as_deref()
-        .ok_or("this hub connection has no private key on disk; re-run `treeship hub attach`")?;
+    let hub_secret_hex = resolve_dpop_secret_hex(entry, &ctx.keys)?;
 
     // 1. Mint a short-lived share token from the Hub. This is the only call
     //    that needs the dock's private key — the browser then uses the opaque
     //    token (no private key involved).
     let session_url = format!("{}/v1/session", entry.endpoint.trim_end_matches('/'));
-    let dpop_jwt = build_dpop_jwt(hub_secret_hex, "POST", &session_url)?;
+    let dpop_jwt = build_dpop_jwt(&hub_secret_hex, "POST", &session_url)?;
 
     let resp: serde_json::Value = ureq::post(&session_url)
         .set("Authorization", &format!("DPoP {}", entry.hub_id))
@@ -681,17 +684,14 @@ fn push_artifact_to_hub(
     id:    &str,
     entry: &HubConnection,
 ) -> Result<PushResult, Box<dyn std::error::Error>> {
-    let hub_secret_hex = entry
-        .hub_secret_key
-        .as_deref()
-        .ok_or("no hub_secret_key -- run: treeship hub attach")?;
+    let hub_secret_hex = resolve_dpop_secret_hex(entry, &ctx.keys)?;
 
     // 1. Load artifact from local storage
     let record = ctx.storage.read(id)?;
 
     // 2. Build DPoP proof JWT
     let artifacts_url = format!("{}/v1/artifacts", entry.endpoint);
-    let dpop_jwt = build_dpop_jwt(hub_secret_hex, "POST", &artifacts_url)?;
+    let dpop_jwt = build_dpop_jwt(&hub_secret_hex, "POST", &artifacts_url)?;
 
     // 3. POST to Hub
     let envelope_json = serde_json::to_string(&record.envelope)?;
@@ -755,6 +755,68 @@ fn resolve_artifact_id(
         Ok(resolved)
     } else {
         Ok(id.to_string())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DPoP secret at-rest sealing (AUD-02)
+//
+// The hub DPoP signing key used to be written to config.json as plaintext
+// hex. A passive read of config.json (backup, dotfile sync, container layer,
+// a committed `.treeship` dir, a co-tenant) then handed an attacker full
+// impersonation of the ship to the hub. We now seal it under the machine key
+// with the same AES-256-GCM path the ship key already uses, so a stolen
+// config.json is useless on another machine -- restoring the AGENTS.md §7
+// guarantee for the one key that was the outlier.
+// ---------------------------------------------------------------------------
+
+/// Marker prefix for a machine-sealed DPoP secret. A stored value without it
+/// is treated as legacy plaintext hex: still honored so existing configs keep
+/// working, and re-sealed on the next `attach`.
+const DPOP_SEALED_PREFIX: &str = "enc.v1:";
+
+/// AEAD context binding a sealed DPoP key to its hub connection, so a local
+/// attacker cannot swap one connection's ciphertext into another entry.
+fn dpop_seal_context(hub_id: &str) -> String {
+    format!("hub-dpop:v1:{hub_id}")
+}
+
+/// Seal a 64-char hex DPoP secret for at-rest storage in config.json.
+/// Returns `enc.v1:<base64url>`.
+fn seal_dpop_secret(
+    secret_hex: &str,
+    hub_id:     &str,
+    keys:       &treeship_core::keys::Store,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let raw = hex::decode(secret_hex)
+        .map_err(|e| format!("hub secret is not valid hex: {e}"))?;
+    let blob = keys.encrypt_secret(&dpop_seal_context(hub_id), &raw)?;
+    Ok(format!("{DPOP_SEALED_PREFIX}{}", URL_SAFE_NO_PAD.encode(blob)))
+}
+
+/// Resolve the stored DPoP secret (sealed or legacy plaintext) to hex,
+/// ready for `build_dpop_jwt`. A sealed value that cannot be decrypted on
+/// this machine is an error (fail closed); a legacy plaintext hex value is
+/// returned as-is for backward compatibility.
+pub(crate) fn resolve_dpop_secret_hex(
+    entry: &HubConnection,
+    keys:  &treeship_core::keys::Store,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let stored = entry.hub_secret_key.as_deref()
+        .ok_or("this hub connection has no private key on disk; re-run `treeship hub attach`")?;
+    match stored.strip_prefix(DPOP_SEALED_PREFIX) {
+        Some(b64) => {
+            let blob = URL_SAFE_NO_PAD.decode(b64)
+                .map_err(|e| format!("stored hub key is corrupt (bad base64): {e}"))?;
+            let raw = keys.decrypt_secret(&dpop_seal_context(&entry.hub_id), &blob)
+                .map_err(|e| format!(
+                    "cannot decrypt the hub key on this machine \
+                     (it was sealed on a different machine, or the keystore moved): {e}"
+                ))?;
+            Ok(hex::encode(raw))
+        }
+        // Legacy plaintext hex. Honored for back-compat; `attach` re-seals.
+        None => Ok(stored.to_string()),
     }
 }
 
@@ -823,5 +885,67 @@ fn format_device_code(code: &str) -> String {
         format!("{}-{}", &code[..4], &code[4..8])
     } else {
         code.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::HubConnection;
+    use tempfile::tempdir;
+
+    fn conn(hub_id: &str, secret: Option<String>) -> HubConnection {
+        HubConnection {
+            hub_id:         hub_id.to_string(),
+            key_id:         String::new(),
+            endpoint:       "https://hub.example".to_string(),
+            created_at:     "0Z".to_string(),
+            last_push:      None,
+            hub_public_key: None,
+            hub_secret_key: secret,
+        }
+    }
+
+    // AUD-02: the DPoP key must never sit in config.json as plaintext hex.
+    #[test]
+    fn sealed_dpop_secret_hides_plaintext_and_roundtrips() {
+        let dir = tempdir().unwrap();
+        let keys = treeship_core::keys::Store::open(dir.path()).unwrap();
+        // 32-byte secret -> 64 hex chars, the real DPoP signing key shape.
+        let secret_hex = "ab".repeat(32);
+
+        let sealed = seal_dpop_secret(&secret_hex, "hub_xyz", &keys).unwrap();
+        // Fail-before-fix invariant: the stored string is the sealed marker,
+        // and the raw hex must NOT appear anywhere in it.
+        assert!(sealed.starts_with(DPOP_SEALED_PREFIX));
+        assert!(!sealed.contains(&secret_hex), "sealed value must not embed the plaintext hex");
+
+        // Resolving the stored (sealed) value returns the original hex.
+        let entry = conn("hub_xyz", Some(sealed));
+        let recovered = resolve_dpop_secret_hex(&entry, &keys).unwrap();
+        assert_eq!(recovered, secret_hex);
+    }
+
+    #[test]
+    fn sealed_dpop_secret_bound_to_hub_id() {
+        let dir = tempdir().unwrap();
+        let keys = treeship_core::keys::Store::open(dir.path()).unwrap();
+        let secret_hex = "cd".repeat(32);
+        let sealed = seal_dpop_secret(&secret_hex, "hub_A", &keys).unwrap();
+        // Same sealed blob, but stored under a different hub_id: the AEAD
+        // context no longer matches, so it must fail closed rather than
+        // hand back the key for the wrong connection.
+        let wrong = conn("hub_B", Some(sealed));
+        assert!(resolve_dpop_secret_hex(&wrong, &keys).is_err());
+    }
+
+    #[test]
+    fn legacy_plaintext_hex_still_resolves() {
+        let dir = tempdir().unwrap();
+        let keys = treeship_core::keys::Store::open(dir.path()).unwrap();
+        // A pre-AUD-02 config with a bare hex key must keep working.
+        let secret_hex = "ef".repeat(32);
+        let entry = conn("hub_legacy", Some(secret_hex.clone()));
+        assert_eq!(resolve_dpop_secret_hex(&entry, &keys).unwrap(), secret_hex);
     }
 }
