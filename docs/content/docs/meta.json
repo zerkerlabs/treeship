@@ -2,6 +2,7 @@
   "title": "Treeship",
   "pages": [
     "guides",
+    "capabilities",
     "concepts",
     "cli",
     "reference",
