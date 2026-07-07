@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Fixed
+- **Verification commands no longer exit 0 on hostile verdicts, and emit real JSON.** `resolve`, `audit`, and `verify-capability` computed hostile verdicts — a REVOKED card, out-of-scope violations, an OMISSION against the committed anchor, an invalid inclusion proof, an equivocating checkpoint, a failed append-only proof — printed a warning, and **returned success**, so any script, CI gate, or monitor keying off the exit code treated a detected history rewrite as green. All four verification surfaces (including `verify-presentation`) now exit nonzero on a hostile verdict. `audit --watch` deliberately keeps looping and alerting instead of exiting — a monitor's job is to keep watching. In JSON mode (`--format json`) each of the four now emits **one structured verdict object** carrying every field the text output shows; previously `resolve`/`verify-capability` returned a bare success envelope, `verify-presentation` returned essentially nothing (its verdict lines went through info, which JSON mode suppresses), and `audit` streamed multiple concatenated JSON objects no parser could consume. Programmatic callers — the bridges, the gateway, CI — can finally gate on these commands.
+
 ## 0.17.0 (2026-07-06)
 
 ### Added

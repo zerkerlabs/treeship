@@ -78,7 +78,11 @@ pub fn audit(
     // One-shot, or monitor mode: re-run on an interval and keep alerting on
     // omission. "Monitors catch anomalies." Ctrl-C to stop.
     if !watch {
-        return audit_once(base, agent, &trust, printer);
+        let hostile = audit_once(base, agent, &trust, printer)?;
+        if hostile {
+            std::process::exit(1);
+        }
+        return Ok(());
     }
     printer.hint(&format!(
         "watching {agent} on {base} every {interval}s (Ctrl-C to stop)"
@@ -88,13 +92,18 @@ pub fn audit(
         if let Err(e) = audit_once(base, agent, &trust, printer) {
             printer.warn("audit cycle failed", &[("error", &e.to_string())]);
         }
+        // watch mode never exits on anomalies -- its job is to keep alerting.
         std::thread::sleep(std::time::Duration::from_secs(interval.max(1)));
     }
 }
 
 /// A single audit pass: pull the history, re-verify anchored inclusions, check
-/// completeness against the agent's committed anchor.
-fn audit_once(base: &str, agent: &str, trust: &TrustRootStore, printer: &Printer) -> CmdResult {
+/// completeness against the agent's committed anchor. Returns whether the
+/// verdict was HOSTILE (omission / invalid inclusion / equivocation /
+/// append-only failure) so the one-shot caller can exit nonzero — a monitor
+/// that detects a history rewrite and exits 0 is lying to whatever gates on
+/// it. Watch mode keeps looping and alerting instead.
+fn audit_once(base: &str, agent: &str, trust: &TrustRootStore, printer: &Printer) -> Result<bool, Box<dyn std::error::Error>> {
     let log: serde_json::Value = ureq::get(&format!("{base}/v1/agents/log"))
         .query("agent", agent)
         .call()
@@ -111,6 +120,7 @@ fn audit_once(base: &str, agent: &str, trust: &TrustRootStore, printer: &Printer
     // Walk the history; re-verify each anchored entry's inclusion offline, and
     // track the highest fully-verified checkpoint so we can witness it.
     let (mut anchored, mut verified) = (0usize, 0usize);
+    let mut invalid = 0usize;
     let mut current_cp: Option<Checkpoint> = None;
     let mut lines: Vec<String> = Vec::new();
     for e in &entries {
@@ -137,7 +147,10 @@ fn audit_once(base: &str, agent: &str, trust: &TrustRootStore, printer: &Printer
                     }
                     "anchored ✓"
                 }
-                Ok((false, _)) => "anchored ✗ INVALID",
+                Ok((false, _)) => {
+                    invalid += 1;
+                    "anchored ✗ INVALID"
+                }
                 Err(_) => "anchored (proof unavailable)",
             }
         } else {
@@ -181,6 +194,37 @@ fn audit_once(base: &str, agent: &str, trust: &TrustRootStore, printer: &Printer
         (Some(_), None) => ("append-only: first witness, nothing to extend from yet".to_string(), false),
         _ => ("append-only: no checkpoint to prove".to_string(), false),
     };
+
+    let omission = committed_count.is_some_and(|c| observed < c);
+    let hostile = omission || invalid > 0 || anomaly || append_anomaly;
+
+    // JSON mode: ONE structured verdict object (the text path streams
+    // success + N warn objects, which is unparseable as a JSON document).
+    if printer.format == crate::printer::Format::Json {
+        printer.json(&serde_json::json!({
+            "verdict": if hostile { "ANOMALY" } else { "clean" },
+            "ok": !hostile,
+            "agent": agent,
+            "hub": base,
+            "receipts": observed,
+            "anchored": anchored,
+            "anchored_verified": verified,
+            "anchored_invalid": invalid,
+            "completeness": completeness,
+            "omission": omission,
+            "consistency": consistency,
+            "equivocation_or_regression": anomaly,
+            "append_only": append_only,
+            "append_only_failed": append_anomaly,
+            "entries": entries.iter().map(|e| serde_json::json!({
+                "artifact_id": e.get("artifact_id"),
+                "kind": e.get("kind"),
+                "action": e.get("action"),
+                "anchored": e.get("merkle_anchor").map(|v| !v.is_null()).unwrap_or(false),
+            })).collect::<Vec<_>>(),
+        }));
+        return Ok(hostile);
+    }
 
     let receipts_str = observed.to_string();
     let anchored_str = format!("{verified}/{anchored} verified");
@@ -228,7 +272,7 @@ fn audit_once(base: &str, agent: &str, trust: &TrustRootStore, printer: &Printer
         "metadata + anchors only, never payloads. each anchored entry's inclusion is re-verified offline against your trust roots; completeness is checked against the agent's committed evidence_anchor (omission detectable for committed sets, not absolute). consistency witnesses the checkpoint across audits to catch a forking/regressing hub; append-only re-verifies the hub's Merkle consistency chain offline to prove the log only appended since you last witnessed it (no rewrite).",
     );
     printer.blank();
-    Ok(())
+    Ok(hostile)
 }
 
 /// Fetch one artifact's Merkle proof from the Hub and re-verify it offline:
