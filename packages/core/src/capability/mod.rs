@@ -44,20 +44,44 @@ pub fn is_key_bound(card_keyid: &str, signer_keyid: &str, trust: &TrustRootStore
             .any(|r| r.key_id == card_keyid && r.kind == TrustRootKind::AgentCert)
 }
 
-/// Is an action within a declared capability set? Checks the action label and
-/// the optional `meta.tool` against each declared capability (exact, or a
-/// `family.*` glob).
-pub fn action_in_scope(action: &ActionStatement, declared_tools: &[String]) -> bool {
-    let mut candidates: Vec<&str> = vec![action.action.as_str()];
-    if let Some(tool) = action
-        .meta
-        .as_ref()
-        .and_then(|m| m.get("tool"))
-        .and_then(|v| v.as_str())
-    {
-        candidates.push(tool);
+/// Generic dispatch labels: an `action` field whose value is one of these is a
+/// placeholder ("the agent called *a* tool"), and the concrete tool name lives
+/// in `meta.tool`. Only for these is `meta.tool` allowed to contribute scope.
+///
+/// This is the security boundary for the cross-check. `meta` is part of the
+/// statement the audited agent signs itself; if `meta.tool` could match for an
+/// action whose `action` field is already a CONCRETE label, a dishonest agent
+/// would attach a benign `meta.tool` (e.g. `file.read`) to a concrete
+/// out-of-scope action (e.g. `payments.charge`) and have it counted in-scope,
+/// silently defeating the very check `verify-capability` exists to run.
+const GENERIC_DISPATCH_LABELS: &[&str] =
+    &["tool.call", "tool.use", "tool.invoke", "mcp.call", "mcp.tool"];
+
+/// The scope-matching candidates for an action. The action label is always
+/// authoritative. `meta.tool` is consulted ONLY when the action label is a
+/// generic dispatch placeholder, so a concrete out-of-scope action cannot be
+/// rescued by an attacker-supplied `meta.tool`.
+fn scope_candidates(action: &ActionStatement) -> Vec<&str> {
+    let label = action.action.as_str();
+    let mut candidates: Vec<&str> = vec![label];
+    if GENERIC_DISPATCH_LABELS.contains(&label) {
+        if let Some(tool) = action
+            .meta
+            .as_ref()
+            .and_then(|m| m.get("tool"))
+            .and_then(|v| v.as_str())
+        {
+            candidates.push(tool);
+        }
     }
     candidates
+}
+
+/// Is an action within a declared capability set? The action label is
+/// authoritative; `meta.tool` counts only when the label is a generic
+/// dispatch placeholder (see [`scope_candidates`]).
+pub fn action_in_scope(action: &ActionStatement, declared_tools: &[String]) -> bool {
+    scope_candidates(action)
         .iter()
         .any(|c| declared_tools.iter().any(|d| tool_matches(d, c)))
 }
@@ -66,15 +90,7 @@ pub fn action_in_scope(action: &ActionStatement, declared_tools: &[String]) -> b
 /// [`action_in_scope`], but returns *which* capability matched, so callers can
 /// grade each declared capability by whether captured receipts exercise it.
 pub fn matched_capability(action: &ActionStatement, declared_tools: &[String]) -> Option<String> {
-    let mut candidates: Vec<&str> = vec![action.action.as_str()];
-    if let Some(tool) = action
-        .meta
-        .as_ref()
-        .and_then(|m| m.get("tool"))
-        .and_then(|v| v.as_str())
-    {
-        candidates.push(tool);
-    }
+    let candidates = scope_candidates(action);
     declared_tools
         .iter()
         .find(|decl| candidates.iter().any(|c| tool_matches(decl, c)))
@@ -155,10 +171,32 @@ mod tests {
         let mut a = ActionStatement::new("agent://x", "file.write");
         assert!(action_in_scope(&a, &["file.*".to_string()]));
         assert!(!action_in_scope(&a, &["db.query".to_string()]));
-        // meta.tool also counts
+        // meta.tool counts ONLY when the action label is a generic dispatch
+        // placeholder (the legitimate MCP case): tool.call + meta.tool=db.query.
         a.action = "tool.call".into();
         a.meta = Some(serde_json::json!({ "tool": "db.query" }));
         assert!(action_in_scope(&a, &["db.query".to_string()]));
+    }
+
+    #[test]
+    fn meta_tool_cannot_rescue_a_concrete_out_of_scope_action() {
+        // The audited-agent bypass: a CONCRETE out-of-scope action with a
+        // benign meta.tool must still be out of scope. If this regresses, a
+        // dishonest agent hides every off-card action behind meta.tool.
+        let mut a = ActionStatement::new("agent://x", "payments.charge");
+        a.meta = Some(serde_json::json!({ "tool": "file.read" }));
+        let declared = vec!["file.*".to_string()]; // payments NOT declared
+        assert!(
+            !action_in_scope(&a, &declared),
+            "meta.tool must not pull a concrete out-of-scope action in-scope"
+        );
+        assert_eq!(
+            matched_capability(&a, &declared),
+            None,
+            "no declared capability should match the concrete out-of-scope action"
+        );
+        // And the concrete action IS matched when it is actually declared.
+        assert!(action_in_scope(&a, &["payments.*".to_string()]));
     }
 
     #[test]

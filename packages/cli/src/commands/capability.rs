@@ -52,16 +52,20 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
         .unwrap_or_default();
 
     // --- Binding strength: key-bound vs self-asserted ----------------------
-    // Key-bound iff the card's keyid is the envelope signer AND that key is
-    // pinned under AgentCert. Anything else is self-asserted.
-    let signer_keyid = record
-        .envelope
-        .signatures
-        .first()
-        .map(|s| s.keyid.as_str())
-        .unwrap_or("");
+    // Key-bound requires the card's OWN key to have produced a VALID signature
+    // (re-verified here against pinned trust roots, never read from the
+    // unverified `signatures[0].keyid` — a card could carry a forged first
+    // signature naming a victim's AgentCert key alongside a second signature by
+    // a locally-held key) AND that key pinned under AgentCert.
     let trust = TrustRootStore::open_default_or_empty()?;
-    let key_bound = is_key_bound(card_keyid, signer_keyid, &trust);
+    let verifier = crate::commands::resolve::verifier_from_trust(&trust);
+    let card_verified_keys: Vec<String> = verifier
+        .verify_any(&record.envelope)
+        .map(|r| r.verified_key_ids)
+        .unwrap_or_default();
+    let key_bound = !card_keyid.is_empty()
+        && card_verified_keys.iter().any(|k| k == card_keyid)
+        && is_key_bound(card_keyid, card_keyid, &trust);
 
     // --- Cross-check captured action receipts signed by this key -----------
     let action_pt = payload_type("action");
@@ -74,14 +78,16 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
         let Ok(arec) = ctx.storage.read(&entry.id) else {
             continue;
         };
-        let asigner = arec
-            .envelope
-            .signatures
-            .first()
-            .map(|s| s.keyid.as_str())
-            .unwrap_or("");
-        if asigner != card_keyid {
-            continue; // only this key's actions count toward its card
+        // Count an action toward the card only when the card's key produced a
+        // VALID signature over it (re-verified against trust roots), never on
+        // an unverified `signatures[0].keyid` match. A forged action naming
+        // the card's key must not inflate the in-scope count.
+        let averified: Vec<String> = verifier
+            .verify_any(&arec.envelope)
+            .map(|r| r.verified_key_ids)
+            .unwrap_or_default();
+        if !averified.iter().any(|k| k == card_keyid) {
+            continue;
         }
         let Ok(action): Result<ActionStatement, _> = arec.envelope.unmarshal_statement() else {
             continue;
@@ -168,7 +174,18 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
         prov_parts.push(format!("{n_discovered} discovered"));
     }
     prov_parts.push(format!("{n_declared} declared-only"));
-    let provenance_str = prov_parts.join(", ");
+    let mut provenance_str = prov_parts.join(", ");
+    // Provenance grades (`captured`, `discovered`) are read off the card's
+    // signed payload — but a signed payload only means "someone asserted
+    // this," not that the machine observed it, UNLESS the card is key-bound.
+    // A self-asserted card can carry fabricated `captured`/`discovered` grades
+    // that would otherwise print identically to real ones. Say so plainly, so
+    // a reader (or a script) never mistakes a self-asserted grade for a
+    // verified one. (`exercised` is computed here from re-verified receipts,
+    // so it is trustworthy even when the card is not key-bound.)
+    if !key_bound && (n_captured > 0 || n_discovered > 0) {
+        provenance_str.push_str(" — captured/discovered are SELF-ASSERTED (card not key-bound; not machine-verified)");
+    }
 
     // --- Report ------------------------------------------------------------
     let status = if revocation.is_some() {
@@ -379,17 +396,22 @@ pub(crate) fn find_revocation(
         if payload.get("card").and_then(|v| v.as_str()) != Some(card_id) {
             continue;
         }
-        let rsigner = rec
-            .envelope
-            .signatures
-            .first()
-            .map(|s| s.keyid.as_str())
-            .unwrap_or("");
-        let self_revoke = !card_keyid.is_empty() && rsigner == card_keyid;
-        let issuer_revoke = trust
-            .roots()
-            .iter()
-            .any(|r| r.key_id == rsigner && r.kind == TrustRootKind::Ship);
+        // The revoker's key must have produced a VALID signature over the
+        // revocation, re-verified against trust roots — not read from the
+        // unverified `signatures[0].keyid`. Otherwise a revocation carrying a
+        // forged first keyid (the card's key, or a Ship root) plus a garbage
+        // signature would be honored, letting a stranger revoke a card (DoS).
+        let verified: Vec<String> = crate::commands::resolve::verifier_from_trust(trust)
+            .verify_any(&rec.envelope)
+            .map(|r| r.verified_key_ids)
+            .unwrap_or_default();
+        let self_revoke = !card_keyid.is_empty() && verified.iter().any(|k| k == card_keyid);
+        let issuer_revoke = verified.iter().any(|rk| {
+            trust
+                .roots()
+                .iter()
+                .any(|r| &r.key_id == rk && r.kind == TrustRootKind::Ship)
+        });
         if self_revoke || issuer_revoke {
             let reason = payload
                 .get("reason")
