@@ -152,10 +152,27 @@ pub fn run(
     let changed_files = diff_files(&files_before, &files_after);
     let files_changed_count = changed_files.len();
 
+    // AUD-15: when a changed file is unreadable at snapshot time (chmod-000 /
+    // TOCTOU delete), record the digest as JSON null, not "". An empty string
+    // is a specific-but-wrong value baked into the signed statement (a reader
+    // cannot tell it apart from a real digest); null is self-describing ("we
+    // saw the change but could not read the bytes").
+    let mut unreadable = 0usize;
     let files_modified: Vec<serde_json::Value> = changed_files.iter().map(|path| {
-        let digest = file_sha256(path).unwrap_or_default();
-        serde_json::json!({ "path": path, "digest": digest })
+        match file_sha256(path) {
+            Some(digest) => serde_json::json!({ "path": path, "digest": digest }),
+            None => {
+                unreadable += 1;
+                serde_json::json!({ "path": path, "digest": serde_json::Value::Null })
+            }
+        }
     }).collect();
+    if unreadable > 0 {
+        printer.warn(
+            "some changed files were unreadable at snapshot time; digest recorded as null",
+            &[("files", &unreadable.to_string())],
+        );
+    }
 
     // Short summary of changed dirs for display
     let files_summary = if changed_files.is_empty() {

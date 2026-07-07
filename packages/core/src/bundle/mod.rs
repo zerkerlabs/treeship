@@ -219,20 +219,26 @@ pub fn import(
     // signatures from a rotation/co-sign setup and the local trust root only
     // needs one to match. Index 0 = bundle envelope, 1..=N = artifact
     // envelopes (matches the order shown in error messages and CLI output).
-    verifier.verify_any(&export.bundle)
+    let bundle_vr = verifier.verify_any(&export.bundle)
         .map_err(|source| BundleError::UnverifiedEnvelope { index: 0, source })?;
+    let mut artifact_verified_keys: Vec<Option<String>> = Vec::with_capacity(export.artifacts.len());
     for (i, env) in export.artifacts.iter().enumerate() {
-        verifier.verify_any(env)
+        let vr = verifier.verify_any(env)
             .map_err(|source| BundleError::UnverifiedEnvelope { index: i + 1, source })?;
+        artifact_verified_keys.push(vr.verified_key_ids.first().cloned());
     }
 
-    // All signatures check out: now write.
-    for env in &export.artifacts {
-        let record = record_from_envelope(env)?;
+    // All signatures check out: now write, attributing each record to the key
+    // that actually verified (AUD-13), not to signatures.first().
+    for (env, vk) in export.artifacts.iter().zip(artifact_verified_keys.iter()) {
+        let record = record_from_envelope(env, vk.as_deref())?;
         storage.write(&record)?;
     }
 
-    let bundle_record = record_from_envelope(&export.bundle)?;
+    let bundle_record = record_from_envelope(
+        &export.bundle,
+        bundle_vr.verified_key_ids.first().map(|s| s.as_str()),
+    )?;
     let bundle_id = bundle_record.artifact_id.clone();
     storage.write(&bundle_record)?;
 
@@ -240,7 +246,16 @@ pub fn import(
 }
 
 /// Reconstruct a Record from a DSSE envelope by re-deriving the artifact ID.
-fn record_from_envelope(envelope: &Envelope) -> Result<Record, BundleError> {
+///
+/// `verified_key_id` is the key id whose signature ACTUALLY verified for this
+/// envelope (from the caller's `verify_any` result). It is used verbatim for
+/// the stored `key_id` so a decoy signature prepended ahead of the real one
+/// cannot misattribute the artifact's signer in local metadata (AUD-13). When
+/// None (no verification context), we fall back to the first signature's keyid.
+fn record_from_envelope(
+    envelope: &Envelope,
+    verified_key_id: Option<&str>,
+) -> Result<Record, BundleError> {
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 
     let payload_bytes = URL_SAFE_NO_PAD.decode(&envelope.payload)
@@ -261,8 +276,11 @@ fn record_from_envelope(envelope: &Envelope) -> Result<Record, BundleError> {
         .ok()
         .and_then(|v| v.get("parentId").and_then(|t| t.as_str().map(|s| s.to_string())));
 
-    let key_id = envelope.signatures.first()
-        .map(|s| s.keyid.clone())
+    // AUD-13: attribute the record to the key that actually verified, not
+    // signatures.first() (which an attacker can prepend a decoy keyid to).
+    let key_id = verified_key_id
+        .map(|s| s.to_string())
+        .or_else(|| envelope.signatures.first().map(|s| s.keyid.clone()))
         .unwrap_or_default();
 
     Ok(Record {
@@ -484,6 +502,50 @@ mod tests {
         // record is persisted, so the destination store stays clean.
         assert!(!store2.exists(&a1));
         assert!(!store2.exists(&bundle.artifact_id));
+
+        rm(dir);
+        rm(dir2);
+    }
+
+    #[test]
+    fn import_attributes_record_to_verified_key_not_decoy() {
+        // AUD-13: a decoy signature prepended ahead of the real one must not
+        // misattribute the stored record's signer. verify_any skips the decoy
+        // and passes on the real sig; the stored key_id must be the key that
+        // actually verified, not signatures.first().
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+
+        let (store, dir) = tmp_store();
+        let signer   = Ed25519Signer::generate("key_real").unwrap();
+        let verifier = crate::attestation::Verifier::from_signer(&signer);
+
+        let a1 = sign_and_store(&store, &signer, &payload_type("action"),
+            &ActionStatement::new("agent://a", "tool.call"));
+        let bundle = create(&[&a1], Some("b"), None, &store, &signer).unwrap();
+        let export_path = dir.join("b.treeship");
+        export(&bundle.artifact_id, &export_path, &store).unwrap();
+
+        // Prepend a decoy signature (attacker keyid, garbage bytes) ahead of
+        // the real one on the first artifact envelope.
+        let raw = std::fs::read(&export_path).unwrap();
+        let mut ef: ExportFile = serde_json::from_slice(&raw).unwrap();
+        let real_sig = ef.artifacts[0].signatures[0].clone();
+        let decoy = crate::attestation::Signature {
+            keyid: "key_ceo".into(),
+            sig:   URL_SAFE_NO_PAD.encode([0u8; 64]),
+        };
+        ef.artifacts[0].signatures = vec![decoy, real_sig];
+        std::fs::write(&export_path, serde_json::to_vec(&ef).unwrap()).unwrap();
+
+        // Import into a fresh store: the real sig still verifies via verify_any.
+        let (store2, dir2) = tmp_store();
+        import(&export_path, &store2, &verifier).unwrap();
+
+        let rec = store2.read(&a1).unwrap();
+        assert_eq!(
+            rec.key_id, "key_real",
+            "record must be attributed to the VERIFIED key, not the prepended decoy"
+        );
 
         rm(dir);
         rm(dir2);
