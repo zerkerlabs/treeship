@@ -16,9 +16,49 @@ const exec = promisify(execFile);
 // subsequent calls reuse the cached bindings.
 type WasmBindings = {
   verify_receipt: (json: string) => string;
-  verify_certificate: (json: string, now: string) => string;
-  cross_verify: (receipt: string, cert: string, now: string) => string;
+  // AUD-16: these must match the real core-wasm ABI. Both take a final
+  // trust_roots_json argument; omitting it (the stale 2/3-arg types) made the
+  // arg arrive as undefined -> empty trust store -> every certificate check
+  // failed closed, and the compiler could not catch the mismatch.
+  verify_certificate: (json: string, now: string, trustRoots: string) => string;
+  cross_verify: (
+    receipt: string,
+    cert: string,
+    now: string,
+    trustRoots: string
+  ) => string;
 };
+
+/** A pinned trust root for certificate verification (AUD-16). */
+export type TrustRootInput = {
+  /** Opaque key id / human label. */
+  keyId: string;
+  /** Public key as `ed25519:<base64url-no-pad>`. */
+  publicKey: string;
+  /** What this root may verify, e.g. `agent_cert`. */
+  kind: string;
+  label?: string;
+  addedAt?: string;
+};
+
+/**
+ * Serialize trust roots into the `{version, roots}` JSON the WASM verifier
+ * expects. Empty/absent roots serialize to "" so verification fails closed
+ * (an empty trust store trusts nothing) exactly as before.
+ */
+function serializeTrustRoots(roots?: TrustRootInput[]): string {
+  if (!roots || roots.length === 0) return "";
+  return JSON.stringify({
+    version: 1,
+    roots: roots.map((r) => ({
+      key_id: r.keyId,
+      public_key: r.publicKey,
+      kind: r.kind,
+      label: r.label ?? "",
+      added_at: r.addedAt ?? "",
+    })),
+  });
+}
 
 let wasmBindings: WasmBindings | null = null;
 
@@ -137,7 +177,8 @@ export class VerifyModule {
    */
   async verifyCertificate(
     target: VerifyTarget,
-    now?: Date | string
+    now?: Date | string,
+    trustRoots?: TrustRootInput[]
   ): Promise<VerifyCertificateResult> {
     const json = await normalizeToJson(target);
     const nowStr =
@@ -147,7 +188,9 @@ export class VerifyModule {
           ? now.toISOString()
           : now;
     const wasm = await loadWasm();
-    return JSON.parse(wasm.verify_certificate(json, nowStr));
+    return JSON.parse(
+      wasm.verify_certificate(json, nowStr, serializeTrustRoots(trustRoots))
+    );
   }
 
   /**
@@ -158,7 +201,8 @@ export class VerifyModule {
   async crossVerify(
     receipt: VerifyTarget,
     certificate: VerifyTarget,
-    now?: Date | string
+    now?: Date | string,
+    trustRoots?: TrustRootInput[]
   ): Promise<CrossVerifyResult> {
     const [receiptJson, certJson] = await Promise.all([
       normalizeToJson(receipt),
@@ -171,6 +215,13 @@ export class VerifyModule {
           ? now.toISOString()
           : now;
     const wasm = await loadWasm();
-    return JSON.parse(wasm.cross_verify(receiptJson, certJson, nowStr));
+    return JSON.parse(
+      wasm.cross_verify(
+        receiptJson,
+        certJson,
+        nowStr,
+        serializeTrustRoots(trustRoots)
+      )
+    );
   }
 }

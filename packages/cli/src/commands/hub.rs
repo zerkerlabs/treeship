@@ -879,10 +879,16 @@ pub(crate) fn build_dpop_jwt(
 /// Shows full code as XXXX-XXXX-XXXX-XXXX so the user can enter
 /// the complete code in the browser activation page.
 fn format_device_code(code: &str) -> String {
-    if code.len() >= 16 {
-        format!("{}-{}-{}-{}", &code[..4], &code[4..8], &code[8..12], &code[12..16])
-    } else if code.len() >= 8 {
-        format!("{}-{}", &code[..4], &code[4..8])
+    // AUD-14: group into 4-CHARACTER blocks, not 4-byte slices. A hub-supplied
+    // device code containing a multibyte character straddling a byte offset
+    // used to panic here (`&code[..4]` on a non-char-boundary), a server-driven
+    // DoS of the interactive attach flow. Operating on chars is panic-free.
+    let chars: Vec<char> = code.chars().collect();
+    let group = |range: std::ops::Range<usize>| -> String { chars[range].iter().collect() };
+    if chars.len() >= 16 {
+        format!("{}-{}-{}-{}", group(0..4), group(4..8), group(8..12), group(12..16))
+    } else if chars.len() >= 8 {
+        format!("{}-{}", group(0..4), group(4..8))
     } else {
         code.to_string()
     }
@@ -904,6 +910,20 @@ mod tests {
             hub_public_key: None,
             hub_secret_key: secret,
         }
+    }
+
+    // AUD-14: a hub-supplied device code with a multibyte char used to panic
+    // on a non-char-boundary slice. format_device_code must be panic-free.
+    #[test]
+    fn format_device_code_handles_multibyte() {
+        // 'é' is 2 bytes; the byte at offset 4 falls mid-character. The old
+        // `&code[..4]` panicked here (verified in the audit: exit 101).
+        let out = format_device_code("aaaé123456789012");
+        assert!(out.contains('-'), "long code should be grouped: {out}");
+        // Fully multibyte, short: must not panic, returns as-is.
+        assert_eq!(format_device_code("éé"), "éé");
+        // Exactly-8 chars with a multibyte in the split zone.
+        let _ = format_device_code("aaaéaaaé");
     }
 
     // AUD-02: the DPoP key must never sit in config.json as plaintext hex.
