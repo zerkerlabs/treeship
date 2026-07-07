@@ -1,4 +1,20 @@
 {
   "title": "Get started",
-  "pages": ["introduction", "quickstart", "install", "first-run", "coverage-levels", "replay-levels", "how-it-works", "templates", "approvals", "handoffs", "workflows", "merkle-proofs", "edge-runtime", "dogfood-checklist"]
+  "pages": [
+    "introduction",
+    "quickstart",
+    "install",
+    "first-run",
+    "what-to-expect",
+    "coverage-levels",
+    "replay-levels",
+    "how-it-works",
+    "templates",
+    "approvals",
+    "handoffs",
+    "workflows",
+    "merkle-proofs",
+    "edge-runtime",
+    "dogfood-checklist"
+  ]
 }

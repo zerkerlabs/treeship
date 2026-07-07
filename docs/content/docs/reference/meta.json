@@ -1,6 +1,7 @@
 {
   "title": "Reference",
   "pages": [
+    "agent-states",
     "feature-matrix",
     "schema",
     "predicates"
