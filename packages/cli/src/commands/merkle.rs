@@ -162,26 +162,81 @@ pub fn checkpoint(
 // treeship merkle proof <artifact_id>
 // ---------------------------------------------------------------------------
 
+/// Rebuild the Merkle tree EXACTLY as it was at `checkpoint` — its first
+/// `tree_size` leaves — and cross-check the rebuilt root against the
+/// checkpoint's own root before returning it. Inclusion proofs must be
+/// generated from THIS tree, never the full current one: an authentication
+/// path is a function of the total leaf count, so a proof computed over a
+/// tree that grew after the checkpoint reconstructs the wrong root and
+/// reports a legitimate, in-log artifact as inclusion INVALID. (The same
+/// correctness rule publish_consistency and `present` already apply.)
+fn checkpoint_tree(
+    artifact_ids: &[String],
+    checkpoint: &Checkpoint,
+) -> Result<MerkleTree, Box<dyn std::error::Error>> {
+    if artifact_ids.len() < checkpoint.tree_size {
+        return Err(format!(
+            "local store has {} artifacts but checkpoint #{} covers {} — the store no longer matches the checkpoint",
+            artifact_ids.len(), checkpoint.index, checkpoint.tree_size
+        )
+        .into());
+    }
+    let mut tree = MerkleTree::new();
+    for id in &artifact_ids[..checkpoint.tree_size] {
+        tree.append(id);
+    }
+    let computed = tree
+        .root()
+        .map(hex::encode)
+        .ok_or("checkpoint-sized tree has no root")?;
+    let cp_root = checkpoint
+        .root
+        .strip_prefix("sha256:")
+        .unwrap_or(&checkpoint.root);
+    if computed != cp_root {
+        return Err(format!(
+            "local artifacts no longer reproduce checkpoint #{}'s root (artifacts changed since checkpointing)\n\n  Fix: treeship checkpoint  (then re-run this command)",
+            checkpoint.index
+        )
+        .into());
+    }
+    Ok(tree)
+}
+
 pub fn proof(
     artifact_id: &str,
     config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
-    let (tree, artifact_ids) = build_tree(&ctx)?;
+    let (_, artifact_ids) = build_tree(&ctx)?;
+
+    // Load the checkpoint FIRST: a proof is a statement about membership in
+    // a signed checkpoint, so both the membership guard and the tree the
+    // authentication path is computed from must be the checkpoint's.
+    let checkpoint = load_latest_checkpoint()?
+        .ok_or("no checkpoints found -- run 'treeship checkpoint' first")?;
 
     // Find the artifact's leaf index
     let leaf_index = artifact_ids.iter()
         .position(|id| id == artifact_id)
         .ok_or_else(|| format!("artifact {} not found in store", artifact_id))?;
 
-    // Generate inclusion proof
-    let inclusion_proof = tree.inclusion_proof(leaf_index)
-        .ok_or("failed to generate inclusion proof")?;
+    // Membership guard: an artifact appended after the checkpoint is not in
+    // the checkpoint's tree — a "proof" against that checkpoint would be one
+    // that verifiably fails.
+    if leaf_index >= checkpoint.tree_size {
+        return Err(format!(
+            "artifact {} is newer than checkpoint #{} (tree_size {})\n\n  Fix: treeship checkpoint  (then re-run this command)",
+            artifact_id, checkpoint.index, checkpoint.tree_size
+        )
+        .into());
+    }
 
-    // Load latest checkpoint
-    let checkpoint = load_latest_checkpoint()?
-        .ok_or("no checkpoints found -- run 'treeship checkpoint' first")?;
+    // Generate the inclusion proof from the checkpoint's tree.
+    let cp_tree = checkpoint_tree(&artifact_ids, &checkpoint)?;
+    let inclusion_proof = cp_tree.inclusion_proof(leaf_index)
+        .ok_or("failed to generate inclusion proof")?;
 
     // Load artifact record for summary
     let record = ctx.storage.read(artifact_id)?;
@@ -478,8 +533,14 @@ pub fn publish(
 
     printer.info(&format!("  {} checkpoint received (hub id: {})", printer.green("ok"), hub_checkpoint_id));
 
-    // 3. Find and publish all proofs for this checkpoint
-    let (tree, artifact_ids) = build_tree(&ctx)?;
+    // 3. Find and publish all proofs for this checkpoint. Proofs are
+    // generated from the tree AS IT WAS at the checkpoint (truncated +
+    // root-cross-checked by checkpoint_tree) — the full current tree would
+    // yield authentication paths that reconstruct the wrong root whenever
+    // artifacts were appended after checkpointing, making the hub serve
+    // proofs that verifiably fail for legitimate, in-log artifacts.
+    let (_, artifact_ids) = build_tree(&ctx)?;
+    let cp_tree = checkpoint_tree(&artifact_ids, &checkpoint)?;
     let proof_url = format!("{}/v1/merkle/proof", endpoint);
     let mut published_count = 0u64;
 
@@ -489,7 +550,7 @@ pub fn publish(
             break;
         }
 
-        let inclusion_proof = match tree.inclusion_proof(leaf_index) {
+        let inclusion_proof = match cp_tree.inclusion_proof(leaf_index) {
             Some(p) => p,
             None => continue,
         };
