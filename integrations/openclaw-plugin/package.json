@@ -1,7 +1,7 @@
 {
   "name": "@treeship/openclaw-plugin",
-  "version": "0.10.3",
-  "description": "Portable, cryptographically signed receipts for every OpenClaw session. Captures every tool call at the Gateway layer — below the agent — so receipts are complete regardless of agent discipline or prompt-injection state.",
+  "version": "0.17.0",
+  "description": "Portable, cryptographically signed receipts for every OpenClaw session. Captures every tool call at the Gateway layer \u2014 below the agent \u2014 so receipts are complete regardless of agent discipline or prompt-injection state.",
   "license": "Apache-2.0",
   "author": {
     "name": "Zerker Labs",

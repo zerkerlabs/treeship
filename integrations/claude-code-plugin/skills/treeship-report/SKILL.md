@@ -37,6 +37,6 @@ This matters because Treeship is local-first. The user owns the source of truth;
 Some users do not want anything on a hub. Two options:
 
 1. Hand them the local receipt path (`.treeship/sessions/ssn_<id>.treeship`) -- they can attach the file directly to whatever they're sharing through.
-2. Suggest `treeship package export ssn_<id> --bundle out.treeship` if they want a single self-contained file with the certificate and any referenced intents bundled in.
+2. If they want a portable copy instead of a URL, the sealed `.treeship` package directory (`.treeship/sessions/ssn_<id>.treeship/`) is self-contained — zip and share it; the recipient verifies with `treeship package verify <dir>`.
 
 Either path produces a verifiable receipt without ever calling `treeship session report`.

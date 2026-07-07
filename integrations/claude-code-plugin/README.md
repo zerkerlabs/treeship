@@ -123,7 +123,7 @@ Receipts produced while the plugin was active stay on disk in `.treeship/session
 
 **The plugin loaded but no session starts.** The plugin auto-starts only when `.treeship/` exists in the project root. Run `treeship init` once. Hooks are silent on missing `.treeship/` by design — adding noise would break Claude Code in unrelated projects.
 
-**The plugin loaded but `treeship` isn't on PATH.** Same silent skip. Install the CLI: `curl -fsSL treeship.dev/setup | sh` or `npm install -g treeship`. The plugin will pick it up on the next session.
+**The plugin loaded but `treeship` isn't on PATH.** Same silent skip. Install the CLI: `curl -fsSL treeship.dev/install | sh` or `npm install -g treeship`. The plugin will pick it up on the next session.
 
 **The session report URL doesn't appear at end of session.** Check `treeship hub status` — the report step needs a configured hub. If the hub isn't reachable, the SessionEnd hook still seals the receipt locally and prints a fallback message pointing to `treeship session report` for a manual retry.
 

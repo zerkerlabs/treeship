@@ -293,21 +293,13 @@ Realistic, version-tagged (see [`CHANGELOG.md`](./CHANGELOG.md) for what each re
 - **Cursor** — MCP via `treeship add` → `~/.cursor/mcp.json`, docs and templates in [`integrations/cursor/`](./integrations/cursor/)
 - **Universal SKILL.md** at <https://treeship.dev/SKILL.md> for AI agent self-onboarding
 
-**v0.10.1 (in flight) — platform, SDK, and supply-chain hardening**
-- Static `x86_64-unknown-linux-musl` binary so Debian 12, Ubuntu 22.04, Alpine, RHEL/Rocky 9, and Amazon Linux 2023 install cleanly (current GNU build requires GLIBC 2.39+)
-- npm postinstall verifies binary checksum (SHA-256), fails closed on tamper
-- Python SDK correctness pass (metadata-derived `__version__`, argv-list `wrap()`, `verify()` returncode handling, configurable `cli_path`/`timeout`)
-- SDK input validation for actor / artifact / nonce / approver fields (rejects option-injection patterns)
-- Keystore permission hardening: `init` writes 0700/0600, `doctor --fix` repairs, signing refuses world-readable private keys
-- MCP server in `@treeship/mcp` (`treeship_session_status`, `treeship_session_event`, `treeship_attest_action`, `treeship_verify`, `treeship_session_report`) — drop-in for Claude Code, Codex, Cursor, Cline
-- CLI correctness fixes: `init --force` no longer clobbers global config; project-level `extends:` honored; `attest action --format json` returns structured success/failure
+**The roadmap is a living document: [`docs/specs/vision.md`](./docs/specs/vision.md)** — frontiers get a spec before code, and the shipped table there is the source of truth (this README deliberately carries no version-pinned roadmap; one went eight releases stale). Currently open, spec'd or deferred-on-demand:
 
-**Planned, post-v0.10.1**
+- Transparent MCP forwarder mode in `@treeship/mcp` (the bridge ships server mode + library mode today)
 - Linux ARM64 (`aarch64`) binary
-- `treeship attach <agent>` — process detection for non-MCP agents
 - Selective disclosure (redactable receipts)
-- Anthropic plugin marketplace listing (broader reach for the Claude Code plugin; Zerker marketplace already works)
-- Transparent MCP forwarder mode in `@treeship/mcp` (today the bridge ships server mode + library mode)
+- `treeship attach <agent>` — process detection for non-MCP agents
+- Anthropic plugin marketplace listing (the Zerker marketplace install already works)
 
 **Not on the roadmap**
 - Native Windows binary. Use WSL. Open an issue at <https://github.com/zerkerlabs/treeship/issues> if you have a strong use case.

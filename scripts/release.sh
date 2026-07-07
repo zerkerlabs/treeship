@@ -96,6 +96,23 @@ cmd_prepare() {
     fs.writeFileSync('npm/treeship/package.json', JSON.stringify(p, null, 2) + '\n');
   "
 
+  echo "Bumping plugin manifests (claude-code, openclaw)..."
+  # The plugins' OWN manifests, not just the marketplace entry. Missing
+  # these is what left the Claude Code plugin advertising 0.9.5 while the
+  # repo shipped 0.17.0 (found by a user with the repo checked out).
+  node -e "
+    const fs = require('fs');
+    for (const path of [
+      'integrations/claude-code-plugin/.claude-plugin/plugin.json',
+      'integrations/openclaw-plugin/package.json',
+      'integrations/openclaw-plugin/openclaw.plugin.json',
+    ]) {
+      const p = JSON.parse(fs.readFileSync(path, 'utf8'));
+      p.version = '${VERSION}';
+      fs.writeFileSync(path, JSON.stringify(p, null, 2) + '\n');
+    }
+  "
+
   echo "Bumping .claude-plugin/marketplace.json..."
   # Both metadata.version and plugins[name=treeship].version. The preflight
   # in scripts/check-release-versions.py reads both sites; missing this bump

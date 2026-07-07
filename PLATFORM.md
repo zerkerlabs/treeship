@@ -99,7 +99,7 @@ treeship/
 
 ## Packages
 
-All packages are at **v0.9.5** and published to their respective registries.
+All release-train packages share a single version (enforced by `scripts/check-release-versions.py`) and are published to their respective registries; see [`CHANGELOG.md`](./CHANGELOG.md) for the current release.
 
 | Package | Registry | Install | Description |
 |---------|----------|---------|-------------|
