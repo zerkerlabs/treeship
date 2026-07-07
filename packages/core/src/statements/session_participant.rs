@@ -292,7 +292,7 @@ pub fn verify_participant_envelope(
     let mut joiner_sig_arr = [0u8; 64];
     joiner_sig_arr.copy_from_slice(&joiner_sig_bytes);
     let joiner_sig = Signature::from_bytes(&joiner_sig_arr);
-    if joiner_vk.verify(canonical.as_bytes(), &joiner_sig).is_err() {
+    if joiner_vk.verify_strict(canonical.as_bytes(), &joiner_sig).is_err() {
         return Err(ParticipantVerifyError::JoiningAgentSigInvalid);
     }
 
@@ -315,7 +315,7 @@ pub fn verify_participant_envelope(
     let mut host_sig_arr = [0u8; 64];
     host_sig_arr.copy_from_slice(&host_sig_bytes);
     let host_sig = Signature::from_bytes(&host_sig_arr);
-    if host_vk.verify(canonical.as_bytes(), &host_sig).is_err() {
+    if host_vk.verify_strict(canonical.as_bytes(), &host_sig).is_err() {
         return Err(ParticipantVerifyError::HostCountersignInvalid);
     }
 

@@ -342,7 +342,7 @@ impl Checkpoint {
         };
         let sig = Signature::from_bytes(&sig_array);
 
-        vk.verify(canonical.as_bytes(), &sig).is_ok()
+        vk.verify_strict(canonical.as_bytes(), &sig).is_ok()
     }
 }
 

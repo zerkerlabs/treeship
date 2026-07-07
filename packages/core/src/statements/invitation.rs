@@ -208,7 +208,7 @@ impl InvitationStatement {
             Err(_) => return false,
         };
         let sig = Signature::from_bytes(&sig_arr);
-        vk.verify(self.canonical_for_signing().as_bytes(), &sig).is_ok()
+        vk.verify_strict(self.canonical_for_signing().as_bytes(), &sig).is_ok()
     }
 
     /// Mint-time validation: rejects invitations that violate
