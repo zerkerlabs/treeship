@@ -55,16 +55,34 @@ pub fn verify_circom_proof(proof_json: &serde_json::Value) -> Result<String, Str
     let valid = Groth16::<Bn254>::verify_proof(&pvk, &ark_proof, &public_signals)
         .unwrap_or(false);
 
-    let artifact_id = proof_json.get("artifact_id")
+    // AUD-09: the pairing check proves the proof is valid FOR THE SUPPLIED
+    // PUBLIC SIGNALS — it says nothing about which artifact those signals
+    // describe. The `artifact_id` field in the proof JSON is caller-controlled
+    // and is NOT compared against any public signal here, so echoing it beside
+    // `valid:true` would let anyone rebind a genuine proof about their own
+    // statement onto `art_VICTIM`. We therefore report `bound:false` and
+    // surface the actual public-signal field elements (as decimal strings) so
+    // a caller holding the trusted artifact_id can bind it themselves. The
+    // in-WASM binding (recompute artifact_id_hash and match the circuit's
+    // public input) is tracked as a follow-up; until then this path must not
+    // claim the proof is about the JSON's artifact_id.
+    let claimed_artifact_id = proof_json.get("artifact_id")
         .and_then(|a| a.as_str())
         .unwrap_or("unknown");
+    let public_signal_values: Vec<String> =
+        public_signals.iter().map(|f| f.into_bigint().to_string()).collect();
 
     Ok(serde_json::json!({
         "valid": valid,
         "system": "circom-groth16",
         "circuit": circuit,
-        "artifact_id": artifact_id,
+        // The artifact id is what the proof CLAIMS to be about; it is NOT
+        // verified against the public signals on this path.
+        "claimed_artifact_id": claimed_artifact_id,
+        "bound": false,
+        "note": "pairing verified for the supplied public signals only; the proof is NOT bound to claimed_artifact_id on this path. Match a trusted artifact_id's field hash against public_signal_values to bind it.",
         "public_signals": public_signals.len(),
+        "public_signal_values": public_signal_values,
         "proved_at": proof_json.get("proved_at")
             .and_then(|p| p.as_str())
             .unwrap_or("unknown"),

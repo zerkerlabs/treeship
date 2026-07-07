@@ -65,8 +65,13 @@ fn main() {
             }
         }
 
-        // 2. Verify content-addressed digest
-        if !artifacts[i].content.is_empty() {
+        // 2. Verify content-addressed digest. AUD-03: empty content cannot be
+        // digest-valid — it must FAIL closed, not skip the check. Before this,
+        // an artifact with empty content left all_digests_valid = true, so a
+        // chain of empty artifacts scored digest-valid with no real content.
+        if artifacts[i].content.is_empty() {
+            all_digests_valid = false;
+        } else {
             let computed_hash = hex::encode(Sha256::digest(&artifacts[i].content));
             let expected = artifacts[i].digest
                 .strip_prefix("sha256:")
@@ -76,18 +81,27 @@ fn main() {
             }
         }
 
-        // 3. Verify Ed25519 signature
-        if let Some(ref vk) = verifying_key {
-            if artifacts[i].signature_bytes.len() == 64 && !artifacts[i].signed_message.is_empty() {
+        // 3. Verify Ed25519 signature. AUD-03: every artifact MUST carry a
+        // verifying key, a 64-byte signature, and a NON-EMPTY signed message
+        // that verifies. Any missing piece fails closed. Before this, an empty
+        // signed_message (or a missing key) skipped verification entirely and
+        // left all_signatures_valid = true — a validly-signed chain forged
+        // with no private key, using only the victim's public key.
+        match &verifying_key {
+            Some(vk)
+                if artifacts[i].signature_bytes.len() == 64
+                    && !artifacts[i].signed_message.is_empty() =>
+            {
                 let mut sig_arr = [0u8; 64];
                 sig_arr.copy_from_slice(&artifacts[i].signature_bytes);
                 let signature = Signature::from_bytes(&sig_arr);
-
                 if vk.verify(&artifacts[i].signed_message, &signature).is_err() {
                     all_signatures_valid = false;
                 }
-            } else if !artifacts[i].signed_message.is_empty() {
-                // Signature bytes wrong length
+            }
+            // No key, wrong signature length, or empty signed message: the
+            // artifact is NOT validly signed.
+            _ => {
                 all_signatures_valid = false;
             }
         }

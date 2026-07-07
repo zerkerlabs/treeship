@@ -103,19 +103,21 @@ impl RiscZeroProver {
             artifacts.len()
         );
 
-        // Build guest-compatible artifacts with full content + signatures
+        // Build guest-compatible artifacts with full content + signatures.
+        // A malformed signature encoding is now a hard error (AUD-08), not a
+        // silently-corrupted byte string.
         let guest_artifacts: Vec<GuestArtifact> = artifacts.iter().map(|a| {
-            // Decode base64url signature to raw bytes
-            let sig_bytes = base64_decode_sig(&a.signature);
-            GuestArtifact {
+            let sig_bytes = base64_decode_sig(&a.signature)
+                .map_err(|e| format!("artifact {}: {e}", a.artifact_id))?;
+            Ok(GuestArtifact {
                 artifact_id: a.artifact_id.clone(),
                 digest: a.digest.clone(),
                 parent_id: a.parent_id.clone(),
                 content: a.pae_message.clone(), // PAE bytes used for digest
                 signature_bytes: sig_bytes,
                 signed_message: a.pae_message.clone(), // PAE is the signed message
-            }
-        }).collect();
+            })
+        }).collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
 
         // Write both inputs matching the guest's two env::read() calls
         let env = risc0_zkvm::ExecutorEnv::builder()
@@ -190,42 +192,45 @@ impl RiscZeroProver {
     }
 }
 
-/// Decode a base64url signature string to raw bytes.
-fn base64_decode_sig(input: &str) -> Vec<u8> {
-    // Simple base64url decode
-    let standard: String = input.chars().map(|c| match c {
-        '-' => '+',
-        '_' => '/',
-        other => other,
-    }).collect();
-
-    let padded = match standard.len() % 4 {
-        2 => format!("{}==", standard),
-        3 => format!("{}=", standard),
-        _ => standard,
-    };
-
-    base64_simple_decode(&padded)
+/// Decode a base64url-no-pad signature string to raw bytes.
+///
+/// AUD-08: the previous hand-rolled decoder mapped every non-alphabet byte
+/// (INCLUDING `=` padding) to a zero sextet and emitted 3 bytes per 4-char
+/// chunk with no padding accounting. A 64-byte Ed25519 signature therefore
+/// decoded to 66 bytes, so `signature_bytes.len() == 64` failed and EVERY
+/// genuine signature was rejected — leaving the empty-`signed_message` forgery
+/// (AUD-03) as the only reachable "signatures valid" path. It also silently
+/// corrupted tampered inputs (`_ => 0`) instead of erroring. Use a real
+/// error-returning decoder: a valid signature decodes to exactly 64 bytes and
+/// malformed input is an explicit error.
+fn base64_decode_sig(input: &str) -> Result<Vec<u8>, String> {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    URL_SAFE_NO_PAD
+        .decode(input)
+        .map_err(|e| format!("bad signature base64: {e}"))
 }
 
-fn base64_simple_decode(input: &str) -> Vec<u8> {
-    let chars: Vec<u8> = input.bytes().map(|b| match b {
-        b'A'..=b'Z' => b - b'A',
-        b'a'..=b'z' => b - b'a' + 26,
-        b'0'..=b'9' => b - b'0' + 52,
-        b'+' => 62,
-        b'/' => 63,
-        _ => 0,
-    }).collect();
+#[cfg(test)]
+mod aud08_tests {
+    use super::base64_decode_sig;
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 
-    let mut output = Vec::new();
-    for chunk in chars.chunks(4) {
-        if chunk.len() < 4 { break; }
-        let n = ((chunk[0] as u32) << 18) | ((chunk[1] as u32) << 12)
-            | ((chunk[2] as u32) << 6) | (chunk[3] as u32);
-        output.push((n >> 16) as u8);
-        output.push((n >> 8) as u8);
-        output.push(n as u8);
+    // AUD-08: a 64-byte Ed25519 signature must decode to EXACTLY 64 bytes.
+    // The old hand-rolled decoder produced 66 (padding mapped to zero sextets
+    // + no padding accounting), so signature_bytes.len() == 64 always failed
+    // and every genuine signature was rejected.
+    #[test]
+    fn sig_decodes_to_exactly_64_bytes() {
+        let sig = [0x5au8; 64];
+        let encoded = URL_SAFE_NO_PAD.encode(sig);
+        let decoded = base64_decode_sig(&encoded).expect("valid base64url must decode");
+        assert_eq!(decoded.len(), 64, "64-byte signature must decode to 64 bytes, got {}", decoded.len());
+        assert_eq!(decoded, sig);
     }
-    output
+
+    // Malformed input is now an explicit error, not silently zero-substituted.
+    #[test]
+    fn malformed_base64_errors() {
+        assert!(base64_decode_sig("not valid base64 !!!").is_err());
+    }
 }
