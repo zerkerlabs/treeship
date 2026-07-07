@@ -472,16 +472,40 @@ pub fn verify_package_with_trust(
         checks.push(VerifyCheck::fail("type", &format!("Expected {RECEIPT_TYPE}, got {}", receipt.type_)));
     }
 
-    // 3. Determinism: re-serialize and check digest matches
+    // 3. Determinism: re-serialize and check digest matches.
+    //
+    // IMPORTANT SCOPE NOTE (do not read this row as integrity): this only
+    // confirms the receipt struct round-trips to the same bytes. It is NOT a
+    // signature check. The Merkle root below covers ONLY the artifact IDs;
+    // the receipt's timeline, side_effects, tool_usage, and narrative are
+    // composed from the (unsigned) event log and are NOT cryptographically
+    // bound by anything in this package. An attacker who edits those fields
+    // and re-serializes will pass determinism and pass the Merkle check.
+    // The authenticated anchor over the whole receipt is the actor-signed
+    // `session.v1` record (which binds receipt_digest) in the agent's chain;
+    // embedding + requiring it here is tracked as a follow-up. Until then,
+    // `package verify` authenticates the ARTIFACTS, not the narrative, and
+    // says so via the explicit scope check below.
     let receipt_path = pkg_dir.join(RECEIPT_FILE);
     let on_disk = std::fs::read(&receipt_path)?;
     let re_serialized = serde_json::to_vec_pretty(&receipt)?;
     if on_disk == re_serialized {
-        checks.push(VerifyCheck::pass("determinism", "receipt.json round-trips identically"));
+        checks.push(VerifyCheck::pass("determinism", "receipt.json round-trips identically (structural, NOT a signature)"));
     } else {
         // Not a hard failure -- pretty-print whitespace may differ
         checks.push(VerifyCheck::warn("determinism", "receipt.json does not byte-match after re-serialization"));
     }
+
+    // 3b. Honest scope of what this package authenticates. The receipt body
+    // (timeline / side_effects / tool_usage / narrative) is derived from the
+    // unsigned event log and carries no signature in the package, so a reader
+    // must not mistake a green package for an authenticated ledger of what
+    // the agent did. Only the artifacts + Merkle root are cryptographically
+    // bound.
+    checks.push(VerifyCheck::warn(
+        "receipt_body_binding",
+        "timeline/side-effects/narrative are NOT signed in this package — only the artifacts and Merkle root are cryptographically bound. For an authenticated record of the session, verify the actor-signed session.v1 record (or the published report).",
+    ));
 
     // 4. Merkle root re-computation
     if !receipt.artifacts.is_empty() {
