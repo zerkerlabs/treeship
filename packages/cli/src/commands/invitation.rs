@@ -712,6 +712,81 @@ pub fn countersign(
         ).into());
     }
 
+    // Re-derive the participant's terms from the TRUST-PINNED invitation.
+    // countersign is the host's authorization gate; it must NOT trust the
+    // bytes in the pending participant envelope. `join()` enforces expiry,
+    // restriction, term-copying, and single-use consume — but `join()` is
+    // just the honest CLI producing the pending envelope. A malicious joiner
+    // (who holds their own signing key) can hand-craft a 1-signature
+    // participant statement with inflated `capabilities` (e.g. add `admin.*`),
+    // a different `session_ref`, or a `joining_agent` that fails the
+    // invitation's restriction, and submit it straight to countersign. If we
+    // only checked host==issuer, the host would bless it into a valid
+    // 2-signature envelope claiming authority the invitation never granted.
+    // Re-validate everything `join` validated, against the invitation.
+    let now = now_unix_secs();
+    if invitation.is_expired(now) {
+        return Err(format!(
+            "invitation expired at {} (now {}); countersign refused",
+            invitation.expires_at,
+            treeship_core::statements::unix_to_rfc3339(now),
+        ).into());
+    }
+    if stmt.session_ref != invitation.session_ref {
+        return Err(format!(
+            "participant session_ref ({}) does not match the invitation's ({}); \
+             countersign refused",
+            stmt.session_ref, invitation.session_ref,
+        ).into());
+    }
+    if stmt.capabilities != invitation.granted_capabilities {
+        return Err(
+            "participant capabilities do not match the invitation's granted_capabilities \
+             (capability escalation attempt); countersign refused".into(),
+        );
+    }
+    match &invitation.invitee_restriction {
+        InviteeRestriction::Open => {}
+        InviteeRestriction::Pubkey { fingerprint } => {
+            let joiner_fp =
+                pubkey_fingerprint_short(&format!("ed25519:{}", stmt.joining_agent));
+            if fingerprint != &joiner_fp {
+                return Err(format!(
+                    "participant joining_agent (fp {joiner_fp}) does not satisfy the \
+                     invitation's Pubkey restriction (fp {fingerprint}); countersign refused"
+                )
+                .into());
+            }
+        }
+        InviteeRestriction::Cert { .. } => {
+            if stmt.joining_agent_cert_ref.is_none() {
+                return Err(
+                    "invitation is Cert-restricted but the participant carries no \
+                     certificate reference; countersign refused".into(),
+                );
+            }
+        }
+    }
+    // Single-use: the invitation nonce must ALREADY be consumed in the
+    // Approval Use Journal (join consumes it with max_uses=1). This both
+    // enforces single-use and forces the honest join path — a joiner who
+    // hand-crafted a pending envelope to bypass join never consumed the
+    // nonce, so there is no journal record and we refuse. `use_number` is
+    // `consumed_count + 1`, so a consumed invitation reads >= 2.
+    let j = Journal::new(&journal_dir_for_ctx(&c));
+    let nonce_d = nonce_digest(&invitation.nonce);
+    let replay = journal::check_replay(&j, &stmt.invitation_ref, &nonce_d, Some(1))
+        .map_err(|e| format!("journal check failed: {e}"))?;
+    let consumed = replay.use_number.map(|n| n >= 2).unwrap_or(false);
+    if !consumed {
+        return Err(
+            "this invitation has not been consumed via `treeship session join` \
+             (no single-use journal record) — countersign refused. A pending \
+             participant envelope must come from a real join, not a hand-crafted \
+             submission.".into(),
+        );
+    }
+
     let finalized = SessionParticipantStatement::attach_host_countersign(
         &rec.envelope, &*host_signer,
     ).map_err(|e| format!("attach host countersign: {e}"))?;

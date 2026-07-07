@@ -1182,6 +1182,27 @@ pub(crate) fn check_scope_violation(scope: &ApprovalScope, action: &ActionStatem
         }
     }
 
+    // `scope.extra` carries additional signed constraints (documented example:
+    // a max payment amount). This verifier does not know how to evaluate them,
+    // and a verifier that cannot check a constraint must NOT report the action
+    // as in-scope — otherwise a grant limited to `{"max_amount": 100}` would
+    // verify as "scoped and enforced" while a $1M action passes. Fail closed:
+    // an unenforceable constraint is itself a scope violation here, so the
+    // operator is told compliance was not confirmed rather than trusting it.
+    if let Some(extra) = &scope.extra {
+        let non_empty = match extra {
+            serde_json::Value::Object(m) => !m.is_empty(),
+            serde_json::Value::Null => false,
+            _ => true,
+        };
+        if non_empty {
+            return Some(format!(
+                "approval scope carries extra constraints this verifier cannot evaluate ({extra}); \
+                 compliance NOT confirmed"
+            ));
+        }
+    }
+
     None
 }
 
@@ -1281,6 +1302,35 @@ mod tests {
             ..Default::default()
         };
         let action = act("agent://deployer", "deploy.production", None);
+        assert!(check_scope_violation(&scope, &action).is_none());
+    }
+
+    // ── check_scope_violation: extra (unenforceable) constraints ───────
+    #[test]
+    fn scope_extra_constraint_fails_closed() {
+        // A grant limited to `{"max_amount": 100}` must NOT verify as
+        // "scoped and enforced" — this verifier can't evaluate the ceiling,
+        // so it must report the action as out-of-scope rather than trusting
+        // an unchecked constraint.
+        let scope = ApprovalScope {
+            extra: Some(serde_json::json!({ "max_amount": 100 })),
+            ..Default::default()
+        };
+        let action = act("agent://payer", "payments.charge", None);
+        let r = check_scope_violation(&scope, &action);
+        assert!(r.is_some(), "unenforceable extra constraint must fail closed");
+        assert!(r.unwrap().contains("cannot evaluate"));
+    }
+
+    #[test]
+    fn scope_empty_extra_object_passes() {
+        // An empty `extra: {}` carries no constraint, so it must not trip
+        // the fail-closed path.
+        let scope = ApprovalScope {
+            extra: Some(serde_json::json!({})),
+            ..Default::default()
+        };
+        let action = act("agent://payer", "payments.charge", None);
         assert!(check_scope_violation(&scope, &action).is_none());
     }
 
