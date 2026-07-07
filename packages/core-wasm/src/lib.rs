@@ -369,6 +369,13 @@ pub fn verify_receipt(receipt_json: &str) -> String {
 
     let checks = verify_receipt_json_checks(&receipt);
     let any_fail = checks.iter().any(|c| c.status == VerifyStatus::Fail);
+    // AUD-01 / AUD-P10: these checks are keyless and self-referential — no
+    // signature or trust-root check runs here, and an empty receipt passes
+    // vacuously. The strongest honest outcome is "structural-pass", never
+    // "pass" (which a consumer could read as authenticity). An empty receipt
+    // proves nothing, so it is a "fail".
+    let empty_receipt = receipt.artifacts.is_empty();
+    let outcome = if any_fail || empty_receipt { "fail" } else { "structural-pass" };
 
     let agent_name = receipt
         .agent_graph
@@ -378,7 +385,10 @@ pub fn verify_receipt(receipt_json: &str) -> String {
         .unwrap_or_default();
 
     serde_json::json!({
-        "outcome": if any_fail { "fail" } else { "pass" },
+        "outcome": outcome,
+        "signatures_verified": false,
+        "issuer_verified": false,
+        "note": "structural checks only (Merkle root, inclusion proofs, leaf count, timeline). Signatures and issuer are NOT verified from a receipt JSON.",
         "checks": checks.iter().map(|c| serde_json::json!({
             "step": c.name,
             "status": status_label(&c.status),
@@ -851,14 +861,44 @@ mod tests {
     }
 
     #[test]
-    fn verify_receipt_passes_on_fresh_compose() {
+    fn verify_receipt_is_structural_pass_not_authentic() {
+        // AUD-01: a consistent receipt is "structural-pass", never "pass".
+        // This surface verifies no signature, so it must not imply authenticity.
         let json = sample_receipt_json();
         let out: serde_json::Value = serde_json::from_str(&verify_receipt(&json)).unwrap();
-        assert_eq!(out["outcome"], "pass", "got: {out}");
+        assert_eq!(out["outcome"], "structural-pass", "got: {out}");
+        assert_eq!(out["signatures_verified"], false);
+        assert_eq!(out["issuer_verified"], false);
         assert_eq!(out["session"]["id"], "ssn_wasm_test");
         assert_eq!(out["session"]["ship_id"], "ship_demo");
         assert_eq!(out["session"]["actions"], 2);
         assert_eq!(out["session"]["agent"], "root");
+    }
+
+    #[test]
+    fn verify_receipt_fabricated_but_consistent_is_not_pass() {
+        // The attack from AUD-01: fabricate a receipt for an arbitrary ship,
+        // fill merkle.root/inclusion_proofs with the PUBLIC algorithm so every
+        // self-referential check passes. The outcome must NOT be "pass" and
+        // must flag that no signature was verified.
+        let mut val: serde_json::Value = serde_json::from_str(&sample_receipt_json()).unwrap();
+        val["session"]["ship_id"] = serde_json::Value::String("ship_ATTACKER".into());
+        let forged = val.to_string();
+        let out: serde_json::Value = serde_json::from_str(&verify_receipt(&forged)).unwrap();
+        assert_ne!(out["outcome"], "pass", "must never claim a plain pass: {out}");
+        assert_eq!(out["outcome"], "structural-pass");
+        assert_eq!(out["signatures_verified"], false);
+    }
+
+    #[test]
+    fn verify_receipt_empty_is_fail() {
+        // An internally-consistent receipt with zero artifacts proves nothing.
+        let mut val: serde_json::Value = serde_json::from_str(&sample_receipt_json()).unwrap();
+        val["artifacts"] = serde_json::Value::Array(vec![]);
+        val["merkle"]["root"] = serde_json::Value::Null;
+        let empty = val.to_string();
+        let out: serde_json::Value = serde_json::from_str(&verify_receipt(&empty)).unwrap();
+        assert_eq!(out["outcome"], "fail", "empty receipt must fail: {out}");
     }
 
     #[test]

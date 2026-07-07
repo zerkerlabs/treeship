@@ -281,7 +281,13 @@ impl ReceiptComposer {
         // exist in the session directory.
         let proofs = ProofsSection {
             signature_count: artifact_entries.len() as u32,
-            signatures_valid: true, // Caller should verify
+            // AUD-01: compose does NOT run a signature-verification pass over
+            // the artifacts, so this must not claim signatures were verified.
+            // A `true` here was a self-asserted "valid" flag baked into the
+            // signed receipt that a consumer could mistake for an independent
+            // verification result. It stays false unless a real verify pass
+            // sets it.
+            signatures_valid: false,
             merkle_root_valid: merkle_tree.is_some(),
             inclusion_proofs_count: merkle_section.inclusion_proofs.len() as u32,
             zk_proofs_present: false,
