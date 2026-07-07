@@ -28,6 +28,7 @@ pub mod agents;
 pub mod onboard;
 pub mod present;
 pub mod history;
+pub mod profile;
 pub mod approval;
 pub mod cards;
 pub mod discovery;

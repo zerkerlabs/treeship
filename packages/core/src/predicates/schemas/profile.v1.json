@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://treeship.dev/schemas/profile.v1.json",
+  "title": "profile.v1",
+  "description": "A derived track record over an agent's work history, pinned to the Merkle checkpoint it was computed at. Every number is a deterministic aggregation over the log's first tree_size leaves, so any verifier holding the log recomputes the same numbers: match and the profile grades `checked`; mismatch and it is provably false. Reputation pinned to a root is falsifiable; reputation that floats is marketing. See docs/specs/work-history.md slice 3.",
+  "type": "object",
+  "required": [
+    "agent",
+    "checkpoint_index",
+    "checkpoint_tree_size",
+    "checkpoint_root",
+    "sessions_total",
+    "computed_at"
+  ],
+  "properties": {
+    "agent": {
+      "description": "Actor URI this profile describes.",
+      "type": "string"
+    },
+    "checkpoint_index": {
+      "description": "Index of the checkpoint the aggregation was computed at.",
+      "type": "number"
+    },
+    "checkpoint_tree_size": {
+      "description": "The log prefix length (leaves) the aggregation covers. Recomputation MUST use exactly this prefix.",
+      "type": "number"
+    },
+    "checkpoint_root": {
+      "description": "The pinned Merkle root (sha256:<hex>). A verifier whose log prefix does not reproduce this root cannot grade the profile.",
+      "type": "string"
+    },
+    "computed_at": {
+      "description": "RFC 3339 time the profile was computed. Informational; not part of the recomputable aggregate.",
+      "type": "string"
+    },
+    "sessions_total": {
+      "description": "session.v1 records for this agent within the pinned prefix.",
+      "type": "number"
+    },
+    "sessions_self": { "type": "number" },
+    "sessions_runtime": { "type": "number" },
+    "sessions_countersigned": { "type": "number" },
+    "actions_total": {
+      "description": "Sum of the sessions' action_count fields.",
+      "type": "number"
+    },
+    "approvals_total": {
+      "description": "Sum of the sessions' approval_count fields (each backed by a signed grant in its package).",
+      "type": "number"
+    },
+    "handoffs_total": { "type": "number" },
+    "tools_exercised": {
+      "description": "Sorted distinct union of the sessions' tools_exercised lists.",
+      "type": "array"
+    },
+    "span_first": {
+      "description": "closed_at of the earliest session in the prefix.",
+      "type": ["string", "null"]
+    },
+    "span_last": {
+      "description": "closed_at of the latest session in the prefix.",
+      "type": ["string", "null"]
+    }
+  }
+}

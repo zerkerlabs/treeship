@@ -170,7 +170,7 @@ pub fn checkpoint(
 /// tree that grew after the checkpoint reconstructs the wrong root and
 /// reports a legitimate, in-log artifact as inclusion INVALID. (The same
 /// correctness rule publish_consistency and `present` already apply.)
-fn checkpoint_tree(
+pub(crate) fn checkpoint_tree(
     artifact_ids: &[String],
     checkpoint: &Checkpoint,
 ) -> Result<MerkleTree, Box<dyn std::error::Error>> {
