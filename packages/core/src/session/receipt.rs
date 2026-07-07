@@ -173,9 +173,19 @@ pub struct ProofsSection {
     pub reconcile_untracked_truncated: u32,
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub reconcile_untracked_cap: u32,
+    /// AUD-07: the git-diff backstop was unavailable at close even though git
+    /// worked at session start (start_commit_sha was captured). A file could
+    /// have changed via a non-AgentWroteFile channel and the only backstop
+    /// that would have caught it was disabled (`.git` removed, corrupt index,
+    /// PATH-poisoned git), so the "Files changed" ledger may be incomplete.
+    /// `package verify` WARNs on this. Absent on receipts sealed before this
+    /// field so they stay byte-identical.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub reconcile_degraded: bool,
 }
 
 fn is_zero_u32(n: &u32) -> bool { *n == 0 }
+fn is_false(b: &bool) -> bool { !*b }
 
 /// Merkle section of the receipt.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -294,6 +304,7 @@ impl ReceiptComposer {
             event_log_skipped: 0, // Set by caller after compose (Codex #8)
             reconcile_untracked_truncated: 0,
             reconcile_untracked_cap: 0,
+            reconcile_degraded: false, // Set by caller after compose (AUD-07)
         };
 
         // Compute cost/token totals from agent graph
