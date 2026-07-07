@@ -1,0 +1,166 @@
+---
+title: "Verify any agent in five minutes: a Treeship walkthrough"
+description: "A complete worked example, from installing the CLI to a stranger verifying your agent over the network with nothing but one pinned key. Every command, every expected output, and what each one proves."
+date: 2026-07-07
+tags: ["tutorial", "getting-started", "verification", "handshake"]
+readTime: "8 min read"
+---
+
+Most tools ship with a "hello world." Treeship's is a handshake: by the end of this post, a person who has never met you will verify, on their own machine, that an agent you control is who it claims to be and did what it says it did. No shared server they have to trust, no account, one key.
+
+We will go the whole distance: install, create an agent, sign some work, publish it, and then switch hats and verify it as a skeptical third party. Every command shows the output you should see and, more importantly, what that output *proves*.
+
+## What Treeship actually is
+
+One sentence: Treeship is TLS for agents. TLS answered "how do I know this website is really my bank?" Treeship answers the same question for AI agents: how do I know this agent is who it claims, is allowed to do what it is doing, and actually did what it says?
+
+The mechanism is the same idea browsers use. Every action, approval, handoff, and capability claim becomes a small cryptographically signed document that anyone can verify offline, against no infrastructure. The discipline that makes it trustworthy is one rule applied everywhere: **report how you know something, never assume it.** A fact is labeled `captured` (the machine observed it), `checked` (recomputed from evidence), or `asserted` (a bare claim). Nothing is ever rounded up.
+
+## Step 1: Install
+
+```bash
+npm install -g treeship
+treeship init
+```
+
+```
+✓ ship initialized
+  ship:  ship_a1b2c3…
+  key:   key_… (ed25519, default)
+```
+
+You now have a **ship**: your local signing authority, the thing that issues and vouches for agents. Think of it as a small certificate authority that lives on your laptop. Its private key never leaves the machine.
+
+## Step 2: Create a verifiable agent
+
+The old way was ten commands with four ways to get it subtly wrong. The new way is one:
+
+```bash
+treeship onboard deployer --from-harness ~/.claude/settings.json
+```
+
+```
+[1/4] identity — registering agent://deployer with its own key
+      key: key_… (pinned under AgentCert)
+[2/4] capability card
+      key-bound: yes (AgentCert) · 9 of 9 captured from harness
+[3/4] publish — skipped (local only)
+[4/4] trust bundle — hand these to a counterparty:
+    treeship trust add key_… ed25519:… --kind agent_cert --yes
+✓ agent onboarded
+```
+
+Three things just happened that matter:
+
+1. **The agent got its own key** (`--own-key`, which `onboard` does by default). This is what lets the agent's later actions be *proven*, not merely asserted. The runtime holds the key; the agent itself cannot read it.
+2. **The capability card is key-bound** (`key-bound: yes`). A capability card is a signed document listing what the agent is allowed to do. "Key-bound" means it is cryptographically tied to that agent's key, so it cannot be forged or reattributed.
+3. **The tools were captured, not typed** (`9 of 9 captured from harness`). The list came from reading your real config file, not from someone hand-writing a wish list. That is the strongest kind of capability claim, and it is labeled as such.
+
+## Step 3: Do some work, and sign it
+
+Have the agent record an action:
+
+```bash
+treeship attest action --actor agent://deployer --action "Bash(git:commit)"
+treeship verify <the-artifact-id>
+```
+
+```
+✓ verified  (1 artifact · chain intact)
+  actor:        agent://deployer
+  actor proof:  proven (key-bound)
+  action:       Bash(git:commit)
+```
+
+`actor proof: proven (key-bound)` is the payoff. The receipt was signed by the deployer agent's own key, so "the deployer did this" is not a claim you have to take on faith. It is cryptographically established.
+
+In practice you rarely run `attest` by hand. If your agent runs under Claude Code, Cursor, Hermes, or an MCP or A2A bridge, Treeship captures actions automatically as the agent works. The manual command is here so you can see the primitive.
+
+## Step 4: Publish so others can find it
+
+Everything so far is local. To let someone else verify your agent, attach a hub and publish. A hub is a shared bulletin board that stores your signed documents. It is worth being precise about what a hub is *not*: it verifies nothing, it holds no secrets, and if it vanished tomorrow nothing you signed would become false. It only answers lookups.
+
+```bash
+treeship hub attach                 # one browser approval
+treeship onboard deployer --from-harness ~/.claude/settings.json --publish
+```
+
+The `--publish` run ends by printing your **trust bundle**: the exact commands a counterparty runs to trust you.
+
+```
+[4/4] trust bundle — hand these to a counterparty:
+    treeship trust add key_… ed25519:… --kind ship --yes
+    treeship trust add key_… ed25519:… --kind hub_checkpoint --yes
+```
+
+Two lines. Note that they pin your **ship** key, not the deployer agent's key. This is the leverage: once someone trusts your ship, they can verify *every* agent your ship ever certifies, forever, without pinning anything else. Pin the certificate authority, trust the fleet. It is exactly how your browser trusts millions of websites by shipping a few hundred root certificates.
+
+## Step 5: Switch hats. Verify as a stranger.
+
+Now become the skeptic. On a clean machine (or a fresh config), holding nothing but those two `trust add` lines the deployer's operator sent you:
+
+```bash
+treeship trust add key_… ed25519:… --kind ship --yes
+treeship trust add key_… ed25519:… --kind hub_checkpoint --yes
+
+treeship resolve --hub https://api.treeship.dev agent://deployer
+```
+
+```
+✓ agent resolved (remote)
+  agent:         agent://deployer
+  signature:     verified (chain to pinned ship root)
+  key-bound:     yes (AgentCert via ship chain)
+  declared tools: Bash(git:*), Read(*), …
+  transparency:  anchored & verified (checkpoint #42)
+  status:        resolved (key-bound)
+```
+
+Read those middle lines carefully, because this is the entire point of Treeship:
+
+- **`signature: verified (chain to pinned ship root)`** — you pinned one key (the ship's), and the deployer agent's card verified by following a certificate chain up to it. You never had to pin the agent's own key.
+- **`transparency: anchored & verified`** — the card is provably *in the public log*, not merely signed. This is the "Certificate Transparency" property: you can see that this exact card was published, and detect if it were ever quietly removed.
+
+Every byte of that verdict was recomputed on your machine, against your trust roots. The hub served bytes; you decided what to believe.
+
+## Step 6: The handshake, if you need it live
+
+Resolving a card proves the *record* is real. It does not prove the party you are talking to right now controls that agent, because a resolved card is a public document anyone could show you. For that, challenge them:
+
+```bash
+# you, the verifier, mint a random nonce:
+NONCE=$(openssl rand -hex 16)
+
+# they answer it, signing your nonce with the agent's key:
+treeship present agent://deployer --challenge $NONCE
+
+# you check the answer:
+treeship verify-presentation deployer.presentation.json --challenge $NONCE
+```
+
+```
+challenge:   verified — bearer controls key_… (response 2s old)
+status:      verified (key-bound, anchored, live)
+```
+
+That last line, `live`, is the mutual-TLS moment: not just "this record is real" but "the party across the wire controls this identity, right now." A captured presentation replayed against a new nonce fails with a replay warning. This is the piece a gateway or a payment counterparty demands before acting.
+
+## What you just proved
+
+In five minutes, with no shared trusted server, a stranger established that:
+
+1. Your agent has a real, key-bound identity (not a name anyone can claim).
+2. Its capabilities were captured from a real config (not a wish list).
+3. Its actions were signed by its own key (proven, not asserted).
+4. Its card is in a public, append-only log (anchored, and omission is detectable).
+5. The party presenting it controls the key right now (live).
+
+And the whole time, every verdict told you exactly *how* it knew each fact. That honesty is not a feature bolted on top. It is the product.
+
+## Where to go next
+
+- [What to expect](/docs/guides/what-to-expect) — the same path with a "you are on track when" line at every step, and a table of the outputs that actually mean trouble.
+- [States and grades](/docs/reference/agent-states) — every status word, decoded.
+- [The Agent Handshake](/docs/concepts/agent-handshake) — the chain, presentation, and challenge in depth.
+
+Install is one line. The stranger verifying you is five minutes away.

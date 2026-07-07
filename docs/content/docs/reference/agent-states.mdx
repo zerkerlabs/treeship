@@ -1,0 +1,89 @@
+---
+title: States and grades
+description: Every status word Treeship prints, what it claims, and what to do about it. Card lifecycle, coverage tiers, provenance grades, actor proof, and verification verdicts in one place.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Treeship's output is deliberately small in vocabulary and precise in meaning. Every word below is a claim about *how strongly something is known*. This page is the dictionary.
+
+<Callout type="info">
+The single rule underneath all of these: **report provenance, never assume
+it.** Nothing is ever rounded up to a stronger claim than the evidence
+supports. A grey `needs-review` or an `asserted` is not a failure; it is an
+honest label.
+</Callout>
+
+## Card lifecycle (`status`)
+
+A capability card moves through these states. Movement toward `verified` is always something you do deliberately; Treeship never auto-promotes.
+
+| Status | Meaning | Is it a problem? | Move it forward with |
+|---|---|---|---|
+| `draft` | Discovered automatically, not acknowledged. | No | `treeship agents review <id>` |
+| `needs-review` | Registered with a real certificate, awaiting your look. **The normal resting state.** | No | `treeship agents review <id>` |
+| `active` | You reviewed and approved it. | No | run a smoke session to reach `verified` |
+| `verified` | Active, and a session proved Treeship can capture this agent end to end. | No (this is the top) | — |
+
+The `?` marker in `treeship agents list` simply means the card is `draft` or `needs-review`, that is, you have not confirmed it yet. A card is fully usable for signing and verification in any state.
+
+## Coverage (`coverage`)
+
+How much of an agent's behavior Treeship can observe through the harness it is attached by. This is a promise about *completeness*, and it is honest about its own gaps.
+
+| Level | Sees | Does not see |
+|---|---|---|
+| `basic` | Commands you wrap explicitly, and MCP tool calls. | Anything the agent does outside those channels. |
+| `standard` | The above plus file and git reconciliation at session close. | Actions in un-instrumented tools. |
+| `high` | The above plus native harness hooks (e.g. Claude Code SessionStart / PostToolUse). | Very little; this is the most complete tier. |
+
+Full detail: [Coverage levels](/docs/guides/coverage-levels). A `basic` card is not wrong, it just claims less. A session report always states its own coverage so a reader is never surprised by a gap.
+
+## Provenance grades (on capabilities)
+
+When a capability card lists a tool, each entry carries *how that tool got onto the card*. Stronger to weaker:
+
+| Grade | Origin | Strength |
+|---|---|---|
+| `captured` | Read from the agent's real harness config. | Strongest. The machine observed it. |
+| `exercised` | Backed by real signed receipts of the agent using the tool. | Strong. Proven by use. |
+| `discovered` | Mapped from the agent's own published descriptor (e.g. an A2A AgentCard). | Medium. The agent's own claim about itself. |
+| `declared` | A bare list someone typed or supplied. | Weakest. An honest assertion, labeled as one. |
+
+`verify-capability` and `resolve` report the mix, e.g. `9 captured, 2 exercised, 0 declared-only`. A card built with `--from-harness` starts all-`captured`; capabilities move to `exercised` as the agent actually uses them.
+
+## Actor proof (on actions)
+
+When you `treeship verify` an action, the actor line answers "is the 'who' real?"
+
+| Verdict | Meaning |
+|---|---|
+| `proven (key-bound)` | The action was signed by the agent's **own** key, pinned under its certificate. The actor is cryptographically established. |
+| `asserted` | The `actor` field is a labeled claim with no dedicated key behind it (the action was signed by the shared ship key). |
+
+To get `proven`, the agent needs its own key: `treeship agent register --own-key` (or just use `treeship onboard`, which does this). Bridges (`@treeship/mcp`, `@treeship/a2a`) provision it automatically on startup.
+
+## Verification verdicts (on facts)
+
+Every verifier grades each fact it reports:
+
+| Grade | Meaning |
+|---|---|
+| `verified` / `checked` | Treeship recomputed the fact from evidence and it held. |
+| `asserted` | An unbacked claim, surfaced but not trusted. |
+| `REVOKED` | An authorized party revoked this. Do not honor it. |
+
+## Signature and transparency (on remote resolve / presentations)
+
+| Line | Meaning |
+|---|---|
+| `signature: verified (trusted key)` | The signer's key is directly in your trust roots. |
+| `signature: verified (chain to pinned ship root)` | The signer's key is vouched for by a certificate chain up to a ship key you pinned. You trust the fleet by pinning one key. |
+| `signature: UNVERIFIED (key not in your trust roots)` | You have not pinned this signer. Not a forgery claim, just "I cannot check this." Pin the key to resolve it. |
+| `transparency: anchored & verified (checkpoint #N)` | The card is provably in the transparency log, not merely signed. |
+| `transparency: anchored, but checkpoint signer not in your trust roots` | Pin the hub's checkpoint key with the printed command. |
+| `staple: … (9m old)` on a presentation | Freshness bound: the proof is current as of a checkpoint 9 minutes ago. Set your tolerance with `--max-staple-age`. |
+
+## Exit codes
+
+Verification commands (`verify`, `verify-capability`, `resolve`, `audit`, `verify-presentation`, `verify-profile`) exit **non-zero on a hostile verdict**: a revoked card, an out-of-scope violation, a detected omission or history rewrite, an invalid proof. Gate your scripts and CI on the exit code; the printed reason explains it. A monitor doing `treeship audit … && deploy` will correctly refuse to deploy if the log was rewritten.

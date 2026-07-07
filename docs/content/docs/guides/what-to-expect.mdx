@@ -1,0 +1,172 @@
+---
+title: What to expect
+description: A guided walk from install to a third party verifying your agent, with the exact output you should see at every step and how to tell it worked.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+This page exists to answer one question: **when I run a Treeship command, is what I see correct, and what do I do next?**
+
+Every step below shows the command, the output you should expect, and a plain "you are on track when" line. If your output matches, it is working. If a status word looks alarming (like `needs-review`), this page tells you whether it is a problem (it usually is not) and what, if anything, to do about it.
+
+<Callout type="info">
+Everything runs locally. No account, no API key, nothing leaves your machine until you explicitly publish. You can run this entire page offline.
+</Callout>
+
+## The 60-second golden path
+
+<Steps>
+
+<Step>
+### Install and initialize
+
+```bash
+npm install -g treeship
+treeship init
+```
+
+Expected:
+
+```
+✓ ship initialized
+  ship:  ship_a1b2c3…
+  key:   key_… (ed25519, default)
+```
+
+**You are on track when** you see a `ship_` id and a `key_`. A "ship" is your local signing authority, the thing that vouches for your agents (the equivalent of a company that issues ID badges). The key is its private signing key and never leaves your machine.
+</Step>
+
+<Step>
+### Onboard an agent
+
+One command takes an agent from nothing to verifiable:
+
+```bash
+treeship onboard my-agent --from-harness ~/.claude/settings.json
+```
+
+Expected:
+
+```
+[1/4] identity — registering agent://my-agent with its own key
+      key: key_… (pinned under AgentCert)
+[2/4] capability card
+      key-bound: yes (AgentCert) · 9 of 9 captured from harness
+[3/4] publish — skipped (local only; re-run with --publish once a hub is attached)
+[4/4] trust bundle — hand these to a counterparty:
+    treeship trust add key_… ed25519:… --kind agent_cert --yes
+✓ agent onboarded
+```
+
+**You are on track when** step 2 says `key-bound: yes`. That means the agent's capability card (a signed document listing what the agent is allowed to do) is cryptographically tied to the agent's own key, not just asserted. `captured from harness` means the tool list was read from your real config, not typed by hand, which is the strongest kind of claim.
+</Step>
+
+<Step>
+### Verify it
+
+```bash
+treeship verify-capability <the-card-id-from-above>
+```
+
+Expected:
+
+```
+✓ capability card
+  key-bound:   yes (AgentCert)
+  provenance:  9 captured, 0 exercised, 0 declared-only
+  status:      verified
+```
+
+**You are on track when** `status: verified` and the command exits `0`. If the agent has actually done work, some capabilities move from `captured` to `exercised` (proven by real signed receipts of the agent using them).
+</Step>
+
+</Steps>
+
+## Reading `treeship agents list`
+
+This is the command most testers run first, and its output looks more alarming than it is. Here is a real listing:
+
+```
+Agent cards (/Users/you/.treeship/agents)
+
+  ? claude-code   (claude-code)
+    id:         agent_6be4c27314cce79f
+    status:     needs-review
+    coverage:   high
+    provenance: registered
+
+  ? tls-dogfood   (shell-wrap)
+    id:         agent_a413e220bbb6cfef
+    status:     needs-review
+    coverage:   basic
+    provenance: registered
+```
+
+Nothing here is broken. Decoding it:
+
+| Field | What you see | What it means |
+|---|---|---|
+| `?` marker | A grey question mark | The card is **awaiting your review**. It is not an error. It means "Treeship created this from what it observed; you have not confirmed it yet." |
+| `status` | `needs-review` | The normal state for a freshly registered agent. Promote it with `treeship agents review <id>` once you have looked at it. Nothing else requires this. |
+| `coverage` | `high` / `basic` | How much of the agent's behavior Treeship can observe through this harness. `high` (native hooks) sees more than `basic` (command wrapping). Neither is wrong; see [Coverage levels](/docs/guides/coverage-levels). |
+| `provenance` | `registered` | Where the card came from. `registered` means you created it with `treeship agent register` (or `onboard`). |
+
+<Callout type="info">
+**`needs-review` is the resting state, not a warning.** A card is only ever
+`active` or `verified` after you deliberately promote it. Most testing never
+needs to; the card is fully usable for signing and verification as-is. The
+status is about *your* review workflow, not the card's validity.
+</Callout>
+
+To clear the review flag on a card you have inspected:
+
+```bash
+treeship agents review agent_6be4c27314cce79f
+```
+
+## The status words, quickly
+
+You will meet a small vocabulary. None of it is jargon for its own sake; each word is a precise claim about how strongly something is known.
+
+- **`proven` vs `asserted`** (on an action) — `proven (key-bound)` means the action was signed by the agent's own key, so the "who did this" is cryptographically established. `asserted` means it is just a labeled claim, no key behind it. Onboarding with `--own-key` (which `onboard` does) gets you `proven`.
+- **`captured` vs `exercised` vs `declared`** (on a capability) — `captured` = read from a real config, `exercised` = backed by real signed receipts of the agent using it, `declared` = a bare claim someone typed. Stronger to weaker, always labeled, never mixed silently.
+- **`verified` vs `checked` vs `asserted`** (on a fact) — `verified`/`checked` mean Treeship recomputed the fact from evidence and it held; `asserted` means it is an unbacked claim. A verdict never rounds up.
+
+The one rule behind all of it: **Treeship reports how it knows something, and never claims to know more than it can prove.** That is the whole product.
+
+## Going over the network (optional)
+
+Everything above is local. To let someone else verify your agent, attach a hub (a shared bulletin board that stores signed artifacts; it verifies nothing itself) and publish:
+
+```bash
+treeship hub attach                 # one browser approval
+treeship onboard my-agent --from-harness ~/.claude/settings.json --publish
+```
+
+The `--publish` run ends by printing a **trust bundle**: the exact two commands a counterparty runs to trust your ship. They then verify any agent you ever register:
+
+```bash
+# what your counterparty runs, once:
+treeship trust add key_… ed25519:… --kind ship --yes
+treeship trust add key_… ed25519:… --kind hub_checkpoint --yes
+
+# then they can verify, from anywhere:
+treeship resolve --hub https://api.treeship.dev agent://my-agent
+```
+
+**You are on track when** their `resolve` prints `signature: verified (chain to pinned ship root)` and `transparency: anchored & verified`. That is the full handshake: they pinned one key, and now trust your whole fleet. See [The Agent Handshake](/docs/concepts/agent-handshake).
+
+## When something is actually wrong
+
+These are the outputs that *do* mean a problem, and what they mean:
+
+| Output | Meaning | Fix |
+|---|---|---|
+| `MAC verification failed — wrong machine` | The keystore cannot be decrypted (rare; a hostname or username change on older versions). | Update to the latest CLI, which self-heals this. If it persists, the message prints a nondestructive recovery command. |
+| `signature: UNVERIFIED (key not in your trust roots)` | You have not pinned the signer's key. | Run the `trust add` line the other party gave you (or `keys export` to get yours). |
+| `status: REVOKED` on a card | The card was revoked by an authorized party. | Do not honor it. This is the system working. |
+| `append-only INVALID — possible history rewrite` on `audit` | A hub's log contradicts what you witnessed before. | The hub may have lost or rewritten data. Investigate before trusting further receipts from it. |
+| A command exits non-zero on a verification | The verdict was hostile (revoked, violation, omission, invalid proof). | The exit code is the point: gate your scripts on it. Read the printed reason. |
+
+Anything not in this table, and not a hostile verdict, is almost certainly the normal path. When in doubt, `treeship verify <id>` and read the top line.
