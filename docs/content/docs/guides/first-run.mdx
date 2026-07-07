@@ -98,7 +98,7 @@ The report has three panels worth scanning first:
 Once you have local value — a signed receipt you can read — you can attach agents that don't run on this machine: VPS-based Codex, cloud VMs, NinjaTech / SuperNinja remotes, CI runners.
 
 <Callout type="warn">
-The remote attach flow (`treeship agent invite` and `treeship join --invite`) is **deferred to v0.9.9**. Today, remote agents show up as **draft** cards with `(none yet)` for verified captures. `treeship harness inspect ninjatech-superninja` is honest about what's possible vs what's actually proven.
+A dedicated one-command remote attach flow is **not yet shipped** (multi-agent joins exist at the session level: `treeship session invite` / `session join`). Today, remote agents show up as **draft** cards with `(none yet)` for verified captures. `treeship harness inspect ninjatech-superninja` is honest about what's possible vs what's actually proven.
 </Callout>
 
 The current honest path for remote agents:
@@ -110,7 +110,7 @@ treeship agent register \
   --description "Codex on vps-01"
 ```
 
-That writes a `.agent` package (signed certificate) and a card at `needs-review`. After v0.9.9 lands, `treeship agent invite` will replace this with a one-line join command on the remote machine.
+That writes a `.agent` package (signed certificate) and a card at `needs-review`. `treeship onboard <name> --publish` folds registration, the capability card, and hub publication into one command.
 
 ## What you'll see after setup
 
