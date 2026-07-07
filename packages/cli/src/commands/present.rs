@@ -570,6 +570,38 @@ pub fn verify_presentation(
     };
 
     let ok = revoked.is_none() && key_bound && !stale && challenge_ok;
+
+    // JSON mode: one structured object with the complete verdict. The text
+    // path below reports via printer.info, which JSON mode suppresses — a
+    // programmatic caller (the gateway) must never receive an empty success
+    // envelope in place of a verdict.
+    if printer.format == crate::printer::Format::Json {
+        printer.json(&serde_json::json!({
+            "verdict": status,
+            "ok": ok,
+            "agent": agent,
+            "card": card_id,
+            "signature": sig_str,
+            "key_bound": key_bound,
+            "via_chain": via_chain,
+            "staple": {
+                "detail": staple_str,
+                "verified": staple_ok,
+                "age_secs": staple_age_secs,
+                "stale": stale,
+            },
+            "challenge": challenge_str,
+            "challenge_checked": challenge.is_some(),
+            "challenge_ok": if challenge.is_some() { Some(challenge_ok) } else { None },
+            "revocation": revocation_str,
+            "revoked": revoked,
+        }));
+        if !ok {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+
     let headline = "presentation";
     if ok {
         printer.success(headline, &[]);
@@ -594,7 +626,7 @@ pub fn verify_presentation(
         printer.blank();
     }
     if !ok {
-        return Err("presentation did not verify".into());
+        return Err(format!("presentation did not verify — status: {status}").into());
     }
     Ok(())
 }

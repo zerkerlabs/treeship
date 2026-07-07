@@ -197,6 +197,35 @@ pub fn resolve(
     };
     let behavior_str =
         format!("{total} captured actions ({in_scope} in scope, {out_of_scope} out)");
+
+    // Hostile verdicts are machine-visible: nonzero exit, and in JSON mode a
+    // single structured verdict object (the text path's info/warn lines are
+    // suppressed or stream separately in JSON). A resolver that detects a
+    // revoked card or violations and exits 0 lies to every script gating on it.
+    let hostile = revocation.is_some() || (card_key_bound && out_of_scope > 0);
+    if printer.format == crate::printer::Format::Json {
+        printer.json(&serde_json::json!({
+            "verdict": status,
+            "ok": !hostile,
+            "agent": agent,
+            "key": key_id,
+            "key_provenance": key_grade,
+            "current_card": card_id,
+            "declared_tools": tools,
+            "capabilities": cap_grade,
+            "capability_mix": provenance_str,
+            "captured_actions": total,
+            "in_scope": in_scope,
+            "out_of_scope": out_of_scope,
+            "revocation": revocation
+                .as_ref()
+                .map(|(reason, who)| serde_json::json!({ "by": who, "reason": reason })),
+        }));
+        if hostile {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
     printer.success(
         "agent resolved",
         &[
@@ -222,6 +251,9 @@ pub fn resolve(
         "every field is re-derived from local artifacts, not a stored verdict. captured = the machine observed it; checked = a claim cross-verified against captured evidence; asserted = a bare claim.",
     );
     printer.blank();
+    if hostile {
+        std::process::exit(1);
+    }
     Ok(())
 }
 
@@ -587,6 +619,33 @@ fn resolve_remote(hub: &str, agent: &str, trust: &TrustRootStore, printer: &Prin
         "resolved (UNVERIFIED)"
     };
 
+    // Remote hostile verdicts: a revoked card, OR a signature that failed
+    // against the verifier's roots (UNVERIFIED means verification FAILED —
+    // matching verify-presentation's semantics — not merely "ungraded").
+    // Machine-visible: nonzero exit + one structured JSON verdict object.
+    let hostile = revocation.is_some() || !sig_ok;
+    if printer.format == crate::printer::Format::Json {
+        printer.json(&serde_json::json!({
+            "verdict": status,
+            "ok": !hostile,
+            "agent": agent,
+            "hub": base,
+            "current_card": card_id,
+            "signature": sig_str,
+            "key_bound": key_bound,
+            "via_chain": chain_cert_id.is_some(),
+            "chain_cert": chain_cert_id,
+            "declared_tools": tools,
+            "capability_mix": mix_str,
+            "transparency": transparency_str,
+            "revocation": revocation,
+        }));
+        if hostile {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+
     printer.success(
         "agent resolved (remote)",
         &[
@@ -609,6 +668,9 @@ fn resolve_remote(hub: &str, agent: &str, trust: &TrustRootStore, printer: &Prin
         "re-verified client-side against YOUR trust roots; the hub's word is not trusted. the exercised grade needs the agent's receipts (run `treeship resolve` locally).",
     );
     printer.blank();
+    if hostile {
+        std::process::exit(1);
+    }
     Ok(())
 }
 

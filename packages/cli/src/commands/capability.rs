@@ -192,6 +192,37 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
     };
     let in_scope_str = in_scope.to_string();
     let oos_str = violations.len().to_string();
+
+    // A hostile verdict must be machine-visible: nonzero exit and, in JSON
+    // mode, one structured object carrying the full verdict (printer.info /
+    // warn are suppressed or stream separate objects in JSON — useless to a
+    // programmatic caller). A verifier that detects a revoked card or
+    // out-of-scope actions and exits 0 is lying to every script gating on it.
+    let hostile = revocation.is_some() || !violations.is_empty();
+    if printer.format == crate::printer::Format::Json {
+        printer.json(&serde_json::json!({
+            "verdict": status,
+            "ok": !hostile,
+            "card": card_id,
+            "agent": card_agent,
+            "key_bound": key_bound,
+            "declared_tools": tools,
+            "provenance": provenance_str,
+            "in_scope": in_scope,
+            "out_of_scope": violations.len(),
+            "violations": violations
+                .iter()
+                .map(|(id, tool)| serde_json::json!({ "artifact": id, "action": tool }))
+                .collect::<Vec<_>>(),
+            "revocation": revocation
+                .as_ref()
+                .map(|(reason, who)| serde_json::json!({ "by": who, "reason": reason })),
+        }));
+        if hostile {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
     printer.success(
         "capability card",
         &[
@@ -234,6 +265,9 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
         "consistency over captured evidence: proves in/out-of-scope for actions Treeship recorded, not that no off-card action occurred (that is Guard's runtime job).",
     );
     printer.blank();
+    if hostile {
+        std::process::exit(1);
+    }
     Ok(())
 }
 
