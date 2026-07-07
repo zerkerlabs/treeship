@@ -53,6 +53,7 @@ const REGISTRY: &[(&str, &str)] = &[
     ),
     ("session.v1", include_str!("schemas/session.v1.json")),
     ("agent_cert.v1", include_str!("schemas/agent_cert.v1.json")),
+    ("profile.v1", include_str!("schemas/profile.v1.json")),
 ];
 
 /// Returns the raw JSON Schema text for a registered predicate suffix, if any.

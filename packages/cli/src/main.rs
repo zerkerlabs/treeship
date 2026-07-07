@@ -331,6 +331,23 @@ enum Command {
     ///   treeship history hermes --class countersigned --since 2026-07-01T00:00:00Z
     History(HistoryCliArgs),
 
+    /// A derived, checkpoint-pinned track record over an agent's work
+    /// history. Every number recomputes from the log at the pinned
+    /// checkpoint: match grades the profile `checked`; mismatch is a
+    /// provable lie. --attest signs it as a ship claim.
+    ///
+    /// Examples:
+    ///   treeship profile agent://hermes
+    ///   treeship profile hermes --attest
+    Profile(ProfileCliArgs),
+
+    /// Recompute an attested profile.v1 from the log at its pinned
+    /// checkpoint and compare, field by field. checked or MISMATCH.
+    ///
+    /// Example:
+    ///   treeship verify-profile art_a1b2c3
+    VerifyProfile(VerifyProfileCliArgs),
+
     /// Manage the local Agent Card store
     ///
     /// Cards are workspace trust objects -- who an agent is, where it
@@ -1826,6 +1843,24 @@ struct VerifyPresentationCliArgs {
 }
 
 #[derive(clap::Args)]
+struct ProfileCliArgs {
+    /// Agent name or agent:// URI
+    #[arg(value_name = "AGENT")]
+    agent: String,
+
+    /// Sign the computed profile as a profile.v1 receipt (ship claim)
+    #[arg(long)]
+    attest: bool,
+}
+
+#[derive(clap::Args)]
+struct VerifyProfileCliArgs {
+    /// profile.v1 artifact id
+    #[arg(value_name = "ID")]
+    artifact_id: String,
+}
+
+#[derive(clap::Args)]
 struct HistoryCliArgs {
     /// Agent name or agent:// URI
     #[arg(value_name = "AGENT")]
@@ -2459,6 +2494,19 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             &a.file,
             a.max_staple_age.as_deref(),
             a.challenge.as_deref(),
+            printer,
+        ),
+
+        Command::Profile(a) => commands::profile::profile(
+            &a.agent,
+            a.attest,
+            cli.config.as_deref(),
+            printer,
+        ),
+
+        Command::VerifyProfile(a) => commands::profile::verify_profile(
+            &a.artifact_id,
+            cli.config.as_deref(),
             printer,
         ),
 
