@@ -94,6 +94,16 @@ pub fn verify_receipt_json_checks(receipt: &SessionReceipt) -> Vec<VerifyCheck> 
                     "per-proof merkle_version drift detected (section declares v{version})",
                 ),
             ));
+        } else if proof_total == 0 {
+            // Artifacts are present but the receipt carries no inclusion
+            // proofs: there is nothing to run, and a check that ran nothing
+            // must not report pass ("0/0 passed" is the vacuous-verifier
+            // shape the policy bans — see the chain_linkage note below,
+            // where this same class was fixed once before).
+            checks.push(VerifyCheck::warn(
+                "inclusion_proofs",
+                "no inclusion proofs present to verify",
+            ));
         } else if proofs_passed == proof_total {
             checks.push(VerifyCheck::pass(
                 "inclusion_proofs",
