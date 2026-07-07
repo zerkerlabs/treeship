@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Fixed
+- **Hub hardening (audit Batch G).** Four fixes and a test wall for the network layer: **(1)** request bodies on `POST /v1/artifacts` and all `POST /v1/merkle/*` are now capped at 10 MB (the receipts handler always was; the other four buffered unbounded uploads into memory). **(2)** New indexes `artifacts(payload_type, signed_at)` and `artifacts(dock_id)` — the public, unauthenticated `GET /v1/agents` and `/v1/agents/log` endpoints were full-table scans that decode every receipt row per request and only get slower as the log grows. **(3)** `PRAGMA foreign_keys=ON`: every `REFERENCES` clause in the schema was decorative (SQLite ignores them unless enabled); a write claiming a dock the hub never registered is now refused by the database itself. **(4)** Re-POSTing a checkpoint no longer inserts a duplicate row forever — `InsertCheckpoint` is idempotent on its natural key (signer, root, tree_size) and returns the original row's id, matching the artifact/consistency insert discipline. **(5)** The public `GET /v1/verify/{id}` no longer echoes the verifier's stderr and internal error strings to anonymous callers (logged server-side; the response is a generic verdict — anyone wanting detail runs `treeship verify` themselves). And the **DPoP authentication boundary — through which every authenticated write funnels — now has a test suite** (it had zero): the accept path plus jti replay, foreign-key signature, unknown dock, htm/htu binding mismatches, clock skew, alg confusion, malformed JWTs, and payload tampering under a stale signature are all pinned.
+
 ## 0.17.1 (2026-07-06)
 
 ### Fixed

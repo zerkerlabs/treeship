@@ -38,6 +38,8 @@ func (h *Handlers) PublishCheckpoint(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req checkpointRequest
+	// Cap request body at 10 MB (same rule as receipts/artifacts).
+	r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
 		return
@@ -90,6 +92,8 @@ func (h *Handlers) PublishProof(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req proofRequest
+	// Cap request body at 10 MB (same rule as receipts/artifacts).
+	r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
 		return
@@ -204,6 +208,8 @@ func (h *Handlers) PublishConsistency(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req consistencyRequest
+	// Cap request body at 10 MB (same rule as receipts/artifacts).
+	r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
 		return

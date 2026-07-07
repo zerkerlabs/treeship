@@ -3,6 +3,7 @@ package verify
 import (
 	"database/sql"
 	"encoding/json"
+	"log"
 	"net/http"
 	"os/exec"
 
@@ -47,20 +48,21 @@ func (h *Handlers) Verify(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// treeship exited with error -- return the stderr or a generic message.
+		// treeship exited nonzero. This is a PUBLIC, unauthenticated
+		// endpoint: internal verifier stderr and Go error strings are
+		// implementation detail an anonymous caller has no business
+		// reading (paths, versions, panic text). Log server-side, return
+		// a generic verdict. The artifact is client-verifiable anyway --
+		// anyone who wants detail runs `treeship verify` themselves.
 		if exitErr, ok := err.(*exec.ExitError); ok && len(exitErr.Stderr) > 0 {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"outcome": "error",
-				"message": string(exitErr.Stderr),
-			})
-			return
+			log.Printf("verify %s: %s", id, string(exitErr.Stderr))
+		} else {
+			log.Printf("verify %s: %v", id, err)
 		}
-
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"outcome": "error",
-			"message": "verification failed: " + err.Error(),
+			"message": "verification failed",
 		})
 		return
 	}
