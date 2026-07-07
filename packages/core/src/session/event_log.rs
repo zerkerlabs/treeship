@@ -222,12 +222,14 @@ impl EventLog {
 
     /// Read all events from the log.
     ///
-    /// Per-line tolerant: a single malformed line (unknown event type,
-    /// missing required field, truncated JSON from a crashed writer) is
-    /// logged to stderr and skipped, not propagated as an error. The
-    /// caller -- session close, in particular -- composes a receipt
-    /// from whatever events parse, instead of dropping every event when
-    /// any one is bad.
+    /// Per-line tolerant: a single bad line -- malformed JSON (unknown
+    /// event type, missing field, truncated write) OR a non-UTF-8 byte
+    /// (partial write, corruption) -- is logged to stderr, counted as a
+    /// skip, and stepped over, not propagated as an error. The caller --
+    /// session close, in particular -- composes a receipt from whatever
+    /// events parse, instead of dropping every event when any one is bad.
+    /// (The read only returns Err for a whole-file failure such as the
+    /// events file being unopenable; a per-line decode error is a skip.)
     ///
     /// Why this matters: events.jsonl is append-only and written by
     /// hooks, daemons, SDKs, and bridges from multiple processes. A
@@ -269,7 +271,27 @@ impl EventLog {
         let mut events = Vec::new();
         let mut skipped = 0usize;
         for (idx, line) in reader.lines().enumerate() {
-            let line = line?;
+            // A per-LINE read error (a non-UTF-8 byte from a partial write or
+            // corruption) must be counted as a skip, not propagated — the `?`
+            // here previously aborted the WHOLE read, and `session::close`
+            // maps that Err to (empty, 0), sealing an empty receipt with a
+            // zero skip-count exactly when the log is most damaged. That
+            // silently bypasses the completeness signal this function exists
+            // to carry. Treat the bad line like a malformed JSON line: skip
+            // it, count it, keep the rest.
+            let line = match line {
+                Ok(l) => l,
+                Err(e) => {
+                    skipped += 1;
+                    eprintln!(
+                        "[treeship] event_log: skipping unreadable line {} in {}: {}",
+                        idx + 1,
+                        self.path.display(),
+                        e,
+                    );
+                    continue;
+                }
+            };
             if line.trim().is_empty() {
                 continue;
             }
@@ -652,6 +674,36 @@ mod tests {
         let (events, skipped) = log.read_all_with_stats().unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(skipped, 0);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn non_utf8_byte_is_skipped_not_aborted() {
+        // A single non-UTF-8 byte in the log (partial write / corruption)
+        // must skip THAT line and keep the rest, with a nonzero skip count —
+        // NOT abort the whole read and seal an empty receipt with skipped=0.
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("treeship-evtlog-badbyte-{}", rand::random::<u32>()));
+        let log = EventLog::open(&dir).unwrap();
+        let mut e = make_event(
+            "ssn_001",
+            EventType::AgentWroteFile {
+                file_path: "ok.rs".into(),
+                digest: None, operation: None, additions: None, deletions: None,
+            },
+        );
+        log.append(&mut e).unwrap();
+
+        // Append a raw non-UTF-8 line directly to the events file.
+        let events_path = dir.join("events.jsonl");
+        let mut f = std::fs::OpenOptions::new().append(true).open(&events_path).unwrap();
+        f.write_all(&[0xff, 0xfe, b'\n']).unwrap(); // invalid UTF-8 line
+        drop(f);
+
+        let (events, skipped) = log.read_all_with_stats().unwrap();
+        assert_eq!(events.len(), 1, "the one good event must survive");
+        assert_eq!(skipped, 1, "the bad line must be counted as skipped, not silently dropped");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
