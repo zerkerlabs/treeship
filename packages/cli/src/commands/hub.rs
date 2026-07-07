@@ -39,10 +39,14 @@ pub fn attach(
     // difference between reporting a fact and reporting a hope. On probe
     // failure we fall through to the full device flow rather than lying.
     if let Some(existing) = ctx.config.hub_connections.get(hub_name) {
-        if let Some(secret_hex) = existing.hub_secret_key.as_deref() {
+        if let Some(secret_hex) = existing
+            .hub_secret_key
+            .as_deref()
+            .and_then(|stored| resolve_hub_secret_hex(&ctx.keys, &existing.hub_id, stored).ok())
+        {
             let probe_endpoint = existing.endpoint.trim_end_matches('/');
             let probe_url = format!("{probe_endpoint}/v1/ship/agents");
-            let probe_ok = build_dpop_jwt(secret_hex, "GET", &probe_url)
+            let probe_ok = build_dpop_jwt(&secret_hex, "GET", &probe_url)
                 .ok()
                 .and_then(|jwt| {
                     ureq::get(&probe_url)
@@ -95,7 +99,6 @@ pub fn attach(
     let hub_verifying_key: VerifyingKey = (&hub_signing_key).into();
 
     let hub_public_hex = hex::encode(hub_verifying_key.as_bytes());
-    let hub_secret_hex = hex::encode(hub_signing_key.to_bytes());
 
     // 3. Print activation instructions
     let formatted_code = format_device_code(&device_code);
@@ -195,7 +198,15 @@ pub fn attach(
             created_at,
             last_push:       None,
             hub_public_key: Some(hub_public_hex),
-            hub_secret_key: Some(hub_secret_hex),
+            // AUD-02: seal the DPoP private key under the machine key (same
+            // protection as ship keys), bound to this hub id. Never write the
+            // raw key to config.json — a passive read of that file must not
+            // yield a working signing key.
+            hub_secret_key: Some(
+                ctx.keys
+                    .seal_secret(&final_hub_id, &hub_signing_key.to_bytes())
+                    .map_err(|e| format!("failed to seal hub key: {e}"))?,
+            ),
         },
     );
     cfg.active_hub = Some(hub_name.to_string());
@@ -570,14 +581,15 @@ pub fn open(
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
     // We need the dock's private key to DPoP-sign the session mint request.
-    let hub_secret_hex = entry.hub_secret_key.as_deref()
+    let stored_secret = entry.hub_secret_key.as_deref()
         .ok_or("this hub connection has no private key on disk; re-run `treeship hub attach`")?;
+    let hub_secret_hex = resolve_hub_secret_hex(&ctx.keys, &entry.hub_id, stored_secret)?;
 
     // 1. Mint a short-lived share token from the Hub. This is the only call
     //    that needs the dock's private key — the browser then uses the opaque
     //    token (no private key involved).
     let session_url = format!("{}/v1/session", entry.endpoint.trim_end_matches('/'));
-    let dpop_jwt = build_dpop_jwt(hub_secret_hex, "POST", &session_url)?;
+    let dpop_jwt = build_dpop_jwt(&hub_secret_hex, "POST", &session_url)?;
 
     let resp: serde_json::Value = ureq::post(&session_url)
         .set("Authorization", &format!("DPoP {}", entry.hub_id))
@@ -681,17 +693,18 @@ fn push_artifact_to_hub(
     id:    &str,
     entry: &HubConnection,
 ) -> Result<PushResult, Box<dyn std::error::Error>> {
-    let hub_secret_hex = entry
+    let stored_secret = entry
         .hub_secret_key
         .as_deref()
         .ok_or("no hub_secret_key -- run: treeship hub attach")?;
+    let hub_secret_hex = resolve_hub_secret_hex(&ctx.keys, &entry.hub_id, stored_secret)?;
 
     // 1. Load artifact from local storage
     let record = ctx.storage.read(id)?;
 
     // 2. Build DPoP proof JWT
     let artifacts_url = format!("{}/v1/artifacts", entry.endpoint);
-    let dpop_jwt = build_dpop_jwt(hub_secret_hex, "POST", &artifacts_url)?;
+    let dpop_jwt = build_dpop_jwt(&hub_secret_hex, "POST", &artifacts_url)?;
 
     // 3. POST to Hub
     let envelope_json = serde_json::to_string(&record.envelope)?;
@@ -755,6 +768,27 @@ fn resolve_artifact_id(
         Ok(resolved)
     } else {
         Ok(id.to_string())
+    }
+}
+
+/// Resolve a stored hub secret into the plaintext hex `build_dpop_jwt` expects.
+///
+/// New connections store the key sealed under the machine key (AUD-02); older
+/// configs stored it as raw plaintext hex. This accepts both: a sealed value is
+/// unsealed (binding the hub id as AAD), a legacy plaintext value is returned
+/// as-is (and re-sealed the next time the connection is written).
+fn resolve_hub_secret_hex(
+    keys:   &treeship_core::keys::Store,
+    hub_id: &str,
+    stored: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    if treeship_core::keys::Store::is_sealed_secret(stored) {
+        let bytes = keys
+            .unseal_secret(hub_id, stored)
+            .map_err(|e| format!("could not unseal hub key for {hub_id}: {e}"))?;
+        Ok(hex::encode(bytes))
+    } else {
+        Ok(stored.to_string())
     }
 }
 

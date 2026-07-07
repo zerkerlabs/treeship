@@ -832,6 +832,46 @@ impl Store {
         Ok(self.load_entry(id)?.public_key)
     }
 
+    /// Seal a small config secret (e.g. a hub DPoP private key) under the SAME
+    /// machine key that protects signing keys, so it can be stored in
+    /// `config.json` without exposing the raw key to a passive file read
+    /// (AUD-02). `context` (in practice the hub/dock id) is bound into the
+    /// AEAD's AAD, so a sealed secret cannot be transplanted to a different
+    /// connection. Returns a self-describing `enc.v2.<hex>` string; the
+    /// plaintext never touches disk.
+    pub fn seal_secret(&self, context: &str, plaintext: &[u8]) -> Result<String, KeyError> {
+        let blob = encrypt_for_disk_v2(&self.machine_key, context, context.as_bytes(), plaintext)
+            .map_err(KeyError::Crypto)?;
+        Ok(format!("{SEALED_SECRET_PREFIX}{}", hex::encode(blob)))
+    }
+
+    /// Unseal a value produced by [`Store::seal_secret`]. Tries the primary
+    /// machine key first, then the decrypt-only fallbacks (mirroring `signer`),
+    /// so a secret sealed before a hostname/path change still opens. A tampered
+    /// blob or a mismatched `context` fails the AEAD tag and returns `Err`.
+    pub fn unseal_secret(&self, context: &str, stored: &str) -> Result<Vec<u8>, KeyError> {
+        let hex_blob = stored
+            .strip_prefix(SEALED_SECRET_PREFIX)
+            .ok_or_else(|| KeyError::Crypto("value is not a sealed secret".into()))?;
+        let blob = hex::decode(hex_blob)
+            .map_err(|e| KeyError::Crypto(format!("sealed secret is not valid hex: {e}")))?;
+        let mut last_err = String::from("no machine key could unseal the secret");
+        for key in std::iter::once(&self.machine_key).chain(self.fallback_machine_keys.iter()) {
+            match decrypt_v2(key, context, context.as_bytes(), &blob) {
+                Ok(pt) => return Ok(pt),
+                Err(e) => last_err = e,
+            }
+        }
+        Err(KeyError::Crypto(last_err))
+    }
+
+    /// Whether `s` is a sealed-secret string produced by [`Store::seal_secret`].
+    /// Lets callers distinguish a sealed value from a legacy plaintext one
+    /// during migration (AUD-02 back-compat).
+    pub fn is_sealed_secret(s: &str) -> bool {
+        s.starts_with(SEALED_SECRET_PREFIX)
+    }
+
     // --- private ---
 
     fn load_entry(&self, id: &str) -> Result<EncryptedEntry, KeyError> {
@@ -955,6 +995,11 @@ impl Store {
 
 const KEYSTORE_MAGIC: u8 = 0x54; // 'T'
 const KEYSTORE_VERSION_V2: u8 = 0x02;
+
+/// Prefix marking a config secret sealed by [`Store::seal_secret`] (AUD-02).
+/// A value without this prefix is a legacy plaintext hex secret, kept
+/// readable for one migration cycle then re-sealed on next write.
+const SEALED_SECRET_PREFIX: &str = "enc.v2.";
 
 /// Build the v2 keystore AEAD AAD.
 ///
@@ -1847,6 +1892,43 @@ mod tests {
 
     fn cleanup(dir: PathBuf) {
         let _ = fs::remove_dir_all(dir);
+    }
+
+    // ── AUD-02 regression: the hub DPoP private key (and any config secret)
+    //    must be sealed under the machine key, never stored in plaintext.
+    //    Before this fix `treeship hub attach` wrote the raw 32-byte key as hex
+    //    into config.json, so a passive read of that file yielded a working
+    //    signing key. seal_secret/unseal_secret reuse the same v2 AEAD that
+    //    protects ship keys, binding a context (the hub id) into the AAD. ──
+
+    #[test]
+    fn sealed_secret_round_trips_and_hides_plaintext() {
+        let (store, dir) = make_store();
+        let secret = [7u8; 32];
+        let sealed = store.seal_secret("dck_hub1", &secret).unwrap();
+        // The raw key hex must NOT be recoverable from the stored blob.
+        assert!(
+            !sealed.contains(&hex::encode(secret)),
+            "sealed secret must not contain the plaintext key hex: {sealed}",
+        );
+        // Round-trips under the same machine key + context.
+        assert_eq!(store.unseal_secret("dck_hub1", &sealed).unwrap(), secret);
+        cleanup(dir);
+    }
+
+    #[test]
+    fn sealed_secret_rejects_wrong_context_and_tamper() {
+        let (store, dir) = make_store();
+        let sealed = store.seal_secret("dck_a", &[9u8; 32]).unwrap();
+        // Wrong context (AAD) must fail — a sealed hub key cannot be moved to a
+        // different hub connection.
+        assert!(store.unseal_secret("dck_b", &sealed).is_err());
+        // A single-nibble change (still valid hex) must fail the AEAD tag.
+        let mut tampered = sealed.clone();
+        let last = tampered.pop().unwrap();
+        tampered.push(if last == '0' { '1' } else { '0' });
+        assert!(store.unseal_secret("dck_a", &tampered).is_err());
+        cleanup(dir);
     }
 
     #[test]
