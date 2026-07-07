@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import { AttestModule } from "./attest.js";
 import { VerifyModule } from "./verify.js";
 import { HubModule } from "./hub.js";
+import { SessionModule } from "./session.js";
 
 const exec = promisify(execFile);
 
@@ -17,6 +18,7 @@ export class Ship {
   readonly attest = new AttestModule();
   readonly verify = new VerifyModule();
   readonly hub = new HubModule();
+  readonly session = new SessionModule();
 
   /**
    * Checks that the `treeship` CLI binary is available and returns its
