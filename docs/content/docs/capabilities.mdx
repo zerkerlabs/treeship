@@ -1,0 +1,430 @@
+---
+title: Capabilities
+description: Everything Treeship can do, grouped by what it is for, with the command to use each capability and the command to test it. Covers all releases from 0.13 through 0.18.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+This is the complete map of what Treeship does, organized by purpose rather than by version. Each capability lists **what it is**, **how to use it**, and **how to test it** (a command and the output you should see). A `Since` tag marks the release it shipped in.
+
+If you are testing a build, work top to bottom; the layers build on each other. For a guided first run with "you are on track when" checkpoints, start with [What to expect](/docs/guides/what-to-expect).
+
+<Callout type="info">
+Every capability below runs locally and offline by default. Anything that
+touches the network is marked. Nothing leaves your machine until you run a
+`publish` or `hub` command.
+</Callout>
+
+## The layers at a glance
+
+| Layer | What it gives you | Key commands |
+|---|---|---|
+| 1. Identity | A provable "who" for every agent | `agent register --own-key`, `attest action` |
+| 2. Capability cards | A signed, graded list of what an agent may do | `attest card`, `verify-capability`, `revoke-capability` |
+| 3. Typed receipts | Schema-checked, signed records of anything | `attest receipt`, predicate registry |
+| 4. Transparency log | An append-only history you can audit for tampering | `publish`, `merkle`, `audit` |
+| 5. Resolution | Look up and re-verify any agent over the network | `resolve`, `resolve --hub` |
+| 6. The handshake | Verify an agent with no registry, prove liveness | `onboard`, `present`, `verify-presentation`, `keys export` |
+| 7. Work history | A verifiable track record; find agents by evidence | `history`, `profile`, `match` |
+| 8. Protocol bridges | Provable receipts inside MCP and A2A automatically | `@treeship/mcp`, `@treeship/a2a` |
+| 9. Reliability | Honest verdicts, self-healing keys, a hardened hub | exit codes, `status`, keystore |
+
+---
+
+## Layer 1: Identity
+
+The foundation: give an agent a cryptographic identity so its actions are provably its own, not just labeled.
+
+### Per-actor signing (a provable `actor`)
+`Since 0.13.0`
+
+**What:** An agent can sign with its own dedicated key instead of the shared ship key, so `treeship verify` reports `actor proof: proven (key-bound)` rather than `asserted`. The runtime holds the key; the agent cannot read it.
+
+**Use:**
+```bash
+treeship agent register --name deployer --own-key
+treeship attest action --actor agent://deployer --action "Bash(git:commit)"
+```
+
+**Test:**
+```bash
+treeship verify <artifact-id>
+# expect: actor proof: proven (key-bound)
+```
+
+### Idempotent registration
+`Since 0.15.0`
+
+**What:** Re-running `register --own-key` for an agent reuses its existing key instead of minting a duplicate. Safe to call on every startup, which is what the bridges do. A `--quiet` flag skips writing the on-disk `.agent` package for programmatic callers.
+
+**Test:**
+```bash
+treeship agent register --name deployer --own-key
+treeship agent register --name deployer --own-key   # runs clean, no second key
+treeship keys list | grep -c key_   # count is stable
+```
+
+### Certificate-chain delivery (pin the ship, verify the fleet)
+`Since 0.17.0`  ·  network
+
+**What:** Registering an agent also mints a signed `agent_cert.v1` binding the agent to its key, issued by your ship. `publish` pushes the chain; a counterparty who pins your **ship** key can then verify every agent it certifies, without pinning each one. This is how browsers trust millions of sites from a few root certificates.
+
+**Use:**
+```bash
+treeship publish agent://deployer   # pushes card + cert chain
+```
+
+**Test (as a third party holding only your ship key):**
+```bash
+treeship resolve --hub https://api.treeship.dev agent://deployer
+# expect: signature: verified (chain to pinned ship root)
+```
+
+---
+
+## Layer 2: Capability cards
+
+A capability card is a signed document listing what an agent is allowed to do, with each capability graded by how strongly it is known.
+
+### Agent capability cards (`agent_card.v1`)
+`Since 0.13.0`
+
+**What:** `attest card` mints a signed card declaring an agent's identity and tool set. `verify-capability` cross-checks it against the agent's actual signed actions and reports in-scope vs out-of-scope.
+
+**Use:**
+```bash
+treeship attest card --agent agent://deployer --tools "file.*,db.query"
+```
+
+**Test:**
+```bash
+treeship verify-capability <card-id>
+# expect: key-bound: yes (AgentCert) · status: verified
+```
+
+### Provenance grades (captured / exercised / discovered / declared)
+`Since 0.14.0` (captured/exercised/declared), `0.15.0` (discovered)
+
+**What:** Every capability on a card carries where it came from: `captured` (read from real config), `exercised` (proven by real receipts of use), `discovered` (the agent's own descriptor), `declared` (a typed claim). Strongest to weakest, always labeled, never mixed silently.
+
+**Test:**
+```bash
+treeship verify-capability <card-id>
+# expect a mix line: "9 captured, 2 exercised, 0 declared-only"
+```
+
+### Three ways to build a card
+`Since 0.14.0`–`0.15.0`
+
+**What:**
+- `--from-harness <settings.json>` captures the tool set from a real config → graded `captured` (strongest).
+- `--tools-json <file>` records an operator's explicit list → graded `declared`.
+- `--from-a2a <AgentCard.json>` maps an agent's own published skills → graded `discovered`.
+
+**Use / Test:**
+```bash
+treeship attest card --agent agent://deployer --from-harness ~/.claude/settings.json
+# expect: "N of N captured from harness"
+```
+
+### Capability-card revocation
+`Since 0.13.0`
+
+**What:** `revoke-capability` mints a signed revocation. `verify-capability` honors it only when the revoker is authorized (the card's own key or a Ship trust root) and then reports `status: REVOKED`. An unauthorized revocation is ignored (fail-closed).
+
+**Test:**
+```bash
+treeship revoke-capability <card-id> --reason "rotated"
+treeship verify-capability <card-id>
+# expect: status: REVOKED, and a non-zero exit code
+```
+
+### Glob capability matching (`Bash(git:*)`)
+`Since 0.16.0`
+
+**What:** Capability patterns match with a wildcard anywhere in the string, so harness-captured patterns like `Bash(git:*)` and `Read(*)` correctly match `Bash(git:status)` while still rejecting `Bash(gh:pr)`.
+
+**Test:**
+```bash
+# a card declaring Bash(git:*), with a real Bash(git:status) action
+treeship verify-capability <card-id>
+# expect the git action counted in-scope, not flagged
+```
+
+### Browser verification
+`Since 0.13.0`
+
+**What:** The same verification runs in a browser via WebAssembly, returning the identical verdict to the CLI. A receipt viewer can show key-bound status with no server.
+
+**Test:** open a published receipt at `treeship.dev/verify/<artifact-id>` and confirm the verdict matches the CLI.
+
+---
+
+## Layer 3: Typed receipts
+
+Under every card and action is a signed receipt. The predicate registry makes specific receipt kinds typed and schema-checked.
+
+### Predicate registry
+`Since 0.13.0`
+
+**What:** Registered receipt kinds (`memory.write.v1`, `boundary.v1`, `agent_card.v1`, `session.v1`, `agent_cert.v1`, `profile.v1`, and more) are validated against a JSON Schema **before** signing. A malformed payload is rejected, so a downstream verifier can rely on the shape, not just the signature.
+
+**Test:**
+```bash
+treeship attest receipt --system system://x --kind session.v1 --payload '{}'
+# expect: rejected with the missing required field named
+```
+
+### External proof receipts
+`Since 0.12.0`, extended `0.13.0`
+
+**What:** `attest receipt --payload-file` / `--payload-digest` sign over a payload read from a file or recorded as a digest, for large or out-of-band proofs (memory systems, external services).
+
+---
+
+## Layer 4: Transparency log
+
+An append-only, monitorable history of an agent's receipts, with tampering detectable. This is Certificate Transparency, for agents.
+
+### Publish and anchor
+`Since 0.14.0`  ·  network
+
+**What:** `publish` pushes an agent's resolvable set to a hub. `merkle checkpoint` + `merkle publish` seal a signed Merkle root over your artifacts and push per-artifact inclusion proofs. The hub stores; it never generates or verifies. Checkpoints are computed publisher-side.
+
+**Use:**
+```bash
+treeship publish agent://deployer
+treeship checkpoint && treeship merkle publish
+```
+
+**Test:**
+```bash
+treeship resolve --hub https://api.treeship.dev agent://deployer
+# expect: transparency: anchored & verified (checkpoint #N)
+```
+
+### Audit (with omission detection)
+`Since 0.14.0`  ·  network
+
+**What:** `audit --hub` pulls an agent's history and re-verifies each anchored entry's inclusion offline, then checks completeness against the agent's committed anchor: it reports `OMISSION` if the hub dropped committed receipts.
+
+**Use / Test:**
+```bash
+treeship audit --hub https://api.treeship.dev agent://deployer
+# expect: "N/N verified", "complete", or a named anomaly
+```
+
+### Monitor mode
+`Since 0.14.0`  ·  network
+
+**What:** `audit --watch` re-audits on an interval and keeps alerting. A monitor that finds a rewritten log keeps firing instead of forgiving it.
+
+### Cryptographic append-only proof
+`Since 0.15.0`  ·  network
+
+**What:** `audit` proves a hub's log was only appended to since you last saw it (the true no-rewrite guarantee), by re-verifying a Merkle consistency chain the publisher generated. It warns `append-only INVALID — possible history rewrite` if the chain fails.
+
+**Test:**
+```bash
+treeship audit --hub https://api.treeship.dev agent://deployer
+# expect: "append-only VERIFIED" once you have witnessed two checkpoints
+```
+
+---
+
+## Layer 5: Resolution
+
+Look up any agent by its URI and re-verify it against your own trust roots. DNS, OCSP, and Certificate Transparency, for agents.
+
+### Local and network resolution
+`Since 0.13.0` (local), `0.14.0` (network)
+
+**What:** `resolve <agent>` re-derives an agent's verifiable bundle from local artifacts. `resolve --hub <url> <agent>` pulls it over the network and re-verifies everything client-side. The hub's word is never trusted.
+
+**Use / Test:**
+```bash
+treeship resolve agent://deployer                                   # local
+treeship resolve --hub https://api.treeship.dev agent://deployer    # network
+# expect a full verdict with signature, key-bound, transparency lines
+```
+
+---
+
+## Layer 6: The handshake
+
+Verify an agent with the agent handing you its proof, no registry in the loop, then prove it controls its key right now. See [The Agent Handshake](/docs/concepts/agent-handshake).
+
+### Onboard (nothing to verifiable, one command)
+`Since 0.17.0`
+
+**What:** Composes register → card → optional publish + anchor → trust bundle. Idempotent; safe on every agent boot. Ends by printing the exact commands a counterparty runs to trust you.
+
+**Use / Test:**
+```bash
+treeship onboard deployer --from-harness ~/.claude/settings.json --publish
+# expect steps [1/4]..[4/4] and a printed trust bundle
+```
+
+### Keys export (the trust handshake)
+`Since 0.16.0`
+
+**What:** Prints your public key in pinnable form plus the exact `trust add` command a counterparty runs. The out-of-band half of the trust model; the private key never leaves the store.
+
+**Use / Test:**
+```bash
+treeship keys export
+# expect an ed25519:… pubkey and ready-to-run trust add lines
+```
+
+### Presentation (carry your proof, verify offline)
+`Since 0.17.0`
+
+**What:** `present` writes one file with the agent's card, certificate chain, revocations, and a Merkle staple (checkpoint + inclusion proof). `verify-presentation` re-verifies it fully offline against your trust roots, with an explicit freshness bound (`--max-staple-age`).
+
+**Use / Test:**
+```bash
+treeship present agent://deployer
+treeship verify-presentation deployer.presentation.json --max-staple-age 1h
+# expect: status: verified (key-bound, anchored)
+```
+
+### Challenge mode (prove it is live)
+`Since 0.17.0`
+
+**What:** A static presentation proves the record; a challenge proves the bearer controls the key right now. The verifier mints a nonce; the agent signs it; the verifier checks the signature against the key the card established. Replay-resistant.
+
+**Use / Test:**
+```bash
+NONCE=$(openssl rand -hex 16)
+treeship present agent://deployer --challenge $NONCE
+treeship verify-presentation deployer.presentation.json --challenge $NONCE
+# expect: status: verified (key-bound, anchored, live)
+```
+
+---
+
+## Layer 7: Work history
+
+Every session becomes a signed record; the records form a track record you can query, aggregate, and match against. See the [work-history spec](https://github.com/zerkerlabs/treeship/blob/main/docs/specs/work-history.md).
+
+### Session records (`session.v1`)
+`Since 0.16.0`
+
+**What:** `session close` mints a typed, signed record of the session: headline, outcome, tools exercised (computed from receipts), and an attestation class (`self` / `runtime` / `countersigned`) describing how the evidence was captured.
+
+**Test:**
+```bash
+treeship session start --name test && treeship session close --headline "test"
+# expect: "record: art_… (session.v1, class=…)"
+```
+
+### History (the sortable projection)
+`Since 0.18.0`  ·  network optional
+
+**What:** `history <agent>` lists the agent's session records, filterable by `--class` and `--since`. Each envelope is re-verified on your machine; anchored entries' inclusion is re-proved offline.
+
+**Use / Test:**
+```bash
+treeship history agent://deployer --hub https://api.treeship.dev
+# expect a newest-first list; each row shows sig verified/unverified and anchor status
+```
+
+### Profile (checkpoint-pinned track record)
+`Since 0.18.0`
+
+**What:** `profile <agent>` aggregates the history at a pinned checkpoint (sessions by class, actions, tools, span). `--attest` signs it as a claim. `verify-profile` recomputes every number from the log at that checkpoint: match grades it `checked`, mismatch is provably false. Reputation pinned to a root cannot drift.
+
+**Use / Test:**
+```bash
+treeship profile agent://deployer --attest
+treeship verify-profile <profile-id>
+# expect: "checked — every number recomputed from the log and matched"
+```
+
+### Match (find agents by exercised evidence)
+`Since 0.18.0`  ·  network
+
+**What:** `match --exercised "<glob>"` finds agents whose sessions actually exercised matching tools, ranked by verified session count. The hub proposes candidates from its index; the client re-verifies every record locally. Declared capability gets an agent found; exercised history gets it chosen.
+
+**Use / Test:**
+```bash
+treeship match --hub https://api.treeship.dev --exercised "Bash(git:*)"
+# expect ranked candidates, each with verified session counts
+```
+
+---
+
+## Layer 8: Protocol bridges
+
+Provable receipts inside the protocols agents already speak, by default.
+
+### MCP bridge (`@treeship/mcp`)
+`Since 0.15.0`
+
+**What:** On startup the bridge provisions the agent's own key, so its MCP tool-call receipts verify as `proven (key-bound)`. Best-effort and idempotent; if Treeship is missing it degrades gracefully.
+
+**Use:** add `@treeship/mcp` as an MCP server; it captures actions automatically.
+
+### A2A bridge (`@treeship/a2a`)
+`Since 0.15.0`, handoffs fixed `0.17.1`
+
+**What:** The middleware provisions its key and signs task and handoff receipts. Delegation boundaries between agents are recorded as signed handoffs.
+
+**Test:** run a task through the A2A middleware and confirm a handoff artifact is produced and verifies.
+
+---
+
+## Layer 9: Reliability
+
+The properties that make the above trustworthy in practice, not just in theory.
+
+### Honest verdicts (exit codes + JSON)
+`Since 0.17.1`
+
+**What:** `resolve`, `audit`, `verify-capability`, `verify-presentation`, and `verify-profile` exit **non-zero** on a hostile verdict (revoked, violation, omission, rewrite, invalid proof) and emit one structured object under `--format json`. Scripts, CI, and monitors can gate on them.
+
+**Test:**
+```bash
+treeship audit --hub https://api.treeship.dev agent://deployer --format json
+echo "exit: $?"   # non-zero if a hostile verdict was detected
+```
+
+### Self-healing keystore
+`Since 0.16.0`
+
+**What:** The machine key wrapping your private keys derives from a hardware identifier, so a hostname or username change no longer bricks the keystore. Older keystores are recovered automatically and re-wrapped.
+
+### Store visibility
+`Since 0.18.0`
+
+**What:** `status` shows which `.treeship` store it resolved (project-local vs global), so you always know which keystore a command used.
+
+**Test:**
+```bash
+treeship status | grep store:
+# expect: store: project-local -- /path/.treeship/config.json
+```
+
+### Hardened hub
+`Since 0.18.0`  ·  server-side
+
+**What:** Request-body size caps, indexes on the public lookup paths, enforced foreign keys, idempotent checkpoint inserts, no internal error leakage on the public verify endpoint, and a full test suite on the DPoP authentication boundary.
+
+---
+
+## How to run a full test pass
+
+To exercise everything end to end, follow this order (each step's output is described above):
+
+1. `treeship init`
+2. `treeship onboard tester --from-harness ~/.claude/settings.json`
+3. `treeship attest action --actor agent://tester --action "Bash(git:status)"`
+4. `treeship verify <id>` → `proven (key-bound)`
+5. `treeship verify-capability <card-id>` → `verified`
+6. `treeship hub attach`, then `treeship onboard tester --from-harness … --publish`
+7. `treeship checkpoint && treeship merkle publish`
+8. From a clean config, pin the trust bundle, then `treeship resolve --hub … agent://tester` → `verified (chain to pinned ship root)`, `anchored & verified`
+9. `treeship present agent://tester --challenge $(openssl rand -hex 16)` and verify with the same nonce → `live`
+10. `treeship session close` on a real session, then `treeship history`, `treeship profile --attest`, `treeship verify-profile`
+
+If every step matches its expected output, the full stack is working. For a copy-paste version with assertions, see the test script in the repo's `tests/` directory.
