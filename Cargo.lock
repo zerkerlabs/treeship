@@ -4088,6 +4088,7 @@ dependencies = [
 name = "treeship-zk-risc0"
 version = "0.5.0"
 dependencies = [
+ "base64",
  "bincode",
  "hex",
  "risc0-zkvm",

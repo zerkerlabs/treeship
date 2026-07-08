@@ -605,16 +605,25 @@ pub fn verify_capability(card_json: &str, actions_json: &str, trust_roots_json: 
     let card_agent = payload.get("agent").and_then(|v| v.as_str()).unwrap_or("");
     let tools = declared_tools(&payload);
 
-    let card_signer = card_env
-        .signatures
-        .first()
-        .map(|s| s.keyid.as_str())
-        .unwrap_or("");
     let trust = match parse_wasm_trust_roots(trust_roots_json) {
         Ok(t) => t,
         Err(e) => return error_result("invalid_trust_roots", &e),
     };
-    let key_bound = is_key_bound(card_keyid, card_signer, &trust);
+    // AUD-17: key-bound requires the card's OWN key to have produced a VALID
+    // signature, re-verified against the pinned trust roots — never read from
+    // the unverified `signatures[0].keyid`, which a forged card can set to a
+    // victim's pinned AgentCert key alongside a garbage signature. This
+    // mirrors the native CLI (cli/src/commands/capability.rs) so the browser
+    // and CLI reach the same verdict by construction, closing the
+    // native/WASM strictness split.
+    let verifier = verifier_from_wasm_trust(&trust);
+    let card_verified: Vec<String> = verifier
+        .verify_any(&card_env)
+        .map(|r| r.verified_key_ids)
+        .unwrap_or_default();
+    let key_bound = !card_keyid.is_empty()
+        && card_verified.iter().any(|k| k == card_keyid)
+        && is_key_bound(card_keyid, card_keyid, &trust);
 
     // Cross-check the provided action envelopes signed by the card's key.
     let actions: Vec<Envelope> = match serde_json::from_str(actions_json) {
@@ -629,13 +638,16 @@ pub fn verify_capability(card_json: &str, actions_json: &str, trust_roots_json: 
     let mut in_scope = 0usize;
     let mut violations: Vec<serde_json::Value> = Vec::new();
     for env in &actions {
-        let signer = env
-            .signatures
-            .first()
-            .map(|s| s.keyid.as_str())
-            .unwrap_or("");
-        if signer != card_keyid {
-            continue; // only the card key's actions count toward its card
+        // AUD-17: count an action only when the card's key produced a VALID
+        // signature over it (re-verified against trust roots), never on an
+        // unverified signatures[0].keyid match — a forged action naming the
+        // card's key must not inflate the in-scope count.
+        let averified: Vec<String> = verifier
+            .verify_any(env)
+            .map(|r| r.verified_key_ids)
+            .unwrap_or_default();
+        if !averified.iter().any(|k| k == card_keyid) {
+            continue; // only the card key's VALIDLY-SIGNED actions count
         }
         let Ok(action) = env.unmarshal_statement::<ActionStatement>() else {
             continue;
@@ -687,6 +699,19 @@ pub fn verify_capability(card_json: &str, actions_json: &str, trust_roots_json: 
 ///
 /// An empty string means "no trust roots configured" -- verifiers
 /// fail-closed in that state, which matches the audit fix.
+/// Build a `Verifier` from a parsed WASM trust store, keyed by each root's
+/// pinned public key. Mirrors the CLI's `verifier_from_trust` so the browser
+/// and CLI verify capability cards the same way (AUD-17).
+fn verifier_from_wasm_trust(trust: &treeship_core::trust::TrustRootStore) -> Verifier {
+    let mut map: HashMap<String, VerifyingKey> = HashMap::new();
+    for r in trust.roots() {
+        if let Ok(vk) = treeship_core::trust::decode_ed25519_pubkey(&r.public_key) {
+            map.insert(r.key_id.clone(), vk);
+        }
+    }
+    Verifier::new(map)
+}
+
 fn parse_wasm_trust_roots(s: &str) -> Result<treeship_core::trust::TrustRootStore, String> {
     use treeship_core::trust::{TrustRoot, TrustRootStore};
     if s.trim().is_empty() {
@@ -1053,12 +1078,17 @@ mod tests {
             &ActionStatement::new("agent://deployer", "command.run"), &signer).unwrap().envelope;
         let actions_json = serde_json::to_string(&vec![a1, a2]).unwrap();
 
-        // Pin the key under agent_cert.
+        // Pin the signer's REAL public key under agent_cert. (AUD-17: this
+        // test previously pinned a garbage all-A pubkey and still expected
+        // key_bound:true — silently encoding the bug that the WASM path never
+        // verified the signature. With verification, the pinned key must be
+        // the one that actually signed.)
+        let real_pk = URL_SAFE_NO_PAD.encode(signer.verifying_key().to_bytes());
         let trust_json = serde_json::json!({
             "version": 1,
             "roots": [{
                 "key_id": keyid,
-                "public_key": "ed25519:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                "public_key": format!("ed25519:{real_pk}"),
                 "kind": "agent_cert",
                 "label": "",
                 "added_at": ""
@@ -1085,5 +1115,58 @@ mod tests {
         let err: serde_json::Value =
             serde_json::from_str(&verify_capability("{}", "[]", "")).unwrap();
         assert_eq!(err["outcome"], "error");
+    }
+
+    // AUD-17: a card whose signatures[0].keyid NAMES a victim's pinned key but
+    // is actually signed by an attacker key must NOT be reported key-bound, and
+    // a forged in-scope action naming the same key must NOT be counted. This is
+    // the forgery the pre-fix WASM path accepted (key_id strings are public).
+    #[test]
+    fn verify_capability_rejects_forged_signature() {
+        use treeship_core::attestation::{sign, Ed25519Signer};
+        use treeship_core::statements::{payload_type, ActionStatement, ReceiptStatement};
+
+        // The victim's real key that a counterparty has pinned under AgentCert.
+        let victim = Ed25519Signer::generate("key_victim").unwrap();
+        let victim_pk = URL_SAFE_NO_PAD.encode(victim.verifying_key().to_bytes());
+
+        // The attacker holds a DIFFERENT key but labels their signer id as the
+        // victim's key_id (key_ids are public strings, not secrets).
+        let attacker = Ed25519Signer::generate("key_victim").unwrap();
+
+        let mut card = ReceiptStatement::new("system://registry", "agent_card.v1");
+        card.payload = Some(serde_json::json!({
+            "schema": "agent_card.v1",
+            "agent": "agent://deployer",
+            "keyid": "key_victim",
+            "version": "1.0.0",
+            "capabilities": { "tools": ["file.*"] }
+        }));
+        // Signed by the ATTACKER but its signature carries keyid "key_victim".
+        let card_env = sign(&payload_type("receipt"), &card, &attacker).unwrap().envelope;
+        let card_json = serde_json::to_string(&card_env).unwrap();
+
+        // A forged in-scope action, also signed by the attacker under key_victim.
+        let a1 = sign(&payload_type("action"),
+            &ActionStatement::new("agent://deployer", "file.write"), &attacker).unwrap().envelope;
+        let actions_json = serde_json::to_string(&vec![a1]).unwrap();
+
+        // The victim's REAL key is what is pinned.
+        let trust_json = serde_json::json!({
+            "version": 1,
+            "roots": [{
+                "key_id": "key_victim",
+                "public_key": format!("ed25519:{victim_pk}"),
+                "kind": "agent_cert",
+                "label": "",
+                "added_at": ""
+            }]
+        }).to_string();
+
+        let out: serde_json::Value =
+            serde_json::from_str(&verify_capability(&card_json, &actions_json, &trust_json)).unwrap();
+        assert_eq!(out["key_bound"], false, "forged card must not be key-bound: {out}");
+        assert_eq!(out["status"], "self-asserted");
+        assert_eq!(out["in_scope"], 0, "a forged action must not be counted");
     }
 }
