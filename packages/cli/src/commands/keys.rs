@@ -60,14 +60,18 @@ pub fn export(
     let pinnable = format!("ed25519:{pub_b64}");
 
     // The trust kinds a counterparty pins this key under. A per-agent key
-    // backs cards and receipts (AgentCert); a ship key signs resolution
-    // bundles (Ship) and Merkle checkpoints (HubCheckpoint) — a remote
-    // verifier needs both to get `verified` on resolve AND
-    // `anchored & verified` on the transparency check.
+    // backs cards and receipts (AgentCert). A ship key signs several distinct
+    // things, and Batch 5 split those into separate kinds so a counterparty
+    // grants exactly the powers they intend: cert_issuer (vouch for this
+    // ship's agent certs → `verified` on resolve), revoker (honor this ship's
+    // capability revocations), hub_org (accept its hub-org single-use
+    // checkpoints), hub_checkpoint (Merkle checkpoints → `anchored & verified`
+    // on the transparency check). The deprecated `ship` kind is no longer
+    // emitted.
     let kinds: &[&str] = if is_agent_key {
         &["agent_cert"]
     } else {
-        &["ship", "hub_checkpoint"]
+        &["cert_issuer", "revoker", "hub_org", "hub_checkpoint"]
     };
 
     if printer.format == crate::printer::Format::Json {

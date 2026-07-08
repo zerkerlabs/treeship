@@ -85,16 +85,33 @@ pub enum TrustRootKind {
     /// the ship-local journal checkpoint, distinct from the hub-org
     /// JournalCheckpoint kind below.
     HubCheckpoint,
-    /// `JournalCheckpoint` of kind `hub-org` -- signed by a remote Hub to
-    /// promote a local journal claim to a global single-use claim.
+    /// DEPRECATED, INERT (Batch 5 / trust-split). A single `ship` pin used to
+    /// authorize THREE unrelated powers at once: promoting a local journal
+    /// claim to a global single-use claim (hub checkpoints), issuing agent
+    /// certificates, and revoking capabilities. Pinning a hub for dedup thus
+    /// silently let it mint certs and kill capabilities. The powers are now
+    /// split across `HubOrg` / `CertIssuer` / `Revoker`, and NO verifier
+    /// accepts `ship` anymore. The variant is retained ONLY so an existing
+    /// `trust.json` that still contains `"kind":"ship"` parses (rather than
+    /// failing the whole file); such a pin is inert until re-pinned under the
+    /// specific kind. `treeship trust add --kind ship` is rejected.
     Ship,
+    /// `JournalCheckpoint` of kind `hub-org` -- signed by a remote Hub to
+    /// promote a local journal claim to a global single-use claim. Split out
+    /// of `Ship` so trusting a hub for single-use dedup does not also let it
+    /// issue certificates or revoke capabilities.
+    HubOrg,
+    /// A ship key trusted to ISSUE agent certificates. Split out of `Ship`.
+    CertIssuer,
+    /// A ship key trusted to REVOKE capabilities it issued. Split out of `Ship`.
+    Revoker,
     /// `AgentCertificate` issued by a ship to one of its agents.
     AgentCert,
     /// Phase 1 of agent invitations: the host's signing key that mints
     /// `InvitationStatement` envelopes. Verifiers (and the
     /// `treeship session join` flow) require the invitation's issuer
     /// pubkey to be present in the trust root store under this kind
-    /// before honoring the invitation. Separate from `Ship` so a
+    /// before honoring the invitation. Separate from the ship kinds so a
     /// machine can trust hub-org checkpoints without implicitly
     /// trusting that hub to host multi-agent rooms.
     SessionHost,
@@ -105,6 +122,9 @@ impl TrustRootKind {
         match self {
             Self::HubCheckpoint => "hub_checkpoint",
             Self::Ship          => "ship",
+            Self::HubOrg        => "hub_org",
+            Self::CertIssuer    => "cert_issuer",
+            Self::Revoker       => "revoker",
             Self::AgentCert     => "agent_cert",
             Self::SessionHost   => "session_host",
         }
@@ -114,10 +134,19 @@ impl TrustRootKind {
         match s {
             "hub_checkpoint" => Some(Self::HubCheckpoint),
             "ship"           => Some(Self::Ship),
+            "hub_org"        => Some(Self::HubOrg),
+            "cert_issuer"    => Some(Self::CertIssuer),
+            "revoker"        => Some(Self::Revoker),
             "agent_cert"     => Some(Self::AgentCert),
             "session_host"   => Some(Self::SessionHost),
             _                => None,
         }
+    }
+
+    /// True for the deprecated, inert `ship` kind that no verifier honors.
+    /// Kept parseable only so legacy trust files still load.
+    pub fn is_deprecated_ship(self) -> bool {
+        matches!(self, Self::Ship)
     }
 }
 
@@ -539,6 +568,21 @@ mod tests {
             added_at:   "2026-05-15T00:00:00Z".into(),
         };
         (sk, root)
+    }
+
+    // Batch 5: legacy `ship` must still PARSE (so an existing trust.json loads
+    // rather than failing the whole file), and round-trip through as_str, and
+    // report as the deprecated kind. The new kinds parse too.
+    #[test]
+    fn legacy_ship_kind_still_parses_but_is_deprecated() {
+        assert_eq!(TrustRootKind::parse("ship"), Some(TrustRootKind::Ship));
+        assert_eq!(TrustRootKind::Ship.as_str(), "ship");
+        assert!(TrustRootKind::Ship.is_deprecated_ship());
+        for k in ["hub_org", "cert_issuer", "revoker"] {
+            let parsed = TrustRootKind::parse(k).expect("new kind must parse");
+            assert_eq!(parsed.as_str(), k);
+            assert!(!parsed.is_deprecated_ship());
+        }
     }
 
     #[test]

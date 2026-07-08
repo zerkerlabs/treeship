@@ -351,20 +351,22 @@ pub fn revoke_capability(
         let signer_kid = signer.key_id();
         let self_revoke = !card_keyid.is_empty() && signer_kid == card_keyid;
         let trust = TrustRootStore::open_default_or_empty()?;
+        // Batch 5: issuer revocation is now scoped to the `Revoker` kind.
         let issuer_revoke = trust
             .roots()
             .iter()
-            .any(|r| r.key_id == signer_kid && r.kind == TrustRootKind::Ship);
+            .any(|r| r.key_id == signer_kid && r.kind == TrustRootKind::Revoker);
         self_revoke || issuer_revoke
     };
     if !will_be_honored {
         return Err(format!(
             "revocation would be IGNORED by verifiers: the resolved signer ({}) is \
-             neither the card's key ({}) nor a pinned Ship root.\n\n  This usually \
+             neither the card's key ({}) nor a pinned `revoker` root.\n\n  This usually \
              means the agent's per-agent key was rotated or removed after the card \
-             was minted. Re-register the agent's key, or pin a Ship trust root that \
-             is authorized to revoke, then retry — do not rely on a revocation that \
-             will not be honored.",
+             was minted. Re-register the agent's key, or pin a `revoker` trust root \
+             (treeship trust add <key_id> <pubkey> --kind revoker) that is authorized \
+             to revoke, then retry — do not rely on a revocation that will not be \
+             honored.",
             signer.key_id(),
             if card_keyid.is_empty() { "(none)" } else { card_keyid },
         )
@@ -397,7 +399,7 @@ pub fn revoke_capability(
     );
     if !self_revoke {
         printer.hint(
-            "signed with the ship's default key: verify-capability honors this only if that key is a Ship trust root; otherwise register the agent with --own-key and revoke as the agent.",
+            "signed with the ship's default key: verify-capability honors this only if that key is pinned as a `revoker` trust root; otherwise register the agent with --own-key and revoke as the agent.",
         );
     }
     printer.hint(&format!("treeship verify-capability {card_id}"));
@@ -439,11 +441,12 @@ pub(crate) fn find_revocation(
             .map(|r| r.verified_key_ids)
             .unwrap_or_default();
         let self_revoke = !card_keyid.is_empty() && verified.iter().any(|k| k == card_keyid);
+        // Batch 5: issuer revocation is now scoped to the `Revoker` kind.
         let issuer_revoke = verified.iter().any(|rk| {
             trust
                 .roots()
                 .iter()
-                .any(|r| &r.key_id == rk && r.kind == TrustRootKind::Ship)
+                .any(|r| &r.key_id == rk && r.kind == TrustRootKind::Revoker)
         });
         if self_revoke || issuer_revoke {
             let reason = payload

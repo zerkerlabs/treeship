@@ -44,7 +44,7 @@ pub fn list(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
                 "no trust roots configured (would be at {})",
                 path.display(),
             ));
-            printer.hint("treeship trust add <key_id> <pubkey> --kind <hub_checkpoint|ship|agent_cert|session_host>");
+            printer.hint("treeship trust add <key_id> <pubkey> --kind <hub_checkpoint|hub_org|cert_issuer|revoker|agent_cert|session_host>");
             return Ok(());
         }
         Err(e) => return Err(e.into()),
@@ -96,8 +96,22 @@ pub fn add(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let kind = TrustRootKind::parse(kind)
         .ok_or_else(|| format!(
-            "unknown trust root kind '{kind}'. Expected one of: hub_checkpoint, ship, agent_cert, session_host",
+            "unknown trust root kind '{kind}'. Expected one of: \
+             hub_checkpoint, hub_org, cert_issuer, revoker, agent_cert, session_host",
         ))?;
+
+    // Batch 5: `ship` is a deprecated, inert kind retained only so legacy
+    // trust files still parse. It authorizes nothing, so refuse to mint a new
+    // one and point the operator at the specific power they meant to grant.
+    if kind.is_deprecated_ship() {
+        return Err(
+            "the `ship` trust kind is deprecated and no longer honored by any verifier. \
+             It used to grant three unrelated powers at once. Pin the specific power instead:\n  \
+             --kind hub_org      (trust this hub to promote local claims to global single-use)\n  \
+             --kind cert_issuer  (trust this ship to issue agent certificates)\n  \
+             --kind revoker      (trust this ship to revoke capabilities it issued)".into(),
+        );
+    }
 
     // Accept both `ed25519:<b64>` and bare base64url for ergonomics.
     // Normalize on write so the on-disk file is always prefixed.
