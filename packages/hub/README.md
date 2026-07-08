@@ -32,7 +32,7 @@ See the full endpoint reference at [docs.treeship.dev/api/overview](https://docs
 
 ## Repository
 
-[github.com/nicholasgriffintn/treeship](https://github.com/nicholasgriffintn/treeship)
+[github.com/zerkerlabs/treeship](https://github.com/zerkerlabs/treeship)
 
 ## License
 
