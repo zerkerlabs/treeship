@@ -89,7 +89,7 @@ The `--publish` run ends by printing your **trust bundle**: the exact commands a
 
 ```
 [4/4] trust bundle — hand these to a counterparty:
-    treeship trust add key_… ed25519:… --kind ship --yes
+    treeship trust add key_… ed25519:… --kind cert_issuer --yes
     treeship trust add key_… ed25519:… --kind hub_checkpoint --yes
 ```
 
@@ -100,7 +100,7 @@ Two lines. Note that they pin your **ship** key, not the deployer agent's key. T
 Now become the skeptic. On a clean machine (or a fresh config), holding nothing but those two `trust add` lines the deployer's operator sent you:
 
 ```bash
-treeship trust add key_… ed25519:… --kind ship --yes
+treeship trust add key_… ed25519:… --kind cert_issuer --yes
 treeship trust add key_… ed25519:… --kind hub_checkpoint --yes
 
 treeship resolve --hub https://api.treeship.dev agent://deployer

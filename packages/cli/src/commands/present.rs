@@ -448,10 +448,11 @@ pub fn verify_presentation(
                 .map(|s| s.keyid.as_str())
                 .unwrap_or("");
             let self_revoke = !card_keyid.is_empty() && rev_signer == card_keyid;
+            // Batch 5: issuer revocation is now scoped to the `Revoker` kind.
             let issuer = trust
                 .roots()
                 .iter()
-                .any(|r| r.key_id == rev_signer && r.kind == TrustRootKind::Ship);
+                .any(|r| r.key_id == rev_signer && r.kind == TrustRootKind::Revoker);
             if self_revoke || issuer {
                 revoked = Some(
                     rev_stmt

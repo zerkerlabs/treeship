@@ -315,10 +315,12 @@ pub(crate) fn chain_verify_card(
             Some(s) => s.keyid.as_str(),
             None => continue,
         };
+        // Batch 5: certificate issuance is now scoped to the `CertIssuer`
+        // kind (was the overloaded `Ship` kind).
         let Some(ship_root) = trust
             .roots()
             .iter()
-            .find(|r| r.key_id == cert_signer && r.kind == TrustRootKind::Ship)
+            .find(|r| r.key_id == cert_signer && r.kind == TrustRootKind::CertIssuer)
         else {
             continue;
         };
@@ -492,10 +494,12 @@ fn resolve_remote(hub: &str, agent: &str, trust: &TrustRootStore, printer: &Prin
                 .map(|s| s.keyid.as_str())
                 .unwrap_or("");
             let self_revoke = !card_keyid.is_empty() && rev_signer == card_keyid;
+            // Batch 5: issuer revocation is now scoped to the `Revoker` kind
+            // (was the overloaded `Ship` kind).
             let issuer = trust
                 .roots()
                 .iter()
-                .any(|r| r.key_id == rev_signer && r.kind == TrustRootKind::Ship);
+                .any(|r| r.key_id == rev_signer && r.kind == TrustRootKind::Revoker);
             if self_revoke || issuer {
                 revocation = Some(
                     rev_stmt
@@ -722,7 +726,7 @@ mod chain_tests {
         let agent_key = Ed25519Signer::generate("key_agent").unwrap();
         let cert = signed_receipt("agent_cert.v1", cert_payload("agent://a", &agent_key), &ship);
         let card = signed_card("agent://a", "key_agent", &agent_key);
-        let trust = ship_pinned(&ship, TrustRootKind::Ship);
+        let trust = ship_pinned(&ship, TrustRootKind::CertIssuer);
 
         let verdict = chain_verify_card(
             &card, "key_agent", "agent://a",
@@ -756,7 +760,7 @@ mod chain_tests {
         let ship = Ed25519Signer::generate("key_ship").unwrap();
         let agent_key = Ed25519Signer::generate("key_agent").unwrap();
         let card = signed_card("agent://a", "key_agent", &agent_key);
-        let trust = ship_pinned(&ship, TrustRootKind::Ship);
+        let trust = ship_pinned(&ship, TrustRootKind::CertIssuer);
 
         let mut expired = cert_payload("agent://a", &agent_key);
         expired["valid_until"] = serde_json::json!("2026-01-02T00:00:00Z");
@@ -782,7 +786,7 @@ mod chain_tests {
         let ship = Ed25519Signer::generate("key_ship").unwrap();
         let agent_key = Ed25519Signer::generate("key_agent").unwrap();
         let other_key = Ed25519Signer::generate("key_other").unwrap();
-        let trust = ship_pinned(&ship, TrustRootKind::Ship);
+        let trust = ship_pinned(&ship, TrustRootKind::CertIssuer);
 
         // Cert certifies a DIFFERENT key than the card's signer.
         let cert = signed_receipt("agent_cert.v1", cert_payload("agent://a", &other_key), &ship);

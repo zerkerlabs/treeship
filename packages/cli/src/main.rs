@@ -193,7 +193,7 @@ enum Command {
     /// Examples:
     ///   treeship trust list
     ///   treeship trust add hub_zerker ed25519:<pubkey> --kind hub_checkpoint
-    ///   treeship trust add ship_acme  ed25519:<pubkey> --kind ship --label "ACME hub"
+    ///   treeship trust add ship_acme  ed25519:<pubkey> --kind cert_issuer --label "ACME ship"
     ///   treeship trust remove hub_zerker
     #[command(subcommand)]
     Trust(TrustCommand),
@@ -2016,7 +2016,7 @@ enum TrustCommand {
     ///
     /// Examples:
     ///   treeship trust add hub_zerker ed25519:<b64> --kind hub_checkpoint
-    ///   treeship trust add ship_acme  ed25519:<b64> --kind ship --label "ACME hub"
+    ///   treeship trust add ship_acme  ed25519:<b64> --kind cert_issuer --label "ACME ship"
     Add(TrustAddArgs),
 
     /// Remove a trust root by `key_id` (across all kinds).

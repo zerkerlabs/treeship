@@ -611,12 +611,14 @@ pub fn verify_hub_checkpoint_signature(
     };
 
     // Trust pin: the embedded hub_public_key MUST be in the operator's
-    // trust root store under kind `Ship` before we honor the signature.
+    // trust root store under kind `HubOrg` before we honor the signature.
     // Without this an attacker-minted keypair can self-sign a hub-org
-    // checkpoint and promote `replay-local-journal` to
-    // `replay-hub-org`. With it, the operator decides which hubs they
-    // trust to vouch for global single-use claims.
-    if !trust.contains(&vk, TrustRootKind::Ship) {
+    // checkpoint and promote `replay-local-journal` to `replay-hub-org`.
+    // With it, the operator decides which hubs they trust to vouch for
+    // global single-use claims. (Batch 5: this power used to ride on the
+    // overloaded `Ship` kind, which also granted cert issuance and
+    // revocation; it is now scoped to `HubOrg`.)
+    if !trust.contains(&vk, TrustRootKind::HubOrg) {
         return HubCheckpointVerification::UntrustedIssuer;
     }
 
@@ -910,15 +912,15 @@ mod tests {
         assert_eq!(v["checkpoint_kind"], "hub-org");
     }
 
-    /// Build a one-entry trust store that pins `pk` for kind `Ship`.
+    /// Build a one-entry trust store that pins `pk` for kind `HubOrg`.
     /// Used by every test below now that hub-checkpoint verification
-    /// requires a pin.
+    /// requires a pin (Batch 5: scoped to HubOrg, was the overloaded Ship).
     fn trust_with(pk: &ed25519_dalek::VerifyingKey) -> crate::trust::TrustRootStore {
         use crate::trust::{encode_ed25519_pubkey, TrustRoot, TrustRootKind, TrustRootStore};
         TrustRootStore::with_roots(vec![TrustRoot {
             key_id:     "test_hub".into(),
             public_key: encode_ed25519_pubkey(pk),
-            kind:       TrustRootKind::Ship,
+            kind:       TrustRootKind::HubOrg,
             label:      "test pin".into(),
             added_at:   "2026-05-15T00:00:00Z".into(),
         }])
@@ -976,6 +978,49 @@ mod tests {
         assert_eq!(
             verify_hub_checkpoint_signature(&cp, &trust),
             HubCheckpointVerification::Valid,
+        );
+    }
+
+    // Batch 5: a deprecated `ship` pin must NOT authorize a hub-org checkpoint
+    // anymore; only a `hub_org` pin does. This is the security property of the
+    // trust-split — pinning a hub for one power no longer grants the others.
+    #[test]
+    fn deprecated_ship_pin_no_longer_authorizes_hub_checkpoint() {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+        use ed25519_dalek::{Signer, SigningKey};
+        use crate::trust::{encode_ed25519_pubkey, TrustRoot, TrustRootKind, TrustRootStore};
+        let sk = SigningKey::from_bytes(&[9u8; 32]);
+        let pk = sk.verifying_key();
+        let mut cp = sample_checkpoint(CheckpointKind::HubOrg);
+        cp.hub_id          = "hub://zerker-org".into();
+        cp.hub_public_key  = URL_SAFE_NO_PAD.encode(pk.to_bytes());
+        cp.signed_at       = "2026-04-30T07:00:00Z".into();
+        cp.covered_use_ids = vec!["use_alpha".into()];
+        cp.hub_signature   = URL_SAFE_NO_PAD.encode(sk.sign(&cp.canonical_hub_signing_bytes()).to_bytes());
+
+        let pin = |kind| TrustRootStore::with_roots(vec![TrustRoot {
+            key_id: "h".into(),
+            public_key: encode_ed25519_pubkey(&pk),
+            kind,
+            label: String::new(),
+            added_at: "2026-05-15T00:00:00Z".into(),
+        }]);
+
+        // The exact same key, pinned as the deprecated `ship` kind: rejected.
+        assert_eq!(
+            verify_hub_checkpoint_signature(&cp, &pin(TrustRootKind::Ship)),
+            HubCheckpointVerification::UntrustedIssuer,
+            "a `ship` pin must no longer authorize hub-org checkpoints",
+        );
+        // Pinned as `hub_org`: honored.
+        assert_eq!(
+            verify_hub_checkpoint_signature(&cp, &pin(TrustRootKind::HubOrg)),
+            HubCheckpointVerification::Valid,
+        );
+        // Cross-power isolation: a `cert_issuer` pin does NOT grant hub-org.
+        assert_eq!(
+            verify_hub_checkpoint_signature(&cp, &pin(TrustRootKind::CertIssuer)),
+            HubCheckpointVerification::UntrustedIssuer,
         );
     }
 

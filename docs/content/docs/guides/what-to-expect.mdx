@@ -148,7 +148,7 @@ The `--publish` run ends by printing a **trust bundle**: the exact two commands 
 
 ```bash
 # what your counterparty runs, once:
-treeship trust add key_… ed25519:… --kind ship --yes
+treeship trust add key_… ed25519:… --kind cert_issuer --yes
 treeship trust add key_… ed25519:… --kind hub_checkpoint --yes
 
 # then they can verify, from anywhere:
