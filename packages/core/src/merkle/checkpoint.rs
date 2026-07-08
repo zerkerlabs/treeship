@@ -276,6 +276,29 @@ impl Checkpoint {
         })
     }
 
+    /// The exact canonical string this checkpoint's signature is computed
+    /// over, as bytes. Reproduces what `verify` reconstructs internally, so a
+    /// remote party (e.g. the hub, AUD-18) can be handed these bytes and run
+    /// `ed25519.Verify(public_key, canonical_signing_bytes, signature)` without
+    /// re-implementing the versioned canonical dispatch in another language.
+    /// The structured fields (root / tree_size / signer / signed_at) are all
+    /// present inside the returned string, pipe-delimited, so a verifier can
+    /// cross-check that the values it stores match the values that were signed.
+    pub fn canonical_signing_string(&self) -> String {
+        Self::canonical_for_signing(
+            self.canonical_version,
+            self.merkle_version,
+            self.algorithm.as_deref(),
+            self.zk_proof.as_ref(),
+            self.index,
+            &self.root,
+            self.tree_size,
+            self.height,
+            &self.signer,
+            &self.signed_at,
+        )
+    }
+
     /// Verify the checkpoint signature AND require the embedded public key
     /// to be present in `trust` under kind `HubCheckpoint`. Returns `false`
     /// on any failure (bad encoding, wrong key size, invalid signature,

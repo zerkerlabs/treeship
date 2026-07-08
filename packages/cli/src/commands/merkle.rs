@@ -519,6 +519,11 @@ pub fn publish(
         "signature":  checkpoint.signature,
         "public_key": checkpoint.public_key,
         "index":      checkpoint.index,
+        // AUD-18: the exact bytes the signature is over, so the hub can
+        // ed25519-verify the checkpoint without re-implementing the versioned
+        // canonical in Go. The hub cross-checks the structured fields above
+        // against the values embedded in this string.
+        "canonical":  checkpoint.canonical_signing_string(),
     });
 
     let cp_resp: serde_json::Value = ureq::post(&checkpoint_url)
