@@ -45,8 +45,16 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable (moving branch; pinned to current tip)
 
+      # Run the full shipped-binary test surface, not just core. Before this,
+      # CI ran only `cargo test -p treeship-core`, so every regression test in
+      # treeship-cli (capability / verify / hub / wrap / resolve / profile) and
+      # treeship-core-wasm (the browser verifier) passed on a contributor's
+      # machine but never gated a merge. That is the gap the 2026-07 audits
+      # flagged: a fix's fail-before-fix test must actually run on push.
+      # (treeship-zk-risc0 needs the RISC0 guest toolchain and is added
+      # separately; the `zk` feature is pre-release.)
       - name: Run tests
-        run: cargo test -p treeship-core
+        run: cargo test -p treeship-core -p treeship-cli -p treeship-core-wasm
 
       - name: Build CLI
         run: cargo build -p treeship-cli
@@ -72,6 +80,13 @@ jobs:
       - name: Build Hub
         working-directory: packages/hub
         run: go build ./...
+
+      # Run the hub's Go tests too. The object-authz regression tests from the
+      # 2026-07 audit (DockOwnsCheckpointSigner, per-dock ownership) live here
+      # and previously did not gate merges — CI only built the hub.
+      - name: Test Hub
+        working-directory: packages/hub
+        run: go test ./...
 
   cross-sdk:
     name: Cross-SDK contract (${{ matrix.os }} / Node ${{ matrix.node }} / Python ${{ matrix.python }})
