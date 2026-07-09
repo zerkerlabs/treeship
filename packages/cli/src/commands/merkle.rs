@@ -746,7 +746,7 @@ fn build_dpop_jwt(
         .as_secs();
 
     let mut jti_bytes = [0u8; 16];
-    rand::thread_rng().fill_bytes(&mut jti_bytes);
+    rand::rngs::OsRng.fill_bytes(&mut jti_bytes);
     let jti = hex::encode(jti_bytes);
 
     let payload = serde_json::json!({

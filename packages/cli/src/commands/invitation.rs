@@ -559,9 +559,10 @@ pub fn join(
     let j_dir = journal_dir_for_ctx(&c);
     let j = Journal::new(&j_dir);
     let use_id = {
-        let mut buf = [0u8; 8];
+        // AUD-24: OS CSPRNG (policy §5), 16 bytes = 128 bits (was 64).
+        let mut buf = [0u8; 16];
         use rand::RngCore;
-        rand::thread_rng().fill_bytes(&mut buf);
+        rand::rngs::OsRng.fill_bytes(&mut buf);
         format!("use_inv_{}", hex::encode(buf))
     };
     let nonce_d = nonce_digest(&invitation.nonce);

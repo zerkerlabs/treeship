@@ -93,7 +93,7 @@ pub fn attach(
         .to_string();
 
     // 2. Generate fresh Ed25519 hub keypair
-    let mut csprng = rand::thread_rng();
+    let mut csprng = rand::rngs::OsRng;
     let hub_signing_key = SigningKey::generate(&mut csprng);
     let hub_verifying_key: VerifyingKey = (&hub_signing_key).into();
 
@@ -850,7 +850,7 @@ pub(crate) fn build_dpop_jwt(
         .as_secs();
 
     let mut jti_bytes = [0u8; 16];
-    rand::thread_rng().fill_bytes(&mut jti_bytes);
+    rand::rngs::OsRng.fill_bytes(&mut jti_bytes);
     let jti = hex::encode(jti_bytes);
 
     let payload = serde_json::json!({

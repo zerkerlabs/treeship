@@ -56,11 +56,24 @@ export async function fetchReceipt(receiptUrl: string): Promise<unknown | null> 
  * means the receipt's JSON-level integrity was confirmed. `null` if the
  * URL is unreachable or the document is unparseable.
  */
-export async function verifyReceipt(receiptUrl: string): Promise<VerifiedReceipt | null> {
-  const raw = await fetchReceipt(receiptUrl);
-  if (!raw || typeof raw !== 'object') return null;
-  const r = raw as Record<string, unknown>;
+export type VerifyFlags = {
+  structurallyConsistent: boolean;
+  cryptographicallyVerified: boolean;
+  verifyChecks?: { step: string; status: 'pass' | 'fail' | 'warn'; detail: string }[];
+};
 
+/**
+ * Build the trust summary from a (hostile) raw receipt object and the
+ * verification flags. Pure and exported so the trust-gating logic is
+ * unit-testable without network or WASM. AUD-27: trust-bearing fields
+ * (`shipId`, `withinDeclaredBounds`) are derived from the raw JSON ONLY when
+ * the receipt structurally verified; otherwise they are `undefined`.
+ */
+export function summarizeVerifiedReceipt(
+  raw: Record<string, unknown>,
+  flags: VerifyFlags,
+): VerifiedReceipt {
+  const r = raw;
   const sessionId =
     (typeof r.session_id === 'string' && r.session_id) ||
     (typeof (r as { session?: { id?: unknown } }).session?.id === 'string' &&
@@ -81,10 +94,35 @@ export async function verifyReceipt(receiptUrl: string): Promise<VerifiedReceipt
   const declared = r.declaration as Record<string, unknown> | undefined;
   const violations = Array.isArray(r.violations) ? r.violations.length : 0;
 
-  let cryptographicallyVerified = false;
-  let verifyChecks:
-    | { step: string; status: 'pass' | 'fail' | 'warn'; detail: string }[]
-    | undefined;
+  const { structurallyConsistent, cryptographicallyVerified, verifyChecks } = flags;
+
+  // AUD-27: shipId and withinDeclaredBounds are reported ONLY when structurally
+  // consistent; withinDeclaredBounds additionally requires a declaration
+  // (absent => undefined/unknown, never a default "true"). sessionId / events /
+  // artifacts / digest stay as an informational summary (not trust claims).
+  return {
+    sessionId,
+    shipId: structurallyConsistent ? shipId : undefined,
+    digest: typeof r.digest === 'string' ? r.digest : undefined,
+    events,
+    artifacts,
+    withinDeclaredBounds:
+      structurallyConsistent && declared ? violations === 0 : undefined,
+    structurallyConsistent,
+    cryptographicallyVerified,
+    verifyChecks,
+    raw,
+  };
+}
+
+export async function verifyReceipt(receiptUrl: string): Promise<VerifiedReceipt | null> {
+  const raw = await fetchReceipt(receiptUrl);
+  if (!raw || typeof raw !== 'object') return null;
+
+  const flags: VerifyFlags = {
+    structurallyConsistent: false,
+    cryptographicallyVerified: false,
+  };
 
   const wasm = await loadWasm();
   if (wasm) {
@@ -92,26 +130,20 @@ export async function verifyReceipt(receiptUrl: string): Promise<VerifiedReceipt
       const resultJson = wasm.verify_receipt(JSON.stringify(raw));
       const parsed = JSON.parse(resultJson) as {
         outcome: string;
-        checks?: typeof verifyChecks;
+        signatures_verified?: boolean;
+        checks?: VerifyFlags['verifyChecks'];
       };
-      cryptographicallyVerified = parsed.outcome === 'pass';
-      verifyChecks = parsed.checks;
+      // AUD-01: verify_receipt is STRUCTURAL only. Its success outcome is
+      // "structural-pass" (never "pass"), and it verifies no signatures.
+      flags.structurallyConsistent = parsed.outcome === 'structural-pass';
+      flags.cryptographicallyVerified = parsed.signatures_verified === true;
+      flags.verifyChecks = parsed.checks;
     } catch {
-      // WASM available but verification threw. Leave cryptographicallyVerified=false.
+      // WASM available but verification threw. Leave both false.
     }
   }
 
-  return {
-    sessionId,
-    shipId,
-    digest: typeof r.digest === 'string' ? r.digest : undefined,
-    events,
-    artifacts,
-    withinDeclaredBounds: declared ? violations === 0 : true,
-    cryptographicallyVerified,
-    verifyChecks,
-    raw,
-  };
+  return summarizeVerifiedReceipt(raw as Record<string, unknown>, flags);
 }
 
 /**

@@ -120,13 +120,28 @@ export interface VerifiedReceipt {
   digest?: string;
   events: number;
   artifacts: number;
-  withinDeclaredBounds: boolean;
   /**
-   * True iff the receipt JSON passed cryptographic checks via WASM
-   * (Merkle root recomputation, inclusion proofs, leaf count parity,
-   * timeline ordering, chain linkage). False when WASM is unavailable
-   * in the runtime or when a check failed -- inspect `verifyChecks` for
-   * the per-step breakdown.
+   * Whether the session stayed within its declared boundaries. Present ONLY
+   * when the receipt passed STRUCTURAL verification AND carried a declaration.
+   * `undefined` means unknown -- no declaration, or the receipt did not verify.
+   * A consumer must treat `undefined` as "not asserted", never as "in bounds"
+   * (AUD-27: this field used to be computed from the raw, attacker-controlled
+   * JSON regardless of verification, and defaulted to `true` when no
+   * declaration was present).
+   */
+  withinDeclaredBounds?: boolean;
+  /**
+   * True iff the receipt JSON passed STRUCTURAL checks via WASM (recomputed
+   * Merkle root, inclusion proofs, leaf-count parity, timeline order). This is
+   * NOT signature or issuer verification -- a URL-fetched receipt carries no
+   * envelope bytes to check. False when WASM is unavailable or a check failed.
+   */
+  structurallyConsistent: boolean;
+  /**
+   * True iff individual envelope SIGNATURES were cryptographically verified.
+   * The URL / receipt-JSON path cannot do this (no envelope bytes), so it is
+   * always false here; use the local-storage CLI path for real signature
+   * verification. Kept so callers can gate on genuine cryptographic proof.
    */
   cryptographicallyVerified: boolean;
   /** Per-step verification results from WASM. Present when WASM ran. */
