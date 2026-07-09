@@ -44,7 +44,7 @@ Full API reference and guides: [docs.treeship.dev](https://docs.treeship.dev)
 
 ## Repository
 
-[github.com/nicholasgriffintn/treeship](https://github.com/nicholasgriffintn/treeship)
+[github.com/zerkerlabs/treeship](https://github.com/zerkerlabs/treeship)
 
 ## License
 
