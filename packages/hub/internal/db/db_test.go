@@ -203,3 +203,53 @@ func TestCheckpointAndArtifactOwnershipIsPerDock(t *testing.T) {
 		t.Fatalf("cross-tenant artifact must not read as dck_b's")
 	}
 }
+
+// AUD-18: a signer id is bound to the public key its first checkpoint used.
+// GetSignerPublicKey is the trust-on-first-use lookup the checkpoint handler
+// gates on so a second dock cannot re-claim a victim's signer id with a
+// different key.
+func TestGetSignerPublicKeyFirstWriterBinding(t *testing.T) {
+	t.Setenv("TREESHIP_HUB_DB", filepath.Join(t.TempDir(), "hub.db"))
+	database, err := Open()
+	if err != nil {
+		t.Fatalf("open test db: %v", err)
+	}
+	defer database.Close()
+
+	if err := InsertShip(database, "dck_victim", []byte("s"), []byte("d"), 1); err != nil {
+		t.Fatalf("insert ship: %v", err)
+	}
+
+	// Unknown signer: not found.
+	_, found, err := GetSignerPublicKey(database, "key_sig")
+	if err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if found {
+		t.Fatal("an unseen signer must not be bound")
+	}
+
+	// Victim publishes first, binding key_sig -> PUBKEY_VICTIM.
+	cp := &MerkleCheckpoint{
+		RootHex: "ab12", TreeSize: 10, Height: 4,
+		SignedAt: "2026-07-08T00:00:00Z", SignerKeyID: "key_sig",
+		SignatureB64: "sig", PublicKeyB64: "PUBKEY_VICTIM",
+	}
+	if _, err := InsertCheckpoint(database, cp, "dck_victim"); err != nil {
+		t.Fatalf("insert checkpoint: %v", err)
+	}
+
+	pub, found, err := GetSignerPublicKey(database, "key_sig")
+	if err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if !found || pub != "PUBKEY_VICTIM" {
+		t.Fatalf("signer must be bound to the first pubkey, got found=%v pub=%q", found, pub)
+	}
+	// The handler compares this against a later request's public_key: an
+	// attacker presenting "PUBKEY_ATTACKER" for the same signer would mismatch
+	// and be rejected.
+	if pub == "PUBKEY_ATTACKER" {
+		t.Fatal("binding must not resolve to an attacker key")
+	}
+}

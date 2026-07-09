@@ -1,11 +1,14 @@
 package merkle
 
 import (
+	"crypto/ed25519"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -29,6 +32,11 @@ type checkpointRequest struct {
 	PublicKey  string `json:"public_key"`
 	RekorIndex *int64 `json:"rekor_index"`
 	Index      int64  `json:"index"`
+	// AUD-18: the exact bytes the CLI's signature is computed over. The hub
+	// ed25519-verifies against these rather than re-implementing the versioned
+	// canonical in Go, then cross-checks that the structured fields above are
+	// the ones actually signed.
+	Canonical string `json:"canonical"`
 }
 
 func (h *Handlers) PublishCheckpoint(w http.ResponseWriter, r *http.Request) {
@@ -45,8 +53,32 @@ func (h *Handlers) PublishCheckpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Root == "" || req.TreeSize == 0 || req.SignedAt == "" || req.Signer == "" || req.Signature == "" || req.PublicKey == "" {
+	if req.Root == "" || req.TreeSize == 0 || req.SignedAt == "" || req.Signer == "" || req.Signature == "" || req.PublicKey == "" || req.Canonical == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing required checkpoint fields"})
+		return
+	}
+
+	// AUD-18: verify the checkpoint signature. Before this, the hub stored
+	// signer/signature/public_key with NO verification, so anyone could POST a
+	// checkpoint naming a victim's signer, which made DockOwnsCheckpointSigner
+	// (the AUD-11 gate) return true for free and let the attacker shadow the
+	// victim's consistency chain.
+	if err := verifyCheckpointSignature(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	// Trust-on-first-use: a signer id is bound to the public key its first
+	// checkpoint used. A later checkpoint claiming that signer with a different
+	// key is rejected, so an attacker cannot re-claim a victim's signer id
+	// (which is what would otherwise make the AUD-11 gate meaningless).
+	boundPub, found, err := db.GetSignerPublicKey(h.DB, req.Signer)
+	if err != nil {
+		log.Printf("signer binding lookup error: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to check signer binding"})
+		return
+	}
+	if found && boundPub != req.PublicKey {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "signer is already bound to a different public key"})
 		return
 	}
 
@@ -331,3 +363,52 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
 }
+
+// containsField reports whether want is an exact element of fields. Used to
+// confirm a structured checkpoint field was one of the pipe-delimited values
+// actually signed in the canonical string (AUD-18).
+func containsField(fields []string, want string) bool {
+	for _, f := range fields {
+		if f == want {
+			return true
+		}
+	}
+	return false
+}
+
+// verifyCheckpointSignature ed25519-verifies a checkpoint publish request
+// against its canonical bytes and cross-checks that the structured fields the
+// hub will store were the ones actually signed (AUD-18). Returns nil on
+// success or a client-safe error describing the first failure. It does NOT
+// establish trust in the signer key — that is the signer→pubkey binding the
+// caller enforces separately; this only proves the request is internally
+// consistent and validly self-signed.
+func verifyCheckpointSignature(req *checkpointRequest) error {
+	pubKey, err := base64.RawURLEncoding.DecodeString(req.PublicKey)
+	if err != nil || len(pubKey) != ed25519.PublicKeySize {
+		return errCheckpoint("invalid public_key")
+	}
+	sig, err := base64.RawURLEncoding.DecodeString(req.Signature)
+	if err != nil || len(sig) != ed25519.SignatureSize {
+		return errCheckpoint("invalid signature")
+	}
+	if !ed25519.Verify(pubKey, []byte(req.Canonical), sig) {
+		return errCheckpoint("checkpoint signature does not verify over the canonical bytes")
+	}
+	// The signature proves SOME key signed the canonical, but the canonical is
+	// attacker-authored. Bind the stored structured fields to the SIGNED bytes:
+	// each must appear as a pipe-delimited element of the canonical string, so
+	// the hub cannot serve a signer/root/tree_size/signed_at that was not signed.
+	canonFields := strings.Split(req.Canonical, "|")
+	for _, want := range []string{req.Signer, req.Root, req.SignedAt, strconv.FormatInt(req.TreeSize, 10)} {
+		if !containsField(canonFields, want) {
+			return errCheckpoint("structured field not present in the signed canonical")
+		}
+	}
+	return nil
+}
+
+type checkpointError string
+
+func (e checkpointError) Error() string { return string(e) }
+func errCheckpoint(msg string) error    { return checkpointError(msg) }

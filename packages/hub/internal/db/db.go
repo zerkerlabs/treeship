@@ -581,6 +581,27 @@ func DockOwnsCheckpointSigner(database *sql.DB, dockID, signerKeyID string) (boo
 	return n > 0, nil
 }
 
+// GetSignerPublicKey returns the public key the FIRST checkpoint published
+// under signerKeyID bound it to, if any (AUD-18). This is the trust-on-first-
+// use binding: once a signer id has been seen with a public key, a later
+// checkpoint claiming the same signer with a DIFFERENT public key is rejected,
+// so an attacker cannot re-claim a victim's signer id to shadow its
+// consistency chain. `found` is false when the signer has never been seen.
+func GetSignerPublicKey(database *sql.DB, signerKeyID string) (pubKeyB64 string, found bool, err error) {
+	err = database.QueryRow(
+		`SELECT public_key_b64 FROM merkle_checkpoints
+		 WHERE signer_key_id = ? ORDER BY id ASC LIMIT 1`,
+		signerKeyID,
+	).Scan(&pubKeyB64)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return pubKeyB64, true, nil
+}
+
 func GetLatestCheckpoint(database *sql.DB, dockID string) (*MerkleCheckpoint, error) {
 	var row *sql.Row
 	if dockID != "" {
