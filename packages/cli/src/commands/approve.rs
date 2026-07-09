@@ -108,9 +108,11 @@ fn list_pending_files() -> Vec<(PathBuf, PendingApproval)> {
 }
 
 fn generate_nonce() -> String {
-    let mut buf = [0u8; 12];
+    // AUD-24: OS CSPRNG (policy §5 bans thread_rng for security nonces), and
+    // 16 bytes = 128 bits (was 96) for the approval binding nonce.
+    let mut buf = [0u8; 16];
     use rand::RngCore;
-    rand::thread_rng().fill_bytes(&mut buf);
+    rand::rngs::OsRng.fill_bytes(&mut buf);
     format!("nce_{}", hex::encode(buf))
 }
 

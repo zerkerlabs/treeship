@@ -274,10 +274,11 @@ pub fn approval(args: ApprovalArgs, printer: &Printer) -> Result<(), Box<dyn std
     };
 
     // Generate a cryptographically random nonce for approval binding.
+    // AUD-24: OS CSPRNG, not thread_rng (policy §5).
     let nonce = {
         let mut b = [0u8; 16];
         use rand::RngCore;
-        rand::thread_rng().fill_bytes(&mut b);
+        rand::rngs::OsRng.fill_bytes(&mut b);
         b.iter().fold(String::new(), |mut s, byte| {
             s.push_str(&format!("{:02x}", byte));
             s
@@ -1211,10 +1212,11 @@ fn reserve_in_journal(
     let use_number = 0u32;
 
     // Use_id is a fresh UUID-style hex token. Same shape as nonces.
+    // AUD-24: OS CSPRNG, 16 bytes = 128 bits (was 12).
     let use_id = {
         use rand::RngCore;
-        let mut b = [0u8; 12];
-        rand::thread_rng().fill_bytes(&mut b);
+        let mut b = [0u8; 16];
+        rand::rngs::OsRng.fill_bytes(&mut b);
         let mut hex = String::with_capacity(2 * b.len() + 4);
         hex.push_str("use_");
         for byte in &b {

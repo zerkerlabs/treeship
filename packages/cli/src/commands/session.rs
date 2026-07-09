@@ -108,6 +108,9 @@ impl Drop for CloseLock {
 }
 
 fn generate_session_id() -> String {
+    // AUD-24: thread_rng is deliberately retained here. A session id is a
+    // non-secret, non-security identifier (collision-avoidance only), not a
+    // key/nonce/token, so policy §5's OsRng requirement does not apply.
     let mut buf = [0u8; 8];
     use rand::RngCore;
     rand::thread_rng().fill_bytes(&mut buf);
