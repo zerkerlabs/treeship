@@ -194,16 +194,30 @@ impl Store {
         // stable derivation would move their seed to the global
         // ~/.treeship/.internal/ and silently break project-local keystore
         // isolation (the v0.9.6 property).
-        let machine_key = match stable_hardware_key(&canonical) {
-            Some(k) => k,
-            None => derive_machine_key(&canonical)?,
-        };
+        // AUD-19: the PRIMARY (encrypt) key derives from a SECRET OsRng seed,
+        // not from guessable machine identifiers. Before this the wrapping key
+        // was `SHA256(machine-id/serial/hostname ‖ store_path)` — all guessable
+        // — so an exfiltrated `keys/*.json` was forgeable by anyone who knew
+        // the victim's hostname or machine-id. The old guessable derivations
+        // are now DECRYPT-ONLY fallbacks below; the first successful fallback
+        // decrypt rewraps the entry under this seed key (see `signer`), so an
+        // existing keystore migrates transparently on first open.
+        //
+        // Durability note: the machine_seed file is now load-bearing — losing
+        // it makes an already-migrated keystore unrecoverable (the price of
+        // real at-rest confidentiality; the old guessable key was recoverable
+        // precisely because it was guessable).
+        let machine_key = derive_seed_primary_key(&canonical)?;
 
         // Decrypt-only fallbacks, most-likely first. Existing keystores are
         // wrapped under one of these; the first successful decrypt rewraps
         // the entry under the primary (see `signer`), so the fallbacks are
         // a migration path, not a permanent second key.
         let mut fallback_machine_keys: Vec<[u8; 32]> = Vec::new();
+        // The former PRIMARY: hardware-stable key (machine-id / serial).
+        if let Some(k) = stable_hardware_key(&canonical) {
+            fallback_machine_keys.push(k);
+        }
         // v1 under the current hostname (every pre-migration keystore).
         if let Ok(k) = derive_machine_key(&canonical) {
             fallback_machine_keys.push(k);
@@ -1376,47 +1390,7 @@ pub fn derive_machine_key(store_dir: &Path) -> Result<[u8; 32], KeyError> {
     //    the user's ~/.treeship is corrupt or on a different machine,
     //    closing the trust-fabric isolation gap that blocked
     //    project-local smoke tests.
-    let local_seed_path = store_dir.parent().map(|p| p.join("machine_seed"));
-    let home = std::env::var("HOME")
-        .map(std::path::PathBuf::from)
-        .map_err(|_| KeyError::Crypto("HOME not set".to_string()))?;
-    let global_seed_path = home.join(".treeship").join("machine_seed");
-
-    let seed = if let Some(local) = local_seed_path.as_ref().filter(|p| p.exists()) {
-        fs::read_to_string(local).map_err(KeyError::Io)?
-    } else if global_seed_path.exists() {
-        // Backward-compat: an existing global seed keeps decrypting any
-        // keystore that was encrypted under it (in particular the
-        // standard ~/.treeship/keys/ case where local == global).
-        fs::read_to_string(&global_seed_path).map_err(KeyError::Io)?
-    } else {
-        let mut bytes = [0u8; 32];
-        // v0.10.4 P1 audit: this seed becomes the machine-key fallback used to
-        // wrap on-disk private keys. Source straight from the OS entropy pool.
-        OsRng.fill_bytes(&mut bytes);
-        let seed_hex = hex_encode(&bytes);
-
-        // Prefer creating the seed locally. Falls back to the global
-        // path only when the keystore has no usable parent (rare;
-        // happens when store_dir is "/" or similar pathological input).
-        let target = match local_seed_path.as_ref() {
-            Some(p) => {
-                let _ = fs::create_dir_all(p.parent().unwrap_or(Path::new(".")));
-                p.clone()
-            }
-            None => {
-                let _ = fs::create_dir_all(global_seed_path.parent().unwrap_or(Path::new(".")));
-                global_seed_path.clone()
-            }
-        };
-        fs::write(&target, &seed_hex).map_err(KeyError::Io)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(&target, fs::Permissions::from_mode(0o600));
-        }
-        seed_hex
-    };
+    let seed = read_or_create_machine_seed(store_dir)?;
 
     let mut h = Sha256::new();
     h.update(b"treeship-machine-key-fallback:");
@@ -1424,6 +1398,153 @@ pub fn derive_machine_key(store_dir: &Path) -> Result<[u8; 32], KeyError> {
     h.update(b":");
     h.update(store_dir.to_string_lossy().as_bytes());
     Ok(h.finalize().into())
+}
+
+/// Read the secret machine seed, creating it (OsRng, mode 0600) on first use.
+/// Returns the hex-encoded seed string.
+///
+/// The seed is co-located with the keystore so a project-local keystore
+/// (`/proj/.treeship/keys/`) keeps its seed at `/proj/.treeship/machine_seed`
+/// and a global keystore at `~/.treeship/machine_seed` (byte-identical to the
+/// pre-v0.9.6 location, so existing global keystores keep working).
+///
+/// AUD-19: as of the seed-primary wrapping change this is the PRIMARY entropy
+/// for every at-rest signing-key wrap on every platform — not just a container
+/// fallback — so it is security-critical. AUD-25: an existing seed file must be
+/// a regular file the current user owns, with no group/world access; anything
+/// else (a planted seed, loose perms, a symlink) is refused fail-closed rather
+/// than trusted as key material.
+fn read_or_create_machine_seed(store_dir: &Path) -> Result<String, KeyError> {
+    let local_seed_path = store_dir.parent().map(|p| p.join("machine_seed"));
+    let home = std::env::var("HOME")
+        .map(std::path::PathBuf::from)
+        .map_err(|_| KeyError::Crypto("HOME not set".to_string()))?;
+    let global_seed_path = home.join(".treeship").join("machine_seed");
+
+    // Read order: co-located seed first, then the legacy global path.
+    if let Some(local) = local_seed_path.as_ref().filter(|p| p.exists()) {
+        check_seed_file_secure(local)?;
+        return fs::read_to_string(local).map_err(KeyError::Io);
+    }
+    if global_seed_path.exists() {
+        check_seed_file_secure(&global_seed_path)?;
+        return fs::read_to_string(&global_seed_path).map_err(KeyError::Io);
+    }
+
+    // First use: mint a 32-byte seed straight from the OS CSPRNG.
+    let mut bytes = [0u8; 32];
+    OsRng.fill_bytes(&mut bytes);
+    let seed_hex = hex_encode(&bytes);
+
+    // Prefer creating the seed co-located with the keystore; fall back to the
+    // global path only when the keystore has no usable parent (store_dir is
+    // "/" or similar pathological input).
+    let target = match local_seed_path.as_ref() {
+        Some(p) => {
+            let _ = fs::create_dir_all(p.parent().unwrap_or(Path::new(".")));
+            p.clone()
+        }
+        None => {
+            let _ = fs::create_dir_all(global_seed_path.parent().unwrap_or(Path::new(".")));
+            global_seed_path.clone()
+        }
+    };
+    fs::write(&target, &seed_hex).map_err(KeyError::Io)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&target, fs::Permissions::from_mode(0o600));
+    }
+    Ok(seed_hex)
+}
+
+/// AUD-25: refuse to trust a machine_seed that is not a regular file owned by
+/// the current user with no group/world access. On non-unix this only checks
+/// that it is a regular file (no ownership model to consult). The
+/// `TREESHIP_ALLOW_INSECURE_KEY_PERMS=1` escape hatch mirrors the keystore's.
+fn check_seed_file_secure(path: &Path) -> Result<(), KeyError> {
+    let meta = fs::symlink_metadata(path).map_err(KeyError::Io)?;
+    if !meta.file_type().is_file() {
+        // A symlink or special file could redirect the read to attacker bytes.
+        return Err(KeyError::Crypto(format!(
+            "machine_seed at {} is not a regular file (refusing to use it as key material)",
+            path.display()
+        )));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        use std::os::unix::fs::PermissionsExt;
+        let bypass = std::env::var_os("TREESHIP_ALLOW_INSECURE_KEY_PERMS")
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        if !bypass {
+            let mode = meta.permissions().mode() & 0o777;
+            if mode & 0o077 != 0 {
+                return Err(KeyError::InsecureKeyPerms { path: path.to_path_buf(), mode });
+            }
+            if meta.uid() != nix_geteuid() {
+                return Err(KeyError::Crypto(format!(
+                    "machine_seed at {} is not owned by the current user (refusing to use a planted seed)",
+                    path.display()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Current effective uid, via libc. Kept tiny and unix-gated so the seed check
+/// does not pull a new dependency.
+#[cfg(unix)]
+fn nix_geteuid() -> u32 {
+    // SAFETY: geteuid is always successful and has no preconditions.
+    unsafe { libc_geteuid() }
+}
+
+#[cfg(unix)]
+extern "C" {
+    #[link_name = "geteuid"]
+    fn libc_geteuid() -> u32;
+}
+
+/// AUD-19: the PRIMARY at-rest wrapping key. Derives from the SECRET OsRng
+/// machine seed (high-entropy, mode 0600), with the machine identifier mixed
+/// in only as a binding salt — never as the sole entropy. This is what makes
+/// an exfiltrated `keys/*.json` un-forgeable: before this the wrapping key was
+/// `SHA256(guessable_machine_id ‖ store_path)`, so anyone who knew the victim's
+/// hostname / machine-id could recompute it. Now the secret seed is required.
+/// Two hosts with identical machine-id / hostname / user but different seeds
+/// cannot decrypt each other's keystore.
+fn derive_seed_primary_key(store_dir: &Path) -> Result<[u8; 32], KeyError> {
+    let seed = read_or_create_machine_seed(store_dir)?;
+    let mut h = Sha256::new();
+    h.update(b"treeship-seed-primary-v1:");
+    h.update(seed.trim().as_bytes());        // the secret (all the entropy)
+    h.update(b":");
+    h.update(machine_id_salt().as_bytes());  // binding salt only (non-secret)
+    h.update(b":");
+    h.update(store_dir.to_string_lossy().as_bytes());
+    Ok(h.finalize().into())
+}
+
+/// A best-effort stable machine identifier used ONLY as a binding salt in
+/// [`derive_seed_primary_key`] (so a keystore is bound to the machine that
+/// wrote it, in addition to the secret seed). Non-secret and possibly empty;
+/// the security comes from the seed, not this.
+fn machine_id_salt() -> String {
+    if let Ok(id) = fs::read_to_string("/etc/machine-id") {
+        let t = id.trim();
+        if !t.is_empty() {
+            return t.to_string();
+        }
+    }
+    // Hostname is a weak, drift-prone salt but fine as a last resort — it only
+    // binds, it does not gate (all the security is in the secret seed).
+    std::process::Command::new("hostname")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default()
 }
 
 /// The v1 hostname+username machine-key derivation, as a pure function of
@@ -1876,6 +1997,13 @@ mod tests {
             rand::thread_rng().fill_bytes(&mut b);
             hex_encode(&b)
         }));
+        // Nest the store under a per-test parent (mirrors production's
+        // `~/.treeship/keys`). The machine_seed lives in `store_dir.parent()`;
+        // without this nesting the parent would be the SHARED system temp dir
+        // and every test would share (and race on) one seed. `dir` still points
+        // at the store directory, so test logic that inspects entry files is
+        // unaffected.
+        p.push("keys");
         p
     }
 
@@ -1886,7 +2014,66 @@ mod tests {
     }
 
     fn cleanup(dir: PathBuf) {
-        let _ = fs::remove_dir_all(dir);
+        // Remove the store dir AND its per-test parent (which holds machine_seed).
+        let _ = fs::remove_dir_all(&dir);
+        if let Some(parent) = dir.parent() {
+            let _ = fs::remove_dir_all(parent);
+        }
+    }
+
+    // AUD-19: the wrapping key must derive from the SECRET machine_seed, not
+    // from guessable machine identifiers. Two "hosts" with identical
+    // machine-id / hostname / user but a DIFFERENT seed must not be able to
+    // decrypt each other's keystore. We simulate the second host by swapping
+    // the seed file under an otherwise-identical machine environment.
+    #[test]
+    fn different_seed_cannot_decrypt_even_with_identical_machine_id() {
+        let (store, dir) = make_store();
+        store.generate(true).unwrap();
+        // The default key is now on disk, wrapped under the seed-primary key.
+        store.default_signer().expect("own seed must decrypt");
+
+        // Swap the seed for a different one. machine-id / hostname / user are
+        // unchanged (same test host) — only the secret seed differs.
+        let seed_path = dir.parent().unwrap().join("machine_seed");
+        assert!(seed_path.exists(), "seed must have been created on first open");
+        fs::write(&seed_path, hex_encode(&[0xABu8; 32])).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&seed_path, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+
+        // A fresh Store sees the new seed. The guessable machine-id/hostname
+        // fallbacks are identical to the original host's, but they never
+        // wrapped this entry (it is seed-wrapped), so decryption MUST fail.
+        let store2 = Store::open(&dir).unwrap();
+        assert!(
+            store2.default_signer().is_err(),
+            "a different machine_seed (same machine-id/hostname) must NOT decrypt the keystore"
+        );
+        cleanup(dir);
+    }
+
+    // AUD-25: a machine_seed that is a symlink (which could redirect the read
+    // to attacker-controlled bytes) is refused rather than trusted as key
+    // material.
+    #[cfg(unix)]
+    #[test]
+    fn planted_symlink_seed_is_refused() {
+        let (_store, dir) = make_store(); // creates a real seed
+        let seed_path = dir.parent().unwrap().join("machine_seed");
+        let _ = fs::remove_file(&seed_path);
+        // Replace the seed with a symlink to some attacker file.
+        let attacker = dir.parent().unwrap().join("attacker_bytes");
+        fs::write(&attacker, hex_encode(&[0x11u8; 32])).unwrap();
+        std::os::unix::fs::symlink(&attacker, &seed_path).unwrap();
+        // Opening must refuse the symlinked seed (fail closed), not follow it.
+        assert!(
+            Store::open(&dir).and_then(|s| s.default_signer()).is_err(),
+            "a symlinked machine_seed must be refused"
+        );
+        cleanup(dir);
     }
 
     #[test]
@@ -1925,6 +2112,7 @@ mod tests {
         let real = temp_dir_path();
         fs::create_dir_all(&real).unwrap();
         let link = temp_dir_path();
+        fs::create_dir_all(link.parent().unwrap()).unwrap();
         std::os::unix::fs::symlink(&real, &link).unwrap();
 
         // Mint a default key via the SYMLINK path.
@@ -1960,6 +2148,7 @@ mod tests {
         let real = temp_dir_path();
         fs::create_dir_all(&real).unwrap();
         let link = temp_dir_path();
+        fs::create_dir_all(link.parent().unwrap()).unwrap();
         std::os::unix::fs::symlink(&real, &link).unwrap();
 
         // Simulate a pre-fix keystore: encrypt a key under the machine key
@@ -2014,15 +2203,13 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let canonical = fs::canonicalize(&dir).unwrap();
 
-        // Only meaningful where a hardware-stable primary exists; on
-        // machines without machine-id/serial the primary IS the v1 key
-        // and there is nothing to migrate.
-        let Some(primary) = stable_hardware_key(&canonical) else {
-            cleanup(dir);
-            return;
-        };
+        // AUD-19: the primary is now the SECRET seed-derived key. A legacy
+        // entry wrapped under the old guessable v1 key must migrate to it.
+        // Migration always applies now (there is always a seed primary),
+        // regardless of whether a hardware-stable id exists.
+        let primary = derive_seed_primary_key(&canonical).unwrap();
         let v1_key = derive_machine_key(&canonical).unwrap();
-        assert_ne!(primary, v1_key, "stable and v1 derivations must differ");
+        assert_ne!(primary, v1_key, "seed-primary and v1 derivations must differ");
 
         // Simulate the pre-fix keystore: entry wrapped under the v1 key.
         let key_id = new_key_id();
