@@ -2,6 +2,7 @@ package rekor
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/treeship/hub/internal/db"
 )
@@ -75,14 +77,31 @@ func Anchor(database *sql.DB, artifactID, digest, envelopeJSON, shipPubKeyHex st
 		return nil
 	}
 
-	resp, err := http.Post(rekorURL, "application/json", bytes.NewReader(bodyBytes))
+	// AUD-23: the default http.Post has NO timeout. A slow or hung
+	// rekor.sigstore.dev (outage, or an on-path attacker holding the socket)
+	// blocked artifacts.Push indefinitely, each blocked call pinning a
+	// Throttle(100) slot -> full-hub DoS during a Rekor outage. Bound the whole
+	// round-trip with a context + client timeout, and LimitReader the response
+	// so a hostile server cannot stream unbounded data into memory. (Moving
+	// anchoring fully off the request path into an async worker is the deeper
+	// fix, tracked as a follow-up.)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, rekorURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		log.Printf("rekor: build request failed: %v", err)
+		return nil
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		log.Printf("rekor: POST failed: %v", err)
 		return nil
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		log.Printf("rekor: failed to read response: %v", err)
 		return nil

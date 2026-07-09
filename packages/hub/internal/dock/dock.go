@@ -162,6 +162,11 @@ type authorizeRequest struct {
 
 // Authorize handles POST /v1/dock/authorize
 func (h *Handlers) Authorize(w http.ResponseWriter, r *http.Request) {
+	// AUD-30: cap the body before decoding. Every authenticated endpoint wraps
+	// the body in MaxBytesReader; this UNauthenticated dock-finalize did not, so
+	// a huge JSON string value buffered straight into memory (OOM, no auth
+	// required). 64 KiB is ample for the device-code + two 32-byte pubkeys.
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	var req authorizeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid JSON body", http.StatusBadRequest)

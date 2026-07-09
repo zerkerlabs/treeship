@@ -106,8 +106,23 @@ func main() {
 		port = "8080"
 	}
 
+	// AUD-20: an explicit server with timeouts. `http.ListenAndServe` sets
+	// none, so a handful of connections that dribble request headers a byte at
+	// a time (Slowloris) each held a Throttle(100) slot forever and froze the
+	// service. ReadHeaderTimeout is the direct fix; the others bound slow
+	// bodies, slow responses, and idle keep-alives. (Per-IP rate limiting to
+	// complement the global Throttle is a follow-up — it needs the httprate
+	// module.)
+	srv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           r,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 	log.Printf("treeship hub listening on :%s", port)
-	if err := http.ListenAndServe(":"+port, r); err != nil {
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
 }

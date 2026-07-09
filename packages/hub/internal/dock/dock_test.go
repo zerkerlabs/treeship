@@ -260,3 +260,27 @@ func toStrings(in []interface{}) []string {
 	}
 	return out
 }
+
+// AUD-30: /dock/authorize is unauthenticated and used to decode r.Body with no
+// size cap, so a huge JSON value could OOM the hub. The MaxBytesReader must
+// reject an oversized body instead of buffering it.
+func TestAuthorizeRejectsOversizedBody(t *testing.T) {
+	h := newTestHandlers(t)
+	// A JSON body well over the 64 KiB cap.
+	huge := `{"device_code":"` + strings.Repeat("A", 200*1024) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/dock/authorize", bytes.NewReader([]byte(huge)))
+	rec := httptest.NewRecorder()
+	h.Authorize(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("oversized body must be rejected with 400, got %d", rec.Code)
+	}
+	// Fail-before-fix: with the MaxBytesReader cap the body is rejected at
+	// DECODE ("invalid JSON body"). Without the cap the giant value decodes
+	// fine and only fails later validation ("missing or invalid device_code")
+	// — asserting the decode-path message proves the cap actually fired.
+	var body map[string]string
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if body["error"] != "invalid JSON body" {
+		t.Fatalf("expected rejection at decode (cap fired), got error=%q", body["error"])
+	}
+}
