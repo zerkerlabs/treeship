@@ -32,7 +32,12 @@ if ! command -v treeship >/dev/null 2>&1; then
   exit 0
 fi
 
-if [ ! -d "./.treeship" ]; then
+# Locate the project. Honor TREESHIP_PROJECT_ROOT when it points at a real
+# .treeship dir (matches the kimi plugin, and lets the hook work when invoked
+# from a different cwd), otherwise require a .treeship in the cwd or $HOME.
+if [ -n "${TREESHIP_PROJECT_ROOT:-}" ] && [ -d "${TREESHIP_PROJECT_ROOT}/.treeship" ]; then
+  cd "${TREESHIP_PROJECT_ROOT}"
+elif [ ! -d "./.treeship" ] && [ ! -d "${HOME}/.treeship" ]; then
   exit 0
 fi
 
@@ -114,6 +119,20 @@ emit_called_tool() {
     >/dev/null 2>&1 || true
 }
 
+# AUD-26: redact secret-bearing tokens from a command string before it is
+# recorded in the session timeline, which can be PUBLISHED to a no-auth URL via
+# `session report`. Removes the values of env-assignment secrets (FOO_KEY=,
+# TOKEN=, ...), secret CLI flags (--token=, --password, --api-key=), and HTTP
+# bearer tokens, keeping the rest of the command readable. Best-effort and
+# pattern-based, NOT a guarantee — real secrets belong in env vars, not inline.
+# Portable POSIX `sed -E` only (no GNU-only \b or case-insensitive flag).
+redact_secrets() {
+  printf '%s' "$1" | sed -E \
+    -e 's/([A-Z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|PASSWD|PWD|CREDENTIAL|AUTH|APIKEY)[A-Z0-9_]*=)[^[:space:]]*/\1[REDACTED]/g' \
+    -e 's/(--?(token|secret|password|passwd|api[-_]?key|apikey|auth|bearer)[=[:space:]])[^[:space:]]*/\1[REDACTED]/g' \
+    -e 's/([Bb]earer[[:space:]]+)[A-Za-z0-9._~+/=-]+/\1[REDACTED]/g'
+}
+
 # ----------------------------------------------------------------------------
 # Dispatch on tool name.
 # ----------------------------------------------------------------------------
@@ -156,9 +175,9 @@ case "$TOOL_NAME" in
     ;;
   Bash)
     CMD=$(extract tool_input.command)
-    # Trim long commands to a sensible process_name. The full command is
-    # available in the meta if a downstream consumer wants it.
-    PROC_NAME=$(printf '%s' "${CMD:-bash}" | cut -c1-120)
+    # Redact secrets BEFORE truncating (AUD-26), then trim to a sensible
+    # process_name. This string can end up in a published, no-auth receipt.
+    PROC_NAME=$(redact_secrets "${CMD:-bash}" | cut -c1-120)
     # PostToolUse fires AFTER the command exits. The exit code is in the
     # tool_response payload (Claude Code uses tool_response.exit_code OR
     # the tool_response.is_error boolean depending on Bash variant).

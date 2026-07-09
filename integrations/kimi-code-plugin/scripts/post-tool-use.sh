@@ -68,6 +68,19 @@ emit_called_tool() {
     >/dev/null 2>&1 || true
 }
 
+# AUD-26: redact secret-bearing tokens from a command string before it is
+# recorded in the session timeline, which can be PUBLISHED to a no-auth URL via
+# `session report`. Removes env-assignment secrets (FOO_KEY=, TOKEN=, ...),
+# secret CLI flags (--token=, --password, --api-key=), and HTTP bearer tokens,
+# keeping the rest readable. Best-effort, pattern-based — real secrets belong in
+# env vars, not inline. Portable POSIX `sed -E` only.
+redact_secrets() {
+  printf '%s' "$1" | sed -E \
+    -e 's/([A-Z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|PASSWD|PWD|CREDENTIAL|AUTH|APIKEY)[A-Z0-9_]*=)[^[:space:]]*/\1[REDACTED]/g' \
+    -e 's/(--?(token|secret|password|passwd|api[-_]?key|apikey|auth|bearer)[=[:space:]])[^[:space:]]*/\1[REDACTED]/g' \
+    -e 's/([Bb]earer[[:space:]]+)[A-Za-z0-9._~+/=-]+/\1[REDACTED]/g'
+}
+
 TOOL_LOWER=$(printf '%s' "$TOOL_NAME" | tr 'A-Z' 'a-z')
 
 case "$TOOL_LOWER" in
@@ -109,7 +122,9 @@ case "$TOOL_LOWER" in
     ;;
   bash|exec|shell|run|run_command|terminal)
     CMD=$(pick params.command params.cmd params.shell tool_input.command input.command)
-    PROC_NAME=$(printf '%s' "${CMD:-bash}" | cut -c1-120)
+    # Redact secrets BEFORE truncating (AUD-26): this string can be published
+    # to a no-auth receipt URL.
+    PROC_NAME=$(redact_secrets "${CMD:-bash}" | cut -c1-120)
     EXIT_CODE=$(pick params.exit_code result.exit_code tool_response.exit_code exit_code)
     if [ -z "$EXIT_CODE" ]; then
       IS_ERROR=$(pick params.is_error result.is_error tool_response.is_error error)

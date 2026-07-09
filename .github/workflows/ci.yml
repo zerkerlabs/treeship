@@ -69,6 +69,14 @@ jobs:
       - name: Trust-fabric acceptance suite
         run: bash tests/acceptance/trust-fabric.sh
 
+      # Plugin hook parity: runs each plugin's PostToolUse/PreToolUse hooks
+      # against fixtures with a mock treeship and diffs the recorded events.
+      # Gates the AUD-26 secret-redaction fixtures (and the per-plugin event
+      # mapping) so a change to a hook script that leaks or drops events fails
+      # on push. Self-contained: mock binary, no cargo build needed.
+      - name: Plugin hook parity suite
+        run: sh integrations/tests/parity.sh
+
   hub:
     runs-on: ubuntu-latest
     steps:
