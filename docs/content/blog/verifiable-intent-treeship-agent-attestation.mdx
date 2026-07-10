@@ -6,6 +6,8 @@ tags: ["verifiable-intent", "commerce", "mastercard", "zk"]
 readTime: "6 min read"
 ---
 
+> **Update (2026-07):** The signed attestation, mandate binding, and scope cross-check described here ship today. Any reference to zero-knowledge proofs of policy or spend-limit compliance is the experimental ZK layer, which is excluded from release binaries and being rebuilt statement-first (the selective-disclosure presentation surface is designed, not yet shipped). See the [ZK verification spec](https://github.com/treeship/treeship/blob/main/docs/specs/zk-verification.md).
+
 A user tells an agent to buy something. The agent has a wallet, API keys, and a mandate. It makes the purchase. The transaction settles.
 
 Now someone asks: how do you know the agent was authorized? How do you know it followed the rules? How do you know the amount was within the approved limit?

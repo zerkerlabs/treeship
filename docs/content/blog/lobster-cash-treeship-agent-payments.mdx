@@ -6,6 +6,8 @@ tags: ["integrations", "commerce"]
 readTime: "5 min read"
 ---
 
+> **Update (2026-07):** The signed-receipt verification described here ships and works today. Any mention of an automatic zero-knowledge spend-limit proof refers to the experimental ZK layer, which is excluded from release binaries and being rebuilt statement-first; see the [ZK verification spec](https://github.com/treeship/treeship/blob/main/docs/specs/zk-verification.md). Spend-limit conformance is currently proven by the signed approval, not by a ZK proof.
+
 [Lobster.cash](https://www.lobster.cash/) (by Crossmint) gives agents a payment layer: wallet provisioning, transaction signing, settlement. Treeship adds the verification layer: every transaction gets a signed receipt.
 
 Together, they solve both halves of the agent payment problem. Lobster.cash answers "how does the agent pay?" Treeship answers "can anyone prove the agent was authorized to pay?"

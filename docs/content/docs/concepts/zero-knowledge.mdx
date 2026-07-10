@@ -8,30 +8,35 @@ import { Callout } from 'fumadocs-ui/components/callout';
 Treeship stacks four ZK-adjacent layers. Each one answers a different question, and each one has different performance characteristics. You pick the layers you need; Ed25519 signatures are always on.
 
 <Callout type="warn">
-**Current status (v0.17.0, re-audited 2026-07-06).** Unchanged since this
-callout was first written at v0.10.4: only the first two layers ship enabled
-by default, and no ZK development has occurred since — deliberately. The ZK
-layers are maintained but not advanced; demand pulls them forward, not
-roadmap pressure. Layers 3 and 4 remain behind the `--features zk` build
-flag with additional runtime requirements:
+**Current status (2026-07, ZK layer under rebuild).** Only the first two
+layers (Ed25519 signatures and the Merkle audit log) ship enabled by default,
+and they are the entire trust story of every release binary. The ZK layers 3
+and 4 live behind the `--features zk` build flag, are excluded from release
+binaries, and are being rebuilt statement-first. A July 2026 internal audit
+applied cryptographer-level scrutiny to this layer and it did not pass; the
+findings and the rebuild are in
+[the ZK verification spec](https://github.com/treeship/treeship/blob/main/docs/specs/zk-verification.md).
 
 - **Layer 1 (Ed25519 signatures):** stable, always on.
 - **Layer 2 (Merkle audit log):** stable, always on.
-- **Layer 3 (Circom):** wired but uses an external toolchain. `treeship
-  prove` and `treeship verify-proof` shell out to the `circom`, `node`, and
-  `snarkjs` binaries -- they must be installed on PATH. A pure-Rust
-  `ark-circom` proving path is scaffolded in `packages/zk-circom/src/native.rs`
-  but the dependencies are currently commented out in
-  `packages/zk-circom/Cargo.toml` pending ark-crate version alignment.
-- **Layer 4 (RISC Zero):** local zkVM proving via `treeship prove-chain` is
-  wired and runs end-to-end with `--features zk`. Bonsai hosted proving is
-  roadmap only -- setting `BONSAI_API_KEY` today logs "Bonsai integration is
-  coming in v0.6.0" and falls back to the local prover.
-- **TLSNotary:** not implemented. Roadmap only.
+- **Layer 3 (Circom/Groth16):** **quarantined.** The path generated proving
+  keys locally with no real trusted-setup ceremony, which makes it forgeable
+  by construction, and its policy constraint was unsatisfiable. `treeship
+  prove` / `verify-proof` fail closed with a pointer to the rebuild. The
+  `.circom` sources are retained as design references; a sound path returns
+  only under a real ceremony or a transparent proof system.
+- **Layer 4 (RISC Zero zkVM):** the transparent path (STARK-based, no trusted
+  setup) that re-verifies signatures and chain linkage inside the guest. This
+  is the primary non-interactive path in the rebuild; it is being hardened
+  (in-guest artifact-id re-derivation, payload-extracted linkage, nonce
+  binding, abort-on-violation) before it is unhidden.
+- **TLSNotary:** not implemented. A designed direction for external-transcript
+  capture, not a current capability.
 
-Browser-side proof verification at `treeship.dev/verify` does use the pure-Rust
-`ark-groth16` pairing math compiled to WASM with verification keys embedded at
-compile time -- that part of the trust story is real today.
+Browser ZK verification is part of the rebuild target, not a current shipping
+capability: the published `@treeship/core-wasm` build does not enable the ZK
+feature. The always-on browser verification of signatures and Merkle proofs at
+`treeship.dev/verify` is real today; browser verification of ZK proofs is not.
 </Callout>
 
 ## The four layers
@@ -52,21 +57,24 @@ Every artifact hash is appended to a local Merkle tree. The tree is append-only 
 
 **What it does not prove:** anything about what the artifact contains or whether it complied with policy.
 
-### Layer 3: Circom (seconds, per-artifact)
+### Layer 3: Circom/Groth16 (quarantined, under rebuild)
 
-A Circom circuit takes an artifact's content and a policy, and produces a zero-knowledge proof that the artifact satisfies the policy without revealing the artifact's content.
+The intended shape of this layer is a circuit that proves an action conforms
+to a policy without revealing the action or the policy set. The implementation
+shipped behind `--features zk` did not achieve that: it generated proving keys
+with no real trusted-setup ceremony (forgeable by construction), left the
+artifact binding unconstrained, and used a placeholder hash that made the
+policy constraint unsatisfiable.
 
-**What it proves:** this artifact satisfies this policy. The verifier learns the policy was met but does not learn the artifact's contents.
-
-**What it does not prove:** anything about the sequence of artifacts or the overall session integrity.
-
-**Performance:** proof generation typically takes 1-5 seconds depending on circuit complexity and on how fast the local `snarkjs` shell-out completes. CLI verification (also via `snarkjs`) is roughly in the same range; browser-side Groth16 pairing verification via the embedded `ark-groth16` WASM is under 100ms.
-
-**Requirements today:** the CLI must be built with `--features zk`, and the
-`circom`, `node`, and `snarkjs` binaries must be installed on PATH. If they
-are not, `treeship prove` and `treeship verify-proof` will fail at the
-shell-out step. Run `treeship zk-setup` to see what is detected on your
-system.
+The path is therefore **quarantined**. `treeship prove` and `verify-proof`
+fail closed with a pointer to the rebuild rather than produce a proof that
+looks valid but establishes almost nothing. The rebuild (see
+[the ZK verification spec](https://github.com/treeship/treeship/blob/main/docs/specs/zk-verification.md))
+binds the committed value inside the signed artifact so a proof is meaningless
+unless the classical signature verifies, states each proof as a formal
+statement the verifier's own policy pins, and reaches for either a real
+multi-party ceremony or a transparent proof system before this layer returns
+to a release path.
 
 ### Layer 4: RISC Zero (minutes, per-session, background)
 
@@ -171,8 +179,8 @@ TLSNotary is scoped to commerce workflows and is roadmap only. Most agent attest
 |---|---|---|
 | Ed25519 signatures | Stable, always on | Since v0.1.0 |
 | Merkle audit log | Stable, always on | Since v0.2.0 |
-| Circom proofs | Wired, external toolchain required | `--features zk` build, plus `circom` + `node` + `snarkjs` on PATH. Pure-Rust `ark-circom` proving path is scaffolded but the dependencies are commented out in `packages/zk-circom/Cargo.toml`. |
-| RISC Zero chain proofs (local) | Wired | `--features zk` build. Local CPU proving via `risc0-zkvm::default_prover()`. Several minutes per chain. |
+| Circom/Groth16 proofs | Quarantined | Forgeable as implemented (no real trusted setup) and unsatisfiable policy constraint. `prove` / `verify-proof` fail closed; `.circom` sources kept as design references. Being rebuilt statement-first. |
+| RISC Zero chain proofs (local) | Under rebuild | `--features zk` build, excluded from release binaries. Local CPU proving via `risc0-zkvm`. The transparent, no-trusted-setup path being hardened as the primary non-interactive proof path. |
 | RISC Zero Bonsai (hosted) | Roadmap | `BONSAI_API_KEY` is detected but unused; logs "coming in v0.6.0" and falls back to the local prover. |
 | TLSNotary | Roadmap | Not implemented in this repo. |
 
@@ -193,28 +201,23 @@ Every ZK layer in Treeship is designed to work locally without contacting a Tree
 **Fully local, no external trust:**
 - **Ed25519 signatures** -- your key, your machine.
 - **Merkle proofs** -- your key, your machine, self-contained proof file.
-- **Circom proving (today)** -- runs on your CPU via a local `snarkjs` + `node`
-  + `circom` shell-out. The witness, proof, and verification keys never leave
-  your machine, but the toolchain dependency is real and is your responsibility
-  to install. A pure-Rust `ark-circom` path is scaffolded in
-  `packages/zk-circom/src/native.rs`; once the ark-crate version alignment is
-  resolved (`# native = [...]` in `packages/zk-circom/Cargo.toml`) the Node.js
-  dependency goes away.
-- **Circom verification in the CLI** -- shells out to local `snarkjs`. Same
-  Node.js dependency as proving.
-- **Circom verification in the browser (`treeship.dev/verify`)** -- pure Rust
-  via `ark-groth16` compiled to WASM, with verification keys embedded at
-  compile time in `packages/core-wasm/src/zk.rs`. No network call. Hub cannot
-  forge a passing result.
+- **Circom/Groth16 (quarantined)** -- the previous path shelled out to local
+  `snarkjs` and generated proving keys locally with no real trusted-setup
+  ceremony, which makes it forgeable by construction. It is quarantined and
+  fails closed. The rebuild binds the proven value inside the signed artifact
+  and reaches for a real ceremony or a transparent system before this layer
+  returns.
 - **RISC Zero chain proving and verification** -- local zkVM via the
-  `risc0-zkvm` crate. The image ID is embedded at compile time, so a finished
-  receipt can be verified offline.
+  `risc0-zkvm` crate, transparent (no trusted setup). The image ID is embedded
+  at compile time, so a finished receipt is verified offline. Under rebuild:
+  the guest is being hardened to re-derive artifact ids and extract chain
+  linkage from the signed bytes, and CLI verification is being wired.
 
-**One-time trust assumption (acceptable):**
-- Groth16 trusted setup uses the Hermez powers-of-tau ceremony (thousands of
-  participants). Maintainers ran the per-circuit phase 2 once and the finished
-  `*.zkey` / `*_vk.json` files are committed under
-  `packages/zk-circom/zkeys/`. Users never run the ceremony.
+**Trusted setup:**
+- The quarantined Groth16 path had **no real phase-2 ceremony** -- proving keys
+  were generated locally with zero contributions, which is exactly why it is
+  quarantined. Any future succinct path either uses a transparent system (no
+  setup) or relies on a named, real multi-party ceremony, and says which.
 
 **Roadmap (not opt-in today):**
 - **RISC Zero Bonsai** would be a hosted prover for chain proofs. Setting

@@ -6,6 +6,8 @@ tags: ["zero-knowledge", "merkle", "cryptography"]
 readTime: "8 min read"
 ---
 
+> **Update (2026-07):** This post describes the intended four-layer design. The two layers that ship in every release binary — Ed25519 signatures and the Merkle audit log — work as described. The two ZK layers (Circom/Groth16 and RISC Zero) are experimental, excluded from release binaries, and being rebuilt statement-first after an internal audit found the Groth16 path forgeable as implemented (no real trusted setup). Current status and the rebuild are in the [ZK verification spec](https://github.com/treeship/treeship/blob/main/docs/specs/zk-verification.md).
+
 Signatures prove authenticity. Merkle proofs prove timing. Circom proves policy. RISC Zero proves the entire chain. Here's how they fit together, and why no single layer is enough.
 
 ## Why four layers
