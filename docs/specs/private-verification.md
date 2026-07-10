@@ -1,10 +1,39 @@
-# Zero-knowledge verification, rebuilt statement-first
+# Private verification: selective disclosure and zero-knowledge proofs
 
-**Status:** draft, not implemented. Supersedes the experimental `zk-circom` Groth16 path.
+**Status:** draft, partly implemented (the selective-disclosure primitive ships in
+`core::disclosure`). Supersedes the experimental `zk-circom` Groth16 path.
 **Pairs with:** [transparency-log](./transparency-log.md), [registry-topology](./registry-topology.md), [protocol-integration](./protocol-integration.md)
 **Last updated:** 2026-07-10
 
 ## Why this document exists
+
+This spec covers how an agent proves properties of its credentials and history to a
+counterparty **while revealing as little as possible**. There are two mechanisms, and
+they are deliberately not the same thing:
+
+- **Selective disclosure (not zero-knowledge).** Reveal *this* field, hide the rest.
+  Plain hashing plus the existing Ed25519 signature (the SD-JWT construction, ported to
+  DSSE): the signed payload commits to salted per-claim digests, the holder reveals the
+  claims it chooses, the verifier re-hashes and checks membership. The revealed field is
+  shown in the clear; only the *other* fields are hidden. Cheap, standard, verifies
+  anywhere including the browser. Shipped in `core::disclosure`.
+- **Zero-knowledge proofs.** Prove a *property* of a value while revealing *nothing*
+  about the value, or compress a large verification into a small proof. This is the only
+  part that uses ZK tech, and it is needed only for a specific set of statements (below).
+
+**When ZK is actually used** (selective disclosure cannot do these): a range or
+threshold over a hidden number ("payment <= limit", hiding both); set membership without
+revealing which member ("some capability covers this action"; "certified by some issuer
+you trust", i.e. anonymity); a computation over hidden records ("N sessions, 0
+violations", hiding the sessions); and a succinct proof that a whole chain verifies.
+Everything else — presenting a capability, showing a subset of a mandate, revealing a
+chosen field — is selective disclosure, no ZK.
+
+The two share one foundation: the salted commitments the disclosure layer puts in the
+signed payload are the *same* values a ZK proof opens. So selective disclosure is not a
+detour from ZK; it is the layer ZK builds on.
+
+### The ZK layer's history and rebuild
 
 Treeship shipped an experimental ZK layer (Circom/Groth16 circuits, a RISC Zero zkVM
 path) behind `--features zk`, hidden from help and excluded from release binaries. In
@@ -16,7 +45,7 @@ to be 1, three of four circuits left the artifact binding unconstrained, and the
 verifier checked a proof only against its own recorded public signals. None of this
 shipped in a release binary, but the docs described capabilities the code did not have.
 
-This spec is the rebuild. Its organizing principle is one sentence:
+The ZK rebuild's organizing principle is one sentence:
 
 > **Make the proven statement equal the claimed statement, or shrink the claim.**
 

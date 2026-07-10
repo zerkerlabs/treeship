@@ -26,7 +26,7 @@
 //! This layer answers "reveal this claim or not." Proving a *property* of a
 //! withheld claim without revealing it (a range, set membership without
 //! revealing which) is the zero-knowledge layer, which opens the *same*
-//! committed values; see `docs/specs/zk-verification.md`. The salt makes each
+//! committed values; see `docs/specs/private-verification.md`. The salt makes each
 //! digest unguessable, so a verifier cannot brute-force a low-entropy withheld
 //! value from its digest.
 

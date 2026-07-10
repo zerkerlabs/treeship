@@ -2,7 +2,7 @@
 //!
 //! The July 2026 ZK audit found two independent defects that make this path
 //! unfit to produce or verify a trustworthy proof (see
-//! `docs/specs/zk-verification.md`):
+//! `docs/specs/private-verification.md`):
 //!
 //!   1. **No phase-2 trusted setup.** The prover generated proving keys
 //!      locally with `snarkjs groth16 setup` and zero MPC contributions, so
@@ -35,7 +35,7 @@ pub type Result<T> = std::result::Result<T, CircomError>;
 
 const QUARANTINE: &str = "the Circom/Groth16 proof path is quarantined: it has no real \
 trusted setup (forgeable by construction) and its policy constraint is unsatisfiable. \
-It is being rebuilt statement-first; see docs/specs/zk-verification.md. The transparent \
+It is being rebuilt statement-first; see docs/specs/private-verification.md. The transparent \
 RISC Zero zkVM path is the non-interactive proof path in the rebuild.";
 
 fn quarantined<T>() -> Result<T> {

@@ -15,7 +15,7 @@ and 4 live behind the `--features zk` build flag, are excluded from release
 binaries, and are being rebuilt statement-first. A July 2026 internal audit
 applied cryptographer-level scrutiny to this layer and it did not pass; the
 findings and the rebuild are in
-[the ZK verification spec](https://github.com/treeship/treeship/blob/main/docs/specs/zk-verification.md).
+[the ZK verification spec](https://github.com/treeship/treeship/blob/main/docs/specs/private-verification.md).
 
 - **Layer 1 (Ed25519 signatures):** stable, always on.
 - **Layer 2 (Merkle audit log):** stable, always on.
@@ -69,7 +69,7 @@ policy constraint unsatisfiable.
 The path is therefore **quarantined**. `treeship prove` and `verify-proof`
 fail closed with a pointer to the rebuild rather than produce a proof that
 looks valid but establishes almost nothing. The rebuild (see
-[the ZK verification spec](https://github.com/treeship/treeship/blob/main/docs/specs/zk-verification.md))
+[the ZK verification spec](https://github.com/treeship/treeship/blob/main/docs/specs/private-verification.md))
 binds the committed value inside the signed artifact so a proof is meaningless
 unless the classical signature verifies, states each proof as a formal
 statement the verifier's own policy pins, and reaches for either a real

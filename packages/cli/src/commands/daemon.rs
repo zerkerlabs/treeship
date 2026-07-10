@@ -921,7 +921,7 @@ fn process_proof_queue(ts: &std::path::Path, ctx: &crate::ctx::Ctx) {
 // on disk to staple a ZK proof summary, which invalidates the checkpoint's own
 // signature under canonical v3 — a knowingly-broken path the v0.10.4 audit left
 // in place with a fail-closed comment. Under the statement-first ZK rebuild
-// (docs/specs/zk-verification.md) a proof binds to the artifact at signing time
+// (docs/specs/private-verification.md) a proof binds to the artifact at signing time
 // rather than being stapled onto a signed object afterward, so this path is not
 // re-added. A future proof-augmented checkpoint, if needed, is a sibling object
 // signed independently, never an in-place mutation.
