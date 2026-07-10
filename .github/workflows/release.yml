@@ -248,8 +248,14 @@ jobs:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Ensure npm >= 11.5.1
-        run: npm install -g npm@latest
+      # Pin npm rather than tracking @latest. The 0.19.0 release failed here
+      # because `npm@latest` on Node 24 shipped a build whose bundled `sigstore`
+      # module was unresolvable, so trusted-publishing provenance generation
+      # crashed with "Cannot find module 'sigstore'" and unwound the npm
+      # publish (crates.io and PyPI succeeded). 11.5.1 is the trusted-publishing
+      # floor and a known-good build; bump this pin deliberately after testing.
+      - name: Ensure npm >= 11.5.1 (pinned)
+        run: npm install -g npm@11.5.1
 
       # Pre-flight: every package we intend to publish must already exist on
       # the @treeship scope with the OIDC trusted publisher configured. npm
