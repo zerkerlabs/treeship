@@ -323,17 +323,49 @@ work is ours to do solo — which is what makes the collaboration attractive (SR
 working system with a ready integration point and a drafted formal theory, not a
 whiteboard).
 
-### The critique as design constraints (already absorbed)
+### First principles (the critique, stated)
 
-The observations in the critique are not future work; they are rules the design already
-obeys, recorded here so nothing regresses: only possession-plus-conformance is provable
-(every statement is a predicate over a signed mandate and trace, never over intent); the
-natural-language-to-formal gap stays a human signature; a signature establishes key
-possession only (the honest boundary); capture provenance dominates proof soundness (we
-keep investing in attestation classes, countersignature, and external-transcript
-capture); the feasible ZK statement is the policy check, never model execution.
+The design follows an argument that a skeptical cryptographer (SRI CSL's assessment of a
+competitor's ZK claims) laid out. It is worth stating in full, because every constraint
+below is a consequence of it, not a preference.
+
+The intent-to-proof pipeline has five stages:
+
+    human intent -> NL utterance -> formal statement -> signed message -> proof of conformance
+
+1. **Only the last stage is cryptographically provable.** What a proof can establish is
+   that an agent *possesses a signed mandate* and its recorded actions *conform* to that
+   mandate. That is the whole provable claim. [SIEVE], [SD-JWT], and the zkVM all operate
+   here and nowhere else.
+2. **The natural-language-to-formal arrow is not provable by any proof system.** No
+   circuit proves that a formal statement faithfully captures an informally expressed
+   human intent. Claiming to prove "end to end intended behavior" across this arrow is a
+   category error, not an engineering gap. Treeship closes it with a *recorded human
+   signature* on the mandate artifact, which is evidence, not proof.
+3. **A signature establishes key possession, not meaning.** Whoever holds the key
+   *probably* meant the message; the trust root is ultimately social and physical, not
+   mathematical. This is the honest boundary already in Treeship's design: the trust root
+   is the machine, and root access breaks the guarantees.
+
+Three extensions sharpen it: **capture provenance dominates proof soundness** (a proof
+over a fabricated trace proves nothing, so the trustworthiness of the inputs — attestation
+class, countersignature, external-transcript capture — is the larger problem); **the
+feasible ZK statement is the policy check, never model execution** (proving an LLM forward
+pass in ZK is not practical, so every statement here is a predicate over a trace); and the
+**formalization gap is legally unnecessary to close** (contract law binds what you signed,
+not what you privately meant, so a signed mandate plus a tamper-evident action record is
+exactly the evidence [EU AI Act Art. 12] and [AB 316] require).
+
+These are not future work; they are rules the design already obeys, recorded so nothing
+regresses: every statement is a predicate over a signed mandate and trace; the intent gap
+stays a human signature; a signature is key possession only; capture provenance is
+invested in continuously; and no statement proves model execution.
 
 ### Cyberlogic (Shankar, Ruess): two deliverables
+
+[Cyberlogic] is SRI's logic for reasoning about attestations: principals make signed
+statements ("K says P") and trust conclusions are *derivations* over those statements.
+That is a description of Treeship's verifier, not a metaphor for it. Two deliverables:
 
 1. **Formal semantics of the trust model, and a mechanized verifier-soundness proof.**
    Write Treeship's verifier as a cyberlogic theory: statements are attestations
@@ -354,10 +386,11 @@ capture); the feasible ZK statement is the policy check, never model execution.
 
 ### SIEVE-lineage VOLE-ZK: the Track B prover in a ready socket
 
-The SIEVE program's VOLE-based systems (Wolverine, QuickSilver, Mac'n'Cheese) and its
-standardized circuit IR are the interactive, no-trusted-setup, designated-verifier prover
-for `present --zk` over the challenge transcript. Two decisions make it plug in rather
-than co-design:
+The [SIEVE] program (DARPA, co-led at SRI) produced VOLE-based ZK systems (Wolverine,
+QuickSilver, Mac'n'Cheese, Line-Point ZK) and a standardized circuit IR. These are the
+interactive, no-trusted-setup, designated-verifier prover for `present --zk` over the
+challenge transcript — the SRI connection is not a cold outreach but the team that built
+this class of system. Two decisions make it plug in rather than co-design:
 
 - Build the `present --zk` / `verify-presentation --zk` surface **proof-system-agnostic**,
   implemented with the Track A zkVM first: same predicate in, same bound-to-`zk_commitment`
@@ -404,3 +437,25 @@ VOLE-ZK Track B integration, and the finalized predicate language.
    and the interactive `present --zk` predicate proofs over the challenge transcript;
    the mechanized verifier-soundness proof in cyberlogic; the finalized predicate
    language.
+
+## References
+
+External work this spec builds on or maps to. Cited inline as `[Name]`.
+
+- **[Cyberlogic]** — Shankar & Ruess, *Cyberlogic*, SRI CSL. A logic for reasoning about
+  attestations and trust as derivation over signed statements.
+  https://www.csl.sri.com/people/shankar/hcss03.pdf
+- **[SIEVE]** — DARPA SIEVE program (Securing Information for Encrypted Verification and
+  Evaluation), co-led at SRI. Produced VOLE-based zero-knowledge systems (Wolverine,
+  QuickSilver, Mac'n'Cheese, Line-Point ZK) — interactive, designated-verifier, no
+  trusted setup — and a standardized circuit intermediate representation (the SIEVE IR).
+- **[SD-JWT]** — IETF, *Selective Disclosure for JWTs (SD-JWT)*,
+  draft-ietf-oauth-selective-disclosure-jwt. The salted-per-claim-digest construction the
+  selective-disclosure tier ports onto Treeship's DSSE payloads.
+- **[RISC Zero]** — the RISC Zero zkVM: STARK-based, transparent (no trusted setup),
+  general-purpose proving over a RISC-V guest. Track A's non-interactive prover.
+- **[DSSE]** — Dead Simple Signing Envelope (in-toto / Sigstore). Treeship's envelope
+  format; the signature the selective-disclosure digests live inside.
+- **[EU AI Act Art. 12]**, **[AB 316]** — the regulatory regimes that require a signed
+  mandate plus a tamper-evident action record (and do *not* require proving intent),
+  which is why the formalization gap is legally unnecessary to close.
