@@ -281,10 +281,37 @@ public side of the predicate (the policy, the limit source, the trust set) exact
 the Statement specs; the presenter never gets to choose it. A predicate the verifier did
 not ask for is not a proof of anything the verifier cares about.
 
-The honest first step is the no-ZK capability-disclosure row: commit the card's
-capability set as a Merkle root inside the signed card, and let `present` reveal one
-capability plus its path while hiding the rest. It demonstrates selective disclosure end
-to end, ships without any ceremony, and is the base the predicate proofs build on.
+The honest first step is the no-ZK capability-disclosure row: the signed card commits to
+salted digests of its capabilities, and `present` reveals a chosen subset while hiding the
+rest. It demonstrates selective disclosure end to end, ships without any ceremony, and is
+the base the predicate proofs build on. (Implemented in `core::disclosure` and
+`core::capability::{commit_tools, disclosed_tools}`.)
+
+### Card model and storage (decided)
+
+Selective disclosure follows the SD-JWT issuance/presentation split, applied to the
+capability card:
+
+- **The signed card commits to digests, not raw tools.** `capabilities.tools` in the
+  signed payload is replaced by `capabilities.tools_sd` (the sorted digest list from
+  `commit_tools`). A plain Ed25519 signature commits to the whole payload, so the raw
+  tools must be *out* of the signed bytes for hiding to be possible.
+- **Disclosures live in a sidecar, not the signed receipt.** The `[salt, tool, true]`
+  openings are stored beside the card in the card store (`.treeship/agents/<card>.disclosures.json`).
+  They are holder state, not secrets (they cannot forge, only open); a presentation
+  explicitly chooses which to attach. The signed artifact never contains them.
+- **Full by default, selective opt-in.** Capabilities are meant to be discoverable, so
+  `resolve`, `verify-capability`, and a plain `present` attach *all* disclosures — the
+  full tool set is visible, identical to today. `present --disclose <subset>` attaches
+  only the chosen openings, for the direct agent-to-counterparty case where an agent
+  proves it has one capability without revealing the others. `present`/`verify-presentation`
+  are "no registry in the loop", so selective presentation needs no hub involvement.
+
+Build sequencing consequence: the `present` / `verify-presentation` path is local and
+fully self-contained, so it lands first. The discoverable path (the hub serving
+disclosures alongside a resolvable card, `resolve --hub`, and the browser WASM
+`verify_capability` reading them) touches the Go hub and the WASM bundle and is a
+deliberate follow-on with integration testing, not part of the first `present` slice.
 
 ## What the WASM verifier must end up doing
 
