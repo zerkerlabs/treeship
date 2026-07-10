@@ -1852,6 +1852,15 @@ struct PresentCliArgs {
     /// proves live key control, not just the record). Requires --own-key.
     #[arg(long, value_name = "NONCE")]
     challenge: Option<String>,
+
+    /// Reveal only these capabilities, hiding the rest (selective disclosure).
+    /// Comma-separated tool names that must appear in the agent's card. The
+    /// presentation carries a re-signed, digests-only card plus openings for
+    /// only the named capabilities; the others stay opaque. A disclosed
+    /// presentation is not transparency-anchored (an ephemeral, privacy-
+    /// preserving re-sign), so it omits the Merkle staple.
+    #[arg(long, value_name = "CAPS", value_delimiter = ',')]
+    disclose: Vec<String>,
 }
 
 #[derive(clap::Args)]
@@ -2562,6 +2571,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             &a.agent,
             a.out.as_deref(),
             a.challenge.as_deref(),
+            &a.disclose,
             cli.config.as_deref(),
             printer,
         ),
