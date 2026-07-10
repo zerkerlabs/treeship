@@ -288,21 +288,64 @@ proves a statement in this spec under a named, real setup or a transparent syste
 
 ## The SRI collaboration surface
 
-This spec is also the technical basis for a proposed collaboration with SRI CSL,
-combining two of their bodies of work with Treeship's deployed capture layer:
+This spec is also the technical basis for a proposed collaboration with SRI CSL. The two
+bodies of work Stéphane identified each have a concrete role, and much of the preparatory
+work is ours to do solo — which is what makes the collaboration attractive (SRI joins a
+working system with a ready integration point and a drafted formal theory, not a
+whiteboard).
 
-- **Cyberlogic (Shankar, Ruess)** as the formal semantics of the mandate and
-  attestation layer. Treeship statements already behave as cyberlogic utterances
-  ("principal K says P"); the verifier's trust policy as trust axioms; chain
-  verification as proof checking. Formalizing that correspondence gives the mandate
-  layer real semantics without pretending to close the intent gap.
-- **SIEVE-lineage VOLE-ZK** as the Track B disclosure mechanism, in the
-  designated-verifier model that matches Treeship's present/verify-presentation flow.
+### The critique as design constraints (already absorbed)
 
-Cyberlogic supplies the statement language, Treeship supplies the trustworthy inputs
-and the deployed verifier, and SIEVE-class ZK supplies selective disclosure over the
-conformance derivation. Track A (the zkVM/browser path) is buildable now without the
-collaboration; Track B is the joint research track.
+The observations in the critique are not future work; they are rules the design already
+obeys, recorded here so nothing regresses: only possession-plus-conformance is provable
+(every statement is a predicate over a signed mandate and trace, never over intent); the
+natural-language-to-formal gap stays a human signature; a signature establishes key
+possession only (the honest boundary); capture provenance dominates proof soundness (we
+keep investing in attestation classes, countersignature, and external-transcript
+capture); the feasible ZK statement is the policy check, never model execution.
+
+### Cyberlogic (Shankar, Ruess): two deliverables
+
+1. **Formal semantics of the trust model, and a mechanized verifier-soundness proof.**
+   Write Treeship's verifier as a cyberlogic theory: statements are attestations
+   ("principal K says P"), pinned trust roots are axioms, and the chain walk, nonce
+   binding, and revocation authority are inference rules. The payoff is specific: the
+   failure class both the 0.19 audit and the ZK audit found by hand — a surface reporting
+   `verified` from attacker-controlled input without a backing signature — becomes a
+   *theorem the verifier is mechanically proven never to violate*. This is the formal
+   version of the red-teaming already done manually, and it is CSL's home discipline.
+2. **The predicate language for `present --zk`.** The disclosure-menu predicates
+   ("action A conforms to policy P", "spend <= limit", "certified by some trusted
+   issuer") are expressed as cyberlogic formulas, so the same formula that has precise
+   meaning is the one the ZK proof establishes. Cyberlogic becomes the shared interface
+   between the mandate layer and the proof layer.
+
+   *Solo now:* draft Treeship's trust model as a cyberlogic-style theory ourselves, as
+   the artifact that seeds the collaboration and directly produces the predicate language.
+
+### SIEVE-lineage VOLE-ZK: the Track B prover in a ready socket
+
+The SIEVE program's VOLE-based systems (Wolverine, QuickSilver, Mac'n'Cheese) and its
+standardized circuit IR are the interactive, no-trusted-setup, designated-verifier prover
+for `present --zk` over the challenge transcript. Two decisions make it plug in rather
+than co-design:
+
+- Build the `present --zk` / `verify-presentation --zk` surface **proof-system-agnostic**,
+  implemented with the Track A zkVM first: same predicate in, same bound-to-`zk_commitment`
+  interface out. The SIEVE prover later implements an interface that already exists and is
+  already tested.
+- Express the Statement specs in a form that targets **both** the SIEVE IR and the
+  cyberlogic formulas, so the specs are the shared contract: cyberlogic gives them
+  meaning, the SIEVE IR gives them a prover, Treeship gives them bound inputs.
+
+### The split
+
+Cyberlogic supplies the statement language and the soundness semantics; Treeship supplies
+the trustworthy inputs, the deployed verifier, and the proof-system-agnostic socket;
+SIEVE-class ZK supplies the interactive disclosure prover. What is solo-buildable now: the
+Merkle disclosure MVP, `zk_commitment`, Track A, the agnostic `present --zk` interface,
+and the first-draft cyberlogic theory. What is joint: the mechanized soundness proof, the
+VOLE-ZK Track B integration, and the finalized predicate language.
 
 ## Build order
 
@@ -321,8 +364,14 @@ collaboration; Track B is the joint research track.
 5. Track A: harden the zkVM guest to Statement 3 (in-guest id re-derivation, payload
    linkage, nonce binding, abort-on-violation), wire `verify` into the CLI with a
    compile-time image-id pin, switch to accelerated crates, and add the WASM verify path.
-   Then the first transferable predicate proof (spend-range or policy-membership)
-   attached to a presentation.
-6. Track B: open the SIEVE designated-verifier collaboration against Statements 1-2 and
-   the interactive `present --zk` predicate proofs over the challenge transcript, with
-   cyberlogic as the predicate language.
+   Build the `present --zk` / `verify-presentation --zk` surface proof-system-agnostic,
+   implemented with the zkVM first, then the first transferable predicate proof
+   (spend-range or policy-membership) attached to a presentation.
+5b. Solo research-prep (parallel, no code dependency): draft Treeship's trust model as a
+   cyberlogic-style theory, and express the Statement specs in a form that targets both
+   the SIEVE IR and cyberlogic formulas. These seed the collaboration and produce the
+   predicate language.
+6. Track B (joint with SRI): the SIEVE designated-verifier prover against Statements 1-2
+   and the interactive `present --zk` predicate proofs over the challenge transcript;
+   the mechanized verifier-soundness proof in cyberlogic; the finalized predicate
+   language.
