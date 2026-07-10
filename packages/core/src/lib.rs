@@ -1,5 +1,6 @@
 pub mod attestation;
 pub mod capability;
+pub mod disclosure;
 pub mod predicates;
 pub mod statements;
 pub mod keys;
