@@ -189,6 +189,74 @@ challenge mode already has both parties online.
 This track is the natural site of a research collaboration (see below) and is not a
 solo build.
 
+## The ZK presentation: authenticated selective disclosure between agents
+
+The existing `present` / `verify-presentation` flow is authenticated *full* disclosure
+plus liveness: the verifier receives the whole capability card, the certificate chain,
+revocations, and a Merkle staple, and challenge mode proves the presenter controls the
+key live. Nothing is hidden. The ZK layer's product payoff is the strict upgrade to
+authenticated *selective and predicate* disclosure: an agent proves a property of its
+signed credentials to a counterparty **without revealing the underlying values**.
+
+This is not a new subsystem. It rides the presentation machinery, and the
+`zk_commitment` mechanism is what makes it compose: because every sensitive value is
+committed inside the signed PAE bytes, a ZK presentation is three steps the verifier
+already trusts.
+
+1. Verify the DSSE signature on the credential envelope. The commitment `C` is now
+   authentic and bound to that exact artifact (already implemented in the verifier).
+2. The presenter supplies a ZK proof that opens `C` for a stated predicate.
+3. The verifier learns only that the predicate holds, and nothing else about the value.
+
+### The predicate menu
+
+Each row is a statement an agent can present without revealing the hidden column. The
+mechanism column determines cost and sequencing; the first row needs no ZK at all and
+is the shippable first step.
+
+| Predicate presented | Hidden | Mechanism |
+|---|---|---|
+| card grants capability C | the other capabilities | Merkle path over a committed capability set (no ZK) |
+| can perform action A (A→capability mapping private) | which capability, the set | ZK set-membership |
+| payment amount <= mandate limit | the amount and the limit | ZK range proof |
+| certified by *some* issuer in the verifier's trust set | which issuer (anonymity) | ZK set-membership over the trust set |
+| >= N sessions of class X with 0 violations | the sessions themselves | ZK over the pinned `profile.v1` aggregation |
+| action A conforms to mandate policy P | A and P | ZK set-membership (Statement 1) |
+
+The history-threshold row is the elegant one: a `profile.v1` is already a deterministic
+aggregation over the log's first `tree_size` leaves at a pinned checkpoint, so proving
+the aggregate in ZK reuses the exact function the plaintext profile already recomputes,
+with the leaves as private witness.
+
+### Interactive vs non-interactive is the transferability choice
+
+- **Non-interactive (Track A).** A transferable, publicly checkable proof attached to a
+  presentation or receipt; anyone verifies it later in a browser. Use the zkVM (optional
+  Groth16 wrap). This is the "proof travels with the credential" mode.
+- **Interactive, designated-verifier (Track B).** A proof that convinces only the
+  counterparty who participated — non-transferable, which is a privacy *feature* for
+  agent-to-agent presentation (the verifier cannot re-sell the proof) and needs no
+  trusted setup. Challenge mode already performs a nonce exchange; that transcript is the
+  natural envelope for a VOLE-ZK proof. The surface is
+  `present --challenge <nonce> --zk <predicate>` and `verify-presentation --zk`.
+
+### The CLI surface
+
+    treeship present --zk <predicate> [--challenge <nonce>]
+    treeship verify-presentation --zk <predicate>
+
+`<predicate>` names a menu entry and its public parameters (e.g.
+`capability:covers(payments.charge)`, `spend:<=,mandate:<id>`, `issuer:in-trust-set`,
+`history:sessions>=10,class=countersigned,violations=0`). The verifier supplies the
+public side of the predicate (the policy, the limit source, the trust set) exactly as in
+the Statement specs; the presenter never gets to choose it. A predicate the verifier did
+not ask for is not a proof of anything the verifier cares about.
+
+The honest first step is the no-ZK capability-disclosure row: commit the card's
+capability set as a Merkle root inside the signed card, and let `present` reveal one
+capability plus its path while hiding the rest. It demonstrates selective disclosure end
+to end, ships without any ceremony, and is the base the predicate proofs build on.
+
 ## What the WASM verifier must end up doing
 
 The verifier is the constraint, so the target end-state is stated explicitly:
@@ -241,12 +309,20 @@ collaboration; Track B is the joint research track.
 1. Deletion list + docs truth pass (no new capability claimed; removes forgeable and
    false surface). Safe, immediate.
 2. `zk_commitment` at signing time: native ZK-friendly hash test-vectored against the
-   circuit hash; canonical binding + mutation regression test. Foundation for both tracks.
-3. The formal statement specs above become the acceptance criteria for tests: every
+   circuit hash; canonical binding + mutation regression test. Foundation for both tracks
+   and for the ZK presentation.
+3. Merkle-committed capability set + `present --disclose <capability>`: the no-ZK
+   selective-disclosure first step. Reveals one capability plus its path, hides the rest;
+   ships without a ceremony and demonstrates the presentation direction end to end.
+4. The formal statement specs above become the acceptance criteria for tests: every
    statement gets an adversarial test that a violating witness, a mutated public input,
    an unbound proof, and a verifier-policy mismatch are all rejected. These land before
    any command is unhidden.
-4. Track A: harden the zkVM guest to Statement 3 (in-guest id re-derivation, payload
+5. Track A: harden the zkVM guest to Statement 3 (in-guest id re-derivation, payload
    linkage, nonce binding, abort-on-violation), wire `verify` into the CLI with a
    compile-time image-id pin, switch to accelerated crates, and add the WASM verify path.
-5. Track B: open the SIEVE designated-verifier collaboration against Statements 1-2.
+   Then the first transferable predicate proof (spend-range or policy-membership)
+   attached to a presentation.
+6. Track B: open the SIEVE designated-verifier collaboration against Statements 1-2 and
+   the interactive `present --zk` predicate proofs over the challenge transcript, with
+   cyberlogic as the predicate language.
