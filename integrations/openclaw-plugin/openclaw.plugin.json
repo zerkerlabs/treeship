@@ -2,7 +2,7 @@
   "id": "treeship",
   "name": "Treeship Receipts",
   "description": "Portable, cryptographically signed receipts for every OpenClaw session. Captures every tool call at the Gateway layer — below the agent — so receipts are complete regardless of agent discipline or prompt-injection state.",
-  "version": "0.18.0",
+  "version": "0.19.0",
   "configSchema": {
     "type": "object",
     "properties": {},
