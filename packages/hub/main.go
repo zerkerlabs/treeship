@@ -18,6 +18,7 @@ import (
 	"github.com/treeship/hub/internal/merkle"
 	"github.com/treeship/hub/internal/receipts"
 	"github.com/treeship/hub/internal/ship"
+	"github.com/treeship/hub/internal/stats"
 	"github.com/treeship/hub/internal/verify"
 )
 
@@ -35,6 +36,7 @@ func main() {
 	receiptHandlers := &receipts.Handlers{DB: database}
 	shipHandlers := &ship.Handlers{DB: database}
 	agentHandlers := &agents.Handlers{DB: database}
+	statsHandlers := &stats.Handlers{DB: database}
 
 	r := chi.NewRouter()
 
@@ -97,6 +99,9 @@ func main() {
 	r.Get("/v1/agents/log", agentHandlers.Log)
 	r.Get("/v1/agents/history", agentHandlers.History)
 	r.Get("/v1/agents/match", agentHandlers.Match)
+
+	// Public adoption metrics: counts only, never identifiers. Cached 5 min.
+	r.Get("/v1/stats", statsHandlers.Stats)
 
 	// Well-known revocation list.
 	r.Get("/.well-known/treeship/revoked.json", revokedHandler)

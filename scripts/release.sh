@@ -35,100 +35,19 @@ cmd_prepare() {
   echo "================================"
   echo
 
-  # Rust crates
-  echo "Bumping Rust crates..."
-  sed -i '' "s/^version = \".*\"/version = \"${VERSION}\"/" packages/core/Cargo.toml
-  sed -i '' "s/^version = \".*\"/version = \"${VERSION}\"/" packages/cli/Cargo.toml
-  sed -i '' "s/^version = \".*\"/version = \"${VERSION}\"/" packages/core-wasm/Cargo.toml
-  sed -i '' "s/treeship-core = { version = \"[^\"]*\"/treeship-core = { version = \"${VERSION}\"/" packages/cli/Cargo.toml
-
-  echo "Bumping @treeship/sdk..."
-  npm version "$VERSION" --no-git-tag-version --allow-same-version --prefix packages/sdk-ts
-
-  echo "Bumping @treeship/mcp..."
-  npm version "$VERSION" --no-git-tag-version --allow-same-version --prefix bridges/mcp
-
-  echo "Bumping @treeship/a2a..."
-  npm version "$VERSION" --no-git-tag-version --allow-same-version --prefix bridges/a2a
-
-  if [ -f packages/verify-js/package.json ]; then
-    echo "Bumping @treeship/verify..."
-    npm version "$VERSION" --no-git-tag-version --allow-same-version --prefix packages/verify-js
-    node -e "
-      const fs = require('fs');
-      const p = JSON.parse(fs.readFileSync('packages/verify-js/package.json', 'utf8'));
-      if (p.dependencies && p.dependencies['@treeship/core-wasm']) {
-        p.dependencies['@treeship/core-wasm'] = '${VERSION}';
-        fs.writeFileSync('packages/verify-js/package.json', JSON.stringify(p, null, 2) + '\n');
-      }
-    "
+  # One source of truth for every version site: the stamper and the checker
+  # share the site list in scripts/check-release-versions.py, so a site
+  # added there is bumped AND verified by construction. The inline
+  # sed/npm/node bump steps that used to live here were a second, parallel
+  # site list that had to be maintained in lockstep with the checker --
+  # forgetting one side is what shipped the 0.9.6 core-wasm pin drift, the
+  # 0.10.2 marketplace drift, and the 0.17.0 stale plugin.json.
+  echo "Stamping every version site..."
+  if ! python3 "$(dirname "$0")/check-release-versions.py" --write "$VERSION"; then
+    echo
+    echo "Stamp failed. Fix the sites above before committing." >&2
+    exit 1
   fi
-
-  for pkgjson in packages/sdk-ts/package.json bridges/a2a/package.json bridges/mcp/package.json; do
-    if [ -f "$pkgjson" ]; then
-      node -e "
-        const fs = require('fs');
-        const p = JSON.parse(fs.readFileSync('$pkgjson', 'utf8'));
-        if (p.dependencies && p.dependencies['@treeship/core-wasm']) {
-          p.dependencies['@treeship/core-wasm'] = '${VERSION}';
-          fs.writeFileSync('$pkgjson', JSON.stringify(p, null, 2) + '\n');
-        }
-      "
-    fi
-  done
-
-  echo "Bumping treeship-sdk (Python)..."
-  sed -i '' "s/^version = \".*\"/version = \"${VERSION}\"/" packages/sdk-python/pyproject.toml
-  sed -i '' "s/__version__ = \".*\"/__version__ = \"${VERSION}\"/" packages/sdk-python/treeship_sdk/__init__.py
-
-  echo "Bumping npm wrapper..."
-  npm version "$VERSION" --no-git-tag-version --allow-same-version --prefix npm/treeship
-  for pkg in cli-darwin-arm64 cli-darwin-x64 cli-linux-x64; do
-    npm version "$VERSION" --no-git-tag-version --allow-same-version --prefix "npm/@treeship/$pkg"
-  done
-
-  node -e "
-    const fs = require('fs');
-    const p = JSON.parse(fs.readFileSync('npm/treeship/package.json', 'utf8'));
-    for (const dep of Object.keys(p.optionalDependencies || {})) {
-      p.optionalDependencies[dep] = '${VERSION}';
-    }
-    fs.writeFileSync('npm/treeship/package.json', JSON.stringify(p, null, 2) + '\n');
-  "
-
-  echo "Bumping plugin manifests (claude-code, openclaw)..."
-  # The plugins' OWN manifests, not just the marketplace entry. Missing
-  # these is what left the Claude Code plugin advertising 0.9.5 while the
-  # repo shipped 0.17.0 (found by a user with the repo checked out).
-  node -e "
-    const fs = require('fs');
-    for (const path of [
-      'integrations/claude-code-plugin/.claude-plugin/plugin.json',
-      'integrations/openclaw-plugin/package.json',
-      'integrations/openclaw-plugin/openclaw.plugin.json',
-    ]) {
-      const p = JSON.parse(fs.readFileSync(path, 'utf8'));
-      p.version = '${VERSION}';
-      fs.writeFileSync(path, JSON.stringify(p, null, 2) + '\n');
-    }
-  "
-
-  echo "Bumping .claude-plugin/marketplace.json..."
-  # Both metadata.version and plugins[name=treeship].version. The preflight
-  # in scripts/check-release-versions.py reads both sites; missing this bump
-  # is what produced the 0.10.2 plugin-marketplace drift we just fixed.
-  node -e "
-    const fs = require('fs');
-    const path = '.claude-plugin/marketplace.json';
-    const m = JSON.parse(fs.readFileSync(path, 'utf8'));
-    if (m.metadata) m.metadata.version = '${VERSION}';
-    if (Array.isArray(m.plugins)) {
-      for (const p of m.plugins) {
-        if (p && p.name === 'treeship') p.version = '${VERSION}';
-      }
-    }
-    fs.writeFileSync(path, JSON.stringify(m, null, 2) + '\n');
-  "
 
   echo "Updating Cargo.lock..."
   cargo check -p treeship-core 2>/dev/null || true
