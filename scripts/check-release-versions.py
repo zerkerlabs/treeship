@@ -11,12 +11,19 @@ Used by:
   - .github/workflows/release.yml as a preflight job blocking build/publish
 
 Usage:
-  scripts/check-release-versions.py <version>
-  scripts/check-release-versions.py 0.9.7
+  scripts/check-release-versions.py <version>          # check every site
+  scripts/check-release-versions.py --consistency      # PR mode: sites agree with each other
+  scripts/check-release-versions.py --write <version>  # stamp every site, then check
 
 Why a single script: at v0.9.6 the Python SDK and three @treeship/core-wasm
 internal pins all drifted independently. The fix is one source of truth that
 both local releases and CI consult.
+
+Why the stamper lives here too: release.sh used to carry its own inline
+sed/npm/node bump steps -- a second, parallel site list that had to be
+maintained in lockstep with this one. Forgetting one side is what shipped
+the 0.10.2 marketplace drift and the 0.17.0 stale plugin.json. With --write,
+a site added to collect_sites() is stamped AND checked by construction.
 """
 
 from __future__ import annotations
@@ -27,6 +34,7 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -38,6 +46,7 @@ class Site:
     path: str
     label: str
     found: str | None  # None means "file/key missing"
+    write: Callable[[str], None] | None = None  # stamps the target version into this site
 
 
 # ---------- parsers ----------
@@ -195,6 +204,164 @@ def py_dunder_version(rel: str) -> str | None:
     return None
 
 
+def pkg_lock_version(rel: str) -> str | None:
+    """Read a package-lock.json version.
+
+    npm keeps the top-level ``version`` and ``packages[""].version`` in sync;
+    if they disagree the lockfile was hand-edited, so return a value that can
+    never match a release target and fails the check visibly.
+    """
+    text = read_text(rel)
+    if text is None:
+        return None
+    data = json.loads(text)
+    top = data.get("version")
+    root = (data.get("packages") or {}).get("", {}).get("version")
+    if top == root:
+        return top
+    return f"{top}!={root}"
+
+
+# ---------- writers ----------
+#
+# Each writer is the inverse of a parser above: it rewrites exactly the
+# version that parser reads and nothing else. Writers raise on failure
+# instead of silently skipping: a site the stamper cannot write is a site
+# the next release ships stale (the 0.17.0 plugin.json miss).
+#
+# JSON sites are round-tripped with a 2-space indent and a trailing newline,
+# the same shape npm and the node -e snippets previously in release.sh
+# wrote, so stamping the version a file already carries is a byte-for-byte
+# no-op (asserted by the same-version test in --write's self-check).
+
+
+def _write_text(rel: str, content: str) -> None:
+    (REPO_ROOT / rel).write_text(content)
+
+
+def _rewrite_json(rel: str, mutate: Callable[[dict], None]) -> None:
+    text = read_text(rel)
+    if text is None:
+        raise FileNotFoundError(rel)
+    data = json.loads(text)
+    mutate(data)
+    _write_text(rel, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+
+
+def _set_toml_section_version(rel: str, section: str, version: str) -> None:
+    """Rewrite the first `version = "..."` line inside [section] of a TOML file."""
+    text = read_text(rel)
+    if text is None:
+        raise FileNotFoundError(rel)
+    out: list[str] = []
+    in_section = False
+    done = False
+    for line in text.splitlines(keepends=True):
+        s = line.strip()
+        if s.startswith("[") and s.endswith("]"):
+            in_section = s == f"[{section}]"
+        elif in_section and not done and re.match(r'^version\s*=\s*"[^"]+"', s):
+            line = re.sub(r'"[^"]+"', f'"{version}"', line, count=1)
+            done = True
+        out.append(line)
+    if not done:
+        raise ValueError(f"{rel}: no [{section}] version line to stamp")
+    _write_text(rel, "".join(out))
+
+
+def set_cargo_package_version(rel: str, version: str) -> None:
+    _set_toml_section_version(rel, "package", version)
+
+
+def set_pyproject_version(rel: str, version: str) -> None:
+    _set_toml_section_version(rel, "project", version)
+
+
+def set_cargo_dep_version(rel: str, dep_name: str, version: str) -> None:
+    """Rewrite a `name = { version = "X", ... }` pin in a Cargo.toml."""
+    text = read_text(rel)
+    if text is None:
+        raise FileNotFoundError(rel)
+    pattern = rf'({re.escape(dep_name)}\s*=\s*\{{[^}}]*version\s*=\s*)"[^"]+"'
+    new, n = re.subn(pattern, rf'\g<1>"{version}"', text, count=1)
+    if n != 1:
+        raise ValueError(f"{rel}: no {dep_name} version pin to stamp")
+    _write_text(rel, new)
+
+
+def set_pkg_json_version(rel: str, version: str) -> None:
+    def mutate(data: dict) -> None:
+        if "version" not in data:
+            raise ValueError(f"{rel}: no top-level version key to stamp")
+        data["version"] = version
+
+    _rewrite_json(rel, mutate)
+
+
+def set_pkg_json_dep_version(rel: str, dep_name: str, version: str, *, group: str = "dependencies") -> None:
+    def mutate(data: dict) -> None:
+        deps = data.get(group)
+        if not deps or dep_name not in deps:
+            raise ValueError(f"{rel}: no {group}[{dep_name}] pin to stamp")
+        deps[dep_name] = version
+
+    _rewrite_json(rel, mutate)
+
+
+def set_pkg_lock_version(rel: str, version: str) -> None:
+    def mutate(data: dict) -> None:
+        if "version" not in data:
+            raise ValueError(f"{rel}: no top-level version to stamp")
+        data["version"] = version
+        root = (data.get("packages") or {}).get("")
+        if root is not None and "version" in root:
+            root["version"] = version
+
+    _rewrite_json(rel, mutate)
+
+
+def set_marketplace_metadata_version(rel: str, version: str) -> None:
+    def mutate(data: dict) -> None:
+        if "metadata" not in data:
+            raise ValueError(f"{rel}: no metadata block to stamp")
+        data["metadata"]["version"] = version
+
+    _rewrite_json(rel, mutate)
+
+
+def set_marketplace_plugin_version(rel: str, plugin_name: str, version: str) -> None:
+    def mutate(data: dict) -> None:
+        for plugin in data.get("plugins", []) or []:
+            if plugin.get("name") == plugin_name:
+                plugin["version"] = version
+                return
+        raise ValueError(f"{rel}: no plugins[name={plugin_name}] entry to stamp")
+
+    _rewrite_json(rel, mutate)
+
+
+def set_py_dunder_version(rel: str, version: str) -> None:
+    """Rewrite a literal __version__ assignment if the file uses one.
+
+    The metadata-derived forms (see py_dunder_version) resolve from
+    pyproject.toml at runtime, so there is nothing to stamp and this is a
+    checked no-op. It still fails loudly when the file has NO recognized
+    __version__ form, because the check side would report not-found and
+    the release must block.
+    """
+    text = read_text(rel)
+    if text is None:
+        raise FileNotFoundError(rel)
+    if re.search(r'__version__\s*=\s*"[^"]+"', text):
+        _write_text(
+            rel,
+            re.sub(r'(__version__\s*=\s*)"[^"]+"', rf'\g<1>"{version}"', text, count=1),
+        )
+        return
+    if py_dunder_version(rel) is None:
+        raise ValueError(f"{rel}: no recognized __version__ form to stamp")
+
+
 # ---------- site discovery ----------
 
 
@@ -207,7 +374,14 @@ def collect_sites() -> list[Site]:
         ("packages/cli/Cargo.toml", "rust crate treeship-cli"),
         ("packages/core-wasm/Cargo.toml", "rust crate treeship-core-wasm"),
     ]:
-        sites.append(Site(rel, label, cargo_package_version(rel)))
+        sites.append(
+            Site(
+                rel,
+                label,
+                cargo_package_version(rel),
+                lambda v, rel=rel: set_cargo_package_version(rel, v),
+            )
+        )
 
     # Workspace-internal Cargo pin: cli depends on core at the same version.
     sites.append(
@@ -215,6 +389,7 @@ def collect_sites() -> list[Site]:
             "packages/cli/Cargo.toml",
             "cargo dep treeship-core (in cli)",
             cargo_dep_version("packages/cli/Cargo.toml", "treeship-core"),
+            lambda v: set_cargo_dep_version("packages/cli/Cargo.toml", "treeship-core", v),
         )
     )
 
@@ -229,7 +404,29 @@ def collect_sites() -> list[Site]:
         ("npm/@treeship/cli-darwin-arm64/package.json", "npm @treeship/cli-darwin-arm64"),
         ("npm/@treeship/cli-darwin-x64/package.json", "npm @treeship/cli-darwin-x64"),
     ]:
-        sites.append(Site(rel, label, pkg_json_version(rel)))
+        sites.append(
+            Site(rel, label, pkg_json_version(rel), lambda v, rel=rel: set_pkg_json_version(rel, v))
+        )
+
+    # npm lockfiles: `npm version` in the old release.sh bump kept these in
+    # sync as a side effect. Now they are first-class sites, so a stale or
+    # hand-edited lockfile fails the preflight instead of shipping silently
+    # (npm ci errors on a lockfile whose version disagrees with package.json).
+    for rel in [
+        "packages/sdk-ts/package-lock.json",
+        "bridges/mcp/package-lock.json",
+        "bridges/a2a/package-lock.json",
+        "packages/verify-js/package-lock.json",
+    ]:
+        if (REPO_ROOT / rel).exists():
+            sites.append(
+                Site(
+                    rel,
+                    f"npm lockfile ({rel})",
+                    pkg_lock_version(rel),
+                    lambda v, rel=rel: set_pkg_lock_version(rel, v),
+                )
+            )
 
     # Internal pin: every package depending on @treeship/core-wasm must pin the
     # exact release version. A mismatch here is what shipped in 0.9.6: bridges
@@ -244,7 +441,12 @@ def collect_sites() -> list[Site]:
         pin = pkg_json_dep_version(rel, "@treeship/core-wasm")
         if pin is not None:
             sites.append(
-                Site(rel, f"npm dep @treeship/core-wasm (in {rel})", pin)
+                Site(
+                    rel,
+                    f"npm dep @treeship/core-wasm (in {rel})",
+                    pin,
+                    lambda v, rel=rel: set_pkg_json_dep_version(rel, "@treeship/core-wasm", v),
+                )
             )
 
     # The wrapper's optionalDependencies select the right CLI binary for each
@@ -260,6 +462,9 @@ def collect_sites() -> list[Site]:
                     "npm/treeship/package.json",
                     f"npm wrapper optionalDependencies[{cli}]",
                     pin,
+                    lambda v, cli=cli: set_pkg_json_dep_version(
+                        "npm/treeship/package.json", cli, v, group="optionalDependencies"
+                    ),
                 )
             )
 
@@ -282,7 +487,9 @@ def collect_sites() -> list[Site]:
             "openclaw.plugin.json version",
         ),
     ]:
-        sites.append(Site(rel, label, pkg_json_version(rel)))
+        sites.append(
+            Site(rel, label, pkg_json_version(rel), lambda v, rel=rel: set_pkg_json_version(rel, v))
+        )
 
     # Claude Code plugin marketplace manifest: both metadata.version and the
     # per-plugin version must track the release. Drift here was the 0.10.2
@@ -293,6 +500,7 @@ def collect_sites() -> list[Site]:
             ".claude-plugin/marketplace.json",
             "claude-plugin marketplace metadata.version",
             marketplace_metadata_version(".claude-plugin/marketplace.json"),
+            lambda v: set_marketplace_metadata_version(".claude-plugin/marketplace.json", v),
         )
     )
     sites.append(
@@ -300,6 +508,7 @@ def collect_sites() -> list[Site]:
             ".claude-plugin/marketplace.json",
             "claude-plugin marketplace plugins[treeship].version",
             marketplace_plugin_version(".claude-plugin/marketplace.json", "treeship"),
+            lambda v: set_marketplace_plugin_version(".claude-plugin/marketplace.json", "treeship", v),
         )
     )
 
@@ -310,6 +519,7 @@ def collect_sites() -> list[Site]:
             "packages/sdk-python/pyproject.toml",
             "pypi treeship-sdk (pyproject)",
             pyproject_version("packages/sdk-python/pyproject.toml"),
+            lambda v: set_pyproject_version("packages/sdk-python/pyproject.toml", v),
         )
     )
     sites.append(
@@ -317,6 +527,7 @@ def collect_sites() -> list[Site]:
             "packages/sdk-python/treeship_sdk/__init__.py",
             "python treeship_sdk.__version__",
             py_dunder_version("packages/sdk-python/treeship_sdk/__init__.py"),
+            lambda v: set_py_dunder_version("packages/sdk-python/treeship_sdk/__init__.py", v),
         )
     )
 
@@ -327,6 +538,19 @@ def collect_sites() -> list[Site]:
 
 
 def main(argv: list[str]) -> int:
+    if len(argv) == 3 and argv[1] == "--write":
+        # Stamp mode: write the target version into every site, then fall
+        # through to the normal check so the exit code proves the stamp took.
+        target = argv[2].lstrip("v")
+        if not re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)*", target):
+            print(f"::error::'{target}' does not look like a semver version", file=sys.stderr)
+            return 2
+        for site in collect_sites():
+            if site.write is not None:
+                site.write(target)
+        print(f"Stamped every site to {target}")
+        argv = [argv[0], target]
+
     if len(argv) == 2 and argv[1] == "--consistency":
         # PR-time mode: there's no target version yet, but every site must agree
         # with each other. Anchor on packages/core/Cargo.toml (the foundational
@@ -348,6 +572,7 @@ def main(argv: list[str]) -> int:
     else:
         print(f"usage: {argv[0]} <version>", file=sys.stderr)
         print(f"       {argv[0]} --consistency", file=sys.stderr)
+        print(f"       {argv[0]} --write <version>", file=sys.stderr)
         print(f"example: {argv[0]} 0.9.7", file=sys.stderr)
         return 2
 

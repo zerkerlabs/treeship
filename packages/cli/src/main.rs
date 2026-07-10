@@ -24,7 +24,7 @@ use printer::{Format, Printer};
     version = env!("CARGO_PKG_VERSION"),
     about   = "Portable trust receipts for agent workflows",
     before_help = "\x1b[1mQuick start\x1b[0m\n  treeship quickstart          guided setup in 90 seconds\n  treeship add                 instrument your AI agents\n  treeship session start       begin recording a session\n  treeship wrap -- <cmd>       record a command\n  treeship session close       finalize and create receipt\n  treeship session report      upload and get shareable URL\n\n  Learn more: docs.treeship.dev",
-    after_help = "Docs: https://treeship.dev/docs   Hub: treeship hub attach",
+    after_help = "Run 'treeship help --all' to list extension and experimental commands.\nDocs: https://treeship.dev/docs   Hub: treeship hub attach",
 )]
 struct Cli {
     /// Config file (default: ~/.treeship/config.json)
@@ -60,12 +60,14 @@ enum Command {
     ///   treeship add claude-code hermes # instrument specific agents
     ///   treeship add --all              # non-interactive, all detected
     ///   treeship add --dry-run          # show what would be done
+    #[command(display_order = 2)]
     Add(AddArgs),
 
     /// Guided first-time setup in 90 seconds
     ///
     /// Walks through init, session start, wrapping a command, and creating
     /// a receipt. No flags needed.
+    #[command(display_order = 0)]
     Quickstart,
 
     /// Set up a new Treeship -- generates a keypair and config
@@ -77,12 +79,14 @@ enum Command {
     ///   treeship init
     ///   treeship init --name my-agent-server
     ///   treeship init --config /opt/myapp/.treeship/config.json
+    #[command(display_order = 1)]
     Init(InitArgs),
 
     /// Show ship state: keys, recent artifacts, hub status
     ///
     /// Examples:
     ///   treeship status
+    #[command(display_order = 9)]
     Status,
 
     /// Wrap any command -- run it and attest the execution
@@ -96,6 +100,7 @@ enum Command {
     ///   treeship wrap -- go build ./...
     ///   treeship wrap --actor agent://ci -- pytest tests/
     ///   treeship wrap --push -- cargo test
+    #[command(display_order = 3)]
     Wrap(WrapArgs),
 
     /// Sign an attestation artifact
@@ -104,7 +109,7 @@ enum Command {
     ///   treeship attest action --actor agent://me --action tool.call
     ///   treeship attest approval --approver human://alice --description "ok to purchase"
     ///   treeship attest handoff --from agent://a --to agent://b --artifacts art_abc,art_def
-    #[command(subcommand)]
+    #[command(subcommand, display_order = 4)]
     Attest(AttestCommand),
 
     /// Verify an artifact or its full parent chain
@@ -119,6 +124,7 @@ enum Command {
     ///   treeship verify art_a1b2c3d4e5f6a1b2
     ///   treeship verify art_a1b2c3d4e5f6a1b2 --no-chain
     ///   treeship verify ./export.treeship
+    #[command(display_order = 6)]
     Verify(VerifyArgs),
 
     /// Verify an agent capability card against the agent's evidence
@@ -147,6 +153,7 @@ enum Command {
     ///
     /// Example:
     ///   treeship resolve agent://deployer
+    #[command(display_order = 8)]
     Resolve(ResolveArgs),
 
     /// Publish an agent's resolvable set (current card + revocations) to the
@@ -172,7 +179,7 @@ enum Command {
     ///   treeship bundle create --artifacts art_a1b2,art_c3d4 --tag v1.0
     ///   treeship bundle export art_e5f6 --out release.treeship
     ///   treeship bundle import release.treeship
-    #[command(subcommand)]
+    #[command(subcommand, hide = true)]
     Bundle(BundleCommand),
 
     /// Manage signing keys
@@ -206,7 +213,7 @@ enum Command {
     ///   treeship hub pull art_a1b2c3d4e5f6a1b2
     ///   treeship hub status
     ///   treeship hub detach
-    #[command(subcommand)]
+    #[command(subcommand, display_order = 7)]
     Hub(HubCommand),
 
     /// Install shell hooks for automatic attestation
@@ -217,12 +224,14 @@ enum Command {
     ///
     /// Examples:
     ///   treeship install
+    #[command(hide = true)]
     Install,
 
     /// Remove shell hooks
     ///
     /// Examples:
     ///   treeship uninstall
+    #[command(hide = true)]
     Uninstall,
 
     /// Shell hook handler (called by shell hooks, not by users directly)
@@ -248,7 +257,7 @@ enum Command {
     ///   treeship session start --name "fix auth bug"
     ///   treeship session status
     ///   treeship session close --summary "fixed JWT expiry"
-    #[command(subcommand)]
+    #[command(subcommand, display_order = 5)]
     Session(SessionCommand),
 
     /// Inspect and verify .treeship session packages
@@ -272,6 +281,7 @@ enum Command {
     ///   treeship declare --tools read_file,write_file,bash
     ///   treeship declare --tools read_file --forbidden deploy,rm
     ///   treeship declare --show
+    #[command(hide = true)]
     Declare(DeclareArgs),
 
     /// Register an agent and produce an Agent Identity Certificate
@@ -282,7 +292,7 @@ enum Command {
     /// Examples:
     ///   treeship agent register --name claude-code --tools read_file,write_file,bash
     ///   treeship agent register --name hermes --tools web_search --model hermes-2 --valid-days 365
-    #[command(subcommand)]
+    #[command(subcommand, hide = true)]
     Agent(AgentCommand),
 
     /// Onboard an agent end to end in one command: register it with its
@@ -369,7 +379,7 @@ enum Command {
     ///   treeship agents review <id>   # show full card details
     ///   treeship agents approve <id>  # promote to active
     ///   treeship agents remove <id>   # delete the card
-    #[command(subcommand)]
+    #[command(subcommand, hide = true)]
     Agents(AgentsCommand),
 
     /// Guided first-run setup -- detect agents, draft cards, instrument, smoke verify
@@ -402,7 +412,7 @@ enum Command {
     ///   treeship harness inspect claude-code
     ///   treeship harness inspect ninjatech-superninja
     ///   treeship harness smoke claude-code
-    #[command(subcommand)]
+    #[command(subcommand, hide = true)]
     Harness(HarnessCommand),
 
     /// List pending approvals
@@ -442,7 +452,7 @@ enum Command {
     ///   treeship approval uses art_grant_xyz
     ///   treeship approval status art_grant_xyz
     ///   treeship approval journal verify
-    #[command(subcommand)]
+    #[command(subcommand, hide = true)]
     Approval(ApprovalCommand),
 
     /// Background daemon for automatic file watching
@@ -455,7 +465,7 @@ enum Command {
     ///   treeship daemon start --foreground
     ///   treeship daemon stop
     ///   treeship daemon status
-    #[command(subcommand)]
+    #[command(subcommand, hide = true)]
     Daemon(DaemonCommand),
 
     /// Diagnostic check -- verify everything is working
@@ -482,6 +492,7 @@ enum Command {
     ///
     /// Examples:
     ///   treeship checkpoint
+    #[command(hide = true)]
     Checkpoint,
 
     /// Merkle tree operations
@@ -493,7 +504,7 @@ enum Command {
     ///   treeship merkle proof art_abc123
     ///   treeship merkle verify proof.json
     ///   treeship merkle status
-    #[command(subcommand)]
+    #[command(subcommand, hide = true)]
     Merkle(MerkleCommand),
 
     /// Interactive terminal dashboard
@@ -503,6 +514,7 @@ enum Command {
     ///
     /// Examples:
     ///   treeship ui
+    #[command(hide = true)]
     Ui,
 
     /// Open the local browser dashboard
@@ -515,6 +527,7 @@ enum Command {
     ///   treeship dashboard
     ///   treeship dashboard ssn_01HR --port 9347
     ///   treeship dashboard --root ../other-repo
+    #[command(hide = true)]
     Dashboard(DashboardArgs),
 
     /// OpenTelemetry export -- send artifacts as OTel spans
@@ -529,7 +542,7 @@ enum Command {
     ///   treeship otel test
     ///   treeship otel status
     ///   treeship otel export art_abc123
-    #[command(subcommand)]
+    #[command(subcommand, hide = true)]
     Otel(OtelCommand),
 
     /// List available trust templates
@@ -539,6 +552,7 @@ enum Command {
     ///
     /// Examples:
     ///   treeship templates
+    #[command(hide = true)]
     Templates,
 
     /// Template management -- preview, apply, validate, save
@@ -548,7 +562,7 @@ enum Command {
     ///   treeship template apply ci-cd-pipeline
     ///   treeship template validate my-template.yaml
     ///   treeship template save --name my-workflow
-    #[command(subcommand)]
+    #[command(subcommand, hide = true)]
     Template(TemplateCommand),
 
     /// Generate a zero-knowledge proof for an artifact
@@ -559,30 +573,35 @@ enum Command {
     /// Examples:
     ///   treeship prove --circuit policy-checker --artifact art_xxx --policy ./policy.json
     ///   treeship prove --circuit input-output-binding --artifact art_xxx
+    #[command(hide = true)]
     Prove(ProveArgs),
 
     /// Prove an entire session chain (RISC Zero, background)
     ///
     /// Examples:
     ///   treeship prove-chain ssn_abc123
+    #[command(hide = true)]
     ProveChain(ProveChainArgs),
 
     /// Verify a zero-knowledge proof file
     ///
     /// Examples:
     ///   treeship verify-proof art_xxx.policy-checker.zkproof
+    #[command(hide = true)]
     VerifyProof(VerifyProofArgs),
 
     /// Show ZK configuration, circuit hashes, and notary status
     ///
     /// Examples:
     ///   treeship zk-setup
+    #[command(hide = true)]
     ZkSetup,
 
     /// Print self-hosted TLSNotary setup instructions
     ///
     /// Examples:
     ///   treeship zk-tls-setup
+    #[command(hide = true)]
     ZkTlsSetup,
 
     /// Print version and build info
@@ -2259,6 +2278,19 @@ struct DashboardArgs {
 // --- main -------------------------------------------------------------------
 
 fn main() {
+    // `treeship help --all` / `treeship --help-all`: top-level help including
+    // the extension and experimental commands hidden from default `--help`.
+    // Intercepted before clap parses because the built-in `help` subcommand
+    // does not accept flags.
+    let argv: Vec<String> = std::env::args().collect();
+    let wants_full_help = argv.iter().any(|a| a == "--help-all")
+        || (argv.get(1).map(String::as_str) == Some("help")
+            && argv.iter().skip(2).any(|a| a == "--all"));
+    if wants_full_help {
+        print_help_all();
+        return;
+    }
+
     let cli = Cli::parse();
 
     let format = Format::from_str(&cli.format);
@@ -2268,6 +2300,21 @@ fn main() {
         printer.failure(&e.to_string(), &[]);
         std::process::exit(exit_code(&e.to_string()));
     }
+}
+
+/// Print top-level help with every subcommand visible, including the
+/// extension and experimental commands hidden from default `--help`.
+fn print_help_all() {
+    use clap::CommandFactory;
+    let mut cmd = Cli::command();
+    let names: Vec<String> = cmd
+        .get_subcommands()
+        .map(|c| c.get_name().to_string())
+        .collect();
+    for name in names {
+        cmd = cmd.mut_subcommand(name, |sc| sc.hide(false));
+    }
+    let _ = cmd.print_help();
 }
 
 fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
