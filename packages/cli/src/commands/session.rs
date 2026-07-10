@@ -2070,7 +2070,7 @@ fn compute_package_manifest_digest(pkg_dir: &Path) -> std::io::Result<String> {
 /// one of "pass" / "warn" / "fail"; warnings is the list of failed
 /// or warning row names + details.
 fn local_verify_summary(pkg_dir: &Path) -> (String, Vec<serde_json::Value>) {
-    use treeship_core::session::{verify_package, VerifyStatus};
+    use treeship_core::session::verify_package;
     let checks = match verify_package(pkg_dir) {
         Ok(c)  => c,
         Err(_) => return ("fail".into(), vec![serde_json::json!({
@@ -2078,31 +2078,50 @@ fn local_verify_summary(pkg_dir: &Path) -> (String, Vec<serde_json::Value>) {
             "headline": "package verify failed to run",
         })]),
     };
+    summarize_verify_checks(&checks)
+}
+
+/// Always-on INFORMATIONAL scope caveats: not session-specific problems, so
+/// they are surfaced in `warnings` but must NOT flip a cryptographically-clean
+/// session's top-line verdict to "warn". `receipt_body_binding` states the
+/// (universal) fact that a package binds the artifacts + Merkle root but not
+/// the unsigned narrative — true of every package, so letting it downgrade the
+/// status makes "pass" unreachable and drains the field of meaning.
+const INFORMATIONAL_CHECKS: &[&str] = &["receipt_body_binding"];
+
+/// Reduce a package verify's check list to `(verification_status, warnings)`.
+/// Pure so the status policy is unit-testable. `fail` if any check failed;
+/// `warn` if there is an ACTIONABLE warning (anything not in
+/// `INFORMATIONAL_CHECKS`); else `pass`. Every warn/fail is still listed in
+/// `warnings`, informational or not, so nothing is hidden.
+fn summarize_verify_checks(
+    checks: &[treeship_core::session::VerifyCheck],
+) -> (String, Vec<serde_json::Value>) {
+    use treeship_core::session::VerifyStatus;
     let mut any_fail = false;
     let mut warnings = Vec::new();
-    for c in &checks {
+    for c in checks {
         match c.status {
             VerifyStatus::Pass => {}
-            VerifyStatus::Warn => {
-                warnings.push(serde_json::json!({
-                    "kind":     c.name,
-                    "headline": c.detail,
-                    "status":   "warn",
-                }));
-            }
+            VerifyStatus::Warn => warnings.push(serde_json::json!({
+                "kind": c.name, "headline": c.detail, "status": "warn",
+            })),
             VerifyStatus::Fail => {
                 any_fail = true;
                 warnings.push(serde_json::json!({
-                    "kind":     c.name,
-                    "headline": c.detail,
-                    "status":   "fail",
+                    "kind": c.name, "headline": c.detail, "status": "fail",
                 }));
             }
         }
     }
+    let has_actionable_warn = warnings.iter().any(|w| {
+        w.get("kind").and_then(|k| k.as_str())
+            .map(|k| !INFORMATIONAL_CHECKS.contains(&k))
+            .unwrap_or(true)
+    });
     let status = if any_fail {
         "fail"
-    } else if !warnings.is_empty() {
+    } else if has_actionable_warn {
         "warn"
     } else {
         "pass"
@@ -2331,6 +2350,48 @@ fn collect_approval_evidence(
     }
 
     bundle
+}
+
+#[cfg(test)]
+mod verify_summary_tests {
+    use super::summarize_verify_checks;
+    use treeship_core::session::VerifyCheck;
+
+    // Regression: a clean session carries the always-on `receipt_body_binding`
+    // scope caveat as a WARN check, but its top-line verification_status must
+    // still be "pass" — otherwise "pass" is unreachable for every session
+    // (0.19.0 shipped it as "warn", which the publish smoke test caught).
+    #[test]
+    fn informational_caveat_alone_stays_pass() {
+        let checks = vec![
+            VerifyCheck::pass("merkle_root", "ok"),
+            VerifyCheck::pass("determinism", "ok"),
+            VerifyCheck::warn("receipt_body_binding", "narrative not signature-bound"),
+        ];
+        let (status, warnings) = summarize_verify_checks(&checks);
+        assert_eq!(status, "pass", "informational caveat must not downgrade a clean session");
+        // ...but it is still surfaced in warnings for transparency.
+        assert!(warnings.iter().any(|w| w["kind"] == "receipt_body_binding"));
+    }
+
+    #[test]
+    fn actionable_warn_downgrades_to_warn() {
+        let checks = vec![
+            VerifyCheck::pass("merkle_root", "ok"),
+            VerifyCheck::warn("receipt_body_binding", "caveat"),
+            VerifyCheck::warn("reconcile_degraded", "git backstop disabled mid-session"),
+        ];
+        assert_eq!(summarize_verify_checks(&checks).0, "warn");
+    }
+
+    #[test]
+    fn any_fail_is_fail() {
+        let checks = vec![
+            VerifyCheck::warn("receipt_body_binding", "caveat"),
+            VerifyCheck::fail("merkle_root", "root mismatch"),
+        ];
+        assert_eq!(summarize_verify_checks(&checks).0, "fail");
+    }
 }
 
 #[cfg(test)]
