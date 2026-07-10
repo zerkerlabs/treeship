@@ -111,6 +111,68 @@ pub fn declared_tools(card_payload: &serde_json::Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+// --- Selective disclosure of the capability set -------------------------------
+//
+// For a card to be presented without revealing its full tool set, the signed
+// payload must not contain the raw tools -- only their salted digests. Each
+// tool is modeled as a disclosure `[salt, tool, true]`; the signed card carries
+// the sorted digest list (`capabilities.tools_sd`), and the disclosures travel
+// alongside the card. A holder reveals the subset it chooses; the verifier
+// reconstructs exactly the revealed tools and nothing else.
+//
+// Consumers (next slice): `attest card` mint computes the commitment;
+// `present --disclose` selects a subset of disclosures; `verify-presentation`
+// and the disclosure-aware replacement for `declared_tools` reconstruct the
+// revealed tools via `disclosed_tools`.
+
+/// Commit a tool set for selective disclosure. Returns the sorted `tools_sd`
+/// digests (which go into the signed card) and the encoded disclosure strings
+/// (which the holder stores and reveals selectively). Order of `tools` does not
+/// affect `tools_sd` (it is sorted), so the digest list never leaks the set's
+/// authoring order.
+pub fn commit_tools(tools: &[String]) -> (Vec<String>, Vec<String>) {
+    let claims: Vec<(String, serde_json::Value)> = tools
+        .iter()
+        .map(|t| (t.clone(), serde_json::Value::Bool(true)))
+        .collect();
+    let c = crate::disclosure::commit(&claims);
+    let disclosures = c.disclosures.iter().map(|d| d.encode()).collect();
+    (c.sd, disclosures)
+}
+
+/// Reconstruct the revealed tools from presented disclosures, checked against
+/// the signed `tools_sd` digest set. Only disclosures whose digest is in the
+/// set and whose value is `true` count; a tampered, foreign, or malformed
+/// disclosure contributes nothing (fail-closed). The result is exactly the
+/// subset the holder chose to reveal -- for a full presentation, every
+/// disclosure; for a selective one, fewer.
+pub fn disclosed_tools(tools_sd: &[String], presented_disclosures: &[String]) -> Vec<String> {
+    let sd_set: std::collections::BTreeSet<String> = tools_sd.iter().cloned().collect();
+    let mut out = Vec::new();
+    for d in presented_disclosures {
+        if let Some((name, value)) = crate::disclosure::verify_disclosure(d, &sd_set) {
+            if value == serde_json::Value::Bool(true) {
+                out.push(name);
+            }
+        }
+    }
+    out
+}
+
+/// Read the signed `capabilities.tools_sd` digest list from a card payload.
+pub fn committed_tool_digests(card_payload: &serde_json::Value) -> Vec<String> {
+    card_payload
+        .get("capabilities")
+        .and_then(|c| c.get("tools_sd"))
+        .and_then(|t| t.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|t| t.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,5 +268,59 @@ mod tests {
         assert_eq!(matched_capability(&a, &tools).as_deref(), Some("file.*"));
         let b = ActionStatement::new("agent://x", "command.run");
         assert_eq!(matched_capability(&b, &tools), None);
+    }
+
+    #[test]
+    fn full_disclosure_reconstructs_the_whole_tool_set() {
+        let tools = vec![
+            "payments.charge".to_string(),
+            "email.send".to_string(),
+            "file.read".to_string(),
+        ];
+        let (tools_sd, disclosures) = commit_tools(&tools);
+        assert_eq!(tools_sd.len(), 3);
+        assert!(tools_sd.windows(2).all(|w| w[0] <= w[1]), "tools_sd is sorted");
+
+        // Presenting every disclosure reveals exactly the original set.
+        let revealed = disclosed_tools(&tools_sd, &disclosures);
+        let got: std::collections::BTreeSet<_> = revealed.into_iter().collect();
+        let want: std::collections::BTreeSet<_> = tools.iter().cloned().collect();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn selective_disclosure_reveals_only_the_chosen_tool() {
+        let tools = vec![
+            "payments.charge".to_string(),
+            "email.send".to_string(),
+            "admin.delete".to_string(),
+        ];
+        let (tools_sd, disclosures) = commit_tools(&tools);
+
+        // Reveal ONLY the disclosure for "payments.charge". The verifier must
+        // learn that tool and nothing about the other two.
+        let chosen: Vec<String> = disclosures
+            .iter()
+            .filter(|d| d.contains("payments.charge"))
+            .cloned()
+            .collect();
+        assert_eq!(chosen.len(), 1);
+        let revealed = disclosed_tools(&tools_sd, &chosen);
+        assert_eq!(revealed, vec!["payments.charge".to_string()]);
+    }
+
+    #[test]
+    fn tampered_or_foreign_disclosure_reveals_nothing() {
+        let tools = vec!["payments.charge".to_string()];
+        let (tools_sd, disclosures) = commit_tools(&tools);
+
+        // A disclosure whose value was flipped to a different tool string is
+        // not in the signed digest set -> contributes nothing.
+        let tampered = disclosures[0].replace("payments.charge", "admin.root");
+        assert!(disclosed_tools(&tools_sd, &[tampered]).is_empty());
+
+        // A disclosure minted against a different card entirely -> rejected.
+        let (_other_sd, other_disclosures) = commit_tools(&["admin.root".to_string()]);
+        assert!(disclosed_tools(&tools_sd, &other_disclosures).is_empty());
     }
 }
