@@ -41,6 +41,7 @@ pub mod declare;
 pub mod package;
 pub mod prove;
 pub mod quickstart;
+pub mod receipt;
 pub mod trust;
 pub mod zk;
 pub mod invitation;
