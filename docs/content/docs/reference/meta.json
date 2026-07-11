@@ -3,6 +3,7 @@
   "pages": [
     "agent-states",
     "feature-matrix",
+    "receipt-format",
     "schema",
     "predicates"
   ]

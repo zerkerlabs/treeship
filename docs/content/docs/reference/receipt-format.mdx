@@ -1,0 +1,138 @@
+---
+title: Receipt format
+description: The byte-level format of a Treeship receipt and how to verify one in any language, with no Treeship code.
+---
+
+A Treeship receipt is a self-contained JSON object that anyone can verify
+offline, in any language, without trusting Treeship or contacting any endpoint.
+This page documents the exact bytes so you can implement a verifier yourself.
+
+The format is **stable**: the structure and the signed-bytes construction below
+are frozen. New statement types may be added, but the envelope shape, the
+pre-authentication encoding, and the id derivation do not change without a new
+major version in the type strings themselves.
+
+## The envelope
+
+A receipt is a [DSSE](https://github.com/secure-systems-lab/dsse) envelope —
+the same signing envelope Sigstore and in-toto use — with camelCase fields:
+
+```json
+{
+  "payload": "<base64url(statement_json_bytes)>",
+  "payloadType": "application/vnd.treeship.action.v1+json",
+  "signatures": [
+    { "keyid": "key_...", "sig": "<base64url(ed25519_signature)>" }
+  ]
+}
+```
+
+- `payload` — the statement, as JSON, base64url-encoded **without padding**.
+- `payloadType` — a media type identifying the statement kind and version.
+- `signatures` — one or more Ed25519 signatures. `keyid` is a label, **not** a
+  secret and **not** trusted on its own; the public key is supplied by the
+  verifier out of band.
+
+## What is signed: the PAE
+
+The signature is **not** over the payload JSON. It is over the DSSE
+**pre-authentication encoding** (PAE) of the payload — this is the single fact
+external verifiers most often miss:
+
+```
+PAE = "DSSEv1" SP LEN(payloadType) SP payloadType SP LEN(payload) SP payload
+```
+
+where `SP` is a single ASCII space, `LEN(x)` is the byte length of `x` as an
+ASCII decimal string, and `payload` is the **raw statement bytes** (the
+base64url-decoded `payload` field — *not* re-serialized JSON).
+
+Concretely, for an action receipt:
+
+```
+DSSEv1 39 application/vnd.treeship.action.v1+json 112 {"type":"treeship/action/v1","timestamp":"2026-07-11T06:48:53Z","actor":"agent://deployer","action":"tool.call"}
+```
+
+> **Do not re-serialize the payload to build the PAE.** Decode the `payload`
+> field's base64url to get the exact signed bytes and use them verbatim. Sorting
+> keys, adding whitespace, or re-encoding will change the bytes and the
+> signature will not verify. This is the number-one cause of failed third-party
+> verification.
+
+## The artifact id
+
+The content-addressed id is derived from the PAE bytes, never stored inside the
+statement:
+
+```
+artifact_id = "art_" + hex( sha256(PAE_bytes) )[..16]
+```
+
+Same content always yields the same id.
+
+## Verifying a receipt (any language)
+
+1. Read `payloadType` and base64url-decode `payload` to raw bytes.
+2. Build the PAE string exactly as above.
+3. Obtain the signer's Ed25519 **public key** out of band (see below). The
+   `keyid` in the envelope is only a hint.
+4. Verify each `signatures[i].sig` (base64url-decoded, 64 bytes) against the PAE
+   with the public key, using strict Ed25519 (reject small-order keys and
+   non-canonical signatures).
+5. Optionally recompute `artifact_id` from the PAE and confirm it matches.
+
+That is the whole verification. No network, no Treeship library.
+
+### The verifiable triple
+
+To hand a counterparty everything they need in one step, export the triple:
+
+```bash
+treeship receipt export <artifact_id> --format json
+```
+
+emits `{ message_b64, signature_b64, public_key_b64, algorithm }`, where
+`message_b64` is the base64 of the PAE (the exact signed bytes), so the
+counterparty runs a plain Ed25519 verify with no reconstruction. The reference
+verifier `scripts/verify-receipt.py` in the repo does exactly this:
+
+```bash
+treeship receipt export <id> --format json | python3 scripts/verify-receipt.py
+# VALID: art_... verified offline (ed25519 over the DSSE PAE)
+```
+
+### Getting the public key
+
+The signature only proves possession of the signing key. To decide whether to
+*trust* that key, the verifier pins it out of band. `treeship keys export`
+prints a key's public half in pinnable form (`ed25519:<base64url>`) with the
+`treeship trust add` command a counterparty runs. Trust is always the verifier's
+decision; a receipt never carries a key you are told to trust.
+
+## Statement types
+
+The `payloadType` names the statement kind. Each payload also carries a `type`
+field with the same version string. Current media types:
+
+```
+application/vnd.treeship.action.v1+json
+application/vnd.treeship.approval.v1+json
+application/vnd.treeship.handoff.v1+json
+application/vnd.treeship.endorsement.v1+json
+application/vnd.treeship.receipt.v1+json
+application/vnd.treeship.bundle.v1+json
+```
+
+Typed payloads carried inside a `receipt` (capability cards, session records,
+certificates, and other predicates) are validated against a registered JSON
+Schema before signing; see [predicates](./predicates). The envelope and PAE
+construction above are identical regardless of the statement kind — a verifier
+that checks the signature over the PAE works for every receipt type.
+
+## What Treeship does not put in a receipt
+
+- **No raw content by default.** Payloads carry digests and signed metadata,
+  never the agent's outputs, tool results, or user data.
+- **No key you must trust.** The verifier pins public keys itself.
+- **No dependency on Treeship being online.** Verification is a signature check
+  over bytes you already hold.
