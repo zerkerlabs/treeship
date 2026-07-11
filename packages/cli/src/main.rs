@@ -138,6 +138,19 @@ enum Command {
     ///   treeship verify-capability art_<agent_card_id>
     VerifyCapability(VerifyCapabilityArgs),
 
+    /// Export a receipt's offline-verifiable triple: message, signature, key
+    ///
+    /// Emits the exact {message (the DSSE PAE), signature, public_key} in
+    /// copy-safe base64, so a counterparty confirms the receipt with any
+    /// Ed25519 library and no Treeship code. The signature is over the PAE,
+    /// not the payload JSON — this is the command that makes that fact usable.
+    ///
+    /// Examples:
+    ///   treeship receipt export art_a1b2c3d4e5f6a1b2
+    ///   treeship receipt export art_a1b2c3d4e5f6a1b2 --format json
+    #[command(subcommand, display_order = 8)]
+    Receipt(ReceiptCommand),
+
     /// Revoke a capability card (agent_card_revocation.v1)
     ///
     /// Mints a signed revocation of an agent_card.v1. Signed with the agent's
@@ -1700,6 +1713,25 @@ struct AttestEndorsementArgs {
     out: Option<String>,
 }
 
+// --- receipt ----------------------------------------------------------------
+
+#[derive(Subcommand)]
+enum ReceiptCommand {
+    /// Export a receipt's offline-verifiable triple (message, signature, key)
+    ///
+    /// Examples:
+    ///   treeship receipt export art_a1b2c3d4e5f6a1b2
+    ///   treeship receipt export art_a1b2c3d4e5f6a1b2 --format json
+    Export(ReceiptExportArgs),
+}
+
+#[derive(clap::Args)]
+struct ReceiptExportArgs {
+    /// Artifact id of the receipt to export
+    #[arg(value_name = "ARTIFACT_ID")]
+    id: String,
+}
+
 // --- bundle -----------------------------------------------------------------
 
 #[derive(Subcommand)]
@@ -2847,6 +2879,12 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
         Command::VerifyCapability(a) => {
             commands::capability::verify_capability(&a.card_id, cli.config.as_deref(), printer)
         }
+
+        Command::Receipt(sub) => match sub {
+            ReceiptCommand::Export(a) => {
+                commands::receipt::export(&a.id, cli.config.as_deref(), printer)
+            }
+        },
 
         Command::RevokeCapability(a) => commands::capability::revoke_capability(
             &a.card_id,
