@@ -81,6 +81,6 @@ echo ""
 # Verification URL
 # -----------------------------------------------
 echo "[verify] Attestation verification URL:"
-echo "  https://hub.treeship.dev/verify/${SESSION_ID:-demo-session}"
+echo "  https://treeship.dev/verify/${SESSION_ID:-demo-session}"
 echo ""
 echo "=== Demo complete ==="
