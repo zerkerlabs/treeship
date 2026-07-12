@@ -72,9 +72,15 @@ pub fn uses(
                 printer.blank();
                 return Ok(());
             }
-            printer.section(&format!("approval uses ({} for grant {grant_id})", uses.len()));
+            printer.section(&format!(
+                "approval uses ({} for grant {grant_id})",
+                uses.len()
+            ));
             for u in &uses {
-                let max = u.max_uses.map(|m| m.to_string()).unwrap_or_else(|| "?".into());
+                let max = u
+                    .max_uses
+                    .map(|m| m.to_string())
+                    .unwrap_or_else(|| "?".into());
                 printer.info(&format!(
                     "  use {}/{}  {}  -> {}  by {}  at {}",
                     u.use_number, max, u.action, u.subject, u.actor, u.created_at,
@@ -115,7 +121,7 @@ pub fn status(
     let max_uses = uses.iter().filter_map(|u| u.max_uses).last();
     let exceeded = match max_uses {
         Some(m) => count >= m,
-        None    => false,
+        None => false,
     };
 
     match format {
@@ -137,7 +143,9 @@ pub fn status(
                 printer.blank();
                 return Ok(());
             }
-            let max_label = max_uses.map(|m| m.to_string()).unwrap_or_else(|| "unbounded".into());
+            let max_label = max_uses
+                .map(|m| m.to_string())
+                .unwrap_or_else(|| "unbounded".into());
             printer.info(&format!("  use count:    {count}"));
             printer.info(&format!("  max_uses:     {max_label}"));
             if exceeded {
@@ -182,7 +190,9 @@ pub fn journal_verify(
             }
             Format::Text => {
                 printer.blank();
-                printer.dim_info("  No local Approval Use Journal in this workspace; nothing to verify.");
+                printer.dim_info(
+                    "  No local Approval Use Journal in this workspace; nothing to verify.",
+                );
                 printer.blank();
             }
         }
@@ -223,7 +233,10 @@ pub fn journal_verify(
                 }
                 Format::Text => {
                     printer.blank();
-                    printer.warn("journal integrity check failed", &[("error", &e.to_string())]);
+                    printer.warn(
+                        "journal integrity check failed",
+                        &[("error", &e.to_string())],
+                    );
                     printer.blank();
                 }
             }

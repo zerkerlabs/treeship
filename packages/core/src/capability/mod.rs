@@ -54,8 +54,13 @@ pub fn is_key_bound(card_keyid: &str, signer_keyid: &str, trust: &TrustRootStore
 /// would attach a benign `meta.tool` (e.g. `file.read`) to a concrete
 /// out-of-scope action (e.g. `payments.charge`) and have it counted in-scope,
 /// silently defeating the very check `verify-capability` exists to run.
-const GENERIC_DISPATCH_LABELS: &[&str] =
-    &["tool.call", "tool.use", "tool.invoke", "mcp.call", "mcp.tool"];
+const GENERIC_DISPATCH_LABELS: &[&str] = &[
+    "tool.call",
+    "tool.use",
+    "tool.invoke",
+    "mcp.call",
+    "mcp.tool",
+];
 
 /// The scope-matching candidates for an action. The action label is always
 /// authoritative. `meta.tool` is consulted ONLY when the action label is a
@@ -191,8 +196,7 @@ pub fn disclose_capabilities(
     // disclosures[i] corresponds to all_tools[i] (commit preserves input order).
     let (tools_sd, disclosures) = commit_tools(&all_tools);
 
-    let reveal_set: std::collections::BTreeSet<&str> =
-        reveal.iter().map(String::as_str).collect();
+    let reveal_set: std::collections::BTreeSet<&str> = reveal.iter().map(String::as_str).collect();
     let selected: Vec<String> = all_tools
         .iter()
         .zip(disclosures.iter())
@@ -276,7 +280,11 @@ mod tests {
         assert!(!is_key_bound("", "", &agentcert));
         let ship = TrustRootStore::with_roots(vec![root("key_x", TrustRootKind::Ship)]);
         assert!(!is_key_bound("key_x", "key_x", &ship));
-        assert!(!is_key_bound("key_x", "key_x", &TrustRootStore::with_roots(vec![])));
+        assert!(!is_key_bound(
+            "key_x",
+            "key_x",
+            &TrustRootStore::with_roots(vec![])
+        ));
     }
 
     #[test]
@@ -330,7 +338,10 @@ mod tests {
         ];
         let (tools_sd, disclosures) = commit_tools(&tools);
         assert_eq!(tools_sd.len(), 3);
-        assert!(tools_sd.windows(2).all(|w| w[0] <= w[1]), "tools_sd is sorted");
+        assert!(
+            tools_sd.windows(2).all(|w| w[0] <= w[1]),
+            "tools_sd is sorted"
+        );
 
         // Presenting every disclosure reveals exactly the original set.
         let revealed = disclosed_tools(&tools_sd, &disclosures);
@@ -397,8 +408,7 @@ mod tests {
             "capabilities": { "tools": ["payments.charge", "email.send", "admin.delete"] }
         });
 
-        let (disclosed, revealed) =
-            disclose_capabilities(&card, &["payments.charge".to_string()]);
+        let (disclosed, revealed) = disclose_capabilities(&card, &["payments.charge".to_string()]);
         // The raw tool list is gone from what gets signed; only digests remain.
         assert!(disclosed["capabilities"].get("tools").is_none());
         assert!(disclosed["capabilities"].get("tools_sd").is_some());

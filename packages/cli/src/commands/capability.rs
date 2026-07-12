@@ -48,7 +48,11 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
         .get("capabilities")
         .and_then(|c| c.get("tools"))
         .and_then(|t| t.as_array())
-        .map(|a| a.iter().filter_map(|t| t.as_str().map(str::to_string)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|t| t.as_str().map(str::to_string))
+                .collect()
+        })
         .unwrap_or_default();
 
     // --- Binding strength: key-bound vs self-asserted ----------------------
@@ -184,7 +188,9 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
     // verified one. (`exercised` is computed here from re-verified receipts,
     // so it is trustworthy even when the card is not key-bound.)
     if !key_bound && (n_captured > 0 || n_discovered > 0) {
-        provenance_str.push_str(" — captured/discovered are SELF-ASSERTED (card not key-bound; not machine-verified)");
+        provenance_str.push_str(
+            " — captured/discovered are SELF-ASSERTED (card not key-bound; not machine-verified)",
+        );
     }
 
     // --- Report ------------------------------------------------------------
@@ -368,7 +374,11 @@ pub fn revoke_capability(
              to revoke, then retry — do not rely on a revocation that will not be \
              honored.",
             signer.key_id(),
-            if card_keyid.is_empty() { "(none)" } else { card_keyid },
+            if card_keyid.is_empty() {
+                "(none)"
+            } else {
+                card_keyid
+            },
         )
         .into());
     }
@@ -376,14 +386,14 @@ pub fn revoke_capability(
     let pt = payload_type("receipt");
     let result = sign(&pt, &stmt, signer.as_ref())?;
     ctx.storage.write(&Record {
-        artifact_id:  result.artifact_id.clone(),
-        digest:       result.digest.clone(),
+        artifact_id: result.artifact_id.clone(),
+        digest: result.digest.clone(),
         payload_type: pt,
-        key_id:       signer.key_id().to_string(),
-        signed_at:    stmt.timestamp.clone(),
-        parent_id:    Some(card_id.to_string()),
-        envelope:     result.envelope,
-        hub_url:      None,
+        key_id: signer.key_id().to_string(),
+        signed_at: stmt.timestamp.clone(),
+        parent_id: Some(card_id.to_string()),
+        envelope: result.envelope,
+        hub_url: None,
     })?;
 
     let self_revoke = signer.key_id() == card_keyid;
@@ -393,7 +403,14 @@ pub fn revoke_capability(
             ("revocation", &result.artifact_id),
             ("card", card_id),
             ("agent", card_agent),
-            ("authority", if self_revoke { "self (agent key)" } else { "ship default key" }),
+            (
+                "authority",
+                if self_revoke {
+                    "self (agent key)"
+                } else {
+                    "ship default key"
+                },
+            ),
             ("reason", reason.unwrap_or("(none)")),
         ],
     );
@@ -427,7 +444,9 @@ pub(crate) fn find_revocation(
         if stmt.kind != "agent_card_revocation.v1" {
             continue;
         }
-        let Some(payload) = stmt.payload else { continue };
+        let Some(payload) = stmt.payload else {
+            continue;
+        };
         if payload.get("card").and_then(|v| v.as_str()) != Some(card_id) {
             continue;
         }
@@ -471,8 +490,7 @@ pub(crate) fn find_revocation(
 /// a signer that isn't the registered key, or an unpinned key.
 pub fn actor_proven(ctx: &crate::ctx::Ctx, actor: &str, signer_keyid: &str) -> bool {
     let agents_dir = crate::commands::cards::agents_dir_for(&ctx.config_path);
-    let Some(registered) =
-        crate::commands::cards::registered_key_for_actor(&agents_dir, actor)
+    let Some(registered) = crate::commands::cards::registered_key_for_actor(&agents_dir, actor)
     else {
         return false;
     };
@@ -481,4 +499,3 @@ pub fn actor_proven(ctx: &crate::ctx::Ctx, actor: &str, signer_keyid: &str) -> b
             .map(|t| is_key_bound(signer_keyid, signer_keyid, &t))
             .unwrap_or(false)
 }
-

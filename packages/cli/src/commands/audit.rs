@@ -23,10 +23,10 @@ type CmdResult = Result<(), Box<dyn std::error::Error>>;
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct WitnessRecord {
     tree_size: usize,
-    root:      String,
-    index:     u64,
+    root: String,
+    index: u64,
     signed_at: String,
-    signer:    String,
+    signer: String,
 }
 
 /// Directory holding witnessed checkpoints: ~/.treeship/merkle/witnessed/
@@ -42,7 +42,13 @@ fn witnessed_dir() -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
 fn witness_path(hub: &str, signer: &str) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
     let safe: String = format!("{hub}__{signer}")
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     Ok(witnessed_dir()?.join(format!("{safe}.json")))
 }
@@ -103,7 +109,12 @@ pub fn audit(
 /// append-only failure) so the one-shot caller can exit nonzero — a monitor
 /// that detects a history rewrite and exits 0 is lying to whatever gates on
 /// it. Watch mode keeps looping and alerting instead.
-fn audit_once(base: &str, agent: &str, trust: &TrustRootStore, printer: &Printer) -> Result<bool, Box<dyn std::error::Error>> {
+fn audit_once(
+    base: &str,
+    agent: &str,
+    trust: &TrustRootStore,
+    printer: &Printer,
+) -> Result<bool, Box<dyn std::error::Error>> {
     let log: serde_json::Value = ureq::get(&format!("{base}/v1/agents/log"))
         .query("agent", agent)
         .call()
@@ -180,18 +191,34 @@ fn audit_once(base: &str, agent: &str, trust: &TrustRootStore, printer: &Printer
     // Hub that equivocates (two roots at one tree_size) or regresses.
     let (consistency, anomaly, prior_witness, pending_witness) = match &current_cp {
         Some(cp) => witness_checkpoint(base, cp),
-        None => ("no verified checkpoint to witness".to_string(), false, None, None),
+        None => (
+            "no verified checkpoint to witness".to_string(),
+            false,
+            None,
+            None,
+        ),
     };
 
     // 3b: cryptographic append-only. When the checkpoint advanced past a prior
     // witness, fetch the Hub's consistency chain and re-verify it proves the
     // current tree extends the one we last witnessed (no rewrite).
     let (append_only, append_anomaly) = match (&current_cp, &prior_witness) {
-        (Some(cp), Some(p)) if cp.tree_size > p.tree_size => {
-            verify_consistency_chain(base, &cp.signer, p.tree_size, &p.root, cp.tree_size, &cp.root)
-        }
-        (Some(_), Some(_)) => ("append-only: no new checkpoints since last audit".to_string(), false),
-        (Some(_), None) => ("append-only: first witness, nothing to extend from yet".to_string(), false),
+        (Some(cp), Some(p)) if cp.tree_size > p.tree_size => verify_consistency_chain(
+            base,
+            &cp.signer,
+            p.tree_size,
+            &p.root,
+            cp.tree_size,
+            &cp.root,
+        ),
+        (Some(_), Some(_)) => (
+            "append-only: no new checkpoints since last audit".to_string(),
+            false,
+        ),
+        (Some(_), None) => (
+            "append-only: first witness, nothing to extend from yet".to_string(),
+            false,
+        ),
         _ => ("append-only: no checkpoint to prove".to_string(), false),
     };
 
@@ -293,7 +320,11 @@ fn audit_once(base: &str, agent: &str, trust: &TrustRootStore, printer: &Printer
 /// the checkpoint signature against our trust roots + inclusion in the signed
 /// root. Returns `(both-hold, checkpoint)` so the caller can also witness the
 /// checkpoint when it is fully verified.
-pub(crate) fn verify_inclusion(base: &str, artifact_id: &str, trust: &TrustRootStore) -> CmdResult2 {
+pub(crate) fn verify_inclusion(
+    base: &str,
+    artifact_id: &str,
+    trust: &TrustRootStore,
+) -> CmdResult2 {
     let pf: ProofFile = ureq::get(&format!("{base}/v1/merkle/{artifact_id}"))
         .call()?
         .into_json()?;
@@ -332,23 +363,32 @@ type CmdResult2 = Result<(bool, Checkpoint), Box<dyn std::error::Error>>;
 fn witness_checkpoint(
     base: &str,
     current: &Checkpoint,
-) -> (String, bool, Option<WitnessRecord>, Option<(std::path::PathBuf, WitnessRecord)>) {
+) -> (
+    String,
+    bool,
+    Option<WitnessRecord>,
+    Option<(std::path::PathBuf, WitnessRecord)>,
+) {
     let path = match witness_path(base, &current.signer) {
         Ok(p) => p,
         Err(e) => return (format!("witness unavailable ({e})"), false, None, None),
     };
     let prior = load_witness(&path);
-    let (line, anomaly, should_save) =
-        witness_decision(prior.as_ref(), current.tree_size, &current.root, current.index);
+    let (line, anomaly, should_save) = witness_decision(
+        prior.as_ref(),
+        current.tree_size,
+        &current.root,
+        current.index,
+    );
     let pending = if should_save {
         Some((
             path,
             WitnessRecord {
                 tree_size: current.tree_size,
-                root:      current.root.clone(),
-                index:     current.index,
+                root: current.root.clone(),
+                index: current.index,
                 signed_at: current.signed_at.clone(),
-                signer:    current.signer.clone(),
+                signer: current.signer.clone(),
             },
         ))
     } else {
@@ -363,9 +403,9 @@ fn witness_checkpoint(
 struct ChainLink {
     from_size: usize,
     from_root: String,
-    to_size:   usize,
-    to_root:   String,
-    version:   u8,
+    to_size: usize,
+    to_root: String,
+    version: u8,
     proof_json: String,
 }
 
@@ -399,7 +439,12 @@ fn verify_consistency_chain(
         .and_then(|r| r.into_json().map_err(Into::into))
     {
         Ok(v) => v,
-        Err(_) => return ("append-only: consistency endpoint unavailable".to_string(), false),
+        Err(_) => {
+            return (
+                "append-only: consistency endpoint unavailable".to_string(),
+                false,
+            )
+        }
     };
     let links: Vec<ChainLink> = resp
         .get("chain")
@@ -429,7 +474,10 @@ fn verify_chain_links(
     let mut verified_links = 0usize;
     for link in links {
         if verified_links > 100_000 {
-            return ("append-only INVALID — consistency chain too long".to_string(), true);
+            return (
+                "append-only INVALID — consistency chain too long".to_string(),
+                true,
+            );
         }
         // Contiguity: this link must start exactly where the previous one ended
         // (and the first link at the witnessed point).
@@ -441,7 +489,12 @@ fn verify_chain_links(
         }
         let proof: Vec<String> = match serde_json::from_str(&link.proof_json) {
             Ok(p) => p,
-            Err(_) => return ("append-only INVALID — malformed proof in chain".to_string(), true),
+            Err(_) => {
+                return (
+                    "append-only INVALID — malformed proof in chain".to_string(),
+                    true,
+                )
+            }
         };
         if !verify_consistency(
             link.version,
@@ -452,7 +505,10 @@ fn verify_chain_links(
             &proof,
         ) {
             return (
-                format!("append-only INVALID — consistency proof failed for #{}→#{} (possible rewrite)", link.from_size, link.to_size),
+                format!(
+                    "append-only INVALID — consistency proof failed for #{}→#{} (possible rewrite)",
+                    link.from_size, link.to_size
+                ),
                 true,
             );
         }

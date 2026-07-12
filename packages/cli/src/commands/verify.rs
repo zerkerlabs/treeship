@@ -3,7 +3,10 @@ use std::collections::HashMap;
 use ed25519_dalek::VerifyingKey;
 use treeship_core::{
     attestation::{Envelope, Verifier},
-    statements::{ActionStatement, ApprovalStatement, ApprovalScope, DecisionStatement, HandoffStatement, ReceiptStatement, payload_type},
+    statements::{
+        payload_type, ActionStatement, ApprovalScope, ApprovalStatement, DecisionStatement,
+        HandoffStatement, ReceiptStatement,
+    },
     storage::Store,
 };
 
@@ -11,57 +14,60 @@ use crate::{ctx, printer::Printer};
 
 /// Result of verifying one artifact.
 struct ArtifactCheck {
-    id:           String,
+    id: String,
     payload_type: String,
     actor_or_sys: String,
-    outcome:      Outcome,
-    reason:       Option<String>,
+    outcome: Outcome,
+    reason: Option<String>,
 }
 
 #[derive(Debug, PartialEq)]
-enum Outcome { Pass, Fail }
+enum Outcome {
+    Pass,
+    Fail,
+}
 
 /// Rich per-step data extracted from each artifact in the chain.
 struct StepInfo {
-    index:        usize,
-    id:           String,
-    actor:        String,
-    action:       String,
-    timestamp:    String,
+    index: usize,
+    id: String,
+    actor: String,
+    action: String,
+    timestamp: String,
     payload_type: String,
     // From meta.execution
-    output_digest:  Option<String>,
-    output_lines:   Option<u64>,
-    exit_code:      Option<i64>,
-    elapsed_ms:     Option<f64>,
+    output_digest: Option<String>,
+    output_lines: Option<u64>,
+    exit_code: Option<i64>,
+    elapsed_ms: Option<f64>,
     // From meta.state_changes
-    files_changed:  Option<u64>,
+    files_changed: Option<u64>,
     // Approval info
-    approver:       Option<String>,
-    approval_id:    Option<String>,
-    description:    Option<String>,
+    approver: Option<String>,
+    approval_id: Option<String>,
+    description: Option<String>,
     // Handoff info
-    handoff_from:   Option<String>,
-    handoff_to:     Option<String>,
+    handoff_from: Option<String>,
+    handoff_to: Option<String>,
     // Parent linkage
-    parent_id:      Option<String>,
+    parent_id: Option<String>,
     // Approval nonce on action
     approval_nonce: Option<String>,
     // Decision info
-    decision_model:      Option<String>,
-    decision_tokens_in:  Option<u64>,
+    decision_model: Option<String>,
+    decision_tokens_in: Option<u64>,
     decision_tokens_out: Option<u64>,
-    decision_summary:    Option<String>,
+    decision_summary: Option<String>,
     decision_confidence: Option<f64>,
 }
 
 pub fn run(
-    target:     &str,
-    no_chain:   bool,
-    max_depth:  usize,
-    full:       bool,
-    config:     Option<&str>,
-    printer:    &Printer,
+    target: &str,
+    no_chain: bool,
+    max_depth: usize,
+    full: bool,
+    config: Option<&str>,
+    printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
 
@@ -97,7 +103,9 @@ pub fn run(
         let mut walk_id = Some(target.to_string());
         while let Some(id) = walk_id {
             chain_ids.push(id.clone());
-            if depth >= max_depth { break; }
+            if depth >= max_depth {
+                break;
+            }
             let rec = ctx.storage.read(&id);
             walk_id = rec.ok().and_then(|r| r.parent_id.clone());
             depth += 1;
@@ -113,14 +121,14 @@ pub fn run(
 
     for id in &chain_ids {
         let rec = match ctx.storage.read(id) {
-            Ok(r)  => r,
+            Ok(r) => r,
             Err(_) => {
                 checks.push(ArtifactCheck {
                     id: id.clone(),
                     payload_type: "unknown".into(),
                     actor_or_sys: "\u{2014}".into(),
                     outcome: Outcome::Fail,
-                    reason:  Some(format!("not found in local storage")),
+                    reason: Some(format!("not found in local storage")),
                 });
                 continue;
             }
@@ -146,16 +154,21 @@ pub fn run(
     };
 
     // Print results.
-    let total  = checks.len();
+    let total = checks.len();
     let passed = checks.iter().filter(|c| c.outcome == Outcome::Pass).count();
     let failed = total - passed;
 
     if printer.format == crate::printer::Format::Json {
-        let out: Vec<_> = checks.iter().map(|c| serde_json::json!({
-            "id":      c.id,
-            "outcome": if c.outcome == Outcome::Pass { "pass" } else { "fail" },
-            "reason":  c.reason,
-        })).collect();
+        let out: Vec<_> = checks
+            .iter()
+            .map(|c| {
+                serde_json::json!({
+                    "id":      c.id,
+                    "outcome": if c.outcome == Outcome::Pass { "pass" } else { "fail" },
+                    "reason":  c.reason,
+                })
+            })
+            .collect();
         printer.json(&serde_json::json!({
             "outcome": if failed == 0 && linkage_ok { "pass" } else { "fail" },
             "total": total, "passed": passed, "failed": failed,
@@ -163,21 +176,36 @@ pub fn run(
             "chain_linkage_detail": if linkage_ok { serde_json::Value::Null } else { serde_json::json!(linkage_detail) },
             "checks": out,
         }));
-        if failed > 0 || !linkage_ok { std::process::exit(1); }
+        if failed > 0 || !linkage_ok {
+            std::process::exit(1);
+        }
         return Ok(());
     }
 
     // --- Full chain timeline display ---
     if full {
-        let chain_ok = print_full_timeline(&chain_envelopes, &checks, &ctx.storage, printer, target, linkage_ok, &linkage_detail);
-        if failed > 0 || !chain_ok { std::process::exit(1); }
+        let chain_ok = print_full_timeline(
+            &chain_envelopes,
+            &checks,
+            &ctx.storage,
+            printer,
+            target,
+            linkage_ok,
+            &linkage_detail,
+        );
+        if failed > 0 || !chain_ok {
+            std::process::exit(1);
+        }
         return Ok(());
     }
 
     // --- Improved short output ---
     let chain_count = chain_envelopes.len();
     if !linkage_ok {
-        printer.warn("chain SIGNED LINKAGE BROKEN — possible tampering", &[("detail", &linkage_detail)]);
+        printer.warn(
+            "chain SIGNED LINKAGE BROKEN — possible tampering",
+            &[("detail", &linkage_detail)],
+        );
         printer.blank();
         std::process::exit(1);
     }
@@ -203,8 +231,7 @@ pub fn run(
                 .map(|s| s.keyid.clone())
                 .unwrap_or_default();
             let proof = |actor: &str| -> (&'static str, String) {
-                let label = if crate::commands::capability::actor_proven(&ctx, actor, &signer_kid)
-                {
+                let label = if crate::commands::capability::actor_proven(&ctx, actor, &signer_kid) {
                     "proven (key-bound)".to_string()
                 } else {
                     "asserted".to_string()
@@ -258,20 +285,32 @@ pub fn run(
             &target[..16.min(target.len())]
         ));
     } else {
-        printer.failure("verification failed", &[
-            ("outcome", "fail"),
-            ("passed",  &passed.to_string()),
-            ("failed",  &failed.to_string()),
-        ]);
+        printer.failure(
+            "verification failed",
+            &[
+                ("outcome", "fail"),
+                ("passed", &passed.to_string()),
+                ("failed", &failed.to_string()),
+            ],
+        );
 
         // Per-artifact detail.
         for c in &checks {
-            let icon = if c.outcome == Outcome::Pass { "  \u{2713}" } else { "  \u{2717}" };
-            let short_type = c.payload_type
+            let icon = if c.outcome == Outcome::Pass {
+                "  \u{2713}"
+            } else {
+                "  \u{2717}"
+            };
+            let short_type = c
+                .payload_type
                 .strip_prefix("application/vnd.treeship.")
                 .and_then(|s| s.strip_suffix(".v1+json"))
                 .unwrap_or(&c.payload_type);
-            let line = format!("{icon}  {}  {short_type}  {}", &c.id[..16.min(c.id.len())], c.actor_or_sys);
+            let line = format!(
+                "{icon}  {}  {short_type}  {}",
+                &c.id[..16.min(c.id.len())],
+                c.actor_or_sys
+            );
             if c.outcome == Outcome::Pass {
                 printer.info(&line);
             } else {
@@ -343,9 +382,11 @@ fn print_full_timeline(
     let failed = checks.len() - passed;
 
     // Build step info for each artifact in chain.
-    let steps: Vec<StepInfo> = chain.iter().enumerate().map(|(i, (id, env))| {
-        extract_step_info(i + 1, id, env, storage)
-    }).collect();
+    let steps: Vec<StepInfo> = chain
+        .iter()
+        .enumerate()
+        .map(|(i, (id, env))| extract_step_info(i + 1, id, env, storage))
+        .collect();
 
     // Header
     if failed == 0 {
@@ -379,7 +420,8 @@ fn print_full_timeline(
 
     // Verification summary.
     let sig_count = chain.len();
-    let nonce_checks: Vec<&ArtifactCheck> = checks.iter()
+    let nonce_checks: Vec<&ArtifactCheck> = checks
+        .iter()
         .filter(|c| c.payload_type == "nonce-binding")
         .collect();
 
@@ -388,21 +430,33 @@ fn print_full_timeline(
     printer.info(&format!("  {rule}"));
 
     // Signatures
-    let sig_status = if checks.iter().any(|c| c.outcome == Outcome::Fail && c.payload_type != "nonce-binding") {
+    let sig_status = if checks
+        .iter()
+        .any(|c| c.outcome == Outcome::Fail && c.payload_type != "nonce-binding")
+    {
         printer.red(&format!("\u{2717}  signatures      FAILED"))
     } else {
-        printer.green(&format!("\u{2713}  signatures      all {} Ed25519 signatures valid", sig_count))
+        printer.green(&format!(
+            "\u{2713}  signatures      all {} Ed25519 signatures valid",
+            sig_count
+        ))
     };
     printer.info(&format!("  {sig_status}"));
 
     // Content IDs
     let id_fail = checks.iter().any(|c| {
-        c.outcome == Outcome::Fail && c.reason.as_deref().map_or(false, |r| r.contains("ID mismatch"))
+        c.outcome == Outcome::Fail
+            && c.reason
+                .as_deref()
+                .map_or(false, |r| r.contains("ID mismatch"))
     });
     let id_status = if id_fail {
         printer.red("\u{2717}  content IDs     ID mismatch detected")
     } else {
-        printer.green(&format!("\u{2713}  content IDs     all {} artifact IDs match content", sig_count))
+        printer.green(&format!(
+            "\u{2713}  content IDs     all {} artifact IDs match content",
+            sig_count
+        ))
     };
     printer.info(&format!("  {id_status}"));
 
@@ -415,7 +469,10 @@ fn print_full_timeline(
     //       artifacts; without (b), "no tampering detected" would be a check
     //       we never ran. We only claim tamper-freedom when (b) holds.
     let no_gaps = !checks.iter().any(|c| {
-        c.outcome == Outcome::Fail && c.reason.as_deref().map_or(false, |r| r.contains("not found"))
+        c.outcome == Outcome::Fail
+            && c.reason
+                .as_deref()
+                .map_or(false, |r| r.contains("not found"))
     });
     let chain_ok = no_gaps && linkage_ok;
     let chain_status = if chain_ok {
@@ -441,13 +498,18 @@ fn print_full_timeline(
     //                   for the artifacts inside this package; a global
     //                   replay ledger does not exist yet, and verify
     //                   must NOT claim "single-use enforced" without one.
-    let approval_checks: Vec<&ArtifactCheck> = checks.iter()
+    let approval_checks: Vec<&ArtifactCheck> = checks
+        .iter()
         .filter(|c| c.payload_type.starts_with("nonce-binding"))
         .collect();
     if !approval_checks.is_empty() {
         let any_fail = approval_checks.iter().any(|c| c.outcome == Outcome::Fail);
-        let any_unscoped = approval_checks.iter().any(|c| c.payload_type == "nonce-binding-unscoped");
-        let any_scoped   = approval_checks.iter().any(|c| c.payload_type == "nonce-binding-scoped");
+        let any_unscoped = approval_checks
+            .iter()
+            .any(|c| c.payload_type == "nonce-binding-unscoped");
+        let any_scoped = approval_checks
+            .iter()
+            .any(|c| c.payload_type == "nonce-binding-scoped");
 
         // Line 1: cryptographic binding (always emitted).
         let bind_status = if any_fail {
@@ -462,7 +524,9 @@ fn print_full_timeline(
         if any_scoped && !any_fail {
             printer.info(&format!(
                 "  {}",
-                printer.green("\u{2713}  approval scope   actor / action / subject matched approval scope")
+                printer.green(
+                    "\u{2713}  approval scope   actor / action / subject matched approval scope"
+                )
             ));
         }
         if any_unscoped {
@@ -477,7 +541,9 @@ fn print_full_timeline(
         // Approval Use Journal had something to say. The printer
         // shows the strongest level it actually achieved -- never
         // overclaims, never silently downgrades.
-        let journal_check = checks.iter().find(|c| c.payload_type == "replay-local-journal");
+        let journal_check = checks
+            .iter()
+            .find(|c| c.payload_type == "replay-local-journal");
         match journal_check {
             Some(c) if c.outcome == Outcome::Pass => {
                 let detail = c.reason.clone().unwrap_or_else(|| {
@@ -532,10 +598,7 @@ fn print_step_card(step: &StepInfo, printer: &Printer) {
     let actor_action = if step.payload_type.contains("decision") {
         format!("{} . decision", step.actor)
     } else if step.payload_type.contains("approval") {
-        format!(
-            "{} . approval",
-            step.actor
-        )
+        format!("{} . approval", step.actor)
     } else if step.payload_type.contains("handoff") {
         let from = step.handoff_from.as_deref().unwrap_or(&step.actor);
         let to = step.handoff_to.as_deref().unwrap_or("?");
@@ -555,10 +618,12 @@ fn print_step_card(step: &StepInfo, printer: &Printer) {
         } else {
             digest_str
         };
-        let lines_str = step.output_lines
+        let lines_str = step
+            .output_lines
             .map(|n| format!("{} lines", n))
             .unwrap_or_default();
-        let exit_str = step.exit_code
+        let exit_str = step
+            .exit_code
             .map(|c| format!("exit {}", c))
             .unwrap_or_default();
         let parts: Vec<&str> = [lines_str.as_str(), exit_str.as_str()]
@@ -621,7 +686,8 @@ fn print_step_card(step: &StepInfo, printer: &Printer) {
     }
 
     // Timestamp + elapsed
-    let elapsed_str = step.elapsed_ms
+    let elapsed_str = step
+        .elapsed_ms
         .map(|ms| {
             if ms < 1000.0 {
                 format!("{:.0}ms", ms)
@@ -653,7 +719,11 @@ fn print_box_line(content: &str, printer: &Printer) {
     printer.info(&format!("  \u{2502}  {} \u{2502}", padded));
 }
 
-fn determine_connector(current: &StepInfo, next: &StepInfo, _chain: &[(String, Envelope)]) -> String {
+fn determine_connector(
+    current: &StepInfo,
+    next: &StepInfo,
+    _chain: &[(String, Envelope)],
+) -> String {
     // Check if next step references an approval
     if next.approval_nonce.is_some() {
         return "\u{2193} approval required".to_string();
@@ -979,12 +1049,12 @@ fn verify_nonce_bindings(
             continue;
         }
         let action = match env.unmarshal_statement::<ActionStatement>() {
-            Ok(a)  => a,
+            Ok(a) => a,
             Err(_) => continue,
         };
         let nonce = match &action.approval_nonce {
             Some(n) => n.clone(),
-            None    => continue, // no approval binding claimed
+            None => continue, // no approval binding claimed
         };
 
         // Look up the approval: first in chain, then in storage.
@@ -995,11 +1065,11 @@ fn verify_nonce_bindings(
                 Some(a) => a,
                 None => {
                     checks.push(ArtifactCheck {
-                        id:           id.clone(),
+                        id: id.clone(),
                         payload_type: "nonce-binding".into(),
                         actor_or_sys: action.actor.clone(),
-                        outcome:      Outcome::Fail,
-                        reason:       Some(format!(
+                        outcome: Outcome::Fail,
+                        reason: Some(format!(
                             "approval_nonce '{}' set but no matching approval found",
                             &nonce[..16.min(nonce.len())]
                         )),
@@ -1014,13 +1084,11 @@ fn verify_nonce_bindings(
             let now = now_rfc3339();
             if *expires < now {
                 checks.push(ArtifactCheck {
-                    id:           id.clone(),
+                    id: id.clone(),
                     payload_type: "nonce-binding".into(),
                     actor_or_sys: action.actor.clone(),
-                    outcome:      Outcome::Fail,
-                    reason:       Some(format!(
-                        "approval expired at {} (now: {})", expires, now
-                    )),
+                    outcome: Outcome::Fail,
+                    reason: Some(format!("approval expired at {} (now: {})", expires, now)),
                 });
                 continue;
             }
@@ -1035,11 +1103,11 @@ fn verify_nonce_bindings(
             Some(scope) if !scope.is_unscoped() => {
                 if let Some(reason) = check_scope_violation(scope, &action) {
                     checks.push(ArtifactCheck {
-                        id:           id.clone(),
+                        id: id.clone(),
                         payload_type: "nonce-binding".into(),
                         actor_or_sys: action.actor.clone(),
-                        outcome:      Outcome::Fail,
-                        reason:       Some(reason),
+                        outcome: Outcome::Fail,
+                        reason: Some(reason),
                     });
                     continue;
                 }
@@ -1052,11 +1120,11 @@ fn verify_nonce_bindings(
         // Not a global ledger; just what we can see in this bundle.
         if let Some(prev) = nonce_consumed_by.get(&nonce) {
             checks.push(ArtifactCheck {
-                id:           id.clone(),
+                id: id.clone(),
                 payload_type: "nonce-binding".into(),
                 actor_or_sys: action.actor.clone(),
-                outcome:      Outcome::Fail,
-                reason:       Some(format!(
+                outcome: Outcome::Fail,
+                reason: Some(format!(
                     "nonce already consumed by {} in this package (package-local replay)",
                     short_id(prev)
                 )),
@@ -1067,11 +1135,11 @@ fn verify_nonce_bindings(
 
         // Binding + scope (if any) valid.
         checks.push(ArtifactCheck {
-            id:           id.clone(),
+            id: id.clone(),
             payload_type: scope_tag.into(),
             actor_or_sys: action.actor.clone(),
-            outcome:      Outcome::Pass,
-            reason:       None,
+            outcome: Outcome::Pass,
+            reason: None,
         });
 
         // Local journal replay check (PR 3). Reports the strongest
@@ -1114,11 +1182,11 @@ fn verify_nonce_bindings(
                     };
                     let detail = replay.details.clone().unwrap_or_default();
                     checks.push(ArtifactCheck {
-                        id:           id.clone(),
+                        id: id.clone(),
                         payload_type: "replay-local-journal".into(),
                         actor_or_sys: action.actor.clone(),
                         outcome,
-                        reason:       Some(detail),
+                        reason: Some(detail),
                     });
                 }
             }
@@ -1134,19 +1202,18 @@ fn verify_nonce_bindings(
 /// Empty `allowed_*` lists mean "no constraint on that axis." The order
 /// of checks is actor → action → subject → scope-level expiry; the
 /// first violation wins for a clear failure message.
-pub(crate) fn check_scope_violation(scope: &ApprovalScope, action: &ActionStatement) -> Option<String> {
-    if !scope.allowed_actors.is_empty()
-        && !scope.allowed_actors.contains(&action.actor)
-    {
+pub(crate) fn check_scope_violation(
+    scope: &ApprovalScope,
+    action: &ActionStatement,
+) -> Option<String> {
+    if !scope.allowed_actors.is_empty() && !scope.allowed_actors.contains(&action.actor) {
         return Some(format!(
             "actor '{}' not in approval's allowed_actors: {:?}",
             action.actor, scope.allowed_actors
         ));
     }
 
-    if !scope.allowed_actions.is_empty()
-        && !scope.allowed_actions.contains(&action.action)
-    {
+    if !scope.allowed_actions.is_empty() && !scope.allowed_actions.contains(&action.action) {
         return Some(format!(
             "action '{}' not in approval's allowed_actions: {:?}",
             action.action, scope.allowed_actions
@@ -1157,12 +1224,15 @@ pub(crate) fn check_scope_violation(scope: &ApprovalScope, action: &ActionStatem
         // Match on whichever subject reference the action carries.
         // URI is the canonical form; artifact_id is a chain-internal
         // form. Either may appear in allowed_subjects.
-        let observed = action.subject.uri.clone()
+        let observed = action
+            .subject
+            .uri
+            .clone()
             .or_else(|| action.subject.artifact_id.clone())
             .or_else(|| action.subject.digest.clone());
         let matches = match observed.as_deref() {
             Some(s) => scope.allowed_subjects.iter().any(|allowed| allowed == s),
-            None    => false,
+            None => false,
         };
         if !matches {
             return Some(format!(
@@ -1177,7 +1247,8 @@ pub(crate) fn check_scope_violation(scope: &ApprovalScope, action: &ActionStatem
         let now = now_rfc3339();
         if *valid_until < now {
             return Some(format!(
-                "approval scope expired at {} (now: {})", valid_until, now
+                "approval scope expired at {} (now: {})",
+                valid_until, now
             ));
         }
     }
@@ -1253,7 +1324,9 @@ fn extract_actor(envelope: &Envelope) -> String {
 }
 
 /// Build a Verifier populated with all public keys from the keystore.
-fn build_verifier(keys: &treeship_core::keys::Store) -> Result<Verifier, Box<dyn std::error::Error>> {
+fn build_verifier(
+    keys: &treeship_core::keys::Store,
+) -> Result<Verifier, Box<dyn std::error::Error>> {
     let key_list = keys.list()?;
     let mut map: HashMap<String, VerifyingKey> = HashMap::new();
 
@@ -1277,7 +1350,10 @@ mod tests {
     fn act(actor: &str, action: &str, subject_uri: Option<&str>) -> ActionStatement {
         let mut a = ActionStatement::new(actor, action);
         if let Some(uri) = subject_uri {
-            a.subject = SubjectRef { uri: Some(uri.into()), ..Default::default() };
+            a.subject = SubjectRef {
+                uri: Some(uri.into()),
+                ..Default::default()
+            };
         }
         a
     }
@@ -1318,7 +1394,10 @@ mod tests {
         };
         let action = act("agent://payer", "payments.charge", None);
         let r = check_scope_violation(&scope, &action);
-        assert!(r.is_some(), "unenforceable extra constraint must fail closed");
+        assert!(
+            r.is_some(),
+            "unenforceable extra constraint must fail closed"
+        );
         assert!(r.unwrap().contains("cannot evaluate"));
     }
 
@@ -1358,7 +1437,11 @@ mod tests {
             allowed_subjects: vec!["env://production".into()],
             ..Default::default()
         };
-        let action = act("agent://deployer", "deploy.production", Some("env://staging"));
+        let action = act(
+            "agent://deployer",
+            "deploy.production",
+            Some("env://staging"),
+        );
         let r = check_scope_violation(&scope, &action);
         assert!(r.is_some());
         assert!(r.unwrap().contains("not in approval's allowed_subjects"));
@@ -1370,7 +1453,11 @@ mod tests {
             allowed_subjects: vec!["env://production".into()],
             ..Default::default()
         };
-        let action = act("agent://deployer", "deploy.production", Some("env://production"));
+        let action = act(
+            "agent://deployer",
+            "deploy.production",
+            Some("env://production"),
+        );
         assert!(check_scope_violation(&scope, &action).is_none());
     }
 
@@ -1383,7 +1470,10 @@ mod tests {
             ..Default::default()
         };
         let mut action = act("agent://x", "doit", None);
-        action.subject = SubjectRef { artifact_id: Some("art_abc123".into()), ..Default::default() };
+        action.subject = SubjectRef {
+            artifact_id: Some("art_abc123".into()),
+            ..Default::default()
+        };
         assert!(check_scope_violation(&scope, &action).is_none());
     }
 
@@ -1402,7 +1492,7 @@ mod tests {
     fn scope_first_violation_wins_actor_then_action() {
         // Actor matches, action doesn't -- action error reported.
         let scope = ApprovalScope {
-            allowed_actors:  vec!["agent://deployer".into()],
+            allowed_actors: vec!["agent://deployer".into()],
             allowed_actions: vec!["deploy.production".into()],
             ..Default::default()
         };
@@ -1415,7 +1505,7 @@ mod tests {
     fn scope_first_violation_wins_actor_takes_priority() {
         // Both wrong; actor reported because it's checked first.
         let scope = ApprovalScope {
-            allowed_actors:  vec!["agent://deployer".into()],
+            allowed_actors: vec!["agent://deployer".into()],
             allowed_actions: vec!["deploy.production".into()],
             ..Default::default()
         };
@@ -1436,7 +1526,10 @@ mod tests {
 
     #[test]
     fn scope_with_max_uses_only_is_not_unscoped() {
-        let scope = ApprovalScope { max_actions: Some(1), ..Default::default() };
+        let scope = ApprovalScope {
+            max_actions: Some(1),
+            ..Default::default()
+        };
         assert!(!scope.is_unscoped());
     }
 

@@ -43,8 +43,7 @@ fn render_log_list(frame: &mut Frame, area: Rect, app: &App) {
     }
 
     // Show artifacts in reverse order (newest at bottom)
-    let reversed: Vec<&crate::tui::app::ArtifactEntry> =
-        app.artifacts.iter().rev().collect();
+    let reversed: Vec<&crate::tui::app::ArtifactEntry> = app.artifacts.iter().rev().collect();
 
     let items: Vec<ListItem> = reversed
         .iter()
@@ -76,14 +75,8 @@ fn render_log_list(frame: &mut Frame, area: Rect, app: &App) {
                     format!("{:<7} ", a.artifact_type),
                     Style::default().fg(Color::Rgb(147, 197, 253)),
                 ),
-                Span::styled(
-                    format!("{:<22} ", a.action),
-                    Style::default().fg(WHITE),
-                ),
-                Span::styled(
-                    format!("exit {} ", a.exit_code),
-                    exit_style,
-                ),
+                Span::styled(format!("{:<22} ", a.action), Style::default().fg(WHITE)),
+                Span::styled(format!("exit {} ", a.exit_code), exit_style),
                 Span::styled(format!("{:>7}  ", elapsed), Style::default().fg(DIM)),
                 Span::styled(short, Style::default().fg(DIM)),
             ]);
@@ -95,17 +88,17 @@ fn render_log_list(frame: &mut Frame, area: Rect, app: &App) {
     let mut state = ListState::default();
     // Select the corresponding item in the reversed list
     if !app.artifacts.is_empty() {
-        let rev_idx = app.artifacts.len().saturating_sub(1).saturating_sub(app.selected);
+        let rev_idx = app
+            .artifacts
+            .len()
+            .saturating_sub(1)
+            .saturating_sub(app.selected);
         state.select(Some(rev_idx));
     }
 
     let list = List::new(items)
         .block(block)
-        .highlight_style(
-            Style::default()
-                .fg(WHITE)
-                .add_modifier(Modifier::BOLD),
-        );
+        .highlight_style(Style::default().fg(WHITE).add_modifier(Modifier::BOLD));
 
     frame.render_stateful_widget(list, area, &mut state);
 }

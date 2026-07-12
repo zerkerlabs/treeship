@@ -52,7 +52,10 @@ fn class_rank(class: &str) -> u8 {
 /// approval; runtime requires a non-cli harness. A self-consistency floor,
 /// not a full evidence check (AUD-06).
 fn justified_class(p: &serde_json::Value) -> &'static str {
-    let approvals = p.get("approval_count").and_then(|v| v.as_u64()).unwrap_or(0);
+    let approvals = p
+        .get("approval_count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
     let harness = p.get("harness").and_then(|v| v.as_str()).unwrap_or("cli");
     if approvals > 0 {
         "countersigned"
@@ -104,7 +107,10 @@ pub(crate) fn aggregate_profile(
         let class = cap_class_to_evidence(declared, p).to_string();
         *by_class.entry(class).or_insert(0u64) += 1;
         actions += p.get("action_count").and_then(|v| v.as_u64()).unwrap_or(0);
-        approvals += p.get("approval_count").and_then(|v| v.as_u64()).unwrap_or(0);
+        approvals += p
+            .get("approval_count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
         handoffs += p.get("handoff_count").and_then(|v| v.as_u64()).unwrap_or(0);
         if let Some(ts) = p.get("tools_exercised").and_then(|v| v.as_array()) {
             for t in ts.iter().filter_map(|t| t.as_str()) {
@@ -158,11 +164,15 @@ fn sessions_in_prefix(
     let receipt_pt = payload_type("receipt");
     let mut out = Vec::new();
     for id in &artifact_ids[..tree_size] {
-        let Ok(rec) = ctx.storage.read(id) else { continue };
+        let Ok(rec) = ctx.storage.read(id) else {
+            continue;
+        };
         if rec.payload_type != receipt_pt {
             continue;
         }
-        let Ok(stmt) = rec.envelope.unmarshal_statement::<ReceiptStatement>() else { continue };
+        let Ok(stmt) = rec.envelope.unmarshal_statement::<ReceiptStatement>() else {
+            continue;
+        };
         if stmt.kind != "session.v1" {
             continue;
         }
@@ -183,12 +193,7 @@ fn now_rfc3339() -> String {
     )
 }
 
-pub fn profile(
-    agent: &str,
-    attest: bool,
-    config: Option<&str>,
-    printer: &Printer,
-) -> CmdResult {
+pub fn profile(agent: &str, attest: bool, config: Option<&str>, printer: &Printer) -> CmdResult {
     let ctx = ctx::open(config)?;
     let agent = if agent.contains("://") {
         agent.to_string()
@@ -211,10 +216,8 @@ pub fn profile(
     if attest {
         treeship_core::predicates::validate("profile.v1", Some(&payload))
             .map_err(|e| format!("profile.v1 validation failed: {e}"))?;
-        let mut stmt = ReceiptStatement::new(
-            &format!("ship://{}", ctx.config.ship_id),
-            "profile.v1",
-        );
+        let mut stmt =
+            ReceiptStatement::new(&format!("ship://{}", ctx.config.ship_id), "profile.v1");
         stmt.payload = Some(payload.clone());
         // The SHIP signs: a profile is the operator's claim about the
         // agent's record, checked by anyone via recompute — not the agent
@@ -223,14 +226,14 @@ pub fn profile(
         let pt = payload_type("receipt");
         let result = sign(&pt, &stmt, signer.as_ref())?;
         ctx.storage.write(&Record {
-            artifact_id:  result.artifact_id.clone(),
-            digest:       result.digest,
+            artifact_id: result.artifact_id.clone(),
+            digest: result.digest,
             payload_type: pt,
-            key_id:       signer.key_id().to_string(),
-            signed_at:    stmt.timestamp.clone(),
-            parent_id:    None,
-            envelope:     result.envelope,
-            hub_url:      None,
+            key_id: signer.key_id().to_string(),
+            signed_at: stmt.timestamp.clone(),
+            parent_id: None,
+            envelope: result.envelope,
+            hub_url: None,
         })?;
         attested_id = Some(result.artifact_id);
     }
@@ -244,26 +247,54 @@ pub fn profile(
         return Ok(());
     }
 
-    printer.success("profile", &[
-        ("agent",    agent.as_str()),
-        ("pinned",   &format!("checkpoint #{} (tree_size {})", checkpoint.index, checkpoint.tree_size)),
-        ("sessions", &format!(
-            "{} ({} self, {} runtime, {} countersigned)",
-            payload["sessions_total"], payload["sessions_self"],
-            payload["sessions_runtime"], payload["sessions_countersigned"]
-        )),
-        ("actions",  &payload["actions_total"].to_string()),
-        ("approvals", &payload["approvals_total"].to_string()),
-        ("tools",    &payload["tools_exercised"].as_array().map(|a| a.len()).unwrap_or(0).to_string()),
-        ("span",     &format!(
-            "{} → {}",
-            payload["span_first"].as_str().unwrap_or("-"),
-            payload["span_last"].as_str().unwrap_or("-")
-        )),
-    ]);
+    printer.success(
+        "profile",
+        &[
+            ("agent", agent.as_str()),
+            (
+                "pinned",
+                &format!(
+                    "checkpoint #{} (tree_size {})",
+                    checkpoint.index, checkpoint.tree_size
+                ),
+            ),
+            (
+                "sessions",
+                &format!(
+                    "{} ({} self, {} runtime, {} countersigned)",
+                    payload["sessions_total"],
+                    payload["sessions_self"],
+                    payload["sessions_runtime"],
+                    payload["sessions_countersigned"]
+                ),
+            ),
+            ("actions", &payload["actions_total"].to_string()),
+            ("approvals", &payload["approvals_total"].to_string()),
+            (
+                "tools",
+                &payload["tools_exercised"]
+                    .as_array()
+                    .map(|a| a.len())
+                    .unwrap_or(0)
+                    .to_string(),
+            ),
+            (
+                "span",
+                &format!(
+                    "{} → {}",
+                    payload["span_first"].as_str().unwrap_or("-"),
+                    payload["span_last"].as_str().unwrap_or("-")
+                ),
+            ),
+        ],
+    );
     if let Some(id) = attested_id {
-        printer.info(&format!("  attested:  {id}  (profile.v1, ship-signed claim)"));
-        printer.hint(&format!("anyone recomputes it: treeship verify-profile {id}"));
+        printer.info(&format!(
+            "  attested:  {id}  (profile.v1, ship-signed claim)"
+        ));
+        printer.hint(&format!(
+            "anyone recomputes it: treeship verify-profile {id}"
+        ));
     } else {
         printer.hint("sign it as a claim: treeship profile <agent> --attest");
     }
@@ -349,14 +380,26 @@ pub fn verify_profile(artifact_id: &str, config: Option<&str>, printer: &Printer
     }
 
     if checked {
-        printer.success("profile checked", &[
-            ("profile", artifact_id),
-            ("agent",   agent.as_str()),
-            ("pinned",  &format!("checkpoint #{index} (tree_size {tree_size}), root reproduced")),
-            ("grade",   "checked — every number recomputed from the log and matched"),
-        ]);
+        printer.success(
+            "profile checked",
+            &[
+                ("profile", artifact_id),
+                ("agent", agent.as_str()),
+                (
+                    "pinned",
+                    &format!("checkpoint #{index} (tree_size {tree_size}), root reproduced"),
+                ),
+                (
+                    "grade",
+                    "checked — every number recomputed from the log and matched",
+                ),
+            ],
+        );
     } else {
-        printer.warn("profile MISMATCH — provably false", &[("profile", artifact_id)]);
+        printer.warn(
+            "profile MISMATCH — provably false",
+            &[("profile", artifact_id)],
+        );
         for m in &mismatches {
             printer.info(&format!("  {m}"));
         }
@@ -416,7 +459,10 @@ mod tests {
 
         let c = cp(1, 10, "sha256:aa");
         let out = aggregate_profile("agent://x", &c, &[forged], "T");
-        assert_eq!(out["sessions_countersigned"], 0, "forge must not land in countersigned");
+        assert_eq!(
+            out["sessions_countersigned"], 0,
+            "forge must not land in countersigned"
+        );
         assert_eq!(out["sessions_self"], 1);
     }
 
@@ -439,7 +485,10 @@ mod tests {
             "harness": "claude-code",
             "closed_at": "2026-07-06T00:00:00Z",
         });
-        assert_eq!(cap_class_to_evidence("countersigned", &honest), "countersigned");
+        assert_eq!(
+            cap_class_to_evidence("countersigned", &honest),
+            "countersigned"
+        );
     }
 
     #[test]
@@ -453,7 +502,12 @@ mod tests {
     #[test]
     fn aggregate_is_deterministic_and_order_insensitive_where_promised() {
         let c = cp(7, 100, "sha256:aa");
-        let s1 = session("runtime", 10, &["Bash(git:*)", "Edit(*)"], "2026-07-01T00:00:00Z");
+        let s1 = session(
+            "runtime",
+            10,
+            &["Bash(git:*)", "Edit(*)"],
+            "2026-07-01T00:00:00Z",
+        );
         let s2 = session("self", 5, &["Edit(*)", "Read(*)"], "2026-07-06T00:00:00Z");
 
         let a = aggregate_profile("agent://x", &c, &[s1.clone(), s2.clone()], "T1");
@@ -461,10 +515,17 @@ mod tests {
 
         // computed_at differs; every aggregate field must be identical.
         for k in [
-            "sessions_total", "sessions_self", "sessions_runtime",
-            "sessions_countersigned", "actions_total", "approvals_total",
-            "tools_exercised", "span_first", "span_last",
-            "checkpoint_root", "checkpoint_tree_size",
+            "sessions_total",
+            "sessions_self",
+            "sessions_runtime",
+            "sessions_countersigned",
+            "actions_total",
+            "approvals_total",
+            "tools_exercised",
+            "span_first",
+            "span_last",
+            "checkpoint_root",
+            "checkpoint_tree_size",
         ] {
             assert_eq!(a[k], b[k], "field {k} must be deterministic");
         }
@@ -485,7 +546,8 @@ mod tests {
     fn inflated_claim_is_detected_by_recompute() {
         let c = cp(7, 100, "sha256:aa");
         let honest = aggregate_profile(
-            "agent://x", &c,
+            "agent://x",
+            &c,
             &[session("runtime", 10, &["Edit(*)"], "2026-07-01T00:00:00Z")],
             "T",
         );
@@ -495,13 +557,16 @@ mod tests {
         inflated["actions_total"] = serde_json::json!(9000);
 
         let recomputed = aggregate_profile(
-            "agent://x", &c,
+            "agent://x",
+            &c,
             &[session("runtime", 10, &["Edit(*)"], "2026-07-01T00:00:00Z")],
             "T2",
         );
         let mut mismatches = 0;
         for (k, rv) in recomputed.as_object().unwrap() {
-            if k == "computed_at" { continue; }
+            if k == "computed_at" {
+                continue;
+            }
             if inflated.get(k) != Some(rv) {
                 mismatches += 1;
             }

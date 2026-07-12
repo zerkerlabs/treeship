@@ -23,7 +23,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 
-use crate::attestation::{Envelope, Signer, SignerError, Signature as DsseSignature};
+use crate::attestation::{Envelope, Signature as DsseSignature, Signer, SignerError};
 use crate::statements::invitation::{canonical_json_digest, GrantedCapabilities};
 
 // ---------------------------------------------------------------------------
@@ -68,19 +68,19 @@ pub struct SessionParticipantStatement {
 
 impl SessionParticipantStatement {
     pub fn new(
-        session_ref:    impl Into<String>,
+        session_ref: impl Into<String>,
         invitation_ref: impl Into<String>,
-        joining_agent:  impl Into<String>,
-        joined_at:      impl Into<String>,
-        capabilities:   GrantedCapabilities,
+        joining_agent: impl Into<String>,
+        joined_at: impl Into<String>,
+        capabilities: GrantedCapabilities,
     ) -> Self {
         Self {
-            type_:                  TYPE_SESSION_PARTICIPANT.into(),
-            session_ref:            session_ref.into(),
-            invitation_ref:         invitation_ref.into(),
-            joining_agent:          joining_agent.into(),
+            type_: TYPE_SESSION_PARTICIPANT.into(),
+            session_ref: session_ref.into(),
+            invitation_ref: invitation_ref.into(),
+            joining_agent: joining_agent.into(),
             joining_agent_cert_ref: None,
-            joined_at:              joined_at.into(),
+            joined_at: joined_at.into(),
             capabilities,
         }
     }
@@ -92,7 +92,7 @@ impl SessionParticipantStatement {
     /// `"v1|session-participant|{session_ref}|{invitation_ref}|{joining_agent}|{cert_ref_or_empty}|{joined_at}|{capabilities_canonical}"`
     pub fn canonical_for_signing(&self) -> String {
         let caps_digest = canonical_json_digest(&self.capabilities);
-        let cert_field  = self.joining_agent_cert_ref.as_deref().unwrap_or("");
+        let cert_field = self.joining_agent_cert_ref.as_deref().unwrap_or("");
         format!(
             "v1|session-participant|{}|{}|{}|{}|{}|{}",
             self.session_ref,
@@ -127,17 +127,14 @@ impl SessionParticipantStatement {
     /// `MissingHostCountersign`; this constructor exists so the
     /// `treeship session join` CLI can emit a "pending countersign"
     /// blob the host then fills in via `treeship session countersign`.
-    pub fn pending_envelope(
-        &self,
-        joining_signer: &dyn Signer,
-    ) -> Result<Envelope, SignerError> {
+    pub fn pending_envelope(&self, joining_signer: &dyn Signer) -> Result<Envelope, SignerError> {
         let sig = self.sign_as_joining_agent(joining_signer)?;
         let payload = serde_json::to_vec(self)
             .map_err(|e| SignerError(format!("serialize participant: {e}")))?;
         Ok(Envelope {
-            payload:      URL_SAFE_NO_PAD.encode(&payload),
+            payload: URL_SAFE_NO_PAD.encode(&payload),
             payload_type: crate::statements::payload_type("session-participant"),
-            signatures:   vec![DsseSignature {
+            signatures: vec![DsseSignature {
                 keyid: joining_signer.key_id().to_string(),
                 sig,
             }],
@@ -153,7 +150,8 @@ impl SessionParticipantStatement {
     ) -> Result<Envelope, SignerError> {
         // Decode + re-canonicalize the embedded statement so the
         // countersign covers the exact bytes the joining agent did.
-        let stmt: Self = envelope.unmarshal_statement()
+        let stmt: Self = envelope
+            .unmarshal_statement()
             .map_err(|e| SignerError(format!("envelope decode: {e}")))?;
         let sig = stmt.sign_as_host(host_signer)?;
         let mut out = envelope.clone();
@@ -261,7 +259,8 @@ pub fn verify_participant_envelope(
 
     if stmt.type_ != TYPE_SESSION_PARTICIPANT {
         return Err(ParticipantVerifyError::BadPayload(format!(
-            "wrong type: got {}, expected {}", stmt.type_, TYPE_SESSION_PARTICIPANT,
+            "wrong type: got {}, expected {}",
+            stmt.type_, TYPE_SESSION_PARTICIPANT,
         )));
     }
 
@@ -292,7 +291,10 @@ pub fn verify_participant_envelope(
     let mut joiner_sig_arr = [0u8; 64];
     joiner_sig_arr.copy_from_slice(&joiner_sig_bytes);
     let joiner_sig = Signature::from_bytes(&joiner_sig_arr);
-    if joiner_vk.verify_strict(canonical.as_bytes(), &joiner_sig).is_err() {
+    if joiner_vk
+        .verify_strict(canonical.as_bytes(), &joiner_sig)
+        .is_err()
+    {
         return Err(ParticipantVerifyError::JoiningAgentSigInvalid);
     }
 
@@ -315,7 +317,10 @@ pub fn verify_participant_envelope(
     let mut host_sig_arr = [0u8; 64];
     host_sig_arr.copy_from_slice(&host_sig_bytes);
     let host_sig = Signature::from_bytes(&host_sig_arr);
-    if host_vk.verify_strict(canonical.as_bytes(), &host_sig).is_err() {
+    if host_vk
+        .verify_strict(canonical.as_bytes(), &host_sig)
+        .is_err()
+    {
         return Err(ParticipantVerifyError::HostCountersignInvalid);
     }
 
@@ -330,7 +335,9 @@ pub fn verify_participant_envelope(
 mod tests {
     use super::*;
     use crate::attestation::Ed25519Signer;
-    use crate::statements::invitation::{GrantedCapabilities, InviteeRestriction, InvitationStatement};
+    use crate::statements::invitation::{
+        GrantedCapabilities, InvitationStatement, InviteeRestriction,
+    };
 
     fn caps() -> GrantedCapabilities {
         GrantedCapabilities {
@@ -345,19 +352,30 @@ mod tests {
         )
     }
 
-    fn build_pair() -> (InvitationStatement, SessionParticipantStatement, Ed25519Signer, Ed25519Signer) {
+    fn build_pair() -> (
+        InvitationStatement,
+        SessionParticipantStatement,
+        Ed25519Signer,
+        Ed25519Signer,
+    ) {
         let (host, agent) = keys();
         let host_pk = URL_SAFE_NO_PAD.encode(host.public_key_bytes());
         let agent_pk = URL_SAFE_NO_PAD.encode(agent.public_key_bytes());
 
         let inv = InvitationStatement::new(
-            "ssn_room", host_pk.clone(),
-            InviteeRestriction::Open, caps(),
-            "2030-01-01T00:00:00Z", "nonce_xyz",
+            "ssn_room",
+            host_pk.clone(),
+            InviteeRestriction::Open,
+            caps(),
+            "2030-01-01T00:00:00Z",
+            "nonce_xyz",
         );
         let part = SessionParticipantStatement::new(
-            "ssn_room", "art_invitation_001",
-            agent_pk, "2026-05-18T01:00:00Z", caps(),
+            "ssn_room",
+            "art_invitation_001",
+            agent_pk,
+            "2026-05-18T01:00:00Z",
+            caps(),
         );
         (inv, part, host, agent)
     }
@@ -380,7 +398,8 @@ mod tests {
     fn participant_pending_plus_countersign_verifies() {
         let (inv, part, host, agent) = build_pair();
         let pending = part.pending_envelope(&agent).unwrap();
-        let finalized = SessionParticipantStatement::attach_host_countersign(&pending, &host).unwrap();
+        let finalized =
+            SessionParticipantStatement::attach_host_countersign(&pending, &host).unwrap();
         assert_eq!(finalized.signatures.len(), 2);
         let back = verify_participant_envelope(&finalized, &inv.issuer).unwrap();
         assert_eq!(back.session_ref, part.session_ref);
@@ -395,7 +414,8 @@ mod tests {
         let (inv, part, _real_host, agent) = build_pair();
         let imposter = Ed25519Signer::from_bytes("imposter", &[42u8; 32]).unwrap();
         let pending = part.pending_envelope(&agent).unwrap();
-        let bad = SessionParticipantStatement::attach_host_countersign(&pending, &imposter).unwrap();
+        let bad =
+            SessionParticipantStatement::attach_host_countersign(&pending, &imposter).unwrap();
         match verify_participant_envelope(&bad, &inv.issuer) {
             Err(ParticipantVerifyError::HostCountersignInvalid) => {}
             other => panic!("expected HostCountersignInvalid, got {other:?}"),
@@ -408,11 +428,15 @@ mod tests {
     fn participant_capabilities_immutable() {
         let (inv, part, host, agent) = build_pair();
         let pending = part.pending_envelope(&agent).unwrap();
-        let mut finalized = SessionParticipantStatement::attach_host_countersign(&pending, &host).unwrap();
+        let mut finalized =
+            SessionParticipantStatement::attach_host_countersign(&pending, &host).unwrap();
 
         // Mutate the embedded statement: bump capabilities and rewrap.
         let mut tampered: SessionParticipantStatement = finalized.unmarshal_statement().unwrap();
-        tampered.capabilities.action_types.push("smuggled.cap".into());
+        tampered
+            .capabilities
+            .action_types
+            .push("smuggled.cap".into());
         let new_payload = serde_json::to_vec(&tampered).unwrap();
         finalized.payload = URL_SAFE_NO_PAD.encode(&new_payload);
 
@@ -432,10 +456,12 @@ mod tests {
         let (_inv, part, _h, _a) = build_pair();
         let base = part.canonical_for_signing();
 
-        let mut m1 = part.clone(); m1.session_ref = "ssn_other".into();
+        let mut m1 = part.clone();
+        m1.session_ref = "ssn_other".into();
         assert_ne!(m1.canonical_for_signing(), base, "session_ref must bind");
 
-        let mut m2 = part.clone(); m2.invitation_ref = "art_other".into();
+        let mut m2 = part.clone();
+        m2.invitation_ref = "art_other".into();
         assert_ne!(m2.canonical_for_signing(), base, "invitation_ref must bind");
 
         let mut m3 = part.clone();
@@ -446,7 +472,8 @@ mod tests {
         m4.joining_agent_cert_ref = Some("art_cert_x".into());
         assert_ne!(m4.canonical_for_signing(), base, "cert_ref must bind");
 
-        let mut m5 = part.clone(); m5.joined_at = "2030-01-01T00:00:00Z".into();
+        let mut m5 = part.clone();
+        m5.joined_at = "2030-01-01T00:00:00Z".into();
         assert_ne!(m5.canonical_for_signing(), base, "joined_at must bind");
 
         let mut m6 = part.clone();
@@ -460,11 +487,12 @@ mod tests {
     fn participant_rejects_more_than_two_signatures() {
         let (inv, part, host, agent) = build_pair();
         let pending = part.pending_envelope(&agent).unwrap();
-        let mut finalized = SessionParticipantStatement::attach_host_countersign(&pending, &host).unwrap();
+        let mut finalized =
+            SessionParticipantStatement::attach_host_countersign(&pending, &host).unwrap();
         // Cheat in a third signature directly (the attach helper refuses).
         finalized.signatures.push(DsseSignature {
             keyid: "extra".into(),
-            sig:   URL_SAFE_NO_PAD.encode([0u8; 64]),
+            sig: URL_SAFE_NO_PAD.encode([0u8; 64]),
         });
         match verify_participant_envelope(&finalized, &inv.issuer) {
             Err(ParticipantVerifyError::TooManySignatures(3)) => {}

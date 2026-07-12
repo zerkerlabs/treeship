@@ -1,17 +1,17 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use ed25519_dalek::VerifyingKey;
 use treeship_core::attestation::Verifier;
 use treeship_core::bundle;
-use ed25519_dalek::VerifyingKey;
 
 use crate::{ctx, printer::Printer};
 
 pub struct CreateArgs {
-    pub artifacts:   Vec<String>,
-    pub tag:         Option<String>,
+    pub artifacts: Vec<String>,
+    pub tag: Option<String>,
     pub description: Option<String>,
-    pub config:      Option<String>,
+    pub config: Option<String>,
 }
 
 pub fn create(args: CreateArgs, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
@@ -26,12 +26,13 @@ pub fn create(args: CreateArgs, printer: &Printer) -> Result<(), Box<dyn std::er
         args.description.as_deref(),
         &ctx.storage,
         signer.as_ref(),
-    ).map_err(|e| format!("{e}"))?;
+    )
+    .map_err(|e| format!("{e}"))?;
 
     let mut fields: Vec<(&str, String)> = vec![
-        ("id",        result.artifact_id.clone()),
+        ("id", result.artifact_id.clone()),
         ("artifacts", format!("{}", result.statement.artifacts.len())),
-        ("signed",    result.statement.timestamp.clone()),
+        ("signed", result.statement.timestamp.clone()),
     ];
     if let Some(t) = &result.statement.tag {
         fields.push(("tag", t.clone()));
@@ -39,35 +40,40 @@ pub fn create(args: CreateArgs, printer: &Printer) -> Result<(), Box<dyn std::er
 
     let field_refs: Vec<(&str, &str)> = fields.iter().map(|(k, v)| (*k, v.as_str())).collect();
     printer.success("bundle created", &field_refs);
-    printer.hint(&format!("treeship bundle export {} --out bundle.treeship", result.artifact_id));
+    printer.hint(&format!(
+        "treeship bundle export {} --out bundle.treeship",
+        result.artifact_id
+    ));
     printer.blank();
     Ok(())
 }
 
 pub struct ExportArgs {
     pub bundle_id: String,
-    pub out:       String,
-    pub config:    Option<String>,
+    pub out: String,
+    pub config: Option<String>,
 }
 
 pub fn export(args: ExportArgs, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(args.config.as_deref())?;
     let out_path = PathBuf::from(&args.out);
 
-    bundle::export(&args.bundle_id, &out_path, &ctx.storage)
-        .map_err(|e| format!("{e}"))?;
+    bundle::export(&args.bundle_id, &out_path, &ctx.storage).map_err(|e| format!("{e}"))?;
 
-    printer.success("bundle exported", &[
-        ("id",   &args.bundle_id),
-        ("file", &args.out),
-    ]);
-    printer.hint(&format!("share {} or run: treeship bundle import {}", args.out, args.out));
+    printer.success(
+        "bundle exported",
+        &[("id", &args.bundle_id), ("file", &args.out)],
+    );
+    printer.hint(&format!(
+        "share {} or run: treeship bundle import {}",
+        args.out, args.out
+    ));
     printer.blank();
     Ok(())
 }
 
 pub struct ImportArgs {
-    pub file:   String,
+    pub file: String,
     pub config: Option<String>,
 }
 
@@ -80,16 +86,14 @@ pub fn import(args: ImportArgs, printer: &Printer) -> Result<(), Box<dyn std::er
     // To accept a bundle from a third party, the user must add that
     // party's public key via `treeship keys add` first — which is the
     // intended explicit-trust step, not a silent surprise.
-    let verifier = build_local_verifier(&ctx.keys)
-        .map_err(|e| format!("build verifier: {e}"))?;
+    let verifier = build_local_verifier(&ctx.keys).map_err(|e| format!("build verifier: {e}"))?;
 
-    let bundle_id = bundle::import(&path, &ctx.storage, &verifier)
-        .map_err(|e| format!("{e}"))?;
+    let bundle_id = bundle::import(&path, &ctx.storage, &verifier).map_err(|e| format!("{e}"))?;
 
-    printer.success("bundle imported", &[
-        ("id",   &bundle_id),
-        ("from", &args.file),
-    ]);
+    printer.success(
+        "bundle imported",
+        &[("id", &bundle_id), ("from", &args.file)],
+    );
     printer.hint(&format!("treeship verify {}", bundle_id));
     printer.blank();
     Ok(())
@@ -168,7 +172,8 @@ mod tests {
         fs::write(
             keys_dir.path().join(format!("{fake_id}.json")),
             serde_json::to_vec_pretty(&fake_entry).unwrap(),
-        ).unwrap();
+        )
+        .unwrap();
 
         // Splice the fake entry's id into the keystore manifest so list()
         // returns it. Read the existing manifest produced by `generate`, push
@@ -176,9 +181,15 @@ mod tests {
         let manifest_path = keys_dir.path().join("manifest.json");
         let mut manifest: serde_json::Value =
             serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
-        manifest["key_ids"].as_array_mut().unwrap()
+        manifest["key_ids"]
+            .as_array_mut()
+            .unwrap()
             .push(serde_json::Value::String(fake_id.into()));
-        fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest).unwrap()).unwrap();
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
 
         // Sanity: the keystore now lists both keys.
         let listed = keys.list().unwrap();
@@ -201,18 +212,20 @@ mod tests {
         // Create a tiny action artifact to bundle.
         let pt_action = treeship_core::statements::payload_type("action");
         let action = ActionStatement::new("agent://test", "tool.call");
-        let signed = treeship_core::attestation::sign(&pt_action, &action, signer.as_ref())
+        let signed =
+            treeship_core::attestation::sign(&pt_action, &action, signer.as_ref()).unwrap();
+        storage
+            .write(&treeship_core::storage::Record {
+                artifact_id: signed.artifact_id.clone(),
+                digest: signed.digest.clone(),
+                payload_type: pt_action.clone(),
+                key_id: signer.key_id().to_string(),
+                signed_at: "2026-01-01T00:00:00Z".into(),
+                parent_id: None,
+                envelope: signed.envelope,
+                hub_url: None,
+            })
             .unwrap();
-        storage.write(&treeship_core::storage::Record {
-            artifact_id:  signed.artifact_id.clone(),
-            digest:       signed.digest.clone(),
-            payload_type: pt_action.clone(),
-            key_id:       signer.key_id().to_string(),
-            signed_at:    "2026-01-01T00:00:00Z".into(),
-            parent_id:    None,
-            envelope:     signed.envelope,
-            hub_url:      None,
-        }).unwrap();
 
         let bundle_res = core_bundle::create(
             &[signed.artifact_id.as_str()],
@@ -220,7 +233,8 @@ mod tests {
             None,
             &storage,
             signer.as_ref(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let export_path = storage_dir.path().join("fwd.treeship");
         core_bundle::export(&bundle_res.artifact_id, &export_path, &storage).unwrap();

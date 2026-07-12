@@ -128,14 +128,14 @@ impl InvitationStatement {
         nonce: impl Into<String>,
     ) -> Self {
         Self {
-            type_:                TYPE_INVITATION.into(),
-            session_ref:          session_ref.into(),
-            issuer:               issuer.into(),
+            type_: TYPE_INVITATION.into(),
+            session_ref: session_ref.into(),
+            issuer: issuer.into(),
             invitee_restriction,
             granted_capabilities,
-            expires_at:           expires_at.into(),
-            max_uses:             1,
-            nonce:                nonce.into(),
+            expires_at: expires_at.into(),
+            max_uses: 1,
+            nonce: nonce.into(),
         }
     }
 
@@ -159,9 +159,9 @@ impl InvitationStatement {
     /// digest into the canonical adds redundancy without exposing the
     /// nonce in a second place.
     pub fn canonical_for_signing(&self) -> String {
-        let restriction_digest  = canonical_json_digest(&self.invitee_restriction);
+        let restriction_digest = canonical_json_digest(&self.invitee_restriction);
         let capabilities_digest = canonical_json_digest(&self.granted_capabilities);
-        let nonce_d             = nonce_digest_hex(&self.nonce);
+        let nonce_d = nonce_digest_hex(&self.nonce);
         format!(
             "v1|invitation|{}|{}|{}|{}|{}|{}|{}",
             self.session_ref,
@@ -204,11 +204,12 @@ impl InvitationStatement {
         let mut sig_arr = [0u8; 64];
         sig_arr.copy_from_slice(&sig_bytes);
         let vk = match VerifyingKey::from_bytes(&pk_arr) {
-            Ok(k)  => k,
+            Ok(k) => k,
             Err(_) => return false,
         };
         let sig = Signature::from_bytes(&sig_arr);
-        vk.verify_strict(self.canonical_for_signing().as_bytes(), &sig).is_ok()
+        vk.verify_strict(self.canonical_for_signing().as_bytes(), &sig)
+            .is_ok()
     }
 
     /// Mint-time validation: rejects invitations that violate
@@ -228,7 +229,9 @@ impl InvitationStatement {
             return Err(InvitationError::EmptyField("nonce"));
         }
         if self.max_uses != 1 {
-            return Err(InvitationError::MaxUsesUnsupported { max_uses: self.max_uses });
+            return Err(InvitationError::MaxUsesUnsupported {
+                max_uses: self.max_uses,
+            });
         }
         // issuer parse check
         let pk_bytes = URL_SAFE_NO_PAD
@@ -237,8 +240,8 @@ impl InvitationStatement {
         if pk_bytes.len() != 32 {
             return Err(InvitationError::IssuerNotEd25519);
         }
-        let expires_secs = parse_rfc3339_to_unix(&self.expires_at)
-            .ok_or(InvitationError::ExpiresAtNotRfc3339)?;
+        let expires_secs =
+            parse_rfc3339_to_unix(&self.expires_at).ok_or(InvitationError::ExpiresAtNotRfc3339)?;
         if expires_secs <= now_unix_secs {
             return Err(InvitationError::ExpiresInPast);
         }
@@ -246,7 +249,7 @@ impl InvitationStatement {
         if lifetime > MAX_INVITATION_LIFETIME_SECS {
             return Err(InvitationError::LifetimeTooLong {
                 requested_secs: lifetime,
-                max_secs:       MAX_INVITATION_LIFETIME_SECS,
+                max_secs: MAX_INVITATION_LIFETIME_SECS,
             });
         }
         Ok(())
@@ -258,7 +261,7 @@ impl InvitationStatement {
     pub fn is_expired(&self, now_unix_secs: u64) -> bool {
         match parse_rfc3339_to_unix(&self.expires_at) {
             Some(secs) => now_unix_secs >= secs,
-            None       => true,
+            None => true,
         }
     }
 
@@ -296,8 +299,14 @@ impl std::fmt::Display for InvitationError {
                 f,
                 "invitation expires_at must be RFC 3339 (e.g. 2026-05-18T12:00:00Z)",
             ),
-            Self::ExpiresInPast => write!(f, "invitation expires_at must be in the future at mint time"),
-            Self::LifetimeTooLong { requested_secs, max_secs } => write!(
+            Self::ExpiresInPast => write!(
+                f,
+                "invitation expires_at must be in the future at mint time"
+            ),
+            Self::LifetimeTooLong {
+                requested_secs,
+                max_secs,
+            } => write!(
                 f,
                 "invitation lifetime {requested_secs}s exceeds protocol max {max_secs}s ({} days)",
                 max_secs / (24 * 60 * 60),
@@ -349,10 +358,11 @@ fn canonical_json_string(value: &serde_json::Value) -> String {
             let mut out = String::from("{");
             let mut first = true;
             for (k, v) in sorted {
-                if !first { out.push(','); }
+                if !first {
+                    out.push(',');
+                }
                 first = false;
-                let key_json = serde_json::to_string(k)
-                    .expect("string serializes to JSON");
+                let key_json = serde_json::to_string(k).expect("string serializes to JSON");
                 out.push_str(&key_json);
                 out.push(':');
                 out.push_str(&v);
@@ -364,15 +374,16 @@ fn canonical_json_string(value: &serde_json::Value) -> String {
             let mut out = String::from("[");
             let mut first = true;
             for v in items {
-                if !first { out.push(','); }
+                if !first {
+                    out.push(',');
+                }
                 first = false;
                 out.push_str(&canonical_json_string(v));
             }
             out.push(']');
             out
         }
-        other => serde_json::to_string(other)
-            .expect("scalar JSON value serializes"),
+        other => serde_json::to_string(other).expect("scalar JSON value serializes"),
     }
 }
 
@@ -395,22 +406,28 @@ fn nonce_digest_hex(raw_nonce: &str) -> String {
 pub fn parse_rfc3339_to_unix(s: &str) -> Option<u64> {
     // Strict shape: 20 bytes, "YYYY-MM-DDTHH:MM:SSZ".
     let b = s.as_bytes();
-    if b.len() != 20 || b[10] != b'T' || b[19] != b'Z'
-        || b[4] != b'-' || b[7] != b'-'
-        || b[13] != b':' || b[16] != b':'
+    if b.len() != 20
+        || b[10] != b'T'
+        || b[19] != b'Z'
+        || b[4] != b'-'
+        || b[7] != b'-'
+        || b[13] != b':'
+        || b[16] != b':'
     {
         return None;
     }
-    let year:  i64 = std::str::from_utf8(&b[0..4]).ok()?.parse().ok()?;
+    let year: i64 = std::str::from_utf8(&b[0..4]).ok()?.parse().ok()?;
     let month: u32 = std::str::from_utf8(&b[5..7]).ok()?.parse().ok()?;
-    let day:   u32 = std::str::from_utf8(&b[8..10]).ok()?.parse().ok()?;
-    let hour:  u32 = std::str::from_utf8(&b[11..13]).ok()?.parse().ok()?;
-    let min:   u32 = std::str::from_utf8(&b[14..16]).ok()?.parse().ok()?;
-    let sec:   u32 = std::str::from_utf8(&b[17..19]).ok()?.parse().ok()?;
+    let day: u32 = std::str::from_utf8(&b[8..10]).ok()?.parse().ok()?;
+    let hour: u32 = std::str::from_utf8(&b[11..13]).ok()?.parse().ok()?;
+    let min: u32 = std::str::from_utf8(&b[14..16]).ok()?.parse().ok()?;
+    let sec: u32 = std::str::from_utf8(&b[17..19]).ok()?.parse().ok()?;
     if !(1970..=9999).contains(&year)
         || !(1..=12).contains(&month)
         || !(1..=31).contains(&day)
-        || hour > 23 || min > 59 || sec > 60
+        || hour > 23
+        || min > 59
+        || sec > 60
     {
         return None;
     }
@@ -429,7 +446,9 @@ pub fn parse_rfc3339_to_unix(s: &str) -> Option<u64> {
     }
     days += (day - 1) as i64;
     let total = days * 86_400 + (hour as i64) * 3600 + (min as i64) * 60 + (sec as i64);
-    if total < 0 { return None; }
+    if total < 0 {
+        return None;
+    }
     Some(total as u64)
 }
 
@@ -513,36 +532,71 @@ mod tests {
     #[test]
     fn invitation_canonical_includes_all_fields() {
         let base = sample(InviteeRestriction::Cert {
-            issuer_pubkey:    "ed25519:AAA".into(),
+            issuer_pubkey: "ed25519:AAA".into(),
             allowed_subjects: vec!["org-x".into()],
         });
         let base_canonical = base.canonical_for_signing();
 
-        let mut m1 = base.clone(); m1.session_ref = "ssn_other".into();
-        assert_ne!(m1.canonical_for_signing(), base_canonical, "session_ref must bind");
+        let mut m1 = base.clone();
+        m1.session_ref = "ssn_other".into();
+        assert_ne!(
+            m1.canonical_for_signing(),
+            base_canonical,
+            "session_ref must bind"
+        );
 
-        let mut m2 = base.clone(); m2.issuer = URL_SAFE_NO_PAD.encode([9u8; 32]);
-        assert_ne!(m2.canonical_for_signing(), base_canonical, "issuer must bind");
+        let mut m2 = base.clone();
+        m2.issuer = URL_SAFE_NO_PAD.encode([9u8; 32]);
+        assert_ne!(
+            m2.canonical_for_signing(),
+            base_canonical,
+            "issuer must bind"
+        );
 
         let mut m3 = base.clone();
         m3.invitee_restriction = InviteeRestriction::Open;
-        assert_ne!(m3.canonical_for_signing(), base_canonical, "restriction must bind");
+        assert_ne!(
+            m3.canonical_for_signing(),
+            base_canonical,
+            "restriction must bind"
+        );
 
         let mut m4 = base.clone();
-        m4.granted_capabilities.action_types.push("extra.cap".into());
-        assert_ne!(m4.canonical_for_signing(), base_canonical, "capabilities must bind");
+        m4.granted_capabilities
+            .action_types
+            .push("extra.cap".into());
+        assert_ne!(
+            m4.canonical_for_signing(),
+            base_canonical,
+            "capabilities must bind"
+        );
 
-        let mut m5 = base.clone(); m5.expires_at = one_hour_after(fixed_now() + 1);
-        assert_ne!(m5.canonical_for_signing(), base_canonical, "expires_at must bind");
+        let mut m5 = base.clone();
+        m5.expires_at = one_hour_after(fixed_now() + 1);
+        assert_ne!(
+            m5.canonical_for_signing(),
+            base_canonical,
+            "expires_at must bind"
+        );
 
         // max_uses is locked at 1 in Phase 1, but the schema field is
         // bound into the canonical so a future relax doesn't silently
         // verify older invitations under the wrong value.
-        let mut m6 = base.clone(); m6.max_uses = 2;
-        assert_ne!(m6.canonical_for_signing(), base_canonical, "max_uses must bind");
+        let mut m6 = base.clone();
+        m6.max_uses = 2;
+        assert_ne!(
+            m6.canonical_for_signing(),
+            base_canonical,
+            "max_uses must bind"
+        );
 
-        let mut m7 = base.clone(); m7.nonce = "nonce_other".into();
-        assert_ne!(m7.canonical_for_signing(), base_canonical, "nonce must bind");
+        let mut m7 = base.clone();
+        m7.nonce = "nonce_other".into();
+        assert_ne!(
+            m7.canonical_for_signing(),
+            base_canonical,
+            "nonce must bind"
+        );
     }
 
     #[test]
@@ -582,9 +636,12 @@ mod tests {
         // 7 days + 1 second -> rejected.
         let too_long = crate::statements::unix_to_rfc3339(now + MAX_INVITATION_LIFETIME_SECS + 1);
         let inv = InvitationStatement::new(
-            "ssn_a", issuer.clone(),
-            InviteeRestriction::Open, sample_caps(),
-            too_long, "n1",
+            "ssn_a",
+            issuer.clone(),
+            InviteeRestriction::Open,
+            sample_caps(),
+            too_long,
+            "n1",
         );
         match inv.validate_for_mint(now) {
             Err(InvitationError::LifetimeTooLong { .. }) => {}
@@ -594,9 +651,12 @@ mod tests {
         // Exactly 7 days -> accepted.
         let exact = crate::statements::unix_to_rfc3339(now + MAX_INVITATION_LIFETIME_SECS);
         let inv_ok = InvitationStatement::new(
-            "ssn_a", issuer,
-            InviteeRestriction::Open, sample_caps(),
-            exact, "n2",
+            "ssn_a",
+            issuer,
+            InviteeRestriction::Open,
+            sample_caps(),
+            exact,
+            "n2",
         );
         assert!(inv_ok.validate_for_mint(now).is_ok());
     }
@@ -608,9 +668,17 @@ mod tests {
         let issuer = URL_SAFE_NO_PAD.encode(signer.public_key_bytes());
         let past = crate::statements::unix_to_rfc3339(now - 60);
         let inv = InvitationStatement::new(
-            "ssn_a", issuer, InviteeRestriction::Open, sample_caps(), past, "n",
+            "ssn_a",
+            issuer,
+            InviteeRestriction::Open,
+            sample_caps(),
+            past,
+            "n",
         );
-        assert_eq!(inv.validate_for_mint(now), Err(InvitationError::ExpiresInPast));
+        assert_eq!(
+            inv.validate_for_mint(now),
+            Err(InvitationError::ExpiresInPast)
+        );
     }
 
     #[test]
@@ -628,8 +696,8 @@ mod tests {
     #[test]
     fn invitation_pubkey_restriction_enforced() {
         // Mint a Pubkey-restricted invitation against signer_a's fp.
-        let signer_a   = Ed25519Signer::from_bytes("a", &[1u8; 32]).unwrap();
-        let signer_b   = Ed25519Signer::from_bytes("b", &[2u8; 32]).unwrap();
+        let signer_a = Ed25519Signer::from_bytes("a", &[1u8; 32]).unwrap();
+        let signer_b = Ed25519Signer::from_bytes("b", &[2u8; 32]).unwrap();
         let fp_a = pubkey_fingerprint_short(&format!(
             "ed25519:{}",
             URL_SAFE_NO_PAD.encode(signer_a.public_key_bytes()),
@@ -640,15 +708,19 @@ mod tests {
         ));
         assert_ne!(fp_a, fp_b);
 
-        let restriction = InviteeRestriction::Pubkey { fingerprint: fp_a.clone() };
+        let restriction = InviteeRestriction::Pubkey {
+            fingerprint: fp_a.clone(),
+        };
 
         // Join-time check (mirrors what the CLI does on `session join`):
         // accept iff the joining agent's pubkey-fp equals the restriction's fp.
-        let accept_for = |fp: &str| matches!(
-            &restriction,
-            InviteeRestriction::Pubkey { fingerprint } if fingerprint == fp,
-        );
-        assert!(accept_for(&fp_a),  "matching pubkey must be accepted");
+        let accept_for = |fp: &str| {
+            matches!(
+                &restriction,
+                InviteeRestriction::Pubkey { fingerprint } if fingerprint == fp,
+            )
+        };
+        assert!(accept_for(&fp_a), "matching pubkey must be accepted");
         assert!(!accept_for(&fp_b), "non-matching pubkey must be rejected");
     }
 
@@ -656,19 +728,30 @@ mod tests {
     #[test]
     fn invitation_cert_restriction_enforced() {
         let restriction = InviteeRestriction::Cert {
-            issuer_pubkey:    "ed25519:ISSUER_X".into(),
+            issuer_pubkey: "ed25519:ISSUER_X".into(),
             allowed_subjects: vec!["org-x".into(), "org-y".into()],
         };
         // Helper: would this (issuer, subject) be accepted?
-        let accept = |iss: &str, subj: &str| matches!(
-            &restriction,
-            InviteeRestriction::Cert { issuer_pubkey, allowed_subjects }
-                if issuer_pubkey == iss && allowed_subjects.iter().any(|s| s == subj),
-        );
+        let accept = |iss: &str, subj: &str| {
+            matches!(
+                &restriction,
+                InviteeRestriction::Cert { issuer_pubkey, allowed_subjects }
+                    if issuer_pubkey == iss && allowed_subjects.iter().any(|s| s == subj),
+            )
+        };
 
-        assert!(accept("ed25519:ISSUER_X",     "org-x"), "matching issuer+subject accepted");
-        assert!(!accept("ed25519:ISSUER_OTHER", "org-x"), "wrong issuer rejected");
-        assert!(!accept("ed25519:ISSUER_X",     "org-z"), "wrong subject rejected");
+        assert!(
+            accept("ed25519:ISSUER_X", "org-x"),
+            "matching issuer+subject accepted"
+        );
+        assert!(
+            !accept("ed25519:ISSUER_OTHER", "org-x"),
+            "wrong issuer rejected"
+        );
+        assert!(
+            !accept("ed25519:ISSUER_X", "org-z"),
+            "wrong subject rejected"
+        );
     }
 
     /// Q1: Open restriction accepts any joining agent.
@@ -686,8 +769,10 @@ mod tests {
     fn invitation_is_expired_returns_true_past_expiry() {
         let now = fixed_now();
         let inv = InvitationStatement::new(
-            "ssn_a", URL_SAFE_NO_PAD.encode([5u8; 32]),
-            InviteeRestriction::Open, sample_caps(),
+            "ssn_a",
+            URL_SAFE_NO_PAD.encode([5u8; 32]),
+            InviteeRestriction::Open,
+            sample_caps(),
             crate::statements::unix_to_rfc3339(now - 1),
             "n",
         );

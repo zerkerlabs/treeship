@@ -14,8 +14,8 @@
 //! it directly. All of them get the same semantics.
 
 use crate::agent::AgentCertificate;
-use crate::session::receipt::SessionReceipt;
 use crate::session::package::{VerifyCheck, VerifyStatus};
+use crate::session::receipt::SessionReceipt;
 
 /// Receipt-level checks derivable from the receipt JSON alone (no on-disk
 /// package). Runs Merkle root recomputation, inclusion proof verification,
@@ -90,9 +90,7 @@ pub fn verify_receipt_json_checks(receipt: &SessionReceipt) -> Vec<VerifyCheck> 
         if drift_detected {
             checks.push(VerifyCheck::fail(
                 "inclusion_proofs",
-                &format!(
-                    "per-proof merkle_version drift detected (section declares v{version})",
-                ),
+                &format!("per-proof merkle_version drift detected (section declares v{version})",),
             ));
         } else if proof_total == 0 {
             // Artifacts are present but the receipt carries no inclusion
@@ -231,9 +229,15 @@ pub enum ShipIdStatus {
 pub enum CertificateStatus {
     Valid,
     /// Current time is past `valid_until`.
-    Expired { valid_until: String, now: String },
+    Expired {
+        valid_until: String,
+        now: String,
+    },
     /// Current time is before `issued_at`.
-    NotYetValid { issued_at: String, now: String },
+    NotYetValid {
+        issued_at: String,
+        now: String,
+    },
 }
 
 /// Cross-verify a receipt against an agent certificate.
@@ -275,10 +279,7 @@ fn compare_ship_ids(receipt: Option<&str>, certificate: &str) -> ShipIdStatus {
     }
 }
 
-fn classify_certificate_validity(
-    certificate: &AgentCertificate,
-    now: &str,
-) -> CertificateStatus {
+fn classify_certificate_validity(certificate: &AgentCertificate, now: &str) -> CertificateStatus {
     // RFC 3339 lexical ordering agrees with chronological ordering when the
     // timestamps use the same timezone suffix. Treeship issues and validates
     // timestamps in UTC (`Z`), so string comparison is sufficient here.
@@ -321,14 +322,9 @@ fn classify_tool_usage(
         .map(|u| u.actual.iter().map(|e| e.tool_name.clone()).collect())
         .unwrap_or_default();
 
-    let authorized_calls: Vec<String> =
-        called.intersection(&authorized).cloned().collect();
-    let unauthorized_calls: Vec<String> =
-        called.difference(&authorized).cloned().collect();
-    let never_called: Vec<String> = authorized
-        .difference(&called)
-        .cloned()
-        .collect();
+    let authorized_calls: Vec<String> = called.intersection(&authorized).cloned().collect();
+    let unauthorized_calls: Vec<String> = called.difference(&authorized).cloned().collect();
+    let never_called: Vec<String> = authorized.difference(&called).cloned().collect();
 
     (authorized_calls, unauthorized_calls, never_called)
 }
@@ -337,15 +333,20 @@ fn classify_tool_usage(
 mod tests {
     use super::*;
     use crate::agent::{
-        AgentCapabilities, AgentDeclaration, AgentIdentity, CertificateSignature,
-        ToolCapability, CERTIFICATE_SCHEMA_VERSION, CERTIFICATE_TYPE,
+        AgentCapabilities, AgentDeclaration, AgentIdentity, CertificateSignature, ToolCapability,
+        CERTIFICATE_SCHEMA_VERSION, CERTIFICATE_TYPE,
     };
     use crate::session::manifest::{LifecycleMode, Participants, SessionStatus};
     use crate::session::receipt::{SessionReceipt, SessionSection, ToolUsage, ToolUsageEntry};
     use crate::session::render::RenderConfig;
     use crate::session::side_effects::SideEffects;
 
-    fn certificate(ship_id: &str, tools: &[&str], issued: &str, valid_until: &str) -> AgentCertificate {
+    fn certificate(
+        ship_id: &str,
+        tools: &[&str],
+        issued: &str,
+        valid_until: &str,
+    ) -> AgentCertificate {
         AgentCertificate {
             r#type: CERTIFICATE_TYPE.into(),
             schema_version: Some(CERTIFICATE_SCHEMA_VERSION.into()),
@@ -362,7 +363,10 @@ mod tests {
             capabilities: AgentCapabilities {
                 tools: tools
                     .iter()
-                    .map(|n| ToolCapability { name: (*n).into(), description: None })
+                    .map(|n| ToolCapability {
+                        name: (*n).into(),
+                        description: None,
+                    })
                     .collect(),
                 api_endpoints: vec![],
                 mcp_servers: vec![],
@@ -390,7 +394,10 @@ mod tests {
                 declared: vec![],
                 actual: tools_called
                     .iter()
-                    .map(|(n, c)| ToolUsageEntry { tool_name: (*n).into(), count: *c })
+                    .map(|(n, c)| ToolUsageEntry {
+                        tool_name: (*n).into(),
+                        count: *c,
+                    })
                     .collect(),
                 unauthorized: vec![],
             })
@@ -460,7 +467,12 @@ mod tests {
 
     #[test]
     fn tools_authorized_but_never_called_reported_and_still_ok() {
-        let cert = certificate("ship_a", &["Bash", "Read", "DropDatabase"], ISSUED, VALID_UNTIL);
+        let cert = certificate(
+            "ship_a",
+            &["Bash", "Read", "DropDatabase"],
+            ISSUED,
+            VALID_UNTIL,
+        );
         let rec = receipt(Some("ship_a"), &[("Bash", 1)]);
         let r = cross_verify_receipt_and_certificate(&rec, &cert, NOW);
         assert_eq!(r.authorized_tool_calls, vec!["Bash"]);
@@ -504,7 +516,12 @@ mod tests {
 
     #[test]
     fn not_yet_valid_certificate_blocks_ok() {
-        let cert = certificate("ship_a", &["Bash"], "2027-01-01T00:00:00Z", "2028-01-01T00:00:00Z");
+        let cert = certificate(
+            "ship_a",
+            &["Bash"],
+            "2027-01-01T00:00:00Z",
+            "2028-01-01T00:00:00Z",
+        );
         let rec = receipt(Some("ship_a"), &[("Bash", 1)]);
         let r = cross_verify_receipt_and_certificate(&rec, &cert, NOW);
         assert!(matches!(
@@ -559,39 +576,39 @@ mod tests {
         let mut rec_full = receipt(Some("ship_a"), &[]);
         rec_full.artifacts = vec![
             ArtifactEntry {
-                artifact_id:  "art_aaaa".into(),
+                artifact_id: "art_aaaa".into(),
                 payload_type: "treeship.dev/v0/action".into(),
-                digest:       None,
-                signed_at:    None,
+                digest: None,
+                signed_at: None,
             },
             ArtifactEntry {
-                artifact_id:  "art_bbbb".into(),
+                artifact_id: "art_bbbb".into(),
                 payload_type: "treeship.dev/v0/action".into(),
-                digest:       None,
-                signed_at:    None,
+                digest: None,
+                signed_at: None,
             },
         ];
         rec_full.merkle.leaf_count = 2;
         rec_full.timeline = vec![
             TimelineEntry {
-                sequence_no:       1,
-                timestamp:         "2026-04-10T00:00:01Z".into(),
-                event_id:          "evt_1".into(),
-                event_type:        "tool.call".into(),
+                sequence_no: 1,
+                timestamp: "2026-04-10T00:00:01Z".into(),
+                event_id: "evt_1".into(),
+                event_type: "tool.call".into(),
                 agent_instance_id: "ai_1".into(),
-                agent_name:        "a".into(),
-                host_id:           "h_1".into(),
-                summary:           None,
+                agent_name: "a".into(),
+                host_id: "h_1".into(),
+                summary: None,
             },
             TimelineEntry {
-                sequence_no:       2,
-                timestamp:         "2026-04-10T00:00:02Z".into(),
-                event_id:          "evt_2".into(),
-                event_type:        "tool.call".into(),
+                sequence_no: 2,
+                timestamp: "2026-04-10T00:00:02Z".into(),
+                event_id: "evt_2".into(),
+                event_type: "tool.call".into(),
                 agent_instance_id: "ai_1".into(),
-                agent_name:        "a".into(),
-                host_id:           "h_1".into(),
-                summary:           None,
+                agent_name: "a".into(),
+                host_id: "h_1".into(),
+                summary: None,
             },
         ];
 
@@ -610,9 +627,7 @@ mod tests {
     /// observe whether `verify_receipt_json_checks` catches the drift.
     fn receipt_with_v2_merkle() -> SessionReceipt {
         use crate::merkle::MerkleTree;
-        use crate::session::receipt::{
-            ArtifactEntry, InclusionProofEntry, MerkleSection,
-        };
+        use crate::session::receipt::{ArtifactEntry, InclusionProofEntry, MerkleSection};
 
         let mut tree = MerkleTree::new();
         tree.append("art_a");

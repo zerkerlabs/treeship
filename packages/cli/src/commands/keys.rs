@@ -25,8 +25,7 @@ pub fn export(
         }
         (None, Some(actor)) => {
             let agents_dir = crate::commands::cards::agents_dir_for(&ctx.config_path);
-            let Some(id) =
-                crate::commands::cards::registered_key_for_actor(&agents_dir, actor)
+            let Some(id) = crate::commands::cards::registered_key_for_actor(&agents_dir, actor)
             else {
                 return Err(format!(
                     "no per-agent key registered for {actor}\n\n  Fix: treeship agent register --name <name> --own-key"
@@ -42,8 +41,7 @@ pub fn export(
                 .ok()
                 .map(|t| {
                     t.roots().iter().any(|r| {
-                        r.key_id == id
-                            && r.kind == treeship_core::trust::TrustRootKind::AgentCert
+                        r.key_id == id && r.kind == treeship_core::trust::TrustRootKind::AgentCert
                     })
                 })
                 .unwrap_or(false);
@@ -88,11 +86,14 @@ pub fn export(
         return Ok(());
     }
 
-    printer.success("public key export", &[
-        ("key",     resolved_id.as_str()),
-        ("subject", subject.as_str()),
-        ("pubkey",  pinnable.as_str()),
-    ]);
+    printer.success(
+        "public key export",
+        &[
+            ("key", resolved_id.as_str()),
+            ("subject", subject.as_str()),
+            ("pubkey", pinnable.as_str()),
+        ],
+    );
     printer.blank();
     printer.info("  a counterparty pins it with:");
     for k in kinds {
@@ -105,7 +106,7 @@ pub fn export(
 }
 
 pub fn list(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
-    let ctx   = ctx::open(config)?;
+    let ctx = ctx::open(config)?;
     let infos = ctx.keys.list()?;
 
     if infos.is_empty() {
@@ -114,15 +115,20 @@ pub fn list(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::
     }
 
     if printer.format == crate::printer::Format::Json {
-        let out: Vec<_> = infos.iter().map(|k| serde_json::json!({
-            "id":               k.id,
-            "algorithm":        k.algorithm,
-            "is_default":       k.is_default,
-            "created_at":       k.created_at,
-            "fingerprint":      k.fingerprint,
-            "valid_until":      k.valid_until,
-            "successor_key_id": k.successor_key_id,
-        })).collect();
+        let out: Vec<_> = infos
+            .iter()
+            .map(|k| {
+                serde_json::json!({
+                    "id":               k.id,
+                    "algorithm":        k.algorithm,
+                    "is_default":       k.is_default,
+                    "created_at":       k.created_at,
+                    "fingerprint":      k.fingerprint,
+                    "valid_until":      k.valid_until,
+                    "successor_key_id": k.successor_key_id,
+                })
+            })
+            .collect();
         printer.json(&out);
         return Ok(());
     }
@@ -131,9 +137,9 @@ pub fn list(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::
         let default_marker = if k.is_default { " (default)" } else { "" };
         let lifecycle = match (&k.valid_until, &k.successor_key_id) {
             (Some(until), Some(succ)) => format!("  rotated -> {succ}, valid until {until}"),
-            (Some(until), None)       => format!("  valid until {until}"),
-            (None, Some(succ))        => format!("  successor: {succ}"),
-            (None, None)              => String::new(),
+            (Some(until), None) => format!("  valid until {until}"),
+            (None, Some(succ)) => format!("  successor: {succ}"),
+            (None, None) => String::new(),
         };
         printer.info(&format!(
             "  {}  {}  {}{}{}",
@@ -172,9 +178,18 @@ pub fn rotate(
     }
 
     printer.info("rotated");
-    printer.info(&format!("  predecessor:  {}  ({})", result.predecessor.id, result.predecessor.fingerprint));
-    printer.info(&format!("  successor:    {}  ({})", result.successor.id, result.successor.fingerprint));
-    printer.info(&format!("  valid until:  {} (predecessor accepts new sigs until then)", result.grace_period_until));
+    printer.info(&format!(
+        "  predecessor:  {}  ({})",
+        result.predecessor.id, result.predecessor.fingerprint
+    ));
+    printer.info(&format!(
+        "  successor:    {}  ({})",
+        result.successor.id, result.successor.fingerprint
+    ));
+    printer.info(&format!(
+        "  valid until:  {} (predecessor accepts new sigs until then)",
+        result.grace_period_until
+    ));
     if set_default {
         printer.info("  default:      successor is now the default signer");
     } else {

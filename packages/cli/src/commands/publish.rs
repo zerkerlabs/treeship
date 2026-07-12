@@ -104,7 +104,10 @@ pub fn publish(agent: &str, config: Option<&str>, printer: &Printer) -> CmdResul
                 printer.info(&format!("  published {id}"));
             }
             Err(e) => {
-                printer.warn("publish failed", &[("artifact", id), ("error", &e.to_string())]);
+                printer.warn(
+                    "publish failed",
+                    &[("artifact", id), ("error", &e.to_string())],
+                );
                 return Err(e);
             }
         }

@@ -71,10 +71,14 @@ impl std::fmt::Display for EventLogError {
 
 impl std::error::Error for EventLogError {}
 impl From<std::io::Error> for EventLogError {
-    fn from(e: std::io::Error) -> Self { Self::Io(e) }
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
 }
 impl From<serde_json::Error> for EventLogError {
-    fn from(e: serde_json::Error) -> Self { Self::Json(e) }
+    fn from(e: serde_json::Error) -> Self {
+        Self::Json(e)
+    }
 }
 
 /// An append-only event log backed by a JSONL file.
@@ -97,7 +101,10 @@ impl EventLog {
         std::fs::create_dir_all(session_dir)?;
         let path = session_dir.join("events.jsonl");
         let count = read_counter_or_recount(&path)?;
-        Ok(Self { path, sequence: AtomicU64::new(count) })
+        Ok(Self {
+            path,
+            sequence: AtomicU64::new(count),
+        })
     }
 
     /// Append a single event to the log.
@@ -383,7 +390,9 @@ fn open_lock_file(path: &Path) -> Result<std::fs::File, std::io::Error> {
                      to 0o600 (current: 0o{:o}). Error: {}. Lock still functions; \
                      only the privacy of the sidecar is affected. Common cause: \
                      NFS mount or filesystem without full POSIX perm support.",
-                    path.display(), mode, err
+                    path.display(),
+                    mode,
+                    err
                 );
             }
         }
@@ -496,7 +505,10 @@ fn write_counter(events_path: &Path, count: u64, byte_size: u64) -> Result<(), s
     use std::io::Write as _;
     let counter = counter_path(events_path);
     let dir = counter.parent().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, "counter path has no parent")
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "counter path has no parent",
+        )
     })?;
     std::fs::create_dir_all(dir)?;
 
@@ -562,13 +574,17 @@ mod tests {
 
     #[test]
     fn append_and_read_back() {
-        let dir = std::env::temp_dir().join(format!("treeship-evtlog-test-{}", rand::random::<u32>()));
+        let dir =
+            std::env::temp_dir().join(format!("treeship-evtlog-test-{}", rand::random::<u32>()));
         let log = EventLog::open(&dir).unwrap();
 
         let mut e1 = make_event("ssn_001", EventType::SessionStarted);
-        let mut e2 = make_event("ssn_001", EventType::AgentStarted {
-            parent_agent_instance_id: None,
-        });
+        let mut e2 = make_event(
+            "ssn_001",
+            EventType::AgentStarted {
+                parent_agent_instance_id: None,
+            },
+        );
 
         log.append(&mut e1).unwrap();
         log.append(&mut e2).unwrap();
@@ -594,7 +610,10 @@ mod tests {
         // side_effects.files_written come back empty even though every
         // other event in the log was a perfectly valid agent.wrote_file
         // event. Now we skip-and-log the bad line and keep the rest.
-        let dir = std::env::temp_dir().join(format!("treeship-evtlog-malformed-{}", rand::random::<u32>()));
+        let dir = std::env::temp_dir().join(format!(
+            "treeship-evtlog-malformed-{}",
+            rand::random::<u32>()
+        ));
         let log = EventLog::open(&dir).unwrap();
 
         let mut good1 = make_event(
@@ -631,7 +650,12 @@ mod tests {
         std::fs::write(&path, lines.join("\n") + "\n").unwrap();
 
         let events = log.read_all().unwrap();
-        assert_eq!(events.len(), 2, "expected the two valid events to come through; got {}", events.len());
+        assert_eq!(
+            events.len(),
+            2,
+            "expected the two valid events to come through; got {}",
+            events.len()
+        );
         // Confirm the valid events are the file-write events and not
         // some default fallback.
         let written_paths: Vec<&str> = events
@@ -648,7 +672,10 @@ mod tests {
         // read_all_with_stats reports it.
         let (events2, skipped) = log.read_all_with_stats().unwrap();
         assert_eq!(events2.len(), 2);
-        assert_eq!(skipped, 1, "exactly one malformed line was injected; expected skipped == 1");
+        assert_eq!(
+            skipped, 1,
+            "exactly one malformed line was injected; expected skipped == 1"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -659,14 +686,18 @@ mod tests {
         // event_log_skipped field stays default (0) and gets omitted
         // from canonical JSON. This preserves byte-identical receipts
         // for the common case where the event log is clean.
-        let dir = std::env::temp_dir().join(format!("treeship-evtlog-clean-{}", rand::random::<u32>()));
+        let dir =
+            std::env::temp_dir().join(format!("treeship-evtlog-clean-{}", rand::random::<u32>()));
         let log = EventLog::open(&dir).unwrap();
 
         let mut e = make_event(
             "ssn_001",
             EventType::AgentWroteFile {
                 file_path: "x.rs".into(),
-                digest: None, operation: None, additions: None, deletions: None,
+                digest: None,
+                operation: None,
+                additions: None,
+                deletions: None,
             },
         );
         log.append(&mut e).unwrap();
@@ -684,33 +715,44 @@ mod tests {
         // must skip THAT line and keep the rest, with a nonzero skip count —
         // NOT abort the whole read and seal an empty receipt with skipped=0.
         use std::io::Write;
-        let dir = std::env::temp_dir().join(format!("treeship-evtlog-badbyte-{}", rand::random::<u32>()));
+        let dir =
+            std::env::temp_dir().join(format!("treeship-evtlog-badbyte-{}", rand::random::<u32>()));
         let log = EventLog::open(&dir).unwrap();
         let mut e = make_event(
             "ssn_001",
             EventType::AgentWroteFile {
                 file_path: "ok.rs".into(),
-                digest: None, operation: None, additions: None, deletions: None,
+                digest: None,
+                operation: None,
+                additions: None,
+                deletions: None,
             },
         );
         log.append(&mut e).unwrap();
 
         // Append a raw non-UTF-8 line directly to the events file.
         let events_path = dir.join("events.jsonl");
-        let mut f = std::fs::OpenOptions::new().append(true).open(&events_path).unwrap();
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&events_path)
+            .unwrap();
         f.write_all(&[0xff, 0xfe, b'\n']).unwrap(); // invalid UTF-8 line
         drop(f);
 
         let (events, skipped) = log.read_all_with_stats().unwrap();
         assert_eq!(events.len(), 1, "the one good event must survive");
-        assert_eq!(skipped, 1, "the bad line must be counted as skipped, not silently dropped");
+        assert_eq!(
+            skipped, 1,
+            "the bad line must be counted as skipped, not silently dropped"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn reopen_preserves_sequence() {
-        let dir = std::env::temp_dir().join(format!("treeship-evtlog-reopen-{}", rand::random::<u32>()));
+        let dir =
+            std::env::temp_dir().join(format!("treeship-evtlog-reopen-{}", rand::random::<u32>()));
 
         {
             let log = EventLog::open(&dir).unwrap();
@@ -722,9 +764,12 @@ mod tests {
         let log = EventLog::open(&dir).unwrap();
         assert_eq!(log.event_count(), 1);
 
-        let mut e2 = make_event("ssn_001", EventType::AgentStarted {
-            parent_agent_instance_id: None,
-        });
+        let mut e2 = make_event(
+            "ssn_001",
+            EventType::AgentStarted {
+                parent_agent_instance_id: None,
+            },
+        );
         log.append(&mut e2).unwrap();
         assert_eq!(e2.sequence_no, 1);
 
@@ -746,8 +791,8 @@ mod tests {
         use std::sync::Arc;
         use std::thread;
 
-        let dir = std::env::temp_dir()
-            .join(format!("treeship-evtlog-race-{}", rand::random::<u32>()));
+        let dir =
+            std::env::temp_dir().join(format!("treeship-evtlog-race-{}", rand::random::<u32>()));
         std::fs::create_dir_all(&dir).unwrap();
 
         const WRITERS: usize = 16;
@@ -792,8 +837,8 @@ mod tests {
     fn lock_file_has_owner_only_permissions() {
         use std::os::unix::fs::PermissionsExt;
 
-        let dir = std::env::temp_dir()
-            .join(format!("treeship-evtlog-perms-{}", rand::random::<u32>()));
+        let dir =
+            std::env::temp_dir().join(format!("treeship-evtlog-perms-{}", rand::random::<u32>()));
         let log = EventLog::open(&dir).unwrap();
 
         let mut e = make_event("ssn_perms", EventType::SessionStarted);
@@ -819,8 +864,10 @@ mod tests {
     fn existing_lock_file_is_re_tightened() {
         use std::os::unix::fs::PermissionsExt;
 
-        let dir = std::env::temp_dir()
-            .join(format!("treeship-evtlog-retighten-{}", rand::random::<u32>()));
+        let dir = std::env::temp_dir().join(format!(
+            "treeship-evtlog-retighten-{}",
+            rand::random::<u32>()
+        ));
         std::fs::create_dir_all(&dir).unwrap();
 
         // Pre-create a lock file with deliberately loose perms, simulating
@@ -829,7 +876,10 @@ mod tests {
         std::fs::write(&lock_path, b"").unwrap();
         std::fs::set_permissions(&lock_path, std::fs::Permissions::from_mode(0o644)).unwrap();
         let pre_mode = std::fs::metadata(&lock_path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(pre_mode, 0o644, "test setup: pre-existing perms should be 0o644");
+        assert_eq!(
+            pre_mode, 0o644,
+            "test setup: pre-existing perms should be 0o644"
+        );
 
         // First append after upgrade -- should re-tighten.
         let log = EventLog::open(&dir).unwrap();
@@ -852,8 +902,8 @@ mod tests {
     #[cfg(not(target_family = "wasm"))]
     #[test]
     fn counter_sidecar_written_after_append() {
-        let dir = std::env::temp_dir()
-            .join(format!("treeship-evtlog-counter-{}", rand::random::<u32>()));
+        let dir =
+            std::env::temp_dir().join(format!("treeship-evtlog-counter-{}", rand::random::<u32>()));
         let log = EventLog::open(&dir).unwrap();
 
         let mut e = make_event("ssn_counter", EventType::SessionStarted);
@@ -882,16 +932,21 @@ mod tests {
     #[cfg(not(target_family = "wasm"))]
     #[test]
     fn counter_sidecar_recovers_when_missing() {
-        let dir = std::env::temp_dir()
-            .join(format!("treeship-evtlog-missing-counter-{}", rand::random::<u32>()));
+        let dir = std::env::temp_dir().join(format!(
+            "treeship-evtlog-missing-counter-{}",
+            rand::random::<u32>()
+        ));
 
         // Append two events, then nuke the counter sidecar.
         {
             let log = EventLog::open(&dir).unwrap();
             let mut e1 = make_event("ssn_x", EventType::SessionStarted);
-            let mut e2 = make_event("ssn_x", EventType::AgentStarted {
-                parent_agent_instance_id: None,
-            });
+            let mut e2 = make_event(
+                "ssn_x",
+                EventType::AgentStarted {
+                    parent_agent_instance_id: None,
+                },
+            );
             log.append(&mut e1).unwrap();
             log.append(&mut e2).unwrap();
         }
@@ -901,12 +956,19 @@ mod tests {
         // Reopen + append. The third event must get sequence_no=2 even
         // though the counter sidecar is gone.
         let log = EventLog::open(&dir).unwrap();
-        assert_eq!(log.event_count(), 2, "open() must recount when counter is missing");
+        assert_eq!(
+            log.event_count(),
+            2,
+            "open() must recount when counter is missing"
+        );
 
-        let mut e3 = make_event("ssn_x", EventType::SessionClosed {
-            summary: None,
-            duration_ms: None,
-        });
+        let mut e3 = make_event(
+            "ssn_x",
+            EventType::SessionClosed {
+                summary: None,
+                duration_ms: None,
+            },
+        );
         log.append(&mut e3).unwrap();
         assert_eq!(e3.sequence_no, 2);
         assert!(counter.exists(), "counter must be rewritten after recount");
@@ -920,8 +982,10 @@ mod tests {
     #[cfg(not(target_family = "wasm"))]
     #[test]
     fn counter_sidecar_recovers_when_corrupt() {
-        let dir = std::env::temp_dir()
-            .join(format!("treeship-evtlog-corrupt-counter-{}", rand::random::<u32>()));
+        let dir = std::env::temp_dir().join(format!(
+            "treeship-evtlog-corrupt-counter-{}",
+            rand::random::<u32>()
+        ));
 
         {
             let log = EventLog::open(&dir).unwrap();
@@ -933,7 +997,11 @@ mod tests {
         std::fs::write(&counter, b"junk").unwrap();
 
         let log = EventLog::open(&dir).unwrap();
-        assert_eq!(log.event_count(), 1, "short-read counter must be ignored, recount kicks in");
+        assert_eq!(
+            log.event_count(),
+            1,
+            "short-read counter must be ignored, recount kicks in"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -945,8 +1013,10 @@ mod tests {
     #[cfg(not(target_family = "wasm"))]
     #[test]
     fn counter_sidecar_recovers_when_size_disagrees() {
-        let dir = std::env::temp_dir()
-            .join(format!("treeship-evtlog-stale-counter-{}", rand::random::<u32>()));
+        let dir = std::env::temp_dir().join(format!(
+            "treeship-evtlog-stale-counter-{}",
+            rand::random::<u32>()
+        ));
 
         {
             let log = EventLog::open(&dir).unwrap();
@@ -958,9 +1028,12 @@ mod tests {
         // events.jsonl WITHOUT updating the counter. Now the counter
         // says (1, S) but events.jsonl is (S + |line|) bytes.
         let events_path = dir.join("events.jsonl");
-        let mut extra = make_event("ssn_stale", EventType::AgentStarted {
-            parent_agent_instance_id: None,
-        });
+        let mut extra = make_event(
+            "ssn_stale",
+            EventType::AgentStarted {
+                parent_agent_instance_id: None,
+            },
+        );
         extra.sequence_no = 999; // intentionally wrong; will be overwritten on read
         let mut line = serde_json::to_vec(&extra).unwrap();
         line.push(b'\n');
@@ -994,8 +1067,10 @@ mod tests {
         use std::sync::Arc;
         use std::thread;
 
-        let dir = std::env::temp_dir()
-            .join(format!("treeship-evtlog-counter-race-{}", rand::random::<u32>()));
+        let dir = std::env::temp_dir().join(format!(
+            "treeship-evtlog-counter-race-{}",
+            rand::random::<u32>()
+        ));
         std::fs::create_dir_all(&dir).unwrap();
 
         const WRITERS: usize = 16;
@@ -1015,7 +1090,10 @@ mod tests {
         let mut seqs: Vec<u64> = handles.into_iter().map(|h| h.join().unwrap()).collect();
         seqs.sort();
         let expected: Vec<u64> = (0..WRITERS as u64).collect();
-        assert_eq!(seqs, expected, "counter must not bypass the flock race protection");
+        assert_eq!(
+            seqs, expected,
+            "counter must not bypass the flock race protection"
+        );
 
         // Counter should reflect the final state.
         let log = EventLog::open(&dir).unwrap();
@@ -1032,8 +1110,10 @@ mod tests {
     fn counter_sidecar_has_owner_only_permissions() {
         use std::os::unix::fs::PermissionsExt;
 
-        let dir = std::env::temp_dir()
-            .join(format!("treeship-evtlog-counter-perms-{}", rand::random::<u32>()));
+        let dir = std::env::temp_dir().join(format!(
+            "treeship-evtlog-counter-perms-{}",
+            rand::random::<u32>()
+        ));
         let log = EventLog::open(&dir).unwrap();
 
         let mut e = make_event("ssn_counter_perms", EventType::SessionStarted);

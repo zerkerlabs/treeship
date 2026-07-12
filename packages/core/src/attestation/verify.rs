@@ -1,11 +1,8 @@
+use ed25519_dalek::{Signature as DalekSignature, Verifier as DalekVerifier, VerifyingKey};
 use std::collections::HashMap;
-use ed25519_dalek::{VerifyingKey, Verifier as DalekVerifier, Signature as DalekSignature};
 
 use crate::attestation::{
-    pae,
-    artifact_id_from_pae, digest_from_pae, ArtifactId,
-    Ed25519Signer, Signer,
-    Envelope,
+    artifact_id_from_pae, digest_from_pae, pae, ArtifactId, Ed25519Signer, Envelope, Signer,
 };
 
 /// The result of a successful verification.
@@ -44,10 +41,10 @@ pub enum VerifyError {
 impl std::fmt::Display for VerifyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::PayloadDecode(e)      => write!(f, "payload decode: {}", e),
-            Self::UnknownKey(id)        => write!(f, "unknown key: {}", id),
-            Self::InvalidSignature(id)  => write!(f, "invalid signature for key: {}", id),
-            Self::NoValidSignature      => write!(f, "no valid signature from any trusted key"),
+            Self::PayloadDecode(e) => write!(f, "payload decode: {}", e),
+            Self::UnknownKey(id) => write!(f, "unknown key: {}", id),
+            Self::InvalidSignature(id) => write!(f, "invalid signature for key: {}", id),
+            Self::NoValidSignature => write!(f, "no valid signature from any trusted key"),
             Self::MalformedSignature(e) => write!(f, "malformed signature bytes: {}", e),
         }
     }
@@ -105,7 +102,9 @@ impl Verifier {
         let mut verified = Vec::new();
 
         for sig in &envelope.signatures {
-            let pub_key = self.keys.get(&sig.keyid)
+            let pub_key = self
+                .keys
+                .get(&sig.keyid)
                 .ok_or_else(|| VerifyError::UnknownKey(sig.keyid.clone()))?;
 
             let raw_sig = self.decode_sig(sig)?;
@@ -128,13 +127,16 @@ impl Verifier {
         for sig in &envelope.signatures {
             let pub_key = match self.keys.get(&sig.keyid) {
                 Some(k) => k,
-                None    => continue, // skip unknown keys
+                None => continue, // skip unknown keys
             };
             let raw_sig = match self.decode_sig(sig) {
-                Ok(b)  => b,
+                Ok(b) => b,
                 Err(_) => continue, // skip malformed sigs
             };
-            if self.verify_sig(pub_key, &pae_bytes, &raw_sig, &sig.keyid).is_ok() {
+            if self
+                .verify_sig(pub_key, &pae_bytes, &raw_sig, &sig.keyid)
+                .is_ok()
+            {
                 verified.push(sig.keyid.clone());
             }
         }
@@ -152,47 +154,50 @@ impl Verifier {
         let payload_bytes = base64::Engine::decode(
             &base64::engine::general_purpose::URL_SAFE_NO_PAD,
             &envelope.payload,
-        ).map_err(|e| VerifyError::PayloadDecode(e.to_string()))?;
+        )
+        .map_err(|e| VerifyError::PayloadDecode(e.to_string()))?;
 
         Ok(pae(&envelope.payload_type, &payload_bytes))
     }
 
     fn decode_sig(&self, sig: &crate::attestation::Signature) -> Result<Vec<u8>, VerifyError> {
-        base64::Engine::decode(
-            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-            &sig.sig,
-        ).map_err(|e| VerifyError::MalformedSignature(e.to_string()))
+        base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, &sig.sig)
+            .map_err(|e| VerifyError::MalformedSignature(e.to_string()))
     }
 
     fn verify_sig(
         &self,
-        pub_key:  &VerifyingKey,
-        pae:      &[u8],
-        raw_sig:  &[u8],
-        key_id:   &str,
+        pub_key: &VerifyingKey,
+        pae: &[u8],
+        raw_sig: &[u8],
+        key_id: &str,
     ) -> Result<(), VerifyError> {
-        let sig_bytes: [u8; 64] = raw_sig.try_into()
-            .map_err(|_| VerifyError::MalformedSignature(
-                format!("signature for {} is {} bytes, expected 64", key_id, raw_sig.len())
-            ))?;
+        let sig_bytes: [u8; 64] = raw_sig.try_into().map_err(|_| {
+            VerifyError::MalformedSignature(format!(
+                "signature for {} is {} bytes, expected 64",
+                key_id,
+                raw_sig.len()
+            ))
+        })?;
 
         let dalek_sig = DalekSignature::from_bytes(&sig_bytes);
 
-        pub_key.verify_strict(pae, &dalek_sig)
+        pub_key
+            .verify_strict(pae, &dalek_sig)
             .map_err(|_| VerifyError::InvalidSignature(key_id.to_string()))
     }
 
     fn build_result(
         &self,
-        pae_bytes:    Vec<u8>,
-        verified:     Vec<String>,
+        pae_bytes: Vec<u8>,
+        verified: Vec<String>,
         payload_type: &str,
     ) -> VerifyResult {
         VerifyResult {
-            artifact_id:     artifact_id_from_pae(&pae_bytes),
-            digest:          digest_from_pae(&pae_bytes),
+            artifact_id: artifact_id_from_pae(&pae_bytes),
+            digest: digest_from_pae(&pae_bytes),
             verified_key_ids: verified,
-            payload_type:    payload_type.to_string(),
+            payload_type: payload_type.to_string(),
         }
     }
 }
@@ -200,8 +205,8 @@ impl Verifier {
 /// Convenience: verify an envelope with a single known public key.
 pub fn verify_with_key(
     envelope: &Envelope,
-    key_id:   &str,
-    pub_key:  VerifyingKey,
+    key_id: &str,
+    pub_key: VerifyingKey,
 ) -> Result<VerifyResult, VerifyError> {
     let mut keys = HashMap::new();
     keys.insert(key_id.to_string(), pub_key);
@@ -217,12 +222,18 @@ mod tests {
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize)]
-    struct TestStmt { actor: String, action: String }
+    struct TestStmt {
+        actor: String,
+        action: String,
+    }
 
     const PT: &str = "application/vnd.treeship.action.v1+json";
 
     fn stmt() -> TestStmt {
-        TestStmt { actor: "agent://researcher".into(), action: "tool.call".into() }
+        TestStmt {
+            actor: "agent://researcher".into(),
+            action: "tool.call".into(),
+        }
     }
 
     fn make_signer() -> Ed25519Signer {
@@ -233,10 +244,10 @@ mod tests {
 
     #[test]
     fn verify_roundtrip() {
-        let signer   = make_signer();
+        let signer = make_signer();
         let verifier = Verifier::from_signer(&signer);
-        let signed   = sign(PT, &stmt(), &signer).unwrap();
-        let result   = verifier.verify(&signed.envelope).unwrap();
+        let signed = sign(PT, &stmt(), &signer).unwrap();
+        let result = verifier.verify(&signed.envelope).unwrap();
 
         assert_eq!(result.artifact_id, signed.artifact_id);
         assert_eq!(result.digest, signed.digest);
@@ -246,9 +257,9 @@ mod tests {
 
     #[test]
     fn verify_any_roundtrip() {
-        let signer   = make_signer();
+        let signer = make_signer();
         let verifier = Verifier::from_signer(&signer);
-        let signed   = sign(PT, &stmt(), &signer).unwrap();
+        let signed = sign(PT, &stmt(), &signer).unwrap();
         verifier.verify_any(&signed.envelope).unwrap();
     }
 
@@ -256,14 +267,17 @@ mod tests {
 
     #[test]
     fn tampered_payload_fails() {
-        let signer   = make_signer();
+        let signer = make_signer();
         let verifier = Verifier::from_signer(&signer);
-        let signed   = sign(PT, &stmt(), &signer).unwrap();
+        let signed = sign(PT, &stmt(), &signer).unwrap();
 
         // Replace the payload with different content. The signature was
         // computed over PAE(original_payload) — after tampering the PAE
         // is different and the signature fails.
-        let malicious = TestStmt { actor: "agent://attacker".into(), action: "steal".into() };
+        let malicious = TestStmt {
+            actor: "agent://attacker".into(),
+            action: "steal".into(),
+        };
         let malicious_bytes = serde_json::to_vec(&malicious).unwrap();
 
         let mut tampered = signed.envelope.clone();
@@ -272,15 +286,16 @@ mod tests {
         let err = verifier.verify(&tampered).unwrap_err();
         assert!(
             matches!(err, VerifyError::InvalidSignature(_)),
-            "Expected InvalidSignature, got: {}", err
+            "Expected InvalidSignature, got: {}",
+            err
         );
     }
 
     #[test]
     fn tampered_payload_type_fails() {
-        let signer   = make_signer();
+        let signer = make_signer();
         let verifier = Verifier::from_signer(&signer);
-        let signed   = sign("application/vnd.treeship.action.v1+json", &stmt(), &signer).unwrap();
+        let signed = sign("application/vnd.treeship.action.v1+json", &stmt(), &signer).unwrap();
 
         // Change the payloadType without re-signing.
         // PAE includes payloadType, so the reconstructed PAE ≠ signed PAE.
@@ -297,11 +312,11 @@ mod tests {
 
     #[test]
     fn wrong_key_fails() {
-        let signer      = make_signer();
+        let signer = make_signer();
         // Build a verifier with a different keypair but the same key_id.
         // Simulates an attacker substituting their public key.
-        let wrong       = Ed25519Signer::generate("key_test_01").unwrap();
-        let verifier    = Verifier::from_signer(&wrong);
+        let wrong = Ed25519Signer::generate("key_test_01").unwrap();
+        let verifier = Verifier::from_signer(&wrong);
 
         let signed = sign(PT, &stmt(), &signer).unwrap();
         assert!(
@@ -312,7 +327,7 @@ mod tests {
 
     #[test]
     fn unknown_key_fails() {
-        let signer   = make_signer();
+        let signer = make_signer();
         let verifier = Verifier::new(HashMap::new()); // no keys
 
         let signed = sign(PT, &stmt(), &signer).unwrap();
@@ -324,7 +339,7 @@ mod tests {
 
     #[test]
     fn verify_any_skips_unknown_keys() {
-        let signer   = make_signer();
+        let signer = make_signer();
         // Verifier only knows about key_test_01
         let verifier = Verifier::from_signer(&signer);
 
@@ -340,9 +355,9 @@ mod tests {
         // the explicit check, the for-loop is a no-op and `verify` returns
         // `Ok(...)` with an empty `verified_key_ids` list — callers that
         // only check `Result::is_ok()` would accept unsigned envelopes.
-        let signer   = make_signer();
+        let signer = make_signer();
         let verifier = Verifier::from_signer(&signer);
-        let signed   = sign(PT, &stmt(), &signer).unwrap();
+        let signed = sign(PT, &stmt(), &signer).unwrap();
 
         // Strip the signatures off an otherwise-valid envelope.
         let mut unsigned = signed.envelope.clone();
@@ -364,9 +379,9 @@ mod tests {
 
     #[test]
     fn verify_any_all_unknown_fails() {
-        let signer   = make_signer();
+        let signer = make_signer();
         let verifier = Verifier::new(HashMap::new());
-        let signed   = sign(PT, &stmt(), &signer).unwrap();
+        let signed = sign(PT, &stmt(), &signer).unwrap();
         assert!(matches!(
             verifier.verify_any(&signed.envelope).unwrap_err(),
             VerifyError::NoValidSignature
@@ -377,9 +392,9 @@ mod tests {
 
     #[test]
     fn artifact_id_matches_sign() {
-        let signer   = make_signer();
+        let signer = make_signer();
         let verifier = Verifier::from_signer(&signer);
-        let signed   = sign(PT, &stmt(), &signer).unwrap();
+        let signed = sign(PT, &stmt(), &signer).unwrap();
         let verified = verifier.verify(&signed.envelope).unwrap();
 
         // The ID is derived from the same PAE bytes during both sign and verify.
@@ -415,11 +430,11 @@ mod tests {
 
     #[test]
     fn json_marshal_unmarshal() {
-        let signer   = make_signer();
+        let signer = make_signer();
         let verifier = Verifier::from_signer(&signer);
-        let signed   = sign(PT, &stmt(), &signer).unwrap();
+        let signed = sign(PT, &stmt(), &signer).unwrap();
 
-        let json     = signed.envelope.to_json().unwrap();
+        let json = signed.envelope.to_json().unwrap();
         let restored = Envelope::from_json(&json).unwrap();
 
         let result = verifier.verify(&restored).unwrap();
@@ -439,8 +454,8 @@ mod tests {
         // degenerate public key that verify() accepts and verify_strict()
         // rejects.
         let small_order = [
-            0x00u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0x00u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0,
         ];
         // If the bytes even decode to a VerifyingKey, a zero-signature against
         // it must NOT verify strictly. (Some small-order encodings fail to
@@ -458,7 +473,9 @@ mod tests {
         let env = sign(PT, &stmt(), &signer).unwrap().envelope;
         let mut v = Verifier::new(std::collections::HashMap::new());
         v.add_key(signer.key_id().to_string(), signer.verifying_key());
-        assert!(v.verify_any(&env).is_ok(), "a real signature must still verify strictly");
+        assert!(
+            v.verify_any(&env).is_ok(),
+            "a real signature must still verify strictly"
+        );
     }
-
 }

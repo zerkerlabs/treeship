@@ -72,8 +72,14 @@ impl App {
             artifacts: Vec::new(),
             selected: 0,
             session: None,
-            hub_status: if ctx.config.is_attached() { "attached".into() } else { "not attached".into() },
-            hub_endpoint: ctx.config.active_hub_connection()
+            hub_status: if ctx.config.is_attached() {
+                "attached".into()
+            } else {
+                "not attached".into()
+            },
+            hub_endpoint: ctx
+                .config
+                .active_hub_connection()
                 .map(|(_, e)| e.endpoint.clone())
                 .unwrap_or_else(|| "treeship.dev".into()),
             ship_id: ctx.config.ship_id.clone(),
@@ -270,9 +276,7 @@ pub fn short_id(id: &str) -> &str {
     }
 }
 
-fn parse_record_fields(
-    rec: &treeship_core::storage::Record,
-) -> (String, String, i32, u64) {
+fn parse_record_fields(rec: &treeship_core::storage::Record) -> (String, String, i32, u64) {
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 
     let payload_bytes = URL_SAFE_NO_PAD
@@ -290,14 +294,8 @@ fn parse_record_fields(
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    let exit_code = val
-        .get("exit_code")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(0) as i32;
-    let elapsed_ms = val
-        .get("elapsed_ms")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
+    let exit_code = val.get("exit_code").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+    let elapsed_ms = val.get("elapsed_ms").and_then(|v| v.as_u64()).unwrap_or(0);
 
     (action, actor, exit_code, elapsed_ms)
 }

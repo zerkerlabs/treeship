@@ -49,31 +49,31 @@ impl AgentSurface {
     /// users pass to `treeship add` / `treeship agent add`.
     pub fn kind(self) -> &'static str {
         match self {
-            Self::ClaudeCode          => "claude-code",
-            Self::CursorAgent         => "cursor-agent",
-            Self::Cline               => "cline",
-            Self::Codex               => "codex",
-            Self::Hermes              => "hermes",
-            Self::OpenClaw            => "openclaw",
+            Self::ClaudeCode => "claude-code",
+            Self::CursorAgent => "cursor-agent",
+            Self::Cline => "cline",
+            Self::Codex => "codex",
+            Self::Hermes => "hermes",
+            Self::OpenClaw => "openclaw",
             Self::NinjatechSuperninja => "ninjatech-superninja",
-            Self::NinjatechNinjaDev   => "ninjatech-ninja-dev",
-            Self::GenericMcp          => "generic-mcp",
-            Self::ShellWrap           => "shell-wrap",
+            Self::NinjatechNinjaDev => "ninjatech-ninja-dev",
+            Self::GenericMcp => "generic-mcp",
+            Self::ShellWrap => "shell-wrap",
         }
     }
 
     pub fn display(self) -> &'static str {
         match self {
-            Self::ClaudeCode          => "Claude Code",
-            Self::CursorAgent         => "Cursor",
-            Self::Cline               => "Cline",
-            Self::Codex               => "Codex CLI",
-            Self::Hermes              => "Hermes",
-            Self::OpenClaw            => "OpenClaw",
+            Self::ClaudeCode => "Claude Code",
+            Self::CursorAgent => "Cursor",
+            Self::Cline => "Cline",
+            Self::Codex => "Codex CLI",
+            Self::Hermes => "Hermes",
+            Self::OpenClaw => "OpenClaw",
             Self::NinjatechSuperninja => "SuperNinja",
-            Self::NinjatechNinjaDev   => "Ninja Dev",
-            Self::GenericMcp          => "Generic MCP client",
-            Self::ShellWrap           => "Shell-wrap custom agent",
+            Self::NinjatechNinjaDev => "Ninja Dev",
+            Self::GenericMcp => "Generic MCP client",
+            Self::ShellWrap => "Shell-wrap custom agent",
         }
     }
 }
@@ -93,10 +93,10 @@ pub enum ConnectionMode {
 impl ConnectionMode {
     pub fn label(self) -> &'static str {
         match self {
-            Self::NativeHook   => "native-hook",
-            Self::Mcp          => "mcp",
-            Self::Skill        => "skill",
-            Self::ShellWrap    => "shell-wrap",
+            Self::NativeHook => "native-hook",
+            Self::Mcp => "mcp",
+            Self::Skill => "skill",
+            Self::ShellWrap => "shell-wrap",
             Self::GitReconcile => "git-reconcile",
         }
     }
@@ -118,9 +118,9 @@ pub enum CoverageLevel {
 impl CoverageLevel {
     pub fn label(self) -> &'static str {
         match self {
-            Self::High         => "high",
-            Self::Medium       => "medium",
-            Self::Basic        => "basic",
+            Self::High => "high",
+            Self::Medium => "medium",
+            Self::Basic => "basic",
             Self::BackstopOnly => "backstop-only",
         }
     }
@@ -140,9 +140,9 @@ pub enum Confidence {
 impl Confidence {
     pub fn label(self) -> &'static str {
         match self {
-            Self::High   => "high",
+            Self::High => "high",
             Self::Medium => "medium",
-            Self::Low    => "low",
+            Self::Low => "low",
         }
     }
 }
@@ -151,18 +151,18 @@ impl Confidence {
 /// implied. Setup turns these into draft Agent Cards in PR 2.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoveredAgent {
-    pub surface:          AgentSurface,
-    pub display_name:     String,
+    pub surface: AgentSurface,
+    pub display_name: String,
     pub connection_modes: Vec<ConnectionMode>,
-    pub coverage:         CoverageLevel,
-    pub confidence:       Confidence,
+    pub coverage: CoverageLevel,
+    pub confidence: Confidence,
     /// Filesystem evidence the detector matched on. Useful for explaining
     /// why an agent showed up; also lets the eventual `treeship agents
     /// review` command point at the file the user might want to inspect.
-    pub evidence:         Vec<PathBuf>,
+    pub evidence: Vec<PathBuf>,
     /// Notes worth showing alongside the row -- e.g. "remote VM, use
     /// `treeship agent invite` to attach". Free-form.
-    pub note:             Option<String>,
+    pub note: Option<String>,
 }
 
 impl DiscoveredAgent {
@@ -171,16 +171,16 @@ impl DiscoveredAgent {
     /// pre-fill `AgentCard.active_harness_id`.
     pub fn recommended_harness_id(&self) -> &'static str {
         match self.surface {
-            AgentSurface::ClaudeCode          => "claude-code",
-            AgentSurface::CursorAgent         => "cursor",
-            AgentSurface::Cline               => "cline",
-            AgentSurface::Codex               => "codex",
-            AgentSurface::Hermes              => "hermes",
-            AgentSurface::OpenClaw            => "openclaw",
+            AgentSurface::ClaudeCode => "claude-code",
+            AgentSurface::CursorAgent => "cursor",
+            AgentSurface::Cline => "cline",
+            AgentSurface::Codex => "codex",
+            AgentSurface::Hermes => "hermes",
+            AgentSurface::OpenClaw => "openclaw",
             AgentSurface::NinjatechSuperninja => "ninjatech-superninja",
-            AgentSurface::NinjatechNinjaDev   => "ninjatech-ninja-dev",
-            AgentSurface::GenericMcp          => "generic-mcp",
-            AgentSurface::ShellWrap           => "shell-wrap",
+            AgentSurface::NinjatechNinjaDev => "ninjatech-ninja-dev",
+            AgentSurface::GenericMcp => "generic-mcp",
+            AgentSurface::ShellWrap => "shell-wrap",
         }
     }
 }
@@ -194,7 +194,7 @@ impl DiscoveredAgent {
 /// machine.
 pub struct Env {
     pub home: Option<PathBuf>,
-    pub cwd:  PathBuf,
+    pub cwd: PathBuf,
     pub path: Option<std::ffi::OsString>,
 }
 
@@ -202,7 +202,7 @@ impl Env {
     pub fn current() -> Self {
         Self {
             home: home::home_dir(),
-            cwd:  std::env::current_dir().unwrap_or_default(),
+            cwd: std::env::current_dir().unwrap_or_default(),
             path: std::env::var_os("PATH"),
         }
     }
@@ -223,7 +223,7 @@ pub fn discover(env: &Env) -> Vec<DiscoveredAgent> {
 
     let home = match env.home.as_ref() {
         Some(h) => h.as_path(),
-        None    => return agents,
+        None => return agents,
     };
     let cwd = env.cwd.as_path();
 
@@ -246,7 +246,7 @@ pub fn discover(env: &Env) -> Vec<DiscoveredAgent> {
 
 fn detect_claude_code(agents: &mut Vec<DiscoveredAgent>, home: &Path, cwd: &Path) {
     let global = home.join(".claude");
-    let local  = cwd.join(".claude");
+    let local = cwd.join(".claude");
     let evidence: Vec<PathBuf> = [&global, &local]
         .iter()
         .filter(|p| p.is_dir())
@@ -256,13 +256,13 @@ fn detect_claude_code(agents: &mut Vec<DiscoveredAgent>, home: &Path, cwd: &Path
         return;
     }
     agents.push(DiscoveredAgent {
-        surface:          AgentSurface::ClaudeCode,
-        display_name:     AgentSurface::ClaudeCode.display().to_string(),
+        surface: AgentSurface::ClaudeCode,
+        display_name: AgentSurface::ClaudeCode.display().to_string(),
         connection_modes: vec![ConnectionMode::NativeHook, ConnectionMode::Mcp],
-        coverage:         CoverageLevel::High,
-        confidence:       Confidence::High,
+        coverage: CoverageLevel::High,
+        confidence: Confidence::High,
         evidence,
-        note:             None,
+        note: None,
     });
 }
 
@@ -272,13 +272,13 @@ fn detect_cursor(agents: &mut Vec<DiscoveredAgent>, home: &Path) {
         return;
     }
     agents.push(DiscoveredAgent {
-        surface:          AgentSurface::CursorAgent,
-        display_name:     AgentSurface::CursorAgent.display().to_string(),
+        surface: AgentSurface::CursorAgent,
+        display_name: AgentSurface::CursorAgent.display().to_string(),
         connection_modes: vec![ConnectionMode::Mcp],
-        coverage:         CoverageLevel::Medium,
-        confidence:       Confidence::High,
-        evidence:         vec![dir],
-        note:             None,
+        coverage: CoverageLevel::Medium,
+        confidence: Confidence::High,
+        evidence: vec![dir],
+        note: None,
     });
 }
 
@@ -288,13 +288,13 @@ fn detect_cline(agents: &mut Vec<DiscoveredAgent>, home: &Path) {
         return;
     }
     agents.push(DiscoveredAgent {
-        surface:          AgentSurface::Cline,
-        display_name:     AgentSurface::Cline.display().to_string(),
+        surface: AgentSurface::Cline,
+        display_name: AgentSurface::Cline.display().to_string(),
         connection_modes: vec![ConnectionMode::Mcp],
-        coverage:         CoverageLevel::Medium,
-        confidence:       Confidence::High,
-        evidence:         vec![dir],
-        note:             None,
+        coverage: CoverageLevel::Medium,
+        confidence: Confidence::High,
+        evidence: vec![dir],
+        note: None,
     });
 }
 
@@ -304,13 +304,13 @@ fn detect_codex(agents: &mut Vec<DiscoveredAgent>, home: &Path) {
         return;
     }
     agents.push(DiscoveredAgent {
-        surface:          AgentSurface::Codex,
-        display_name:     AgentSurface::Codex.display().to_string(),
+        surface: AgentSurface::Codex,
+        display_name: AgentSurface::Codex.display().to_string(),
         connection_modes: vec![ConnectionMode::Mcp, ConnectionMode::ShellWrap],
-        coverage:         CoverageLevel::Medium,
-        confidence:       Confidence::High,
-        evidence:         vec![dir],
-        note:             None,
+        coverage: CoverageLevel::Medium,
+        confidence: Confidence::High,
+        evidence: vec![dir],
+        note: None,
     });
 }
 
@@ -325,13 +325,17 @@ fn detect_hermes(agents: &mut Vec<DiscoveredAgent>, env: &Env, home: &Path) {
         evidence.push(dir.clone());
     }
     agents.push(DiscoveredAgent {
-        surface:          AgentSurface::Hermes,
-        display_name:     AgentSurface::Hermes.display().to_string(),
+        surface: AgentSurface::Hermes,
+        display_name: AgentSurface::Hermes.display().to_string(),
         connection_modes: vec![ConnectionMode::Skill, ConnectionMode::Mcp],
-        coverage:         CoverageLevel::Medium,
-        confidence:       if dir.is_dir() { Confidence::High } else { Confidence::Medium },
+        coverage: CoverageLevel::Medium,
+        confidence: if dir.is_dir() {
+            Confidence::High
+        } else {
+            Confidence::Medium
+        },
         evidence,
-        note:             None,
+        note: None,
     });
 }
 
@@ -346,13 +350,17 @@ fn detect_openclaw(agents: &mut Vec<DiscoveredAgent>, env: &Env, home: &Path) {
         evidence.push(dir.clone());
     }
     agents.push(DiscoveredAgent {
-        surface:          AgentSurface::OpenClaw,
-        display_name:     AgentSurface::OpenClaw.display().to_string(),
+        surface: AgentSurface::OpenClaw,
+        display_name: AgentSurface::OpenClaw.display().to_string(),
         connection_modes: vec![ConnectionMode::Skill, ConnectionMode::Mcp],
-        coverage:         CoverageLevel::Medium,
-        confidence:       if dir.is_dir() { Confidence::High } else { Confidence::Medium },
+        coverage: CoverageLevel::Medium,
+        confidence: if dir.is_dir() {
+            Confidence::High
+        } else {
+            Confidence::Medium
+        },
         evidence,
-        note:             None,
+        note: None,
     });
 }
 
@@ -403,13 +411,20 @@ fn detect_ninja_dev(agents: &mut Vec<DiscoveredAgent>, env: &Env, home: &Path) {
     }
 
     agents.push(DiscoveredAgent {
-        surface:          AgentSurface::NinjatechNinjaDev,
-        display_name:     AgentSurface::NinjatechNinjaDev.display().to_string(),
+        surface: AgentSurface::NinjatechNinjaDev,
+        display_name: AgentSurface::NinjatechNinjaDev.display().to_string(),
         connection_modes: vec![ConnectionMode::Mcp, ConnectionMode::ShellWrap],
-        coverage:         CoverageLevel::Medium,
-        confidence:       if !evidence.is_empty() { Confidence::Medium } else { Confidence::Low },
+        coverage: CoverageLevel::Medium,
+        confidence: if !evidence.is_empty() {
+            Confidence::Medium
+        } else {
+            Confidence::Low
+        },
         evidence,
-        note:             Some("Local NinjaTech IDE surface. For remote SuperNinja VMs, use `treeship agent invite`.".to_string()),
+        note: Some(
+            "Local NinjaTech IDE surface. For remote SuperNinja VMs, use `treeship agent invite`."
+                .to_string(),
+        ),
     });
 }
 
@@ -466,7 +481,11 @@ mod tests {
     use tempfile::tempdir;
 
     fn fake_env(home: PathBuf, cwd: PathBuf) -> Env {
-        Env { home: Some(home), cwd, path: Some(std::ffi::OsString::new()) }
+        Env {
+            home: Some(home),
+            cwd,
+            path: Some(std::ffi::OsString::new()),
+        }
     }
 
     #[test]
@@ -486,10 +505,15 @@ mod tests {
         fs::create_dir_all(h.path().join(".claude")).unwrap();
 
         let agents = discover(&fake_env(h.path().into(), c.path().into()));
-        let claude = agents.iter().find(|a| a.surface == AgentSurface::ClaudeCode).expect("claude detected");
+        let claude = agents
+            .iter()
+            .find(|a| a.surface == AgentSurface::ClaudeCode)
+            .expect("claude detected");
         assert_eq!(claude.coverage, CoverageLevel::High);
         assert_eq!(claude.confidence, Confidence::High);
-        assert!(claude.connection_modes.contains(&ConnectionMode::NativeHook));
+        assert!(claude
+            .connection_modes
+            .contains(&ConnectionMode::NativeHook));
         assert!(claude.connection_modes.contains(&ConnectionMode::Mcp));
         assert!(!claude.evidence.is_empty());
     }
@@ -516,9 +540,18 @@ mod tests {
         let agents = discover(&fake_env(h.path().into(), c.path().into()));
         let kinds: Vec<&str> = agents.iter().map(|a| a.surface.kind()).collect();
         for expected in &[
-            "cursor-agent", "cline", "codex", "hermes", "openclaw", "ninjatech-superninja",
+            "cursor-agent",
+            "cline",
+            "codex",
+            "hermes",
+            "openclaw",
+            "ninjatech-superninja",
         ] {
-            assert!(kinds.contains(expected), "missing {expected} in {:?}", kinds);
+            assert!(
+                kinds.contains(expected),
+                "missing {expected} in {:?}",
+                kinds
+            );
         }
     }
 
@@ -542,11 +575,17 @@ mod tests {
     fn ninja_dev_detected_via_vscode_extension() {
         let h = tempdir().unwrap();
         let c = tempdir().unwrap();
-        let ext = h.path().join(".vscode").join("extensions").join("ninjatech.ninja-dev-1.2.3");
+        let ext = h
+            .path()
+            .join(".vscode")
+            .join("extensions")
+            .join("ninjatech.ninja-dev-1.2.3");
         fs::create_dir_all(&ext).unwrap();
 
         let agents = discover(&fake_env(h.path().into(), c.path().into()));
-        assert!(agents.iter().any(|a| a.surface == AgentSurface::NinjatechNinjaDev));
+        assert!(agents
+            .iter()
+            .any(|a| a.surface == AgentSurface::NinjatechNinjaDev));
     }
 
     #[test]
@@ -569,13 +608,13 @@ mod tests {
         // through to its own logic. Lock the field shape so a downstream
         // bump doesn't silently change the contract.
         let agent = DiscoveredAgent {
-            surface:          AgentSurface::ClaudeCode,
-            display_name:     "Claude Code".to_string(),
+            surface: AgentSurface::ClaudeCode,
+            display_name: "Claude Code".to_string(),
             connection_modes: vec![ConnectionMode::NativeHook, ConnectionMode::Mcp],
-            coverage:         CoverageLevel::High,
-            confidence:       Confidence::High,
-            evidence:         vec![PathBuf::from("/tmp/.claude")],
-            note:             None,
+            coverage: CoverageLevel::High,
+            confidence: Confidence::High,
+            evidence: vec![PathBuf::from("/tmp/.claude")],
+            note: None,
         };
         let json = serde_json::to_value(&agent).unwrap();
         assert_eq!(json["surface"], "claude-code");

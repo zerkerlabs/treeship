@@ -111,8 +111,12 @@ fn mint_cert_receipt(
 
     // Idempotency scan: one cert per (agent, subject key).
     for entry in ctx.storage.list_by_type(&receipt_pt) {
-        let Ok(rec) = ctx.storage.read(&entry.id) else { continue };
-        let Ok(stmt) = rec.envelope.unmarshal_statement::<ReceiptStatement>() else { continue };
+        let Ok(rec) = ctx.storage.read(&entry.id) else {
+            continue;
+        };
+        let Ok(stmt) = rec.envelope.unmarshal_statement::<ReceiptStatement>() else {
+            continue;
+        };
         if stmt.kind != "agent_cert.v1" {
             continue;
         }
@@ -137,22 +141,20 @@ fn mint_cert_receipt(
     treeship_core::predicates::validate("agent_cert.v1", Some(&payload))
         .map_err(|e| format!("agent_cert.v1 validation failed: {e}"))?;
 
-    let mut stmt = ReceiptStatement::new(
-        &format!("ship://{}", ctx.config.ship_id),
-        "agent_cert.v1",
-    );
+    let mut stmt =
+        ReceiptStatement::new(&format!("ship://{}", ctx.config.ship_id), "agent_cert.v1");
     stmt.payload = Some(payload);
 
     let result = sign(&receipt_pt, &stmt, signer)?;
     ctx.storage.write(&Record {
-        artifact_id:  result.artifact_id.clone(),
-        digest:       result.digest,
+        artifact_id: result.artifact_id.clone(),
+        digest: result.digest,
         payload_type: receipt_pt,
-        key_id:       signer.key_id().to_string(),
-        signed_at:    stmt.timestamp.clone(),
-        parent_id:    None,
-        envelope:     result.envelope,
-        hub_url:      None,
+        key_id: signer.key_id().to_string(),
+        signed_at: stmt.timestamp.clone(),
+        parent_id: None,
+        envelope: result.envelope,
+        hub_url: None,
     })?;
     Ok(())
 }

@@ -16,9 +16,8 @@
 use std::path::Path;
 
 use treeship_core::session::{
-    build_package, read_package, verify_package, ArtifactEntry, EventType,
-    LifecycleMode, ReceiptComposer, SessionEvent, SessionManifest, SessionStatus,
-    VerifyStatus,
+    build_package, read_package, verify_package, ArtifactEntry, EventType, LifecycleMode,
+    ReceiptComposer, SessionEvent, SessionManifest, SessionStatus, VerifyStatus,
 };
 
 // ============================================================================
@@ -48,15 +47,38 @@ fn make_legacy_events() -> Vec<SessionEvent> {
     };
     vec![
         mk(0, "root", EventType::SessionStarted),
-        mk(1, "root", EventType::AgentStarted { parent_agent_instance_id: None }),
-        mk(2, "root", EventType::AgentCalledTool {
-            tool_name: "Bash".into(),
-            tool_input_digest: None,
-            tool_output_digest: None,
-            duration_ms: Some(8),
-        }),
-        mk(3, "root", EventType::AgentCompleted { termination_reason: None }),
-        mk(4, "root", EventType::SessionClosed { summary: Some("Done".into()), duration_ms: Some(120_000) }),
+        mk(
+            1,
+            "root",
+            EventType::AgentStarted {
+                parent_agent_instance_id: None,
+            },
+        ),
+        mk(
+            2,
+            "root",
+            EventType::AgentCalledTool {
+                tool_name: "Bash".into(),
+                tool_input_digest: None,
+                tool_output_digest: None,
+                duration_ms: Some(8),
+            },
+        ),
+        mk(
+            3,
+            "root",
+            EventType::AgentCompleted {
+                termination_reason: None,
+            },
+        ),
+        mk(
+            4,
+            "root",
+            EventType::SessionClosed {
+                summary: Some("Done".into()),
+                duration_ms: Some(120_000),
+            },
+        ),
     ]
 }
 
@@ -81,8 +103,18 @@ fn build_synthesized_legacy_package(tmp: &Path) -> std::path::PathBuf {
     let manifest = make_legacy_manifest();
     let events = make_legacy_events();
     let artifacts = vec![
-        ArtifactEntry { artifact_id: "art_001".into(), payload_type: "action".into(), digest: None, signed_at: None },
-        ArtifactEntry { artifact_id: "art_002".into(), payload_type: "action".into(), digest: None, signed_at: None },
+        ArtifactEntry {
+            artifact_id: "art_001".into(),
+            payload_type: "action".into(),
+            digest: None,
+            signed_at: None,
+        },
+        ArtifactEntry {
+            artifact_id: "art_002".into(),
+            payload_type: "action".into(),
+            digest: None,
+            signed_at: None,
+        },
     ];
     let mut receipt = ReceiptComposer::compose(&manifest, &events, artifacts);
     // Mimic pre-v0.9.0: strip the new optional fields.
@@ -102,8 +134,18 @@ fn print_legacy_receipt_json() {
     let manifest = make_legacy_manifest();
     let events = make_legacy_events();
     let artifacts = vec![
-        ArtifactEntry { artifact_id: "art_001".into(), payload_type: "action".into(), digest: None, signed_at: None },
-        ArtifactEntry { artifact_id: "art_002".into(), payload_type: "action".into(), digest: None, signed_at: None },
+        ArtifactEntry {
+            artifact_id: "art_001".into(),
+            payload_type: "action".into(),
+            digest: None,
+            signed_at: None,
+        },
+        ArtifactEntry {
+            artifact_id: "art_002".into(),
+            payload_type: "action".into(),
+            digest: None,
+            signed_at: None,
+        },
     ];
     let mut receipt = ReceiptComposer::compose(&manifest, &events, artifacts);
     receipt.schema_version = None;
@@ -113,10 +155,7 @@ fn print_legacy_receipt_json() {
 
 #[test]
 fn synthesized_legacy_receipt_verifies_under_current_code() {
-    let tmp = std::env::temp_dir().join(format!(
-        "treeship-legacy-syn-{}",
-        std::process::id()
-    ));
+    let tmp = std::env::temp_dir().join(format!("treeship-legacy-syn-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
 
     let pkg = build_synthesized_legacy_package(&tmp);
@@ -124,19 +163,32 @@ fn synthesized_legacy_receipt_verifies_under_current_code() {
     // Sanity: the on-disk receipt.json must NOT contain the v0.9.0 fields.
     let receipt_bytes = std::fs::read(pkg.join("receipt.json")).unwrap();
     let receipt_str = std::str::from_utf8(&receipt_bytes).unwrap();
-    assert!(!receipt_str.contains("schema_version"),
-        "synthesized legacy fixture must omit schema_version");
-    assert!(!receipt_str.contains(r#""ship_id""#),
-        "synthesized legacy fixture must omit ship_id");
+    assert!(
+        !receipt_str.contains("schema_version"),
+        "synthesized legacy fixture must omit schema_version"
+    );
+    assert!(
+        !receipt_str.contains(r#""ship_id""#),
+        "synthesized legacy fixture must omit ship_id"
+    );
 
     // Re-parse and confirm both fields are None.
     let parsed = read_package(&pkg).expect("read legacy package");
-    assert!(parsed.schema_version.is_none(), "legacy receipts parse with schema_version=None");
-    assert!(parsed.session.ship_id.is_none(), "legacy receipts parse with ship_id=None");
+    assert!(
+        parsed.schema_version.is_none(),
+        "legacy receipts parse with schema_version=None"
+    );
+    assert!(
+        parsed.session.ship_id.is_none(),
+        "legacy receipts parse with ship_id=None"
+    );
 
     // Run the full verifier.
     let checks = verify_package(&pkg).expect("verify legacy package");
-    let fails: Vec<_> = checks.iter().filter(|c| c.status == VerifyStatus::Fail).collect();
+    let fails: Vec<_> = checks
+        .iter()
+        .filter(|c| c.status == VerifyStatus::Fail)
+        .collect();
     assert!(
         fails.is_empty(),
         "legacy receipt must verify under current code, but these checks failed: {:#?}",
@@ -164,8 +216,14 @@ fn copy_fixture_to_package(receipt_json: &str, tmp: &Path) -> std::path::PathBuf
 fn committed_v0_7_2_fixture_parses_and_omits_v0_9_fields() {
     let receipt: treeship_core::session::SessionReceipt =
         serde_json::from_str(V0_7_2_FIXTURE).expect("v0.7.2 fixture must parse");
-    assert!(receipt.schema_version.is_none(), "v0.7.2 fixture must lack schema_version");
-    assert!(receipt.session.ship_id.is_none(), "v0.7.2 fixture must lack ship_id");
+    assert!(
+        receipt.schema_version.is_none(),
+        "v0.7.2 fixture must lack schema_version"
+    );
+    assert!(
+        receipt.session.ship_id.is_none(),
+        "v0.7.2 fixture must lack ship_id"
+    );
     // Sanity: committed JSON does not literally contain those keys.
     assert!(!V0_7_2_FIXTURE.contains("schema_version"));
     assert!(!V0_7_2_FIXTURE.contains(r#""ship_id""#));
@@ -188,8 +246,15 @@ fn committed_v0_7_2_fixture_passes_package_verification() {
     std::fs::create_dir_all(&tmp).unwrap();
     let pkg = copy_fixture_to_package(V0_7_2_FIXTURE, &tmp);
     let checks = verify_package(&pkg).expect("verify v0.7.2 fixture");
-    let fails: Vec<_> = checks.iter().filter(|c| c.status == VerifyStatus::Fail).collect();
-    assert!(fails.is_empty(), "v0.7.2 fixture must verify cleanly: {:#?}", fails);
+    let fails: Vec<_> = checks
+        .iter()
+        .filter(|c| c.status == VerifyStatus::Fail)
+        .collect();
+    assert!(
+        fails.is_empty(),
+        "v0.7.2 fixture must verify cleanly: {:#?}",
+        fails
+    );
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
@@ -200,7 +265,14 @@ fn committed_v0_8_0_fixture_passes_package_verification() {
     std::fs::create_dir_all(&tmp).unwrap();
     let pkg = copy_fixture_to_package(V0_8_0_FIXTURE, &tmp);
     let checks = verify_package(&pkg).expect("verify v0.8.0 fixture");
-    let fails: Vec<_> = checks.iter().filter(|c| c.status == VerifyStatus::Fail).collect();
-    assert!(fails.is_empty(), "v0.8.0 fixture must verify cleanly: {:#?}", fails);
+    let fails: Vec<_> = checks
+        .iter()
+        .filter(|c| c.status == VerifyStatus::Fail)
+        .collect();
+    assert!(
+        fails.is_empty(),
+        "v0.8.0 fixture must verify cleanly: {:#?}",
+        fails
+    );
     let _ = std::fs::remove_dir_all(&tmp);
 }

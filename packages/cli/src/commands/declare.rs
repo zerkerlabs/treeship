@@ -32,8 +32,8 @@ pub fn create(
     valid_until: Option<String>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let path = declaration_path()
-        .ok_or("no .treeship directory found -- run treeship init first")?;
+    let path =
+        declaration_path().ok_or("no .treeship directory found -- run treeship init first")?;
 
     let created_at = {
         let secs = std::time::SystemTime::now()
@@ -59,7 +59,10 @@ pub fn create(
     printer.info(&format!("  path:       {}", path.display()));
     printer.info(&format!("  authorized: {} tools", bounded_actions.len()));
     printer.info(&format!("  forbidden:  {} tools", forbidden.len()));
-    printer.info(&format!("  escalation: {} tools", escalation_required.len()));
+    printer.info(&format!(
+        "  escalation: {} tools",
+        escalation_required.len()
+    ));
     if let Some(ref v) = valid_until {
         printer.info(&format!("  valid until: {}", v));
     }
@@ -70,8 +73,7 @@ pub fn create(
 
 /// Show the current declaration.
 pub fn show(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
-    let path = declaration_path()
-        .ok_or("no .treeship directory found")?;
+    let path = declaration_path().ok_or("no .treeship directory found")?;
 
     if !path.exists() {
         printer.blank();
@@ -89,16 +91,28 @@ pub fn show(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     printer.section("declaration");
 
     if let Some(tools) = decl.get("bounded_actions").and_then(|v| v.as_array()) {
-        printer.info(&format!("  authorized: {:?}", tools.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>()));
+        printer.info(&format!(
+            "  authorized: {:?}",
+            tools.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>()
+        ));
     }
     if let Some(forbidden) = decl.get("forbidden").and_then(|v| v.as_array()) {
         if !forbidden.is_empty() {
-            printer.info(&format!("  forbidden:  {:?}", forbidden.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>()));
+            printer.info(&format!(
+                "  forbidden:  {:?}",
+                forbidden
+                    .iter()
+                    .filter_map(|v| v.as_str())
+                    .collect::<Vec<_>>()
+            ));
         }
     }
     if let Some(esc) = decl.get("escalation_required").and_then(|v| v.as_array()) {
         if !esc.is_empty() {
-            printer.info(&format!("  escalation: {:?}", esc.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>()));
+            printer.info(&format!(
+                "  escalation: {:?}",
+                esc.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>()
+            ));
         }
     }
     if let Some(v) = decl.get("valid_until").and_then(|v| v.as_str()) {
@@ -132,6 +146,10 @@ pub fn read_authorized_tools() -> Vec<String> {
     };
     decl.get("bounded_actions")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
         .unwrap_or_default()
 }

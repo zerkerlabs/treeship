@@ -1,21 +1,19 @@
 //! Merkle tree module: append-only binary Merkle tree with checkpoints
 //! and inclusion proofs for batch integrity verification.
 
-pub mod tree;
 pub mod checkpoint;
 pub mod proof;
+pub mod tree;
 
-pub use tree::{
-    verify_consistency,
-    MerkleTree, MerkleError, InclusionProof, Direction, ProofStep,
-    MERKLE_ALGORITHM_V1, MERKLE_ALGORITHM_V2, MERKLE_VERSION_V1, MERKLE_VERSION_V2,
-    default_merkle_version_v1,
-};
 pub use checkpoint::{
-    Checkpoint, CheckpointError,
-    CANONICAL_VERSION_V1, CANONICAL_VERSION_V2, CANONICAL_VERSION_V3,
+    Checkpoint, CheckpointError, CANONICAL_VERSION_V1, CANONICAL_VERSION_V2, CANONICAL_VERSION_V3,
 };
-pub use proof::{ProofFile, ArtifactSummary};
+pub use proof::{ArtifactSummary, ProofFile};
+pub use tree::{
+    default_merkle_version_v1, verify_consistency, Direction, InclusionProof, MerkleError,
+    MerkleTree, ProofStep, MERKLE_ALGORITHM_V1, MERKLE_ALGORITHM_V2, MERKLE_VERSION_V1,
+    MERKLE_VERSION_V2,
+};
 
 #[cfg(test)]
 mod tests {
@@ -28,11 +26,11 @@ mod tests {
         let pk_bytes: [u8; 32] = signer.public_key_bytes().try_into().unwrap();
         let vk = VerifyingKey::from_bytes(&pk_bytes).unwrap();
         TrustRootStore::with_roots(vec![TrustRoot {
-            key_id:     signer.key_id().to_string(),
+            key_id: signer.key_id().to_string(),
             public_key: encode_ed25519_pubkey(&vk),
-            kind:       TrustRootKind::HubCheckpoint,
-            label:      "test".into(),
-            added_at:   "2026-05-15T00:00:00Z".into(),
+            kind: TrustRootKind::HubCheckpoint,
+            label: "test".into(),
+            added_at: "2026-05-15T00:00:00Z".into(),
         }])
     }
 

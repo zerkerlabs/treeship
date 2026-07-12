@@ -57,9 +57,15 @@ fn install_candidates(env: &Env) -> Vec<InstallCandidate> {
 fn is_safe_path(path: &Path) -> bool {
     let mut check = path.to_path_buf();
     loop {
-        if check.is_symlink() { return false; }
-        if !check.pop() { break; }
-        if check.as_os_str().is_empty() { break; }
+        if check.is_symlink() {
+            return false;
+        }
+        if !check.pop() {
+            break;
+        }
+        if check.as_os_str().is_empty() {
+            break;
+        }
     }
     true
 }
@@ -95,19 +101,29 @@ pub fn install_via_manifest(
 
     if !is_safe_path(&path) {
         printer.warn(
-            &format!("  {} config path contains a symlink, skipping for safety", manifest.display_name),
+            &format!(
+                "  {} config path contains a symlink, skipping for safety",
+                manifest.display_name
+            ),
             &[],
         );
         return Ok(false);
     }
 
     if (install.idempotency)(&path) {
-        printer.dim_info(&format!("  {} already configured, skipping", manifest.display_name));
+        printer.dim_info(&format!(
+            "  {} already configured, skipping",
+            manifest.display_name
+        ));
         return Ok(false);
     }
 
     if dry_run {
-        printer.info(&format!("  Would configure {} at {}", manifest.display_name, path.display()));
+        printer.info(&format!(
+            "  Would configure {} at {}",
+            manifest.display_name,
+            path.display()
+        ));
         return Ok(true);
     }
 
@@ -116,8 +132,8 @@ pub fn install_via_manifest(
     }
 
     match install.install_method {
-        InstallMethod::JsonMcp   => install_json_mcp(manifest.harness_id, install.snippet, &path)?,
-        InstallMethod::TomlMcp   => install_toml_mcp(install.snippet, &path)?,
+        InstallMethod::JsonMcp => install_json_mcp(manifest.harness_id, install.snippet, &path)?,
+        InstallMethod::TomlMcp => install_toml_mcp(install.snippet, &path)?,
         InstallMethod::SkillFile => install_skill_file(install.snippet, &path)?,
     }
 
@@ -134,7 +150,11 @@ pub fn install_via_manifest(
 /// JSON merge: read `path` (or start with `{"mcpServers": {}}`), insert
 /// `mcpServers.treeship` from the snippet, atomic-write back. `kind` fills
 /// the `__AGENT__` placeholder so receipts attribute activity correctly.
-fn install_json_mcp(kind: &str, snippet: &str, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+fn install_json_mcp(
+    kind: &str,
+    snippet: &str,
+    path: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut config: serde_json::Value = if path.exists() {
         serde_json::from_str(&std::fs::read_to_string(path)?)?
     } else {
@@ -204,15 +224,23 @@ const TREESHIP_MD_TEMPLATE: &str = include_str!("../../../../TREESHIP.md");
 ///   * cwd is not a Treeship project (no `.treeship/` marker)
 ///   * `./TREESHIP.md` already exists (never overwrite user content)
 ///   * the resolved path contains a symlink (matches the rest of `add`)
-fn install_treeship_md_in_cwd(dry_run: bool, printer: &Printer) -> Result<bool, Box<dyn std::error::Error>> {
+fn install_treeship_md_in_cwd(
+    dry_run: bool,
+    printer: &Printer,
+) -> Result<bool, Box<dyn std::error::Error>> {
     let cwd = std::env::current_dir()?;
     if !cwd.join(".treeship").is_dir() {
-        printer.dim_info("  No .treeship/ in cwd -- skipping project TREESHIP.md (run `treeship init` first)");
+        printer.dim_info(
+            "  No .treeship/ in cwd -- skipping project TREESHIP.md (run `treeship init` first)",
+        );
         return Ok(false);
     }
     let treeship_md = cwd.join("TREESHIP.md");
     if !is_safe_path(&treeship_md) {
-        printer.warn("  ./TREESHIP.md path contains a symlink, skipping for safety", &[]);
+        printer.warn(
+            "  ./TREESHIP.md path contains a symlink, skipping for safety",
+            &[],
+        );
         return Ok(false);
     }
     if treeship_md.exists() {
@@ -227,7 +255,9 @@ fn install_treeship_md_in_cwd(dry_run: bool, printer: &Printer) -> Result<bool, 
     std::fs::write(&tmp_path, TREESHIP_MD_TEMPLATE)?;
     std::fs::rename(&tmp_path, &treeship_md)?;
     printer.success("./TREESHIP.md written", &[]);
-    printer.dim_info("  Any agent reading the project will see what Treeship captures and trust the MCP server.");
+    printer.dim_info(
+        "  Any agent reading the project will see what Treeship captures and trust the MCP server.",
+    );
     Ok(true)
 }
 
@@ -280,15 +310,18 @@ fn print_discover_text(agents: &[DiscoveredAgent], printer: &Printer) {
     printer.blank();
     for agent in agents {
         let mark = match agent.confidence {
-            discovery::Confidence::High   => "✓",
+            discovery::Confidence::High => "✓",
             discovery::Confidence::Medium => "✓",
-            discovery::Confidence::Low    => "?",
+            discovery::Confidence::Low => "?",
         };
         printer.info(&format!("  {} {}", mark, agent.display_name));
         printer.dim_info(&format!("    surface:    {}", agent.surface.kind()));
         let conns: Vec<&str> = agent.connection_modes.iter().map(|c| c.label()).collect();
         printer.dim_info(&format!("    connection: {}", conns.join(" + ")));
-        printer.dim_info(&format!("    harness:    {}", agent.recommended_harness_id()));
+        printer.dim_info(&format!(
+            "    harness:    {}",
+            agent.recommended_harness_id()
+        ));
         printer.dim_info(&format!("    coverage:   {}", agent.coverage.label()));
         printer.dim_info(&format!("    confidence: {}", agent.confidence.label()));
         printer.dim_info("    card:       draft");
@@ -325,7 +358,9 @@ pub fn run(
 
     if candidates.is_empty() {
         printer.blank();
-        printer.dim_info("  No agent frameworks detected on this machine that Treeship can instrument.");
+        printer.dim_info(
+            "  No agent frameworks detected on this machine that Treeship can instrument.",
+        );
         printer.blank();
         printer.info("  Treeship has harness manifests for:");
         for p in harnesses::HARNESSES {
@@ -340,7 +375,11 @@ pub fn run(
     let targets: Vec<&InstallCandidate> = if !specific_agents.is_empty() {
         candidates
             .iter()
-            .filter(|c| specific_agents.iter().any(|s| s.eq_ignore_ascii_case(c.manifest.harness_id)))
+            .filter(|c| {
+                specific_agents
+                    .iter()
+                    .any(|s| s.eq_ignore_ascii_case(c.manifest.harness_id))
+            })
             .collect()
     } else {
         candidates.iter().collect()
@@ -348,7 +387,10 @@ pub fn run(
 
     if targets.is_empty() && !specific_agents.is_empty() {
         printer.blank();
-        printer.warn("None of the specified agents were detected on this machine.", &[]);
+        printer.warn(
+            "None of the specified agents were detected on this machine.",
+            &[],
+        );
         printer.blank();
         printer.info("  Detected:");
         for c in &candidates {
@@ -382,20 +424,26 @@ pub fn run(
 
     let home = match home::home_dir() {
         Some(h) => h,
-        None    => return Err("no HOME directory; cannot resolve config paths".into()),
+        None => return Err("no HOME directory; cannot resolve config paths".into()),
     };
 
     let mut installed = 0usize;
     for c in &targets {
         match install_via_manifest(c.manifest, &home, dry_run, printer) {
-            Ok(true)  => installed += 1,
+            Ok(true) => installed += 1,
             Ok(false) => {}
-            Err(e)    => printer.warn(&format!("Failed to configure {}: {}", c.manifest.display_name, e), &[]),
+            Err(e) => printer.warn(
+                &format!("Failed to configure {}: {}", c.manifest.display_name, e),
+                &[],
+            ),
         }
     }
 
     if let Err(e) = install_treeship_md_in_cwd(dry_run, printer) {
-        printer.warn("  Could not write project TREESHIP.md", &[("error", &e.to_string())]);
+        printer.warn(
+            "  Could not write project TREESHIP.md",
+            &[("error", &e.to_string())],
+        );
     }
 
     printer.blank();
@@ -434,8 +482,12 @@ mod tests {
         // production), so canonicalize for tests.
         let home = home_dir.path().canonicalize().unwrap();
         let home = home.as_path();
-    std::fs::create_dir_all(home.join(".claude")).unwrap();
-        let printer = Printer::new(Format::Text, true /* quiet */, true /* no_color */);
+        std::fs::create_dir_all(home.join(".claude")).unwrap();
+        let printer = Printer::new(
+            Format::Text,
+            true, /* quiet */
+            true, /* no_color */
+        );
         let profile = harnesses::for_surface(AgentSurface::ClaudeCode).unwrap();
 
         let did_install = install_via_manifest(profile, home, false, &printer).unwrap();
@@ -467,15 +519,14 @@ mod tests {
         // production), so canonicalize for tests.
         let home = home_dir.path().canonicalize().unwrap();
         let home = home.as_path();
-    std::fs::create_dir_all(home.join(".cursor")).unwrap();
+        std::fs::create_dir_all(home.join(".cursor")).unwrap();
         let printer = Printer::new(Format::Text, true, true);
         let profile = harnesses::for_surface(AgentSurface::CursorAgent).unwrap();
         install_via_manifest(profile, home, false, &printer).unwrap();
 
-        let json: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(home.join(".cursor").join("mcp.json")).unwrap(),
-        )
-        .unwrap();
+        let json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(home.join(".cursor").join("mcp.json")).unwrap())
+                .unwrap();
         assert_eq!(
             json["mcpServers"]["treeship"]["env"]["TREESHIP_ACTOR"],
             "agent://cursor"
@@ -490,7 +541,7 @@ mod tests {
         // production), so canonicalize for tests.
         let home = home_dir.path().canonicalize().unwrap();
         let home = home.as_path();
-    std::fs::create_dir_all(home.join(".codex")).unwrap();
+        std::fs::create_dir_all(home.join(".codex")).unwrap();
         // Pre-existing file with comments -- append must preserve it.
         let path = home.join(".codex").join("config.toml");
         std::fs::write(&path, "# user note\nmodel = \"o4\"").unwrap();
@@ -502,7 +553,10 @@ mod tests {
 
         let after = std::fs::read_to_string(&path).unwrap();
         assert!(after.contains("# user note"), "preserves user comments");
-        assert!(after.contains("[mcp_servers.treeship]"), "appends treeship block");
+        assert!(
+            after.contains("[mcp_servers.treeship]"),
+            "appends treeship block"
+        );
 
         // Idempotency: second run is a no-op.
         let again = install_via_manifest(profile, home, false, &printer).unwrap();
@@ -517,7 +571,7 @@ mod tests {
         // production), so canonicalize for tests.
         let home = home_dir.path().canonicalize().unwrap();
         let home = home.as_path();
-    std::fs::create_dir_all(home.join(".hermes")).unwrap();
+        std::fs::create_dir_all(home.join(".hermes")).unwrap();
         let printer = Printer::new(Format::Text, true, true);
         let profile = harnesses::for_surface(AgentSurface::Hermes).unwrap();
 
@@ -539,7 +593,7 @@ mod tests {
         // production), so canonicalize for tests.
         let home = home_dir.path().canonicalize().unwrap();
         let home = home.as_path();
-    std::fs::create_dir_all(home.join(".claude")).unwrap();
+        std::fs::create_dir_all(home.join(".claude")).unwrap();
         let printer = Printer::new(Format::Text, true, true);
         let profile = harnesses::for_surface(AgentSurface::ClaudeCode).unwrap();
         let did = install_via_manifest(profile, home, true /* dry_run */, &printer).unwrap();
@@ -556,7 +610,7 @@ mod tests {
         // production), so canonicalize for tests.
         let home = home_dir.path().canonicalize().unwrap();
         let home = home.as_path();
-    // Make ~/.claude a symlink to /tmp; install must refuse rather
+        // Make ~/.claude a symlink to /tmp; install must refuse rather
         // than write through it.
         let target = tempfile::tempdir().unwrap();
         let link = home.join(".claude");
@@ -586,9 +640,9 @@ mod tests {
             let is_remote_or_generic = matches!(
                 h.surface,
                 AgentSurface::NinjatechSuperninja
-                | AgentSurface::NinjatechNinjaDev
-                | AgentSurface::GenericMcp
-                | AgentSurface::ShellWrap
+                    | AgentSurface::NinjatechNinjaDev
+                    | AgentSurface::GenericMcp
+                    | AgentSurface::ShellWrap
             );
             assert_eq!(
                 candidate_eligible, !is_remote_or_generic,
@@ -606,15 +660,21 @@ mod tests {
         let home = PathBuf::from("/h");
         let cases = [
             ("claude-code", "/h/.claude/mcp.json"),
-            ("cursor",      "/h/.cursor/mcp.json"),
-            ("cline",       "/h/.config/cline/mcp.json"),
-            ("codex",       "/h/.codex/config.toml"),
-            ("hermes",      "/h/.hermes/skills/treeship/SKILL.md"),
-            ("openclaw",    "/h/.openclaw/skills/treeship/SKILL.md"),
+            ("cursor", "/h/.cursor/mcp.json"),
+            ("cline", "/h/.config/cline/mcp.json"),
+            ("codex", "/h/.codex/config.toml"),
+            ("hermes", "/h/.hermes/skills/treeship/SKILL.md"),
+            ("openclaw", "/h/.openclaw/skills/treeship/SKILL.md"),
         ];
         for (kind, expected) in cases {
             let p = harnesses::find(kind).unwrap();
-            assert_eq!((p.install.as_ref().unwrap().config_path)(&home).to_str().unwrap(), expected, "{kind}");
+            assert_eq!(
+                (p.install.as_ref().unwrap().config_path)(&home)
+                    .to_str()
+                    .unwrap(),
+                expected,
+                "{kind}"
+            );
         }
     }
 }

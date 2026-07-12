@@ -33,9 +33,9 @@ use serde::{Deserialize, Serialize};
 // Type constants
 // ---------------------------------------------------------------------------
 
-pub const TYPE_APPROVAL_USE:        &str = "treeship/approval-use/v1";
+pub const TYPE_APPROVAL_USE: &str = "treeship/approval-use/v1";
 pub const TYPE_APPROVAL_REVOCATION: &str = "treeship/approval-revocation/v1";
-pub const TYPE_JOURNAL_CHECKPOINT:  &str = "treeship/journal-checkpoint/v1";
+pub const TYPE_JOURNAL_CHECKPOINT: &str = "treeship/journal-checkpoint/v1";
 
 // ---------------------------------------------------------------------------
 // ApprovalUse
@@ -81,8 +81,8 @@ pub struct ApprovalUse {
     /// outside the package they live in.
     pub nonce_digest: String,
 
-    pub actor:   String,
-    pub action:  String,
+    pub actor: String,
+    pub action: String,
     /// Subject URI / artifact id the action targets. Mirrors
     /// `ApprovalScope.allowed_subjects` so journal records carry the
     /// resolved value used at consume time.
@@ -217,7 +217,7 @@ impl CheckpointKind {
     pub fn label(self) -> &'static str {
         match self {
             Self::LocalJournal => "local-journal",
-            Self::HubOrg       => "hub-org",
+            Self::HubOrg => "hub-org",
         }
     }
 }
@@ -250,12 +250,12 @@ pub struct JournalCheckpoint {
     /// Inclusive range of `use_number`s (or revocation_ids) covered by
     /// this checkpoint, in journal order.
     pub from_record_index: u64,
-    pub to_record_index:   u64,
+    pub to_record_index: u64,
 
     /// Merkle root over the canonical JSON of every record in
     /// `[from_record_index, to_record_index]`.
     pub merkle_root: String,
-    pub leaf_count:  u64,
+    pub leaf_count: u64,
 
     pub journal_id: String,
     pub created_at: String,
@@ -331,38 +331,39 @@ impl JournalCheckpoint {
         // checkpoint's identity in the journal.
         #[derive(Serialize)]
         struct Signing<'a> {
-            #[serde(rename = "type")]                    type_: &'a str,
-            checkpoint_id:           &'a str,
-            checkpoint_kind:         CheckpointKind,
-            from_record_index:       u64,
-            to_record_index:         u64,
-            merkle_root:             &'a str,
-            leaf_count:              u64,
-            journal_id:              &'a str,
-            created_at:              &'a str,
-            hub_id:                  &'a str,
-            hub_public_key:          &'a str,
-            signed_at:               &'a str,
-            covered_use_ids:         &'a [String],
-            covered_grant_ids:       &'a [String],
-            previous_record_digest:  &'a str,
+            #[serde(rename = "type")]
+            type_: &'a str,
+            checkpoint_id: &'a str,
+            checkpoint_kind: CheckpointKind,
+            from_record_index: u64,
+            to_record_index: u64,
+            merkle_root: &'a str,
+            leaf_count: u64,
+            journal_id: &'a str,
+            created_at: &'a str,
+            hub_id: &'a str,
+            hub_public_key: &'a str,
+            signed_at: &'a str,
+            covered_use_ids: &'a [String],
+            covered_grant_ids: &'a [String],
+            previous_record_digest: &'a str,
         }
         let v = Signing {
-            type_:                   &self.type_,
-            checkpoint_id:           &self.checkpoint_id,
-            checkpoint_kind:         self.checkpoint_kind,
-            from_record_index:       self.from_record_index,
-            to_record_index:         self.to_record_index,
-            merkle_root:             &self.merkle_root,
-            leaf_count:              self.leaf_count,
-            journal_id:              &self.journal_id,
-            created_at:              &self.created_at,
-            hub_id:                  &self.hub_id,
-            hub_public_key:          &self.hub_public_key,
-            signed_at:               &self.signed_at,
-            covered_use_ids:         &self.covered_use_ids,
-            covered_grant_ids:       &self.covered_grant_ids,
-            previous_record_digest:  &self.previous_record_digest,
+            type_: &self.type_,
+            checkpoint_id: &self.checkpoint_id,
+            checkpoint_kind: self.checkpoint_kind,
+            from_record_index: self.from_record_index,
+            to_record_index: self.to_record_index,
+            merkle_root: &self.merkle_root,
+            leaf_count: self.leaf_count,
+            journal_id: &self.journal_id,
+            created_at: &self.created_at,
+            hub_id: &self.hub_id,
+            hub_public_key: &self.hub_public_key,
+            signed_at: &self.signed_at,
+            covered_use_ids: &self.covered_use_ids,
+            covered_grant_ids: &self.covered_grant_ids,
+            previous_record_digest: &self.previous_record_digest,
         };
         // v0.10.4 audit lane C: this function feeds Hub-signature
         // verification. Falling back to `Vec<u8>::default()` on encode
@@ -410,7 +411,7 @@ impl ReplayCheckLevel {
             Self::NotPerformed => "not performed",
             Self::PackageLocal => "package-local",
             Self::LocalJournal => "local-journal",
-            Self::HubOrg       => "hub-org",
+            Self::HubOrg => "hub-org",
         }
     }
 }
@@ -444,16 +445,22 @@ pub struct ReplayCheck {
 
 impl ReplayCheck {
     pub fn not_performed() -> Self {
-        Self { level: ReplayCheckLevel::NotPerformed, use_number: None, max_uses: None, passed: None, details: None }
+        Self {
+            level: ReplayCheckLevel::NotPerformed,
+            use_number: None,
+            max_uses: None,
+            passed: None,
+            details: None,
+        }
     }
 
     pub fn package_local(passed: bool, details: impl Into<String>) -> Self {
         Self {
-            level:      ReplayCheckLevel::PackageLocal,
+            level: ReplayCheckLevel::PackageLocal,
             use_number: None,
-            max_uses:   None,
-            passed:     Some(passed),
-            details:    Some(details.into()),
+            max_uses: None,
+            passed: Some(passed),
+            details: Some(details.into()),
         }
     }
 }
@@ -580,17 +587,25 @@ pub fn verify_hub_checkpoint_signature(
     cp: &JournalCheckpoint,
     trust: &crate::trust::TrustRootStore,
 ) -> HubCheckpointVerification {
+    use crate::trust::TrustRootKind;
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-    use crate::trust::TrustRootKind;
 
     if cp.checkpoint_kind != CheckpointKind::HubOrg {
         return HubCheckpointVerification::NotHubKind;
     }
-    if cp.hub_id.is_empty()         { return HubCheckpointVerification::MissingFields("hub_id"); }
-    if cp.hub_public_key.is_empty() { return HubCheckpointVerification::MissingFields("hub_public_key"); }
-    if cp.hub_signature.is_empty()  { return HubCheckpointVerification::MissingFields("hub_signature"); }
-    if cp.signed_at.is_empty()      { return HubCheckpointVerification::MissingFields("signed_at"); }
+    if cp.hub_id.is_empty() {
+        return HubCheckpointVerification::MissingFields("hub_id");
+    }
+    if cp.hub_public_key.is_empty() {
+        return HubCheckpointVerification::MissingFields("hub_public_key");
+    }
+    if cp.hub_signature.is_empty() {
+        return HubCheckpointVerification::MissingFields("hub_signature");
+    }
+    if cp.signed_at.is_empty() {
+        return HubCheckpointVerification::MissingFields("signed_at");
+    }
 
     let pk_bytes = match URL_SAFE_NO_PAD.decode(cp.hub_public_key.as_bytes()) {
         Ok(b) if b.len() == 32 => b,
@@ -606,7 +621,7 @@ pub fn verify_hub_checkpoint_signature(
     sig_arr.copy_from_slice(&sig_bytes);
 
     let vk = match VerifyingKey::from_bytes(&pk_arr) {
-        Ok(k)  => k,
+        Ok(k) => k,
         Err(_) => return HubCheckpointVerification::Tampered,
     };
 
@@ -625,8 +640,8 @@ pub fn verify_hub_checkpoint_signature(
     let sig = Signature::from_bytes(&sig_arr);
     let payload = cp.canonical_hub_signing_bytes();
     match vk.verify_strict(&payload, &sig) {
-        Ok(())  => HubCheckpointVerification::Valid,
-        Err(_)  => HubCheckpointVerification::Tampered,
+        Ok(()) => HubCheckpointVerification::Valid,
+        Err(_) => HubCheckpointVerification::Tampered,
     }
 }
 
@@ -656,27 +671,27 @@ mod tests {
 
     fn sample_use() -> ApprovalUse {
         ApprovalUse {
-            type_:                  TYPE_APPROVAL_USE.into(),
-            use_id:                 "use_abc".into(),
-            grant_id:               "art_grant_1".into(),
-            grant_digest:           "sha256:00".into(),
-            nonce_digest:           "sha256:11".into(),
-            actor:                  "agent://deployer".into(),
-            action:                 "deploy.production".into(),
-            subject:                "env://production".into(),
-            session_id:             Some("ssn_xyz".into()),
-            action_artifact_id:     None,
-            receipt_digest:         None,
-            use_number:             1,
-            max_uses:               Some(1),
-            idempotency_key:        None,
-            created_at:             "2026-04-30T06:00:00Z".into(),
-            expires_at:             None,
+            type_: TYPE_APPROVAL_USE.into(),
+            use_id: "use_abc".into(),
+            grant_id: "art_grant_1".into(),
+            grant_digest: "sha256:00".into(),
+            nonce_digest: "sha256:11".into(),
+            actor: "agent://deployer".into(),
+            action: "deploy.production".into(),
+            subject: "env://production".into(),
+            session_id: Some("ssn_xyz".into()),
+            action_artifact_id: None,
+            receipt_digest: None,
+            use_number: 1,
+            max_uses: Some(1),
+            idempotency_key: None,
+            created_at: "2026-04-30T06:00:00Z".into(),
+            expires_at: None,
             previous_record_digest: String::new(),
-            record_digest:          String::new(),
-            signature:              None,
-            signature_alg:          None,
-            signing_key_id:         None,
+            record_digest: String::new(),
+            signature: None,
+            signature_alg: None,
+            signing_key_id: None,
         }
     }
 
@@ -698,7 +713,10 @@ mod tests {
         let u1 = sample_use();
         let mut u2 = u1.clone();
         u2.record_digest = "sha256:cafe".into();
-        assert_eq!(approval_use_record_digest(&u1), approval_use_record_digest(&u2));
+        assert_eq!(
+            approval_use_record_digest(&u1),
+            approval_use_record_digest(&u2)
+        );
     }
 
     #[test]
@@ -742,17 +760,17 @@ mod tests {
         assert_eq!(ReplayCheckLevel::NotPerformed.label(), "not performed");
         assert_eq!(ReplayCheckLevel::PackageLocal.label(), "package-local");
         assert_eq!(ReplayCheckLevel::LocalJournal.label(), "local-journal");
-        assert_eq!(ReplayCheckLevel::HubOrg.label(),       "hub-org");
+        assert_eq!(ReplayCheckLevel::HubOrg.label(), "hub-org");
     }
 
     #[test]
     fn replay_check_serialization_uses_kebab_case() {
         let r = ReplayCheck {
-            level:      ReplayCheckLevel::LocalJournal,
+            level: ReplayCheckLevel::LocalJournal,
             use_number: Some(1),
-            max_uses:   Some(1),
-            passed:     Some(true),
-            details:    Some("local Approval Use Journal passed".into()),
+            max_uses: Some(1),
+            passed: Some(true),
+            details: Some("local Approval Use Journal passed".into()),
         };
         let v = serde_json::to_value(&r).unwrap();
         assert_eq!(v["level"], "local-journal");
@@ -764,18 +782,18 @@ mod tests {
     #[test]
     fn revocation_record_digest_stable() {
         let rev = ApprovalRevocation {
-            type_:                  TYPE_APPROVAL_REVOCATION.into(),
-            revocation_id:          "rev_1".into(),
-            grant_id:               "art_grant_1".into(),
-            grant_digest:           "sha256:00".into(),
-            revoker:                "human://alice".into(),
-            reason:                 Some("rotated key".into()),
-            created_at:             "2026-04-30T06:01:00Z".into(),
+            type_: TYPE_APPROVAL_REVOCATION.into(),
+            revocation_id: "rev_1".into(),
+            grant_id: "art_grant_1".into(),
+            grant_digest: "sha256:00".into(),
+            revoker: "human://alice".into(),
+            reason: Some("rotated key".into()),
+            created_at: "2026-04-30T06:01:00Z".into(),
             previous_record_digest: "sha256:00".into(),
-            record_digest:          String::new(),
-            signature:              None,
-            signature_alg:          None,
-            signing_key_id:         None,
+            record_digest: String::new(),
+            signature: None,
+            signature_alg: None,
+            signing_key_id: None,
         };
         let d1 = approval_revocation_record_digest(&rev);
         let d2 = approval_revocation_record_digest(&rev);
@@ -784,26 +802,26 @@ mod tests {
 
     fn sample_checkpoint(kind: CheckpointKind) -> JournalCheckpoint {
         JournalCheckpoint {
-            type_:                  TYPE_JOURNAL_CHECKPOINT.into(),
-            checkpoint_id:          "cp_1".into(),
-            checkpoint_kind:        kind,
-            from_record_index:      1,
-            to_record_index:        10,
-            merkle_root:            "sha256:abcd".into(),
-            leaf_count:             10,
-            journal_id:             "journal_1".into(),
-            created_at:             "2026-04-30T06:02:00Z".into(),
-            hub_id:                 String::new(),
-            hub_public_key:         String::new(),
-            hub_signature:          String::new(),
-            signed_at:              String::new(),
-            covered_use_ids:        Vec::new(),
-            covered_grant_ids:      Vec::new(),
+            type_: TYPE_JOURNAL_CHECKPOINT.into(),
+            checkpoint_id: "cp_1".into(),
+            checkpoint_kind: kind,
+            from_record_index: 1,
+            to_record_index: 10,
+            merkle_root: "sha256:abcd".into(),
+            leaf_count: 10,
+            journal_id: "journal_1".into(),
+            created_at: "2026-04-30T06:02:00Z".into(),
+            hub_id: String::new(),
+            hub_public_key: String::new(),
+            hub_signature: String::new(),
+            signed_at: String::new(),
+            covered_use_ids: Vec::new(),
+            covered_grant_ids: Vec::new(),
             previous_record_digest: "sha256:00".into(),
-            record_digest:          String::new(),
-            signature:              None,
-            signature_alg:          None,
-            signing_key_id:         None,
+            record_digest: String::new(),
+            signature: None,
+            signature_alg: None,
+            signing_key_id: None,
         }
     }
 
@@ -855,18 +873,18 @@ mod tests {
         );
 
         let rev = ApprovalRevocation {
-            type_:                  TYPE_APPROVAL_REVOCATION.into(),
-            revocation_id:          "rev_x".into(),
-            grant_id:               "art_grant_x".into(),
-            grant_digest:           "sha256:00".into(),
-            revoker:                "human://x".into(),
-            reason:                 None,
-            created_at:             "2026-04-30T06:01:00Z".into(),
+            type_: TYPE_APPROVAL_REVOCATION.into(),
+            revocation_id: "rev_x".into(),
+            grant_id: "art_grant_x".into(),
+            grant_digest: "sha256:00".into(),
+            revoker: "human://x".into(),
+            reason: None,
+            created_at: "2026-04-30T06:01:00Z".into(),
             previous_record_digest: "sha256:00".into(),
-            record_digest:          String::new(),
-            signature:              None,
-            signature_alg:          None,
-            signing_key_id:         None,
+            record_digest: String::new(),
+            signature: None,
+            signature_alg: None,
+            signing_key_id: None,
         };
         let rev_digest = approval_revocation_record_digest(&rev);
         assert_ne!(rev_digest, empty_hex);
@@ -918,11 +936,11 @@ mod tests {
     fn trust_with(pk: &ed25519_dalek::VerifyingKey) -> crate::trust::TrustRootStore {
         use crate::trust::{encode_ed25519_pubkey, TrustRoot, TrustRootKind, TrustRootStore};
         TrustRootStore::with_roots(vec![TrustRoot {
-            key_id:     "test_hub".into(),
+            key_id: "test_hub".into(),
             public_key: encode_ed25519_pubkey(pk),
-            kind:       TrustRootKind::HubOrg,
-            label:      "test pin".into(),
-            added_at:   "2026-05-15T00:00:00Z".into(),
+            kind: TrustRootKind::HubOrg,
+            label: "test pin".into(),
+            added_at: "2026-05-15T00:00:00Z".into(),
         }])
     }
 
@@ -964,13 +982,13 @@ mod tests {
         let pk_b64 = URL_SAFE_NO_PAD.encode(pk.to_bytes());
 
         let mut cp = sample_checkpoint(CheckpointKind::HubOrg);
-        cp.hub_id          = "hub://zerker-org".into();
-        cp.hub_public_key  = pk_b64.clone();
-        cp.signed_at       = "2026-04-30T07:00:00Z".into();
+        cp.hub_id = "hub://zerker-org".into();
+        cp.hub_public_key = pk_b64.clone();
+        cp.signed_at = "2026-04-30T07:00:00Z".into();
         cp.covered_use_ids = vec!["use_alpha".into(), "use_beta".into()];
 
         let payload = cp.canonical_hub_signing_bytes();
-        let sig     = sk.sign(&payload);
+        let sig = sk.sign(&payload);
         cp.hub_signature = URL_SAFE_NO_PAD.encode(sig.to_bytes());
 
         assert!(cp.is_hub_signed());
@@ -986,25 +1004,28 @@ mod tests {
     // trust-split — pinning a hub for one power no longer grants the others.
     #[test]
     fn deprecated_ship_pin_no_longer_authorizes_hub_checkpoint() {
+        use crate::trust::{encode_ed25519_pubkey, TrustRoot, TrustRootKind, TrustRootStore};
         use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
         use ed25519_dalek::{Signer, SigningKey};
-        use crate::trust::{encode_ed25519_pubkey, TrustRoot, TrustRootKind, TrustRootStore};
         let sk = SigningKey::from_bytes(&[9u8; 32]);
         let pk = sk.verifying_key();
         let mut cp = sample_checkpoint(CheckpointKind::HubOrg);
-        cp.hub_id          = "hub://zerker-org".into();
-        cp.hub_public_key  = URL_SAFE_NO_PAD.encode(pk.to_bytes());
-        cp.signed_at       = "2026-04-30T07:00:00Z".into();
+        cp.hub_id = "hub://zerker-org".into();
+        cp.hub_public_key = URL_SAFE_NO_PAD.encode(pk.to_bytes());
+        cp.signed_at = "2026-04-30T07:00:00Z".into();
         cp.covered_use_ids = vec!["use_alpha".into()];
-        cp.hub_signature   = URL_SAFE_NO_PAD.encode(sk.sign(&cp.canonical_hub_signing_bytes()).to_bytes());
+        cp.hub_signature =
+            URL_SAFE_NO_PAD.encode(sk.sign(&cp.canonical_hub_signing_bytes()).to_bytes());
 
-        let pin = |kind| TrustRootStore::with_roots(vec![TrustRoot {
-            key_id: "h".into(),
-            public_key: encode_ed25519_pubkey(&pk),
-            kind,
-            label: String::new(),
-            added_at: "2026-05-15T00:00:00Z".into(),
-        }]);
+        let pin = |kind| {
+            TrustRootStore::with_roots(vec![TrustRoot {
+                key_id: "h".into(),
+                public_key: encode_ed25519_pubkey(&pk),
+                kind,
+                label: String::new(),
+                added_at: "2026-05-15T00:00:00Z".into(),
+            }])
+        };
 
         // The exact same key, pinned as the deprecated `ship` kind: rejected.
         assert_eq!(
@@ -1033,16 +1054,19 @@ mod tests {
         let pk = sk.verifying_key();
 
         let mut cp = sample_checkpoint(CheckpointKind::HubOrg);
-        cp.hub_id          = "hub://x".into();
-        cp.hub_public_key  = URL_SAFE_NO_PAD.encode(pk.to_bytes());
-        cp.signed_at       = "2026-04-30T07:00:00Z".into();
+        cp.hub_id = "hub://x".into();
+        cp.hub_public_key = URL_SAFE_NO_PAD.encode(pk.to_bytes());
+        cp.signed_at = "2026-04-30T07:00:00Z".into();
         cp.covered_use_ids = vec!["use_alpha".into()];
 
         let sig = sk.sign(&cp.canonical_hub_signing_bytes());
         cp.hub_signature = URL_SAFE_NO_PAD.encode(sig.to_bytes());
         let trust = trust_with(&pk);
         // Sanity: signature is good before tamper.
-        assert_eq!(verify_hub_checkpoint_signature(&cp, &trust), HubCheckpointVerification::Valid);
+        assert_eq!(
+            verify_hub_checkpoint_signature(&cp, &trust),
+            HubCheckpointVerification::Valid
+        );
 
         // Tamper with covered_use_ids -- now the canonical bytes
         // change, signature no longer applies.
@@ -1059,16 +1083,16 @@ mod tests {
         use ed25519_dalek::{Signer, SigningKey};
 
         let sk_real = SigningKey::from_bytes(&[2u8; 32]);
-        let sk_imp  = SigningKey::from_bytes(&[3u8; 32]); // different key
-        let pk_imp  = sk_imp.verifying_key();
+        let sk_imp = SigningKey::from_bytes(&[3u8; 32]); // different key
+        let pk_imp = sk_imp.verifying_key();
 
         let mut cp = sample_checkpoint(CheckpointKind::HubOrg);
-        cp.hub_id          = "hub://x".into();
+        cp.hub_id = "hub://x".into();
         // Signature made by sk_real, but public key claims sk_imp.
-        cp.hub_public_key  = URL_SAFE_NO_PAD.encode(pk_imp.to_bytes());
-        cp.signed_at       = "2026-04-30T07:00:00Z".into();
+        cp.hub_public_key = URL_SAFE_NO_PAD.encode(pk_imp.to_bytes());
+        cp.signed_at = "2026-04-30T07:00:00Z".into();
         let sig = sk_real.sign(&cp.canonical_hub_signing_bytes());
-        cp.hub_signature   = URL_SAFE_NO_PAD.encode(sig.to_bytes());
+        cp.hub_signature = URL_SAFE_NO_PAD.encode(sig.to_bytes());
         // Pin the impersonator's key so the trust pin doesn't short-circuit
         // before we hit the signature mismatch -- this test exercises the
         // signature-failure path, not the trust-pin path.
@@ -1082,10 +1106,10 @@ mod tests {
     #[test]
     fn malformed_pubkey_or_signature_fails() {
         let mut cp = sample_checkpoint(CheckpointKind::HubOrg);
-        cp.hub_id          = "hub://x".into();
-        cp.hub_public_key  = "not-base64!!".into();
-        cp.hub_signature   = "also-not-base64".into();
-        cp.signed_at       = "2026-04-30T07:00:00Z".into();
+        cp.hub_id = "hub://x".into();
+        cp.hub_public_key = "not-base64!!".into();
+        cp.hub_signature = "also-not-base64".into();
+        cp.signed_at = "2026-04-30T07:00:00Z".into();
         assert_eq!(
             verify_hub_checkpoint_signature(&cp, &crate::trust::TrustRootStore::empty()),
             HubCheckpointVerification::Tampered,
@@ -1106,9 +1130,9 @@ mod tests {
         let pk = attacker.verifying_key();
 
         let mut cp = sample_checkpoint(CheckpointKind::HubOrg);
-        cp.hub_id          = "hub://attacker-claims-zerker".into();
-        cp.hub_public_key  = URL_SAFE_NO_PAD.encode(pk.to_bytes());
-        cp.signed_at       = "2026-04-30T07:00:00Z".into();
+        cp.hub_id = "hub://attacker-claims-zerker".into();
+        cp.hub_public_key = URL_SAFE_NO_PAD.encode(pk.to_bytes());
+        cp.signed_at = "2026-04-30T07:00:00Z".into();
         cp.covered_use_ids = vec!["use_alpha".into()];
         let sig = attacker.sign(&cp.canonical_hub_signing_bytes());
         cp.hub_signature = URL_SAFE_NO_PAD.encode(sig.to_bytes());
@@ -1133,9 +1157,9 @@ mod tests {
         let sk = SigningKey::from_bytes(&[9u8; 32]);
         let pk = sk.verifying_key();
         let mut cp = sample_checkpoint(CheckpointKind::HubOrg);
-        cp.hub_id          = "hub://anything".into();
-        cp.hub_public_key  = URL_SAFE_NO_PAD.encode(pk.to_bytes());
-        cp.signed_at       = "2026-04-30T07:00:00Z".into();
+        cp.hub_id = "hub://anything".into();
+        cp.hub_public_key = URL_SAFE_NO_PAD.encode(pk.to_bytes());
+        cp.signed_at = "2026-04-30T07:00:00Z".into();
         let sig = sk.sign(&cp.canonical_hub_signing_bytes());
         cp.hub_signature = URL_SAFE_NO_PAD.encode(sig.to_bytes());
 

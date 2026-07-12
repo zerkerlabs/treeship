@@ -45,11 +45,11 @@ pub enum EnvelopeError {
 impl std::fmt::Display for EnvelopeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Base64Decode(e)  => write!(f, "base64 decode: {}", e),
-            Self::JsonParse(e)     => write!(f, "json parse: {}", e),
-            Self::EmptyPayload     => write!(f, "payload is empty"),
+            Self::Base64Decode(e) => write!(f, "base64 decode: {}", e),
+            Self::JsonParse(e) => write!(f, "json parse: {}", e),
+            Self::EmptyPayload => write!(f, "payload is empty"),
             Self::EmptyPayloadType => write!(f, "payloadType is empty"),
-            Self::NoSignatures     => write!(f, "no signatures in envelope"),
+            Self::NoSignatures => write!(f, "no signatures in envelope"),
         }
     }
 }
@@ -65,36 +65,36 @@ impl Envelope {
     }
 
     /// Deserializes the payload into type `T`.
-    pub fn unmarshal_statement<T: serde::de::DeserializeOwned>(
-        &self,
-    ) -> Result<T, EnvelopeError> {
+    pub fn unmarshal_statement<T: serde::de::DeserializeOwned>(&self) -> Result<T, EnvelopeError> {
         let bytes = self.payload_bytes()?;
-        serde_json::from_slice(&bytes)
-            .map_err(|e| EnvelopeError::JsonParse(e.to_string()))
+        serde_json::from_slice(&bytes).map_err(|e| EnvelopeError::JsonParse(e.to_string()))
     }
 
     /// Decodes a single `Signature`'s sig field to raw bytes.
     pub fn sig_bytes(sig: &Signature) -> Result<Vec<u8>, EnvelopeError> {
         URL_SAFE_NO_PAD
             .decode(&sig.sig)
-            .map_err(|e| EnvelopeError::Base64Decode(
-                format!("sig for key {}: {}", sig.keyid, e)
-            ))
+            .map_err(|e| EnvelopeError::Base64Decode(format!("sig for key {}: {}", sig.keyid, e)))
     }
 
     /// Serializes the envelope to compact JSON bytes.
     pub fn to_json(&self) -> Result<Vec<u8>, EnvelopeError> {
-        serde_json::to_vec(self)
-            .map_err(|e| EnvelopeError::JsonParse(e.to_string()))
+        serde_json::to_vec(self).map_err(|e| EnvelopeError::JsonParse(e.to_string()))
     }
 
     /// Parses an envelope from JSON bytes, validating required fields.
     pub fn from_json(bytes: &[u8]) -> Result<Self, EnvelopeError> {
-        let e: Envelope = serde_json::from_slice(bytes)
-            .map_err(|e| EnvelopeError::JsonParse(e.to_string()))?;
-        if e.payload.is_empty()      { return Err(EnvelopeError::EmptyPayload); }
-        if e.payload_type.is_empty() { return Err(EnvelopeError::EmptyPayloadType); }
-        if e.signatures.is_empty()   { return Err(EnvelopeError::NoSignatures); }
+        let e: Envelope =
+            serde_json::from_slice(bytes).map_err(|e| EnvelopeError::JsonParse(e.to_string()))?;
+        if e.payload.is_empty() {
+            return Err(EnvelopeError::EmptyPayload);
+        }
+        if e.payload_type.is_empty() {
+            return Err(EnvelopeError::EmptyPayloadType);
+        }
+        if e.signatures.is_empty() {
+            return Err(EnvelopeError::NoSignatures);
+        }
         Ok(e)
     }
 }
@@ -111,9 +111,12 @@ mod tests {
 
     fn make_envelope(payload: &str) -> Envelope {
         Envelope {
-            payload:      URL_SAFE_NO_PAD.encode(payload),
+            payload: URL_SAFE_NO_PAD.encode(payload),
             payload_type: "application/vnd.treeship.action.v1+json".into(),
-            signatures:   vec![Signature { keyid: "key_test".into(), sig: "c2ln".into() }],
+            signatures: vec![Signature {
+                keyid: "key_test".into(),
+                sig: "c2ln".into(),
+            }],
         }
     }
 
@@ -121,21 +124,23 @@ mod tests {
     fn payload_bytes_roundtrip() {
         let original = b"{\"actor\":\"agent://test\"}";
         let env = Envelope {
-            payload:      URL_SAFE_NO_PAD.encode(original),
+            payload: URL_SAFE_NO_PAD.encode(original),
             payload_type: "application/vnd.treeship.action.v1+json".into(),
-            signatures:   vec![],
+            signatures: vec![],
         };
         assert_eq!(env.payload_bytes().unwrap(), original);
     }
 
     #[test]
     fn unmarshal_statement() {
-        let stmt = TestStmt { actor: "agent://test".into() };
+        let stmt = TestStmt {
+            actor: "agent://test".into(),
+        };
         let json = serde_json::to_vec(&stmt).unwrap();
-        let env  = Envelope {
-            payload:      URL_SAFE_NO_PAD.encode(&json),
+        let env = Envelope {
+            payload: URL_SAFE_NO_PAD.encode(&json),
             payload_type: "application/vnd.treeship.action.v1+json".into(),
-            signatures:   vec![],
+            signatures: vec![],
         };
         let decoded: TestStmt = env.unmarshal_statement().unwrap();
         assert_eq!(decoded, stmt);
@@ -143,8 +148,8 @@ mod tests {
 
     #[test]
     fn json_roundtrip() {
-        let env      = make_envelope("{\"actor\":\"agent://test\"}");
-        let json     = env.to_json().unwrap();
+        let env = make_envelope("{\"actor\":\"agent://test\"}");
+        let json = env.to_json().unwrap();
         let restored = Envelope::from_json(&json).unwrap();
         assert_eq!(restored.payload, env.payload);
         assert_eq!(restored.payload_type, env.payload_type);
@@ -152,7 +157,8 @@ mod tests {
 
     #[test]
     fn from_json_rejects_empty_payload() {
-        let json = br#"{"payload":"","payloadType":"text/plain","signatures":[{"keyid":"k","sig":"s"}]}"#;
+        let json =
+            br#"{"payload":"","payloadType":"text/plain","signatures":[{"keyid":"k","sig":"s"}]}"#;
         assert!(Envelope::from_json(json).is_err());
     }
 

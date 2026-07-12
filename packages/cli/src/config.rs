@@ -1,14 +1,18 @@
-use std::{collections::{HashMap, HashSet}, fs, path::{Path, PathBuf}};
 use serde::{Deserialize, Serialize};
+use std::{
+    collections::{HashMap, HashSet},
+    fs,
+    path::{Path, PathBuf},
+};
 
 // -- v0.4.0 Config ------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    pub ship_id:        String,
-    pub name:           Option<String>,
-    pub storage_dir:    String,
-    pub keys_dir:       String,
+    pub ship_id: String,
+    pub name: Option<String>,
+    pub storage_dir: String,
+    pub keys_dir: String,
     pub default_key_id: String,
 
     /// Named hub connections (v0.4+).
@@ -16,7 +20,11 @@ pub struct Config {
     pub hub_connections: HashMap<String, HubConnection>,
 
     /// Currently active hub connection name.
-    #[serde(default, skip_serializing_if = "Option::is_none", alias = "active_dock")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "active_dock"
+    )]
     pub active_hub: Option<String>,
 
     /// Legacy v0.1/v0.2 hub config -- read for migration, never written.
@@ -27,15 +35,23 @@ pub struct Config {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HubConnection {
     #[serde(alias = "dock_id")]
-    pub hub_id:    String,
-    pub key_id:     String,
-    pub endpoint:   String,
+    pub hub_id: String,
+    pub key_id: String,
+    pub endpoint: String,
     pub created_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_push:  Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none", alias = "dock_public_key")]
+    pub last_push: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "dock_public_key"
+    )]
     pub hub_public_key: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none", alias = "dock_secret_key")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "dock_secret_key"
+    )]
     pub hub_secret_key: Option<String>,
 }
 
@@ -43,15 +59,15 @@ pub struct HubConnection {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LegacyHubConfig {
     #[serde(default)]
-    pub status:          Option<String>,
+    pub status: Option<String>,
     #[serde(default)]
-    pub endpoint:        Option<String>,
+    pub endpoint: Option<String>,
     #[serde(default)]
-    pub workspace_id:    Option<String>,
+    pub workspace_id: Option<String>,
     #[serde(default)]
-    pub dock_id:         Option<String>,
+    pub dock_id: Option<String>,
     #[serde(default)]
-    pub sync_mode:       Option<String>,
+    pub sync_mode: Option<String>,
     #[serde(default)]
     pub dock_public_key: Option<String>,
     #[serde(default)]
@@ -64,7 +80,10 @@ impl Config {
     /// Returns true if there is an active hub connection.
     pub fn is_attached(&self) -> bool {
         self.active_hub.is_some()
-            && self.active_hub.as_deref().map_or(false, |name| self.hub_connections.contains_key(name))
+            && self
+                .active_hub
+                .as_deref()
+                .map_or(false, |name| self.hub_connections.contains_key(name))
     }
 
     /// Get the active hub connection entry, if any.
@@ -83,23 +102,32 @@ impl Config {
                     f.to_string()
                 } else {
                     // Try by hub_id
-                    self.hub_connections.iter()
+                    self.hub_connections
+                        .iter()
                         .find(|(_, v)| v.hub_id == f)
                         .map(|(k, _)| k.clone())
-                        .ok_or_else(|| format!("hub connection {:?} not found\n  Run: treeship hub ls", f))?
+                        .ok_or_else(|| {
+                            format!("hub connection {:?} not found\n  Run: treeship hub ls", f)
+                        })?
                 }
             }
-            None => {
-                self.active_hub.clone()
-                    .ok_or_else(|| "no active hub connection\n  Run: treeship hub attach".to_string())?
-            }
+            None => self.active_hub.clone().ok_or_else(|| {
+                "no active hub connection\n  Run: treeship hub attach".to_string()
+            })?,
         };
 
-        let entry = self.hub_connections.get(name.as_str())
+        let entry = self
+            .hub_connections
+            .get(name.as_str())
             .ok_or_else(|| format!("hub connection {:?} not found in config", name))?;
 
         // SAFETY: name exists in self.hub_connections, so we can get a &str with the same lifetime
-        let name_ref = self.hub_connections.get_key_value(name.as_str()).unwrap().0.as_str();
+        let name_ref = self
+            .hub_connections
+            .get_key_value(name.as_str())
+            .unwrap()
+            .0
+            .as_str();
         Ok((name_ref, entry))
     }
 }
@@ -117,17 +145,29 @@ pub enum ConfigError {
 impl std::fmt::Display for ConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Io(e)         => write!(f, "config io: {e}"),
-            Self::Json(e)       => write!(f, "config json: {e}"),
-            Self::NotFound(p)   => write!(f, "treeship not initialized at {} -- run 'treeship init'", p.display()),
-            Self::NoHome        => write!(f, "cannot determine home directory"),
+            Self::Io(e) => write!(f, "config io: {e}"),
+            Self::Json(e) => write!(f, "config json: {e}"),
+            Self::NotFound(p) => write!(
+                f,
+                "treeship not initialized at {} -- run 'treeship init'",
+                p.display()
+            ),
+            Self::NoHome => write!(f, "cannot determine home directory"),
         }
     }
 }
 
 impl std::error::Error for ConfigError {}
-impl From<std::io::Error>    for ConfigError { fn from(e: std::io::Error)    -> Self { Self::Io(e) } }
-impl From<serde_json::Error> for ConfigError { fn from(e: serde_json::Error) -> Self { Self::Json(e) } }
+impl From<std::io::Error> for ConfigError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+impl From<serde_json::Error> for ConfigError {
+    fn from(e: serde_json::Error) -> Self {
+        Self::Json(e)
+    }
+}
 
 // -- Load / Save / Migrate ----------------------------------------------------
 
@@ -150,10 +190,10 @@ pub enum ConfigSource {
 impl ConfigSource {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Explicit     => "explicit (--config)",
-            Self::Env          => "env (TREESHIP_CONFIG)",
+            Self::Explicit => "explicit (--config)",
+            Self::Env => "env (TREESHIP_CONFIG)",
             Self::ProjectLocal => "project-local",
-            Self::Global       => "global",
+            Self::Global => "global",
         }
     }
 }
@@ -271,7 +311,10 @@ mod tests {
             &global,
             fake_exists(&["/home/u/work/proj/.treeship/config.json"]),
         );
-        assert_eq!(found, Some(PathBuf::from("/home/u/work/proj/.treeship/config.json")));
+        assert_eq!(
+            found,
+            Some(PathBuf::from("/home/u/work/proj/.treeship/config.json"))
+        );
     }
 
     #[test]
@@ -291,11 +334,8 @@ mod tests {
     #[test]
     fn walk_up_returns_none_when_nothing_matches() {
         let global = PathBuf::from("/home/u/.treeship/config.json");
-        let found = walk_up_for_project_config(
-            Path::new("/home/u/work/proj"),
-            &global,
-            fake_exists(&[]),
-        );
+        let found =
+            walk_up_for_project_config(Path::new("/home/u/work/proj"), &global, fake_exists(&[]));
         assert_eq!(found, None);
     }
 
@@ -307,10 +347,7 @@ mod tests {
         let found = walk_up_for_project_config(
             Path::new("/a/b/c"),
             &global,
-            fake_exists(&[
-                "/a/b/.treeship/config.json",
-                "/a/.treeship/config.json",
-            ]),
+            fake_exists(&["/a/b/.treeship/config.json", "/a/.treeship/config.json"]),
         );
         assert_eq!(found, Some(PathBuf::from("/a/b/.treeship/config.json")));
     }
@@ -497,14 +534,12 @@ fn load_with_depth(
     // Config deserializer requires ship_id, which is absent in stubs.
     let raw: serde_json::Value = serde_json::from_slice(&bytes)?;
     if let Some(extends_value) = raw.get("extends") {
-        let extends_path = extends_value
-            .as_str()
-            .ok_or_else(|| ConfigError::Json(serde_json::Error::io(
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "config `extends` must be a string path",
-                ),
-            )))?;
+        let extends_path = extends_value.as_str().ok_or_else(|| {
+            ConfigError::Json(serde_json::Error::io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "config `extends` must be a string path",
+            )))
+        })?;
         let parent_path = resolve_extends(path, extends_path);
         let mut cfg = load_with_depth(&parent_path, depth + 1, visited)?;
         apply_overrides(&mut cfg, &raw);
@@ -532,10 +567,7 @@ fn resolve_extends(referrer: &Path, extends: &str) -> PathBuf {
     if p.is_absolute() {
         p.to_path_buf()
     } else {
-        referrer
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join(p)
+        referrer.parent().unwrap_or_else(|| Path::new(".")).join(p)
     }
 }
 
@@ -588,11 +620,13 @@ fn migrate_legacy_hub(cfg: &mut Config) -> bool {
         return true; // Clear the hub field but don't create a hub connection entry
     }
 
-    let hub_id  = match hub.dock_id {
+    let hub_id = match hub.dock_id {
         Some(d) => d,
         None => return true,
     };
-    let endpoint = hub.endpoint.unwrap_or_else(|| "https://api.treeship.dev".into());
+    let endpoint = hub
+        .endpoint
+        .unwrap_or_else(|| "https://api.treeship.dev".into());
 
     let now = {
         use std::time::{SystemTime, UNIX_EPOCH};
@@ -603,31 +637,39 @@ fn migrate_legacy_hub(cfg: &mut Config) -> bool {
         format!("{}Z", secs)
     };
 
-    cfg.hub_connections.insert("default".to_string(), HubConnection {
-        hub_id,
-        key_id:          cfg.default_key_id.clone(),
-        endpoint,
-        created_at:      now,
-        last_push:       None,
-        hub_public_key: hub.dock_public_key,
-        hub_secret_key: hub.dock_secret_key,
-    });
+    cfg.hub_connections.insert(
+        "default".to_string(),
+        HubConnection {
+            hub_id,
+            key_id: cfg.default_key_id.clone(),
+            endpoint,
+            created_at: now,
+            last_push: None,
+            hub_public_key: hub.dock_public_key,
+            hub_secret_key: hub.dock_secret_key,
+        },
+    );
     cfg.active_hub = Some("default".to_string());
 
     true
 }
 
 /// Build a Config for a freshly-initialized ship.
-pub fn new_config(config_path: &Path, ship_id: &str, default_key_id: &str, name: Option<String>) -> Config {
+pub fn new_config(
+    config_path: &Path,
+    ship_id: &str,
+    default_key_id: &str,
+    name: Option<String>,
+) -> Config {
     let dir = config_path.parent().unwrap_or(Path::new("."));
     Config {
-        ship_id:        ship_id.to_string(),
+        ship_id: ship_id.to_string(),
         name,
-        storage_dir:    dir.join("artifacts").to_string_lossy().into_owned(),
-        keys_dir:       dir.join("keys").to_string_lossy().into_owned(),
+        storage_dir: dir.join("artifacts").to_string_lossy().into_owned(),
+        keys_dir: dir.join("keys").to_string_lossy().into_owned(),
         default_key_id: default_key_id.to_string(),
         hub_connections: HashMap::new(),
-        active_hub:     None,
-        hub:            None,
+        active_hub: None,
+        hub: None,
     }
 }

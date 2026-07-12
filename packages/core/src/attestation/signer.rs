@@ -1,4 +1,4 @@
-use ed25519_dalek::{SigningKey, VerifyingKey, Signer as DalekSigner};
+use ed25519_dalek::{Signer as DalekSigner, SigningKey, VerifyingKey};
 use rand::rngs::OsRng;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
@@ -57,7 +57,7 @@ impl std::error::Error for SignerError {}
 /// when the cache entry is dropped. Hot paths that briefly load a signer
 /// should let it go out of scope as soon as signing is done.
 pub struct Ed25519Signer {
-    key_id:      String,
+    key_id: String,
     signing_key: SigningKey,
 }
 
@@ -97,7 +97,10 @@ impl Ed25519Signer {
             return Err(SignerError("key_id must not be empty".into()));
         }
         let signing_key = SigningKey::from_bytes(bytes);
-        Ok(Self { key_id, signing_key })
+        Ok(Self {
+            key_id,
+            signing_key,
+        })
     }
 
     /// Generates a fresh Ed25519 keypair using the OS CSPRNG.
@@ -110,7 +113,10 @@ impl Ed25519Signer {
             return Err(SignerError("key_id must not be empty".into()));
         }
         let signing_key = SigningKey::generate(&mut OsRng);
-        Ok(Self { key_id, signing_key })
+        Ok(Self {
+            key_id,
+            signing_key,
+        })
     }
 
     /// Returns the `VerifyingKey` (public key) for building a `Verifier`.
@@ -157,7 +163,10 @@ mod tests {
     use crate::attestation::pae;
 
     fn test_pae() -> Vec<u8> {
-        pae("application/vnd.treeship.action.v1+json", b"{\"actor\":\"agent://test\"}")
+        pae(
+            "application/vnd.treeship.action.v1+json",
+            b"{\"actor\":\"agent://test\"}",
+        )
     }
 
     #[test]
@@ -185,9 +194,9 @@ mod tests {
         // always produces the same signature. This is a security property:
         // non-deterministic signing would leak key material if the RNG is weak.
         let signer = Ed25519Signer::generate("key_det").unwrap();
-        let msg    = test_pae();
-        let sig1   = signer.sign(&msg).unwrap();
-        let sig2   = signer.sign(&msg).unwrap();
+        let msg = test_pae();
+        let sig1 = signer.sign(&msg).unwrap();
+        let sig2 = signer.sign(&msg).unwrap();
         assert_eq!(sig1, sig2, "Ed25519 signing must be deterministic");
     }
 
@@ -206,28 +215,28 @@ mod tests {
     #[test]
     fn different_messages_produce_different_signatures() {
         let signer = Ed25519Signer::generate("key_test").unwrap();
-        let pae1 = pae("application/vnd.treeship.action.v1+json",   b"{\"a\":1}");
-        let pae2 = pae("application/vnd.treeship.approval.v1+json",  b"{\"a\":1}");
-        assert_ne!(
-            signer.sign(&pae1).unwrap(),
-            signer.sign(&pae2).unwrap()
-        );
+        let pae1 = pae("application/vnd.treeship.action.v1+json", b"{\"a\":1}");
+        let pae2 = pae("application/vnd.treeship.approval.v1+json", b"{\"a\":1}");
+        assert_ne!(signer.sign(&pae1).unwrap(), signer.sign(&pae2).unwrap());
     }
 
     #[test]
     fn roundtrip_from_bytes() {
         let original = Ed25519Signer::generate("key_rt").unwrap();
-        let secret   = original.secret_bytes();
+        let secret = original.secret_bytes();
         // `secret` is Zeroizing<[u8; 32]>; deref to the inner array for
         // `from_bytes`'s `&[u8; 32]` parameter.
         let restored = Ed25519Signer::from_bytes("key_rt", &*secret).unwrap();
 
         assert_eq!(original.public_key_bytes(), restored.public_key_bytes());
 
-        let msg   = test_pae();
+        let msg = test_pae();
         let sig_a = original.sign(&msg).unwrap();
         let sig_b = restored.sign(&msg).unwrap();
-        assert_eq!(sig_a, sig_b, "Restored key must produce identical signatures");
+        assert_eq!(
+            sig_a, sig_b,
+            "Restored key must produce identical signatures"
+        );
     }
 
     /// Proves the `Zeroize` impl actually wipes the secret scalar.

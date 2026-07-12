@@ -5,9 +5,9 @@
 //! package-level artifact that unifies an entire session.
 
 use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
-use crate::merkle::{MerkleTree, InclusionProof};
+use crate::merkle::{InclusionProof, MerkleTree};
 
 use super::event::SessionEvent;
 use super::graph::AgentGraph;
@@ -106,7 +106,6 @@ pub struct SessionSection {
     pub total_tokens_out: u64,
 }
 
-
 /// Structured narrative for the session summary.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Narrative {
@@ -184,8 +183,12 @@ pub struct ProofsSection {
     pub reconcile_degraded: bool,
 }
 
-fn is_zero_u32(n: &u32) -> bool { *n == 0 }
-fn is_false(b: &bool) -> bool { !*b }
+fn is_zero_u32(n: &u32) -> bool {
+    *n == 0
+}
+fn is_false(b: &bool) -> bool {
+    !*b
+}
 
 /// Merkle section of the receipt.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -247,8 +250,9 @@ impl ReceiptComposer {
         let side_effects = SideEffects::from_events(events);
 
         // Build timeline from all events
-        let mut timeline: Vec<TimelineEntry> = events.iter().map(|e| {
-            TimelineEntry {
+        let mut timeline: Vec<TimelineEntry> = events
+            .iter()
+            .map(|e| TimelineEntry {
                 sequence_no: e.sequence_no,
                 timestamp: e.timestamp.clone(),
                 event_id: e.event_id.clone(),
@@ -257,12 +261,13 @@ impl ReceiptComposer {
                 agent_name: e.agent_name.clone(),
                 host_id: e.host_id.clone(),
                 summary: event_summary(&e.event_type),
-            }
-        }).collect();
+            })
+            .collect();
 
         // Sort by (timestamp, sequence_no, event_id) for determinism
         timeline.sort_by(|a, b| {
-            a.timestamp.cmp(&b.timestamp)
+            a.timestamp
+                .cmp(&b.timestamp)
                 .then(a.sequence_no.cmp(&b.sequence_no))
                 .then(a.event_id.cmp(&b.event_id))
         });
@@ -397,20 +402,25 @@ fn compute_participants(graph: &AgentGraph, manifest: &SessionManifest) -> Parti
     }
 
     // Find root agent (depth 0, first started)
-    let root = graph.nodes.iter()
+    let root = graph
+        .nodes
+        .iter()
         .filter(|n| n.depth == 0)
         .min_by_key(|n| n.started_at.as_deref().unwrap_or(""))
         .map(|n| n.agent_instance_id.clone());
 
     // Find final output agent (last completed at max depth or last completed overall)
-    let final_output = graph.nodes.iter()
+    let final_output = graph
+        .nodes
+        .iter()
         .filter(|n| n.completed_at.is_some())
         .max_by_key(|n| n.completed_at.as_deref().unwrap_or(""))
         .map(|n| n.agent_instance_id.clone());
 
     Participants {
         root_agent_instance_id: root.or(manifest.participants.root_agent_instance_id.clone()),
-        final_output_agent_instance_id: final_output.or(manifest.participants.final_output_agent_instance_id.clone()),
+        final_output_agent_instance_id: final_output
+            .or(manifest.participants.final_output_agent_instance_id.clone()),
         total_agents,
         spawned_subagents,
         handoffs,
@@ -482,7 +492,9 @@ fn build_merkle(artifacts: &[ArtifactEntry]) -> (MerkleSection, Option<MerkleTre
     let root = tree.root().map(|r| format!("mroot_{}", hex::encode(r)));
 
     // Build inclusion proofs for each artifact
-    let inclusion_proofs: Vec<InclusionProofEntry> = artifacts.iter().enumerate()
+    let inclusion_proofs: Vec<InclusionProofEntry> = artifacts
+        .iter()
+        .enumerate()
         .filter_map(|(i, art)| {
             tree.inclusion_proof(i).map(|proof| InclusionProofEntry {
                 artifact_id: art.artifact_id.clone(),
@@ -509,7 +521,11 @@ pub fn parse_ship_id_from_actor(actor: &str) -> Option<String> {
     let rest = actor.strip_prefix("ship://")?;
     // Strip any trailing path segment so `ship://ship_abc/foo` -> `ship_abc`.
     let id = rest.split('/').next().unwrap_or(rest);
-    if id.is_empty() { None } else { Some(id.to_string()) }
+    if id.is_empty() {
+        None
+    } else {
+        Some(id.to_string())
+    }
 }
 
 /// Extract a human-readable label from an EventType.
@@ -563,10 +579,20 @@ pub fn parse_ship_id_from_actor(actor: &str) -> Option<String> {
 ///    below for the authoritative allow list.
 const TOOL_ALIASES: &[(&str, &[&str])] = &[
     // Canonical first; rest are accepted aliases.
-    ("read_file",  &["read_file", "Read"]),
-    ("write_file", &["write_file", "Write", "Edit", "MultiEdit", "NotebookEdit", "edit_file"]),
-    ("bash",       &["bash", "Bash", "shell"]),
-    ("web_fetch",  &["web_fetch", "WebFetch", "webfetch"]),
+    ("read_file", &["read_file", "Read"]),
+    (
+        "write_file",
+        &[
+            "write_file",
+            "Write",
+            "Edit",
+            "MultiEdit",
+            "NotebookEdit",
+            "edit_file",
+        ],
+    ),
+    ("bash", &["bash", "Bash", "shell"]),
+    ("web_fetch", &["web_fetch", "WebFetch", "webfetch"]),
 ];
 
 /// Returns true iff `source` represents a direct tool attribution that
@@ -596,11 +622,7 @@ const TOOL_ALIASES: &[(&str, &[&str])] = &[
 fn source_attributes_a_tool(source: Option<&str>) -> bool {
     matches!(
         source,
-        None
-            | Some("hook")
-            | Some("mcp")
-            | Some("shell-wrap")
-            | Some("session-event-cli"),
+        None | Some("hook") | Some("mcp") | Some("shell-wrap") | Some("session-event-cli"),
     )
 }
 
@@ -611,8 +633,7 @@ fn count_attributed<'a, F>(
     source_at: F,
     canonical: &str,
     counts: &mut std::collections::BTreeMap<String, u32>,
-)
-where
+) where
     F: Fn(usize) -> Option<&'a str>,
 {
     let n: u32 = (0..items)
@@ -623,10 +644,7 @@ where
     }
 }
 
-fn derive_tool_usage(
-    side_effects: &SideEffects,
-    authorized_tools: &[String],
-) -> Option<ToolUsage> {
+fn derive_tool_usage(side_effects: &SideEffects, authorized_tools: &[String]) -> Option<ToolUsage> {
     use std::collections::BTreeMap;
 
     let total_specialized = side_effects.files_read.len()
@@ -672,12 +690,7 @@ fn derive_tool_usage(
         &mut counts,
     );
     let pr = &side_effects.processes;
-    count_attributed(
-        pr.len(),
-        |i| pr[i].source.as_deref(),
-        "bash",
-        &mut counts,
-    );
+    count_attributed(pr.len(), |i| pr[i].source.as_deref(), "bash", &mut counts);
     // network_connections has no source field today; treat all as
     // attributed (this matches the round-1 behavior since there's no
     // backstop layer producing network entries).
@@ -686,8 +699,12 @@ fn derive_tool_usage(
             side_effects.network_connections.len() as u32;
     }
 
-    let actual: Vec<ToolUsageEntry> = counts.iter()
-        .map(|(name, &count)| ToolUsageEntry { tool_name: name.clone(), count })
+    let actual: Vec<ToolUsageEntry> = counts
+        .iter()
+        .map(|(name, &count)| ToolUsageEntry {
+            tool_name: name.clone(),
+            count,
+        })
         .collect();
 
     // Authorization check uses alias resolution: an actual tool is
@@ -698,10 +715,10 @@ fn derive_tool_usage(
     let unauthorized = if authorized_tools.is_empty() {
         Vec::new()
     } else {
-        let declared_set: std::collections::BTreeSet<&str> = authorized_tools.iter()
-            .map(|s| s.as_str())
-            .collect();
-        counts.keys()
+        let declared_set: std::collections::BTreeSet<&str> =
+            authorized_tools.iter().map(|s| s.as_str()).collect();
+        counts
+            .keys()
             .filter(|actual_name| !is_authorized(actual_name, &declared_set))
             .cloned()
             .collect()
@@ -758,7 +775,8 @@ fn event_type_label(et: &super::event::EventType) -> String {
         AgentStartedProcess { .. } => "agent.started_process",
         AgentCompletedProcess { .. } => "agent.completed_process",
         AgentDecision { .. } => "agent.decision",
-    }.into()
+    }
+    .into()
 }
 
 /// Optional human-readable summary from an EventType.
@@ -768,26 +786,52 @@ fn event_summary(et: &super::event::EventType) -> Option<String> {
         SessionStarted => Some("Session started".into()),
         SessionClosed { summary, .. } => summary.clone().or(Some("Session closed".into())),
         AgentSpawned { reason, .. } => reason.clone(),
-        AgentHandoff { from_agent_instance_id, to_agent_instance_id, .. } => {
-            Some(format!("{from_agent_instance_id} -> {to_agent_instance_id}"))
-        }
+        AgentHandoff {
+            from_agent_instance_id,
+            to_agent_instance_id,
+            ..
+        } => Some(format!(
+            "{from_agent_instance_id} -> {to_agent_instance_id}"
+        )),
         AgentCalledTool { tool_name, .. } => Some(format!("Called {tool_name}")),
         AgentReadFile { file_path, .. } => Some(format!("Read {file_path}")),
         AgentWroteFile { file_path, .. } => Some(format!("Wrote {file_path}")),
         AgentOpenedPort { port, .. } => Some(format!("Opened port {port}")),
         AgentConnectedNetwork { destination, .. } => Some(format!("Connected to {destination}")),
         AgentStartedProcess { process_name, .. } => Some(format!("Started {process_name}")),
-        AgentCompletedProcess { process_name, exit_code, .. } => {
-            Some(format!("Completed {process_name} (exit {})", exit_code.unwrap_or(-1)))
-        }
-        AgentCompleted { termination_reason } => termination_reason.clone().or(Some("Agent completed".into())),
+        AgentCompletedProcess {
+            process_name,
+            exit_code,
+            ..
+        } => Some(format!(
+            "Completed {process_name} (exit {})",
+            exit_code.unwrap_or(-1)
+        )),
+        AgentCompleted { termination_reason } => termination_reason
+            .clone()
+            .or(Some("Agent completed".into())),
         AgentFailed { reason } => reason.clone().or(Some("Agent failed".into())),
-        AgentDecision { model, summary, provider, .. } => {
+        AgentDecision {
+            model,
+            summary,
+            provider,
+            ..
+        } => {
             let mut parts = Vec::new();
-            if let Some(s) = summary { parts.push(s.clone()); }
-            if let Some(m) = model { parts.push(format!("model: {m}")); }
-            if let Some(p) = provider { parts.push(format!("via {p}")); }
-            if parts.is_empty() { Some("LLM decision".into()) } else { Some(parts.join(" | ")) }
+            if let Some(s) = summary {
+                parts.push(s.clone());
+            }
+            if let Some(m) = model {
+                parts.push(format!("model: {m}"));
+            }
+            if let Some(p) = provider {
+                parts.push(format!("via {p}"));
+            }
+            if parts.is_empty() {
+                Some("LLM decision".into())
+            } else {
+                Some(parts.join(" | "))
+            }
         }
         _ => None,
     }
@@ -833,12 +877,57 @@ mod tests {
     fn make_events() -> Vec<SessionEvent> {
         vec![
             mk(0, "root", EventType::SessionStarted),
-            mk(1, "root", EventType::AgentStarted { parent_agent_instance_id: None }),
-            mk(2, "worker", EventType::AgentSpawned { spawned_by_agent_instance_id: "root".into(), reason: Some("review".into()) }),
-            mk(3, "worker", EventType::AgentCalledTool { tool_name: "read_file".into(), tool_input_digest: None, tool_output_digest: None, duration_ms: Some(5) }),
-            mk(4, "worker", EventType::AgentWroteFile { file_path: "src/fix.rs".into(), digest: None, operation: None, additions: None, deletions: None }),
-            mk(5, "worker", EventType::AgentCompleted { termination_reason: None }),
-            mk(6, "root", EventType::SessionClosed { summary: Some("Done".into()), duration_ms: Some(360000) }),
+            mk(
+                1,
+                "root",
+                EventType::AgentStarted {
+                    parent_agent_instance_id: None,
+                },
+            ),
+            mk(
+                2,
+                "worker",
+                EventType::AgentSpawned {
+                    spawned_by_agent_instance_id: "root".into(),
+                    reason: Some("review".into()),
+                },
+            ),
+            mk(
+                3,
+                "worker",
+                EventType::AgentCalledTool {
+                    tool_name: "read_file".into(),
+                    tool_input_digest: None,
+                    tool_output_digest: None,
+                    duration_ms: Some(5),
+                },
+            ),
+            mk(
+                4,
+                "worker",
+                EventType::AgentWroteFile {
+                    file_path: "src/fix.rs".into(),
+                    digest: None,
+                    operation: None,
+                    additions: None,
+                    deletions: None,
+                },
+            ),
+            mk(
+                5,
+                "worker",
+                EventType::AgentCompleted {
+                    termination_reason: None,
+                },
+            ),
+            mk(
+                6,
+                "root",
+                EventType::SessionClosed {
+                    summary: Some("Done".into()),
+                    duration_ms: Some(360000),
+                },
+            ),
         ]
     }
 
@@ -847,8 +936,18 @@ mod tests {
         let manifest = make_manifest();
         let events = make_events();
         let artifacts = vec![
-            ArtifactEntry { artifact_id: "art_001".into(), payload_type: "action".into(), digest: None, signed_at: None },
-            ArtifactEntry { artifact_id: "art_002".into(), payload_type: "action".into(), digest: None, signed_at: None },
+            ArtifactEntry {
+                artifact_id: "art_001".into(),
+                payload_type: "action".into(),
+                digest: None,
+                signed_at: None,
+            },
+            ArtifactEntry {
+                artifact_id: "art_002".into(),
+                payload_type: "action".into(),
+                digest: None,
+                signed_at: None,
+            },
         ];
 
         let receipt = ReceiptComposer::compose(&manifest, &events, artifacts);
@@ -866,14 +965,24 @@ mod tests {
     fn new_receipts_carry_schema_version() {
         let manifest = make_manifest();
         let events = make_events();
-        let artifacts = vec![
-            ArtifactEntry { artifact_id: "art_001".into(), payload_type: "action".into(), digest: None, signed_at: None },
-        ];
+        let artifacts = vec![ArtifactEntry {
+            artifact_id: "art_001".into(),
+            payload_type: "action".into(),
+            digest: None,
+            signed_at: None,
+        }];
         let receipt = ReceiptComposer::compose(&manifest, &events, artifacts);
-        assert_eq!(receipt.schema_version.as_deref(), Some(RECEIPT_SCHEMA_VERSION));
+        assert_eq!(
+            receipt.schema_version.as_deref(),
+            Some(RECEIPT_SCHEMA_VERSION)
+        );
         // And it shows up in canonical JSON.
-        let json = String::from_utf8(ReceiptComposer::to_canonical_json(&receipt).unwrap()).unwrap();
-        assert!(json.contains(r#""schema_version":"1""#), "missing schema_version: {json}");
+        let json =
+            String::from_utf8(ReceiptComposer::to_canonical_json(&receipt).unwrap()).unwrap();
+        assert!(
+            json.contains(r#""schema_version":"1""#),
+            "missing schema_version: {json}"
+        );
     }
 
     #[test]
@@ -884,33 +993,46 @@ mod tests {
         // old receipts that nobody can re-sign.
         let manifest = make_manifest();
         let events = make_events();
-        let artifacts = vec![
-            ArtifactEntry { artifact_id: "art_001".into(), payload_type: "action".into(), digest: None, signed_at: None },
-        ];
+        let artifacts = vec![ArtifactEntry {
+            artifact_id: "art_001".into(),
+            payload_type: "action".into(),
+            digest: None,
+            signed_at: None,
+        }];
         let mut receipt = ReceiptComposer::compose(&manifest, &events, artifacts);
         receipt.schema_version = None; // mimic a legacy receipt
 
         let original = ReceiptComposer::to_canonical_json(&receipt).unwrap();
         // Verify the field is omitted, not serialized as null.
         let original_str = std::str::from_utf8(&original).unwrap();
-        assert!(!original_str.contains("schema_version"),
-            "schema_version must be skipped when None");
+        assert!(
+            !original_str.contains("schema_version"),
+            "schema_version must be skipped when None"
+        );
 
         let parsed: SessionReceipt = serde_json::from_slice(&original).unwrap();
-        assert!(parsed.schema_version.is_none(), "legacy receipts must parse with schema_version=None");
+        assert!(
+            parsed.schema_version.is_none(),
+            "legacy receipts must parse with schema_version=None"
+        );
 
         let reserialized = ReceiptComposer::to_canonical_json(&parsed).unwrap();
-        assert_eq!(original, reserialized,
-            "legacy receipt must round-trip byte-identical so package determinism check passes");
+        assert_eq!(
+            original, reserialized,
+            "legacy receipt must round-trip byte-identical so package determinism check passes"
+        );
     }
 
     #[test]
     fn canonical_json_is_deterministic() {
         let manifest = make_manifest();
         let events = make_events();
-        let artifacts = vec![
-            ArtifactEntry { artifact_id: "art_001".into(), payload_type: "action".into(), digest: None, signed_at: None },
-        ];
+        let artifacts = vec![ArtifactEntry {
+            artifact_id: "art_001".into(),
+            payload_type: "action".into(),
+            digest: None,
+            signed_at: None,
+        }];
 
         let r1 = ReceiptComposer::compose(&manifest, &events, artifacts.clone());
         let r2 = ReceiptComposer::compose(&manifest, &events, artifacts);
@@ -947,13 +1069,24 @@ mod tests {
         let manifest = manifest_with_authorized(vec!["read_file", "write_file"]); // NO bash
         let events = vec![
             mk(0, "root", EventType::SessionStarted),
-            mk(1, "agent", EventType::AgentCompletedProcess {
-                process_name: "rm -rf /".into(),
-                exit_code: Some(0),
-                duration_ms: Some(50),
-                command: Some("rm -rf /".into()),
-            }),
-            mk(2, "root", EventType::SessionClosed { summary: None, duration_ms: Some(1000) }),
+            mk(
+                1,
+                "agent",
+                EventType::AgentCompletedProcess {
+                    process_name: "rm -rf /".into(),
+                    exit_code: Some(0),
+                    duration_ms: Some(50),
+                    command: Some("rm -rf /".into()),
+                },
+            ),
+            mk(
+                2,
+                "root",
+                EventType::SessionClosed {
+                    summary: None,
+                    duration_ms: Some(1000),
+                },
+            ),
         ];
         let receipt = ReceiptComposer::compose(&manifest, &events, vec![]);
         let tu = receipt.tool_usage.expect("tool_usage must be populated");
@@ -969,12 +1102,25 @@ mod tests {
         let manifest = manifest_with_authorized(vec!["read_file", "bash"]); // NO write_file
         let events = vec![
             mk(0, "root", EventType::SessionStarted),
-            mk(1, "agent", EventType::AgentWroteFile {
-                file_path: "src/secret.rs".into(),
-                digest: None, operation: Some("modified".into()),
-                additions: Some(10), deletions: Some(0),
-            }),
-            mk(2, "root", EventType::SessionClosed { summary: None, duration_ms: Some(1000) }),
+            mk(
+                1,
+                "agent",
+                EventType::AgentWroteFile {
+                    file_path: "src/secret.rs".into(),
+                    digest: None,
+                    operation: Some("modified".into()),
+                    additions: Some(10),
+                    deletions: Some(0),
+                },
+            ),
+            mk(
+                2,
+                "root",
+                EventType::SessionClosed {
+                    summary: None,
+                    duration_ms: Some(1000),
+                },
+            ),
         ];
         let receipt = ReceiptComposer::compose(&manifest, &events, vec![]);
         let tu = receipt.tool_usage.expect("tool_usage must be populated");
@@ -990,18 +1136,43 @@ mod tests {
         let manifest = manifest_with_authorized(vec!["read_file", "write_file", "bash"]);
         let events = vec![
             mk(0, "root", EventType::SessionStarted),
-            mk(1, "agent", EventType::AgentReadFile { file_path: "package.json".into(), digest: None }),
-            mk(2, "agent", EventType::AgentWroteFile {
-                file_path: "src/lib.rs".into(),
-                digest: None, operation: Some("modified".into()),
-                additions: Some(5), deletions: Some(2),
-            }),
-            mk(3, "agent", EventType::AgentCompletedProcess {
-                process_name: "bun test".into(),
-                exit_code: Some(0), duration_ms: Some(2000),
-                command: Some("bun test".into()),
-            }),
-            mk(4, "root", EventType::SessionClosed { summary: None, duration_ms: Some(5000) }),
+            mk(
+                1,
+                "agent",
+                EventType::AgentReadFile {
+                    file_path: "package.json".into(),
+                    digest: None,
+                },
+            ),
+            mk(
+                2,
+                "agent",
+                EventType::AgentWroteFile {
+                    file_path: "src/lib.rs".into(),
+                    digest: None,
+                    operation: Some("modified".into()),
+                    additions: Some(5),
+                    deletions: Some(2),
+                },
+            ),
+            mk(
+                3,
+                "agent",
+                EventType::AgentCompletedProcess {
+                    process_name: "bun test".into(),
+                    exit_code: Some(0),
+                    duration_ms: Some(2000),
+                    command: Some("bun test".into()),
+                },
+            ),
+            mk(
+                4,
+                "root",
+                EventType::SessionClosed {
+                    summary: None,
+                    duration_ms: Some(5000),
+                },
+            ),
         ];
         let receipt = ReceiptComposer::compose(&manifest, &events, vec![]);
         let tu = receipt.tool_usage.expect("tool_usage must be populated");
@@ -1025,11 +1196,22 @@ mod tests {
         let manifest = manifest_with_authorized(vec!["read_file", "write_file", "bash"]); // NO web_fetch
         let events = vec![
             mk(0, "root", EventType::SessionStarted),
-            mk(1, "agent", EventType::AgentConnectedNetwork {
-                destination: "evil.example.com".into(),
-                port: Some(443),
-            }),
-            mk(2, "root", EventType::SessionClosed { summary: None, duration_ms: Some(1000) }),
+            mk(
+                1,
+                "agent",
+                EventType::AgentConnectedNetwork {
+                    destination: "evil.example.com".into(),
+                    port: Some(443),
+                },
+            ),
+            mk(
+                2,
+                "root",
+                EventType::SessionClosed {
+                    summary: None,
+                    duration_ms: Some(1000),
+                },
+            ),
         ];
         let receipt = ReceiptComposer::compose(&manifest, &events, vec![]);
         let tu = receipt.tool_usage.expect("tool_usage must be populated");
@@ -1055,18 +1237,47 @@ mod tests {
         let manifest = manifest_with_authorized(vec!["Read", "Write", "Bash"]);
         let events = vec![
             mk(0, "root", EventType::SessionStarted),
-            mk(1, "agent", EventType::AgentReadFile { file_path: "x".into(), digest: None }),
-            mk(2, "agent", EventType::AgentWroteFile {
-                file_path: "y".into(),
-                digest: None, operation: None, additions: None, deletions: None,
-            }),
-            mk(3, "agent", EventType::AgentCompletedProcess {
-                process_name: "z".into(),
-                exit_code: Some(0), duration_ms: Some(1), command: None,
-            }),
-            mk(4, "root", EventType::SessionClosed { summary: None, duration_ms: Some(1000) }),
+            mk(
+                1,
+                "agent",
+                EventType::AgentReadFile {
+                    file_path: "x".into(),
+                    digest: None,
+                },
+            ),
+            mk(
+                2,
+                "agent",
+                EventType::AgentWroteFile {
+                    file_path: "y".into(),
+                    digest: None,
+                    operation: None,
+                    additions: None,
+                    deletions: None,
+                },
+            ),
+            mk(
+                3,
+                "agent",
+                EventType::AgentCompletedProcess {
+                    process_name: "z".into(),
+                    exit_code: Some(0),
+                    duration_ms: Some(1),
+                    command: None,
+                },
+            ),
+            mk(
+                4,
+                "root",
+                EventType::SessionClosed {
+                    summary: None,
+                    duration_ms: Some(1000),
+                },
+            ),
         ];
-        let tu = ReceiptComposer::compose(&manifest, &events, vec![]).tool_usage.unwrap();
+        let tu = ReceiptComposer::compose(&manifest, &events, vec![])
+            .tool_usage
+            .unwrap();
         assert!(
             tu.unauthorized.is_empty(),
             "TitleCase declarations must authorize canonical snake_case actuals via aliases; \
@@ -1084,14 +1295,33 @@ mod tests {
         let manifest = manifest_with_authorized(vec!["Edit"]);
         let events = vec![
             mk(0, "root", EventType::SessionStarted),
-            mk(1, "agent", EventType::AgentWroteFile {
-                file_path: "x".into(),
-                digest: None, operation: None, additions: None, deletions: None,
-            }),
-            mk(2, "root", EventType::SessionClosed { summary: None, duration_ms: Some(1000) }),
+            mk(
+                1,
+                "agent",
+                EventType::AgentWroteFile {
+                    file_path: "x".into(),
+                    digest: None,
+                    operation: None,
+                    additions: None,
+                    deletions: None,
+                },
+            ),
+            mk(
+                2,
+                "root",
+                EventType::SessionClosed {
+                    summary: None,
+                    duration_ms: Some(1000),
+                },
+            ),
         ];
-        let tu = ReceiptComposer::compose(&manifest, &events, vec![]).tool_usage.unwrap();
-        assert!(tu.unauthorized.is_empty(), "Edit alias must authorize write_file");
+        let tu = ReceiptComposer::compose(&manifest, &events, vec![])
+            .tool_usage
+            .unwrap();
+        assert!(
+            tu.unauthorized.is_empty(),
+            "Edit alias must authorize write_file"
+        );
     }
 
     #[test]
@@ -1105,24 +1335,38 @@ mod tests {
             evt_with_source(
                 EventType::AgentWroteFile {
                     file_path: "CHANGELOG.md".into(),
-                    digest: None, operation: Some("modified".into()),
-                    additions: Some(7), deletions: Some(2),
+                    digest: None,
+                    operation: Some("modified".into()),
+                    additions: Some(7),
+                    deletions: Some(2),
                 },
                 "git-reconcile",
             ),
-            mk(2, "root", EventType::SessionClosed { summary: None, duration_ms: Some(1000) }),
+            mk(
+                2,
+                "root",
+                EventType::SessionClosed {
+                    summary: None,
+                    duration_ms: Some(1000),
+                },
+            ),
         ];
-        let tu = ReceiptComposer::compose(&manifest, &events, vec![]).tool_usage.unwrap();
+        let tu = ReceiptComposer::compose(&manifest, &events, vec![])
+            .tool_usage
+            .unwrap();
         assert!(
             !tu.unauthorized.iter().any(|t| t == "write_file"),
             "git-reconcile entries must NOT count toward tool_usage; \
              got unauthorized={:?}, actual={:?}",
-            tu.unauthorized, tu.actual,
+            tu.unauthorized,
+            tu.actual,
         );
         let actual_names: std::collections::BTreeSet<String> =
             tu.actual.iter().map(|e| e.tool_name.clone()).collect();
-        assert!(!actual_names.contains("write_file"),
-            "actual must not include backstop-only writes");
+        assert!(
+            !actual_names.contains("write_file"),
+            "actual must not include backstop-only writes"
+        );
     }
 
     // session-event-cli is a direct-attribution source -- the standard
@@ -1142,13 +1386,25 @@ mod tests {
             evt_with_source(
                 EventType::AgentWroteFile {
                     file_path: "src/x.rs".into(),
-                    digest: None, operation: None, additions: None, deletions: None,
+                    digest: None,
+                    operation: None,
+                    additions: None,
+                    deletions: None,
                 },
                 "hook",
             ),
-            mk(2, "root", EventType::SessionClosed { summary: None, duration_ms: Some(1000) }),
+            mk(
+                2,
+                "root",
+                EventType::SessionClosed {
+                    summary: None,
+                    duration_ms: Some(1000),
+                },
+            ),
         ];
-        let tu = ReceiptComposer::compose(&manifest, &events, vec![]).tool_usage.unwrap();
+        let tu = ReceiptComposer::compose(&manifest, &events, vec![])
+            .tool_usage
+            .unwrap();
         assert!(
             tu.unauthorized.iter().any(|t| t == "write_file"),
             "hook-emitted writes MUST count toward tool_usage; got unauthorized={:?}",
@@ -1163,13 +1419,29 @@ mod tests {
         let manifest = manifest_with_authorized(vec!["read_file"]); // NO write_file
         let events = vec![
             mk(0, "root", EventType::SessionStarted),
-            mk(1, "agent", EventType::AgentWroteFile {
-                file_path: "x".into(),
-                digest: None, operation: None, additions: None, deletions: None,
-            }),
-            mk(2, "root", EventType::SessionClosed { summary: None, duration_ms: Some(1000) }),
+            mk(
+                1,
+                "agent",
+                EventType::AgentWroteFile {
+                    file_path: "x".into(),
+                    digest: None,
+                    operation: None,
+                    additions: None,
+                    deletions: None,
+                },
+            ),
+            mk(
+                2,
+                "root",
+                EventType::SessionClosed {
+                    summary: None,
+                    duration_ms: Some(1000),
+                },
+            ),
         ];
-        let tu = ReceiptComposer::compose(&manifest, &events, vec![]).tool_usage.unwrap();
+        let tu = ReceiptComposer::compose(&manifest, &events, vec![])
+            .tool_usage
+            .unwrap();
         assert!(
             tu.unauthorized.iter().any(|t| t == "write_file"),
             "legacy untagged writes must count for back-compat",

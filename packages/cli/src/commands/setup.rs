@@ -54,10 +54,10 @@ pub struct SetupOpts {
 impl Default for SetupOpts {
     fn default() -> Self {
         Self {
-            yes:           false,
-            skip_smoke:    false,
+            yes: false,
+            skip_smoke: false,
             no_instrument: false,
-            format:        "text".into(),
+            format: "text".into(),
         }
     }
 }
@@ -101,7 +101,7 @@ pub fn run(
             return Ok(());
         }
     };
-    result.ship_id    = Some(ctx.config.ship_id.clone());
+    result.ship_id = Some(ctx.config.ship_id.clone());
     result.config_path = Some(ctx.config_path.display().to_string());
     printer.dim_info(&format!("  config:    {}", ctx.config_path.display()));
     printer.dim_info(&format!("  ship:      {}", ctx.config.ship_id));
@@ -115,9 +115,9 @@ pub fn run(
     // useful info for an orchestration agent).
     for agent in &agents {
         result.detected.push(DetectedSummary {
-            surface:                agent.surface.kind().into(),
-            display_name:           agent.display_name.clone(),
-            confidence:             agent.confidence.label().into(),
+            surface: agent.surface.kind().into(),
+            display_name: agent.display_name.clone(),
+            confidence: agent.confidence.label().into(),
             recommended_harness_id: Some(agent.recommended_harness_id().to_string()),
         });
     }
@@ -168,7 +168,9 @@ pub fn run(
         if json_mode {
             populate_card_counts(&mut result, &written);
             result.next_steps.push("treeship agents review <id>".into());
-            result.next_steps.push("treeship agents approve <id>".into());
+            result
+                .next_steps
+                .push("treeship agents approve <id>".into());
             emit_setup_json(&result);
         }
         return Ok(());
@@ -207,24 +209,26 @@ pub fn run(
         // for. SuperNinja (remote VM) and GenericMcp/ShellWrap fall through
         // to their cards but `add::run` won't recognize them as installable
         // names today; passing them would just be a no-op printed warning.
-        .filter(|c| matches!(
-            c.surface,
-            discovery::AgentSurface::ClaudeCode
-            | discovery::AgentSurface::CursorAgent
-            | discovery::AgentSurface::Cline
-            | discovery::AgentSurface::Codex
-            | discovery::AgentSurface::Hermes
-            | discovery::AgentSurface::OpenClaw
-        ))
+        .filter(|c| {
+            matches!(
+                c.surface,
+                discovery::AgentSurface::ClaudeCode
+                    | discovery::AgentSurface::CursorAgent
+                    | discovery::AgentSurface::Cline
+                    | discovery::AgentSurface::Codex
+                    | discovery::AgentSurface::Hermes
+                    | discovery::AgentSurface::OpenClaw
+            )
+        })
         .map(|c| match c.surface {
-            discovery::AgentSurface::ClaudeCode  => "claude-code".to_string(),
+            discovery::AgentSurface::ClaudeCode => "claude-code".to_string(),
             discovery::AgentSurface::CursorAgent => "cursor".to_string(),
-            discovery::AgentSurface::Cline       => "cline".to_string(),
-            discovery::AgentSurface::Codex       => "codex".to_string(),
-            discovery::AgentSurface::Hermes      => "hermes".to_string(),
-            discovery::AgentSurface::OpenClaw    => "openclaw".to_string(),
+            discovery::AgentSurface::Cline => "cline".to_string(),
+            discovery::AgentSurface::Codex => "codex".to_string(),
+            discovery::AgentSurface::Hermes => "hermes".to_string(),
+            discovery::AgentSurface::OpenClaw => "openclaw".to_string(),
             // unreachable thanks to the filter above
-            _                                    => String::new(),
+            _ => String::new(),
         })
         .filter(|s| !s.is_empty())
         .collect();
@@ -246,15 +250,17 @@ pub fn run(
         // Verified.
         instrumented_cards = written
             .iter()
-            .filter(|c| matches!(
-                c.surface,
-                discovery::AgentSurface::ClaudeCode
-                | discovery::AgentSurface::CursorAgent
-                | discovery::AgentSurface::Cline
-                | discovery::AgentSurface::Codex
-                | discovery::AgentSurface::Hermes
-                | discovery::AgentSurface::OpenClaw
-            ))
+            .filter(|c| {
+                matches!(
+                    c.surface,
+                    discovery::AgentSurface::ClaudeCode
+                        | discovery::AgentSurface::CursorAgent
+                        | discovery::AgentSurface::Cline
+                        | discovery::AgentSurface::Codex
+                        | discovery::AgentSurface::Hermes
+                        | discovery::AgentSurface::OpenClaw
+                )
+            })
             .collect();
         for card in &instrumented_cards {
             if card.status == CardStatus::Draft {
@@ -279,8 +285,14 @@ pub fn run(
         print_complete(&final_cards, false, printer);
         if json_mode {
             populate_card_counts(&mut result, &final_cards);
-            result.smoke = Some(SmokeSummary { ran: false, passed: false, error: None });
-            result.next_steps.push("treeship setup            (re-run later with --skip-smoke off to verify)".into());
+            result.smoke = Some(SmokeSummary {
+                ran: false,
+                passed: false,
+                error: None,
+            });
+            result.next_steps.push(
+                "treeship setup            (re-run later with --skip-smoke off to verify)".into(),
+            );
             emit_setup_json(&result);
         }
         return Ok(());
@@ -298,9 +310,9 @@ pub fn run(
         }
     };
     result.smoke = Some(SmokeSummary {
-        ran:    true,
+        ran: true,
         passed: smoke_ok,
-        error:  smoke_err,
+        error: smoke_err,
     });
     let _ = smoke_start;
 
@@ -327,12 +339,8 @@ pub fn run(
         let now = now_rfc3339();
         let harnesses_dir = crate::commands::harnesses::harnesses_dir_for(&ctx.config_path);
         for card in &instrumented_cards {
-            if let Err(e) = cards::set_status(
-                &agents_dir,
-                &card.agent_id,
-                CardStatus::Active,
-                &now,
-            ) {
+            if let Err(e) = cards::set_status(&agents_dir, &card.agent_id, CardStatus::Active, &now)
+            {
                 printer.warn(
                     &format!("could not promote {} to active", card.agent_id),
                     &[("error", &e.to_string())],
@@ -340,8 +348,13 @@ pub fn run(
             }
             if let Some(harness_id) = card.active_harness_id.as_deref() {
                 if let Some(manifest) = crate::commands::harnesses::find(harness_id) {
-                    let mut state = crate::commands::harnesses::load_state(&harnesses_dir, harness_id)
-                        .unwrap_or_else(|_| crate::commands::harnesses::HarnessState::from_manifest(manifest, &now));
+                    let mut state =
+                        crate::commands::harnesses::load_state(&harnesses_dir, harness_id)
+                            .unwrap_or_else(|_| {
+                                crate::commands::harnesses::HarnessState::from_manifest(
+                                    manifest, &now,
+                                )
+                            });
                     state.status = crate::commands::harnesses::HarnessStatus::Instrumented;
                     // Do NOT set last_verified_at: nothing was verified
                     // about this specific harness.
@@ -369,8 +382,12 @@ pub fn run(
     print_complete(&final_cards, smoke_ok, printer);
     if json_mode {
         populate_card_counts(&mut result, &final_cards);
-        result.next_steps.push("treeship session start --name <task>".into());
-        result.next_steps.push("treeship session report --share --format json".into());
+        result
+            .next_steps
+            .push("treeship session start --name <task>".into());
+        result
+            .next_steps
+            .push("treeship session report --share --format json".into());
         emit_setup_json(&result);
     }
     Ok(())
@@ -382,39 +399,39 @@ pub fn run(
 
 #[derive(serde::Serialize, Default)]
 struct SetupResult {
-    schema:       String,
-    ship_id:      Option<String>,
-    config_path:  Option<String>,
-    detected:     Vec<DetectedSummary>,
-    cards:        CardCounts,
+    schema: String,
+    ship_id: Option<String>,
+    config_path: Option<String>,
+    detected: Vec<DetectedSummary>,
+    cards: CardCounts,
     instrumented: Vec<String>,
-    smoke:        Option<SmokeSummary>,
-    next_steps:   Vec<String>,
-    error:        Option<String>,
+    smoke: Option<SmokeSummary>,
+    next_steps: Vec<String>,
+    error: Option<String>,
 }
 
 #[derive(serde::Serialize)]
 struct DetectedSummary {
-    surface:                String,
-    display_name:           String,
-    confidence:             String,
+    surface: String,
+    display_name: String,
+    confidence: String,
     recommended_harness_id: Option<String>,
 }
 
 #[derive(serde::Serialize, Default)]
 struct CardCounts {
-    total:        usize,
-    draft:        usize,
+    total: usize,
+    draft: usize,
     needs_review: usize,
-    active:       usize,
-    verified:     usize,
+    active: usize,
+    verified: usize,
 }
 
 #[derive(serde::Serialize)]
 struct SmokeSummary {
-    ran:    bool,
+    ran: bool,
     passed: bool,
-    error:  Option<String>,
+    error: Option<String>,
 }
 
 fn populate_card_counts(result: &mut SetupResult, cards_list: &[AgentCard]) {
@@ -422,10 +439,10 @@ fn populate_card_counts(result: &mut SetupResult, cards_list: &[AgentCard]) {
     c.total = cards_list.len();
     for card in cards_list {
         match card.status {
-            CardStatus::Draft       => c.draft        += 1,
+            CardStatus::Draft => c.draft += 1,
             CardStatus::NeedsReview => c.needs_review += 1,
-            CardStatus::Active      => c.active       += 1,
-            CardStatus::Verified    => c.verified     += 1,
+            CardStatus::Active => c.active += 1,
+            CardStatus::Verified => c.verified += 1,
         }
     }
     result.cards = c;
@@ -442,30 +459,34 @@ fn emit_setup_json(result: &SetupResult) {
 impl SetupResult {
     fn clone_with_schema(&self) -> SetupResult {
         SetupResult {
-            schema:       self.schema.clone(),
-            ship_id:      self.ship_id.clone(),
-            config_path:  self.config_path.clone(),
-            detected:     self.detected.iter().map(|d| DetectedSummary {
-                surface:                d.surface.clone(),
-                display_name:           d.display_name.clone(),
-                confidence:             d.confidence.clone(),
-                recommended_harness_id: d.recommended_harness_id.clone(),
-            }).collect(),
-            cards:        CardCounts {
-                total:        self.cards.total,
-                draft:        self.cards.draft,
+            schema: self.schema.clone(),
+            ship_id: self.ship_id.clone(),
+            config_path: self.config_path.clone(),
+            detected: self
+                .detected
+                .iter()
+                .map(|d| DetectedSummary {
+                    surface: d.surface.clone(),
+                    display_name: d.display_name.clone(),
+                    confidence: d.confidence.clone(),
+                    recommended_harness_id: d.recommended_harness_id.clone(),
+                })
+                .collect(),
+            cards: CardCounts {
+                total: self.cards.total,
+                draft: self.cards.draft,
                 needs_review: self.cards.needs_review,
-                active:       self.cards.active,
-                verified:     self.cards.verified,
+                active: self.cards.active,
+                verified: self.cards.verified,
             },
             instrumented: self.instrumented.clone(),
-            smoke:        self.smoke.as_ref().map(|s| SmokeSummary {
-                ran:    s.ran,
+            smoke: self.smoke.as_ref().map(|s| SmokeSummary {
+                ran: s.ran,
                 passed: s.passed,
-                error:  s.error.clone(),
+                error: s.error.clone(),
             }),
-            next_steps:   self.next_steps.clone(),
-            error:        self.error.clone(),
+            next_steps: self.next_steps.clone(),
+            error: self.error.clone(),
         }
     }
 }
@@ -498,12 +519,60 @@ fn run_smoke_session(printer: &Printer) -> Result<(), Box<dyn std::error::Error>
     // config agree on where session state lives. Mixing cwds caused
     // `session close` to mis-locate session.json during setup smoke.
     let ws = workspace.path();
-    run_subcommand_in(ws, &exe, &["init", "--config", to_str(&cfg), "--name", "setup-smoke"])?;
-    run_subcommand_in(ws, &exe, &["session", "start", "--config", to_str(&cfg), "--name", "setup-smoke"])?;
-    run_subcommand_in(ws, &exe, &["wrap", "--config", to_str(&cfg), "--action", "setup.smoke", "--", "true"])?;
-    run_subcommand_in(ws, &exe, &["session", "close", "--config", to_str(&cfg), "--summary", "setup smoke ok"])?;
+    run_subcommand_in(
+        ws,
+        &exe,
+        &["init", "--config", to_str(&cfg), "--name", "setup-smoke"],
+    )?;
+    run_subcommand_in(
+        ws,
+        &exe,
+        &[
+            "session",
+            "start",
+            "--config",
+            to_str(&cfg),
+            "--name",
+            "setup-smoke",
+        ],
+    )?;
+    run_subcommand_in(
+        ws,
+        &exe,
+        &[
+            "wrap",
+            "--config",
+            to_str(&cfg),
+            "--action",
+            "setup.smoke",
+            "--",
+            "true",
+        ],
+    )?;
+    run_subcommand_in(
+        ws,
+        &exe,
+        &[
+            "session",
+            "close",
+            "--config",
+            to_str(&cfg),
+            "--summary",
+            "setup smoke ok",
+        ],
+    )?;
     let pkg = find_recent_package(ws)?;
-    run_subcommand_in(ws, &exe, &["package", "verify", "--config", to_str(&cfg), &pkg.to_string_lossy()])?;
+    run_subcommand_in(
+        ws,
+        &exe,
+        &[
+            "package",
+            "verify",
+            "--config",
+            to_str(&cfg),
+            &pkg.to_string_lossy(),
+        ],
+    )?;
 
     printer.dim_info("  ✓ smoke session captured and verified");
     Ok(())
@@ -516,7 +585,11 @@ fn to_str(p: &Path) -> &str {
     p.to_str().expect("tmpdir path must be UTF-8")
 }
 
-fn run_subcommand_in(cwd: &Path, exe: &Path, args: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
+fn run_subcommand_in(
+    cwd: &Path,
+    exe: &Path,
+    args: &[&str],
+) -> Result<(), Box<dyn std::error::Error>> {
     let output = ProcCommand::new(exe)
         .current_dir(cwd)
         .args(args)
@@ -540,7 +613,11 @@ fn run_subcommand_in(cwd: &Path, exe: &Path, args: &[&str]) -> Result<(), Box<dy
 fn find_recent_package(workspace: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let sessions = workspace.join(".treeship").join("sessions");
     if !sessions.is_dir() {
-        return Err(format!("smoke session produced no .treeship/sessions/ at {}", sessions.display()).into());
+        return Err(format!(
+            "smoke session produced no .treeship/sessions/ at {}",
+            sessions.display()
+        )
+        .into());
     }
     let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
     for entry in std::fs::read_dir(&sessions)? {
@@ -556,7 +633,11 @@ fn find_recent_package(workspace: &Path) -> Result<PathBuf, Box<dyn std::error::
         }
     }
     best.map(|(_, p)| p).ok_or_else(|| {
-        format!("no .treeship session package found under {}", sessions.display()).into()
+        format!(
+            "no .treeship session package found under {}",
+            sessions.display()
+        )
+        .into()
     })
 }
 
@@ -571,8 +652,8 @@ fn print_detection_summary(cards_list: &[AgentCard], printer: &Printer) {
     for card in cards_list {
         let mark = match card.status {
             CardStatus::Verified | CardStatus::Active => "✓",
-            CardStatus::NeedsReview                   => "?",
-            CardStatus::Draft                         => "·",
+            CardStatus::NeedsReview => "?",
+            CardStatus::Draft => "·",
         };
         printer.info(&format!(
             "  {mark} {}  ({}, coverage: {})",
@@ -593,22 +674,30 @@ fn print_complete(cards_list: &[AgentCard], smoke_ok: bool, printer: &Printer) {
             "    {}    {} ({})",
             card.surface.kind(),
             match card.status {
-                CardStatus::Verified    => "verified",
-                CardStatus::Active      => "active",
+                CardStatus::Verified => "verified",
+                CardStatus::Active => "active",
                 CardStatus::NeedsReview => "needs review",
-                CardStatus::Draft       => "draft",
+                CardStatus::Draft => "draft",
             },
             card.coverage.label(),
         ));
     }
     printer.blank();
     if smoke_ok {
-        printer.dim_info("  Generic trust-fabric smoke passed: signing, session log, package emission, verify.");
-        printer.dim_info("  Each harness is now `instrumented`. Per-harness capture (Claude native hook,");
-        printer.dim_info("  Cursor MCP, Codex shell-wrap, etc.) is NOT yet verified. Run a real session");
-        printer.dim_info("  through each harness to populate verified_captures and reach `verified`.");
+        printer.dim_info(
+            "  Generic trust-fabric smoke passed: signing, session log, package emission, verify.",
+        );
+        printer.dim_info(
+            "  Each harness is now `instrumented`. Per-harness capture (Claude native hook,",
+        );
+        printer.dim_info(
+            "  Cursor MCP, Codex shell-wrap, etc.) is NOT yet verified. Run a real session",
+        );
+        printer
+            .dim_info("  through each harness to populate verified_captures and reach `verified`.");
     } else {
-        printer.dim_info("  Smoke session skipped or failed; cards remain at draft / needs-review.");
+        printer
+            .dim_info("  Smoke session skipped or failed; cards remain at draft / needs-review.");
     }
     printer.blank();
     printer.hint("Next: treeship session start --name \"first run\"");

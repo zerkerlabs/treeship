@@ -16,10 +16,9 @@ use sha2::{Digest, Sha256};
 
 use super::receipt::{SessionReceipt, RECEIPT_TYPE};
 use crate::statements::{
-    ApprovalRevocation, ApprovalUse, JournalCheckpoint,
-    ReplayCheck, ReplayCheckLevel,
     approval_revocation_record_digest, approval_use_record_digest,
-    journal_checkpoint_record_digest,
+    journal_checkpoint_record_digest, ApprovalRevocation, ApprovalUse, JournalCheckpoint,
+    ReplayCheck, ReplayCheckLevel,
 };
 
 /// Errors from package operations.
@@ -42,10 +41,14 @@ impl std::fmt::Display for PackageError {
 
 impl std::error::Error for PackageError {}
 impl From<std::io::Error> for PackageError {
-    fn from(e: std::io::Error) -> Self { Self::Io(e) }
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
 }
 impl From<serde_json::Error> for PackageError {
-    fn from(e: serde_json::Error) -> Self { Self::Json(e) }
+    fn from(e: serde_json::Error) -> Self {
+        Self::Json(e)
+    }
 }
 
 /// Manifest file inside the package root.
@@ -68,10 +71,10 @@ const PREVIEW_FILE: &str = "preview.html";
 // approvals/checkpoints/<id>.json     -- JournalCheckpoint records that
 //                          cover the included uses (PR 6 Hub
 //                          checkpoint signing extends this)
-const APPROVALS_DIR:        &str = "approvals";
-const APPROVALS_GRANTS:     &str = "approvals/grants";
-const APPROVALS_USES:       &str = "approvals/uses";
-const APPROVALS_CHECKPOINTS:&str = "approvals/checkpoints";
+const APPROVALS_DIR: &str = "approvals";
+const APPROVALS_GRANTS: &str = "approvals/grants";
+const APPROVALS_USES: &str = "approvals/uses";
+const APPROVALS_CHECKPOINTS: &str = "approvals/checkpoints";
 const APPROVALS_INDEX_FILE: &str = "approvals/index.json";
 
 /// Optional approval evidence to embed in the package alongside the
@@ -89,11 +92,11 @@ pub struct ApprovalsBundle {
     /// any consumed uses. Each entry is `(grant_id, raw_envelope_json)`.
     /// Stored verbatim so the package's verifier can re-check the
     /// signature without re-serializing.
-    pub grants:      Vec<(String, Vec<u8>)>,
+    pub grants: Vec<(String, Vec<u8>)>,
     /// ApprovalUse records pulled from the local journal at close time.
     /// `action_artifact_id` should be backfilled before passing to
     /// build_package (see `commands/session.rs`).
-    pub uses:        Vec<ApprovalUse>,
+    pub uses: Vec<ApprovalUse>,
     /// JournalCheckpoints that cover the included uses. Optional; may
     /// be empty even when uses are present (PR 6 fills these in).
     pub checkpoints: Vec<JournalCheckpoint>,
@@ -124,15 +127,17 @@ pub struct ApprovalsIndex {
     pub schema_version: u32,
     /// Stable kebab-case ids of grants present. Order matches
     /// `grants/` filename order.
-    pub grants:      Vec<String>,
+    pub grants: Vec<String>,
     /// Use ids present.
-    pub uses:        Vec<String>,
+    pub uses: Vec<String>,
     pub checkpoints: Vec<String>,
     pub revocations: Vec<String>,
 }
 
 impl ApprovalsIndex {
-    pub fn type_string() -> &'static str { "treeship/approvals-index/v1" }
+    pub fn type_string() -> &'static str {
+        "treeship/approvals-index/v1"
+    }
 }
 
 /// Result of building a package.
@@ -218,7 +223,12 @@ pub fn build_package_with_approvals(
     // bundle behaves the same as None so a session with no consumed
     // approvals doesn't leave behind an empty `approvals/` directory.
     if let Some(b) = bundle {
-        if !b.grants.is_empty() || !b.uses.is_empty() || !b.checkpoints.is_empty() || !b.revocations.is_empty() || !b.action_envelopes.is_empty() {
+        if !b.grants.is_empty()
+            || !b.uses.is_empty()
+            || !b.checkpoints.is_empty()
+            || !b.revocations.is_empty()
+            || !b.action_envelopes.is_empty()
+        {
             std::fs::create_dir_all(pkg_dir.join(APPROVALS_GRANTS))?;
             std::fs::create_dir_all(pkg_dir.join(APPROVALS_USES))?;
             std::fs::create_dir_all(pkg_dir.join(APPROVALS_CHECKPOINTS))?;
@@ -265,7 +275,9 @@ pub fn build_package_with_approvals(
                 let safe = sanitize_filename(&cp.checkpoint_id);
                 let bytes = serde_json::to_vec_pretty(cp)?;
                 std::fs::write(
-                    pkg_dir.join(APPROVALS_CHECKPOINTS).join(format!("{safe}.json")),
+                    pkg_dir
+                        .join(APPROVALS_CHECKPOINTS)
+                        .join(format!("{safe}.json")),
                     &bytes,
                 )?;
                 checkpoint_ids.push(cp.checkpoint_id.clone());
@@ -277,7 +289,9 @@ pub fn build_package_with_approvals(
                 let safe = sanitize_filename(&rev.revocation_id);
                 let bytes = serde_json::to_vec_pretty(rev)?;
                 std::fs::write(
-                    pkg_dir.join(APPROVALS_DIR).join(format!("revocations-{safe}.json")),
+                    pkg_dir
+                        .join(APPROVALS_DIR)
+                        .join(format!("revocations-{safe}.json")),
                     &bytes,
                 )?;
                 revocation_ids.push(rev.revocation_id.clone());
@@ -285,12 +299,12 @@ pub fn build_package_with_approvals(
             }
 
             let index = ApprovalsIndex {
-                type_:          ApprovalsIndex::type_string().into(),
+                type_: ApprovalsIndex::type_string().into(),
                 schema_version: 1,
-                grants:         grant_ids,
-                uses:           use_ids,
-                checkpoints:    checkpoint_ids,
-                revocations:    revocation_ids,
+                grants: grant_ids,
+                uses: use_ids,
+                checkpoints: checkpoint_ids,
+                revocations: revocation_ids,
             };
             let index_bytes = serde_json::to_vec_pretty(&index)?;
             std::fs::write(pkg_dir.join(APPROVALS_INDEX_FILE), &index_bytes)?;
@@ -311,7 +325,13 @@ pub fn build_package_with_approvals(
 /// Not a security boundary; the digest chain is the integrity check.
 fn sanitize_filename(s: &str) -> String {
     s.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -339,8 +359,14 @@ pub fn read_approvals_bundle(pkg_dir: &Path) -> Result<ApprovalsBundle, PackageE
         for entry in std::fs::read_dir(&grants_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) != Some("json") { continue; }
-            let id = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+            if path.extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
+            }
+            let id = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
             let bytes = std::fs::read(&path)?;
             bundle.grants.push((id, bytes));
         }
@@ -351,7 +377,9 @@ pub fn read_approvals_bundle(pkg_dir: &Path) -> Result<ApprovalsBundle, PackageE
         for entry in std::fs::read_dir(&uses_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) != Some("json") { continue; }
+            if path.extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
+            }
             let bytes = std::fs::read(&path)?;
             let u: ApprovalUse = serde_json::from_slice(&bytes)?;
             bundle.uses.push(u);
@@ -363,7 +391,9 @@ pub fn read_approvals_bundle(pkg_dir: &Path) -> Result<ApprovalsBundle, PackageE
         for entry in std::fs::read_dir(&cps_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) != Some("json") { continue; }
+            if path.extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
+            }
             let bytes = std::fs::read(&path)?;
             let cp: JournalCheckpoint = serde_json::from_slice(&bytes)?;
             bundle.checkpoints.push(cp);
@@ -381,8 +411,14 @@ pub fn read_approvals_bundle(pkg_dir: &Path) -> Result<ApprovalsBundle, PackageE
         for entry in std::fs::read_dir(&arts_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) != Some("json") { continue; }
-            let id = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+            if path.extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
+            }
+            let id = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
             let bytes = std::fs::read(&path)?;
             bundle.action_envelopes.push((id, bytes));
         }
@@ -395,17 +431,19 @@ pub fn read_approvals_bundle(pkg_dir: &Path) -> Result<ApprovalsBundle, PackageE
 pub fn read_package(pkg_dir: &Path) -> Result<SessionReceipt, PackageError> {
     let receipt_path = pkg_dir.join(RECEIPT_FILE);
     if !receipt_path.exists() {
-        return Err(PackageError::InvalidPackage(
-            format!("missing {RECEIPT_FILE} in {}", pkg_dir.display()),
-        ));
+        return Err(PackageError::InvalidPackage(format!(
+            "missing {RECEIPT_FILE} in {}",
+            pkg_dir.display()
+        )));
     }
     let bytes = std::fs::read(&receipt_path)?;
     let receipt: SessionReceipt = serde_json::from_slice(&bytes)?;
 
     if receipt.type_ != RECEIPT_TYPE {
-        return Err(PackageError::InvalidPackage(
-            format!("unexpected type: {} (expected {RECEIPT_TYPE})", receipt.type_),
-        ));
+        return Err(PackageError::InvalidPackage(format!(
+            "unexpected type: {} (expected {RECEIPT_TYPE})",
+            receipt.type_
+        )));
     }
 
     Ok(receipt)
@@ -456,11 +494,17 @@ pub fn verify_package_with_trust(
     // 1. receipt.json exists and parses
     let receipt = match read_package(pkg_dir) {
         Ok(r) => {
-            checks.push(VerifyCheck::pass("receipt.json", "Parses as valid Session Receipt"));
+            checks.push(VerifyCheck::pass(
+                "receipt.json",
+                "Parses as valid Session Receipt",
+            ));
             r
         }
         Err(e) => {
-            checks.push(VerifyCheck::fail("receipt.json", &format!("Failed to parse: {e}")));
+            checks.push(VerifyCheck::fail(
+                "receipt.json",
+                &format!("Failed to parse: {e}"),
+            ));
             return Ok(checks);
         }
     };
@@ -469,7 +513,10 @@ pub fn verify_package_with_trust(
     if receipt.type_ == RECEIPT_TYPE {
         checks.push(VerifyCheck::pass("type", "Correct receipt type"));
     } else {
-        checks.push(VerifyCheck::fail("type", &format!("Expected {RECEIPT_TYPE}, got {}", receipt.type_)));
+        checks.push(VerifyCheck::fail(
+            "type",
+            &format!("Expected {RECEIPT_TYPE}, got {}", receipt.type_),
+        ));
     }
 
     // 3. Determinism: re-serialize and check digest matches.
@@ -490,10 +537,16 @@ pub fn verify_package_with_trust(
     let on_disk = std::fs::read(&receipt_path)?;
     let re_serialized = serde_json::to_vec_pretty(&receipt)?;
     if on_disk == re_serialized {
-        checks.push(VerifyCheck::pass("determinism", "receipt.json round-trips identically (structural, NOT a signature)"));
+        checks.push(VerifyCheck::pass(
+            "determinism",
+            "receipt.json round-trips identically (structural, NOT a signature)",
+        ));
     } else {
         // Not a hard failure -- pretty-print whitespace may differ
-        checks.push(VerifyCheck::warn("determinism", "receipt.json does not byte-match after re-serialization"));
+        checks.push(VerifyCheck::warn(
+            "determinism",
+            "receipt.json does not byte-match after re-serialization",
+        ));
     }
 
     // 3b. Honest scope of what this package authenticates. The receipt body
@@ -532,14 +585,14 @@ pub fn verify_package_with_trust(
             tree.append(&art.artifact_id);
         }
         let root_bytes = tree.root();
-        let recomputed_root = root_bytes
-            .map(|r| format!("mroot_{}", hex::encode(r)));
-        let root_hex = root_bytes
-            .map(|r| hex::encode(r))
-            .unwrap_or_default();
+        let recomputed_root = root_bytes.map(|r| format!("mroot_{}", hex::encode(r)));
+        let root_hex = root_bytes.map(|r| hex::encode(r)).unwrap_or_default();
 
         if recomputed_root == receipt.merkle.root {
-            checks.push(VerifyCheck::pass("merkle_root", "Merkle root matches recomputed value"));
+            checks.push(VerifyCheck::pass(
+                "merkle_root",
+                "Merkle root matches recomputed value",
+            ));
         } else {
             checks.push(VerifyCheck::fail(
                 "merkle_root",
@@ -589,11 +642,18 @@ pub fn verify_package_with_trust(
 
     // 6. Leaf count matches artifacts
     if receipt.merkle.leaf_count == receipt.artifacts.len() {
-        checks.push(VerifyCheck::pass("leaf_count", "Leaf count matches artifact count"));
+        checks.push(VerifyCheck::pass(
+            "leaf_count",
+            "Leaf count matches artifact count",
+        ));
     } else {
         checks.push(VerifyCheck::fail(
             "leaf_count",
-            &format!("leaf_count {} != artifact count {}", receipt.merkle.leaf_count, receipt.artifacts.len()),
+            &format!(
+                "leaf_count {} != artifact count {}",
+                receipt.merkle.leaf_count,
+                receipt.artifacts.len()
+            ),
         ));
     }
 
@@ -603,9 +663,15 @@ pub fn verify_package_with_trust(
             <= (&w[1].timestamp, w[1].sequence_no, &w[1].event_id)
     });
     if ordered {
-        checks.push(VerifyCheck::pass("timeline_order", "Timeline is correctly ordered"));
+        checks.push(VerifyCheck::pass(
+            "timeline_order",
+            "Timeline is correctly ordered",
+        ));
     } else {
-        checks.push(VerifyCheck::fail("timeline_order", "Timeline entries are not in deterministic order"));
+        checks.push(VerifyCheck::fail(
+            "timeline_order",
+            "Timeline entries are not in deterministic order",
+        ));
     }
 
     // event_log completeness: when session::close skipped malformed
@@ -680,13 +746,17 @@ fn finish_package_checks(
     receipt: &SessionReceipt,
 ) -> Vec<VerifyCheck> {
     if receipt.merkle.leaf_count == receipt.artifacts.len() {
-        checks.push(VerifyCheck::pass("leaf_count", "Leaf count matches artifact count"));
+        checks.push(VerifyCheck::pass(
+            "leaf_count",
+            "Leaf count matches artifact count",
+        ));
     } else {
         checks.push(VerifyCheck::fail(
             "leaf_count",
             &format!(
                 "leaf_count {} != artifact count {}",
-                receipt.merkle.leaf_count, receipt.artifacts.len(),
+                receipt.merkle.leaf_count,
+                receipt.artifacts.len(),
             ),
         ));
     }
@@ -696,9 +766,15 @@ fn finish_package_checks(
             <= (&w[1].timestamp, w[1].sequence_no, &w[1].event_id)
     });
     if ordered {
-        checks.push(VerifyCheck::pass("timeline_order", "Timeline is correctly ordered"));
+        checks.push(VerifyCheck::pass(
+            "timeline_order",
+            "Timeline is correctly ordered",
+        ));
     } else {
-        checks.push(VerifyCheck::fail("timeline_order", "Timeline entries are not in deterministic order"));
+        checks.push(VerifyCheck::fail(
+            "timeline_order",
+            "Timeline entries are not in deterministic order",
+        ));
     }
 
     checks
@@ -761,7 +837,10 @@ pub(crate) fn add_approval_evidence_checks(
     if over_max.is_empty() && dup_use_ids.is_empty() {
         checks.push(VerifyCheck::pass(
             "replay-package-local",
-            &format!("no duplicate approval use inside package ({} uses scanned)", bundle.uses.len()),
+            &format!(
+                "no duplicate approval use inside package ({} uses scanned)",
+                bundle.uses.len()
+            ),
         ));
     } else {
         let mut detail = String::from("package-local replay violation:");
@@ -786,16 +865,24 @@ pub(crate) fn add_approval_evidence_checks(
         for cp in &bundle.checkpoints {
             let recomputed = journal_checkpoint_record_digest(cp);
             if recomputed != cp.record_digest {
-                tampered.push((cp.checkpoint_id.clone(), cp.record_digest.clone(), recomputed));
+                tampered.push((
+                    cp.checkpoint_id.clone(),
+                    cp.record_digest.clone(),
+                    recomputed,
+                ));
             }
         }
         if tampered.is_empty() {
             checks.push(VerifyCheck::pass(
                 "replay-included-checkpoint",
-                &format!("{} included journal checkpoint(s) verify offline", bundle.checkpoints.len()),
+                &format!(
+                    "{} included journal checkpoint(s) verify offline",
+                    bundle.checkpoints.len()
+                ),
             ));
         } else {
-            let detail = tampered.iter()
+            let detail = tampered
+                .iter()
                 .map(|(id, expected, actual)| {
                     format!("checkpoint {id} tampered (stored {expected}, recomputed {actual})")
                 })
@@ -828,7 +915,8 @@ pub(crate) fn add_approval_evidence_checks(
                 &format!("{} use record(s) recompute identically", bundle.uses.len()),
             ));
         } else {
-            let detail = tampered_uses.iter()
+            let detail = tampered_uses
+                .iter()
                 .map(|(id, expected, actual)| {
                     format!("use {id} tampered (stored {expected}, recomputed {actual})")
                 })
@@ -857,13 +945,14 @@ pub(crate) fn add_approval_evidence_checks(
     // SHA-256.
     if !bundle.uses.is_empty() {
         use crate::attestation::envelope::Envelope;
-        use crate::attestation::{pae, artifact_id_from_pae};
+        use crate::attestation::{artifact_id_from_pae, pae};
         use crate::statements::{nonce_digest, ApprovalStatement};
-        let mut grant_nonce_digest: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        let mut grant_nonce_digest: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
         let mut tampered_grants: Vec<String> = Vec::new();
         for (grant_id, env_bytes) in &bundle.grants {
             let env = match Envelope::from_json(env_bytes) {
-                Ok(e)  => e,
+                Ok(e) => e,
                 Err(_) => {
                     tampered_grants.push(format!("grant {grant_id} envelope unparseable"));
                     continue;
@@ -887,9 +976,10 @@ pub(crate) fn add_approval_evidence_checks(
                 continue;
             }
             let approval: ApprovalStatement = match env.unmarshal_statement() {
-                Ok(a)  => a,
+                Ok(a) => a,
                 Err(_) => {
-                    tampered_grants.push(format!("grant {grant_id} payload not an ApprovalStatement"));
+                    tampered_grants
+                        .push(format!("grant {grant_id} payload not an ApprovalStatement"));
                     continue;
                 }
             };
@@ -925,10 +1015,19 @@ pub(crate) fn add_approval_evidence_checks(
             ));
         } else {
             let mut parts: Vec<String> = Vec::new();
-            if !tampered_grants.is_empty() { parts.push(tampered_grants.join("; ")); }
-            if !mismatches.is_empty()      { parts.push(mismatches.join("; ")); }
-            if !missing_grants.is_empty()  { parts.push(missing_grants.join("; ")); }
-            checks.push(VerifyCheck::fail("approval-use-nonce-binding", &parts.join("; ")));
+            if !tampered_grants.is_empty() {
+                parts.push(tampered_grants.join("; "));
+            }
+            if !mismatches.is_empty() {
+                parts.push(mismatches.join("; "));
+            }
+            if !missing_grants.is_empty() {
+                parts.push(missing_grants.join("; "));
+            }
+            checks.push(VerifyCheck::fail(
+                "approval-use-nonce-binding",
+                &parts.join("; "),
+            ));
         }
     }
 
@@ -948,7 +1047,7 @@ pub(crate) fn add_approval_evidence_checks(
     // than silent PASS.
     if !bundle.uses.is_empty() {
         use crate::attestation::envelope::Envelope;
-        use crate::attestation::{pae, artifact_id_from_pae};
+        use crate::attestation::{artifact_id_from_pae, pae};
         use crate::statements::{nonce_digest, ActionStatement};
         if bundle.action_envelopes.is_empty() {
             checks.push(VerifyCheck::warn(
@@ -956,12 +1055,13 @@ pub(crate) fn add_approval_evidence_checks(
                 "no action envelopes embedded -- action↔use binding not asserted by package (pre-v0.9.10)",
             ));
         } else {
-            let use_ids: std::collections::HashSet<&str> = bundle.uses.iter().map(|u| u.use_id.as_str()).collect();
+            let use_ids: std::collections::HashSet<&str> =
+                bundle.uses.iter().map(|u| u.use_id.as_str()).collect();
             let mut violations: Vec<String> = Vec::new();
             let mut bound_count = 0usize;
             for (artifact_id, env_bytes) in &bundle.action_envelopes {
                 let env = match Envelope::from_json(env_bytes) {
-                    Ok(e)  => e,
+                    Ok(e) => e,
                     Err(_) => {
                         violations.push(format!("action {artifact_id} envelope unparseable"));
                         continue;
@@ -977,7 +1077,8 @@ pub(crate) fn add_approval_evidence_checks(
                 let derived = match env.payload_bytes() {
                     Ok(p) => artifact_id_from_pae(&pae(&env.payload_type, &p)),
                     Err(_) => {
-                        violations.push(format!("action {artifact_id} envelope payload undecodable"));
+                        violations
+                            .push(format!("action {artifact_id} envelope payload undecodable"));
                         continue;
                     }
                 };
@@ -988,7 +1089,7 @@ pub(crate) fn add_approval_evidence_checks(
                     continue;
                 }
                 let action: ActionStatement = match env.unmarshal_statement() {
-                    Ok(a)  => a,
+                    Ok(a) => a,
                     Err(_) => {
                         violations.push(format!("action {artifact_id} not an ActionStatement"));
                         continue;
@@ -996,7 +1097,7 @@ pub(crate) fn add_approval_evidence_checks(
                 };
                 let raw_nonce = match action.approval_nonce.as_deref() {
                     Some(n) => n,
-                    None    => continue,
+                    None => continue,
                 };
                 let claimed_use_id = action
                     .meta
@@ -1075,7 +1176,11 @@ pub(crate) fn add_approval_evidence_checks(
         use std::collections::{HashMap, HashSet};
         // Each record carries a label for diagnostics + its own
         // record_digest + previous_record_digest.
-        struct Node<'a> { label: String, digest: &'a str, prev: &'a str }
+        struct Node<'a> {
+            label: String,
+            digest: &'a str,
+            prev: &'a str,
+        }
         let mut nodes: Vec<Node> = Vec::new();
         for u in &bundle.uses {
             nodes.push(Node {
@@ -1112,7 +1217,11 @@ pub(crate) fn add_approval_evidence_checks(
             violations.push(format!(
                 "{} records claim previous_record_digest='' (genesis): {}",
                 genesis.len(),
-                genesis.iter().map(|n| n.label.clone()).collect::<Vec<_>>().join(", "),
+                genesis
+                    .iter()
+                    .map(|n| n.label.clone())
+                    .collect::<Vec<_>>()
+                    .join(", "),
             ));
         }
         // Forks: two records sharing the same non-empty prev.
@@ -1126,7 +1235,11 @@ pub(crate) fn add_approval_evidence_checks(
                     "fork: {} records share previous_record_digest {}: {}",
                     group.len(),
                     prev,
-                    group.iter().map(|n| n.label.clone()).collect::<Vec<_>>().join(", "),
+                    group
+                        .iter()
+                        .map(|n| n.label.clone())
+                        .collect::<Vec<_>>()
+                        .join(", "),
                 ));
             }
         }
@@ -1142,7 +1255,7 @@ pub(crate) fn add_approval_evidence_checks(
                 .collect();
             let start = match genesis.first() {
                 Some(g) => Some(*g),
-                None    => None,
+                None => None,
             };
             let mut visited: HashSet<&str> = HashSet::new();
             let mut current = start;
@@ -1158,7 +1271,8 @@ pub(crate) fn add_approval_evidence_checks(
             }
             // Disconnected: walk didn't include every node.
             if violations.is_empty() && visited.len() != nodes.len() {
-                let unreached: Vec<String> = nodes.iter()
+                let unreached: Vec<String> = nodes
+                    .iter()
                     .filter(|n| !visited.contains(n.digest))
                     .map(|n| n.label.clone())
                     .collect();
@@ -1291,27 +1405,18 @@ pub(crate) fn add_approval_evidence_checks(
             }
         }
         if all_ok && have_valid_signature {
-            checks.push(VerifyCheck::pass(
-                "replay-hub-org",
-                &details.join("; "),
-            ));
+            checks.push(VerifyCheck::pass("replay-hub-org", &details.join("; ")));
         } else if security_fatal {
             // Untrusted issuer or tampered signature: fail-by-default
             // regardless of --strict. Self-signed forgeries must not
             // pass yellow.
-            checks.push(VerifyCheck::fail(
-                "replay-hub-org",
-                &details.join("; "),
-            ));
+            checks.push(VerifyCheck::fail("replay-hub-org", &details.join("; ")));
         } else {
             // Hub checkpoint is present but does not satisfy every
             // non-security gate (missing-field, coverage gap).
             // Default mode warns; the CLI verify wrapper's --strict
             // promotes to fail.
-            checks.push(VerifyCheck::warn(
-                "replay-hub-org",
-                &details.join("; "),
-            ));
+            checks.push(VerifyCheck::warn("replay-hub-org", &details.join("; ")));
         }
     }
     // No hub-org checkpoints embedded -> no row. The Approval
@@ -1340,13 +1445,25 @@ pub enum VerifyStatus {
 
 impl VerifyCheck {
     pub fn pass(name: &str, detail: &str) -> Self {
-        Self { name: name.into(), status: VerifyStatus::Pass, detail: detail.into() }
+        Self {
+            name: name.into(),
+            status: VerifyStatus::Pass,
+            detail: detail.into(),
+        }
     }
     pub fn fail(name: &str, detail: &str) -> Self {
-        Self { name: name.into(), status: VerifyStatus::Fail, detail: detail.into() }
+        Self {
+            name: name.into(),
+            status: VerifyStatus::Fail,
+            detail: detail.into(),
+        }
     }
     pub fn warn(name: &str, detail: &str) -> Self {
-        Self { name: name.into(), status: VerifyStatus::Warn, detail: detail.into() }
+        Self {
+            name: name.into(),
+            status: VerifyStatus::Warn,
+            detail: detail.into(),
+        }
     }
 }
 
@@ -1367,8 +1484,7 @@ const PREVIEW_TEMPLATE: &str = include_str!("preview_template.html");
 /// Open it in any modern browser and it automatically verifies the receipt
 /// and shows pass/fail for each check.
 pub fn render_preview_html(receipt: &SessionReceipt) -> String {
-    let receipt_json = serde_json::to_string_pretty(receipt)
-        .unwrap_or_else(|_| "{}".to_string());
+    let receipt_json = serde_json::to_string_pretty(receipt).unwrap_or_else(|_| "{}".to_string());
     // Defense-in-depth: escape </script sequences so a malicious receipt
     // field cannot break out of the JSON data block. The primary defense
     // is type="application/json" which the HTML parser does not execute,
@@ -1384,8 +1500,7 @@ pub fn render_preview_html(receipt: &SessionReceipt) -> String {
     // placeholder check) the receipt body is never injected into it. The
     // template's own placeholder check uses a split sentinel for the same
     // reason. The page title is set at runtime from the parsed JSON.
-    PREVIEW_TEMPLATE
-        .replacen("__RECEIPT_JSON__", &safe_json, 1)
+    PREVIEW_TEMPLATE.replacen("__RECEIPT_JSON__", &safe_json, 1)
 }
 
 #[cfg(test)]
@@ -1426,20 +1541,46 @@ mod tests {
 
         let events = vec![
             mk(0, "root", EventType::SessionStarted),
-            mk(1, "root", EventType::AgentStarted { parent_agent_instance_id: None }),
-            mk(2, "root", EventType::AgentCalledTool {
-                tool_name: "read_file".into(),
-                tool_input_digest: None,
-                tool_output_digest: None,
-                duration_ms: Some(10),
-            }),
-            mk(3, "root", EventType::AgentCompleted { termination_reason: None }),
-            mk(4, "root", EventType::SessionClosed { summary: Some("Done".into()), duration_ms: Some(60000) }),
+            mk(
+                1,
+                "root",
+                EventType::AgentStarted {
+                    parent_agent_instance_id: None,
+                },
+            ),
+            mk(
+                2,
+                "root",
+                EventType::AgentCalledTool {
+                    tool_name: "read_file".into(),
+                    tool_input_digest: None,
+                    tool_output_digest: None,
+                    duration_ms: Some(10),
+                },
+            ),
+            mk(
+                3,
+                "root",
+                EventType::AgentCompleted {
+                    termination_reason: None,
+                },
+            ),
+            mk(
+                4,
+                "root",
+                EventType::SessionClosed {
+                    summary: Some("Done".into()),
+                    duration_ms: Some(60000),
+                },
+            ),
         ];
 
-        let artifacts = vec![
-            ArtifactEntry { artifact_id: "art_001".into(), payload_type: "action".into(), digest: None, signed_at: None },
-        ];
+        let artifacts = vec![ArtifactEntry {
+            artifact_id: "art_001".into(),
+            payload_type: "action".into(),
+            digest: None,
+            signed_at: None,
+        }];
 
         ReceiptComposer::compose(&manifest, &events, artifacts)
     }
@@ -1469,16 +1610,27 @@ mod tests {
     #[test]
     fn verify_valid_package() {
         let receipt = make_receipt();
-        let tmp = std::env::temp_dir().join(format!("treeship-pkg-verify-{}", rand::random::<u32>()));
+        let tmp =
+            std::env::temp_dir().join(format!("treeship-pkg-verify-{}", rand::random::<u32>()));
 
         let output = build_package(&receipt, &tmp).unwrap();
         let checks = verify_package(&output.path).unwrap();
 
-        let fails: Vec<_> = checks.iter().filter(|c| c.status == VerifyStatus::Fail).collect();
+        let fails: Vec<_> = checks
+            .iter()
+            .filter(|c| c.status == VerifyStatus::Fail)
+            .collect();
         assert!(fails.is_empty(), "unexpected failures: {fails:?}");
 
-        let passes: Vec<_> = checks.iter().filter(|c| c.status == VerifyStatus::Pass).collect();
-        assert!(passes.len() >= 5, "expected at least 5 pass checks, got {}", passes.len());
+        let passes: Vec<_> = checks
+            .iter()
+            .filter(|c| c.status == VerifyStatus::Pass)
+            .collect();
+        assert!(
+            passes.len() >= 5,
+            "expected at least 5 pass checks, got {}",
+            passes.len()
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -1490,15 +1642,21 @@ mod tests {
     fn verify_warns_when_reconcile_degraded() {
         let mut receipt = make_receipt();
         receipt.proofs.reconcile_degraded = true;
-        let tmp = std::env::temp_dir().join(format!("treeship-pkg-degraded-{}", rand::random::<u32>()));
+        let tmp =
+            std::env::temp_dir().join(format!("treeship-pkg-degraded-{}", rand::random::<u32>()));
 
         let output = build_package(&receipt, &tmp).unwrap();
         let checks = verify_package(&output.path).unwrap();
 
-        let warned = checks.iter().any(|c| c.name == "reconcile_degraded" && c.status == VerifyStatus::Warn);
+        let warned = checks
+            .iter()
+            .any(|c| c.name == "reconcile_degraded" && c.status == VerifyStatus::Warn);
         assert!(warned, "expected a reconcile_degraded WARN, got {checks:?}");
         // It is a WARN, not a hard fail (the signatures/Merkle are still valid).
-        let fails: Vec<_> = checks.iter().filter(|c| c.status == VerifyStatus::Fail).collect();
+        let fails: Vec<_> = checks
+            .iter()
+            .filter(|c| c.status == VerifyStatus::Fail)
+            .collect();
         assert!(fails.is_empty(), "must not hard-fail: {fails:?}");
 
         let _ = std::fs::remove_dir_all(&tmp);
@@ -1508,7 +1666,8 @@ mod tests {
     fn verify_no_degraded_warn_when_clean() {
         // The default receipt has reconcile_degraded=false: no such WARN.
         let receipt = make_receipt();
-        let tmp = std::env::temp_dir().join(format!("treeship-pkg-clean-{}", rand::random::<u32>()));
+        let tmp =
+            std::env::temp_dir().join(format!("treeship-pkg-clean-{}", rand::random::<u32>()));
         let output = build_package(&receipt, &tmp).unwrap();
         let checks = verify_package(&output.path).unwrap();
         assert!(
@@ -1520,7 +1679,8 @@ mod tests {
 
     #[test]
     fn verify_detects_missing_receipt() {
-        let tmp = std::env::temp_dir().join(format!("treeship-pkg-empty-{}", rand::random::<u32>()));
+        let tmp =
+            std::env::temp_dir().join(format!("treeship-pkg-empty-{}", rand::random::<u32>()));
         std::fs::create_dir_all(&tmp).unwrap();
 
         let err = read_package(&tmp);

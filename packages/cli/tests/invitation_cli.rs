@@ -34,7 +34,10 @@ impl Workspace {
     }
 
     fn config(&self) -> String {
-        self.root.join(".treeship/config.json").display().to_string()
+        self.root
+            .join(".treeship/config.json")
+            .display()
+            .to_string()
     }
 
     /// Returns a `Command` for the treeship binary, with HOME and
@@ -45,15 +48,21 @@ impl Workspace {
     fn cmd(&self) -> Command {
         let mut c = Command::new(cli_path());
         c.env("HOME", &self.root);
-        c.env("TREESHIP_TRUST_ROOTS",
-              self.root.join(".treeship/trust_roots.json").display().to_string());
+        c.env(
+            "TREESHIP_TRUST_ROOTS",
+            self.root
+                .join(".treeship/trust_roots.json")
+                .display()
+                .to_string(),
+        );
         c.env("TREESHIP_ALLOW_INSECURE_KEY_PERMS", "1");
         c.current_dir(&self.root);
         c
     }
 
     fn init(&self) {
-        let out = self.cmd()
+        let out = self
+            .cmd()
             .args(["init", "--config"])
             .arg(self.config())
             .args(["--name", "invitation-test"])
@@ -69,7 +78,8 @@ impl Workspace {
     }
 
     fn session_start(&self) -> String {
-        let out = self.cmd()
+        let out = self
+            .cmd()
             .args(["session", "start", "--config"])
             .arg(self.config())
             .args(["--name", "host_session"])
@@ -91,7 +101,8 @@ impl Workspace {
         }
         let json: serde_json::Value = serde_json::from_slice(
             &std::fs::read(&path).unwrap_or_else(|_| panic!("read {}", path.display())),
-        ).unwrap();
+        )
+        .unwrap();
         json["session_id"].as_str().expect("session_id").to_string()
     }
 
@@ -105,18 +116,19 @@ impl Workspace {
         let manifest_path = keys_dir.join("manifest.json");
         let manifest_bytes = std::fs::read(&manifest_path)
             .unwrap_or_else(|e| panic!("read keystore manifest {}: {e}", manifest_path.display()));
-        let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes)
-            .expect("manifest parses as JSON");
-        let default_id = manifest["default_key_id"].as_str()
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&manifest_bytes).expect("manifest parses as JSON");
+        let default_id = manifest["default_key_id"]
+            .as_str()
             .expect("manifest has default_key_id");
         let key_path = keys_dir.join(format!("{default_id}.json"));
         let key_bytes = std::fs::read(&key_path)
             .unwrap_or_else(|e| panic!("read key file {}: {e}", key_path.display()));
-        let entry: serde_json::Value = serde_json::from_slice(&key_bytes)
-            .expect("key file parses as JSON");
-        let pk_array = entry["public_key"].as_array()
-            .expect("public_key is array");
-        let pk: Vec<u8> = pk_array.iter()
+        let entry: serde_json::Value =
+            serde_json::from_slice(&key_bytes).expect("key file parses as JSON");
+        let pk_array = entry["public_key"].as_array().expect("public_key is array");
+        let pk: Vec<u8> = pk_array
+            .iter()
             .map(|n| n.as_u64().expect("byte") as u8)
             .collect();
         assert_eq!(pk.len(), 32, "Ed25519 public key must be 32 bytes");
@@ -125,8 +137,11 @@ impl Workspace {
 
     fn add_trust(&self, key_id: &str, pubkey_b64url: &str, kind: &str) {
         let canonical = format!("ed25519:{}", pubkey_b64url);
-        let out = self.cmd()
-            .args(["trust", "add", key_id, &canonical, "--kind", kind, "--yes", "--format", "json"])
+        let out = self
+            .cmd()
+            .args([
+                "trust", "add", key_id, &canonical, "--kind", kind, "--yes", "--format", "json",
+            ])
             .output()
             .expect("trust add");
         if !out.status.success() {
@@ -163,7 +178,8 @@ fn treeship_session_invite_then_join_roundtrip() {
     ws.add_trust("host_default", &pubkey, "session_host");
 
     // Mint an open invitation (default 1h expiry).
-    let invite_out = ws.cmd()
+    let invite_out = ws
+        .cmd()
         .args(["session", "invite", &session_id, "--format", "json"])
         .args(["--open", "--config"])
         .arg(ws.config())
@@ -178,8 +194,14 @@ fn treeship_session_invite_then_join_roundtrip() {
     let mint: serde_json::Value = serde_json::from_str(&stdout)
         .unwrap_or_else(|_| panic!("invite stdout not JSON: {stdout}"));
     assert_eq!(mint["status"], "ok");
-    let invitation_id = mint["invitation_id"].as_str().expect("invitation_id").to_string();
-    let blob = mint["bootstrap_blob"].as_str().expect("bootstrap_blob").to_string();
+    let invitation_id = mint["invitation_id"]
+        .as_str()
+        .expect("invitation_id")
+        .to_string();
+    let blob = mint["bootstrap_blob"]
+        .as_str()
+        .expect("bootstrap_blob")
+        .to_string();
     assert!(blob.contains("-----BEGIN TREESHIP INVITATION-----"));
     assert!(blob.contains("-----END TREESHIP INVITATION-----"));
 
@@ -187,11 +209,14 @@ fn treeship_session_invite_then_join_roundtrip() {
     let blob_path = ws.root.join("invite.blob");
     std::fs::write(&blob_path, &blob).unwrap();
 
-    let join_out = ws.cmd()
+    let join_out = ws
+        .cmd()
         .args(["session", "join", "--format", "json"])
-        .args(["--invite-file"]).arg(&blob_path)
+        .args(["--invite-file"])
+        .arg(&blob_path)
         .args(["--actor", "agent://joiner"])
-        .args(["--config"]).arg(ws.config())
+        .args(["--config"])
+        .arg(ws.config())
         .output()
         .expect("session join");
     let stdout = String::from_utf8_lossy(&join_out.stdout).to_string();
@@ -200,17 +225,28 @@ fn treeship_session_invite_then_join_roundtrip() {
         "join failed: stdout={stdout} stderr={}",
         String::from_utf8_lossy(&join_out.stderr),
     );
-    let join: serde_json::Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|_| panic!("join stdout not JSON: {stdout}"));
+    let join: serde_json::Value =
+        serde_json::from_str(&stdout).unwrap_or_else(|_| panic!("join stdout not JSON: {stdout}"));
     assert_eq!(join["status"], "pending_countersign");
     assert_eq!(join["invitation_ref"], invitation_id);
-    let participant_id = join["participant_id"].as_str().expect("participant_id").to_string();
+    let participant_id = join["participant_id"]
+        .as_str()
+        .expect("participant_id")
+        .to_string();
 
     // Countersign as host. After this the participant artifact carries
     // two signatures and verifies as finalized.
-    let cs_out = ws.cmd()
-        .args(["session", "countersign", &participant_id, "--format", "json"])
-        .args(["--config"]).arg(ws.config())
+    let cs_out = ws
+        .cmd()
+        .args([
+            "session",
+            "countersign",
+            &participant_id,
+            "--format",
+            "json",
+        ])
+        .args(["--config"])
+        .arg(ws.config())
         .output()
         .expect("session countersign");
     let stdout = String::from_utf8_lossy(&cs_out.stdout).to_string();
@@ -226,15 +262,20 @@ fn treeship_session_invite_then_join_roundtrip() {
 
     // Second join attempt with the SAME invitation must fail -- single
     // use enforced by the Approval Use Journal.
-    let join2 = ws.cmd()
+    let join2 = ws
+        .cmd()
         .args(["session", "join", "--format", "json"])
-        .args(["--invite-file"]).arg(&blob_path)
+        .args(["--invite-file"])
+        .arg(&blob_path)
         .args(["--actor", "agent://joiner"])
-        .args(["--config"]).arg(ws.config())
+        .args(["--config"])
+        .arg(ws.config())
         .output()
         .expect("session join (replay)");
-    assert!(!join2.status.success(),
-            "second join of the same invitation must fail (single-use)");
+    assert!(
+        !join2.status.success(),
+        "second join of the same invitation must fail (single-use)"
+    );
     let stderr = String::from_utf8_lossy(&join2.stderr).to_string();
     let stdout = String::from_utf8_lossy(&join2.stdout).to_string();
     let combined = format!("{stderr}{stdout}");
@@ -256,13 +297,17 @@ fn treeship_session_invite_rejects_no_session_context() {
     // No session start -- no session.json on disk.
     assert!(ws.read_session_id().is_none());
 
-    let out = ws.cmd()
+    let out = ws
+        .cmd()
         .args(["session", "invite", "--format", "json"])
-        .args(["--open", "--config"]).arg(ws.config())
+        .args(["--open", "--config"])
+        .arg(ws.config())
         .output()
         .expect("session invite no-session");
-    assert!(!out.status.success(),
-            "invite with no session context must fail");
+    assert!(
+        !out.status.success(),
+        "invite with no session context must fail"
+    );
     let combined = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -287,9 +332,11 @@ fn treeship_session_join_no_countersign_appears_pending() {
     let pubkey = ws.default_pubkey_b64();
     ws.add_trust("host_default", &pubkey, "session_host");
 
-    let invite_out = ws.cmd()
+    let invite_out = ws
+        .cmd()
         .args(["session", "invite", &session_id, "--format", "json"])
-        .args(["--open", "--config"]).arg(ws.config())
+        .args(["--open", "--config"])
+        .arg(ws.config())
         .output()
         .expect("session invite");
     assert!(invite_out.status.success());
@@ -301,11 +348,13 @@ fn treeship_session_join_no_countersign_appears_pending() {
     // blobs with dash-leading content; --invite-file works without
     // this dance.
     let invite_arg = format!("--invite={blob}");
-    let join_out = ws.cmd()
+    let join_out = ws
+        .cmd()
         .args(["session", "join", "--format", "json"])
         .arg(&invite_arg)
         .args(["--actor", "agent://joiner"])
-        .args(["--config"]).arg(ws.config())
+        .args(["--config"])
+        .arg(ws.config())
         .output()
         .expect("session join");
     assert!(
@@ -337,10 +386,12 @@ fn treeship_session_join_no_countersign_appears_pending() {
     }
     let bytes = std::fs::read(&artifact_path).unwrap();
     let record: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    let sigs = record["envelope"]["signatures"].as_array()
+    let sigs = record["envelope"]["signatures"]
+        .as_array()
         .expect("envelope.signatures array");
     assert_eq!(
-        sigs.len(), 1,
+        sigs.len(),
+        1,
         "pending participant must carry exactly one signature; got {sigs:?}",
     );
 }

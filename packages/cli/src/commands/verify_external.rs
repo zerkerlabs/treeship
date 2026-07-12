@@ -54,7 +54,11 @@ impl ExternalExit {
 /// authenticity). A consistent receipt is "structural-pass"; a failed check
 /// or an empty receipt (nothing to prove) is "fail".
 fn structural_outcome(receipt_failed: bool, empty_receipt: bool) -> &'static str {
-    if receipt_failed || empty_receipt { "fail" } else { "structural-pass" }
+    if receipt_failed || empty_receipt {
+        "fail"
+    } else {
+        "structural-pass"
+    }
 }
 
 /// Heuristic: does this look like a URL we should fetch?
@@ -69,18 +73,17 @@ pub fn is_local_path(s: &str) -> bool {
 
 /// Run external verification. The dispatcher (commands::verify::run) decides
 /// which mode to call based on the target shape.
-pub fn run(
-    target: &str,
-    certificate: Option<&str>,
-    printer: &Printer,
-) -> ExternalExit {
+pub fn run(target: &str, certificate: Option<&str>, printer: &Printer) -> ExternalExit {
     // Resolve the target into a parsed receipt or certificate.
     let target_kind = classify_target(target);
     let (receipt, package_checks, source_label, exit_for_load) = match target_kind {
         TargetKind::Url => match fetch_receipt_url(target) {
             Ok(receipt) => (Some(receipt), Vec::new(), format!("URL {target}"), None),
             Err(LoadError::Io(msg)) => {
-                printer.failure("could not fetch receipt", &[("target", target), ("reason", &msg)]);
+                printer.failure(
+                    "could not fetch receipt",
+                    &[("target", target), ("reason", &msg)],
+                );
                 return ExternalExit::IoError;
             }
             Err(LoadError::Parse(msg)) => {
@@ -95,10 +98,13 @@ pub fn run(
             let checks = match verify_package(path) {
                 Ok(c) => c,
                 Err(e) => {
-                    printer.failure("could not read package", &[
-                        ("path", &path.display().to_string()),
-                        ("reason", &e.to_string()),
-                    ]);
+                    printer.failure(
+                        "could not read package",
+                        &[
+                            ("path", &path.display().to_string()),
+                            ("reason", &e.to_string()),
+                        ],
+                    );
                     return ExternalExit::IoError;
                 }
             };
@@ -131,7 +137,11 @@ pub fn run(
 
     // Combine. URL mode uses json_checks; package mode uses package_checks
     // (which is a superset). Pick the bigger one.
-    let checks = if package_checks.is_empty() { json_checks } else { package_checks };
+    let checks = if package_checks.is_empty() {
+        json_checks
+    } else {
+        package_checks
+    };
 
     let receipt = match receipt {
         Some(r) => r,
@@ -143,7 +153,14 @@ pub fn run(
 
     // JSON output mode short-circuits the rest.
     if printer.format == Format::Json {
-        return emit_json(printer, target, &source_label, &receipt, &checks, certificate);
+        return emit_json(
+            printer,
+            target,
+            &source_label,
+            &receipt,
+            &checks,
+            certificate,
+        );
     }
 
     // Header + per-step output.
@@ -160,15 +177,27 @@ pub fn run(
     // NOT call that "authentic". An empty receipt has nothing to check, so it
     // is not even structurally meaningful.
     let has_content = !receipt.artifacts.is_empty();
-    let mut overall = if receipt_ok { ExternalExit::Ok } else { ExternalExit::VerifyFailed };
+    let mut overall = if receipt_ok {
+        ExternalExit::Ok
+    } else {
+        ExternalExit::VerifyFailed
+    };
 
     if receipt_ok && has_content {
         printer.blank();
         printer.info(&printer.green("Structurally consistent."));
         printer.warn(
             "signatures and issuer were NOT verified from this source",
-            &[("checked", "Merkle root, inclusion proofs, leaf count, timeline order"),
-              ("not checked", "who signed this receipt (no signature or trust-root check)")],
+            &[
+                (
+                    "checked",
+                    "Merkle root, inclusion proofs, leaf count, timeline order",
+                ),
+                (
+                    "not checked",
+                    "who signed this receipt (no signature or trust-root check)",
+                ),
+            ],
         );
         printer.hint("to verify signatures against your trust roots, use the local artifact form: treeship verify <artifact-id>");
         printer.blank();
@@ -177,8 +206,13 @@ pub fn run(
         printer.blank();
         printer.warn(
             "receipt is empty — nothing to verify",
-            &[("artifacts", "0"),
-              ("note", "an internally-consistent receipt with no artifacts proves nothing")],
+            &[
+                ("artifacts", "0"),
+                (
+                    "note",
+                    "an internally-consistent receipt with no artifacts proves nothing",
+                ),
+            ],
         );
         overall = ExternalExit::VerifyFailed;
     } else {
@@ -192,18 +226,27 @@ pub fn run(
             // Don't cross-verify against an unverified or empty receipt:
             // an empty receipt has no tool calls to authorize.
             printer.blank();
-            printer.warn("skipping cross-verification because receipt did not verify", &[]);
+            printer.warn(
+                "skipping cross-verification because receipt did not verify",
+                &[],
+            );
             return overall;
         }
 
         let cert = match load_certificate(cert_target) {
             Ok(c) => c,
             Err(LoadError::Io(msg)) => {
-                printer.failure("could not load certificate", &[("certificate", cert_target), ("reason", &msg)]);
+                printer.failure(
+                    "could not load certificate",
+                    &[("certificate", cert_target), ("reason", &msg)],
+                );
                 return ExternalExit::IoError;
             }
             Err(LoadError::Parse(msg)) => {
-                printer.failure("could not parse certificate", &[("certificate", cert_target), ("reason", &msg)]);
+                printer.failure(
+                    "could not parse certificate",
+                    &[("certificate", cert_target), ("reason", &msg)],
+                );
                 return ExternalExit::VerifyFailed;
             }
         };
@@ -238,10 +281,15 @@ pub fn run(
         let ship_ok = matches!(result.ship_id_status, ShipIdStatus::Match);
         let ship_msg = match &result.ship_id_status {
             ShipIdStatus::Match => "Ship IDs match".to_string(),
-            ShipIdStatus::Mismatch { receipt, certificate } => {
+            ShipIdStatus::Mismatch {
+                receipt,
+                certificate,
+            } => {
                 format!("Ship IDs mismatch (receipt={receipt}, certificate={certificate})")
             }
-            ShipIdStatus::Unknown => "Receipt has no ship_id (legacy receipt; cannot cross-verify)".to_string(),
+            ShipIdStatus::Unknown => {
+                "Receipt has no ship_id (legacy receipt; cannot cross-verify)".to_string()
+            }
         };
         emit_step(printer, ship_ok, &ship_msg, None);
 
@@ -250,9 +298,9 @@ pub fn run(
             CertificateStatus::Expired { valid_until, now } => {
                 Some(format!("Certificate expired at {valid_until} (now: {now})"))
             }
-            CertificateStatus::NotYetValid { issued_at, now } => {
-                Some(format!("Certificate not yet valid (issued_at={issued_at}, now={now})"))
-            }
+            CertificateStatus::NotYetValid { issued_at, now } => Some(format!(
+                "Certificate not yet valid (issued_at={issued_at}, now={now})"
+            )),
         };
         if let Some(detail) = cert_detail {
             emit_step(printer, false, "Certificate validity", Some(&detail));
@@ -270,7 +318,11 @@ pub fn run(
             format!(
                 "{} unauthorized tool call{}: {}",
                 result.unauthorized_tool_calls.len(),
-                if result.unauthorized_tool_calls.len() == 1 { "" } else { "s" },
+                if result.unauthorized_tool_calls.len() == 1 {
+                    ""
+                } else {
+                    "s"
+                },
                 result.unauthorized_tool_calls.join(", ")
             )
         };
@@ -391,7 +443,10 @@ fn load_certificate(target: &str) -> Result<AgentCertificate, LoadError> {
             .call()
             .map_err(|e| LoadError::Io(format!("HTTP request failed: {e}")))?;
         if resp.status() != 200 {
-            return Err(LoadError::Io(format!("HTTP {} from {target}", resp.status())));
+            return Err(LoadError::Io(format!(
+                "HTTP {} from {target}",
+                resp.status()
+            )));
         }
         let body = resp
             .into_string()
@@ -581,10 +636,13 @@ fn verify_agent_package_only(path: &Path, printer: &Printer) -> ExternalExit {
     let bytes = match std::fs::read(&cert_path) {
         Ok(b) => b,
         Err(e) => {
-            printer.failure("could not read certificate.json", &[
-                ("path", &cert_path.display().to_string()),
-                ("reason", &e.to_string()),
-            ]);
+            printer.failure(
+                "could not read certificate.json",
+                &[
+                    ("path", &cert_path.display().to_string()),
+                    ("reason", &e.to_string()),
+                ],
+            );
             return ExternalExit::IoError;
         }
     };
@@ -612,14 +670,28 @@ fn verify_agent_package_only(path: &Path, printer: &Printer) -> ExternalExit {
                 "signature_valid": sig_ok,
             },
         }));
-        return if sig_ok { ExternalExit::Ok } else { ExternalExit::VerifyFailed };
+        return if sig_ok {
+            ExternalExit::Ok
+        } else {
+            ExternalExit::VerifyFailed
+        };
     }
 
-    emit_step(printer, true, &format!("Loaded certificate from {}", path.display()), None);
+    emit_step(
+        printer,
+        true,
+        &format!("Loaded certificate from {}", path.display()),
+        None,
+    );
     match verify_certificate(&cert, &trust) {
         Ok(()) => emit_step(printer, true, "Certificate signature valid (Ed25519)", None),
         Err(e) => {
-            emit_step(printer, false, "Certificate signature valid (Ed25519)", Some(&e.to_string()));
+            emit_step(
+                printer,
+                false,
+                "Certificate signature valid (Ed25519)",
+                Some(&e.to_string()),
+            );
             return ExternalExit::VerifyFailed;
         }
     }
@@ -678,13 +750,22 @@ mod tests {
 
     #[test]
     fn classify_url() {
-        assert!(matches!(classify_target("https://api.treeship.dev/v1/receipt/x"), TargetKind::Url));
-        assert!(matches!(classify_target("http://localhost:8080/v1/receipt/x"), TargetKind::Url));
+        assert!(matches!(
+            classify_target("https://api.treeship.dev/v1/receipt/x"),
+            TargetKind::Url
+        ));
+        assert!(matches!(
+            classify_target("http://localhost:8080/v1/receipt/x"),
+            TargetKind::Url
+        ));
     }
 
     #[test]
     fn classify_unknown_for_nonexistent_path() {
-        assert!(matches!(classify_target("/no/such/path/here"), TargetKind::Unknown));
+        assert!(matches!(
+            classify_target("/no/such/path/here"),
+            TargetKind::Unknown
+        ));
         assert!(matches!(classify_target("art_abc123"), TargetKind::Unknown));
     }
 

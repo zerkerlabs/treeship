@@ -24,13 +24,13 @@ pub type KeyId = String;
 /// Public information about a stored key. Never contains private material.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeyInfo {
-    pub id:          KeyId,
-    pub algorithm:   String,   // "ed25519"
-    pub is_default:  bool,
-    pub created_at:  String,   // RFC 3339
+    pub id: KeyId,
+    pub algorithm: String, // "ed25519"
+    pub is_default: bool,
+    pub created_at: String, // RFC 3339
     /// First 8 bytes of sha256(public_key), hex-encoded.
     pub fingerprint: String,
-    pub public_key:  Vec<u8>,  // raw 32-byte Ed25519 public key
+    pub public_key: Vec<u8>, // raw 32-byte Ed25519 public key
     /// RFC 3339 timestamp after which signatures by this key should be
     /// considered stale. `None` means the key has not been rotated and is
     /// indefinitely valid. Set automatically by `Store::rotate` to
@@ -71,17 +71,20 @@ pub enum KeyError {
     /// Carries the path and the observed octal mode so the caller can show
     /// an actionable error. Set `TREESHIP_ALLOW_INSECURE_KEY_PERMS=1` to
     /// bypass during testing or controlled environments.
-    InsecureKeyPerms { path: PathBuf, mode: u32 },
+    InsecureKeyPerms {
+        path: PathBuf,
+        mode: u32,
+    },
 }
 
 impl std::fmt::Display for KeyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Io(e)       => write!(f, "keys io: {}", e),
-            Self::Json(e)     => write!(f, "keys json: {}", e),
-            Self::Crypto(e)   => write!(f, "keys crypto: {}", e),
+            Self::Io(e) => write!(f, "keys io: {}", e),
+            Self::Json(e) => write!(f, "keys json: {}", e),
+            Self::Crypto(e) => write!(f, "keys crypto: {}", e),
             Self::NotFound(k) => write!(f, "key not found: {}", k),
-            Self::EmptyKeyId  => write!(f, "key id must not be empty"),
+            Self::EmptyKeyId => write!(f, "key id must not be empty"),
             Self::NoDefaultKey => write!(f, "no default key — run treeship init"),
             Self::InsecureKeyPerms { path, mode } => write!(
                 f,
@@ -96,22 +99,30 @@ impl std::fmt::Display for KeyError {
 }
 
 impl std::error::Error for KeyError {}
-impl From<io::Error>          for KeyError { fn from(e: io::Error)          -> Self { Self::Io(e) } }
-impl From<serde_json::Error>  for KeyError { fn from(e: serde_json::Error)  -> Self { Self::Json(e) } }
+impl From<io::Error> for KeyError {
+    fn from(e: io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+impl From<serde_json::Error> for KeyError {
+    fn from(e: serde_json::Error) -> Self {
+        Self::Json(e)
+    }
+}
 
 // --- On-disk formats ---
 
 /// The encrypted representation of one keypair on disk.
 #[derive(Serialize, Deserialize, Clone)]
 struct EncryptedEntry {
-    id:           KeyId,
-    algorithm:    String,
-    created_at:   String,
-    public_key:   Vec<u8>,
+    id: KeyId,
+    algorithm: String,
+    created_at: String,
+    public_key: Vec<u8>,
     /// AES-256-GCM ciphertext of the 32-byte Ed25519 secret scalar.
     enc_priv_key: Vec<u8>,
     /// 12-byte GCM nonce used when encrypting.
-    nonce:        Vec<u8>,
+    nonce: Vec<u8>,
     /// RFC 3339 timestamp after which signatures by this key should be
     /// considered stale. `None` means the key is indefinitely valid.
     /// Defaulted on deserialization so pre-0.9.5 entry files still load.
@@ -127,7 +138,7 @@ struct EncryptedEntry {
 #[derive(Serialize, Deserialize, Default)]
 struct Manifest {
     default_key_id: Option<KeyId>,
-    key_ids:        Vec<KeyId>,
+    key_ids: Vec<KeyId>,
 }
 
 // --- Store ---
@@ -147,7 +158,7 @@ struct Manifest {
 /// A future version will delegate to OS credential stores (Secure
 /// Enclave / TPM 2.0).
 pub struct Store {
-    dir:         PathBuf,
+    dir: PathBuf,
     machine_key: [u8; 32],
     /// Decrypt-only fallback machine keys, tried in order when the primary
     /// fails. These cover every wrapping an existing keystore may carry:
@@ -161,7 +172,7 @@ pub struct Store {
     /// rewrapped under the primary. See `open` and `signer`.
     fallback_machine_keys: Vec<[u8; 32]>,
     /// In-memory cache — avoids disk reads on hot paths.
-    cache:       Arc<RwLock<HashMap<KeyId, EncryptedEntry>>>,
+    cache: Arc<RwLock<HashMap<KeyId, EncryptedEntry>>>,
 }
 
 impl Store {
@@ -236,8 +247,7 @@ impl Store {
         // user action.
         if let Ok(user) = std::env::var("USER") {
             for h in local_hostname_variants() {
-                fallback_machine_keys
-                    .push(derive_machine_key_v1_from_parts(&h, &user, &canonical));
+                fallback_machine_keys.push(derive_machine_key_v1_from_parts(&h, &user, &canonical));
             }
         }
         // Order-preserving dedupe (Vec::dedup only folds adjacent repeats),
@@ -267,31 +277,36 @@ impl Store {
     pub fn generate(&self, set_default: bool) -> Result<KeyInfo, KeyError> {
         let key_id = new_key_id();
 
-        let signer = Ed25519Signer::generate(&key_id)
-            .map_err(|e| KeyError::Crypto(e.to_string()))?;
+        let signer =
+            Ed25519Signer::generate(&key_id).map_err(|e| KeyError::Crypto(e.to_string()))?;
 
         // `secret` is a Zeroizing<[u8; 32]> -- the caller-side copy of the
         // signer's secret scalar is wiped on scope exit. `signer` is dropped
         // at end of fn, which wipes its own copy via the Drop impl in
         // attestation::signer.
-        let secret  = signer.secret_bytes();
+        let secret = signer.secret_bytes();
         let pub_key = signer.public_key_bytes();
 
-        let enc = encrypt_for_disk_v2(&self.machine_key, key_id.as_str(), &pub_key, secret.as_slice())
-            .map_err(KeyError::Crypto)?;
+        let enc = encrypt_for_disk_v2(
+            &self.machine_key,
+            key_id.as_str(),
+            &pub_key,
+            secret.as_slice(),
+        )
+        .map_err(KeyError::Crypto)?;
 
         let entry = EncryptedEntry {
-            id:               key_id.clone(),
-            algorithm:        "ed25519".into(),
-            created_at:       crate::statements::unix_to_rfc3339(unix_now()),
-            public_key:       pub_key.clone(),
-            enc_priv_key:     enc,
+            id: key_id.clone(),
+            algorithm: "ed25519".into(),
+            created_at: crate::statements::unix_to_rfc3339(unix_now()),
+            public_key: pub_key.clone(),
+            enc_priv_key: enc,
             // v2 ciphertexts carry their nonce inline (bytes [2..14]).
             // The separate `nonce` field is retained for v1 legacy
             // compatibility; for fresh v2 entries we serialize an empty
             // vec so the JSON stays well-formed.
-            nonce:            Vec::new(),
-            valid_until:      None,
+            nonce: Vec::new(),
+            valid_until: None,
             successor_key_id: None,
         };
 
@@ -309,13 +324,13 @@ impl Store {
         self.cache.write().unwrap().insert(key_id.clone(), entry);
 
         Ok(KeyInfo {
-            id:               key_id.clone(),
-            algorithm:        "ed25519".into(),
-            is_default:       manifest.default_key_id.as_deref() == Some(key_id.as_str()),
-            created_at:       crate::statements::unix_to_rfc3339(unix_now()),
-            fingerprint:      fingerprint(&pub_key),
-            public_key:       pub_key,
-            valid_until:      None,
+            id: key_id.clone(),
+            algorithm: "ed25519".into(),
+            is_default: manifest.default_key_id.as_deref() == Some(key_id.as_str()),
+            created_at: crate::statements::unix_to_rfc3339(unix_now()),
+            fingerprint: fingerprint(&pub_key),
+            public_key: pub_key,
+            valid_until: None,
             successor_key_id: None,
         })
     }
@@ -372,37 +387,39 @@ impl Store {
         // single transactional update that sets both predecessor metadata
         // AND (optionally) the new default in one manifest write.
         let succ_id = new_key_id();
-        let signer = Ed25519Signer::generate(&succ_id)
-            .map_err(|e| KeyError::Crypto(e.to_string()))?;
+        let signer =
+            Ed25519Signer::generate(&succ_id).map_err(|e| KeyError::Crypto(e.to_string()))?;
         // `succ_secret` is a Zeroizing<[u8; 32]>; the caller-side copy is
         // wiped on scope exit, and `signer` is dropped at end of fn (which
         // wipes its own copy via the attestation::signer Drop impl).
-        let succ_secret  = signer.secret_bytes();
+        let succ_secret = signer.secret_bytes();
         let succ_pub_key = signer.public_key_bytes();
-        let succ_enc =
-            encrypt_for_disk_v2(&self.machine_key, succ_id.as_str(), &succ_pub_key, succ_secret.as_slice())
-                .map_err(KeyError::Crypto)?;
+        let succ_enc = encrypt_for_disk_v2(
+            &self.machine_key,
+            succ_id.as_str(),
+            &succ_pub_key,
+            succ_secret.as_slice(),
+        )
+        .map_err(KeyError::Crypto)?;
 
         let succ_created = crate::statements::unix_to_rfc3339(unix_now());
         let succ_entry = EncryptedEntry {
-            id:               succ_id.clone(),
-            algorithm:        "ed25519".into(),
-            created_at:       succ_created.clone(),
-            public_key:       succ_pub_key.clone(),
-            enc_priv_key:     succ_enc,
+            id: succ_id.clone(),
+            algorithm: "ed25519".into(),
+            created_at: succ_created.clone(),
+            public_key: succ_pub_key.clone(),
+            enc_priv_key: succ_enc,
             // v2 ciphertexts carry their nonce inline; the legacy
             // `nonce` field is left empty for fresh writes.
-            nonce:            Vec::new(),
-            valid_until:      None,
+            nonce: Vec::new(),
+            valid_until: None,
             successor_key_id: None,
         };
 
         // Stamp the predecessor with the grace deadline and link forward.
-        let valid_until = crate::statements::unix_to_rfc3339(
-            unix_now() + grace_period.as_secs(),
-        );
+        let valid_until = crate::statements::unix_to_rfc3339(unix_now() + grace_period.as_secs());
         let mut pred_entry = pred_entry_existing;
-        pred_entry.valid_until      = Some(valid_until.clone());
+        pred_entry.valid_until = Some(valid_until.clone());
         pred_entry.successor_key_id = Some(succ_id.clone());
 
         // Write order matters for partial-failure recovery. Persist the
@@ -434,7 +451,7 @@ impl Store {
         {
             let mut cache = self.cache.write().unwrap();
             cache.insert(pred_entry.id.clone(), pred_entry.clone());
-            cache.insert(succ_id.clone(),       succ_entry.clone());
+            cache.insert(succ_id.clone(), succ_entry.clone());
         }
 
         // Update the manifest: register the new key, optionally promote it.
@@ -447,23 +464,23 @@ impl Store {
 
         let default_id = manifest.default_key_id.clone();
         let predecessor = KeyInfo {
-            id:               pred_entry.id.clone(),
-            algorithm:        pred_entry.algorithm.clone(),
-            is_default:       default_id.as_deref() == Some(pred_entry.id.as_str()),
-            created_at:       pred_entry.created_at.clone(),
-            fingerprint:      fingerprint(&pred_entry.public_key),
-            public_key:       pred_entry.public_key.clone(),
-            valid_until:      pred_entry.valid_until.clone(),
+            id: pred_entry.id.clone(),
+            algorithm: pred_entry.algorithm.clone(),
+            is_default: default_id.as_deref() == Some(pred_entry.id.as_str()),
+            created_at: pred_entry.created_at.clone(),
+            fingerprint: fingerprint(&pred_entry.public_key),
+            public_key: pred_entry.public_key.clone(),
+            valid_until: pred_entry.valid_until.clone(),
             successor_key_id: pred_entry.successor_key_id.clone(),
         };
         let successor = KeyInfo {
-            id:               succ_id.clone(),
-            algorithm:        "ed25519".into(),
-            is_default:       default_id.as_deref() == Some(succ_id.as_str()),
-            created_at:       succ_created,
-            fingerprint:      fingerprint(&succ_pub_key),
-            public_key:       succ_pub_key,
-            valid_until:      None,
+            id: succ_id.clone(),
+            algorithm: "ed25519".into(),
+            is_default: default_id.as_deref() == Some(succ_id.as_str()),
+            created_at: succ_created,
+            fingerprint: fingerprint(&succ_pub_key),
+            public_key: succ_pub_key,
+            valid_until: None,
             successor_key_id: None,
         };
 
@@ -503,7 +520,8 @@ impl Store {
     /// Useful for building a verifier's accept-set as of a given time.
     pub fn valid_keys_at(&self, at_unix_secs: u64) -> Result<Vec<KeyInfo>, KeyError> {
         let cutoff_rfc = crate::statements::unix_to_rfc3339(at_unix_secs);
-        Ok(self.list()?
+        Ok(self
+            .list()?
             .into_iter()
             .filter(|k| match &k.valid_until {
                 None => true,
@@ -598,8 +616,10 @@ impl Store {
         // would leave the secret scalar in stale stack memory until
         // a future stack frame happens to overwrite it.
         let secret_arr: Zeroizing<[u8; 32]> = Zeroizing::new(
-            secret.as_slice().try_into()
-                .map_err(|_| KeyError::Crypto("decrypted key is wrong length".into()))?
+            secret
+                .as_slice()
+                .try_into()
+                .map_err(|_| KeyError::Crypto("decrypted key is wrong length".into()))?,
         );
 
         // Transparent migration: if this entry was still in the legacy
@@ -664,8 +684,7 @@ impl Store {
         // try-with-bounded-retry pattern in here would buy us nothing:
         // the second writer's re-read after the lock releases would
         // observe the now-v2 entry and short-circuit.
-        let lock_file = open_migration_lock_file(&lock_path)
-            .map_err(KeyError::Io)?;
+        let lock_file = open_migration_lock_file(&lock_path).map_err(KeyError::Io)?;
 
         #[cfg(not(target_family = "wasm"))]
         {
@@ -716,14 +735,14 @@ impl Store {
         .map_err(KeyError::Crypto)?;
 
         let migrated = EncryptedEntry {
-            id:               old_entry.id.clone(),
-            algorithm:        old_entry.algorithm.clone(),
-            created_at:       old_entry.created_at.clone(),
-            public_key:       old_entry.public_key.clone(),
-            enc_priv_key:     new_ciphertext,
+            id: old_entry.id.clone(),
+            algorithm: old_entry.algorithm.clone(),
+            created_at: old_entry.created_at.clone(),
+            public_key: old_entry.public_key.clone(),
+            enc_priv_key: new_ciphertext,
             // v2 carries the nonce inline; clear the legacy field.
-            nonce:            Vec::new(),
-            valid_until:      old_entry.valid_until.clone(),
+            nonce: Vec::new(),
+            valid_until: old_entry.valid_until.clone(),
             successor_key_id: old_entry.successor_key_id.clone(),
         };
 
@@ -767,7 +786,7 @@ impl Store {
         }
 
         let legacy_seed_dot = self.dir.join(".machineseed");
-        let legacy_seed     = self.dir.join("machine_seed");
+        let legacy_seed = self.dir.join("machine_seed");
         let has_legacy_seed = legacy_seed_dot.exists() || legacy_seed.exists();
 
         let diagnosis = if has_legacy_seed {
@@ -815,21 +834,25 @@ impl Store {
     /// Lists all keys.
     pub fn list(&self) -> Result<Vec<KeyInfo>, KeyError> {
         let manifest = self.read_manifest()?;
-        let default  = manifest.default_key_id.as_deref().unwrap_or("");
+        let default = manifest.default_key_id.as_deref().unwrap_or("");
 
-        manifest.key_ids.iter().map(|id| {
-            let entry = self.load_entry(id)?;
-            Ok(KeyInfo {
-                id:               entry.id.clone(),
-                algorithm:        entry.algorithm.clone(),
-                is_default:       entry.id == default,
-                created_at:       entry.created_at.clone(),
-                fingerprint:      fingerprint(&entry.public_key),
-                public_key:       entry.public_key.clone(),
-                valid_until:      entry.valid_until.clone(),
-                successor_key_id: entry.successor_key_id.clone(),
+        manifest
+            .key_ids
+            .iter()
+            .map(|id| {
+                let entry = self.load_entry(id)?;
+                Ok(KeyInfo {
+                    id: entry.id.clone(),
+                    algorithm: entry.algorithm.clone(),
+                    is_default: entry.id == default,
+                    created_at: entry.created_at.clone(),
+                    fingerprint: fingerprint(&entry.public_key),
+                    public_key: entry.public_key.clone(),
+                    valid_until: entry.valid_until.clone(),
+                    successor_key_id: entry.successor_key_id.clone(),
+                })
             })
-        }).collect()
+            .collect()
     }
 
     /// Sets the default signing key.
@@ -862,8 +885,7 @@ impl Store {
         // public_key is empty: for a non-keystore secret there is no
         // associated pubkey to bind, but `context` (carried as the AAD
         // entry_id) plus the framing prefix still bind machine + purpose.
-        encrypt_for_disk_v2(&self.machine_key, context, &[], plaintext)
-            .map_err(KeyError::Crypto)
+        encrypt_for_disk_v2(&self.machine_key, context, &[], plaintext).map_err(KeyError::Crypto)
     }
 
     /// Decrypt a blob produced by [`KeyStore::encrypt_secret`] with the same
@@ -1261,12 +1283,16 @@ fn legacy_v1_encrypt(key: &[u8; 32], plaintext: &[u8]) -> Result<(Vec<u8>, Vec<u
     mac_key_input.extend_from_slice(b"mac");
     let mac_key = Sha256::digest(&mac_key_input);
 
-    let ciphertext: Vec<u8> = plaintext.iter().enumerate().map(|(i, &b)| {
-        let mut block_input = enc_key.to_vec();
-        block_input.extend_from_slice(&(i as u64).to_le_bytes());
-        let block = Sha256::digest(&block_input);
-        b ^ block[i % 32]
-    }).collect();
+    let ciphertext: Vec<u8> = plaintext
+        .iter()
+        .enumerate()
+        .map(|(i, &b)| {
+            let mut block_input = enc_key.to_vec();
+            block_input.extend_from_slice(&(i as u64).to_le_bytes());
+            let block = Sha256::digest(&block_input);
+            b ^ block[i % 32]
+        })
+        .collect();
 
     let mut mac_input = mac_key.to_vec();
     mac_input.extend_from_slice(&nonce);
@@ -1294,7 +1320,7 @@ fn decrypt_legacy_v1(
     }
     use sha2::Sha256;
 
-    let nonce      = &enc_data[..12];
+    let nonce = &enc_data[..12];
     let stored_mac = &enc_data[12..44];
     let ciphertext = &enc_data[44..];
 
@@ -1315,19 +1341,26 @@ fn decrypt_legacy_v1(
     mac_input.extend_from_slice(ciphertext);
     let computed_mac = Sha256::digest(&mac_input);
 
-    let mac_ok = stored_mac.iter().zip(computed_mac.iter())
-        .fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0;
+    let mac_ok = stored_mac
+        .iter()
+        .zip(computed_mac.iter())
+        .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+        == 0;
 
     if !mac_ok {
         return Err("MAC verification failed — key file may be corrupt or wrong machine".into());
     }
 
-    let plaintext: Vec<u8> = ciphertext.iter().enumerate().map(|(i, &b)| {
-        let mut block_input = enc_key.to_vec();
-        block_input.extend_from_slice(&(i as u64).to_le_bytes());
-        let block = Sha256::digest(&block_input);
-        b ^ block[i % 32]
-    }).collect();
+    let plaintext: Vec<u8> = ciphertext
+        .iter()
+        .enumerate()
+        .map(|(i, &b)| {
+            let mut block_input = enc_key.to_vec();
+            block_input.extend_from_slice(&(i as u64).to_le_bytes());
+            let block = Sha256::digest(&block_input);
+            b ^ block[i % 32]
+        })
+        .collect();
 
     Ok(plaintext)
 }
@@ -1481,7 +1514,10 @@ fn check_seed_file_secure(path: &Path) -> Result<(), KeyError> {
         if !bypass {
             let mode = meta.permissions().mode() & 0o777;
             if mode & 0o077 != 0 {
-                return Err(KeyError::InsecureKeyPerms { path: path.to_path_buf(), mode });
+                return Err(KeyError::InsecureKeyPerms {
+                    path: path.to_path_buf(),
+                    mode,
+                });
             }
             if meta.uid() != nix_geteuid() {
                 return Err(KeyError::Crypto(format!(
@@ -1520,9 +1556,9 @@ fn derive_seed_primary_key(store_dir: &Path) -> Result<[u8; 32], KeyError> {
     let seed = read_or_create_machine_seed(store_dir)?;
     let mut h = Sha256::new();
     h.update(b"treeship-seed-primary-v1:");
-    h.update(seed.trim().as_bytes());        // the secret (all the entropy)
+    h.update(seed.trim().as_bytes()); // the secret (all the entropy)
     h.update(b":");
-    h.update(machine_id_salt().as_bytes());  // binding salt only (non-secret)
+    h.update(machine_id_salt().as_bytes()); // binding salt only (non-secret)
     h.update(b":");
     h.update(store_dir.to_string_lossy().as_bytes());
     Ok(h.finalize().into())
@@ -2036,7 +2072,10 @@ mod tests {
         // Swap the seed for a different one. machine-id / hostname / user are
         // unchanged (same test host) — only the secret seed differs.
         let seed_path = dir.parent().unwrap().join("machine_seed");
-        assert!(seed_path.exists(), "seed must have been created on first open");
+        assert!(
+            seed_path.exists(),
+            "seed must have been created on first open"
+        );
         fs::write(&seed_path, hex_encode(&[0xABu8; 32])).unwrap();
         #[cfg(unix)]
         {
@@ -2166,13 +2205,13 @@ mod tests {
         )
         .unwrap();
         let entry = EncryptedEntry {
-            id:               key_id.clone(),
-            algorithm:        "ed25519".into(),
-            created_at:       crate::statements::unix_to_rfc3339(unix_now()),
-            public_key:       signer.public_key_bytes(),
-            enc_priv_key:     enc,
-            nonce:            Vec::new(),
-            valid_until:      None,
+            id: key_id.clone(),
+            algorithm: "ed25519".into(),
+            created_at: crate::statements::unix_to_rfc3339(unix_now()),
+            public_key: signer.public_key_bytes(),
+            enc_priv_key: enc,
+            nonce: Vec::new(),
+            valid_until: None,
             successor_key_id: None,
         };
 
@@ -2209,7 +2248,10 @@ mod tests {
         // regardless of whether a hardware-stable id exists.
         let primary = derive_seed_primary_key(&canonical).unwrap();
         let v1_key = derive_machine_key(&canonical).unwrap();
-        assert_ne!(primary, v1_key, "seed-primary and v1 derivations must differ");
+        assert_ne!(
+            primary, v1_key,
+            "seed-primary and v1 derivations must differ"
+        );
 
         // Simulate the pre-fix keystore: entry wrapped under the v1 key.
         let key_id = new_key_id();
@@ -2222,13 +2264,13 @@ mod tests {
         )
         .unwrap();
         let entry = EncryptedEntry {
-            id:               key_id.clone(),
-            algorithm:        "ed25519".into(),
-            created_at:       crate::statements::unix_to_rfc3339(unix_now()),
-            public_key:       signer.public_key_bytes(),
-            enc_priv_key:     enc,
-            nonce:            Vec::new(),
-            valid_until:      None,
+            id: key_id.clone(),
+            algorithm: "ed25519".into(),
+            created_at: crate::statements::unix_to_rfc3339(unix_now()),
+            public_key: signer.public_key_bytes(),
+            enc_priv_key: enc,
+            nonce: Vec::new(),
+            valid_until: None,
             successor_key_id: None,
         };
 
@@ -2290,8 +2332,7 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let canonical = fs::canonicalize(&dir).unwrap();
 
-        let drifted_key =
-            derive_machine_key_v1_from_parts(old_hostname, &user, &canonical);
+        let drifted_key = derive_machine_key_v1_from_parts(old_hostname, &user, &canonical);
 
         let key_id = new_key_id();
         let signer = Ed25519Signer::generate(&key_id).unwrap();
@@ -2303,13 +2344,13 @@ mod tests {
         )
         .unwrap();
         let entry = EncryptedEntry {
-            id:               key_id.clone(),
-            algorithm:        "ed25519".into(),
-            created_at:       crate::statements::unix_to_rfc3339(unix_now()),
-            public_key:       signer.public_key_bytes(),
-            enc_priv_key:     enc,
-            nonce:            Vec::new(),
-            valid_until:      None,
+            id: key_id.clone(),
+            algorithm: "ed25519".into(),
+            created_at: crate::statements::unix_to_rfc3339(unix_now()),
+            public_key: signer.public_key_bytes(),
+            enc_priv_key: enc,
+            nonce: Vec::new(),
+            valid_until: None,
             successor_key_id: None,
         };
 
@@ -2337,7 +2378,7 @@ mod tests {
 
     #[test]
     fn decrypt_wrong_key_fails() {
-        let key   = [42u8; 32];
+        let key = [42u8; 32];
         let wrong = [99u8; 32];
         let (enc, nonce) = aes_gcm_encrypt(&key, b"secret").unwrap();
         assert!(aes_gcm_decrypt(&wrong, &enc, &nonce).is_err());
@@ -2357,16 +2398,17 @@ mod tests {
     fn v2_encrypt_decrypt_roundtrip() {
         let key = [7u8; 32];
         let plaintext = b"super secret private key material here!";
-        let blob =
-            encrypt_for_disk_v2(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, plaintext).unwrap();
+        let blob = encrypt_for_disk_v2(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, plaintext).unwrap();
         // Structural check on the framing.
         assert_eq!(blob[0], KEYSTORE_MAGIC, "magic byte");
         assert_eq!(blob[1], KEYSTORE_VERSION_V2, "version byte");
-        assert_eq!(blob.len(), 2 + 12 + plaintext.len() + 16,
-                   "magic+version+nonce+ct+tag length");
+        assert_eq!(
+            blob.len(),
+            2 + 12 + plaintext.len() + 16,
+            "magic+version+nonce+ct+tag length"
+        );
 
-        let dec =
-            decrypt_from_disk(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, &blob, &[]).unwrap();
+        let dec = decrypt_from_disk(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, &blob, &[]).unwrap();
         assert_eq!(&*dec, plaintext);
     }
 
@@ -2391,7 +2433,11 @@ mod tests {
         );
 
         let recovered = store.decrypt_secret(ctx, &blob).unwrap();
-        assert_eq!(recovered.as_slice(), &secret, "roundtrip must recover the secret");
+        assert_eq!(
+            recovered.as_slice(),
+            &secret,
+            "roundtrip must recover the secret"
+        );
         cleanup(dir);
     }
 
@@ -2403,13 +2449,16 @@ mod tests {
         // A blob sealed for hub A must not open under hub B's context —
         // this is what prevents an intra-file ciphertext swap.
         let r = store.decrypt_secret("hub-dpop:v1:hub_B", &blob);
-        assert!(r.is_err(), "wrong context must fail closed, not return wrong bytes");
+        assert!(
+            r.is_err(),
+            "wrong context must fail closed, not return wrong bytes"
+        );
         cleanup(dir);
     }
 
     #[test]
     fn v2_decrypt_wrong_key_fails() {
-        let key   = [7u8; 32];
+        let key = [7u8; 32];
         let wrong = [99u8; 32];
         let blob = encrypt_for_disk_v2(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, b"secret").unwrap();
         // Wrong key with v2 framing: AEAD must reject. Dispatcher will
@@ -2423,8 +2472,12 @@ mod tests {
     fn v2_tamper_ciphertext_fails() {
         let key = [7u8; 32];
         let mut blob = encrypt_for_disk_v2(
-            &key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, b"super secret private key"
-        ).unwrap();
+            &key,
+            TEST_ENTRY_ID,
+            TEST_PUBLIC_KEY,
+            b"super secret private key",
+        )
+        .unwrap();
         // Flip one bit inside the ciphertext body (after the 14-byte
         // framing). GCM authenticates ciphertext + nonce; any flip must
         // fail.
@@ -2438,8 +2491,12 @@ mod tests {
     fn v2_tamper_nonce_fails() {
         let key = [7u8; 32];
         let mut blob = encrypt_for_disk_v2(
-            &key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, b"super secret private key"
-        ).unwrap();
+            &key,
+            TEST_ENTRY_ID,
+            TEST_PUBLIC_KEY,
+            b"super secret private key",
+        )
+        .unwrap();
         // Flip a bit in the nonce (bytes [2..14]).
         blob[5] ^= 0x01;
         let result = decrypt_from_disk(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, &blob, &[]);
@@ -2450,8 +2507,12 @@ mod tests {
     fn v2_tamper_tag_fails() {
         let key = [7u8; 32];
         let mut blob = encrypt_for_disk_v2(
-            &key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, b"super secret private key"
-        ).unwrap();
+            &key,
+            TEST_ENTRY_ID,
+            TEST_PUBLIC_KEY,
+            b"super secret private key",
+        )
+        .unwrap();
         // Flip a bit in the trailing GCM tag (last 16 bytes).
         let len = blob.len();
         blob[len - 1] ^= 0x80;
@@ -2469,8 +2530,10 @@ mod tests {
             encrypt_for_disk_v2(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, b"identical").unwrap();
         let blob_b =
             encrypt_for_disk_v2(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, b"identical").unwrap();
-        assert_ne!(blob_a, blob_b,
-                   "two v2 encryptions of the same plaintext must differ");
+        assert_ne!(
+            blob_a, blob_b,
+            "two v2 encryptions of the same plaintext must differ"
+        );
         assert_ne!(&blob_a[2..14], &blob_b[2..14], "nonces must differ");
 
         // L1 (TS-2026-001 audit): draw 10k nonces in a row and assert
@@ -2484,8 +2547,7 @@ mod tests {
         let mut nonces: std::collections::HashSet<Vec<u8>> =
             std::collections::HashSet::with_capacity(N);
         for _ in 0..N {
-            let blob =
-                encrypt_for_disk_v2(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, b"x").unwrap();
+            let blob = encrypt_for_disk_v2(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, b"x").unwrap();
             // bytes [2..14] are the 12-byte GCM nonce.
             nonces.insert(blob[2..14].to_vec());
         }
@@ -2505,8 +2567,12 @@ mod tests {
         // sanity check would otherwise pass.
         let key = [7u8; 32];
         let mut blob = encrypt_for_disk_v2(
-            &key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, b"super secret private key"
-        ).unwrap();
+            &key,
+            TEST_ENTRY_ID,
+            TEST_PUBLIC_KEY,
+            b"super secret private key",
+        )
+        .unwrap();
         assert_eq!(blob[1], KEYSTORE_VERSION_V2);
         blob[1] = 0xff;
         assert!(
@@ -2545,8 +2611,10 @@ mod tests {
         assert_eq!(forged[0], KEYSTORE_MAGIC);
         assert_eq!(forged[1], KEYSTORE_VERSION_V2);
         let result = decrypt_v2(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, &forged);
-        assert!(result.is_err(),
-                "ciphertext computed without AAD must fail to decrypt now that AAD is bound");
+        assert!(
+            result.is_err(),
+            "ciphertext computed without AAD must fail to decrypt now that AAD is bound"
+        );
     }
 
     #[test]
@@ -2558,15 +2626,13 @@ mod tests {
         // sees a meaningful message that points at the right
         // remediation.
         let key = [7u8; 32];
-        let mut blob =
-            encrypt_for_disk_v2(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, b"hello").unwrap();
+        let mut blob = encrypt_for_disk_v2(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, b"hello").unwrap();
         // Flip a byte in the GCM tag (last 16 bytes) so the v2 AEAD
         // rejects but the framing still classifies as v2.
         let last = blob.len() - 1;
         blob[last] ^= 0x01;
 
-        let err =
-            decrypt_from_disk(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, &blob, &[]).unwrap_err();
+        let err = decrypt_from_disk(&key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, &blob, &[]).unwrap_err();
         // The dispatcher should bubble the v2 error string up. v2's
         // error message contains "MAC verification failed"; v1's
         // shape on garbage data is either "ciphertext too short" or
@@ -2584,18 +2650,23 @@ mod tests {
         // through the v1 path so existing users are not locked out.
         let key = [13u8; 32];
         let plaintext = b"pre-v0.10.3 keystore entry";
-        let (legacy_blob, legacy_nonce) =
-            legacy_v1_encrypt(&key, plaintext).unwrap();
+        let (legacy_blob, legacy_nonce) = legacy_v1_encrypt(&key, plaintext).unwrap();
 
         // Sanity: legacy blob does NOT start with v2 framing.
-        assert!(is_legacy_v1(&legacy_blob),
-                "legacy_v1_encrypt output must classify as legacy");
+        assert!(
+            is_legacy_v1(&legacy_blob),
+            "legacy_v1_encrypt output must classify as legacy"
+        );
 
         // Dispatcher must accept it. AAD inputs are irrelevant for the
         // v1 path (it doesn't use them), but the signature requires them
         // — pass the same placeholder constants used elsewhere.
         let dec = decrypt_from_disk(
-            &key, TEST_ENTRY_ID, TEST_PUBLIC_KEY, &legacy_blob, &legacy_nonce,
+            &key,
+            TEST_ENTRY_ID,
+            TEST_PUBLIC_KEY,
+            &legacy_blob,
+            &legacy_nonce,
         )
         .unwrap();
         assert_eq!(&*dec, plaintext);
@@ -2625,20 +2696,23 @@ mod tests {
             &v2_entry.enc_priv_key,
             &v2_entry.nonce,
         )
-            .unwrap();
-        let (legacy_blob, legacy_nonce) =
-            legacy_v1_encrypt(&store.machine_key, &secret).unwrap();
+        .unwrap();
+        let (legacy_blob, legacy_nonce) = legacy_v1_encrypt(&store.machine_key, &secret).unwrap();
         let legacy_entry = EncryptedEntry {
-            id:               v2_entry.id.clone(),
-            algorithm:        v2_entry.algorithm.clone(),
-            created_at:       v2_entry.created_at.clone(),
-            public_key:       v2_entry.public_key.clone(),
-            enc_priv_key:     legacy_blob,
-            nonce:            legacy_nonce,
-            valid_until:      v2_entry.valid_until.clone(),
+            id: v2_entry.id.clone(),
+            algorithm: v2_entry.algorithm.clone(),
+            created_at: v2_entry.created_at.clone(),
+            public_key: v2_entry.public_key.clone(),
+            enc_priv_key: legacy_blob,
+            nonce: legacy_nonce,
+            valid_until: v2_entry.valid_until.clone(),
             successor_key_id: v2_entry.successor_key_id.clone(),
         };
-        fs::write(&entry_path, serde_json::to_vec_pretty(&legacy_entry).unwrap()).unwrap();
+        fs::write(
+            &entry_path,
+            serde_json::to_vec_pretty(&legacy_entry).unwrap(),
+        )
+        .unwrap();
 
         // Reload with a fresh Store so the cache doesn't paper over the
         // on-disk change.
@@ -2649,12 +2723,16 @@ mod tests {
 
         let after: EncryptedEntry =
             serde_json::from_slice(&fs::read(&entry_path).unwrap()).unwrap();
-        assert!(!is_legacy_v1(&after.enc_priv_key),
-                "post-migration entry must be in v2 format");
+        assert!(
+            !is_legacy_v1(&after.enc_priv_key),
+            "post-migration entry must be in v2 format"
+        );
         assert_eq!(after.enc_priv_key[0], KEYSTORE_MAGIC);
         assert_eq!(after.enc_priv_key[1], KEYSTORE_VERSION_V2);
-        assert!(after.nonce.is_empty(),
-                "v2 entries serialize an empty legacy nonce field");
+        assert!(
+            after.nonce.is_empty(),
+            "v2 entries serialize an empty legacy nonce field"
+        );
 
         // L2 (TS-2026-001 audit): the framing check above proves the
         // migrator *wrote* a v2-shaped blob, but a downstream
@@ -2695,8 +2773,8 @@ mod tests {
 
         use crate::attestation::sign;
         use crate::statements::ActionStatement;
-        let stmt   = ActionStatement::new("agent://test", "tool.call");
-        let pt     = crate::statements::payload_type("action");
+        let stmt = ActionStatement::new("agent://test", "tool.call");
+        let pt = crate::statements::payload_type("action");
         let signed = sign(&pt, &stmt, signer.as_ref()).unwrap();
         verifier.verify(&signed.envelope).unwrap();
 
@@ -2727,7 +2805,10 @@ mod tests {
         let (store, dir) = make_store();
         let pred = store.generate(true).unwrap();
         assert!(pred.valid_until.is_none(), "fresh key has no expiry");
-        assert!(pred.successor_key_id.is_none(), "fresh key has no successor");
+        assert!(
+            pred.successor_key_id.is_none(),
+            "fresh key has no successor"
+        );
 
         let result = store
             .rotate(None, std::time::Duration::from_secs(3600), true)
@@ -2735,18 +2816,30 @@ mod tests {
 
         // Predecessor metadata is updated.
         assert_eq!(result.predecessor.id, pred.id);
-        assert!(result.predecessor.valid_until.is_some(),
-                "predecessor must get valid_until after rotation");
-        assert_eq!(result.predecessor.successor_key_id.as_deref(),
-                   Some(result.successor.id.as_str()),
-                   "predecessor must link forward to successor");
-        assert!(!result.predecessor.is_default,
-                "after rotation with set_default=true, predecessor is no longer default");
+        assert!(
+            result.predecessor.valid_until.is_some(),
+            "predecessor must get valid_until after rotation"
+        );
+        assert_eq!(
+            result.predecessor.successor_key_id.as_deref(),
+            Some(result.successor.id.as_str()),
+            "predecessor must link forward to successor"
+        );
+        assert!(
+            !result.predecessor.is_default,
+            "after rotation with set_default=true, predecessor is no longer default"
+        );
 
         // Successor is fresh.
         assert_ne!(result.successor.id, pred.id);
-        assert!(result.successor.valid_until.is_none(), "successor has no expiry yet");
-        assert!(result.successor.successor_key_id.is_none(), "successor is chain head");
+        assert!(
+            result.successor.valid_until.is_none(),
+            "successor has no expiry yet"
+        );
+        assert!(
+            result.successor.successor_key_id.is_none(),
+            "successor is chain head"
+        );
         assert!(result.successor.is_default, "successor is the new default");
 
         // Same metadata visible via list().
@@ -2754,8 +2847,10 @@ mod tests {
         assert_eq!(listed.len(), 2);
         let pred_listed = listed.iter().find(|k| k.id == pred.id).unwrap();
         assert!(pred_listed.valid_until.is_some());
-        assert_eq!(pred_listed.successor_key_id.as_deref(),
-                   Some(result.successor.id.as_str()));
+        assert_eq!(
+            pred_listed.successor_key_id.as_deref(),
+            Some(result.successor.id.as_str())
+        );
 
         cleanup(dir);
     }
@@ -2807,9 +2902,11 @@ mod tests {
         // Rotating the predecessor again must be refused -- it already
         // points at r1.successor. Caller should rotate the chain head.
         let err = store
-            .rotate(Some(&r1.predecessor.id),
-                    std::time::Duration::from_secs(60),
-                    true)
+            .rotate(
+                Some(&r1.predecessor.id),
+                std::time::Duration::from_secs(60),
+                true,
+            )
             .unwrap_err();
         match err {
             KeyError::Crypto(msg) => assert!(
@@ -2833,8 +2930,15 @@ mod tests {
             .unwrap();
 
         let chain = store.successor_chain(&k0.id).unwrap();
-        assert_eq!(chain, vec![k0.id.clone(), r1.successor.id.clone(), r2.successor.id.clone()],
-                   "chain must be ordered head -> tail");
+        assert_eq!(
+            chain,
+            vec![
+                k0.id.clone(),
+                r1.successor.id.clone(),
+                r2.successor.id.clone()
+            ],
+            "chain must be ordered head -> tail"
+        );
 
         // Mid-chain start: chain from r1.successor should drop k0.
         let mid = store.successor_chain(&r1.successor.id).unwrap();
@@ -2859,13 +2963,20 @@ mod tests {
         // mid-grace, successor is freshly minted.
         let now = unix_now();
         let valid_now = store.valid_keys_at(now).unwrap();
-        assert_eq!(valid_now.len(), 2, "both predecessor (in grace) and successor should be valid");
+        assert_eq!(
+            valid_now.len(),
+            2,
+            "both predecessor (in grace) and successor should be valid"
+        );
 
         // After the grace window expires, only the successor remains.
         let after_grace = unix_now() + 7200;
         let valid_after = store.valid_keys_at(after_grace).unwrap();
-        assert_eq!(valid_after.len(), 1,
-                   "after grace window only successor remains valid");
+        assert_eq!(
+            valid_after.len(),
+            1,
+            "after grace window only successor remains valid"
+        );
         assert_eq!(valid_after[0].id, result.successor.id);
 
         cleanup(dir);
@@ -2905,9 +3016,7 @@ mod tests {
         // were stale (still showing the unstamped predecessor), this
         // call would proceed and mint a duplicate successor.
         let err = store
-            .rotate(Some(&pred.id),
-                    std::time::Duration::from_secs(60),
-                    true)
+            .rotate(Some(&pred.id), std::time::Duration::from_secs(60), true)
             .unwrap_err();
         match err {
             KeyError::Crypto(msg) => assert!(
@@ -2959,7 +3068,7 @@ mod tests {
         // Re-serialize the on-disk entry without the new fields, simulating
         // a file created by a 0.9.4 or earlier CLI.
         let path = store.entry_path(&info.id);
-        let raw  = fs::read(&path).unwrap();
+        let raw = fs::read(&path).unwrap();
         let mut json: serde_json::Value = serde_json::from_slice(&raw).unwrap();
         let obj = json.as_object_mut().unwrap();
         obj.remove("valid_until");
@@ -2971,10 +3080,14 @@ mod tests {
         let store2 = Store::open(&dir).unwrap();
         let listed = store2.list().unwrap();
         assert_eq!(listed.len(), 1);
-        assert!(listed[0].valid_until.is_none(),
-                "missing valid_until must default to None on legacy entry");
-        assert!(listed[0].successor_key_id.is_none(),
-                "missing successor_key_id must default to None on legacy entry");
+        assert!(
+            listed[0].valid_until.is_none(),
+            "missing valid_until must default to None on legacy entry"
+        );
+        assert!(
+            listed[0].successor_key_id.is_none(),
+            "missing successor_key_id must default to None on legacy entry"
+        );
         let signer = store2.default_signer().unwrap();
         assert_eq!(signer.key_id(), info.id);
 
@@ -3002,7 +3115,11 @@ mod tests {
             .permissions()
             .mode()
             & 0o777;
-        assert_eq!(mode, 0o600, "freshly written key file must be 0600, got {:o}", mode);
+        assert_eq!(
+            mode, 0o600,
+            "freshly written key file must be 0600, got {:o}",
+            mode
+        );
         cleanup(dir);
     }
 
@@ -3111,9 +3228,7 @@ mod tests {
                 "expected InsecureKeyPerms from single-open fstat gate, got {:?}",
                 other
             ),
-            Ok(_) => panic!(
-                "expected InsecureKeyPerms from single-open fstat gate, got ok signer"
-            ),
+            Ok(_) => panic!("expected InsecureKeyPerms from single-open fstat gate, got ok signer"),
         }
 
         // The "structural" half of the test: invoke the helper
@@ -3171,20 +3286,23 @@ mod tests {
             &v2_entry.enc_priv_key,
             &v2_entry.nonce,
         )
-            .unwrap();
-        let (legacy_blob, legacy_nonce) =
-            legacy_v1_encrypt(&store.machine_key, &secret).unwrap();
+        .unwrap();
+        let (legacy_blob, legacy_nonce) = legacy_v1_encrypt(&store.machine_key, &secret).unwrap();
         let legacy_entry = EncryptedEntry {
-            id:               v2_entry.id.clone(),
-            algorithm:        v2_entry.algorithm.clone(),
-            created_at:       v2_entry.created_at.clone(),
-            public_key:       v2_entry.public_key.clone(),
-            enc_priv_key:     legacy_blob,
-            nonce:            legacy_nonce,
-            valid_until:      v2_entry.valid_until.clone(),
+            id: v2_entry.id.clone(),
+            algorithm: v2_entry.algorithm.clone(),
+            created_at: v2_entry.created_at.clone(),
+            public_key: v2_entry.public_key.clone(),
+            enc_priv_key: legacy_blob,
+            nonce: legacy_nonce,
+            valid_until: v2_entry.valid_until.clone(),
             successor_key_id: v2_entry.successor_key_id.clone(),
         };
-        fs::write(&entry_path, serde_json::to_vec_pretty(&legacy_entry).unwrap()).unwrap();
+        fs::write(
+            &entry_path,
+            serde_json::to_vec_pretty(&legacy_entry).unwrap(),
+        )
+        .unwrap();
 
         // Two independent Store instances racing on the same on-disk
         // legacy entry. Using independent Store instances forces the
@@ -3207,8 +3325,12 @@ mod tests {
             Ok(())
         });
 
-        h1.join().unwrap().expect("thread 1 signer load must succeed");
-        h2.join().unwrap().expect("thread 2 signer load must succeed");
+        h1.join()
+            .unwrap()
+            .expect("thread 1 signer load must succeed");
+        h2.join()
+            .unwrap()
+            .expect("thread 2 signer load must succeed");
 
         // Post-condition: on-disk entry is v2 framed.
         let after: EncryptedEntry =
@@ -3229,8 +3351,12 @@ mod tests {
             &after.public_key,
             &after.enc_priv_key,
         )
-            .expect("v2 entry must decrypt cleanly after concurrent migration");
-        assert_eq!(dec.len(), 32, "decrypted secret must be a 32-byte ed25519 scalar");
+        .expect("v2 entry must decrypt cleanly after concurrent migration");
+        assert_eq!(
+            dec.len(),
+            32,
+            "decrypted secret must be a 32-byte ed25519 scalar"
+        );
 
         // No stale .tmp file left behind.
         for entry in fs::read_dir(&dir).unwrap() {
@@ -3269,7 +3395,10 @@ mod tests {
 
         // Capture the original bytes for byte-identity comparison.
         let original = fs::read(&entry_path).expect("entry file must exist");
-        assert!(!original.is_empty(), "freshly generated entry must be non-empty");
+        assert!(
+            !original.is_empty(),
+            "freshly generated entry must be non-empty"
+        );
 
         // Lock the directory: read+execute only, no write. fs::rename
         // into this directory will fail.
@@ -3280,7 +3409,10 @@ mod tests {
         // the directory is read-only, exercising the rename-failure
         // branch.
         let res = write_file_600(&entry_path, b"new junk that must not land");
-        assert!(res.is_err(), "write_file_600 must fail when dir is read-only");
+        assert!(
+            res.is_err(),
+            "write_file_600 must fail when dir is read-only"
+        );
 
         // Restore perms so we can read back the entry.
         fs::set_permissions(&dir, fs::Permissions::from_mode(orig_dir_mode)).unwrap();
@@ -3303,7 +3435,10 @@ mod tests {
 
         // No stale tmp file left behind.
         let tmp = entry_path.with_extension("tmp");
-        assert!(!tmp.exists(), "tmp file must be cleaned up after rename failure");
+        assert!(
+            !tmp.exists(),
+            "tmp file must be cleaned up after rename failure"
+        );
 
         cleanup(dir);
     }
@@ -3321,7 +3456,11 @@ mod tests {
         let entry_path = store.entry_path(&info.id);
 
         let mode = fs::metadata(&entry_path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600, "entry file must be 0600 at creation, got {:o}", mode);
+        assert_eq!(
+            mode, 0o600,
+            "entry file must be 0600 at creation, got {:o}",
+            mode
+        );
 
         let tmp = entry_path.with_extension("tmp");
         assert!(
@@ -3361,7 +3500,9 @@ mod tests {
         assert_eq!(key_mode, 0o600);
 
         // After repair, signing must work again.
-        store.signer(&info.id).expect("signing must work after fix_perms");
+        store
+            .signer(&info.id)
+            .expect("signing must work after fix_perms");
 
         cleanup(dir);
     }
@@ -3390,10 +3531,8 @@ mod tests {
         // Snapshot both on-disk envelopes.
         let path_a = store.entry_path(&a.id);
         let path_b = store.entry_path(&b.id);
-        let entry_a: EncryptedEntry =
-            serde_json::from_slice(&fs::read(&path_a).unwrap()).unwrap();
-        let entry_b: EncryptedEntry =
-            serde_json::from_slice(&fs::read(&path_b).unwrap()).unwrap();
+        let entry_a: EncryptedEntry = serde_json::from_slice(&fs::read(&path_a).unwrap()).unwrap();
+        let entry_b: EncryptedEntry = serde_json::from_slice(&fs::read(&path_b).unwrap()).unwrap();
 
         // Sanity: both are v2 framed, and the ciphertexts differ.
         assert_eq!(entry_a.enc_priv_key[0], KEYSTORE_MAGIC);
@@ -3453,9 +3592,11 @@ mod tests {
         let info = store.generate(true).unwrap();
         let path = store.entry_path(&info.id);
 
-        let mut entry: EncryptedEntry =
-            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-        assert_eq!(entry.id, info.id, "sanity: id matches what generate returned");
+        let mut entry: EncryptedEntry = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(
+            entry.id, info.id,
+            "sanity: id matches what generate returned"
+        );
 
         // Pretend the attacker forged an id. Note we write this back to
         // the SAME file path so Store::load_entry by the original id
@@ -3477,8 +3618,8 @@ mod tests {
         let key_buf = store2.machine_key;
         let result = decrypt_from_disk(
             &key_buf,
-            &entry.id,          // tampered id (bound into AAD)
-            &entry.public_key,  // original pubkey
+            &entry.id,         // tampered id (bound into AAD)
+            &entry.public_key, // original pubkey
             &entry.enc_priv_key,
             &entry.nonce,
         );

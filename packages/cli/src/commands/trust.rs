@@ -30,7 +30,7 @@ use crate::printer::{Format, Printer};
 pub fn list(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     let path = TrustRootStore::default_path();
     let store = match TrustRootStore::open(&path) {
-        Ok(s)  => s,
+        Ok(s) => s,
         Err(TrustRootError::NotConfigured { .. }) | Err(TrustRootError::Empty { .. }) => {
             if printer.format == Format::Json {
                 printer.json(&serde_json::json!({
@@ -51,13 +51,19 @@ pub fn list(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     if printer.format == Format::Json {
-        let roots: Vec<_> = store.roots().iter().map(|r| serde_json::json!({
-            "key_id":     r.key_id,
-            "public_key": r.public_key,
-            "kind":       r.kind.as_str(),
-            "label":      r.label,
-            "added_at":   r.added_at,
-        })).collect();
+        let roots: Vec<_> = store
+            .roots()
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "key_id":     r.key_id,
+                    "public_key": r.public_key,
+                    "kind":       r.kind.as_str(),
+                    "label":      r.label,
+                    "added_at":   r.added_at,
+                })
+            })
+            .collect();
         printer.json(&serde_json::json!({
             "status": "ok",
             "path":   path.display().to_string(),
@@ -70,10 +76,10 @@ pub fn list(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     for r in store.roots() {
         printer.info(&format!(
             "  {kind:<16} {key_id:<24} {pk:<58} {label}",
-            kind   = r.kind.as_str(),
+            kind = r.kind.as_str(),
             key_id = r.key_id,
-            pk     = r.public_key,
-            label  = if r.label.is_empty() { "" } else { &r.label },
+            pk = r.public_key,
+            label = if r.label.is_empty() { "" } else { &r.label },
         ));
     }
     Ok(())
@@ -94,11 +100,12 @@ pub fn add(
     yes: bool,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let kind = TrustRootKind::parse(kind)
-        .ok_or_else(|| format!(
+    let kind = TrustRootKind::parse(kind).ok_or_else(|| {
+        format!(
             "unknown trust root kind '{kind}'. Expected one of: \
              hub_checkpoint, hub_org, cert_issuer, revoker, agent_cert, session_host",
-        ))?;
+        )
+    })?;
 
     // Batch 5: `ship` is a deprecated, inert kind retained only so legacy
     // trust files still parse. It authorizes nothing, so refuse to mint a new
@@ -109,16 +116,17 @@ pub fn add(
              It used to grant three unrelated powers at once. Pin the specific power instead:\n  \
              --kind hub_org      (trust this hub to promote local claims to global single-use)\n  \
              --kind cert_issuer  (trust this ship to issue agent certificates)\n  \
-             --kind revoker      (trust this ship to revoke capabilities it issued)".into(),
+             --kind revoker      (trust this ship to revoke capabilities it issued)"
+                .into(),
         );
     }
 
     // Accept both `ed25519:<b64>` and bare base64url for ergonomics.
     // Normalize on write so the on-disk file is always prefixed.
-    let parsed = decode_ed25519_pubkey(public_key)
-        .map_err(|m| format!("invalid public key: {m}"))?;
+    let parsed =
+        decode_ed25519_pubkey(public_key).map_err(|m| format!("invalid public key: {m}"))?;
     let canonical_pk = encode_ed25519_pubkey(&parsed);
-    let fingerprint  = pubkey_fingerprint(&canonical_pk);
+    let fingerprint = pubkey_fingerprint(&canonical_pk);
 
     if key_id.trim().is_empty() {
         return Err("key_id must not be empty".into());
@@ -134,7 +142,11 @@ pub fn add(
     };
 
     // Is this replacing an existing (key_id, kind) entry?
-    let replacing = store.roots().iter().find(|r| r.key_id == key_id && r.kind == kind).cloned();
+    let replacing = store
+        .roots()
+        .iter()
+        .find(|r| r.key_id == key_id && r.kind == kind)
+        .cloned();
 
     // Confirmation gate. JSON callers MUST pass --yes; an interactive
     // y/N prompt on stdout/stdin doesn't compose with --output json
@@ -146,10 +158,9 @@ pub fn add(
             );
         }
         if !io::stdin().is_terminal() {
-            return Err(
-                "trust add refuses to run non-interactively without --yes \
-                 (pass --yes to skip the confirmation prompt)".into(),
-            );
+            return Err("trust add refuses to run non-interactively without --yes \
+                 (pass --yes to skip the confirmation prompt)"
+                .into());
         }
         if let Some(ref prev) = replacing {
             let prev_fp = pubkey_fingerprint(&prev.public_key);
@@ -161,7 +172,14 @@ pub fn add(
                 ),
                 &[
                     ("existing_key_id", &prev.key_id),
-                    ("existing_label",  if prev.label.is_empty() { "<none>" } else { &prev.label }),
+                    (
+                        "existing_label",
+                        if prev.label.is_empty() {
+                            "<none>"
+                        } else {
+                            &prev.label
+                        },
+                    ),
                     ("new_fingerprint", &fingerprint),
                 ],
             );
@@ -178,11 +196,11 @@ pub fn add(
     }
 
     let root = TrustRoot {
-        key_id:     key_id.into(),
+        key_id: key_id.into(),
         public_key: canonical_pk.clone(),
         kind,
-        label:      label.unwrap_or("").into(),
-        added_at:   now_rfc3339(),
+        label: label.unwrap_or("").into(),
+        added_at: now_rfc3339(),
     };
     store.add(root);
     store.save(&path)?;
@@ -200,13 +218,16 @@ pub fn add(
         }));
         return Ok(());
     }
-    printer.success("trust root added", &[
-        ("key_id",      key_id),
-        ("kind",        kind.as_str()),
-        ("fingerprint", &fingerprint),
-        ("public_key",  &canonical_pk),
-        ("path",        &path.display().to_string()),
-    ]);
+    printer.success(
+        "trust root added",
+        &[
+            ("key_id", key_id),
+            ("kind", kind.as_str()),
+            ("fingerprint", &fingerprint),
+            ("public_key", &canonical_pk),
+            ("path", &path.display().to_string()),
+        ],
+    );
     Ok(())
 }
 
@@ -271,7 +292,8 @@ pub fn remove(
         if !io::stdin().is_terminal() {
             return Err(
                 "trust remove refuses to run non-interactively without --yes \
-                 (pass --yes to skip the confirmation prompt)".into(),
+                 (pass --yes to skip the confirmation prompt)"
+                    .into(),
             );
         }
         printer.info(&format!(
@@ -284,7 +306,11 @@ pub fn remove(
                 "  - kind={}  fingerprint={}  label={}",
                 r.kind.as_str(),
                 pubkey_fingerprint(&r.public_key),
-                if r.label.is_empty() { "<none>" } else { &r.label },
+                if r.label.is_empty() {
+                    "<none>"
+                } else {
+                    &r.label
+                },
             ));
         }
         if !confirm("Remove? [y/N] ") {
@@ -307,10 +333,10 @@ pub fn remove(
         return Ok(());
     }
     if removed {
-        printer.success("trust root removed", &[
-            ("key_id", key_id),
-            ("count",  &matches.len().to_string()),
-        ]);
+        printer.success(
+            "trust root removed",
+            &[("key_id", key_id), ("count", &matches.len().to_string())],
+        );
     } else {
         printer.info(&format!("no trust root with key_id={key_id}"));
     }

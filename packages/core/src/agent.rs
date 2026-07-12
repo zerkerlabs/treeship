@@ -76,7 +76,7 @@ pub struct AgentCertificate {
 /// Signature over the certificate content.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CertificateSignature {
-    pub algorithm: String,     // "ed25519"
+    pub algorithm: String, // "ed25519"
     pub key_id: String,
     pub public_key: String,    // base64url-encoded Ed25519 public key
     pub signature: String,     // base64url-encoded Ed25519 signature
@@ -188,10 +188,9 @@ pub fn verify_certificate(
     let pk_bytes = URL_SAFE_NO_PAD
         .decode(&cert.signature.public_key)
         .map_err(|e| CertificateVerifyError::BadPublicKey(e.to_string()))?;
-    let pk_arr: [u8; 32] = pk_bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| CertificateVerifyError::BadPublicKey(format!("expected 32 bytes, got {}", pk_bytes.len())))?;
+    let pk_arr: [u8; 32] = pk_bytes.as_slice().try_into().map_err(|_| {
+        CertificateVerifyError::BadPublicKey(format!("expected 32 bytes, got {}", pk_bytes.len()))
+    })?;
     let verifying_key = VerifyingKey::from_bytes(&pk_arr)
         .map_err(|e| CertificateVerifyError::BadPublicKey(e.to_string()))?;
 
@@ -211,10 +210,9 @@ pub fn verify_certificate(
     let sig_bytes = URL_SAFE_NO_PAD
         .decode(&cert.signature.signature)
         .map_err(|e| CertificateVerifyError::BadSignature(e.to_string()))?;
-    let sig_arr: [u8; 64] = sig_bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| CertificateVerifyError::BadSignature(format!("expected 64 bytes, got {}", sig_bytes.len())))?;
+    let sig_arr: [u8; 64] = sig_bytes.as_slice().try_into().map_err(|_| {
+        CertificateVerifyError::BadSignature(format!("expected 64 bytes, got {}", sig_bytes.len()))
+    })?;
     let signature = DalekSignature::from_bytes(&sig_arr);
 
     // Reconstruct the canonical signed payload exactly as the issuer did:
@@ -252,7 +250,10 @@ mod tests {
                 description: None,
             },
             capabilities: AgentCapabilities {
-                tools: vec![ToolCapability { name: "Bash".into(), description: None }],
+                tools: vec![ToolCapability {
+                    name: "Bash".into(),
+                    description: None,
+                }],
                 api_endpoints: vec![],
                 mcp_servers: vec![],
             },
@@ -280,14 +281,19 @@ mod tests {
         let cert = sample_certificate(None);
         let bytes = serde_json::to_vec(&cert).unwrap();
         let s = std::str::from_utf8(&bytes).unwrap();
-        assert!(!s.contains("schema_version"),
-            "legacy cert must omit schema_version, got: {s}");
+        assert!(
+            !s.contains("schema_version"),
+            "legacy cert must omit schema_version, got: {s}"
+        );
 
         let parsed: AgentCertificate = serde_json::from_slice(&bytes).unwrap();
         assert!(parsed.schema_version.is_none());
         let reserialized = serde_json::to_vec(&parsed).unwrap();
         assert_eq!(bytes, reserialized);
-        assert_eq!(effective_schema_version(parsed.schema_version.as_deref()), "0");
+        assert_eq!(
+            effective_schema_version(parsed.schema_version.as_deref()),
+            "0"
+        );
     }
 
     /// Build a single-entry trust store pinning `pk_b64` for kind
@@ -296,11 +302,11 @@ mod tests {
     fn trust_with(pk_b64: &str) -> crate::trust::TrustRootStore {
         use crate::trust::{TrustRoot, TrustRootKind, TrustRootStore};
         TrustRootStore::with_roots(vec![TrustRoot {
-            key_id:     "key_demo".into(),
+            key_id: "key_demo".into(),
             public_key: format!("ed25519:{pk_b64}"),
-            kind:       TrustRootKind::AgentCert,
-            label:      "test issuer".into(),
-            added_at:   "2026-05-15T00:00:00Z".into(),
+            kind: TrustRootKind::AgentCert,
+            label: "test issuer".into(),
+            added_at: "2026-05-15T00:00:00Z".into(),
         }])
     }
 
@@ -322,7 +328,10 @@ mod tests {
             description: None,
         };
         let capabilities = AgentCapabilities {
-            tools: vec![ToolCapability { name: "Bash".into(), description: None }],
+            tools: vec![ToolCapability {
+                name: "Bash".into(),
+                description: None,
+            }],
             api_endpoints: vec![],
             mcp_servers: vec![],
         };
@@ -373,7 +382,10 @@ mod tests {
             description: None,
         };
         let capabilities = AgentCapabilities {
-            tools: vec![ToolCapability { name: "Bash".into(), description: None }],
+            tools: vec![ToolCapability {
+                name: "Bash".into(),
+                description: None,
+            }],
             api_endpoints: vec![],
             mcp_servers: vec![],
         };
@@ -392,8 +404,14 @@ mod tests {
         // over the smaller list so it should no longer verify.
         let evil_caps = AgentCapabilities {
             tools: vec![
-                ToolCapability { name: "Bash".into(), description: None },
-                ToolCapability { name: "DropDatabase".into(), description: None },
+                ToolCapability {
+                    name: "Bash".into(),
+                    description: None,
+                },
+                ToolCapability {
+                    name: "DropDatabase".into(),
+                    description: None,
+                },
             ],
             api_endpoints: vec![],
             mcp_servers: vec![],
@@ -416,8 +434,10 @@ mod tests {
 
         let trust = trust_with(&pk_b64);
         let err = verify_certificate(&cert, &trust).unwrap_err();
-        assert!(matches!(err, CertificateVerifyError::InvalidSignature),
-            "expected InvalidSignature, got: {err}");
+        assert!(
+            matches!(err, CertificateVerifyError::InvalidSignature),
+            "expected InvalidSignature, got: {err}"
+        );
     }
 
     #[test]
@@ -425,7 +445,10 @@ mod tests {
         let mut cert = sample_certificate(Some(CERTIFICATE_SCHEMA_VERSION));
         cert.signature.algorithm = "rsa-pss-sha256".into();
         let err = verify_certificate(&cert, &crate::trust::TrustRootStore::empty()).unwrap_err();
-        assert!(matches!(err, CertificateVerifyError::UnsupportedAlgorithm(_)));
+        assert!(matches!(
+            err,
+            CertificateVerifyError::UnsupportedAlgorithm(_)
+        ));
     }
 
     /// Trust pin headline: a freshly-signed cert whose issuer key is
@@ -448,7 +471,10 @@ mod tests {
             description: None,
         };
         let capabilities = AgentCapabilities {
-            tools: vec![ToolCapability { name: "Bash".into(), description: None }],
+            tools: vec![ToolCapability {
+                name: "Bash".into(),
+                description: None,
+            }],
             api_endpoints: vec![],
             mcp_servers: vec![],
         };
@@ -482,8 +508,10 @@ mod tests {
         let trust = trust_with(&honest_pk);
 
         let err = verify_certificate(&cert, &trust).unwrap_err();
-        assert!(matches!(err, CertificateVerifyError::UntrustedIssuer { .. }),
-            "expected UntrustedIssuer, got: {err}");
+        assert!(
+            matches!(err, CertificateVerifyError::UntrustedIssuer { .. }),
+            "expected UntrustedIssuer, got: {err}"
+        );
     }
 
     /// Empty trust store yields `NoTrustConfigured` so the CLI can
@@ -506,7 +534,10 @@ mod tests {
             description: None,
         };
         let capabilities = AgentCapabilities {
-            tools: vec![ToolCapability { name: "Bash".into(), description: None }],
+            tools: vec![ToolCapability {
+                name: "Bash".into(),
+                description: None,
+            }],
             api_endpoints: vec![],
             mcp_servers: vec![],
         };
@@ -535,12 +566,16 @@ mod tests {
         };
 
         let err = verify_certificate(&cert, &crate::trust::TrustRootStore::empty()).unwrap_err();
-        assert!(matches!(err, CertificateVerifyError::NoTrustConfigured),
-            "expected NoTrustConfigured, got: {err}");
+        assert!(
+            matches!(err, CertificateVerifyError::NoTrustConfigured),
+            "expected NoTrustConfigured, got: {err}"
+        );
         // And the error must reference the CLI remediation.
         let msg = format!("{err}");
-        assert!(msg.contains("treeship trust add"),
-                "remediation must mention treeship trust add: {msg}");
+        assert!(
+            msg.contains("treeship trust add"),
+            "remediation must mention treeship trust add: {msg}"
+        );
     }
 
     #[test]
@@ -548,9 +583,14 @@ mod tests {
         let cert = sample_certificate(Some(CERTIFICATE_SCHEMA_VERSION));
         let bytes = serde_json::to_vec(&cert).unwrap();
         let s = std::str::from_utf8(&bytes).unwrap();
-        assert!(s.contains(r#""schema_version":"1""#),
-            "current cert must include schema_version=1, got: {s}");
+        assert!(
+            s.contains(r#""schema_version":"1""#),
+            "current cert must include schema_version=1, got: {s}"
+        );
         let parsed: AgentCertificate = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(effective_schema_version(parsed.schema_version.as_deref()), "1");
+        assert_eq!(
+            effective_schema_version(parsed.schema_version.as_deref()),
+            "1"
+        );
     }
 }

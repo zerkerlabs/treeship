@@ -121,25 +121,25 @@ impl TrustRootKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::HubCheckpoint => "hub_checkpoint",
-            Self::Ship          => "ship",
-            Self::HubOrg        => "hub_org",
-            Self::CertIssuer    => "cert_issuer",
-            Self::Revoker       => "revoker",
-            Self::AgentCert     => "agent_cert",
-            Self::SessionHost   => "session_host",
+            Self::Ship => "ship",
+            Self::HubOrg => "hub_org",
+            Self::CertIssuer => "cert_issuer",
+            Self::Revoker => "revoker",
+            Self::AgentCert => "agent_cert",
+            Self::SessionHost => "session_host",
         }
     }
 
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "hub_checkpoint" => Some(Self::HubCheckpoint),
-            "ship"           => Some(Self::Ship),
-            "hub_org"        => Some(Self::HubOrg),
-            "cert_issuer"    => Some(Self::CertIssuer),
-            "revoker"        => Some(Self::Revoker),
-            "agent_cert"     => Some(Self::AgentCert),
-            "session_host"   => Some(Self::SessionHost),
-            _                => None,
+            "ship" => Some(Self::Ship),
+            "hub_org" => Some(Self::HubOrg),
+            "cert_issuer" => Some(Self::CertIssuer),
+            "revoker" => Some(Self::Revoker),
+            "agent_cert" => Some(Self::AgentCert),
+            "session_host" => Some(Self::SessionHost),
+            _ => None,
         }
     }
 
@@ -183,7 +183,7 @@ pub struct TrustRoot {
 struct TrustRootFile {
     /// Schema version. Currently `1`.
     pub version: u8,
-    pub roots:   Vec<TrustRoot>,
+    pub roots: Vec<TrustRoot>,
 }
 
 const SCHEMA_VERSION: u8 = 1;
@@ -222,11 +222,9 @@ impl std::fmt::Display for TrustRootError {
                  or sync from your hub via `treeship hub sync-trust`.",
                 path.display(),
             ),
-            Self::Malformed { path, msg } => write!(
-                f,
-                "trust root file {} is malformed: {msg}",
-                path.display(),
-            ),
+            Self::Malformed { path, msg } => {
+                write!(f, "trust root file {} is malformed: {msg}", path.display(),)
+            }
             Self::Empty { path } => write!(
                 f,
                 "trust root file {} has no roots configured. \
@@ -249,7 +247,9 @@ impl std::fmt::Display for TrustRootError {
 impl std::error::Error for TrustRootError {}
 
 impl From<io::Error> for TrustRootError {
-    fn from(e: io::Error) -> Self { Self::Io(e) }
+    fn from(e: io::Error) -> Self {
+        Self::Io(e)
+    }
 }
 
 impl TrustRootStore {
@@ -265,7 +265,9 @@ impl TrustRootStore {
             .map(PathBuf::from)
             .unwrap_or_else(|| {
                 let home = std::env::var("HOME").unwrap_or_default();
-                PathBuf::from(home).join(".treeship").join("trust_roots.json")
+                PathBuf::from(home)
+                    .join(".treeship")
+                    .join("trust_roots.json")
             })
     }
 
@@ -290,10 +292,10 @@ impl TrustRootStore {
     /// shouldn't silently downgrade to empty).
     pub fn open_or_empty(path: &Path) -> Result<Self, TrustRootError> {
         match Self::open(path) {
-            Ok(s)                                          => Ok(s),
-            Err(TrustRootError::NotConfigured { .. })      => Ok(Self::empty()),
-            Err(TrustRootError::Empty { .. })              => Ok(Self::empty()),
-            Err(e)                                         => Err(e),
+            Ok(s) => Ok(s),
+            Err(TrustRootError::NotConfigured { .. }) => Ok(Self::empty()),
+            Err(TrustRootError::Empty { .. }) => Ok(Self::empty()),
+            Err(e) => Err(e),
         }
     }
 
@@ -318,22 +320,24 @@ impl TrustRootStore {
         let mut file = match fs::File::open(path) {
             Ok(f) => f,
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                return Err(TrustRootError::NotConfigured { path: path.to_path_buf() });
+                return Err(TrustRootError::NotConfigured {
+                    path: path.to_path_buf(),
+                });
             }
             Err(e) => return Err(TrustRootError::Io(e)),
         };
         check_open_trust_file_perms(path, &file)?;
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)?;
-        let file: TrustRootFile = serde_json::from_slice(&bytes)
-            .map_err(|e| TrustRootError::Malformed {
+        let file: TrustRootFile =
+            serde_json::from_slice(&bytes).map_err(|e| TrustRootError::Malformed {
                 path: path.to_path_buf(),
-                msg:  e.to_string(),
+                msg: e.to_string(),
             })?;
         if file.version != SCHEMA_VERSION {
             return Err(TrustRootError::Malformed {
                 path: path.to_path_buf(),
-                msg:  format!(
+                msg: format!(
                     "schema version mismatch: file has v{}, this binary supports v{}",
                     file.version, SCHEMA_VERSION,
                 ),
@@ -342,14 +346,15 @@ impl TrustRootStore {
         // Validate every embedded public key parses now -- catch a
         // malformed key at load time rather than at verify time.
         for root in &file.roots {
-            decode_ed25519_pubkey(&root.public_key)
-                .map_err(|msg| TrustRootError::Malformed {
-                    path: path.to_path_buf(),
-                    msg:  format!("root {}: {msg}", root.key_id),
-                })?;
+            decode_ed25519_pubkey(&root.public_key).map_err(|msg| TrustRootError::Malformed {
+                path: path.to_path_buf(),
+                msg: format!("root {}: {msg}", root.key_id),
+            })?;
         }
         if file.roots.is_empty() {
-            return Err(TrustRootError::Empty { path: path.to_path_buf() });
+            return Err(TrustRootError::Empty {
+                path: path.to_path_buf(),
+            });
         }
         Ok(Self { roots: file.roots })
     }
@@ -367,13 +372,12 @@ impl TrustRootStore {
         }
         let file = TrustRootFile {
             version: SCHEMA_VERSION,
-            roots:   self.roots.clone(),
+            roots: self.roots.clone(),
         };
-        let json = serde_json::to_vec_pretty(&file)
-            .map_err(|e| TrustRootError::Malformed {
-                path: path.to_path_buf(),
-                msg:  e.to_string(),
-            })?;
+        let json = serde_json::to_vec_pretty(&file).map_err(|e| TrustRootError::Malformed {
+            path: path.to_path_buf(),
+            msg: e.to_string(),
+        })?;
         fs::write(path, &json)?;
         #[cfg(unix)]
         {
@@ -426,7 +430,8 @@ impl TrustRootStore {
     /// pair replaces the previous entry. The CLI `treeship trust add`
     /// goes through here.
     pub fn add(&mut self, root: TrustRoot) {
-        self.roots.retain(|r| !(r.key_id == root.key_id && r.kind == root.kind));
+        self.roots
+            .retain(|r| !(r.key_id == root.key_id && r.kind == root.kind));
         self.roots.push(root);
     }
 
@@ -561,11 +566,11 @@ mod tests {
         let sk = SigningKey::generate(&mut rand::thread_rng());
         let pk = sk.verifying_key();
         let root = TrustRoot {
-            key_id:     key_id.into(),
+            key_id: key_id.into(),
             public_key: encode_ed25519_pubkey(&pk),
             kind,
-            label:      format!("test root {key_id}"),
-            added_at:   "2026-05-15T00:00:00Z".into(),
+            label: format!("test root {key_id}"),
+            added_at: "2026-05-15T00:00:00Z".into(),
         };
         (sk, root)
     }
@@ -656,7 +661,10 @@ mod tests {
         let dir = tmp_dir("perms");
         let path = dir.join("trust_roots.json");
         let (_, r) = fresh_root("hub_a", TrustRootKind::HubCheckpoint);
-        let file = TrustRootFile { version: SCHEMA_VERSION, roots: vec![r] };
+        let file = TrustRootFile {
+            version: SCHEMA_VERSION,
+            roots: vec![r],
+        };
         fs::write(&path, serde_json::to_vec_pretty(&file).unwrap()).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
 
@@ -687,7 +695,10 @@ mod tests {
         let dir = tmp_dir("perms-fd");
         let path = dir.join("trust_roots.json");
         let (_, r) = fresh_root("hub_b", TrustRootKind::HubCheckpoint);
-        let file = TrustRootFile { version: SCHEMA_VERSION, roots: vec![r] };
+        let file = TrustRootFile {
+            version: SCHEMA_VERSION,
+            roots: vec![r],
+        };
         // Valid JSON body -- proves the gate stops us before we
         // parse, since a successful parse would have returned a
         // populated store rather than the perms error.
@@ -711,12 +722,18 @@ mod tests {
         let store = TrustRootStore::with_roots(vec![r]);
         let vk = sk.verifying_key();
 
-        assert!(store.contains(&vk, TrustRootKind::HubCheckpoint),
-                "must accept matching kind");
-        assert!(!store.contains(&vk, TrustRootKind::Ship),
-                "must reject mismatching kind");
-        assert!(!store.contains(&vk, TrustRootKind::AgentCert),
-                "must reject mismatching kind");
+        assert!(
+            store.contains(&vk, TrustRootKind::HubCheckpoint),
+            "must accept matching kind"
+        );
+        assert!(
+            !store.contains(&vk, TrustRootKind::Ship),
+            "must reject mismatching kind"
+        );
+        assert!(
+            !store.contains(&vk, TrustRootKind::AgentCert),
+            "must reject mismatching kind"
+        );
     }
 
     #[test]

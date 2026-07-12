@@ -1,14 +1,13 @@
-use wasm_bindgen::prelude::*;
-use std::collections::HashMap;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use ed25519_dalek::VerifyingKey;
+use std::collections::HashMap;
+use wasm_bindgen::prelude::*;
 
 #[cfg(feature = "zk")]
 mod zk;
 
 use treeship_core::attestation::{
-    pae, artifact_id_from_pae, digest_from_pae,
-    Envelope, Verifier, VerifyResult,
+    artifact_id_from_pae, digest_from_pae, pae, Envelope, Verifier, VerifyResult,
 };
 
 /// Verify a DSSE envelope JSON string against a set of trusted public keys.
@@ -28,7 +27,8 @@ pub fn verify_envelope(envelope_json: &str, trusted_keys_json: &str) -> String {
             "verified_keys": result.verified_key_ids,
             "payload_type": result.payload_type,
             "error": serde_json::Value::Null,
-        }).to_string(),
+        })
+        .to_string(),
         Err(e) => serde_json::json!({
             "valid": false,
             "artifact_id": serde_json::Value::Null,
@@ -36,23 +36,29 @@ pub fn verify_envelope(envelope_json: &str, trusted_keys_json: &str) -> String {
             "verified_keys": Vec::<String>::new(),
             "payload_type": serde_json::Value::Null,
             "error": e,
-        }).to_string(),
+        })
+        .to_string(),
     }
 }
 
 fn verify_inner(envelope_json: &str, trusted_keys_json: &str) -> Result<VerifyResult, String> {
-    let envelope: Envelope = serde_json::from_str(envelope_json)
-        .map_err(|e| format!("invalid envelope JSON: {}", e))?;
+    let envelope: Envelope =
+        serde_json::from_str(envelope_json).map_err(|e| format!("invalid envelope JSON: {}", e))?;
 
     let keys_map: HashMap<String, String> = serde_json::from_str(trusted_keys_json)
         .map_err(|e| format!("invalid trusted_keys JSON: {}", e))?;
 
     let mut verifying_keys: HashMap<String, VerifyingKey> = HashMap::new();
     for (key_id, b64_pubkey) in &keys_map {
-        let bytes = URL_SAFE_NO_PAD.decode(b64_pubkey)
+        let bytes = URL_SAFE_NO_PAD
+            .decode(b64_pubkey)
             .map_err(|e| format!("bad base64 for key {}: {}", key_id, e))?;
         if bytes.len() != 32 {
-            return Err(format!("key {} is {} bytes, expected 32", key_id, bytes.len()));
+            return Err(format!(
+                "key {} is {} bytes, expected 32",
+                key_id,
+                bytes.len()
+            ));
         }
         let mut arr = [0u8; 32];
         arr.copy_from_slice(&bytes);
@@ -62,8 +68,7 @@ fn verify_inner(envelope_json: &str, trusted_keys_json: &str) -> Result<VerifyRe
     }
 
     let verifier = Verifier::new(verifying_keys);
-    verifier.verify_any(&envelope)
-        .map_err(|e| format!("{}", e))
+    verifier.verify_any(&envelope).map_err(|e| format!("{}", e))
 }
 
 /// Derive the content-addressed artifact ID from an envelope.
@@ -77,10 +82,11 @@ pub fn artifact_id(envelope_json: &str) -> String {
 }
 
 fn artifact_id_inner(envelope_json: &str) -> Result<String, String> {
-    let envelope: Envelope = serde_json::from_str(envelope_json)
-        .map_err(|e| format!("invalid envelope JSON: {}", e))?;
+    let envelope: Envelope =
+        serde_json::from_str(envelope_json).map_err(|e| format!("invalid envelope JSON: {}", e))?;
 
-    let payload_bytes = URL_SAFE_NO_PAD.decode(&envelope.payload)
+    let payload_bytes = URL_SAFE_NO_PAD
+        .decode(&envelope.payload)
         .map_err(|e| format!("bad payload base64: {}", e))?;
 
     let pae_bytes = pae(&envelope.payload_type, &payload_bytes);
@@ -98,10 +104,11 @@ pub fn digest(envelope_json: &str) -> String {
 }
 
 fn digest_inner(envelope_json: &str) -> Result<String, String> {
-    let envelope: Envelope = serde_json::from_str(envelope_json)
-        .map_err(|e| format!("invalid envelope JSON: {}", e))?;
+    let envelope: Envelope =
+        serde_json::from_str(envelope_json).map_err(|e| format!("invalid envelope JSON: {}", e))?;
 
-    let payload_bytes = URL_SAFE_NO_PAD.decode(&envelope.payload)
+    let payload_bytes = URL_SAFE_NO_PAD
+        .decode(&envelope.payload)
         .map_err(|e| format!("bad payload base64: {}", e))?;
 
     let pae_bytes = pae(&envelope.payload_type, &payload_bytes);
@@ -119,14 +126,14 @@ pub fn decode_payload(envelope_json: &str) -> String {
 }
 
 fn decode_inner(envelope_json: &str) -> Result<String, String> {
-    let envelope: Envelope = serde_json::from_str(envelope_json)
-        .map_err(|e| format!("invalid envelope JSON: {}", e))?;
+    let envelope: Envelope =
+        serde_json::from_str(envelope_json).map_err(|e| format!("invalid envelope JSON: {}", e))?;
 
-    let payload_bytes = URL_SAFE_NO_PAD.decode(&envelope.payload)
+    let payload_bytes = URL_SAFE_NO_PAD
+        .decode(&envelope.payload)
         .map_err(|e| format!("bad payload base64: {}", e))?;
 
-    String::from_utf8(payload_bytes)
-        .map_err(|e| format!("payload is not UTF-8: {}", e))
+    String::from_utf8(payload_bytes).map_err(|e| format!("payload is not UTF-8: {}", e))
 }
 
 /// Verify a Merkle inclusion proof JSON. The `trust_roots_json` argument
@@ -145,13 +152,14 @@ pub fn verify_merkle_proof(proof_json: &str, trust_roots_json: &str) -> String {
         Err(e) => serde_json::json!({
             "valid": false,
             "message": e,
-        }).to_string(),
+        })
+        .to_string(),
     }
 }
 
 fn verify_merkle_inner(proof_json: &str, trust_roots_json: &str) -> Result<String, String> {
-    let proof_file: treeship_core::merkle::ProofFile = serde_json::from_str(proof_json)
-        .map_err(|e| format!("invalid proof JSON: {}", e))?;
+    let proof_file: treeship_core::merkle::ProofFile =
+        serde_json::from_str(proof_json).map_err(|e| format!("invalid proof JSON: {}", e))?;
 
     let trust = parse_wasm_trust_roots(trust_roots_json)?;
 
@@ -164,14 +172,17 @@ fn verify_merkle_inner(proof_json: &str, trust_roots_json: &str) -> Result<Strin
             "message": "checkpoint signature invalid",
             "artifact_id": proof_file.artifact_id,
             "checkpoint_index": proof_file.checkpoint.index,
-        }).to_string());
+        })
+        .to_string());
     }
 
     // 2. Verify inclusion proof. The trusted merkle_version comes from
     // the signature-verified checkpoint above — NOT from the
     // (attacker-controllable) inclusion proof. verify_proof additionally
     // rejects if proof.merkle_version != checkpoint.merkle_version.
-    let root = proof_file.checkpoint.root
+    let root = proof_file
+        .checkpoint
+        .root
         .strip_prefix("sha256:")
         .unwrap_or(&proof_file.checkpoint.root);
 
@@ -191,7 +202,8 @@ fn verify_merkle_inner(proof_json: &str, trust_roots_json: &str) -> Result<Strin
         "checkpoint_root": proof_file.checkpoint.root,
         "signed_at": proof_file.checkpoint.signed_at,
         "signer": proof_file.checkpoint.signer,
-    }).to_string())
+    })
+    .to_string())
 }
 
 /// Verify a ZK proof file (auto-detects type from proof.system field).
@@ -209,15 +221,17 @@ pub fn verify_zk_proof(proof_json: &str) -> String {
             "valid": false,
             "system": "unknown",
             "error": e,
-        }).to_string(),
+        })
+        .to_string(),
     }
 }
 
 fn verify_zk_inner(proof_json: &str) -> Result<String, String> {
-    let proof: serde_json::Value = serde_json::from_str(proof_json)
-        .map_err(|e| format!("invalid proof JSON: {}", e))?;
+    let proof: serde_json::Value =
+        serde_json::from_str(proof_json).map_err(|e| format!("invalid proof JSON: {}", e))?;
 
-    let system = proof.get("system")
+    let system = proof
+        .get("system")
         .and_then(|s| s.as_str())
         .unwrap_or("unknown");
 
@@ -235,15 +249,22 @@ fn verify_circom_proof_inner(proof: &serde_json::Value) -> Result<String, String
 
 #[cfg(not(feature = "zk"))]
 fn verify_circom_proof_inner(proof: &serde_json::Value) -> Result<String, String> {
-    let circuit = proof.get("circuit").and_then(|c| c.as_str()).unwrap_or("unknown");
-    let artifact_id = proof.get("artifact_id").and_then(|a| a.as_str()).unwrap_or("unknown");
+    let circuit = proof
+        .get("circuit")
+        .and_then(|c| c.as_str())
+        .unwrap_or("unknown");
+    let artifact_id = proof
+        .get("artifact_id")
+        .and_then(|a| a.as_str())
+        .unwrap_or("unknown");
     Ok(serde_json::json!({
         "valid": false,
         "system": "circom-groth16",
         "circuit": circuit,
         "artifact_id": artifact_id,
         "error": "ZK verification not enabled in this WASM build. Rebuild with --features zk.",
-    }).to_string())
+    })
+    .to_string())
 }
 
 fn verify_risc0_proof_inner(proof: &serde_json::Value) -> Result<String, String> {
@@ -251,8 +272,7 @@ fn verify_risc0_proof_inner(proof: &serde_json::Value) -> Result<String, String>
     // Full zkVM receipt verification (receipt.verify(GUEST_ID)) requires the
     // native CLI: treeship verify-proof
 
-    let receipt_arr = proof.get("receipt_bytes")
-        .and_then(|r| r.as_array());
+    let receipt_arr = proof.get("receipt_bytes").and_then(|r| r.as_array());
 
     let receipt_len = receipt_arr.map(|a| a.len()).unwrap_or(0);
 
@@ -263,16 +283,15 @@ fn verify_risc0_proof_inner(proof: &serde_json::Value) -> Result<String, String>
             "system": "risc0",
             "error": "no receipt present, proof was generated by placeholder prover",
             "note": "RISC Zero chain proofs require a receipt for any validity claim"
-        }).to_string());
+        })
+        .to_string());
     }
 
     // Structural check: attempt to interpret receipt_bytes as a valid byte array.
     // Each element must be a u8 (0-255). If any element is out of range or not
     // a number, the receipt is structurally invalid.
     let receipt_valid_structure = receipt_arr
-        .map(|arr| arr.iter().all(|v| {
-            v.as_u64().map_or(false, |n| n <= 255)
-        }))
+        .map(|arr| arr.iter().all(|v| v.as_u64().map_or(false, |n| n <= 255)))
         .unwrap_or(false);
 
     if !receipt_valid_structure {
@@ -280,17 +299,15 @@ fn verify_risc0_proof_inner(proof: &serde_json::Value) -> Result<String, String>
             "valid": false,
             "system": "risc0",
             "error": "receipt_bytes failed structural validation (not a valid byte array)",
-        }).to_string());
+        })
+        .to_string());
     }
 
     // Require journal fields to be present. Without these, the receipt
     // cannot be meaningful even if it deserializes.
-    let image_id = proof.get("image_id")
-        .and_then(|i| i.as_str());
-    let artifact_count = proof.get("artifact_count")
-        .and_then(|c| c.as_u64());
-    let proved_at = proof.get("proved_at")
-        .and_then(|p| p.as_str());
+    let image_id = proof.get("image_id").and_then(|i| i.as_str());
+    let artifact_count = proof.get("artifact_count").and_then(|c| c.as_u64());
+    let proved_at = proof.get("proved_at").and_then(|p| p.as_str());
 
     if image_id.is_none() || artifact_count.is_none() || proved_at.is_none() {
         return Ok(serde_json::json!({
@@ -298,18 +315,22 @@ fn verify_risc0_proof_inner(proof: &serde_json::Value) -> Result<String, String>
             "system": "risc0",
             "error": "missing required journal fields (image_id, artifact_count, proved_at)",
             "has_receipt": true,
-        }).to_string());
+        })
+        .to_string());
     }
 
     // Read summary fields for informational output only.
     // These JSON booleans are NOT used to determine validity.
-    let all_sigs = proof.get("all_signatures_valid")
+    let all_sigs = proof
+        .get("all_signatures_valid")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let chain_intact = proof.get("chain_intact")
+    let chain_intact = proof
+        .get("chain_intact")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let approvals_matched = proof.get("approval_nonces_matched")
+    let approvals_matched = proof
+        .get("approval_nonces_matched")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
@@ -375,7 +396,11 @@ pub fn verify_receipt(receipt_json: &str) -> String {
     // "pass" (which a consumer could read as authenticity). An empty receipt
     // proves nothing, so it is a "fail".
     let empty_receipt = receipt.artifacts.is_empty();
-    let outcome = if any_fail || empty_receipt { "fail" } else { "structural-pass" };
+    let outcome = if any_fail || empty_receipt {
+        "fail"
+    } else {
+        "structural-pass"
+    };
 
     let agent_name = receipt
         .agent_graph
@@ -437,7 +462,7 @@ pub fn verify_certificate(cert_json: &str, now_rfc3339: &str, trust_roots_json: 
     // the browser-side verifier no longer trusts whatever pubkey the
     // certificate happens to carry.
     let trust = match parse_wasm_trust_roots(trust_roots_json) {
-        Ok(t)  => t,
+        Ok(t) => t,
         Err(e) => return error_result("invalid_trust_roots", &e),
     };
     let sig_ok = verify_cert(&cert, &trust).is_ok();
@@ -516,7 +541,7 @@ pub fn cross_verify(
         Err(e) => return error_result("invalid_json", &format!("invalid certificate JSON: {e}")),
     };
     let trust = match parse_wasm_trust_roots(trust_roots_json) {
-        Ok(t)  => t,
+        Ok(t) => t,
         Err(e) => return error_result("invalid_trust_roots", &e),
     };
 
@@ -583,9 +608,7 @@ pub fn verify_capability(card_json: &str, actions_json: &str, trust_roots_json: 
 
     let card_env: Envelope = match serde_json::from_str(card_json) {
         Ok(e) => e,
-        Err(e) => {
-            return error_result("invalid_json", &format!("invalid card envelope JSON: {e}"))
-        }
+        Err(e) => return error_result("invalid_json", &format!("invalid card envelope JSON: {e}")),
     };
     let card_stmt: ReceiptStatement = match card_env.unmarshal_statement() {
         Ok(s) => s,
@@ -718,11 +741,17 @@ fn parse_wasm_trust_roots(s: &str) -> Result<treeship_core::trust::TrustRootStor
         return Ok(TrustRootStore::empty());
     }
     #[derive(serde::Deserialize)]
-    struct File { version: u8, roots: Vec<TrustRoot> }
-    let file: File = serde_json::from_str(s)
-        .map_err(|e| format!("invalid trust_roots_json: {e}"))?;
+    struct File {
+        version: u8,
+        roots: Vec<TrustRoot>,
+    }
+    let file: File =
+        serde_json::from_str(s).map_err(|e| format!("invalid trust_roots_json: {e}"))?;
     if file.version != 1 {
-        return Err(format!("unsupported trust_roots schema version: {}", file.version));
+        return Err(format!(
+            "unsupported trust_roots schema version: {}",
+            file.version
+        ));
     }
     // Validate every embedded pubkey parses now -- otherwise the
     // verifier would silently ignore a malformed root.
@@ -783,18 +812,38 @@ mod tests {
         };
         let events = vec![
             mk(0, "root", EventType::SessionStarted),
-            mk(1, "root", EventType::AgentStarted { parent_agent_instance_id: None }),
-            mk(2, "root", EventType::AgentCalledTool {
-                tool_name: "Bash".into(),
-                tool_input_digest: None,
-                tool_output_digest: None,
-                duration_ms: Some(8),
-            }),
-            mk(3, "root", EventType::AgentCompleted { termination_reason: None }),
-            mk(4, "root", EventType::SessionClosed {
-                summary: Some("Done".into()),
-                duration_ms: Some(120_000),
-            }),
+            mk(
+                1,
+                "root",
+                EventType::AgentStarted {
+                    parent_agent_instance_id: None,
+                },
+            ),
+            mk(
+                2,
+                "root",
+                EventType::AgentCalledTool {
+                    tool_name: "Bash".into(),
+                    tool_input_digest: None,
+                    tool_output_digest: None,
+                    duration_ms: Some(8),
+                },
+            ),
+            mk(
+                3,
+                "root",
+                EventType::AgentCompleted {
+                    termination_reason: None,
+                },
+            ),
+            mk(
+                4,
+                "root",
+                EventType::SessionClosed {
+                    summary: Some("Done".into()),
+                    duration_ms: Some(120_000),
+                },
+            ),
         ];
         let mut m = SessionManifest::new(
             "ssn_wasm_test".into(),
@@ -805,8 +854,18 @@ mod tests {
         m.mode = LifecycleMode::Manual;
         m.status = SessionStatus::Completed;
         let artifacts = vec![
-            ArtifactEntry { artifact_id: "art_001".into(), payload_type: "action".into(), digest: None, signed_at: None },
-            ArtifactEntry { artifact_id: "art_002".into(), payload_type: "action".into(), digest: None, signed_at: None },
+            ArtifactEntry {
+                artifact_id: "art_001".into(),
+                payload_type: "action".into(),
+                digest: None,
+                signed_at: None,
+            },
+            ArtifactEntry {
+                artifact_id: "art_002".into(),
+                payload_type: "action".into(),
+                digest: None,
+                signed_at: None,
+            },
         ];
         let r = ReceiptComposer::compose(&m, &events, artifacts);
         serde_json::to_string(&r).unwrap()
@@ -825,7 +884,8 @@ mod tests {
                 "label":      "test issuer",
                 "added_at":   "2026-05-15T00:00:00Z",
             }]
-        }).to_string()
+        })
+        .to_string()
     }
 
     fn sample_cert_with_key(valid_until: &str) -> (String, String) {
@@ -850,7 +910,10 @@ mod tests {
             description: None,
         };
         let capabilities = AgentCapabilities {
-            tools: vec![ToolCapability { name: "Bash".into(), description: None }],
+            tools: vec![ToolCapability {
+                name: "Bash".into(),
+                description: None,
+            }],
             api_endpoints: vec![],
             mcp_servers: vec![],
         };
@@ -910,7 +973,10 @@ mod tests {
         val["session"]["ship_id"] = serde_json::Value::String("ship_ATTACKER".into());
         let forged = val.to_string();
         let out: serde_json::Value = serde_json::from_str(&verify_receipt(&forged)).unwrap();
-        assert_ne!(out["outcome"], "pass", "must never claim a plain pass: {out}");
+        assert_ne!(
+            out["outcome"], "pass",
+            "must never claim a plain pass: {out}"
+        );
         assert_eq!(out["outcome"], "structural-pass");
         assert_eq!(out["signatures_verified"], false);
     }
@@ -952,9 +1018,9 @@ mod tests {
     fn verify_certificate_passes_freshly_signed_cert() {
         let (cert, pk) = sample_cert_with_key("2027-01-01T00:00:00Z");
         let trust = trust_roots_for(&pk);
-        let out: serde_json::Value = serde_json::from_str(
-            &verify_certificate(&cert, "2026-06-01T00:00:00Z", &trust),
-        ).unwrap();
+        let out: serde_json::Value =
+            serde_json::from_str(&verify_certificate(&cert, "2026-06-01T00:00:00Z", &trust))
+                .unwrap();
         assert_eq!(out["outcome"], "pass", "got: {out}");
         assert_eq!(out["signature_valid"], true);
         assert_eq!(out["validity"], "valid");
@@ -965,9 +1031,9 @@ mod tests {
     fn verify_certificate_flags_expiry() {
         let (cert, pk) = sample_cert_with_key("2026-04-10T00:00:00Z");
         let trust = trust_roots_for(&pk);
-        let out: serde_json::Value = serde_json::from_str(
-            &verify_certificate(&cert, "2026-06-01T00:00:00Z", &trust),
-        ).unwrap();
+        let out: serde_json::Value =
+            serde_json::from_str(&verify_certificate(&cert, "2026-06-01T00:00:00Z", &trust))
+                .unwrap();
         assert_eq!(out["outcome"], "fail");
         assert_eq!(out["validity"], "expired");
     }
@@ -976,9 +1042,8 @@ mod tests {
     fn verify_certificate_empty_now_defers_validity() {
         let (cert, pk) = sample_cert_with_key("2027-01-01T00:00:00Z");
         let trust = trust_roots_for(&pk);
-        let out: serde_json::Value = serde_json::from_str(
-            &verify_certificate(&cert, "", &trust),
-        ).unwrap();
+        let out: serde_json::Value =
+            serde_json::from_str(&verify_certificate(&cert, "", &trust)).unwrap();
         assert_eq!(out["outcome"], "pass");
         assert_eq!(out["validity"], "not_checked");
     }
@@ -989,11 +1054,9 @@ mod tests {
     #[test]
     fn verify_certificate_rejects_with_no_trust_roots() {
         let cert = sample_cert_json("2027-01-01T00:00:00Z");
-        let out: serde_json::Value = serde_json::from_str(
-            &verify_certificate(&cert, "2026-06-01T00:00:00Z", ""),
-        ).unwrap();
-        assert_eq!(out["outcome"], "fail",
-                   "no trust roots must fail: {out}");
+        let out: serde_json::Value =
+            serde_json::from_str(&verify_certificate(&cert, "2026-06-01T00:00:00Z", "")).unwrap();
+        assert_eq!(out["outcome"], "fail", "no trust roots must fail: {out}");
         assert_eq!(out["signature_valid"], false);
     }
 
@@ -1006,11 +1069,13 @@ mod tests {
         let bogus_trust = trust_roots_for(
             "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", // 32 zero bytes
         );
-        let out: serde_json::Value = serde_json::from_str(
-            &verify_certificate(&cert, "2026-06-01T00:00:00Z", &bogus_trust),
-        ).unwrap();
-        assert_eq!(out["outcome"], "fail",
-                   "unknown issuer must fail: {out}");
+        let out: serde_json::Value = serde_json::from_str(&verify_certificate(
+            &cert,
+            "2026-06-01T00:00:00Z",
+            &bogus_trust,
+        ))
+        .unwrap();
+        assert_eq!(out["outcome"], "fail", "unknown issuer must fail: {out}");
         assert_eq!(out["signature_valid"], false);
     }
 
@@ -1019,9 +1084,13 @@ mod tests {
         let receipt = sample_receipt_json();
         let (cert, pk) = sample_cert_with_key("2027-01-01T00:00:00Z");
         let trust = trust_roots_for(&pk);
-        let out: serde_json::Value = serde_json::from_str(
-            &cross_verify(&receipt, &cert, "2026-06-01T00:00:00Z", &trust),
-        ).unwrap();
+        let out: serde_json::Value = serde_json::from_str(&cross_verify(
+            &receipt,
+            &cert,
+            "2026-06-01T00:00:00Z",
+            &trust,
+        ))
+        .unwrap();
         assert_eq!(out["outcome"], "pass", "got: {out}");
         assert_eq!(out["ok"], true);
         assert_eq!(out["ship_id_status"], "match");
@@ -1035,18 +1104,22 @@ mod tests {
         let receipt = sample_receipt_json();
         let (cert, pk) = sample_cert_with_key("2026-04-10T00:00:00Z");
         let trust = trust_roots_for(&pk);
-        let out: serde_json::Value = serde_json::from_str(
-            &cross_verify(&receipt, &cert, "2026-06-01T00:00:00Z", &trust),
-        ).unwrap();
+        let out: serde_json::Value = serde_json::from_str(&cross_verify(
+            &receipt,
+            &cert,
+            "2026-06-01T00:00:00Z",
+            &trust,
+        ))
+        .unwrap();
         assert_eq!(out["ok"], false);
         assert_eq!(out["certificate_status"], "expired");
     }
 
     #[test]
     fn cross_verify_returns_error_on_malformed_input() {
-        let out: serde_json::Value = serde_json::from_str(
-            &cross_verify("bad", "also bad", "2026-06-01T00:00:00Z", ""),
-        ).unwrap();
+        let out: serde_json::Value =
+            serde_json::from_str(&cross_verify("bad", "also bad", "2026-06-01T00:00:00Z", ""))
+                .unwrap();
         assert_eq!(out["outcome"], "error");
         assert_eq!(out["error_code"], "invalid_json");
     }
@@ -1068,14 +1141,26 @@ mod tests {
             "version": "1.0.0",
             "capabilities": { "tools": ["file.*"] }
         }));
-        let card_env = sign(&payload_type("receipt"), &card, &signer).unwrap().envelope;
+        let card_env = sign(&payload_type("receipt"), &card, &signer)
+            .unwrap()
+            .envelope;
         let card_json = serde_json::to_string(&card_env).unwrap();
 
         // file.write (in scope via file.*) and command.run (out of scope)
-        let a1 = sign(&payload_type("action"),
-            &ActionStatement::new("agent://deployer", "file.write"), &signer).unwrap().envelope;
-        let a2 = sign(&payload_type("action"),
-            &ActionStatement::new("agent://deployer", "command.run"), &signer).unwrap().envelope;
+        let a1 = sign(
+            &payload_type("action"),
+            &ActionStatement::new("agent://deployer", "file.write"),
+            &signer,
+        )
+        .unwrap()
+        .envelope;
+        let a2 = sign(
+            &payload_type("action"),
+            &ActionStatement::new("agent://deployer", "command.run"),
+            &signer,
+        )
+        .unwrap()
+        .envelope;
         let actions_json = serde_json::to_string(&vec![a1, a2]).unwrap();
 
         // Pin the signer's REAL public key under agent_cert. (AUD-17: this
@@ -1093,12 +1178,14 @@ mod tests {
                 "label": "",
                 "added_at": ""
             }]
-        }).to_string();
+        })
+        .to_string();
 
         // With trust roots: key-bound, 1 in / 1 out, status violations -- the
         // exact verdict the CLI verify-capability returns for the same inputs.
         let out: serde_json::Value =
-            serde_json::from_str(&verify_capability(&card_json, &actions_json, &trust_json)).unwrap();
+            serde_json::from_str(&verify_capability(&card_json, &actions_json, &trust_json))
+                .unwrap();
         assert_eq!(out["key_bound"], true, "{out}");
         assert_eq!(out["in_scope"], 1);
         assert_eq!(out["out_of_scope"], 1);
@@ -1143,12 +1230,19 @@ mod tests {
             "capabilities": { "tools": ["file.*"] }
         }));
         // Signed by the ATTACKER but its signature carries keyid "key_victim".
-        let card_env = sign(&payload_type("receipt"), &card, &attacker).unwrap().envelope;
+        let card_env = sign(&payload_type("receipt"), &card, &attacker)
+            .unwrap()
+            .envelope;
         let card_json = serde_json::to_string(&card_env).unwrap();
 
         // A forged in-scope action, also signed by the attacker under key_victim.
-        let a1 = sign(&payload_type("action"),
-            &ActionStatement::new("agent://deployer", "file.write"), &attacker).unwrap().envelope;
+        let a1 = sign(
+            &payload_type("action"),
+            &ActionStatement::new("agent://deployer", "file.write"),
+            &attacker,
+        )
+        .unwrap()
+        .envelope;
         let actions_json = serde_json::to_string(&vec![a1]).unwrap();
 
         // The victim's REAL key is what is pinned.
@@ -1161,11 +1255,16 @@ mod tests {
                 "label": "",
                 "added_at": ""
             }]
-        }).to_string();
+        })
+        .to_string();
 
         let out: serde_json::Value =
-            serde_json::from_str(&verify_capability(&card_json, &actions_json, &trust_json)).unwrap();
-        assert_eq!(out["key_bound"], false, "forged card must not be key-bound: {out}");
+            serde_json::from_str(&verify_capability(&card_json, &actions_json, &trust_json))
+                .unwrap();
+        assert_eq!(
+            out["key_bound"], false,
+            "forged card must not be key-bound: {out}"
+        );
         assert_eq!(out["status"], "self-asserted");
         assert_eq!(out["in_scope"], 0, "a forged action must not be counted");
     }

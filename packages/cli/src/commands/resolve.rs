@@ -60,7 +60,9 @@ pub fn resolve(
         if stmt.kind != "agent_card.v1" {
             continue;
         }
-        let Some(payload) = stmt.payload else { continue };
+        let Some(payload) = stmt.payload else {
+            continue;
+        };
         if payload.get("agent").and_then(|v| v.as_str()) != Some(agent) {
             continue;
         }
@@ -98,7 +100,8 @@ pub fn resolve(
     let tools = declared_tools(&card);
 
     // --- Revocation (authorized only) ---------------------------------------
-    let revocation = crate::commands::capability::find_revocation(&ctx, &card_id, card_keyid, &trust);
+    let revocation =
+        crate::commands::capability::find_revocation(&ctx, &card_id, card_keyid, &trust);
 
     // --- Capabilities grade: cross-check captured actions -------------------
     let action_pt = payload_type("action");
@@ -475,7 +478,10 @@ fn resolve_remote(hub: &str, agent: &str, trust: &TrustRootStore, printer: &Prin
     let mut revocation: Option<String> = None;
     if let Some(revs) = bundle.get("revocations").and_then(|v| v.as_array()) {
         for rev in revs {
-            let rev_json = rev.get("envelope_json").and_then(|v| v.as_str()).unwrap_or("");
+            let rev_json = rev
+                .get("envelope_json")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let Ok(rev_env) = serde_json::from_str::<Envelope>(rev_json) else {
                 continue;
             };
@@ -535,7 +541,10 @@ fn resolve_remote(hub: &str, agent: &str, trust: &TrustRootStore, printer: &Prin
         .iter()
         .filter(|t| !captured.contains(*t) && discovered.contains(*t))
         .count();
-    let n_other = tools.len().saturating_sub(n_captured).saturating_sub(n_discovered);
+    let n_other = tools
+        .len()
+        .saturating_sub(n_captured)
+        .saturating_sub(n_discovered);
 
     let sig_str = if sig_ok && chain_cert_id.is_some() {
         "verified (chain to pinned ship root)"
@@ -665,7 +674,10 @@ fn resolve_remote(hub: &str, agent: &str, trust: &TrustRootStore, printer: &Prin
         ],
     );
     if let Some(reason) = &revocation {
-        printer.warn("card REVOKED — do not honor", &[("reason", reason.as_str())]);
+        printer.warn(
+            "card REVOKED — do not honor",
+            &[("reason", reason.as_str())],
+        );
     }
     printer.blank();
     printer.hint(
@@ -701,19 +713,26 @@ mod chain_tests {
     fn signed_receipt(kind: &str, payload: serde_json::Value, signer: &Ed25519Signer) -> Envelope {
         let mut stmt = ReceiptStatement::new("ship://ship_test", kind);
         stmt.payload = Some(payload);
-        sign(&payload_type("receipt"), &stmt, signer).unwrap().envelope
+        sign(&payload_type("receipt"), &stmt, signer)
+            .unwrap()
+            .envelope
     }
 
     fn signed_card(agent: &str, keyid_claim: &str, signer: &Ed25519Signer) -> Envelope {
         let mut stmt = ReceiptStatement::new("ship://ship_test", "agent_card.v1");
         stmt.payload = Some(serde_json::json!({ "agent": agent, "keyid": keyid_claim }));
-        sign(&payload_type("receipt"), &stmt, signer).unwrap().envelope
+        sign(&payload_type("receipt"), &stmt, signer)
+            .unwrap()
+            .envelope
     }
 
     fn ship_pinned(ship: &Ed25519Signer, kind: TrustRootKind) -> TrustRootStore {
         TrustRootStore::with_roots(vec![TrustRoot {
             key_id: ship.key_id().to_string(),
-            public_key: format!("ed25519:{}", URL_SAFE_NO_PAD.encode(ship.public_key_bytes())),
+            public_key: format!(
+                "ed25519:{}",
+                URL_SAFE_NO_PAD.encode(ship.public_key_bytes())
+            ),
             kind,
             label: "test ship".into(),
             added_at: String::new(),
@@ -724,13 +743,21 @@ mod chain_tests {
     fn chain_verifies_card_through_pinned_ship_root() {
         let ship = Ed25519Signer::generate("key_ship").unwrap();
         let agent_key = Ed25519Signer::generate("key_agent").unwrap();
-        let cert = signed_receipt("agent_cert.v1", cert_payload("agent://a", &agent_key), &ship);
+        let cert = signed_receipt(
+            "agent_cert.v1",
+            cert_payload("agent://a", &agent_key),
+            &ship,
+        );
         let card = signed_card("agent://a", "key_agent", &agent_key);
         let trust = ship_pinned(&ship, TrustRootKind::CertIssuer);
 
         let verdict = chain_verify_card(
-            &card, "key_agent", "agent://a",
-            &[("art_cert".into(), cert)], &trust, NOW,
+            &card,
+            "key_agent",
+            "agent://a",
+            &[("art_cert".into(), cert)],
+            &trust,
+            NOW,
         );
         assert!(verdict.is_some(), "valid chain must verify");
         assert_eq!(verdict.unwrap().cert_id, "art_cert");
@@ -740,19 +767,37 @@ mod chain_tests {
     fn chain_rejects_unpinned_ship() {
         let ship = Ed25519Signer::generate("key_ship").unwrap();
         let agent_key = Ed25519Signer::generate("key_agent").unwrap();
-        let cert = signed_receipt("agent_cert.v1", cert_payload("agent://a", &agent_key), &ship);
+        let cert = signed_receipt(
+            "agent_cert.v1",
+            cert_payload("agent://a", &agent_key),
+            &ship,
+        );
         let card = signed_card("agent://a", "key_agent", &agent_key);
 
         // Empty roots: a self-signed forgery chain must not verify.
         let empty = TrustRootStore::with_roots(vec![]);
-        assert!(chain_verify_card(&card, "key_agent", "agent://a",
-            &[("art_cert".into(), cert.clone())], &empty, NOW).is_none());
+        assert!(chain_verify_card(
+            &card,
+            "key_agent",
+            "agent://a",
+            &[("art_cert".into(), cert.clone())],
+            &empty,
+            NOW
+        )
+        .is_none());
 
         // Pinned under the WRONG kind (agent_cert, not ship) also rejects:
         // certifying agents is the Ship role, not a leaf role.
         let wrong_kind = ship_pinned(&ship, TrustRootKind::AgentCert);
-        assert!(chain_verify_card(&card, "key_agent", "agent://a",
-            &[("art_cert".into(), cert)], &wrong_kind, NOW).is_none());
+        assert!(chain_verify_card(
+            &card,
+            "key_agent",
+            "agent://a",
+            &[("art_cert".into(), cert)],
+            &wrong_kind,
+            NOW
+        )
+        .is_none());
     }
 
     #[test]
@@ -765,20 +810,50 @@ mod chain_tests {
         let mut expired = cert_payload("agent://a", &agent_key);
         expired["valid_until"] = serde_json::json!("2026-01-02T00:00:00Z");
         let cert = signed_receipt("agent_cert.v1", expired, &ship);
-        assert!(chain_verify_card(&card, "key_agent", "agent://a",
-            &[("c".into(), cert)], &trust, NOW).is_none(), "expired cert must reject");
+        assert!(
+            chain_verify_card(
+                &card,
+                "key_agent",
+                "agent://a",
+                &[("c".into(), cert)],
+                &trust,
+                NOW
+            )
+            .is_none(),
+            "expired cert must reject"
+        );
 
         let mut future = cert_payload("agent://a", &agent_key);
         future["issued_at"] = serde_json::json!("2026-12-01T00:00:00Z");
         let cert = signed_receipt("agent_cert.v1", future, &ship);
-        assert!(chain_verify_card(&card, "key_agent", "agent://a",
-            &[("c".into(), cert)], &trust, NOW).is_none(), "not-yet-valid cert must reject");
+        assert!(
+            chain_verify_card(
+                &card,
+                "key_agent",
+                "agent://a",
+                &[("c".into(), cert)],
+                &trust,
+                NOW
+            )
+            .is_none(),
+            "not-yet-valid cert must reject"
+        );
 
         let mut missing = cert_payload("agent://a", &agent_key);
         missing.as_object_mut().unwrap().remove("valid_until");
         let cert = signed_receipt("agent_cert.v1", missing, &ship);
-        assert!(chain_verify_card(&card, "key_agent", "agent://a",
-            &[("c".into(), cert)], &trust, NOW).is_none(), "missing window must fail closed");
+        assert!(
+            chain_verify_card(
+                &card,
+                "key_agent",
+                "agent://a",
+                &[("c".into(), cert)],
+                &trust,
+                NOW
+            )
+            .is_none(),
+            "missing window must fail closed"
+        );
     }
 
     #[test]
@@ -789,29 +864,85 @@ mod chain_tests {
         let trust = ship_pinned(&ship, TrustRootKind::CertIssuer);
 
         // Cert certifies a DIFFERENT key than the card's signer.
-        let cert = signed_receipt("agent_cert.v1", cert_payload("agent://a", &other_key), &ship);
+        let cert = signed_receipt(
+            "agent_cert.v1",
+            cert_payload("agent://a", &other_key),
+            &ship,
+        );
         let card = signed_card("agent://a", "key_agent", &agent_key);
-        assert!(chain_verify_card(&card, "key_agent", "agent://a",
-            &[("c".into(), cert)], &trust, NOW).is_none(), "subject mismatch must reject");
+        assert!(
+            chain_verify_card(
+                &card,
+                "key_agent",
+                "agent://a",
+                &[("c".into(), cert)],
+                &trust,
+                NOW
+            )
+            .is_none(),
+            "subject mismatch must reject"
+        );
 
         // Cert for a DIFFERENT agent URI: key_agent certified for agent://b
         // must not vouch for a card claiming agent://a.
-        let cert = signed_receipt("agent_cert.v1", cert_payload("agent://b", &agent_key), &ship);
+        let cert = signed_receipt(
+            "agent_cert.v1",
+            cert_payload("agent://b", &agent_key),
+            &ship,
+        );
         let card = signed_card("agent://a", "key_agent", &agent_key);
-        assert!(chain_verify_card(&card, "key_agent", "agent://a",
-            &[("c".into(), cert)], &trust, NOW).is_none(), "agent URI mismatch must reject");
+        assert!(
+            chain_verify_card(
+                &card,
+                "key_agent",
+                "agent://a",
+                &[("c".into(), cert)],
+                &trust,
+                NOW
+            )
+            .is_none(),
+            "agent URI mismatch must reject"
+        );
 
         // Card signed by a key that is NOT the certified subject (stolen
         // cert, attacker's card): the subject-key check must catch it.
-        let cert = signed_receipt("agent_cert.v1", cert_payload("agent://a", &agent_key), &ship);
+        let cert = signed_receipt(
+            "agent_cert.v1",
+            cert_payload("agent://a", &agent_key),
+            &ship,
+        );
         let card = signed_card("agent://a", "key_agent", &other_key);
-        assert!(chain_verify_card(&card, "key_agent", "agent://a",
-            &[("c".into(), cert)], &trust, NOW).is_none(), "wrong card signer must reject");
+        assert!(
+            chain_verify_card(
+                &card,
+                "key_agent",
+                "agent://a",
+                &[("c".into(), cert)],
+                &trust,
+                NOW
+            )
+            .is_none(),
+            "wrong card signer must reject"
+        );
 
         // Card whose keyid claim differs from its envelope signer.
-        let cert = signed_receipt("agent_cert.v1", cert_payload("agent://a", &agent_key), &ship);
+        let cert = signed_receipt(
+            "agent_cert.v1",
+            cert_payload("agent://a", &agent_key),
+            &ship,
+        );
         let card = signed_card("agent://a", "key_someone_else", &agent_key);
-        assert!(chain_verify_card(&card, "key_someone_else", "agent://a",
-            &[("c".into(), cert)], &trust, NOW).is_none(), "keyid/signer mismatch must reject");
+        assert!(
+            chain_verify_card(
+                &card,
+                "key_someone_else",
+                "agent://a",
+                &[("c".into(), cert)],
+                &trust,
+                NOW
+            )
+            .is_none(),
+            "keyid/signer mismatch must reject"
+        );
     }
 }

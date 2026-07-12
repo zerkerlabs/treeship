@@ -57,11 +57,7 @@ pub fn list(
     Ok(())
 }
 
-fn print_list(
-    cards_list: &[AgentCard],
-    agents_dir: &std::path::Path,
-    printer: &Printer,
-) {
+fn print_list(cards_list: &[AgentCard], agents_dir: &std::path::Path, printer: &Printer) {
     printer.blank();
     if cards_list.is_empty() {
         printer.dim_info("  No agent cards yet.");
@@ -74,10 +70,10 @@ fn print_list(
     printer.blank();
     for card in cards_list {
         let mark = match card.status {
-            CardStatus::Verified    => "✓",
-            CardStatus::Active      => "✓",
+            CardStatus::Verified => "✓",
+            CardStatus::Active => "✓",
             CardStatus::NeedsReview => "?",
-            CardStatus::Draft       => "·",
+            CardStatus::Draft => "·",
         };
         printer.info(&format!(
             "  {mark} {}  ({})",
@@ -126,11 +122,7 @@ fn print_review(card: &AgentCard, printer: &Printer) {
 
     printer.info(&format!("  id:         {}", card.agent_id));
     printer.info(&format!("  surface:    {}", card.surface.kind()));
-    let conns: Vec<&str> = card
-        .connection_modes
-        .iter()
-        .map(|c| c.label())
-        .collect();
+    let conns: Vec<&str> = card.connection_modes.iter().map(|c| c.label()).collect();
     printer.info(&format!("  connection: {}", conns.join(" + ")));
     printer.info(&format!("  coverage:   {}", card.coverage.label()));
     printer.info(&format!("  status:     {}", card.status.label()));
@@ -213,10 +205,7 @@ pub fn approve(
         return Ok(());
     }
     if existing.status == CardStatus::Active {
-        printer.dim_info(&format!(
-            "  {} is already active.",
-            existing.agent_id
-        ));
+        printer.dim_info(&format!("  {} is already active.", existing.agent_id));
         return Ok(());
     }
 
@@ -243,4 +232,3 @@ pub fn remove(
     printer.dim_info(&format!("  removed agent card {agent_id}"));
     Ok(())
 }
-

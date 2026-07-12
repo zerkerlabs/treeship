@@ -2623,18 +2623,13 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             printer,
         ),
 
-        Command::Profile(a) => commands::profile::profile(
-            &a.agent,
-            a.attest,
-            cli.config.as_deref(),
-            printer,
-        ),
+        Command::Profile(a) => {
+            commands::profile::profile(&a.agent, a.attest, cli.config.as_deref(), printer)
+        }
 
-        Command::VerifyProfile(a) => commands::profile::verify_profile(
-            &a.artifact_id,
-            cli.config.as_deref(),
-            printer,
-        ),
+        Command::VerifyProfile(a) => {
+            commands::profile::verify_profile(&a.artifact_id, cli.config.as_deref(), printer)
+        }
 
         Command::History(a) => commands::history::history(
             &a.agent,

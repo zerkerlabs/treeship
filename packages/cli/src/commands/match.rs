@@ -68,7 +68,11 @@ pub fn match_agents(
         let matched_tools: Vec<String> = c
             .get("matched_tools")
             .and_then(|v| v.as_array())
-            .map(|a| a.iter().filter_map(|t| t.as_str().map(String::from)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|t| t.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
         let proposed = c
             .get("matched_sessions")
@@ -82,12 +86,18 @@ pub fn match_agents(
         let mut verified = 0usize;
         if let Some(records) = c.get("records").and_then(|v| v.as_array()) {
             for rec in records {
-                let Some(ej) = rec.get("envelope_json").and_then(|v| v.as_str()) else { continue };
-                let Ok(env) = serde_json::from_str::<Envelope>(ej) else { continue };
+                let Some(ej) = rec.get("envelope_json").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let Ok(env) = serde_json::from_str::<Envelope>(ej) else {
+                    continue;
+                };
                 if verifier.verify_any(&env).is_err() {
                     continue;
                 }
-                let Ok(stmt) = env.unmarshal_statement::<ReceiptStatement>() else { continue };
+                let Ok(stmt) = env.unmarshal_statement::<ReceiptStatement>() else {
+                    continue;
+                };
                 if stmt.kind != "session.v1" {
                     continue;
                 }
@@ -143,10 +153,13 @@ pub fn match_agents(
         return Ok(());
     }
 
-    printer.success("evidence match", &[
-        ("exercised", exercised),
-        ("candidates", &candidates.len().to_string()),
-    ]);
+    printer.success(
+        "evidence match",
+        &[
+            ("exercised", exercised),
+            ("candidates", &candidates.len().to_string()),
+        ],
+    );
     printer.blank();
     for c in &candidates {
         let mark = if c.verified_matches {
@@ -154,7 +167,10 @@ pub fn match_agents(
         } else {
             "unverified (records did not verify against your trust roots)".to_string()
         };
-        printer.info(&format!("  {}  {}/{} sessions {mark}", c.agent, c.verified_sessions, c.proposed_sessions));
+        printer.info(&format!(
+            "  {}  {}/{} sessions {mark}",
+            c.agent, c.verified_sessions, c.proposed_sessions
+        ));
         printer.dim_info(&format!("    exercised: {}", c.matched_tools.join(", ")));
     }
     printer.blank();

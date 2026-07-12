@@ -12,10 +12,7 @@ fn prompt(msg: &str) -> String {
     input.trim().to_string()
 }
 
-pub fn run(
-    config: Option<&str>,
-    printer: &Printer,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     printer.blank();
     printer.info("  Welcome to Treeship.");
     printer.blank();
@@ -44,26 +41,33 @@ pub fn run(
         printer.dim_info("  (closing previous session)");
         let _ = super::session::close(
             Some("auto-closed by quickstart".into()),
-            None, None,
-            config, printer,
+            None,
+            None,
+            config,
+            printer,
         );
     }
     super::session::start(
         Some("quickstart session".into()),
-        None, false, config, printer,
+        None,
+        false,
+        config,
+        printer,
     )?;
     printer.blank();
 
     // Step 3: Wrap a command
     printer.info("  Step 3/4  Wrap a command to record it.");
     let cmd = prompt("  Enter a command to run (e.g. \"ls -la\"): ");
-    let cmd = if cmd.is_empty() { "echo hello treeship".to_string() } else { cmd };
+    let cmd = if cmd.is_empty() {
+        "echo hello treeship".to_string()
+    } else {
+        cmd
+    };
 
     let args: Vec<String> = cmd.split_whitespace().map(|s| s.to_string()).collect();
     if !args.is_empty() {
-        let wrap_result = super::wrap::run(
-            None, None, None, false, config, &args, printer,
-        );
+        let wrap_result = super::wrap::run(None, None, None, false, config, &args, printer);
         match wrap_result {
             Ok(_) => {
                 printer.blank();

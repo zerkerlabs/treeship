@@ -16,7 +16,12 @@ pub fn list(printer: &Printer) {
         printer.info(&format!("  {category}"));
         for t in &tmpls {
             let pad = " ".repeat(24_usize.saturating_sub(t.name.len()));
-            printer.info(&format!("    {}{}{}", t.name, pad, printer.dim(t.description)));
+            printer.info(&format!(
+                "    {}{}{}",
+                t.name,
+                pad,
+                printer.dim(t.description)
+            ));
         }
         printer.blank();
     }
@@ -52,7 +57,10 @@ pub fn preview(name: &str, printer: &Printer) -> Result<(), Box<dyn std::error::
             } else {
                 ""
             };
-            printer.info(&format!("    {}{}-> {}{}", cmd.pattern, pad, cmd.label, extras));
+            printer.info(&format!(
+                "    {}{}-> {}{}",
+                cmd.pattern, pad, cmd.label, extras
+            ));
         }
         printer.blank();
     }
@@ -72,12 +80,24 @@ pub fn preview(name: &str, printer: &Printer) -> Result<(), Box<dyn std::error::
     // Capture
     if let Some(ref cap) = parsed.capture {
         printer.info("  Capture");
-        if cap.output_digest.unwrap_or(false)    { printer.info("    output digest    yes"); }
-        if cap.file_changes.unwrap_or(false)     { printer.info("    file changes     yes"); }
-        if cap.git_state.unwrap_or(false)        { printer.info("    git state        yes"); }
-        if cap.lockfile_changes.unwrap_or(false)  { printer.info("    lockfile         yes"); }
-        if cap.environment.unwrap_or(false)       { printer.info("    environment      yes"); }
-        if cap.model_metadata.unwrap_or(false)    { printer.info("    model metadata   yes"); }
+        if cap.output_digest.unwrap_or(false) {
+            printer.info("    output digest    yes");
+        }
+        if cap.file_changes.unwrap_or(false) {
+            printer.info("    file changes     yes");
+        }
+        if cap.git_state.unwrap_or(false) {
+            printer.info("    git state        yes");
+        }
+        if cap.lockfile_changes.unwrap_or(false) {
+            printer.info("    lockfile         yes");
+        }
+        if cap.environment.unwrap_or(false) {
+            printer.info("    environment      yes");
+        }
+        if cap.model_metadata.unwrap_or(false) {
+            printer.info("    model metadata   yes");
+        }
         printer.blank();
     }
 
@@ -99,14 +119,24 @@ pub fn preview(name: &str, printer: &Printer) -> Result<(), Box<dyn std::error::
     // Hub
     if let Some(ref hub) = parsed.hub {
         printer.info("  Hub");
-        printer.info(&format!("    auto push: {}", if hub.auto_push.unwrap_or(false) { "yes" } else { "no" }));
+        printer.info(&format!(
+            "    auto push: {}",
+            if hub.auto_push.unwrap_or(false) {
+                "yes"
+            } else {
+                "no"
+            }
+        ));
         if !hub.push_on.is_empty() {
             printer.info(&format!("    push on:   {}", hub.push_on.join(", ")));
         }
         printer.blank();
     }
 
-    printer.dim_info(&format!("  Apply: treeship init --template {}", parsed.name));
+    printer.dim_info(&format!(
+        "  Apply: treeship init --template {}",
+        parsed.name
+    ));
     printer.blank();
 
     Ok(())
@@ -186,27 +216,47 @@ pub fn validate(file: &str, printer: &Printer) -> Result<(), Box<dyn std::error:
                     printer.info(&format!("  {} session.actor is empty", printer.red("FAIL")));
                     pass = false;
                 } else {
-                    printer.info(&format!("  {} session.actor: {}", printer.green("PASS"), session.actor));
+                    printer.info(&format!(
+                        "  {} session.actor: {}",
+                        printer.green("PASS"),
+                        session.actor
+                    ));
                 }
             } else {
-                printer.info(&format!("  {} session section missing", printer.red("FAIL")));
+                printer.info(&format!(
+                    "  {} session section missing",
+                    printer.red("FAIL")
+                ));
                 pass = false;
             }
 
             // Check: version present
             if t.version.unwrap_or(0) == 0 {
-                printer.info(&format!("  {} version should be >= 1", printer.yellow("WARN")));
+                printer.info(&format!(
+                    "  {} version should be >= 1",
+                    printer.yellow("WARN")
+                ));
             } else {
-                printer.info(&format!("  {} version: {}", printer.green("PASS"), t.version.unwrap()));
+                printer.info(&format!(
+                    "  {} version: {}",
+                    printer.green("PASS"),
+                    t.version.unwrap()
+                ));
             }
 
             // Check: can convert to ProjectConfig
             match template_to_project_config(t) {
                 Ok(_) => {
-                    printer.info(&format!("  {} converts to ProjectConfig", printer.green("PASS")));
+                    printer.info(&format!(
+                        "  {} converts to ProjectConfig",
+                        printer.green("PASS")
+                    ));
                 }
                 Err(e) => {
-                    printer.info(&format!("  {} ProjectConfig conversion: {e}", printer.red("FAIL")));
+                    printer.info(&format!(
+                        "  {} ProjectConfig conversion: {e}",
+                        printer.red("FAIL")
+                    ));
                     pass = false;
                 }
             }
@@ -225,17 +275,18 @@ pub fn validate(file: &str, printer: &Printer) -> Result<(), Box<dyn std::error:
     }
     printer.blank();
 
-    if pass { Ok(()) } else { Err("validation failed".into()) }
+    if pass {
+        Ok(())
+    } else {
+        Err("validation failed".into())
+    }
 }
 
 // ---------------------------------------------------------------------------
 // treeship template save -- save current config as a template
 // ---------------------------------------------------------------------------
 
-pub fn save(
-    name: Option<String>,
-    printer: &Printer,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub fn save(name: Option<String>, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     let cwd = std::env::current_dir()?;
     let config_path = cwd.join(".treeship").join("config.yaml");
 
@@ -266,7 +317,13 @@ pub fn save(
     let slug: String = template_name
         .to_lowercase()
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect();
 
     // Build output path: ~/.treeship/templates/<slug>.yaml
@@ -302,12 +359,15 @@ pub fn save(
     std::fs::write(&out_path, output)?;
 
     printer.blank();
-    printer.success("Template saved", &[
-        ("Name", &slug),
-        ("Path", &out_path.to_string_lossy()),
-    ]);
+    printer.success(
+        "Template saved",
+        &[("Name", &slug), ("Path", &out_path.to_string_lossy())],
+    );
     printer.blank();
-    printer.hint(&format!("treeship template validate {}", out_path.display()));
+    printer.hint(&format!(
+        "treeship template validate {}",
+        out_path.display()
+    ));
     printer.blank();
 
     Ok(())
@@ -327,11 +387,12 @@ pub fn apply_for_init(
         std::fs::read_to_string(name_or_path)?
     } else {
         // Look up embedded template
-        let tmpl = templates::get(name_or_path)
-            .ok_or_else(|| format!(
+        let tmpl = templates::get(name_or_path).ok_or_else(|| {
+            format!(
                 "template '{}' not found\n\n  Run 'treeship templates' to see available templates.",
                 name_or_path
-            ))?;
+            )
+        })?;
         tmpl.yaml.to_string()
     };
 
@@ -475,25 +536,41 @@ fn template_to_project_config(
         },
     };
 
-    let commands: Vec<CommandRule> = t.attest.commands.iter().map(|c| CommandRule {
-        pattern: c.pattern.clone(),
-        label: c.label.clone(),
-        require_approval: c.require_approval.unwrap_or(false),
-    }).collect();
+    let commands: Vec<CommandRule> = t
+        .attest
+        .commands
+        .iter()
+        .map(|c| CommandRule {
+            pattern: c.pattern.clone(),
+            label: c.label.clone(),
+            require_approval: c.require_approval.unwrap_or(false),
+        })
+        .collect();
 
-    let paths: Vec<PathRule> = t.attest.paths.as_ref().map(|ps| {
-        ps.iter().map(|p| PathRule {
-            path: p.path.clone(),
-            on: p.on.clone(),
-            label: p.label.clone(),
-            alert: p.alert.unwrap_or(false),
-        }).collect()
-    }).unwrap_or_default();
+    let paths: Vec<PathRule> = t
+        .attest
+        .paths
+        .as_ref()
+        .map(|ps| {
+            ps.iter()
+                .map(|p| PathRule {
+                    path: p.path.clone(),
+                    on: p.on.clone(),
+                    label: p.label.clone(),
+                    alert: p.alert.unwrap_or(false),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
     let approvals = t.approvals.as_ref().map(|a| ApprovalConfig {
-        require_for: a.require_for.iter().map(|r| LabelRef {
-            label: r.label.clone(),
-        }).collect(),
+        require_for: a
+            .require_for
+            .iter()
+            .map(|r| LabelRef {
+                label: r.label.clone(),
+            })
+            .collect(),
         auto_approve: vec![],
         timeout: None,
     });
@@ -505,7 +582,9 @@ fn template_to_project_config(
     });
 
     Ok(ProjectConfig {
-        treeship: TreeshipMeta { version: t.version.unwrap_or(1) },
+        treeship: TreeshipMeta {
+            version: t.version.unwrap_or(1),
+        },
         session,
         attest: AttestConfig { commands, paths },
         approvals,
@@ -517,7 +596,9 @@ fn template_to_project_config(
 // Resolve template from name or path
 // ---------------------------------------------------------------------------
 
-fn resolve_template(name: &str) -> Result<&'static templates::Template, Box<dyn std::error::Error>> {
+fn resolve_template(
+    name: &str,
+) -> Result<&'static templates::Template, Box<dyn std::error::Error>> {
     templates::get(name).ok_or_else(|| {
         let available: Vec<&str> = templates::list().iter().map(|t| t.name).collect();
         format!(

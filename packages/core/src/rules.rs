@@ -173,16 +173,40 @@ impl ProjectConfig {
     pub fn default_for(project_type: &str, actor: &str) -> Self {
         let test_commands: Vec<CommandRule> = match project_type {
             "node" => vec![
-                CommandRule { pattern: "npm test*".into(), label: "test suite".into(), require_approval: false },
-                CommandRule { pattern: "npx jest*".into(), label: "test suite".into(), require_approval: false },
+                CommandRule {
+                    pattern: "npm test*".into(),
+                    label: "test suite".into(),
+                    require_approval: false,
+                },
+                CommandRule {
+                    pattern: "npx jest*".into(),
+                    label: "test suite".into(),
+                    require_approval: false,
+                },
             ],
             "rust" => vec![
-                CommandRule { pattern: "cargo test*".into(), label: "test suite".into(), require_approval: false },
-                CommandRule { pattern: "cargo clippy*".into(), label: "lint".into(), require_approval: false },
+                CommandRule {
+                    pattern: "cargo test*".into(),
+                    label: "test suite".into(),
+                    require_approval: false,
+                },
+                CommandRule {
+                    pattern: "cargo clippy*".into(),
+                    label: "lint".into(),
+                    require_approval: false,
+                },
             ],
             "python" => vec![
-                CommandRule { pattern: "pytest*".into(), label: "test suite".into(), require_approval: false },
-                CommandRule { pattern: "python -m pytest*".into(), label: "test suite".into(), require_approval: false },
+                CommandRule {
+                    pattern: "pytest*".into(),
+                    label: "test suite".into(),
+                    require_approval: false,
+                },
+                CommandRule {
+                    pattern: "python -m pytest*".into(),
+                    label: "test suite".into(),
+                    require_approval: false,
+                },
             ],
             _ => vec![],
         };
@@ -190,23 +214,60 @@ impl ProjectConfig {
         let mut commands = test_commands;
         // Common commands for every project type
         commands.extend(vec![
-            CommandRule { pattern: "git commit*".into(), label: "code commit".into(), require_approval: false },
-            CommandRule { pattern: "git push*".into(), label: "code push".into(), require_approval: false },
-            CommandRule { pattern: "kubectl apply*".into(), label: "deployment".into(), require_approval: true },
-            CommandRule { pattern: "fly deploy*".into(), label: "deployment".into(), require_approval: true },
+            CommandRule {
+                pattern: "git commit*".into(),
+                label: "code commit".into(),
+                require_approval: false,
+            },
+            CommandRule {
+                pattern: "git push*".into(),
+                label: "code push".into(),
+                require_approval: false,
+            },
+            CommandRule {
+                pattern: "kubectl apply*".into(),
+                label: "deployment".into(),
+                require_approval: true,
+            },
+            CommandRule {
+                pattern: "fly deploy*".into(),
+                label: "deployment".into(),
+                require_approval: true,
+            },
         ]);
 
         let paths = vec![
-            PathRule { path: "src/**".into(), on: "write".into(), label: None, alert: false },
-            PathRule { path: "*lock*".into(), on: "change".into(), label: Some("dependency change".into()), alert: false },
-            PathRule { path: "*.env*".into(), on: "access".into(), label: Some("env file access".into()), alert: true },
+            PathRule {
+                path: "src/**".into(),
+                on: "write".into(),
+                label: None,
+                alert: false,
+            },
+            PathRule {
+                path: "*lock*".into(),
+                on: "change".into(),
+                label: Some("dependency change".into()),
+                alert: false,
+            },
+            PathRule {
+                path: "*.env*".into(),
+                on: "access".into(),
+                label: Some("env file access".into()),
+                alert: true,
+            },
         ];
 
         let approvals = ApprovalConfig {
-            require_for: vec![LabelRef { label: "deployment".into() }],
+            require_for: vec![LabelRef {
+                label: "deployment".into(),
+            }],
             auto_approve: vec![
-                LabelRef { label: "test suite".into() },
-                LabelRef { label: "code commit".into() },
+                LabelRef {
+                    label: "test suite".into(),
+                },
+                LabelRef {
+                    label: "code commit".into(),
+                },
             ],
             timeout: Some("5m".into()),
         };
@@ -233,7 +294,10 @@ impl ProjectConfig {
         for rule in &self.attest.paths {
             if path_matches(&rule.path, path) {
                 return Some(PathMatchResult {
-                    label: rule.label.clone().unwrap_or_else(|| "file change".to_string()),
+                    label: rule
+                        .label
+                        .clone()
+                        .unwrap_or_else(|| "file change".to_string()),
                     alert: rule.alert,
                     on: rule.on.clone(),
                 });
@@ -365,7 +429,9 @@ hub:
     #[test]
     fn test_command_match_prefix_wildcard_with_args() {
         let cfg = load_sample();
-        let m = cfg.match_command("npm test --coverage").expect("should match");
+        let m = cfg
+            .match_command("npm test --coverage")
+            .expect("should match");
         assert_eq!(m.label, "test suite");
         assert!(m.should_attest);
     }
@@ -373,7 +439,9 @@ hub:
     #[test]
     fn test_command_match_cargo_test() {
         let cfg = load_sample();
-        let m = cfg.match_command("cargo test -p treeship-core").expect("should match");
+        let m = cfg
+            .match_command("cargo test -p treeship-core")
+            .expect("should match");
         assert_eq!(m.label, "test suite");
     }
 
@@ -388,7 +456,9 @@ hub:
     #[test]
     fn test_require_approval_from_rule() {
         let cfg = load_sample();
-        let m = cfg.match_command("kubectl apply -f deploy.yaml").expect("should match");
+        let m = cfg
+            .match_command("kubectl apply -f deploy.yaml")
+            .expect("should match");
         assert_eq!(m.label, "deployment");
         assert!(m.require_approval);
     }
@@ -408,7 +478,9 @@ hub:
         // "payment" label is in require_for. Even though the rule already
         // has require_approval: true, the approval config confirms it.
         let cfg = load_sample();
-        let m = cfg.match_command("stripe charge create").expect("should match");
+        let m = cfg
+            .match_command("stripe charge create")
+            .expect("should match");
         assert_eq!(m.label, "payment");
         assert!(m.require_approval);
     }
@@ -434,7 +506,10 @@ approvals:
 "#;
         let cfg = ProjectConfig::from_yaml(yaml).unwrap();
         let m = cfg.match_command("deploy production").unwrap();
-        assert!(!m.require_approval, "auto_approve should override require_for");
+        assert!(
+            !m.require_approval,
+            "auto_approve should override require_for"
+        );
     }
 
     #[test]
@@ -480,19 +555,25 @@ attest:
         assert!(cfg.session.auto_start);
 
         // Should have npm test pattern
-        let m = cfg.match_command("npm test --watch").expect("should match npm test");
+        let m = cfg
+            .match_command("npm test --watch")
+            .expect("should match npm test");
         assert_eq!(m.label, "test suite");
         assert!(!m.require_approval, "tests are auto-approved by default");
 
         // Should have deployment rules
-        let m = cfg.match_command("kubectl apply -f x.yaml").expect("should match kubectl");
+        let m = cfg
+            .match_command("kubectl apply -f x.yaml")
+            .expect("should match kubectl");
         assert!(m.require_approval);
     }
 
     #[test]
     fn test_default_for_rust() {
         let cfg = ProjectConfig::default_for("rust", "agent://builder");
-        let m = cfg.match_command("cargo test -p core").expect("should match cargo test");
+        let m = cfg
+            .match_command("cargo test -p core")
+            .expect("should match cargo test");
         assert_eq!(m.label, "test suite");
     }
 
@@ -507,7 +588,9 @@ attest:
     fn test_default_for_general() {
         let cfg = ProjectConfig::default_for("general", "agent://dev");
         // General has no test commands but still has git/deploy rules
-        let m = cfg.match_command("git commit -m 'init'").expect("should match git commit");
+        let m = cfg
+            .match_command("git commit -m 'init'")
+            .expect("should match git commit");
         assert_eq!(m.label, "code commit");
     }
 
@@ -598,14 +681,18 @@ attest:
     #[test]
     fn test_path_match_directory_glob_nested() {
         let cfg = load_sample();
-        let m = cfg.match_path("src/bar/baz.ts").expect("should match src/**");
+        let m = cfg
+            .match_path("src/bar/baz.ts")
+            .expect("should match src/**");
         assert_eq!(m.on, "write");
     }
 
     #[test]
     fn test_path_match_lock_wildcard() {
         let cfg = load_sample();
-        let m = cfg.match_path("package-lock.json").expect("should match *lock*");
+        let m = cfg
+            .match_path("package-lock.json")
+            .expect("should match *lock*");
         assert_eq!(m.label, "dependency change");
         assert_eq!(m.on, "change");
     }

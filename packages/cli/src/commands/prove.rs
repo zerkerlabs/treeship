@@ -4,16 +4,21 @@ use crate::{ctx, printer::Printer};
 use treeship_zk_circom::{CircomProver, ZkProof};
 
 /// Available circuit names.
-pub const CIRCUITS: &[&str] = &["policy-checker", "input-output-binding", "prompt-template", "spend-limit-checker"];
+pub const CIRCUITS: &[&str] = &[
+    "policy-checker",
+    "input-output-binding",
+    "prompt-template",
+    "spend-limit-checker",
+];
 
 /// Generate a ZK proof for an artifact using a specific circuit.
 #[cfg(feature = "zk")]
 pub fn prove_circuit(
-    circuit:     &str,
+    circuit: &str,
     artifact_id: &str,
     policy_file: Option<&str>,
-    config:      Option<&str>,
-    printer:     &Printer,
+    config: Option<&str>,
+    printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
 
@@ -37,14 +42,24 @@ pub fn prove_circuit(
         "input-output-binding" => "input_output_binding",
         "prompt-template" => "prompt_template_binding",
         "spend-limit-checker" => "spend_limit_checker",
-        _ => return Err(format!("unknown circuit: {}\n  Available: {}", circuit, CIRCUITS.join(", ")).into()),
+        _ => {
+            return Err(format!(
+                "unknown circuit: {}\n  Available: {}",
+                circuit,
+                CIRCUITS.join(", ")
+            )
+            .into())
+        }
     };
 
     // Find circuits directory
     let circuits_dir = find_circuits_dir()?;
 
     printer.blank();
-    printer.info(&format!("Generating {} proof for {}...", circuit, artifact_id));
+    printer.info(&format!(
+        "Generating {} proof for {}...",
+        circuit, artifact_id
+    ));
 
     let prover = CircomProver::new(&circuits_dir)?;
 
@@ -163,13 +178,16 @@ pub fn prove_circuit(
     let proof_json = serde_json::to_vec_pretty(&zk_proof)?;
     std::fs::write(&proof_filename, &proof_json)?;
 
-    printer.success("proof generated", &[
-        ("circuit", circuit),
-        ("artifact", &artifact_id),
-        ("time", &format!("{:.1}s", elapsed.as_secs_f64())),
-        ("size", &format!("{} bytes", proof_json.len())),
-        ("output", &proof_filename),
-    ]);
+    printer.success(
+        "proof generated",
+        &[
+            ("circuit", circuit),
+            ("artifact", &artifact_id),
+            ("time", &format!("{:.1}s", elapsed.as_secs_f64())),
+            ("size", &format!("{} bytes", proof_json.len())),
+            ("output", &proof_filename),
+        ],
+    );
     printer.blank();
 
     Ok(())
@@ -177,13 +195,10 @@ pub fn prove_circuit(
 
 /// Verify a ZK proof file.
 #[cfg(feature = "zk")]
-pub fn verify_proof(
-    proof_file: &str,
-    printer:    &Printer,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub fn verify_proof(proof_file: &str, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     let content = std::fs::read_to_string(proof_file)?;
-    let zk_proof: ZkProof = serde_json::from_str(&content)
-        .map_err(|e| format!("invalid proof file: {e}"))?;
+    let zk_proof: ZkProof =
+        serde_json::from_str(&content).map_err(|e| format!("invalid proof file: {e}"))?;
 
     printer.blank();
     printer.info(&format!("Verifying {} proof...", zk_proof.circuit));
@@ -207,16 +222,22 @@ pub fn verify_proof(
     let valid = prover.verify_single_proof(internal_name, &circom_proof)?;
 
     if valid {
-        printer.success("proof verified", &[
-            ("circuit", &zk_proof.circuit),
-            ("artifact", &zk_proof.artifact_id),
-            ("proved_at", &zk_proof.proved_at),
-        ]);
+        printer.success(
+            "proof verified",
+            &[
+                ("circuit", &zk_proof.circuit),
+                ("artifact", &zk_proof.artifact_id),
+                ("proved_at", &zk_proof.proved_at),
+            ],
+        );
     } else {
-        printer.warn("proof verification failed", &[
-            ("circuit", &zk_proof.circuit),
-            ("artifact", &zk_proof.artifact_id),
-        ]);
+        printer.warn(
+            "proof verification failed",
+            &[
+                ("circuit", &zk_proof.circuit),
+                ("artifact", &zk_proof.artifact_id),
+            ],
+        );
     }
     printer.blank();
 
@@ -254,7 +275,10 @@ pub fn zk_status(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
             .is_ok();
 
         if circom_available {
-            printer.info(&format!("  {} circom compiler available", printer.green("+")));
+            printer.info(&format!(
+                "  {} circom compiler available",
+                printer.green("+")
+            ));
         } else {
             printer.dim_info("  - circom compiler not found (not needed for proving, only for circuit development)");
         }
@@ -263,11 +287,20 @@ pub fn zk_status(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
         printer.blank();
         printer.info("  verification key hashes (sha256):");
         for (name, vk_content) in [
-            ("policy-checker", include_bytes!("../../../zk-circom/zkeys/pc_vk.json").as_slice()),
-            ("input-output-binding", include_bytes!("../../../zk-circom/zkeys/iob_vk.json").as_slice()),
-            ("prompt-template", include_bytes!("../../../zk-circom/zkeys/pt_vk.json").as_slice()),
+            (
+                "policy-checker",
+                include_bytes!("../../../zk-circom/zkeys/pc_vk.json").as_slice(),
+            ),
+            (
+                "input-output-binding",
+                include_bytes!("../../../zk-circom/zkeys/iob_vk.json").as_slice(),
+            ),
+            (
+                "prompt-template",
+                include_bytes!("../../../zk-circom/zkeys/pt_vk.json").as_slice(),
+            ),
         ] {
-            use sha2::{Sha256, Digest};
+            use sha2::{Digest, Sha256};
             let hash = hex::encode(Sha256::digest(vk_content));
             printer.info(&format!("    {} {}", name, &hash[..16]));
         }
@@ -290,8 +323,11 @@ pub fn zk_status(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
 /// Stub for non-zk builds
 #[cfg(not(feature = "zk"))]
 pub fn prove_circuit(
-    _circuit: &str, _artifact_id: &str, _policy_file: Option<&str>,
-    _config: Option<&str>, printer: &Printer,
+    _circuit: &str,
+    _artifact_id: &str,
+    _policy_file: Option<&str>,
+    _config: Option<&str>,
+    printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     printer.blank();
     printer.warn("ZK features not enabled in this build", &[]);
@@ -303,7 +339,8 @@ pub fn prove_circuit(
 /// Stub for non-zk builds
 #[cfg(not(feature = "zk"))]
 pub fn verify_proof(
-    _proof_file: &str, printer: &Printer,
+    _proof_file: &str,
+    printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     printer.blank();
     printer.warn("ZK features not enabled in this build", &[]);
@@ -316,8 +353,8 @@ pub fn verify_proof(
 #[cfg(feature = "zk")]
 pub fn prove_chain(
     session_id: &str,
-    config:     Option<&str>,
-    printer:    &Printer,
+    config: Option<&str>,
+    printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     prove_chain_with_root(session_id, None, None, config, printer)
 }
@@ -333,8 +370,8 @@ pub fn prove_chain_with_root(
     session_id: &str,
     explicit_root: Option<&str>,
     explicit_tip: Option<&str>,
-    config:     Option<&str>,
-    printer:    &Printer,
+    config: Option<&str>,
+    printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
 
@@ -369,7 +406,10 @@ pub fn prove_chain_with_root(
                     printer.info(&format!("  session root: {}", root_id));
                     Some(root_id.clone())
                 } else {
-                    printer.warn("session manifest has no root_artifact_id, proving full chain", &[]);
+                    printer.warn(
+                        "session manifest has no root_artifact_id, proving full chain",
+                        &[],
+                    );
                     None
                 }
             } else {
@@ -405,13 +445,15 @@ pub fn prove_chain_with_root(
                 let payload_bytes = base64::Engine::decode(
                     &base64::engine::general_purpose::URL_SAFE_NO_PAD,
                     &record.envelope.payload,
-                ).unwrap_or_default();
-                let pae_bytes = treeship_core::attestation::pae(
-                    &record.envelope.payload_type,
-                    &payload_bytes,
-                );
+                )
+                .unwrap_or_default();
+                let pae_bytes =
+                    treeship_core::attestation::pae(&record.envelope.payload_type, &payload_bytes);
 
-                let sig = record.envelope.signatures.first()
+                let sig = record
+                    .envelope
+                    .signatures
+                    .first()
                     .map(|s| s.sig.clone())
                     .unwrap_or_default();
 
@@ -456,10 +498,14 @@ pub fn prove_chain_with_root(
         return Err("no artifacts found in chain".into());
     }
 
-    printer.info(&format!("  chain: {} artifacts (root -> tip)", artifacts.len()));
+    printer.info(&format!(
+        "  chain: {} artifacts (root -> tip)",
+        artifacts.len()
+    ));
 
     let public_key = ctx.keys.public_key(&ctx.config.default_key_id)?;
-    let pub_key_arr: [u8; 32] = public_key.try_into()
+    let pub_key_arr: [u8; 32] = public_key
+        .try_into()
         .map_err(|_| "invalid public key length")?;
 
     let prover = treeship_zk_risc0::RiscZeroProver::new(Default::default());
@@ -472,14 +518,31 @@ pub fn prove_chain_with_root(
     let proof_path = std::path::PathBuf::from(&proof_filename);
     treeship_zk_risc0::RiscZeroProver::save_proof(&result, &proof_path)?;
 
-    printer.success("chain proof generated", &[
-        ("session", session_id),
-        ("artifacts", &result.artifact_count.to_string()),
-        ("digests", if result.all_digests_valid { "all valid" } else { "INVALID" }),
-        ("chain", if result.chain_intact { "intact" } else { "BROKEN" }),
-        ("time", &format!("{:.1}s", elapsed.as_secs_f64())),
-        ("output", &proof_filename),
-    ]);
+    printer.success(
+        "chain proof generated",
+        &[
+            ("session", session_id),
+            ("artifacts", &result.artifact_count.to_string()),
+            (
+                "digests",
+                if result.all_digests_valid {
+                    "all valid"
+                } else {
+                    "INVALID"
+                },
+            ),
+            (
+                "chain",
+                if result.chain_intact {
+                    "intact"
+                } else {
+                    "BROKEN"
+                },
+            ),
+            ("time", &format!("{:.1}s", elapsed.as_secs_f64())),
+            ("output", &proof_filename),
+        ],
+    );
     printer.blank();
 
     Ok(())
@@ -488,7 +551,9 @@ pub fn prove_chain_with_root(
 /// Stub for non-zk builds
 #[cfg(not(feature = "zk"))]
 pub fn prove_chain(
-    _session_id: &str, _config: Option<&str>, printer: &Printer,
+    _session_id: &str,
+    _config: Option<&str>,
+    printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     printer.blank();
     printer.warn("ZK features not enabled in this build", &[]);
@@ -499,8 +564,11 @@ pub fn prove_chain(
 
 #[cfg(not(feature = "zk"))]
 pub fn prove_chain_with_root(
-    _session_id: &str, _root: Option<&str>, _tip: Option<&str>,
-    _config: Option<&str>, printer: &Printer,
+    _session_id: &str,
+    _root: Option<&str>,
+    _tip: Option<&str>,
+    _config: Option<&str>,
+    printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     prove_chain(_session_id, _config, printer)
 }
@@ -521,7 +589,9 @@ fn find_circuits_dir() -> Result<std::path::PathBuf, Box<dyn std::error::Error>>
     // Check common locations for circuits
     let candidates = [
         std::path::PathBuf::from(".treeship/circuits"),
-        home::home_dir().unwrap_or_default().join(".treeship/circuits"),
+        home::home_dir()
+            .unwrap_or_default()
+            .join(".treeship/circuits"),
         std::path::PathBuf::from("/usr/local/share/treeship/circuits"),
     ];
 
@@ -535,7 +605,7 @@ fn find_circuits_dir() -> Result<std::path::PathBuf, Box<dyn std::error::Error>>
 }
 
 fn sha256_bytes(input: &str) -> [u8; 32] {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let hash = Sha256::digest(input.as_bytes());
     hash.into()
 }
@@ -544,28 +614,32 @@ fn extract_action_from_envelope(envelope_str: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(envelope_str).ok()?;
     // DSSE envelope -> payload (base64) -> decode -> parse -> action field
     let payload_b64 = v.get("payload")?.as_str()?;
-    let payload_bytes = base64::Engine::decode(
-        &base64::engine::general_purpose::STANDARD, payload_b64
-    ).ok()?;
+    let payload_bytes =
+        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, payload_b64).ok()?;
     let payload: serde_json::Value = serde_json::from_slice(&payload_bytes).ok()?;
-    payload.get("action").and_then(|a| a.as_str()).map(|s| s.to_string())
+    payload
+        .get("action")
+        .and_then(|a| a.as_str())
+        .map(|s| s.to_string())
 }
 
 fn extract_digests_from_envelope(envelope_str: &str) -> (String, String) {
     let v: serde_json::Value = serde_json::from_str(envelope_str).unwrap_or_default();
     let payload_b64 = v.get("payload").and_then(|p| p.as_str()).unwrap_or("");
-    let payload_bytes = base64::Engine::decode(
-        &base64::engine::general_purpose::STANDARD, payload_b64
-    ).unwrap_or_default();
+    let payload_bytes =
+        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, payload_b64)
+            .unwrap_or_default();
     let payload: serde_json::Value = serde_json::from_slice(&payload_bytes).unwrap_or_default();
 
-    let input = payload.get("subject")
+    let input = payload
+        .get("subject")
         .and_then(|s| s.get("digest"))
         .and_then(|d| d.as_str())
         .unwrap_or("unknown")
         .to_string();
 
-    let output = payload.get("output_digest")
+    let output = payload
+        .get("output_digest")
         .or_else(|| payload.get("meta").and_then(|m| m.get("output_digest")))
         .and_then(|d| d.as_str())
         .unwrap_or("unknown")
@@ -577,12 +651,12 @@ fn extract_digests_from_envelope(envelope_str: &str) -> (String, String) {
 fn extract_field_from_envelope(envelope_str: &str, field: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(envelope_str).ok()?;
     let payload_b64 = v.get("payload")?.as_str()?;
-    let payload_bytes = base64::Engine::decode(
-        &base64::engine::general_purpose::STANDARD, payload_b64
-    ).ok()?;
+    let payload_bytes =
+        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, payload_b64).ok()?;
     let payload: serde_json::Value = serde_json::from_slice(&payload_bytes).ok()?;
 
-    payload.get(field)
+    payload
+        .get(field)
         .or_else(|| payload.get("meta").and_then(|m| m.get(field)))
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())

@@ -43,10 +43,7 @@ const REGISTRY: &[(&str, &str)] = &[
         include_str!("schemas/memory.read.v1.json"),
     ),
     ("boundary.v1", include_str!("schemas/boundary.v1.json")),
-    (
-        "agent_card.v1",
-        include_str!("schemas/agent_card.v1.json"),
-    ),
+    ("agent_card.v1", include_str!("schemas/agent_card.v1.json")),
     (
         "agent_card_revocation.v1",
         include_str!("schemas/agent_card_revocation.v1.json"),
@@ -109,7 +106,11 @@ impl fmt::Display for PredicateError {
             PredicateError::NotAnObject { suffix } => {
                 write!(f, "{suffix}: payload must be a JSON object")
             }
-            PredicateError::NotInEnum { suffix, field, allowed } => write!(
+            PredicateError::NotInEnum {
+                suffix,
+                field,
+                allowed,
+            } => write!(
                 f,
                 "{suffix}: field `{field}` has a value outside its allowed set ({allowed})"
             ),

@@ -46,7 +46,9 @@ pub struct ReconcileOptions {
 
 impl Default for ReconcileOptions {
     fn default() -> Self {
-        Self { untracked_max: DEFAULT_UNTRACKED_MAX }
+        Self {
+            untracked_max: DEFAULT_UNTRACKED_MAX,
+        }
     }
 }
 
@@ -79,7 +81,8 @@ pub struct ReconcileResult {
 /// fail-open by contract.
 fn git_capture(repo_dir: &Path, args: &[&str]) -> Option<String> {
     let output = Command::new("git")
-        .arg("-C").arg(repo_dir)
+        .arg("-C")
+        .arg(repo_dir)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -96,9 +99,14 @@ fn git_capture(repo_dir: &Path, args: &[&str]) -> Option<String> {
     Some(s)
 }
 
-fn git_capture_lines_limited(repo_dir: &Path, args: &[&str], limit: usize) -> Option<(Vec<String>, bool)> {
+fn git_capture_lines_limited(
+    repo_dir: &Path,
+    args: &[&str],
+    limit: usize,
+) -> Option<(Vec<String>, bool)> {
     let mut child = Command::new("git")
-        .arg("-C").arg(repo_dir)
+        .arg("-C")
+        .arg(repo_dir)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -127,9 +135,7 @@ fn git_capture_lines_limited(repo_dir: &Path, args: &[&str], limit: usize) -> Op
 
 /// Fast probe: is this directory inside a git repo?
 fn is_git_repo(repo_dir: &Path) -> bool {
-    git_capture(repo_dir, &["rev-parse", "--is-inside-work-tree"])
-        .as_deref()
-        == Some("true")
+    git_capture(repo_dir, &["rev-parse", "--is-inside-work-tree"]).as_deref() == Some("true")
 }
 
 pub fn git_toplevel(repo_dir: &Path) -> Option<PathBuf> {
@@ -148,7 +154,7 @@ fn translate_status(code: &str) -> &'static str {
         'C' => "created", // copy = new file at the destination
         'T' => "modified",
         '?' => "untracked",
-        _   => "modified", // M, U, anything else
+        _ => "modified", // M, U, anything else
     }
 }
 
@@ -189,7 +195,10 @@ fn parse_name_status_line(line: &str) -> Option<(&'static str, String)> {
             // Rename / copy: the FINAL path is the third field.
             // If the destination is missing for any reason, fall
             // back to the source so we still record SOMETHING.
-            parts.next().map(|p| p.to_string()).unwrap_or_else(|| first_path.to_string())
+            parts
+                .next()
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| first_path.to_string())
         }
         _ => first_path.to_string(),
     };
@@ -326,7 +335,10 @@ pub fn reconcile_changes_with_options(
         result.summary.untracked_seen = lines.len();
         result.summary.untracked_truncated = truncated || lines.len() > options.untracked_max;
         if result.summary.untracked_truncated {
-            result.summary.untracked_seen = result.summary.untracked_seen.max(options.untracked_max.saturating_add(1));
+            result.summary.untracked_seen = result
+                .summary
+                .untracked_seen
+                .max(options.untracked_max.saturating_add(1));
         } else {
             for path in lines.iter().filter(|l| !l.is_empty()) {
                 record(path.to_string(), "untracked");
@@ -407,7 +419,8 @@ mod tests {
 
     #[test]
     fn reconcile_in_non_git_dir_returns_empty() {
-        let tmp = std::env::temp_dir().join(format!("treeship-not-a-repo-{}", rand::random::<u32>()));
+        let tmp =
+            std::env::temp_dir().join(format!("treeship-not-a-repo-{}", rand::random::<u32>()));
         std::fs::create_dir_all(&tmp).unwrap();
         let result = reconcile_changes(&tmp, None);
         assert!(result.is_empty());
@@ -422,7 +435,10 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("treeship-nogit-{}", rand::random::<u32>()));
         std::fs::create_dir_all(&tmp).unwrap();
         let r = reconcile_changes_with_options(&tmp, None, &ReconcileOptions::default());
-        assert!(!r.summary.git_repo_present, "no git repo -> git_repo_present must be false");
+        assert!(
+            !r.summary.git_repo_present,
+            "no git repo -> git_repo_present must be false"
+        );
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -431,12 +447,20 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("treeship-git-{}", rand::random::<u32>()));
         std::fs::create_dir_all(&tmp).unwrap();
         let inited = Command::new("git")
-            .arg("-C").arg(&tmp).arg("init")
-            .stdout(Stdio::null()).stderr(Stdio::null())
-            .status().map(|s| s.success()).unwrap_or(false);
+            .arg("-C")
+            .arg(&tmp)
+            .arg("init")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
         if inited {
             let r = reconcile_changes_with_options(&tmp, None, &ReconcileOptions::default());
-            assert!(r.summary.git_repo_present, "real git repo -> git_repo_present must be true");
+            assert!(
+                r.summary.git_repo_present,
+                "real git repo -> git_repo_present must be true"
+            );
         }
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -474,16 +498,23 @@ mod tests {
         // the actual file on disk.
         let (op, path) = parse_name_status_line("R100\tsrc/old.rs\tsrc/new.rs").unwrap();
         assert_eq!(op, "renamed");
-        assert_eq!(path, "src/new.rs", "rename must record the destination, not the source");
+        assert_eq!(
+            path, "src/new.rs",
+            "rename must record the destination, not the source"
+        );
     }
 
     #[test]
     fn parse_name_status_copy_uses_destination() {
         // Copies map to "created" semantically -- a new file appeared
         // at the destination -- and we record the destination path.
-        let (op, path) = parse_name_status_line("C75\tsrc/template.rs\tsrc/new-from-template.rs").unwrap();
+        let (op, path) =
+            parse_name_status_line("C75\tsrc/template.rs\tsrc/new-from-template.rs").unwrap();
         assert_eq!(op, "created");
-        assert_eq!(path, "src/new-from-template.rs", "copy must record the destination");
+        assert_eq!(
+            path, "src/new-from-template.rs",
+            "copy must record the destination"
+        );
     }
 
     #[test]
@@ -501,7 +532,7 @@ mod tests {
     fn parse_name_status_handles_empty_or_garbage_lines() {
         assert!(parse_name_status_line("").is_none());
         assert!(parse_name_status_line("\t\t").is_none()); // empty code field
-        // Code with no path -- nothing to record.
+                                                           // Code with no path -- nothing to record.
         assert!(parse_name_status_line("M").is_none());
     }
 
@@ -510,15 +541,23 @@ mod tests {
         // Generated runtime state -- never the agent's work.
         assert!(is_treeship_runtime_artifact(".treeship/session.closing"));
         assert!(is_treeship_runtime_artifact(".treeship/session.json"));
-        assert!(is_treeship_runtime_artifact(".treeship/sessions/ssn_abc/events.jsonl"));
-        assert!(is_treeship_runtime_artifact(".treeship/sessions/ssn_abc/manifest.json"));
+        assert!(is_treeship_runtime_artifact(
+            ".treeship/sessions/ssn_abc/events.jsonl"
+        ));
+        assert!(is_treeship_runtime_artifact(
+            ".treeship/sessions/ssn_abc/manifest.json"
+        ));
         assert!(is_treeship_runtime_artifact(".treeship/artifacts/foo.json"));
         assert!(is_treeship_runtime_artifact(".treeship/tmp/scratch"));
-        assert!(is_treeship_runtime_artifact(".treeship/proof_queue/pending.json"));
+        assert!(is_treeship_runtime_artifact(
+            ".treeship/proof_queue/pending.json"
+        ));
 
         // "./"-prefixed forms (some git output emits these).
         assert!(is_treeship_runtime_artifact("./.treeship/session.closing"));
-        assert!(is_treeship_runtime_artifact("./.treeship/sessions/ssn_x/events.jsonl"));
+        assert!(is_treeship_runtime_artifact(
+            "./.treeship/sessions/ssn_x/events.jsonl"
+        ));
     }
 
     #[test]
@@ -529,8 +568,12 @@ mod tests {
         assert!(!is_treeship_runtime_artifact(".treeship/config.json"));
         assert!(!is_treeship_runtime_artifact(".treeship/declaration.json"));
         assert!(!is_treeship_runtime_artifact(".treeship/policy.yaml"));
-        assert!(!is_treeship_runtime_artifact(".treeship/agents/coder.agent"));
-        assert!(!is_treeship_runtime_artifact(".treeship/agents/reviewer.json"));
+        assert!(!is_treeship_runtime_artifact(
+            ".treeship/agents/coder.agent"
+        ));
+        assert!(!is_treeship_runtime_artifact(
+            ".treeship/agents/reviewer.json"
+        ));
 
         // Anything outside .treeship/ is never filtered.
         assert!(!is_treeship_runtime_artifact("src/main.rs"));
@@ -545,12 +588,14 @@ mod tests {
         // of runtime-artifact paths and user-authored paths. The
         // returned reconciliation must include the user files and
         // exclude the runtime artifacts.
-        let tmp = std::env::temp_dir().join(format!("treeship-reconcile-{}", rand::random::<u32>()));
+        let tmp =
+            std::env::temp_dir().join(format!("treeship-reconcile-{}", rand::random::<u32>()));
         std::fs::create_dir_all(&tmp).unwrap();
 
         let run = |args: &[&str]| {
             std::process::Command::new("git")
-                .arg("-C").arg(&tmp)
+                .arg("-C")
+                .arg(&tmp)
                 .args(args)
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
@@ -581,25 +626,42 @@ mod tests {
 
         // User-authored content: present.
         assert!(paths.contains(&"src.rs"), "user file missing: {paths:?}");
-        assert!(paths.contains(&".treeship/agents/coder.agent"), "agent card missing: {paths:?}");
-        assert!(paths.contains(&".treeship/declaration.json"), "declaration missing: {paths:?}");
+        assert!(
+            paths.contains(&".treeship/agents/coder.agent"),
+            "agent card missing: {paths:?}"
+        );
+        assert!(
+            paths.contains(&".treeship/declaration.json"),
+            "declaration missing: {paths:?}"
+        );
 
         // Runtime artifacts: excluded.
-        assert!(!paths.contains(&".treeship/sessions/ssn_x/events.jsonl"), "leaked: {paths:?}");
-        assert!(!paths.contains(&".treeship/artifacts/foo.json"), "leaked: {paths:?}");
-        assert!(!paths.contains(&".treeship/session.closing"), "leaked: {paths:?}");
+        assert!(
+            !paths.contains(&".treeship/sessions/ssn_x/events.jsonl"),
+            "leaked: {paths:?}"
+        );
+        assert!(
+            !paths.contains(&".treeship/artifacts/foo.json"),
+            "leaked: {paths:?}"
+        );
+        assert!(
+            !paths.contains(&".treeship/session.closing"),
+            "leaked: {paths:?}"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
     fn reconcile_truncates_untracked_without_promoting_per_file_events() {
-        let tmp = std::env::temp_dir().join(format!("treeship-reconcile-cap-{}", rand::random::<u32>()));
+        let tmp =
+            std::env::temp_dir().join(format!("treeship-reconcile-cap-{}", rand::random::<u32>()));
         std::fs::create_dir_all(&tmp).unwrap();
 
         let run = |args: &[&str]| {
             std::process::Command::new("git")
-                .arg("-C").arg(&tmp)
+                .arg("-C")
+                .arg(&tmp)
                 .args(args)
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
@@ -618,11 +680,8 @@ mod tests {
         std::fs::write(tmp.join("b.txt"), "b\n").unwrap();
         std::fs::write(tmp.join("c.txt"), "c\n").unwrap();
 
-        let result = reconcile_changes_with_options(
-            &tmp,
-            None,
-            &ReconcileOptions { untracked_max: 2 },
-        );
+        let result =
+            reconcile_changes_with_options(&tmp, None, &ReconcileOptions { untracked_max: 2 });
 
         assert!(result.summary.untracked_truncated);
         assert_eq!(result.summary.untracked_cap, 2);

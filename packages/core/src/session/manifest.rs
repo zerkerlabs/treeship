@@ -121,7 +121,6 @@ pub struct SessionManifest {
     pub root_artifact_id: Option<String>,
 
     // --- v1 fields below ---
-
     #[serde(default)]
     pub mode: LifecycleMode,
 

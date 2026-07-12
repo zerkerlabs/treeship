@@ -3,9 +3,9 @@ use treeship_core::{
     attestation::{sign, Signer},
     journal::{self, Journal},
     statements::{
-        ActionStatement, ApprovalScope, ApprovalStatement, ApprovalUse, DecisionStatement,
-        EndorsementStatement, HandoffStatement, ReceiptStatement,
-        SubjectRef, TYPE_APPROVAL_USE, payload_type, nonce_digest,
+        nonce_digest, payload_type, ActionStatement, ApprovalScope, ApprovalStatement, ApprovalUse,
+        DecisionStatement, EndorsementStatement, HandoffStatement, ReceiptStatement, SubjectRef,
+        TYPE_APPROVAL_USE,
     },
     storage::Record,
     trust::{TrustRootKind, TrustRootStore},
@@ -39,8 +39,7 @@ pub(crate) fn resolve_actor_signer(
     actor: &str,
 ) -> Result<Box<dyn Signer>, Box<dyn std::error::Error>> {
     let agents_dir = crate::commands::cards::agents_dir_for(&ctx.config_path);
-    let Some(key_id) = crate::commands::cards::registered_key_for_actor(&agents_dir, actor)
-    else {
+    let Some(key_id) = crate::commands::cards::registered_key_for_actor(&agents_dir, actor) else {
         return Ok(ctx.keys.default_signer()?);
     };
     // Only sign as the agent if its key is actually pinned under AgentCert.
@@ -61,40 +60,42 @@ pub(crate) fn resolve_actor_signer(
 // --- action -----------------------------------------------------------------
 
 pub struct ActionArgs {
-    pub actor:           String,
-    pub action:          String,
-    pub input_digest:    Option<String>,
-    pub output_digest:   Option<String>,
-    pub content_uri:     Option<String>,
-    pub parent_id:       Option<String>,
-    pub approval_nonce:  Option<String>,
+    pub actor: String,
+    pub action: String,
+    pub input_digest: Option<String>,
+    pub output_digest: Option<String>,
+    pub content_uri: Option<String>,
+    pub parent_id: Option<String>,
+    pub approval_nonce: Option<String>,
     /// Set together with --approval-nonce: a retry with the same key
     /// collapses to the existing journal entry instead of allocating a
     /// new one. See attest::action() for the precise crash-recovery
     /// semantics.
     pub idempotency_key: Option<String>,
-    pub meta:            Option<String>,
-    pub out:             Option<String>,
-    pub config:          Option<String>,
+    pub meta: Option<String>,
+    pub out: Option<String>,
+    pub config: Option<String>,
 }
 
 pub fn action(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std::error::Error>> {
     let ctx = ctx::open(args.config.as_deref())?;
 
-    let mut meta: Option<Value> = args.meta.as_deref()
+    let mut meta: Option<Value> = args
+        .meta
+        .as_deref()
         .map(|m| serde_json::from_str(m))
         .transpose()
         .map_err(|e| format!("--meta is not valid JSON: {e}"))?;
 
     let subject = SubjectRef {
-        digest:      args.input_digest.clone(),
-        uri:         args.content_uri.clone(),
+        digest: args.input_digest.clone(),
+        uri: args.content_uri.clone(),
         artifact_id: None,
     };
 
     let mut stmt = ActionStatement::new(&args.actor, &args.action);
-    stmt.subject        = subject;
-    stmt.parent_id      = args.parent_id.clone();
+    stmt.subject = subject;
+    stmt.parent_id = args.parent_id.clone();
     stmt.approval_nonce = args.approval_nonce.clone();
 
     // ----------------------------------------------------------------------
@@ -133,7 +134,9 @@ pub fn action(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std
     if let Some(ref use_id) = consumed_use_id {
         let mut obj = match meta.take() {
             Some(Value::Object(map)) => map,
-            Some(_other) => return Err("--meta must be a JSON object when --approval-nonce is set".into()),
+            Some(_other) => {
+                return Err("--meta must be a JSON object when --approval-nonce is set".into())
+            }
             None => serde_json::Map::new(),
         };
         obj.insert("approval_use_id".into(), Value::String(use_id.clone()));
@@ -142,7 +145,9 @@ pub fn action(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std
     if let Some(ref output_digest) = args.output_digest {
         let mut obj = match meta.take() {
             Some(Value::Object(map)) => map,
-            Some(_other) => return Err("--meta must be a JSON object when --output-digest is set".into()),
+            Some(_other) => {
+                return Err("--meta must be a JSON object when --output-digest is set".into())
+            }
             None => serde_json::Map::new(),
         };
         obj.insert("output_digest".into(), Value::String(output_digest.clone()));
@@ -153,19 +158,19 @@ pub fn action(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std
     // Sign with the actor's own key when it has a registered, pinned one;
     // otherwise the ship's default key (unchanged behavior).
     let signer = resolve_actor_signer(&ctx, &args.actor)?;
-    let pt     = payload_type("action");
+    let pt = payload_type("action");
     let result = sign(&pt, &stmt, signer.as_ref())?;
 
     // Store locally.
     let record = Record {
-        artifact_id:  result.artifact_id.clone(),
-        digest:       result.digest.clone(),
+        artifact_id: result.artifact_id.clone(),
+        digest: result.digest.clone(),
         payload_type: pt.clone(),
-        key_id:       signer.key_id().to_string(),
-        signed_at:    stmt.timestamp.clone(),
-        parent_id:    args.parent_id.clone(),
-        envelope:     result.envelope.clone(),
-        hub_url:      None,
+        key_id: signer.key_id().to_string(),
+        signed_at: stmt.timestamp.clone(),
+        parent_id: args.parent_id.clone(),
+        envelope: result.envelope.clone(),
+        hub_url: None,
     };
     ctx.storage.write(&record)?;
     write_last(&ctx.config.storage_dir, &result.artifact_id);
@@ -204,8 +209,8 @@ pub fn action(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std
     // Build display fields.
     let signed_str = stmt.timestamp.clone();
     let mut fields: Vec<(&str, String)> = vec![
-        ("id",     result.artifact_id.clone()),
-        ("actor",  args.actor.clone()),
+        ("id", result.artifact_id.clone()),
+        ("actor", args.actor.clone()),
         ("action", args.action.clone()),
         ("signed", signed_str),
     ];
@@ -226,23 +231,23 @@ pub fn action(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std
 // --- approval ---------------------------------------------------------------
 
 pub struct ApprovalArgs {
-    pub approver:         String,
-    pub subject_id:       Option<String>,
-    pub description:      Option<String>,
-    pub expires:          Option<String>,
+    pub approver: String,
+    pub subject_id: Option<String>,
+    pub description: Option<String>,
+    pub expires: Option<String>,
     /// Scope: actor URIs allowed to consume this approval.
-    pub allowed_actors:   Vec<String>,
+    pub allowed_actors: Vec<String>,
     /// Scope: action labels allowed under this approval.
-    pub allowed_actions:  Vec<String>,
+    pub allowed_actions: Vec<String>,
     /// Scope: subject URIs allowed as the action target.
     pub allowed_subjects: Vec<String>,
     /// Scope: max consumption count (signed for future ledger enforcement).
-    pub max_uses:         Option<u32>,
+    pub max_uses: Option<u32>,
     /// Explicit opt-in to an unscoped approval. Required when no
     /// scope axis is populated; without it the command refuses since
     /// unscoped approvals are footguns.
-    pub unscoped:         bool,
-    pub config:           Option<String>,
+    pub unscoped: bool,
+    pub config: Option<String>,
 }
 
 pub fn approval(args: ApprovalArgs, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
@@ -253,12 +258,12 @@ pub fn approval(args: ApprovalArgs, printer: &Printer) -> Result<(), Box<dyn std
     // operator explicitly typed --unscoped, since the verify pass will
     // (correctly) flag it as proving nothing about authorization.
     let scope = ApprovalScope {
-        max_actions:      args.max_uses,
-        valid_until:      None,
-        allowed_actors:   args.allowed_actors.clone(),
-        allowed_actions:  args.allowed_actions.clone(),
+        max_actions: args.max_uses,
+        valid_until: None,
+        allowed_actors: args.allowed_actors.clone(),
+        allowed_actions: args.allowed_actions.clone(),
         allowed_subjects: args.allowed_subjects.clone(),
-        extra:            None,
+        extra: None,
     };
     let scope_for_stmt = if scope.is_unscoped() {
         if !args.unscoped {
@@ -287,45 +292,59 @@ pub fn approval(args: ApprovalArgs, printer: &Printer) -> Result<(), Box<dyn std
 
     let mut stmt = ApprovalStatement::new(&args.approver, &nonce);
     stmt.description = args.description.clone();
-    stmt.expires_at  = args.expires.clone();
-    stmt.scope       = scope_for_stmt;
+    stmt.expires_at = args.expires.clone();
+    stmt.scope = scope_for_stmt;
     if let Some(id) = &args.subject_id {
         stmt.subject.artifact_id = Some(id.clone());
     }
 
     let signer = ctx.keys.default_signer()?;
-    let pt     = payload_type("approval");
+    let pt = payload_type("approval");
     let result = sign(&pt, &stmt, signer.as_ref())?;
 
     ctx.storage.write(&Record {
-        artifact_id:  result.artifact_id.clone(),
-        digest:       result.digest.clone(),
+        artifact_id: result.artifact_id.clone(),
+        digest: result.digest.clone(),
         payload_type: pt,
-        key_id:       signer.key_id().to_string(),
-        signed_at:    stmt.timestamp.clone(),
-        parent_id:    None,
-        envelope:     result.envelope,
-        hub_url:      None,
+        key_id: signer.key_id().to_string(),
+        signed_at: stmt.timestamp.clone(),
+        parent_id: None,
+        envelope: result.envelope,
+        hub_url: None,
     })?;
     write_last(&ctx.config.storage_dir, &result.artifact_id);
 
-    printer.success("approval attested", &[
-        ("id",       &result.artifact_id),
-        ("approver", &args.approver),
-        ("nonce",    &nonce),
-        ("signed",   &stmt.timestamp),
-    ]);
+    printer.success(
+        "approval attested",
+        &[
+            ("id", &result.artifact_id),
+            ("approver", &args.approver),
+            ("nonce", &nonce),
+            ("signed", &stmt.timestamp),
+        ],
+    );
     if stmt.scope.is_none() {
         printer.hint("scope: none (unscoped/bearer approval -- proves binding only, not actor/action/subject authorization)");
     } else if let Some(ref s) = stmt.scope {
         let mut parts = Vec::new();
-        if !s.allowed_actors.is_empty()   { parts.push(format!("actors={:?}", s.allowed_actors)); }
-        if !s.allowed_actions.is_empty()  { parts.push(format!("actions={:?}", s.allowed_actions)); }
-        if !s.allowed_subjects.is_empty() { parts.push(format!("subjects={:?}", s.allowed_subjects)); }
-        if let Some(n) = s.max_actions    { parts.push(format!("max_uses={n}")); }
+        if !s.allowed_actors.is_empty() {
+            parts.push(format!("actors={:?}", s.allowed_actors));
+        }
+        if !s.allowed_actions.is_empty() {
+            parts.push(format!("actions={:?}", s.allowed_actions));
+        }
+        if !s.allowed_subjects.is_empty() {
+            parts.push(format!("subjects={:?}", s.allowed_subjects));
+        }
+        if let Some(n) = s.max_actions {
+            parts.push(format!("max_uses={n}"));
+        }
         printer.hint(&format!("scope: {}", parts.join(", ")));
     }
-    printer.hint(&format!("nonce: {}  (echo this in --approval-nonce when you attest the action)", nonce));
+    printer.hint(&format!(
+        "nonce: {}  (echo this in --approval-nonce when you attest the action)",
+        nonce
+    ));
     printer.blank();
     Ok(())
 }
@@ -333,12 +352,12 @@ pub fn approval(args: ApprovalArgs, printer: &Printer) -> Result<(), Box<dyn std
 // --- handoff ----------------------------------------------------------------
 
 pub struct HandoffArgs {
-    pub from:        String,
-    pub to:          String,
-    pub artifacts:   Vec<String>,
-    pub approvals:   Vec<String>,
+    pub from: String,
+    pub to: String,
+    pub artifacts: Vec<String>,
+    pub approvals: Vec<String>,
     pub obligations: Vec<String>,
-    pub config:      Option<String>,
+    pub config: Option<String>,
 }
 
 pub fn handoff(args: HandoffArgs, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
@@ -346,32 +365,35 @@ pub fn handoff(args: HandoffArgs, printer: &Printer) -> Result<(), Box<dyn std::
 
     let mut stmt = HandoffStatement::new(&args.from, &args.to, args.artifacts.clone());
     stmt.approval_ids = args.approvals.clone();
-    stmt.obligations  = args.obligations.clone();
+    stmt.obligations = args.obligations.clone();
 
     // The handing-off agent (`from`) signs; use its own key when registered.
     let signer = resolve_actor_signer(&ctx, &args.from)?;
-    let pt     = payload_type("handoff");
+    let pt = payload_type("handoff");
     let result = sign(&pt, &stmt, signer.as_ref())?;
 
     ctx.storage.write(&Record {
-        artifact_id:  result.artifact_id.clone(),
-        digest:       result.digest.clone(),
+        artifact_id: result.artifact_id.clone(),
+        digest: result.digest.clone(),
         payload_type: pt,
-        key_id:       signer.key_id().to_string(),
-        signed_at:    stmt.timestamp.clone(),
-        parent_id:    args.artifacts.first().cloned(),
-        envelope:     result.envelope,
-        hub_url:      None,
+        key_id: signer.key_id().to_string(),
+        signed_at: stmt.timestamp.clone(),
+        parent_id: args.artifacts.first().cloned(),
+        envelope: result.envelope,
+        hub_url: None,
     })?;
     write_last(&ctx.config.storage_dir, &result.artifact_id);
 
-    printer.success("handoff attested", &[
-        ("id",        &result.artifact_id),
-        ("from",      &args.from),
-        ("to",        &args.to),
-        ("artifacts", &args.artifacts.join(", ")),
-        ("signed",    &stmt.timestamp),
-    ]);
+    printer.success(
+        "handoff attested",
+        &[
+            ("id", &result.artifact_id),
+            ("from", &args.from),
+            ("to", &args.to),
+            ("artifacts", &args.artifacts.join(", ")),
+            ("signed", &stmt.timestamp),
+        ],
+    );
     printer.hint(&format!("treeship verify {}", result.artifact_id));
     printer.blank();
     Ok(())
@@ -380,13 +402,13 @@ pub fn handoff(args: HandoffArgs, printer: &Printer) -> Result<(), Box<dyn std::
 // --- receipt ----------------------------------------------------------------
 
 pub struct ReceiptArgs {
-    pub system:         String,
-    pub kind:           String,
-    pub subject_id:     Option<String>,
-    pub payload:        Option<String>,
-    pub payload_file:   Option<String>,
+    pub system: String,
+    pub kind: String,
+    pub subject_id: Option<String>,
+    pub payload: Option<String>,
+    pub payload_file: Option<String>,
     pub payload_digest: Option<String>,
-    pub config:         Option<String>,
+    pub config: Option<String>,
 }
 
 pub fn receipt(args: ReceiptArgs, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
@@ -394,12 +416,17 @@ pub fn receipt(args: ReceiptArgs, printer: &Printer) -> Result<(), Box<dyn std::
 
     let payload_text = match (&args.payload, &args.payload_file) {
         (Some(payload), None) => Some(payload.clone()),
-        (None, Some(path)) => Some(std::fs::read_to_string(path)
-            .map_err(|e| format!("could not read --payload-file {path}: {e}"))?),
+        (None, Some(path)) => Some(
+            std::fs::read_to_string(path)
+                .map_err(|e| format!("could not read --payload-file {path}: {e}"))?,
+        ),
         (None, None) => None,
-        (Some(_), Some(_)) => return Err("--payload and --payload-file cannot be used together".into()),
+        (Some(_), Some(_)) => {
+            return Err("--payload and --payload-file cannot be used together".into())
+        }
     };
-    let payload_val: Option<Value> = payload_text.as_deref()
+    let payload_val: Option<Value> = payload_text
+        .as_deref()
         .map(serde_json::from_str)
         .transpose()
         .map_err(|e| format!("receipt payload is not valid JSON: {e}"))?;
@@ -419,7 +446,8 @@ pub fn receipt(args: ReceiptArgs, printer: &Printer) -> Result<(), Box<dyn std::
              work-history record with a self-declared attestation_class. \
              See docs/specs/work-history.md.",
             args.kind
-        ).into());
+        )
+        .into());
     }
 
     // Typed-predicate validation: if `kind` is a registered predicate, the
@@ -440,27 +468,30 @@ pub fn receipt(args: ReceiptArgs, printer: &Printer) -> Result<(), Box<dyn std::
     }
 
     let signer = ctx.keys.default_signer()?;
-    let pt     = payload_type("receipt");
+    let pt = payload_type("receipt");
     let result = sign(&pt, &stmt, signer.as_ref())?;
 
     ctx.storage.write(&Record {
-        artifact_id:  result.artifact_id.clone(),
-        digest:       result.digest.clone(),
+        artifact_id: result.artifact_id.clone(),
+        digest: result.digest.clone(),
         payload_type: pt,
-        key_id:       signer.key_id().to_string(),
-        signed_at:    stmt.timestamp.clone(),
-        parent_id:    args.subject_id.clone(),
-        envelope:     result.envelope,
-        hub_url:      None,
+        key_id: signer.key_id().to_string(),
+        signed_at: stmt.timestamp.clone(),
+        parent_id: args.subject_id.clone(),
+        envelope: result.envelope,
+        hub_url: None,
     })?;
     write_last(&ctx.config.storage_dir, &result.artifact_id);
 
-    printer.success("receipt attested", &[
-        ("id",     &result.artifact_id),
-        ("system", &args.system),
-        ("kind",   &args.kind),
-        ("signed", &stmt.timestamp),
-    ]);
+    printer.success(
+        "receipt attested",
+        &[
+            ("id", &result.artifact_id),
+            ("system", &args.system),
+            ("kind", &args.kind),
+            ("signed", &stmt.timestamp),
+        ],
+    );
     printer.hint(&format!("treeship verify {}", result.artifact_id));
     printer.blank();
     Ok(())
@@ -469,13 +500,13 @@ pub fn receipt(args: ReceiptArgs, printer: &Printer) -> Result<(), Box<dyn std::
 // --- card -------------------------------------------------------------------
 
 pub struct CardArgs {
-    pub agent:        String,
-    pub tools:        Vec<String>,
-    pub models:       Vec<String>,
-    pub keyid:        Option<String>,
-    pub owner:        Option<String>,
-    pub version:      String,
-    pub policy_ref:   Option<String>,
+    pub agent: String,
+    pub tools: Vec<String>,
+    pub models: Vec<String>,
+    pub keyid: Option<String>,
+    pub owner: Option<String>,
+    pub version: String,
+    pub policy_ref: Option<String>,
     /// Path to a harness config (e.g. a Claude Code settings.json) whose
     /// `permissions.allow` list is the agent's real, wired tool set. Those
     /// capabilities are stamped `captured` -- read from config, not declared.
@@ -485,15 +516,15 @@ pub struct CardArgs {
     /// `--from-harness`: where `--from-harness` *captures* tools observed in a
     /// config, this records an operator's *declaration*. Entries are stamped
     /// `declared` with the file as their `source`, never presented as captured.
-    pub tools_json:   Option<String>,
+    pub tools_json: Option<String>,
     /// Path to an A2A `AgentCard` JSON. The agent's own published `skills` are
     /// mapped to capabilities and stamped `discovered` with the AgentCard's
     /// `url` as their `source` -- read from the agent's own descriptor, a real
     /// provenance source distinct from operator-`declared` and harness-
     /// `captured`. Protocol-level `capabilities` (streaming, ...) are not the
     /// agent's domain capabilities and are excluded.
-    pub from_a2a:     Option<String>,
-    pub config:       Option<String>,
+    pub from_a2a: Option<String>,
+    pub config: Option<String>,
 }
 
 /// Read a harness config's `permissions.allow` list -- the deterministic
@@ -606,7 +637,10 @@ fn read_a2a_skills(path: &str) -> Result<(Vec<String>, String), Box<dyn std::err
 /// Pure parser for an A2A AgentCard, split from IO so it is unit-testable. Each
 /// skill's `id` is the capability string (stable identifier); the AgentCard's
 /// `url` is the provenance source (where the descriptor was published).
-fn parse_a2a_skills(text: &str, path: &str) -> Result<(Vec<String>, String), Box<dyn std::error::Error>> {
+fn parse_a2a_skills(
+    text: &str,
+    path: &str,
+) -> Result<(Vec<String>, String), Box<dyn std::error::Error>> {
     let json: Value = serde_json::from_str(text)
         .map_err(|e| format!("--from-a2a {path} is not valid JSON: {e}"))?;
     let obj = json
@@ -700,7 +734,10 @@ pub fn card(args: CardArgs, printer: &Printer) -> Result<(), Box<dyn std::error:
     let signer = resolve_actor_signer(&ctx, &args.agent)?;
     // Default the card's keyid to the signing key, so a freshly minted card is
     // key-bound-eligible by default (pin it under AgentCert to make it strong).
-    let keyid = args.keyid.clone().unwrap_or_else(|| signer.key_id().to_string());
+    let keyid = args
+        .keyid
+        .clone()
+        .unwrap_or_else(|| signer.key_id().to_string());
 
     // Capability set: --tools entries are declared; --from-harness entries are
     // captured from the agent's real config and stamped with their provenance.
@@ -797,14 +834,14 @@ pub fn card(args: CardArgs, printer: &Printer) -> Result<(), Box<dyn std::error:
     let pt = payload_type("receipt");
     let result = sign(&pt, &stmt, signer.as_ref())?;
     ctx.storage.write(&Record {
-        artifact_id:  result.artifact_id.clone(),
-        digest:       result.digest.clone(),
+        artifact_id: result.artifact_id.clone(),
+        digest: result.digest.clone(),
         payload_type: pt,
-        key_id:       signer.key_id().to_string(),
-        signed_at:    stmt.timestamp.clone(),
-        parent_id:    None,
-        envelope:     result.envelope,
-        hub_url:      None,
+        key_id: signer.key_id().to_string(),
+        signed_at: stmt.timestamp.clone(),
+        parent_id: None,
+        envelope: result.envelope,
+        hub_url: None,
     })?;
     write_last(&ctx.config.storage_dir, &result.artifact_id);
 
@@ -812,7 +849,10 @@ pub fn card(args: CardArgs, printer: &Printer) -> Result<(), Box<dyn std::error:
     let key_bound = crate::commands::capability::is_key_bound(&keyid, signer.key_id(), &trust);
 
     let tools_str = all_tools.join(", ");
-    let mut prov_parts = vec![format!("{captured_count} of {} captured from harness", all_tools.len())];
+    let mut prov_parts = vec![format!(
+        "{captured_count} of {} captured from harness",
+        all_tools.len()
+    )];
     if declared_count > 0 {
         prov_parts.push(format!("{declared_count} operator-declared (--tools-json)"));
     }
@@ -820,14 +860,27 @@ pub fn card(args: CardArgs, printer: &Printer) -> Result<(), Box<dyn std::error:
         prov_parts.push(format!("{discovered_count} discovered from A2A AgentCard"));
     }
     let captured_str = prov_parts.join(", ");
-    printer.success("capability card attested", &[
-        ("id",        &result.artifact_id),
-        ("agent",     &args.agent),
-        ("key-bound", if key_bound { "yes (AgentCert)" } else { "no (self-asserted)" }),
-        ("tools",     &tools_str),
-        ("provenance", &captured_str),
-    ]);
-    printer.hint(&format!("treeship verify-capability {}", result.artifact_id));
+    printer.success(
+        "capability card attested",
+        &[
+            ("id", &result.artifact_id),
+            ("agent", &args.agent),
+            (
+                "key-bound",
+                if key_bound {
+                    "yes (AgentCert)"
+                } else {
+                    "no (self-asserted)"
+                },
+            ),
+            ("tools", &tools_str),
+            ("provenance", &captured_str),
+        ],
+    );
+    printer.hint(&format!(
+        "treeship verify-capability {}",
+        result.artifact_id
+    ));
     printer.blank();
     Ok(())
 }
@@ -835,17 +888,17 @@ pub fn card(args: CardArgs, printer: &Printer) -> Result<(), Box<dyn std::error:
 // --- decision ---------------------------------------------------------------
 
 pub struct DecisionArgs {
-    pub actor:         String,
-    pub model:         Option<String>,
+    pub actor: String,
+    pub model: Option<String>,
     pub model_version: Option<String>,
-    pub provider:      Option<String>,
-    pub tokens_in:     Option<u64>,
-    pub tokens_out:    Option<u64>,
+    pub provider: Option<String>,
+    pub tokens_in: Option<u64>,
+    pub tokens_out: Option<u64>,
     pub prompt_digest: Option<String>,
-    pub summary:       Option<String>,
-    pub confidence:    Option<f64>,
-    pub parent_id:     Option<String>,
-    pub config:        Option<String>,
+    pub summary: Option<String>,
+    pub confidence: Option<f64>,
+    pub parent_id: Option<String>,
+    pub config: Option<String>,
 }
 
 pub fn decision(args: DecisionArgs, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
@@ -871,14 +924,14 @@ pub fn decision(args: DecisionArgs, printer: &Printer) -> Result<(), Box<dyn std
     let result = sign(&pt, &stmt, signer.as_ref())?;
 
     ctx.storage.write(&Record {
-        artifact_id:  result.artifact_id.clone(),
-        digest:       result.digest.clone(),
+        artifact_id: result.artifact_id.clone(),
+        digest: result.digest.clone(),
         payload_type: pt,
-        key_id:       signer.key_id().to_string(),
-        signed_at:    stmt.timestamp.clone(),
-        parent_id:    parent,
-        envelope:     result.envelope,
-        hub_url:      None,
+        key_id: signer.key_id().to_string(),
+        signed_at: stmt.timestamp.clone(),
+        parent_id: parent,
+        envelope: result.envelope,
+        hub_url: None,
     })?;
 
     // Write .last for auto-chaining
@@ -898,11 +951,14 @@ pub fn decision(args: DecisionArgs, printer: &Printer) -> Result<(), Box<dyn std
     // event is a derived view, not the source of truth.
     emit_decision_session_event(&args, &result.artifact_id);
 
-    printer.success("decision attested", &[
-        ("id",    &result.artifact_id),
-        ("actor", &args.actor),
-        ("model", args.model.as_deref().unwrap_or("not specified")),
-    ]);
+    printer.success(
+        "decision attested",
+        &[
+            ("id", &result.artifact_id),
+            ("actor", &args.actor),
+            ("model", args.model.as_deref().unwrap_or("not specified")),
+        ],
+    );
     if let Some(ref summary) = args.summary {
         printer.dim_info(&format!("  summary: {}", summary));
     }
@@ -929,21 +985,35 @@ fn emit_decision_session_event(args: &DecisionArgs, artifact_id: &str) {
     // TREESHIP_MODEL once at session start still gets attribution
     // even if the per-call --model isn't passed. Mirrors the logic
     // in commands/session.rs::event for agent.decision.
-    let model = args.model.clone()
+    let model = args
+        .model
+        .clone()
         .or_else(|| std::env::var("TREESHIP_MODEL").ok());
-    let provider = args.provider.clone()
+    let provider = args
+        .provider
+        .clone()
         .or_else(|| std::env::var("TREESHIP_PROVIDER").ok());
-    let tokens_in = args.tokens_in
-        .or_else(|| std::env::var("TREESHIP_TOKENS_IN").ok().and_then(|s| s.parse().ok()));
-    let tokens_out = args.tokens_out
-        .or_else(|| std::env::var("TREESHIP_TOKENS_OUT").ok().and_then(|s| s.parse().ok()));
+    let tokens_in = args.tokens_in.or_else(|| {
+        std::env::var("TREESHIP_TOKENS_IN")
+            .ok()
+            .and_then(|s| s.parse().ok())
+    });
+    let tokens_out = args.tokens_out.or_else(|| {
+        std::env::var("TREESHIP_TOKENS_OUT")
+            .ok()
+            .and_then(|s| s.parse().ok())
+    });
 
     // If the operator gave us nothing about the inference (no model,
     // no provider, no tokens, no summary, no confidence), there's
     // nothing useful to put in the session event. The signed artifact
     // already exists; skip the empty event.
-    if model.is_none() && provider.is_none() && tokens_in.is_none() && tokens_out.is_none()
-        && args.summary.is_none() && args.confidence.is_none()
+    if model.is_none()
+        && provider.is_none()
+        && tokens_in.is_none()
+        && tokens_out.is_none()
+        && args.summary.is_none()
+        && args.confidence.is_none()
     {
         return;
     }
@@ -971,22 +1041,27 @@ fn emit_decision_session_event(args: &DecisionArgs, artifact_id: &str) {
 // --- endorsement -----------------------------------------------------------
 
 pub struct EndorsementArgs {
-    pub endorser:   String,
+    pub endorser: String,
     pub subject_id: String,
-    pub kind:       String,
-    pub rationale:  Option<String>,
-    pub expires:    Option<String>,
+    pub kind: String,
+    pub rationale: Option<String>,
+    pub expires: Option<String>,
     pub policy_ref: Option<String>,
-    pub meta:       Option<String>,
-    pub parent_id:  Option<String>,
-    pub out:        Option<String>,
-    pub config:     Option<String>,
+    pub meta: Option<String>,
+    pub parent_id: Option<String>,
+    pub out: Option<String>,
+    pub config: Option<String>,
 }
 
-pub fn endorsement(args: EndorsementArgs, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
+pub fn endorsement(
+    args: EndorsementArgs,
+    printer: &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(args.config.as_deref())?;
 
-    let meta: Option<Value> = args.meta.as_deref()
+    let meta: Option<Value> = args
+        .meta
+        .as_deref()
         .map(|m| serde_json::from_str(m))
         .transpose()
         .map_err(|e| format!("--meta is not valid JSON: {e}"))?;
@@ -999,24 +1074,24 @@ pub fn endorsement(args: EndorsementArgs, printer: &Printer) -> Result<(), Box<d
         digest: None,
         uri: None,
     };
-    stmt.rationale  = args.rationale.clone();
+    stmt.rationale = args.rationale.clone();
     stmt.expires_at = args.expires.clone();
     stmt.policy_ref = args.policy_ref.clone();
-    stmt.meta       = meta;
+    stmt.meta = meta;
 
     let signer = ctx.keys.default_signer()?;
-    let pt     = payload_type("endorsement");
+    let pt = payload_type("endorsement");
     let result = sign(&pt, &stmt, signer.as_ref())?;
 
     ctx.storage.write(&Record {
-        artifact_id:  result.artifact_id.clone(),
-        digest:       result.digest.clone(),
+        artifact_id: result.artifact_id.clone(),
+        digest: result.digest.clone(),
         payload_type: pt,
-        key_id:       signer.key_id().to_string(),
-        signed_at:    stmt.timestamp.clone(),
-        parent_id:    parent,
-        envelope:     result.envelope.clone(),
-        hub_url:      None,
+        key_id: signer.key_id().to_string(),
+        signed_at: stmt.timestamp.clone(),
+        parent_id: parent,
+        envelope: result.envelope.clone(),
+        hub_url: None,
     })?;
 
     // Write .last for auto-chaining
@@ -1031,12 +1106,15 @@ pub fn endorsement(args: EndorsementArgs, printer: &Printer) -> Result<(), Box<d
         }
     }
 
-    printer.success("endorsement attested", &[
-        ("id",       &result.artifact_id),
-        ("endorser", &args.endorser),
-        ("subject",  &args.subject_id),
-        ("kind",     &args.kind),
-    ]);
+    printer.success(
+        "endorsement attested",
+        &[
+            ("id", &result.artifact_id),
+            ("endorser", &args.endorser),
+            ("subject", &args.subject_id),
+            ("kind", &args.kind),
+        ],
+    );
     if let Some(ref rationale) = args.rationale {
         printer.dim_info(&format!("  rationale: {}", rationale));
     }
@@ -1083,10 +1161,7 @@ fn journal_dir_for(ctx: &ctx::Ctx) -> std::path::PathBuf {
 /// record. Reusing find_approval_by_nonce for the parse + then walking
 /// storage a second time would be wasteful; we walk once here and
 /// return both.
-fn resolve_grant_by_nonce(
-    ctx: &ctx::Ctx,
-    raw_nonce: &str,
-) -> Option<(String, ApprovalStatement)> {
+fn resolve_grant_by_nonce(ctx: &ctx::Ctx, raw_nonce: &str) -> Option<(String, ApprovalStatement)> {
     let approval_type = payload_type("approval");
     for entry in ctx.storage.list_by_type(&approval_type) {
         if let Ok(rec) = ctx.storage.read(&entry.id) {
@@ -1126,19 +1201,22 @@ fn consume_approval(
     // 1. Resolve grant.
     let (grant_id, grant) = match resolve_grant_by_nonce(ctx, raw_nonce) {
         Some(found) => found,
-        None => return Err(format!(
-            "approval_nonce '{}...' set but no matching ApprovalStatement in local storage",
-            &raw_nonce[..16.min(raw_nonce.len())],
-        ).into()),
+        None => {
+            return Err(format!(
+                "approval_nonce '{}...' set but no matching ApprovalStatement in local storage",
+                &raw_nonce[..16.min(raw_nonce.len())],
+            )
+            .into())
+        }
     };
 
     // 2. Expiry on the grant envelope itself.
     if let Some(ref expires) = grant.expires_at {
         let now = now_rfc3339();
         if *expires < now {
-            return Err(format!(
-                "approval grant {grant_id} expired at {expires} (now: {now})",
-            ).into());
+            return Err(
+                format!("approval grant {grant_id} expired at {expires} (now: {now})",).into(),
+            );
         }
     }
 
@@ -1191,9 +1269,13 @@ fn reserve_in_journal(
     // network or crashed CLI can retry safely.
     if let Some(key) = idempotency_key {
         let existing = journal::list_uses_for_grant(&j, grant_id)?;
-        if let Some(prior) = existing.iter().find(|u| u.idempotency_key.as_deref() == Some(key)) {
+        if let Some(prior) = existing
+            .iter()
+            .find(|u| u.idempotency_key.as_deref() == Some(key))
+        {
             printer.dim_info(&format!(
-                "  idempotency: reusing existing use_id {}", prior.use_id,
+                "  idempotency: reusing existing use_id {}",
+                prior.use_id,
             ));
             return Ok(prior.use_id.clone());
         }
@@ -1234,49 +1316,56 @@ fn reserve_in_journal(
     let grant_digest = grant_id.to_string();
 
     let record = ApprovalUse {
-        type_:                  TYPE_APPROVAL_USE.into(),
-        use_id:                 use_id.clone(),
-        grant_id:               grant_id.to_string(),
+        type_: TYPE_APPROVAL_USE.into(),
+        use_id: use_id.clone(),
+        grant_id: grant_id.to_string(),
         grant_digest,
         nonce_digest,
-        actor:                  action.actor.clone(),
-        action:                 action.action.clone(),
-        subject:                action
+        actor: action.actor.clone(),
+        action: action.action.clone(),
+        subject: action
             .subject
             .uri
             .clone()
             .or_else(|| action.subject.artifact_id.clone())
             .or_else(|| action.subject.digest.clone())
             .unwrap_or_default(),
-        session_id:             None, // PR 5 wires this from active session
-        action_artifact_id:     None, // backfilled after signing
-        receipt_digest:         None,
+        session_id: None,         // PR 5 wires this from active session
+        action_artifact_id: None, // backfilled after signing
+        receipt_digest: None,
         use_number,
         max_uses,
-        idempotency_key:        idempotency_key.map(str::to_string),
-        created_at:             now_rfc3339(),
-        expires_at:             None,
+        idempotency_key: idempotency_key.map(str::to_string),
+        created_at: now_rfc3339(),
+        expires_at: None,
         previous_record_digest: String::new(), // append_use stamps this
-        record_digest:          String::new(), // append_use stamps this
-        signature:              None,
-        signature_alg:          None,
-        signing_key_id:         None,
+        record_digest: String::new(),          // append_use stamps this
+        signature: None,
+        signature_alg: None,
+        signing_key_id: None,
     };
 
-    let head = journal::reserve_use(&j, record, max_uses).map_err(|e| -> Box<dyn std::error::Error> {
-        format!("could not reserve approval use in journal: {e}").into()
-    })?;
+    let head =
+        journal::reserve_use(&j, record, max_uses).map_err(|e| -> Box<dyn std::error::Error> {
+            format!("could not reserve approval use in journal: {e}").into()
+        })?;
     // reserve_use stamped use_number inside the lock; recover it from
     // the just-written record so the user-visible message is accurate.
     let actual_use_number = journal::list_uses_for_grant(&j, grant_id)
         .ok()
-        .and_then(|uses| uses.iter().find(|u| u.use_id == use_id).map(|u| u.use_number))
+        .and_then(|uses| {
+            uses.iter()
+                .find(|u| u.use_id == use_id)
+                .map(|u| u.use_number)
+        })
         .unwrap_or(0);
     let _ = head;
 
     printer.dim_info(&format!(
         "  approval use reserved: {use_id} (use {actual_use_number}/{})",
-        max_uses.map(|m| m.to_string()).unwrap_or_else(|| "unbounded".into()),
+        max_uses
+            .map(|m| m.to_string())
+            .unwrap_or_else(|| "unbounded".into()),
     ));
 
     Ok(use_id)
@@ -1321,7 +1410,10 @@ mod aud06_tests {
     // hand-signed.
     #[test]
     fn session_v1_is_close_only() {
-        assert_eq!(close_only_kind_owner("session.v1"), Some("treeship session close"));
+        assert_eq!(
+            close_only_kind_owner("session.v1"),
+            Some("treeship session close")
+        );
     }
 
     #[test]
