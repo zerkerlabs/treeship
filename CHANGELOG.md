@@ -2,6 +2,52 @@
 
 ## Unreleased
 
+## 0.19.1 (2026-07-11)
+
+The portable-verification release. The headline is a small command that closes a
+real gap: a Treeship signature is over the DSSE PAE (`DSSEv1 <len> <payloadType>
+<len> <payload>`), not the payload JSON, and nothing exported those exact bytes —
+so a counterparty verifying a receipt with a third-party Ed25519 library had to
+guess the PAE construction and failed. The "portable, offline, don't-trust-us"
+promise was true in the bytes but unusable without reading the source.
+
+### Added
+- **`treeship receipt export <id>` — the offline-verifiable triple.** Emits the
+  exact `{message (the PAE), signature, public_key, algorithm}` in copy-safe
+  base64, so a counterparty confirms a receipt with any Ed25519 library and zero
+  Treeship code. `--format json` pipes the triple straight to a partner. The
+  message is reconstructed from the same `payload_type`+`payload` the verifier
+  sees, so what is exported is provably what the signature covers; the public key
+  comes from the local keystore (export is for a receipt you produced — a
+  received receipt is checked with `treeship verify`).
+- **`scripts/verify-receipt.py` — the reference verifier.** Dependency-light,
+  independent Ed25519, offline: `treeship receipt export <id> --format json |
+  python3 scripts/verify-receipt.py` → `VALID`. The canonical thing a partner
+  copies.
+- **[Receipt format](docs/content/docs/reference/receipt-format.mdx) reference.**
+  The stable, partner-facing description of the byte format — envelope, PAE,
+  id derivation, a language-agnostic verification recipe — so anyone can
+  implement a verifier without reading the Rust. The format is frozen; this
+  documents it.
+
+### Fixed
+- **A clean session reports `verification_status: "pass"`, not `"warn"` (#231).**
+  The always-on `receipt_body_binding` scope caveat added in 0.19.0 is
+  informational (every package carries it), but it was flipping every
+  cryptographically-clean session's top-line verdict to `warn`, making `pass`
+  unreachable and breaking any caller that gates on `status == "pass"`. It is now
+  surfaced in `warnings` for transparency but no longer downgrades the verdict;
+  real warnings (git-degraded, event-log skips, determinism drift) still do.
+  Caught by the post-publish smoke test; regression-tested.
+- **Release tooling: npm pinned to 11.5.1 (#230).** The 0.19.0 publish failed on
+  npm because `npm@latest` on the runner's Node 24 shipped a build whose bundled
+  `sigstore` module was unresolvable, crashing trusted-publishing provenance
+  (crates.io and PyPI published fine). npm is now pinned to the trusted-publishing
+  floor instead of tracking `@latest`.
+- **Dead verify URL in the lobster-cash demo.** It printed the non-resolving
+  `hub.treeship.dev/verify/`; the public verify URL is `https://treeship.dev/verify/<id>`
+  (the hub's own `hub_url`).
+
 ## 0.19.0 (2026-07-09)
 
 The security-hardening release. Two independent AI-assisted adversarial audits
