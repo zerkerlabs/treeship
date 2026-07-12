@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+## 0.20.0 (2026-07-12)
+
+The private-verification release. Treeship gets a way for an agent to prove a
+*subset* of what it is authorized to do without revealing the rest, and the
+experimental zero-knowledge path gets rebuilt on an honest foundation.
+
+### Added
+- **Selective capability disclosure — `treeship present --disclose <caps>`.** An
+  agent card commits to its full capability set, but a holder can present only the
+  capabilities a given verifier needs. Built as an SD-JWT-style disclosure layered
+  over the existing DSSE signature (core: `disclose_capabilities` /
+  `reconstruct_capabilities`): the verifier reconstructs the disclosed subset,
+  checks it against the signed commitment, and learns nothing about the withheld
+  entries — while the card's signature still verifies. The withheld set cannot be
+  forged or silently extended, and an omitted capability cannot be presented as
+  disclosed. Round-trip tested end to end.
+
+### Changed
+- **Honest zero-knowledge rebuild (statement-first).** The experimental Groth16
+  path was not sound to ship — it had no trusted-setup ceremony and its proofs were
+  not bound to the statement being proven, so a proof could be replayed or forged
+  (identified in the ZK audit). That path is now **quarantined**, the dead ZK code
+  deleted, and the docs corrected to stop implying it was authoritative. A
+  statement-first *private-verification* design (renamed from `zk-verification`)
+  supersedes it and names the two tiers concretely; `treeship zk-setup` and
+  `zk-tls-setup` scaffold the SRI-identified building blocks. The `zk` feature
+  remains **pre-release and non-authoritative** — nothing in the default trust path
+  depends on it.
+
+### Docs
+- Private-verification spec (statement-first) with the first-principles argument
+  and citations, and a first-draft "cyberlogic" theory of Treeship's trust model.
+
 ## 0.19.1 (2026-07-11)
 
 The portable-verification release. The headline is a small command that closes a

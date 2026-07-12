@@ -12,6 +12,85 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
 
 ## Unreleased
 
+## 0.20.0 (2026-07-12)
+
+The private-verification release. Treeship gets a way for an agent to prove a
+*subset* of what it is authorized to do without revealing the rest, and the
+experimental zero-knowledge path gets rebuilt on an honest foundation.
+
+### Added
+- **Selective capability disclosure — `treeship present --disclose <caps>`.** An
+  agent card commits to its full capability set, but a holder can present only the
+  capabilities a given verifier needs. Built as an SD-JWT-style disclosure layered
+  over the existing DSSE signature (core: `disclose_capabilities` /
+  `reconstruct_capabilities`): the verifier reconstructs the disclosed subset,
+  checks it against the signed commitment, and learns nothing about the withheld
+  entries — while the card's signature still verifies. The withheld set cannot be
+  forged or silently extended, and an omitted capability cannot be presented as
+  disclosed. Round-trip tested end to end.
+
+### Changed
+- **Honest zero-knowledge rebuild (statement-first).** The experimental Groth16
+  path was not sound to ship — it had no trusted-setup ceremony and its proofs were
+  not bound to the statement being proven, so a proof could be replayed or forged
+  (identified in the ZK audit). That path is now **quarantined**, the dead ZK code
+  deleted, and the docs corrected to stop implying it was authoritative. A
+  statement-first *private-verification* design (renamed from `zk-verification`)
+  supersedes it and names the two tiers concretely; `treeship zk-setup` and
+  `zk-tls-setup` scaffold the SRI-identified building blocks. The `zk` feature
+  remains **pre-release and non-authoritative** — nothing in the default trust path
+  depends on it.
+
+### Docs
+- Private-verification spec (statement-first) with the first-principles argument
+  and citations, and a first-draft "cyberlogic" theory of Treeship's trust model.
+
+## 0.19.1 (2026-07-11)
+
+The portable-verification release. The headline is a small command that closes a
+real gap: a Treeship signature is over the DSSE PAE (`DSSEv1 &lt;len> &lt;payloadType>
+&lt;len> &lt;payload>`), not the payload JSON, and nothing exported those exact bytes —
+so a counterparty verifying a receipt with a third-party Ed25519 library had to
+guess the PAE construction and failed. The "portable, offline, don't-trust-us"
+promise was true in the bytes but unusable without reading the source.
+
+### Added
+- **`treeship receipt export <id>` — the offline-verifiable triple.** Emits the
+  exact `{message (the PAE), signature, public_key, algorithm}` in copy-safe
+  base64, so a counterparty confirms a receipt with any Ed25519 library and zero
+  Treeship code. `--format json` pipes the triple straight to a partner. The
+  message is reconstructed from the same `payload_type`+`payload` the verifier
+  sees, so what is exported is provably what the signature covers; the public key
+  comes from the local keystore (export is for a receipt you produced — a
+  received receipt is checked with `treeship verify`).
+- **`scripts/verify-receipt.py` — the reference verifier.** Dependency-light,
+  independent Ed25519, offline: `treeship receipt export &lt;id> --format json |
+  python3 scripts/verify-receipt.py` → `VALID`. The canonical thing a partner
+  copies.
+- **[Receipt format](docs/content/docs/reference/receipt-format.mdx) reference.**
+  The stable, partner-facing description of the byte format — envelope, PAE,
+  id derivation, a language-agnostic verification recipe — so anyone can
+  implement a verifier without reading the Rust. The format is frozen; this
+  documents it.
+
+### Fixed
+- **A clean session reports `verification_status: "pass"`, not `"warn"` (#231).**
+  The always-on `receipt_body_binding` scope caveat added in 0.19.0 is
+  informational (every package carries it), but it was flipping every
+  cryptographically-clean session's top-line verdict to `warn`, making `pass`
+  unreachable and breaking any caller that gates on `status == "pass"`. It is now
+  surfaced in `warnings` for transparency but no longer downgrades the verdict;
+  real warnings (git-degraded, event-log skips, determinism drift) still do.
+  Caught by the post-publish smoke test; regression-tested.
+- **Release tooling: npm pinned to 11.5.1 (#230).** The 0.19.0 publish failed on
+  npm because `npm@latest` on the runner's Node 24 shipped a build whose bundled
+  `sigstore` module was unresolvable, crashing trusted-publishing provenance
+  (crates.io and PyPI published fine). npm is now pinned to the trusted-publishing
+  floor instead of tracking `@latest`.
+- **Dead verify URL in the lobster-cash demo.** It printed the non-resolving
+  `hub.treeship.dev/verify/`; the public verify URL is `https://treeship.dev/verify/<id>`
+  (the hub's own `hub_url`).
+
 ## 0.19.0 (2026-07-09)
 
 The security-hardening release. Two independent AI-assisted adversarial audits
