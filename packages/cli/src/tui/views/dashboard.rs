@@ -7,12 +7,8 @@ use ratatui::{
 };
 
 use crate::tui::app::{self, App, View};
+use crate::tui::theme::{BRONZE, DIM, GREEN, RED, WHITE};
 use crate::tui::widgets::status_bar;
-
-const GREEN: Color = Color::Rgb(34, 197, 94);
-const RED: Color = Color::Rgb(239, 68, 68);
-const DIM: Color = Color::Rgb(100, 100, 100);
-const WHITE: Color = Color::White;
 
 pub fn render(frame: &mut Frame, app: &App) {
     let size = frame.area();
@@ -56,7 +52,10 @@ fn render_header(frame: &mut Frame, area: Rect, app: &App) {
     ]);
 
     let block = Block::default()
-        .title(" TREESHIP ")
+        .title(Span::styled(
+            " TREESHIP ",
+            Style::default().fg(BRONZE).add_modifier(Modifier::BOLD),
+        ))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(DIM));
 

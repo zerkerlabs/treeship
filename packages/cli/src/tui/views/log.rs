@@ -9,10 +9,7 @@ use ratatui::{
 use crate::tui::app::{self, App, View};
 use crate::tui::widgets::status_bar;
 
-const GREEN: Color = Color::Rgb(34, 197, 94);
-const RED: Color = Color::Rgb(239, 68, 68);
-const DIM: Color = Color::Rgb(100, 100, 100);
-const WHITE: Color = Color::White;
+use crate::tui::theme::{DIM, GREEN, RED, WHITE};
 
 pub fn render(frame: &mut Frame, app: &App) {
     let size = frame.area();
