@@ -1,0 +1,50 @@
+/* GENERATED from design/tokens.json by scripts/gen-design-tokens.py. DO NOT EDIT. */
+:root {
+  --ts-paper: #F1F0EA; /* document ground */
+  --ts-panel: #EBEAE1; /* inset panel / code chip ground */
+  --ts-ink: #1F2329; /* primary text */
+  --ts-muted: #5F646B; /* secondary text */
+  --ts-faint: #9B9B93; /* tertiary / captions */
+  --ts-hair: #DAD8CD; /* warm hairline rule */
+  --ts-hair-cool: #CBCED0; /* cool hairline / registration ticks */
+  --ts-steel: #37454F; /* cool accent: links, live elements */
+  --ts-bronze: #856733; /* the one warm metallic: the seal */
+  --ts-bronze-hi: #C6A972; /* seal ring highlight */
+  --ts-bronze-lo: #5E4923; /* seal ring shadow */
+  --ts-verdict-pass: #3B6A4E; /* pass family */
+  --ts-verdict-fail: #9F4230; /* fail / revoked family */
+  --ts-verdict-warn: #8F5E1F; /* warn / declared family */
+  --ts-serif: 'Fraunces', Georgia, serif;
+  --ts-sans: 'Switzer', 'Helvetica Neue', system-ui, sans-serif;
+  --ts-mono: 'Berkeley Mono', 'JetBrains Mono', 'SF Mono', ui-monospace, monospace;
+  --ts-space-0: 4px;
+  --ts-space-1: 8px;
+  --ts-space-2: 12px;
+  --ts-space-3: 24px;
+  --ts-space-4: 48px;
+  --ts-space-5: 96px;
+  --ts-radius-sm: 5px;
+  --ts-radius-md: 12px;
+  --ts-radius-full: 9999px;
+}
+
+.ts-verdict-full-pass { color: #3B6A4E; }
+.ts-verdict-full-pass::before { content: "△\00a0"; }
+.ts-verdict-structural-pass { color: #3B6A4E; }
+.ts-verdict-structural-pass::before { content: "△\00a0"; }
+.ts-verdict-countersigned { color: #3B6A4E; }
+.ts-verdict-countersigned::before { content: "△\00a0"; }
+.ts-verdict-permitted { color: #3B6A4E; }
+.ts-verdict-permitted::before { content: "○\00a0"; }
+.ts-verdict-anchored { color: #3B6A4E; }
+.ts-verdict-anchored::before { content: "◇\00a0"; }
+.ts-verdict-declared { color: #8F5E1F; }
+.ts-verdict-declared::before { content: "△\00a0"; }
+.ts-verdict-self-asserted { color: #8F5E1F; }
+.ts-verdict-self-asserted::before { content: "△\00a0"; }
+.ts-verdict-pending { color: #5F646B; }
+.ts-verdict-pending::before { content: "·\00a0"; }
+.ts-verdict-revoked { color: #9F4230; }
+.ts-verdict-revoked::before { content: "✕\00a0"; }
+.ts-verdict-unverified { color: #9F4230; }
+.ts-verdict-unverified::before { content: "✕\00a0"; }
