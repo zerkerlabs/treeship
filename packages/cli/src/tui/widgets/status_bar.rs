@@ -1,15 +1,13 @@
 use ratatui::{
     layout::Rect,
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
     widgets::Paragraph,
     Frame,
 };
 
 use crate::tui::app::View;
-
-const DIM: Color = Color::Rgb(100, 100, 100);
-const KEY_COLOR: Color = Color::Rgb(180, 180, 180);
+use crate::tui::theme::{DIM, KEY_COLOR};
 
 pub fn render(frame: &mut Frame, area: Rect, view: &View) {
     let hints: Vec<(&str, &str)> = match view {
