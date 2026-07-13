@@ -59,13 +59,27 @@ pub fn history(
             .map_err(|e| format!("could not reach hub {base}: {e}"))?
             .into_json()
             .map_err(|e| format!("hub returned invalid JSON: {e}"))?;
-        for e in resp.get("entries").and_then(|v| v.as_array()).unwrap_or(&Vec::new()) {
-            let Some(id) = e.get("artifact_id").and_then(|v| v.as_str()) else { continue };
-            let Some(ej) = e.get("envelope_json").and_then(|v| v.as_str()) else { continue };
-            let Ok(env) = serde_json::from_str::<Envelope>(ej) else { continue };
+        for e in resp
+            .get("entries")
+            .and_then(|v| v.as_array())
+            .unwrap_or(&Vec::new())
+        {
+            let Some(id) = e.get("artifact_id").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let Some(ej) = e.get("envelope_json").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let Ok(env) = serde_json::from_str::<Envelope>(ej) else {
+                continue;
+            };
             // Re-verify the anchor OFFLINE when the hub claims one; the
             // claim itself is never trusted.
-            let anchored = if e.get("merkle_anchor").map(|v| !v.is_null()).unwrap_or(false) {
+            let anchored = if e
+                .get("merkle_anchor")
+                .map(|v| !v.is_null())
+                .unwrap_or(false)
+            {
                 Some(
                     crate::commands::audit::verify_inclusion(base, id, &trust)
                         .map(|(ok, _)| ok)
@@ -80,7 +94,9 @@ pub fn history(
         let ctx = ctx::open(config)?;
         let receipt_pt = payload_type("receipt");
         for entry in ctx.storage.list_by_type(&receipt_pt) {
-            let Ok(rec) = ctx.storage.read(&entry.id) else { continue };
+            let Ok(rec) = ctx.storage.read(&entry.id) else {
+                continue;
+            };
             raw.push((entry.id.clone(), rec.envelope, None));
         }
     }
@@ -91,7 +107,9 @@ pub fn history(
     let mut rows: Vec<Row> = Vec::new();
     for (id, env, anchored) in raw {
         let sig_ok = verifier.verify_any(&env).is_ok();
-        let Ok(stmt) = env.unmarshal_statement::<ReceiptStatement>() else { continue };
+        let Ok(stmt) = env.unmarshal_statement::<ReceiptStatement>() else {
+            continue;
+        };
         if stmt.kind != "session.v1" {
             continue;
         }
@@ -189,10 +207,13 @@ pub fn history(
         return Ok(());
     }
 
-    printer.success("work history", &[
-        ("agent", agent.as_str()),
-        ("records", &format!("{} shown of {total}", rows.len())),
-    ]);
+    printer.success(
+        "work history",
+        &[
+            ("agent", agent.as_str()),
+            ("records", &format!("{} shown of {total}", rows.len())),
+        ],
+    );
     printer.blank();
     for r in &rows {
         printer.info(&format!(

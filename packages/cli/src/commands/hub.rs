@@ -1,10 +1,14 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use ed25519_dalek::{SigningKey, Signer, VerifyingKey};
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use rand::RngCore;
 
-use crate::{config::{self, HubConnection}, ctx, printer::Printer};
+use crate::{
+    config::{self, HubConnection},
+    ctx,
+    printer::Printer,
+};
 
 // ---------------------------------------------------------------------------
 // Result type for push
@@ -12,7 +16,7 @@ use crate::{config::{self, HubConnection}, ctx, printer::Printer};
 
 /// Result of a successful push to Hub.
 pub struct PushResult {
-    pub hub_url:     String,
+    pub hub_url: String,
     pub rekor_index: Option<u64>,
 }
 
@@ -21,14 +25,14 @@ pub struct PushResult {
 // ---------------------------------------------------------------------------
 
 pub fn attach(
-    name:     Option<&str>,
+    name: Option<&str>,
     endpoint: Option<&str>,
-    config:   Option<&str>,
-    printer:  &Printer,
+    config: Option<&str>,
+    printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let ctx      = ctx::open(config)?;
+    let ctx = ctx::open(config)?;
     let hub_name = name.unwrap_or("default");
-    let endpoint  = endpoint.unwrap_or("https://api.treeship.dev").to_string();
+    let endpoint = endpoint.unwrap_or("https://api.treeship.dev").to_string();
 
     // If a connection with stored keys exists, PROBE the hub before claiming
     // "reconnected". Cached keys can outlive the server's dock registration
@@ -61,11 +65,14 @@ pub fn attach(
                 cfg.active_hub = Some(hub_name.to_string());
                 config::save(&cfg, &ctx.config_path)?;
 
-                printer.success("reconnected", &[
-                    ("hub", hub_name),
-                    ("hub id", &existing.hub_id),
-                    ("probe", "authenticated OK"),
-                ]);
+                printer.success(
+                    "reconnected",
+                    &[
+                        ("hub", hub_name),
+                        ("hub id", &existing.hub_id),
+                        ("probe", "authenticated OK"),
+                    ],
+                );
                 printer.hint("view your workspace: treeship hub open");
                 printer.blank();
                 return Ok(());
@@ -124,7 +131,10 @@ pub fn attach(
     loop {
         let elapsed = start.elapsed().unwrap_or_default().as_secs();
         if elapsed > timeout_secs {
-            return Err("hub attach timed out after 5 minutes\n\n  Fix: try again with treeship hub attach".into());
+            return Err(
+                "hub attach timed out after 5 minutes\n\n  Fix: try again with treeship hub attach"
+                    .into(),
+            );
         }
 
         std::thread::sleep(std::time::Duration::from_secs(2));
@@ -147,11 +157,12 @@ pub fn attach(
                     404 => "device code not found",
                     410 => "device code expired",
                     409 => "device code already used",
-                    _   => "hub activation failed",
+                    _ => "hub activation failed",
                 };
                 return Err(format!(
                     "{reason}\n\n  Fix: run treeship hub attach again to get a new code"
-                ).into());
+                )
+                .into());
             }
             Err(e) => {
                 return Err(format!("polling error: {e}").into());
@@ -192,11 +203,11 @@ pub fn attach(
     cfg.hub_connections.insert(
         hub_name.to_string(),
         HubConnection {
-            hub_id:         final_hub_id.clone(),
-            key_id:          ctx.config.default_key_id.clone(),
-            endpoint:        endpoint.clone(),
+            hub_id: final_hub_id.clone(),
+            key_id: ctx.config.default_key_id.clone(),
+            endpoint: endpoint.clone(),
             created_at,
-            last_push:       None,
+            last_push: None,
             hub_public_key: Some(hub_public_hex),
             // Sealed at rest under the machine key (AUD-02), not plaintext hex.
             hub_secret_key: Some(seal_dpop_secret(&hub_secret_hex, &final_hub_id, &ctx.keys)?),
@@ -206,11 +217,14 @@ pub fn attach(
     config::save(&cfg, &ctx.config_path)?;
 
     // 8. Print success
-    printer.success("attached", &[
-        ("name",     hub_name),
-        ("hub id",   &final_hub_id),
-        ("endpoint", &endpoint),
-    ]);
+    printer.success(
+        "attached",
+        &[
+            ("name", hub_name),
+            ("hub id", &final_hub_id),
+            ("endpoint", &endpoint),
+        ],
+    );
     printer.blank();
     print_attach_next_steps(printer);
     printer.hint("view your workspace: treeship hub open");
@@ -244,13 +258,13 @@ fn print_attach_next_steps(printer: &Printer) {
 // detach
 // ---------------------------------------------------------------------------
 
-pub fn detach(
-    config:  Option<&str>,
-    printer: &Printer,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub fn detach(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
 
-    let hub_name = ctx.config.active_hub.as_deref()
+    let hub_name = ctx
+        .config
+        .active_hub
+        .as_deref()
         .unwrap_or("(none)")
         .to_string();
 
@@ -270,10 +284,7 @@ pub fn detach(
 // ls
 // ---------------------------------------------------------------------------
 
-pub fn ls(
-    config:  Option<&str>,
-    printer: &Printer,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub fn ls(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
 
     // JSON mode: emit a structured list. The pretty path uses
@@ -370,10 +381,7 @@ pub fn ls(
 // status
 // ---------------------------------------------------------------------------
 
-pub fn status(
-    config:  Option<&str>,
-    printer: &Printer,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub fn status(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
 
     // JSON mode: emit a structured envelope that the SDK can parse.
@@ -439,8 +447,8 @@ pub fn status(
 
 pub fn use_hub(
     name_or_id: &str,
-    config:     Option<&str>,
-    printer:    &Printer,
+    config: Option<&str>,
+    printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
 
@@ -453,7 +461,12 @@ pub fn use_hub(
             .iter()
             .find(|(_, v)| v.hub_id == name_or_id)
             .map(|(k, _)| k.clone())
-            .ok_or_else(|| format!("hub connection {:?} not found\n  Run: treeship hub ls", name_or_id))?
+            .ok_or_else(|| {
+                format!(
+                    "hub connection {:?} not found\n  Run: treeship hub ls",
+                    name_or_id
+                )
+            })?
     };
 
     let mut cfg = ctx.config.clone();
@@ -461,10 +474,10 @@ pub fn use_hub(
     config::save(&cfg, &ctx.config_path)?;
 
     let entry = &ctx.config.hub_connections[&resolved_name];
-    printer.success("switched", &[
-        ("hub", resolved_name.as_str()),
-        ("hub id", &entry.hub_id),
-    ]);
+    printer.success(
+        "switched",
+        &[("hub", resolved_name.as_str()), ("hub id", &entry.hub_id)],
+    );
     printer.blank();
 
     Ok(())
@@ -475,10 +488,10 @@ pub fn use_hub(
 // ---------------------------------------------------------------------------
 
 pub fn push(
-    id:      &str,
-    hub:     Option<&str>,
-    all:     bool,
-    config:  Option<&str>,
+    id: &str,
+    hub: Option<&str>,
+    all: bool,
+    config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
@@ -499,7 +512,9 @@ pub fn push(
             print_push_result(printer, name, &result);
         }
     } else {
-        let (name, entry) = ctx.config.resolve_hub(hub)
+        let (name, entry) = ctx
+            .config
+            .resolve_hub(hub)
             .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
         let result = push_artifact_to_hub(&ctx, &resolved_id, entry)?;
         print_push_result(printer, name, &result);
@@ -513,14 +528,16 @@ pub fn push(
 // ---------------------------------------------------------------------------
 
 pub fn pull(
-    id:      &str,
-    hub:     Option<&str>,
-    config:  Option<&str>,
+    id: &str,
+    hub: Option<&str>,
+    config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
 
-    let (_name, entry) = ctx.config.resolve_hub(hub)
+    let (_name, entry) = ctx
+        .config
+        .resolve_hub(hub)
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
     let endpoint = &entry.endpoint;
 
@@ -533,20 +550,21 @@ pub fn pull(
         .as_str()
         .ok_or("missing envelope_json in response")?;
 
-    let envelope: treeship_core::attestation::Envelope =
-        serde_json::from_str(envelope_json_str)?;
+    let envelope: treeship_core::attestation::Envelope = serde_json::from_str(envelope_json_str)?;
 
     let record = treeship_core::storage::Record {
-        artifact_id:  resp["artifact_id"].as_str().unwrap_or(id).to_string(),
-        digest:       resp["digest"].as_str().unwrap_or("").to_string(),
+        artifact_id: resp["artifact_id"].as_str().unwrap_or(id).to_string(),
+        digest: resp["digest"].as_str().unwrap_or("").to_string(),
         payload_type: resp["payload_type"].as_str().unwrap_or("").to_string(),
-        key_id:       envelope.signatures.first()
+        key_id: envelope
+            .signatures
+            .first()
             .map(|s| s.keyid.clone())
             .unwrap_or_default(),
-        signed_at:    resp["signed_at"].as_str().unwrap_or("").to_string(),
-        parent_id:    resp["parent_id"].as_str().map(|s| s.to_string()),
+        signed_at: resp["signed_at"].as_str().unwrap_or("").to_string(),
+        parent_id: resp["parent_id"].as_str().map(|s| s.to_string()),
         envelope,
-        hub_url:      resp["hub_url"].as_str().map(|s| s.to_string()),
+        hub_url: resp["hub_url"].as_str().map(|s| s.to_string()),
     };
 
     ctx.storage.write(&record)?;
@@ -563,14 +581,16 @@ pub fn pull(
 // ---------------------------------------------------------------------------
 
 pub fn open(
-    hub:     Option<&str>,
+    hub: Option<&str>,
     no_open: bool,
-    config:  Option<&str>,
+    config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
 
-    let (_name, entry) = ctx.config.resolve_hub(hub)
+    let (_name, entry) = ctx
+        .config
+        .resolve_hub(hub)
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
     // We need the dock's private key to DPoP-sign the session mint request.
@@ -588,7 +608,8 @@ pub fn open(
         .send_json(&serde_json::json!({}))?
         .into_json()?;
 
-    let token = resp["token"].as_str()
+    let token = resp["token"]
+        .as_str()
         .ok_or("hub did not return a session token")?;
 
     // 2. Build the browser URL. The workspace UI lives on treeship.dev
@@ -605,9 +626,13 @@ pub fn open(
 
     if !no_open {
         #[cfg(target_os = "macos")]
-        { let _ = std::process::Command::new("open").arg(&url).spawn(); }
+        {
+            let _ = std::process::Command::new("open").arg(&url).spawn();
+        }
         #[cfg(target_os = "linux")]
-        { let _ = std::process::Command::new("xdg-open").arg(&url).spawn(); }
+        {
+            let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+        }
     }
 
     Ok(())
@@ -618,20 +643,27 @@ pub fn open(
 // ---------------------------------------------------------------------------
 
 pub fn kill(
-    name:    &str,
-    force:   bool,
-    config:  Option<&str>,
+    name: &str,
+    force: bool,
+    config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
 
     if !ctx.config.hub_connections.contains_key(name) {
-        return Err(format!("hub connection {:?} not found\n  Run: treeship hub ls", name).into());
+        return Err(format!(
+            "hub connection {:?} not found\n  Run: treeship hub ls",
+            name
+        )
+        .into());
     }
 
     if !force {
         // Prompt for confirmation
-        printer.info(&format!("remove hub connection {:?}? this deletes the local keys.", name));
+        printer.info(&format!(
+            "remove hub connection {:?}? this deletes the local keys.",
+            name
+        ));
         printer.info("pass --force to skip this prompt");
 
         eprint!("confirm [y/N]: ");
@@ -666,9 +698,11 @@ pub fn kill(
 /// Shared push logic used by `wrap --push`. Uses the active hub from config.
 pub fn push_artifact(
     ctx: &crate::ctx::Ctx,
-    id:  &str,
+    id: &str,
 ) -> Result<PushResult, Box<dyn std::error::Error>> {
-    let (_name, entry) = ctx.config.resolve_hub(None)
+    let (_name, entry) = ctx
+        .config
+        .resolve_hub(None)
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
     push_artifact_to_hub(ctx, id, entry)
@@ -680,8 +714,8 @@ pub fn push_artifact(
 
 /// Push a single artifact to a specific hub connection.
 fn push_artifact_to_hub(
-    ctx:   &crate::ctx::Ctx,
-    id:    &str,
+    ctx: &crate::ctx::Ctx,
+    id: &str,
     entry: &HubConnection,
 ) -> Result<PushResult, Box<dyn std::error::Error>> {
     let hub_secret_hex = resolve_dpop_secret_hex(entry, &ctx.keys)?;
@@ -710,7 +744,7 @@ fn push_artifact_to_hub(
         .send_json(&body)?
         .into_json()?;
 
-    let hub_url     = resp["hub_url"].as_str().unwrap_or("").to_string();
+    let hub_url = resp["hub_url"].as_str().unwrap_or("").to_string();
     let rekor_index = resp["rekor_index"].as_u64();
 
     // 4. Update local record with hub_url
@@ -718,21 +752,27 @@ fn push_artifact_to_hub(
         ctx.storage.set_hub_url(id, &hub_url)?;
     }
 
-    Ok(PushResult { hub_url, rekor_index })
+    Ok(PushResult {
+        hub_url,
+        rekor_index,
+    })
 }
 
 /// Print push result for a given hub connection.
 fn print_push_result(printer: &Printer, hub_name: &str, result: &PushResult) {
     let rekor_str = match result.rekor_index {
         Some(idx) => format!("rekor.sigstore.dev #{}", idx),
-        None      => "pending".into(),
+        None => "pending".into(),
     };
 
-    printer.success("pushed", &[
-        ("hub",   hub_name),
-        ("url",   &result.hub_url),
-        ("rekor", &rekor_str),
-    ]);
+    printer.success(
+        "pushed",
+        &[
+            ("hub", hub_name),
+            ("url", &result.hub_url),
+            ("rekor", &rekor_str),
+        ],
+    );
     if !result.hub_url.is_empty() {
         printer.hint(&format!("treeship open {}", result.hub_url));
     }
@@ -742,7 +782,7 @@ fn print_push_result(printer: &Printer, hub_name: &str, result: &PushResult) {
 /// Resolve "last" to the actual artifact id from the .last file.
 fn resolve_artifact_id(
     ctx: &crate::ctx::Ctx,
-    id:  &str,
+    id: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
     if id == "last" {
         let last_path = std::path::Path::new(&ctx.config.storage_dir).join(".last");
@@ -750,7 +790,10 @@ fn resolve_artifact_id(
             .map_err(|_| "no .last artifact found -- attest or wrap something first")?;
         let resolved = content.trim().to_string();
         if resolved.is_empty() {
-            return Err("no artifacts found -- wrap a command first\n\n  Fix: treeship wrap -- echo hello".into());
+            return Err(
+                "no artifacts found -- wrap a command first\n\n  Fix: treeship wrap -- echo hello"
+                    .into(),
+            );
         }
         Ok(resolved)
     } else {
@@ -785,13 +828,15 @@ fn dpop_seal_context(hub_id: &str) -> String {
 /// Returns `enc.v1:<base64url>`.
 fn seal_dpop_secret(
     secret_hex: &str,
-    hub_id:     &str,
-    keys:       &treeship_core::keys::Store,
+    hub_id: &str,
+    keys: &treeship_core::keys::Store,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let raw = hex::decode(secret_hex)
-        .map_err(|e| format!("hub secret is not valid hex: {e}"))?;
+    let raw = hex::decode(secret_hex).map_err(|e| format!("hub secret is not valid hex: {e}"))?;
     let blob = keys.encrypt_secret(&dpop_seal_context(hub_id), &raw)?;
-    Ok(format!("{DPOP_SEALED_PREFIX}{}", URL_SAFE_NO_PAD.encode(blob)))
+    Ok(format!(
+        "{DPOP_SEALED_PREFIX}{}",
+        URL_SAFE_NO_PAD.encode(blob)
+    ))
 }
 
 /// Resolve the stored DPoP secret (sealed or legacy plaintext) to hex,
@@ -800,19 +845,25 @@ fn seal_dpop_secret(
 /// returned as-is for backward compatibility.
 pub(crate) fn resolve_dpop_secret_hex(
     entry: &HubConnection,
-    keys:  &treeship_core::keys::Store,
+    keys: &treeship_core::keys::Store,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let stored = entry.hub_secret_key.as_deref()
+    let stored = entry
+        .hub_secret_key
+        .as_deref()
         .ok_or("this hub connection has no private key on disk; re-run `treeship hub attach`")?;
     match stored.strip_prefix(DPOP_SEALED_PREFIX) {
         Some(b64) => {
-            let blob = URL_SAFE_NO_PAD.decode(b64)
+            let blob = URL_SAFE_NO_PAD
+                .decode(b64)
                 .map_err(|e| format!("stored hub key is corrupt (bad base64): {e}"))?;
-            let raw = keys.decrypt_secret(&dpop_seal_context(&entry.hub_id), &blob)
-                .map_err(|e| format!(
-                    "cannot decrypt the hub key on this machine \
+            let raw = keys
+                .decrypt_secret(&dpop_seal_context(&entry.hub_id), &blob)
+                .map_err(|e| {
+                    format!(
+                        "cannot decrypt the hub key on this machine \
                      (it was sealed on a different machine, or the keystore moved): {e}"
-                ))?;
+                    )
+                })?;
             Ok(hex::encode(raw))
         }
         // Legacy plaintext hex. Honored for back-compat; `attach` re-seals.
@@ -826,12 +877,13 @@ pub(crate) fn resolve_dpop_secret_hex(
 
 pub(crate) fn build_dpop_jwt(
     hub_secret_hex: &str,
-    method:          &str,
-    url:             &str,
+    method: &str,
+    url: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
     // Decode the hub secret key from hex
     let secret_bytes = hex::decode(hub_secret_hex)?;
-    let secret_arr: [u8; 32] = secret_bytes.try_into()
+    let secret_arr: [u8; 32] = secret_bytes
+        .try_into()
         .map_err(|_| "hub secret key must be 32 bytes")?;
     let signing_key = SigningKey::from_bytes(&secret_arr);
 
@@ -840,14 +892,10 @@ pub(crate) fn build_dpop_jwt(
         "alg": "EdDSA",
         "typ": "dpop+jwt",
     });
-    let header_b64 = URL_SAFE_NO_PAD.encode(
-        serde_json::to_vec(&header)?
-    );
+    let header_b64 = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&header)?);
 
     // Payload
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)?
-        .as_secs();
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
     let mut jti_bytes = [0u8; 16];
     rand::rngs::OsRng.fill_bytes(&mut jti_bytes);
@@ -859,9 +907,7 @@ pub(crate) fn build_dpop_jwt(
         "htm": method,
         "htu": url,
     });
-    let payload_b64 = URL_SAFE_NO_PAD.encode(
-        serde_json::to_vec(&payload)?
-    );
+    let payload_b64 = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload)?);
 
     // Sign: message is "header.payload"
     let message = format!("{}.{}", header_b64, payload_b64);
@@ -886,7 +932,13 @@ fn format_device_code(code: &str) -> String {
     let chars: Vec<char> = code.chars().collect();
     let group = |range: std::ops::Range<usize>| -> String { chars[range].iter().collect() };
     if chars.len() >= 16 {
-        format!("{}-{}-{}-{}", group(0..4), group(4..8), group(8..12), group(12..16))
+        format!(
+            "{}-{}-{}-{}",
+            group(0..4),
+            group(4..8),
+            group(8..12),
+            group(12..16)
+        )
     } else if chars.len() >= 8 {
         format!("{}-{}", group(0..4), group(4..8))
     } else {
@@ -902,11 +954,11 @@ mod tests {
 
     fn conn(hub_id: &str, secret: Option<String>) -> HubConnection {
         HubConnection {
-            hub_id:         hub_id.to_string(),
-            key_id:         String::new(),
-            endpoint:       "https://hub.example".to_string(),
-            created_at:     "0Z".to_string(),
-            last_push:      None,
+            hub_id: hub_id.to_string(),
+            key_id: String::new(),
+            endpoint: "https://hub.example".to_string(),
+            created_at: "0Z".to_string(),
+            last_push: None,
             hub_public_key: None,
             hub_secret_key: secret,
         }
@@ -938,7 +990,10 @@ mod tests {
         // Fail-before-fix invariant: the stored string is the sealed marker,
         // and the raw hex must NOT appear anywhere in it.
         assert!(sealed.starts_with(DPOP_SEALED_PREFIX));
-        assert!(!sealed.contains(&secret_hex), "sealed value must not embed the plaintext hex");
+        assert!(
+            !sealed.contains(&secret_hex),
+            "sealed value must not embed the plaintext hex"
+        );
 
         // Resolving the stored (sealed) value returns the original hex.
         let entry = conn("hub_xyz", Some(sealed));

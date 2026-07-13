@@ -53,8 +53,8 @@ pub enum InstallMethod {
 impl InstallMethod {
     pub fn label(self) -> &'static str {
         match self {
-            Self::JsonMcp   => "json-mcp",
-            Self::TomlMcp   => "toml-mcp",
+            Self::JsonMcp => "json-mcp",
+            Self::TomlMcp => "toml-mcp",
             Self::SkillFile => "skill-file",
         }
     }
@@ -74,10 +74,10 @@ impl InstallMethod {
 /// wrong one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct PotentialCaptures {
-    pub files_read:     bool,
-    pub files_write:    bool,
-    pub commands_run:   bool,
-    pub mcp_call:       bool,
+    pub files_read: bool,
+    pub files_write: bool,
+    pub commands_run: bool,
+    pub mcp_call: bool,
     pub model_provider: bool,
 }
 
@@ -96,13 +96,13 @@ pub struct PotentialCaptures {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct VerifiedCaptures {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub files_read:     Option<bool>,
+    pub files_read: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub files_write:    Option<bool>,
+    pub files_write: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub commands_run:   Option<bool>,
+    pub commands_run: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mcp_call:       Option<bool>,
+    pub mcp_call: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_provider: Option<bool>,
 }
@@ -122,11 +122,11 @@ impl VerifiedCaptures {
 /// (remote VMs, generic MCP setups whose config path Treeship can't know).
 pub struct InstallProfile {
     pub install_method: InstallMethod,
-    pub snippet:        &'static str,
+    pub snippet: &'static str,
     /// Resolves the absolute path the snippet should land at given HOME.
-    pub config_path:    fn(&Path) -> PathBuf,
+    pub config_path: fn(&Path) -> PathBuf,
     /// Detects "already installed" without writing.
-    pub idempotency:    fn(&Path) -> bool,
+    pub idempotency: fn(&Path) -> bool,
 }
 
 /// Static description of one harness. Every supported surface has a
@@ -138,27 +138,27 @@ pub struct HarnessManifest {
     /// 1:1 surface↔harness mapping in v0.9.8. Future surfaces with
     /// multiple harnesses (e.g. Cursor native vs MCP) will introduce
     /// suffixes here.
-    pub harness_id:            &'static str,
-    pub surface:               AgentSurface,
-    pub display_name:          &'static str,
+    pub harness_id: &'static str,
+    pub surface: AgentSurface,
+    pub display_name: &'static str,
     /// All connection modes this harness uses or falls back to. The
     /// active modes for a given install are recorded in the per-workspace
     /// HarnessState.
-    pub connection_modes:      &'static [ConnectionMode],
-    pub coverage:              CoverageLevel,
-    pub captures:              PotentialCaptures,
+    pub connection_modes: &'static [ConnectionMode],
+    pub coverage: CoverageLevel,
+    pub captures: PotentialCaptures,
     /// Things this harness *can't* observe. Surfaced in `harness inspect`
     /// so users see honest gaps rather than discovering them at receipt
     /// time.
-    pub known_gaps:            &'static [&'static str],
+    pub known_gaps: &'static [&'static str],
     /// One-line summary of what raw data the harness keeps and what it
     /// drops. Sourced from the v0.9.6 capture rules.
-    pub privacy_posture:       &'static str,
+    pub privacy_posture: &'static str,
     /// Connection modes that act as fallbacks if the primary capture
     /// path is missing. e.g. git-reconcile reconstructs files_written
     /// even when no hook fired.
     pub recommended_backstops: &'static [ConnectionMode],
-    pub install:               Option<InstallProfile>,
+    pub install: Option<InstallProfile>,
 }
 
 // ---------------------------------------------------------------------------
@@ -186,15 +186,20 @@ TREESHIP_HUB_ENDPOINT = "https://api.treeship.dev"
 "#;
 
 const HERMES_SKILL: &str = include_str!("../../../../integrations/hermes/treeship.skill/SKILL.md");
-const OPENCLAW_SKILL: &str = include_str!("../../../../integrations/openclaw/treeship.skill/SKILL.md");
+const OPENCLAW_SKILL: &str =
+    include_str!("../../../../integrations/openclaw/treeship.skill/SKILL.md");
 
 // ---------------------------------------------------------------------------
 // Idempotency checks
 // ---------------------------------------------------------------------------
 
 fn json_has_treeship(path: &Path) -> bool {
-    let Ok(data) = std::fs::read_to_string(path) else { return false };
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(&data) else { return false };
+    let Ok(data) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&data) else {
+        return false;
+    };
     value
         .get("mcpServers")
         .and_then(|s| s.as_object())
@@ -203,7 +208,9 @@ fn json_has_treeship(path: &Path) -> bool {
 }
 
 fn toml_has_treeship_block(path: &Path) -> bool {
-    let Ok(data) = std::fs::read_to_string(path) else { return false };
+    let Ok(data) = std::fs::read_to_string(path) else {
+        return false;
+    };
     data.contains("[mcp_servers.treeship]")
 }
 
@@ -215,15 +222,29 @@ fn skill_file_exists(path: &Path) -> bool {
 // config_path resolvers
 // ---------------------------------------------------------------------------
 
-fn claude_config_path(home: &Path) -> PathBuf { home.join(".claude").join("mcp.json") }
-fn cursor_config_path(home: &Path) -> PathBuf { home.join(".cursor").join("mcp.json") }
-fn cline_config_path(home: &Path)  -> PathBuf { home.join(".config").join("cline").join("mcp.json") }
-fn codex_config_path(home: &Path)  -> PathBuf { home.join(".codex").join("config.toml") }
-fn hermes_skill_path(home: &Path)  -> PathBuf {
-    home.join(".hermes").join("skills").join("treeship").join("SKILL.md")
+fn claude_config_path(home: &Path) -> PathBuf {
+    home.join(".claude").join("mcp.json")
+}
+fn cursor_config_path(home: &Path) -> PathBuf {
+    home.join(".cursor").join("mcp.json")
+}
+fn cline_config_path(home: &Path) -> PathBuf {
+    home.join(".config").join("cline").join("mcp.json")
+}
+fn codex_config_path(home: &Path) -> PathBuf {
+    home.join(".codex").join("config.toml")
+}
+fn hermes_skill_path(home: &Path) -> PathBuf {
+    home.join(".hermes")
+        .join("skills")
+        .join("treeship")
+        .join("SKILL.md")
 }
 fn openclaw_skill_path(home: &Path) -> PathBuf {
-    home.join(".openclaw").join("skills").join("treeship").join("SKILL.md")
+    home.join(".openclaw")
+        .join("skills")
+        .join("treeship")
+        .join("SKILL.md")
 }
 
 // ---------------------------------------------------------------------------
@@ -231,26 +252,26 @@ fn openclaw_skill_path(home: &Path) -> PathBuf {
 // ---------------------------------------------------------------------------
 
 const CAPTURES_FULL: PotentialCaptures = PotentialCaptures {
-    files_read:     true,
-    files_write:    true,
-    commands_run:   true,
-    mcp_call:       true,
+    files_read: true,
+    files_write: true,
+    commands_run: true,
+    mcp_call: true,
     model_provider: true,
 };
 
 const CAPTURES_MCP_BACKED: PotentialCaptures = PotentialCaptures {
-    files_read:     false,
-    files_write:    true,
-    commands_run:   true,
-    mcp_call:       true,
+    files_read: false,
+    files_write: true,
+    commands_run: true,
+    mcp_call: true,
     model_provider: false,
 };
 
 const CAPTURES_BACKSTOP_ONLY: PotentialCaptures = PotentialCaptures {
-    files_read:     false,
-    files_write:    true, // git-reconcile recovers writes
-    commands_run:   false,
-    mcp_call:       false,
+    files_read: false,
+    files_write: true, // git-reconcile recovers writes
+    commands_run: false,
+    mcp_call: false,
     model_provider: false,
 };
 
@@ -518,21 +539,21 @@ pub enum HarnessStatus {
 impl HarnessStatus {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Detected     => "detected",
-            Self::Available    => "available",
+            Self::Detected => "detected",
+            Self::Available => "available",
             Self::Instrumented => "instrumented",
-            Self::Verified     => "verified",
-            Self::Drifted      => "drifted",
-            Self::Degraded     => "degraded",
-            Self::Disabled     => "disabled",
+            Self::Verified => "verified",
+            Self::Drifted => "drifted",
+            Self::Degraded => "degraded",
+            Self::Disabled => "disabled",
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SmokeResult {
-    pub at:      String,
-    pub passed:  bool,
+    pub at: String,
+    pub passed: bool,
     /// One-line summary -- e.g. "captured init+session+wrap+close+verify"
     /// or "session close failed: <reason>".
     pub summary: String,
@@ -543,50 +564,50 @@ pub struct SmokeResult {
 /// attached, so report code and `harness inspect` can read it back.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HarnessState {
-    pub harness_id:              String,
-    pub status:                  HarnessStatus,
-    pub coverage:                CoverageLevel,
+    pub harness_id: String,
+    pub status: HarnessStatus,
+    pub coverage: CoverageLevel,
     pub active_connection_modes: Vec<ConnectionMode>,
     /// Path that the install snippet landed at (if installed). Useful for
     /// drift detection later.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub config_path:             Option<String>,
+    pub config_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub installed_at:            Option<String>,
+    pub installed_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_smoke_result:       Option<SmokeResult>,
+    pub last_smoke_result: Option<SmokeResult>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_verified_at:        Option<String>,
+    pub last_verified_at: Option<String>,
     /// Snapshot of the manifest's known_gaps frozen at install time, so
     /// drift in the manifest doesn't silently change the gaps the user
     /// approved.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub known_gaps:              Vec<String>,
+    pub known_gaps: Vec<String>,
     /// Agent IDs whose cards point at this harness via active_harness_id.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub linked_agent_ids:        Vec<String>,
+    pub linked_agent_ids: Vec<String>,
     /// Captures actually proven by a harness-specific smoke. Empty (all
     /// fields `None`) until a smoke that exercises this harness's own
     /// capture path runs and asserts on each signal. Setup's generic
     /// session round-trip does NOT populate this.
     #[serde(default, skip_serializing_if = "VerifiedCaptures::is_empty")]
-    pub verified_captures:       VerifiedCaptures,
+    pub verified_captures: VerifiedCaptures,
 }
 
 impl HarnessState {
     pub fn from_manifest(m: &HarnessManifest, now: &str) -> Self {
         Self {
-            harness_id:              m.harness_id.to_string(),
-            status:                  HarnessStatus::Detected,
-            coverage:                m.coverage,
+            harness_id: m.harness_id.to_string(),
+            status: HarnessStatus::Detected,
+            coverage: m.coverage,
             active_connection_modes: m.connection_modes.to_vec(),
-            config_path:             None,
-            installed_at:            Some(now.to_string()),
-            last_smoke_result:       None,
-            last_verified_at:        None,
-            known_gaps:              m.known_gaps.iter().map(|s| s.to_string()).collect(),
-            linked_agent_ids:        Vec::new(),
-            verified_captures:       VerifiedCaptures::default(),
+            config_path: None,
+            installed_at: Some(now.to_string()),
+            last_smoke_result: None,
+            last_verified_at: None,
+            known_gaps: m.known_gaps.iter().map(|s| s.to_string()).collect(),
+            linked_agent_ids: Vec::new(),
+            verified_captures: VerifiedCaptures::default(),
         }
     }
 }
@@ -605,16 +626,24 @@ pub enum StateError {
 impl std::fmt::Display for StateError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Io(e)        => write!(f, "harness io: {e}"),
-            Self::Json(e)      => write!(f, "harness json: {e}"),
+            Self::Io(e) => write!(f, "harness io: {e}"),
+            Self::Json(e) => write!(f, "harness json: {e}"),
             Self::NotFound(id) => write!(f, "no harness state for {id:?}"),
         }
     }
 }
 
 impl std::error::Error for StateError {}
-impl From<std::io::Error>    for StateError { fn from(e: std::io::Error)    -> Self { Self::Io(e) } }
-impl From<serde_json::Error> for StateError { fn from(e: serde_json::Error) -> Self { Self::Json(e) } }
+impl From<std::io::Error> for StateError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+impl From<serde_json::Error> for StateError {
+    fn from(e: serde_json::Error) -> Self {
+        Self::Json(e)
+    }
+}
 
 /// Resolve `<config_dir>/harnesses/`. Pairs harness state with the same
 /// keystore the cards live next to.
@@ -676,23 +705,44 @@ pub fn upsert_state(
 ) -> Result<HarnessState, StateError> {
     let merged = match load_state(harnesses_dir, &incoming.harness_id) {
         Ok(existing) => HarnessState {
-            installed_at:      incoming.installed_at.clone().or(existing.installed_at),
-            last_smoke_result: incoming.last_smoke_result.clone().or(existing.last_smoke_result),
-            last_verified_at:  incoming.last_verified_at.clone().or(existing.last_verified_at),
+            installed_at: incoming.installed_at.clone().or(existing.installed_at),
+            last_smoke_result: incoming
+                .last_smoke_result
+                .clone()
+                .or(existing.last_smoke_result),
+            last_verified_at: incoming
+                .last_verified_at
+                .clone()
+                .or(existing.last_verified_at),
             // Verified captures only ever grow: a harness-specific smoke
             // that proves files_read=true should not erase a previously
             // proven mcp_call=true. Per-field merge with incoming taking
             // precedence when set.
             verified_captures: VerifiedCaptures {
-                files_read:     incoming.verified_captures.files_read.or(existing.verified_captures.files_read),
-                files_write:    incoming.verified_captures.files_write.or(existing.verified_captures.files_write),
-                commands_run:   incoming.verified_captures.commands_run.or(existing.verified_captures.commands_run),
-                mcp_call:       incoming.verified_captures.mcp_call.or(existing.verified_captures.mcp_call),
-                model_provider: incoming.verified_captures.model_provider.or(existing.verified_captures.model_provider),
+                files_read: incoming
+                    .verified_captures
+                    .files_read
+                    .or(existing.verified_captures.files_read),
+                files_write: incoming
+                    .verified_captures
+                    .files_write
+                    .or(existing.verified_captures.files_write),
+                commands_run: incoming
+                    .verified_captures
+                    .commands_run
+                    .or(existing.verified_captures.commands_run),
+                mcp_call: incoming
+                    .verified_captures
+                    .mcp_call
+                    .or(existing.verified_captures.mcp_call),
+                model_provider: incoming
+                    .verified_captures
+                    .model_provider
+                    .or(existing.verified_captures.model_provider),
             },
             // Merge linked agent IDs (deduped) so previously-linked cards
             // don't disappear when a new install runs.
-            linked_agent_ids:  {
+            linked_agent_ids: {
                 let mut combined: Vec<String> = existing
                     .linked_agent_ids
                     .into_iter()
@@ -722,9 +772,9 @@ pub fn link_agent(
 ) -> Result<HarnessState, StateError> {
     let manifest = find(harness_id).ok_or_else(|| StateError::NotFound(harness_id.into()))?;
     let mut state = match load_state(harnesses_dir, harness_id) {
-        Ok(s)                        => s,
+        Ok(s) => s,
         Err(StateError::NotFound(_)) => HarnessState::from_manifest(manifest, now),
-        Err(e)                       => return Err(e),
+        Err(e) => return Err(e),
     };
     if !state.linked_agent_ids.iter().any(|s| s == agent_id) {
         state.linked_agent_ids.push(agent_id.to_string());
@@ -768,14 +818,20 @@ mod tests {
     #[test]
     fn instrumentable_harnesses_have_install_profiles() {
         let installable: &[&str] = &[
-            "claude-code", "cursor", "cline", "codex", "hermes", "openclaw",
+            "claude-code",
+            "cursor",
+            "cline",
+            "codex",
+            "hermes",
+            "openclaw",
         ];
         for h in HARNESSES {
             let want_install = installable.contains(&h.harness_id);
-            let has_install  = h.install.is_some();
+            let has_install = h.install.is_some();
             assert_eq!(
                 want_install, has_install,
-                "{} install presence must match instrumentable list", h.harness_id,
+                "{} install presence must match instrumentable list",
+                h.harness_id,
             );
         }
     }
@@ -787,7 +843,7 @@ mod tests {
         assert_eq!(h.coverage, CoverageLevel::Basic);
         let gaps = h.known_gaps.join(" ");
         assert!(gaps.contains("remote VM"), "gaps must mention remote VM");
-        assert!(gaps.contains("invite"),    "gaps must point at invite/join");
+        assert!(gaps.contains("invite"), "gaps must point at invite/join");
     }
 
     #[test]
@@ -818,8 +874,8 @@ mod tests {
         let mut existing = HarnessState::from_manifest(m, "2026-04-29T22:00:00Z");
         existing.status = HarnessStatus::Verified;
         existing.last_smoke_result = Some(SmokeResult {
-            at:      "2026-04-29T22:00:00Z".into(),
-            passed:  true,
+            at: "2026-04-29T22:00:00Z".into(),
+            passed: true,
             summary: "captured init+session+wrap+close+verify".into(),
         });
         existing.linked_agent_ids = vec!["agent_aaa".into()];
@@ -831,7 +887,10 @@ mod tests {
 
         let merged = upsert_state(dir.path(), incoming).unwrap();
         assert_eq!(merged.status, HarnessStatus::Instrumented);
-        assert!(merged.last_smoke_result.is_some(), "smoke result must survive upsert");
+        assert!(
+            merged.last_smoke_result.is_some(),
+            "smoke result must survive upsert"
+        );
         assert_eq!(merged.linked_agent_ids, vec!["agent_aaa", "agent_bbb"]);
     }
 
@@ -867,10 +926,10 @@ mod tests {
         let m = find("claude-code").unwrap();
         let s = HarnessState::from_manifest(m, "t");
         assert!(s.verified_captures.is_empty());
-        assert_eq!(s.verified_captures.files_read,     None);
-        assert_eq!(s.verified_captures.files_write,    None);
-        assert_eq!(s.verified_captures.commands_run,   None);
-        assert_eq!(s.verified_captures.mcp_call,       None);
+        assert_eq!(s.verified_captures.files_read, None);
+        assert_eq!(s.verified_captures.files_write, None);
+        assert_eq!(s.verified_captures.commands_run, None);
+        assert_eq!(s.verified_captures.mcp_call, None);
         assert_eq!(s.verified_captures.model_provider, None);
     }
 
@@ -889,7 +948,7 @@ mod tests {
         second.verified_captures.files_read = Some(true);
         let merged = upsert_state(dir.path(), second).unwrap();
 
-        assert_eq!(merged.verified_captures.mcp_call,   Some(true));
+        assert_eq!(merged.verified_captures.mcp_call, Some(true));
         assert_eq!(merged.verified_captures.files_read, Some(true));
     }
 

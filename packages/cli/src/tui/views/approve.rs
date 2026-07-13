@@ -64,14 +64,8 @@ fn render_pending_list(frame: &mut Frame, area: ratatui::layout::Rect, app: &App
 
             let line = Line::from(vec![
                 Span::styled(indicator, Style::default().fg(WHITE)),
-                Span::styled(
-                    format!("#{} ", i + 1),
-                    Style::default().fg(YELLOW),
-                ),
-                Span::styled(
-                    format!("{} ", actor_str),
-                    Style::default().fg(DIM),
-                ),
+                Span::styled(format!("#{} ", i + 1), Style::default().fg(YELLOW)),
+                Span::styled(format!("{} ", actor_str), Style::default().fg(DIM)),
                 Span::styled("wants to: ", Style::default().fg(DIM)),
                 Span::styled(&p.command, Style::default().fg(WHITE)),
                 Span::styled(
@@ -96,11 +90,7 @@ fn render_pending_list(frame: &mut Frame, area: ratatui::layout::Rect, app: &App
 
     let list = List::new(items)
         .block(block)
-        .highlight_style(
-            Style::default()
-                .fg(WHITE)
-                .add_modifier(Modifier::BOLD),
-        );
+        .highlight_style(Style::default().fg(WHITE).add_modifier(Modifier::BOLD));
 
     frame.render_stateful_widget(list, area, &mut state);
 }

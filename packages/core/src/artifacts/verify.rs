@@ -10,7 +10,7 @@ use crate::artifacts::types::{
     TYPE_APPROVAL_DECISION, TYPE_BUDGET_UPDATE, TYPE_KILL_COMMAND, TYPE_MANDATE_UPDATE,
     TYPE_TERMINATE_SESSION,
 };
-use crate::attestation::{Envelope, VerifyError, Verifier};
+use crate::attestation::{Envelope, Verifier, VerifyError};
 
 /// Returned on successful command verification.
 #[derive(Debug)]
@@ -37,7 +37,11 @@ impl std::fmt::Display for VerifyCommandError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::UnknownPayloadType(t) => {
-                write!(f, "not a command artifact: payloadType '{}' is not a known command", t)
+                write!(
+                    f,
+                    "not a command artifact: payloadType '{}' is not a known command",
+                    t
+                )
             }
             Self::Signature(e) => write!(f, "command signature: {}", e),
             Self::PayloadParse(e) => write!(f, "command payload parse: {}", e),
@@ -185,7 +189,10 @@ mod tests {
             valid_until: Some("2026-12-31T00:00:00Z".into()),
         };
         let env = sign(TYPE_MANDATE_UPDATE, &mandate, &s).unwrap().envelope;
-        assert!(matches!(verify_command(&env, &trusted).unwrap().command, CommandType::MandateUpdate(_)));
+        assert!(matches!(
+            verify_command(&env, &trusted).unwrap().command,
+            CommandType::MandateUpdate(_)
+        ));
 
         let budget = BudgetUpdate {
             ship_id: "ship_demo".into(),
@@ -193,7 +200,10 @@ mod tests {
             valid_until: None,
         };
         let env = sign(TYPE_BUDGET_UPDATE, &budget, &s).unwrap().envelope;
-        assert!(matches!(verify_command(&env, &trusted).unwrap().command, CommandType::BudgetUpdate(_)));
+        assert!(matches!(
+            verify_command(&env, &trusted).unwrap().command,
+            CommandType::BudgetUpdate(_)
+        ));
 
         let term = TerminateSession {
             session_id: "ssn_abc".into(),
@@ -201,7 +211,10 @@ mod tests {
             requested_at: "2026-04-18T11:00:00Z".into(),
         };
         let env = sign(TYPE_TERMINATE_SESSION, &term, &s).unwrap().envelope;
-        assert!(matches!(verify_command(&env, &trusted).unwrap().command, CommandType::TerminateSession(_)));
+        assert!(matches!(
+            verify_command(&env, &trusted).unwrap().command,
+            CommandType::TerminateSession(_)
+        ));
     }
 
     #[test]
@@ -216,8 +229,10 @@ mod tests {
         };
         let signed = sign(TYPE_KILL_COMMAND, &payload, &issuer).unwrap();
         let err = verify_command(&signed.envelope, &trusted).unwrap_err();
-        assert!(matches!(err, VerifyCommandError::Signature(_)),
-            "expected Signature error for unauthorized signer, got: {err}");
+        assert!(
+            matches!(err, VerifyCommandError::Signature(_)),
+            "expected Signature error for unauthorized signer, got: {err}"
+        );
     }
 
     #[test]
@@ -267,10 +282,21 @@ mod tests {
         // passes, payload parse fails.
         let s = signer("issuer_1");
         #[derive(serde::Serialize)]
-        struct Garbage { not_a_kill_field: u32 }
-        let signed = sign(TYPE_KILL_COMMAND, &Garbage { not_a_kill_field: 7 }, &s).unwrap();
+        struct Garbage {
+            not_a_kill_field: u32,
+        }
+        let signed = sign(
+            TYPE_KILL_COMMAND,
+            &Garbage {
+                not_a_kill_field: 7,
+            },
+            &s,
+        )
+        .unwrap();
         let err = verify_command(&signed.envelope, &keys(&[&s])).unwrap_err();
-        assert!(matches!(err, VerifyCommandError::PayloadParse(_)),
-            "expected PayloadParse, got: {err}");
+        assert!(
+            matches!(err, VerifyCommandError::PayloadParse(_)),
+            "expected PayloadParse, got: {err}"
+        );
     }
 }

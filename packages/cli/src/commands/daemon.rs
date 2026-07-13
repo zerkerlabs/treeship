@@ -7,10 +7,10 @@ use treeship_core::{
     attestation::sign,
     rules::ProjectConfig,
     session::{
-        EventLog, EventType, SessionEvent, SessionManifest,
         event::{generate_event_id, generate_span_id, generate_trace_id},
+        EventLog, EventType, SessionEvent, SessionManifest,
     },
-    statements::{ActionStatement, payload_type},
+    statements::{payload_type, ActionStatement},
     storage::Record,
 };
 
@@ -147,7 +147,11 @@ fn read_start_time(ts: &Path) -> Option<u64> {
 
 fn daemon_log(ts: &Path, msg: &str) {
     let path = log_path(ts);
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         let now = epoch_secs();
         let _ = writeln!(f, "[{}] {}", now, msg);
     }
@@ -405,7 +409,7 @@ fn local_host_id() -> String {
 
 /// Compute a simple content digest for a file (sha256 hex, first 16 chars).
 fn content_digest(path: &Path) -> String {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     match std::fs::read(path) {
         Ok(data) => {
             let hash = Sha256::digest(&data);
@@ -453,14 +457,14 @@ fn attest_file_change(
     let result = sign(&pt, &stmt, signer.as_ref())?;
 
     ctx.storage.write(&Record {
-        artifact_id:  result.artifact_id.clone(),
-        digest:       result.digest.clone(),
+        artifact_id: result.artifact_id.clone(),
+        digest: result.digest.clone(),
         payload_type: pt,
-        key_id:       signer.key_id().to_string(),
-        signed_at:    stmt.timestamp.clone(),
+        key_id: signer.key_id().to_string(),
+        signed_at: stmt.timestamp.clone(),
         parent_id,
-        envelope:     result.envelope,
-        hub_url:      None,
+        envelope: result.envelope,
+        hub_url: None,
     })?;
 
     write_last(&ctx.config.storage_dir, &result.artifact_id);
@@ -480,13 +484,13 @@ fn should_auto_push(project: &ProjectConfig) -> bool {
     }
 }
 
-fn auto_push_new_artifacts(
-    _ctx: &ctx::Ctx,
-    ts: &Path,
-) {
+fn auto_push_new_artifacts(_ctx: &ctx::Ctx, ts: &Path) {
     // For v1: just log that auto-push would happen.
     // Actual push requires the hub module; we note it and move on.
-    daemon_log(ts, "auto-push: would push new artifacts (not implemented in v1)");
+    daemon_log(
+        ts,
+        "auto-push: would push new artifacts (not implemented in v1)",
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -656,10 +660,19 @@ pub fn start(
                 let emitted = emit_read_event(&ts, &rel, digest, &match_result.label);
 
                 if emitted {
-                    daemon_log(&ts, &format!("read event: {} ({})", rel, match_result.label));
+                    daemon_log(
+                        &ts,
+                        &format!("read event: {} ({})", rel, match_result.label),
+                    );
                 } else {
                     // No active session -- still log the alert if configured.
-                    daemon_log(&ts, &format!("read detected (no active session): {} ({})", rel, match_result.label));
+                    daemon_log(
+                        &ts,
+                        &format!(
+                            "read detected (no active session): {} ({})",
+                            rel, match_result.label
+                        ),
+                    );
                 }
 
                 if match_result.alert {
@@ -746,8 +759,7 @@ pub fn status(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     if printer.format == crate::printer::Format::Json {
         let body = if is_running(&ts) {
             let pid = read_pid(&ts).unwrap_or(0);
-            let uptime_secs = read_start_time(&ts)
-                .map(|start| epoch_secs().saturating_sub(start));
+            let uptime_secs = read_start_time(&ts).map(|start| epoch_secs().saturating_sub(start));
             serde_json::json!({
                 "status":      "running",
                 "running":     true,
@@ -874,18 +886,27 @@ fn process_proof_queue(ts: &std::path::Path, ctx: &crate::ctx::Ctx) {
         let session_id = job["session_id"].as_str().unwrap_or("unknown");
         let root_id = job["root_artifact_id"].as_str().map(|s| s.to_string());
         let tip_id = job["tip_artifact_id"].as_str().map(|s| s.to_string());
-        daemon_log(ts, &format!("proving chain for session {} (root: {:?}, tip: {:?})", session_id, root_id, tip_id));
+        daemon_log(
+            ts,
+            &format!(
+                "proving chain for session {} (root: {:?}, tip: {:?})",
+                session_id, root_id, tip_id
+            ),
+        );
 
         // Run the proof. Pass root_artifact_id and tip_artifact_id from the
         // job so the prover knows the exact session boundaries (session.json
         // is already deleted and .last may have advanced).
         let silent_printer = crate::printer::Printer::new(crate::printer::Format::Text, true, true);
-        match super::prove::prove_chain_with_root(session_id, root_id.as_deref(), tip_id.as_deref(), None, &silent_printer) {
+        match super::prove::prove_chain_with_root(
+            session_id,
+            root_id.as_deref(),
+            tip_id.as_deref(),
+            None,
+            &silent_printer,
+        ) {
             Ok(()) => {
                 daemon_log(ts, &format!("chain proof complete for {}", session_id));
-
-                // Update the latest Merkle checkpoint with the proof summary
-                update_checkpoint_with_proof(ts, session_id);
 
                 // Auto-push proof to Hub if attached
                 if ctx.config.is_attached() {
@@ -901,16 +922,26 @@ fn process_proof_queue(ts: &std::path::Path, ctx: &crate::ctx::Ctx) {
                 let attempts = job["attempts"].as_u64().unwrap_or(0) + 1;
                 if attempts >= 3 {
                     // Move to dead-letter after 3 attempts
-                    daemon_log(ts, &format!("moving failed job {} to dead-letter (3 attempts)", session_id));
+                    daemon_log(
+                        ts,
+                        &format!(
+                            "moving failed job {} to dead-letter (3 attempts)",
+                            session_id
+                        ),
+                    );
                     let dead_dir = ts.join("proof_queue").join("dead");
                     let _ = std::fs::create_dir_all(&dead_dir);
-                    let _ = std::fs::rename(&path, dead_dir.join(path.file_name().unwrap_or_default()));
+                    let _ =
+                        std::fs::rename(&path, dead_dir.join(path.file_name().unwrap_or_default()));
                 } else {
                     // Update attempts counter, keep for retry
                     let mut updated = job.clone();
                     updated["attempts"] = serde_json::json!(attempts);
                     updated["last_error"] = serde_json::json!(e.to_string());
-                    let _ = std::fs::write(&path, serde_json::to_vec_pretty(&updated).unwrap_or_default());
+                    let _ = std::fs::write(
+                        &path,
+                        serde_json::to_vec_pretty(&updated).unwrap_or_default(),
+                    );
                 }
             }
         }
@@ -920,82 +951,14 @@ fn process_proof_queue(ts: &std::path::Path, ctx: &crate::ctx::Ctx) {
     }
 }
 
-/// Update the latest Merkle checkpoint with a ZK proof summary.
-/// Called by the daemon after a chain proof completes successfully.
-///
-/// **WARNING (v0.10.4 P1 audit, lane A):** this function mutates a
-/// signed checkpoint on disk after the fact. Under canonical v3 (the
-/// v0.10.4 fix that binds `zk_proof` into the signature), attaching a
-/// proof here invalidates the original signature. The right fix is
-/// either (a) re-sign the checkpoint with the original hub signer
-/// (requires daemon to hold or proxy that key), or (b) write the
-/// zk_proof to a sibling file that's signed independently and refers
-/// to the checkpoint by digest. Both are larger refactors than the
-/// P1 fix permits, so this path is left intentionally broken-by-
-/// design: the resulting checkpoint will fail verification, which is
-/// the correct fail-closed behavior. Operators who currently rely on
-/// this code path (zk feature is opt-in) should expect verification
-/// to start failing on proof-augmented checkpoints until the
-/// follow-up lands. Tracked as v0.10.5 follow-up.
-#[cfg(feature = "zk")]
-fn update_checkpoint_with_proof(ts: &std::path::Path, session_id: &str) {
-    use treeship_core::merkle::checkpoint::{Checkpoint, ChainProofSummary};
-
-    let merkle_dir = home::home_dir()
-        .unwrap_or_default()
-        .join(".treeship")
-        .join("merkle")
-        .join("checkpoints");
-
-    let latest_path = merkle_dir.join("latest.json");
-    if !latest_path.exists() {
-        daemon_log(ts, "no checkpoint found to update with proof");
-        return;
-    }
-
-    let bytes = match std::fs::read(&latest_path) {
-        Ok(b) => b,
-        Err(e) => {
-            daemon_log(ts, &format!("failed to read checkpoint: {}", e));
-            return;
-        }
-    };
-
-    let mut checkpoint: Checkpoint = match serde_json::from_slice(&bytes) {
-        Ok(cp) => cp,
-        Err(e) => {
-            daemon_log(ts, &format!("failed to parse checkpoint: {}", e));
-            return;
-        }
-    };
-
-    // Load the proof result
-    let proof_path = format!("{}.chain.zkproof", session_id);
-    if let Ok(proof_bytes) = std::fs::read(&proof_path) {
-        if let Ok(proof) = serde_json::from_slice::<treeship_zk_risc0::ChainProofResult>(&proof_bytes) {
-            let now = super::prove::now_rfc3339_approx();
-            checkpoint.zk_proof = Some(ChainProofSummary {
-                image_id: proof.image_id.clone(),
-                // Only report what the zkVM actually verified.
-                // chain_intact and all_digests_valid come from the proof.
-                // Signature and nonce checks are NOT yet part of the
-                // RISC Zero guest, so we report false to stay honest.
-                all_signatures_valid: false,   // not verified in zkVM yet
-                chain_intact: proof.chain_intact,
-                approval_nonces_matched: false, // not verified in zkVM yet
-                artifact_count: proof.artifact_count as u64,
-                public_key_digest: String::new(),
-                proved_at: now,
-            });
-
-            // Write updated checkpoint back
-            if let Ok(updated) = serde_json::to_vec_pretty(&checkpoint) {
-                let _ = std::fs::write(&latest_path, updated);
-                daemon_log(ts, &format!("checkpoint updated with proof for {}", session_id));
-            }
-        }
-    }
-}
+// Removed (2026-07): `update_checkpoint_with_proof` mutated a signed checkpoint
+// on disk to staple a ZK proof summary, which invalidates the checkpoint's own
+// signature under canonical v3 — a knowingly-broken path the v0.10.4 audit left
+// in place with a fail-closed comment. Under the statement-first ZK rebuild
+// (docs/specs/private-verification.md) a proof binds to the artifact at signing time
+// rather than being stapled onto a signed object afterward, so this path is not
+// re-added. A future proof-augmented checkpoint, if needed, is a sibling object
+// signed independently, never an in-place mutation.
 
 /// Enqueue a proof job. Called by session close when zk.auto_prove is enabled.
 #[cfg(feature = "zk")]
@@ -1071,7 +1034,10 @@ mod tests {
         let mut new = HashMap::new();
         new.insert(
             PathBuf::from("src/main.rs"),
-            FileTimes { mtime: t(100), atime: t(100) },
+            FileTimes {
+                mtime: t(100),
+                atime: t(100),
+            },
         );
 
         let diff = diff_snapshots(&old, &new);
@@ -1085,9 +1051,21 @@ mod tests {
         // When only mtime changes (atime stays the same), it's a pure write.
         let path = PathBuf::from("src/lib.rs");
         let mut old = HashMap::new();
-        old.insert(path.clone(), FileTimes { mtime: t(100), atime: t(100) });
+        old.insert(
+            path.clone(),
+            FileTimes {
+                mtime: t(100),
+                atime: t(100),
+            },
+        );
         let mut new = HashMap::new();
-        new.insert(path.clone(), FileTimes { mtime: t(200), atime: t(100) });
+        new.insert(
+            path.clone(),
+            FileTimes {
+                mtime: t(200),
+                atime: t(100),
+            },
+        );
 
         let diff = diff_snapshots(&old, &new);
         assert_eq!(diff.written.len(), 1);
@@ -1099,9 +1077,21 @@ mod tests {
         // mtime stays the same, atime advances -- pure read
         let path = PathBuf::from(".env");
         let mut old = HashMap::new();
-        old.insert(path.clone(), FileTimes { mtime: t(100), atime: t(100) });
+        old.insert(
+            path.clone(),
+            FileTimes {
+                mtime: t(100),
+                atime: t(100),
+            },
+        );
         let mut new = HashMap::new();
-        new.insert(path.clone(), FileTimes { mtime: t(100), atime: t(150) });
+        new.insert(
+            path.clone(),
+            FileTimes {
+                mtime: t(100),
+                atime: t(150),
+            },
+        );
 
         let diff = diff_snapshots(&old, &new);
         assert_eq!(diff.written.len(), 0);
@@ -1113,9 +1103,21 @@ mod tests {
     fn diff_ignores_unchanged_files() {
         let path = PathBuf::from("README.md");
         let mut old = HashMap::new();
-        old.insert(path.clone(), FileTimes { mtime: t(100), atime: t(100) });
+        old.insert(
+            path.clone(),
+            FileTimes {
+                mtime: t(100),
+                atime: t(100),
+            },
+        );
         let mut new = HashMap::new();
-        new.insert(path.clone(), FileTimes { mtime: t(100), atime: t(100) });
+        new.insert(
+            path.clone(),
+            FileTimes {
+                mtime: t(100),
+                atime: t(100),
+            },
+        );
 
         let diff = diff_snapshots(&old, &new);
         assert_eq!(diff.written.len(), 0);
@@ -1129,9 +1131,21 @@ mod tests {
         // concurrently (e.g. touch after a secret read).
         let path = PathBuf::from("src/foo.rs");
         let mut old = HashMap::new();
-        old.insert(path.clone(), FileTimes { mtime: t(100), atime: t(100) });
+        old.insert(
+            path.clone(),
+            FileTimes {
+                mtime: t(100),
+                atime: t(100),
+            },
+        );
         let mut new = HashMap::new();
-        new.insert(path.clone(), FileTimes { mtime: t(200), atime: t(250) });
+        new.insert(
+            path.clone(),
+            FileTimes {
+                mtime: t(200),
+                atime: t(250),
+            },
+        );
 
         let diff = diff_snapshots(&old, &new);
         assert_eq!(diff.written.len(), 1);
@@ -1159,6 +1173,6 @@ attest:
         assert!(matches_access_rule(&project, ".env"));
         assert!(matches_access_rule(&project, ".env.local"));
         assert!(!matches_access_rule(&project, "src/main.rs")); // write rule, not access
-        assert!(!matches_access_rule(&project, "README.md"));   // no rule
+        assert!(!matches_access_rule(&project, "README.md")); // no rule
     }
 }

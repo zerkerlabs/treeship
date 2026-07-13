@@ -57,7 +57,8 @@ impl ViKeypair {
             let machine_key = treeship_core::keys::derive_machine_key_stable(dir)
                 .map_err(|e| format!("failed to derive machine key: {}", e))?;
             let enc_bytes = hex::decode(&stored.private_hex)?;
-            let nonce = stored.nonce_hex
+            let nonce = stored
+                .nonce_hex
                 .as_deref()
                 .map(hex::decode)
                 .transpose()?
@@ -93,8 +94,9 @@ impl ViKeypair {
         let machine_key = treeship_core::keys::derive_machine_key_stable(dir)
             .map_err(|e| format!("failed to derive machine key: {}", e))?;
         let plaintext = self.signing_key.to_bytes();
-        let (enc_bytes, nonce) = treeship_core::keys::aes_gcm_encrypt(&machine_key, plaintext.as_slice())
-            .map_err(|e| format!("encryption failed: {}", e))?;
+        let (enc_bytes, nonce) =
+            treeship_core::keys::aes_gcm_encrypt(&machine_key, plaintext.as_slice())
+                .map_err(|e| format!("encryption failed: {}", e))?;
 
         let stored = StoredKey {
             kid: self.kid.clone(),

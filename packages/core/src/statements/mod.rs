@@ -11,24 +11,24 @@ pub fn payload_type(suffix: &str) -> String {
     format!("application/vnd.treeship.{}.v1+json", suffix)
 }
 
-pub const TYPE_ACTION:      &str = "treeship/action/v1";
-pub const TYPE_APPROVAL:    &str = "treeship/approval/v1";
-pub const TYPE_HANDOFF:     &str = "treeship/handoff/v1";
+pub const TYPE_ACTION: &str = "treeship/action/v1";
+pub const TYPE_APPROVAL: &str = "treeship/approval/v1";
+pub const TYPE_HANDOFF: &str = "treeship/handoff/v1";
 pub const TYPE_ENDORSEMENT: &str = "treeship/endorsement/v1";
-pub const TYPE_RECEIPT:     &str = "treeship/receipt/v1";
-pub const TYPE_BUNDLE:      &str = "treeship/bundle/v1";
-pub const TYPE_DECISION:    &str = "treeship/decision/v1";
+pub const TYPE_RECEIPT: &str = "treeship/receipt/v1";
+pub const TYPE_BUNDLE: &str = "treeship/bundle/v1";
+pub const TYPE_DECISION: &str = "treeship/decision/v1";
 
 // v0.9.9 Approval Authority schemas. See `approval_use` for details on
 // the journal-side record types and the `replay_check` metadata shape
 // that verify uses to report what level of replay check actually ran.
 mod approval_use;
 pub use approval_use::{
-    ApprovalRevocation, ApprovalUse, CheckpointKind, HubCheckpointVerification,
-    JournalCheckpoint, ReplayCheck, ReplayCheckLevel,
-    TYPE_APPROVAL_REVOCATION, TYPE_APPROVAL_USE, TYPE_JOURNAL_CHECKPOINT,
     approval_revocation_record_digest, approval_use_record_digest,
     journal_checkpoint_record_digest, nonce_digest, verify_hub_checkpoint_signature,
+    ApprovalRevocation, ApprovalUse, CheckpointKind, HubCheckpointVerification, JournalCheckpoint,
+    ReplayCheck, ReplayCheckLevel, TYPE_APPROVAL_REVOCATION, TYPE_APPROVAL_USE,
+    TYPE_JOURNAL_CHECKPOINT,
 };
 
 // Phase 1 of the agent-invitations spec (docs/specs/agent-invitations-rooms.md).
@@ -39,13 +39,13 @@ pub use approval_use::{
 pub mod invitation;
 pub mod session_participant;
 pub use invitation::{
-    GrantedCapabilities, InvitationError, InvitationStatement, InviteeRestriction,
-    TYPE_INVITATION, DEFAULT_INVITATION_LIFETIME_SECS, MAX_INVITATION_LIFETIME_SECS,
-    parse_rfc3339_to_unix,
+    parse_rfc3339_to_unix, GrantedCapabilities, InvitationError, InvitationStatement,
+    InviteeRestriction, DEFAULT_INVITATION_LIFETIME_SECS, MAX_INVITATION_LIFETIME_SECS,
+    TYPE_INVITATION,
 };
 pub use session_participant::{
-    ParticipantVerifyError, SessionParticipantStatement, TYPE_SESSION_PARTICIPANT,
-    verify_participant_envelope,
+    verify_participant_envelope, ParticipantVerifyError, SessionParticipantStatement,
+    TYPE_SESSION_PARTICIPANT,
 };
 
 use serde::{Deserialize, Serialize};
@@ -98,19 +98,31 @@ pub struct ApprovalScope {
 
     /// Actor URIs permitted to consume this approval. Empty = no
     /// constraint on actor.
-    #[serde(rename = "allowedActors", skip_serializing_if = "Vec::is_empty", default)]
+    #[serde(
+        rename = "allowedActors",
+        skip_serializing_if = "Vec::is_empty",
+        default
+    )]
     pub allowed_actors: Vec<String>,
 
     /// Action labels permitted under this approval. Empty = no
     /// constraint on action.
-    #[serde(rename = "allowedActions", skip_serializing_if = "Vec::is_empty", default)]
+    #[serde(
+        rename = "allowedActions",
+        skip_serializing_if = "Vec::is_empty",
+        default
+    )]
     pub allowed_actions: Vec<String>,
 
     /// Subject URIs permitted as the target of an action under this
     /// approval. Matched against `ActionStatement.subject.uri` (or
     /// `artifact_id` for chain-internal subjects). Empty = no
     /// constraint on subject.
-    #[serde(rename = "allowedSubjects", skip_serializing_if = "Vec::is_empty", default)]
+    #[serde(
+        rename = "allowedSubjects",
+        skip_serializing_if = "Vec::is_empty",
+        default
+    )]
     pub allowed_subjects: Vec<String>,
 
     /// Arbitrary additional constraints (e.g. max payment amount).
@@ -334,10 +346,10 @@ pub struct ReceiptStatement {
 /// A reference to one artifact within a bundle.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArtifactRef {
-    pub id:     String,
+    pub id: String,
     pub digest: String,
     #[serde(rename = "type")]
-    pub type_:  String,
+    pub type_: String,
 }
 
 /// Groups a set of artifacts into a named, signed bundle.
@@ -477,11 +489,7 @@ impl ApprovalStatement {
 }
 
 impl HandoffStatement {
-    pub fn new(
-        from:      impl Into<String>,
-        to:        impl Into<String>,
-        artifacts: Vec<String>,
-    ) -> Self {
+    pub fn new(from: impl Into<String>, to: impl Into<String>, artifacts: Vec<String>) -> Self {
         Self {
             type_: TYPE_HANDOFF.into(),
             timestamp: now_rfc3339(),
@@ -555,10 +563,10 @@ pub fn unix_to_rfc3339(secs: u64) -> String {
 }
 
 fn seconds_to_ymd_hms(s: u64) -> (u64, u64, u64, u64, u64, u64) {
-    let sec  = s % 60;
+    let sec = s % 60;
     let mins = s / 60;
-    let min  = mins % 60;
-    let hrs  = mins / 60;
+    let min = mins % 60;
+    let hrs = mins / 60;
     let hour = hrs % 24;
     let days = hrs / 24;
 
@@ -573,7 +581,9 @@ fn days_to_ymd(days: u64) -> (u64, u64, u64) {
     let mut year = 1970u64;
     loop {
         let dy = if is_leap(year) { 366 } else { 365 };
-        if d < dy { break; }
+        if d < dy {
+            break;
+        }
         d -= dy;
         year += 1;
     }
@@ -584,7 +594,9 @@ fn days_to_ymd(days: u64) -> (u64, u64, u64) {
     };
     let mut month = 1u64;
     for dm in months {
-        if d < dm { break; }
+        if d < dm {
+            break;
+        }
         d -= dm;
         month += 1;
     }
@@ -614,13 +626,13 @@ mod tests {
 
     #[test]
     fn action_statement_sign_verify() {
-        let signer   = Ed25519Signer::generate("key_test").unwrap();
+        let signer = Ed25519Signer::generate("key_test").unwrap();
         let verifier = Verifier::from_signer(&signer);
 
         let mut stmt = ActionStatement::new("agent://researcher", "tool.call");
         stmt.parent_id = Some("art_aabbccdd11223344aabbccdd11223344".into());
 
-        let pt     = payload_type("action");
+        let pt = payload_type("action");
         let result = sign(&pt, &stmt, &signer).unwrap();
 
         assert!(result.artifact_id.starts_with("art_"));
@@ -647,7 +659,7 @@ mod tests {
             ..Default::default()
         });
 
-        let pt     = payload_type("approval");
+        let pt = payload_type("approval");
         let result = sign(&pt, &approval, &signer).unwrap();
         assert!(result.artifact_id.starts_with("art_"));
 
@@ -666,12 +678,12 @@ mod tests {
         let mut approval = ApprovalStatement::new("human://piyush", "nonce_deadbeef");
         approval.description = Some("Deploy production after final review".into());
         approval.scope = Some(ApprovalScope {
-            max_actions:      Some(1),
-            valid_until:      None,
-            allowed_actors:   vec!["agent://deployer".into()],
-            allowed_actions:  vec!["deploy.production".into()],
+            max_actions: Some(1),
+            valid_until: None,
+            allowed_actors: vec!["agent://deployer".into()],
+            allowed_actions: vec!["deploy.production".into()],
             allowed_subjects: vec!["env://production".into()],
-            extra:            None,
+            extra: None,
         });
 
         let pt = payload_type("approval");
@@ -679,10 +691,10 @@ mod tests {
         let decoded: ApprovalStatement = result.envelope.unmarshal_statement().unwrap();
         let scope = decoded.scope.expect("scope must round-trip");
 
-        assert_eq!(scope.allowed_actors,   vec!["agent://deployer".to_string()]);
-        assert_eq!(scope.allowed_actions,  vec!["deploy.production".to_string()]);
+        assert_eq!(scope.allowed_actors, vec!["agent://deployer".to_string()]);
+        assert_eq!(scope.allowed_actions, vec!["deploy.production".to_string()]);
         assert_eq!(scope.allowed_subjects, vec!["env://production".to_string()]);
-        assert_eq!(scope.max_actions,      Some(1));
+        assert_eq!(scope.max_actions, Some(1));
     }
 
     #[test]
@@ -691,11 +703,31 @@ mod tests {
         assert!(ApprovalScope::default().is_unscoped());
 
         // Any single populated axis flips the predicate.
-        assert!(!ApprovalScope { max_actions: Some(1), ..Default::default() }.is_unscoped());
-        assert!(!ApprovalScope { valid_until: Some("2030-01-01T00:00:00Z".into()), ..Default::default() }.is_unscoped());
-        assert!(!ApprovalScope { allowed_actors:   vec!["agent://x".into()], ..Default::default() }.is_unscoped());
-        assert!(!ApprovalScope { allowed_actions:  vec!["doit".into()],      ..Default::default() }.is_unscoped());
-        assert!(!ApprovalScope { allowed_subjects: vec!["env://prod".into()], ..Default::default() }.is_unscoped());
+        assert!(!ApprovalScope {
+            max_actions: Some(1),
+            ..Default::default()
+        }
+        .is_unscoped());
+        assert!(!ApprovalScope {
+            valid_until: Some("2030-01-01T00:00:00Z".into()),
+            ..Default::default()
+        }
+        .is_unscoped());
+        assert!(!ApprovalScope {
+            allowed_actors: vec!["agent://x".into()],
+            ..Default::default()
+        }
+        .is_unscoped());
+        assert!(!ApprovalScope {
+            allowed_actions: vec!["doit".into()],
+            ..Default::default()
+        }
+        .is_unscoped());
+        assert!(!ApprovalScope {
+            allowed_subjects: vec!["env://prod".into()],
+            ..Default::default()
+        }
+        .is_unscoped());
     }
 
     #[test]
@@ -709,7 +741,10 @@ mod tests {
         });
         let scope: ApprovalScope = serde_json::from_value(legacy).unwrap();
         assert_eq!(scope.max_actions, Some(1));
-        assert_eq!(scope.allowed_actions, vec!["stripe.payment_intent.create".to_string()]);
+        assert_eq!(
+            scope.allowed_actions,
+            vec!["stripe.payment_intent.create".to_string()]
+        );
         // New fields default to empty -- not present in legacy payload.
         assert!(scope.allowed_actors.is_empty());
         assert!(scope.allowed_subjects.is_empty());
@@ -726,12 +761,12 @@ mod tests {
             vec!["art_aabbccdd11223344aabbccdd11223344".into()],
         );
 
-        let pt     = payload_type("handoff");
+        let pt = payload_type("handoff");
         let result = sign(&pt, &handoff, &signer).unwrap();
         let decoded: HandoffStatement = result.envelope.unmarshal_statement().unwrap();
 
         assert_eq!(decoded.from, "agent://researcher");
-        assert_eq!(decoded.to,   "agent://checkout");
+        assert_eq!(decoded.to, "agent://checkout");
         assert_eq!(decoded.artifacts.len(), 1);
     }
 
@@ -745,26 +780,29 @@ mod tests {
             "status": "succeeded"
         }));
 
-        let pt     = payload_type("receipt");
+        let pt = payload_type("receipt");
         let result = sign(&pt, &receipt, &signer).unwrap();
         let decoded: ReceiptStatement = result.envelope.unmarshal_statement().unwrap();
 
         assert_eq!(decoded.system, "system://stripe-webhook");
-        assert_eq!(decoded.kind,   "confirmation");
+        assert_eq!(decoded.kind, "confirmation");
     }
 
     #[test]
     fn nonce_binding_survives_serialization() {
-        let signer   = Ed25519Signer::generate("key_test").unwrap();
+        let signer = Ed25519Signer::generate("key_test").unwrap();
 
         // The nonce in the approval must survive a sign→verify→decode round-trip.
         // The verifier checks that action.approval_nonce == approval.nonce.
         let approval = ApprovalStatement::new("human://alice", "secure_nonce_xyz");
-        let pt       = payload_type("approval");
-        let signed   = sign(&pt, &approval, &signer).unwrap();
+        let pt = payload_type("approval");
+        let signed = sign(&pt, &approval, &signer).unwrap();
 
         let decoded: ApprovalStatement = signed.envelope.unmarshal_statement().unwrap();
-        assert_eq!(decoded.nonce, "secure_nonce_xyz", "nonce must survive serialization");
+        assert_eq!(
+            decoded.nonce, "secure_nonce_xyz",
+            "nonce must survive serialization"
+        );
     }
 
     #[test]
@@ -803,11 +841,11 @@ mod tests {
         // v0.10.2 added `provider` so Kimi (model=kimi-k2 / provider=moonshot)
         // and similar split-model/provider attributions land on the
         // signed artifact, not just on the unsigned session event.
-        let signer   = Ed25519Signer::generate("key_test").unwrap();
+        let signer = Ed25519Signer::generate("key_test").unwrap();
         let verifier = Verifier::from_signer(&signer);
 
         let mut stmt = DecisionStatement::new("agent://researcher");
-        stmt.model    = Some("kimi-k2".into());
+        stmt.model = Some("kimi-k2".into());
         stmt.provider = Some("moonshot".into());
 
         let pt = payload_type("decision");
@@ -815,7 +853,7 @@ mod tests {
         verifier.verify(&result.envelope).unwrap();
 
         let decoded: DecisionStatement = result.envelope.unmarshal_statement().unwrap();
-        assert_eq!(decoded.model,    Some("kimi-k2".into()));
+        assert_eq!(decoded.model, Some("kimi-k2".into()));
         assert_eq!(decoded.provider, Some("moonshot".into()));
     }
 
@@ -843,10 +881,10 @@ mod tests {
         // must produce different artifact IDs — enforced by payloadType in PAE.
         let signer = Ed25519Signer::generate("key_test").unwrap();
 
-        let action   = ActionStatement::new("agent://test", "do.thing");
+        let action = ActionStatement::new("agent://test", "do.thing");
         let approval = ApprovalStatement::new("human://test", "nonce_123");
 
-        let r_action   = sign(&payload_type("action"),   &action,   &signer).unwrap();
+        let r_action = sign(&payload_type("action"), &action, &signer).unwrap();
         let r_approval = sign(&payload_type("approval"), &approval, &signer).unwrap();
 
         assert_ne!(r_action.artifact_id, r_approval.artifact_id);

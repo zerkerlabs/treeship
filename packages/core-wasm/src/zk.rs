@@ -10,21 +10,18 @@ use ark_groth16::{Groth16, PreparedVerifyingKey, Proof, VerifyingKey};
 use core::str::FromStr;
 
 // Embed verification keys from the trusted setup (committed to repo)
-const POLICY_CHECKER_VK: &[u8] =
-    include_bytes!("../../zk-circom/zkeys/pc_vk.json");
+const POLICY_CHECKER_VK: &[u8] = include_bytes!("../../zk-circom/zkeys/pc_vk.json");
 
-const INPUT_OUTPUT_BINDING_VK: &[u8] =
-    include_bytes!("../../zk-circom/zkeys/iob_vk.json");
+const INPUT_OUTPUT_BINDING_VK: &[u8] = include_bytes!("../../zk-circom/zkeys/iob_vk.json");
 
-const PROMPT_TEMPLATE_VK: &[u8] =
-    include_bytes!("../../zk-circom/zkeys/pt_vk.json");
+const PROMPT_TEMPLATE_VK: &[u8] = include_bytes!("../../zk-circom/zkeys/pt_vk.json");
 
-const SPEND_LIMIT_CHECKER_VK: &[u8] =
-    include_bytes!("../../zk-circom/zkeys/slc_vk.json");
+const SPEND_LIMIT_CHECKER_VK: &[u8] = include_bytes!("../../zk-circom/zkeys/slc_vk.json");
 
 /// Run actual Groth16 pairing verification on a Circom proof.
 pub fn verify_circom_proof(proof_json: &serde_json::Value) -> Result<String, String> {
-    let circuit = proof_json.get("circuit")
+    let circuit = proof_json
+        .get("circuit")
         .and_then(|c| c.as_str())
         .ok_or("missing circuit field")?;
 
@@ -41,19 +38,18 @@ pub fn verify_circom_proof(proof_json: &serde_json::Value) -> Result<String, Str
     let pvk = load_vk(vk_bytes)?;
 
     // Parse the proof
-    let proof_data = proof_json.get("proof")
-        .ok_or("missing proof field")?;
+    let proof_data = proof_json.get("proof").ok_or("missing proof field")?;
     let ark_proof = parse_proof(proof_data)?;
 
     // Parse public signals
-    let public_signals = proof_json.get("public_signals")
+    let public_signals = proof_json
+        .get("public_signals")
         .map(|s| parse_public_signals(s))
         .transpose()?
         .unwrap_or_default();
 
     // Run actual Groth16 pairing verification
-    let valid = Groth16::<Bn254>::verify_proof(&pvk, &ark_proof, &public_signals)
-        .unwrap_or(false);
+    let valid = Groth16::<Bn254>::verify_proof(&pvk, &ark_proof, &public_signals).unwrap_or(false);
 
     // AUD-09: the pairing check proves the proof is valid FOR THE SUPPLIED
     // PUBLIC SIGNALS — it says nothing about which artifact those signals
@@ -66,11 +62,14 @@ pub fn verify_circom_proof(proof_json: &serde_json::Value) -> Result<String, Str
     // in-WASM binding (recompute artifact_id_hash and match the circuit's
     // public input) is tracked as a follow-up; until then this path must not
     // claim the proof is about the JSON's artifact_id.
-    let claimed_artifact_id = proof_json.get("artifact_id")
+    let claimed_artifact_id = proof_json
+        .get("artifact_id")
         .and_then(|a| a.as_str())
         .unwrap_or("unknown");
-    let public_signal_values: Vec<String> =
-        public_signals.iter().map(|f| f.into_bigint().to_string()).collect();
+    let public_signal_values: Vec<String> = public_signals
+        .iter()
+        .map(|f| f.into_bigint().to_string())
+        .collect();
 
     Ok(serde_json::json!({
         "valid": valid,
@@ -91,15 +90,16 @@ pub fn verify_circom_proof(proof_json: &serde_json::Value) -> Result<String, Str
 
 /// Parse a snarkjs vk.json into ark-groth16's PreparedVerifyingKey.
 fn load_vk(vk_json: &[u8]) -> Result<PreparedVerifyingKey<Bn254>, String> {
-    let vk_value: serde_json::Value = serde_json::from_slice(vk_json)
-        .map_err(|e| format!("invalid vk JSON: {}", e))?;
+    let vk_value: serde_json::Value =
+        serde_json::from_slice(vk_json).map_err(|e| format!("invalid vk JSON: {}", e))?;
 
     let alpha_g1 = parse_g1(&vk_value["vk_alpha_1"])?;
     let beta_g2 = parse_g2(&vk_value["vk_beta_2"])?;
     let gamma_g2 = parse_g2(&vk_value["vk_gamma_2"])?;
     let delta_g2 = parse_g2(&vk_value["vk_delta_2"])?;
 
-    let ic = vk_value["IC"].as_array()
+    let ic = vk_value["IC"]
+        .as_array()
         .ok_or("missing IC in vk")?
         .iter()
         .map(|p| parse_g1(p))
@@ -126,13 +126,13 @@ fn parse_proof(proof_data: &serde_json::Value) -> Result<Proof<Bn254>, String> {
 
 /// Parse public signals from snarkjs format.
 fn parse_public_signals(signals: &serde_json::Value) -> Result<Vec<Fr>, String> {
-    signals.as_array()
+    signals
+        .as_array()
         .ok_or("public_signals not array")?
         .iter()
         .map(|s| {
             let val = s.as_str().ok_or("signal not string")?;
-            Fr::from_str(val)
-                .map_err(|_| format!("invalid Fr: {}", val))
+            Fr::from_str(val).map_err(|_| format!("invalid Fr: {}", val))
         })
         .collect()
 }
@@ -199,16 +199,28 @@ mod tests {
     #[test]
     fn vk_loads_from_embedded_bytes() {
         let result = load_vk(POLICY_CHECKER_VK);
-        assert!(result.is_ok(), "policy checker vk failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "policy checker vk failed: {:?}",
+            result.err()
+        );
 
         let result = load_vk(INPUT_OUTPUT_BINDING_VK);
         assert!(result.is_ok(), "iob vk failed: {:?}", result.err());
 
         let result = load_vk(PROMPT_TEMPLATE_VK);
-        assert!(result.is_ok(), "prompt template vk failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "prompt template vk failed: {:?}",
+            result.err()
+        );
 
         let result = load_vk(SPEND_LIMIT_CHECKER_VK);
-        assert!(result.is_ok(), "spend limit checker vk failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "spend limit checker vk failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]

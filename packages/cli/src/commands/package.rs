@@ -48,9 +48,12 @@ fn is_treeship_runtime_artifact(path: &str) -> bool {
     // earlier checks matched, but spelling them out keeps the rule
     // honest if someone adds a sweepier prefix above.
     let preserved = [
-        "config.yaml", "config.json", "policy.yaml", "declaration.json",
-        "agents/",     // user-approved Agent Cards
-        "harnesses/",  // workspace harness state
+        "config.yaml",
+        "config.json",
+        "policy.yaml",
+        "declaration.json",
+        "agents/",    // user-approved Agent Cards
+        "harnesses/", // workspace harness state
     ];
     if preserved.iter().any(|p| key.starts_with(p)) {
         return false;
@@ -63,14 +66,14 @@ fn is_treeship_runtime_artifact(path: &str) -> bool {
 
 fn source_label(file: &FileAccess) -> &'static str {
     match file.source.as_deref() {
-        Some("hook")               => "hook",
-        Some("mcp")                => "mcp",
-        Some("git-reconcile")      => "git-reconcile",
-        Some("shell-wrap")         => "shell-wrap",
-        Some("session-event-cli")  => "session-event-cli",
-        Some("daemon-atime")       => "daemon-atime",
-        Some(_)                    => "unknown",
-        None                       => "unknown",
+        Some("hook") => "hook",
+        Some("mcp") => "mcp",
+        Some("git-reconcile") => "git-reconcile",
+        Some("shell-wrap") => "shell-wrap",
+        Some("session-event-cli") => "session-event-cli",
+        Some("daemon-atime") => "daemon-atime",
+        Some(_) => "unknown",
+        None => "unknown",
     }
 }
 
@@ -148,7 +151,10 @@ pub fn inspect(
     printer.info(&format!("  tool calls:     {}", summary.tool_invocations));
     printer.info(&format!("  processes:      {}", summary.processes));
     printer.info(&format!("  ports opened:   {}", summary.ports_opened));
-    printer.info(&format!("  network conns:  {}", summary.network_connections));
+    printer.info(&format!(
+        "  network conns:  {}",
+        summary.network_connections
+    ));
 
     // ---- files changed (with source badges, runtime artifacts filtered) ----
     print_files_changed(&se.files_written, &se.files_read, printer);
@@ -171,8 +177,7 @@ pub fn inspect(
     // Reads from PR 4's read_approvals_bundle plus, when workspace
     // context is available, the local journal for the local-journal
     // replay level. Both pure functions; no schema fork.
-    let approvals_bundle = treeship_core::session::read_approvals_bundle(&path)
-        .unwrap_or_default();
+    let approvals_bundle = treeship_core::session::read_approvals_bundle(&path).unwrap_or_default();
     let workspace_config_path = ctx::open(config).ok().map(|c| c.config_path);
     // Load the operator's trust roots once; the approval-authority and
     // replay-warning panels both pin embedded hub-org checkpoints
@@ -211,14 +216,20 @@ pub fn inspect(
     if let Some(ref root) = receipt.merkle.root {
         printer.info(&format!("  root:    {}", root));
     }
-    printer.info(&format!("  proofs:  {}", receipt.merkle.inclusion_proofs.len()));
+    printer.info(&format!(
+        "  proofs:  {}",
+        receipt.merkle.inclusion_proofs.len()
+    ));
 
     printer.blank();
     printer.section("artifacts");
     printer.info(&format!("  count: {}", receipt.artifacts.len()));
     for art in receipt.artifacts.iter().take(10) {
         let digest = art.digest.as_deref().unwrap_or("--");
-        printer.dim_info(&format!("  {} ({}) {}", art.artifact_id, art.payload_type, digest));
+        printer.dim_info(&format!(
+            "  {} ({}) {}",
+            art.artifact_id, art.payload_type, digest
+        ));
     }
     if receipt.artifacts.len() > 10 {
         printer.dim_info(&format!("  ... and {} more", receipt.artifacts.len() - 10));
@@ -236,16 +247,20 @@ pub fn inspect(
                 "event log incomplete: {} skipped",
                 receipt.proofs.event_log_skipped,
             ),
-            &[(
-                "what",
-                "events.jsonl had lines that failed to parse during close",
-            ), (
-                "impact",
-                "the receipt does not represent the full event stream",
-            ), (
-                "next",
-                "inspect close-time stderr or events.jsonl to investigate",
-            )],
+            &[
+                (
+                    "what",
+                    "events.jsonl had lines that failed to parse during close",
+                ),
+                (
+                    "impact",
+                    "the receipt does not represent the full event stream",
+                ),
+                (
+                    "next",
+                    "inspect close-time stderr or events.jsonl to investigate",
+                ),
+            ],
         );
     }
 
@@ -265,11 +280,7 @@ pub fn inspect(
 /// "Hidden" rather than "removed" -- if the filter dropped anything, we
 /// say so explicitly with a count, so a reader can't mistake a quiet
 /// list for a complete one.
-fn print_files_changed(
-    written: &[FileAccess],
-    read: &[FileAccess],
-    printer: &Printer,
-) {
+fn print_files_changed(written: &[FileAccess], read: &[FileAccess], printer: &Printer) {
     let (visible_w, hidden_w) = partition(written);
     let (visible_r, hidden_r) = partition(read);
 
@@ -339,10 +350,10 @@ fn print_agent_cards_panel(config_path: &Path, printer: &Printer) {
     printer.section(&format!("agent cards ({} in workspace)", cards_list.len()));
     for card in &cards_list {
         let mark = match card.status {
-            cards::CardStatus::Verified    => "✓",
-            cards::CardStatus::Active      => "✓",
+            cards::CardStatus::Verified => "✓",
+            cards::CardStatus::Active => "✓",
             cards::CardStatus::NeedsReview => "?",
-            cards::CardStatus::Draft       => "·",
+            cards::CardStatus::Draft => "·",
         };
         let harness = card.active_harness_id.as_deref().unwrap_or("none");
         printer.info(&format!(
@@ -398,7 +409,8 @@ fn print_harness_coverage_panel(config_path: &Path, printer: &Printer) {
         }
         let v = state.verified_captures;
         if v.is_empty() {
-            printer.dim_info("    verified:  (none yet -- run a real session through this harness)");
+            printer
+                .dim_info("    verified:  (none yet -- run a real session through this harness)");
         } else {
             printer.dim_info(&format!(
                 "    verified:  read={} write={} cmd={} mcp={} model={}",
@@ -433,9 +445,19 @@ fn print_harness_coverage_panel(config_path: &Path, printer: &Printer) {
     }
 }
 
-fn yes_or_no(b: bool) -> &'static str { if b { "y" } else { "n" } }
+fn yes_or_no(b: bool) -> &'static str {
+    if b {
+        "y"
+    } else {
+        "n"
+    }
+}
 fn tri(v: Option<bool>) -> &'static str {
-    match v { Some(true) => "y", Some(false) => "no-fire", None => "?" }
+    match v {
+        Some(true) => "y",
+        Some(false) => "no-fire",
+        None => "?",
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -503,10 +525,7 @@ fn print_approval_authority_panel(
     // its uses underneath, instead of repeating the grant header per use.
     let mut uses_by_grant: HashMap<String, Vec<&ApprovalUse>> = HashMap::new();
     for u in &bundle.uses {
-        uses_by_grant
-            .entry(u.grant_id.clone())
-            .or_default()
-            .push(u);
+        uses_by_grant.entry(u.grant_id.clone()).or_default().push(u);
     }
 
     // Stable display order: by grant_id ascending. Uses inside a grant
@@ -526,10 +545,7 @@ fn print_approval_authority_panel(
                     .first()
                     .map(|u| u.actor.as_str())
                     .unwrap_or("agent://?");
-                let action_label = uses
-                    .first()
-                    .map(|u| u.action.as_str())
-                    .unwrap_or("?");
+                let action_label = uses.first().map(|u| u.action.as_str()).unwrap_or("?");
                 printer.info(&format!(
                     "  {} approved {}  ({})",
                     g.approver, actor_label, action_label,
@@ -590,7 +606,7 @@ fn print_approval_authority_panel(
             let max = uses.iter().filter_map(|u| u.max_uses).next();
             match max {
                 Some(m) => count <= m,
-                None    => true,
+                None => true,
             }
         };
         printer.dim_info(&format!(
@@ -611,9 +627,8 @@ fn print_approval_authority_panel(
                 let max_uses = grant
                     .and_then(|g| g.scope.as_ref())
                     .and_then(|s| s.max_actions);
-                match treeship_core::journal::find_use_for_action(
-                    j, grant_id, &nonce_dig, max_uses,
-                ) {
+                match treeship_core::journal::find_use_for_action(j, grant_id, &nonce_dig, max_uses)
+                {
                     Ok(Some((_rec, replay))) => {
                         let mark = match replay.passed {
                             Some(false) => "✗",
@@ -626,9 +641,8 @@ fn print_approval_authority_panel(
                         printer.dim_info(&format!("    {mark} local-journal        {detail}"));
                     }
                     Ok(None) => {
-                        printer.dim_info(
-                            "    - local-journal        not present in this workspace",
-                        );
+                        printer
+                            .dim_info("    - local-journal        not present in this workspace");
                     }
                     Err(e) => {
                         printer.dim_info(&format!("    ✗ local-journal        error: {e}"));
@@ -646,9 +660,8 @@ fn print_approval_authority_panel(
         // don't pin which checkpoint covers which use here -- the
         // panel just reports "checkpoints present and verify offline."
         if bundle.checkpoints.is_empty() {
-            printer.dim_info(
-                "    - included-checkpoint  no journal checkpoint included in package",
-            );
+            printer
+                .dim_info("    - included-checkpoint  no journal checkpoint included in package");
         } else {
             // Reuse the integrity recompute helper indirectly: if the
             // verifier already gave us a pass row, we trust that.
@@ -673,9 +686,8 @@ fn print_approval_authority_panel(
             .filter(|cp| cp.checkpoint_kind == treeship_core::statements::CheckpointKind::HubOrg)
             .collect();
         if hub_cps.is_empty() {
-            printer.dim_info(
-                "    - hub-org              not checked (no Hub checkpoint in package)",
-            );
+            printer
+                .dim_info("    - hub-org              not checked (no Hub checkpoint in package)");
         } else {
             // For each use, check whether SOME hub-org checkpoint
             // verifies AND covers this use_id. The strongest finding
@@ -690,10 +702,8 @@ fn print_approval_authority_panel(
                         treeship_core::statements::HubCheckpointVerification::Valid => {
                             if cp.covered_use_ids.iter().any(|id| id == &u.use_id) {
                                 this_use_ok = true;
-                                this_use_detail = Some(format!(
-                                    "use {} signed by {}",
-                                    u.use_id, cp.hub_id,
-                                ));
+                                this_use_detail =
+                                    Some(format!("use {} signed by {}", u.use_id, cp.hub_id,));
                                 break;
                             } else {
                                 this_use_detail = Some(format!(
@@ -703,14 +713,12 @@ fn print_approval_authority_panel(
                             }
                         }
                         treeship_core::statements::HubCheckpointVerification::MissingFields(f) => {
-                            this_use_detail = Some(format!(
-                                "{} missing field {}", cp.checkpoint_id, f,
-                            ));
+                            this_use_detail =
+                                Some(format!("{} missing field {}", cp.checkpoint_id, f,));
                         }
                         treeship_core::statements::HubCheckpointVerification::Tampered => {
-                            this_use_detail = Some(format!(
-                                "{} hub signature failed", cp.checkpoint_id,
-                            ));
+                            this_use_detail =
+                                Some(format!("{} hub signature failed", cp.checkpoint_id,));
                         }
                         treeship_core::statements::HubCheckpointVerification::UntrustedIssuer => {
                             this_use_detail = Some(format!(
@@ -721,8 +729,12 @@ fn print_approval_authority_panel(
                         treeship_core::statements::HubCheckpointVerification::NotHubKind => {}
                     }
                 }
-                if !this_use_ok { all_uses_covered = false; }
-                if let Some(d) = this_use_detail { summary.push(d); }
+                if !this_use_ok {
+                    all_uses_covered = false;
+                }
+                if let Some(d) = this_use_detail {
+                    summary.push(d);
+                }
             }
             let mark = if all_uses_covered { "✓" } else { "✗" };
             let detail = if summary.is_empty() {
@@ -742,14 +754,18 @@ fn print_approval_authority_panel(
     // verify checks haven't been threaded through.
     if !bundle.uses.is_empty() {
         use treeship_core::statements::approval_use_record_digest;
-        let tampered_digest = bundle.uses.iter().any(|u| {
-            approval_use_record_digest(u) != u.record_digest
-        });
+        let tampered_digest = bundle
+            .uses
+            .iter()
+            .any(|u| approval_use_record_digest(u) != u.record_digest);
         printer.dim_info(&format!(
             "  {} approval-use-record-digest    {}",
             if tampered_digest { "✗" } else { "✓" },
-            if tampered_digest { "one or more use records tampered post-write" }
-            else { "every use record's stored digest recomputes identically" },
+            if tampered_digest {
+                "one or more use records tampered post-write"
+            } else {
+                "every use record's stored digest recomputes identically"
+            },
         ));
 
         // Nonce binding: each use's nonce_digest must equal
@@ -758,7 +774,8 @@ fn print_approval_authority_panel(
         // reports the gap honestly.
         use treeship_core::attestation::envelope::Envelope;
         use treeship_core::statements::{nonce_digest, ApprovalStatement};
-        let mut grant_nonce_digest: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        let mut grant_nonce_digest: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
         for (gid, env_bytes) in &bundle.grants {
             if let Ok(env) = Envelope::from_json(env_bytes) {
                 if let Ok(g) = env.unmarshal_statement::<ApprovalStatement>() {
@@ -767,13 +784,18 @@ fn print_approval_authority_panel(
             }
         }
         let nonce_ok = bundle.uses.iter().all(|u| {
-            grant_nonce_digest.get(&u.grant_id).map_or(false, |d| d == &u.nonce_digest)
+            grant_nonce_digest
+                .get(&u.grant_id)
+                .map_or(false, |d| d == &u.nonce_digest)
         });
         printer.dim_info(&format!(
             "  {} approval-use-nonce-binding    {}",
             if nonce_ok { "✓" } else { "✗" },
-            if nonce_ok { "use.nonce_digest == sha256(grant.nonce) for every use" }
-            else { "one or more uses do not bind to a grant signed nonce" },
+            if nonce_ok {
+                "use.nonce_digest == sha256(grant.nonce) for every use"
+            } else {
+                "one or more uses do not bind to a grant signed nonce"
+            },
         ));
 
         // Action binding row: empty action_envelopes -> "not asserted"
@@ -790,10 +812,20 @@ fn print_approval_authority_panel(
             let mut all_ok = true;
             let mut bound = 0usize;
             for (_aid, env_bytes) in &bundle.action_envelopes {
-                let Ok(env) = Envelope::from_json(env_bytes) else { all_ok = false; continue };
-                let Ok(action) = env.unmarshal_statement::<ActionStatement>() else { all_ok = false; continue };
-                let Some(raw_nonce) = action.approval_nonce.as_deref() else { continue };
-                let claimed = action.meta.as_ref()
+                let Ok(env) = Envelope::from_json(env_bytes) else {
+                    all_ok = false;
+                    continue;
+                };
+                let Ok(action) = env.unmarshal_statement::<ActionStatement>() else {
+                    all_ok = false;
+                    continue;
+                };
+                let Some(raw_nonce) = action.approval_nonce.as_deref() else {
+                    continue;
+                };
+                let claimed = action
+                    .meta
+                    .as_ref()
                     .and_then(|m| m.get("approval_use_id"))
                     .and_then(|v| v.as_str());
                 match claimed {
@@ -824,15 +856,28 @@ fn print_approval_authority_panel(
         // an in-package record_digest or be empty (genesis).
         let mut owned: std::collections::HashSet<String> = std::collections::HashSet::new();
         owned.insert(String::new());
-        for u in &bundle.uses          { owned.insert(u.record_digest.clone()); }
-        for cp in &bundle.checkpoints  { owned.insert(cp.record_digest.clone()); }
-        let chain_ok = bundle.uses.iter().all(|u| owned.contains(&u.previous_record_digest))
-            && bundle.checkpoints.iter().all(|cp| owned.contains(&cp.previous_record_digest));
+        for u in &bundle.uses {
+            owned.insert(u.record_digest.clone());
+        }
+        for cp in &bundle.checkpoints {
+            owned.insert(cp.record_digest.clone());
+        }
+        let chain_ok = bundle
+            .uses
+            .iter()
+            .all(|u| owned.contains(&u.previous_record_digest))
+            && bundle
+                .checkpoints
+                .iter()
+                .all(|cp| owned.contains(&cp.previous_record_digest));
         printer.dim_info(&format!(
             "  {} approval-use-chain-continuity {}",
             if chain_ok { "✓" } else { "✗" },
-            if chain_ok { "every previous_record_digest anchors in-package or genesis" }
-            else { "one or more previous_record_digest values dangle" },
+            if chain_ok {
+                "every previous_record_digest anchors in-package or genesis"
+            } else {
+                "one or more previous_record_digest values dangle"
+            },
         ));
     }
 
@@ -873,7 +918,8 @@ fn print_decision_cards(
         .filter(|u| grants_seen.insert(u.grant_id.as_str()))
         .collect();
 
-    if approval_cards.is_empty() && receipt.proofs.event_log_skipped == 0 && bundle.uses.is_empty() {
+    if approval_cards.is_empty() && receipt.proofs.event_log_skipped == 0 && bundle.uses.is_empty()
+    {
         // Nothing to say -- omit the section entirely.
         return;
     }
@@ -891,12 +937,16 @@ fn print_decision_cards(
         let max = u.max_uses;
 
         printer.blank();
-        printer.info(&format!("  ▸ Approval consumed: {} on {}", u.action, u.subject));
+        printer.info(&format!(
+            "  ▸ Approval consumed: {} on {}",
+            u.action, u.subject
+        ));
         printer.dim_info(&format!(
             "      {} use(s) recorded against grant {} (max_uses={})",
             count,
             u.grant_id,
-            max.map(|m| m.to_string()).unwrap_or_else(|| "unbounded".into()),
+            max.map(|m| m.to_string())
+                .unwrap_or_else(|| "unbounded".into()),
         ));
         printer.dim_info("      evidence:");
         printer.dim_info(&format!("        grant_id:        {}", u.grant_id));
@@ -926,26 +976,21 @@ fn print_decision_cards(
             matches!(
                 treeship_core::statements::verify_hub_checkpoint_signature(cp, trust),
                 treeship_core::statements::HubCheckpointVerification::Valid,
-            ) && bundle.uses.iter().all(|u| cp.covered_use_ids.iter().any(|id| id == &u.use_id))
+            ) && bundle
+                .uses
+                .iter()
+                .all(|u| cp.covered_use_ids.iter().any(|id| id == &u.use_id))
         });
     if !bundle.uses.is_empty() && !has_hub_coverage {
         printer.blank();
         printer.info("  ⚠ Replay posture: no verified Hub coverage");
-        printer.dim_info(
-            "      Verifiers without access to your workspace's local journal can",
-        );
+        printer.dim_info("      Verifiers without access to your workspace's local journal can");
         printer.dim_info(
             "      only check package-local replay (duplicate uses inside this package).",
         );
-        printer.dim_info(
-            "      Hub-org replay is not asserted -- a global single-use guarantee",
-        );
-        printer.dim_info(
-            "      requires a signed Hub checkpoint that covers every use_id in this",
-        );
-        printer.dim_info(
-            "      package. v0.9.9 supports verifying such checkpoints when present;",
-        );
+        printer.dim_info("      Hub-org replay is not asserted -- a global single-use guarantee");
+        printer.dim_info("      requires a signed Hub checkpoint that covers every use_id in this");
+        printer.dim_info("      package. v0.9.9 supports verifying such checkpoints when present;");
         printer.dim_info("      the Hub signer itself is out of scope for this release.");
         printer.dim_info("      evidence:");
         printer.dim_info(&format!(
@@ -953,16 +998,24 @@ fn print_decision_cards(
             bundle.uses.len(),
         ));
         printer.dim_info(&format!(
-            "        hub checkpoints: {} embedded ({})",
-            bundle.checkpoints.iter()
-                .filter(|cp| cp.checkpoint_kind == treeship_core::statements::CheckpointKind::HubOrg)
-                .count(),
-            if bundle.checkpoints.iter().any(|cp| cp.checkpoint_kind == treeship_core::statements::CheckpointKind::HubOrg) {
-                "see hub-org row above for per-checkpoint detail"
-            } else {
-                "none"
-            },
-        ));
+                "        hub checkpoints: {} embedded ({})",
+                bundle
+                    .checkpoints
+                    .iter()
+                    .filter(|cp| cp.checkpoint_kind
+                        == treeship_core::statements::CheckpointKind::HubOrg)
+                    .count(),
+                if bundle
+                    .checkpoints
+                    .iter()
+                    .any(|cp| cp.checkpoint_kind
+                        == treeship_core::statements::CheckpointKind::HubOrg)
+                {
+                    "see hub-org row above for per-checkpoint detail"
+                } else {
+                    "none"
+                },
+            ));
         printer.dim_info("        verify rows:     replay-package-local, replay-local-journal");
         cards_emitted += 1;
     }
@@ -978,9 +1031,8 @@ fn print_decision_cards(
             "  ⚠ Verification posture: {} event(s) skipped during close",
             receipt.proofs.event_log_skipped,
         ));
-        printer.dim_info(
-            "      Treeship dropped malformed lines from events.jsonl when sealing the",
-        );
+        printer
+            .dim_info("      Treeship dropped malformed lines from events.jsonl when sealing the");
         printer.dim_info(
             "      receipt. The receipt is cryptographically valid but does not represent",
         );
@@ -1062,20 +1114,22 @@ mod tests {
         // explicitly classify, we err on the side of showing it. The
         // alternative -- silently filtering anything under .treeship/
         // -- would hide files the user might care about.
-        assert!(!is_treeship_runtime_artifact(".treeship/something-new.json"));
+        assert!(!is_treeship_runtime_artifact(
+            ".treeship/something-new.json"
+        ));
     }
 
     #[test]
     fn source_label_maps_known_provenance() {
         for (input, want) in &[
-            (Some("hook"),               "hook"),
-            (Some("mcp"),                "mcp"),
-            (Some("git-reconcile"),      "git-reconcile"),
-            (Some("shell-wrap"),         "shell-wrap"),
-            (Some("session-event-cli"),  "session-event-cli"),
-            (Some("daemon-atime"),       "daemon-atime"),
-            (Some("future-source"),      "unknown"),
-            (None,                       "unknown"),
+            (Some("hook"), "hook"),
+            (Some("mcp"), "mcp"),
+            (Some("git-reconcile"), "git-reconcile"),
+            (Some("shell-wrap"), "shell-wrap"),
+            (Some("session-event-cli"), "session-event-cli"),
+            (Some("daemon-atime"), "daemon-atime"),
+            (Some("future-source"), "unknown"),
+            (None, "unknown"),
         ] {
             let f = FileAccess {
                 file_path: "x".into(),
@@ -1111,14 +1165,14 @@ pub fn verify(
     // than failing -- offline / inbox verification of a bare package
     // must keep working.
     if let Ok(ctx_opened) = ctx::open(config) {
-        let journal_dir = ctx_opened.config_path
+        let journal_dir = ctx_opened
+            .config_path
             .parent()
             .unwrap_or_else(|| std::path::Path::new("."))
             .join("journals")
             .join("approval-use");
         let journal = treeship_core::journal::Journal::new(&journal_dir);
-        let bundle = treeship_core::session::read_approvals_bundle(&path)
-            .unwrap_or_default();
+        let bundle = treeship_core::session::read_approvals_bundle(&path).unwrap_or_default();
         if !bundle.uses.is_empty() {
             if !journal.exists() {
                 checks.push(treeship_core::session::VerifyCheck::warn(
@@ -1138,10 +1192,7 @@ pub fn verify(
                         Ok(Some((_rec, replay))) => {
                             if matches!(replay.passed, Some(false)) {
                                 all_pass = false;
-                                detail_parts.push(format!(
-                                    "use {} exceeds max_uses",
-                                    u.use_id,
-                                ));
+                                detail_parts.push(format!("use {} exceeds max_uses", u.use_id,));
                             } else if let Some(d) = replay.details {
                                 detail_parts.push(d);
                             }
@@ -1170,21 +1221,28 @@ pub fn verify(
                             "local Approval Use Journal consulted".into()
                         } else {
                             combined.clone()
-                        }.as_str(),
+                        }
+                        .as_str(),
                     )
                 } else {
-                    treeship_core::session::VerifyCheck::fail(
-                        "replay-local-journal",
-                        &combined,
-                    )
+                    treeship_core::session::VerifyCheck::fail("replay-local-journal", &combined)
                 });
             }
         }
     }
 
-    let pass_count = checks.iter().filter(|c| c.status == VerifyStatus::Pass).count();
-    let mut fail_count = checks.iter().filter(|c| c.status == VerifyStatus::Fail).count();
-    let mut warn_count = checks.iter().filter(|c| c.status == VerifyStatus::Warn).count();
+    let pass_count = checks
+        .iter()
+        .filter(|c| c.status == VerifyStatus::Pass)
+        .count();
+    let mut fail_count = checks
+        .iter()
+        .filter(|c| c.status == VerifyStatus::Fail)
+        .count();
+    let mut warn_count = checks
+        .iter()
+        .filter(|c| c.status == VerifyStatus::Warn)
+        .count();
 
     // --strict promotes warnings touching approval evidence to
     // failures. Existing receipt-determinism / event-log warnings

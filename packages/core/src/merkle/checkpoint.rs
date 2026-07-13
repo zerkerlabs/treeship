@@ -191,9 +191,7 @@ impl Checkpoint {
             // up front, so this branch is only reached for known v3).
             _ => {
                 let algo_field = algorithm.unwrap_or("");
-                let zk_digest = zk_proof
-                    .map(zk_proof_digest_hex)
-                    .unwrap_or_default();
+                let zk_digest = zk_proof.map(zk_proof_digest_hex).unwrap_or_default();
                 format!(
                     "v3|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
                     canonical_version,
@@ -385,8 +383,7 @@ impl Checkpoint {
 /// (the canonical writes an empty field) for `None`. We do not call this
 /// for `None` so the sentinel can't collide with a real digest.
 fn zk_proof_digest_hex(summary: &ChainProofSummary) -> String {
-    let value = serde_json::to_value(summary)
-        .expect("ChainProofSummary serializes to JSON value");
+    let value = serde_json::to_value(summary).expect("ChainProofSummary serializes to JSON value");
     // Re-serialize through BTreeMap to enforce sorted keys at every level.
     // For ChainProofSummary specifically this is a flat object of scalars,
     // but doing it through the generic walker keeps the function honest
@@ -418,8 +415,7 @@ fn canonical_json_string(value: &serde_json::Value) -> String {
                 }
                 first = false;
                 // Re-serialize the key as a JSON string to handle escapes.
-                let key_json = serde_json::to_string(k)
-                    .expect("string serializes to JSON");
+                let key_json = serde_json::to_string(k).expect("string serializes to JSON");
                 out.push_str(&key_json);
                 out.push(':');
                 out.push_str(&v);
@@ -440,8 +436,7 @@ fn canonical_json_string(value: &serde_json::Value) -> String {
             out.push(']');
             out
         }
-        other => serde_json::to_string(other)
-            .expect("scalar serializes to JSON"),
+        other => serde_json::to_string(other).expect("scalar serializes to JSON"),
     }
 }
 
@@ -469,11 +464,11 @@ mod trust_pin_tests {
         let pk_bytes: [u8; 32] = signer.public_key_bytes().try_into().unwrap();
         let vk = VerifyingKey::from_bytes(&pk_bytes).unwrap();
         TrustRootStore::with_roots(vec![TrustRoot {
-            key_id:     signer.key_id().to_string(),
+            key_id: signer.key_id().to_string(),
             public_key: encode_ed25519_pubkey(&vk),
-            kind:       TrustRootKind::HubCheckpoint,
-            label:      "trusted hub".into(),
-            added_at:   "2026-05-15T00:00:00Z".into(),
+            kind: TrustRootKind::HubCheckpoint,
+            label: "trusted hub".into(),
+            added_at: "2026-05-15T00:00:00Z".into(),
         }])
     }
 
@@ -489,8 +484,10 @@ mod trust_pin_tests {
         let other = Ed25519Signer::generate("other").unwrap();
         let trust = trust_with(&other);
 
-        assert!(!cp.verify(&trust),
-                "unknown issuer must be rejected even with valid signature");
+        assert!(
+            !cp.verify(&trust),
+            "unknown issuer must be rejected even with valid signature"
+        );
     }
 
     /// Happy path: the issuer is pinned, the signature math is good,
@@ -500,7 +497,10 @@ mod trust_pin_tests {
         let (signer, tree) = signer_and_tree();
         let cp = Checkpoint::create(1, &tree, &signer).unwrap();
         let trust = trust_with(&signer);
-        assert!(cp.verify(&trust), "trusted issuer + good signature must verify");
+        assert!(
+            cp.verify(&trust),
+            "trusted issuer + good signature must verify"
+        );
     }
 
     /// No trust configured at all (empty store) is the operator's
@@ -511,8 +511,10 @@ mod trust_pin_tests {
         let (signer, tree) = signer_and_tree();
         let cp = Checkpoint::create(1, &tree, &signer).unwrap();
         let trust = TrustRootStore::empty();
-        assert!(!cp.verify(&trust),
-                "empty trust store must reject all checkpoints");
+        assert!(
+            !cp.verify(&trust),
+            "empty trust store must reject all checkpoints"
+        );
     }
 
     /// Trust pinning is kind-scoped: a key trusted for AgentCert is
@@ -527,14 +529,16 @@ mod trust_pin_tests {
         let pk_bytes: [u8; 32] = signer.public_key_bytes().try_into().unwrap();
         let vk = VerifyingKey::from_bytes(&pk_bytes).unwrap();
         let mismatched = TrustRootStore::with_roots(vec![TrustRoot {
-            key_id:     signer.key_id().to_string(),
+            key_id: signer.key_id().to_string(),
             public_key: encode_ed25519_pubkey(&vk),
-            kind:       TrustRootKind::AgentCert, // wrong kind!
-            label:      "trusted for agent certs only".into(),
-            added_at:   "2026-05-15T00:00:00Z".into(),
+            kind: TrustRootKind::AgentCert, // wrong kind!
+            label: "trusted for agent certs only".into(),
+            added_at: "2026-05-15T00:00:00Z".into(),
         }]);
-        assert!(!cp.verify(&mismatched),
-                "kind discrimination must keep AgentCert roots out of checkpoint trust");
+        assert!(
+            !cp.verify(&mismatched),
+            "kind discrimination must keep AgentCert roots out of checkpoint trust"
+        );
     }
 
     /// Forge attempt -- attacker re-signs with a non-trusted key.
@@ -552,8 +556,10 @@ mod trust_pin_tests {
         let honest = Ed25519Signer::generate("honest_hub").unwrap();
         let trust = trust_with(&honest);
 
-        assert!(!forgery.verify(&trust),
-                "self-signed forgery must not verify against operator's trust set");
+        assert!(
+            !forgery.verify(&trust),
+            "self-signed forgery must not verify against operator's trust set"
+        );
     }
 }
 
@@ -569,7 +575,9 @@ mod trust_pin_tests {
 mod canonical_v3_tests {
     use super::*;
     use crate::attestation::{Ed25519Signer, Signer};
-    use crate::merkle::tree::{MerkleTree, MERKLE_ALGORITHM_V2, MERKLE_VERSION_V1, MERKLE_VERSION_V2};
+    use crate::merkle::tree::{
+        MerkleTree, MERKLE_ALGORITHM_V2, MERKLE_VERSION_V1, MERKLE_VERSION_V2,
+    };
     use crate::trust::{encode_ed25519_pubkey, TrustRoot, TrustRootKind, TrustRootStore};
 
     fn signer_and_tree() -> (Ed25519Signer, MerkleTree) {
@@ -585,11 +593,11 @@ mod canonical_v3_tests {
         let pk_bytes: [u8; 32] = signer.public_key_bytes().try_into().unwrap();
         let vk = VerifyingKey::from_bytes(&pk_bytes).unwrap();
         TrustRootStore::with_roots(vec![TrustRoot {
-            key_id:     signer.key_id().to_string(),
+            key_id: signer.key_id().to_string(),
             public_key: encode_ed25519_pubkey(&vk),
-            kind:       TrustRootKind::HubCheckpoint,
-            label:      "trusted hub".into(),
-            added_at:   "2026-05-15T00:00:00Z".into(),
+            kind: TrustRootKind::HubCheckpoint,
+            label: "trusted hub".into(),
+            added_at: "2026-05-15T00:00:00Z".into(),
         }])
     }
 
@@ -650,7 +658,10 @@ mod canonical_v3_tests {
         // Case A: attacker attaches a fabricated proof to a checkpoint
         // that was signed with zk_proof: None.
         let mut cp_attach = Checkpoint::create(1, &tree, &signer).unwrap();
-        assert!(cp_attach.zk_proof.is_none(), "fresh checkpoint must have no proof");
+        assert!(
+            cp_attach.zk_proof.is_none(),
+            "fresh checkpoint must have no proof"
+        );
         cp_attach.zk_proof = Some(sample_zk_proof());
         assert!(
             !cp_attach.verify(&trust),
@@ -662,10 +673,12 @@ mod canonical_v3_tests {
         // Checkpoint::create only sets zk_proof to None.
         let (signer_b, tree_b) = signer_and_tree();
         let trust_b = trust_with(&signer_b);
-        let mut cp_swap = checkpoint_signed_with_proof(
-            &signer_b, &tree_b, 1, Some(sample_zk_proof()),
+        let mut cp_swap =
+            checkpoint_signed_with_proof(&signer_b, &tree_b, 1, Some(sample_zk_proof()));
+        assert!(
+            cp_swap.verify(&trust_b),
+            "freshly signed v3+proof must verify"
         );
-        assert!(cp_swap.verify(&trust_b), "freshly signed v3+proof must verify");
 
         // Mutate one field on the embedded proof.
         let mut tampered = sample_zk_proof();
@@ -677,9 +690,8 @@ mod canonical_v3_tests {
         );
 
         // Case C: strip the proof entirely.
-        let mut cp_strip = checkpoint_signed_with_proof(
-            &signer_b, &tree_b, 1, Some(sample_zk_proof()),
-        );
+        let mut cp_strip =
+            checkpoint_signed_with_proof(&signer_b, &tree_b, 1, Some(sample_zk_proof()));
         cp_strip.zk_proof = None;
         assert!(
             !cp_strip.verify(&trust_b),
@@ -842,11 +854,7 @@ mod canonical_v3_tests {
     /// Sign a checkpoint under the v0.10.3-era v2 canonical (no
     /// algorithm/zk_proof binding, no canonical_version on the wire).
     /// Used to verify legacy compat.
-    fn sign_legacy_v2(
-        signer: &Ed25519Signer,
-        tree: &MerkleTree,
-        index: u64,
-    ) -> Checkpoint {
+    fn sign_legacy_v2(signer: &Ed25519Signer, tree: &MerkleTree, index: u64) -> Checkpoint {
         let root_bytes = tree.root().expect("non-empty tree");
         let root = format!("sha256:{}", hex::encode(root_bytes));
         let signed_at = "2026-05-17T00:00:00Z".to_string();
@@ -856,8 +864,8 @@ mod canonical_v3_tests {
         let canonical = Checkpoint::canonical_for_signing(
             CANONICAL_VERSION_V2,
             tree.version(),
-            None,   // ignored under v2 dispatch
-            None,   // ignored under v2 dispatch
+            None, // ignored under v2 dispatch
+            None, // ignored under v2 dispatch
             index,
             &root,
             tree.len(),
@@ -917,7 +925,12 @@ mod canonical_v3_tests {
             canonical,
             format!(
                 "{}|{}|{}|{}|{}|{}",
-                index, root, tree_size, height, signer.key_id(), signed_at
+                index,
+                root,
+                tree_size,
+                height,
+                signer.key_id(),
+                signed_at
             ),
             "v1 canonical must remain byte-identical to legacy"
         );

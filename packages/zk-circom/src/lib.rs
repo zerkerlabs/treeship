@@ -1,7 +1,4 @@
-pub mod circuits;
-pub mod native;
 pub mod prover;
-pub mod utils;
 
 pub use prover::CircomProver;
 use serde::{Deserialize, Serialize};

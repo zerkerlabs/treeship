@@ -20,19 +20,12 @@
 /// assert_eq!(result, b"DSSEv1 19 application/example 5 hello");
 /// ```
 pub fn pae(payload_type: &str, payload: &[u8]) -> Vec<u8> {
-    let type_len  = payload_type.len();
-    let pay_len   = payload.len();
+    let type_len = payload_type.len();
+    let pay_len = payload.len();
 
     // Pre-allocate the exact capacity:
     // "DSSEv1 " (7) + digits(type_len) + " " + type + " " + digits(pay_len) + " " + payload
-    let cap = 7
-        + digits(type_len)
-        + 1
-        + type_len
-        + 1
-        + digits(pay_len)
-        + 1
-        + pay_len;
+    let cap = 7 + digits(type_len) + 1 + type_len + 1 + digits(pay_len) + 1 + pay_len;
 
     let mut buf = Vec::with_capacity(cap);
 
@@ -50,7 +43,11 @@ pub fn pae(payload_type: &str, payload: &[u8]) -> Vec<u8> {
 
 /// Returns the number of decimal digits needed to represent n.
 fn digits(n: usize) -> usize {
-    if n == 0 { 1 } else { (n as f64).log10().floor() as usize + 1 }
+    if n == 0 {
+        1
+    } else {
+        (n as f64).log10().floor() as usize + 1
+    }
 }
 
 #[cfg(test)]
@@ -108,9 +105,9 @@ mod tests {
 
     #[test]
     fn treeship_action_type() {
-        let pt      = "application/vnd.treeship.action.v1+json";
+        let pt = "application/vnd.treeship.action.v1+json";
         let payload = b"{}";
-        let got     = pae(pt, payload);
+        let got = pae(pt, payload);
         // "DSSEv1 39 application/vnd.treeship.action.v1+json 2 {}"
         // len("application/vnd.treeship.action.v1+json") == 39
         assert_eq!(pt.len(), 39, "sanity: payload type length");

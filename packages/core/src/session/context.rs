@@ -82,7 +82,10 @@ impl PropagationContext {
             cmd.env(format!("{ENV_PREFIX}{FIELD_PARENT_SPAN_ID}"), psid);
         }
         cmd.env(format!("{ENV_PREFIX}{FIELD_AGENT_ID}"), &self.agent_id);
-        cmd.env(format!("{ENV_PREFIX}{FIELD_AGENT_INSTANCE_ID}"), &self.agent_instance_id);
+        cmd.env(
+            format!("{ENV_PREFIX}{FIELD_AGENT_INSTANCE_ID}"),
+            &self.agent_instance_id,
+        );
         if let Some(ref wid) = self.workspace_id {
             cmd.env(format!("{ENV_PREFIX}{FIELD_WORKSPACE_ID}"), wid);
         }
@@ -98,11 +101,17 @@ impl PropagationContext {
     /// Produce HTTP header pairs for outbound requests.
     pub fn to_headers(&self) -> Vec<(String, String)> {
         let mut h = vec![
-            (format!("{HEADER_PREFIX}session-id"), self.session_id.clone()),
+            (
+                format!("{HEADER_PREFIX}session-id"),
+                self.session_id.clone(),
+            ),
             (format!("{HEADER_PREFIX}trace-id"), self.trace_id.clone()),
             (format!("{HEADER_PREFIX}span-id"), self.span_id.clone()),
             (format!("{HEADER_PREFIX}agent-id"), self.agent_id.clone()),
-            (format!("{HEADER_PREFIX}agent-instance-id"), self.agent_instance_id.clone()),
+            (
+                format!("{HEADER_PREFIX}agent-instance-id"),
+                self.agent_instance_id.clone(),
+            ),
             (format!("{HEADER_PREFIX}host-id"), self.host_id.clone()),
         ];
         if let Some(ref psid) = self.parent_span_id {
@@ -124,7 +133,8 @@ impl PropagationContext {
     pub fn from_headers(headers: &[(String, String)]) -> Option<Self> {
         let get = |name: &str| -> Option<String> {
             let key = format!("{HEADER_PREFIX}{name}");
-            headers.iter()
+            headers
+                .iter()
                 .find(|(k, _)| k.eq_ignore_ascii_case(&key))
                 .map(|(_, v)| v.clone())
         };
@@ -253,6 +263,9 @@ mod tests {
             tool_runtime_id: None,
         };
         let tp = ctx.to_traceparent();
-        assert_eq!(tp, "00-abcd1234abcd1234abcd1234abcd1234-1111222233334444-01");
+        assert_eq!(
+            tp,
+            "00-abcd1234abcd1234abcd1234abcd1234-1111222233334444-01"
+        );
     }
 }

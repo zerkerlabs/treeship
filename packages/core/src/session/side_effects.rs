@@ -127,7 +127,13 @@ impl SideEffects {
                     });
                 }
 
-                EventType::AgentWroteFile { file_path, digest, operation, additions, deletions } => {
+                EventType::AgentWroteFile {
+                    file_path,
+                    digest,
+                    operation,
+                    additions,
+                    deletions,
+                } => {
                     se.files_written.push(FileAccess {
                         file_path: file_path.clone(),
                         agent_instance_id: event.agent_instance_id.clone(),
@@ -158,7 +164,11 @@ impl SideEffects {
                     });
                 }
 
-                EventType::AgentStartedProcess { process_name, pid: _, command } => {
+                EventType::AgentStartedProcess {
+                    process_name,
+                    pid: _,
+                    command,
+                } => {
                     let idx = se.processes.len();
                     se.processes.push(ProcessExecution {
                         process_name: process_name.clone(),
@@ -169,13 +179,16 @@ impl SideEffects {
                         command: command.clone(),
                         source: Some(source_from_meta(event, "hook")),
                     });
-                    started_processes.insert(
-                        (event.agent_instance_id.clone(), process_name.clone()),
-                        idx,
-                    );
+                    started_processes
+                        .insert((event.agent_instance_id.clone(), process_name.clone()), idx);
                 }
 
-                EventType::AgentCompletedProcess { process_name, exit_code, duration_ms, command } => {
+                EventType::AgentCompletedProcess {
+                    process_name,
+                    exit_code,
+                    duration_ms,
+                    command,
+                } => {
                     let key = (event.agent_instance_id.clone(), process_name.clone());
                     if let Some(&idx) = started_processes.get(&key) {
                         if let Some(proc) = se.processes.get_mut(idx) {
@@ -198,7 +211,11 @@ impl SideEffects {
                     }
                 }
 
-                EventType::AgentCalledTool { tool_name, duration_ms, .. } => {
+                EventType::AgentCalledTool {
+                    tool_name,
+                    duration_ms,
+                    ..
+                } => {
                     se.tool_invocations.push(ToolInvocation {
                         tool_name: tool_name.clone(),
                         agent_instance_id: event.agent_instance_id.clone(),
@@ -344,53 +361,62 @@ enum ToolCategory {
 fn classify_tool(tool_name: &str) -> ToolCategory {
     let t = tool_name.to_lowercase();
     // Process / shell first -- "execute" matches before generic "exec".
-    if t.contains("bash") || t.contains("shell") || t.contains("exec")
-        || t.contains("run_command") || t.contains("ran_command")
+    if t.contains("bash")
+        || t.contains("shell")
+        || t.contains("exec")
+        || t.contains("run_command")
+        || t.contains("ran_command")
     {
         return ToolCategory::Process;
     }
     // Writes: any mutation verb wins. Order matters because "edit" is a
     // strong signal even when the tool name also contains "file".
-    if t.contains("write") || t.contains("edit") || t.contains("create_file")
-        || t.contains("modify") || t.contains("patch") || t.contains("save_file")
-        || t.contains("delete_file") || t.contains("remove_file") || t.contains("rename_file")
+    if t.contains("write")
+        || t.contains("edit")
+        || t.contains("create_file")
+        || t.contains("modify")
+        || t.contains("patch")
+        || t.contains("save_file")
+        || t.contains("delete_file")
+        || t.contains("remove_file")
+        || t.contains("rename_file")
     {
         return ToolCategory::Write;
     }
     // Reads
-    if t.contains("read") || t.contains("view_file") || t.contains("cat_file")
-        || t.contains("open_file") || t.contains("get_file_contents")
+    if t.contains("read")
+        || t.contains("view_file")
+        || t.contains("cat_file")
+        || t.contains("open_file")
+        || t.contains("get_file_contents")
     {
         return ToolCategory::Read;
     }
     ToolCategory::Unknown
 }
 
-fn promote_mcp_called_tool(
-    event: &SessionEvent,
-    tool_name: &str,
-    se: &mut SideEffects,
-) {
+fn promote_mcp_called_tool(event: &SessionEvent, tool_name: &str, se: &mut SideEffects) {
     let category = classify_tool(tool_name);
 
     // File path candidates -- check tool_input first (Claude Code +
     // most MCP servers), then flattened (some bridges flatten meta).
-    let file_path = first_meta_string(event, &[
-        "tool_input.file_path",
-        "tool_input.path",
-        "tool_input.notebook_path",
-        "tool_input.target_file",
-        "file_path",
-        "path",
-    ]);
+    let file_path = first_meta_string(
+        event,
+        &[
+            "tool_input.file_path",
+            "tool_input.path",
+            "tool_input.notebook_path",
+            "tool_input.target_file",
+            "file_path",
+            "path",
+        ],
+    );
 
     // Command candidates for shell-style tools.
-    let command = first_meta_string(event, &[
-        "tool_input.command",
-        "command",
-        "tool_input.cmd",
-        "cmd",
-    ]);
+    let command = first_meta_string(
+        event,
+        &["tool_input.command", "command", "tool_input.cmd", "cmd"],
+    );
 
     match (category, file_path, command) {
         (ToolCategory::Read, Some(p), _) => {
@@ -486,10 +512,29 @@ mod tests {
     #[test]
     fn aggregates_file_and_tool_events() {
         let events = vec![
-            evt(EventType::AgentReadFile { file_path: "src/main.rs".into(), digest: None }),
-            evt(EventType::AgentWroteFile { file_path: "src/lib.rs".into(), digest: Some("sha256:abc".into()), operation: Some("modified".into()), additions: Some(10), deletions: Some(3) }),
-            evt(EventType::AgentCalledTool { tool_name: "read_file".into(), tool_input_digest: None, tool_output_digest: None, duration_ms: Some(10) }),
-            evt(EventType::AgentCalledTool { tool_name: "write_file".into(), tool_input_digest: None, tool_output_digest: None, duration_ms: None }),
+            evt(EventType::AgentReadFile {
+                file_path: "src/main.rs".into(),
+                digest: None,
+            }),
+            evt(EventType::AgentWroteFile {
+                file_path: "src/lib.rs".into(),
+                digest: Some("sha256:abc".into()),
+                operation: Some("modified".into()),
+                additions: Some(10),
+                deletions: Some(3),
+            }),
+            evt(EventType::AgentCalledTool {
+                tool_name: "read_file".into(),
+                tool_input_digest: None,
+                tool_output_digest: None,
+                duration_ms: Some(10),
+            }),
+            evt(EventType::AgentCalledTool {
+                tool_name: "write_file".into(),
+                tool_input_digest: None,
+                tool_output_digest: None,
+                duration_ms: None,
+            }),
         ];
 
         let se = SideEffects::from_events(&events);
@@ -503,8 +548,17 @@ mod tests {
     #[test]
     fn matches_process_start_and_complete() {
         let events = vec![
-            evt(EventType::AgentStartedProcess { process_name: "npm test".into(), pid: Some(1234), command: Some("npm test --runInBand".into()) }),
-            evt(EventType::AgentCompletedProcess { process_name: "npm test".into(), exit_code: Some(0), duration_ms: Some(5000), command: None }),
+            evt(EventType::AgentStartedProcess {
+                process_name: "npm test".into(),
+                pid: Some(1234),
+                command: Some("npm test --runInBand".into()),
+            }),
+            evt(EventType::AgentCompletedProcess {
+                process_name: "npm test".into(),
+                exit_code: Some(0),
+                duration_ms: Some(5000),
+                command: None,
+            }),
         ];
 
         let se = SideEffects::from_events(&events);
@@ -532,8 +586,17 @@ mod tests {
         // receipt page can render provenance ("observed via hook") on
         // each file row.
         let events = vec![
-            evt(EventType::AgentReadFile { file_path: "src/a.rs".into(), digest: None }),
-            evt(EventType::AgentWroteFile { file_path: "src/b.rs".into(), digest: None, operation: None, additions: None, deletions: None }),
+            evt(EventType::AgentReadFile {
+                file_path: "src/a.rs".into(),
+                digest: None,
+            }),
+            evt(EventType::AgentWroteFile {
+                file_path: "src/b.rs".into(),
+                digest: None,
+                operation: None,
+                additions: None,
+                deletions: None,
+            }),
         ];
         let se = SideEffects::from_events(&events);
         assert_eq!(se.files_read[0].source.as_deref(), Some("hook"));
@@ -547,17 +610,19 @@ mod tests {
         // generic agent.called_tool event with the path tucked inside
         // meta.tool_input.file_path (the shape the engineer's events.jsonl
         // had), the aggregator must surface it.
-        let events = vec![
-            called_tool_with_meta(
-                "Edit",
-                serde_json::json!({
-                    "source": "mcp-bridge",
-                    "tool_input": { "file_path": "src/api/receipt.ts" },
-                }),
-            ),
-        ];
+        let events = vec![called_tool_with_meta(
+            "Edit",
+            serde_json::json!({
+                "source": "mcp-bridge",
+                "tool_input": { "file_path": "src/api/receipt.ts" },
+            }),
+        )];
         let se = SideEffects::from_events(&events);
-        assert_eq!(se.files_written.len(), 1, "Edit with file_path must promote to files_written");
+        assert_eq!(
+            se.files_written.len(),
+            1,
+            "Edit with file_path must promote to files_written"
+        );
         assert_eq!(se.files_written[0].file_path, "src/api/receipt.ts");
         assert_eq!(se.files_written[0].source.as_deref(), Some("mcp"));
         // tool_invocations also gets the entry -- the original record
@@ -567,12 +632,10 @@ mod tests {
 
     #[test]
     fn mcp_read_tool_promotes_to_files_read() {
-        let events = vec![
-            called_tool_with_meta(
-                "Read",
-                serde_json::json!({ "tool_input": { "file_path": "package.json" } }),
-            ),
-        ];
+        let events = vec![called_tool_with_meta(
+            "Read",
+            serde_json::json!({ "tool_input": { "file_path": "package.json" } }),
+        )];
         let se = SideEffects::from_events(&events);
         assert_eq!(se.files_read.len(), 1);
         assert_eq!(se.files_read[0].file_path, "package.json");
@@ -581,12 +644,10 @@ mod tests {
 
     #[test]
     fn mcp_bash_tool_promotes_to_processes() {
-        let events = vec![
-            called_tool_with_meta(
-                "Bash",
-                serde_json::json!({ "tool_input": { "command": "bun test --run" } }),
-            ),
-        ];
+        let events = vec![called_tool_with_meta(
+            "Bash",
+            serde_json::json!({ "tool_input": { "command": "bun test --run" } }),
+        )];
         let se = SideEffects::from_events(&events);
         assert_eq!(se.processes.len(), 1);
         assert_eq!(se.processes[0].command.as_deref(), Some("bun test --run"));
@@ -599,12 +660,10 @@ mod tests {
         // verb but meta carries a file_path, record as files_written
         // rather than dropping the path. Misclassifying a read as a
         // write is recoverable; silently losing a real change is not.
-        let events = vec![
-            called_tool_with_meta(
-                "mcp__weird-vendor__do_thing",
-                serde_json::json!({ "tool_input": { "file_path": "config.toml" } }),
-            ),
-        ];
+        let events = vec![called_tool_with_meta(
+            "mcp__weird-vendor__do_thing",
+            serde_json::json!({ "tool_input": { "file_path": "config.toml" } }),
+        )];
         let se = SideEffects::from_events(&events);
         assert_eq!(se.files_written.len(), 1);
         assert_eq!(se.files_written[0].file_path, "config.toml");
@@ -617,9 +676,10 @@ mod tests {
         // tool_invocation entry is the only record. We do NOT invent a
         // file path or fail loudly -- this is the "search/list/info"
         // tool case that legitimately has no side effect.
-        let events = vec![
-            called_tool_with_meta("ls", serde_json::json!({"source": "mcp-bridge"})),
-        ];
+        let events = vec![called_tool_with_meta(
+            "ls",
+            serde_json::json!({"source": "mcp-bridge"}),
+        )];
         let se = SideEffects::from_events(&events);
         assert_eq!(se.files_read.len(), 0);
         assert_eq!(se.files_written.len(), 0);
@@ -631,7 +691,12 @@ mod tests {
     fn mcp_promotion_handles_alt_path_field_names() {
         // Different MCP servers use different conventions for the path
         // field. We try a list of common ones.
-        for path_field in &["tool_input.path", "tool_input.target_file", "file_path", "path"] {
+        for path_field in &[
+            "tool_input.path",
+            "tool_input.target_file",
+            "file_path",
+            "path",
+        ] {
             let mut meta_obj = serde_json::Map::new();
             // Build a nested object matching the dotted path.
             let parts: Vec<&str> = path_field.split('.').collect();
@@ -641,11 +706,16 @@ mod tests {
                 let inner = serde_json::json!({ parts[1]: "x.txt" });
                 meta_obj.insert(parts[0].into(), inner);
             }
-            let events = vec![called_tool_with_meta("Edit", serde_json::Value::Object(meta_obj))];
+            let events = vec![called_tool_with_meta(
+                "Edit",
+                serde_json::Value::Object(meta_obj),
+            )];
             let se = SideEffects::from_events(&events);
             assert_eq!(
-                se.files_written.len(), 1,
-                "expected promotion via {} but got nothing", path_field,
+                se.files_written.len(),
+                1,
+                "expected promotion via {} but got nothing",
+                path_field,
             );
         }
     }
@@ -670,18 +740,22 @@ mod tests {
         // Events emitted via `treeship session event` have meta.source =
         // "session-event-cli" (set in commands/session.rs::event). This
         // must NOT render as "hook" on the receipt.
-        let events = vec![
-            evt_with_meta(
-                EventType::AgentWroteFile {
-                    file_path: "src/x.rs".into(),
-                    digest: None, operation: None, additions: None, deletions: None,
-                },
-                serde_json::json!({"source": "session-event-cli"}),
-            ),
-        ];
+        let events = vec![evt_with_meta(
+            EventType::AgentWroteFile {
+                file_path: "src/x.rs".into(),
+                digest: None,
+                operation: None,
+                additions: None,
+                deletions: None,
+            },
+            serde_json::json!({"source": "session-event-cli"}),
+        )];
         let se = SideEffects::from_events(&events);
-        assert_eq!(se.files_written[0].source.as_deref(), Some("session-event-cli"),
-            "session-event-cli must be preserved verbatim, not downgraded to hook");
+        assert_eq!(
+            se.files_written[0].source.as_deref(),
+            Some("session-event-cli"),
+            "session-event-cli must be preserved verbatim, not downgraded to hook"
+        );
     }
 
     #[test]
@@ -689,18 +763,19 @@ mod tests {
         // The daemon's atime-based file detection tags events with
         // source = "daemon-atime" (lower trust than direct hook). Must
         // not be silently promoted to hook.
-        let events = vec![
-            evt_with_meta(
-                EventType::AgentReadFile {
-                    file_path: "src/x.rs".into(),
-                    digest: None,
-                },
-                serde_json::json!({"source": "daemon-atime"}),
-            ),
-        ];
+        let events = vec![evt_with_meta(
+            EventType::AgentReadFile {
+                file_path: "src/x.rs".into(),
+                digest: None,
+            },
+            serde_json::json!({"source": "daemon-atime"}),
+        )];
         let se = SideEffects::from_events(&events);
-        assert_eq!(se.files_read[0].source.as_deref(), Some("daemon-atime"),
-            "daemon-atime must be preserved verbatim, not downgraded to hook");
+        assert_eq!(
+            se.files_read[0].source.as_deref(),
+            Some("daemon-atime"),
+            "daemon-atime must be preserved verbatim, not downgraded to hook"
+        );
     }
 
     #[test]
@@ -709,17 +784,21 @@ mod tests {
         // source label. We preserve it so the receipt page renders
         // "via <label>" -- honest provenance even for labels we do not
         // have a styled pill for yet.
-        let events = vec![
-            evt_with_meta(
-                EventType::AgentWroteFile {
-                    file_path: "x".into(),
-                    digest: None, operation: None, additions: None, deletions: None,
-                },
-                serde_json::json!({"source": "future-bridge-v2"}),
-            ),
-        ];
+        let events = vec![evt_with_meta(
+            EventType::AgentWroteFile {
+                file_path: "x".into(),
+                digest: None,
+                operation: None,
+                additions: None,
+                deletions: None,
+            },
+            serde_json::json!({"source": "future-bridge-v2"}),
+        )];
         let se = SideEffects::from_events(&events);
-        assert_eq!(se.files_written[0].source.as_deref(), Some("future-bridge-v2"));
+        assert_eq!(
+            se.files_written[0].source.as_deref(),
+            Some("future-bridge-v2")
+        );
     }
 
     #[test]
@@ -729,12 +808,13 @@ mod tests {
         // hook-emitted-event path -- pre-v0.9.6 plugins did not tag
         // their source, and the aggregator still tags those as "hook"
         // because that is what they actually were.
-        let events = vec![
-            evt(EventType::AgentWroteFile {
-                file_path: "x".into(),
-                digest: None, operation: None, additions: None, deletions: None,
-            }),
-        ];
+        let events = vec![evt(EventType::AgentWroteFile {
+            file_path: "x".into(),
+            digest: None,
+            operation: None,
+            additions: None,
+            deletions: None,
+        })];
         let se = SideEffects::from_events(&events);
         assert_eq!(se.files_written[0].source.as_deref(), Some("hook"));
     }
@@ -743,15 +823,13 @@ mod tests {
     fn source_from_meta_treats_empty_string_as_absent() {
         // Defensive: meta.source = "" should not render as a row with
         // "via " (empty pill). Treat as absent and fall back to default.
-        let events = vec![
-            evt_with_meta(
-                EventType::AgentReadFile {
-                    file_path: "x".into(),
-                    digest: None,
-                },
-                serde_json::json!({"source": ""}),
-            ),
-        ];
+        let events = vec![evt_with_meta(
+            EventType::AgentReadFile {
+                file_path: "x".into(),
+                digest: None,
+            },
+            serde_json::json!({"source": ""}),
+        )];
         let se = SideEffects::from_events(&events);
         assert_eq!(se.files_read[0].source.as_deref(), Some("hook"));
     }

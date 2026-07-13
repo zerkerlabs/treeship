@@ -195,7 +195,10 @@ pub fn run(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::e
     let keys = ctx.keys.list()?;
     for k in &keys {
         let marker = if k.is_default { " (default)" } else { "" };
-        printer.info(&format!("  {}  {}  {}{}", k.id, k.algorithm, k.fingerprint, marker));
+        printer.info(&format!(
+            "  {}  {}  {}{}",
+            k.id, k.algorithm, k.fingerprint, marker
+        ));
     }
     printer.blank();
 
@@ -208,7 +211,8 @@ pub fn run(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::e
         printer.hint("treeship attest action --actor agent://me --action tool.call");
     } else {
         for a in artifacts.iter().take(5) {
-            let short_type = a.payload_type
+            let short_type = a
+                .payload_type
                 .strip_prefix("application/vnd.treeship.")
                 .and_then(|s| s.strip_suffix(".v1+json"))
                 .unwrap_or(&a.payload_type);
@@ -248,13 +252,22 @@ pub fn run(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::e
     // Hub status
     printer.section("hub");
     if let Some((name, entry)) = cfg.active_hub_connection() {
-        printer.info(&format!("  {} {} ({})", printer.green("●"), name, entry.hub_id));
+        printer.info(&format!(
+            "  {} {} ({})",
+            printer.green("●"),
+            name,
+            entry.hub_id
+        ));
         printer.dim_info(&format!("  endpoint  {}", entry.endpoint));
     } else if cfg.hub_connections.is_empty() {
         printer.info(&format!("  {} no hub connections", printer.dim("○")));
         printer.hint("treeship hub attach");
     } else {
-        printer.info(&format!("  {} {} hub connections, none active", printer.dim("○"), cfg.hub_connections.len()));
+        printer.info(&format!(
+            "  {} {} hub connections, none active",
+            printer.dim("○"),
+            cfg.hub_connections.len()
+        ));
         printer.hint("treeship hub use <name>");
     }
     printer.blank();

@@ -227,18 +227,9 @@ fn render_right_panel(frame: &mut Frame, area: Rect, app: &App) {
                     format!("{:<5} ", a.artifact_type),
                     Style::default().fg(Color::Rgb(147, 197, 253)),
                 ),
-                Span::styled(
-                    format!("{:<20} ", a.action),
-                    Style::default().fg(WHITE),
-                ),
-                Span::styled(
-                    format!("{:>3} ", a.exit_code),
-                    exit_style,
-                ),
-                Span::styled(
-                    format!("{:>7} ", elapsed),
-                    Style::default().fg(DIM),
-                ),
+                Span::styled(format!("{:<20} ", a.action), Style::default().fg(WHITE)),
+                Span::styled(format!("{:>3} ", a.exit_code), exit_style),
+                Span::styled(format!("{:>7} ", elapsed), Style::default().fg(DIM)),
                 Span::styled(ts, Style::default().fg(DIM)),
             ]);
 
@@ -251,11 +242,7 @@ fn render_right_panel(frame: &mut Frame, area: Rect, app: &App) {
 
     let list = List::new(items)
         .block(block)
-        .highlight_style(
-            Style::default()
-                .fg(WHITE)
-                .add_modifier(Modifier::BOLD),
-        );
+        .highlight_style(Style::default().fg(WHITE).add_modifier(Modifier::BOLD));
 
     frame.render_stateful_widget(list, area, &mut state);
 }

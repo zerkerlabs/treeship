@@ -14,8 +14,9 @@ pub fn test_connection(
     _config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let otel_config = crate::otel::config::OtelConfig::from_env()
-        .ok_or("TREESHIP_OTEL_ENDPOINT not set\n\n  export TREESHIP_OTEL_ENDPOINT=http://localhost:4318")?;
+    let otel_config = crate::otel::config::OtelConfig::from_env().ok_or(
+        "TREESHIP_OTEL_ENDPOINT not set\n\n  export TREESHIP_OTEL_ENDPOINT=http://localhost:4318",
+    )?;
 
     if !otel_config.enabled {
         printer.warn("otel export is disabled (TREESHIP_OTEL_ENABLED=false)", &[]);
@@ -27,19 +28,22 @@ pub fn test_connection(
     match crate::otel::exporter::send_test_span(&otel_config) {
         Ok(()) => {
             printer.blank();
-            printer.success("connected", &[
-                ("endpoint", &otel_config.endpoint),
-                ("service",  &otel_config.service_name),
-            ]);
+            printer.success(
+                "connected",
+                &[
+                    ("endpoint", &otel_config.endpoint),
+                    ("service", &otel_config.service_name),
+                ],
+            );
             printer.info("  sent 1 test span");
             printer.blank();
         }
         Err(e) => {
             printer.blank();
-            printer.failure("connection failed", &[
-                ("endpoint", &otel_config.endpoint),
-                ("error",    &e),
-            ]);
+            printer.failure(
+                "connection failed",
+                &[("endpoint", &otel_config.endpoint), ("error", &e)],
+            );
             printer.blank();
         }
     }
@@ -48,9 +52,7 @@ pub fn test_connection(
 }
 
 #[cfg(feature = "otel")]
-pub fn status(
-    printer: &Printer,
-) {
+pub fn status(printer: &Printer) {
     match crate::otel::config::OtelConfig::from_env() {
         Some(cfg) => {
             printer.blank();
@@ -81,8 +83,8 @@ pub fn export_artifact(
     config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let otel_config = crate::otel::config::OtelConfig::from_env()
-        .ok_or("TREESHIP_OTEL_ENDPOINT not set")?;
+    let otel_config =
+        crate::otel::config::OtelConfig::from_env().ok_or("TREESHIP_OTEL_ENDPOINT not set")?;
 
     let ctx = crate::ctx::open(config)?;
     let record = ctx.storage.read(id)?;
@@ -90,18 +92,15 @@ pub fn export_artifact(
     match crate::otel::exporter::export_artifact(&otel_config, &record) {
         Ok(()) => {
             printer.blank();
-            printer.success("exported", &[
-                ("artifact", id),
-                ("endpoint", &otel_config.endpoint),
-            ]);
+            printer.success(
+                "exported",
+                &[("artifact", id), ("endpoint", &otel_config.endpoint)],
+            );
             printer.blank();
         }
         Err(e) => {
             printer.blank();
-            printer.failure("export failed", &[
-                ("artifact", id),
-                ("error",    &e),
-            ]);
+            printer.failure("export failed", &[("artifact", id), ("error", &e)]);
             printer.blank();
         }
     }

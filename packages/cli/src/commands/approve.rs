@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use treeship_core::{
     attestation::sign,
-    statements::{ActionStatement, ApprovalStatement, payload_type},
+    statements::{payload_type, ActionStatement, ApprovalStatement},
     storage::Record,
 };
 
@@ -273,10 +273,7 @@ pub fn pending(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
         let idx = i + 1;
         let ago = format_relative(now_ms.saturating_sub(pa.requested_at_ms));
         printer.info(&format!("  {}. {}", idx, pa.command));
-        printer.dim_info(&format!(
-            "     label: {}  |  requested {}",
-            pa.label, ago
-        ));
+        printer.dim_info(&format!("     label: {}  |  requested {}", pa.label, ago));
         printer.hint(&format!("treeship approve {}", idx));
         printer.blank();
     }
@@ -305,7 +302,8 @@ pub fn approve(
             "invalid index {}. {} pending approval(s)",
             idx,
             entries.len()
-        ).into());
+        )
+        .into());
     }
 
     let (path, mut pa) = entries[idx - 1].clone();
@@ -333,14 +331,14 @@ pub fn approve(
     let result = sign(&pt, &stmt, signer.as_ref())?;
 
     ctx.storage.write(&Record {
-        artifact_id:  result.artifact_id.clone(),
-        digest:       result.digest.clone(),
+        artifact_id: result.artifact_id.clone(),
+        digest: result.digest.clone(),
         payload_type: pt,
-        key_id:       signer.key_id().to_string(),
-        signed_at:    stmt.timestamp.clone(),
-        parent_id:    None,
-        envelope:     result.envelope,
-        hub_url:      None,
+        key_id: signer.key_id().to_string(),
+        signed_at: stmt.timestamp.clone(),
+        parent_id: None,
+        envelope: result.envelope,
+        hub_url: None,
     })?;
 
     // Mark the pending file as approved with the nonce
@@ -383,7 +381,8 @@ pub fn deny(
             "invalid index {}. {} pending approval(s)",
             idx,
             entries.len()
-        ).into());
+        )
+        .into());
     }
 
     let (path, pa) = entries[idx - 1].clone();
@@ -407,14 +406,14 @@ pub fn deny(
     let result = sign(&pt, &stmt, signer.as_ref())?;
 
     ctx.storage.write(&Record {
-        artifact_id:  result.artifact_id.clone(),
-        digest:       result.digest.clone(),
+        artifact_id: result.artifact_id.clone(),
+        digest: result.digest.clone(),
         payload_type: pt,
-        key_id:       signer.key_id().to_string(),
-        signed_at:    stmt.timestamp.clone(),
-        parent_id:    None,
-        envelope:     result.envelope,
-        hub_url:      None,
+        key_id: signer.key_id().to_string(),
+        signed_at: stmt.timestamp.clone(),
+        parent_id: None,
+        envelope: result.envelope,
+        hub_url: None,
     })?;
 
     // Remove the pending file

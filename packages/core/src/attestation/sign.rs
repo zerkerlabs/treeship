@@ -2,10 +2,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::Serialize;
 
 use crate::attestation::{
-    pae,
-    artifact_id_from_pae, digest_from_pae, ArtifactId,
-    Signer,
-    Envelope, Signature,
+    artifact_id_from_pae, digest_from_pae, pae, ArtifactId, Envelope, Signature, Signer,
 };
 
 /// The result of a successful `sign` call.
@@ -55,8 +52,8 @@ pub struct SignResult {
 /// ```
 pub fn sign<T: Serialize>(
     payload_type: &str,
-    statement:    &T,
-    signer:       &dyn Signer,
+    statement: &T,
+    signer: &dyn Signer,
 ) -> Result<SignResult, SignError> {
     if payload_type.is_empty() {
         return Err(SignError("payload_type must not be empty".into()));
@@ -77,19 +74,23 @@ pub fn sign<T: Serialize>(
 
     // 4. Build the DSSE envelope.
     let envelope = Envelope {
-        payload:      URL_SAFE_NO_PAD.encode(&payload_bytes),
+        payload: URL_SAFE_NO_PAD.encode(&payload_bytes),
         payload_type: payload_type.to_string(),
         signatures: vec![Signature {
             keyid: signer.key_id().to_string(),
-            sig:   URL_SAFE_NO_PAD.encode(&raw_sig),
+            sig: URL_SAFE_NO_PAD.encode(&raw_sig),
         }],
     };
 
     // 5. Derive ID and digest from the PAE bytes — same bytes that were signed.
     let artifact_id = artifact_id_from_pae(&pae_bytes);
-    let digest      = digest_from_pae(&pae_bytes);
+    let digest = digest_from_pae(&pae_bytes);
 
-    Ok(SignResult { envelope, artifact_id, digest })
+    Ok(SignResult {
+        envelope,
+        artifact_id,
+        digest,
+    })
 }
 
 /// Error from the sign operation.
@@ -113,8 +114,8 @@ mod tests {
     #[derive(Debug, PartialEq, Serialize, Deserialize)]
     struct TestStmt {
         #[serde(rename = "type")]
-        type_:  String,
-        actor:  String,
+        type_: String,
+        actor: String,
         action: String,
     }
 
@@ -126,8 +127,8 @@ mod tests {
 
     fn make_stmt() -> TestStmt {
         TestStmt {
-            type_:  "treeship/action/v1".into(),
-            actor:  "agent://researcher".into(),
+            type_: "treeship/action/v1".into(),
+            actor: "agent://researcher".into(),
             action: "tool.call".into(),
         }
     }
@@ -145,15 +146,19 @@ mod tests {
     #[test]
     fn artifact_id_format() {
         let signer = make_signer();
-        let r      = sign(TEST_PT, &make_stmt(), &signer).unwrap();
-        assert!(r.artifact_id.starts_with("art_"), "must start with art_: {}", r.artifact_id);
+        let r = sign(TEST_PT, &make_stmt(), &signer).unwrap();
+        assert!(
+            r.artifact_id.starts_with("art_"),
+            "must start with art_: {}",
+            r.artifact_id
+        );
         assert_eq!(r.artifact_id.len(), 36, "art_ + 32 hex: {}", r.artifact_id);
     }
 
     #[test]
     fn digest_format() {
         let signer = make_signer();
-        let r      = sign(TEST_PT, &make_stmt(), &signer).unwrap();
+        let r = sign(TEST_PT, &make_stmt(), &signer).unwrap();
         assert!(r.digest.starts_with("sha256:"), "must start with sha256:");
         assert_eq!(r.digest.len(), 71, "sha256: + 64 hex: {}", r.digest);
     }
@@ -167,18 +172,18 @@ mod tests {
     #[test]
     fn id_matches_verify() {
         // The ID derived during sign must equal the ID re-derived during verify.
-        let signer   = make_signer();
+        let signer = make_signer();
         let verifier = Verifier::from_signer(&signer);
-        let signed   = sign(TEST_PT, &make_stmt(), &signer).unwrap();
+        let signed = sign(TEST_PT, &make_stmt(), &signer).unwrap();
         let verified = verifier.verify(&signed.envelope).unwrap();
         assert_eq!(signed.artifact_id, verified.artifact_id);
     }
 
     #[test]
     fn digest_matches_verify() {
-        let signer   = make_signer();
+        let signer = make_signer();
         let verifier = Verifier::from_signer(&signer);
-        let signed   = sign(TEST_PT, &make_stmt(), &signer).unwrap();
+        let signed = sign(TEST_PT, &make_stmt(), &signer).unwrap();
         let verified = verifier.verify(&signed.envelope).unwrap();
         assert_eq!(signed.digest, verified.digest);
     }
@@ -187,7 +192,7 @@ mod tests {
     fn payload_roundtrip() {
         let signer = make_signer();
         let original = make_stmt();
-        let r      = sign(TEST_PT, &original, &signer).unwrap();
+        let r = sign(TEST_PT, &original, &signer).unwrap();
         let decoded: TestStmt = r.envelope.unmarshal_statement().unwrap();
         assert_eq!(decoded, original);
     }
@@ -196,36 +201,54 @@ mod tests {
     fn id_deterministic() {
         // Two calls with identical content must produce the same ID.
         let signer = make_signer();
-        let r1     = sign(TEST_PT, &make_stmt(), &signer).unwrap();
-        let r2     = sign(TEST_PT, &make_stmt(), &signer).unwrap();
+        let r1 = sign(TEST_PT, &make_stmt(), &signer).unwrap();
+        let r2 = sign(TEST_PT, &make_stmt(), &signer).unwrap();
         assert_eq!(r1.artifact_id, r2.artifact_id);
     }
 
     #[test]
     fn id_differs_by_content() {
         let signer = make_signer();
-        let s1     = TestStmt { type_: "treeship/action/v1".into(), actor: "a".into(), action: "x".into() };
-        let s2     = TestStmt { type_: "treeship/action/v1".into(), actor: "b".into(), action: "x".into() };
-        let r1     = sign(TEST_PT, &s1, &signer).unwrap();
-        let r2     = sign(TEST_PT, &s2, &signer).unwrap();
+        let s1 = TestStmt {
+            type_: "treeship/action/v1".into(),
+            actor: "a".into(),
+            action: "x".into(),
+        };
+        let s2 = TestStmt {
+            type_: "treeship/action/v1".into(),
+            actor: "b".into(),
+            action: "x".into(),
+        };
+        let r1 = sign(TEST_PT, &s1, &signer).unwrap();
+        let r2 = sign(TEST_PT, &s2, &signer).unwrap();
         assert_ne!(r1.artifact_id, r2.artifact_id);
     }
 
     #[test]
     fn id_differs_by_payload_type() {
         let signer = make_signer();
-        let r1 = sign("application/vnd.treeship.action.v1+json",   &make_stmt(), &signer).unwrap();
-        let r2 = sign("application/vnd.treeship.approval.v1+json",  &make_stmt(), &signer).unwrap();
+        let r1 = sign(
+            "application/vnd.treeship.action.v1+json",
+            &make_stmt(),
+            &signer,
+        )
+        .unwrap();
+        let r2 = sign(
+            "application/vnd.treeship.approval.v1+json",
+            &make_stmt(),
+            &signer,
+        )
+        .unwrap();
         assert_ne!(r1.artifact_id, r2.artifact_id);
     }
 
     #[test]
     fn json_serialization_roundtrip() {
-        let signer   = make_signer();
+        let signer = make_signer();
         let verifier = Verifier::from_signer(&signer);
-        let signed   = sign(TEST_PT, &make_stmt(), &signer).unwrap();
+        let signed = sign(TEST_PT, &make_stmt(), &signer).unwrap();
 
-        let json     = signed.envelope.to_json().unwrap();
+        let json = signed.envelope.to_json().unwrap();
         let restored = Envelope::from_json(&json).unwrap();
 
         // The restored envelope must still verify correctly.

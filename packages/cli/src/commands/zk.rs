@@ -13,12 +13,24 @@ pub fn setup(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
         printer.info("  circuits:");
 
         for (name, vk_content) in [
-            ("policy-checker", include_bytes!("../../../zk-circom/zkeys/pc_vk.json").as_slice()),
-            ("spend-limit-checker", include_bytes!("../../../zk-circom/zkeys/slc_vk.json").as_slice()),
-            ("input-output-binding", include_bytes!("../../../zk-circom/zkeys/iob_vk.json").as_slice()),
-            ("prompt-template", include_bytes!("../../../zk-circom/zkeys/pt_vk.json").as_slice()),
+            (
+                "policy-checker",
+                include_bytes!("../../../zk-circom/zkeys/pc_vk.json").as_slice(),
+            ),
+            (
+                "spend-limit-checker",
+                include_bytes!("../../../zk-circom/zkeys/slc_vk.json").as_slice(),
+            ),
+            (
+                "input-output-binding",
+                include_bytes!("../../../zk-circom/zkeys/iob_vk.json").as_slice(),
+            ),
+            (
+                "prompt-template",
+                include_bytes!("../../../zk-circom/zkeys/pt_vk.json").as_slice(),
+            ),
         ] {
-            use sha2::{Sha256, Digest};
+            use sha2::{Digest, Sha256};
             let hash = hex::encode(Sha256::digest(vk_content));
             printer.info(&format!("    {}  vk:{}", name, &hash[..16]));
         }
@@ -30,7 +42,10 @@ pub fn setup(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
             .is_ok();
         printer.blank();
         if snarkjs_ok {
-            printer.info(&format!("  {} snarkjs (proving runtime)", printer.green("+")));
+            printer.info(&format!(
+                "  {} snarkjs (proving runtime)",
+                printer.green("+")
+            ));
         } else {
             printer.dim_info("  - snarkjs not found (install: npm install -g snarkjs)");
         }

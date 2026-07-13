@@ -25,7 +25,9 @@ pub struct RenderConfig {
     pub generate_preview: bool,
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 /// A section in the rendered report.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,12 +47,36 @@ impl RenderConfig {
     /// Default sections matching the spec's Explorer UX.
     pub fn default_sections() -> Vec<RenderSection> {
         vec![
-            RenderSection { id: "summary".into(), label: "Session Summary".into(), visible: true },
-            RenderSection { id: "participants".into(), label: "Participant Strip".into(), visible: true },
-            RenderSection { id: "agent_graph".into(), label: "Delegation & Collaboration Graph".into(), visible: true },
-            RenderSection { id: "timeline".into(), label: "Mission Timeline".into(), visible: true },
-            RenderSection { id: "side_effects".into(), label: "Side-Effect Ledger".into(), visible: true },
-            RenderSection { id: "proofs".into(), label: "Proofs Panel".into(), visible: true },
+            RenderSection {
+                id: "summary".into(),
+                label: "Session Summary".into(),
+                visible: true,
+            },
+            RenderSection {
+                id: "participants".into(),
+                label: "Participant Strip".into(),
+                visible: true,
+            },
+            RenderSection {
+                id: "agent_graph".into(),
+                label: "Delegation & Collaboration Graph".into(),
+                visible: true,
+            },
+            RenderSection {
+                id: "timeline".into(),
+                label: "Mission Timeline".into(),
+                visible: true,
+            },
+            RenderSection {
+                id: "side_effects".into(),
+                label: "Side-Effect Ledger".into(),
+                visible: true,
+            },
+            RenderSection {
+                id: "proofs".into(),
+                label: "Proofs Panel".into(),
+                visible: true,
+            },
         ]
     }
 }

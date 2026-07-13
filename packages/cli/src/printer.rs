@@ -1,28 +1,40 @@
 use std::io::{self, IsTerminal};
 
 #[derive(Clone, Copy, PartialEq)]
-pub enum Format { Text, Json }
+pub enum Format {
+    Text,
+    Json,
+}
 
 impl Format {
     pub fn from_str(s: &str) -> Self {
-        match s { "json" => Self::Json, _ => Self::Text }
+        match s {
+            "json" => Self::Json,
+            _ => Self::Text,
+        }
     }
 }
 
 pub struct Printer {
-    pub format:   Format,
-    pub quiet:    bool,
+    pub format: Format,
+    pub quiet: bool,
     pub no_color: bool,
 }
 
 impl Printer {
     pub fn new(format: Format, quiet: bool, no_color: bool) -> Self {
-        Self { format, quiet, no_color }
+        Self {
+            format,
+            quiet,
+            no_color,
+        }
     }
 
     /// ✓ green success header + aligned key:value fields
     pub fn success(&self, msg: &str, fields: &[(&str, &str)]) {
-        if self.quiet { return; }
+        if self.quiet {
+            return;
+        }
         if self.format == Format::Json {
             self.print_json_with_status("ok", Some(msg), fields);
             return;
@@ -51,12 +63,16 @@ impl Printer {
             return;
         }
         eprintln!("{}", self.red(&format!("✗ {msg}")));
-        for (k, v) in fields { eprintln!("  {k}: {v}"); }
+        for (k, v) in fields {
+            eprintln!("  {k}: {v}");
+        }
     }
 
     /// ⚠ amber warning
     pub fn warn(&self, msg: &str, fields: &[(&str, &str)]) {
-        if self.quiet { return; }
+        if self.quiet {
+            return;
+        }
         if self.format == Format::Json {
             self.print_json_with_status("warning", Some(msg), fields);
             return;
@@ -68,38 +84,48 @@ impl Printer {
     /// Dim hint line shown after a success to guide the next step
     ///   →  treeship verify art_abc123
     pub fn hint(&self, msg: &str) {
-        if self.quiet || self.format == Format::Json { return; }
+        if self.quiet || self.format == Format::Json {
+            return;
+        }
         println!("{}", self.dim(&format!("   → {msg}")));
     }
 
     /// Blank breathing room
     pub fn blank(&self) {
-        if self.quiet || self.format == Format::Json { return; }
+        if self.quiet || self.format == Format::Json {
+            return;
+        }
         println!();
     }
 
     /// Plain info line
     pub fn info(&self, msg: &str) {
-        if self.quiet || self.format == Format::Json { return; }
+        if self.quiet || self.format == Format::Json {
+            return;
+        }
         println!("{msg}");
     }
 
     /// Dim secondary info
     pub fn dim_info(&self, msg: &str) {
-        if self.quiet || self.format == Format::Json { return; }
+        if self.quiet || self.format == Format::Json {
+            return;
+        }
         println!("{}", self.dim(msg));
     }
 
     /// Bold section header (for status-style multi-part output)
     pub fn section(&self, title: &str) {
-        if self.quiet || self.format == Format::Json { return; }
+        if self.quiet || self.format == Format::Json {
+            return;
+        }
         println!("{}", self.bold(title));
     }
 
     /// Print any serialisable value as indented JSON
     pub fn json<T: serde::Serialize>(&self, v: &T) {
         match serde_json::to_string_pretty(v) {
-            Ok(s)  => println!("{s}"),
+            Ok(s) => println!("{s}"),
             Err(e) => eprintln!("json error: {e}"),
         }
     }
@@ -107,7 +133,9 @@ impl Printer {
     // --- internal ---
 
     fn print_fields(&self, fields: &[(&str, &str)]) {
-        if fields.is_empty() { return; }
+        if fields.is_empty() {
+            return;
+        }
         let max = fields.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
         for (k, v) in fields {
             let pad = " ".repeat(max - k.len());
@@ -123,12 +151,7 @@ impl Printer {
         println!("{}", serde_json::to_string(&m).unwrap_or_default());
     }
 
-    fn print_json_with_status(
-        &self,
-        status: &str,
-        message: Option<&str>,
-        fields: &[(&str, &str)],
-    ) {
+    fn print_json_with_status(&self, status: &str, message: Option<&str>, fields: &[(&str, &str)]) {
         println!("{}", self.json_envelope(status, message, fields));
     }
 
@@ -144,12 +167,19 @@ impl Printer {
         fields: &[(&str, &str)],
     ) -> String {
         let mut m = serde_json::Map::new();
-        m.insert("status".into(), serde_json::Value::String(status.to_string()));
+        m.insert(
+            "status".into(),
+            serde_json::Value::String(status.to_string()),
+        );
         if let Some(msg) = message {
             // success/warning use `message`; error uses `error`. Both
             // are present so callers don't have to read `status` to
             // know which key carries the human text.
-            let key = if status == "error" { "error" } else { "message" };
+            let key = if status == "error" {
+                "error"
+            } else {
+                "message"
+            };
             m.insert(key.into(), serde_json::Value::String(msg.to_string()));
         }
         for (k, v) in fields {
@@ -166,15 +196,31 @@ impl Printer {
     }
 
     fn code(&self, s: &str, c: &str) -> String {
-        if self.use_color() { format!("{c}{s}\x1b[0m") } else { s.to_string() }
+        if self.use_color() {
+            format!("{c}{s}\x1b[0m")
+        } else {
+            s.to_string()
+        }
     }
 
-    pub fn green(&self, s: &str)  -> String { self.code(s, "\x1b[32m") }
-    pub fn red(&self, s: &str)    -> String { self.code(s, "\x1b[31m") }
-    pub fn yellow(&self, s: &str) -> String { self.code(s, "\x1b[33m") }
-    pub fn dim(&self, s: &str)    -> String { self.code(s, "\x1b[2m")  }
-    pub fn bold(&self, s: &str)   -> String { self.code(s, "\x1b[1m")  }
-    pub fn cyan(&self, s: &str)   -> String { self.code(s, "\x1b[36m") }
+    pub fn green(&self, s: &str) -> String {
+        self.code(s, "\x1b[32m")
+    }
+    pub fn red(&self, s: &str) -> String {
+        self.code(s, "\x1b[31m")
+    }
+    pub fn yellow(&self, s: &str) -> String {
+        self.code(s, "\x1b[33m")
+    }
+    pub fn dim(&self, s: &str) -> String {
+        self.code(s, "\x1b[2m")
+    }
+    pub fn bold(&self, s: &str) -> String {
+        self.code(s, "\x1b[1m")
+    }
+    pub fn cyan(&self, s: &str) -> String {
+        self.code(s, "\x1b[36m")
+    }
 }
 
 #[cfg(test)]
@@ -183,7 +229,11 @@ mod tests {
     use serde_json::Value;
 
     fn json_printer() -> Printer {
-        Printer::new(Format::Json, /* quiet */ false, /* no_color */ true)
+        Printer::new(
+            Format::Json,
+            /* quiet */ false,
+            /* no_color */ true,
+        )
     }
 
     fn parse(s: &str) -> Value {

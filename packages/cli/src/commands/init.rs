@@ -11,14 +11,13 @@ use crate::{
 };
 
 pub fn run(
-    name:        Option<String>,
+    name: Option<String>,
     config_path: Option<String>,
-    force:       bool,
-    global:      bool,
-    template:    Option<String>,
-    printer:     &Printer,
+    force: bool,
+    global: bool,
+    template: Option<String>,
+    printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
-
     // Resolve target. Order:
     //   1. --config <path>  (explicit user override; we never second-guess it)
     //   2. --global         (forces user-level path even when a project
@@ -27,7 +26,7 @@ pub fn run(
     let config_path: PathBuf = match config_path {
         Some(p) => PathBuf::from(p),
         None if global => global_config_path()?,
-        None    => default_config_path()?,
+        None => default_config_path()?,
     };
 
     // Guard: refuse to clobber the global keystore unless the operator
@@ -56,7 +55,8 @@ pub fn run(
                  global default_key_id under --force, breaking signature continuity\n\
                  for every receipt that referenced the old key.",
                 config_path.display()
-            ).into());
+            )
+            .into());
         }
     }
 
@@ -69,9 +69,7 @@ pub fn run(
 
     // ---- 1. Generate keypair (existing behavior) ----
 
-    let keys_dir = config_path.parent()
-        .unwrap_or(&config_path)
-        .join("keys");
+    let keys_dir = config_path.parent().unwrap_or(&config_path).join("keys");
 
     let key_store = KeyStore::open(&keys_dir)?;
 
@@ -84,8 +82,8 @@ pub fn run(
         }
     }
 
-    let key_info  = key_store.generate(true)?;
-    let ship_id   = format!("ship_{}", key_info.fingerprint);
+    let key_info = key_store.generate(true)?;
+    let ship_id = format!("ship_{}", key_info.fingerprint);
 
     let cfg = config::new_config(&config_path, &ship_id, &key_info.id, name);
     config::save(&cfg, &config_path)?;
@@ -103,9 +101,10 @@ pub fn run(
         write_project_config(&project_config)?;
 
         printer.blank();
-        printer.success("Configuration saved to .treeship/config.yaml", &[
-            ("Template", tmpl_name),
-        ]);
+        printer.success(
+            "Configuration saved to .treeship/config.yaml",
+            &[("Template", tmpl_name)],
+        );
 
         // Show onboarding message
         if let Some(ref msg) = onboarding {
@@ -122,7 +121,7 @@ pub fn run(
             let install_hooks = !matches!(hook_input.trim().to_lowercase().as_str(), "n" | "no");
             if install_hooks {
                 match super::install::install(printer) {
-                    Ok(()) => {},
+                    Ok(()) => {}
                     Err(e) => {
                         printer.warn("Could not install hooks", &[("error", &e.to_string())]);
                     }
@@ -163,7 +162,7 @@ pub fn run(
     let project_type = match project_choice.trim() {
         "2" => "cicd",
         "3" => "general",
-        _   => "agent",
+        _ => "agent",
     };
 
     // Detect language from cwd
@@ -174,8 +173,8 @@ pub fn run(
     // Actor URI
     let default_actor = match project_type {
         "agent" => "agent://my-agent",
-        "cicd"  => "agent://ci",
-        _       => "agent://dev",
+        "cicd" => "agent://ci",
+        _ => "agent://dev",
     };
     let actor_input = prompt(&format!("Agent actor URI (default: {}): ", default_actor));
     let actor = if actor_input.trim().is_empty() {
@@ -192,10 +191,10 @@ pub fn run(
 
     // Build project config
     let core_type = match (project_type, lang.as_str()) {
-        (_, "node")   => "node",
-        (_, "rust")   => "rust",
+        (_, "node") => "node",
+        (_, "rust") => "rust",
         (_, "python") => "python",
-        _             => "general",
+        _ => "general",
     };
 
     let mut project_config = ProjectConfig::default_for(core_type, &actor);
@@ -222,7 +221,7 @@ pub fn run(
 
     if install_hooks {
         match super::install::install(printer) {
-            Ok(()) => {},
+            Ok(()) => {}
             Err(e) => {
                 printer.warn("Could not install hooks", &[("error", &e.to_string())]);
             }
@@ -279,15 +278,22 @@ mod tests {
         // ship_id. write_project_config should leave this alone.
         let dir = tempdir();
         let path = dir.join("config.json");
-        std::fs::write(&path, r#"{
+        std::fs::write(
+            &path,
+            r#"{
             "ship_id": "ship_abc123",
             "name": "test",
             "storage_dir": "/tmp/proj/.treeship/artifacts",
             "keys_dir": "/tmp/proj/.treeship/keys",
             "default_key_id": "key_xyz",
             "hub_connections": {}
-        }"#).unwrap();
-        assert!(config_json_is_real(&path), "real Config with ship_id should be detected as real");
+        }"#,
+        )
+        .unwrap();
+        assert!(
+            config_json_is_real(&path),
+            "real Config with ship_id should be detected as real"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -298,11 +304,18 @@ mod tests {
         // safe to overwrite.
         let dir = tempdir();
         let path = dir.join("config.json");
-        std::fs::write(&path, r#"{
+        std::fs::write(
+            &path,
+            r#"{
             "extends": "/Users/somebody/.treeship/config.json",
             "project": true
-        }"#).unwrap();
-        assert!(!config_json_is_real(&path), "marker stub without ship_id must NOT be detected as real");
+        }"#,
+        )
+        .unwrap();
+        assert!(
+            !config_json_is_real(&path),
+            "marker stub without ship_id must NOT be detected as real"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -328,7 +341,10 @@ mod tests {
         let dir = tempdir();
         let path = dir.join("config.json");
         std::fs::write(&path, r#"{"ship_id": ""}"#).unwrap();
-        assert!(!config_json_is_real(&path), "empty ship_id should not count as real");
+        assert!(
+            !config_json_is_real(&path),
+            "empty ship_id should not count as real"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
@@ -349,9 +365,7 @@ fn detect_language() -> String {
     }
 }
 
-fn write_project_config(
-    project_config: &ProjectConfig,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn write_project_config(project_config: &ProjectConfig) -> Result<(), Box<dyn std::error::Error>> {
     let cwd = std::env::current_dir()?;
     let ts_dir = cwd.join(".treeship");
     std::fs::create_dir_all(&ts_dir)?;
@@ -437,5 +451,7 @@ fn config_json_is_real(path: &std::path::Path) -> bool {
         Ok(v) => v,
         Err(_) => return false,
     };
-    val.get("ship_id").and_then(|v| v.as_str()).is_some_and(|s| !s.is_empty())
+    val.get("ship_id")
+        .and_then(|v| v.as_str())
+        .is_some_and(|s| !s.is_empty())
 }

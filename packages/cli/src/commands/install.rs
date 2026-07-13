@@ -158,7 +158,9 @@ pub fn install(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
         "could not detect shell from $SHELL -- set SHELL to /bin/zsh, /bin/bash, or /usr/bin/fish",
     )?;
 
-    let config_path = shell.config_path().ok_or("could not determine home directory")?;
+    let config_path = shell
+        .config_path()
+        .ok_or("could not determine home directory")?;
 
     if already_installed(&config_path) {
         printer.info(&format!(
@@ -194,9 +196,20 @@ pub fn install(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::write(&config_path, &contents)?;
 
     printer.blank();
-    printer.success("Shell hooks installed", &[
-        ("shell", &format!("{} (~{})", shell.name(), config_path.file_name().unwrap_or_default().to_string_lossy())),
-    ]);
+    printer.success(
+        "Shell hooks installed",
+        &[(
+            "shell",
+            &format!(
+                "{} (~{})",
+                shell.name(),
+                config_path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+            ),
+        )],
+    );
     printer.blank();
     printer.info("  From now on, matching commands are attested automatically.");
     printer.info("  Edit .treeship/config.yaml to change which commands are attested.");
@@ -208,17 +221,28 @@ pub fn install(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 pub fn uninstall(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
-    let shell = Shell::detect().ok_or(
-        "could not detect shell from $SHELL",
-    )?;
+    let shell = Shell::detect().ok_or("could not detect shell from $SHELL")?;
 
-    let config_path = shell.config_path().ok_or("could not determine home directory")?;
+    let config_path = shell
+        .config_path()
+        .ok_or("could not determine home directory")?;
 
     if remove_hook(&config_path)? {
         printer.blank();
-        printer.success("Shell hooks removed", &[
-            ("shell", &format!("{} (~{})", shell.name(), config_path.file_name().unwrap_or_default().to_string_lossy())),
-        ]);
+        printer.success(
+            "Shell hooks removed",
+            &[(
+                "shell",
+                &format!(
+                    "{} (~{})",
+                    shell.name(),
+                    config_path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                ),
+            )],
+        );
         printer.blank();
     } else {
         printer.info("  No Treeship hooks found to remove.");

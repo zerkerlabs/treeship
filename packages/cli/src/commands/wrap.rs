@@ -3,15 +3,15 @@ use std::process;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
 use treeship_core::{
     attestation::sign,
     session::{
-        EventLog, EventType, SessionEvent,
         event::{generate_event_id, generate_span_id, generate_trace_id},
+        EventLog, EventType, SessionEvent,
     },
-    statements::{ActionStatement, payload_type},
+    statements::{payload_type, ActionStatement},
     storage::Record,
 };
 
@@ -21,38 +21,55 @@ use crate::{ctx, printer::Printer};
 /// sensitive values that appear as inline environment variables or flags.
 fn sanitize_command(cmd: &str) -> String {
     let sensitive_patterns = [
-        "KEY=", "TOKEN=", "SECRET=", "PASSWORD=", "PASSWD=", "AUTH=",
-        "API_KEY=", "STRIPE_KEY=", "OPENAI_API_KEY=", "CREDENTIAL=",
-        "AWS_SECRET", "PRIVATE_KEY=", "ACCESS_KEY=",
-        "--api-key=", "--token=", "--secret=", "--password=", "--auth=",
-        "--api_key=", "--apikey=",
+        "KEY=",
+        "TOKEN=",
+        "SECRET=",
+        "PASSWORD=",
+        "PASSWD=",
+        "AUTH=",
+        "API_KEY=",
+        "STRIPE_KEY=",
+        "OPENAI_API_KEY=",
+        "CREDENTIAL=",
+        "AWS_SECRET",
+        "PRIVATE_KEY=",
+        "ACCESS_KEY=",
+        "--api-key=",
+        "--token=",
+        "--secret=",
+        "--password=",
+        "--auth=",
+        "--api_key=",
+        "--apikey=",
     ];
     let parts: Vec<&str> = cmd.split_whitespace().collect();
-    let sanitized: Vec<String> = parts.iter().map(|part| {
-        let upper = part.to_uppercase();
-        for pattern in &sensitive_patterns {
-            if upper.contains(pattern) {
-                return "[REDACTED]".to_string();
+    let sanitized: Vec<String> = parts
+        .iter()
+        .map(|part| {
+            let upper = part.to_uppercase();
+            for pattern in &sensitive_patterns {
+                if upper.contains(pattern) {
+                    return "[REDACTED]".to_string();
+                }
             }
-        }
-        part.to_string()
-    }).collect();
+            part.to_string()
+        })
+        .collect();
     sanitized.join(" ")
 }
 
 pub fn run(
-    actor:     Option<String>,
-    action:    Option<String>,
+    actor: Option<String>,
+    action: Option<String>,
     parent_id: Option<String>,
-    push:      bool,
-    config:    Option<&str>,
-    args:      &[String],     // everything after --
-    printer:   &Printer,
+    push: bool,
+    config: Option<&str>,
+    args: &[String], // everything after --
+    printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
-
     if args.is_empty() {
         return Err(
-            "no command given\n\n  usage: treeship wrap [flags] -- <command> [args...]".into()
+            "no command given\n\n  usage: treeship wrap [flags] -- <command> [args...]".into(),
         );
     }
 
@@ -130,7 +147,7 @@ pub fn run(
     let elapsed_ms = elapsed.as_millis() as u64;
 
     let (exit_code, succeeded) = match &status {
-        Ok(s)  => (s.code().unwrap_or(-1), s.success()),
+        Ok(s) => (s.code().unwrap_or(-1), s.success()),
         Err(_) => (-1, false),
     };
 
@@ -158,15 +175,16 @@ pub fn run(
     // cannot tell it apart from a real digest); null is self-describing ("we
     // saw the change but could not read the bytes").
     let mut unreadable = 0usize;
-    let files_modified: Vec<serde_json::Value> = changed_files.iter().map(|path| {
-        match file_sha256(path) {
+    let files_modified: Vec<serde_json::Value> = changed_files
+        .iter()
+        .map(|path| match file_sha256(path) {
             Some(digest) => serde_json::json!({ "path": path, "digest": digest }),
             None => {
                 unreadable += 1;
                 serde_json::json!({ "path": path, "digest": serde_json::Value::Null })
             }
-        }
-    }).collect();
+        })
+        .collect();
     if unreadable > 0 {
         printer.warn(
             "some changed files were unreadable at snapshot time; digest recorded as null",
@@ -178,7 +196,8 @@ pub fn run(
     let files_summary = if changed_files.is_empty() {
         String::new()
     } else {
-        let dirs: Vec<String> = changed_files.iter()
+        let dirs: Vec<String> = changed_files
+            .iter()
             .take(3)
             .map(|p| {
                 let path = std::path::Path::new(p);
@@ -191,7 +210,9 @@ pub fn run(
             .collect();
         let unique: Vec<String> = {
             let mut seen = std::collections::HashSet::new();
-            dirs.into_iter().filter(|d| seen.insert(d.clone())).collect()
+            dirs.into_iter()
+                .filter(|d| seen.insert(d.clone()))
+                .collect()
         };
         format!("({})", unique.join(", "))
     };
@@ -226,18 +247,18 @@ pub fn run(
     stmt.meta = Some(meta);
 
     let signer = ctx.keys.default_signer()?;
-    let pt     = payload_type("action");
+    let pt = payload_type("action");
     let result = sign(&pt, &stmt, signer.as_ref())?;
 
     ctx.storage.write(&Record {
-        artifact_id:  result.artifact_id.clone(),
-        digest:       result.digest.clone(),
+        artifact_id: result.artifact_id.clone(),
+        digest: result.digest.clone(),
         payload_type: pt,
-        key_id:       signer.key_id().to_string(),
-        signed_at:    stmt.timestamp.clone(),
-        parent_id:    parent_id.clone(),
-        envelope:     result.envelope,
-        hub_url:      None,
+        key_id: signer.key_id().to_string(),
+        signed_at: stmt.timestamp.clone(),
+        parent_id: parent_id.clone(),
+        envelope: result.envelope,
+        hub_url: None,
     })?;
 
     // ── 2. Auto-chaining: write .last ──────────────────────────────────
@@ -246,7 +267,14 @@ pub fn run(
     // ── Emit session events (best-effort, never fails the wrap) ─────
     // If a session is active, emit process start/complete and file-write
     // events so they appear in the Session Receipt.
-    emit_wrap_events(&safe_command, &action_label, exit_code, elapsed_ms, &changed_files, &files_before);
+    emit_wrap_events(
+        &safe_command,
+        &action_label,
+        exit_code,
+        elapsed_ms,
+        &changed_files,
+        &files_before,
+    );
 
     // ── AgentDecision from env vars (best-effort) ─────────────────
     // If TREESHIP_MODEL (or any of TREESHIP_TOKENS_IN, TREESHIP_TOKENS_OUT,
@@ -279,26 +307,28 @@ pub fn run(
             if let Ok(decl_content) = std::fs::read_to_string(&decl_path) {
                 if let Ok(decl) = serde_json::from_str::<serde_json::Value>(&decl_content) {
                     if let Some(actions) = decl.get("bounded_actions").and_then(|a| a.as_array()) {
-                        let allowed: Vec<String> = actions.iter()
+                        let allowed: Vec<String> = actions
+                            .iter()
                             .filter_map(|a| a.as_str().map(|s| s.to_string()))
                             .collect();
                         if !allowed.is_empty() {
                             // Write bounded_actions to a temp file so prove_circuit
                             // can load it as the policy path.
-                            let policy_result = (|| -> std::result::Result<(), Box<dyn std::error::Error>> {
-                                let tmp_dir = tempfile::tempdir()?;
-                                let policy_path = tmp_dir.path().join("policy.json");
-                                let policy_json = serde_json::to_vec_pretty(&allowed)?;
-                                std::fs::write(&policy_path, &policy_json)?;
-                                super::prove::prove_circuit(
-                                    "policy-checker",
-                                    &result.artifact_id,
-                                    policy_path.to_str(),
-                                    config,
-                                    printer,
-                                )?;
-                                Ok(())
-                            })();
+                            let policy_result =
+                                (|| -> std::result::Result<(), Box<dyn std::error::Error>> {
+                                    let tmp_dir = tempfile::tempdir()?;
+                                    let policy_path = tmp_dir.path().join("policy.json");
+                                    let policy_json = serde_json::to_vec_pretty(&allowed)?;
+                                    std::fs::write(&policy_path, &policy_json)?;
+                                    super::prove::prove_circuit(
+                                        "policy-checker",
+                                        &result.artifact_id,
+                                        policy_path.to_str(),
+                                        config,
+                                        printer,
+                                    )?;
+                                    Ok(())
+                                })();
                             if let Err(e) = policy_result {
                                 printer.dim_info(&format!("  zk proof: {}", e));
                             }
@@ -359,7 +389,11 @@ pub fn run(
         Some(pid) => {
             let step = chain_depth(&ctx, pid);
             let pid_short = if pid.len() > 14 { &pid[..14] } else { pid };
-            let aid_short = if short_id.len() > 14 { &short_id[..14] } else { short_id };
+            let aid_short = if short_id.len() > 14 {
+                &short_id[..14]
+            } else {
+                short_id
+            };
             format!("{} -> {}  (step {})", pid_short, aid_short, step)
         }
         None => "root".to_string(),
@@ -397,7 +431,10 @@ pub fn run(
     // Warn if no session is active -- the wrap created an artifact but
     // it won't appear in any session receipt.
     if super::session::load_session().is_none() {
-        printer.warn("no active session -- this command will not appear in a receipt", &[]);
+        printer.warn(
+            "no active session -- this command will not appear in a receipt",
+            &[],
+        );
         printer.hint("run: treeship session start --name \"my task\"");
     }
 
@@ -519,7 +556,7 @@ fn file_mtimes(dir: &str) -> std::collections::HashMap<String, std::time::System
 /// Diff two file mtime snapshots, returning paths that are new or changed.
 fn diff_files(
     before: &std::collections::HashMap<String, std::time::SystemTime>,
-    after:  &std::collections::HashMap<String, std::time::SystemTime>,
+    after: &std::collections::HashMap<String, std::time::SystemTime>,
 ) -> Vec<String> {
     let mut changed = Vec::new();
     for (path, mtime) in after {
@@ -562,15 +599,13 @@ fn chain_depth(ctx: &ctx::Ctx, parent_id: &str) -> usize {
     let mut current = parent_id.to_string();
     for _ in 0..20 {
         match ctx.storage.read(&current) {
-            Ok(record) => {
-                match record.parent_id {
-                    Some(pid) => {
-                        depth += 1;
-                        current = pid;
-                    }
-                    None => break,
+            Ok(record) => match record.parent_id {
+                Some(pid) => {
+                    depth += 1;
+                    current = pid;
                 }
-            }
+                None => break,
+            },
             Err(_) => break,
         }
     }
@@ -645,7 +680,11 @@ fn emit_wrap_events(
     // File write events with created/modified detection
     for path in changed_files {
         let op = if files_before.contains_key(path) {
-            if std::path::Path::new(path).exists() { "modified" } else { "deleted" }
+            if std::path::Path::new(path).exists() {
+                "modified"
+            } else {
+                "deleted"
+            }
         } else {
             "created"
         };
@@ -740,7 +779,9 @@ fn find_treeship_dir() -> Option<std::path::PathBuf> {
         if ts.is_dir() {
             return Some(ts);
         }
-        if !dir.pop() { return None; }
+        if !dir.pop() {
+            return None;
+        }
     }
 }
 
@@ -755,7 +796,7 @@ fn format_elapsed(d: std::time::Duration) -> String {
             format!("{:.1}s", secs)
         } else {
             let mins = secs as u64 / 60;
-            let rem  = secs as u64 % 60;
+            let rem = secs as u64 % 60;
             format!("{}m{}s", mins, rem)
         }
     }
@@ -782,7 +823,10 @@ mod tests {
         use std::os::unix::process::ExitStatusExt;
         for sig in [1, 6, 9, 11, 15] {
             let st = std::process::ExitStatus::from_raw(sig);
-            assert!(signal_exit_code(&st) > 0, "signal {sig} must map to nonzero");
+            assert!(
+                signal_exit_code(&st) > 0,
+                "signal {sig} must map to nonzero"
+            );
         }
     }
 }

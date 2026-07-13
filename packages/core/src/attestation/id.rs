@@ -107,7 +107,12 @@ mod tests {
     #[test]
     fn id_correct_length() {
         let id = artifact_id_from_pae(&test_pae());
-        assert_eq!(id.len(), 36, "ID must be 36 chars ('art_' + 32 hex): {}", id);
+        assert_eq!(
+            id.len(),
+            36,
+            "ID must be 36 chars ('art_' + 32 hex): {}",
+            id
+        );
     }
 
     #[test]
@@ -119,8 +124,14 @@ mod tests {
 
     #[test]
     fn id_different_for_different_content() {
-        let a = pae("application/vnd.treeship.action.v1+json", b"{\"actor\":\"a\"}");
-        let b = pae("application/vnd.treeship.action.v1+json", b"{\"actor\":\"b\"}");
+        let a = pae(
+            "application/vnd.treeship.action.v1+json",
+            b"{\"actor\":\"a\"}",
+        );
+        let b = pae(
+            "application/vnd.treeship.action.v1+json",
+            b"{\"actor\":\"b\"}",
+        );
         assert_ne!(
             artifact_id_from_pae(&a),
             artifact_id_from_pae(&b),
@@ -150,7 +161,11 @@ mod tests {
     #[test]
     fn parse_valid() {
         let id = artifact_id_from_pae(&test_pae());
-        assert!(parse_artifact_id(&id).is_ok(), "valid ID should parse: {}", id);
+        assert!(
+            parse_artifact_id(&id).is_ok(),
+            "valid ID should parse: {}",
+            id
+        );
     }
 
     #[test]
@@ -164,11 +179,7 @@ mod tests {
             "art_gggggggggggggggggggggggggggggggg", // non-hex
         ];
         for id in bad {
-            assert!(
-                parse_artifact_id(id).is_err(),
-                "should reject {:?}",
-                id
-            );
+            assert!(parse_artifact_id(id).is_err(), "should reject {:?}", id);
         }
     }
 }

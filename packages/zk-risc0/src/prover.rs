@@ -88,7 +88,9 @@ impl RiscZeroProver {
                 );
             }
         }
-        Self { mode: ProverMode::Local }
+        Self {
+            mode: ProverMode::Local,
+        }
     }
 
     /// Prove a chain of artifacts using the RISC Zero zkVM.
@@ -106,18 +108,21 @@ impl RiscZeroProver {
         // Build guest-compatible artifacts with full content + signatures.
         // A malformed signature encoding is now a hard error (AUD-08), not a
         // silently-corrupted byte string.
-        let guest_artifacts: Vec<GuestArtifact> = artifacts.iter().map(|a| {
-            let sig_bytes = base64_decode_sig(&a.signature)
-                .map_err(|e| format!("artifact {}: {e}", a.artifact_id))?;
-            Ok(GuestArtifact {
-                artifact_id: a.artifact_id.clone(),
-                digest: a.digest.clone(),
-                parent_id: a.parent_id.clone(),
-                content: a.pae_message.clone(), // PAE bytes used for digest
-                signature_bytes: sig_bytes,
-                signed_message: a.pae_message.clone(), // PAE is the signed message
+        let guest_artifacts: Vec<GuestArtifact> = artifacts
+            .iter()
+            .map(|a| {
+                let sig_bytes = base64_decode_sig(&a.signature)
+                    .map_err(|e| format!("artifact {}: {e}", a.artifact_id))?;
+                Ok(GuestArtifact {
+                    artifact_id: a.artifact_id.clone(),
+                    digest: a.digest.clone(),
+                    parent_id: a.parent_id.clone(),
+                    content: a.pae_message.clone(), // PAE bytes used for digest
+                    signature_bytes: sig_bytes,
+                    signed_message: a.pae_message.clone(), // PAE is the signed message
+                })
             })
-        }).collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
+            .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
 
         // Write both inputs matching the guest's two env::read() calls
         let env = risc0_zkvm::ExecutorEnv::builder()
@@ -144,12 +149,16 @@ impl RiscZeroProver {
         };
 
         let image_id = hex::encode(
-            TREESHIP_CHAIN_VERIFIER_ID.iter()
+            TREESHIP_CHAIN_VERIFIER_ID
+                .iter()
                 .flat_map(|w| w.to_le_bytes())
-                .collect::<Vec<u8>>()
+                .collect::<Vec<u8>>(),
         );
 
-        eprintln!("[treeship] chain proof complete. image_id: {}", &image_id[..16]);
+        eprintln!(
+            "[treeship] chain proof complete. image_id: {}",
+            &image_id[..16]
+        );
 
         Ok(ChainProofResult {
             image_id,
@@ -179,7 +188,10 @@ impl RiscZeroProver {
         Ok(output.chain_intact && output.all_digests_valid && output.all_signatures_valid)
     }
 
-    pub fn save_proof(proof: &ChainProofResult, path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn save_proof(
+        proof: &ChainProofResult,
+        path: &PathBuf,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let json = serde_json::to_vec_pretty(proof)?;
         std::fs::write(path, json)?;
         Ok(())
@@ -224,7 +236,12 @@ mod aud08_tests {
         let sig = [0x5au8; 64];
         let encoded = URL_SAFE_NO_PAD.encode(sig);
         let decoded = base64_decode_sig(&encoded).expect("valid base64url must decode");
-        assert_eq!(decoded.len(), 64, "64-byte signature must decode to 64 bytes, got {}", decoded.len());
+        assert_eq!(
+            decoded.len(),
+            64,
+            "64-byte signature must decode to 64 bytes, got {}",
+            decoded.len()
+        );
         assert_eq!(decoded, sig);
     }
 

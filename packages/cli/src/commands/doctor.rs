@@ -86,7 +86,10 @@ fn shell_config_path() -> Option<(String, PathBuf)> {
     } else if shell.contains("bash") {
         Some(("bash".to_string(), home.join(".bashrc")))
     } else if shell.contains("fish") {
-        Some(("fish".to_string(), home.join(".config").join("fish").join("config.fish")))
+        Some((
+            "fish".to_string(),
+            home.join(".config").join("fish").join("config.fish"),
+        ))
     } else {
         None
     }
@@ -217,16 +220,11 @@ pub fn run(
             }
 
             if all_changes.is_empty() {
-                checks.push(Check::pass(
-                    "doctor --fix",
-                    "permissions already correct",
-                ));
+                checks.push(Check::pass("doctor --fix", "permissions already correct"));
             } else {
                 let summary = all_changes
                     .iter()
-                    .map(|(p, old, new)| {
-                        format!("{} ({:o}→{:o})", p.display(), old, new)
-                    })
+                    .map(|(p, old, new)| format!("{} ({:o}→{:o})", p.display(), old, new))
                     .collect::<Vec<_>>()
                     .join(", ");
                 checks.push(Check::info(
@@ -244,17 +242,18 @@ pub fn run(
     }
     match &ctx_result {
         Ok(ctx) => {
-            checks.push(Check::pass(
-                "treeship initialized",
-                &ctx.config.ship_id,
-            ));
+            checks.push(Check::pass("treeship initialized", &ctx.config.ship_id));
             // Surface where the config came from. A user debugging "wrong
             // keystore" or "stale config" needs to see whether the resolved
             // path was an --config override, env var, project-local
             // discovery, or the global fallback. v0.9.6 had no signal here.
             checks.push(Check::info(
                 "config source",
-                &format!("{} -- {}", ctx.config_source.label(), ctx.config_path.display()),
+                &format!(
+                    "{} -- {}",
+                    ctx.config_source.label(),
+                    ctx.config_path.display()
+                ),
             ));
         }
         Err(_) => {
@@ -271,7 +270,11 @@ pub fn run(
         match ctx.keys.default_signer() {
             Ok(signer) => {
                 let key_id = signer.key_id();
-                let short_key = if key_id.len() > 12 { &key_id[..12] } else { key_id };
+                let short_key = if key_id.len() > 12 {
+                    &key_id[..12]
+                } else {
+                    key_id
+                };
                 checks.push(Check::pass(
                     "keypair valid",
                     &format!("{} (ed25519)", short_key),
@@ -322,7 +325,8 @@ pub fn run(
     match shell_config_path() {
         Some((shell_name, shell_path)) => {
             if hook_installed(&shell_path) {
-                let short_path = shell_path.file_name()
+                let short_path = shell_path
+                    .file_name()
                     .unwrap_or_default()
                     .to_string_lossy()
                     .to_string();
@@ -339,10 +343,7 @@ pub fn run(
             }
         }
         None => {
-            checks.push(Check::info(
-                "shell hooks",
-                "could not detect shell",
-            ));
+            checks.push(Check::info("shell hooks", "could not detect shell"));
         }
     }
 
@@ -350,7 +351,9 @@ pub fn run(
     let (daemon_running, daemon_pid, daemon_uptime) = super::daemon::daemon_info();
     if daemon_running {
         let pid = daemon_pid.unwrap_or(0);
-        let uptime = daemon_uptime.map(|s| format_uptime_secs(s)).unwrap_or_else(|| "unknown".to_string());
+        let uptime = daemon_uptime
+            .map(|s| format_uptime_secs(s))
+            .unwrap_or_else(|| "unknown".to_string());
         checks.push(Check::pass(
             "daemon running",
             &format!("pid {} (uptime: {})", pid, uptime),
@@ -366,7 +369,11 @@ pub fn run(
     // 6. Is Hub attached?
     if let Ok(ref ctx) = ctx_result {
         if let Some((name, entry)) = ctx.config.active_hub_connection() {
-            let short_hub = if entry.hub_id.len() > 12 { &entry.hub_id[..12] } else { &entry.hub_id };
+            let short_hub = if entry.hub_id.len() > 12 {
+                &entry.hub_id[..12]
+            } else {
+                &entry.hub_id
+            };
             checks.push(Check::pass(
                 "hub attached",
                 &format!("{} ({}, {})", entry.endpoint, name, short_hub),
@@ -375,10 +382,7 @@ pub fn run(
             // 7. Is Hub reachable? (only check if attached)
             let reachable = check_hub_reachable(&entry.endpoint);
             if reachable {
-                checks.push(Check::pass(
-                    "hub reachable",
-                    &entry.endpoint,
-                ));
+                checks.push(Check::pass("hub reachable", &entry.endpoint));
             } else {
                 checks.push(Check::fail(
                     "hub unreachable",
@@ -474,10 +478,7 @@ pub fn run(
                 &format!("{} authorized tools", tools.len()),
             ));
         } else {
-            checks.push(Check::info(
-                "declaration",
-                "not found (optional)",
-            ));
+            checks.push(Check::info("declaration", "not found (optional)"));
         }
     }
 
@@ -499,13 +500,13 @@ pub fn run(
 
         checks.push(Check::pass(
             "active session",
-            &format!("{} \"{}\" ({}, {} receipts)", manifest.session_id, name, elapsed_str, receipt_count),
+            &format!(
+                "{} \"{}\" ({}, {} receipts)",
+                manifest.session_id, name, elapsed_str, receipt_count
+            ),
         ));
     } else {
-        checks.push(Check::info(
-            "no active session",
-            "",
-        ));
+        checks.push(Check::info("no active session", ""));
     }
 
     // Print all checks
@@ -534,9 +535,7 @@ pub fn run(
                 }
                 ("!", Box::new(|p: &Printer, s: &str| p.yellow(s)))
             }
-            CheckStatus::Info => {
-                ("·", Box::new(|p: &Printer, s: &str| p.dim(s)))
-            }
+            CheckStatus::Info => ("·", Box::new(|p: &Printer, s: &str| p.dim(s))),
         };
 
         let label_str = color_fn(printer, &format!("{}  {}", icon, check.label));
@@ -546,7 +545,12 @@ pub fn run(
             // Pad label for alignment
             let pad_len = 28usize.saturating_sub(check.label.len() + 4);
             let pad = " ".repeat(pad_len);
-            printer.info(&format!("  {}{}  {}", label_str, pad, printer.dim(&check.detail)));
+            printer.info(&format!(
+                "  {}{}  {}",
+                label_str,
+                pad,
+                printer.dim(&check.detail)
+            ));
         }
     }
 
@@ -571,7 +575,11 @@ pub fn run(
             summary_parts.push(format!(
                 "{} {}",
                 printer.yellow(&warn_count.to_string()),
-                if warn_count == 1 { "warning" } else { "warnings" },
+                if warn_count == 1 {
+                    "warning"
+                } else {
+                    "warnings"
+                },
             ));
         }
         printer.info(&format!("  {}", summary_parts.join(", ")));
@@ -609,7 +617,7 @@ fn check_hub_reachable(endpoint: &str) -> bool {
 
     // Check if host contains a port
     let (host, port) = if let Some(idx) = host.rfind(':') {
-        let p = host[idx+1..].parse::<u16>().unwrap_or(port);
+        let p = host[idx + 1..].parse::<u16>().unwrap_or(port);
         (&host[..idx], p)
     } else {
         (host, port)
@@ -651,7 +659,10 @@ fn check_directory_permissions(ts_path: &Path, checks: &mut Vec<Check>) {
         if mode & 0o077 != 0 {
             checks.push(Check::warn(
                 ".treeship permissions",
-                &format!("directory is accessible by other users (mode {:o})", mode & 0o777),
+                &format!(
+                    "directory is accessible by other users (mode {:o})",
+                    mode & 0o777
+                ),
                 "chmod 700 .treeship",
             ));
         } else {
@@ -728,7 +739,10 @@ fn check_keys_directory_permissions(keys_dir: &Path, checks: &mut Vec<Check>) {
         if mode & 0o077 != 0 {
             checks.push(Check::warn(
                 "keys/ permissions",
-                &format!("key directory accessible by other users (mode {:o})", mode & 0o777),
+                &format!(
+                    "key directory accessible by other users (mode {:o})",
+                    mode & 0o777
+                ),
                 "chmod 700 .treeship/keys",
             ));
         } else {

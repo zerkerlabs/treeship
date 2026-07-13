@@ -15,9 +15,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcCommand;
 
-use crate::commands::harnesses::{
-    self, HarnessManifest, HarnessState, HarnessStatus, SmokeResult,
-};
+use crate::commands::harnesses::{self, HarnessManifest, HarnessState, HarnessStatus, SmokeResult};
 use crate::ctx;
 use crate::printer::{Format, Printer};
 
@@ -75,7 +73,10 @@ fn print_list_json(states: &[HarnessState]) {
             })
         })
         .collect();
-    println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "harnesses": rows })).unwrap_or_default());
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({ "harnesses": rows })).unwrap_or_default()
+    );
 }
 
 fn print_list_text(states: &[HarnessState], printer: &Printer) {
@@ -86,17 +87,18 @@ fn print_list_text(states: &[HarnessState], printer: &Printer) {
         let state = states.iter().find(|s| s.harness_id == m.harness_id);
         let status = state.map(|s| s.status.label()).unwrap_or("detected");
         let mark = match status {
-            "verified"     => "✓",
+            "verified" => "✓",
             "instrumented" => "✓",
             "drifted" | "degraded" => "!",
-            "disabled"     => "—",
-            _              => "·",
+            "disabled" => "—",
+            _ => "·",
         };
-        let installable = if m.install.is_some() { "" } else { " (no auto-installer)" };
-        printer.info(&format!(
-            "  {mark} {}{}",
-            m.display_name, installable,
-        ));
+        let installable = if m.install.is_some() {
+            ""
+        } else {
+            " (no auto-installer)"
+        };
+        printer.info(&format!("  {mark} {}{}", m.display_name, installable,));
         printer.dim_info(&format!("    id:       {}", m.harness_id));
         printer.dim_info(&format!("    surface:  {}", m.surface.kind()));
         printer.dim_info(&format!("    coverage: {}", m.coverage.label()));
@@ -138,9 +140,11 @@ pub fn inspect(
 }
 
 fn print_inspect_json(m: &HarnessManifest, state: Option<&HarnessState>) {
-    let install = m.install.as_ref().map(|i| serde_json::json!({
-        "method": i.install_method.label(),
-    }));
+    let install = m.install.as_ref().map(|i| {
+        serde_json::json!({
+            "method": i.install_method.label(),
+        })
+    });
     let potential_captures = serde_json::to_value(m.captures).unwrap_or_default();
     // Verified captures live in state, defaulting to "all None" (nothing
     // proven). Surface them as a distinct field so JSON consumers can
@@ -162,7 +166,10 @@ fn print_inspect_json(m: &HarnessManifest, state: Option<&HarnessState>) {
         "install":               install,
         "state":                 state,
     });
-    println!("{}", serde_json::to_string_pretty(&value).unwrap_or_default());
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&value).unwrap_or_default()
+    );
 }
 
 fn print_inspect_text(m: &HarnessManifest, state: Option<&HarnessState>, printer: &Printer) {
@@ -177,7 +184,11 @@ fn print_inspect_text(m: &HarnessManifest, state: Option<&HarnessState>, printer
     printer.info(&format!("  coverage:     {}", m.coverage.label()));
     printer.info(&format!(
         "  installable:  {}",
-        if m.install.is_some() { "yes (treeship add / treeship setup)" } else { "no -- register manually with treeship agent register" },
+        if m.install.is_some() {
+            "yes (treeship add / treeship setup)"
+        } else {
+            "no -- register manually with treeship agent register"
+        },
     ));
 
     // Two distinct rows: what the harness *could* capture if attached
@@ -198,11 +209,26 @@ fn print_inspect_text(m: &HarnessManifest, state: Option<&HarnessState>, printer
     if vc.is_empty() {
         printer.dim_info("    (none yet -- run a real session through this harness)");
     } else {
-        printer.dim_info(&format!("    files.read     {}", verified_label(vc.files_read)));
-        printer.dim_info(&format!("    files.write    {}", verified_label(vc.files_write)));
-        printer.dim_info(&format!("    commands.run   {}", verified_label(vc.commands_run)));
-        printer.dim_info(&format!("    mcp.call       {}", verified_label(vc.mcp_call)));
-        printer.dim_info(&format!("    model/provider {}", verified_label(vc.model_provider)));
+        printer.dim_info(&format!(
+            "    files.read     {}",
+            verified_label(vc.files_read)
+        ));
+        printer.dim_info(&format!(
+            "    files.write    {}",
+            verified_label(vc.files_write)
+        ));
+        printer.dim_info(&format!(
+            "    commands.run   {}",
+            verified_label(vc.commands_run)
+        ));
+        printer.dim_info(&format!(
+            "    mcp.call       {}",
+            verified_label(vc.mcp_call)
+        ));
+        printer.dim_info(&format!(
+            "    model/provider {}",
+            verified_label(vc.model_provider)
+        ));
     }
 
     printer.blank();
@@ -234,7 +260,8 @@ fn print_inspect_text(m: &HarnessManifest, state: Option<&HarnessState>, printer
             printer.dim_info(&format!(
                 "    last smoke:    {} -- {} ({})",
                 if s.passed { "pass" } else { "fail" },
-                s.summary, s.at,
+                s.summary,
+                s.at,
             ));
         }
         if !state.linked_agent_ids.is_empty() {
@@ -251,13 +278,19 @@ fn print_inspect_text(m: &HarnessManifest, state: Option<&HarnessState>, printer
     printer.blank();
 }
 
-fn yes_no(b: bool) -> &'static str { if b { "yes" } else { "no" } }
+fn yes_no(b: bool) -> &'static str {
+    if b {
+        "yes"
+    } else {
+        "no"
+    }
+}
 
 fn verified_label(v: Option<bool>) -> &'static str {
     match v {
-        Some(true)  => "yes",
+        Some(true) => "yes",
         Some(false) => "smoke ran but signal absent",
-        None        => "not yet proven",
+        None => "not yet proven",
     }
 }
 
@@ -273,8 +306,8 @@ pub fn smoke(
     config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let manifest = harnesses::find(harness_id)
-        .ok_or_else(|| format!("no harness with id {harness_id:?}"))?;
+    let manifest =
+        harnesses::find(harness_id).ok_or_else(|| format!("no harness with id {harness_id:?}"))?;
     let ctx = ctx::open(config)?;
     let dir = harnesses::harnesses_dir_for(&ctx.config_path);
 
@@ -329,7 +362,8 @@ pub fn smoke(
     if passed {
         printer.success("generic trust-fabric smoke passed", &[]);
         printer.dim_info("  status: instrumented (harness-specific capture not yet proven)");
-        printer.dim_info("  Run a real session through this harness to populate verified_captures.");
+        printer
+            .dim_info("  Run a real session through this harness to populate verified_captures.");
     } else {
         printer.warn("smoke failed", &[]);
         if let Some(r) = state.last_smoke_result.as_ref() {
@@ -348,12 +382,60 @@ fn run_smoke() -> Result<(), Box<dyn std::error::Error>> {
     let workspace = tempfile::tempdir()?;
     let cfg = workspace.path().join(".treeship").join("config.json");
 
-    run_in(workspace.path(), &exe, &["init", "--config", to_str(&cfg), "--name", "harness-smoke"])?;
-    run_in(workspace.path(), &exe, &["session", "start", "--config", to_str(&cfg), "--name", "harness-smoke"])?;
-    run_in(workspace.path(), &exe, &["wrap", "--config", to_str(&cfg), "--action", "harness.smoke", "--", "true"])?;
-    run_in(workspace.path(), &exe, &["session", "close", "--config", to_str(&cfg), "--summary", "harness smoke ok"])?;
+    run_in(
+        workspace.path(),
+        &exe,
+        &["init", "--config", to_str(&cfg), "--name", "harness-smoke"],
+    )?;
+    run_in(
+        workspace.path(),
+        &exe,
+        &[
+            "session",
+            "start",
+            "--config",
+            to_str(&cfg),
+            "--name",
+            "harness-smoke",
+        ],
+    )?;
+    run_in(
+        workspace.path(),
+        &exe,
+        &[
+            "wrap",
+            "--config",
+            to_str(&cfg),
+            "--action",
+            "harness.smoke",
+            "--",
+            "true",
+        ],
+    )?;
+    run_in(
+        workspace.path(),
+        &exe,
+        &[
+            "session",
+            "close",
+            "--config",
+            to_str(&cfg),
+            "--summary",
+            "harness smoke ok",
+        ],
+    )?;
     let pkg = find_recent_package(workspace.path())?;
-    run_in(workspace.path(), &exe, &["package", "verify", "--config", to_str(&cfg), &pkg.to_string_lossy()])?;
+    run_in(
+        workspace.path(),
+        &exe,
+        &[
+            "package",
+            "verify",
+            "--config",
+            to_str(&cfg),
+            &pkg.to_string_lossy(),
+        ],
+    )?;
     Ok(())
 }
 
@@ -370,7 +452,14 @@ fn run_in(cwd: &Path, exe: &Path, args: &[&str]) -> Result<(), Box<dyn std::erro
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let summary = stderr.lines().last().unwrap_or("(no stderr)").to_string();
-        return Err(format!("{} {}: exit {} -- {}", exe.display(), args.join(" "), output.status, summary).into());
+        return Err(format!(
+            "{} {}: exit {} -- {}",
+            exe.display(),
+            args.join(" "),
+            output.status,
+            summary
+        )
+        .into());
     }
     Ok(())
 }
@@ -378,7 +467,11 @@ fn run_in(cwd: &Path, exe: &Path, args: &[&str]) -> Result<(), Box<dyn std::erro
 fn find_recent_package(workspace: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let sessions = workspace.join(".treeship").join("sessions");
     if !sessions.is_dir() {
-        return Err(format!("smoke produced no .treeship/sessions/ at {}", sessions.display()).into());
+        return Err(format!(
+            "smoke produced no .treeship/sessions/ at {}",
+            sessions.display()
+        )
+        .into());
     }
     let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
     for entry in std::fs::read_dir(&sessions)? {
@@ -394,6 +487,10 @@ fn find_recent_package(workspace: &Path) -> Result<PathBuf, Box<dyn std::error::
         }
     }
     best.map(|(_, p)| p).ok_or_else(|| {
-        format!("no .treeship session package found under {}", sessions.display()).into()
+        format!(
+            "no .treeship session package found under {}",
+            sessions.display()
+        )
+        .into()
     })
 }

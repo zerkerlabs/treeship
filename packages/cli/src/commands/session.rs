@@ -5,11 +5,11 @@ use treeship_core::{
     attestation::sign,
     journal::{self, Journal},
     session::{
-        self, ApprovalsBundle, EventLog, EventType, ReceiptComposer, SessionEvent,
-        build_package_with_approvals,
+        self, build_package_with_approvals,
         event::{generate_event_id, generate_span_id, generate_trace_id},
+        ApprovalsBundle, EventLog, EventType, ReceiptComposer, SessionEvent,
     },
-    statements::{ActionStatement, ApprovalStatement, ReceiptStatement, SubjectRef, payload_type},
+    statements::{payload_type, ActionStatement, ApprovalStatement, ReceiptStatement, SubjectRef},
     storage::Record,
 };
 
@@ -65,8 +65,12 @@ fn home_dir() -> Option<PathBuf> {
 }
 
 fn is_home_git_root(path: &Path) -> bool {
-    let Some(home) = home_dir() else { return false; };
-    let Ok(path) = path.canonicalize() else { return false; };
+    let Some(home) = home_dir() else {
+        return false;
+    };
+    let Ok(path) = path.canonicalize() else {
+        return false;
+    };
     path == home
 }
 
@@ -285,7 +289,8 @@ pub fn start(
             "session already active: {} ({})\n\n  run: treeship session close",
             existing.session_id,
             existing.name.unwrap_or_default()
-        ).into());
+        )
+        .into());
     }
 
     let ts_dir = match session_dir() {
@@ -330,25 +335,20 @@ pub fn start(
     let result = sign(&pt, &stmt, signer.as_ref())?;
 
     ctx.storage.write(&Record {
-        artifact_id:  result.artifact_id.clone(),
-        digest:       result.digest.clone(),
+        artifact_id: result.artifact_id.clone(),
+        digest: result.digest.clone(),
         payload_type: pt,
-        key_id:       signer.key_id().to_string(),
-        signed_at:    stmt.timestamp.clone(),
+        key_id: signer.key_id().to_string(),
+        signed_at: stmt.timestamp.clone(),
         parent_id,
-        envelope:     result.envelope,
-        hub_url:      None,
+        envelope: result.envelope,
+        hub_url: None,
     })?;
 
     write_last(&ctx.config.storage_dir, &result.artifact_id);
 
     // Write session manifest (using core SessionManifest)
-    let manifest = SessionManifest::new(
-        session_id.clone(),
-        actor_uri.clone(),
-        now.clone(),
-        now_ms,
-    );
+    let manifest = SessionManifest::new(session_id.clone(), actor_uri.clone(), now.clone(), now_ms);
     let mut manifest = manifest;
     manifest.name = name.clone();
     manifest.root_artifact_id = Some(result.artifact_id.clone());
@@ -371,8 +371,13 @@ pub fn start(
     let evt_dir = ts_dir.join("sessions").join(&session_id);
     let event_log = EventLog::open(&evt_dir)?;
     let mut evt = base_event(
-        &session_id, &actor_uri, "operator", "treeship-cli",
-        &trace_id, &host_id, EventType::SessionStarted,
+        &session_id,
+        &actor_uri,
+        "operator",
+        "treeship-cli",
+        &trace_id,
+        &host_id,
+        EventType::SessionStarted,
     );
     event_log.append(&mut evt)?;
 
@@ -420,7 +425,10 @@ pub fn status_check() -> Result<(), Box<dyn std::error::Error>> {
 
 pub fn abandon(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     let path = session_path().ok_or("no .treeship directory found -- run treeship init first")?;
-    let ts_dir = path.parent().ok_or("invalid .treeship session path")?.to_path_buf();
+    let ts_dir = path
+        .parent()
+        .ok_or("invalid .treeship session path")?
+        .to_path_buf();
     let _close_lock = CloseLock::acquire(&ts_dir)?;
     let closing = ts_dir.join("session.closing");
 
@@ -440,7 +448,11 @@ pub fn abandon(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
         .as_ref()
         .map(|m| m.session_id.clone())
         .unwrap_or_else(|| format!("unknown-{}", epoch_ms()));
-    let quarantine = ts_dir.join(format!("quarantine-{}-{}", now_rfc3339().replace(':', ""), session_id));
+    let quarantine = ts_dir.join(format!(
+        "quarantine-{}-{}",
+        now_rfc3339().replace(':', ""),
+        session_id
+    ));
     std::fs::create_dir_all(&quarantine)?;
 
     let target = quarantine.join(manifest_path.file_name().unwrap_or_default());
@@ -461,10 +473,7 @@ pub fn abandon(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn status(
-    config: Option<&str>,
-    printer: &Printer,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub fn status(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     let manifest_opt = load_session();
 
     // JSON mode: emit a structured envelope. Without this branch the
@@ -515,8 +524,7 @@ pub fn status(
             None => 0,
         };
         let elapsed_ms = epoch_ms().saturating_sub(manifest.started_at_ms);
-        let evt_dir = session_dir()
-            .map(|d| d.join("sessions").join(&manifest.session_id));
+        let evt_dir = session_dir().map(|d| d.join("sessions").join(&manifest.session_id));
         let event_count = evt_dir
             .and_then(|d| EventLog::open(&d).ok())
             .map(|log| log.event_count())
@@ -568,20 +576,25 @@ pub fn status(
 
     if !root_verified {
         if manifest.root_artifact_id.is_some() {
-            printer.warn("session root artifact not found in storage (file may have been modified)", &[]);
+            printer.warn(
+                "session root artifact not found in storage (file may have been modified)",
+                &[],
+            );
         }
     }
 
     if artifact_count != manifest.artifact_count && manifest.artifact_count != 0 {
-        printer.warn("session artifact count mismatch (file may have been modified)", &[]);
+        printer.warn(
+            "session artifact count mismatch (file may have been modified)",
+            &[],
+        );
     }
 
     let elapsed_ms = epoch_ms().saturating_sub(manifest.started_at_ms);
     let elapsed_str = format_duration_ms(elapsed_ms);
 
     // Check event log
-    let evt_dir = session_dir()
-        .map(|d| d.join("sessions").join(&manifest.session_id));
+    let evt_dir = session_dir().map(|d| d.join("sessions").join(&manifest.session_id));
     let event_count = evt_dir
         .and_then(|d| EventLog::open(&d).ok())
         .map(|log| log.event_count())
@@ -594,8 +607,14 @@ pub fn status(
         printer.info(&format!("  name:      {}", name));
     }
     printer.info(&format!("  actor:     {}", manifest.actor));
-    printer.info(&format!("  started:   {} ({} ago)", manifest.started_at, elapsed_str));
-    printer.info(&format!("  receipts:  {} (verified from chain)", artifact_count));
+    printer.info(&format!(
+        "  started:   {} ({} ago)",
+        manifest.started_at, elapsed_str
+    ));
+    printer.info(&format!(
+        "  receipts:  {} (verified from chain)",
+        artifact_count
+    ));
     printer.info(&format!("  events:    {}", event_count));
     printer.blank();
     printer.hint("treeship session close --summary \"what was done\"");
@@ -608,30 +627,35 @@ pub fn status(
 // session status --watch (live TUI)
 // ---------------------------------------------------------------------------
 
-pub fn watch(
-    config: Option<&str>,
-    _printer: &Printer,
-) -> Result<(), Box<dyn std::error::Error>> {
-    use std::io::Write;
+pub fn watch(config: Option<&str>, _printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     use std::collections::BTreeMap;
+    use std::io::Write;
 
     /// Strip terminal escape sequences and control characters from a string
     /// to prevent injected ANSI codes from hijacking the TUI display.
     fn sanitize(s: &str) -> String {
-        s.chars().filter(|c| !c.is_control() || *c == '\n').collect()
+        s.chars()
+            .filter(|c| !c.is_control() || *c == '\n')
+            .collect()
     }
 
     /// UTF-8-safe truncation: truncate to at most `max` chars, not bytes.
     fn trunc(s: &str, max: usize) -> String {
         let truncated: String = s.chars().take(max).collect();
-        if s.chars().count() > max { format!("{}...", truncated) } else { truncated }
+        if s.chars().count() > max {
+            format!("{}...", truncated)
+        } else {
+            truncated
+        }
     }
 
     /// Guard that disables raw mode on drop (panic, error, or clean exit).
     struct RawModeGuard(bool);
     impl Drop for RawModeGuard {
         fn drop(&mut self) {
-            if self.0 { let _ = crossterm::terminal::disable_raw_mode(); }
+            if self.0 {
+                let _ = crossterm::terminal::disable_raw_mode();
+            }
         }
     }
 
@@ -660,7 +684,10 @@ pub fn watch(
         // Read events
         let log = match EventLog::open(&evt_dir) {
             Ok(l) => l,
-            Err(_) => { std::thread::sleep(std::time::Duration::from_secs(2)); continue; }
+            Err(_) => {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                continue;
+            }
         };
         let events = log.read_all().unwrap_or_default();
         let event_count = events.len();
@@ -668,17 +695,36 @@ pub fn watch(
         // Compute agent stats
         let mut agents: BTreeMap<String, (String, String, u32, u64, u64)> = BTreeMap::new(); // name -> (model, role, actions, tok_in, tok_out)
         for e in &events {
-            let entry = agents.entry(e.agent_instance_id.clone()).or_insert_with(|| {
-                (String::new(), String::new(), 0, 0, 0)
-            });
-            if entry.0.is_empty() { entry.0 = e.agent_name.clone(); }
-            if entry.1.is_empty() { entry.1 = e.agent_role.clone().unwrap_or_default(); }
+            let entry = agents
+                .entry(e.agent_instance_id.clone())
+                .or_insert_with(|| (String::new(), String::new(), 0, 0, 0));
+            if entry.0.is_empty() {
+                entry.0 = e.agent_name.clone();
+            }
+            if entry.1.is_empty() {
+                entry.1 = e.agent_role.clone().unwrap_or_default();
+            }
             match &e.event_type {
-                EventType::AgentCalledTool { .. } | EventType::AgentCompletedProcess { .. } => { entry.2 += 1; }
-                EventType::AgentDecision { model, tokens_in, tokens_out, .. } => {
-                    if let Some(m) = model { if !m.is_empty() { entry.0 = m.clone(); } }
-                    if let Some(t) = tokens_in { entry.3 += t; }
-                    if let Some(t) = tokens_out { entry.4 += t; }
+                EventType::AgentCalledTool { .. } | EventType::AgentCompletedProcess { .. } => {
+                    entry.2 += 1;
+                }
+                EventType::AgentDecision {
+                    model,
+                    tokens_in,
+                    tokens_out,
+                    ..
+                } => {
+                    if let Some(m) = model {
+                        if !m.is_empty() {
+                            entry.0 = m.clone();
+                        }
+                    }
+                    if let Some(t) = tokens_in {
+                        entry.3 += t;
+                    }
+                    if let Some(t) = tokens_out {
+                        entry.4 += t;
+                    }
                 }
                 _ => {}
             }
@@ -689,7 +735,10 @@ pub fn watch(
             matches!(&e.event_type, EventType::AgentReadFile { file_path, .. } if
                 file_path.contains(".env") || file_path.contains(".ssh") || file_path.contains(".pem") || file_path.contains(".aws"))
         }).count();
-        let external_calls = events.iter().filter(|e| matches!(&e.event_type, EventType::AgentConnectedNetwork { .. })).count();
+        let external_calls = events
+            .iter()
+            .filter(|e| matches!(&e.event_type, EventType::AgentConnectedNetwork { .. }))
+            .count();
         let failed_cmds = events.iter().filter(|e| {
             matches!(&e.event_type, EventType::AgentCompletedProcess { exit_code: Some(c), .. } if *c != 0)
         }).count();
@@ -703,7 +752,9 @@ pub fn watch(
         // Header
         let elapsed_ms = epoch_ms().saturating_sub(manifest.started_at_ms);
         let elapsed_str = format_duration_ms(elapsed_ms);
-        writeln!(stdout, "\x1b[1m SESSION: {}\x1b[0m  \x1b[90m{}\x1b[0m  \x1b[32m{} ago\x1b[0m\r",
+        writeln!(
+            stdout,
+            "\x1b[1m SESSION: {}\x1b[0m  \x1b[90m{}\x1b[0m  \x1b[32m{} ago\x1b[0m\r",
             manifest.name.as_deref().unwrap_or("unnamed"),
             manifest.session_id,
             elapsed_str,
@@ -715,29 +766,61 @@ pub fn watch(
         let colors = ["\x1b[35m", "\x1b[33m", "\x1b[36m", "\x1b[34m", "\x1b[31m"];
         for (i, (id, (name, _role, actions, ti, to))) in agents.iter().enumerate() {
             let c = colors[i % colors.len()];
-            let display_name = if name.is_empty() { id.as_str() } else { name.as_str() };
-            writeln!(stdout, " {c}\u{25cf}\x1b[0m {:<28} {:>4}      {}k/{}k\r",
-                trunc(&sanitize(display_name), 28), actions, ti/1000, to/1000)?;
+            let display_name = if name.is_empty() {
+                id.as_str()
+            } else {
+                name.as_str()
+            };
+            writeln!(
+                stdout,
+                " {c}\u{25cf}\x1b[0m {:<28} {:>4}      {}k/{}k\r",
+                trunc(&sanitize(display_name), 28),
+                actions,
+                ti / 1000,
+                to / 1000
+            )?;
         }
         writeln!(stdout, "\r")?;
 
         // Live events (last 15)
         writeln!(stdout, "\x1b[1m LIVE EVENTS\x1b[0m\r")?;
-        let start = if events.len() > 15 { events.len() - 15 } else { 0 };
+        let start = if events.len() > 15 {
+            events.len() - 15
+        } else {
+            0
+        };
         for e in &events[start..] {
             let time = &e.timestamp[11..19.min(e.timestamp.len())];
             let agent = trunc(&sanitize(&e.agent_name), 14);
             let (ev_label, detail) = match &e.event_type {
                 EventType::SessionStarted => ("start".to_string(), "session opened".to_string()),
-                EventType::SessionClosed { summary, .. } => ("closed".to_string(), summary.clone().unwrap_or_default()),
-                EventType::AgentCalledTool { tool_name, duration_ms, .. } => {
-                    (tool_name.clone(), format!("{}ms", duration_ms.unwrap_or(0)))
+                EventType::SessionClosed { summary, .. } => {
+                    ("closed".to_string(), summary.clone().unwrap_or_default())
                 }
-                EventType::AgentCompletedProcess { process_name, exit_code, duration_ms, .. } => {
-                    let status = if *exit_code == Some(0) { "\x1b[32m\u{2713}\x1b[0m" } else { "\x1b[31m\u{2717}\x1b[0m" };
-                    (process_name.clone(), format!("{} {}ms", status, duration_ms.unwrap_or(0)))
+                EventType::AgentCalledTool {
+                    tool_name,
+                    duration_ms,
+                    ..
+                } => (tool_name.clone(), format!("{}ms", duration_ms.unwrap_or(0))),
+                EventType::AgentCompletedProcess {
+                    process_name,
+                    exit_code,
+                    duration_ms,
+                    ..
+                } => {
+                    let status = if *exit_code == Some(0) {
+                        "\x1b[32m\u{2713}\x1b[0m"
+                    } else {
+                        "\x1b[31m\u{2717}\x1b[0m"
+                    };
+                    (
+                        process_name.clone(),
+                        format!("{} {}ms", status, duration_ms.unwrap_or(0)),
+                    )
                 }
-                EventType::AgentDecision { model, provider, .. } => {
+                EventType::AgentDecision {
+                    model, provider, ..
+                } => {
                     let detail = match (model, provider) {
                         (Some(m), Some(p)) => format!("{} via {}", m, p),
                         (Some(m), None) => m.clone(),
@@ -746,38 +829,80 @@ pub fn watch(
                     };
                     ("decision".to_string(), detail)
                 }
-                EventType::AgentWroteFile { file_path, operation, .. } => {
-                    (operation.clone().unwrap_or_else(|| "write".into()), file_path.clone())
+                EventType::AgentWroteFile {
+                    file_path,
+                    operation,
+                    ..
+                } => (
+                    operation.clone().unwrap_or_else(|| "write".into()),
+                    file_path.clone(),
+                ),
+                EventType::AgentReadFile { file_path, .. } => {
+                    ("read".to_string(), file_path.clone())
                 }
-                EventType::AgentReadFile { file_path, .. } => ("read".to_string(), file_path.clone()),
-                EventType::AgentConnectedNetwork { destination, .. } => ("network".to_string(), destination.clone()),
-                EventType::AgentHandoff { to_agent_instance_id, .. } => ("handoff \u{2192}".to_string(), to_agent_instance_id.clone()),
+                EventType::AgentConnectedNetwork { destination, .. } => {
+                    ("network".to_string(), destination.clone())
+                }
+                EventType::AgentHandoff {
+                    to_agent_instance_id,
+                    ..
+                } => ("handoff \u{2192}".to_string(), to_agent_instance_id.clone()),
                 _ => ("event".to_string(), String::new()),
             };
             let detail_short = trunc(&sanitize(&detail), 40);
             let ev_short = trunc(&sanitize(&ev_label), 14);
-            writeln!(stdout, " \x1b[90m{}\x1b[0m  {:<14} \x1b[36m{:<14}\x1b[0m {}\r",
-                time, agent, ev_short, detail_short)?;
+            writeln!(
+                stdout,
+                " \x1b[90m{}\x1b[0m  {:<14} \x1b[36m{:<14}\x1b[0m {}\r",
+                time, agent, ev_short, detail_short
+            )?;
         }
         writeln!(stdout, "\r")?;
 
         // Security summary
         writeln!(stdout, "\x1b[1m SECURITY\x1b[0m\r")?;
-        let sr = if sensitive_reads == 0 { format!("\x1b[32m\u{2713} 0 sensitive reads\x1b[0m") }
-                 else { format!("\x1b[33m\u{26a0} {} sensitive read{}\x1b[0m", sensitive_reads, if sensitive_reads > 1 { "s" } else { "" }) };
-        let ec = if external_calls == 0 { format!("\x1b[32m\u{2713} 0 external calls\x1b[0m") }
-                 else { format!("\x1b[33m\u{26a0} {} external call{}\x1b[0m", external_calls, if external_calls > 1 { "s" } else { "" }) };
-        let fc = if failed_cmds == 0 { format!("\x1b[32m\u{2713} 0 failed commands\x1b[0m") }
-                 else { format!("\x1b[31m\u{2717} {} failed command{}\x1b[0m", failed_cmds, if failed_cmds > 1 { "s" } else { "" }) };
+        let sr = if sensitive_reads == 0 {
+            format!("\x1b[32m\u{2713} 0 sensitive reads\x1b[0m")
+        } else {
+            format!(
+                "\x1b[33m\u{26a0} {} sensitive read{}\x1b[0m",
+                sensitive_reads,
+                if sensitive_reads > 1 { "s" } else { "" }
+            )
+        };
+        let ec = if external_calls == 0 {
+            format!("\x1b[32m\u{2713} 0 external calls\x1b[0m")
+        } else {
+            format!(
+                "\x1b[33m\u{26a0} {} external call{}\x1b[0m",
+                external_calls,
+                if external_calls > 1 { "s" } else { "" }
+            )
+        };
+        let fc = if failed_cmds == 0 {
+            format!("\x1b[32m\u{2713} 0 failed commands\x1b[0m")
+        } else {
+            format!(
+                "\x1b[31m\u{2717} {} failed command{}\x1b[0m",
+                failed_cmds,
+                if failed_cmds > 1 { "s" } else { "" }
+            )
+        };
         writeln!(stdout, " {}    {}    {}\r", sr, ec, fc)?;
         writeln!(stdout, "\r")?;
 
         // Merkle progress
         writeln!(stdout, "\x1b[1m VERIFICATION\x1b[0m\r")?;
-        writeln!(stdout, " Events: {}    Artifacts: {}    Signatures: {}\r",
-            event_count, artifact_count, artifact_count)?;
+        writeln!(
+            stdout,
+            " Events: {}    Artifacts: {}    Signatures: {}\r",
+            event_count, artifact_count, artifact_count
+        )?;
         writeln!(stdout, "\r")?;
-        writeln!(stdout, " \x1b[90mPolling every 2s. Press Ctrl+C to exit.\x1b[0m\r")?;
+        writeln!(
+            stdout,
+            " \x1b[90mPolling every 2s. Press Ctrl+C to exit.\x1b[0m\r"
+        )?;
 
         stdout.flush()?;
         last_count = event_count as u64;
@@ -792,14 +917,19 @@ pub fn watch(
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         loop {
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-            if remaining.is_zero() { break; }
+            if remaining.is_zero() {
+                break;
+            }
             if crossterm::event::poll(remaining.min(std::time::Duration::from_millis(100)))? {
                 if let crossterm::event::Event::Key(key) = crossterm::event::read()? {
                     use crossterm::event::KeyCode;
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Char('c')
-                            if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
-                               || key.code == KeyCode::Char('q') => {
+                            if key
+                                .modifiers
+                                .contains(crossterm::event::KeyModifiers::CONTROL)
+                                || key.code == KeyCode::Char('q') =>
+                        {
                             // _guard Drop handles disable_raw_mode
                             println!();
                             return Ok(());
@@ -881,8 +1011,7 @@ pub(crate) fn session_record_payload(
         _ => receipt.tools.iter().map(|t| t.tool_name.clone()).collect(),
     };
 
-    let class =
-        session_attestation_class(receipt.participants.tool_runtimes, consumed_approvals);
+    let class = session_attestation_class(receipt.participants.tool_runtimes, consumed_approvals);
 
     serde_json::json!({
         "session_id": session_id,
@@ -945,14 +1074,14 @@ fn mint_session_record(
     let result = sign(&pt, &stmt, signer.as_ref())?;
 
     ctx.storage.write(&Record {
-        artifact_id:  result.artifact_id.clone(),
-        digest:       result.digest.clone(),
+        artifact_id: result.artifact_id.clone(),
+        digest: result.digest.clone(),
         payload_type: pt,
-        key_id:       signer.key_id().to_string(),
-        signed_at:    stmt.timestamp.clone(),
-        parent_id:    Some(close_artifact_id.to_string()),
-        envelope:     result.envelope,
-        hub_url:      None,
+        key_id: signer.key_id().to_string(),
+        signed_at: stmt.timestamp.clone(),
+        parent_id: Some(close_artifact_id.to_string()),
+        envelope: result.envelope,
+        hub_url: None,
     })?;
     write_last(&ctx.config.storage_dir, &result.artifact_id);
 
@@ -969,7 +1098,10 @@ pub fn close(
     let manifest = match load_session() {
         Some(m) => m,
         None => {
-            return Err("no active session to close\n\n  Fix: treeship session start --name \"my task\"".into());
+            return Err(
+                "no active session to close\n\n  Fix: treeship session start --name \"my task\""
+                    .into(),
+            );
         }
     };
 
@@ -978,7 +1110,10 @@ pub fn close(
     // Verify the root artifact actually exists in storage
     if let Some(ref root_id) = manifest.root_artifact_id {
         if ctx.storage.read(root_id).is_err() {
-            printer.warn("session root artifact not found in storage (file may have been modified)", &[]);
+            printer.warn(
+                "session root artifact not found in storage (file may have been modified)",
+                &[],
+            );
         }
     }
 
@@ -989,7 +1124,10 @@ pub fn close(
     };
 
     if artifact_count != manifest.artifact_count && manifest.artifact_count != 0 {
-        printer.warn("session artifact count mismatch (file may have been modified)", &[]);
+        printer.warn(
+            "session artifact count mismatch (file may have been modified)",
+            &[],
+        );
     }
 
     let elapsed_ms = epoch_ms().saturating_sub(manifest.started_at_ms);
@@ -1004,8 +1142,12 @@ pub fn close(
     let event_log = EventLog::open(&evt_dir)?;
 
     let mut close_evt = base_event(
-        &manifest.session_id, &manifest.actor, "operator", "treeship-cli",
-        &trace_id, &host_id,
+        &manifest.session_id,
+        &manifest.actor,
+        "operator",
+        "treeship-cli",
+        &trace_id,
+        &host_id,
         EventType::SessionClosed {
             summary: summary.clone(),
             duration_ms: Some(elapsed_ms),
@@ -1033,14 +1175,14 @@ pub fn close(
     let result = sign(&pt, &stmt, signer.as_ref())?;
 
     ctx.storage.write(&Record {
-        artifact_id:  result.artifact_id.clone(),
-        digest:       result.digest.clone(),
+        artifact_id: result.artifact_id.clone(),
+        digest: result.digest.clone(),
         payload_type: pt,
-        key_id:       signer.key_id().to_string(),
-        signed_at:    stmt.timestamp.clone(),
+        key_id: signer.key_id().to_string(),
+        signed_at: stmt.timestamp.clone(),
         parent_id,
-        envelope:     result.envelope,
-        hub_url:      None,
+        envelope: result.envelope,
+        hub_url: None,
     })?;
 
     write_last(&ctx.config.storage_dir, &result.artifact_id);
@@ -1055,8 +1197,7 @@ pub fn close(
     // successful package write leaves a recoverable marker. On the next
     // `session close` or `session start`, the presence of
     // session.closing signals an incomplete close that can be retried.
-    let closing_marker = session_dir()
-        .map(|d| d.join("session.closing"));
+    let closing_marker = session_dir().map(|d| d.join("session.closing"));
     if let Some(ref path) = session_path() {
         if let Some(ref marker) = closing_marker {
             let _ = std::fs::rename(path, marker);
@@ -1109,7 +1250,8 @@ pub fn close(
         // The trust-fabric bar is "if a file changed during the session,
         // the receipt shows it." Reads do not change files. Only writes
         // belong in the dedup set.
-        let already_captured: std::collections::BTreeSet<String> = events.iter()
+        let already_captured: std::collections::BTreeSet<String> = events
+            .iter()
             .filter_map(|e| match &e.event_type {
                 EventType::AgentWroteFile { file_path, .. } => Some(file_path.clone()),
                 _ => None,
@@ -1179,7 +1321,8 @@ pub fn close(
     }
 
     // Build artifact entries from the chain
-    let artifact_entries: Vec<session::receipt::ArtifactEntry> = collect_artifact_entries(&ctx, &manifest);
+    let artifact_entries: Vec<session::receipt::ArtifactEntry> =
+        collect_artifact_entries(&ctx, &manifest);
 
     // Update manifest for receipt composition
     let mut receipt_manifest = manifest.clone();
@@ -1299,9 +1442,17 @@ pub fn close(
             let preview_path = pkg_output.path.join("preview.html");
             if preview_path.exists() && crossterm::tty::IsTty::is_tty(&std::io::stdout()) {
                 #[cfg(target_os = "macos")]
-                { let _ = std::process::Command::new("open").arg(&preview_path).spawn(); }
+                {
+                    let _ = std::process::Command::new("open")
+                        .arg(&preview_path)
+                        .spawn();
+                }
                 #[cfg(target_os = "linux")]
-                { let _ = std::process::Command::new("xdg-open").arg(&preview_path).spawn(); }
+                {
+                    let _ = std::process::Command::new("xdg-open")
+                        .arg(&preview_path)
+                        .spawn();
+                }
             }
         }
         Err(e) => {
@@ -1346,8 +1497,14 @@ pub fn close(
         ));
         printer.hint("treeship session report                                              to publish + get a shareable URL (requires `treeship hub attach`)");
     } else {
-        printer.hint(&format!("treeship verify {} --full  to see the chain", result.artifact_id));
-        printer.hint(&format!("treeship hub push {}      to share", result.artifact_id));
+        printer.hint(&format!(
+            "treeship verify {} --full  to see the chain",
+            result.artifact_id
+        ));
+        printer.hint(&format!(
+            "treeship hub push {}      to share",
+            result.artifact_id
+        ));
     }
 
     // ZK: Enqueue chain proof BEFORE deleting session.json so the proof
@@ -1509,17 +1666,27 @@ pub fn event(
             // commands/wrap.rs::read_decision_env). When neither is set,
             // the field stays None and the receipt simply won't surface
             // it -- caller is responsible for at least providing model.
-            let model = model_arg.map(|s| s.to_string())
+            let model = model_arg
+                .map(|s| s.to_string())
                 .or_else(|| std::env::var("TREESHIP_MODEL").ok());
-            let provider = provider_arg.map(|s| s.to_string())
+            let provider = provider_arg
+                .map(|s| s.to_string())
                 .or_else(|| std::env::var("TREESHIP_PROVIDER").ok());
-            let tokens_in = tokens_in_arg
-                .or_else(|| std::env::var("TREESHIP_TOKENS_IN").ok().and_then(|s| s.parse().ok()));
-            let tokens_out = tokens_out_arg
-                .or_else(|| std::env::var("TREESHIP_TOKENS_OUT").ok().and_then(|s| s.parse().ok()));
+            let tokens_in = tokens_in_arg.or_else(|| {
+                std::env::var("TREESHIP_TOKENS_IN")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+            });
+            let tokens_out = tokens_out_arg.or_else(|| {
+                std::env::var("TREESHIP_TOKENS_OUT")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+            });
 
             if model.is_none() {
-                return Err("agent.decision events require --model (or TREESHIP_MODEL env var)".into());
+                return Err(
+                    "agent.decision events require --model (or TREESHIP_MODEL env var)".into(),
+                );
             }
 
             EventType::AgentDecision {
@@ -1729,7 +1896,8 @@ fn find_incomplete_package() -> Option<(PathBuf, String)> {
         let path = entry.path();
         let name = entry.file_name();
         let name_str = name.to_string_lossy().to_string();
-        if !path.is_dir() || !name_str.ends_with(".treeship") || path.join("receipt.json").exists() {
+        if !path.is_dir() || !name_str.ends_with(".treeship") || path.join("receipt.json").exists()
+        {
             continue;
         }
         let modified = entry
@@ -1749,7 +1917,9 @@ fn find_incomplete_package() -> Option<(PathBuf, String)> {
 /// Locate the package directory for an explicit session_id.
 fn find_package_for_session(session_id: &str) -> Option<PathBuf> {
     let ts_dir = session_dir()?;
-    let pkg = ts_dir.join("sessions").join(format!("{session_id}.treeship"));
+    let pkg = ts_dir
+        .join("sessions")
+        .join(format!("{session_id}.treeship"));
     if pkg.join("receipt.json").exists() {
         Some(pkg)
     } else {
@@ -1759,7 +1929,11 @@ fn find_package_for_session(session_id: &str) -> Option<PathBuf> {
 
 fn package_dir_for_session(session_id: &str) -> Option<PathBuf> {
     let ts_dir = session_dir()?;
-    Some(ts_dir.join("sessions").join(format!("{session_id}.treeship")))
+    Some(
+        ts_dir
+            .join("sessions")
+            .join(format!("{session_id}.treeship")),
+    )
 }
 
 pub fn report(
@@ -1799,7 +1973,9 @@ pub fn report(
                         dir.display(),
                     ).into());
                 }
-                return Err("no closed sessions found -- run `treeship session close` first".into());
+                return Err(
+                    "no closed sessions found -- run `treeship session close` first".into(),
+                );
             }
         },
     };
@@ -1829,8 +2005,7 @@ pub fn report(
     // populate verification_status and warnings whether or not the
     // hub is reachable. The CLI reuses treeship_core's package verify
     // -- same checks the offline verifier runs.
-    let (verification_status, warnings) =
-        local_verify_summary(&pkg_dir);
+    let (verification_status, warnings) = local_verify_summary(&pkg_dir);
 
     // 3. Resolve the active hub connection.
     //
@@ -1894,7 +2069,8 @@ pub fn report(
                  Or skip publishing and verify the sealed receipt locally:\n    \
                  treeship package verify {}",
                 pkg_dir.display(),
-            ).into());
+            )
+            .into());
         }
     };
 
@@ -1924,7 +2100,8 @@ pub fn report(
                  Or verify the sealed receipt locally without publishing:\n    \
                  treeship package verify {}",
                 pkg_dir.display(),
-            ).into());
+            )
+            .into());
         }
     };
 
@@ -1945,7 +2122,10 @@ pub fn report(
             let detail: serde_json::Value = r
                 .into_json()
                 .unwrap_or_else(|_| serde_json::json!({"error": "unknown"}));
-            let msg = detail["error"].as_str().unwrap_or("unknown error").to_string();
+            let msg = detail["error"]
+                .as_str()
+                .unwrap_or("unknown error")
+                .to_string();
             if format == "json" {
                 return emit_report_output(
                     format,
@@ -2029,8 +2209,8 @@ fn derive_share_urls(receipt_url: &str, session_id: &str) -> (String, String) {
         Some(idx) => &receipt_url[..idx],
         None => "https://www.treeship.dev",
     };
-    let raw  = format!("{origin}/api/receipt/{session_id}");
-    let pkg  = format!("{origin}/receipt/{session_id}/package");
+    let raw = format!("{origin}/api/receipt/{session_id}");
+    let pkg = format!("{origin}/receipt/{session_id}/package");
     (raw, pkg)
 }
 
@@ -2056,9 +2236,13 @@ fn compute_package_manifest_digest(pkg_dir: &Path) -> std::io::Result<String> {
     files.sort();
     let mut manifest = String::new();
     for f in &files {
-        let rel = f.strip_prefix(pkg_dir).unwrap_or(f).to_string_lossy().replace('\\', "/");
+        let rel = f
+            .strip_prefix(pkg_dir)
+            .unwrap_or(f)
+            .to_string_lossy()
+            .replace('\\', "/");
         let bytes = std::fs::read(f)?;
-        let h     = Sha256::digest(&bytes);
+        let h = Sha256::digest(&bytes);
         manifest.push_str(&format!("{rel}:{}\n", hex::encode(h)));
     }
     let final_h = Sha256::digest(manifest.as_bytes());
@@ -2072,11 +2256,16 @@ fn compute_package_manifest_digest(pkg_dir: &Path) -> std::io::Result<String> {
 fn local_verify_summary(pkg_dir: &Path) -> (String, Vec<serde_json::Value>) {
     use treeship_core::session::verify_package;
     let checks = match verify_package(pkg_dir) {
-        Ok(c)  => c,
-        Err(_) => return ("fail".into(), vec![serde_json::json!({
-            "kind": "verify-error",
-            "headline": "package verify failed to run",
-        })]),
+        Ok(c) => c,
+        Err(_) => {
+            return (
+                "fail".into(),
+                vec![serde_json::json!({
+                    "kind": "verify-error",
+                    "headline": "package verify failed to run",
+                })],
+            )
+        }
     };
     summarize_verify_checks(&checks)
 }
@@ -2115,7 +2304,8 @@ fn summarize_verify_checks(
         }
     }
     let has_actionable_warn = warnings.iter().any(|w| {
-        w.get("kind").and_then(|k| k.as_str())
+        w.get("kind")
+            .and_then(|k| k.as_str())
             .map(|k| !INFORMATIONAL_CHECKS.contains(&k))
             .unwrap_or(true)
     });
@@ -2212,7 +2402,6 @@ fn emit_report_output(
     Ok(())
 }
 
-
 // ---------------------------------------------------------------------------
 // v0.9.9 PR 4 -- approval evidence collection
 // ---------------------------------------------------------------------------
@@ -2235,7 +2424,8 @@ fn collect_approval_evidence(
 
     // Resolve the workspace journal directory; same precedence rule as
     // attest.rs uses (config_path.parent / journals / approval-use).
-    let journal_dir = ctx.config_path
+    let journal_dir = ctx
+        .config_path
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."))
         .join("journals")
@@ -2248,12 +2438,12 @@ fn collect_approval_evidence(
     // is an ordered list of ids on the receipt).
     use std::collections::HashSet;
     let mut grant_ids_seen: HashSet<String> = HashSet::new();
-    let mut use_ids_seen:   HashSet<String> = HashSet::new();
+    let mut use_ids_seen: HashSet<String> = HashSet::new();
     let mut checkpoint_ids: HashSet<String> = HashSet::new();
 
     for art in &receipt.artifacts {
         let rec = match ctx.storage.read(&art.artifact_id) {
-            Ok(r)  => r,
+            Ok(r) => r,
             Err(_) => continue,
         };
         // Snapshot the raw envelope BEFORE unmarshaling so we can ship
@@ -2261,12 +2451,12 @@ fn collect_approval_evidence(
         // being able to read action.meta.approval_use_id offline.
         let envelope_bytes_for_package = rec.envelope.to_json().ok();
         let action = match rec.envelope.unmarshal_statement::<ActionStatement>() {
-            Ok(a)  => a,
+            Ok(a) => a,
             Err(_) => continue,
         };
         let raw_nonce = match action.approval_nonce.as_deref() {
             Some(n) => n,
-            None    => continue,
+            None => continue,
         };
         // Only record the envelope for actions that actually consumed
         // an approval; an action without `approval_nonce` doesn't need
@@ -2274,8 +2464,14 @@ fn collect_approval_evidence(
         if let Some(env_bytes) = envelope_bytes_for_package {
             // Deduplicate by artifact_id; the receipt may reference the
             // same artifact twice in pathological cases.
-            if !bundle.action_envelopes.iter().any(|(id, _)| id == &art.artifact_id) {
-                bundle.action_envelopes.push((art.artifact_id.clone(), env_bytes));
+            if !bundle
+                .action_envelopes
+                .iter()
+                .any(|(id, _)| id == &art.artifact_id)
+            {
+                bundle
+                    .action_envelopes
+                    .push((art.artifact_id.clone(), env_bytes));
             }
         }
 
@@ -2285,7 +2481,10 @@ fn collect_approval_evidence(
         let mut grant_envelope: Option<Vec<u8>> = None;
         for entry in ctx.storage.list_by_type(&approval_pt) {
             if let Ok(grant_rec) = ctx.storage.read(&entry.id) {
-                if let Ok(approval) = grant_rec.envelope.unmarshal_statement::<ApprovalStatement>() {
+                if let Ok(approval) = grant_rec
+                    .envelope
+                    .unmarshal_statement::<ApprovalStatement>()
+                {
                     if approval.nonce == raw_nonce {
                         grant_id_opt = Some(entry.id.clone());
                         grant_envelope = grant_rec.envelope.to_json().ok();
@@ -2294,7 +2493,9 @@ fn collect_approval_evidence(
                 }
             }
         }
-        let Some(grant_id) = grant_id_opt else { continue };
+        let Some(grant_id) = grant_id_opt else {
+            continue;
+        };
 
         if grant_ids_seen.insert(grant_id.clone()) {
             if let Some(env_bytes) = grant_envelope {
@@ -2321,7 +2522,7 @@ fn collect_approval_evidence(
                 for u in uses {
                     let take = match &action_use_id_hint {
                         Some(target) => &u.use_id == target,
-                        None         => true, // legacy behavior when no pointer
+                        None => true, // legacy behavior when no pointer
                     };
                     if take && use_ids_seen.insert(u.use_id.clone()) {
                         bundle.uses.push(u);
@@ -2334,13 +2535,22 @@ fn collect_approval_evidence(
             if let Ok(rd) = std::fs::read_dir(journal.records_dir()) {
                 for entry in rd.flatten() {
                     let path = entry.path();
-                    let name = match path.file_name().and_then(|n| n.to_str()) { Some(s) => s, None => continue };
-                    if !name.contains(".journal-checkpoint.") { continue; }
-                    let bytes = match std::fs::read(&path) { Ok(b) => b, Err(_) => continue };
-                    let cp: treeship_core::statements::JournalCheckpoint = match serde_json::from_slice(&bytes) {
-                        Ok(c)  => c,
+                    let name = match path.file_name().and_then(|n| n.to_str()) {
+                        Some(s) => s,
+                        None => continue,
+                    };
+                    if !name.contains(".journal-checkpoint.") {
+                        continue;
+                    }
+                    let bytes = match std::fs::read(&path) {
+                        Ok(b) => b,
                         Err(_) => continue,
                     };
+                    let cp: treeship_core::statements::JournalCheckpoint =
+                        match serde_json::from_slice(&bytes) {
+                            Ok(c) => c,
+                            Err(_) => continue,
+                        };
                     if checkpoint_ids.insert(cp.checkpoint_id.clone()) {
                         bundle.checkpoints.push(cp);
                     }
@@ -2369,7 +2579,10 @@ mod verify_summary_tests {
             VerifyCheck::warn("receipt_body_binding", "narrative not signature-bound"),
         ];
         let (status, warnings) = summarize_verify_checks(&checks);
-        assert_eq!(status, "pass", "informational caveat must not downgrade a clean session");
+        assert_eq!(
+            status, "pass",
+            "informational caveat must not downgrade a clean session"
+        );
         // ...but it is still surfaced in warnings for transparency.
         assert!(warnings.iter().any(|w| w["kind"] == "receipt_body_binding"));
     }
@@ -2485,8 +2698,15 @@ mod work_history_tests {
     fn session_record_class_reflects_capture_evidence() {
         let receipt = receipt_fixture();
         let countersigned = session_record_payload(
-            &receipt, "ssn_test1", "agent://hermes", 1, 1, 2, 1000,
-            "sha256:aa", None,
+            &receipt,
+            "ssn_test1",
+            "agent://hermes",
+            1,
+            1,
+            2,
+            1000,
+            "sha256:aa",
+            None,
         );
         assert_eq!(countersigned["attestation_class"], "countersigned");
 
@@ -2495,8 +2715,15 @@ mod work_history_tests {
         bare.tools.clear();
         bare.tool_usage = None;
         let selfish = session_record_payload(
-            &bare, "ssn_test1", "agent://hermes", 1, 1, 0, 1000,
-            "sha256:aa", None,
+            &bare,
+            "ssn_test1",
+            "agent://hermes",
+            1,
+            1,
+            0,
+            1000,
+            "sha256:aa",
+            None,
         );
         assert_eq!(selfish["attestation_class"], "self");
         assert_eq!(selfish["harness"], "cli");

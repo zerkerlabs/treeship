@@ -49,10 +49,7 @@ pub fn render(frame: &mut Frame, area: Rect, view: &View) {
             format!("[{}]", key),
             Style::default().fg(KEY_COLOR),
         ));
-        spans.push(Span::styled(
-            format!(" {}", desc),
-            Style::default().fg(DIM),
-        ));
+        spans.push(Span::styled(format!(" {}", desc), Style::default().fg(DIM)));
     }
 
     let bar = Paragraph::new(Line::from(spans));

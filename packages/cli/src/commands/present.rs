@@ -123,6 +123,7 @@ pub fn present(
     agent: &str,
     out: Option<&str>,
     challenge: Option<&str>,
+    disclose: &[String],
     config: Option<&str>,
     printer: &Printer,
 ) -> CmdResult {
@@ -141,8 +142,12 @@ pub fn present(
     let mut certs: Vec<(String, String)> = Vec::new(); // (id, envelope_json)
     let mut all_revocations: Vec<(String, String, String)> = Vec::new(); // (id, env, card_ref)
     for entry in ctx.storage.list_by_type(&receipt_pt) {
-        let Ok(rec) = ctx.storage.read(&entry.id) else { continue };
-        let Ok(stmt) = rec.envelope.unmarshal_statement::<ReceiptStatement>() else { continue };
+        let Ok(rec) = ctx.storage.read(&entry.id) else {
+            continue;
+        };
+        let Ok(stmt) = rec.envelope.unmarshal_statement::<ReceiptStatement>() else {
+            continue;
+        };
         let env_json = serde_json::to_string(&rec.envelope)?;
         match stmt.kind.as_str() {
             "agent_card.v1" => {
@@ -189,12 +194,66 @@ pub fn present(
         }
     }
 
-    let Some((card_id, card_env_json, _)) = card else {
+    let Some((mut card_id, mut card_env_json, _)) = card else {
         return Err(format!(
             "no agent_card.v1 for {agent} in the local store\n\n  Fix: treeship onboard {agent} --from-harness <settings.json>"
         )
         .into());
     };
+
+    // ── Selective disclosure ──────────────────────────────────────────────
+    // Re-sign a digests-only copy of the card that reveals only the named
+    // capabilities; the rest become opaque salted digests. The re-sign is by
+    // the agent's OWN key (so the disclosed card stays key-bound), and it is
+    // ephemeral -- not in the transparency log -- so a disclosed presentation
+    // carries no staple and reports "not anchored". This is the honest trade:
+    // a private selective claim you would not want in the public log.
+    let mut disclosures_block: Option<Vec<String>> = None;
+    if !disclose.is_empty() {
+        let Some(kid) = &key_id else {
+            return Err(format!(
+                "selective disclosure requires a per-agent key for {agent}\n\n  Fix: treeship agent register --name {} --own-key",
+                agent.trim_start_matches("agent://")
+            )
+            .into());
+        };
+        let env_parsed: Envelope = serde_json::from_str(&card_env_json)?;
+        let card_stmt: ReceiptStatement = env_parsed.unmarshal_statement()?;
+        let card_payload = card_stmt.payload.ok_or("card carries no payload")?;
+        // The card must be bound to the agent's key, or the re-sign would swap
+        // the binding out from under the disclosure.
+        let bound = card_payload
+            .get("keyid")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if bound != kid {
+            return Err(format!(
+                "the current card is bound to {bound}, but this agent's key is {kid} -- re-mint the card first\n\n  Fix: treeship attest card --agent {agent} ..."
+            )
+            .into());
+        }
+        // Every requested capability must actually be in the card, or the
+        // presentation would claim something the agent never declared.
+        let all_tools = treeship_core::capability::declared_tools(&card_payload);
+        for cap in disclose {
+            if !all_tools.iter().any(|t| t == cap) {
+                return Err(format!(
+                    "capability `{cap}` is not in {agent}'s card\n  card declares: {}",
+                    all_tools.join(", ")
+                )
+                .into());
+            }
+        }
+        let (disclosed_payload, selected) =
+            treeship_core::capability::disclose_capabilities(&card_payload, disclose);
+        let mut stmt = ReceiptStatement::new("system://registry", "agent_card.v1");
+        stmt.payload = Some(disclosed_payload);
+        let signer = ctx.keys.signer(kid)?;
+        let result = treeship_core::attestation::sign::sign(&receipt_pt, &stmt, signer.as_ref())?;
+        card_id = result.artifact_id.clone();
+        card_env_json = serde_json::to_string(&result.envelope)?;
+        disclosures_block = Some(selected);
+    }
 
     // Honesty over self-interest: revocations referencing the presented card
     // are INCLUDED, not filtered. The verifier judges their authority; a
@@ -212,38 +271,60 @@ pub fn present(
     // rebuilt with exactly the first `tree_size` leaves and its root is
     // cross-checked against the checkpoint's before anything is written —
     // the same correctness rule the consistency publisher applies.
-    let checkpoint = crate::commands::merkle::load_latest_checkpoint()?
-        .ok_or("no checkpoints found -- run: treeship checkpoint")?;
-    let (_, artifact_ids) = crate::commands::merkle::build_tree(&ctx)?;
-    let leaf_index = artifact_ids
-        .iter()
-        .position(|id| id == &card_id)
-        .ok_or("card artifact not found in the local Merkle tree")?;
-    if leaf_index >= checkpoint.tree_size {
-        return Err(format!(
-            "the current card ({card_id}) is newer than the latest checkpoint (#{}, tree_size {})\n\n  Fix: treeship checkpoint  (then re-run present)",
-            checkpoint.index, checkpoint.tree_size
-        )
-        .into());
-    }
-    let mut cp_tree = MerkleTree::new();
-    for id in &artifact_ids[..checkpoint.tree_size] {
-        cp_tree.append(id);
-    }
-    let computed_root = cp_tree
-        .root()
-        .map(hex::encode)
-        .ok_or("checkpoint-sized tree has no root")?;
-    let cp_root_hex = checkpoint.root.strip_prefix("sha256:").unwrap_or(&checkpoint.root);
-    if computed_root != cp_root_hex {
-        return Err(
-            "local tree root does not match the latest checkpoint (artifacts changed since checkpointing)\n\n  Fix: treeship checkpoint  (then re-run present)"
-                .into(),
+    //
+    // Skipped for a disclosed presentation: the disclosed card is an ephemeral
+    // re-sign that is deliberately not in the transparency log, so there is
+    // nothing to staple. The presentation reports "not anchored" instead.
+    let (staple_json, staple_desc): (serde_json::Value, String) = if disclose.is_empty() {
+        let checkpoint = crate::commands::merkle::load_latest_checkpoint()?
+            .ok_or("no checkpoints found -- run: treeship checkpoint")?;
+        let (_, artifact_ids) = crate::commands::merkle::build_tree(&ctx)?;
+        let leaf_index = artifact_ids
+            .iter()
+            .position(|id| id == &card_id)
+            .ok_or("card artifact not found in the local Merkle tree")?;
+        if leaf_index >= checkpoint.tree_size {
+            return Err(format!(
+                "the current card ({card_id}) is newer than the latest checkpoint (#{}, tree_size {})\n\n  Fix: treeship checkpoint  (then re-run present)",
+                checkpoint.index, checkpoint.tree_size
+            )
+            .into());
+        }
+        let mut cp_tree = MerkleTree::new();
+        for id in &artifact_ids[..checkpoint.tree_size] {
+            cp_tree.append(id);
+        }
+        let computed_root = cp_tree
+            .root()
+            .map(hex::encode)
+            .ok_or("checkpoint-sized tree has no root")?;
+        let cp_root_hex = checkpoint
+            .root
+            .strip_prefix("sha256:")
+            .unwrap_or(&checkpoint.root);
+        if computed_root != cp_root_hex {
+            return Err(
+                "local tree root does not match the latest checkpoint (artifacts changed since checkpointing)\n\n  Fix: treeship checkpoint  (then re-run present)"
+                    .into(),
+            );
+        }
+        let inclusion_proof = cp_tree
+            .inclusion_proof(leaf_index)
+            .ok_or("failed to generate inclusion proof")?;
+        let desc = format!(
+            "checkpoint #{} ({})",
+            checkpoint.index, checkpoint.signed_at
         );
-    }
-    let inclusion_proof = cp_tree
-        .inclusion_proof(leaf_index)
-        .ok_or("failed to generate inclusion proof")?;
+        (
+            serde_json::json!({ "checkpoint": checkpoint, "inclusion_proof": inclusion_proof }),
+            desc,
+        )
+    } else {
+        (
+            serde_json::Value::Null,
+            "none (disclosed presentation, not anchored)".to_string(),
+        )
+    };
 
     // ── Challenge response (slice 3, the handshake) ────────────────────────
     // Signs the verifier's nonce with the AGENT'S OWN key — never a
@@ -299,10 +380,8 @@ pub fn present(
             .map(|(id, env)| serde_json::json!({ "artifact_id": id, "envelope_json": env }))
             .collect::<Vec<_>>(),
         "revocations": revocations,
-        "staple": {
-            "checkpoint": checkpoint,
-            "inclusion_proof": inclusion_proof,
-        },
+        "staple": staple_json,
+        "disclosures": disclosures_block,
         "challenge": challenge_block,
     });
 
@@ -310,14 +389,24 @@ pub fn present(
     let out_path = out.unwrap_or(&default_name);
     std::fs::write(out_path, serde_json::to_vec_pretty(&presentation)?)?;
 
-    printer.success("presentation written", &[
-        ("agent",  agent.as_str()),
-        ("card",   card_id.as_str()),
-        ("certs",  &certs.len().to_string()),
-        ("staple", &format!("checkpoint #{} ({})", checkpoint.index, checkpoint.signed_at)),
-        ("file",   out_path),
-    ]);
-    printer.hint(&format!("a counterparty verifies with: treeship verify-presentation {out_path}"));
+    let disclosed_desc = disclosures_block
+        .as_ref()
+        .map(|d| format!("{} of {} capabilities revealed", d.len(), disclose.len()))
+        .unwrap_or_else(|| "full card".to_string());
+    printer.success(
+        "presentation written",
+        &[
+            ("agent", agent.as_str()),
+            ("card", card_id.as_str()),
+            ("certs", &certs.len().to_string()),
+            ("staple", &staple_desc),
+            ("reveals", &disclosed_desc),
+            ("file", out_path),
+        ],
+    );
+    printer.hint(&format!(
+        "a counterparty verifies with: treeship verify-presentation {out_path}"
+    ));
     if challenge.is_some() {
         printer.hint("challenge response included — the verifier passes the SAME nonce to verify-presentation --challenge");
     } else {
@@ -336,8 +425,7 @@ pub fn verify_presentation(
     printer: &Printer,
 ) -> CmdResult {
     let trust = TrustRootStore::open_default_or_empty()?;
-    let raw = std::fs::read_to_string(path)
-        .map_err(|e| format!("could not read {path}: {e}"))?;
+    let raw = std::fs::read_to_string(path).map_err(|e| format!("could not read {path}: {e}"))?;
     let pres: serde_json::Value =
         serde_json::from_str(&raw).map_err(|e| format!("{path} is not valid JSON: {e}"))?;
 
@@ -366,7 +454,11 @@ pub fn verify_presentation(
     let mut sig_ok = verifier.verify_any(&env).is_ok();
     let stmt: ReceiptStatement = env.unmarshal_statement()?;
     if stmt.kind != "agent_card.v1" {
-        return Err(format!("presentation card is a `{}`, not an agent_card.v1", stmt.kind).into());
+        return Err(format!(
+            "presentation card is a `{}`, not an agent_card.v1",
+            stmt.kind
+        )
+        .into());
     }
     let card = stmt.payload.unwrap_or(serde_json::Value::Null);
     if card.get("agent").and_then(|v| v.as_str()) != Some(agent) {
@@ -424,12 +516,19 @@ pub fn verify_presentation(
     let mut revoked: Option<String> = None;
     if let Some(revs) = pres.get("revocations").and_then(|v| v.as_array()) {
         for rev in revs {
-            let rev_json = rev.get("envelope_json").and_then(|v| v.as_str()).unwrap_or("");
-            let Ok(rev_env) = serde_json::from_str::<Envelope>(rev_json) else { continue };
+            let rev_json = rev
+                .get("envelope_json")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let Ok(rev_env) = serde_json::from_str::<Envelope>(rev_json) else {
+                continue;
+            };
             if verifier.verify_any(&rev_env).is_err() {
                 continue;
             }
-            let Ok(rev_stmt) = rev_env.unmarshal_statement::<ReceiptStatement>() else { continue };
+            let Ok(rev_stmt) = rev_env.unmarshal_statement::<ReceiptStatement>() else {
+                continue;
+            };
             if rev_stmt.kind != "agent_card_revocation.v1" {
                 continue;
             }
@@ -508,8 +607,9 @@ pub fn verify_presentation(
     // Freshness bound: enforced only when the verifier asks. Reported always.
     let mut stale = false;
     if let Some(max) = max_staple_age {
-        let max_secs = parse_duration_secs(max)
-            .ok_or(format!("--max-staple-age {max} is not a duration (try 30s, 15m, 2h, 1d)"))?;
+        let max_secs = parse_duration_secs(max).ok_or(format!(
+            "--max-staple-age {max} is not a duration (try 30s, 15m, 2h, 1d)"
+        ))?;
         match staple_age_secs {
             Some(age) if age <= max_secs => {}
             Some(age) => {
@@ -572,6 +672,38 @@ pub fn verify_presentation(
 
     let ok = revoked.is_none() && key_bound && !stale && challenge_ok;
 
+    // Selective disclosure: a card carrying `capabilities.tools_sd` is a
+    // disclosed card. Reconstruct exactly the capabilities the presenter
+    // revealed, checked against the signed digests (a tampered or foreign
+    // disclosure reveals nothing). These are only as trustworthy as the card's
+    // signature verdict above; the status line carries that.
+    let disclosed = card
+        .get("capabilities")
+        .and_then(|c| c.get("tools_sd"))
+        .is_some();
+    let (revealed_caps, reveal_str): (Vec<String>, Option<String>) = if disclosed {
+        let disclosures: Vec<String> = pres
+            .get("disclosures")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|d| d.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let revealed = treeship_core::capability::reconstruct_capabilities(&card, &disclosures);
+        let total = treeship_core::capability::committed_tool_digests(&card).len();
+        let s = format!(
+            "selective — revealed {} of {} capabilities: [{}]",
+            revealed.len(),
+            total,
+            revealed.join(", ")
+        );
+        (revealed, Some(s))
+    } else {
+        (Vec::new(), None)
+    };
+
     // JSON mode: one structured object with the complete verdict. The text
     // path below reports via printer.info, which JSON mode suppresses — a
     // programmatic caller (the gateway) must never receive an empty success
@@ -596,6 +728,8 @@ pub fn verify_presentation(
             "challenge_ok": if challenge.is_some() { Some(challenge_ok) } else { None },
             "revocation": revocation_str,
             "revoked": revoked,
+            "disclosed": disclosed,
+            "revealed_capabilities": revealed_caps,
         }));
         if !ok {
             std::process::exit(1);
@@ -613,6 +747,9 @@ pub fn verify_presentation(
     printer.info(&format!("  card:        {card_id}"));
     printer.info(&format!("  signature:   {sig_str}"));
     printer.info(&format!("  key-bound:   {key_bound_str}"));
+    if let Some(rs) = &reveal_str {
+        printer.info(&format!("  reveals:     {rs}"));
+    }
     printer.info(&format!("  staple:      {staple_str}"));
     if let Some(cs) = &challenge_str {
         printer.info(&format!("  challenge:   {cs}"));
@@ -654,8 +791,7 @@ fn verify_staple(
         return ("unparseable inclusion proof".into(), false, None);
     };
 
-    let age = parse_rfc3339_to_unix(&checkpoint.signed_at)
-        .map(|t| unix_now().saturating_sub(t));
+    let age = parse_rfc3339_to_unix(&checkpoint.signed_at).map(|t| unix_now().saturating_sub(t));
 
     if !checkpoint.verify(trust) {
         return (
@@ -673,7 +809,10 @@ fn verify_staple(
         .unwrap_or(&checkpoint.root);
     if !MerkleTree::verify_proof(checkpoint.merkle_version, root_hex, card_id, &proof) {
         return (
-            format!("checkpoint #{} verified, but card inclusion proof INVALID", checkpoint.index),
+            format!(
+                "checkpoint #{} verified, but card inclusion proof INVALID",
+                checkpoint.index
+            ),
             false,
             age,
         );
@@ -806,26 +945,44 @@ mod tests {
 
         // Happy path.
         let block = signed_challenge_block(&agent_key, "agent://a", "art_card", "nonce-1");
-        assert!(check_challenge(&block, "agent://a", "art_card", "nonce-1", "key_agent", &vk).is_ok());
+        assert!(
+            check_challenge(&block, "agent://a", "art_card", "nonce-1", "key_agent", &vk).is_ok()
+        );
 
         // Wrong nonce: a captured response must not answer a new challenge.
-        assert!(check_challenge(&block, "agent://a", "art_card", "nonce-2", "key_agent", &vk)
-            .unwrap_err()
-            .contains("DIFFERENT challenge"));
+        assert!(
+            check_challenge(&block, "agent://a", "art_card", "nonce-2", "key_agent", &vk)
+                .unwrap_err()
+                .contains("DIFFERENT challenge")
+        );
 
         // Signed by a different key than the card's.
         let forged = signed_challenge_block(&other_key, "agent://a", "art_card", "nonce-1");
         assert!(
-            check_challenge(&forged, "agent://a", "art_card", "nonce-1", "key_agent", &vk)
-                .is_err(),
+            check_challenge(
+                &forged,
+                "agent://a",
+                "art_card",
+                "nonce-1",
+                "key_agent",
+                &vk
+            )
+            .is_err(),
             "response signed by a non-card key must reject"
         );
 
         // Replayed for a DIFFERENT card of the same agent: canonical binds card_id.
         assert!(
-            check_challenge(&block, "agent://a", "art_other_card", "nonce-1", "key_agent", &vk)
-                .unwrap_err()
-                .contains("INVALID"),
+            check_challenge(
+                &block,
+                "agent://a",
+                "art_other_card",
+                "nonce-1",
+                "key_agent",
+                &vk
+            )
+            .unwrap_err()
+            .contains("INVALID"),
             "challenge for one card must not vouch for another"
         );
 

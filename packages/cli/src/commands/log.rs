@@ -93,7 +93,11 @@ fn run_follow(ctx: &ctx::Ctx, printer: &Printer) -> Result<(), Box<dyn std::erro
 
     // Print existing entries first (last 5 as context)
     let entries = ctx.storage.list();
-    let start = if entries.len() > 5 { entries.len() - 5 } else { 0 };
+    let start = if entries.len() > 5 {
+        entries.len() - 5
+    } else {
+        0
+    };
     for entry in &entries[start..] {
         print_entry(entry, printer);
     }
@@ -140,10 +144,5 @@ fn print_entry(entry: &treeship_core::storage::IndexEntry, printer: &Printer) {
         &entry.signed_at
     };
 
-    printer.info(&format!(
-        "  {}  {:12}  {}",
-        ts,
-        badge,
-        short_id,
-    ));
+    printer.info(&format!("  {}  {:12}  {}", ts, badge, short_id,));
 }

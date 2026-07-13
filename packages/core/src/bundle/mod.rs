@@ -1,9 +1,9 @@
 use std::path::Path;
 
 use crate::{
-    attestation::{sign, ArtifactId, Envelope, Signer, SignError, Verifier, VerifyError},
+    attestation::{sign, ArtifactId, Envelope, SignError, Signer, Verifier, VerifyError},
     statements::{payload_type, ArtifactRef, BundleStatement},
-    storage::{Record, Store, StorageError},
+    storage::{Record, StorageError, Store},
 };
 
 /// Error from bundle operations.
@@ -19,7 +19,10 @@ pub enum BundleError {
     /// configured trust root. Carries the offending envelope's index in
     /// the export (0 = bundle envelope, 1..=N = artifact envelopes) and
     /// the underlying verification error.
-    UnverifiedEnvelope { index: usize, source: VerifyError },
+    UnverifiedEnvelope {
+        index: usize,
+        source: VerifyError,
+    },
     /// `import` was called with an empty trust root. Without trusted keys
     /// there is nothing to verify signatures against, so import would
     /// degenerate to "trust whatever the file says" — refused loudly.
@@ -29,12 +32,12 @@ pub enum BundleError {
 impl std::fmt::Display for BundleError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Storage(e)          => write!(f, "bundle storage: {e}"),
-            Self::Sign(e)             => write!(f, "bundle sign: {e}"),
-            Self::Io(e)               => write!(f, "bundle io: {e}"),
-            Self::Json(e)             => write!(f, "bundle json: {e}"),
-            Self::ArtifactNotFound(id)=> write!(f, "artifact not found: {id}"),
-            Self::InvalidBundle(msg)  => write!(f, "invalid bundle: {msg}"),
+            Self::Storage(e) => write!(f, "bundle storage: {e}"),
+            Self::Sign(e) => write!(f, "bundle sign: {e}"),
+            Self::Io(e) => write!(f, "bundle io: {e}"),
+            Self::Json(e) => write!(f, "bundle json: {e}"),
+            Self::ArtifactNotFound(id) => write!(f, "artifact not found: {id}"),
+            Self::InvalidBundle(msg) => write!(f, "invalid bundle: {msg}"),
             Self::UnverifiedEnvelope { index, source } => write!(
                 f,
                 "envelope {index} failed signature verification: {source}",
@@ -50,18 +53,34 @@ impl std::fmt::Display for BundleError {
 }
 
 impl std::error::Error for BundleError {}
-impl From<StorageError>       for BundleError { fn from(e: StorageError)       -> Self { Self::Storage(e) } }
-impl From<SignError>          for BundleError { fn from(e: SignError)          -> Self { Self::Sign(e) } }
-impl From<std::io::Error>    for BundleError { fn from(e: std::io::Error)    -> Self { Self::Io(e) } }
-impl From<serde_json::Error> for BundleError { fn from(e: serde_json::Error) -> Self { Self::Json(e) } }
+impl From<StorageError> for BundleError {
+    fn from(e: StorageError) -> Self {
+        Self::Storage(e)
+    }
+}
+impl From<SignError> for BundleError {
+    fn from(e: SignError) -> Self {
+        Self::Sign(e)
+    }
+}
+impl From<std::io::Error> for BundleError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+impl From<serde_json::Error> for BundleError {
+    fn from(e: serde_json::Error) -> Self {
+        Self::Json(e)
+    }
+}
 
 /// The result of creating a bundle.
 #[derive(Debug)]
 pub struct CreateResult {
     pub artifact_id: ArtifactId,
-    pub digest:      String,
-    pub record:      Record,
-    pub statement:   BundleStatement,
+    pub digest: String,
+    pub record: Record,
+    pub statement: BundleStatement,
 }
 
 /// A .treeship export file: the bundle envelope plus all referenced artifact envelopes.
@@ -85,13 +104,15 @@ const EXPORT_VERSION: &str = "treeship-export/v1";
 /// them, signs it, and stores the bundle as a regular artifact.
 pub fn create(
     artifact_ids: &[&str],
-    tag:          Option<&str>,
-    description:  Option<&str>,
-    storage:      &Store,
-    signer:       &dyn Signer,
+    tag: Option<&str>,
+    description: Option<&str>,
+    storage: &Store,
+    signer: &dyn Signer,
 ) -> Result<CreateResult, BundleError> {
     if artifact_ids.is_empty() {
-        return Err(BundleError::InvalidBundle("no artifact IDs provided".into()));
+        return Err(BundleError::InvalidBundle(
+            "no artifact IDs provided".into(),
+        ));
     }
 
     // Read each artifact and build the reference list.
@@ -99,10 +120,11 @@ pub fn create(
     let mut records = Vec::with_capacity(artifact_ids.len());
 
     for &id in artifact_ids {
-        let rec = storage.read(id)
+        let rec = storage
+            .read(id)
             .map_err(|_| BundleError::ArtifactNotFound(id.to_string()))?;
         refs.push(ArtifactRef {
-            id:    rec.artifact_id.clone(),
+            id: rec.artifact_id.clone(),
             digest: rec.digest.clone(),
             type_: rec.payload_type.clone(),
         });
@@ -110,36 +132,36 @@ pub fn create(
     }
 
     let stmt = BundleStatement {
-        type_:      crate::statements::TYPE_BUNDLE.into(),
-        timestamp:  crate::statements::unix_to_rfc3339(now_secs()),
-        tag:        tag.map(|s| s.to_string()),
+        type_: crate::statements::TYPE_BUNDLE.into(),
+        timestamp: crate::statements::unix_to_rfc3339(now_secs()),
+        tag: tag.map(|s| s.to_string()),
         description: description.map(|s| s.to_string()),
-        artifacts:  refs,
+        artifacts: refs,
         policy_ref: None,
-        meta:       None,
+        meta: None,
     };
 
-    let pt     = payload_type("bundle");
+    let pt = payload_type("bundle");
     let result = sign(&pt, &stmt, signer)?;
 
     let record = Record {
-        artifact_id:  result.artifact_id.clone(),
-        digest:       result.digest.clone(),
+        artifact_id: result.artifact_id.clone(),
+        digest: result.digest.clone(),
         payload_type: pt,
-        key_id:       signer.key_id().to_string(),
-        signed_at:    stmt.timestamp.clone(),
-        parent_id:    None,
-        envelope:     result.envelope,
-        hub_url:      None,
+        key_id: signer.key_id().to_string(),
+        signed_at: stmt.timestamp.clone(),
+        parent_id: None,
+        envelope: result.envelope,
+        hub_url: None,
     };
 
     storage.write(&record)?;
 
     Ok(CreateResult {
         artifact_id: result.artifact_id,
-        digest:      result.digest,
+        digest: result.digest,
         record,
-        statement:   stmt,
+        statement: stmt,
     })
 }
 
@@ -147,11 +169,7 @@ pub fn create(
 ///
 /// The export file contains the bundle envelope and all referenced artifact
 /// envelopes. This is the portable format for sharing proof chains.
-pub fn export(
-    bundle_id: &str,
-    out_path:  &Path,
-    storage:   &Store,
-) -> Result<(), BundleError> {
+pub fn export(bundle_id: &str, out_path: &Path, storage: &Store) -> Result<(), BundleError> {
     let bundle_rec = storage.read(bundle_id)?;
 
     // Verify this is actually a bundle.
@@ -164,20 +182,23 @@ pub fn export(
     }
 
     // Decode the bundle statement to get artifact references.
-    let stmt: BundleStatement = bundle_rec.envelope.unmarshal_statement()
+    let stmt: BundleStatement = bundle_rec
+        .envelope
+        .unmarshal_statement()
         .map_err(|e| BundleError::InvalidBundle(format!("cannot decode bundle: {e}")))?;
 
     // Collect all referenced artifact envelopes.
     let mut artifact_envelopes = Vec::with_capacity(stmt.artifacts.len());
     for art_ref in &stmt.artifacts {
-        let rec = storage.read(&art_ref.id)
+        let rec = storage
+            .read(&art_ref.id)
             .map_err(|_| BundleError::ArtifactNotFound(art_ref.id.clone()))?;
         artifact_envelopes.push(rec.envelope);
     }
 
     let export = ExportFile {
-        version:   EXPORT_VERSION.into(),
-        bundle:    bundle_rec.envelope,
+        version: EXPORT_VERSION.into(),
+        bundle: bundle_rec.envelope,
         artifacts: artifact_envelopes,
     };
 
@@ -200,8 +221,8 @@ pub fn export(
 /// the entire import is rejected; partial writes are avoided by verifying all
 /// envelopes before writing any record.
 pub fn import(
-    path:     &Path,
-    storage:  &Store,
+    path: &Path,
+    storage: &Store,
     verifier: &Verifier,
 ) -> Result<ArtifactId, BundleError> {
     let bytes = std::fs::read(path)?;
@@ -219,12 +240,18 @@ pub fn import(
     // signatures from a rotation/co-sign setup and the local trust root only
     // needs one to match. Index 0 = bundle envelope, 1..=N = artifact
     // envelopes (matches the order shown in error messages and CLI output).
-    let bundle_vr = verifier.verify_any(&export.bundle)
+    let bundle_vr = verifier
+        .verify_any(&export.bundle)
         .map_err(|source| BundleError::UnverifiedEnvelope { index: 0, source })?;
-    let mut artifact_verified_keys: Vec<Option<String>> = Vec::with_capacity(export.artifacts.len());
+    let mut artifact_verified_keys: Vec<Option<String>> =
+        Vec::with_capacity(export.artifacts.len());
     for (i, env) in export.artifacts.iter().enumerate() {
-        let vr = verifier.verify_any(env)
-            .map_err(|source| BundleError::UnverifiedEnvelope { index: i + 1, source })?;
+        let vr = verifier
+            .verify_any(env)
+            .map_err(|source| BundleError::UnverifiedEnvelope {
+                index: i + 1,
+                source,
+            })?;
         artifact_verified_keys.push(vr.verified_key_ids.first().cloned());
     }
 
@@ -258,23 +285,30 @@ fn record_from_envelope(
 ) -> Result<Record, BundleError> {
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 
-    let payload_bytes = URL_SAFE_NO_PAD.decode(&envelope.payload)
+    let payload_bytes = URL_SAFE_NO_PAD
+        .decode(&envelope.payload)
         .map_err(|e| BundleError::InvalidBundle(format!("bad payload base64: {e}")))?;
 
     let pae_bytes = crate::attestation::pae(&envelope.payload_type, &payload_bytes);
     let artifact_id = crate::attestation::artifact_id_from_pae(&pae_bytes);
-    let digest      = crate::attestation::digest_from_pae(&pae_bytes);
+    let digest = crate::attestation::digest_from_pae(&pae_bytes);
 
     // Extract timestamp from the payload if possible.
     let signed_at = serde_json::from_slice::<serde_json::Value>(&payload_bytes)
         .ok()
-        .and_then(|v| v.get("timestamp").and_then(|t| t.as_str().map(|s| s.to_string())))
+        .and_then(|v| {
+            v.get("timestamp")
+                .and_then(|t| t.as_str().map(|s| s.to_string()))
+        })
         .unwrap_or_default();
 
     // Extract parent_id from the payload if present.
     let parent_id = serde_json::from_slice::<serde_json::Value>(&payload_bytes)
         .ok()
-        .and_then(|v| v.get("parentId").and_then(|t| t.as_str().map(|s| s.to_string())));
+        .and_then(|v| {
+            v.get("parentId")
+                .and_then(|t| t.as_str().map(|s| s.to_string()))
+        });
 
     // AUD-13: attribute the record to the key that actually verified, not
     // signatures.first() (which an attacker can prepend a decoy keyid to).
@@ -324,20 +358,29 @@ mod tests {
         (store, p)
     }
 
-    fn rm(p: std::path::PathBuf) { let _ = std::fs::remove_dir_all(p); }
+    fn rm(p: std::path::PathBuf) {
+        let _ = std::fs::remove_dir_all(p);
+    }
 
-    fn sign_and_store(store: &Store, signer: &dyn Signer, pt: &str, stmt: &impl serde::Serialize) -> String {
+    fn sign_and_store(
+        store: &Store,
+        signer: &dyn Signer,
+        pt: &str,
+        stmt: &impl serde::Serialize,
+    ) -> String {
         let result = sign(pt, stmt, signer).unwrap();
-        store.write(&Record {
-            artifact_id:  result.artifact_id.clone(),
-            digest:       result.digest.clone(),
-            payload_type: pt.to_string(),
-            key_id:       signer.key_id().to_string(),
-            signed_at:    String::new(),
-            parent_id:    None,
-            envelope:     result.envelope,
-            hub_url:      None,
-        }).unwrap();
+        store
+            .write(&Record {
+                artifact_id: result.artifact_id.clone(),
+                digest: result.digest.clone(),
+                payload_type: pt.to_string(),
+                key_id: signer.key_id().to_string(),
+                signed_at: String::new(),
+                parent_id: None,
+                envelope: result.envelope,
+                hub_url: None,
+            })
+            .unwrap();
         result.artifact_id
     }
 
@@ -346,18 +389,20 @@ mod tests {
         let (store, dir) = tmp_store();
         let signer = Ed25519Signer::generate("key_test").unwrap();
 
-        let a1 = sign_and_store(&store, &signer, &payload_type("action"),
-            &ActionStatement::new("agent://a", "tool.call"));
-        let a2 = sign_and_store(&store, &signer, &payload_type("approval"),
-            &ApprovalStatement::new("human://b", "nonce_1"));
-
-        let result = create(
-            &[&a1, &a2],
-            Some("test-bundle"),
-            None,
+        let a1 = sign_and_store(
             &store,
             &signer,
-        ).unwrap();
+            &payload_type("action"),
+            &ActionStatement::new("agent://a", "tool.call"),
+        );
+        let a2 = sign_and_store(
+            &store,
+            &signer,
+            &payload_type("approval"),
+            &ApprovalStatement::new("human://b", "nonce_1"),
+        );
+
+        let result = create(&[&a1, &a2], Some("test-bundle"), None, &store, &signer).unwrap();
 
         assert!(result.artifact_id.starts_with("art_"));
         assert_eq!(result.statement.artifacts.len(), 2);
@@ -381,7 +426,14 @@ mod tests {
     fn create_missing_artifact_fails() {
         let (store, dir) = tmp_store();
         let signer = Ed25519Signer::generate("key_test").unwrap();
-        let err = create(&["art_doesnotexist1234567890123456"], None, None, &store, &signer).unwrap_err();
+        let err = create(
+            &["art_doesnotexist1234567890123456"],
+            None,
+            None,
+            &store,
+            &signer,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("not found"));
         rm(dir);
     }
@@ -392,10 +444,18 @@ mod tests {
         let signer = Ed25519Signer::generate("key_test").unwrap();
         let verifier = crate::attestation::Verifier::from_signer(&signer);
 
-        let a1 = sign_and_store(&store, &signer, &payload_type("action"),
-            &ActionStatement::new("agent://a", "tool.call"));
-        let a2 = sign_and_store(&store, &signer, &payload_type("action"),
-            &ActionStatement::new("agent://b", "web.fetch"));
+        let a1 = sign_and_store(
+            &store,
+            &signer,
+            &payload_type("action"),
+            &ActionStatement::new("agent://a", "tool.call"),
+        );
+        let a2 = sign_and_store(
+            &store,
+            &signer,
+            &payload_type("action"),
+            &ActionStatement::new("agent://b", "web.fetch"),
+        );
 
         let bundle = create(&[&a1, &a2], Some("roundtrip"), None, &store, &signer).unwrap();
 
@@ -428,8 +488,12 @@ mod tests {
     fn export_non_bundle_fails() {
         let (store, dir) = tmp_store();
         let signer = Ed25519Signer::generate("key_test").unwrap();
-        let a1 = sign_and_store(&store, &signer, &payload_type("action"),
-            &ActionStatement::new("agent://a", "tool.call"));
+        let a1 = sign_and_store(
+            &store,
+            &signer,
+            &payload_type("action"),
+            &ActionStatement::new("agent://a", "tool.call"),
+        );
 
         let export_path = dir.join("bad.treeship");
         let err = export(&a1, &export_path, &store).unwrap_err();
@@ -440,11 +504,11 @@ mod tests {
     #[test]
     fn import_bad_version_fails() {
         let (store, dir) = tmp_store();
-        let signer   = Ed25519Signer::generate("key_test").unwrap();
+        let signer = Ed25519Signer::generate("key_test").unwrap();
         let verifier = crate::attestation::Verifier::from_signer(&signer);
         let bad = ExportFile {
-            version:   "bad/v99".into(),
-            bundle:    Envelope {
+            version: "bad/v99".into(),
+            bundle: Envelope {
                 payload: String::new(),
                 payload_type: String::new(),
                 signatures: vec![],
@@ -469,12 +533,16 @@ mod tests {
         use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 
         let (store, dir) = tmp_store();
-        let signer       = Ed25519Signer::generate("key_test").unwrap();
-        let verifier     = crate::attestation::Verifier::from_signer(&signer);
+        let signer = Ed25519Signer::generate("key_test").unwrap();
+        let verifier = crate::attestation::Verifier::from_signer(&signer);
 
         // Build a normal bundle so we have a valid export to start from.
-        let a1 = sign_and_store(&store, &signer, &payload_type("action"),
-            &ActionStatement::new("agent://a", "tool.call"));
+        let a1 = sign_and_store(
+            &store,
+            &signer,
+            &payload_type("action"),
+            &ActionStatement::new("agent://a", "tool.call"),
+        );
         let bundle = create(&[&a1], Some("tampered"), None, &store, &signer).unwrap();
         let export_path = dir.join("tampered.treeship");
         export(&bundle.artifact_id, &export_path, &store).unwrap();
@@ -516,11 +584,15 @@ mod tests {
         use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 
         let (store, dir) = tmp_store();
-        let signer   = Ed25519Signer::generate("key_real").unwrap();
+        let signer = Ed25519Signer::generate("key_real").unwrap();
         let verifier = crate::attestation::Verifier::from_signer(&signer);
 
-        let a1 = sign_and_store(&store, &signer, &payload_type("action"),
-            &ActionStatement::new("agent://a", "tool.call"));
+        let a1 = sign_and_store(
+            &store,
+            &signer,
+            &payload_type("action"),
+            &ActionStatement::new("agent://a", "tool.call"),
+        );
         let bundle = create(&[&a1], Some("b"), None, &store, &signer).unwrap();
         let export_path = dir.join("b.treeship");
         export(&bundle.artifact_id, &export_path, &store).unwrap();
@@ -532,7 +604,7 @@ mod tests {
         let real_sig = ef.artifacts[0].signatures[0].clone();
         let decoy = crate::attestation::Signature {
             keyid: "key_ceo".into(),
-            sig:   URL_SAFE_NO_PAD.encode([0u8; 64]),
+            sig: URL_SAFE_NO_PAD.encode([0u8; 64]),
         };
         ef.artifacts[0].signatures = vec![decoy, real_sig];
         std::fs::write(&export_path, serde_json::to_vec(&ef).unwrap()).unwrap();
@@ -558,11 +630,15 @@ mod tests {
         // `NoValidSignature` and `import` propagates it as
         // `UnverifiedEnvelope`.
         let (store, dir) = tmp_store();
-        let signer       = Ed25519Signer::generate("key_test").unwrap();
-        let verifier     = crate::attestation::Verifier::from_signer(&signer);
+        let signer = Ed25519Signer::generate("key_test").unwrap();
+        let verifier = crate::attestation::Verifier::from_signer(&signer);
 
-        let a1 = sign_and_store(&store, &signer, &payload_type("action"),
-            &ActionStatement::new("agent://a", "tool.call"));
+        let a1 = sign_and_store(
+            &store,
+            &signer,
+            &payload_type("action"),
+            &ActionStatement::new("agent://a", "tool.call"),
+        );
         let bundle = create(&[&a1], Some("unsigned"), None, &store, &signer).unwrap();
         let export_path = dir.join("unsigned.treeship");
         export(&bundle.artifact_id, &export_path, &store).unwrap();
@@ -571,7 +647,9 @@ mod tests {
         let raw = std::fs::read(&export_path).unwrap();
         let mut ef: ExportFile = serde_json::from_slice(&raw).unwrap();
         ef.bundle.signatures.clear();
-        for env in &mut ef.artifacts { env.signatures.clear(); }
+        for env in &mut ef.artifacts {
+            env.signatures.clear();
+        }
         std::fs::write(&export_path, serde_json::to_vec(&ef).unwrap()).unwrap();
 
         let (store2, dir2) = tmp_store();

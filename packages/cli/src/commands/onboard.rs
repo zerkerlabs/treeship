@@ -18,16 +18,16 @@ use treeship_core::statements::{payload_type, ReceiptStatement};
 
 pub struct OnboardArgs {
     /// Agent name or `agent://` URI (normalized either way).
-    pub name:         String,
+    pub name: String,
     pub from_harness: Option<String>,
-    pub tools_json:   Option<String>,
-    pub from_a2a:     Option<String>,
-    pub tools:        Vec<String>,
-    pub models:       Vec<String>,
-    pub description:  Option<String>,
+    pub tools_json: Option<String>,
+    pub from_a2a: Option<String>,
+    pub tools: Vec<String>,
+    pub models: Vec<String>,
+    pub description: Option<String>,
     /// Also publish + checkpoint + anchor to the attached Hub.
-    pub publish:      bool,
-    pub config:       Option<String>,
+    pub publish: bool,
+    pub config: Option<String>,
 }
 
 pub fn onboard(args: OnboardArgs, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
@@ -62,7 +62,9 @@ pub fn onboard(args: OnboardArgs, printer: &Printer) -> Result<(), Box<dyn std::
     // ── 1/4 identity: per-agent key, certified + pinned ────────────────────
     // register --own-key is idempotent: an existing key is reused, never
     // duplicated, so onboard can run repeatedly (e.g. on every agent boot).
-    printer.info(&format!("[1/4] identity — registering {actor} with its own key"));
+    printer.info(&format!(
+        "[1/4] identity — registering {actor} with its own key"
+    ));
     crate::commands::agent::register(
         &name,
         Vec::new(),
@@ -116,7 +118,9 @@ pub fn onboard(args: OnboardArgs, printer: &Printer) -> Result<(), Box<dyn std::
             .ok()
             .map(|(_, h)| h.endpoint.clone());
     } else {
-        printer.info("[3/4] publish — skipped (local only; re-run with --publish once a hub is attached)");
+        printer.info(
+            "[3/4] publish — skipped (local only; re-run with --publish once a hub is attached)",
+        );
     }
 
     // ── 4/4 the trust bundle: what a counterparty runs ─────────────────────
@@ -137,11 +141,14 @@ pub fn onboard(args: OnboardArgs, printer: &Printer) -> Result<(), Box<dyn std::
         ));
     }
     printer.blank();
-    printer.success("agent onboarded", &[
-        ("agent", actor.as_str()),
-        ("key",   key_id.as_str()),
-        ("card",  card_id.as_deref().unwrap_or("(see above)")),
-    ]);
+    printer.success(
+        "agent onboarded",
+        &[
+            ("agent", actor.as_str()),
+            ("key", key_id.as_str()),
+            ("card", card_id.as_deref().unwrap_or("(see above)")),
+        ],
+    );
     if let Some(endpoint) = hub_endpoint {
         printer.info("  a counterparty verifies with:");
         printer.info(&format!("    treeship resolve --hub {endpoint} {actor}"));
@@ -167,12 +174,18 @@ fn latest_card_for(ctx: &ctx::Ctx, actor: &str, key_id: &str) -> Option<String> 
     let receipt_pt = payload_type("receipt");
     let mut newest: Option<(String, String)> = None;
     for entry in ctx.storage.list_by_type(&receipt_pt) {
-        let Ok(rec) = ctx.storage.read(&entry.id) else { continue };
-        let Ok(stmt) = rec.envelope.unmarshal_statement::<ReceiptStatement>() else { continue };
+        let Ok(rec) = ctx.storage.read(&entry.id) else {
+            continue;
+        };
+        let Ok(stmt) = rec.envelope.unmarshal_statement::<ReceiptStatement>() else {
+            continue;
+        };
         if stmt.kind != "agent_card.v1" {
             continue;
         }
-        let Some(payload) = stmt.payload else { continue };
+        let Some(payload) = stmt.payload else {
+            continue;
+        };
         if payload.get("agent").and_then(|v| v.as_str()) != Some(actor) {
             continue;
         }

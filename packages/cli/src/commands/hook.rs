@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use treeship_core::rules::ProjectConfig;
 use treeship_core::{
     attestation::sign,
-    statements::{ActionStatement, payload_type},
+    statements::{payload_type, ActionStatement},
     storage::Record,
 };
 
@@ -33,22 +33,40 @@ fn find_project_config() -> Option<PathBuf> {
 /// Uses simple string matching (no regex crate dependency).
 fn sanitize_command(cmd: &str) -> String {
     let sensitive_patterns = [
-        "KEY=", "TOKEN=", "SECRET=", "PASSWORD=", "PASSWD=", "AUTH=",
-        "API_KEY=", "STRIPE_KEY=", "OPENAI_API_KEY=", "CREDENTIAL=",
-        "AWS_SECRET", "PRIVATE_KEY=", "ACCESS_KEY=",
-        "--api-key=", "--token=", "--secret=", "--password=", "--auth=",
-        "--api_key=", "--apikey=",
+        "KEY=",
+        "TOKEN=",
+        "SECRET=",
+        "PASSWORD=",
+        "PASSWD=",
+        "AUTH=",
+        "API_KEY=",
+        "STRIPE_KEY=",
+        "OPENAI_API_KEY=",
+        "CREDENTIAL=",
+        "AWS_SECRET",
+        "PRIVATE_KEY=",
+        "ACCESS_KEY=",
+        "--api-key=",
+        "--token=",
+        "--secret=",
+        "--password=",
+        "--auth=",
+        "--api_key=",
+        "--apikey=",
     ];
     let parts: Vec<&str> = cmd.split_whitespace().collect();
-    let sanitized: Vec<String> = parts.iter().map(|part| {
-        let upper = part.to_uppercase();
-        for pattern in &sensitive_patterns {
-            if upper.contains(pattern) {
-                return "[REDACTED]".to_string();
+    let sanitized: Vec<String> = parts
+        .iter()
+        .map(|part| {
+            let upper = part.to_uppercase();
+            for pattern in &sensitive_patterns {
+                if upper.contains(pattern) {
+                    return "[REDACTED]".to_string();
+                }
             }
-        }
-        part.to_string()
-    }).collect();
+            part.to_string()
+        })
+        .collect();
     sanitized.join(" ")
 }
 
@@ -89,11 +107,7 @@ pub fn pre(command: &str, printer: &Printer) -> Result<(), Box<dyn std::error::E
             // Approved -- fall through to normal attestation
         } else {
             // Not yet approved -- write pending file and block
-            let _ = super::approve::write_pending(
-                command,
-                &matched.label,
-                None,
-            );
+            let _ = super::approve::write_pending(command, &matched.label, None);
 
             printer.blank();
             printer.warn(
@@ -164,7 +178,11 @@ pub fn post(
 
     // Elapsed time
     let now_ms = epoch_ms();
-    let elapsed_ms = if now_ms > start_ms { now_ms - start_ms } else { 0 };
+    let elapsed_ms = if now_ms > start_ms {
+        now_ms - start_ms
+    } else {
+        0
+    };
 
     // Open treeship context (loads keys + storage)
     let ctx = ctx::open(config_override)?;
@@ -208,14 +226,14 @@ pub fn post(
     let result = sign(&pt, &stmt, signer.as_ref())?;
 
     ctx.storage.write(&Record {
-        artifact_id:  result.artifact_id.clone(),
-        digest:       result.digest.clone(),
+        artifact_id: result.artifact_id.clone(),
+        digest: result.digest.clone(),
         payload_type: pt,
-        key_id:       signer.key_id().to_string(),
-        signed_at:    stmt.timestamp.clone(),
-        parent_id:    parent_id,
-        envelope:     result.envelope,
-        hub_url:      None,
+        key_id: signer.key_id().to_string(),
+        signed_at: stmt.timestamp.clone(),
+        parent_id: parent_id,
+        envelope: result.envelope,
+        hub_url: None,
     })?;
 
     // Write .last for auto-chaining

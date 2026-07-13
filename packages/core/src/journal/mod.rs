@@ -39,10 +39,10 @@ use std::path::{Path, PathBuf};
 use fs2::FileExt;
 
 use crate::statements::{
-    ApprovalRevocation, ApprovalUse, JournalCheckpoint, ReplayCheck, ReplayCheckLevel,
-    TYPE_APPROVAL_REVOCATION, TYPE_APPROVAL_USE, TYPE_JOURNAL_CHECKPOINT,
     approval_revocation_record_digest, approval_use_record_digest,
-    journal_checkpoint_record_digest,
+    journal_checkpoint_record_digest, ApprovalRevocation, ApprovalUse, JournalCheckpoint,
+    ReplayCheck, ReplayCheckLevel, TYPE_APPROVAL_REVOCATION, TYPE_APPROVAL_USE,
+    TYPE_JOURNAL_CHECKPOINT,
 };
 
 // ---------------------------------------------------------------------------
@@ -56,16 +56,16 @@ pub enum JournalError {
     /// `previous_record_digest` on a record didn't match the prior
     /// record's `record_digest`. The chain is broken.
     BrokenChain {
-        index:    u64,
+        index: u64,
         expected: String,
-        actual:   String,
+        actual: String,
     },
     /// A record's stored `record_digest` didn't match the recomputed
     /// digest. The record was tampered after write.
     RecordTampered {
-        index:    u64,
+        index: u64,
         expected: String,
-        actual:   String,
+        actual: String,
     },
     /// A record file referenced by the head no longer exists.
     MissingRecord {
@@ -79,9 +79,9 @@ pub enum JournalError {
     /// so this only fires from `append_use` when the caller didn't
     /// preflight via `check_replay`.
     MaxUsesExceeded {
-        grant_id:   String,
-        max_uses:   u32,
-        current:    u32,
+        grant_id: String,
+        max_uses: u32,
+        current: u32,
     },
 }
 
@@ -112,8 +112,16 @@ impl std::fmt::Display for JournalError {
 }
 
 impl std::error::Error for JournalError {}
-impl From<std::io::Error>    for JournalError { fn from(e: std::io::Error)    -> Self { Self::Io(e) } }
-impl From<serde_json::Error> for JournalError { fn from(e: serde_json::Error) -> Self { Self::Json(e) } }
+impl From<std::io::Error> for JournalError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+impl From<serde_json::Error> for JournalError {
+    fn from(e: serde_json::Error) -> Self {
+        Self::Json(e)
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Layout
@@ -130,22 +138,40 @@ impl Journal {
         Self { dir: dir.into() }
     }
 
-    pub fn records_dir(&self) -> PathBuf  { self.dir.join("records") }
-    pub fn heads_dir(&self)   -> PathBuf  { self.dir.join("heads") }
-    pub fn indexes_dir(&self) -> PathBuf  { self.dir.join("indexes") }
-    pub fn locks_dir(&self)   -> PathBuf  { self.dir.join("locks") }
-    pub fn current_head_path(&self) -> PathBuf { self.heads_dir().join("current.json") }
-    pub fn lock_path(&self)         -> PathBuf { self.locks_dir().join("journal.lock") }
-    pub fn meta_path(&self)         -> PathBuf { self.dir.join("journal.json") }
+    pub fn records_dir(&self) -> PathBuf {
+        self.dir.join("records")
+    }
+    pub fn heads_dir(&self) -> PathBuf {
+        self.dir.join("heads")
+    }
+    pub fn indexes_dir(&self) -> PathBuf {
+        self.dir.join("indexes")
+    }
+    pub fn locks_dir(&self) -> PathBuf {
+        self.dir.join("locks")
+    }
+    pub fn current_head_path(&self) -> PathBuf {
+        self.heads_dir().join("current.json")
+    }
+    pub fn lock_path(&self) -> PathBuf {
+        self.locks_dir().join("journal.lock")
+    }
+    pub fn meta_path(&self) -> PathBuf {
+        self.dir.join("journal.json")
+    }
 
     /// Index file for a given grant. Each line is one `record_index`.
     pub fn by_grant_path(&self, grant_id: &str) -> PathBuf {
-        self.indexes_dir().join("by-grant").join(format!("{}.txt", safe_name(grant_id)))
+        self.indexes_dir()
+            .join("by-grant")
+            .join(format!("{}.txt", safe_name(grant_id)))
     }
 
     /// Index file for a nonce_digest.
     pub fn by_nonce_path(&self, nonce_digest: &str) -> PathBuf {
-        self.indexes_dir().join("by-nonce").join(format!("{}.txt", safe_name(nonce_digest)))
+        self.indexes_dir()
+            .join("by-nonce")
+            .join(format!("{}.txt", safe_name(nonce_digest)))
     }
 
     /// Returns true iff the journal directory exists.
@@ -183,8 +209,8 @@ pub struct Head {
 impl Default for Head {
     fn default() -> Self {
         Self {
-            index:      0,
-            digest:     String::new(),
+            index: 0,
+            digest: String::new(),
             updated_at: String::new(),
         }
     }
@@ -263,8 +289,8 @@ pub fn append_use(j: &Journal, mut rec: ApprovalUse) -> Result<Head, JournalErro
         write_record_use(j, next_index, &rec)?;
         update_indexes_for_use(j, next_index, &rec)?;
         let new_head = Head {
-            index:      next_index,
-            digest:     rec.record_digest.clone(),
+            index: next_index,
+            digest: rec.record_digest.clone(),
             updated_at: rec.created_at.clone(),
         };
         write_head(j, &new_head)?;
@@ -303,10 +329,7 @@ pub fn reserve_use(
         // writer can mutate that index, so the count is correct.
         let replay = check_replay(j, &rec.grant_id, &rec.nonce_digest, max_uses)?;
         if let Some(false) = replay.passed {
-            let current = replay
-                .use_number
-                .map(|n| n.saturating_sub(1))
-                .unwrap_or(0);
+            let current = replay.use_number.map(|n| n.saturating_sub(1)).unwrap_or(0);
             return Err(JournalError::MaxUsesExceeded {
                 grant_id: rec.grant_id.clone(),
                 max_uses: replay.max_uses.unwrap_or(0),
@@ -326,8 +349,8 @@ pub fn reserve_use(
         write_record_use(j, next_index, &rec)?;
         update_indexes_for_use(j, next_index, &rec)?;
         let new_head = Head {
-            index:      next_index,
-            digest:     rec.record_digest.clone(),
+            index: next_index,
+            digest: rec.record_digest.clone(),
             updated_at: rec.created_at.clone(),
         };
         write_head(j, &new_head)?;
@@ -347,8 +370,8 @@ pub fn append_revocation(j: &Journal, mut rec: ApprovalRevocation) -> Result<Hea
         write_record_revocation(j, next_index, &rec)?;
         index_grant(j, next_index, &rec.grant_id)?;
         let new_head = Head {
-            index:      next_index,
-            digest:     rec.record_digest.clone(),
+            index: next_index,
+            digest: rec.record_digest.clone(),
             updated_at: rec.created_at.clone(),
         };
         write_head(j, &new_head)?;
@@ -367,8 +390,8 @@ pub fn append_checkpoint(j: &Journal, mut rec: JournalCheckpoint) -> Result<Head
         let next_index = head.index + 1;
         write_record_checkpoint(j, next_index, &rec)?;
         let new_head = Head {
-            index:      next_index,
-            digest:     rec.record_digest.clone(),
+            index: next_index,
+            digest: rec.record_digest.clone(),
             updated_at: rec.created_at.clone(),
         };
         write_head(j, &new_head)?;
@@ -397,7 +420,11 @@ fn write_record_use(j: &Journal, index: u64, rec: &ApprovalUse) -> Result<(), Jo
     Ok(())
 }
 
-fn write_record_revocation(j: &Journal, index: u64, rec: &ApprovalRevocation) -> Result<(), JournalError> {
+fn write_record_revocation(
+    j: &Journal,
+    index: u64,
+    rec: &ApprovalRevocation,
+) -> Result<(), JournalError> {
     fs::create_dir_all(j.records_dir())?;
     let name = record_filename(index, "approval-revocation", &rec.record_digest);
     let path = j.records_dir().join(&name);
@@ -409,7 +436,11 @@ fn write_record_revocation(j: &Journal, index: u64, rec: &ApprovalRevocation) ->
     Ok(())
 }
 
-fn write_record_checkpoint(j: &Journal, index: u64, rec: &JournalCheckpoint) -> Result<(), JournalError> {
+fn write_record_checkpoint(
+    j: &Journal,
+    index: u64,
+    rec: &JournalCheckpoint,
+) -> Result<(), JournalError> {
     fs::create_dir_all(j.records_dir())?;
     let name = record_filename(index, "journal-checkpoint", &rec.record_digest);
     let path = j.records_dir().join(&name);
@@ -428,11 +459,15 @@ fn ensure_meta(j: &Journal) -> Result<(), JournalError> {
     }
     #[derive(serde::Serialize)]
     struct Meta<'a> {
-        kind:    &'a str,
+        kind: &'a str,
         version: &'a str,
-        format:  &'a str,
+        format: &'a str,
     }
-    let meta = Meta { kind: "approval-use-journal", version: "v1", format: "json-records" };
+    let meta = Meta {
+        kind: "approval-use-journal",
+        version: "v1",
+        format: "json-records",
+    };
     let bytes = serde_json::to_vec_pretty(&meta)?;
     fs::write(&path, bytes)?;
     Ok(())
@@ -521,14 +556,23 @@ fn iter_records(j: &Journal) -> Result<Vec<(u64, String, Vec<u8>)>, JournalError
         }
         let name = match path.file_name().and_then(|n| n.to_str()) {
             Some(n) => n,
-            None    => continue,
+            None => continue,
         };
         // Filename shape: "<10-digit-index>.<kind>.<short-digest>.json"
         let mut parts = name.splitn(4, '.');
-        let idx_str = match parts.next() { Some(s) => s, None => continue };
-        let kind    = match parts.next() { Some(s) => s, None => continue };
+        let idx_str = match parts.next() {
+            Some(s) => s,
+            None => continue,
+        };
+        let kind = match parts.next() {
+            Some(s) => s,
+            None => continue,
+        };
         // index parses as u64
-        let idx = match idx_str.parse::<u64>() { Ok(n) => n, Err(_) => continue };
+        let idx = match idx_str.parse::<u64>() {
+            Ok(n) => n,
+            Err(_) => continue,
+        };
         entries.push((idx, kind.to_string(), path));
     }
     entries.sort_by_key(|(idx, _, _)| *idx);
@@ -554,17 +598,17 @@ pub fn verify_integrity(j: &Journal) -> Result<u64, JournalError> {
                 let rec: ApprovalUse = serde_json::from_slice(&bytes)?;
                 if rec.previous_record_digest != prior_digest {
                     return Err(JournalError::BrokenChain {
-                        index:    idx,
+                        index: idx,
                         expected: prior_digest,
-                        actual:   rec.previous_record_digest,
+                        actual: rec.previous_record_digest,
                     });
                 }
                 let recomputed = approval_use_record_digest(&rec);
                 if recomputed != rec.record_digest {
                     return Err(JournalError::RecordTampered {
-                        index:    idx,
+                        index: idx,
                         expected: rec.record_digest,
-                        actual:   recomputed,
+                        actual: recomputed,
                     });
                 }
                 prior_digest = rec.record_digest;
@@ -573,17 +617,17 @@ pub fn verify_integrity(j: &Journal) -> Result<u64, JournalError> {
                 let rec: ApprovalRevocation = serde_json::from_slice(&bytes)?;
                 if rec.previous_record_digest != prior_digest {
                     return Err(JournalError::BrokenChain {
-                        index:    idx,
+                        index: idx,
                         expected: prior_digest,
-                        actual:   rec.previous_record_digest,
+                        actual: rec.previous_record_digest,
                     });
                 }
                 let recomputed = approval_revocation_record_digest(&rec);
                 if recomputed != rec.record_digest {
                     return Err(JournalError::RecordTampered {
-                        index:    idx,
+                        index: idx,
                         expected: rec.record_digest,
-                        actual:   recomputed,
+                        actual: recomputed,
                     });
                 }
                 prior_digest = rec.record_digest;
@@ -592,17 +636,17 @@ pub fn verify_integrity(j: &Journal) -> Result<u64, JournalError> {
                 let rec: JournalCheckpoint = serde_json::from_slice(&bytes)?;
                 if rec.previous_record_digest != prior_digest {
                     return Err(JournalError::BrokenChain {
-                        index:    idx,
+                        index: idx,
                         expected: prior_digest,
-                        actual:   rec.previous_record_digest,
+                        actual: rec.previous_record_digest,
                     });
                 }
                 let recomputed = journal_checkpoint_record_digest(&rec);
                 if recomputed != rec.record_digest {
                     return Err(JournalError::RecordTampered {
-                        index:    idx,
+                        index: idx,
                         expected: rec.record_digest,
-                        actual:   recomputed,
+                        actual: recomputed,
                     });
                 }
                 prior_digest = rec.record_digest;
@@ -660,7 +704,10 @@ pub fn check_replay(
     if index_path.exists() {
         let raw = fs::read_to_string(&index_path)?;
         for line in raw.lines() {
-            let idx: u64 = match line.trim().parse() { Ok(n) => n, Err(_) => continue };
+            let idx: u64 = match line.trim().parse() {
+                Ok(n) => n,
+                Err(_) => continue,
+            };
             if let Some(rec) = load_use_record(j, idx)? {
                 // Only count uses that bind to the same grant_id; the
                 // by-nonce index can in theory share a digest across
@@ -675,18 +722,20 @@ pub fn check_replay(
     let max_uses = max_uses_hint.or(last_max);
     let passed = match max_uses {
         Some(m) => current < m,
-        None    => true, // unbounded grant; PR 5 reports this honestly
+        None => true, // unbounded grant; PR 5 reports this honestly
     };
     let details = match max_uses {
         Some(m) => format!("local Approval Use Journal: use {current}/{m}"),
-        None    => format!("local Approval Use Journal: {current} prior use(s); grant has no max_uses"),
+        None => {
+            format!("local Approval Use Journal: {current} prior use(s); grant has no max_uses")
+        }
     };
     Ok(ReplayCheck {
-        level:      ReplayCheckLevel::LocalJournal,
+        level: ReplayCheckLevel::LocalJournal,
         use_number: Some(current.saturating_add(1)),
         max_uses,
-        passed:     Some(passed),
-        details:    Some(details),
+        passed: Some(passed),
+        details: Some(details),
     })
 }
 
@@ -747,7 +796,10 @@ pub fn find_use_for_action(
     // metadata link.
     let mut latest: Option<ApprovalUse> = None;
     for line in raw.lines() {
-        let idx: u64 = match line.trim().parse() { Ok(n) => n, Err(_) => continue };
+        let idx: u64 = match line.trim().parse() {
+            Ok(n) => n,
+            Err(_) => continue,
+        };
         if let Some(rec) = load_use_record(j, idx)? {
             if rec.grant_id == grant_id {
                 latest = Some(rec);
@@ -760,20 +812,26 @@ pub fn find_use_for_action(
     let max_uses = max_uses_hint.or(stored_max);
     let passed = match max_uses {
         Some(m) => rec.use_number <= m,
-        None    => true,
+        None => true,
     };
     let details = match max_uses {
-        Some(m) => format!("local Approval Use Journal passed, use {}/{}", rec.use_number, m),
-        None    => format!("local Approval Use Journal: use {} of unbounded grant", rec.use_number),
+        Some(m) => format!(
+            "local Approval Use Journal passed, use {}/{}",
+            rec.use_number, m
+        ),
+        None => format!(
+            "local Approval Use Journal: use {} of unbounded grant",
+            rec.use_number
+        ),
     };
     Ok(Some((
         rec.clone(),
         ReplayCheck {
-            level:      ReplayCheckLevel::LocalJournal,
+            level: ReplayCheckLevel::LocalJournal,
             use_number: Some(rec.use_number),
             max_uses,
-            passed:     Some(passed),
-            details:    Some(details),
+            passed: Some(passed),
+            details: Some(details),
         },
     )))
 }
@@ -791,7 +849,10 @@ pub fn list_uses_for_grant(j: &Journal, grant_id: &str) -> Result<Vec<ApprovalUs
     let raw = fs::read_to_string(&index_path)?;
     let mut out = Vec::new();
     for line in raw.lines() {
-        let idx: u64 = match line.trim().parse() { Ok(n) => n, Err(_) => continue };
+        let idx: u64 = match line.trim().parse() {
+            Ok(n) => n,
+            Err(_) => continue,
+        };
         if let Some(rec) = load_use_record(j, idx)? {
             out.push(rec);
         }
@@ -810,27 +871,27 @@ mod tests {
 
     fn sample_use(use_id: &str, grant_id: &str, nonce_digest: &str, n: u32) -> ApprovalUse {
         ApprovalUse {
-            type_:                  TYPE_APPROVAL_USE.into(),
-            use_id:                 use_id.into(),
-            grant_id:               grant_id.into(),
-            grant_digest:           "sha256:00".into(),
-            nonce_digest:           nonce_digest.into(),
-            actor:                  "agent://deployer".into(),
-            action:                 "deploy.production".into(),
-            subject:                "env://production".into(),
-            session_id:             None,
-            action_artifact_id:     None,
-            receipt_digest:         None,
-            use_number:             n,
-            max_uses:               Some(2),
-            idempotency_key:        None,
-            created_at:             "2026-04-30T07:00:00Z".into(),
-            expires_at:             None,
+            type_: TYPE_APPROVAL_USE.into(),
+            use_id: use_id.into(),
+            grant_id: grant_id.into(),
+            grant_digest: "sha256:00".into(),
+            nonce_digest: nonce_digest.into(),
+            actor: "agent://deployer".into(),
+            action: "deploy.production".into(),
+            subject: "env://production".into(),
+            session_id: None,
+            action_artifact_id: None,
+            receipt_digest: None,
+            use_number: n,
+            max_uses: Some(2),
+            idempotency_key: None,
+            created_at: "2026-04-30T07:00:00Z".into(),
+            expires_at: None,
             previous_record_digest: String::new(), // append_use rewrites this
-            record_digest:          String::new(), // append_use rewrites this
-            signature:              None,
-            signature_alg:          None,
-            signing_key_id:         None,
+            record_digest: String::new(),          // append_use rewrites this
+            signature: None,
+            signature_alg: None,
+            signing_key_id: None,
         }
     }
 
@@ -945,8 +1006,8 @@ mod tests {
         let r = check_replay(&j, "g1", "sha256:nn1", Some(2)).unwrap();
         assert_eq!(r.level, ReplayCheckLevel::LocalJournal);
         assert_eq!(r.use_number, Some(3));
-        assert_eq!(r.max_uses,   Some(2));
-        assert_eq!(r.passed,     Some(false));
+        assert_eq!(r.max_uses, Some(2));
+        assert_eq!(r.passed, Some(false));
     }
 
     #[test]
@@ -956,7 +1017,7 @@ mod tests {
         append_use(&j, sample_use("use_1", "g1", "sha256:nn1", 1)).unwrap();
         let r = check_replay(&j, "g1", "sha256:nn1", Some(2)).unwrap();
         assert_eq!(r.use_number, Some(2));
-        assert_eq!(r.passed,     Some(true));
+        assert_eq!(r.passed, Some(true));
     }
 
     #[test]
@@ -1007,8 +1068,12 @@ mod tests {
         let j = Journal::new(dir.path());
         fs::create_dir_all(j.locks_dir()).unwrap();
         let held = OpenOptions::new()
-            .read(true).write(true).create(true).truncate(false)
-            .open(j.lock_path()).unwrap();
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(j.lock_path())
+            .unwrap();
         held.try_lock_exclusive().unwrap();
 
         let err = append_use(&j, sample_use("use_1", "g1", "sha256:nn1", 1)).unwrap_err();
@@ -1023,18 +1088,18 @@ mod tests {
         let j = Journal::new(dir.path());
         append_use(&j, sample_use("use_1", "g1", "sha256:nn1", 1)).unwrap();
         let rev = ApprovalRevocation {
-            type_:                  TYPE_APPROVAL_REVOCATION.into(),
-            revocation_id:          "rev_1".into(),
-            grant_id:               "g1".into(),
-            grant_digest:           "sha256:00".into(),
-            revoker:                "human://alice".into(),
-            reason:                 Some("rotated key".into()),
-            created_at:             "2026-04-30T07:01:00Z".into(),
+            type_: TYPE_APPROVAL_REVOCATION.into(),
+            revocation_id: "rev_1".into(),
+            grant_id: "g1".into(),
+            grant_digest: "sha256:00".into(),
+            revoker: "human://alice".into(),
+            reason: Some("rotated key".into()),
+            created_at: "2026-04-30T07:01:00Z".into(),
             previous_record_digest: String::new(),
-            record_digest:          String::new(),
-            signature:              None,
-            signature_alg:          None,
-            signing_key_id:         None,
+            record_digest: String::new(),
+            signature: None,
+            signature_alg: None,
+            signing_key_id: None,
         };
         let h = append_revocation(&j, rev).unwrap();
         assert_eq!(h.index, 2);
@@ -1057,7 +1122,14 @@ mod tests {
         let bytes = fs::read(&entries[0]).unwrap();
         let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         let obj = json.as_object().unwrap();
-        for forbidden in ["nonce", "command", "prompt", "file_content", "bearer_token", "api_key"] {
+        for forbidden in [
+            "nonce",
+            "command",
+            "prompt",
+            "file_content",
+            "bearer_token",
+            "api_key",
+        ] {
             assert!(
                 !obj.contains_key(forbidden),
                 "journal record must not contain `{forbidden}`",
@@ -1081,7 +1153,10 @@ mod tests {
         assert_eq!(head.index, 1);
         let stored = list_uses_for_grant(&j, "g1").unwrap();
         assert_eq!(stored.len(), 1);
-        assert_eq!(stored[0].use_number, 1, "reserve_use must stamp use_number=1 for the first use");
+        assert_eq!(
+            stored[0].use_number, 1,
+            "reserve_use must stamp use_number=1 for the first use"
+        );
     }
 
     #[test]
@@ -1095,7 +1170,11 @@ mod tests {
         let err = reserve_use(&j, sample_use("use_2", "g1", "sha256:nn_a", 0), Some(1))
             .expect_err("second consume of max_uses=1 grant must fail");
         match err {
-            JournalError::MaxUsesExceeded { grant_id, max_uses, current } => {
+            JournalError::MaxUsesExceeded {
+                grant_id,
+                max_uses,
+                current,
+            } => {
                 assert_eq!(grant_id, "g1");
                 assert_eq!(max_uses, 1);
                 assert_eq!(current, 1);
@@ -1112,21 +1191,26 @@ mod tests {
         // Legitimate multi-use grant: two distinct nonces, same grant.
         let dir = tempdir().unwrap();
         let j = Journal::new(dir.path());
-        let mut a = sample_use("use_1", "g1", "sha256:nn_a", 0); a.max_uses = Some(2);
-        let mut b = sample_use("use_2", "g1", "sha256:nn_b", 0); b.max_uses = Some(2);
+        let mut a = sample_use("use_1", "g1", "sha256:nn_a", 0);
+        a.max_uses = Some(2);
+        let mut b = sample_use("use_2", "g1", "sha256:nn_b", 0);
+        b.max_uses = Some(2);
         reserve_use(&j, a, Some(2)).unwrap();
         reserve_use(&j, b, Some(2)).unwrap();
         // A third nonce with max_uses=2 is fine (per-nonce check, not
         // per-grant); the journal's invariant is single-use-per-nonce.
-        let mut c = sample_use("use_3", "g1", "sha256:nn_c", 0); c.max_uses = Some(2);
+        let mut c = sample_use("use_3", "g1", "sha256:nn_c", 0);
+        c.max_uses = Some(2);
         reserve_use(&j, c, Some(2)).unwrap();
         // But a SECOND consume of nn_a violates max_uses=2 because
         // that nonce already has 1 use; 1+1 = 2 is within bound, so
         // this second use of nn_a is actually allowed — pin that.
-        let mut a2 = sample_use("use_1b", "g1", "sha256:nn_a", 0); a2.max_uses = Some(2);
+        let mut a2 = sample_use("use_1b", "g1", "sha256:nn_a", 0);
+        a2.max_uses = Some(2);
         reserve_use(&j, a2, Some(2)).unwrap();
         // A THIRD consume of nn_a exceeds max_uses=2.
-        let mut a3 = sample_use("use_1c", "g1", "sha256:nn_a", 0); a3.max_uses = Some(2);
+        let mut a3 = sample_use("use_1c", "g1", "sha256:nn_a", 0);
+        a3.max_uses = Some(2);
         let err = reserve_use(&j, a3, Some(2)).expect_err("third use of same nonce must fail");
         assert!(matches!(err, JournalError::MaxUsesExceeded { .. }));
     }
@@ -1156,11 +1240,16 @@ mod tests {
                 &j,
                 sample_use(&format!("use_retry_{i}"), "g1", "sha256:nn_retry", 0),
                 Some(1),
-            ).expect_err("retry must fail");
+            )
+            .expect_err("retry must fail");
             assert!(matches!(err, JournalError::MaxUsesExceeded { .. }));
         }
         let stored = list_uses_for_grant(&j, "g1").unwrap();
-        assert_eq!(stored.len(), 1, "exactly one record on disk despite 5 retries");
+        assert_eq!(
+            stored.len(),
+            1,
+            "exactly one record on disk despite 5 retries"
+        );
     }
 
     #[test]
@@ -1178,8 +1267,8 @@ mod tests {
         //   - MaxUsesExceeded: they got the lock after the winner
         //     released, saw the winner's record, declined to write
         // Both are correct — neither is a bypass.
-        use std::sync::Arc;
         use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
         use std::thread;
 
         let dir = tempdir().unwrap();
@@ -1196,21 +1285,24 @@ mod tests {
             let max_exceeded = Arc::clone(&max_exceeded);
             handles.push(thread::spawn(move || {
                 let j = Journal::new(dir_path.as_path());
-                let rec = sample_use(
-                    &format!("use_{i}"),
-                    "g1",
-                    "sha256:race_nonce",
-                    0,
-                );
+                let rec = sample_use(&format!("use_{i}"), "g1", "sha256:race_nonce", 0);
                 match reserve_use(&j, rec, Some(1)) {
-                    Ok(_)                                            => { success.fetch_add(1, Ordering::SeqCst); }
-                    Err(JournalError::LockBusy)                      => { lock_busy.fetch_add(1, Ordering::SeqCst); }
-                    Err(JournalError::MaxUsesExceeded { .. })        => { max_exceeded.fetch_add(1, Ordering::SeqCst); }
+                    Ok(_) => {
+                        success.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Err(JournalError::LockBusy) => {
+                        lock_busy.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Err(JournalError::MaxUsesExceeded { .. }) => {
+                        max_exceeded.fetch_add(1, Ordering::SeqCst);
+                    }
                     Err(other) => panic!("unexpected error: {other:?}"),
                 }
             }));
         }
-        for h in handles { h.join().unwrap(); }
+        for h in handles {
+            h.join().unwrap();
+        }
 
         let s = success.load(Ordering::SeqCst);
         let lb = lock_busy.load(Ordering::SeqCst);
@@ -1220,7 +1312,13 @@ mod tests {
 
         // Belt-and-braces: only one record actually on disk for this nonce.
         let stored = list_uses_for_grant(&Journal::new(dir.path()), "g1").unwrap();
-        let same_nonce = stored.iter().filter(|u| u.nonce_digest == "sha256:race_nonce").count();
-        assert_eq!(same_nonce, 1, "exactly one record on disk for the contested nonce");
+        let same_nonce = stored
+            .iter()
+            .filter(|u| u.nonce_digest == "sha256:race_nonce")
+            .count();
+        assert_eq!(
+            same_nonce, 1,
+            "exactly one record on disk for the contested nonce"
+        );
     }
 }

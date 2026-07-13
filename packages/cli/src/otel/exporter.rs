@@ -18,8 +18,7 @@ pub fn export_artifact(config: &OtelConfig, record: &Record) -> Result<(), Strin
     let span_json = build_otlp_payload(config, record)?;
 
     let url = format!("{}/v1/traces", config.endpoint.trim_end_matches('/'));
-    let mut req = ureq::post(&url)
-        .set("Content-Type", "application/json");
+    let mut req = ureq::post(&url).set("Content-Type", "application/json");
 
     if let Some(ref auth) = config.auth_header {
         req = req.set("Authorization", auth);
@@ -63,15 +62,14 @@ pub fn send_test_span(config: &OtelConfig) -> Result<(), String> {
     });
 
     let url = format!("{}/v1/traces", config.endpoint.trim_end_matches('/'));
-    let mut req = ureq::post(&url)
-        .set("Content-Type", "application/json");
+    let mut req = ureq::post(&url).set("Content-Type", "application/json");
 
     if let Some(ref auth) = config.auth_header {
         req = req.set("Authorization", auth);
     }
 
-    let body = serde_json::to_string(&payload)
-        .map_err(|e| format!("json serialization failed: {}", e))?;
+    let body =
+        serde_json::to_string(&payload).map_err(|e| format!("json serialization failed: {}", e))?;
 
     req.send_string(&body)
         .map_err(|e| format!("otel test failed: {}", e))?;
@@ -97,8 +95,7 @@ fn build_otlp_payload(config: &OtelConfig, record: &Record) -> Result<String, St
         .to_string();
 
     // Timestamps
-    let start_ns = rfc3339_to_unix_nano(&record.signed_at)
-        .unwrap_or_else(|| now_unix_nano());
+    let start_ns = rfc3339_to_unix_nano(&record.signed_at).unwrap_or_else(|| now_unix_nano());
 
     let elapsed_ns = statement
         .get("meta")
@@ -191,8 +188,7 @@ fn build_otlp_payload(config: &OtelConfig, record: &Record) -> Result<String, St
         }]
     });
 
-    serde_json::to_string(&payload)
-        .map_err(|e| format!("json serialization failed: {}", e))
+    serde_json::to_string(&payload).map_err(|e| format!("json serialization failed: {}", e))
 }
 
 /// Decode the base64url-encoded statement payload from the DSSE envelope.
@@ -201,8 +197,7 @@ fn decode_statement(record: &Record) -> Result<serde_json::Value, String> {
     let bytes = URL_SAFE_NO_PAD
         .decode(&record.envelope.payload)
         .map_err(|e| format!("base64 decode failed: {}", e))?;
-    serde_json::from_slice(&bytes)
-        .map_err(|e| format!("json parse failed: {}", e))
+    serde_json::from_slice(&bytes).map_err(|e| format!("json parse failed: {}", e))
 }
 
 /// Derive a 32-hex-char trace ID from an artifact_id.
@@ -237,14 +232,18 @@ fn rfc3339_to_unix_nano(ts: &str) -> Option<u64> {
     let s = ts.trim().trim_end_matches('Z');
     let (date_part, time_part) = s.split_once('T')?;
     let parts: Vec<&str> = date_part.split('-').collect();
-    if parts.len() != 3 { return None; }
+    if parts.len() != 3 {
+        return None;
+    }
 
     let year: i64 = parts[0].parse().ok()?;
     let month: i64 = parts[1].parse().ok()?;
     let day: i64 = parts[2].parse().ok()?;
 
     let time_parts: Vec<&str> = time_part.split(':').collect();
-    if time_parts.len() < 3 { return None; }
+    if time_parts.len() < 3 {
+        return None;
+    }
 
     let hour: i64 = time_parts[0].parse().ok()?;
     let min: i64 = time_parts[1].parse().ok()?;
@@ -256,7 +255,9 @@ fn rfc3339_to_unix_nano(ts: &str) -> Option<u64> {
         // Pad/truncate fraction to 9 digits (nanoseconds)
         let mut f = frac.to_string();
         f.truncate(9);
-        while f.len() < 9 { f.push('0'); }
+        while f.len() < 9 {
+            f.push('0');
+        }
         let ns: u64 = f.parse().ok()?;
         (w, ns)
     } else {
@@ -266,14 +267,20 @@ fn rfc3339_to_unix_nano(ts: &str) -> Option<u64> {
     // Days from epoch (simplified -- good enough for 2000-2100 range)
     let days = days_from_civil(year, month, day)?;
     let secs = days * 86400 + hour * 3600 + min * 60 + sec_whole;
-    if secs < 0 { return None; }
+    if secs < 0 {
+        return None;
+    }
     Some(secs as u64 * 1_000_000_000 + frac_ns)
 }
 
 /// Convert a civil date to days since Unix epoch.
 fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {
     // Adjust for months before March
-    let (y, m) = if month <= 2 { (year - 1, month + 9) } else { (year, month - 3) };
+    let (y, m) = if month <= 2 {
+        (year - 1, month + 9)
+    } else {
+        (year, month - 3)
+    };
     let era = if y >= 0 { y } else { y - 399 } / 400;
     let yoe = y - era * 400;
     let doy = (153 * m + 2) / 5 + day - 1;

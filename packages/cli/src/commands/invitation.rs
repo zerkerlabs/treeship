@@ -26,14 +26,13 @@ use treeship_core::{
     journal::{self, Journal},
     statements::{
         invitation::{
-            generate_nonce, pubkey_fingerprint_short,
-            DEFAULT_INVITATION_LIFETIME_SECS, GrantedCapabilities, InvitationStatement,
-            InviteeRestriction, MAX_INVITATION_LIFETIME_SECS, TYPE_INVITATION,
+            generate_nonce, pubkey_fingerprint_short, GrantedCapabilities, InvitationStatement,
+            InviteeRestriction, DEFAULT_INVITATION_LIFETIME_SECS, MAX_INVITATION_LIFETIME_SECS,
+            TYPE_INVITATION,
         },
         nonce_digest, payload_type,
         session_participant::{
-            verify_participant_envelope, SessionParticipantStatement,
-            TYPE_SESSION_PARTICIPANT,
+            verify_participant_envelope, SessionParticipantStatement, TYPE_SESSION_PARTICIPANT,
         },
         ApprovalUse, TYPE_APPROVAL_USE,
     },
@@ -41,7 +40,10 @@ use treeship_core::{
     trust::{decode_ed25519_pubkey, TrustRootKind, TrustRootStore},
 };
 
-use crate::{ctx, printer::{Format, Printer}};
+use crate::{
+    ctx,
+    printer::{Format, Printer},
+};
 
 // ---------------------------------------------------------------------------
 // Bootstrap blob format
@@ -66,8 +68,7 @@ struct BootstrapBundle {
 }
 
 fn encode_bootstrap_blob(bundle: &BootstrapBundle) -> Result<String, String> {
-    let json = serde_json::to_vec(bundle)
-        .map_err(|e| format!("encode bootstrap: {e}"))?;
+    let json = serde_json::to_vec(bundle).map_err(|e| format!("encode bootstrap: {e}"))?;
     let body = URL_SAFE_NO_PAD.encode(&json);
     // Wrap every 64 chars so paste-buffers don't word-wrap mid-line.
     let mut out = String::with_capacity(body.len() + 128);
@@ -89,8 +90,13 @@ fn decode_bootstrap_blob(s: &str) -> Result<BootstrapBundle, String> {
     let mut body = String::new();
     for line in s.lines() {
         let l = line.trim();
-        if l == BLOB_HEADER { in_blob = true; continue; }
-        if l == BLOB_FOOTER { break; }
+        if l == BLOB_HEADER {
+            in_blob = true;
+            continue;
+        }
+        if l == BLOB_FOOTER {
+            break;
+        }
         if in_blob {
             body.push_str(l);
         }
@@ -112,8 +118,7 @@ fn decode_bootstrap_blob(s: &str) -> Result<BootstrapBundle, String> {
     let bytes = URL_SAFE_NO_PAD
         .decode(body.as_bytes())
         .map_err(|e| format!("blob base64 decode: {e}"))?;
-    serde_json::from_slice(&bytes)
-        .map_err(|e| format!("blob json decode: {e}"))
+    serde_json::from_slice(&bytes).map_err(|e| format!("blob json decode: {e}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -229,8 +234,8 @@ fn parse_restriction(args: &InviteArgs) -> Result<InviteeRestriction, String> {
             fp.to_string()
         } else {
             // Treat as a pubkey (ed25519:<b64> or bare b64).
-            let parsed = decode_ed25519_pubkey(fp)
-                .map_err(|e| format!("--invitee-pubkey invalid: {e}"))?;
+            let parsed =
+                decode_ed25519_pubkey(fp).map_err(|e| format!("--invitee-pubkey invalid: {e}"))?;
             pubkey_fingerprint_short(&format!(
                 "ed25519:{}",
                 URL_SAFE_NO_PAD.encode(parsed.to_bytes()),
@@ -244,9 +249,11 @@ fn parse_restriction(args: &InviteArgs) -> Result<InviteeRestriction, String> {
         // split on the LAST colon -- the cert spec puts subjects after
         // the rightmost colon, never inside. Subjects with embedded `:`
         // are unsupported in Phase 1.
-        let (issuer, subjects) = spec.rsplit_once(':').ok_or_else(|| format!(
-            "--invitee-cert format is <issuer_pubkey>:<subject1,subject2,...> (got `{spec}`)",
-        ))?;
+        let (issuer, subjects) = spec.rsplit_once(':').ok_or_else(|| {
+            format!(
+                "--invitee-cert format is <issuer_pubkey>:<subject1,subject2,...> (got `{spec}`)",
+            )
+        })?;
         let issuer = issuer.trim().to_string();
         if issuer.is_empty() {
             return Err("--invitee-cert: issuer_pubkey must not be empty".into());
@@ -259,7 +266,10 @@ fn parse_restriction(args: &InviteArgs) -> Result<InviteeRestriction, String> {
         if allowed_subjects.is_empty() {
             return Err("--invitee-cert: at least one subject is required".into());
         }
-        return Ok(InviteeRestriction::Cert { issuer_pubkey: issuer, allowed_subjects });
+        return Ok(InviteeRestriction::Cert {
+            issuer_pubkey: issuer,
+            allowed_subjects,
+        });
     }
     unreachable!("count > 0 above");
 }
@@ -293,7 +303,8 @@ pub fn invite(
     // both are absent.
     let session_id = if args.session_id.is_empty() {
         load_session_id_from_manifest().ok_or_else(|| {
-            "no session id given and no active session manifest at .treeship/session.json".to_string()
+            "no session id given and no active session manifest at .treeship/session.json"
+                .to_string()
         })?
     } else {
         args.session_id.clone()
@@ -307,26 +318,29 @@ pub fn invite(
     // doesn't specify any, matching the spec's default room workflow.
     let capabilities = match args.capabilities.as_deref() {
         Some(s) => parse_capabilities(Some(s)),
-        None    => GrantedCapabilities { action_types: vec!["tool.call".into()] },
+        None => GrantedCapabilities {
+            action_types: vec!["tool.call".into()],
+        },
     };
 
     // Expiry: validate against the 7-day protocol max.
     let now = now_unix_secs();
     let lifetime = match args.expires.as_deref() {
         Some(s) => parse_duration_to_secs(s)?,
-        None    => DEFAULT_INVITATION_LIFETIME_SECS,
+        None => DEFAULT_INVITATION_LIFETIME_SECS,
     };
     if lifetime > MAX_INVITATION_LIFETIME_SECS {
         return Err(format!(
             "--expires lifetime {lifetime}s exceeds protocol max {}s (7 days)",
             MAX_INVITATION_LIFETIME_SECS
-        ).into());
+        )
+        .into());
     }
     let expires_at = treeship_core::statements::unix_to_rfc3339(now + lifetime);
 
     // Sign with the keystore's default key (the session's owning key).
     let host_signer = c.keys.default_signer()?;
-    let issuer_b64  = URL_SAFE_NO_PAD.encode(host_signer.public_key_bytes());
+    let issuer_b64 = URL_SAFE_NO_PAD.encode(host_signer.public_key_bytes());
 
     let nonce = generate_nonce();
     let invitation = InvitationStatement::new(
@@ -340,7 +354,8 @@ pub fn invite(
 
     // Validate before signing so the operator sees the error before
     // any side effect occurs.
-    invitation.validate_for_mint(now)
+    invitation
+        .validate_for_mint(now)
         .map_err(|e| format!("invitation rejected at mint time: {e}"))?;
 
     // Sign via the DSSE envelope machinery so the invitation lives
@@ -351,23 +366,20 @@ pub fn invite(
     // and is what the InvitationStatement::verify_canonical path uses
     // when the joiner doesn't want to drag in the whole attestation
     // machinery (e.g. WASM verify-js).
-    let sign_result = treeship_core::attestation::sign(
-        &payload_type("invitation"),
-        &invitation,
-        &*host_signer,
-    )?;
+    let sign_result =
+        treeship_core::attestation::sign(&payload_type("invitation"), &invitation, &*host_signer)?;
 
     // Persist the invitation under the artifact store so the host can
     // refer to it later via artifact_id.
     let record = Record {
-        artifact_id:  sign_result.artifact_id.clone(),
-        digest:       sign_result.digest.clone(),
+        artifact_id: sign_result.artifact_id.clone(),
+        digest: sign_result.digest.clone(),
         payload_type: sign_result.envelope.payload_type.clone(),
-        key_id:       host_signer.key_id().to_string(),
-        signed_at:    now_rfc3339(),
-        parent_id:    None,
-        envelope:     sign_result.envelope.clone(),
-        hub_url:      None,
+        key_id: host_signer.key_id().to_string(),
+        signed_at: now_rfc3339(),
+        parent_id: None,
+        envelope: sign_result.envelope.clone(),
+        hub_url: None,
     };
     c.storage.write(&record)?;
 
@@ -380,9 +392,9 @@ pub fn invite(
 
     // Build the bootstrap blob.
     let bundle = BootstrapBundle {
-        v:             1,
+        v: 1,
         invitation_id: sign_result.artifact_id.clone(),
-        envelope:      sign_result.envelope.clone(),
+        envelope: sign_result.envelope.clone(),
     };
     let blob = if args.no_armor {
         serde_json::to_string_pretty(&bundle)?
@@ -406,12 +418,15 @@ pub fn invite(
         return Ok(());
     }
 
-    printer.success("invitation minted", &[
-        ("invitation_id", &sign_result.artifact_id),
-        ("session_ref",   &session_id),
-        ("expires_at",    &expires_at),
-        ("restriction",   restriction_label(&restriction)),
-    ]);
+    printer.success(
+        "invitation minted",
+        &[
+            ("invitation_id", &sign_result.artifact_id),
+            ("session_ref", &session_id),
+            ("expires_at", &expires_at),
+            ("restriction", restriction_label(&restriction)),
+        ],
+    );
     printer.blank();
     printer.info("Send this blob to the joining agent:");
     // Write to stdout directly so the blob is machine-pasteable even
@@ -429,8 +444,8 @@ pub fn invite(
 fn restriction_label(r: &InviteeRestriction) -> &'static str {
     match r {
         InviteeRestriction::Pubkey { .. } => "pubkey",
-        InviteeRestriction::Cert   { .. } => "cert",
-        InviteeRestriction::Open          => "open",
+        InviteeRestriction::Cert { .. } => "cert",
+        InviteeRestriction::Open => "open",
     }
 }
 
@@ -448,16 +463,17 @@ pub fn join(
     // Resolve invitation blob from --invite (or stdin via '-'), or from
     // --invite-file.
     let blob_text = match (args.invite.as_deref(), args.invite_file.as_deref()) {
-        (Some("-"), _)  => {
+        (Some("-"), _) => {
             use std::io::Read;
             let mut s = String::new();
             std::io::stdin().read_to_string(&mut s)?;
             s
         }
-        (Some(s), _)    => s.to_string(),
-        (None, Some(p)) => std::fs::read_to_string(p)
-            .map_err(|e| format!("read --invite-file {p}: {e}"))?,
-        (None, None)    => {
+        (Some(s), _) => s.to_string(),
+        (None, Some(p)) => {
+            std::fs::read_to_string(p).map_err(|e| format!("read --invite-file {p}: {e}"))?
+        }
+        (None, None) => {
             return Err(
                 "no invitation provided. Pass --invite <blob>, --invite -, or --invite-file <path>"
                     .into(),
@@ -467,13 +483,16 @@ pub fn join(
     let bundle = decode_bootstrap_blob(&blob_text)?;
 
     // Decode the embedded statement so we can run pre-flight checks.
-    let invitation: InvitationStatement = bundle.envelope
+    let invitation: InvitationStatement = bundle
+        .envelope
         .unmarshal_statement()
         .map_err(|e| format!("invitation envelope payload decode: {e}"))?;
     if invitation.type_ != TYPE_INVITATION {
         return Err(format!(
-            "envelope payload is not an invitation (got type={})", invitation.type_,
-        ).into());
+            "envelope payload is not an invitation (got type={})",
+            invitation.type_,
+        )
+        .into());
     }
 
     // Trust check: the issuer's pubkey must be pinned under SessionHost.
@@ -488,7 +507,8 @@ pub fn join(
             "invitation issuer pubkey is not pinned under SessionHost trust roots.\n\
              Add it with:  treeship trust add <key_id> ed25519:{} --kind session_host --yes",
             URL_SAFE_NO_PAD.encode(issuer_pk_bytes),
-        ).into());
+        )
+        .into());
     }
 
     // Signature check via the DSSE envelope. The envelope's single
@@ -496,7 +516,10 @@ pub fn join(
     // We trust the issuer pubkey embedded in the invitation (which we
     // just gated on SessionHost trust roots above) against whatever
     // keyid the host signed under.
-    let host_keyid = bundle.envelope.signatures.first()
+    let host_keyid = bundle
+        .envelope
+        .signatures
+        .first()
         .map(|s| s.keyid.clone())
         .unwrap_or_else(|| "host".into());
     let issuer_vk = ed25519_dalek::VerifyingKey::from_bytes(&issuer_pk_bytes)
@@ -511,15 +534,14 @@ pub fn join(
             "invitation expired at {} (now: {})",
             invitation.expires_at,
             treeship_core::statements::unix_to_rfc3339(now),
-        ).into());
+        )
+        .into());
     }
 
     // Joining agent's signer.
     let joining_signer = c.keys.default_signer()?;
     let joiner_pk_b64 = URL_SAFE_NO_PAD.encode(joining_signer.public_key_bytes());
-    let joiner_fingerprint = pubkey_fingerprint_short(&format!(
-        "ed25519:{}", joiner_pk_b64,
-    ));
+    let joiner_fingerprint = pubkey_fingerprint_short(&format!("ed25519:{}", joiner_pk_b64,));
 
     // Restriction check.
     let mut cert_ref: Option<String> = None;
@@ -530,24 +552,31 @@ pub fn join(
                 return Err(format!(
                     "invitation is Pubkey-restricted to fingerprint {fingerprint}; \
                      this agent's fingerprint is {joiner_fingerprint}",
-                ).into());
+                )
+                .into());
             }
         }
-        InviteeRestriction::Cert { issuer_pubkey, allowed_subjects } => {
+        InviteeRestriction::Cert {
+            issuer_pubkey,
+            allowed_subjects,
+        } => {
             // Phase 1: cert presentation is checked by the operator via
             // a separate command (or out-of-band). We surface what's
             // required and refuse the join unless the env var
             // TREESHIP_AGENT_CERT_REF is set with the cert artifact id.
             // Future PRs land the keystore-side cert lookup.
             match std::env::var("TREESHIP_AGENT_CERT_REF") {
-                Ok(id) if !id.is_empty() => { cert_ref = Some(id); }
+                Ok(id) if !id.is_empty() => {
+                    cert_ref = Some(id);
+                }
                 _ => {
                     return Err(format!(
                         "invitation is Cert-restricted (issuer={issuer_pubkey}, \
                          subjects={:?}). Phase 1 join requires the joining agent's \
                          certificate artifact id in TREESHIP_AGENT_CERT_REF.",
-                         allowed_subjects,
-                    ).into());
+                        allowed_subjects,
+                    )
+                    .into());
                 }
             }
         }
@@ -567,40 +596,40 @@ pub fn join(
     };
     let nonce_d = nonce_digest(&invitation.nonce);
     let use_record = ApprovalUse {
-        type_:                  TYPE_APPROVAL_USE.into(),
-        use_id:                 use_id.clone(),
-        grant_id:               bundle.invitation_id.clone(),
-        grant_digest:           digest_of_envelope(&bundle.envelope),
-        nonce_digest:           nonce_d.clone(),
-        actor:                  args.actor.clone(),
-        action:                 "session.join".into(),
-        subject:                invitation.session_ref.clone(),
-        session_id:             Some(invitation.session_ref.clone()),
-        action_artifact_id:     None,
-        receipt_digest:         None,
-        use_number:             0,
-        max_uses:               Some(1),
-        idempotency_key:        None,
-        created_at:             now_rfc3339(),
-        expires_at:             Some(invitation.expires_at.clone()),
+        type_: TYPE_APPROVAL_USE.into(),
+        use_id: use_id.clone(),
+        grant_id: bundle.invitation_id.clone(),
+        grant_digest: digest_of_envelope(&bundle.envelope),
+        nonce_digest: nonce_d.clone(),
+        actor: args.actor.clone(),
+        action: "session.join".into(),
+        subject: invitation.session_ref.clone(),
+        session_id: Some(invitation.session_ref.clone()),
+        action_artifact_id: None,
+        receipt_digest: None,
+        use_number: 0,
+        max_uses: Some(1),
+        idempotency_key: None,
+        created_at: now_rfc3339(),
+        expires_at: Some(invitation.expires_at.clone()),
         previous_record_digest: String::new(),
-        record_digest:          String::new(),
-        signature:              None,
-        signature_alg:          None,
-        signing_key_id:         None,
+        record_digest: String::new(),
+        signature: None,
+        signature_alg: None,
+        signing_key_id: None,
     };
     journal::reserve_use(&j, use_record, Some(1))
         .map_err(|e| format!("invitation already consumed (or journal busy): {e}"))?;
 
     // Emit the participant event (single-sig, pending countersign).
     let participant = SessionParticipantStatement {
-        type_:                  TYPE_SESSION_PARTICIPANT.into(),
-        session_ref:            invitation.session_ref.clone(),
-        invitation_ref:         bundle.invitation_id.clone(),
-        joining_agent:          joiner_pk_b64.clone(),
+        type_: TYPE_SESSION_PARTICIPANT.into(),
+        session_ref: invitation.session_ref.clone(),
+        invitation_ref: bundle.invitation_id.clone(),
+        joining_agent: joiner_pk_b64.clone(),
         joining_agent_cert_ref: cert_ref.clone(),
-        joined_at:              now_rfc3339(),
-        capabilities:           invitation.granted_capabilities.clone(),
+        joined_at: now_rfc3339(),
+        capabilities: invitation.granted_capabilities.clone(),
     };
     let pending_env = participant
         .pending_envelope(&*joining_signer)
@@ -617,14 +646,14 @@ pub fn join(
     let env_hash = sha2_digest(&serde_json::to_vec(&pending_env)?);
     let participant_id = format!("art_{}", hex::encode(&env_hash[..16]));
     let record = Record {
-        artifact_id:  participant_id.clone(),
-        digest:       digest_of_envelope(&pending_env),
+        artifact_id: participant_id.clone(),
+        digest: digest_of_envelope(&pending_env),
         payload_type: pending_env.payload_type.clone(),
-        key_id:       joining_signer.key_id().to_string(),
-        signed_at:    now_rfc3339(),
-        parent_id:    Some(bundle.invitation_id.clone()),
-        envelope:     pending_env.clone(),
-        hub_url:      None,
+        key_id: joining_signer.key_id().to_string(),
+        signed_at: now_rfc3339(),
+        parent_id: Some(bundle.invitation_id.clone()),
+        envelope: pending_env.clone(),
+        hub_url: None,
     };
     c.storage.write(&record)?;
 
@@ -643,19 +672,23 @@ pub fn join(
         return Ok(());
     }
 
-    printer.success("invitation accepted; participant event signed", &[
-        ("participant_id",   &participant_id),
-        ("session_ref",      &invitation.session_ref),
-        ("invitation_ref",   &bundle.invitation_id),
-        ("joining_agent",    &joiner_pk_b64),
-        ("joining_agent_fp", &joiner_fingerprint),
-    ]);
+    printer.success(
+        "invitation accepted; participant event signed",
+        &[
+            ("participant_id", &participant_id),
+            ("session_ref", &invitation.session_ref),
+            ("invitation_ref", &bundle.invitation_id),
+            ("joining_agent", &joiner_pk_b64),
+            ("joining_agent_fp", &joiner_fingerprint),
+        ],
+    );
     printer.blank();
     printer.warn(
         "participant event is PENDING the host's countersign",
-        &[
-            ("countersign_cmd", &format!("treeship session countersign {participant_id}")),
-        ],
+        &[(
+            "countersign_cmd",
+            &format!("treeship session countersign {participant_id}"),
+        )],
     );
     Ok(())
 }
@@ -672,33 +705,42 @@ pub fn countersign(
     let c = ctx::open(ctx_override)?;
 
     // Read the pending participant artifact.
-    let rec = c.storage.read(&args.participant_id)
+    let rec = c
+        .storage
+        .read(&args.participant_id)
         .map_err(|e| format!("participant artifact {}: {e}", args.participant_id))?;
     if rec.payload_type != payload_type("session-participant") {
         return Err(format!(
             "artifact {} is not a session-participant envelope (type={})",
             args.participant_id, rec.payload_type,
-        ).into());
+        )
+        .into());
     }
     if rec.envelope.signatures.len() != 1 {
         return Err(format!(
             "participant artifact {} already has {} signatures; expected exactly 1 (pending)",
-            args.participant_id, rec.envelope.signatures.len(),
-        ).into());
+            args.participant_id,
+            rec.envelope.signatures.len(),
+        )
+        .into());
     }
 
     // Decode the embedded statement so we can pull invitation_ref +
     // re-resolve the host pubkey it expects.
-    let stmt: SessionParticipantStatement = rec.envelope
+    let stmt: SessionParticipantStatement = rec
+        .envelope
         .unmarshal_statement()
         .map_err(|e| format!("decode participant payload: {e}"))?;
 
     // Re-resolve the invitation so we can confirm the host that's
     // about to countersign matches the issuer the joining agent
     // verified at join time.
-    let inv_rec = c.storage.read(&stmt.invitation_ref)
+    let inv_rec = c
+        .storage
+        .read(&stmt.invitation_ref)
         .map_err(|e| format!("invitation artifact {}: {e}", stmt.invitation_ref))?;
-    let invitation: InvitationStatement = inv_rec.envelope
+    let invitation: InvitationStatement = inv_rec
+        .envelope
         .unmarshal_statement()
         .map_err(|e| format!("decode invitation payload: {e}"))?;
 
@@ -710,7 +752,8 @@ pub fn countersign(
              countersign refused. The host must run this command on the same machine \
              that minted the invitation.",
             host_pk_b64, invitation.issuer,
-        ).into());
+        )
+        .into());
     }
 
     // Re-derive the participant's terms from the TRUST-PINNED invitation.
@@ -731,26 +774,28 @@ pub fn countersign(
             "invitation expired at {} (now {}); countersign refused",
             invitation.expires_at,
             treeship_core::statements::unix_to_rfc3339(now),
-        ).into());
+        )
+        .into());
     }
     if stmt.session_ref != invitation.session_ref {
         return Err(format!(
             "participant session_ref ({}) does not match the invitation's ({}); \
              countersign refused",
             stmt.session_ref, invitation.session_ref,
-        ).into());
+        )
+        .into());
     }
     if stmt.capabilities != invitation.granted_capabilities {
         return Err(
             "participant capabilities do not match the invitation's granted_capabilities \
-             (capability escalation attempt); countersign refused".into(),
+             (capability escalation attempt); countersign refused"
+                .into(),
         );
     }
     match &invitation.invitee_restriction {
         InviteeRestriction::Open => {}
         InviteeRestriction::Pubkey { fingerprint } => {
-            let joiner_fp =
-                pubkey_fingerprint_short(&format!("ed25519:{}", stmt.joining_agent));
+            let joiner_fp = pubkey_fingerprint_short(&format!("ed25519:{}", stmt.joining_agent));
             if fingerprint != &joiner_fp {
                 return Err(format!(
                     "participant joining_agent (fp {joiner_fp}) does not satisfy the \
@@ -763,7 +808,8 @@ pub fn countersign(
             if stmt.joining_agent_cert_ref.is_none() {
                 return Err(
                     "invitation is Cert-restricted but the participant carries no \
-                     certificate reference; countersign refused".into(),
+                     certificate reference; countersign refused"
+                        .into(),
                 );
             }
         }
@@ -784,13 +830,14 @@ pub fn countersign(
             "this invitation has not been consumed via `treeship session join` \
              (no single-use journal record) — countersign refused. A pending \
              participant envelope must come from a real join, not a hand-crafted \
-             submission.".into(),
+             submission."
+                .into(),
         );
     }
 
-    let finalized = SessionParticipantStatement::attach_host_countersign(
-        &rec.envelope, &*host_signer,
-    ).map_err(|e| format!("attach host countersign: {e}"))?;
+    let finalized =
+        SessionParticipantStatement::attach_host_countersign(&rec.envelope, &*host_signer)
+            .map_err(|e| format!("attach host countersign: {e}"))?;
 
     // Self-verify before persisting so we never write a broken envelope.
     verify_participant_envelope(&finalized, &invitation.issuer)
@@ -803,7 +850,7 @@ pub fn countersign(
         envelope: finalized.clone(),
         // Refresh the signed_at + digest. The artifact_id stays as-is
         // so consumers that captured the id at join time still find it.
-        digest:   digest_of_envelope(&finalized),
+        digest: digest_of_envelope(&finalized),
         signed_at: now_rfc3339(),
         ..rec
     };
@@ -821,11 +868,14 @@ pub fn countersign(
         }));
         return Ok(());
     }
-    printer.success("participant countersigned and finalized", &[
-        ("participant_id", &args.participant_id),
-        ("session_ref",    &stmt.session_ref),
-        ("invitation_ref", &stmt.invitation_ref),
-    ]);
+    printer.success(
+        "participant countersigned and finalized",
+        &[
+            ("participant_id", &args.participant_id),
+            ("session_ref", &stmt.session_ref),
+            ("invitation_ref", &stmt.invitation_ref),
+        ],
+    );
     Ok(())
 }
 
@@ -872,22 +922,37 @@ mod tests {
     #[test]
     fn parse_restriction_requires_explicit_kind() {
         let args = InviteArgs {
-            session_id: "ssn".into(), invitee_cert: None, invitee_pubkey: None,
-            open: false, capabilities: None, expires: None,
-            format: "text".into(), no_armor: false,
+            session_id: "ssn".into(),
+            invitee_cert: None,
+            invitee_pubkey: None,
+            open: false,
+            capabilities: None,
+            expires: None,
+            format: "text".into(),
+            no_armor: false,
         };
-        assert!(parse_restriction(&args).is_err(),
-                "no restriction => must error");
+        assert!(
+            parse_restriction(&args).is_err(),
+            "no restriction => must error"
+        );
     }
 
     #[test]
     fn parse_restriction_open_explicit() {
         let args = InviteArgs {
-            session_id: "ssn".into(), invitee_cert: None, invitee_pubkey: None,
-            open: true, capabilities: None, expires: None,
-            format: "text".into(), no_armor: false,
+            session_id: "ssn".into(),
+            invitee_cert: None,
+            invitee_pubkey: None,
+            open: true,
+            capabilities: None,
+            expires: None,
+            format: "text".into(),
+            no_armor: false,
         };
-        assert!(matches!(parse_restriction(&args).unwrap(), InviteeRestriction::Open));
+        assert!(matches!(
+            parse_restriction(&args).unwrap(),
+            InviteeRestriction::Open
+        ));
     }
 
     #[test]
@@ -895,14 +960,23 @@ mod tests {
         let args = InviteArgs {
             session_id: "ssn".into(),
             invitee_cert: Some("ed25519:ISSUER:org-x,org-y".into()),
-            invitee_pubkey: None, open: false,
-            capabilities: None, expires: None,
-            format: "text".into(), no_armor: false,
+            invitee_pubkey: None,
+            open: false,
+            capabilities: None,
+            expires: None,
+            format: "text".into(),
+            no_armor: false,
         };
         match parse_restriction(&args).unwrap() {
-            InviteeRestriction::Cert { issuer_pubkey, allowed_subjects } => {
+            InviteeRestriction::Cert {
+                issuer_pubkey,
+                allowed_subjects,
+            } => {
                 assert_eq!(issuer_pubkey, "ed25519:ISSUER");
-                assert_eq!(allowed_subjects, vec!["org-x".to_string(), "org-y".to_string()]);
+                assert_eq!(
+                    allowed_subjects,
+                    vec!["org-x".to_string(), "org-y".to_string()]
+                );
             }
             other => panic!("expected Cert, got {other:?}"),
         }
@@ -916,11 +990,13 @@ mod tests {
             payload_type: payload_type("invitation"),
             signatures: vec![treeship_core::attestation::Signature {
                 keyid: "k".into(),
-                sig:   URL_SAFE_NO_PAD.encode([0u8; 64]),
+                sig: URL_SAFE_NO_PAD.encode([0u8; 64]),
             }],
         };
         let bundle = BootstrapBundle {
-            v: 1, invitation_id: "art_test".into(), envelope: env,
+            v: 1,
+            invitation_id: "art_test".into(),
+            envelope: env,
         };
         let blob = encode_bootstrap_blob(&bundle).unwrap();
         assert!(blob.starts_with(BLOB_HEADER));

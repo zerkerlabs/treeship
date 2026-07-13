@@ -27,9 +27,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::commands::discovery::{
-    AgentSurface, ConnectionMode, CoverageLevel, DiscoveredAgent,
-};
+use crate::commands::discovery::{AgentSurface, ConnectionMode, CoverageLevel, DiscoveredAgent};
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -62,10 +60,10 @@ pub enum CardStatus {
 impl CardStatus {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Draft       => "draft",
+            Self::Draft => "draft",
             Self::NeedsReview => "needs-review",
-            Self::Active      => "active",
-            Self::Verified    => "verified",
+            Self::Active => "active",
+            Self::Verified => "verified",
         }
     }
 }
@@ -109,7 +107,7 @@ impl CardProvenance {
         match self {
             Self::Discovered => "discovered",
             Self::Registered => "registered",
-            Self::Manual     => "manual",
+            Self::Manual => "manual",
         }
     }
 }
@@ -194,25 +192,25 @@ impl AgentCard {
         now: &str,
     ) -> Self {
         Self {
-            agent_id:               derive_agent_id(&agent.display_name, agent.surface, host, workspace),
-            agent_name:             agent.display_name.clone(),
-            surface:                agent.surface,
-            connection_modes:       agent.connection_modes.clone(),
-            coverage:               agent.coverage,
-            capabilities:           CardCapabilities::default(),
-            provenance:             CardProvenance::Discovered,
-            status:                 CardStatus::Draft,
-            host:                   host.to_string(),
-            workspace:              workspace.to_string_lossy().into_owned(),
-            model:                  None,
-            description:            agent.note.clone(),
-            certificate_digest:     None,
-            key_id:                 None,
-            active_harness_id:      Some(agent.recommended_harness_id().to_string()),
-            latest_session_id:      None,
-            latest_receipt_digest:  None,
-            created_at:             now.to_string(),
-            updated_at:             now.to_string(),
+            agent_id: derive_agent_id(&agent.display_name, agent.surface, host, workspace),
+            agent_name: agent.display_name.clone(),
+            surface: agent.surface,
+            connection_modes: agent.connection_modes.clone(),
+            coverage: agent.coverage,
+            capabilities: CardCapabilities::default(),
+            provenance: CardProvenance::Discovered,
+            status: CardStatus::Draft,
+            host: host.to_string(),
+            workspace: workspace.to_string_lossy().into_owned(),
+            model: None,
+            description: agent.note.clone(),
+            certificate_digest: None,
+            key_id: None,
+            active_harness_id: Some(agent.recommended_harness_id().to_string()),
+            latest_session_id: None,
+            latest_receipt_digest: None,
+            created_at: now.to_string(),
+            updated_at: now.to_string(),
         }
     }
 }
@@ -289,16 +287,24 @@ pub enum CardError {
 impl std::fmt::Display for CardError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Io(e)        => write!(f, "card io: {e}"),
-            Self::Json(e)      => write!(f, "card json: {e}"),
+            Self::Io(e) => write!(f, "card io: {e}"),
+            Self::Json(e) => write!(f, "card json: {e}"),
             Self::NotFound(id) => write!(f, "no agent card with id {id:?}"),
         }
     }
 }
 
 impl std::error::Error for CardError {}
-impl From<std::io::Error>    for CardError { fn from(e: std::io::Error) -> Self { Self::Io(e) } }
-impl From<serde_json::Error> for CardError { fn from(e: serde_json::Error) -> Self { Self::Json(e) } }
+impl From<std::io::Error> for CardError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+impl From<serde_json::Error> for CardError {
+    fn from(e: serde_json::Error) -> Self {
+        Self::Json(e)
+    }
+}
 
 /// Read every `.json` in the cards directory. Returns an empty Vec if the
 /// dir doesn't exist yet -- a fresh Treeship project has no cards.
@@ -376,11 +382,7 @@ pub fn save(agents_dir: &Path, card: &AgentCard) -> Result<(), CardError> {
 /// `treeship agents` lie about what the user has actually approved.
 /// `keep_higher_status` only applies when both cards refer to the same
 /// (or no) certificate.
-pub fn upsert(
-    agents_dir: &Path,
-    incoming: AgentCard,
-    now: &str,
-) -> Result<AgentCard, CardError> {
+pub fn upsert(agents_dir: &Path, incoming: AgentCard, now: &str) -> Result<AgentCard, CardError> {
     let merged = match load(agents_dir, &incoming.agent_id) {
         Ok(existing) => {
             let cert_changed = match (&existing.certificate_digest, &incoming.certificate_digest) {
@@ -403,17 +405,24 @@ pub fn upsert(
                 keep_higher_status(existing.status, incoming.status)
             };
             AgentCard {
-                created_at:             existing.created_at,
-                updated_at:             now.to_string(),
+                created_at: existing.created_at,
+                updated_at: now.to_string(),
                 status,
                 // Preserve session linkage: the new card from discovery has
                 // none, but the existing record might.
-                latest_session_id:      existing.latest_session_id.or(incoming.latest_session_id.clone()),
-                latest_receipt_digest:  existing.latest_receipt_digest.or(incoming.latest_receipt_digest.clone()),
-                certificate_digest:     incoming.certificate_digest.clone().or(existing.certificate_digest),
+                latest_session_id: existing
+                    .latest_session_id
+                    .or(incoming.latest_session_id.clone()),
+                latest_receipt_digest: existing
+                    .latest_receipt_digest
+                    .or(incoming.latest_receipt_digest.clone()),
+                certificate_digest: incoming
+                    .certificate_digest
+                    .clone()
+                    .or(existing.certificate_digest),
                 // Preserve a registered per-agent key binding across upserts;
                 // a later discovery upsert must not wipe it.
-                key_id:                 incoming.key_id.clone().or(existing.key_id),
+                key_id: incoming.key_id.clone().or(existing.key_id),
                 ..incoming
             }
         }
@@ -456,13 +465,17 @@ pub fn remove(agents_dir: &Path, agent_id: &str) -> Result<(), CardError> {
 fn keep_higher_status(existing: CardStatus, incoming: CardStatus) -> CardStatus {
     fn rank(s: CardStatus) -> u8 {
         match s {
-            CardStatus::Draft       => 0,
+            CardStatus::Draft => 0,
             CardStatus::NeedsReview => 1,
-            CardStatus::Active      => 2,
-            CardStatus::Verified    => 3,
+            CardStatus::Active => 2,
+            CardStatus::Verified => 3,
         }
     }
-    if rank(existing) >= rank(incoming) { existing } else { incoming }
+    if rank(existing) >= rank(incoming) {
+        existing
+    } else {
+        incoming
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -482,12 +495,12 @@ mod tests {
     fn sample_discovery(surface: AgentSurface) -> DiscoveredAgent {
         DiscoveredAgent {
             surface,
-            display_name:     surface.display().to_string(),
+            display_name: surface.display().to_string(),
             connection_modes: vec![ConnectionMode::NativeHook, ConnectionMode::Mcp],
-            coverage:         CoverageLevel::High,
-            confidence:       Confidence::High,
-            evidence:         vec![],
-            note:             None,
+            coverage: CoverageLevel::High,
+            confidence: Confidence::High,
+            evidence: vec![],
+            note: None,
         }
     }
 
@@ -505,13 +518,30 @@ mod tests {
         let ws = Path::new("/home/u/projects/proj-a");
         let base = derive_agent_id("bot", AgentSurface::ClaudeCode, "host", ws);
         // surface change
-        assert_ne!(base, derive_agent_id("bot", AgentSurface::CursorAgent, "host", ws));
+        assert_ne!(
+            base,
+            derive_agent_id("bot", AgentSurface::CursorAgent, "host", ws)
+        );
         // host change
-        assert_ne!(base, derive_agent_id("bot", AgentSurface::ClaudeCode, "other", ws));
+        assert_ne!(
+            base,
+            derive_agent_id("bot", AgentSurface::ClaudeCode, "other", ws)
+        );
         // workspace change
-        assert_ne!(base, derive_agent_id("bot", AgentSurface::ClaudeCode, "host", Path::new("/elsewhere")));
+        assert_ne!(
+            base,
+            derive_agent_id(
+                "bot",
+                AgentSurface::ClaudeCode,
+                "host",
+                Path::new("/elsewhere")
+            )
+        );
         // name change — two agents in one workspace must NOT collapse
-        assert_ne!(base, derive_agent_id("other-bot", AgentSurface::ClaudeCode, "host", ws));
+        assert_ne!(
+            base,
+            derive_agent_id("other-bot", AgentSurface::ClaudeCode, "host", ws)
+        );
     }
 
     #[test]
@@ -627,7 +657,8 @@ mod tests {
         let merged = upsert(dir.path(), incoming, "2026-04-30T10:00:00Z").unwrap();
 
         assert_eq!(
-            merged.status, CardStatus::NeedsReview,
+            merged.status,
+            CardStatus::NeedsReview,
             "drift must demote Active to NeedsReview"
         );
         assert_eq!(
@@ -700,7 +731,10 @@ mod tests {
         );
         let merged = upsert(dir.path(), fresh, now()).unwrap();
         assert_eq!(merged.latest_session_id.as_deref(), Some("ssn_abc"));
-        assert_eq!(merged.latest_receipt_digest.as_deref(), Some("sha256:deadbeef"));
+        assert_eq!(
+            merged.latest_receipt_digest.as_deref(),
+            Some("sha256:deadbeef")
+        );
     }
 
     #[test]
@@ -713,7 +747,13 @@ mod tests {
             now(),
         );
         save(dir.path(), &card).unwrap();
-        let promoted = set_status(dir.path(), &card.agent_id, CardStatus::Active, "2026-05-01T00:00:00Z").unwrap();
+        let promoted = set_status(
+            dir.path(),
+            &card.agent_id,
+            CardStatus::Active,
+            "2026-05-01T00:00:00Z",
+        )
+        .unwrap();
         assert_eq!(promoted.status, CardStatus::Active);
         assert_eq!(promoted.updated_at, "2026-05-01T00:00:00Z");
     }
@@ -721,9 +761,14 @@ mod tests {
     #[test]
     fn set_status_unknown_id_returns_not_found() {
         let dir = tempdir().unwrap();
-        let err = set_status(dir.path(), "agent_does_not_exist", CardStatus::Active, now())
-            .err()
-            .unwrap();
+        let err = set_status(
+            dir.path(),
+            "agent_does_not_exist",
+            CardStatus::Active,
+            now(),
+        )
+        .err()
+        .unwrap();
         assert!(matches!(err, CardError::NotFound(_)));
     }
 
