@@ -7,9 +7,12 @@
 <style>
 /* Treeship product design system — see /DESIGN.md, design/tokens.json.
    Document of record: warm paper, graphite ink, one bronze seal. Air-gapped:
-   system-font stack only (no CDN), so it renders identically offline. */
+   the brand display serif (Fraunces, SIL OFL 1.1) is embedded below as a
+   base64 woff2 so the page renders identically offline with no CDN; body and
+   mono fall back to the system stack. */
+@font-face{font-family:'Fraunces';font-style:normal;font-weight:300 500;font-display:swap;src:url(__FONT_FRAUNCES__) format('woff2')}
 :root{
-  --serif:Georgia,'Iowan Old Style','Times New Roman',serif;
+  --serif:'Fraunces',Georgia,'Iowan Old Style','Times New Roman',serif;
   --sans:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
   --mono:ui-monospace,'SF Mono','JetBrains Mono',Menlo,monospace;
   --paper:#F1F0EA;--panel:#EBEAE1;--ink:#1F2329;--muted:#5F646B;--faint:#9B9B93;

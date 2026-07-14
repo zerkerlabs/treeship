@@ -312,7 +312,9 @@ pub fn register(
         // certificate.html
         let cert_json = serde_json::to_string_pretty(&certificate)?;
         let safe_json = cert_json.replace('<', r"\u003c");
-        let html = CERTIFICATE_TEMPLATE.replace("__CERTIFICATE_JSON__", &safe_json);
+        let html = CERTIFICATE_TEMPLATE
+            .replace("__CERTIFICATE_JSON__", &safe_json)
+            .replace("__FONT_FRAUNCES__", &fraunces_data_uri());
         std::fs::write(pkg_dir.join("certificate.html"), html.as_bytes())?;
 
         // Also write the full certificate.json
@@ -482,3 +484,16 @@ pub fn register(
 
 /// Certificate HTML template. Same design system as preview.html.
 const CERTIFICATE_TEMPLATE: &str = include_str!("certificate_template.html");
+
+/// Brand display serif (Fraunces, SIL OFL 1.1), latin variable slice, embedded
+/// as base64 so the certificate renders with the brand type offline, no CDN.
+/// See design/fonts/.
+const FRAUNCES_WOFF2: &[u8] = include_bytes!("../../../../design/fonts/fraunces-latin-var.woff2");
+
+/// The `data:` URI for the embedded Fraunces woff2, substituted into the
+/// certificate template's `@font-face`.
+fn fraunces_data_uri() -> String {
+    use base64::engine::general_purpose::STANDARD;
+    use base64::Engine;
+    format!("data:font/woff2;base64,{}", STANDARD.encode(FRAUNCES_WOFF2))
+}

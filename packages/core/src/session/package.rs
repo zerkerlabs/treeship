@@ -1477,6 +1477,21 @@ impl VerifyCheck {
 /// Loaded at compile time so the binary carries no runtime file dependencies.
 const PREVIEW_TEMPLATE: &str = include_str!("preview_template.html");
 
+/// Brand display serif (Fraunces, SIL OFL 1.1) — latin variable slice, weights
+/// 300..500. Embedded as base64 into the self-contained preview so the document
+/// renders with the brand type offline, no CDN. Body and mono use the system
+/// stack. See design/fonts/.
+const FRAUNCES_WOFF2: &[u8] = include_bytes!("../../../../design/fonts/fraunces-latin-var.woff2");
+
+/// The `data:` URI for the embedded Fraunces woff2, substituted into the
+/// template's `@font-face`. Standard (not URL-safe) base64: it sits in a CSS
+/// `url(...)`, not a URL path.
+fn fraunces_data_uri() -> String {
+    use base64::engine::general_purpose::STANDARD;
+    use base64::Engine;
+    format!("data:font/woff2;base64,{}", STANDARD.encode(FRAUNCES_WOFF2))
+}
+
 /// Generate a self-contained preview.html that embeds the receipt JSON
 /// and runs Merkle verification client-side using Web Crypto API.
 ///
@@ -1500,7 +1515,9 @@ pub fn render_preview_html(receipt: &SessionReceipt) -> String {
     // placeholder check) the receipt body is never injected into it. The
     // template's own placeholder check uses a split sentinel for the same
     // reason. The page title is set at runtime from the parsed JSON.
-    PREVIEW_TEMPLATE.replacen("__RECEIPT_JSON__", &safe_json, 1)
+    PREVIEW_TEMPLATE
+        .replacen("__RECEIPT_JSON__", &safe_json, 1)
+        .replace("__FONT_FRAUNCES__", &fraunces_data_uri())
 }
 
 #[cfg(test)]
