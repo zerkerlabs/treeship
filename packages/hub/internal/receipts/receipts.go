@@ -32,8 +32,8 @@ type Handlers struct {
 // struct -- only the fields the Hub needs to extract for indexing. The full
 // receipt body is round-tripped as JSON without re-serialization.
 type receipt struct {
-	Type    string         `json:"type"`
-	Session sessionSection `json:"session"`
+	Type         string         `json:"type"`
+	Session      sessionSection `json:"session"`
 	Participants struct {
 		TotalAgents      int `json:"total_agents"`
 		SpawnedSubagents int `json:"spawned_subagents"`
@@ -200,9 +200,10 @@ func (h *Handlers) PutReceipt(w http.ResponseWriter, r *http.Request) {
 // GetReceipt handles GET /v1/receipt/:session_id [public, no auth].
 //
 // Three response shapes:
-//   200 + receipt body  -- session exists, receipt is uploaded
-//   403 "session still open"  -- session row exists, receipt_json is null
-//   404 "session not found"   -- no row at all
+//
+//	200 + receipt body  -- session exists, receipt is uploaded
+//	403 "session still open"  -- session row exists, receipt_json is null
+//	404 "session not found"   -- no row at all
 func (h *Handlers) GetReceipt(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "session_id")
 	if sessionID == "" {

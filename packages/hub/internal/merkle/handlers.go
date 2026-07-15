@@ -86,11 +86,11 @@ func (h *Handlers) PublishCheckpoint(w http.ResponseWriter, r *http.Request) {
 		RootHex:      req.Root,
 		TreeSize:     req.TreeSize,
 		Height:       req.Height,
-		SignedAt:      req.SignedAt,
-		SignerKeyID:   req.Signer,
-		SignatureB64:  req.Signature,
-		PublicKeyB64:  req.PublicKey,
-		RekorIndex:    req.RekorIndex,
+		SignedAt:     req.SignedAt,
+		SignerKeyID:  req.Signer,
+		SignatureB64: req.Signature,
+		PublicKeyB64: req.PublicKey,
+		RekorIndex:   req.RekorIndex,
 	}
 
 	id, err := db.InsertCheckpoint(h.DB, cp, dockID)
@@ -196,11 +196,11 @@ func (h *Handlers) GetProof(w http.ResponseWriter, r *http.Request) {
 	if err := json.Unmarshal([]byte(proof.ProofJSON), &proofFile); err != nil {
 		// Fallback: wrap proof + checkpoint manually
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"artifact_id":    proof.ArtifactID,
-			"leaf_index":     proof.LeafIndex,
-			"leaf_hash":      proof.LeafHash,
-			"checkpoint_id":  proof.CheckpointID,
-			"checkpoint":     checkpoint,
+			"artifact_id":   proof.ArtifactID,
+			"leaf_index":    proof.LeafIndex,
+			"leaf_hash":     proof.LeafHash,
+			"checkpoint_id": proof.CheckpointID,
+			"checkpoint":    checkpoint,
 		})
 		return
 	}

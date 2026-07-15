@@ -171,7 +171,7 @@ func (h *Handlers) Workspace(w http.ResponseWriter, r *http.Request) {
 			ArtifactID:  a.ArtifactID,
 			PayloadType: a.PayloadType,
 			Digest:      a.Digest,
-			SignedAt:     a.SignedAt,
+			SignedAt:    a.SignedAt,
 			ParentID:    a.ParentID,
 			HubURL:      a.HubURL,
 			RekorIndex:  a.RekorIndex,
