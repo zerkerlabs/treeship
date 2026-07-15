@@ -6,7 +6,8 @@ pub mod proof;
 pub mod tree;
 
 pub use checkpoint::{
-    Checkpoint, CheckpointError, CANONICAL_VERSION_V1, CANONICAL_VERSION_V2, CANONICAL_VERSION_V3,
+    Checkpoint, CheckpointError, CheckpointVerifyOutcome, CANONICAL_VERSION_V1,
+    CANONICAL_VERSION_V2, CANONICAL_VERSION_V3,
 };
 pub use proof::{ArtifactSummary, ProofFile};
 pub use tree::{
