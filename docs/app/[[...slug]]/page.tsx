@@ -76,6 +76,12 @@ export async function generateMetadata(props: {
   // inherit the template, so set the full title explicitly there.
   const fullTitle = `${data.title} -- Treeship`;
   const url = `/${(params.slug ?? []).join('/')}`;
+  const section = params.slug?.[0]?.replace(/-/g, ' ') ?? 'docs';
+  const image = `/og?${new URLSearchParams({
+    title: data.title,
+    description: data.description ?? '',
+    section,
+  }).toString()}`;
 
   return {
     title: data.title,
@@ -85,10 +91,13 @@ export async function generateMetadata(props: {
       title: fullTitle,
       description: data.description,
       url,
+      images: [{ url: image, width: 1200, height: 630, alt: data.title }],
     },
     twitter: {
+      card: 'summary_large_image',
       title: fullTitle,
       description: data.description,
+      images: [image],
     },
   };
 }

@@ -69,8 +69,25 @@ export async function generateMetadata(props: {
   const { slug } = await props.params;
   const post = blogSource.getPage(slug);
   if (!post) return {};
+  const image = `/og?${new URLSearchParams({
+    title: post.data.title,
+    description: post.data.description ?? '',
+    section: 'blog',
+  }).toString()}`;
   return {
     title: post.data.title,
     description: post.data.description,
+    openGraph: {
+      type: 'article',
+      title: post.data.title,
+      description: post.data.description,
+      images: [{ url: image, width: 1200, height: 630, alt: post.data.title }],
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title: post.data.title,
+      description: post.data.description,
+      images: [image],
+    },
   };
 }
