@@ -39,7 +39,19 @@ export interface TrustRootInput {
   key_id: string;
   /** `ed25519:<base64url-no-pad>` */
   public_key: string;
-  kind: 'hub_checkpoint' | 'ship' | 'agent_cert';
+  /**
+   * The powers a root grants, after the v0.19 trust-split. The single old
+   * `ship` kind was split into `hub_org` / `cert_issuer` / `revoker` and is
+   * now deprecated and inert (no verifier honors it), so it is intentionally
+   * not offered here. See TrustRootKind in packages/core/src/trust/mod.rs.
+   */
+  kind:
+    | 'hub_checkpoint'
+    | 'hub_org'
+    | 'cert_issuer'
+    | 'revoker'
+    | 'agent_cert'
+    | 'session_host';
   label?: string;
   added_at?: string;
 }
@@ -94,7 +106,11 @@ export interface VerifyCheck {
 }
 
 export interface VerifyReceiptResult {
-  outcome: 'pass' | 'fail' | 'error';
+  // `structural-pass` is the honest verdict for a receipt whose Merkle
+  // structure and inclusion proofs are internally consistent but whose
+  // authorship is not established here (no issuer trust). The WASM
+  // `verify_receipt` emits it (see core-wasm, AUD-01); the type must admit it.
+  outcome: 'pass' | 'structural-pass' | 'fail' | 'error';
   checks: VerifyCheck[];
   session: {
     id: string;

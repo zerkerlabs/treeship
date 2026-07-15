@@ -51,7 +51,11 @@ export interface VerifyCheck {
 }
 
 export interface VerifyReceiptResult {
-  outcome: "pass" | "fail" | "error";
+  // `structural-pass`: the receipt's Merkle structure and inclusion proofs are
+  // internally consistent, but authorship is not established here (no issuer
+  // trust). The WASM `verify_receipt` emits it (core-wasm, AUD-01); the type
+  // must admit it so callers can switch on it exhaustively.
+  outcome: "pass" | "structural-pass" | "fail" | "error";
   checks: VerifyCheck[];
   session: {
     id: string;
