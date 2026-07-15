@@ -134,8 +134,11 @@ server.registerTool(
     },
   },
   async ({ artifactId, chain }) => {
+    // The CLI walks the parent chain by DEFAULT; the only flag is `--no-chain`
+    // to opt out. There is no `--chain` flag — passing it makes clap reject the
+    // whole invocation, which previously broke every default verify call.
     const args = ['verify', artifactId];
-    if (chain !== false) args.push('--chain');
+    if (chain === false) args.push('--no-chain');
     return formatExec(await runTreeship(args));
   },
 );
@@ -145,15 +148,17 @@ server.registerTool(
   {
     title: 'Publish session report',
     description:
-      'Close-and-publish the active session as a shareable report on the configured hub. Returns the report URL.',
+      'Publish the latest closed session as a shareable report. When summary is provided, close the active session with that summary first.',
     inputSchema: {
       summary: z.string().optional().describe('Headline summary for the report'),
     },
   },
   async ({ summary }) => {
-    const args = ['session', 'report'];
-    if (summary) args.push('--summary', summary);
-    return formatExec(await runTreeship(args));
+    if (summary) {
+      const close = await runTreeship(['session', 'close', '--summary', summary]);
+      if (close.code !== 0) return formatExec(close);
+    }
+    return formatExec(await runTreeship(['session', 'report']));
   },
 );
 
