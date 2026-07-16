@@ -146,6 +146,49 @@ export interface ResolutionVerdict {
   message?: string;
 }
 
+/** The challenge-response outcome within a presentation. */
+export interface PresentationChallenge {
+  outcome:
+    | "not_requested"
+    | "present_but_unchecked"
+    | "no_response"
+    | "no_established_key"
+    | "verified"
+    | "failed";
+  signed_at: string | null;
+  reason: string | null;
+}
+
+/** The staple portion of a presentation verdict. */
+export interface PresentationStaple {
+  verified: boolean;
+  status:
+    | "no_staple"
+    | "unparseable"
+    | "signer_not_trusted"
+    | "inclusion_invalid"
+    | "verified";
+  checkpoint_index: number | null;
+  age_secs: number | null;
+}
+
+/** Result of `VerifyModule.verifyPresentation`. Mirrors the WASM JSON output. */
+export interface PresentationVerdict {
+  agent: string;
+  card_id: string;
+  sig_ok: boolean;
+  key_bound: boolean;
+  via_chain: boolean;
+  revoked: string | null;
+  challenge: PresentationChallenge;
+  challenge_ok: boolean;
+  staple: PresentationStaple;
+  /** Roll-up: not revoked, key-bound, and (if requested) challenge verified. */
+  ok: boolean;
+  error_code?: string;
+  message?: string;
+}
+
 export class TreeshipError extends Error {
   constructor(message: string, public readonly args: string[]) {
     super(message);

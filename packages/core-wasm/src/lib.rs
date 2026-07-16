@@ -784,6 +784,92 @@ pub fn verify_capability(card_json: &str, actions_json: &str, trust_roots_json: 
     .to_string()
 }
 
+/// Verify an agent presentation — the `verify-presentation` trust decision —
+/// against caller-supplied trust roots. Wraps
+/// `treeship_core::verify::presentation::verify_presentation`, so the browser
+/// and SDKs run the exact same code path as the CLI: card verification (direct
+/// pin or certificate-chain walk), authorized revocation, the challenge-response
+/// liveness check, and the staple (checkpoint + card inclusion).
+///
+/// `presentation_json`: a `treeship/presentation/v1` object.
+/// `trust_roots_json`: same shape the other verifiers take (empty = fail closed).
+/// `expected_nonce`: the nonce THIS verifier issued; pass "" to skip the
+/// liveness check.
+/// `now_rfc3339`: time for certificate validity windows and staple age.
+///
+/// Returns JSON with the full verdict; `ok` is the roll-up (not revoked,
+/// key-bound, and the challenge — if requested — verified). Freshness
+/// (`--max-staple-age`) is a caller policy over `staple.age_secs`.
+#[wasm_bindgen]
+pub fn verify_presentation(
+    presentation_json: &str,
+    trust_roots_json: &str,
+    expected_nonce: &str,
+    now_rfc3339: &str,
+) -> String {
+    use treeship_core::verify::presentation::{
+        verify_presentation as core_vp, ChallengeOutcome, StapleStatus,
+    };
+
+    let pres: serde_json::Value = match serde_json::from_str(presentation_json) {
+        Ok(v) => v,
+        Err(e) => return error_result("invalid_json", &format!("invalid presentation JSON: {e}")),
+    };
+    let trust = match parse_wasm_trust_roots(trust_roots_json) {
+        Ok(t) => t,
+        Err(e) => return error_result("invalid_trust_roots", &e),
+    };
+    let now_unix = treeship_core::statements::parse_rfc3339_to_unix(now_rfc3339).unwrap_or(0);
+    let nonce = if expected_nonce.is_empty() {
+        None
+    } else {
+        Some(expected_nonce)
+    };
+
+    let verdict = match core_vp(&pres, &trust, nonce, now_unix) {
+        Ok(v) => v,
+        Err(e) => return error_result("invalid_presentation", &e),
+    };
+
+    let (outcome, signed_at, reason): (&str, Option<String>, Option<String>) =
+        match &verdict.challenge {
+            ChallengeOutcome::NotRequested => ("not_requested", None, None),
+            ChallengeOutcome::PresentButUnchecked => ("present_but_unchecked", None, None),
+            ChallengeOutcome::NoResponse => ("no_response", None, None),
+            ChallengeOutcome::NoEstablishedKey => ("no_established_key", None, None),
+            ChallengeOutcome::Verified { signed_at } => ("verified", Some(signed_at.clone()), None),
+            ChallengeOutcome::Failed { reason } => ("failed", None, Some(reason.clone())),
+        };
+    let staple_status = match verdict.staple.status {
+        StapleStatus::NoStaple => "no_staple",
+        StapleStatus::Unparseable => "unparseable",
+        StapleStatus::SignerNotTrusted => "signer_not_trusted",
+        StapleStatus::InclusionInvalid => "inclusion_invalid",
+        StapleStatus::Verified => "verified",
+    };
+    let challenge_ok = verdict.challenge.is_ok();
+    let ok = verdict.revoked.is_none() && verdict.key_bound && challenge_ok;
+
+    serde_json::json!({
+        "agent": verdict.agent,
+        "card_id": verdict.card_id,
+        "sig_ok": verdict.sig_ok,
+        "key_bound": verdict.key_bound,
+        "via_chain": verdict.via_chain,
+        "revoked": verdict.revoked,
+        "challenge": { "outcome": outcome, "signed_at": signed_at, "reason": reason },
+        "challenge_ok": challenge_ok,
+        "staple": {
+            "verified": verdict.staple.verified,
+            "status": staple_status,
+            "checkpoint_index": verdict.staple.checkpoint_index,
+            "age_secs": verdict.staple.age_secs,
+        },
+        "ok": ok,
+    })
+    .to_string()
+}
+
 /// Parse the `trust_roots_json` argument the WASM verify_* surfaces
 /// accept. The JSON shape mirrors the on-disk
 /// `~/.treeship/trust_roots.json`:
@@ -1261,6 +1347,80 @@ mod tests {
             out2["key_bound"], false,
             "empty trust must fail closed: {out2}"
         );
+    }
+
+    #[test]
+    fn verify_presentation_chains_via_wasm() {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+        use treeship_core::attestation::{sign, Ed25519Signer, Signer};
+        use treeship_core::statements::{payload_type, ReceiptStatement};
+
+        let ship = Ed25519Signer::generate("key_ship").unwrap();
+        let agent_key = Ed25519Signer::generate("key_agent").unwrap();
+
+        let mut cert = ReceiptStatement::new("ship://ship_test", "agent_cert.v1");
+        cert.payload = Some(serde_json::json!({
+            "agent": "agent://a",
+            "subject_key_id": agent_key.key_id(),
+            "subject_public_key": URL_SAFE_NO_PAD.encode(agent_key.public_key_bytes()),
+            "issued_at": "2026-01-01T00:00:00Z",
+            "valid_until": "2027-01-01T00:00:00Z",
+        }));
+        let cert_env = sign(&payload_type("receipt"), &cert, &ship)
+            .unwrap()
+            .envelope;
+
+        let mut card = ReceiptStatement::new("ship://ship_test", "agent_card.v1");
+        card.payload =
+            Some(serde_json::json!({ "agent": "agent://a", "keyid": agent_key.key_id() }));
+        let card_env = sign(&payload_type("receipt"), &card, &agent_key)
+            .unwrap()
+            .envelope;
+
+        let trust = serde_json::json!({
+            "version": 1,
+            "roots": [{
+                "key_id": ship.key_id(),
+                "public_key": format!("ed25519:{}", URL_SAFE_NO_PAD.encode(ship.public_key_bytes())),
+                "kind": "cert_issuer",
+                "label": "test ship",
+                "added_at": "",
+            }]
+        })
+        .to_string();
+        // A presentation wraps each envelope as a JSON string under envelope_json.
+        let pres = serde_json::json!({
+            "type": "treeship/presentation/v1",
+            "agent": "agent://a",
+            "card": { "artifact_id": "art_card", "envelope_json": serde_json::to_string(&card_env).unwrap() },
+            "certs": [{ "artifact_id": "art_cert", "envelope_json": serde_json::to_string(&cert_env).unwrap() }],
+            "revocations": [],
+        })
+        .to_string();
+
+        let out: serde_json::Value = serde_json::from_str(&verify_presentation(
+            &pres,
+            &trust,
+            "",
+            "2026-07-06T12:00:00Z",
+        ))
+        .unwrap();
+        assert_eq!(out["key_bound"], true, "got: {out}");
+        assert_eq!(out["via_chain"], true);
+        assert_eq!(out["revoked"], serde_json::Value::Null);
+        assert_eq!(out["challenge"]["outcome"], "not_requested");
+        assert_eq!(out["staple"]["status"], "no_staple");
+        assert_eq!(out["ok"], true);
+
+        // No trust roots => fail closed.
+        let out2: serde_json::Value =
+            serde_json::from_str(&verify_presentation(&pres, "", "", "2026-07-06T12:00:00Z"))
+                .unwrap();
+        assert_eq!(
+            out2["key_bound"], false,
+            "empty trust must fail closed: {out2}"
+        );
+        assert_eq!(out2["ok"], false);
     }
 
     #[test]

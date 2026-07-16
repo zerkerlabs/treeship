@@ -33,6 +33,12 @@ type WasmBindings = {
     trustRoots: string,
     now: string,
   ) => string;
+  verify_presentation: (
+    presentation: string,
+    trustRoots: string,
+    expectedNonce: string,
+    now: string,
+  ) => string;
 };
 
 /**
@@ -326,6 +332,87 @@ export async function verifyResolution(
     wasm.verify_resolution(
       JSON.stringify(bundle),
       serializeTrustRoots(trustRoots),
+      nowStr,
+    ),
+  );
+}
+
+/** The challenge-response outcome within a presentation. */
+export interface PresentationChallenge {
+  outcome:
+    | 'not_requested'
+    | 'present_but_unchecked'
+    | 'no_response'
+    | 'no_established_key'
+    | 'verified'
+    | 'failed';
+  /** Bearer-signed timestamp, when `outcome` is `verified`. */
+  signed_at: string | null;
+  /** Failure reason, when `outcome` is `failed`. */
+  reason: string | null;
+}
+
+/** The staple portion of a presentation verdict. */
+export interface PresentationStaple {
+  verified: boolean;
+  status:
+    | 'no_staple'
+    | 'unparseable'
+    | 'signer_not_trusted'
+    | 'inclusion_invalid'
+    | 'verified';
+  checkpoint_index: number | null;
+  age_secs: number | null;
+}
+
+/** Result of {@link verifyPresentation}. Mirrors the WASM JSON output. */
+export interface PresentationVerdict {
+  agent: string;
+  card_id: string;
+  /** Card signature verified against your roots (directly or via the chain). */
+  sig_ok: boolean;
+  key_bound: boolean;
+  via_chain: boolean;
+  revoked: string | null;
+  challenge: PresentationChallenge;
+  challenge_ok: boolean;
+  staple: PresentationStaple;
+  /** Roll-up: not revoked, key-bound, and (if requested) challenge verified.
+   * Freshness (`--max-staple-age`) is your own policy over `staple.age_secs`. */
+  ok: boolean;
+  error_code?: string;
+  message?: string;
+}
+
+/**
+ * Verify an agent presentation in the browser — the same `verify-presentation`
+ * trust decision the CLI makes, via shared Rust logic
+ * (`treeship_core::verify::presentation`). Verifies the card (direct pin or
+ * chain), honors an authorized revocation, checks challenge liveness (when
+ * `nonce` is given), and verifies the staple.
+ *
+ * `trustRoots` is required for `key_bound`; with none, the presentation fails
+ * closed. `nonce` is the challenge nonce YOU issued (omit to skip liveness).
+ * `now` defaults to the current time.
+ */
+export async function verifyPresentation(
+  presentation: Record<string, unknown>,
+  trustRoots?: TrustRootsBundle | TrustRootInput[],
+  opts?: { nonce?: string; now?: Date | string },
+): Promise<PresentationVerdict> {
+  const now = opts?.now;
+  const nowStr =
+    now === undefined
+      ? new Date().toISOString()
+      : now instanceof Date
+        ? now.toISOString()
+        : now;
+  const wasm = await loadWasm();
+  return JSON.parse(
+    wasm.verify_presentation(
+      JSON.stringify(presentation),
+      serializeTrustRoots(trustRoots),
+      opts?.nonce ?? '',
       nowStr,
     ),
   );
