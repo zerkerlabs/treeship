@@ -291,6 +291,10 @@ pub fn proof(
             ),
             ("root", &format!("sha256:{}", root_short)),
             ("path", &format!("{} steps", inclusion_proof.path.len())),
+            // Machine consumers need the generated proof file, not merely a
+            // human summary. Without this field `--format json` hid the path
+            // required by the subsequent `merkle verify` command.
+            ("file", &out_path),
         ],
     );
     printer.blank();

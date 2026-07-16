@@ -1,10 +1,14 @@
 use std::collections::HashMap;
 
+use sha2::{Digest, Sha256};
 use treeship_core::{
     attestation::{Envelope, Verifier},
     statements::{
-        payload_type, ActionStatement, ApprovalScope, ApprovalStatement, DecisionStatement,
-        HandoffStatement, ReceiptStatement,
+        invitation::InvitationStatement,
+        payload_type,
+        session_participant::{verify_participant_envelope, SessionParticipantStatement},
+        ActionStatement, ApprovalScope, ApprovalStatement, DecisionStatement, HandoffStatement,
+        ReceiptStatement,
     },
     storage::Store,
     trust::TrustRootStore,
@@ -137,7 +141,7 @@ pub fn run(
             }
         };
 
-        let check = verify_one(&verifier, &rec.envelope, id);
+        let check = verify_one(&verifier, &ctx.storage, &rec.envelope, id);
         chain_envelopes.push((id.clone(), rec.envelope));
         checks.push(check);
     }
@@ -351,6 +355,10 @@ fn compute_chain_linkage(chain: &[(String, Envelope)]) -> (bool, String) {
             .and_then(|v| {
                 v.get("parentId")
                     .or_else(|| v.get("parent_id"))
+                    // session-participant/v1 names the signed edge after the
+                    // protocol object it extends. Treat that invitation ref as
+                    // its parent instead of trusting unsigned storage metadata.
+                    .or_else(|| v.get("invitation_ref"))
                     .and_then(|p| p.as_str())
                     .map(str::to_string)
             });
@@ -956,9 +964,23 @@ fn short_id(id: &str) -> String {
 // Verification logic (unchanged)
 // =============================================================================
 
-fn verify_one(verifier: &Verifier, envelope: &Envelope, id: &str) -> ArtifactCheck {
+fn verify_one(
+    verifier: &Verifier,
+    storage: &Store,
+    envelope: &Envelope,
+    id: &str,
+) -> ArtifactCheck {
     let actor_or_sys = extract_actor(envelope);
     let pt = envelope.payload_type.clone();
+
+    // Participant envelopes deliberately carry canonical protocol signatures,
+    // not ordinary DSSE PAE signatures: joining agent first, host second. The
+    // generic verifier therefore rejects a correctly countersigned join. Route
+    // this typed envelope through its protocol verifier and authenticate the
+    // referenced invitation through the normal trust universe.
+    if pt == payload_type("session-participant") {
+        return verify_session_participant(verifier, storage, envelope, id, actor_or_sys);
+    }
 
     match verifier.verify(envelope) {
         Ok(result) => {
@@ -992,6 +1014,79 @@ fn verify_one(verifier: &Verifier, envelope: &Envelope, id: &str) -> ArtifactChe
             outcome: Outcome::Fail,
             reason: Some(e.to_string()),
         },
+    }
+}
+
+fn verify_session_participant(
+    verifier: &Verifier,
+    storage: &Store,
+    envelope: &Envelope,
+    id: &str,
+    actor_or_sys: String,
+) -> ArtifactCheck {
+    let pt = envelope.payload_type.clone();
+    let fail = |reason: String| ArtifactCheck {
+        id: id.to_string(),
+        payload_type: pt.clone(),
+        actor_or_sys: actor_or_sys.clone(),
+        outcome: Outcome::Fail,
+        reason: Some(reason),
+    };
+
+    let participant: SessionParticipantStatement = match envelope.unmarshal_statement() {
+        Ok(statement) => statement,
+        Err(e) => return fail(format!("participant payload invalid: {e}")),
+    };
+    let invitation_record = match storage.read(&participant.invitation_ref) {
+        Ok(record) => record,
+        Err(e) => {
+            return fail(format!(
+                "referenced invitation {} is unavailable: {e}",
+                participant.invitation_ref
+            ))
+        }
+    };
+    let invitation_result = match verifier.verify(&invitation_record.envelope) {
+        Ok(result) => result,
+        Err(e) => return fail(format!("invitation is not trusted: {e}")),
+    };
+    if invitation_result.artifact_id != participant.invitation_ref {
+        return fail(format!(
+            "invitation id mismatch: expected {}, derived {}",
+            participant.invitation_ref, invitation_result.artifact_id
+        ));
+    }
+    let invitation: InvitationStatement = match invitation_record.envelope.unmarshal_statement() {
+        Ok(statement) => statement,
+        Err(e) => return fail(format!("invitation payload invalid: {e}")),
+    };
+    if let Err(e) = verify_participant_envelope(envelope, &invitation.issuer) {
+        return fail(e.to_string());
+    }
+
+    // The join command intentionally keeps the pending artifact id stable when
+    // the host appends signature #2. Recreate the pending envelope to retain a
+    // content-address check without falsely hashing the finalized bytes.
+    let mut pending = envelope.clone();
+    pending.signatures.truncate(1);
+    let pending_bytes = match serde_json::to_vec(&pending) {
+        Ok(bytes) => bytes,
+        Err(e) => return fail(format!("participant envelope encoding failed: {e}")),
+    };
+    let digest = Sha256::digest(pending_bytes);
+    let derived_id = format!("art_{}", hex::encode(&digest[..16]));
+    if derived_id != id {
+        return fail(format!(
+            "participant id mismatch: stored as {id}, derived {derived_id}"
+        ));
+    }
+
+    ArtifactCheck {
+        id: id.to_string(),
+        payload_type: pt,
+        actor_or_sys,
+        outcome: Outcome::Pass,
+        reason: None,
     }
 }
 
