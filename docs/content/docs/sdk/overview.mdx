@@ -23,15 +23,17 @@ Treeship ships an SDK for the languages most agent stacks are built in. **Every 
 
 ## Common shape
 
-Every SDK exposes the same three modules, with the same method names mapped to the language's conventions:
+The TypeScript SDK exposes three modules on the `Ship` client:
 
 | Module | Methods | What it does |
 |---|---|---|
-| `attest` | `action`, `decision`, `approval`, `handoff`, `endorsement`, `receipt` | Sign one of the six attestation types |
-| `verify` | `verify`, `verifyChain`, `verifyPackage` | Recompute Merkle, recheck signatures, walk parent chain |
-| `hub` | `push`, `pull`, `share` | Upload to the Hub, get a shareable URL, pull a remote receipt |
+| `attest` | `action`, `decision`, `approval`, `handoff` | Sign an attestation (`endorsement` and typed `receipt` attestations are CLI-only for now: `treeship attest endorsement` / `treeship attest receipt`) |
+| `verify` | `verify`, `verifyReceipt`, `verifyCertificate`, `crossVerify` | Verify a local artifact via the CLI; verify receipts/certificates in-process via `@treeship/verify` |
+| `hub` | `push`, `pull`, `status` | Upload an artifact to the Hub, pull a remote one, check connection status |
 
-The TypeScript SDK is the reference implementation; new methods land there first and propagate to Python and the bridges.
+The Python SDK maps the same operations to flat snake_case methods: `attest_action`, `attest_approval`, `attest_handoff`, `attest_decision`, `verify`, `hub_push`, `wrap`, `session_report`.
+
+The TypeScript SDK is the reference implementation; new methods land there first and propagate to Python and the bridges. Anything the SDKs don't wrap yet is still reachable by shelling out to the CLI directly.
 
 ## Install topology
 
@@ -53,12 +55,12 @@ Every SDK supports a JSON output mode the underlying CLI inherits via `--format 
 
 ```ts
 const result = await s.attest.action({ actor: 'agent://x', action: 'tool.call' });
-//   ^? { artifactId: string, digest: string, signedAt: string }
+//   ^? { artifactId: string }
 ```
 
 ```python
 result = ts.attest_action(actor="agent://x", action="tool.call")
-print(result.artifact_id, result.digest)
+print(result.artifact_id)
 ```
 
 The shape is stable across SDKs — agents that orchestrate Treeship through one language can hand the same JSON to a verifier in another.

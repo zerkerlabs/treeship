@@ -35,8 +35,8 @@ treeship verify <url-or-path-or-artifact-id> [OPTIONS]
 
 | Code | Meaning |
 |------|---------|
-| `0` | Verified |
-| `1` | Verification failed (signature, Merkle, inclusion proof, determinism) |
+| `0` | Verified (`pass` on the local artifact path; `structural-pass` on URL/package targets) |
+| `1` | Verification failed (signature, Merkle, inclusion proof, determinism, or empty receipt) |
 | `2` | Cross-verification failed (cert mismatch, unauthorized tool call, expired cert) |
 | `3` | Network or filesystem error (could not fetch URL or read file) |
 
@@ -56,7 +56,14 @@ treeship verify https://api.treeship.dev/v1/receipt/ssn_abc123
   ✓  Timeline ordering verified
   ✓  Chain linkage intact
 
-Verified. This receipt is authentic.
+Structurally consistent.
+
+  ⚠  signatures and issuer were NOT verified from this source
+       checked:      Merkle root, inclusion proofs, leaf count, timeline order
+       not checked:  who signed this receipt (no signature or trust-root check)
+
+  hint: to verify signatures against your trust roots, use the local
+        artifact form: treeship verify <artifact-id>
 
   Session:   ssn_abc123
   Ship:      ship_demo
@@ -64,6 +71,8 @@ Verified. This receipt is authentic.
   Duration:  4m 22s
   Actions:   28
 ```
+
+A fetched receipt earns **`structural-pass`, never `pass`**: this surface runs only keyless, self-referential checks and never opens the trust store, so it deliberately refuses to call the result "authentic". Signature verification against your trust roots requires the local artifact-ID form. An empty receipt (zero artifacts) is `fail`, not a vacuous pass.
 
 The human-readable mirror at `treeship.dev/receipt/...` is also accepted; the CLI rewrites `/receipt/` to `/v1/receipt/` automatically.
 </Tab>
@@ -79,7 +88,15 @@ Loads the on-disk package, runs the full bag of checks (determinism, Merkle root
 treeship verify ./researcher.agent
 ```
 
-Loads the certificate from `researcher.agent/certificate.json`, verifies the embedded Ed25519 signature, and prints the certificate metadata.
+Loads the certificate from `researcher.agent/certificate.json`, checks that the issuer key is pinned in your local trust store under kind `agent_cert`, verifies the Ed25519 signature, and prints the certificate metadata.
+
+Trust pinning is mandatory and fail-closed: if the issuer key is not in your trust store, verification fails — with `no trust roots configured for agent certificates` when the store has nothing for kind `agent_cert`, or `untrusted issuer` when it has other keys. Pin an issuer first:
+
+```bash
+treeship trust add <key_id> <pubkey> --kind agent_cert
+# or sync from your hub:
+treeship hub sync-trust
+```
 </Tab>
 <Tab value="Cross-verify">
 ```bash
@@ -97,7 +114,7 @@ Verifies the receipt, then runs cross-verification:
 Complete trust loop verified.
 ```
 
-Fails with exit code `2` if the receipt's `ship_id` does not match the certificate's `identity.ship_id`, the certificate is expired or not yet valid at the verify time, or any tool the session called is missing from the certificate's `capabilities.tools`.
+Fails with exit code `2` if the certificate's issuer key is not pinned in your trust store (kind `agent_cert`), the receipt's `ship_id` does not match the certificate's `identity.ship_id`, the certificate is expired or not yet valid at the verify time, or any tool the session called is missing from the certificate's `capabilities.tools`.
 </Tab>
 <Tab value="Artifact ID">
 ```bash
@@ -112,7 +129,22 @@ treeship verify $RECEIPT_URL --format json --certificate $CERT_PATH \
   | jq -e '.cross_verify.ok == true'
 ```
 
-The JSON object includes `outcome`, per-check status, and (when `--certificate` is used) a `cross_verify` block with `ship_id_status`, `certificate_status`, the three tool-call lists, and a roll-up `ok` boolean. Pipe it to `jq -e` for a clean pass/fail gate.
+For URL and package targets the JSON object looks like:
+
+```json
+{
+  "outcome": "structural-pass",
+  "signatures_verified": false,
+  "issuer_verified": false,
+  "note": "structural checks only (Merkle root, inclusion proofs, leaf count, timeline). Signatures and issuer are NOT verified from a fetched receipt; use the local artifact-ID verify path for signature verification.",
+  "receipt": { "session_id": "ssn_abc123", "ship_id": "ship_demo", "schema_version": "1", "artifact_count": 28 },
+  "checks": [ { "name": "merkle_root", "status": "pass", "detail": "..." } ]
+}
+```
+
+`outcome` on this surface is `"structural-pass"` or `"fail"` — never `"pass"` — and `signatures_verified` / `issuer_verified` are always `false`. **Do not gate CI on `.outcome == "pass"` for a URL or package target; it will never match.** Gate on `.outcome == "structural-pass"` (or just the exit code), and on `.cross_verify.ok == true` when `--certificate` is used. The `cross_verify` block carries `ship_id_status`, `certificate_status`, the three tool-call lists, and the roll-up `ok` boolean.
+
+The local artifact-ID form emits `"outcome": "pass" | "fail"` with per-check results — that is the surface where real signature verification happens.
 </Tab>
 </Tabs>
 
@@ -122,7 +154,7 @@ The exact set of checks depends on what's available at the target:
 
 - **URL mode** runs every check that's derivable from the receipt JSON alone: Merkle root recomputation, inclusion proofs, leaf count, timeline ordering, chain linkage. Per-artifact Ed25519 signature checks need the original envelope bytes, which only the local-storage and `.treeship` package paths have.
 - **`.treeship` package mode** runs everything URL mode runs plus determinism (the on-disk `receipt.json` round-trips byte-identical) and any signature checks the package preserves.
-- **`.agent` package mode** verifies the certificate's Ed25519 signature against the public key embedded in the certificate. It does NOT chain to a trusted issuer; trust chaining is out of scope for v0.9.0.
+- **`.agent` package mode** verifies the certificate's Ed25519 signature and **requires the issuer key to be pinned in your trust store** (kind `agent_cert`). A certificate is never accepted on its embedded key alone — that would make every certificate self-signed. Fails closed when no trust roots are configured.
 - **Artifact-ID mode** is the original local-storage path: walks the parent chain, verifies every signature, enforces nonce binding on approvals, checks expiry. See [the chain-verification guide](/docs/concepts/artifacts) for full semantics.
 
 The cross-verification path additionally verifies that the receipt's `session.ship_id` matches the certificate's `identity.ship_id`, the certificate was valid at verify time (`issued_at <= now <= valid_until`), and every tool the session called is present in the certificate's `capabilities.tools` list. See the [cross-verification concept](/docs/concepts/cross-verification) for the full semantics.

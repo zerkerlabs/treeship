@@ -18,9 +18,32 @@ npm install @treeship/verify
 
 Same verification semantics in every runtime. The package ships with `@treeship/core-wasm` pinned to an exact version (no caret), so there is no silent drift between the WASM you install and the rules this package documents.
 
+## Trust roots
+
+Certificate-bearing checks (`verifyCertificate`, `crossVerify`, `verifyCapability`) take a `trustRoots` argument, and **fail closed without it**. As of the v0.10.3 trust-root audit fix, a certificate is never accepted on its embedded public key alone — that would make every certificate self-signed. You pin which issuer keys may vouch for agents; any other issuer is rejected.
+
+`trustRoots` accepts the same JSON shape the CLI stores in `~/.treeship/trust_roots.json`, or a plain array:
+
+```typescript
+import type { TrustRootInput } from '@treeship/verify';
+
+const trustRoots: TrustRootInput[] = [
+  {
+    key_id: 'key_8a3f...',
+    public_key: 'ed25519:LnR1c3Rl...',   // base64url, no padding
+    kind: 'agent_cert',
+    label: 'our cert issuer',
+  },
+];
+```
+
+`kind` is one of the v0.19 split trust kinds: `'hub_checkpoint' | 'hub_org' | 'cert_issuer' | 'revoker' | 'agent_cert' | 'session_host'`. (The old single `ship` kind is deprecated and inert — no verifier honors it.)
+
+Omitting `trustRoots` is allowed by the types, but the result is a deliberate fail-closed verdict — useful only for diagnostic UIs that want to show *why* a certificate can't be trusted yet.
+
 ## API
 
-Three functions. Each accepts a parsed object, a JSON string, or a URL.
+Four functions. Each accepts a parsed object, a JSON string, or a URL.
 
 ### `verifyReceipt(target)`
 
@@ -31,8 +54,9 @@ import { verifyReceipt } from '@treeship/verify';
 
 const result = await verifyReceipt('https://treeship.dev/receipt/ssn_abc');
 
-if (result.outcome === 'pass') {
-  console.log(`session ${result.session.id} verified`);
+if (result.outcome === 'structural-pass') {
+  console.log(`session ${result.session.id} is structurally consistent`);
+  console.log('note: signatures and issuer are NOT verified from a fetched receipt');
 } else {
   console.log(`verification failed:`, result.checks.filter(c => c.status === 'fail'));
 }
@@ -42,7 +66,7 @@ Returns `VerifyReceiptResult`:
 
 ```typescript
 {
-  outcome: 'pass' | 'fail' | 'error';
+  outcome: 'pass' | 'structural-pass' | 'fail' | 'error';
   checks: { step: string; status: 'pass' | 'fail' | 'warn'; detail: string }[];
   session: {
     id: string;
@@ -57,34 +81,34 @@ Returns `VerifyReceiptResult`:
 }
 ```
 
-<Callout type="info">
-Signature verification on individual envelopes needs the original envelope bytes, which a URL-fetched receipt does not carry. `verifyReceipt` verifies receipt-level integrity only. For per-envelope signature checks, use `treeship verify <artifact-id>` on the CLI against local storage.
+<Callout type="warn">
+A fetched receipt earns **`structural-pass`, not `pass`**: the Merkle structure and inclusion proofs are internally consistent, but authorship is not established (no issuer trust, no envelope signatures). Do not gate on `outcome === 'pass'` for URL-fetched receipts — it will not match. Signature verification on individual envelopes needs the original envelope bytes; use `treeship verify <artifact-id>` on the CLI against local storage for that.
 </Callout>
 
-### `verifyCertificate(target, now?)`
+### `verifyCertificate(target, now?, trustRoots?)`
 
-Verifies the Ed25519 signature on an Agent Certificate against the public key embedded in the certificate. With `now` supplied (Date or RFC 3339 string), also classifies the validity window.
+Verifies the Ed25519 signature on an Agent Certificate against an issuer key you pin via `trustRoots`. With `now` supplied (Date or RFC 3339 string), also classifies the validity window.
 
 ```typescript
 import { verifyCertificate } from '@treeship/verify';
 
-const result = await verifyCertificate(cert, new Date());
+const result = await verifyCertificate(cert, new Date(), trustRoots);
 
 if (result.outcome === 'pass' && result.validity === 'valid') {
   console.log(`${result.certificate.agent_name} is authorized`);
 }
 ```
 
-Omit `now` (or pass `undefined`) for signature-only checks.
+`trustRoots` is required for the signature to be accepted — without it the check fails closed. Omit `now` (or pass `undefined`) for signature-only checks (`validity: 'not_checked'`).
 
-### `crossVerify(receipt, certificate, now?)`
+### `crossVerify(receipt, certificate, now?, trustRoots?)`
 
-Answers three questions at once: do the receipt and certificate reference the same ship, was the certificate valid at `now`, was every tool the session called authorized by the certificate. The `ok` field is the roll-up.
+Answers three questions at once: do the receipt and certificate reference the same ship, was the certificate valid at `now`, was every tool the session called authorized by the certificate. The `ok` field is the roll-up. `now` defaults to the current time; `trustRoots` is required for the certificate's signature to be accepted.
 
 ```typescript
 import { crossVerify } from '@treeship/verify';
 
-const result = await crossVerify(receiptUrl, certUrl);
+const result = await crossVerify(receiptUrl, certUrl, undefined, trustRoots);
 
 if (result.ok) {
   console.log('complete trust loop verified');
@@ -96,6 +120,30 @@ if (result.ok) {
 ```
 
 See [Cross-verification](/docs/concepts/cross-verification) for the full semantics.
+
+### `verifyCapability(card, actions, trustRoots?)`
+
+Verifies an `agent_card.v1` capability card and cross-checks a set of action envelopes against it — the same check `treeship verify-capability` runs on the CLI (shared Rust logic). `trustRoots` is required for `key_bound` to be true; without a pinned issuer the card is reported `self-asserted`.
+
+```typescript
+import { verifyCapability } from '@treeship/verify';
+
+const result = await verifyCapability(card, actionEnvelopes, trustRoots);
+
+if (result.status === 'verified') {
+  console.log(`${result.agent}: ${result.in_scope} in-scope actions, key-bound`);
+} else if (result.status === 'self-asserted') {
+  console.log('card signature ok, but issuer is not in your trust roots');
+} else {
+  console.log('violations:', result.violations);
+}
+```
+
+Returns `CapabilityVerifyResult`: `{ outcome, agent?, key_bound?, declared_tools?, in_scope?, out_of_scope?, violations?, status? }` where `status` is `'verified' | 'self-asserted' | 'violations'`.
+
+<Callout type="info">
+Honest contract: this is consistency over the actions you provide, not a completeness guarantee. It cannot prove the agent took no off-card action.
+</Callout>
 
 ## Runtime compatibility
 
@@ -113,7 +161,7 @@ See the [edge runtime guide](/docs/guides/edge-runtime) for deployable examples 
 
 ## Input shapes
 
-All three functions accept four target forms:
+All four functions accept four target forms:
 
 | Form | Example | Behavior |
 |------|---------|----------|
@@ -125,7 +173,7 @@ All three functions accept four target forms:
 ## What this package is NOT
 
 - **Not an attestation SDK.** For signing artifacts, session management, Hub push/pull, or agent registration, use [`@treeship/sdk`](/docs/sdk/overview) which shells out to the `treeship` CLI.
-- **Not a trust anchor.** The embedded Ed25519 signature on an Agent Certificate is verified against the certificate's own public key. Chaining a certificate to a trusted issuer is the caller's responsibility.
+- **Not a trust anchor.** Certificates are only accepted against issuer keys *you* pin via `trustRoots` — never against the certificate's own embedded key. Deciding which issuers to trust is the caller's responsibility; the package just fails closed until you decide.
 - **Not a drop-in for local-chain verification.** Some signature verification needs the original envelope bytes, which a URL-fetched receipt does not carry. Use `treeship verify <artifact-id>` on the CLI for that.
 
 ## Schema versioning

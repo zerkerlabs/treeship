@@ -21,15 +21,15 @@ components:
       scheme: DPoP
       description: |
         RFC 9449 DPoP proof-of-possession.
-        Every request carries a DPoP JWT signed by the hub key.
+        Every request carries a DPoP JWT signed by the dock key.
         Stolen credentials are useless without the private key.
 
 paths:
-  /v1/hub/challenge:
+  /v1/dock/challenge:
     get:
       summary: Start device flow
       description: Returns a device_code and nonce to begin the RFC 8628 device authorization flow.
-      operationId: hubChallenge
+      operationId: dockChallenge
       security: []
       responses:
         '200':
@@ -39,16 +39,15 @@ paths:
               schema:
                 type: object
                 properties:
-                  device_code: { type: string, example: "dvc_a1b2c3d4" }
-                  nonce:       { type: string, example: "nce_7f8e9d0a" }
-                  expires_at:  { type: integer, example: 1711494000 }
-                  verify_url:  { type: string, example: "https://treeship.dev/hub/activate" }
+                  device_code: { type: string, example: "a1b2c3d4e5f60718" }
+                  nonce:       { type: string, example: "7f8e9d0a1b2c3d4e5f60718293a4b5c6" }
+                  expires_at:  { type: string, example: "1711494000", description: "Unix timestamp as a string" }
 
-  /v1/hub/authorized:
+  /v1/dock/authorized:
     get:
       summary: Poll for device flow completion
       description: Poll after the user has approved at treeship.dev/hub/activate.
-      operationId: hubAuthorized
+      operationId: dockAuthorized
       security: []
       parameters:
         - name: device_code
@@ -67,7 +66,7 @@ paths:
                 type: object
                 properties:
                   state:      { type: string, enum: [approved, attached] }
-                  dock_id:    { type: string, example: "hub_9f8e7d6c" }
+                  dock_id:    { type: string, example: "dck_9f8e7d6c5b4a39281706f5e4d3c2b1a0" }
                   next_steps: { type: array, items: { type: string } }
                   example:    { type: string }
         '202':
@@ -95,11 +94,14 @@ paths:
                 properties:
                   state: { type: string, example: "expired" }
 
-  /v1/hub/authorize:
+  /v1/dock/authorize:
     post:
       summary: Complete device flow authorization
-      description: Called by treeship.dev when the user approves. Stores the keypair binding.
-      operationId: hubAuthorize
+      description: |
+        Two calling modes. The browser calls it with only device_code to approve
+        the challenge. The CLI calls it with keys and the challenge nonce to
+        finalize registration; the challenge must already be browser-approved.
+      operationId: dockAuthorize
       security: []
       requestBody:
         required: true
@@ -107,11 +109,12 @@ paths:
           application/json:
             schema:
               type: object
-              required: [device_code, ship_public_key, hub_public_key]
+              required: [device_code]
               properties:
                 device_code:      { type: string }
-                ship_public_key:  { type: string, description: "hex-encoded Ed25519 public key" }
-                hub_public_key:   { type: string, description: "hex-encoded Ed25519 public key" }
+                ship_public_key:  { type: string, description: "hex-encoded Ed25519 public key (CLI finalize mode)" }
+                dock_public_key:  { type: string, description: "hex-encoded Ed25519 public key (CLI finalize mode)" }
+                nonce:            { type: string, description: "nonce from /v1/dock/challenge; required in CLI finalize mode" }
       responses:
         '200':
           description: |
@@ -195,12 +198,14 @@ paths:
 
   /v1/verify/{id}:
     get:
-      summary: Verify a chain
+      summary: Retired server-side verification endpoint
       description: |
-        Runs treeship verify on the artifact chain server-side.
-        The /verify/:id page also runs the WASM verifier client-side independently --
-        the Hub cannot forge a passing result.
+        Server-side verification is retired. Any verdict the server produced
+        would represent the server's trust policy, not the verifier's. The Hub
+        is transport/index only: fetch the signed artifact from
+        /v1/artifacts/{id} and verify it locally against your own trust roots.
       operationId: verifyChain
+      deprecated: true
       security: []
       parameters:
         - name: id
@@ -208,25 +213,28 @@ paths:
           required: true
           schema: { type: string }
       responses:
-        '200':
-          description: Verification result
+        '410':
+          description: Endpoint retired (artifact exists)
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  outcome:  { type: string, enum: [pass, fail, error] }
-                  chain:    { type: integer, description: "Number of artifacts in chain" }
-                  approver: { type: string, nullable: true }
-                  checks:   { type: array, items: { type: object } }
+                  outcome:      { type: string, enum: [retired] }
+                  message:      { type: string, example: "server-side verification is retired; fetch the signed artifact and verify it locally" }
+                  artifact_url: { type: string, example: "/v1/artifacts/art_f7e6d5c4b3a2f7e6" }
+        '400':
+          description: Missing artifact ID
+        '404':
+          description: Artifact not found
 
-  /v1/workspace/{hubId}:
+  /v1/workspace/{dockId}:
     get:
       summary: Fetch workspace artifacts
       description: Returns all artifacts associated with a hub connection. Requires DPoP authentication.
       operationId: getWorkspace
       parameters:
-        - name: hubId
+        - name: dockId
           in: path
           required: true
           schema: { type: string }
@@ -238,7 +246,7 @@ paths:
               schema:
                 type: object
                 properties:
-                  hub_id: { type: string }
+                  dock_id: { type: string }
                   artifacts: { type: array, items: { type: object } }
         '401':
           description: DPoP authentication failed

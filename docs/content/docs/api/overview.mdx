@@ -31,8 +31,8 @@ Hub uses DPoP (Demonstration of Proof-of-Possession) for write endpoints. There 
 
 | Header | Value |
 |--------|-------|
-| `Authorization` | `DPoP {hub_id}` |
-| `DPoP` | A fresh JWT signed by the hub private key |
+| `Authorization` | `DPoP {dock_id}` |
+| `DPoP` | A fresh JWT signed by the dock private key |
 
 The DPoP JWT contains:
 
@@ -50,7 +50,7 @@ Hub verifies:
 - `jti` has not been seen before (replay protection)
 - `htm` matches the HTTP method of the request
 - `htu` matches the request URL
-- The JWT signature matches the hub public key stored during login
+- The JWT signature matches the dock public key stored during login
 
 **Read endpoints** require no authentication.
 
@@ -58,18 +58,30 @@ Hub verifies:
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| `GET` | `/v1/hub/challenge` | None | Start device flow login |
-| `POST` | `/v1/hub/authorize` | None | Complete device flow login |
-| `GET` | `/v1/hub/authorized` | None | Poll device flow status |
+| `GET` | `/v1/dock/challenge` | None | Start device flow login |
+| `GET` | `/v1/dock/authorized` | None | Poll device flow status |
+| `POST` | `/v1/dock/authorize` | None | Complete device flow login |
 | `POST` | `/v1/artifacts` | DPoP | Push a signed artifact |
 | `GET` | `/v1/artifacts/:id` | None | Retrieve an artifact |
-| `GET` | `/v1/workspace/:hub_id` | DPoP | List artifacts in a workspace |
-| `GET` | `/v1/verify/:id` | None | Verify an artifact server-side |
+| `GET` | `/v1/workspace/:dock_id` | DPoP | List artifacts in a workspace |
+| `POST` | `/v1/session` | DPoP | Mint a short-lived share token for browser workspace reads |
+| `GET` | `/v1/verify/:id` | None | **Retired.** Returns `410 Gone`; verify locally instead |
 | `POST` | `/v1/merkle/checkpoint` | DPoP | Publish a Merkle checkpoint |
 | `POST` | `/v1/merkle/proof` | DPoP | Publish a Merkle inclusion proof |
+| `POST` | `/v1/merkle/consistency` | DPoP | Publish a Merkle consistency proof |
 | `GET` | `/v1/merkle/checkpoint/latest` | None | Get the latest Merkle checkpoint |
 | `GET` | `/v1/merkle/checkpoint/:id` | None | Get a specific Merkle checkpoint |
+| `GET` | `/v1/merkle/consistency` | None | Get a Merkle consistency proof |
 | `GET` | `/v1/merkle/:artifactId` | None | Get a Merkle inclusion proof |
+| `PUT` | `/v1/receipt/:session_id` | DPoP | Publish a session receipt |
+| `GET` | `/v1/receipt/:session_id` | None | Fetch a session receipt (permanent URL) |
+| `GET` | `/v1/ship/agents` | DPoP | List this ship's registered agents |
+| `GET` | `/v1/ship/sessions` | DPoP | List this ship's sessions |
+| `GET` | `/v1/agents` | None | Resolve an agent URI to its verifiable bundle |
+| `GET` | `/v1/agents/log` | None | Agent transparency log (metadata + Merkle anchors) |
+| `GET` | `/v1/agents/history` | None | Agent receipt history |
+| `GET` | `/v1/agents/match` | None | Match agents in the registry |
+| `GET` | `/v1/stats` | None | Public adoption metrics (counts only, cached 5 min) |
 | `GET` | `/.well-known/treeship/revoked.json` | None | Revoked key list |
 
 ## Error format
@@ -89,6 +101,8 @@ HTTP status codes:
 - `400` -- Bad request
 - `401` -- Authentication failed (DPoP invalid)
 - `404` -- Not found
+- `409` -- Conflict (device code already used)
+- `410` -- Gone (expired device code, or the retired `/v1/verify/:id` endpoint)
 - `500` -- Server error
 
 ## OpenAPI spec
