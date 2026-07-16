@@ -18,6 +18,10 @@
 /// WASM verifier, and the SDKs run the same code path.
 pub mod resolution;
 
+/// Presentation verification primitives (the challenge-response canonical and
+/// its check). Same reason: one code path across CLI, WASM, and SDKs.
+pub mod presentation;
+
 use crate::agent::AgentCertificate;
 use crate::session::package::{VerifyCheck, VerifyStatus};
 use crate::session::receipt::SessionReceipt;
