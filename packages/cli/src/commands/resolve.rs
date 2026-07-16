@@ -15,7 +15,7 @@ use treeship_core::capability::{declared_tools, is_key_bound, matched_capability
 use treeship_core::merkle::{MerkleTree, ProofFile};
 use treeship_core::statements::{payload_type, ActionStatement, ReceiptStatement};
 use treeship_core::trust::{TrustRootKind, TrustRootStore};
-use treeship_core::verify::resolution::{chain_verify_card, verifier_from_trust};
+use treeship_core::verify::resolution::{verify_resolution, ResolutionBundle};
 
 type CmdResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -273,8 +273,6 @@ fn resolve_remote(hub: &str, agent: &str, trust: &TrustRootStore, printer: &Prin
         .into_json()
         .map_err(|e| format!("hub returned invalid JSON: {e}"))?;
 
-    let verifier = verifier_from_trust(trust);
-
     let Some(card_entry) = bundle.get("current_card").filter(|v| !v.is_null()) else {
         printer.warn("no capability card", &[("agent", agent), ("hub", base)]);
         printer.hint("the hub holds no agent_card.v1 for this agent.");
@@ -293,107 +291,63 @@ fn resolve_remote(hub: &str, agent: &str, trust: &TrustRootStore, printer: &Prin
     let env: Envelope = serde_json::from_str(env_json)
         .map_err(|e| format!("hub returned an unparseable card envelope: {e}"))?;
 
-    // Re-verify the signature against OUR trust roots.
-    let mut sig_ok = verifier.verify_any(&env).is_ok();
+    // Parse the card statement for the capability display below.
     let stmt: ReceiptStatement = env.unmarshal_statement()?;
     if stmt.kind != "agent_card.v1" {
         return Err(format!("hub returned a `{}`, not an agent_card.v1", stmt.kind).into());
     }
     let card = stmt.payload.unwrap_or(serde_json::Value::Null);
-    let card_keyid = card.get("keyid").and_then(|v| v.as_str()).unwrap_or("");
-    let signer = env
-        .signatures
-        .first()
-        .map(|s| s.keyid.as_str())
-        .unwrap_or("");
     let tools = declared_tools(&card);
-    let mut key_bound = sig_ok && is_key_bound(card_keyid, signer, trust);
 
-    // Chain walk: when the leaf key is not directly pinned, a served
-    // agent_cert.v1 signed by a PINNED Ship root can vouch for it — the TLS
-    // chain (pin the CA, verify the leaves through the cert). The verifier
-    // used for the agent's revocations gains the chain-certified subject key
-    // too, so a self-revocation signed by the agent's own key still counts.
-    let mut chain_cert_id: Option<String> = None;
-    let mut rev_verifier = verifier;
-    if !key_bound {
-        let served_certs: Vec<(String, Envelope)> = bundle
-            .get("certs")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|c| {
-                        let id = c.get("artifact_id").and_then(|v| v.as_str())?;
-                        let ej = c.get("envelope_json").and_then(|v| v.as_str())?;
-                        let cenv: Envelope = serde_json::from_str(ej).ok()?;
-                        Some((id.to_string(), cenv))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        let now = treeship_core::statements::unix_to_rfc3339(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0),
-        );
-        if let Some(verdict) =
-            chain_verify_card(&env, card_keyid, agent, &served_certs, trust, &now)
-        {
-            sig_ok = true;
-            key_bound = true;
-            rev_verifier.add_key(signer.to_string(), verdict.subject_key);
-            chain_cert_id = Some(verdict.cert_id);
-        }
-    }
-    let verifier = rev_verifier;
-
-    // Honor an authorized, verifying revocation from the bundle.
-    let mut revocation: Option<String> = None;
-    if let Some(revs) = bundle.get("revocations").and_then(|v| v.as_array()) {
-        for rev in revs {
-            let rev_json = rev
-                .get("envelope_json")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let Ok(rev_env) = serde_json::from_str::<Envelope>(rev_json) else {
-                continue;
-            };
-            if verifier.verify_any(&rev_env).is_err() {
-                continue; // unverified revocation -> ignored
-            }
-            let Ok(rev_stmt) = rev_env.unmarshal_statement::<ReceiptStatement>() else {
-                continue;
-            };
-            if rev_stmt.kind != "agent_card_revocation.v1" {
-                continue;
-            }
-            let rev_signer = rev_env
-                .signatures
-                .first()
-                .map(|s| s.keyid.as_str())
-                .unwrap_or("");
-            let self_revoke = !card_keyid.is_empty() && rev_signer == card_keyid;
-            // Batch 5: issuer revocation is now scoped to the `Revoker` kind
-            // (was the overloaded `Ship` kind).
-            let issuer = trust
-                .roots()
-                .iter()
-                .any(|r| r.key_id == rev_signer && r.kind == TrustRootKind::Revoker);
-            if self_revoke || issuer {
-                revocation = Some(
-                    rev_stmt
-                        .payload
-                        .as_ref()
-                        .and_then(|p| p.get("reason"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("(no reason given)")
-                        .to_string(),
-                );
-                break;
-            }
-        }
-    }
+    // The single core trust-decision: verify the card (direct pin or chain
+    // walk), then honor an authorized revocation. Same code path the WASM
+    // verifier and SDKs run — see treeship_core::verify::resolution.
+    let served_certs: Vec<(String, Envelope)> = bundle
+        .get("certs")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|c| {
+                    let id = c.get("artifact_id").and_then(|v| v.as_str())?;
+                    let ej = c.get("envelope_json").and_then(|v| v.as_str())?;
+                    Some((id.to_string(), serde_json::from_str::<Envelope>(ej).ok()?))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let revocation_envs: Vec<Envelope> = bundle
+        .get("revocations")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|r| {
+                    let ej = r.get("envelope_json").and_then(|v| v.as_str())?;
+                    serde_json::from_str::<Envelope>(ej).ok()
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let now = treeship_core::statements::unix_to_rfc3339(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+    );
+    let verdict = verify_resolution(
+        &ResolutionBundle {
+            agent: agent.to_string(),
+            card: env.clone(),
+            certs: served_certs,
+            revocations: revocation_envs,
+        },
+        trust,
+        &now,
+    )
+    .map_err(|e| format!("hub returned an invalid card bundle: {e}"))?;
+    let sig_ok = verdict.sig_ok;
+    let key_bound = verdict.key_bound;
+    let chain_cert_id = verdict.chain_cert_id;
+    let revocation = verdict.revocation_reason;
 
     // Capability provenance from the card (captured/discovered grades travel
     // with it; exercised needs receipts and is unavailable over the network).
