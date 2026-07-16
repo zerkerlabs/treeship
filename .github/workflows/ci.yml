@@ -51,6 +51,8 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.12'
+      - name: Install pyyaml (feature-inventory linter)
+        run: pip install pyyaml
       - name: Hub OpenAPI matches the router
         run: python3 scripts/check-hub-openapi.py
       - name: Docs reference only real SDK methods

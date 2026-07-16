@@ -35,6 +35,10 @@ The deprecated `ship` kind is rejected with guidance — it used to grant three 
 
 Legacy `ship` entries in an existing file still parse but are inert until re-pinned.
 
+<Callout type="warn">
+**v0.20.0 flag gap:** the released binary's `trust add --kind` flag only accepts `hub_checkpoint`, `agent_cert`, `session_host` (and the rejected `ship`) — it does not yet accept `cert_issuer`, `hub_org`, or `revoker`, even though the verifiers honor those kinds and `keys export` prints them. The fix has landed and ships in the next release; until then, pin those kinds by adding the entry to `~/.treeship/trust_roots.json` directly (same JSON shape `trust list` shows).
+</Callout>
+
 ## Adding a pin
 
 `treeship keys export` on the counterparty's machine prints the exact commands. The public key is `ed25519:<base64url>` (bare base64url also accepted):
