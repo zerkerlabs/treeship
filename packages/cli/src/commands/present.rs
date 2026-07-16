@@ -26,10 +26,12 @@ use ed25519_dalek::VerifyingKey;
 
 use crate::{ctx, printer::Printer};
 use treeship_core::attestation::Envelope;
-use treeship_core::merkle::{Checkpoint, InclusionProof, MerkleTree};
+use treeship_core::merkle::MerkleTree;
 use treeship_core::statements::{parse_rfc3339_to_unix, payload_type, ReceiptStatement};
 use treeship_core::trust::{decode_ed25519_pubkey, TrustRootKind, TrustRootStore};
-use treeship_core::verify::presentation::{challenge_canonical, check_challenge};
+use treeship_core::verify::presentation::{
+    challenge_canonical, check_challenge, verify_staple, StapleStatus,
+};
 use treeship_core::verify::resolution::{chain_verify_card, verifier_from_trust};
 
 type CmdResult = Result<(), Box<dyn std::error::Error>>;
@@ -521,7 +523,32 @@ pub fn verify_presentation(
     }
 
     // ── Staple: checkpoint signature + card inclusion, then freshness ─────
-    let (staple_str, staple_ok, staple_age_secs) = verify_staple(&pres, card_id, &trust);
+    let sv = verify_staple(&pres, card_id, &trust, unix_now());
+    let staple_ok = sv.verified;
+    let staple_age_secs = sv.age_secs;
+    let staple_str = match sv.status {
+        StapleStatus::NoStaple => "none included".to_string(),
+        StapleStatus::Unparseable => "unparseable staple".to_string(),
+        StapleStatus::SignerNotTrusted => format!(
+            "checkpoint #{} signer not in your trust roots (or signature invalid) — pin it: treeship trust add <name> ed25519:{} --kind hub_checkpoint --yes",
+            sv.checkpoint_index.unwrap_or(0),
+            sv.checkpoint_public_key.as_deref().unwrap_or("")
+        ),
+        StapleStatus::InclusionInvalid => format!(
+            "checkpoint #{} verified, but card inclusion proof INVALID",
+            sv.checkpoint_index.unwrap_or(0)
+        ),
+        StapleStatus::Verified => {
+            let age_str = sv
+                .age_secs
+                .map(human_secs)
+                .unwrap_or_else(|| "unknown age".into());
+            format!(
+                "checkpoint #{} verified, inclusion verified ({age_str})",
+                sv.checkpoint_index.unwrap_or(0)
+            )
+        }
+    };
 
     // Freshness bound: enforced only when the verifier asks. Reported always.
     let mut stale = false;
@@ -691,61 +718,6 @@ pub fn verify_presentation(
 /// Verify the staple offline: checkpoint signature against pinned
 /// hub_checkpoint roots, then the card's inclusion in that signed root.
 /// Returns (report line, verified, age in seconds when computable).
-fn verify_staple(
-    pres: &serde_json::Value,
-    card_id: &str,
-    trust: &TrustRootStore,
-) -> (String, bool, Option<u64>) {
-    let Some(staple) = pres.get("staple").filter(|v| !v.is_null()) else {
-        return ("none included".into(), false, None);
-    };
-    let Ok(checkpoint) =
-        serde_json::from_value::<Checkpoint>(staple.get("checkpoint").cloned().unwrap_or_default())
-    else {
-        return ("unparseable checkpoint".into(), false, None);
-    };
-    let Ok(proof) = serde_json::from_value::<InclusionProof>(
-        staple.get("inclusion_proof").cloned().unwrap_or_default(),
-    ) else {
-        return ("unparseable inclusion proof".into(), false, None);
-    };
-
-    let age = parse_rfc3339_to_unix(&checkpoint.signed_at).map(|t| unix_now().saturating_sub(t));
-
-    if !checkpoint.verify(trust) {
-        return (
-            format!(
-                "checkpoint #{} signer not in your trust roots (or signature invalid) — pin it: treeship trust add <name> ed25519:{} --kind hub_checkpoint --yes",
-                checkpoint.index, checkpoint.public_key
-            ),
-            false,
-            age,
-        );
-    }
-    let root_hex = checkpoint
-        .root
-        .strip_prefix("sha256:")
-        .unwrap_or(&checkpoint.root);
-    if !MerkleTree::verify_proof(checkpoint.merkle_version, root_hex, card_id, &proof) {
-        return (
-            format!(
-                "checkpoint #{} verified, but card inclusion proof INVALID",
-                checkpoint.index
-            ),
-            false,
-            age,
-        );
-    }
-    let age_str = age.map(human_secs).unwrap_or_else(|| "unknown age".into());
-    (
-        format!(
-            "checkpoint #{} verified, inclusion verified ({age_str})",
-            checkpoint.index
-        ),
-        true,
-        age,
-    )
-}
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
