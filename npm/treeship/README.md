@@ -30,8 +30,9 @@ treeship init                       # one-time, per machine
 treeship session start              # opens a recording session
 treeship wrap -- npm test           # captures the command + exit code + file writes
 treeship session close              # seals the receipt
-treeship session report             # uploads + prints a shareable URL
-treeship verify <url>               # anyone can verify, offline, no account
+treeship session report             # uploads + prints a shareable URL (requires `treeship hub attach`)
+treeship verify <url>               # structural check of a fetched receipt (verdict: structural-pass)
+treeship verify <artifact-id>       # full local verification: signatures + chain, offline
 ```
 
 ## Claude Code users
@@ -53,13 +54,13 @@ claude plugin install treeship@treeship
 - Exit code, duration, error message text on failures
 - Actor URI (e.g. `agent://claude-code`)
 
-What's **not** captured: raw argument values, raw output content, file contents, environment variable values, secrets. Full inventory at <https://github.com/zerkerlabs/treeship/blob/main/TREESHIP.md>.
+What's **not** captured by the MCP/plugin path: raw argument values, raw output content, file contents, environment variable values, secrets. Note that `treeship wrap` records more: the (sanitized) command line, the last output line as a summary, and modified file paths. Full inventory at <https://github.com/zerkerlabs/treeship/blob/main/TREESHIP.md>.
 
 ## Where data lives
 
 - Receipts stay in `.treeship/sessions/<id>.treeship` on your machine
-- They leave only on explicit `treeship session report`, `treeship hub push`, or with `auto_push: true` configured
-- Verification (`treeship package verify`) is pure WASM, runs entirely offline, doesn't phone home
+- They leave on `treeship session report`, `treeship hub push`, with `auto_push: true` configured — or automatically at session end if you use the Claude Code plugin with a hub attached (the SessionEnd hook runs `session report`)
+- Verification (`treeship verify`, `treeship package verify`) runs entirely offline and doesn't phone home. Package verification authenticates the artifacts and Merkle root; the receipt's narrative fields are not signed, and the verifier says so explicitly
 
 ## Documentation
 
