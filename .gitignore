@@ -22,3 +22,24 @@ npm/@treeship/cli-*/expected-checksum.txt
 # PyPI-delivered hash. Never committed.
 packages/sdk-python/treeship_sdk/_data/expected-checksum-*.txt
 .gstack/
+
+# --- Build artifacts (generated in CI; never commit) ---
+/target/
+**/target/
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+dist/
+build/
+packages/sdk-python/dist/
+packages/sdk-python/build/
+packages/sdk-python/*.egg-info/
+packages/zk-circom/build/
+
+# --- OS / editor cruft ---
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/

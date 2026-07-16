@@ -3,6 +3,15 @@ members = ["packages/core", "packages/cli", "packages/core-wasm", "packages/zk-c
 default-members = ["packages/core", "packages/cli"]
 resolver = "2"
 
+# Shared package metadata for the workspace. Crates inherit any of these with
+# `<field>.workspace = true` in their own `[package]` table, so the license and
+# repository stay consistent across every published crate.
+[workspace.package]
+license = "Apache-2.0"
+repository = "https://github.com/zerkerlabs/treeship"
+homepage = "https://treeship.dev"
+authors = ["Zerker Labs <opensource@zerker.ai>"]
+
 # WASM release profile tuned for bundle size. Applies only to
 # treeship-core-wasm so the CLI keeps its standard release tuning for speed.
 # Leaf-level `[profile.release]` in the core-wasm crate would be silently

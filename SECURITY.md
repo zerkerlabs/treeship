@@ -30,9 +30,9 @@ We will acknowledge your report within 48 hours and aim to release a fix within 
 
 | Version | Supported              |
 |---------|------------------------|
-| 0.10.x  | Yes (current)          |
-| 0.9.x   | Security fixes only    |
-| < 0.9   | No longer supported    |
+| 0.20.x  | Yes (current)          |
+| 0.19.x  | Security fixes only    |
+| < 0.19  | No longer supported    |
 
 ## Security model
 
@@ -51,7 +51,7 @@ The trust boundary is the machine. Root access breaks all guarantees. **Hub "dev
 
 ## Trust roots (issuer pinning)
 
-Three verification paths used to trust whichever public key was embedded inside the artifact they verified -- Merkle checkpoints, hub-org `JournalCheckpoint`s, and Agent Certificates. An attacker who minted their own keypair could self-sign any of these and verification returned success. Starting in v0.10.3, each of these surfaces requires the embedded pubkey to be present in the operator's local trust root store at `~/.treeship/trust_roots.json` (mode `0o600`, JSON schema v1). Configure via `treeship trust add <key_id> <pubkey> --kind <hub_checkpoint|ship|agent_cert>`. Fresh installs have no roots configured; verification fails closed until roots are pinned out-of-band.
+Three verification paths used to trust whichever public key was embedded inside the artifact they verified -- Merkle checkpoints, hub-org `JournalCheckpoint`s, and Agent Certificates. An attacker who minted their own keypair could self-sign any of these and verification returned success. Starting in v0.10.3, each of these surfaces requires the embedded pubkey to be present in the operator's local trust root store at `~/.treeship/trust_roots.json` (mode `0o600`, JSON schema v1). Configure via `treeship trust add <key_id> <pubkey> --kind <hub_checkpoint|hub_org|cert_issuer|revoker|agent_cert|session_host>` (the v0.19 trust-split replaced the single `ship` power with the scoped `hub_org` / `cert_issuer` / `revoker` kinds). Fresh installs have no roots configured; verification fails closed until roots are pinned out-of-band.
 
 ## Known limitations
 
