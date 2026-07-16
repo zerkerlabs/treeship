@@ -22,44 +22,64 @@ The Hub is convenience infrastructure for sharing and discovery. It cannot forge
 
 ## Key hierarchy
 
-A Treeship is the trust domain: one Ed25519 keypair, one local artifact store, one identity boundary. Every artifact signed within a Treeship shares the same root of trust.
+A Treeship is the trust domain: a **ship key**, a local artifact store, one identity boundary — plus a per-agent key for every agent you register.
 
 ```
 Owner (human)
-+-- Treeship key (Ed25519)
-    |-- Signs all artifacts
-    |-- Signs approvals
-    +-- Signs handoffs
++-- Ship key (Ed25519)
+    |-- Default signer for unregistered actors' artifacts
+    |-- Signs approvals and handoffs
+    +-- Issues agent_cert.v1 certificates for registered agents
+        +-- Agent key (Ed25519, one per registered agent)
+            |-- Signs that agent's actions, cards, and session.v1 records
+            +-- Answers presentation challenges (never the ship key)
 ```
 
-The owner holds the private key, encrypted at rest. The key never leaves the local machine unless explicitly exported. There is no key escrow or recovery service.
+The owner holds the private keys, encrypted at rest. Keys never leave the local machine unless explicitly exported (and `keys export` prints only the public half). There is no key escrow or recovery service. Keys rotate gracefully: a rotation mints a successor and stamps the predecessor with a validity end, so verifiers can walk the chain.
 
-Actors (humans and AI agents) work inside a Treeship but do not hold their own keys. They are identified by URIs like `human://alice` or `agent://coder`, and every artifact they create is signed by the Treeship key. The actor URI tells you who acted. The Treeship key tells you the artifact is authentic.
+Unregistered actors are identified by URIs like `human://alice` or `agent://coder`, and their artifacts are signed by the ship key — the verifier grades that `actor proof: asserted` (the URI is a label, the ship vouches for the trust domain). A registered agent (`treeship onboard`) signs with its own key, certificate-bound to its URI, and grades `proven (key-bound)`.
 
 <Callout type="info">
-A good rule of thumb: if you would use the same SSH key, use the same Treeship. If you would use different SSH keys, use different Treeships.
+A good rule of thumb: if you would use the same SSH key, use the same Treeship. If you would use different SSH keys, use different Treeships. Register an agent with its own key whenever "which agent did this" must be cryptographic rather than claimed.
 </Callout>
+
+## Trust roots: powers are pinned separately
+
+Verification never trusts a key because an artifact carried it — you **pin** the keys you trust in your local trust-root store, and each pin grants exactly one power (the v0.19 trust-kind split):
+
+| Kind | What pinning it grants |
+|---|---|
+| `agent_cert` | Accept this agent key's certificates, cards, and receipts (leaf pin) |
+| `cert_issuer` | Accept agent certificates this ship key issues — pin once, verify the fleet |
+| `hub_checkpoint` | Accept this key's signed Merkle checkpoints (staples, transparency) |
+| `hub_org` | Accept this hub's org-wide single-use approval checkpoints |
+| `revoker` | Honor capability revocations this ship key signs |
+| `session_host` | Honor multi-agent room invitations this host key mints |
+
+The old single `ship` kind bundled three of these powers into one pin and is deprecated — no verifier honors it, and `trust add --kind ship` is rejected. Certificate verification is fail-closed: with no pinned root, the verdict is a deliberate failure, never a fallback to the certificate's embedded key.
 
 ## What "verified" means
 
 When you run `treeship verify`, the verifier checks:
 
 1. **Content-addressed ID** matches the artifact content (tampered content fails immediately)
-2. **Ed25519 signature** is valid for the claimed key
-3. **Parent chain** is intact (no missing or modified links)
-4. **Approval nonce binding** matches if the action references an approval
+2. **Ed25519 signature** is valid for the signer's key (ship key, or the agent's own key)
+3. **Actor proof** is graded: `proven (key-bound)` or `asserted`
+4. **Parent chain** is intact (no missing or modified links)
+5. **Approval nonce binding** matches if the action references an approval
 
-Exit 0 means clean chain. Exit 1 means something failed. The verifier is deterministic and runs entirely on your machine.
+Exit 0 means clean chain. Exit 1 means something failed. The verifier is deterministic and runs entirely on your machine. Different surfaces check different things — a fetched receipt can only earn `structural-pass`; see the per-surface breakdown in [CLI verify](/docs/cli/verify).
 
 ## Cross-Treeship trust
 
-When work moves between organizations, each side has its own Treeship and keys. Trust is established by exchanging public keys, not by sharing infrastructure. Company B verifies Company A's artifacts using Company A's public key directly.
+When work moves between organizations, each side has its own Treeship and keys. Trust is established by exchanging public keys, not by sharing infrastructure. Company A runs `treeship keys export`, which prints the pinnable key and the exact commands; Company B pins precisely the powers it intends to grant:
 
 ```bash
-treeship verify art_handoff_xyz --trusted-key ./company-a-public.pem
+treeship trust add key_9f8e7d6c ed25519:K8V6... --kind cert_issuer --yes
+treeship trust add key_9f8e7d6c ed25519:K8V6... --kind hub_checkpoint --yes
 ```
 
-No shared infrastructure required. The signature is the trust.
+From then on, every agent Company A certifies verifies on Company B's machine — `verified (chain to pinned ship root)` — with no shared infrastructure. The signature is the trust; the pin is the policy.
 
 ## Offline verification
 

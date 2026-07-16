@@ -25,7 +25,7 @@ agent_cert.v1    →  binds that key to the agent URI, signed by the ship
 ship key         →  the one thing a counterparty pins
 ```
 
-A counterparty pins the ship key once (the two lines `treeship keys export` prints) and can then verify **every agent that ship ever certifies**. Verdicts say so explicitly:
+A counterparty pins the ship key once and can then verify **every agent that ship ever certifies**. `treeship keys export` prints the exact `trust add` lines, one per power (the v0.19 trust-kind split): `--kind cert_issuer` is the one the chain walk consults; add `--kind hub_checkpoint` for the staple/transparency verdict, and `--kind revoker` to honor the ship's capability revocations. Pin only the powers you intend to grant. Verdicts say how they were established explicitly:
 
 ```
 signature:  verified (chain to pinned ship root)

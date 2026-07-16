@@ -1,4 +1,4 @@
 {
   "title": "Concepts",
-  "pages": ["trust-fabric", "trust-model", "actor-checker-boundaries", "agent-cards", "capability-cards", "agent-resolution", "agent-handshake", "harnesses", "approval-authority", "approval-use-journal", "artifacts", "session-receipts", "room-sessions", "multi-agent-sessions", "agent-identity", "cross-verification", "command-artifacts", "zero-knowledge", "glossary", "security"]
+  "pages": ["trust-fabric", "trust-model", "actor-checker-boundaries", "agent-cards", "capability-cards", "agent-resolution", "agent-handshake", "harnesses", "approval-authority", "approval-use-journal", "artifacts", "session-receipts", "room-sessions", "multi-agent-sessions", "agent-identity", "cross-verification", "verification-surfaces", "command-artifacts", "zero-knowledge", "glossary", "security"]
 }
