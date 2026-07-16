@@ -11,11 +11,11 @@
 //! metadata. Filters and sort keys are schema fields (`attestation_class`,
 //! `closed_at`), which is the entire point of the records being typed.
 
-use crate::commands::resolve::verifier_from_trust;
 use crate::{ctx, printer::Printer};
 use treeship_core::attestation::Envelope;
 use treeship_core::statements::{payload_type, ReceiptStatement};
 use treeship_core::trust::TrustRootStore;
+use treeship_core::verify::resolution::verifier_from_trust;
 
 type CmdResult = Result<(), Box<dyn std::error::Error>>;
 

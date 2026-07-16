@@ -13,6 +13,11 @@
 //! in v0.9.1, and third-party dashboards embedding Treeship verification call
 //! it directly. All of them get the same semantics.
 
+/// Card resolution verification (the certificate-chain walk behind
+/// `resolve --hub` and `verify-presentation`). Lives in core so the CLI, the
+/// WASM verifier, and the SDKs run the same code path.
+pub mod resolution;
+
 use crate::agent::AgentCertificate;
 use crate::session::package::{VerifyCheck, VerifyStatus};
 use crate::session::receipt::SessionReceipt;

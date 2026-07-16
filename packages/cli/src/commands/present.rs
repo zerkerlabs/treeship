@@ -27,12 +27,12 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use ed25519_dalek::{Signature, VerifyingKey};
 use sha2::{Digest, Sha256};
 
-use crate::commands::resolve::{chain_verify_card, verifier_from_trust};
 use crate::{ctx, printer::Printer};
 use treeship_core::attestation::Envelope;
 use treeship_core::merkle::{Checkpoint, InclusionProof, MerkleTree};
 use treeship_core::statements::{parse_rfc3339_to_unix, payload_type, ReceiptStatement};
 use treeship_core::trust::{decode_ed25519_pubkey, TrustRootKind, TrustRootStore};
+use treeship_core::verify::resolution::{chain_verify_card, verifier_from_trust};
 
 type CmdResult = Result<(), Box<dyn std::error::Error>>;
 
