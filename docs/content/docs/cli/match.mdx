@@ -1,0 +1,49 @@
+---
+title: match
+description: Find agents by exercised, verified evidence — the Hub proposes candidates from its index; every record is re-verified on your machine before ranking.
+---
+
+`treeship match` finds agents that have **actually run** tools matching a glob, from their signed `session.v1` records. The Hub's index proposes; your machine re-verifies each record against your pinned trust roots and re-checks the glob locally — a hub cannot inflate a candidate's rank with records that don't verify.
+
+## Usage
+
+```bash
+treeship match --hub <url> --exercised <glob> [--class <class>] [--min-sessions <n>]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--hub <URL>` | Required. The Hub index to query |
+| `--exercised <GLOB>` | Required. Tool glob the agent must have exercised, e.g. `"payments.*"`, `"Bash(git:*)"` |
+| `--class <CLASS>` | Restrict to `self` \| `runtime` \| `countersigned` evidence |
+| `--min-sessions <N>` | Minimum matching sessions (default 1) |
+| `--format json` | Machine-readable output |
+
+## What "verified" means here
+
+For each proposed candidate, every record must: signature-verify against **your** trust roots, be a `session.v1` whose `actor` is the candidate, and exercise a tool matching your glob — recomputed locally, never trusting the hub's match. Candidates rank by **locally verified** session count; the output shows both numbers, so an index that over-proposes is visible:
+
+```
+agent://deployer     4/4 verified    payments.charge, payments.refund
+agent://other-bot    0/3 verified    unverified (records did not verify against your trust roots)
+```
+
+## JSON output
+
+```json
+{
+  "exercised": "payments.*",
+  "count": 2,
+  "candidates": [
+    {
+      "agent": "agent://deployer",
+      "matched_tools": ["payments.charge", "payments.refund"],
+      "proposed_sessions": 4,
+      "verified_sessions": 4,
+      "verified": true
+    }
+  ]
+}
+```
+
+Informational command — exit code 0 either way. See [`GET /v1/agents/match`](/docs/api/agents) for the Hub side, and [Work history](/docs/cli/history) for the records themselves.

@@ -1,0 +1,68 @@
+---
+title: Merkle consistency proofs
+description: Publish client-computed consistency proofs and fetch the chain an auditor walks. The Hub stores and serves; it never generates or verifies.
+---
+
+A consistency proof shows that the Merkle tree at size `to_size` is an **append-only extension** of the tree at size `from_size` — nothing rewritten, nothing removed. Proofs are computed and signed client-side; the Hub stores and serves them verbatim.
+
+## POST /v1/merkle/consistency
+
+DPoP authenticated. Body capped at 10 MB.
+
+```json
+{
+  "signer": "key_9f8e7d6c",
+  "from_size": 4,
+  "from_root": "sha256:…",
+  "to_size": 9,
+  "to_root": "sha256:…",
+  "version": 2,
+  "proof_json": "[\"…hex node hashes…\"]",
+  "signed_at": "2026-07-16T17:00:00Z"
+}
+```
+
+**200 response:** `{ "id": 17, "hub_received_at": "2026-07-16T17:00:01Z" }`
+
+| Status | Body | Cause |
+|--------|------|-------|
+| `400` | `{"error":"invalid JSON body"}` | Malformed body |
+| `400` | `{"error":"missing required consistency fields"}` | Empty `signer` / `from_root` / `to_root` / `proof_json` |
+| `400` | `{"error":"from_size must be > 0 and <= to_size"}` | Size ordering violated |
+| `401` | — | DPoP failed |
+| `403` | `{"error":"signer is not owned by this dock"}` | The authenticated dock has never published a checkpoint signed by this signer |
+| `500` | `{"error":"failed to store consistency proof"}` | Storage failure |
+
+## GET /v1/merkle/consistency
+
+Public. Returns the consecutive proofs for a signer from a given tree size onward — the chain an auditor walks.
+
+```
+GET /v1/merkle/consistency?signer=key_9f8e7d6c&from=0
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `signer` | Yes | Checkpoint signer key ID |
+| `from` | No | Starting tree size (default 0) |
+
+**200 response:** `{ "signer", "from", "chain": [ … ], "note" }` — each chain element:
+
+```json
+{
+  "id": 17,
+  "signer": "key_9f8e7d6c",
+  "from_size": 4,
+  "from_root": "sha256:…",
+  "to_size": 9,
+  "to_root": "sha256:…",
+  "version": 2,
+  "proof_json": "[…]",
+  "signed_at": "2026-07-16T17:00:00Z",
+  "dock_id": "dck_…"
+}
+```
+
+Errors: `400` `{"error":"missing signer"}` / `{"error":"invalid from size"}` · `500`.
+
+The verifier walks the chain checking each proof offline and that each link's `to_size`/`to_root` matches the next link's `from_size`/`from_root` — any gap or mismatch is evidence of a rewritten log. See [Merkle proofs](/docs/guides/merkle-proofs).

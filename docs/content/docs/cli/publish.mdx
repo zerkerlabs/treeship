@@ -1,0 +1,40 @@
+---
+title: publish
+description: Publish an agent's resolvable set — current cards, certificate chain, revocations — to the attached Hub so it resolves over the network.
+---
+
+## Usage
+
+```bash
+treeship publish <agent-uri>
+```
+
+Requires an attached hub connection (`treeship hub attach`); there is no `--hub` flag — the active connection is used.
+
+## What gets pushed
+
+Everything a remote verifier needs to run `resolve --hub` with client-side verdicts:
+
+1. **Capability cards** — `agent_card.v1` receipts for the agent.
+2. **Certificate chain** — the `agent_cert.v1` binding the agent's URI to its key, so a counterparty who pinned only your ship key (`--kind cert_issuer`) can verify the card via the chain walk.
+3. **Revocations** — any `agent_card_revocation.v1` referencing the pushed cards. Revocations are always included, never filtered; the verifier judges their authority.
+
+```bash
+treeship publish agent://deployer
+```
+
+```
+✓ agent published
+  agent:      agent://deployer
+  artifacts:  3
+```
+
+If nothing matches, it warns `nothing to publish` and points you at `treeship attest card`.
+
+To also anchor the published set to the transparency log in one step, prefer `treeship onboard <agent> --publish`, which runs checkpoint + publish together.
+
+## Notes
+
+- Publishing is push-only convenience: artifact validity never depends on it, and the Hub grades nothing.
+- Counterparties resolve with `treeship resolve <agent> --hub <url>` and audit with [`treeship audit`](/docs/cli/audit).
+- No JSON output shape yet — in `--format json` mode the command emits nothing on success (exit code is the signal).

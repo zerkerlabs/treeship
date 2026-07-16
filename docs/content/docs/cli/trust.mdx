@@ -1,0 +1,58 @@
+---
+title: trust
+description: Manage pinned trust roots — the issuer keys your verifiers accept, one power per pin.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Your trust-root store is the policy half of every verification: nothing is trusted because an artifact carried it, only because **you pinned it**. Pins live in `~/.treeship/trust_roots.json` (mode `0600`; override path with `TREESHIP_TRUST_ROOTS`).
+
+## Subcommands
+
+```bash
+treeship trust list
+treeship trust add <key-id> <public-key> --kind <kind> [--label <text>] [--yes]
+treeship trust remove <key-id> [--yes]
+```
+
+## Kinds — one power per pin
+
+| Kind | Pinning a key under it means |
+|------|------------------------------|
+| `agent_cert` | Accept this agent key's certificates, cards, and receipts (leaf pin) |
+| `cert_issuer` | Accept agent certificates this ship key issues — the chain-walk pin |
+| `hub_checkpoint` | Accept this key's signed Merkle checkpoints (staples, transparency) |
+| `hub_org` | Accept this hub's org-wide single-use approval checkpoints |
+| `revoker` | Honor capability revocations this ship key signs |
+| `session_host` | Honor multi-agent room invitations this host key mints |
+
+The deprecated `ship` kind is rejected with guidance — it used to grant three unrelated powers at once:
+
+```
+✗ the `ship` trust kind is deprecated and no longer honored …
+  Pin the specific power instead: hub_org / cert_issuer / revoker
+```
+
+Legacy `ship` entries in an existing file still parse but are inert until re-pinned.
+
+## Adding a pin
+
+`treeship keys export` on the counterparty's machine prints the exact commands. The public key is `ed25519:<base64url>` (bare base64url also accepted):
+
+```bash
+treeship trust add key_9f8e7d6c ed25519:K8V6… --kind cert_issuer --yes
+```
+
+Without `--yes` the CLI shows the key's SHA-256 fingerprint and asks for confirmation; non-interactive use (including `--format json`) **requires** `--yes`. Adding replaces any existing pin for the same `(key_id, kind)` pair.
+
+`remove` deletes **all** pins for the key ID, across every kind.
+
+## JSON output
+
+- `list` → `{ "status": "ok", "path", "roots": [ { "key_id", "public_key", "kind", "label", "added_at" } ] }`
+- `add` → `{ "status": "ok", "message": "trust root added", "key_id", "kind", "public_key", "fingerprint", "replaced", "path" }`
+- `remove` → `{ "status": "ok", "key_id", "removed", "count", "path" }`
+
+<Callout type="warn">
+Pin only the powers you intend to grant. Pinning a hub's key under `hub_checkpoint` for transparency does **not** — and must not — let that hub mint certificates or kill your capabilities; that isolation is the entire point of the kind split.
+</Callout>

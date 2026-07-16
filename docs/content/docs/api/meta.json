@@ -3,14 +3,19 @@
   "pages": [
     "overview",
     "dock-challenge",
+    "dock-authorized",
     "dock-authorize",
     "artifacts-push",
     "artifacts-get",
+    "workspace",
     "receipt-put",
     "receipt-get",
     "ship-registry",
+    "agents",
+    "stats",
     "verify",
     "merkle-proof",
-    "merkle-checkpoint"
+    "merkle-checkpoint",
+    "merkle-consistency"
   ]
 }
