@@ -325,7 +325,7 @@ enum Command {
     /// fully offline with `verify-presentation` — no registry in the loop.
     ///
     /// Static presentations prove the RECORD, not the bearer (they are
-    /// replayable); challenge mode for live key-control proof is next.
+    /// replayable); pass `--challenge <nonce>` to prove live key control.
     ///
     /// Examples:
     ///   treeship present agent://deployer

@@ -5,6 +5,7 @@ import { execFile } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
 import { z } from 'zod';
+import { sessionReportCommands, verifyArgs } from './cli-args.js';
 
 const exec = promisify(execFile);
 
@@ -137,9 +138,7 @@ server.registerTool(
     // The CLI walks the parent chain by DEFAULT; the only flag is `--no-chain`
     // to opt out. There is no `--chain` flag — passing it makes clap reject the
     // whole invocation, which previously broke every default verify call.
-    const args = ['verify', artifactId];
-    if (chain === false) args.push('--no-chain');
-    return formatExec(await runTreeship(args));
+    return formatExec(await runTreeship(verifyArgs(artifactId, chain)));
   },
 );
 
@@ -154,11 +153,12 @@ server.registerTool(
     },
   },
   async ({ summary }) => {
-    if (summary) {
-      const close = await runTreeship(['session', 'close', '--summary', summary]);
-      if (close.code !== 0) return formatExec(close);
+    const commands = sessionReportCommands(summary);
+    for (const command of commands) {
+      const result = await runTreeship(command);
+      if (result.code !== 0 || command === commands.at(-1)) return formatExec(result);
     }
-    return formatExec(await runTreeship(['session', 'report']));
+    return textResult('ok');
   },
 );
 

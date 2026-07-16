@@ -41,6 +41,7 @@ pub mod setup;
 pub mod status;
 pub mod template;
 pub mod trust;
+pub mod verifier;
 pub mod verify;
 pub mod verify_external;
 pub mod wrap;

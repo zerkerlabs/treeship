@@ -403,6 +403,9 @@ def collect_sites() -> list[Site]:
         ("npm/@treeship/cli-linux-x64/package.json", "npm @treeship/cli-linux-x64"),
         ("npm/@treeship/cli-darwin-arm64/package.json", "npm @treeship/cli-darwin-arm64"),
         ("npm/@treeship/cli-darwin-x64/package.json", "npm @treeship/cli-darwin-x64"),
+        ("tests/runtime-acceptance/aws-lambda/package.json", "acceptance AWS Lambda"),
+        ("tests/runtime-acceptance/cloudflare-worker/package.json", "acceptance Cloudflare Worker"),
+        ("tests/runtime-acceptance/vercel-edge/package.json", "acceptance Vercel Edge"),
     ]:
         sites.append(
             Site(rel, label, pkg_json_version(rel), lambda v, rel=rel: set_pkg_json_version(rel, v))
@@ -417,6 +420,9 @@ def collect_sites() -> list[Site]:
         "bridges/mcp/package-lock.json",
         "bridges/a2a/package-lock.json",
         "packages/verify-js/package-lock.json",
+        "tests/runtime-acceptance/aws-lambda/package-lock.json",
+        "tests/runtime-acceptance/cloudflare-worker/package-lock.json",
+        "tests/runtime-acceptance/vercel-edge/package-lock.json",
     ]:
         if (REPO_ROOT / rel).exists():
             sites.append(
@@ -448,6 +454,24 @@ def collect_sites() -> list[Site]:
                     lambda v, rel=rel: set_pkg_json_dep_version(rel, "@treeship/core-wasm", v),
                 )
             )
+
+    # Runtime acceptance projects exercise the released verifier package, not a
+    # historical version. Stale pins silently made these fixtures stop testing
+    # the current release for eleven versions.
+    for rel in [
+        "tests/runtime-acceptance/aws-lambda/package.json",
+        "tests/runtime-acceptance/cloudflare-worker/package.json",
+        "tests/runtime-acceptance/vercel-edge/package.json",
+    ]:
+        pin = pkg_json_dep_version(rel, "@treeship/verify")
+        sites.append(
+            Site(
+                rel,
+                f"npm dep @treeship/verify (in {rel})",
+                pin,
+                lambda v, rel=rel: set_pkg_json_dep_version(rel, "@treeship/verify", v),
+            )
+        )
 
     # The wrapper's optionalDependencies select the right CLI binary for each
     # platform; they MUST match the platform packages it routes to or `npm i

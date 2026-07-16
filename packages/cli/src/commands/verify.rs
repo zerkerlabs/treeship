@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use ed25519_dalek::VerifyingKey;
 use treeship_core::{
     attestation::{Envelope, Verifier},
     statements::{
@@ -8,6 +7,7 @@ use treeship_core::{
         HandoffStatement, ReceiptStatement,
     },
     storage::Store,
+    trust::TrustRootStore,
 };
 
 use crate::{ctx, printer::Printer};
@@ -83,8 +83,11 @@ pub fn run(
     };
     let target = resolved_target.as_str();
 
-    // Build a Verifier from every known public key in the keystore.
-    let verifier = build_verifier(&ctx.keys)?;
+    // Local keys cover artifacts produced here; pinned roots cover artifacts
+    // pulled or imported from trusted counterparties.
+    let trust = TrustRootStore::open_default_or_empty()?;
+    let verifier = crate::commands::verifier::from_local_and_trust(&ctx.keys, &trust)?
+        .ok_or("no local or trusted verification keys are configured")?;
 
     // Resolve starting artifact.
     let _root_record = ctx.storage.read(target)
@@ -1321,25 +1324,6 @@ fn extract_actor(envelope: &Envelope) -> String {
         return s.actor;
     }
     "\u{2014}".into()
-}
-
-/// Build a Verifier populated with all public keys from the keystore.
-fn build_verifier(
-    keys: &treeship_core::keys::Store,
-) -> Result<Verifier, Box<dyn std::error::Error>> {
-    let key_list = keys.list()?;
-    let mut map: HashMap<String, VerifyingKey> = HashMap::new();
-
-    for info in key_list {
-        if info.algorithm == "ed25519" && info.public_key.len() == 32 {
-            let bytes: [u8; 32] = info.public_key.try_into().unwrap();
-            if let Ok(vk) = VerifyingKey::from_bytes(&bytes) {
-                map.insert(info.id, vk);
-            }
-        }
-    }
-
-    Ok(Verifier::new(map))
 }
 
 #[cfg(test)]

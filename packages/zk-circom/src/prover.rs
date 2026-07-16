@@ -47,6 +47,13 @@ fn quarantined<T>() -> Result<T> {
 pub struct CircomProver;
 
 impl CircomProver {
+    /// Fail before any filesystem/setup probing while this backend is
+    /// quarantined. CLI callers use this to avoid suggesting that installing
+    /// circuit files could make an unsound proof system safe.
+    pub fn ensure_available() -> Result<()> {
+        quarantined()
+    }
+
     pub fn new<P: AsRef<Path>>(_circuits_path: P) -> Result<Self> {
         quarantined()
     }
@@ -93,5 +100,17 @@ impl CircomProver {
 
     pub fn verify_single_proof(&self, _circuit_name: &str, _proof: &CircomProof) -> Result<bool> {
         quarantined()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn availability_reports_security_quarantine_before_setup() {
+        let error = CircomProver::ensure_available().unwrap_err().to_string();
+        assert!(error.contains("quarantined"));
+        assert!(error.contains("forgeable"));
     }
 }

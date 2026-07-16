@@ -29,6 +29,7 @@
     - treeship attest action
     - treeship wrap
     - treeship log
+    - treeship receipt export
   packages:
     - treeship-core
   docs:
@@ -44,6 +45,7 @@
     - treeship session start
     - treeship session close
     - treeship session report
+    - treeship publish
   packages:
     - treeship-core
   docs:
@@ -139,7 +141,7 @@
     - treeship-core
   tests:
     - packages/core/src/trust/mod.rs
-  notes: "Pinned issuer keys for hub_checkpoint / ship / agent_cert verification. No dedicated docs page yet; covered inline in security notes."
+  notes: "Power-scoped pinned roots: hub_checkpoint, hub_org, cert_issuer, revoker, agent_cert, and session_host. The legacy ship kind is deprecated and inert."
 
 - id: approval-use-journal
   name: Approval Use Journal
@@ -162,6 +164,10 @@
   status: beta
   cli:
     - treeship agent register
+    - treeship onboard
+    - treeship resolve
+    - treeship present
+    - treeship verify-presentation
   packages:
     - treeship-core
   docs:
@@ -178,12 +184,42 @@
     - treeship agents review
     - treeship agents approve
     - treeship agents remove
+    - treeship verify-capability
+    - treeship revoke-capability
   docs:
     - docs/content/docs/concepts/agent-cards.mdx
     - docs/content/docs/cli/agents.mdx
   tests:
     - packages/cli/src/commands/cards.rs
   notes: "Project-local card store; describes who an agent is and how Treeship is attached. Linked to active_harness_id."
+
+- id: agent-history-and-profiles
+  name: Agent history and verifiable profiles
+  status: beta
+  cli:
+    - treeship history
+    - treeship profile
+    - treeship verify-profile
+  packages:
+    - treeship-core
+  notes: "Builds local or Hub-backed agent history and checkpoint-pinned aggregate profiles. Verification authenticates the signer, reproduces the pinned root, and recomputes every aggregate field."
+
+- id: network-audit-and-match
+  name: Network transparency audit and agent matching
+  status: beta
+  cli:
+    - treeship audit
+    - treeship match
+  packages:
+    - treeship-core
+  notes: "Client-side verification of Hub history, consistency, and capability matching against the verifier's own trust roots."
+
+- id: local-dashboard
+  name: Local dashboard
+  status: beta
+  cli:
+    - treeship dashboard
+  notes: "Local UI over the same project/session data exposed by the CLI."
 
 - id: harness-manager
   name: Harness Manager
