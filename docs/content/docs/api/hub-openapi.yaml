@@ -457,6 +457,94 @@ paths:
         '404':
           description: Proof not found
 
+  /v1/receipt/{session_id}:
+    put:
+      summary: Publish a session receipt
+      description: DPoP authenticated. Idempotent upload of a canonical Session Receipt; served afterward at the permanent public URL.
+      operationId: putReceipt
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: A treeship/session-receipt/v1 document
+      responses:
+        '200':
+          description: Receipt stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_id:  { type: string }
+                  receipt_url: { type: string, example: "https://treeship.dev/receipt/ssn_42e740bd9eb238f6" }
+                  agents:      { type: integer }
+                  events:      { type: integer }
+                  uploaded_at: { type: integer }
+        '400':
+          description: Missing session_id, empty body, invalid JSON, or unsupported receipt type
+        '401':
+          description: DPoP authentication failed
+    get:
+      summary: Fetch a session receipt
+      description: Public, permanent URL. Returns the raw receipt JSON verbatim; cached immutably.
+      operationId: getReceipt
+      security: []
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: The receipt JSON, verbatim
+        '404':
+          description: No receipt uploaded for this session
+
+  /v1/ship/agents:
+    get:
+      summary: List the calling ship's agents
+      description: DPoP authenticated (or a workspace share token via ?session=). Registry derived from uploaded receipts.
+      operationId: listShipAgents
+      responses:
+        '200':
+          description: Agent registry
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agents:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:     { type: string }
+                        label:  { type: string }
+                        role:   { type: string }
+                        model:  { type: string }
+                        host:   { type: string }
+                        status: { type: string }
+        '401':
+          description: Authentication failed
+
+  /v1/ship/sessions:
+    get:
+      summary: List the calling ship's sessions
+      description: DPoP authenticated (or a workspace share token via ?session=). Session history derived from uploaded receipts.
+      operationId: listShipSessions
+      responses:
+        '200':
+          description: Session history
+        '401':
+          description: Authentication failed
+
   /v1/session:
     post:
       summary: Mint a short-lived workspace share token

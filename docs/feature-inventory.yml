@@ -1,13 +1,16 @@
 # Treeship feature inventory.
 #
-# Source of truth for what Treeship actually ships today. Hand-maintained.
-# A small linter at scripts/check-feature-inventory.py validates each entry
+# SOURCE OF TRUTH for what Treeship actually ships today. Hand-maintained.
+# The docs feature-matrix page is GENERATED from this file at build time by
+# docs/scripts/sync-feature-matrix.mjs -- edit here, never in the MDX.
+# A linter at scripts/check-feature-inventory.py validates each entry
 # against the codebase (CLI commands, doc paths, test paths exist).
 #
 # Status taxonomy:
 #   stable        shipped, documented, tested, no known gaps
 #   beta          shipped + used, has rough edges or thin docs
 #   experimental  shipped behind a flag or with explicit caveats; may change
+#   quarantined   shipped code found unsound; fails closed, kept only as a marker
 #   roadmap       designed or specced, not implemented
 #   internal      exists in code, supports a user-facing feature
 #   deprecated    supported but discouraged; replacement exists
@@ -15,6 +18,7 @@
 # Schema (per entry):
 #   id        kebab-case, unique
 #   name      human-readable name as used in CHANGELOG/docs
+#   section   matrix grouping (core | identity | provenance | capture | supply-chain | integrations | zk)
 #   status    one of the taxonomy values above
 #   cli       list of `treeship ...` invocations that exercise this (optional)
 #   packages  list of npm / crate / PyPI package names this ships under (optional)
@@ -24,6 +28,7 @@
 
 - id: receipts
   name: Receipts (signed artifacts)
+  section: core
   status: stable
   cli:
     - treeship attest action
@@ -35,10 +40,11 @@
     - docs/content/docs/concepts/artifacts.mdx
   tests:
     - packages/core/src/artifacts/verify.rs
-  notes: "DSSE envelopes over RFC 8785 canonical JSON, Ed25519 signed, content-addressed art_ IDs."
+  notes: "DSSE envelopes (Ed25519 over PAE bytes, deterministic declaration-order JSON), content-addressed art_ IDs."
 
 - id: session-reports
   name: Session reports
+  section: core
   status: stable
   cli:
     - treeship session start
@@ -55,6 +61,7 @@
 
 - id: packages
   name: Session packages (.treeship bundles)
+  section: core
   status: stable
   cli:
     - treeship package inspect
@@ -69,10 +76,11 @@
   tests:
     - packages/core/src/bundle/mod.rs
     - packages/core/src/session/package.rs
-  notes: "Portable signed bundles; package verify is the offline verification entry point."
+  notes: "Portable signed bundles; package verify authenticates artifacts + Merkle root and warns that narrative fields are unsigned."
 
 - id: offline-verifier
   name: Offline verifier (Rust CLI)
+  section: core
   status: stable
   cli:
     - treeship verify
@@ -82,12 +90,14 @@
     - treeship-core
   docs:
     - docs/content/docs/cli/verify.mdx
+    - docs/content/docs/concepts/verification-surfaces.mdx
   tests:
     - packages/core/src/verify.rs
-  notes: "Walks the parent chain, checks every signature, verifies Merkle inclusion -- all offline."
+  notes: "Walks the parent chain, checks every signature, verifies Merkle inclusion -- all offline. Fetched receipts earn structural-pass, never pass."
 
 - id: wasm-verifier
   name: WASM verifier (@treeship/verify)
+  section: core
   status: stable
   packages:
     - "@treeship/verify"
@@ -97,10 +107,11 @@
     - docs/content/docs/guides/edge-runtime.mdx
   tests:
     - packages/verify-js/test/verify.test.ts
-  notes: "Zero-dep WASM (~167KB gzipped); runs on Node, Deno, browsers, Vercel Edge, Cloudflare Workers, AWS Lambda."
+  notes: "Zero-dep WASM (~190KB gzipped); runs on Node, Deno, browsers, Vercel Edge, Cloudflare Workers, AWS Lambda. Certificate checks fail closed without pinned trustRoots."
 
 - id: merkle-checkpoints
   name: Merkle checkpoints
+  section: core
   status: stable
   cli:
     - treeship checkpoint
@@ -117,8 +128,23 @@
     - packages/core/src/merkle/proof.rs
   notes: "RFC 9162 domain separation (v2). Canonical v3 signing as of v0.10.4 binds merkle_version + zk_proof_digest."
 
+- id: merkle-consistency
+  name: Merkle consistency proofs (append-only evidence)
+  section: core
+  status: stable
+  cli:
+    - treeship merkle publish
+  packages:
+    - treeship-core
+  docs:
+    - docs/content/docs/api/merkle-consistency.mdx
+  tests:
+    - packages/core/src/merkle/tree.rs
+  notes: "Client-computed proofs (verify_consistency) that the tree at to_size extends the tree at from_size; the audit chain walks them offline. Shipped v0.15."
+
 - id: hub-checkpoint-consumer-verifier
   name: Hub-checkpoint consumer verifier
+  section: core
   status: stable
   packages:
     - treeship-core
@@ -128,21 +154,43 @@
     - packages/core/tests/hub_checkpoint_verify.rs
   notes: "Verifies hub-org JournalCheckpoints against pinned trust roots; rejects untrusted issuers by default since v0.10.3."
 
+- id: hub-transport
+  name: Hub transport (attach, push, pull, DPoP)
+  section: core
+  status: stable
+  cli:
+    - treeship hub attach
+    - treeship hub push
+    - treeship hub pull
+    - treeship hub status
+  docs:
+    - docs/content/docs/api/overview.mdx
+    - docs/content/docs/cli/hub.mdx
+  tests:
+    - packages/hub/internal/dpop/dpop_test.go
+  notes: "Device-flow login (/v1/dock/*), DPoP-authenticated writes, public content-addressed reads. The Hub stores and serves; it never grades trust."
+
 - id: trust-roots
-  name: Trust roots
-  status: beta
+  name: Trust roots (split kinds)
+  section: core
+  status: stable
   cli:
     - treeship trust list
     - treeship trust add
     - treeship trust remove
+    - treeship keys export
   packages:
     - treeship-core
+  docs:
+    - docs/content/docs/cli/trust.mdx
+    - docs/content/docs/concepts/trust-model.mdx
   tests:
     - packages/core/src/trust/mod.rs
-  notes: "Pinned issuer keys for hub_checkpoint / ship / agent_cert verification. No dedicated docs page yet; covered inline in security notes."
+  notes: "Pinned issuer keys, one power per pin since the v0.19 split: agent_cert / cert_issuer / hub_checkpoint / hub_org / revoker / session_host. The old `ship` kind is inert."
 
 - id: approval-use-journal
   name: Approval Use Journal
+  section: identity
   status: stable
   cli:
     - treeship approval uses
@@ -155,10 +203,27 @@
     - docs/content/docs/concepts/approval-authority.mdx
   tests:
     - packages/core/src/statements/approval_use.rs
-  notes: "Workspace-local store of consumed approval grants. Enforces max_uses + idempotency-key replay safety."
+  notes: "Workspace-local store of consumed approval grants. Enforces max_uses + idempotency-key replay safety. Approvals are scoped by default (--allowed-* / --max-uses, or explicit --unscoped)."
+
+- id: per-agent-keys
+  name: Per-agent keys & onboarding
+  section: identity
+  status: stable
+  cli:
+    - treeship onboard
+    - treeship agent register
+  packages:
+    - treeship-core
+  docs:
+    - docs/content/docs/concepts/trust-model.mdx
+    - docs/content/docs/guides/how-it-works.mdx
+  tests:
+    - packages/core/src/keys/mod.rs
+  notes: "Registered agents sign with their own Ed25519 key, bound by a ship-issued agent_cert.v1 -- the `proven (key-bound)` actor grade. MCP/A2A bridges auto-provision on startup. Shipped v0.13."
 
 - id: agent-identity-certificates
   name: Agent Identity Certificates
+  section: identity
   status: beta
   cli:
     - treeship agent register
@@ -168,10 +233,11 @@
     - docs/content/docs/concepts/agent-identity.mdx
   tests:
     - packages/core/src/agent.rs
-  notes: "Produces a .agent package (identity.json + capabilities.json + declaration.json + certificate.html). Cross-verify wired into `treeship verify --certificate`."
+  notes: "Produces a .agent package (identity.json + capabilities.json + declaration.json + certificate.html). Cross-verify wired into `treeship verify --certificate`. Verification requires a pinned agent_cert root (fail-closed since v0.10.3)."
 
 - id: agent-cards
   name: Agent Cards
+  section: identity
   status: stable
   cli:
     - treeship agents
@@ -185,8 +251,25 @@
     - packages/cli/src/commands/cards.rs
   notes: "Project-local card store; describes who an agent is and how Treeship is attached. Linked to active_harness_id."
 
+- id: capability-cards
+  name: Capability cards & provenance grades
+  section: identity
+  status: stable
+  cli:
+    - treeship attest card
+    - treeship verify-capability
+    - treeship revoke-capability
+  packages:
+    - "@treeship/verify"
+  docs:
+    - docs/content/docs/concepts/capability-cards.mdx
+  tests:
+    - packages/core/src/capability/mod.rs
+  notes: "Signed agent_card.v1 capability sets with captured / exercised / discovered / declared provenance grades; verify-capability cross-checks actions against scope. WASM parity via verifyCapability. Hardened v0.19."
+
 - id: harness-manager
   name: Harness Manager
+  section: identity
   status: stable
   cli:
     - treeship harness list
@@ -199,8 +282,139 @@
     - packages/cli/src/commands/harnesses.rs
   notes: "Describes how Treeship attaches to a given agent surface. Smoke promotes a harness to verified."
 
+- id: multi-agent-invitations
+  name: Multi-agent session invitations
+  section: identity
+  status: beta
+  cli:
+    - treeship session invite
+    - treeship session join
+    - treeship session countersign
+  packages:
+    - treeship-core
+  docs:
+    - docs/content/docs/concepts/multi-agent-sessions.mdx
+  tests:
+    - packages/core/src/statements/invitation.rs
+  notes: "Host-minted invitations gated by the session_host trust kind; joiner signs, host countersigns. Replay rejected; countersigning hardened in v0.19."
+
+- id: agent-resolver
+  name: Agent resolver (local + network)
+  section: provenance
+  status: stable
+  cli:
+    - treeship resolve
+    - treeship publish
+  docs:
+    - docs/content/docs/cli/resolve.mdx
+    - docs/content/docs/concepts/agent-resolution.mdx
+  tests:
+    - packages/cli/src/commands/resolve.rs
+  notes: "Every verdict re-derived from signed artifacts on the verifier's machine; the Hub proposes, the client decides. Chain walk to a pinned cert_issuer root. Shipped v0.13 (local) / v0.14 (network)."
+
+- id: transparency-audit
+  name: Transparency log & audit
+  section: provenance
+  status: stable
+  cli:
+    - treeship audit
+  docs:
+    - docs/content/docs/cli/audit.mdx
+    - docs/content/docs/api/agents.mdx
+  tests:
+    - packages/cli/src/commands/audit.rs
+  notes: "Re-proves inclusion offline, checks completeness against the card's committed anchor, witnesses checkpoints (fork/regression detection), verifies the append-only consistency chain."
+
+- id: work-history
+  name: Work history (session.v1 records)
+  section: provenance
+  status: beta
+  cli:
+    - treeship history
+  packages:
+    - treeship-core
+  docs:
+    - docs/content/docs/cli/history.mdx
+  tests:
+    - packages/cli/src/commands/history.rs
+  notes: "Actor-signed session.v1 records binding receipt_digest; attestation class (self/runtime/countersigned) capped to evidence. History proves what was recorded, never everything that happened. Shipped v0.16-v0.18."
+
+- id: agent-profiles
+  name: Recomputable agent profiles
+  section: provenance
+  status: beta
+  cli:
+    - treeship profile
+    - treeship verify-profile
+  docs:
+    - docs/content/docs/cli/profile.mdx
+  tests:
+    - packages/cli/src/commands/profile.rs
+  notes: "Checkpoint-pinned aggregation over the work history; every number recomputes or the claim is provably false (checked / MISMATCH). Shipped v0.18."
+
+- id: agent-matching
+  name: Evidence-based agent matching
+  section: provenance
+  status: beta
+  cli:
+    - treeship match
+  docs:
+    - docs/content/docs/cli/match.mdx
+  tests:
+    - packages/cli/src/commands/match.rs
+  notes: "Find agents by exercised tool globs; the hub proposes candidates, the client re-verifies every record before ranking. Shipped v0.18."
+
+- id: presentations
+  name: Presentations & challenge handshake
+  section: provenance
+  status: beta
+  cli:
+    - treeship present
+    - treeship verify-presentation
+  docs:
+    - docs/content/docs/cli/present.mdx
+    - docs/content/docs/concepts/agent-handshake.mdx
+  tests:
+    - packages/cli/src/commands/present.rs
+  notes: "Registry-free proof handoff: card + cert chain + revocations + Merkle staple, verified fully offline; --challenge proves live key control with the agent's own key (no ship-key fallback). Shipped v0.17."
+
+- id: selective-disclosure
+  name: Selective capability disclosure
+  section: provenance
+  status: beta
+  cli:
+    - treeship present
+  packages:
+    - treeship-core
+  docs:
+    - docs/content/docs/cli/present.mdx
+  tests:
+    - packages/core/src/capability/mod.rs
+  notes: "present --disclose reveals only the capabilities a verifier needs (disclose_capabilities / reconstruct_capabilities); the withheld set cannot be forged or extended, and the card signature still verifies. SD-JWT-style over DSSE. Shipped v0.20."
+
+- id: receipt-export
+  name: Portable receipt export + reference verifier
+  section: provenance
+  status: stable
+  cli:
+    - treeship receipt export
+  docs:
+    - docs/content/docs/cli/receipt.mdx
+  tests:
+    - packages/cli/src/commands/receipt.rs
+  notes: "Exports the message/signature/public-key triple (base64) verifiable by any Ed25519 library; scripts/verify-receipt.py is the no-Treeship reference verifier. Shipped v0.19.1."
+
+- id: local-dashboard
+  name: Local dashboard
+  section: capture
+  status: internal
+  cli:
+    - treeship dashboard
+  notes: "Local read-only dashboard (hidden command); the spec at docs/specs/local-dashboard.md is ahead of it."
+
 - id: daemon
   name: Background daemon
+  section: capture
   status: beta
   cli:
     - treeship daemon start
@@ -216,6 +430,7 @@
 
 - id: otel-bridge
   name: OpenTelemetry bridge
+  section: capture
   status: experimental
   cli:
     - treeship otel test
@@ -227,6 +442,7 @@
 
 - id: mcp-server
   name: MCP stdio server (@treeship/mcp)
+  section: capture
   status: stable
   packages:
     - "@treeship/mcp"
@@ -235,10 +451,11 @@
     - docs/content/docs/sdk/mcp.mdx
   tests:
     - bridges/mcp/test/client.test.ts
-  notes: "Five tools: session_status, session_event, attest_action, verify, session_report. Drop-in for Claude Code, Codex, Cursor, Cline."
+  notes: "Five tools: session_status, session_event, attest_action, verify, session_report. Provisions a per-agent key on startup so receipts verify proven (key-bound). Drop-in for Claude Code, Codex, Cursor, Cline."
 
 - id: a2a-bridge
   name: A2A bridge (@treeship/a2a)
+  section: capture
   status: beta
   packages:
     - "@treeship/a2a"
@@ -246,10 +463,11 @@
     - docs/content/docs/integrations/a2a.mdx
   tests:
     - bridges/a2a/test/middleware.test.ts
-  notes: "Verifies receipts attached to agent-to-agent messages."
+  notes: "Attests A2A task intents/results and verifies receipts attached to agent-to-agent messages. Provisions its actor's per-agent key on construction."
 
 - id: npm-binary-integrity
   name: npm binary SHA-256 integrity check
+  section: supply-chain
   status: stable
   packages:
     - treeship
@@ -259,13 +477,15 @@
 
 - id: integrations-claude-code
   name: Integration -- Claude Code
+  section: integrations
   status: stable
   docs:
     - docs/content/docs/integrations/claude-code.mdx
-  notes: "Plugin via Zerker marketplace (SessionStart/PostToolUse/SessionEnd hooks); manual MCP wiring also documented in integrations/claude-code/."
+  notes: "Plugin via Zerker marketplace (SessionStart/PostToolUse/SessionEnd hooks); manual MCP wiring also documented in integrations/claude-code/. SessionEnd auto-publishes the session report when a hub is attached."
 
 - id: integrations-cursor
   name: Integration -- Cursor
+  section: integrations
   status: stable
   docs:
     - docs/content/docs/integrations/cursor.mdx
@@ -273,6 +493,7 @@
 
 - id: integrations-codex
   name: Integration -- Codex
+  section: integrations
   status: stable
   docs:
     - docs/content/docs/integrations/codex.mdx
@@ -280,6 +501,7 @@
 
 - id: integrations-openclaw
   name: Integration -- OpenClaw
+  section: integrations
   status: beta
   packages:
     - "@treeship/openclaw-plugin"
@@ -289,6 +511,7 @@
 
 - id: integrations-hermes
   name: Integration -- Hermes
+  section: integrations
   status: beta
   docs:
     - docs/content/docs/integrations/hermes.mdx
@@ -296,6 +519,7 @@
 
 - id: integrations-generic-mcp
   name: Integration -- generic MCP client
+  section: integrations
   status: stable
   docs:
     - docs/content/docs/integrations/mcp.mdx
@@ -303,43 +527,49 @@
 
 - id: integrations-agent-skills
   name: Universal Treeship SKILL.md
+  section: integrations
   status: stable
   docs:
     - docs/content/docs/integrations/agent-skills.mdx
-  notes: "One skills/treeship/SKILL.md taught to every supported agent (Claude Code, Codex, Cursor, OpenClaw, Hermes, Kimi Code CLI). Kimi is an SKILL consumer, not a detected surface."
+  notes: "One skills/treeship/SKILL.md taught to every supported agent (Claude Code, Codex, Cursor, OpenClaw, Hermes, Kimi Code CLI). Kimi is a SKILL consumer, not a detected surface."
 
 - id: zk-circom-cli
   name: ZK -- Circom Groth16 (snarkjs shell-out)
-  status: experimental
+  section: zk
+  status: quarantined
   cli:
     - treeship prove
     - treeship verify-proof
     - treeship zk-setup
   docs:
     - docs/content/docs/concepts/zero-knowledge.mdx
-  notes: "Requires `--features zk` at build time and snarkjs installed. Circuits: policy-checker, input-output-binding, prompt-template, spend-limit-checker."
+  notes: "Found unsound in the ZK audit (no trusted-setup ceremony; proofs not bound to the statement). Quarantined in v0.20: fails closed, non-authoritative, superseded by the statement-first private-verification design."
 
 - id: zk-risc0-local
   name: ZK -- RISC Zero local prover (prove-chain)
+  section: zk
   status: experimental
   cli:
     - treeship prove-chain
   docs:
     - docs/content/docs/concepts/zero-knowledge.mdx
-  notes: "Behind `--features zk`. Uses risc0_zkvm local prover. Bonsai hosted proving is roadmap."
+  notes: "Behind `--features zk`. Uses risc0_zkvm local prover. Bonsai hosted proving is roadmap. Pre-release and non-authoritative; nothing in the default trust path depends on it."
 
 - id: zk-circom-native
   name: ZK -- Circom native pure-Rust (ark-circom)
+  section: zk
   status: roadmap
   notes: "Scaffolded at packages/zk-circom/src/native.rs. ark-bn254/ark-groth16/ark-circom version alignment unresolved; native feature is commented out in Cargo.toml."
 
 - id: zk-risc0-bonsai
   name: ZK -- RISC Zero Bonsai (hosted proving)
+  section: zk
   status: roadmap
   notes: "Marked `coming in v0.6.0` per packages/zk-risc0/src/prover.rs. BONSAI_API_KEY is detected but falls back to local prover."
 
 - id: zk-tlsnotary
   name: ZK -- TLSNotary (verifiable TLS evidence)
+  section: zk
   status: roadmap
   cli:
     - treeship zk-tls-setup

@@ -2,6 +2,7 @@
   "title": "CLI reference",
   "pages": [
     "overview",
+    "command-matrix",
     "init",
     "setup",
     "add",

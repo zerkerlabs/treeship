@@ -1,0 +1,931 @@
+---
+title: Command matrix (generated)
+description: Every visible treeship command, argument, and flag — generated from the binary's own help output.
+---
+
+{/* GENERATED FILE — DO NOT EDIT.
+    Generator: scripts/gen-cli-reference.py (CI regenerates and diffs it).
+    Regenerate: cargo build -p treeship-cli && python3 scripts/gen-cli-reference.py --bin target/debug/treeship */}
+
+This page is generated from the CLI's own `--help` output, so it cannot drift from the binary. For narrative documentation and examples, use the hand-written pages in this section; when they disagree with this page, this page is right and the other page has a bug.
+
+
+Global flags on every command: `--config <PATH>`, `--format <text|json>`, `--quiet`, `--no-color`.
+
+## `treeship quickstart`
+
+Guided first-time setup in 90 seconds
+
+```
+treeship quickstart [OPTIONS]
+```
+
+## `treeship init`
+
+Set up a new Treeship -- generates a keypair and config
+
+```
+treeship init [OPTIONS]
+```
+
+| Option | Description |
+|---|---|
+| `--name <NAME>` | Human-readable name for this ship (optional) |
+| `--template <TEMPLATE>` | Apply a trust template (name or file path) |
+| `--force` | Overwrite an existing config |
+| `--global` | Explicitly target the user-global keystore (`~/.treeship/`) |
+
+## `treeship add`
+
+Auto-detect and instrument installed AI agent frameworks
+
+```
+treeship add [OPTIONS] [AGENTS]...
+```
+
+| Argument | Description |
+|---|---|
+| `[AGENTS]...` | Specific agent frameworks to instrument (e.g. claude-code hermes) |
+
+| Option | Description |
+|---|---|
+| `--all` | Instrument all detected agents without prompting |
+| `--dry-run` | Show what would be done without making changes |
+| `--discover` | Read-only: list every detected agent with surface, connection, coverage and confidence -- without modifying any config. Honors the global --format flag (text or json) |
+
+## `treeship wrap`
+
+Wrap any command -- run it and attest the execution
+
+```
+treeship wrap [OPTIONS] -- <CMD>...
+```
+
+| Argument | Description |
+|---|---|
+| `<CMD>...` | The command to run (everything after --) |
+
+| Option | Description |
+|---|---|
+| `--actor <URI>` | Actor URI (default: ship://&lt;your-ship-id&gt;) |
+| `--action <LABEL>` | Action label (default: executable name) |
+| `--parent <ID>` | Parent artifact ID -- links this into a chain |
+| `--push` | Push the artifact to Hub immediately after attesting |
+
+## `treeship attest`
+
+Sign an attestation artifact
+
+```
+treeship attest [OPTIONS] <COMMAND>
+```
+
+### `treeship attest action`
+
+Record that an actor performed an action
+
+```
+treeship attest action [OPTIONS] --actor <URI> --action <LABEL>
+```
+
+| Option | Description |
+|---|---|
+| `--actor <URI>` | Actor URI -- who performed the action |
+| `--action <LABEL>` | Action label -- what was done |
+| `--input-digest <sha256:HEX>` | SHA-256 digest of the input consumed |
+| `--output-digest <sha256:HEX>` | SHA-256 digest of the output produced |
+| `--content-uri <URI>` | URI to referenced content (for large/external payloads). Sets the action's subject.uri so it can be matched against an approval's --allowed-subject scope. Same role as the older --content-uri flag, named to read symmetrically with the --allowed-subject flag on `attest approval` |
+| `--subject <URI>` | Subject the action targets, as a URI. Alias for --content-uri. Provided so callers reading `treeship attest approval --allowed-subject env://prod` can naturally type `treeship attest action --subject env://prod` |
+| `--parent <ID>` | Parent artifact ID -- links this into a chain |
+| `--approval-nonce <NONCE>` | Must match the nonce on the approval authorising this action |
+| `--idempotency-key <KEY>` | Idempotency key for retry-safe approval consumption |
+| `--meta <'{"key":"val"}'>` | Extra metadata as a JSON object |
+| `--out <PATH>` | Write the raw DSSE envelope to a file (- for stdout) |
+
+### `treeship attest approval`
+
+Record that an approver authorized an intent
+
+```
+treeship attest approval [OPTIONS] --approver <URI>
+```
+
+| Option | Description |
+|---|---|
+| `--approver <URI>` | Approver URI |
+| `--subject <ID>` | Artifact ID being approved (subject reference for the ApprovalStatement itself; for *scope* constraints on what the downstream action may target, use --allowed-subject) |
+| `--description <TEXT>` | Human-readable description of what was approved |
+| `--expires <TIMESTAMP>` | Expiry as ISO 8601 timestamp |
+| `--allowed-actor <URI>` | Scope: actor URI(s) permitted to consume this approval. Repeatable. Empty list (and no other --allowed-* / --max-uses) means unscoped; verify will warn that the binding proves nothing about authorization |
+| `--allowed-action <LABEL>` | Scope: action label(s) permitted under this approval. Repeatable. Pre-existing flag --allowed-action remains the canonical name |
+| `--allowed-subject <URI>` | Scope: subject URI(s) permitted as the action's target. Repeatable. Matched against ActionStatement.subject.&#123;uri \| artifact_id \| digest&#125; |
+| `--max-uses <N>` | Scope: maximum number of actions this approval may authorise. Signed into the grant for future ledger enforcement; verify reports replay posture honestly and does NOT claim global single-use |
+| `--unscoped` | Explicit opt-in to an unscoped (bearer) approval. Required when no --allowed-* or --max-uses flag is set; without it the CLI refuses, since unscoped approvals are footguns |
+
+### `treeship attest handoff`
+
+Record a work handoff between actors
+
+```
+treeship attest handoff [OPTIONS] --from <URI> --to <URI> --artifacts <IDS>
+```
+
+| Option | Description |
+|---|---|
+| `--from <URI>` | Source actor URI |
+| `--to <URI>` | Destination actor URI |
+| `--artifacts <IDS>` | Comma-separated artifact IDs being transferred |
+| `--approvals <IDS>` | Comma-separated approval IDs the receiver inherits |
+| `--obligations <TEXT>` | Comma-separated obligations the receiver must satisfy |
+
+### `treeship attest receipt`
+
+Record an external system receipt (webhook, timestamp, confirmation)
+
+```
+treeship attest receipt [OPTIONS] --system <URI> --kind <KIND>
+```
+
+| Option | Description |
+|---|---|
+| `--system <URI>` | System URI -- who produced this receipt |
+| `--kind <KIND>` | Receipt kind: confirmation \| timestamp \| inclusion \| webhook |
+| `--subject <ID>` | Subject artifact ID |
+| `--payload <'{"key":"val"}'>` | Receipt payload as a JSON object |
+| `--payload-file <PATH>` | Read receipt payload JSON from a file |
+| `--payload-digest <DIGEST>` | Digest of the external payload, for example sha256:&lt;hex&gt; |
+
+### `treeship attest card`
+
+Mint a signed agent capability card (agent_card.v1)
+
+```
+treeship attest card [OPTIONS] --agent <URI>
+```
+
+| Option | Description |
+|---|---|
+| `--agent <URI>` | Actor URI the card claims, e.g. agent://deployer |
+| `--tools <TOOLS>` | Capabilities: tool categories or `family.*` globs (comma-separated) |
+| `--models <MODELS>` | Models the agent uses (comma-separated) |
+| `--keyid <KEYID>` | Key this card binds to. Defaults to the signing key |
+| `--owner <URI>` | Owner URI, e.g. human://alice |
+| `--version <VERSION>` | Card version [default: 1.0.0] |
+| `--policy-ref <REF>` | Policy this card operates under |
+| `--from-harness <PATH>` | Capture the tool set from a harness config (e.g. a Claude Code settings.json). Its `permissions.allow` entries are stamped `captured` in capability_provenance -- read from real config, not declared |
+| `--tools-json <PATH>` | Declare the tool set from an explicit operator-supplied JSON file (a JSON array of tool strings, or `&#123; "tools": [...] &#125;`). The runtime companion to --from-harness: entries are stamped `declared` with the file as their source -- an operator's claim, honestly labeled, never presented as captured/discovered |
+| `--from-a2a <PATH>` | Map an A2A `AgentCard` JSON file's `skills` to capabilities, stamped `discovered` with the AgentCard's `url` as their source (the agent's own published descriptor). Protocol-level `capabilities` (streaming, ...) are excluded -- they are transport, not domain capabilities |
+
+### `treeship attest decision`
+
+Record an agent's reasoning and decision context
+
+```
+treeship attest decision [OPTIONS] --actor <URI>
+```
+
+| Option | Description |
+|---|---|
+| `--actor <URI>` | Actor URI -- who made the decision |
+| `--model <MODEL>` | Model used for inference. Examples: claude-opus-4-7, kimi-k2, gpt-5, gemini-3-pro |
+| `--model-version <VERSION>` | Model version if known |
+| `--provider <NAME>` | Provider that hosts the model. Examples: anthropic, moonshot, openai, google, meta, mistral, ollama. Decoupled from --model so attribution is correct when the same model name lives behind multiple providers (e.g. Bedrock vs Anthropic native, OpenRouter vs OpenAI) |
+| `--tokens-in <N>` | Number of input tokens consumed |
+| `--tokens-out <N>` | Number of output tokens produced |
+| `--prompt-digest <sha256:HEX>` | SHA-256 digest of the full prompt |
+| `--summary <TEXT>` | Human-readable summary of the decision |
+| `--confidence <FLOAT>` | Confidence level 0.0-1.0 |
+| `--parent <ID>` | Parent artifact ID -- links this into a chain |
+
+### `treeship attest endorsement`
+
+Record an endorsement of an existing artifact
+
+```
+treeship attest endorsement [OPTIONS] --endorser <URI> --subject <ID> --kind <KIND>
+```
+
+| Option | Description |
+|---|---|
+| `--endorser <URI>` | Endorser URI -- who is endorsing |
+| `--subject <ID>` | Subject artifact ID being endorsed |
+| `--kind <KIND>` | Endorsement kind: validation, compliance, countersignature, review |
+| `--rationale <TEXT>` | Human-readable rationale for the endorsement |
+| `--expires <TIMESTAMP>` | Expiration timestamp (RFC 3339) |
+| `--policy-ref <URI>` | URI to the governing policy document |
+| `--meta <'{"key":"val"}'>` | Extra metadata as a JSON object |
+| `--parent <ID>` | Parent artifact ID -- links this into a chain |
+| `--out <PATH>` | Write the raw DSSE envelope to a file (- for stdout) |
+
+## `treeship session`
+
+Manage work sessions
+
+```
+treeship session [OPTIONS] <COMMAND>
+```
+
+### `treeship session start`
+
+Start a new work session
+
+```
+treeship session start [OPTIONS]
+```
+
+| Option | Description |
+|---|---|
+| `--name <NAME>` | Human-readable name for this session |
+| `--actor <URI>` | Actor URI (default: ship://&lt;your-ship-id&gt;) |
+| `--allow-dangerous-root` | Allow starting from a dangerous git root such as $HOME |
+
+### `treeship session status`
+
+Show active session info
+
+```
+treeship session status [OPTIONS]
+```
+
+| Option | Description |
+|---|---|
+| `--watch` | Watch mode: poll the event log every 2 seconds and render a live TUI |
+| `--check` | Quiet check: print nothing, exit 0 if a session is active, exit 1 otherwise. Designed for shell-script gating (hooks, monitors, CI) |
+
+### `treeship session close`
+
+Close the active session
+
+```
+treeship session close [OPTIONS]
+```
+
+| Option | Description |
+|---|---|
+| `--summary <TEXT>` | Summary of what was accomplished |
+| `--headline <TEXT>` | One-line headline for the receipt (e.g. "Verifier refactor completed.") |
+| `--review <TEXT>` | What should be reviewed before trusting the output |
+
+### `treeship session abandon`
+
+Quarantine a wedged active session without deleting evidence
+
+```
+treeship session abandon [OPTIONS]
+```
+
+### `treeship session report`
+
+Upload a session receipt to the configured hub
+
+```
+treeship session report [OPTIONS] [SESSION_ID]
+```
+
+| Argument | Description |
+|---|---|
+| `[SESSION_ID]` | Session ID to report (defaults to the most recently closed session) |
+
+| Option | Description |
+|---|---|
+| `--no-upload` | Skip uploading to the hub. Compute digests + run local verification, return the agent-native shape with `receipt_url` / `raw_json_url` / `package_download_url` set to null. Useful when running in an environment without hub auth (CI, sandboxed agent, demo) but the caller still needs a structured share response |
+
+### `treeship session event`
+
+Append a structured event to the active session's event log
+
+```
+treeship session event [OPTIONS] --type <TYPE>
+```
+
+| Option | Description |
+|---|---|
+| `--type <TYPE>` | Event type (e.g. agent.called_tool, agent.wrote_file, agent.read_file, agent.connected_network, agent.decision) |
+| `--tool <NAME>` | Tool name (for agent.called_tool events) |
+| `--file <PATH>` | File path (for agent.wrote_file / agent.read_file events) |
+| `--destination <HOST>` | Network destination (for agent.connected_network events) |
+| `--actor <URI>` | Actor URI (default: reads from session manifest) |
+| `--agent-name <NAME>` | Agent name for the event |
+| `--duration-ms <MS>` | Duration in milliseconds |
+| `--exit-code <CODE>` | Exit code or error indicator (0 = success) |
+| `--artifact-id <ID>` | Artifact ID to reference |
+| `--meta <JSON>` | Arbitrary JSON metadata |
+| `--model <NAME>` | Model identifier (for agent.decision events). Examples: claude-opus-4-7, gpt-5, kimi-k2, gemini-3-pro. Falls back to TREESHIP_MODEL env var when unset |
+| `--provider <NAME>` | Provider name (for agent.decision events). Examples: anthropic, openai, moonshot, google, meta, mistral. Falls back to TREESHIP_PROVIDER env var when unset |
+| `--tokens-in <N>` | Input tokens consumed by the inference (for agent.decision events). Falls back to TREESHIP_TOKENS_IN env var when unset |
+| `--tokens-out <N>` | Output tokens produced by the inference (for agent.decision events). Falls back to TREESHIP_TOKENS_OUT env var when unset |
+
+### `treeship session invite`
+
+Mint a single-use, expiring invitation for another agent to join this session (Phase 1 of the agent-invitations spec)
+
+```
+treeship session invite [OPTIONS] [SESSION_ID]
+```
+
+| Argument | Description |
+|---|---|
+| `[SESSION_ID]` | Session id to mint an invitation for. Defaults to the currently active session [default: ""] |
+
+| Option | Description |
+|---|---|
+| `--invitee-cert <ISSUER:SUBJECTS>` | Cert-restricted invitation. Format: &lt;issuer_pubkey&gt;:&lt;subject1,subject2,...&gt; |
+| `--invitee-pubkey <FP_OR_PUBKEY>` | Pubkey-restricted invitation. Either a 16-hex fingerprint or a full canonical pubkey (`ed25519:&lt;b64&gt;` or bare base64url) |
+| `--open` | Open invitation -- anyone holding the blob can redeem. Opt-in only; required because Open invitations are the loosest setting |
+| `--capabilities <TYPES>` | Comma-separated action types to grant. Defaults to "tool.call" |
+| `--expires <DURATION>` | Lifetime of the invitation (e.g. "30s", "5m", "1h", "7d"). Defaults to 1 hour; the protocol max is 7 days |
+| `--no-armor` | Emit raw JSON instead of the armored `-----BEGIN TREESHIP INVITATION-----` blob |
+
+### `treeship session join`
+
+Redeem an invitation and emit a pending participant event
+
+```
+treeship session join [OPTIONS] --actor <URI>
+```
+
+| Option | Description |
+|---|---|
+| `--invite <BLOB>` | Paste the bootstrap blob inline (use `-` to read from stdin) |
+| `--invite-file <PATH>` | Read the bootstrap blob from a file |
+| `--actor <URI>` | Joining agent's actor URI (e.g. agent://researcher) |
+
+### `treeship session countersign`
+
+Host countersigns a pending participant event. After this runs, the participant envelope carries two signatures (joining agent + host) and verifies as a finalized join
+
+```
+treeship session countersign [OPTIONS] <PARTICIPANT_ID>
+```
+
+| Argument | Description |
+|---|---|
+| `<PARTICIPANT_ID>` | Participant artifact id (output of `treeship session join`) |
+
+## `treeship verify`
+
+Verify an artifact or its full parent chain
+
+```
+treeship verify [OPTIONS] <TARGET>
+```
+
+| Argument | Description |
+|---|---|
+| `<TARGET>` | What to verify: artifact ID, path to a .treeship/.agent package, or a receipt URL (http:// or https://). Use the global --quiet for exit-code-only output and --format json for machine-readable output |
+
+| Option | Description |
+|---|---|
+| `--certificate <PATH-OR-URL>` | Cross-verify against an Agent Certificate (path to a .agent package or a URL serving the certificate JSON) |
+| `--no-chain` | Verify only this artifact, do not walk the parent chain. Only applies to the artifact-ID form |
+| `--max-depth <N>` | Maximum chain depth to walk (default: 20). Only applies to the artifact-ID form [default: 20] |
+| `--full` | Show full chain timeline with box-drawn cards. Only applies to the artifact-ID form |
+
+## `treeship hub`
+
+Connect to treeship.dev Hub -- push, pull, and share artifacts
+
+```
+treeship hub [OPTIONS] <COMMAND>
+```
+
+### `treeship hub attach`
+
+Attach to Hub (creates new hub connection or reconnects to existing)
+
+```
+treeship hub attach [OPTIONS]
+```
+
+| Option | Description |
+|---|---|
+| `--name <NAME>` | Name for this hub connection (default: "default") |
+| `--endpoint <URL>` | Hub API endpoint (default: https://api.treeship.dev) |
+
+### `treeship hub detach`
+
+Detach active hub connection (keeps keys for reconnect)
+
+```
+treeship hub detach [OPTIONS]
+```
+
+### `treeship hub ls`
+
+List all known hub connections
+
+```
+treeship hub ls [OPTIONS]
+```
+
+### `treeship hub status`
+
+Show active hub connection status
+
+```
+treeship hub status [OPTIONS]
+```
+
+### `treeship hub use`
+
+Switch active hub connection
+
+```
+treeship hub use [OPTIONS] <NAME_OR_ID>
+```
+
+| Argument | Description |
+|---|---|
+| `<NAME_OR_ID>` | Hub connection name or hub ID to switch to |
+
+### `treeship hub push`
+
+Push a signed artifact to Hub
+
+```
+treeship hub push [OPTIONS] <ID>
+```
+
+| Argument | Description |
+|---|---|
+| `<ID>` | Artifact ID to push (or "last" for most recent) |
+
+| Option | Description |
+|---|---|
+| `--hub <NAME\|ID>` | Push to a specific hub connection by name or ID |
+| `--all` | Push to all known hub connections |
+
+### `treeship hub pull`
+
+Pull an artifact from Hub into local storage
+
+```
+treeship hub pull [OPTIONS] <ID>
+```
+
+| Argument | Description |
+|---|---|
+| `<ID>` | Artifact ID to pull |
+
+| Option | Description |
+|---|---|
+| `--hub <NAME\|ID>` | Pull from a specific hub connection by name or ID |
+
+### `treeship hub open`
+
+Open workspace in browser
+
+```
+treeship hub open [OPTIONS]
+```
+
+| Option | Description |
+|---|---|
+| `--hub <NAME\|ID>` | Open workspace for a specific hub connection |
+| `--no-open` | Print URL only, don't open browser |
+
+### `treeship hub kill`
+
+Remove a hub connection (revokes + deletes local keys)
+
+```
+treeship hub kill [OPTIONS] <NAME>
+```
+
+| Argument | Description |
+|---|---|
+| `<NAME>` | Hub connection name to remove |
+
+| Option | Description |
+|---|---|
+| `--force` | Skip confirmation prompt |
+
+## `treeship receipt`
+
+Export a receipt's offline-verifiable triple: message, signature, key
+
+```
+treeship receipt [OPTIONS] <COMMAND>
+```
+
+### `treeship receipt export`
+
+Export a receipt's offline-verifiable triple (message, signature, key)
+
+```
+treeship receipt export [OPTIONS] <ARTIFACT_ID>
+```
+
+| Argument | Description |
+|---|---|
+| `<ARTIFACT_ID>` | Artifact id of the receipt to export |
+
+## `treeship resolve`
+
+Resolve an agent URI to a verifiable bundle (identity, current card, revocation, provenance grades), re-derived from local artifacts
+
+```
+treeship resolve [OPTIONS] <AGENT>
+```
+
+| Argument | Description |
+|---|---|
+| `<AGENT>` | Agent URI to resolve, e.g. agent://deployer |
+
+| Option | Description |
+|---|---|
+| `--hub <URL>` | Resolve from a Hub over the network instead of the local store. The returned bundle is re-verified client-side against your trust roots |
+
+## `treeship status`
+
+Show ship state: keys, recent artifacts, hub status
+
+```
+treeship status [OPTIONS]
+```
+
+## `treeship verify-capability`
+
+Verify an agent capability card against the agent's evidence
+
+```
+treeship verify-capability [OPTIONS] <CARD_ID>
+```
+
+| Argument | Description |
+|---|---|
+| `<CARD_ID>` | Artifact id of the agent_card.v1 receipt to check |
+
+## `treeship revoke-capability`
+
+Revoke a capability card (agent_card_revocation.v1)
+
+```
+treeship revoke-capability [OPTIONS] <CARD_ID>
+```
+
+| Argument | Description |
+|---|---|
+| `<CARD_ID>` | Artifact id of the agent_card.v1 receipt to revoke |
+
+| Option | Description |
+|---|---|
+| `--reason <REASON>` | Optional reason, e.g. key-rotation, compromised, decommissioned |
+
+## `treeship publish`
+
+Publish an agent's resolvable set (current card + revocations) to the Hub, so it can be resolved over the network with `resolve --hub`
+
+```
+treeship publish [OPTIONS] <AGENT>
+```
+
+| Argument | Description |
+|---|---|
+| `<AGENT>` | Agent URI to publish, e.g. agent://deployer |
+
+## `treeship audit`
+
+Audit an agent's transparency log from a Hub: re-verify each anchored entry's inclusion offline and check completeness against its anchor
+
+```
+treeship audit [OPTIONS] <AGENT>
+```
+
+| Argument | Description |
+|---|---|
+| `<AGENT>` | Agent URI to audit, e.g. agent://deployer |
+
+| Option | Description |
+|---|---|
+| `--hub <URL>` | Hub URL whose transparency log to audit |
+| `--watch` | Monitor mode: re-audit on an interval and keep alerting on omission |
+| `--interval <SECS>` | Seconds between re-audits in --watch mode [default: 30] |
+
+## `treeship keys`
+
+Manage signing keys
+
+```
+treeship keys [OPTIONS] <COMMAND>
+```
+
+### `treeship keys list`
+
+List all signing keys
+
+```
+treeship keys list [OPTIONS]
+```
+
+### `treeship keys export`
+
+Export a key's PUBLIC half in pinnable form, with the exact `treeship trust add` command a counterparty runs to pin it. The private key never leaves the store
+
+```
+treeship keys export [OPTIONS]
+```
+
+| Option | Description |
+|---|---|
+| `--key <KEY>` | Specific key id to export. Defaults to the current default key |
+| `--agent <AGENT>` | Export the registered per-agent key for this actor URI (e.g. agent://deployer). Mutually exclusive with --key |
+
+### `treeship keys rotate`
+
+Rotate a signing key, minting a successor and stamping the predecessor with a grace-period valid_until
+
+```
+treeship keys rotate [OPTIONS]
+```
+
+| Option | Description |
+|---|---|
+| `--key <KEY>` | Specific key id to rotate. Defaults to the current default key |
+| `--grace-hours <GRACE_HOURS>` | Hours the predecessor remains valid for verifiers honoring the grace window. Default 24h matches the typical client-cache TTL for fetched public-key bundles [default: 24] |
+| `--no-default` | Mint the successor without promoting it to default. Useful for staging a rotation for review before the active signer flips |
+
+## `treeship trust`
+
+Manage pinned trust roots (issuer keys)
+
+```
+treeship trust [OPTIONS] <COMMAND>
+```
+
+### `treeship trust list`
+
+List every pinned trust root
+
+```
+treeship trust list [OPTIONS]
+```
+
+### `treeship trust add`
+
+Add or replace a trust root
+
+```
+treeship trust add [OPTIONS] --kind <KIND> <KEY_ID> <PUBLIC_KEY>
+```
+
+| Argument | Description |
+|---|---|
+| `<KEY_ID>` | Identifier for this root. Matches the existing key_id format but human-readable labels are accepted |
+| `<PUBLIC_KEY>` | Ed25519 public key. Either `ed25519:&lt;base64url&gt;` or bare base64url |
+
+| Option | Description |
+|---|---|
+| `--kind <KIND>` | What this root is allowed to verify [possible values: hub_checkpoint, hub_org, cert_issuer, revoker, agent_cert, session_host, ship] |
+| `--label <LABEL>` | Optional human-readable label. Shown by `treeship trust list` |
+| `--yes` | Skip the interactive confirmation prompt. Required for non-interactive use (CI, scripts, JSON output mode) |
+
+### `treeship trust remove`
+
+Remove a trust root by `key_id` (across all kinds)
+
+```
+treeship trust remove [OPTIONS] <KEY_ID>
+```
+
+| Argument | Description |
+|---|---|
+| `<KEY_ID>` | Identifier to remove. Removes every entry with this `key_id` regardless of kind |
+
+| Option | Description |
+|---|---|
+| `--yes` | Skip the interactive confirmation prompt. Required for non-interactive use (CI, scripts, JSON output mode) |
+
+## `treeship log`
+
+View receipt log
+
+```
+treeship log [OPTIONS]
+```
+
+| Option | Description |
+|---|---|
+| `--follow` | Watch for new receipts in real time |
+| `--tail <TAIL>` | Number of recent receipts to show [default: 20] |
+
+## `treeship package`
+
+Inspect and verify .treeship session packages
+
+```
+treeship package [OPTIONS] <COMMAND>
+```
+
+### `treeship package inspect`
+
+Inspect a .treeship session package
+
+```
+treeship package inspect [OPTIONS] <PATH>
+```
+
+| Argument | Description |
+|---|---|
+| `<PATH>` | Path to the .treeship package directory |
+
+### `treeship package verify`
+
+Verify a .treeship session package
+
+```
+treeship package verify [OPTIONS] <PATH>
+```
+
+| Argument | Description |
+|---|---|
+| `<PATH>` | Path to the .treeship package directory |
+
+| Option | Description |
+|---|---|
+| `--strict` | Promote approval-evidence warnings (missing journal records, included-checkpoint anomalies) to verification failures. Existing receipt-determinism / event-log warnings are unchanged |
+
+## `treeship onboard`
+
+Onboard an agent end to end in one command: register it with its own key, mint its capability card, optionally publish + anchor to the attached Hub, and print the trust bundle a counterparty runs to verify it. Idempotent -- safe to run on every agent boot
+
+```
+treeship onboard [OPTIONS] <NAME>
+```
+
+| Argument | Description |
+|---|---|
+| `<NAME>` | Agent name or agent:// URI (normalized either way) |
+
+| Option | Description |
+|---|---|
+| `--from-harness <PATH>` | Harness config (e.g. a Claude Code settings.json) whose permissions.allow list is captured as the capability set |
+| `--tools-json <PATH>` | Operator-declared capability list (JSON array or &#123; "tools": [...] &#125;) |
+| `--from-a2a <PATH>` | A2A AgentCard JSON whose skills become `discovered` capabilities |
+| `--tools <TOOLS>` | Capabilities: tool categories or family.* globs (comma-separated) |
+| `--models <MODELS>` | Models the agent uses (comma-separated) |
+| `--description <TEXT>` | Agent description |
+| `--publish` | Also publish the agent + checkpoint + anchor to the attached Hub |
+
+## `treeship present`
+
+Package an agent's proof into a file it can hand to any counterparty: current card + certificate chain + known revocations + a Merkle staple (checkpoint + inclusion proof). The counterparty verifies it fully offline with `verify-presentation` — no registry in the loop
+
+```
+treeship present [OPTIONS] <AGENT>
+```
+
+| Argument | Description |
+|---|---|
+| `<AGENT>` | Agent name or agent:// URI |
+
+| Option | Description |
+|---|---|
+| `--out <PATH>` | Output path (default: &lt;name&gt;.presentation.json) |
+| `--challenge <NONCE>` | Sign the verifier's nonce with the agent's own key (the handshake: proves live key control, not just the record). Requires --own-key |
+| `--disclose <CAPS>` | Reveal only these capabilities, hiding the rest (selective disclosure). Comma-separated tool names that must appear in the agent's card. The presentation carries a re-signed, digests-only card plus openings for only the named capabilities; the others stay opaque. A disclosed presentation is not transparency-anchored (an ephemeral, privacy- preserving re-sign), so it omits the Merkle staple |
+
+## `treeship verify-presentation`
+
+Verify a presentation file fully offline against YOUR trust roots: leaf pin or certificate-chain walk to a pinned ship root, authorized revocations honored, staple checkpoint + inclusion re-verified, and freshness reported as an explicit bound
+
+```
+treeship verify-presentation [OPTIONS] <PATH>
+```
+
+| Argument | Description |
+|---|---|
+| `<PATH>` | Path to a .presentation.json file |
+
+| Option | Description |
+|---|---|
+| `--max-staple-age <DURATION>` | Reject staples older than this (30s, 15m, 2h, 1d). Unset = report the age without enforcing |
+| `--challenge <NONCE>` | The nonce YOU issued for this handshake. The presentation's challenge response must answer exactly this nonce, signed by the card's key |
+
+## `treeship history`
+
+An agent's work history: its transparency log filtered to signed session.v1 records, sortable and filterable. Each record's envelope is re-verified on this machine; anchored entries' Merkle inclusion is re-proved offline. History proves what was recorded, never everything that happened
+
+```
+treeship history [OPTIONS] <AGENT>
+```
+
+| Argument | Description |
+|---|---|
+| `<AGENT>` | Agent name or agent:// URI |
+
+| Option | Description |
+|---|---|
+| `--hub <URL>` | Pull history from a Hub instead of the local store |
+| `--class <CLASS>` | Only records with this attestation class (self \| runtime \| countersigned) |
+| `--since <TIMESTAMP>` | Only records closed at or after this RFC 3339 timestamp |
+| `--limit <N>` | Maximum records to show (newest first) [default: 50] |
+
+## `treeship profile`
+
+A derived, checkpoint-pinned track record over an agent's work history. Every number recomputes from the log at the pinned checkpoint: match grades the profile `checked`; mismatch is a provable lie. --attest signs it as a ship claim
+
+```
+treeship profile [OPTIONS] <AGENT>
+```
+
+| Argument | Description |
+|---|---|
+| `<AGENT>` | Agent name or agent:// URI |
+
+| Option | Description |
+|---|---|
+| `--attest` | Sign the computed profile as a profile.v1 receipt (ship claim) |
+
+## `treeship verify-profile`
+
+Recompute an attested profile.v1 from the log at its pinned checkpoint and compare, field by field. checked or MISMATCH
+
+```
+treeship verify-profile [OPTIONS] <ID>
+```
+
+| Argument | Description |
+|---|---|
+| `<ID>` | profile.v1 artifact id |
+
+## `treeship match`
+
+Find agents by their EXERCISED evidence: which agents actually ran tools matching a glob, ranked by verified session count. The hub proposes candidates from its index; every record is re-verified on this machine against your trust roots
+
+```
+treeship match [OPTIONS] --hub <URL> --exercised <GLOB>
+```
+
+| Option | Description |
+|---|---|
+| `--hub <URL>` | Hub to query |
+| `--exercised <GLOB>` | Tool glob the agent must have exercised (e.g. "payments.*") |
+| `--class <CLASS>` | Only sessions with this attestation class (self \| runtime \| countersigned) |
+| `--min-sessions <N>` | Minimum matching sessions a candidate must have [default: 1] |
+
+## `treeship setup`
+
+Guided first-run setup -- detect agents, draft cards, instrument, smoke verify
+
+```
+treeship setup [OPTIONS]
+```
+
+| Option | Description |
+|---|---|
+| `--yes` | Skip the confirmation prompt before instrumenting |
+| `--skip-smoke` | Skip the smoke verification pass after instrumentation |
+| `--no-instrument` | Detect + draft cards only -- do not modify any agent config files |
+
+## `treeship pending`
+
+List pending approvals
+
+```
+treeship pending [OPTIONS]
+```
+
+## `treeship approve`
+
+Approve a pending action
+
+```
+treeship approve [OPTIONS] [N]
+```
+
+| Argument | Description |
+|---|---|
+| `[N]` | Index of the pending approval to approve (default: 1) |
+
+## `treeship deny`
+
+Deny a pending action
+
+```
+treeship deny [OPTIONS] [N]
+```
+
+| Argument | Description |
+|---|---|
+| `[N]` | Index of the pending approval to deny (default: 1) |
+
+## `treeship doctor`
+
+Diagnostic check -- verify everything is working
+
+```
+treeship doctor [OPTIONS]
+```
+
+| Option | Description |
+|---|---|
+| `--fix` | Repair insecure permissions on the keystore directory and files |
+
+## `treeship version`
+
+Print version and build info
+
+```
+treeship version [OPTIONS]
+```
