@@ -10,9 +10,12 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use ed25519_dalek::{Signature, VerifyingKey};
 use sha2::{Digest, Sha256};
 
+use super::resolution::{chain_verify_card, verifier_from_trust};
+use crate::attestation::Envelope;
+use crate::capability::is_key_bound;
 use crate::merkle::{Checkpoint, InclusionProof, MerkleTree};
-use crate::statements::parse_rfc3339_to_unix;
-use crate::trust::TrustRootStore;
+use crate::statements::{parse_rfc3339_to_unix, unix_to_rfc3339, ReceiptStatement};
+use crate::trust::{decode_ed25519_pubkey, TrustRootKind, TrustRootStore};
 
 /// The canonical bytes a challenge response signs (the handshake).
 ///
@@ -184,6 +187,230 @@ pub fn verify_staple(
         age_secs: age,
         status: StapleStatus::Verified,
     }
+}
+
+/// The outcome of the challenge-response handshake within a presentation.
+#[derive(Debug)]
+pub enum ChallengeOutcome {
+    /// The verifier passed no nonce, so no liveness was checked.
+    NotRequested,
+    /// A response is present but the verifier passed no nonce to check it.
+    PresentButUnchecked,
+    /// A nonce was requested but the presentation carries no response.
+    NoResponse,
+    /// A response is present but the card did not verify key-bound, so there
+    /// is no established key to check the response against.
+    NoEstablishedKey,
+    /// The bearer proved live control of the card key; carries the response's
+    /// bearer-signed `signed_at`.
+    Verified { signed_at: String },
+    /// The response was checked against the established key and failed.
+    Failed { reason: String },
+}
+
+impl ChallengeOutcome {
+    /// Vacuously true unless a nonce was requested and the check did not
+    /// succeed — i.e. a signature from an unverified key never counts as a
+    /// live-control success.
+    pub fn is_ok(&self) -> bool {
+        matches!(
+            self,
+            Self::NotRequested | Self::PresentButUnchecked | Self::Verified { .. }
+        )
+    }
+}
+
+/// The full trust verdict for a presentation: card authenticity, revocation,
+/// challenge liveness, and staple anchoring. Freshness policy
+/// (`--max-staple-age`) and rendering stay with the caller.
+pub struct PresentationVerdict {
+    pub agent: String,
+    pub card_id: String,
+    /// The card envelope verified against the caller's roots (direct pin or
+    /// via the certificate chain).
+    pub sig_ok: bool,
+    pub key_bound: bool,
+    pub via_chain: bool,
+    pub revoked: Option<String>,
+    pub challenge: ChallengeOutcome,
+    pub staple: StapleVerdict,
+}
+
+/// Verify a presentation against the caller's pinned trust roots at `now_unix`.
+/// Composes the resolution chain walk, staple verification, and the challenge
+/// check into one decision — the same code path the CLI, WASM, and SDKs run.
+/// `expected_nonce` is the nonce THIS verifier issued (None when not
+/// challenging). Pure — no I/O, no system clock. The caller has already parsed
+/// the presentation JSON and validated its envelope type.
+pub fn verify_presentation(
+    pres: &serde_json::Value,
+    trust: &TrustRootStore,
+    expected_nonce: Option<&str>,
+    now_unix: u64,
+) -> Result<PresentationVerdict, String> {
+    let agent = pres
+        .get("agent")
+        .and_then(|v| v.as_str())
+        .ok_or("presentation carries no agent URI")?;
+
+    // ── Card: direct pin, or chain walk to a pinned CertIssuer root ──────────
+    let card_env_json = pres
+        .get("card")
+        .and_then(|c| c.get("envelope_json"))
+        .and_then(|v| v.as_str())
+        .ok_or("presentation carries no card envelope")?;
+    let card_id = pres
+        .get("card")
+        .and_then(|c| c.get("artifact_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let env: Envelope = serde_json::from_str(card_env_json)
+        .map_err(|e| format!("unparseable card envelope: {e}"))?;
+    let mut verifier = verifier_from_trust(trust);
+    let mut sig_ok = verifier.verify_any(&env).is_ok();
+    let stmt: ReceiptStatement = env
+        .unmarshal_statement()
+        .map_err(|e| format!("unparseable card statement: {e}"))?;
+    if stmt.kind != "agent_card.v1" {
+        return Err(format!(
+            "presentation card is a `{}`, not an agent_card.v1",
+            stmt.kind
+        ));
+    }
+    let card = stmt.payload.unwrap_or(serde_json::Value::Null);
+    if card.get("agent").and_then(|v| v.as_str()) != Some(agent) {
+        return Err("card's agent URI does not match the presentation's".into());
+    }
+    let card_keyid = card.get("keyid").and_then(|v| v.as_str()).unwrap_or("");
+    let signer = env
+        .signatures
+        .first()
+        .map(|s| s.keyid.as_str())
+        .unwrap_or("")
+        .to_string();
+    let mut key_bound = sig_ok && is_key_bound(card_keyid, &signer, trust);
+
+    let served_certs: Vec<(String, Envelope)> = pres
+        .get("certs")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|c| {
+                    let id = c.get("artifact_id").and_then(|v| v.as_str())?;
+                    let ej = c.get("envelope_json").and_then(|v| v.as_str())?;
+                    Some((id.to_string(), serde_json::from_str::<Envelope>(ej).ok()?))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let now_rfc = unix_to_rfc3339(now_unix);
+    let mut via_chain = false;
+    // The subject key the verification establishes — the ONLY key a challenge
+    // response may be checked against. From the chain verdict, or (direct-pin
+    // path) decoded from the verifier's own AgentCert root.
+    let mut subject_vk: Option<VerifyingKey> = None;
+    if !key_bound {
+        if let Some(verdict) =
+            chain_verify_card(&env, card_keyid, agent, &served_certs, trust, &now_rfc)
+        {
+            sig_ok = true;
+            key_bound = true;
+            via_chain = true;
+            subject_vk = Some(verdict.subject_key);
+            verifier.add_key(signer.clone(), verdict.subject_key);
+        }
+    } else {
+        subject_vk = trust
+            .roots()
+            .iter()
+            .find(|r| r.key_id == card_keyid && r.kind == TrustRootKind::AgentCert)
+            .and_then(|r| decode_ed25519_pubkey(&r.public_key).ok());
+    }
+
+    // ── Revocations: honored when authorized, exactly as resolve does ───────
+    let mut revoked: Option<String> = None;
+    if let Some(revs) = pres.get("revocations").and_then(|v| v.as_array()) {
+        for rev in revs {
+            let rev_json = rev
+                .get("envelope_json")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let Ok(rev_env) = serde_json::from_str::<Envelope>(rev_json) else {
+                continue;
+            };
+            if verifier.verify_any(&rev_env).is_err() {
+                continue;
+            }
+            let Ok(rev_stmt) = rev_env.unmarshal_statement::<ReceiptStatement>() else {
+                continue;
+            };
+            if rev_stmt.kind != "agent_card_revocation.v1" {
+                continue;
+            }
+            if rev_stmt
+                .payload
+                .as_ref()
+                .and_then(|p| p.get("card"))
+                .and_then(|v| v.as_str())
+                != Some(card_id)
+            {
+                continue;
+            }
+            let rev_signer = rev_env
+                .signatures
+                .first()
+                .map(|s| s.keyid.as_str())
+                .unwrap_or("");
+            let self_revoke = !card_keyid.is_empty() && rev_signer == card_keyid;
+            let issuer = trust
+                .roots()
+                .iter()
+                .any(|r| r.key_id == rev_signer && r.kind == TrustRootKind::Revoker);
+            if self_revoke || issuer {
+                revoked = Some(
+                    rev_stmt
+                        .payload
+                        .as_ref()
+                        .and_then(|p| p.get("reason"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("(no reason given)")
+                        .to_string(),
+                );
+                break;
+            }
+        }
+    }
+
+    // ── Challenge: the handshake — live key control, checked ONLY against the
+    // subject key card verification established (fail closed otherwise). ─────
+    let challenge = match (
+        expected_nonce,
+        pres.get("challenge").filter(|v| !v.is_null()),
+    ) {
+        (None, None) => ChallengeOutcome::NotRequested,
+        (None, Some(_)) => ChallengeOutcome::PresentButUnchecked,
+        (Some(_), None) => ChallengeOutcome::NoResponse,
+        (Some(nonce), Some(block)) => match &subject_vk {
+            None => ChallengeOutcome::NoEstablishedKey,
+            Some(vk) => match check_challenge(block, agent, card_id, nonce, card_keyid, vk) {
+                Ok(signed_at) => ChallengeOutcome::Verified { signed_at },
+                Err(reason) => ChallengeOutcome::Failed { reason },
+            },
+        },
+    };
+
+    let staple = verify_staple(pres, card_id, trust, now_unix);
+
+    Ok(PresentationVerdict {
+        agent: agent.to_string(),
+        card_id: card_id.to_string(),
+        sig_ok,
+        key_bound,
+        via_chain,
+        revoked,
+        challenge,
+        staple,
+    })
 }
 
 #[cfg(test)]
