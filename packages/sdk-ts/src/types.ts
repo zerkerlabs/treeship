@@ -110,6 +110,42 @@ export interface PushResult {
   rekorIndex?: number;
 }
 
+/** One certificate in a resolution bundle's chain. */
+export interface ResolutionCert {
+  artifact_id: string;
+  /** An `agent_cert.v1` DSSE envelope object. */
+  envelope: Record<string, unknown>;
+}
+
+/**
+ * A resolution bundle: the signed bytes needed to decide whether an agent's
+ * current card is trustworthy — the same shape the Hub serves and the CLI
+ * re-verifies.
+ */
+export interface ResolutionBundleInput {
+  agent: string;
+  /** The agent's current `agent_card.v1` DSSE envelope object. */
+  card: Record<string, unknown>;
+  certs?: ResolutionCert[];
+  /** `agent_card_revocation.v1` DSSE envelope objects. */
+  revocations?: Record<string, unknown>[];
+}
+
+/** Result of `VerifyModule.verifyResolution`. Mirrors the WASM JSON output. */
+export interface ResolutionVerdict {
+  /** Card signature verified against your roots (directly or via the chain). */
+  sig_ok: boolean;
+  /** Card is key-bound: signer pinned under AgentCert, or chain-certified. */
+  key_bound: boolean;
+  /** If verified via the certificate chain, the cert artifact that vouched. */
+  chain_cert_id: string | null;
+  /** An authorized, verifying revocation was found. */
+  revoked: boolean;
+  revocation_reason: string | null;
+  error_code?: string;
+  message?: string;
+}
+
 export class TreeshipError extends Error {
   constructor(message: string, public readonly args: string[]) {
     super(message);

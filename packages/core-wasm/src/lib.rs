@@ -500,6 +500,78 @@ pub fn verify_certificate(cert_json: &str, now_rfc3339: &str, trust_roots_json: 
     .to_string()
 }
 
+/// Verify an agent resolution bundle — the `resolve --hub` trust decision —
+/// against caller-supplied trust roots. Wraps
+/// `treeship_core::verify::resolution::verify_resolution`, so the browser and
+/// SDKs run the exact same code path as the CLI: verify the card (direct leaf
+/// pin or certificate-chain walk), then honor an authorized revocation.
+///
+/// `bundle_json`:
+/// ```json
+/// {
+///   "agent": "agent://deployer",
+///   "card": { <agent_card.v1 envelope> },
+///   "certs": [{ "artifact_id": "art_...", "envelope": { <agent_cert.v1 envelope> } }],
+///   "revocations": [{ <agent_card_revocation.v1 envelope> }]
+/// }
+/// ```
+/// `trust_roots_json`: same shape the other verifiers take (empty = fail closed).
+/// `now_rfc3339`: time to check certificate validity windows against (required;
+/// an empty string fails the chain closed).
+///
+/// Returns JSON: `{ "sig_ok", "key_bound", "chain_cert_id", "revoked",
+/// "revocation_reason", "error_code"?, "message"? }`.
+#[wasm_bindgen]
+pub fn verify_resolution(bundle_json: &str, trust_roots_json: &str, now_rfc3339: &str) -> String {
+    use treeship_core::verify::resolution::{verify_resolution as core_verify, ResolutionBundle};
+
+    #[derive(serde::Deserialize)]
+    struct WasmCert {
+        artifact_id: String,
+        envelope: Envelope,
+    }
+    #[derive(serde::Deserialize)]
+    struct WasmBundle {
+        agent: String,
+        card: Envelope,
+        #[serde(default)]
+        certs: Vec<WasmCert>,
+        #[serde(default)]
+        revocations: Vec<Envelope>,
+    }
+
+    let parsed: WasmBundle = match serde_json::from_str(bundle_json) {
+        Ok(b) => b,
+        Err(e) => {
+            return error_result(
+                "invalid_json",
+                &format!("invalid resolution bundle JSON: {e}"),
+            )
+        }
+    };
+    let trust = match parse_wasm_trust_roots(trust_roots_json) {
+        Ok(t) => t,
+        Err(e) => return error_result("invalid_trust_roots", &e),
+    };
+
+    let bundle = ResolutionBundle {
+        agent: parsed.agent,
+        card: parsed.card,
+        certs: parsed
+            .certs
+            .into_iter()
+            .map(|c| (c.artifact_id, c.envelope))
+            .collect(),
+        revocations: parsed.revocations,
+    };
+    match core_verify(&bundle, &trust, now_rfc3339) {
+        Ok(v) => {
+            serde_json::to_string(&v).unwrap_or_else(|e| error_result("serialize", &e.to_string()))
+        }
+        Err(e) => error_result("invalid_bundle", &e),
+    }
+}
+
 /// Cross-verify a Session Receipt against an Agent Certificate. Wraps
 /// `treeship_core::verify::cross_verify_receipt_and_certificate` and adds
 /// a top-level `ok` roll-up: ship IDs match, certificate is valid, no
@@ -1122,6 +1194,73 @@ mod tests {
                 .unwrap();
         assert_eq!(out["outcome"], "error");
         assert_eq!(out["error_code"], "invalid_json");
+    }
+
+    #[test]
+    fn verify_resolution_chains_via_wasm() {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+        use treeship_core::attestation::{sign, Ed25519Signer, Signer};
+        use treeship_core::statements::{payload_type, ReceiptStatement};
+
+        let ship = Ed25519Signer::generate("key_ship").unwrap();
+        let agent_key = Ed25519Signer::generate("key_agent").unwrap();
+
+        // agent_cert.v1: the ship certifies the agent key for agent://a.
+        let mut cert = ReceiptStatement::new("ship://ship_test", "agent_cert.v1");
+        cert.payload = Some(serde_json::json!({
+            "agent": "agent://a",
+            "subject_key_id": agent_key.key_id(),
+            "subject_public_key": URL_SAFE_NO_PAD.encode(agent_key.public_key_bytes()),
+            "issued_at": "2026-01-01T00:00:00Z",
+            "valid_until": "2027-01-01T00:00:00Z",
+        }));
+        let cert_env = sign(&payload_type("receipt"), &cert, &ship)
+            .unwrap()
+            .envelope;
+
+        // agent_card.v1: signed by the agent key, claiming its own keyid.
+        let mut card = ReceiptStatement::new("ship://ship_test", "agent_card.v1");
+        card.payload =
+            Some(serde_json::json!({ "agent": "agent://a", "keyid": agent_key.key_id() }));
+        let card_env = sign(&payload_type("receipt"), &card, &agent_key)
+            .unwrap()
+            .envelope;
+
+        let trust = serde_json::json!({
+            "version": 1,
+            "roots": [{
+                "key_id": ship.key_id(),
+                "public_key": format!("ed25519:{}", URL_SAFE_NO_PAD.encode(ship.public_key_bytes())),
+                "kind": "cert_issuer",
+                "label": "test ship",
+                "added_at": "",
+            }]
+        })
+        .to_string();
+        let bundle = serde_json::json!({
+            "agent": "agent://a",
+            "card": card_env,
+            "certs": [{ "artifact_id": "art_cert", "envelope": cert_env }],
+            "revocations": [],
+        })
+        .to_string();
+
+        // Chain-verifies against the pinned CertIssuer root.
+        let out: serde_json::Value =
+            serde_json::from_str(&verify_resolution(&bundle, &trust, "2026-07-06T12:00:00Z"))
+                .unwrap();
+        assert_eq!(out["key_bound"], true, "got: {out}");
+        assert_eq!(out["sig_ok"], true);
+        assert_eq!(out["chain_cert_id"], "art_cert");
+        assert_eq!(out["revoked"], false);
+
+        // No trust roots => fail closed (matches the CLI + other WASM verifiers).
+        let out2: serde_json::Value =
+            serde_json::from_str(&verify_resolution(&bundle, "", "2026-07-06T12:00:00Z")).unwrap();
+        assert_eq!(
+            out2["key_bound"], false,
+            "empty trust must fail closed: {out2}"
+        );
     }
 
     #[test]
