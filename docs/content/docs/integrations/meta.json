@@ -1,4 +1,4 @@
 {
   "title": "Integrations",
-  "pages": ["agent-skills", "codex", "claude-code", "cursor", "ninjatech", "openclaw", "hermes", "langchain", "mcp", "a2a", "memory-proofs", "lobster-cash", "robinhood-agentic-trading", "verifiable-intent"]
+  "pages": ["install", "agent-skills", "codex", "claude-code", "cursor", "ninjatech", "openclaw", "hermes", "langchain", "mcp", "a2a", "memory-proofs", "lobster-cash", "robinhood-agentic-trading", "verifiable-intent"]
 }

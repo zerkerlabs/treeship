@@ -84,8 +84,29 @@ treeship ui                             # interactive dashboard
 treeship install                        # install shell hooks
 treeship uninstall                      # remove shell hooks
 
-# Keys
+# Keys and trust roots
 treeship keys list                      # show key fingerprints
+treeship keys export [KEY]              # print a key's public half + the trust add lines
+treeship trust list                     # show pinned trust roots
+treeship trust add <key> <pub> --kind <kind>  # pin one power (agent_cert, cert_issuer, ...)
+treeship trust remove <key>             # remove a pin (all kinds)
+
+# Agent identity, provenance, and discovery
+treeship onboard <agent>                # register agent + mint card + trust bundle, one command
+treeship resolve <agent> [--hub URL]    # resolve to a verifiable bundle, re-derived verdicts
+treeship publish <agent>                # push cards + cert chain + revocations to the hub
+treeship audit <agent> --hub <url>      # re-verify a hub's transparency log offline
+treeship history <agent> [--hub URL]    # signed session.v1 work records, re-verified
+treeship profile <agent> [--attest]     # checkpoint-pinned recomputable track record
+treeship verify-profile <id>            # recompute an attested profile: checked or MISMATCH
+treeship match --hub <url> --exercised <glob>  # find agents by verified evidence
+treeship present <agent> [--disclose]   # package proof for offline handoff (+ selective disclosure)
+treeship verify-presentation <file>     # verify a presentation against YOUR roots
+treeship verify-capability <card-id>    # verify a capability card + scope cross-check
+treeship revoke-capability <card-id>    # revoke a capability card
+
+# Portable receipts
+treeship receipt export <id>            # message/signature/key triple, verifiable by any Ed25519 lib
 
 # OpenTelemetry (requires --features otel)
 treeship otel test                      # verify OTLP connectivity

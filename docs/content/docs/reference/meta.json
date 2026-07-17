@@ -5,6 +5,7 @@
     "feature-matrix",
     "receipt-format",
     "schema",
-    "predicates"
+    "predicates",
+    "specs"
   ]
 }

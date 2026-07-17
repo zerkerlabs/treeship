@@ -1,0 +1,70 @@
+---
+title: Workspace & share tokens
+description: List a dock's artifacts (DPoP or short-lived share token) and mint browser share tokens.
+---
+
+## GET /v1/workspace/:dockId
+
+Returns all artifacts associated with a hub connection. Two auth mechanisms, and whichever succeeds must resolve to the **same dock as the path** — you can never read another ship's workspace.
+
+| Mechanism | How |
+|-----------|-----|
+| DPoP | `Authorization: DPoP {dock_id}` + `DPoP` JWT (the CLI's path) |
+| Share token | `?session=TOKEN` query param (the browser's path; see below) |
+
+```
+GET /v1/workspace/dck_9f8e7d6c…?session=TOKEN
+```
+
+**200 response:**
+
+```json
+{
+  "dock_id": "dck_9f8e7d6c…",
+  "created_at": 1752600000,
+  "artifact_count": 2,
+  "artifacts": [
+    {
+      "artifact_id": "art_…",
+      "payload_type": "application/vnd.treeship.action.v1+json",
+      "digest": "sha256:…",
+      "signed_at": 1752600000,
+      "parent_id": null,
+      "hub_url": "https://treeship.dev/verify/art_…",
+      "rekor_index": null
+    }
+  ]
+}
+```
+
+Errors: `401` (DPoP invalid, or `{"error":"invalid or expired session token"}` — a present-but-bad token fails closed, it never falls through to DPoP) · `403` `{"error":"you can only access your own workspace"}` · `404` `{"error":"ship not found"}` · `500`.
+
+## POST /v1/session
+
+DPoP-authenticated mint of a short-lived opaque token that lets an unauthenticated browser read **your own** workspace via `?session=`. No request body.
+
+```
+POST /v1/session
+Authorization: DPoP dck_9f8e7d6c…
+DPoP: <fresh JWT>
+```
+
+**200 response:**
+
+```json
+{
+  "token": "…43-char base64url…",
+  "dock_id": "dck_9f8e7d6c…",
+  "expires_at": 1752600900
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `token` | 32 random bytes, base64url — opaque, single-dock scope |
+| `dock_id` | The dock the token is bound to (the authenticated caller's) |
+| `expires_at` | Unix timestamp; tokens live **15 minutes** |
+
+Errors: `401` (DPoP) · `500` `{"error":"failed to generate token"}` / `{"error":"failed to store session"}`.
+
+Expired tokens are cleaned opportunistically; presenting one returns `401 {"error":"invalid or expired session token"}`.

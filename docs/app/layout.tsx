@@ -4,7 +4,7 @@ import Script from 'next/script';
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 
-const siteUrl = 'https://treeship.dev';
+const siteUrl = 'https://docs.treeship.dev';
 const siteName = 'Treeship';
 const siteDescription =
   'Cryptographic receipts for AI agent actions. Verifiable proofs of what an agent did, when, and to which inputs.';

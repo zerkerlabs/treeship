@@ -1,0 +1,57 @@
+---
+title: history
+description: An agent's work history — its transparency log filtered to signed session.v1 records, every envelope re-verified on your machine.
+---
+
+`treeship history` lists an agent's signed `session.v1` work records — what it worked on, the outcome, the evidence class, and whether each record is anchored. History proves **what was recorded, never everything that happened**.
+
+## Usage
+
+```bash
+treeship history <agent> [--hub <url>] [--class <class>] [--since <ts>] [--limit <n>]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--hub <URL>` | Pull from a Hub instead of the local store |
+| `--class <CLASS>` | Filter to `self` \| `runtime` \| `countersigned` |
+| `--since <TIMESTAMP>` | Only records closed at/after this RFC 3339 timestamp |
+| `--limit <N>` | Max records, newest first (default 50) |
+| `--format json` | Machine-readable output |
+
+A bare name is normalized to `agent://<name>`.
+
+## What each row shows
+
+Artifact ID, headline, outcome, attestation class, close time, action count, tools-exercised count, `signature` (`verified`/`unverified` against **your** trust roots), and the anchor state (`anchored ✓` / `anchored ✗ INVALID` / blank).
+
+Two honesty rules:
+
+- **Remote records are graded, not trusted.** Each hub-served envelope is signature-verified locally, and each hub-claimed Merkle anchor is re-proved offline. Typed fields are read from the verified envelope only.
+- **Class is capped to evidence.** A record can't claim `countersigned` without the countersignature actually present — records with no supportable class display `?`.
+
+## JSON output
+
+```json
+{
+  "agent": "agent://deployer",
+  "total": 12, "shown": 12, "ok": true,
+  "records": [
+    {
+      "artifact_id": "art_…", "headline": "fix auth bug", "outcome": "completed",
+      "attestation_class": "runtime", "closed_at": "2026-07-16T17:00:00Z",
+      "action_count": 28, "tools_exercised_count": 4,
+      "signature": "verified", "anchored": "anchored ✓"
+    }
+  ]
+}
+```
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Clean (unverified signatures are reported, not fatal) |
+| `1` | Hostile: any record whose claimed anchor fails inclusion re-verification (`anchored ✗ INVALID`) |
+
+See also: [`treeship profile`](/docs/cli/profile) for the aggregated track record, and [`GET /v1/agents/history`](/docs/api/agents) for the Hub side.

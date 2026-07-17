@@ -1,0 +1,41 @@
+---
+title: Verification surfaces
+description: There is no single universal "verify." Every surface checks a specific set of properties against a specific trust input — this page is the map.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Treeship exposes several verification commands and APIs, and they deliberately do **not** all prove the same thing. A verifier that reports a stronger claim than its evidence supports is worse than no verifier, so each surface checks a scoped set of properties and names its scope in the verdict. This page is the map.
+
+## The matrix
+
+| Surface | What it actually checks | Trust input | Strongest verdict |
+|---|---|---|---|
+| `treeship verify <artifact-id>` | Ed25519 signatures, content-address re-derivation, parent chain, approval nonce binding | Local keys + pinned roots | `pass`, with `actor proof: proven (key-bound)` or `asserted` |
+| `treeship verify <URL>` / `<package path>` | Structure only: Merkle root recomputation, inclusion proofs, leaf count, timeline order | None — no issuer trust, no signatures | `structural-pass` (never `pass`); `signatures_verified: false` |
+| `treeship package verify` | Package/artifact integrity: determinism, Merkle root, inclusion, plus approval-evidence replay rows | Local keys + pinned roots | Pass with an explicit `receipt_body_binding` warning — narrative is unsigned |
+| `treeship verify-capability` | Card + action envelope signatures, in/out-of-scope cross-check | Pinned `agent_cert` roots | `verified` (key-bound); `self-asserted` without a pin |
+| `treeship verify-presentation` | Card, certificate chain, revocations, Merkle staple, optional live challenge — fully offline | **Your** pinned roots (`agent_cert` leaf or `cert_issuer` chain, `hub_checkpoint` staple, `revoker`) | `verified (key-bound, anchored, live)` |
+| `treeship verify-profile` | Envelope signature + field-by-field recomputation from the log at the pinned checkpoint | Local keys + pinned roots | `checked` (a mismatch is a provable lie) |
+| `treeship resolve [--hub]` | Card, chain, revocation, transparency inclusion — Hub proposes, your machine decides | Pinned `cert_issuer` + `hub_checkpoint` roots | `verified (chain to pinned ship root)` |
+| `@treeship/verify` (WASM) | Receipt structure, certificates, capabilities, cross-verify — in-process, any runtime | `trustRoots` you pass (fails closed when omitted) | `pass` / `structural-pass` per function |
+| Hub `GET /v1/verify/:id` | Nothing — retired | — | `410 Gone`; verify locally |
+
+## Why the split exists
+
+**Signature checks need the original envelope bytes and a trust decision.** A receipt fetched from a URL carries neither: the JSON is self-referential, so the strongest honest claim is that its Merkle structure is internally consistent — `structural-pass`. Calling that "authentic" would launder structure into authorship. The full `pass` verdict lives where the envelope bytes and your pinned roots are: the local artifact path.
+
+**Trust is the verifier's, never the server's.** The Hub's server-side verify endpoint was retired (it returns `410 Gone`) because any verdict a server produces represents the server's trust policy. Every surviving surface resolves trust against roots *you* pinned — and fails closed when you haven't pinned any.
+
+**Different questions, different evidence.** "Is this artifact intact?" (verify), "is this package self-consistent?" (package verify), "is this agent who it claims and allowed to do this?" (verify-capability / verify-presentation), "is this track record real?" (verify-profile) are distinct questions with distinct evidence. The one thing every surface shares: the verdict line states how it knows.
+
+<Callout type="warn">
+When gating automation (CI, pre-delegation checks), match the gate to the surface: exit codes or `outcome == "structural-pass"` for fetched receipts, `outcome == "pass"` only on the local artifact path, `cross_verify.ok` for certificate cross-checks, and a `--challenge` handshake before acting on a presentation.
+</Callout>
+
+## Related
+
+- [Trust model](/docs/concepts/trust-model) — the key hierarchy and the six pinned trust kinds
+- [The Agent Handshake](/docs/concepts/agent-handshake) — presentations, staples, and live challenges
+- [CLI verify](/docs/cli/verify) — flags, exit codes, and JSON output shapes
+- [Session receipts](/docs/concepts/session-receipts) — what a package binds and what the `session.v1` record adds

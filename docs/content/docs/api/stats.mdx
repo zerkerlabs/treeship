@@ -1,0 +1,36 @@
+---
+title: GET /v1/stats
+description: Public adoption metrics — counts only, never identifiers. Cached 5 minutes.
+---
+
+## Request
+
+```
+GET /v1/stats
+```
+
+No authentication, no parameters.
+
+## Response
+
+`200` with `Cache-Control: public, max-age=300`:
+
+```json
+{
+  "artifacts": { "total": 12345, "last_7d": 321 },
+  "docks":     { "total": 210, "attached_last_7d": 12, "active_last_7d": 34 },
+  "sessions":  { "total": 890, "receipts_uploaded": 456, "uploaded_last_7d": 78 },
+  "agents":    { "total": 145, "seen_last_7d": 40 },
+  "generated_at": "2026-07-16T17:00:00Z"
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `artifacts.total` / `last_7d` | Stored artifacts, all-time and in the trailing 7 days |
+| `docks.total` / `attached_last_7d` / `active_last_7d` | Hub connections: all-time, newly attached, and distinct docks that pushed an artifact in the window |
+| `sessions.total` / `receipts_uploaded` / `uploaded_last_7d` | Sessions known to the Hub and uploaded receipts |
+| `agents.total` / `seen_last_7d` | Distinct registered agents, and those seen in the window |
+| `generated_at` | RFC 3339 UTC timestamp of computation |
+
+Counts only — the endpoint never returns identifiers. On any internal query failure the whole request is `500` `stats unavailable` (never a partial document).

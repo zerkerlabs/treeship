@@ -12,7 +12,7 @@ This page explains the mechanics behind Treeship. If you have not run the [quick
 
 Every artifact Treeship produces is an Ed25519 signature over a structured payload.
 
-When you run `treeship init`, a new Ed25519 keypair is generated and encrypted at rest on your machine. This key never leaves your device unless you explicitly export it. Every artifact your Treeship produces is signed with this key, which means anyone with access to your public key can verify any artifact you have ever created.
+When you run `treeship init`, a new Ed25519 keypair — the **ship key** — is generated and encrypted at rest on your machine. Private keys never leave your device. The ship key is the default signer, and agents you register with their own key (`treeship onboard`, or `treeship agent register --own-key`) sign with **per-agent keys**, each bound to its `agent://` URI by a ship-signed certificate. Anyone holding the matching public key (or a certificate chain to a key they pinned) can verify any artifact you have ever created.
 
 The signature format follows [DSSE (Dead Simple Signing Envelope)](https://github.com/secure-systems-lab/dsse):
 
@@ -58,9 +58,12 @@ An actor is any entity that performs work inside your Treeship. Actors are ident
 
 URIs are freeform after the prefix. Use whatever naming convention fits your organization.
 
-All actors sign under the same Treeship key. The actor URI identifies *who* performed the action; the Treeship key proves *which trust domain* the action belongs to. This separation matters because a single Treeship often has multiple actors (a developer, a CI bot, and several AI agents) all contributing to the same chain of work.
+An actor URI comes in two trust grades, and the verifier always tells you which one you got:
 
-Actors do not have their own keys. The Treeship key is the root of trust, and the actor URI is metadata within the signed payload. This keeps the key management surface small: one key to protect, one key to rotate, one key to verify against.
+- **`asserted`** — the artifact was signed by the shared ship key, and the actor URI is a label inside the signed payload. The signature proves *which trust domain* produced the artifact, not *which actor* within it. This is the default for unregistered actors, and it keeps the key surface small when you don't need more.
+- **`proven (key-bound)`** — the actor is a registered agent with its own Ed25519 key, and the artifact is signed by that key. A ship-signed `agent_cert.v1` certificate binds the key to the `agent://` URI, so "who did this" is cryptographically established, not just claimed.
+
+`treeship onboard <agent>` does the registration, certificate, and capability card in one command; the MCP and A2A bridges provision per-agent keys automatically on startup. A single Treeship often has multiple actors — a developer, a CI bot, several AI agents — contributing to the same chain of work, each verifiable at its own grade.
 
 Actors appear in different roles depending on the attestation type:
 
@@ -94,7 +97,7 @@ Derive the expected ID from `sha256(PAE_bytes)[..16]` and compare it to the stor
 <Step>
 ### Check the Ed25519 signature
 
-Verify the signature in the DSSE envelope against the Treeship's public key. A bad signature means the artifact was not produced by the claimed Treeship.
+Verify the signature in the DSSE envelope against the signer's public key — the ship key, or the agent's own key for registered agents. A bad signature means the artifact was not produced by the claimed signer. The verdict also grades the actor: `actor proof: proven (key-bound)` when a certified per-agent key signed it, `asserted` when the actor URI is a label under the ship key.
 </Step>
 <Step>
 ### Validate the statement schema

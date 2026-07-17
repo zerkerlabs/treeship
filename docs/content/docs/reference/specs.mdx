@@ -1,0 +1,39 @@
+---
+title: Protocol specs index
+description: Every design spec in docs/specs/, with its real implementation status — frontiers get a spec before code, and this index says which frontiers have been reached.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Treeship's rule is **spec before code**: each protocol surface gets a design document in [`docs/specs/`](https://github.com/zerkerlabs/treeship/tree/main/docs/specs) before implementation. Specs ship in slices, so a spec being "done" is rarely binary — this index gives the honest status of each one as of v0.20, sourced from the [CHANGELOG](https://github.com/zerkerlabs/treeship/blob/main/CHANGELOG.md).
+
+<Callout type="warn">
+The `Status:` headers inside some spec files lag behind the shipped product (several still say "not implemented" for features that shipped releases ago). Until status is generated from the feature inventory, trust this index and the changelog over the file headers.
+</Callout>
+
+## Shipped
+
+| Spec | Status | Shipped as |
+|------|--------|-----------|
+| [per-actor-signing](https://github.com/zerkerlabs/treeship/blob/main/docs/specs/per-actor-signing.md) | Shipped | Per-agent keys + `agent_cert.v1` (v0.13); MCP/A2A bridges auto-provision keys (v0.15+) — the `proven (key-bound)` grade |
+| [agent-capability-cards](https://github.com/zerkerlabs/treeship/blob/main/docs/specs/agent-capability-cards.md) | Shipped | `attest card`, `verify-capability`, `revoke-capability` (v0.13); WASM `verifyCapability` |
+| [agent-resolver](https://github.com/zerkerlabs/treeship/blob/main/docs/specs/agent-resolver.md) | Shipped | Local `resolve` (v0.13), network `resolve --hub` + `publish` (v0.14) |
+| [transparency-log](https://github.com/zerkerlabs/treeship/blob/main/docs/specs/transparency-log.md) | Shipped | Merkle anchoring + `audit` (v0.14), witnessing + equivocation detection (v0.15) |
+| [merkle-consistency](https://github.com/zerkerlabs/treeship/blob/main/docs/specs/merkle-consistency.md) | Shipped | Consistency proofs + append-only audit chain (v0.15) |
+| [capability-provenance](https://github.com/zerkerlabs/treeship/blob/main/docs/specs/capability-provenance.md) | Shipped | The `captured` / `exercised` / `discovered` / `declared` grade system across cards, `resolve`, and `verify-capability` |
+| [work-history](https://github.com/zerkerlabs/treeship/blob/main/docs/specs/work-history.md) | Shipped (slices 1–4) | `session.v1` records (v0.16), `history`, `profile` / `verify-profile`, `match` (v0.18) |
+| [protocol-integration](https://github.com/zerkerlabs/treeship/blob/main/docs/specs/protocol-integration.md) | Shipped (slices 1–3) | MCP per-agent key provisioning, `--tools-json`, `--from-a2a` + A2A provable receipts |
+| [registry-topology](https://github.com/zerkerlabs/treeship/blob/main/docs/specs/registry-topology.md) | Shipped in behavior | Presentations, Merkle staples, challenge handshake (v0.17); the doc doubles as topology analysis |
+| [agent-invitations-rooms](https://github.com/zerkerlabs/treeship/blob/main/docs/specs/agent-invitations-rooms.md) | Shipped (phase 1) | `session invite` / `join` / `countersign`, `session_host` trust kind; countersigning hardened in v0.19 |
+
+## Partial or design-stage
+
+| Spec | Status | Notes |
+|------|--------|-------|
+| [private-verification](https://github.com/zerkerlabs/treeship/blob/main/docs/specs/private-verification.md) | Partial | Selective capability disclosure shipped in v0.20 (`present --disclose`); the statement-first ZK tiers remain design (the prior Groth16 path is quarantined) |
+| [memory-provenance-binding](https://github.com/zerkerlabs/treeship/blob/main/docs/specs/memory-provenance-binding.md) | Design | The why-believed axis: memory provider ledger contract (zmem.sh), quarantine-gated approvals, chain-root commitment, effect-status ladder. Marks SHIPPED vs NEW per section; phases 1–2 run on today's primitives |
+| [trusted-rooms](https://github.com/zerkerlabs/treeship/blob/main/docs/specs/trusted-rooms.md) | Draft | Product spec building on invitations/rooms |
+| [token-capture](https://github.com/zerkerlabs/treeship/blob/main/docs/specs/token-capture.md) | Draft | Working notes |
+| [local-dashboard](https://github.com/zerkerlabs/treeship/blob/main/docs/specs/local-dashboard.md) | Draft | A dashboard ships behind a hidden command; the spec is ahead of it |
+| [cyberlogic-trust-model](https://github.com/zerkerlabs/treeship/blob/main/docs/specs/cyberlogic-trust-model.md) | Theory, first draft | A first-principles account of Treeship's trust model |
+| [vision](https://github.com/zerkerlabs/treeship/blob/main/docs/specs/vision.md) | Living document | The roadmap source of truth |

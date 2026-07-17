@@ -1,6 +1,6 @@
 import type { MetadataRoute } from 'next';
 
-const baseUrl = 'https://treeship.dev';
+const baseUrl = 'https://docs.treeship.dev';
 
 export default function robots(): MetadataRoute.Robots {
   return {

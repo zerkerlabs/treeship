@@ -1,0 +1,68 @@
+---
+title: resolve
+description: Resolve an agent URI to a verifiable bundle — identity, current card, revocations, provenance grades — re-derived from artifacts, never from a stored verdict.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`treeship resolve` answers "who is this agent and what is it allowed to do?" Every field is re-derived from signed artifacts at resolve time — locally from your store, or over the network from a Hub with **your machine re-verifying everything** against your pinned trust roots.
+
+## Usage
+
+```bash
+treeship resolve <agent-uri> [--hub <url>]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--hub <URL>` | Resolve from a Hub over the network; the served bundle is re-verified client-side |
+| `--format json` | Machine-readable verdict |
+
+## Local mode
+
+```bash
+treeship resolve agent://deployer
+```
+
+```
+✓ agent resolved
+  agent:           agent://deployer
+  key:             key_97fe3be93ca7e2b7
+  key provenance:  captured (key-bound under AgentCert)
+  current card:    art_de2f79588c61614aa35548b3773348a0
+  declared tools:  deploy.*, git.push
+  capabilities:    checked (1/1 captured actions in scope)
+  capability mix:  0 captured, 1 exercised, 1 declared-only
+  behavior:        1 captured actions (1 in scope, 0 out)
+  status:          resolved (verified)
+```
+
+Grades follow the provenance discipline: **captured** = the machine observed it; **checked** = a claim cross-verified against captured evidence; **asserted** = a bare claim. Key provenance is `captured (key-bound under AgentCert)`, `asserted (registered, not pinned)`, or `asserted (no per-agent key)`. Capability status is `checked (…in scope)`, `checked with violations (… out of scope)`, or `asserted (card not key-bound)`. Overall `status` is `resolved (verified)` / `resolved (violations)` / `resolved (self-asserted)` / `REVOKED`.
+
+## Network mode
+
+```bash
+treeship resolve agent://deployer --hub https://api.treeship.dev
+```
+
+The Hub serves raw signed envelopes ([`GET /v1/agents`](/docs/api/agents)); your machine grades them:
+
+- `signature:` — `verified (trusted key)` (leaf pin), `verified (chain to pinned ship root)` (an `agent_cert.v1` signed by a key you pinned under `cert_issuer`), or `UNVERIFIED (key not in your trust roots)`.
+- `key_bound:` — `yes (AgentCert)` / `yes (AgentCert via ship chain)` / `no`.
+- `transparency:` — `anchored & verified (checkpoint #N)` when the card's inclusion proof re-verifies against a checkpoint signer you pinned under `hub_checkpoint`; honest degradations otherwise (`anchored, but checkpoint signer not in your trust roots`, `not anchored`, …).
+
+## JSON output
+
+Local: `{ verdict, ok, agent, key, key_provenance, current_card, declared_tools, capabilities, capability_mix, captured_actions, in_scope, out_of_scope, revocation }`.
+Network adds: `{ hub, signature, key_bound, via_chain, chain_cert, transparency }`.
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Resolved clean |
+| `1` | Hostile verdict: revoked, out-of-scope violations on a key-bound card, or (network) unverified signature |
+
+<Callout type="info">
+The Hub proposes; the client decides. See [Agent resolution](/docs/concepts/agent-resolution) and [Verification surfaces](/docs/concepts/verification-surfaces).
+</Callout>

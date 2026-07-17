@@ -4,8 +4,11 @@
   "private": true,
   "scripts": {
     "sync:changelog": "node scripts/sync-changelog.mjs",
-    "predev": "node scripts/sync-changelog.mjs",
-    "prebuild": "node scripts/sync-changelog.mjs",
+    "sync:agents-matrix": "node scripts/sync-agents-matrix.mjs",
+    "sync:feature-matrix": "node scripts/sync-feature-matrix.mjs",
+    "sync:all": "node scripts/sync-changelog.mjs && node scripts/sync-agents-matrix.mjs && node scripts/sync-feature-matrix.mjs",
+    "predev": "npm run sync:all",
+    "prebuild": "npm run sync:all",
     "dev": "next dev --port 3001",
     "build": "next build",
     "start": "next start",
@@ -23,6 +26,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4.0.0",
     "@types/node": "^20",
+    "yaml": "^2.9.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "tailwindcss": "^4.0.0",

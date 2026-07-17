@@ -41,10 +41,10 @@ Re-verifies everything against **your** trust roots, no network required:
   status:      verified (key-bound, anchored, live)
 ```
 
-- **Signature / key-bound** — direct pin, or the certificate-chain walk to a pinned `ship` root (see [The Agent Handshake](/docs/concepts/agent-handshake)).
+- **Signature / key-bound** — a direct pin of the agent key (`--kind agent_cert`), or the certificate-chain walk to a ship key you pinned under `--kind cert_issuer` (see [The Agent Handshake](/docs/concepts/agent-handshake)). The old single `ship` kind is deprecated and inert.
 - **Staple** — checkpoint signature checked against your `hub_checkpoint` roots; the card's inclusion re-proved offline. `--max-staple-age 30s|15m|2h|1d` turns your freshness tolerance into an enforced verdict (`STALE` past it; unknown age fails closed under a bound).
 - **Challenge** — pass the nonce **you** issued; the response is checked only against the key the card verification itself established. A replayed response reports `answers a DIFFERENT challenge (replay?)`.
-- **Revocation** — authorized revocations (the card's own key, or a pinned `ship` root) flip the status to `REVOKED`. Absence is honestly bounded: `current as of the staple`.
+- **Revocation** — authorized revocations (the card's own key, or a ship key pinned under `--kind revoker`) flip the status to `REVOKED`. Absence is honestly bounded: `current as of the staple`.
 
 <Callout type="warn">
 A presentation without `--challenge` proves the **record**, not the

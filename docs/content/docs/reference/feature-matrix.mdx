@@ -1,15 +1,17 @@
 ---
 title: Feature matrix
-description: Every shipped Treeship capability, with status, CLI surface, and docs.
+description: Every shipped Treeship capability, with status, CLI surface, and docs. Generated from feature-inventory.yml.
 ---
+
+{/* GENERATED FILE — DO NOT EDIT.
+    Source: docs/feature-inventory.yml
+    Generator: docs/scripts/sync-feature-matrix.mjs (runs on prebuild; CI diffs it). */}
 
 This page is the canonical list of what Treeship actually ships today. If a capability is described in a blog post or a CHANGELOG entry but does not appear here, treat it as not present.
 
 ## Source of truth
 
-The hand-maintained source is [`docs/feature-inventory.yml`](https://github.com/zerkerlabs/treeship/blob/main/docs/feature-inventory.yml) in the repo. A small linter at [`scripts/check-feature-inventory.py`](https://github.com/zerkerlabs/treeship/blob/main/scripts/check-feature-inventory.py) walks every entry and warns when a listed CLI command, docs page, test file, or package manifest cannot be found. The linter does not fail builds today; that is a deliberate later step once the inventory has burned in.
-
-This MDX page is hand-maintained from the YAML. Auto-generation from YAML at build time is on the roadmap but intentionally not in the bootstrap PR. If you change one, change the other.
+This page is **generated** from [`docs/feature-inventory.yml`](https://github.com/zerkerlabs/treeship/blob/main/docs/feature-inventory.yml) on every build — edit the YAML, never this file. A linter at [`scripts/check-feature-inventory.py`](https://github.com/zerkerlabs/treeship/blob/main/scripts/check-feature-inventory.py) validates every entry against the codebase (CLI commands, doc paths, test paths exist), and CI fails if this page and the YAML disagree.
 
 ## Status taxonomy
 
@@ -18,8 +20,8 @@ This MDX page is hand-maintained from the YAML. Auto-generation from YAML at bui
 | `stable` | Shipped, documented, tested. No known gaps. Safe to depend on. |
 | `beta` | Shipped and used in practice. Rough edges or thin docs. |
 | `experimental` | Shipped behind a build flag or with explicit caveats. May change. |
+| `quarantined` | Shipped code found unsound; fails closed and is non-authoritative. Kept as a marker, not a feature. |
 | `roadmap` | Designed or specced. Not implemented. Listed here so you know it is on the radar. |
-| `internal` | Exists in code but is not a user-facing feature. Supports something else. |
 | `deprecated` | Still supported, but discouraged. A replacement exists. |
 
 Pick `stable` only when the code, docs, and tests all line up. If the docs page is missing, the right status is `beta`, not `stable`.
@@ -29,67 +31,83 @@ Pick `stable` only when the code, docs, and tests all line up. If the docs page 
 | Feature | Status | CLI | Docs |
 |---|---|---|---|
 | Receipts (signed artifacts) | `stable` | `treeship attest action`, `treeship wrap`, `treeship log` | [Artifacts](/docs/concepts/artifacts) |
-| Session reports | `stable` | `treeship session start / close / report` | [Session receipts](/docs/concepts/session-receipts) |
-| Session packages (.treeship bundles) | `stable` | `treeship package inspect / verify`, `treeship bundle export / import` | [Package CLI](/docs/cli/package) |
-| Offline verifier (Rust CLI) | `stable` | `treeship verify`, `treeship package verify`, `treeship merkle verify` | [Verify CLI](/docs/cli/verify) |
-| WASM verifier (`@treeship/verify`) | `stable` | -- | [Verify SDK](/docs/sdk/verify), [Edge runtime guide](/docs/guides/edge-runtime) |
-| Merkle checkpoints | `stable` | `treeship checkpoint`, `treeship merkle proof / status / publish` | [Merkle proofs](/docs/guides/merkle-proofs) |
-| Hub-checkpoint consumer verifier | `stable` | -- | [Merkle checkpoint API](/docs/api/merkle-checkpoint) |
-| Trust roots | `beta` | `treeship trust list / add / remove` | covered inline in security notes; no dedicated page yet |
+| Session reports | `stable` | `treeship session start`, `treeship session close`, `treeship session report` | [Session Receipts](/docs/concepts/session-receipts), [session](/docs/cli/session) |
+| Session packages (.treeship bundles) | `stable` | `treeship package inspect`, `treeship package verify`, `treeship bundle export`, `treeship bundle import` | [package](/docs/cli/package), [bundle](/docs/cli/bundle) |
+| Offline verifier (Rust CLI) | `stable` | `treeship verify`, `treeship package verify`, `treeship merkle verify` | [verify](/docs/cli/verify), [Verification surfaces](/docs/concepts/verification-surfaces) |
+| WASM verifier (@treeship/verify) | `stable` | -- | [@treeship/verify](/docs/sdk/verify), [Verifying receipts on the edge](/docs/guides/edge-runtime) |
+| Merkle checkpoints | `stable` | `treeship checkpoint`, `treeship merkle proof`, `treeship merkle status`, `treeship merkle publish` | [Merkle proofs](/docs/guides/merkle-proofs), [merkle](/docs/cli/merkle) |
+| Merkle consistency proofs (append-only evidence) | `stable` | `treeship merkle publish` | [Merkle consistency proofs](/docs/api/merkle-consistency) |
+| Hub-checkpoint consumer verifier | `stable` | -- | [Merkle Checkpoints](/docs/api/merkle-checkpoint) |
+| Hub transport (attach, push, pull, DPoP) | `stable` | `treeship hub attach`, `treeship hub push`, `treeship hub pull`, `treeship hub status` | [Hub API Overview](/docs/api/overview), [hub](/docs/cli/hub) |
+| Trust roots (split kinds) | `stable` | `treeship trust list`, `treeship trust add`, `treeship trust remove`, `treeship keys export` | [trust](/docs/cli/trust), [Trust model](/docs/concepts/trust-model) |
 
 ## Identity, approval, attribution
 
 | Feature | Status | CLI | Docs |
 |---|---|---|---|
-| Approval Use Journal | `stable` | `treeship approval uses / status`, `treeship approval journal verify` | [Approval Use Journal](/docs/concepts/approval-use-journal) |
-| Agent Identity Certificates | `beta` | `treeship agent register` | [Agent identity](/docs/concepts/agent-identity) |
-| Agent Cards | `stable` | `treeship agents`, `agents review / approve / remove` | [Agent Cards](/docs/concepts/agent-cards) |
-| Harness Manager | `stable` | `treeship harness list / inspect / smoke` | [Harnesses](/docs/concepts/harnesses) |
+| Approval Use Journal | `stable` | `treeship approval uses`, `treeship approval status`, `treeship approval journal verify` | [Approval Use Journal](/docs/concepts/approval-use-journal), [Approval Authority](/docs/concepts/approval-authority) |
+| Per-agent keys & onboarding | `stable` | `treeship onboard`, `treeship agent register` | [Trust model](/docs/concepts/trust-model), [How it works](/docs/guides/how-it-works) |
+| Agent Identity Certificates | `beta` | `treeship agent register` | [Agent Identity](/docs/concepts/agent-identity) |
+| Agent Cards | `stable` | `treeship agents`, `treeship agents review`, `treeship agents approve`, `treeship agents remove` | [Agent Cards](/docs/concepts/agent-cards), [agents](/docs/cli/agents) |
+| Capability cards & provenance grades | `stable` | `treeship attest card`, `treeship verify-capability`, `treeship revoke-capability` | [Capability Cards](/docs/concepts/capability-cards) |
+| Harness Manager | `stable` | `treeship harness list`, `treeship harness inspect`, `treeship harness smoke` | [Agent Harnesses](/docs/concepts/harnesses), [harness](/docs/cli/harness) |
+| Multi-agent session invitations | `beta` | `treeship session invite`, `treeship session join`, `treeship session countersign` | [Multi-Agent Sessions](/docs/concepts/multi-agent-sessions) |
+
+## Provenance & discovery
+
+| Feature | Status | CLI | Docs |
+|---|---|---|---|
+| Agent resolver (local + network) | `stable` | `treeship resolve`, `treeship publish` | [resolve](/docs/cli/resolve), [Agent Resolution](/docs/concepts/agent-resolution) |
+| Transparency log & audit | `stable` | `treeship audit` | [audit](/docs/cli/audit), [Agent registry endpoints](/docs/api/agents) |
+| Work history (session.v1 records) | `beta` | `treeship history` | [history](/docs/cli/history) |
+| Recomputable agent profiles | `beta` | `treeship profile`, `treeship verify-profile` | [profile / verify-profile](/docs/cli/profile) |
+| Evidence-based agent matching | `beta` | `treeship match` | [match](/docs/cli/match) |
+| Presentations & challenge handshake | `beta` | `treeship present`, `treeship verify-presentation` | [present / verify-presentation](/docs/cli/present), [The Agent Handshake](/docs/concepts/agent-handshake) |
+| Selective capability disclosure | `beta` | `treeship present` | [present / verify-presentation](/docs/cli/present) |
+| Portable receipt export + reference verifier | `stable` | `treeship receipt export` | [receipt export](/docs/cli/receipt) |
 
 ## Capture surfaces
 
 | Feature | Status | CLI | Docs |
 |---|---|---|---|
-| Background daemon | `beta` | `treeship daemon start / stop / status` | [Daemon CLI](/docs/cli/daemon) |
-| OpenTelemetry bridge | `experimental` | `treeship otel test / status / export` (behind `--features otel`) | [OTel CLI](/docs/cli/otel) |
-| MCP stdio server (`@treeship/mcp`) | `stable` | -- | [MCP integration](/docs/integrations/mcp), [MCP SDK](/docs/sdk/mcp) |
-| A2A bridge (`@treeship/a2a`) | `beta` | -- | [A2A integration](/docs/integrations/a2a) |
+| Background daemon | `beta` | `treeship daemon start`, `treeship daemon stop`, `treeship daemon status` | [daemon](/docs/cli/daemon) |
+| OpenTelemetry bridge | `experimental` | `treeship otel test`, `treeship otel status`, `treeship otel export` | [otel](/docs/cli/otel) |
+| MCP stdio server (@treeship/mcp) | `stable` | -- | [@treeship/mcp](/docs/integrations/mcp), [@treeship/mcp](/docs/sdk/mcp) |
+| A2A bridge (@treeship/a2a) | `beta` | -- | [@treeship/a2a](/docs/integrations/a2a) |
 
 ## Supply chain
 
 | Feature | Status | CLI | Docs |
 |---|---|---|---|
-| npm binary SHA-256 integrity check | `stable` | -- (runs at `npm install`) | covered in [Install guide](/docs/guides/install) |
+| npm binary SHA-256 integrity check | `stable` | -- | -- |
 
 ## Agent integrations
 
 | Feature | Status | CLI | Docs |
 |---|---|---|---|
-| Claude Code | `stable` | `treeship add` | [Claude Code](/docs/integrations/claude-code) |
-| Cursor | `stable` | `treeship add` | [Cursor](/docs/integrations/cursor) |
-| Codex | `stable` | `treeship add` | [Codex](/docs/integrations/codex) |
-| OpenClaw | `beta` | `treeship add` | [OpenClaw](/docs/integrations/openclaw) |
-| Hermes | `beta` | `treeship add` | [Hermes](/docs/integrations/hermes) |
-| Generic MCP client | `stable` | -- | [MCP integration](/docs/integrations/mcp) |
-| Universal Treeship SKILL.md | `stable` | -- | [Agent skills](/docs/integrations/agent-skills) |
-
-Kimi Code CLI consumes the universal SKILL.md but is not a detected surface in `treeship add --discover`. Tracked under the agent-skills entry.
+| Integration -- Claude Code | `stable` | -- | [Claude Code](/docs/integrations/claude-code) |
+| Integration -- Cursor | `stable` | -- | [Cursor](/docs/integrations/cursor) |
+| Integration -- Codex | `stable` | -- | [Codex](/docs/integrations/codex) |
+| Integration -- OpenClaw | `beta` | -- | [OpenClaw](/docs/integrations/openclaw) |
+| Integration -- Hermes | `beta` | -- | [Hermes](/docs/integrations/hermes) |
+| Integration -- generic MCP client | `stable` | -- | [@treeship/mcp](/docs/integrations/mcp) |
+| Universal Treeship SKILL.md | `stable` | -- | [Agent Skills](/docs/integrations/agent-skills) |
 
 ## Zero-knowledge proofs
 
 | Feature | Status | CLI | Docs |
 |---|---|---|---|
-| Circom Groth16 (snarkjs shell-out) | `quarantined` | `treeship prove` / `verify-proof` fail closed (forgeable as implemented) | [Zero knowledge](/docs/concepts/zero-knowledge) |
-| RISC Zero local prover (prove-chain) | `experimental` | `treeship prove-chain` | [Zero knowledge](/docs/concepts/zero-knowledge) |
-| Selective-disclosure ZK presentation (`present --zk`) | `designed` | see [ZK verification spec](https://github.com/treeship/treeship/blob/main/docs/specs/private-verification.md) | [Zero knowledge](/docs/concepts/zero-knowledge) |
-| RISC Zero Bonsai (hosted proving) | `roadmap` | -- | -- |
-| TLSNotary (verifiable TLS evidence) | `roadmap` | `treeship zk-tls-setup` (setup stub) | -- |
+| ZK -- Circom Groth16 (snarkjs shell-out) | `quarantined` | `treeship prove`, `treeship verify-proof`, `treeship zk-setup` | [Zero-knowledge proofs](/docs/concepts/zero-knowledge) |
+| ZK -- RISC Zero local prover (prove-chain) | `experimental` | `treeship prove-chain` | [Zero-knowledge proofs](/docs/concepts/zero-knowledge) |
+| ZK -- Circom native pure-Rust (ark-circom) | `roadmap` | -- | -- |
+| ZK -- RISC Zero Bonsai (hosted proving) | `roadmap` | -- | -- |
+| ZK -- TLSNotary (verifiable TLS evidence) | `roadmap` | `treeship zk-tls-setup` | -- |
 
-Both `zk` CLI paths require the `--features zk` build flag. The Bonsai path is gated on a v0.6.x milestone per `packages/zk-risc0/src/prover.rs`; the README is explicit that TLSNotary is waiting on the upstream alpha to stabilize.
+Both `zk` CLI paths require the `--features zk` build flag; the `zk` feature is pre-release and nothing in the default trust path depends on it.
 
 ## How to update this page
 
-1. Edit `docs/feature-inventory.yml`.
-2. Run `python3 scripts/check-feature-inventory.py` -- fix any warnings about your own entries.
-3. Mirror the change in this MDX file. (Auto-generation from YAML is roadmap.)
+1. Edit `docs/feature-inventory.yml` (add `section:` so the entry lands in the right table).
+2. Run `python3 scripts/check-feature-inventory.py --strict` — fix any warnings about your own entries.
+3. `npm run sync:feature-matrix` in `docs/` (or just build — prebuild regenerates it).
 4. If you are adding a new feature, surface it in the next CHANGELOG entry too.
