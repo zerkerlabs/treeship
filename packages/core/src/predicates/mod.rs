@@ -46,6 +46,7 @@ const REGISTRY: &[(&str, &str)] = &[
         "memory.quarantine-check.v1",
         include_str!("schemas/memory.quarantine-check.v1.json"),
     ),
+    ("blocked.v1", include_str!("schemas/blocked.v1.json")),
     ("boundary.v1", include_str!("schemas/boundary.v1.json")),
     ("agent_card.v1", include_str!("schemas/agent_card.v1.json")),
     (
@@ -338,6 +339,48 @@ mod tests {
                 suffix: "memory.quarantine-check.v1".into(),
                 field: "decision_seq".into(),
                 expected: "\"integer\"".into()
+            }
+        );
+    }
+
+    #[test]
+    fn blocked_valid_passes() {
+        let payload = json!({
+            "reason_class": "quarantine_triggered",
+            "refused_kind": "approval",
+            "approver": "human://alice",
+            "irreversibility": "one_way_consequential",
+            "description": "quarantine check reports DIRTY",
+            "quarantine_receipt": "art_deadbeef00112233"
+        });
+        assert!(validate("blocked.v1", Some(&payload)).is_ok());
+    }
+
+    #[test]
+    fn blocked_out_of_vocabulary_reason_fails_closed() {
+        // A refusal record whose reason is not in the closed vocabulary
+        // must not validate -- otherwise "blocked" becomes a freeform
+        // label that policy checks cannot rely on (AUD-06).
+        let payload = json!({
+            "reason_class": "just_felt_like_it",
+            "refused_kind": "approval"
+        });
+        let err = validate("blocked.v1", Some(&payload)).unwrap_err();
+        assert!(
+            matches!(err, PredicateError::NotInEnum { ref field, .. } if field == "reason_class"),
+            "expected NotInEnum on reason_class, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn blocked_missing_reason_fails_closed() {
+        let payload = json!({ "refused_kind": "approval" });
+        let err = validate("blocked.v1", Some(&payload)).unwrap_err();
+        assert_eq!(
+            err,
+            PredicateError::MissingField {
+                suffix: "blocked.v1".into(),
+                field: "reason_class".into()
             }
         );
     }
