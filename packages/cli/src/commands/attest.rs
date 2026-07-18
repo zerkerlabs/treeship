@@ -286,18 +286,19 @@ pub fn approval(args: ApprovalArgs, printer: &Printer) -> Result<(), Box<dyn std
         Some(scope)
     };
 
-    // Irreversibility gate (memory-provenance-binding §2.4-2.5).
+    // Irreversibility gate (memory-provenance-binding §2.4-2.6).
     // A supplied quarantine receipt is validated whenever present -- we
     // never sign a reference to evidence we did not check. Consequential
     // and terminal classes REQUIRE that evidence; terminal additionally
     // requires a human approver. Fail-closed: a dirty, missing, or
-    // unverifiable check refuses the grant.
-    if let Some(rid) = &args.quarantine_receipt {
-        validate_quarantine_receipt(&ctx, rid)?;
-    }
+    // unverifiable check refuses the grant -- and the refusal itself is
+    // recorded as a signed blocked.v1 artifact (§2.6), so "the guardrail
+    // fired" is evidence rather than a narrative.
+    //
+    // The vocabulary check stays a plain usage error (no blocked
+    // artifact): clap already prevents it for CLI callers, and a typo is
+    // not a policy refusal.
     if let Some(class) = &args.irreversibility {
-        // Clap constrains the vocabulary for CLI callers; re-check here so
-        // programmatic callers get the same closed-vocabulary behavior.
         if !is_irreversibility_class(class) {
             return Err(format!(
                 "unknown irreversibility class `{class}`\n  valid: {}",
@@ -305,22 +306,51 @@ pub fn approval(args: ApprovalArgs, printer: &Printer) -> Result<(), Box<dyn std
             )
             .into());
         }
-        if class == "one_way_terminal" && !args.approver.starts_with("human://") {
-            return Err(format!(
-                "one_way_terminal grants require a human approver, got `{}`\n  \
-                 fix: --approver human://<name>",
-                args.approver
-            )
-            .into());
+    }
+    let gate: Result<(), (&'static str, String)> = (|| {
+        if let Some(rid) = &args.quarantine_receipt {
+            validate_quarantine_receipt(&ctx, rid)
+                .map_err(|e| ("quarantine_triggered", e.to_string()))?;
         }
-        if irreversibility_requires_quarantine(class) && args.quarantine_receipt.is_none() {
-            return Err(format!(
-                "a `{class}` grant requires memory quarantine evidence\n  \
-                 the provider mints it, then pass: --quarantine-receipt <artifact-id>\n  \
-                 (a clean memory.quarantine-check.v1 receipt signed by a key pinned under agent_cert)"
-            )
-            .into());
+        if let Some(class) = &args.irreversibility {
+            if class == "one_way_terminal" && !args.approver.starts_with("human://") {
+                return Err((
+                    "human_escalation_pending",
+                    format!(
+                        "one_way_terminal grants require a human approver, got `{}`\n  \
+                         fix: --approver human://<name>",
+                        args.approver
+                    ),
+                ));
+            }
+            if irreversibility_requires_quarantine(class) && args.quarantine_receipt.is_none() {
+                return Err((
+                    "quarantine_triggered",
+                    format!(
+                        "a `{class}` grant requires memory quarantine evidence\n  \
+                         the provider mints it, then pass: --quarantine-receipt <artifact-id>\n  \
+                         (a clean memory.quarantine-check.v1 receipt signed by a key pinned under agent_cert)"
+                    ),
+                ));
+            }
         }
+        Ok(())
+    })();
+    if let Err((reason_class, msg)) = gate {
+        // Best-effort: a failure to record the refusal must never mask
+        // the refusal itself.
+        let blocked = record_approval_refusal(
+            &ctx,
+            reason_class,
+            msg.lines().next().unwrap_or(reason_class),
+            &args.approver,
+            args.irreversibility.as_deref(),
+            args.quarantine_receipt.as_deref(),
+        );
+        return Err(match blocked {
+            Some(id) => format!("{msg}\n  refusal recorded: {id}").into(),
+            None => msg.into(),
+        });
     }
 
     // Generate a cryptographically random nonce for approval binding.
@@ -402,6 +432,57 @@ pub fn approval(args: ApprovalArgs, printer: &Printer) -> Result<(), Box<dyn std
     ));
     printer.blank();
     Ok(())
+}
+
+/// Record a refused approval mint as a signed blocked.v1 receipt
+/// (memory-provenance-binding §2.6). Best-effort by contract: every
+/// failure path returns None so the caller's refusal error is never
+/// masked by a recording problem. The artifact is written to storage
+/// and chained like any receipt, but deliberately does NOT move the
+/// `last` pointer -- `verify last` must keep meaning "the artifact you
+/// just minted on purpose", not a refusal tombstone.
+fn record_approval_refusal(
+    ctx: &ctx::Ctx,
+    reason_class: &str,
+    description: &str,
+    approver: &str,
+    irreversibility: Option<&str>,
+    quarantine_receipt: Option<&str>,
+) -> Option<String> {
+    let mut payload = serde_json::json!({
+        "reason_class": reason_class,
+        "refused_kind": "approval",
+        "approver": approver,
+        "description": description,
+    });
+    if let Some(c) = irreversibility {
+        payload["irreversibility"] = c.into();
+    }
+    if let Some(r) = quarantine_receipt {
+        payload["quarantine_receipt"] = r.into();
+    }
+    // Never mint an invalid refusal record: if it does not satisfy its
+    // own predicate, recording is skipped rather than degraded.
+    treeship_core::predicates::validate("blocked.v1", Some(&payload)).ok()?;
+
+    let mut stmt = ReceiptStatement::new(&format!("ship://{}", ctx.config.ship_id), "blocked.v1");
+    stmt.payload = Some(payload);
+    let signer = ctx.keys.default_signer().ok()?;
+    let pt = payload_type("receipt");
+    let result = sign(&pt, &stmt, signer.as_ref()).ok()?;
+    ctx.storage
+        .write(&Record {
+            artifact_id: result.artifact_id.clone(),
+            digest: result.digest.clone(),
+            payload_type: pt,
+            key_id: signer.key_id().to_string(),
+            signed_at: stmt.timestamp.clone(),
+            parent_id: None,
+            envelope: result.envelope,
+            hub_url: None,
+        })
+        .ok()?;
+    Some(result.artifact_id)
 }
 
 /// Validate a memory.quarantine-check.v1 receipt as gate evidence for an

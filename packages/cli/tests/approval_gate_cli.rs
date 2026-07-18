@@ -166,8 +166,35 @@ impl Workspace {
     }
 }
 
+impl Workspace {
+    /// Extract the blocked.v1 artifact id from a refusal output and
+    /// assert it verifies as a signed local artifact (§2.6: the refusal
+    /// is evidence, not just an error message).
+    fn assert_refusal_recorded(&self, output: &str) -> String {
+        let id = output
+            .split("refusal recorded: ")
+            .nth(1)
+            .and_then(|s| s.split_whitespace().next())
+            .unwrap_or_else(|| panic!("no `refusal recorded:` in refusal output: {output}"))
+            .to_string();
+        let out = self
+            .cmd()
+            .args(["verify", &id, "--no-chain", "--config"])
+            .arg(self.config())
+            .output()
+            .expect("verify blocked artifact");
+        assert!(
+            out.status.success(),
+            "blocked artifact {id} must verify: stdout={} stderr={}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr),
+        );
+        id
+    }
+}
+
 #[test]
-fn consequential_without_receipt_is_refused() {
+fn consequential_without_receipt_is_refused_and_recorded() {
     let ws = Workspace::new();
     ws.init();
     let (ok, output) = ws.approve_consequential(None, "human://alice", "one_way_consequential");
@@ -176,6 +203,7 @@ fn consequential_without_receipt_is_refused() {
         output.contains("requires memory quarantine evidence"),
         "refusal must say why: {output}"
     );
+    ws.assert_refusal_recorded(&output);
 }
 
 #[test]
@@ -189,6 +217,7 @@ fn terminal_requires_human_approver() {
         output.contains("human approver"),
         "refusal must name the fix: {output}"
     );
+    ws.assert_refusal_recorded(&output);
 }
 
 #[test]
@@ -229,6 +258,9 @@ fn dirty_verdict_is_refused() {
         output.contains("mem_poisoned1"),
         "refusal must surface the quarantined triggers: {output}"
     );
+    // The refusal record links back to the dirty check receipt.
+    let blocked = ws.assert_refusal_recorded(&output);
+    assert_ne!(blocked, receipt, "blocked artifact is distinct from the check receipt");
 }
 
 #[test]

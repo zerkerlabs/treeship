@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://treeship.dev/schemas/blocked.v1.json",
+  "title": "blocked.v1",
+  "description": "Receipt payload recording a REFUSED action or grant: the guardrail fired and this is the signed evidence. Negative space made verifiable -- without it, 'the safety constraint was evaluated' is a narrative. Minted best-effort by the refusing gate (e.g. the approval irreversibility gate) and chained like any artifact; see docs/specs/memory-provenance-binding.md §2.6. Metadata only: evidence travels by reference or digest, never inline.",
+  "type": "object",
+  "required": ["reason_class", "refused_kind"],
+  "properties": {
+    "reason_class": {
+      "description": "Why the refusal fired. Closed vocabulary (AUD-06): an out-of-vocabulary reason must not pass validation.",
+      "type": "string",
+      "enum": [
+        "policy_threshold_exceeded",
+        "quarantine_triggered",
+        "scope_violation",
+        "operator_revocation",
+        "human_escalation_pending"
+      ]
+    },
+    "refused_kind": {
+      "description": "What was refused.",
+      "type": "string",
+      "enum": ["approval", "action"]
+    },
+    "approver": {
+      "description": "Approver URI of the refused grant, when the refusal was an approval mint.",
+      "type": "string"
+    },
+    "actor": {
+      "description": "Actor URI of the refused action, when the refusal was an action.",
+      "type": "string"
+    },
+    "irreversibility": {
+      "description": "Declared irreversibility class of the refused grant/action, when one was declared.",
+      "type": "string"
+    },
+    "description": {
+      "description": "One-line human-readable refusal reason. Keep it short; detailed evidence travels by reference, not inline.",
+      "type": "string"
+    },
+    "quarantine_receipt": {
+      "description": "Artifact id of the memory.quarantine-check.v1 receipt involved in the refusal (e.g. the DIRTY verdict), when one exists.",
+      "type": "string"
+    },
+    "evidence_digest": {
+      "description": "sha256:<hex> digest of a private evidence object backing the refusal, when the producer keeps one.",
+      "type": "string"
+    },
+    "reevaluate_when": {
+      "description": "Condition or RFC 3339 time after which the refused request may be re-attempted, when the block is conditional.",
+      "type": "string"
+    }
+  }
+}
