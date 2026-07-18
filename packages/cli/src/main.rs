@@ -1522,6 +1522,19 @@ struct AttestApprovalArgs {
     /// refuses, since unscoped approvals are footguns.
     #[arg(long)]
     unscoped: bool,
+
+    /// Irreversibility class of the actions this approval authorizes.
+    /// one_way_consequential and one_way_terminal require a clean
+    /// --quarantine-receipt; one_way_terminal additionally requires a
+    /// human:// approver. Signed into the grant.
+    #[arg(long, value_name = "CLASS", value_parser = ["two_way", "one_way_recoverable", "one_way_consequential", "one_way_terminal"])]
+    irreversibility: Option<String>,
+
+    /// Artifact ID of a memory.quarantine-check.v1 receipt gating this
+    /// grant. Must be locally stored, schema-valid, clean:true, and
+    /// signed by a key pinned under agent_cert (the memory provider).
+    #[arg(long, value_name = "ARTIFACT_ID")]
+    quarantine_receipt: Option<String>,
 }
 
 #[derive(Args)]
@@ -2778,6 +2791,8 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                     allowed_subjects: a.allowed_subject.clone(),
                     max_uses: a.max_uses,
                     unscoped: a.unscoped,
+                    irreversibility: a.irreversibility.clone(),
+                    quarantine_receipt: a.quarantine_receipt.clone(),
                     config: cli.config.clone(),
                 },
                 printer,

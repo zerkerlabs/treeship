@@ -121,6 +121,8 @@ treeship attest approval [OPTIONS] --approver <URI>
 | `--allowed-subject <URI>` | Scope: subject URI(s) permitted as the action's target. Repeatable. Matched against ActionStatement.subject.&#123;uri \| artifact_id \| digest&#125; |
 | `--max-uses <N>` | Scope: maximum number of actions this approval may authorise. Signed into the grant for future ledger enforcement; verify reports replay posture honestly and does NOT claim global single-use |
 | `--unscoped` | Explicit opt-in to an unscoped (bearer) approval. Required when no --allowed-* or --max-uses flag is set; without it the CLI refuses, since unscoped approvals are footguns |
+| `--irreversibility <CLASS>` | Irreversibility class of the actions this approval authorizes. one_way_consequential and one_way_terminal require a clean --quarantine-receipt; one_way_terminal additionally requires a human:// approver. Signed into the grant [possible values: two_way, one_way_recoverable, one_way_consequential, one_way_terminal] |
+| `--quarantine-receipt <ARTIFACT_ID>` | Artifact ID of a memory.quarantine-check.v1 receipt gating this grant. Must be locally stored, schema-valid, clean:true, and signed by a key pinned under agent_cert (the memory provider) |
 
 ### `treeship attest handoff`
 

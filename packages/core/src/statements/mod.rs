@@ -223,8 +223,48 @@ pub struct ApprovalStatement {
     #[serde(rename = "policyRef", skip_serializing_if = "Option::is_none")]
     pub policy_ref: Option<String>,
 
+    /// Irreversibility class of the actions this approval authorizes.
+    /// One of `IRREVERSIBILITY_CLASSES` (fail-closed: producers must
+    /// reject any other value; absent means undeclared, the pre-existing
+    /// behavior). Consequential-or-worse classes gate on memory
+    /// quarantine evidence at minting; see
+    /// docs/specs/memory-provenance-binding.md §2.4-2.5.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub irreversibility: Option<String>,
+
+    /// Artifact id of the `memory.quarantine-check.v1` receipt that
+    /// gated this grant. Signed into the approval so the evidence link
+    /// is tamper-evident: a verifier can walk grant -> check receipt ->
+    /// provider key -> chain root.
+    #[serde(rename = "quarantineReceipt", skip_serializing_if = "Option::is_none")]
+    pub quarantine_receipt: Option<String>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meta: Option<serde_json::Value>,
+}
+
+/// The irreversibility vocabulary, ordered from most to least recoverable.
+/// A grant's class is a claim about the worst-case effect of the actions it
+/// authorizes, not a property Treeship can observe -- but the vocabulary is
+/// closed so a self-declared class cannot smuggle an out-of-vocabulary value
+/// past a policy check (the AUD-06 rule, applied here).
+pub const IRREVERSIBILITY_CLASSES: &[&str] = &[
+    "two_way",
+    "one_way_recoverable",
+    "one_way_consequential",
+    "one_way_terminal",
+];
+
+/// True iff `class` is in the closed irreversibility vocabulary.
+pub fn is_irreversibility_class(class: &str) -> bool {
+    IRREVERSIBILITY_CLASSES.contains(&class)
+}
+
+/// True iff a grant of this class requires memory quarantine evidence at
+/// minting (consequential or worse). Unknown classes return true: an
+/// unrecognized claim gets the strictest treatment, never a bypass.
+pub fn irreversibility_requires_quarantine(class: &str) -> bool {
+    !matches!(class, "two_way" | "one_way_recoverable")
 }
 
 /// Records that work moved from one actor/domain to another.
@@ -483,6 +523,8 @@ impl ApprovalStatement {
             nonce: nonce.into(),
             scope: None,
             policy_ref: None,
+            irreversibility: None,
+            quarantine_receipt: None,
             meta: None,
         }
     }
@@ -666,6 +708,53 @@ mod tests {
         let decoded: ApprovalStatement = result.envelope.unmarshal_statement().unwrap();
         assert_eq!(decoded.nonce, "nonce_abc123");
         assert_eq!(decoded.scope.unwrap().max_actions, Some(1));
+    }
+
+    #[test]
+    fn approval_without_irreversibility_keeps_canonical_bytes() {
+        // The new optional fields must not appear in the serialized payload
+        // when absent -- content addressing means any accidental emission
+        // would change every existing approval's artifact id.
+        let approval = ApprovalStatement::new("human://alice", "nonce_abc123");
+        let bytes = serde_json::to_string(&approval).unwrap();
+        assert!(!bytes.contains("irreversibility"));
+        assert!(!bytes.contains("quarantineReceipt"));
+    }
+
+    #[test]
+    fn approval_irreversibility_fields_roundtrip_signed() {
+        let signer = Ed25519Signer::generate("key_human").unwrap();
+        let mut approval = ApprovalStatement::new("human://alice", "nonce_abc123");
+        approval.irreversibility = Some("one_way_consequential".into());
+        approval.quarantine_receipt = Some("art_deadbeef00112233".into());
+
+        let pt = payload_type("approval");
+        let result = sign(&pt, &approval, &signer).unwrap();
+        let decoded: ApprovalStatement = result.envelope.unmarshal_statement().unwrap();
+        assert_eq!(
+            decoded.irreversibility.as_deref(),
+            Some("one_way_consequential")
+        );
+        assert_eq!(
+            decoded.quarantine_receipt.as_deref(),
+            Some("art_deadbeef00112233")
+        );
+    }
+
+    #[test]
+    fn irreversibility_vocabulary_is_closed_and_fails_strict() {
+        for c in IRREVERSIBILITY_CLASSES {
+            assert!(is_irreversibility_class(c));
+        }
+        assert!(!is_irreversibility_class("reversible"));
+        assert!(!is_irreversibility_class(""));
+        // Recoverable classes do not gate; consequential and terminal do.
+        assert!(!irreversibility_requires_quarantine("two_way"));
+        assert!(!irreversibility_requires_quarantine("one_way_recoverable"));
+        assert!(irreversibility_requires_quarantine("one_way_consequential"));
+        assert!(irreversibility_requires_quarantine("one_way_terminal"));
+        // Unknown classes get the strictest treatment, never a bypass.
+        assert!(irreversibility_requires_quarantine("definitely_fine_trust_me"));
     }
 
     #[test]

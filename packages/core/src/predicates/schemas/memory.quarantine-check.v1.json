@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://treeship.dev/schemas/memory.quarantine-check.v1.json",
+  "title": "memory.quarantine-check.v1",
+  "description": "Receipt payload recording a memory provider's quarantine verdict for one gated action: whether any of the beliefs that triggered the action came from quarantined (untrusted) memory. Minted by the provider (e.g. system://zmem) and signed with its own key; consumed at approval minting for actions in a consequential irreversibility class, per docs/specs/memory-provenance-binding.md. The verdict is about availability and trust state, never influence.",
+  "type": "object",
+  "required": ["action_id", "chain_root", "decision_seq", "clean"],
+  "properties": {
+    "action_id": {
+      "description": "The action (or approval grant) this check gates. The consuming artifact references this receipt; this field closes the loop back.",
+      "type": "string"
+    },
+    "provider": {
+      "description": "Optional provider system URI, e.g. 'system://zmem'. The authoritative provider identity is the receipt's signing key; this field is a convenience label.",
+      "type": "string"
+    },
+    "chain_root": {
+      "description": "The provider's memory chain root (base64url SHA-256 over its canonical ledger state) at decision time. A Class-2 verifier resolves this against the provider's provenance API to rederive the verdict.",
+      "type": "string"
+    },
+    "decision_seq": {
+      "description": "Ledger sequence number the chain root was computed at. Binding this into the grant lets a consumer detect belief drift between approval minting and consumption.",
+      "type": "integer"
+    },
+    "clean": {
+      "description": "True iff none of the triggering memory entries were in quarantine at decision_seq. A false verdict must refuse the grant; the refusal becomes a signed blocked artifact.",
+      "type": "boolean"
+    },
+    "quarantined_triggers": {
+      "description": "Entry ids of triggering memories found quarantined (empty or absent when clean).",
+      "type": "array"
+    },
+    "staleness_flags": {
+      "description": "Entry ids of triggering memories past the provider's freshness window. Advisory: staleness tolerance is the verifier's policy, not the provider's.",
+      "type": "array"
+    },
+    "checked_at": {
+      "description": "RFC 3339 UTC timestamp of the check. The check is fresh at minting; consumers of one_way_terminal grants should re-check at consumption (spec open question 5).",
+      "type": "string"
+    },
+    "scope": {
+      "description": "Tenant/workspace/session scope the check ran in.",
+      "type": "string"
+    }
+  }
+}
