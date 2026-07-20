@@ -56,8 +56,8 @@ pub use session_participant::{
 pub mod action_v2;
 pub use action_v2::{
     action_in_scope, payload_type_v2, verify_grant_chain, verify_mandate, ActionStatementV2, Cost,
-    Effect, Grant, GrantChainError, Mandate, MandateVerdict, NoRevocationSource, Revocation,
-    RevocationSource, RevocationStatus, TYPE_ACTION_V2,
+    Effect, EffectConfidence, Grant, GrantChainError, Mandate, MandateVerdict, NoRevocationSource,
+    Revocation, RevocationSource, RevocationStatus, TYPE_ACTION_V2,
 };
 
 use serde::{Deserialize, Serialize};

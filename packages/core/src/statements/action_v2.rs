@@ -167,6 +167,63 @@ pub struct Effect {
     /// verifier detect action on stale/poisoned context.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_snapshot: Option<String>,
+    /// The actor's honest self-declaration of whether the effect actually
+    /// happened ("the ack is not the act"). This is a CLAIM, not proof: the
+    /// verifier cross-checks it against the independent evidence above (a
+    /// `readback` the actor could not mint), and a `Verified` claim carrying no
+    /// such evidence is downgraded, never taken on faith. Absent means the
+    /// actor made no effect claim at all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect_confidence: Option<EffectConfidence>,
+}
+
+/// How confident the actor is that an action's real-world effect happened,
+/// separate from whether the receipt's signature is valid. Encodes the honest
+/// middle ground the "ack is not the act" discourse keeps asking for: an agent
+/// that cannot confirm the effect declares `Unknown` or `NotVerified` instead
+/// of forcing a green success.
+///
+/// A verifier NEVER trusts `Verified` on the actor's word alone — see
+/// [`Effect::has_independent_evidence`] and the effect-confidence check in
+/// `treeship verify`, which reconciles this claim with the evidence present.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EffectConfidence {
+    /// Independently confirmed: an external read-back or witness the actor
+    /// could not mint shows the intended post-state.
+    Verified,
+    /// Some effect evidence, but incomplete (e.g. the sink accepted the write
+    /// but nothing read the post-state back).
+    Partial,
+    /// The observed state is consistent with more than one outcome.
+    Ambiguous,
+    /// The actor could not determine whether the effect happened.
+    Unknown,
+    /// Attempted, but the effect was not independently verified — the common
+    /// honest default: the tool returned ok and nothing read it back.
+    NotVerified,
+}
+
+impl Effect {
+    /// True when the effect carries a signal the actor could not have minted
+    /// itself (an external read-back). This is what lets a verifier honor a
+    /// `Verified` confidence claim; without it, `Verified` is downgraded.
+    pub fn has_independent_evidence(&self) -> bool {
+        self.readback.is_some()
+    }
+
+    /// The strongest effect confidence the *evidence* supports, independent of
+    /// what the actor claimed. `Verified` requires independent evidence;
+    /// otherwise the honest ceiling is `NotVerified`. Callers reconcile this
+    /// with `effect_confidence` (the claim): the effective verdict is the
+    /// weaker of the two, so an actor can honestly downgrade but never inflate.
+    pub fn evidence_ceiling(&self) -> EffectConfidence {
+        if self.has_independent_evidence() {
+            EffectConfidence::Verified
+        } else {
+            EffectConfidence::NotVerified
+        }
+    }
 }
 
 /// `treeship/action/v2` statement. Additive over v1: the v1 core fields are
@@ -625,6 +682,54 @@ fn scope_entry_covers(parent: &str, child: &str) -> bool {
 mod tests {
     use super::*;
     use crate::attestation::{sign, Ed25519Signer, Verifier as EnvVerifier};
+
+    #[test]
+    fn effect_confidence_ceiling_gates_on_independent_evidence() {
+        // A readback the actor could not mint lets the evidence support Verified.
+        let with_evidence = Effect {
+            readback: Some("sha256:observed".into()),
+            effect_confidence: Some(EffectConfidence::Verified),
+            ..Default::default()
+        };
+        assert!(with_evidence.has_independent_evidence());
+        assert_eq!(with_evidence.evidence_ceiling(), EffectConfidence::Verified);
+
+        // No independent evidence: the honest ceiling is NotVerified, so a
+        // `Verified` CLAIM here must be treated as inflated (ack != act).
+        let claim_only = Effect {
+            output_hash: Some("sha256:out".into()),
+            effect_confidence: Some(EffectConfidence::Verified),
+            ..Default::default()
+        };
+        assert!(!claim_only.has_independent_evidence());
+        assert_eq!(claim_only.evidence_ceiling(), EffectConfidence::NotVerified);
+
+        // An honest actor can downgrade below the ceiling with no evidence.
+        let honest_downgrade = Effect {
+            effect_confidence: Some(EffectConfidence::Unknown),
+            ..Default::default()
+        };
+        assert_eq!(
+            honest_downgrade.evidence_ceiling(),
+            EffectConfidence::NotVerified
+        );
+    }
+
+    #[test]
+    fn effect_confidence_serializes_snake_case_and_is_omitted_when_absent() {
+        let e = Effect {
+            effect_confidence: Some(EffectConfidence::NotVerified),
+            ..Default::default()
+        };
+        let j = serde_json::to_string(&e).unwrap();
+        assert!(j.contains("\"effect_confidence\":\"not_verified\""), "{j}");
+
+        // Absent => omitted entirely (additive, backward-compatible over v1).
+        let empty = Effect::default();
+        assert!(!serde_json::to_string(&empty)
+            .unwrap()
+            .contains("effect_confidence"));
+    }
 
     fn base_mandate() -> Mandate {
         Mandate {
