@@ -226,10 +226,53 @@ impl Effect {
     }
 }
 
+/// Who and what produced this action: the model runtime the actor was
+/// executing under at sign time. Binding it into the signed statement lets a
+/// verifier holding a pinned expectation ("this agent must run
+/// claude-opus-4-8 with this tool schema and this system prompt") detect a
+/// swapped model, an altered tool set, or a changed system prompt after the
+/// fact. Where `effect` records *what* the action touched, this records *what
+/// executed it*.
+///
+/// Every field is optional and actor-attested: it is signed by the actor's
+/// key, so it is exactly as trustworthy as the actor, and it carries no
+/// weight on its own. A verifier can only turn it into a Pass by reconciling
+/// it against an out-of-band pinned expectation; absent means "not recorded"
+/// (unverifiable), never a pass. The hashes are `sha256:<hex>` over the exact
+/// bytes presented to the model, so equality is the whole check.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeIdentity {
+    /// Model provider, e.g. "anthropic", "openai".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// Model identifier the actor ran under, e.g. "claude-opus-4-8".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Hash of the exact tool schemas the agent had available this turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_schema_hash: Option<String>,
+    /// Hash of the exact system prompt the agent ran under.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt_hash: Option<String>,
+}
+
+impl RuntimeIdentity {
+    /// True when no field is populated -- the runtime binding attests nothing,
+    /// so a verifier has nothing to pin against an expectation. Verify treats
+    /// this the same as an absent `runtime`: the runtime layer is
+    /// unverifiable, not a pass.
+    pub fn is_unbound(&self) -> bool {
+        self.provider.is_none()
+            && self.model.is_none()
+            && self.tool_schema_hash.is_none()
+            && self.system_prompt_hash.is_none()
+    }
+}
+
 /// `treeship/action/v2` statement. Additive over v1: the v1 core fields are
-/// unchanged; `audience`, `mandate`, and `effect` are new. `mandate` is
-/// required (a v2 receipt with no mandate would just be a v1 receipt);
-/// `effect` is optional.
+/// unchanged; `audience`, `mandate`, `effect`, and `runtime` are new.
+/// `mandate` is required (a v2 receipt with no mandate would just be a v1
+/// receipt); `effect` and `runtime` are optional.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActionStatementV2 {
     #[serde(rename = "type")]
@@ -260,6 +303,12 @@ pub struct ActionStatementV2 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effect: Option<Effect>,
 
+    /// The model runtime the actor executed under. See [`RuntimeIdentity`].
+    /// Absent means the signer recorded no runtime, which leaves the runtime
+    /// layer unverifiable (not a pass).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<RuntimeIdentity>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meta: Option<serde_json::Value>,
 }
@@ -281,6 +330,7 @@ impl ActionStatementV2 {
             parent_id: None,
             mandate,
             effect: None,
+            runtime: None,
             meta: None,
         }
     }
@@ -729,6 +779,70 @@ mod tests {
         assert!(!serde_json::to_string(&empty)
             .unwrap()
             .contains("effect_confidence"));
+    }
+
+    #[test]
+    fn runtime_identity_is_unbound_only_when_all_fields_absent() {
+        assert!(RuntimeIdentity::default().is_unbound());
+
+        // Any single populated field means the binding attests something.
+        let with_model = RuntimeIdentity {
+            model: Some("claude-opus-4-8".into()),
+            ..Default::default()
+        };
+        assert!(!with_model.is_unbound());
+
+        let with_prompt = RuntimeIdentity {
+            system_prompt_hash: Some("sha256:sys".into()),
+            ..Default::default()
+        };
+        assert!(!with_prompt.is_unbound());
+    }
+
+    #[test]
+    fn runtime_identity_serializes_snake_case_and_omits_absent_fields() {
+        let rt = RuntimeIdentity {
+            provider: Some("anthropic".into()),
+            model: Some("claude-opus-4-8".into()),
+            tool_schema_hash: Some("sha256:tools".into()),
+            system_prompt_hash: None,
+        };
+        let j = serde_json::to_string(&rt).unwrap();
+        assert!(j.contains("\"provider\":\"anthropic\""), "{j}");
+        assert!(j.contains("\"model\":\"claude-opus-4-8\""), "{j}");
+        assert!(j.contains("\"tool_schema_hash\":\"sha256:tools\""), "{j}");
+        // Absent field omitted, not null -- keeps the canonical stable.
+        assert!(!j.contains("system_prompt_hash"), "{j}");
+
+        // All-absent runtime is an empty object, and roundtrips.
+        let empty = serde_json::to_string(&RuntimeIdentity::default()).unwrap();
+        assert_eq!(empty, "{}");
+        let back: RuntimeIdentity = serde_json::from_str(&empty).unwrap();
+        assert!(back.is_unbound());
+    }
+
+    #[test]
+    fn runtime_is_omitted_from_statement_when_absent() {
+        // A v2 statement with no runtime must not emit a `runtime` key, so
+        // existing artifact_ids over runtime-less receipts are unaffected.
+        let s = good_stmt();
+        assert!(s.runtime.is_none());
+        let j = serde_json::to_string(&s).unwrap();
+        assert!(!j.contains("runtime"), "{j}");
+
+        // When present, it rides in the signed statement and roundtrips.
+        let mut with_rt = good_stmt();
+        with_rt.runtime = Some(RuntimeIdentity {
+            model: Some("claude-opus-4-8".into()),
+            ..Default::default()
+        });
+        let j2 = serde_json::to_string(&with_rt).unwrap();
+        assert!(j2.contains("\"runtime\""), "{j2}");
+        let back: ActionStatementV2 = serde_json::from_str(&j2).unwrap();
+        assert_eq!(
+            back.runtime.unwrap().model.as_deref(),
+            Some("claude-opus-4-8")
+        );
     }
 
     fn base_mandate() -> Mandate {
