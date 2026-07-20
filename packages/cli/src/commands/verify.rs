@@ -5,9 +5,10 @@ use treeship_core::{
     attestation::{Envelope, Verifier},
     statements::{
         invitation::InvitationStatement,
-        payload_type,
+        payload_type, payload_type_v2,
         session_participant::{verify_participant_envelope, SessionParticipantStatement},
-        ActionStatement, ApprovalScope, ApprovalStatement, DecisionStatement, HandoffStatement,
+        verify_effect, ActionStatement, ActionStatementV2, ApprovalScope, ApprovalStatement,
+        DecisionStatement, EffectConfidence, HandoffStatement, NoWitnessAuthority,
         ReceiptStatement,
     },
     storage::Store,
@@ -63,6 +64,26 @@ struct StepInfo {
     decision_tokens_out: Option<u64>,
     decision_summary: Option<String>,
     decision_confidence: Option<f64>,
+    // action/v2 effect verdict (operational confidence, reconciled by
+    // verify_effect). Present only for treeship/action/v2 receipts carrying an
+    // effect block.
+    effect_effective: Option<EffectConfidence>,
+    effect_claimed: Option<EffectConfidence>,
+    effect_downgraded: bool,
+    effect_trusted_witnesses: usize,
+    // action/v2 runtime identity (who/what executed the action).
+    runtime_model: Option<String>,
+}
+
+/// Human label for an effect confidence level, matching the wire snake_case.
+fn effect_label(c: EffectConfidence) -> &'static str {
+    match c {
+        EffectConfidence::Verified => "verified",
+        EffectConfidence::Partial => "partial",
+        EffectConfidence::Ambiguous => "ambiguous",
+        EffectConfidence::Unknown => "unknown",
+        EffectConfidence::NotVerified => "not-verified",
+    }
 }
 
 pub fn run(
@@ -655,6 +676,37 @@ fn print_step_card(step: &StepInfo, printer: &Printer) {
         print_box_line(&format!("files:  {} modified", n), printer);
     }
 
+    // Runtime identity (action/v2): what executed the action.
+    if let Some(ref model) = step.runtime_model {
+        print_box_line(&format!("runtime: {}", model), printer);
+    }
+
+    // Effect verdict (action/v2): operational confidence, reconciled against
+    // evidence. Distinct from the signature check -- a valid signature over a
+    // Verified claim still reads not-verified here when nothing backs it.
+    if let Some(effective) = step.effect_effective {
+        let mut line = format!("effect: {}", effect_label(effective));
+        if step.effect_downgraded {
+            if let Some(claimed) = step.effect_claimed {
+                line.push_str(&format!(
+                    "  (actor claimed {}, downgraded: no independent evidence)",
+                    effect_label(claimed)
+                ));
+            }
+        } else if step.effect_trusted_witnesses > 0 {
+            line.push_str(&format!(
+                "  ({} trusted witness{})",
+                step.effect_trusted_witnesses,
+                if step.effect_trusted_witnesses == 1 {
+                    ""
+                } else {
+                    "es"
+                }
+            ));
+        }
+        print_box_line(&line, printer);
+    }
+
     // Approval info (if this action references an approval)
     if let (Some(ref appr_id), Some(ref approver)) = (&step.approval_id, &step.approver) {
         print_box_line(
@@ -786,7 +838,41 @@ fn extract_step_info(index: usize, id: &str, env: &Envelope, storage: &Store) ->
         decision_tokens_out: None,
         decision_summary: None,
         decision_confidence: None,
+        effect_effective: None,
+        effect_claimed: None,
+        effect_downgraded: false,
+        effect_trusted_witnesses: 0,
+        runtime_model: None,
     };
+
+    // Try action/v2 FIRST: a v2 payload also parses as v1 (serde ignores the
+    // extra mandate/effect fields), so dispatch on the envelope payloadType
+    // before the v1 attempt or the effect verdict is silently skipped.
+    if env.payload_type == payload_type_v2("action") {
+        if let Ok(stmt) = env.unmarshal_statement::<ActionStatementV2>() {
+            info.actor = stmt.actor.clone();
+            info.action = stmt.action.clone();
+            info.timestamp = stmt.timestamp.clone();
+            info.parent_id = stmt.parent_id.clone();
+            if let Some(rt) = &stmt.runtime {
+                info.runtime_model = rt.model.clone();
+            }
+            // No witness authority is wired into the CLI yet, so witnesses give
+            // no evidence lift here -- the honest, fail-closed default.
+            let verdict = verify_effect(&stmt, &NoWitnessAuthority);
+            info.effect_effective = Some(verdict.effective_confidence);
+            info.effect_claimed = verdict.claimed_confidence;
+            info.effect_trusted_witnesses = verdict.trusted_witnesses;
+            info.effect_downgraded = verdict
+                .claimed_confidence
+                .map(|c| c != verdict.effective_confidence)
+                .unwrap_or(false);
+            if let Some(meta) = &stmt.meta {
+                extract_meta_fields(&mut info, meta);
+            }
+            return info;
+        }
+    }
 
     // Try action statement
     if let Ok(action) = env.unmarshal_statement::<ActionStatement>() {
@@ -1425,6 +1511,65 @@ fn extract_actor(envelope: &Envelope) -> String {
 mod tests {
     use super::*;
     use treeship_core::statements::{ActionStatement, ApprovalScope, SubjectRef};
+
+    // ── action/v2 effect verdict wiring ────────────────────────────────
+    #[test]
+    fn v2_receipt_effect_verdict_reaches_step_info_and_downgrades() {
+        use treeship_core::attestation::{sign, Ed25519Signer};
+        use treeship_core::statements::{
+            payload_type_v2, ActionStatementV2, Effect, EffectConfidence, Mandate, Revocation,
+        };
+
+        let mandate = Mandate {
+            grant_id: "grant_1".into(),
+            grantor: "key_parent".into(),
+            issuer_sig: None,
+            objective_hash: Some("sha256:abc".into()),
+            scope: vec!["payments.charge".into()],
+            audience: "acme".into(),
+            parent_request_id: None,
+            delegation_depth: 0,
+            issued_at: "2026-07-20T10:00:00Z".into(),
+            expiry: "2026-07-20T11:00:00Z".into(),
+            max_delegation: 3,
+            revocation: Revocation {
+                path: "hub://acme/revocations".into(),
+                revoked_at: None,
+            },
+        };
+        let mut stmt = ActionStatementV2::new("agent://worker", "payments.charge", mandate);
+        // Verified claim with NO independent evidence: must downgrade.
+        stmt.effect = Some(Effect {
+            output_hash: Some("sha256:out".into()),
+            effect_confidence: Some(EffectConfidence::Verified),
+            ..Default::default()
+        });
+
+        let signer = Ed25519Signer::generate("agent_worker").unwrap();
+        let env = sign(&payload_type_v2("action"), &stmt, &signer)
+            .unwrap()
+            .envelope;
+
+        // A v2 payload also parses as v1; this proves the dispatch runs the
+        // effect verdict rather than silently taking the v1 branch.
+        let dir = std::env::temp_dir().join("ts_verify_v2_effect_test");
+        let store = Store::open(&dir).unwrap();
+        let info = extract_step_info(0, "art_test", &env, &store);
+
+        assert_eq!(info.actor, "agent://worker");
+        assert_eq!(
+            info.effect_claimed,
+            Some(EffectConfidence::Verified),
+            "claim should be captured"
+        );
+        assert_eq!(
+            info.effect_effective,
+            Some(EffectConfidence::NotVerified),
+            "unbacked Verified must downgrade"
+        );
+        assert!(info.effect_downgraded, "downgrade flag must be set");
+        assert_eq!(info.effect_trusted_witnesses, 0);
+    }
 
     fn act(actor: &str, action: &str, subject_uri: Option<&str>) -> ActionStatement {
         let mut a = ActionStatement::new(actor, action);
