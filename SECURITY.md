@@ -30,9 +30,9 @@ We will acknowledge your report within 48 hours and aim to release a fix within 
 
 | Version | Supported              |
 |---------|------------------------|
-| 0.10.x  | Yes (current)          |
-| 0.9.x   | Security fixes only    |
-| < 0.9   | No longer supported    |
+| 0.20.x  | Yes (current)          |
+| 0.19.x  | Security fixes only    |
+| < 0.19  | No longer supported    |
 
 ## Security model
 
