@@ -610,6 +610,132 @@ pub fn verify_mandate(
 }
 
 // ---------------------------------------------------------------------------
+// Effect verdict + verifier (operational confidence)
+// ---------------------------------------------------------------------------
+
+/// Decides whether a bundled [`Witness`] is a trustworthy, independent
+/// corroboration of an effect. A real implementation MUST require all of:
+/// the witness `signature` verifies against `observer`'s key in the trust
+/// roots; `observer != actor` (a self-witness proves nothing); and
+/// `observation` matches the effect's own observed post-state. The default
+/// [`NoWitnessAuthority`] trusts nothing, so witnesses give zero evidence
+/// lift until an authority is wired in -- fail closed, exactly like
+/// [`NoRevocationSource`].
+pub trait WitnessAuthority {
+    fn is_trusted(&self, actor: &str, effect: &Effect, witness: &Witness) -> bool;
+}
+
+/// The default: no authority configured, so no witness is trusted and
+/// witnesses contribute no evidence.
+pub struct NoWitnessAuthority;
+
+impl WitnessAuthority for NoWitnessAuthority {
+    fn is_trusted(&self, _actor: &str, _effect: &Effect, _witness: &Witness) -> bool {
+        false
+    }
+}
+
+/// The reconciled operational-confidence outcome for a v2 receipt's effect,
+/// kept deliberately separate from cryptographic validity (the DSSE
+/// signature, checked elsewhere). A perfectly-signed receipt can still carry
+/// an effect nobody independently confirmed; this verdict reports how much of
+/// the *effect* the evidence actually supports, never how well it was signed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectVerdict {
+    /// The confidence the evidence supports after reconciliation. Equal to the
+    /// actor's claim for every honest (non-`Verified`) claim; a `Verified`
+    /// claim carrying no independent evidence is downgraded to `NotVerified`.
+    /// Never higher than the actor claimed, and never higher than the evidence
+    /// supports.
+    pub effective_confidence: EffectConfidence,
+    /// The actor's own claim, echoed for audit. `None` when the actor recorded
+    /// no `effect_confidence`.
+    pub claimed_confidence: Option<EffectConfidence>,
+    /// Count of bundled witnesses the [`WitnessAuthority`] vouched for.
+    pub trusted_witnesses: usize,
+    /// Audit notes: downgrades applied, and witnesses that were not trusted.
+    pub notes: Vec<String>,
+}
+
+impl EffectVerdict {
+    /// True when the effect is independently confirmed at the strongest level.
+    pub fn is_verified(&self) -> bool {
+        self.effective_confidence == EffectConfidence::Verified
+    }
+}
+
+/// Reconcile a v2 receipt's effect claim against its evidence. Fails safe: the
+/// effective confidence is never higher than what independent, actor-unmintable
+/// evidence supports. Independent evidence is a `readback` the actor could not
+/// mint, or a witness the [`WitnessAuthority`] vouches for (signed by a trusted
+/// key that is not the actor, observing the same post-state).
+///
+/// Only a `Verified` claim asserts the effect definitely happened, so only it
+/// can be inflated and only it is capped. Lesser claims (`Partial`,
+/// `Ambiguous`, `Unknown`, `NotVerified`) are already admissions of incomplete
+/// confidence and pass through unchanged -- the verifier's job is to block
+/// inflation, not to erase an honest actor's own hedging.
+///
+/// Signature validity is a precondition checked elsewhere; this evaluates
+/// operational confidence over bytes assumed authentic.
+pub fn verify_effect(stmt: &ActionStatementV2, witnesses: &dyn WitnessAuthority) -> EffectVerdict {
+    let effect = match &stmt.effect {
+        Some(e) => e,
+        None => {
+            return EffectVerdict {
+                effective_confidence: EffectConfidence::NotVerified,
+                claimed_confidence: None,
+                trusted_witnesses: 0,
+                notes: vec!["receipt carries no effect block; effect is unverified".into()],
+            }
+        }
+    };
+
+    let mut notes: Vec<String> = Vec::new();
+
+    let trusted_witnesses = effect
+        .witnesses
+        .iter()
+        .filter(|w| witnesses.is_trusted(&stmt.actor, effect, w))
+        .count();
+    let untrusted = effect.witnesses.len() - trusted_witnesses;
+    if untrusted > 0 {
+        notes.push(format!(
+            "{untrusted} of {} bundled witness(es) not independently trusted; they add no evidence",
+            effect.witnesses.len()
+        ));
+    }
+
+    // The verify layer knows more than the pure-data ceiling: a witness the
+    // authority vouched for is also actor-unmintable evidence.
+    let has_evidence = effect.has_independent_evidence() || trusted_witnesses > 0;
+
+    let claimed = effect.effect_confidence;
+    let effective = match claimed {
+        None => {
+            notes.push("actor recorded no effect_confidence; effect is unverified".into());
+            EffectConfidence::NotVerified
+        }
+        Some(EffectConfidence::Verified) if !has_evidence => {
+            notes.push(
+                "actor claimed Verified but bundled no independent evidence \
+                 (no readback, no trusted witness); downgraded to NotVerified"
+                    .into(),
+            );
+            EffectConfidence::NotVerified
+        }
+        Some(c) => c,
+    };
+
+    EffectVerdict {
+        effective_confidence: effective,
+        claimed_confidence: claimed,
+        trusted_witnesses,
+        notes,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // First-class grant object + attenuation
 // ---------------------------------------------------------------------------
 
@@ -844,6 +970,129 @@ mod tests {
         assert!(!serde_json::to_string(&empty)
             .unwrap()
             .contains("effect_confidence"));
+    }
+
+    /// A test authority that trusts any signed witness whose observer differs
+    /// from the actor and whose observation matches the effect's readback.
+    /// Stands in for the real trust-root + signature check.
+    struct TrustingWitnessAuthority;
+    impl WitnessAuthority for TrustingWitnessAuthority {
+        fn is_trusted(&self, actor: &str, effect: &Effect, w: &Witness) -> bool {
+            w.is_signed()
+                && w.observer != actor
+                && effect.readback.as_deref() == Some(w.observation.as_str())
+        }
+    }
+
+    #[test]
+    fn verify_effect_downgrades_unbacked_verified_claim() {
+        // Verified claim, no readback, no witness => downgraded to NotVerified.
+        let mut s = good_stmt();
+        s.actor = "agent://worker".into();
+        s.effect = Some(Effect {
+            output_hash: Some("sha256:out".into()),
+            effect_confidence: Some(EffectConfidence::Verified),
+            ..Default::default()
+        });
+        let v = verify_effect(&s, &NoWitnessAuthority);
+        assert_eq!(v.effective_confidence, EffectConfidence::NotVerified);
+        assert_eq!(v.claimed_confidence, Some(EffectConfidence::Verified));
+        assert!(!v.is_verified());
+        assert!(
+            v.notes.iter().any(|n| n.contains("downgraded")),
+            "{:?}",
+            v.notes
+        );
+    }
+
+    #[test]
+    fn verify_effect_honors_verified_backed_by_readback() {
+        let mut s = good_stmt();
+        s.effect = Some(Effect {
+            readback: Some("sha256:observed".into()),
+            effect_confidence: Some(EffectConfidence::Verified),
+            ..Default::default()
+        });
+        let v = verify_effect(&s, &NoWitnessAuthority);
+        assert_eq!(v.effective_confidence, EffectConfidence::Verified);
+        assert!(v.is_verified());
+    }
+
+    #[test]
+    fn verify_effect_trusts_a_vouched_witness_over_no_readback() {
+        // No readback, but an independent trusted witness observed the same
+        // post-state the effect commits to: Verified stands.
+        let mut s = good_stmt();
+        s.actor = "agent://worker".into();
+        s.effect = Some(Effect {
+            readback: Some("sha256:state".into()),
+            effect_confidence: Some(EffectConfidence::Verified),
+            witnesses: vec![Witness {
+                observer: "agent://auditor".into(),
+                observation: "sha256:state".into(),
+                observed_at: Some("2026-07-20T10:00:00Z".into()),
+                signature: Some("ed25519:sig".into()),
+            }],
+            ..Default::default()
+        });
+        let v = verify_effect(&s, &TrustingWitnessAuthority);
+        assert_eq!(v.trusted_witnesses, 1);
+        assert_eq!(v.effective_confidence, EffectConfidence::Verified);
+
+        // A self-witness (observer == actor) is not trusted, even signed.
+        let mut self_witness = s.clone();
+        if let Some(e) = self_witness.effect.as_mut() {
+            e.readback = None; // remove the readback so only the witness could lift it
+            e.witnesses[0].observer = "agent://worker".into();
+        }
+        let v2 = verify_effect(&self_witness, &TrustingWitnessAuthority);
+        assert_eq!(v2.trusted_witnesses, 0);
+        assert_eq!(v2.effective_confidence, EffectConfidence::NotVerified);
+        assert!(v2
+            .notes
+            .iter()
+            .any(|n| n.contains("not independently trusted")));
+    }
+
+    #[test]
+    fn verify_effect_passes_honest_lesser_claims_through_unchanged() {
+        // Partial/Unknown are admissions, not inflations: no downgrade even
+        // without independent evidence.
+        for c in [
+            EffectConfidence::Partial,
+            EffectConfidence::Ambiguous,
+            EffectConfidence::Unknown,
+            EffectConfidence::NotVerified,
+        ] {
+            let mut s = good_stmt();
+            s.effect = Some(Effect {
+                effect_confidence: Some(c),
+                ..Default::default()
+            });
+            let v = verify_effect(&s, &NoWitnessAuthority);
+            assert_eq!(v.effective_confidence, c, "claim {c:?} should pass through");
+        }
+    }
+
+    #[test]
+    fn verify_effect_reports_unverified_when_no_effect_or_no_claim() {
+        // No effect block at all.
+        let s = good_stmt();
+        assert!(s.effect.is_none());
+        let v = verify_effect(&s, &NoWitnessAuthority);
+        assert_eq!(v.effective_confidence, EffectConfidence::NotVerified);
+        assert_eq!(v.claimed_confidence, None);
+        assert!(v.notes.iter().any(|n| n.contains("no effect block")));
+
+        // Effect present but no confidence claim.
+        let mut s2 = good_stmt();
+        s2.effect = Some(Effect {
+            output_hash: Some("sha256:out".into()),
+            ..Default::default()
+        });
+        let v2 = verify_effect(&s2, &NoWitnessAuthority);
+        assert_eq!(v2.effective_confidence, EffectConfidence::NotVerified);
+        assert!(v2.notes.iter().any(|n| n.contains("no effect_confidence")));
     }
 
     #[test]

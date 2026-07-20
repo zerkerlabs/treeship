@@ -55,9 +55,10 @@ pub use session_participant::{
 // `Unverified` rather than a false `Pass` for any layer it cannot check.
 pub mod action_v2;
 pub use action_v2::{
-    action_in_scope, payload_type_v2, verify_grant_chain, verify_mandate, ActionStatementV2, Cost,
-    Effect, EffectConfidence, Grant, GrantChainError, Mandate, MandateVerdict, NoRevocationSource,
-    Revocation, RevocationSource, RevocationStatus, RuntimeIdentity, Witness, TYPE_ACTION_V2,
+    action_in_scope, payload_type_v2, verify_effect, verify_grant_chain, verify_mandate,
+    ActionStatementV2, Cost, Effect, EffectConfidence, EffectVerdict, Grant, GrantChainError,
+    Mandate, MandateVerdict, NoRevocationSource, NoWitnessAuthority, Revocation, RevocationSource,
+    RevocationStatus, RuntimeIdentity, Witness, WitnessAuthority, TYPE_ACTION_V2,
 };
 
 use serde::{Deserialize, Serialize};
