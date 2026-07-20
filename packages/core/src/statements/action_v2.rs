@@ -142,6 +142,51 @@ pub struct Cost {
     pub amount: u64,
 }
 
+/// An independent observation of an action's effect, made by someone other
+/// than the actor. A witness is the raw material of effect verification: the
+/// actor's own `effect_confidence` is a claim it can mint, but a witness
+/// whose key is NOT the actor's, whose `signature` verifies against a trusted
+/// root, and whose `observation` matches the effect is a signal the actor
+/// could not have forged. Multiple independent witnesses are how a `Verified`
+/// confidence earns its evidence beyond a single self-reported `readback`.
+///
+/// This struct is only the record. It carries NO independent weight on its
+/// own: an unsigned witness, or one signed by the actor's own key, proves
+/// nothing. The reconciliation -- does `observer` resolve to a trusted,
+/// non-actor key? does `signature` verify over the canonical tuple? does
+/// `observation` match the effect? -- happens in verify, never here. Do not
+/// treat the mere presence of a witness as evidence.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Witness {
+    /// URI or key id of the observer, e.g. "agent://auditor", "key_9f2c".
+    /// Verify resolves this to a trust root and requires it to differ from
+    /// the action's actor.
+    pub observer: String,
+    /// `sha256:<hex>` of what the observer independently saw. Verify checks
+    /// this equals the effect's own observed post-state (`readback` /
+    /// `output_hash`); a witness that observed something else corroborates
+    /// nothing.
+    pub observation: String,
+    /// RFC 3339 instant the observation was made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_at: Option<String>,
+    /// The observer's signature over its own (observer, observation,
+    /// observed_at) tuple, verifiable against `observer`'s key. Absent means
+    /// unsigned: verify gives it zero independent weight.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+}
+
+impl Witness {
+    /// True when the witness at least carries a signature to check. This is a
+    /// necessary-not-sufficient precondition: verify still has to confirm the
+    /// signature verifies, the observer is a trusted non-actor key, and the
+    /// observation matches. A `true` here is NOT evidence by itself.
+    pub fn is_signed(&self) -> bool {
+        self.signature.is_some()
+    }
+}
+
 /// What the action actually touched. Descriptive; every field is optional
 /// because not every action has cheap external ground truth. `readback` is
 /// the strongest claim: a hash of externally-observed post-state the actor
@@ -175,6 +220,12 @@ pub struct Effect {
     /// actor made no effect claim at all.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effect_confidence: Option<EffectConfidence>,
+    /// Independent observers who corroborate this effect. Each is a claim the
+    /// actor bundled in; verify decides which (if any) are trustworthy signals
+    /// the actor could not mint. An empty list -- the common case -- means the
+    /// only effect evidence is the actor's own `readback`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub witnesses: Vec<Witness>,
 }
 
 /// How confident the actor is that an action's real-world effect happened,
@@ -208,8 +259,22 @@ impl Effect {
     /// True when the effect carries a signal the actor could not have minted
     /// itself (an external read-back). This is what lets a verifier honor a
     /// `Verified` confidence claim; without it, `Verified` is downgraded.
+    ///
+    /// Deliberately gated on `readback` alone, NOT on `witnesses`: a witness
+    /// only becomes evidence once verify confirms its signature against a
+    /// trusted non-actor key, which this pure-data check cannot do. Counting
+    /// an unverified witness here would let the actor inflate its own ceiling
+    /// with a fabricated observer -- exactly the "ok for the wrong reason" we
+    /// refuse.
     pub fn has_independent_evidence(&self) -> bool {
         self.readback.is_some()
+    }
+
+    /// The witnesses that at least carry a signature verify can attempt to
+    /// check. Callers must still run that check; a non-empty result is a
+    /// precondition for witness-backed evidence, never evidence itself.
+    pub fn signed_witnesses(&self) -> impl Iterator<Item = &Witness> {
+        self.witnesses.iter().filter(|w| w.is_signed())
     }
 
     /// The strongest effect confidence the *evidence* supports, independent of
@@ -779,6 +844,66 @@ mod tests {
         assert!(!serde_json::to_string(&empty)
             .unwrap()
             .contains("effect_confidence"));
+    }
+
+    #[test]
+    fn witness_does_not_inflate_evidence_ceiling() {
+        // Security invariant: a witness the actor bundled in -- even a signed
+        // one -- must NOT lift evidence_ceiling at the data-model layer. Only
+        // an actor-unmintable readback does that here; witness trust is
+        // verify's job.
+        let signed_witness = Witness {
+            observer: "agent://auditor".into(),
+            observation: "sha256:observed".into(),
+            observed_at: Some("2026-07-20T10:00:00Z".into()),
+            signature: Some("ed25519:sig".into()),
+        };
+        let e = Effect {
+            witnesses: vec![signed_witness.clone()],
+            effect_confidence: Some(EffectConfidence::Verified),
+            ..Default::default()
+        };
+        assert!(!e.has_independent_evidence());
+        assert_eq!(e.evidence_ceiling(), EffectConfidence::NotVerified);
+        // The signature is visible for verify to check, but that's a
+        // precondition, not evidence.
+        assert!(signed_witness.is_signed());
+        assert_eq!(e.signed_witnesses().count(), 1);
+
+        // An unsigned witness isn't even a candidate.
+        let unsigned = Effect {
+            witnesses: vec![Witness {
+                observer: "agent://auditor".into(),
+                observation: "sha256:observed".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert_eq!(unsigned.signed_witnesses().count(), 0);
+    }
+
+    #[test]
+    fn witnesses_serialize_and_omit_when_empty() {
+        let empty = Effect::default();
+        assert!(!serde_json::to_string(&empty).unwrap().contains("witnesses"));
+
+        let e = Effect {
+            witnesses: vec![Witness {
+                observer: "key_9f2c".into(),
+                observation: "sha256:obs".into(),
+                observed_at: None,
+                signature: Some("ed25519:sig".into()),
+            }],
+            ..Default::default()
+        };
+        let j = serde_json::to_string(&e).unwrap();
+        assert!(j.contains("\"witnesses\":[{"), "{j}");
+        assert!(j.contains("\"observer\":\"key_9f2c\""), "{j}");
+        // observed_at absent => omitted, not null.
+        assert!(!j.contains("observed_at"), "{j}");
+        let back: Effect = serde_json::from_str(&j).unwrap();
+        assert_eq!(back.witnesses.len(), 1);
+        assert!(back.witnesses[0].is_signed());
     }
 
     #[test]
