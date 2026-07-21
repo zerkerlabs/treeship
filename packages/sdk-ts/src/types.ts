@@ -44,6 +44,41 @@ export interface ApprovalResult {
   nonce: string;
 }
 
+export interface SessionEventParams {
+  /** Event type, e.g. "agent.called_tool", "agent.wrote_file", "agent.read_file", "agent.connected_network", "agent.decision". */
+  type: string;
+  /** Tool name (for agent.called_tool events). */
+  tool?: string;
+  /** File path (for agent.wrote_file / agent.read_file events). */
+  file?: string;
+  /** Network destination host (for agent.connected_network events). */
+  destination?: string;
+  /** Actor URI. Defaults to the actor recorded in the active session manifest. */
+  actor?: string;
+  /** Agent name attached to the event. */
+  agentName?: string;
+  /** Duration of the action, in milliseconds. */
+  durationMs?: number;
+  /** Exit code / error indicator (0 = success). */
+  exitCode?: number;
+  /** Attestation artifact id this event references — links the timeline entry to its signed artifact. */
+  artifactId?: string;
+  /** Model identifier (for agent.decision events). */
+  model?: string;
+  /** Provider name (for agent.decision events). */
+  provider?: string;
+  /** Input tokens consumed by the inference (for agent.decision events). */
+  tokensIn?: number;
+  /** Output tokens produced by the inference (for agent.decision events). */
+  tokensOut?: number;
+  /** Arbitrary JSON metadata. */
+  meta?: Record<string, unknown>;
+}
+
+export interface SessionEventResult {
+  eventId: string;
+}
+
 export interface VerifyCheck {
   step: string;
   status: "pass" | "fail" | "warn";
