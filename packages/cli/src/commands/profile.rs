@@ -19,6 +19,7 @@ use treeship_core::attestation::sign;
 use treeship_core::merkle::Checkpoint;
 use treeship_core::statements::{payload_type, ReceiptStatement};
 use treeship_core::storage::Record;
+use treeship_core::trust::TrustRootStore;
 
 type CmdResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -299,7 +300,7 @@ pub fn profile(agent: &str, attest: bool, config: Option<&str>, printer: &Printe
         printer.hint("sign it as a claim: treeship profile <agent> --attest");
     }
     printer.blank();
-    printer.hint("every number is recomputable from the log at the pinned checkpoint. asserted until checked; checked by recompute, not by trust.");
+    printer.hint("every number is recomputable from the log at the pinned checkpoint. verify-profile authenticates the signer, then recomputes the claim.");
     printer.blank();
     Ok(())
 }
@@ -307,6 +308,12 @@ pub fn profile(agent: &str, attest: bool, config: Option<&str>, printer: &Printe
 pub fn verify_profile(artifact_id: &str, config: Option<&str>, printer: &Printer) -> CmdResult {
     let ctx = ctx::open(config)?;
     let rec = ctx.storage.read(artifact_id)?;
+    let trust = TrustRootStore::open_default_or_empty()?;
+    let verifier = crate::commands::verifier::from_local_and_trust(&ctx.keys, &trust)?
+        .ok_or("no local or trusted verification keys are configured")?;
+    let signature = verifier
+        .verify_any(&rec.envelope)
+        .map_err(|e| format!("profile signature is not trusted: {e}"))?;
     let stmt: ReceiptStatement = rec.envelope.unmarshal_statement()?;
     if stmt.kind != "profile.v1" {
         return Err(format!("{artifact_id} is a `{}`, not a profile.v1", stmt.kind).into());
@@ -370,6 +377,10 @@ pub fn verify_profile(artifact_id: &str, config: Option<&str>, printer: &Printer
             "ok": checked,
             "profile": artifact_id,
             "agent": agent,
+            "signature": {
+                "trusted": true,
+                "verified_key_ids": signature.verified_key_ids,
+            },
             "pinned_checkpoint": { "index": index, "tree_size": tree_size, "root": root },
             "mismatches": mismatches,
         }));

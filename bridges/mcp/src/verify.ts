@@ -10,8 +10,18 @@
 
 type WasmBindings = {
   verify_receipt: (json: string) => string;
-  verify_certificate: (json: string, now: string) => string;
-  cross_verify: (receipt: string, cert: string, now: string) => string;
+  // The current core-wasm ABI takes trust_roots_json as the final argument on
+  // both of these. An empty string means "no pinned roots" and therefore a
+  // deliberate fail-closed verdict. Omitting the argument, as this binding
+  // used to, passed `undefined` into the wasm-bindgen string glue and broke
+  // the call before a verdict could be returned.
+  verify_certificate: (json: string, now: string, trustRoots: string) => string;
+  cross_verify: (
+    receipt: string,
+    cert: string,
+    now: string,
+    trustRoots: string,
+  ) => string;
 };
 
 let wasmBindings: WasmBindings | null = null;
@@ -40,7 +50,9 @@ async function normalizeToJson(target: VerifyTarget): Promise<string> {
 }
 
 export interface VerifyReceiptResult {
-  outcome: 'pass' | 'fail' | 'error';
+  // `structural-pass`: structure/proofs consistent, authorship not established
+  // here. The WASM verify_receipt emits it (core-wasm, AUD-01).
+  outcome: 'pass' | 'structural-pass' | 'fail' | 'error';
   checks: { step: string; status: 'pass' | 'fail' | 'warn'; detail: string }[];
   session: {
     id: string;
@@ -99,12 +111,14 @@ export async function verifyReceipt(target: VerifyTarget): Promise<VerifyReceipt
 export async function verifyCertificate(
   target: VerifyTarget,
   now?: Date | string,
+  trustRoots?: string,
 ): Promise<VerifyCertificateResult> {
   const json = await normalizeToJson(target);
   const nowStr =
     now === undefined ? '' : now instanceof Date ? now.toISOString() : now;
   const wasm = await loadWasm();
-  return JSON.parse(wasm.verify_certificate(json, nowStr));
+  // Empty trust roots deliberately trust no issuer and fail closed.
+  return JSON.parse(wasm.verify_certificate(json, nowStr, trustRoots ?? ''));
 }
 
 /**
@@ -115,6 +129,7 @@ export async function crossVerify(
   receipt: VerifyTarget,
   certificate: VerifyTarget,
   now?: Date | string,
+  trustRoots?: string,
 ): Promise<CrossVerifyResult> {
   const [receiptJson, certJson] = await Promise.all([
     normalizeToJson(receipt),
@@ -127,5 +142,8 @@ export async function crossVerify(
         ? now.toISOString()
         : now;
   const wasm = await loadWasm();
-  return JSON.parse(wasm.cross_verify(receiptJson, certJson, nowStr));
+  // Empty trust roots deliberately trust no issuer and fail closed.
+  return JSON.parse(
+    wasm.cross_verify(receiptJson, certJson, nowStr, trustRoots ?? ''),
+  );
 }

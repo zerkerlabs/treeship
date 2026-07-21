@@ -163,45 +163,70 @@ fn verify_merkle_inner(proof_json: &str, trust_roots_json: &str) -> Result<Strin
 
     let trust = parse_wasm_trust_roots(trust_roots_json)?;
 
-    // 1. Verify checkpoint signature against the pinned trust root.
-    // The signature now binds merkle_version (see Checkpoint::canonical_for_signing),
-    // so a tampered version on the checkpoint reaches us as an invalid signature.
-    if !proof_file.checkpoint.verify(&trust) {
-        return Ok(serde_json::json!({
-            "valid": false,
-            "message": "checkpoint signature invalid",
-            "artifact_id": proof_file.artifact_id,
-            "checkpoint_index": proof_file.checkpoint.index,
-        })
-        .to_string());
-    }
-
-    // 2. Verify inclusion proof. The trusted merkle_version comes from
-    // the signature-verified checkpoint above — NOT from the
-    // (attacker-controllable) inclusion proof. verify_proof additionally
-    // rejects if proof.merkle_version != checkpoint.merkle_version.
+    // Inclusion-proof structure is checkable regardless of whether the
+    // checkpoint's signer is pinned, so compute it once and report it in
+    // every branch. The merkle_version comes from the checkpoint (the proof's
+    // own version is attacker-controllable); verify_proof additionally rejects
+    // if proof.merkle_version != checkpoint.merkle_version. This result is
+    // "internally consistent" on its own; it only becomes "verified against a
+    // trusted checkpoint" when the checkpoint itself is Valid below.
     let root = proof_file
         .checkpoint
         .root
         .strip_prefix("sha256:")
         .unwrap_or(&proof_file.checkpoint.root);
-
-    let valid = treeship_core::merkle::MerkleTree::verify_proof(
+    let inclusion_ok = treeship_core::merkle::MerkleTree::verify_proof(
         proof_file.checkpoint.merkle_version,
         root,
         &proof_file.artifact_id,
         &proof_file.inclusion_proof,
     );
 
+    // Distinguish the three checkpoint outcomes. An unpinned signer is NOT the
+    // same as a bad signature: the first asks the caller to pin a root (its
+    // decision), the second says distrust the hub. Reporting the first as
+    // "invalid" is a mislabel (see Checkpoint::verify_detailed). `valid` is
+    // true only when the checkpoint is trusted AND inclusion verifies.
+    use treeship_core::merkle::CheckpointVerifyOutcome;
+    let (checkpoint_status, message, valid) = match proof_file.checkpoint.verify_detailed(&trust) {
+        CheckpointVerifyOutcome::Valid => (
+            "verified",
+            if inclusion_ok {
+                "inclusion verified against a trusted checkpoint"
+            } else {
+                "checkpoint is trusted, but the inclusion proof does not verify"
+            },
+            inclusion_ok,
+        ),
+        CheckpointVerifyOutcome::SignerNotPinned { .. } => (
+            "signer_not_pinned",
+            if inclusion_ok {
+                "inclusion proof is internally consistent, but the checkpoint signer is \
+                 not in your trust roots — pin it to establish trust"
+            } else {
+                "checkpoint signer is not pinned and the inclusion proof does not verify"
+            },
+            false,
+        ),
+        CheckpointVerifyOutcome::Invalid { .. } => {
+            ("invalid", "checkpoint signature is invalid", false)
+        }
+    };
+
     Ok(serde_json::json!({
         "valid": valid,
-        "message": if valid { "inclusion verified" } else { "proof invalid" },
+        "checkpoint": checkpoint_status,
+        "inclusion": if inclusion_ok { "verified" } else { "invalid" },
+        "message": message,
         "artifact_id": proof_file.artifact_id,
         "leaf_index": proof_file.inclusion_proof.leaf_index,
         "checkpoint_index": proof_file.checkpoint.index,
         "checkpoint_root": proof_file.checkpoint.root,
         "signed_at": proof_file.checkpoint.signed_at,
         "signer": proof_file.checkpoint.signer,
+        // The served pubkey, so an unpinned-signer UI can offer a ready-to-run
+        // `treeship trust add … --kind hub_checkpoint` with the real key.
+        "checkpoint_public_key": proof_file.checkpoint.public_key,
     })
     .to_string())
 }

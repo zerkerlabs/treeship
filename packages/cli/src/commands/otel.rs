@@ -45,6 +45,7 @@ pub fn test_connection(
                 &[("endpoint", &otel_config.endpoint), ("error", &e)],
             );
             printer.blank();
+            return Err(e.into());
         }
     }
 

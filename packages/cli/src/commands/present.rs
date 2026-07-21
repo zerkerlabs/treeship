@@ -209,6 +209,7 @@ pub fn present(
     // carries no staple and reports "not anchored". This is the honest trade:
     // a private selective claim you would not want in the public log.
     let mut disclosures_block: Option<Vec<String>> = None;
+    let mut disclosed_total: Option<usize> = None;
     if !disclose.is_empty() {
         let Some(kid) = &key_id else {
             return Err(format!(
@@ -235,6 +236,7 @@ pub fn present(
         // Every requested capability must actually be in the card, or the
         // presentation would claim something the agent never declared.
         let all_tools = treeship_core::capability::declared_tools(&card_payload);
+        disclosed_total = Some(all_tools.len());
         for cap in disclose {
             if !all_tools.iter().any(|t| t == cap) {
                 return Err(format!(
@@ -391,7 +393,13 @@ pub fn present(
 
     let disclosed_desc = disclosures_block
         .as_ref()
-        .map(|d| format!("{} of {} capabilities revealed", d.len(), disclose.len()))
+        .map(|d| {
+            format!(
+                "{} of {} capabilities revealed",
+                d.len(),
+                disclosed_total.unwrap_or(d.len())
+            )
+        })
         .unwrap_or_else(|| "full card".to_string());
     printer.success(
         "presentation written",

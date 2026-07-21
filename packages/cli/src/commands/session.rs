@@ -1396,7 +1396,13 @@ pub fn close(
                 let _ = std::fs::remove_file(marker);
             }
             printer.blank();
-            printer.success("session receipt composed", &[]);
+            // JSON mode is a single-document API. The final close response
+            // below includes the package path; emitting this intermediate
+            // success used to produce two concatenated JSON objects that no
+            // standard JSON parser could consume.
+            if printer.format != crate::printer::Format::Json {
+                printer.success("session receipt composed", &[]);
+            }
             printer.info(&format!("  package:   {}", pkg_output.path.display()));
             printer.info(&format!("  digest:    {}", pkg_output.receipt_digest));
             if let Some(ref root) = pkg_output.merkle_root {
@@ -1475,13 +1481,25 @@ pub fn close(
     // Print output
     let elapsed_str = format_duration_ms(elapsed_ms);
 
-    printer.blank();
-    printer.success("session closed", &[]);
-    printer.info(&format!("  id:       {}", manifest.session_id));
-    printer.info(&format!("  duration: {}", elapsed_str));
-    printer.info(&format!("  receipts: {}", artifact_count));
-    printer.info(&format!("  events:   {}", event_log.event_count()));
-    printer.blank();
+    if printer.format == crate::printer::Format::Json {
+        printer.json(&serde_json::json!({
+            "status": "ok",
+            "message": "session closed",
+            "session_id": manifest.session_id,
+            "duration_ms": elapsed_ms,
+            "receipts": artifact_count,
+            "events": event_log.event_count(),
+            "package": sealed_pkg_path.as_ref().map(|path| path.display().to_string()),
+        }));
+    } else {
+        printer.blank();
+        printer.success("session closed", &[]);
+        printer.info(&format!("  id:       {}", manifest.session_id));
+        printer.info(&format!("  duration: {}", elapsed_str));
+        printer.info(&format!("  receipts: {}", artifact_count));
+        printer.info(&format!("  events:   {}", event_log.event_count()));
+        printer.blank();
+    }
 
     // Next-step hints. The two paths a user has after a successful
     // close are: (a) verify the sealed receipt locally with no hub

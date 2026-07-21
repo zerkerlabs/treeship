@@ -1,13 +1,18 @@
 use std::collections::HashMap;
 
-use ed25519_dalek::VerifyingKey;
+use sha2::{Digest, Sha256};
 use treeship_core::{
     attestation::{Envelope, Verifier},
     statements::{
-        payload_type, ActionStatement, ApprovalScope, ApprovalStatement, DecisionStatement,
-        HandoffStatement, ReceiptStatement,
+        invitation::InvitationStatement,
+        payload_type, payload_type_v2,
+        session_participant::{verify_participant_envelope, SessionParticipantStatement},
+        verify_effect, ActionStatement, ActionStatementV2, ApprovalScope, ApprovalStatement,
+        DecisionStatement, EffectConfidence, EffectVerdict, HandoffStatement, NoWitnessAuthority,
+        ReceiptStatement,
     },
     storage::Store,
+    trust::TrustRootStore,
 };
 
 use crate::{ctx, printer::Printer};
@@ -59,6 +64,56 @@ struct StepInfo {
     decision_tokens_out: Option<u64>,
     decision_summary: Option<String>,
     decision_confidence: Option<f64>,
+    // action/v2 effect verdict (operational confidence, reconciled by
+    // verify_effect). Present only for treeship/action/v2 receipts carrying an
+    // effect block.
+    effect_effective: Option<EffectConfidence>,
+    effect_claimed: Option<EffectConfidence>,
+    effect_downgraded: bool,
+    effect_trusted_witnesses: usize,
+    // action/v2 runtime identity (who/what executed the action).
+    runtime_model: Option<String>,
+}
+
+/// Human label for an effect confidence level, matching the wire snake_case.
+fn effect_label(c: EffectConfidence) -> &'static str {
+    match c {
+        EffectConfidence::Verified => "verified",
+        EffectConfidence::Partial => "partial",
+        EffectConfidence::Ambiguous => "ambiguous",
+        EffectConfidence::Unknown => "unknown",
+        EffectConfidence::NotVerified => "not-verified",
+    }
+}
+
+/// Reconciled effect verdict for an envelope, if it is a treeship/action/v2
+/// receipt that actually carries an effect block. `None` for any other
+/// artifact (or a v2 action with no effect), so callers surface the effect
+/// line only where there is an effect to judge. Uses [`NoWitnessAuthority`]:
+/// the CLI wires no witness trust yet, so witnesses give no evidence lift --
+/// the honest, fail-closed default across every output format.
+fn v2_effect_verdict(env: &Envelope) -> Option<EffectVerdict> {
+    if env.payload_type != payload_type_v2("action") {
+        return None;
+    }
+    let stmt = env.unmarshal_statement::<ActionStatementV2>().ok()?;
+    stmt.effect.as_ref()?;
+    Some(verify_effect(&stmt, &NoWitnessAuthority))
+}
+
+/// Serialize an effect verdict for `--json` output.
+fn effect_verdict_json(v: &EffectVerdict) -> serde_json::Value {
+    let downgraded = v
+        .claimed_confidence
+        .map(|c| c != v.effective_confidence)
+        .unwrap_or(false);
+    serde_json::json!({
+        "effective_confidence": effect_label(v.effective_confidence),
+        "claimed_confidence": v.claimed_confidence.map(effect_label),
+        "downgraded": downgraded,
+        "trusted_witnesses": v.trusted_witnesses,
+        "notes": v.notes,
+    })
 }
 
 pub fn run(
@@ -83,8 +138,11 @@ pub fn run(
     };
     let target = resolved_target.as_str();
 
-    // Build a Verifier from every known public key in the keystore.
-    let verifier = build_verifier(&ctx.keys)?;
+    // Local keys cover artifacts produced here; pinned roots cover artifacts
+    // pulled or imported from trusted counterparties.
+    let trust = TrustRootStore::open_default_or_empty()?;
+    let verifier = crate::commands::verifier::from_local_and_trust(&ctx.keys, &trust)?
+        .ok_or("no local or trusted verification keys are configured")?;
 
     // Resolve starting artifact.
     let _root_record = ctx.storage.read(target)
@@ -134,7 +192,7 @@ pub fn run(
             }
         };
 
-        let check = verify_one(&verifier, &rec.envelope, id);
+        let check = verify_one(&verifier, &ctx.storage, &rec.envelope, id);
         chain_envelopes.push((id.clone(), rec.envelope));
         checks.push(check);
     }
@@ -159,14 +217,28 @@ pub fn run(
     let failed = total - passed;
 
     if printer.format == crate::printer::Format::Json {
+        // Effect verdicts are keyed by artifact id so the signature-focused
+        // `checks` list can carry the operational-confidence verdict alongside
+        // each v2 action without disturbing the nonce-binding synthetic checks.
+        let effect_by_id: HashMap<String, serde_json::Value> = chain_envelopes
+            .iter()
+            .filter_map(|(id, env)| {
+                v2_effect_verdict(env).map(|v| (id.clone(), effect_verdict_json(&v)))
+            })
+            .collect();
+
         let out: Vec<_> = checks
             .iter()
             .map(|c| {
-                serde_json::json!({
+                let mut obj = serde_json::json!({
                     "id":      c.id,
                     "outcome": if c.outcome == Outcome::Pass { "pass" } else { "fail" },
                     "reason":  c.reason,
-                })
+                });
+                if let Some(effect) = effect_by_id.get(&c.id) {
+                    obj["effect"] = effect.clone();
+                }
+                obj
             })
             .collect();
         printer.json(&serde_json::json!({
@@ -348,6 +420,10 @@ fn compute_chain_linkage(chain: &[(String, Envelope)]) -> (bool, String) {
             .and_then(|v| {
                 v.get("parentId")
                     .or_else(|| v.get("parent_id"))
+                    // session-participant/v1 names the signed edge after the
+                    // protocol object it extends. Treat that invitation ref as
+                    // its parent instead of trusting unsigned storage metadata.
+                    .or_else(|| v.get("invitation_ref"))
                     .and_then(|p| p.as_str())
                     .map(str::to_string)
             });
@@ -644,6 +720,37 @@ fn print_step_card(step: &StepInfo, printer: &Printer) {
         print_box_line(&format!("files:  {} modified", n), printer);
     }
 
+    // Runtime identity (action/v2): what executed the action.
+    if let Some(ref model) = step.runtime_model {
+        print_box_line(&format!("runtime: {}", model), printer);
+    }
+
+    // Effect verdict (action/v2): operational confidence, reconciled against
+    // evidence. Distinct from the signature check -- a valid signature over a
+    // Verified claim still reads not-verified here when nothing backs it.
+    if let Some(effective) = step.effect_effective {
+        let mut line = format!("effect: {}", effect_label(effective));
+        if step.effect_downgraded {
+            if let Some(claimed) = step.effect_claimed {
+                line.push_str(&format!(
+                    "  (actor claimed {}, downgraded: no independent evidence)",
+                    effect_label(claimed)
+                ));
+            }
+        } else if step.effect_trusted_witnesses > 0 {
+            line.push_str(&format!(
+                "  ({} trusted witness{})",
+                step.effect_trusted_witnesses,
+                if step.effect_trusted_witnesses == 1 {
+                    ""
+                } else {
+                    "es"
+                }
+            ));
+        }
+        print_box_line(&line, printer);
+    }
+
     // Approval info (if this action references an approval)
     if let (Some(ref appr_id), Some(ref approver)) = (&step.approval_id, &step.approver) {
         print_box_line(
@@ -775,7 +882,41 @@ fn extract_step_info(index: usize, id: &str, env: &Envelope, storage: &Store) ->
         decision_tokens_out: None,
         decision_summary: None,
         decision_confidence: None,
+        effect_effective: None,
+        effect_claimed: None,
+        effect_downgraded: false,
+        effect_trusted_witnesses: 0,
+        runtime_model: None,
     };
+
+    // Try action/v2 FIRST: a v2 payload also parses as v1 (serde ignores the
+    // extra mandate/effect fields), so dispatch on the envelope payloadType
+    // before the v1 attempt or the effect verdict is silently skipped.
+    if env.payload_type == payload_type_v2("action") {
+        if let Ok(stmt) = env.unmarshal_statement::<ActionStatementV2>() {
+            info.actor = stmt.actor.clone();
+            info.action = stmt.action.clone();
+            info.timestamp = stmt.timestamp.clone();
+            info.parent_id = stmt.parent_id.clone();
+            if let Some(rt) = &stmt.runtime {
+                info.runtime_model = rt.model.clone();
+            }
+            // Surface the effect line only when there is an effect to judge.
+            if let Some(verdict) = v2_effect_verdict(env) {
+                info.effect_effective = Some(verdict.effective_confidence);
+                info.effect_claimed = verdict.claimed_confidence;
+                info.effect_trusted_witnesses = verdict.trusted_witnesses;
+                info.effect_downgraded = verdict
+                    .claimed_confidence
+                    .map(|c| c != verdict.effective_confidence)
+                    .unwrap_or(false);
+            }
+            if let Some(meta) = &stmt.meta {
+                extract_meta_fields(&mut info, meta);
+            }
+            return info;
+        }
+    }
 
     // Try action statement
     if let Ok(action) = env.unmarshal_statement::<ActionStatement>() {
@@ -953,9 +1094,23 @@ fn short_id(id: &str) -> String {
 // Verification logic (unchanged)
 // =============================================================================
 
-fn verify_one(verifier: &Verifier, envelope: &Envelope, id: &str) -> ArtifactCheck {
+fn verify_one(
+    verifier: &Verifier,
+    storage: &Store,
+    envelope: &Envelope,
+    id: &str,
+) -> ArtifactCheck {
     let actor_or_sys = extract_actor(envelope);
     let pt = envelope.payload_type.clone();
+
+    // Participant envelopes deliberately carry canonical protocol signatures,
+    // not ordinary DSSE PAE signatures: joining agent first, host second. The
+    // generic verifier therefore rejects a correctly countersigned join. Route
+    // this typed envelope through its protocol verifier and authenticate the
+    // referenced invitation through the normal trust universe.
+    if pt == payload_type("session-participant") {
+        return verify_session_participant(verifier, storage, envelope, id, actor_or_sys);
+    }
 
     match verifier.verify(envelope) {
         Ok(result) => {
@@ -989,6 +1144,79 @@ fn verify_one(verifier: &Verifier, envelope: &Envelope, id: &str) -> ArtifactChe
             outcome: Outcome::Fail,
             reason: Some(e.to_string()),
         },
+    }
+}
+
+fn verify_session_participant(
+    verifier: &Verifier,
+    storage: &Store,
+    envelope: &Envelope,
+    id: &str,
+    actor_or_sys: String,
+) -> ArtifactCheck {
+    let pt = envelope.payload_type.clone();
+    let fail = |reason: String| ArtifactCheck {
+        id: id.to_string(),
+        payload_type: pt.clone(),
+        actor_or_sys: actor_or_sys.clone(),
+        outcome: Outcome::Fail,
+        reason: Some(reason),
+    };
+
+    let participant: SessionParticipantStatement = match envelope.unmarshal_statement() {
+        Ok(statement) => statement,
+        Err(e) => return fail(format!("participant payload invalid: {e}")),
+    };
+    let invitation_record = match storage.read(&participant.invitation_ref) {
+        Ok(record) => record,
+        Err(e) => {
+            return fail(format!(
+                "referenced invitation {} is unavailable: {e}",
+                participant.invitation_ref
+            ))
+        }
+    };
+    let invitation_result = match verifier.verify(&invitation_record.envelope) {
+        Ok(result) => result,
+        Err(e) => return fail(format!("invitation is not trusted: {e}")),
+    };
+    if invitation_result.artifact_id != participant.invitation_ref {
+        return fail(format!(
+            "invitation id mismatch: expected {}, derived {}",
+            participant.invitation_ref, invitation_result.artifact_id
+        ));
+    }
+    let invitation: InvitationStatement = match invitation_record.envelope.unmarshal_statement() {
+        Ok(statement) => statement,
+        Err(e) => return fail(format!("invitation payload invalid: {e}")),
+    };
+    if let Err(e) = verify_participant_envelope(envelope, &invitation.issuer) {
+        return fail(e.to_string());
+    }
+
+    // The join command intentionally keeps the pending artifact id stable when
+    // the host appends signature #2. Recreate the pending envelope to retain a
+    // content-address check without falsely hashing the finalized bytes.
+    let mut pending = envelope.clone();
+    pending.signatures.truncate(1);
+    let pending_bytes = match serde_json::to_vec(&pending) {
+        Ok(bytes) => bytes,
+        Err(e) => return fail(format!("participant envelope encoding failed: {e}")),
+    };
+    let digest = Sha256::digest(pending_bytes);
+    let derived_id = format!("art_{}", hex::encode(&digest[..16]));
+    if derived_id != id {
+        return fail(format!(
+            "participant id mismatch: stored as {id}, derived {derived_id}"
+        ));
+    }
+
+    ArtifactCheck {
+        id: id.to_string(),
+        payload_type: pt,
+        actor_or_sys,
+        outcome: Outcome::Pass,
+        reason: None,
     }
 }
 
@@ -1323,29 +1551,92 @@ fn extract_actor(envelope: &Envelope) -> String {
     "\u{2014}".into()
 }
 
-/// Build a Verifier populated with all public keys from the keystore.
-fn build_verifier(
-    keys: &treeship_core::keys::Store,
-) -> Result<Verifier, Box<dyn std::error::Error>> {
-    let key_list = keys.list()?;
-    let mut map: HashMap<String, VerifyingKey> = HashMap::new();
-
-    for info in key_list {
-        if info.algorithm == "ed25519" && info.public_key.len() == 32 {
-            let bytes: [u8; 32] = info.public_key.try_into().unwrap();
-            if let Ok(vk) = VerifyingKey::from_bytes(&bytes) {
-                map.insert(info.id, vk);
-            }
-        }
-    }
-
-    Ok(Verifier::new(map))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use treeship_core::statements::{ActionStatement, ApprovalScope, SubjectRef};
+
+    // ── action/v2 effect verdict wiring ────────────────────────────────
+    #[test]
+    fn v2_receipt_effect_verdict_reaches_step_info_and_downgrades() {
+        use treeship_core::attestation::{sign, Ed25519Signer};
+        use treeship_core::statements::{
+            payload_type_v2, ActionStatementV2, Effect, EffectConfidence, Mandate, Revocation,
+        };
+
+        let mandate = Mandate {
+            grant_id: "grant_1".into(),
+            grantor: "key_parent".into(),
+            issuer_sig: None,
+            objective_hash: Some("sha256:abc".into()),
+            scope: vec!["payments.charge".into()],
+            audience: "acme".into(),
+            parent_request_id: None,
+            delegation_depth: 0,
+            issued_at: "2026-07-20T10:00:00Z".into(),
+            expiry: "2026-07-20T11:00:00Z".into(),
+            max_delegation: 3,
+            revocation: Revocation {
+                path: "hub://acme/revocations".into(),
+                revoked_at: None,
+            },
+        };
+        let mut stmt = ActionStatementV2::new("agent://worker", "payments.charge", mandate);
+        // Verified claim with NO independent evidence: must downgrade.
+        stmt.effect = Some(Effect {
+            output_hash: Some("sha256:out".into()),
+            effect_confidence: Some(EffectConfidence::Verified),
+            ..Default::default()
+        });
+
+        let signer = Ed25519Signer::generate("agent_worker").unwrap();
+        let env = sign(&payload_type_v2("action"), &stmt, &signer)
+            .unwrap()
+            .envelope;
+
+        // A v2 payload also parses as v1; this proves the dispatch runs the
+        // effect verdict rather than silently taking the v1 branch.
+        let dir = std::env::temp_dir().join("ts_verify_v2_effect_test");
+        let store = Store::open(&dir).unwrap();
+        let info = extract_step_info(0, "art_test", &env, &store);
+
+        assert_eq!(info.actor, "agent://worker");
+        assert_eq!(
+            info.effect_claimed,
+            Some(EffectConfidence::Verified),
+            "claim should be captured"
+        );
+        assert_eq!(
+            info.effect_effective,
+            Some(EffectConfidence::NotVerified),
+            "unbacked Verified must downgrade"
+        );
+        assert!(info.effect_downgraded, "downgrade flag must be set");
+        assert_eq!(info.effect_trusted_witnesses, 0);
+
+        // Same verdict must surface in the --json path via the shared helper.
+        let verdict = v2_effect_verdict(&env).expect("v2 action with effect");
+        let j = effect_verdict_json(&verdict);
+        assert_eq!(j["effective_confidence"], "not-verified");
+        assert_eq!(j["claimed_confidence"], "verified");
+        assert_eq!(j["downgraded"], true);
+        assert!(j["notes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|n| n.as_str().unwrap().contains("downgraded")));
+
+        // A non-v2 artifact yields no effect verdict at all.
+        let v1 = act("agent://x", "tool.call", None);
+        let v1_env = sign(
+            &treeship_core::statements::payload_type("action"),
+            &v1,
+            &signer,
+        )
+        .unwrap()
+        .envelope;
+        assert!(v2_effect_verdict(&v1_env).is_none());
+    }
 
     fn act(actor: &str, action: &str, subject_uri: Option<&str>) -> ActionStatement {
         let mut a = ActionStatement::new(actor, action);

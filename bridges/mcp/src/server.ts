@@ -5,6 +5,7 @@ import { execFile } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
 import { z } from 'zod';
+import { sessionReportCommands, verifyArgs } from './cli-args.js';
 
 const exec = promisify(execFile);
 
@@ -134,9 +135,10 @@ server.registerTool(
     },
   },
   async ({ artifactId, chain }) => {
-    const args = ['verify', artifactId];
-    if (chain !== false) args.push('--chain');
-    return formatExec(await runTreeship(args));
+    // The CLI walks the parent chain by DEFAULT; the only flag is `--no-chain`
+    // to opt out. There is no `--chain` flag — passing it makes clap reject the
+    // whole invocation, which previously broke every default verify call.
+    return formatExec(await runTreeship(verifyArgs(artifactId, chain)));
   },
 );
 
@@ -145,15 +147,18 @@ server.registerTool(
   {
     title: 'Publish session report',
     description:
-      'Close-and-publish the active session as a shareable report on the configured hub. Returns the report URL.',
+      'Publish the latest closed session as a shareable report. When summary is provided, close the active session with that summary first.',
     inputSchema: {
       summary: z.string().optional().describe('Headline summary for the report'),
     },
   },
   async ({ summary }) => {
-    const args = ['session', 'report'];
-    if (summary) args.push('--summary', summary);
-    return formatExec(await runTreeship(args));
+    const commands = sessionReportCommands(summary);
+    for (const command of commands) {
+      const result = await runTreeship(command);
+      if (result.code !== 0 || command === commands.at(-1)) return formatExec(result);
+    }
+    return textResult('ok');
   },
 );
 

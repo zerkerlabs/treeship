@@ -107,6 +107,15 @@ fn short_hash(h: &str) -> String {
     }
 }
 
+/// A checkpoint covers the complete local tree, including artifacts the
+/// operator deliberately kept local. The Hub rejects proofs for those
+/// artifacts because it has no corresponding artifact row. That is an
+/// expected local-only case, not a reason to abort proofs for artifacts that
+/// were published.
+fn is_missing_hub_artifact(status: u16, body: &serde_json::Value) -> bool {
+    status == 404 && body.get("error").and_then(|v| v.as_str()) == Some("artifact not found")
+}
+
 // ---------------------------------------------------------------------------
 // treeship checkpoint
 // ---------------------------------------------------------------------------
@@ -282,6 +291,10 @@ pub fn proof(
             ),
             ("root", &format!("sha256:{}", root_short)),
             ("path", &format!("{} steps", inclusion_proof.path.len())),
+            // Machine consumers need the generated proof file, not merely a
+            // human summary. Without this field `--format json` hid the path
+            // required by the subsequent `merkle verify` command.
+            ("file", &out_path),
         ],
     );
     printer.blank();
@@ -616,6 +629,8 @@ pub fn publish(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn st
     let cp_tree = checkpoint_tree(&artifact_ids, &checkpoint)?;
     let proof_url = format!("{}/v1/merkle/proof", endpoint);
     let mut published_count = 0u64;
+    let mut local_only_count = 0u64;
+    let mut first_published_id: Option<&str> = None;
 
     for (leaf_index, artifact_id) in artifact_ids.iter().enumerate() {
         // Only publish proofs for artifacts within this checkpoint's tree_size
@@ -664,12 +679,30 @@ pub fn publish(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn st
             "proof_json":    proof_json_str,
         });
 
-        ureq::post(&proof_url)
+        match ureq::post(&proof_url)
             .set("Authorization", &format!("DPoP {}", hub_id))
             .set("DPoP", &dpop_jwt)
-            .send_json(&proof_body)?;
-
-        published_count += 1;
+            .send_json(&proof_body)
+        {
+            Ok(_) => {
+                published_count += 1;
+                first_published_id.get_or_insert(artifact_id);
+            }
+            Err(ureq::Error::Status(status, response)) => {
+                let body: serde_json::Value =
+                    response.into_json().unwrap_or(serde_json::Value::Null);
+                if is_missing_hub_artifact(status, &body) {
+                    local_only_count += 1;
+                    continue;
+                }
+                return Err(format!(
+                    "Hub rejected proof for {} with status {}: {}",
+                    artifact_id, status, body
+                )
+                .into());
+            }
+            Err(e) => return Err(e.into()),
+        }
     }
 
     printer.info(&format!(
@@ -677,6 +710,12 @@ pub fn publish(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn st
         printer.green("ok"),
         published_count
     ));
+    if local_only_count > 0 {
+        printer.hint(&format!(
+            "{} local-only artifacts skipped (push them first if their proofs should be public)",
+            local_only_count
+        ));
+    }
 
     // 4. Publish a consistency proof from the previous checkpoint (3b): proves
     //    this checkpoint's tree EXTENDS the previous one (append-only, no
@@ -693,7 +732,7 @@ pub fn publish(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn st
     }
     printer.blank();
 
-    if let Some(first_id) = artifact_ids.first() {
+    if let Some(first_id) = first_published_id {
         printer.hint(&format!(
             "treeship.dev/merkle?id={}  (any artifact is now verifiable via Hub)",
             first_id
@@ -702,6 +741,27 @@ pub fn publish(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn st
     printer.blank();
 
     Ok(())
+}
+
+#[cfg(test)]
+mod publish_tests {
+    use super::is_missing_hub_artifact;
+
+    #[test]
+    fn only_missing_artifact_404_is_skippable() {
+        assert!(is_missing_hub_artifact(
+            404,
+            &serde_json::json!({"error": "artifact not found"})
+        ));
+        assert!(!is_missing_hub_artifact(
+            404,
+            &serde_json::json!({"error": "checkpoint not found"})
+        ));
+        assert!(!is_missing_hub_artifact(
+            403,
+            &serde_json::json!({"error": "artifact not found"})
+        ));
+    }
 }
 
 /// Load the checkpoint immediately before `index` (i.e. `index - 1`), if it

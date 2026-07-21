@@ -1,10 +1,17 @@
 import { createMDX } from 'fumadocs-mdx/next';
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const withMDX = createMDX();
+const docsRoot = dirname(fileURLToPath(import.meta.url));
 
 /** @type {import('next').NextConfig} */
 const config = {
   reactStrictMode: true,
+  // Do not let an unrelated package-lock.json above the repository make Next
+  // treat the user's entire home directory as this application's trace root.
+  outputFileTracingRoot: docsRoot,
+  allowedDevOrigins: ['localhost', '127.0.0.1'],
   async redirects() {
     return [
       {

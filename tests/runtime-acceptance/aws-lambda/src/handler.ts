@@ -1,7 +1,7 @@
 // AWS Lambda function that verifies a Treeship receipt by URL.
 //
 // Deploy with SAM, serverless framework, or the AWS console -- bundle the
-// dist/handler.mjs emitted by `npm run build`.
+// dist/handler.js and dist/treeship_core_wasm_bg.wasm emitted by `npm run build`.
 
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 import { verifyReceipt } from '@treeship/verify';

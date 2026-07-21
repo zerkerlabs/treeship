@@ -1,7 +1,6 @@
 #!/usr/bin/env node
-// Generates docs/content/docs/about/changelog.mdx from CHANGELOG.md at the repo
-// root. The repo-root CHANGELOG.md is the single source of truth — edit that
-// file, not the generated MDX page.
+// Generates a readable recent-release view from the repo-root CHANGELOG.md.
+// The complete root changelog remains the single source of truth.
 //
 // Run from anywhere — paths are resolved relative to this script.
 // Hooked into `prebuild` so every Vercel deploy regenerates from the source.
@@ -21,18 +20,19 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "..", "..");
 const SRC = join(REPO_ROOT, "CHANGELOG.md");
 const OUT = join(REPO_ROOT, "docs", "content", "docs", "about", "changelog.mdx");
+const MAX_RELEASES = 10;
 
 const FRONTMATTER = `---
 title: Changelog
-description: All notable changes to Treeship, newest first. The format follows Keep a Changelog and versioning follows Semantic Versioning.
+description: Recent Treeship releases, newest first. The complete history remains in the repository changelog.
 ---
 
 {/* GENERATED FILE — do not edit. Source: CHANGELOG.md at the repo root.
     Regenerate with \`npm run sync:changelog\` (also runs on every build via prebuild). */}
 
-All notable changes to Treeship are documented here.
+The latest Treeship releases are documented here.
 
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The canonical source is [\`CHANGELOG.md\`](https://github.com/zerkerlabs/treeship/blob/main/CHANGELOG.md) at the repo root. Edit that file, not this page.
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The canonical source and [complete release history](https://github.com/zerkerlabs/treeship/blob/main/CHANGELOG.md) live in \`CHANGELOG.md\` at the repo root. Edit that file, not this page.
 `;
 
 // Escape MDX-significant characters in a prose segment (never called on code).
@@ -55,6 +55,7 @@ const src = await readFile(SRC, "utf8");
 const out = [];
 let inFence = false;
 let droppedTitle = false;
+let releaseCount = 0;
 
 for (const line of src.split("\n")) {
   if (/^\s*```/.test(line)) {
@@ -71,11 +72,21 @@ for (const line of src.split("\n")) {
     droppedTitle = true;
     continue;
   }
+  if (/^##\s+\d+\.\d+\.\d+(?:\s|$)/.test(line)) {
+    releaseCount += 1;
+    if (releaseCount > MAX_RELEASES) break;
+  }
   out.push(escapeLine(line));
 }
 
 const body = out.join("\n").replace(/^\n+/, "").replace(/\n*$/, "");
+const archive = `
+
+## Older releases
+
+Read the [complete release history](https://github.com/zerkerlabs/treeship/blob/main/CHANGELOG.md) in the repository.
+`;
 await mkdir(dirname(OUT), { recursive: true });
-await writeFile(OUT, FRONTMATTER + "\n" + body + "\n");
+await writeFile(OUT, FRONTMATTER + "\n" + body + archive);
 console.log(`sync-changelog: wrote ${OUT}`);
 console.log(`  source: ${SRC}`);

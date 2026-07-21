@@ -48,6 +48,19 @@ pub use session_participant::{
     TYPE_SESSION_PARTICIPANT,
 };
 
+// Receipt schema v2 (docs receipt-v2 spec). `action.v2` binds two blocks into
+// the signed payload: `mandate` (the per-hop authorization the action was
+// exercised under) and `effect` (what the action actually touched). The
+// verifier evaluates authorization at `signed_at` and fails closed, reporting
+// `Unverified` rather than a false `Pass` for any layer it cannot check.
+pub mod action_v2;
+pub use action_v2::{
+    action_in_scope, payload_type_v2, verify_effect, verify_grant_chain, verify_mandate,
+    ActionStatementV2, Cost, Effect, EffectConfidence, EffectVerdict, Grant, GrantChainError,
+    Mandate, MandateVerdict, NoRevocationSource, NoWitnessAuthority, Revocation, RevocationSource,
+    RevocationStatus, RuntimeIdentity, Witness, WitnessAuthority, TYPE_ACTION_V2,
+};
+
 use serde::{Deserialize, Serialize};
 
 /// A reference to content being attested, approved, or receipted.

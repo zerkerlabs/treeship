@@ -34,15 +34,15 @@ type agentResponse struct {
 
 // sessionResponse is the public shape returned for each session.
 type sessionResponse struct {
-	SessionID   string  `json:"session_id"`
-	Name        string  `json:"name,omitempty"`
-	StartedAt   string  `json:"started_at,omitempty"`
-	EndedAt     string  `json:"ended_at,omitempty"`
-	DurationMin int64   `json:"duration_min"`
-	Status      string  `json:"status"`
-	AgentCount  int     `json:"agent_count"`
-	ActionCount int     `json:"action_count"`
-	ReceiptURL  string  `json:"receipt_url,omitempty"`
+	SessionID   string `json:"session_id"`
+	Name        string `json:"name,omitempty"`
+	StartedAt   string `json:"started_at,omitempty"`
+	EndedAt     string `json:"ended_at,omitempty"`
+	DurationMin int64  `json:"duration_min"`
+	Status      string `json:"status"`
+	AgentCount  int    `json:"agent_count"`
+	ActionCount int    `json:"action_count"`
+	ReceiptURL  string `json:"receipt_url,omitempty"`
 }
 
 // ListAgents handles GET /v1/ship/agents.

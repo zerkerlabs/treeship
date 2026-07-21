@@ -1,9 +1,7 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
 
-use ed25519_dalek::VerifyingKey;
-use treeship_core::attestation::Verifier;
 use treeship_core::bundle;
+use treeship_core::trust::TrustRootStore;
 
 use crate::{ctx, printer::Printer};
 
@@ -81,12 +79,14 @@ pub fn import(args: ImportArgs, printer: &Printer) -> Result<(), Box<dyn std::er
     let ctx = ctx::open(args.config.as_deref())?;
     let path = PathBuf::from(&args.file);
 
-    // Build the trust root from the local keystore. Every public key the
-    // user has generated or added becomes a trusted signer for imports.
-    // To accept a bundle from a third party, the user must add that
-    // party's public key via `treeship keys add` first — which is the
-    // intended explicit-trust step, not a silent surprise.
-    let verifier = build_local_verifier(&ctx.keys).map_err(|e| format!("build verifier: {e}"))?;
+    // Local keys cover self-roundtrips; pinned trust roots cover bundles from
+    // counterparties. The old implementation ignored `treeship trust add`
+    // entirely and instructed users to run a nonexistent `treeship keys add`,
+    // making legitimate third-party imports impossible.
+    let trust = TrustRootStore::open_default_or_empty()?;
+    let verifier = crate::commands::verifier::from_local_and_trust(&ctx.keys, &trust)
+        .map_err(|e| format!("build verifier: {e}"))?
+        .ok_or(bundle::BundleError::NoTrustRoot)?;
 
     let bundle_id = bundle::import(&path, &ctx.storage, &verifier).map_err(|e| format!("{e}"))?;
 
@@ -99,38 +99,6 @@ pub fn import(args: ImportArgs, printer: &Printer) -> Result<(), Box<dyn std::er
     Ok(())
 }
 
-/// Construct a `Verifier` from every Ed25519 key in the local keystore.
-///
-/// Returns `bundle::BundleError::NoTrustRoot` if the keystore is empty so the
-/// caller can surface a useful "run `treeship init` first" message instead of
-/// a silent accept-everything.
-///
-/// Forward-compat: future keystore entries may carry non-Ed25519 algorithms
-/// (e.g. hybrid ML-DSA). We filter by `algorithm == "ed25519"` and skip
-/// malformed entries rather than hard-failing the entire import, mirroring the
-/// pattern in `verify::build_verifier`. A single bad or unsupported entry
-/// must not lock the user out of importing bundles signed by their working
-/// keys.
-fn build_local_verifier(
-    keys: &treeship_core::keys::Store,
-) -> Result<Verifier, Box<dyn std::error::Error>> {
-    let infos = keys.list()?;
-    if infos.is_empty() {
-        return Err(Box::new(bundle::BundleError::NoTrustRoot));
-    }
-
-    let mut map: HashMap<String, VerifyingKey> = HashMap::new();
-    for info in infos {
-        if info.algorithm == "ed25519" && info.public_key.len() == 32 {
-            let bytes: [u8; 32] = info.public_key.try_into().unwrap();
-            if let Ok(vk) = VerifyingKey::from_bytes(&bytes) {
-                map.insert(info.id, vk);
-            }
-        }
-    }
-    Ok(Verifier::new(map))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,7 +109,7 @@ mod tests {
     use treeship_core::statements::ActionStatement;
     use treeship_core::storage::Store as StorageStore;
 
-    /// build_local_verifier must tolerate a non-ed25519 keystore entry without
+    /// The shared verifier builder must tolerate a non-ed25519 keystore entry without
     /// failing the entire import. Before the forward-compat fix, an entry
     /// whose `public_key` was not exactly 32 bytes (e.g. a future ML-DSA-65
     /// key) caused `try_into::<[u8; 32]>` to fail and the entire keystore was
@@ -149,7 +117,7 @@ mod tests {
     /// working ed25519 key. The Verifier built here must still successfully
     /// verify a bundle signed by the working ed25519 key.
     #[test]
-    fn build_local_verifier_skips_non_ed25519_entries() {
+    fn verifier_builder_skips_non_ed25519_entries() {
         // Set up a fresh keystore with one real ed25519 key.
         let keys_dir = tempdir().unwrap();
         let keys = KeyStore::open(keys_dir.path()).unwrap();
@@ -197,11 +165,13 @@ mod tests {
         assert!(listed.iter().any(|k| k.algorithm == "ml-dsa-65"));
         assert!(listed.iter().any(|k| k.algorithm == "ed25519"));
 
-        // build_local_verifier must succeed and yield a Verifier with the
+        // The shared builder must succeed and yield a Verifier with the
         // ed25519 key trusted. Before the fix, the non-32-byte ML-DSA pubkey
         // tripped a hard error here.
-        let verifier = build_local_verifier(&keys)
-            .expect("build_local_verifier must skip non-ed25519 entries");
+        let verifier =
+            crate::commands::verifier::from_local_and_trust(&keys, &TrustRootStore::empty())
+                .expect("verifier builder must skip non-ed25519 entries")
+                .expect("the valid ed25519 key should produce a verifier");
 
         // Build a bundle in a separate storage store, signed by the ed25519
         // key, then export and import it through the constructed verifier.

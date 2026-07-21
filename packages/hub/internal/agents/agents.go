@@ -425,11 +425,11 @@ func (h *Handlers) Match(w http.ResponseWriter, r *http.Request) {
 		MerkleAnchor interface{} `json:"merkle_anchor"`
 	}
 	type candidate struct {
-		Agent          string   `json:"agent"`
-		MatchedTools   []string `json:"matched_tools"`
-		MatchedSessions int     `json:"matched_sessions"`
-		Records        []record `json:"records"`
-		toolSet        map[string]bool
+		Agent           string   `json:"agent"`
+		MatchedTools    []string `json:"matched_tools"`
+		MatchedSessions int      `json:"matched_sessions"`
+		Records         []record `json:"records"`
+		toolSet         map[string]bool
 	}
 	cands := map[string]*candidate{}
 

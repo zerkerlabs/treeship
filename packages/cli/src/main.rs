@@ -325,7 +325,7 @@ enum Command {
     /// fully offline with `verify-presentation` — no registry in the loop.
     ///
     /// Static presentations prove the RECORD, not the bearer (they are
-    /// replayable); challenge mode for live key-control proof is next.
+    /// replayable); pass `--challenge <nonce>` to prove live key control.
     ///
     /// Examples:
     ///   treeship present agent://deployer
@@ -2106,7 +2106,14 @@ struct TrustAddArgs {
     public_key: String,
 
     /// What this root is allowed to verify.
-    #[arg(long, value_parser = ["hub_checkpoint", "ship", "agent_cert", "session_host"])]
+    ///
+    /// Mirrors TrustRootKind::parse exactly. The v0.19 trust-split replaced the
+    /// single `ship` power with `hub_org` / `cert_issuer` / `revoker`; those
+    /// were missing here, so the CLI rejected them at the arg layer even though
+    /// the handler supports them. `ship` is kept in the accepted set only so it
+    /// reaches the handler's helpful deprecation message rather than a generic
+    /// clap error.
+    #[arg(long, value_parser = ["hub_checkpoint", "hub_org", "cert_issuer", "revoker", "agent_cert", "session_host", "ship"])]
     kind: String,
 
     /// Optional human-readable label. Shown by `treeship trust list`.

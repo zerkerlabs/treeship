@@ -32,6 +32,31 @@ pub fn default_canonical_version_v2() -> u8 {
     CANONICAL_VERSION_V2
 }
 
+/// Outcome of verifying a checkpoint against a trust root store.
+///
+/// The bool-returning [`Checkpoint::verify`] collapses this to
+/// `Valid`-or-not, which conflates two situations that demand opposite
+/// reactions: a *genuinely bad* signature (distrust the hub) versus a
+/// cryptographically fine signature from a signer you simply have not pinned
+/// (pin the root, if you decide to trust it). Reporting the second as
+/// "INVALID" is a mislabel. Callers that need to tell them apart -- `resolve`,
+/// and the browser `verify_merkle_proof` -- use [`Checkpoint::verify_detailed`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckpointVerifyOutcome {
+    /// Signature verifies AND the signer is pinned under `HubCheckpoint`.
+    Valid,
+    /// The signature is cryptographically valid, but the signer's public key
+    /// is not pinned in the provided trust roots. Not a failure of the math --
+    /// the verifier just has not decided to trust this signer. Pinning remains
+    /// the caller's explicit decision (trust-on-first-use). Carries the served
+    /// public key so a caller can offer a ready-to-run pin.
+    SignerNotPinned { public_key: String },
+    /// The checkpoint is malformed (bad key/signature encoding, unknown
+    /// canonical/merkle version) or the signature does not verify. A genuine
+    /// failure regardless of trust configuration.
+    Invalid { reason: String },
+}
+
 /// A signed snapshot of the Merkle tree at a point in time.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Checkpoint {
@@ -307,25 +332,46 @@ impl Checkpoint {
     /// canonical bytes) used to satisfy this function -- it now does not,
     /// because `trust.contains` rejects unknown issuers.
     pub fn verify(&self, trust: &TrustRootStore) -> bool {
+        matches!(self.verify_detailed(trust), CheckpointVerifyOutcome::Valid)
+    }
+
+    /// Verify the checkpoint and distinguish the three outcomes a caller may
+    /// want to react to differently (see [`CheckpointVerifyOutcome`]).
+    ///
+    /// The check order matters: structural validity (key/version/signature
+    /// encoding) and the signature math are evaluated *before* the trust pin,
+    /// so a genuinely bad signature reports `Invalid` while a valid signature
+    /// from an unpinned signer reports `SignerNotPinned`. `verify` collapses
+    /// both non-`Valid` arms to `false`, so its security contract is
+    /// unchanged: a self-signed forgery (valid math, unpinned key) is
+    /// `SignerNotPinned`, never `Valid`.
+    pub fn verify_detailed(&self, trust: &TrustRootStore) -> CheckpointVerifyOutcome {
+        use CheckpointVerifyOutcome::*;
+
         let pub_bytes = match URL_SAFE_NO_PAD.decode(&self.public_key) {
             Ok(b) => b,
-            Err(_) => return false,
+            Err(_) => {
+                return Invalid {
+                    reason: "public_key is not valid base64url".into(),
+                }
+            }
         };
         let pub_array: [u8; 32] = match pub_bytes.as_slice().try_into() {
             Ok(a) => a,
-            Err(_) => return false,
+            Err(_) => {
+                return Invalid {
+                    reason: "public_key is not 32 bytes".into(),
+                }
+            }
         };
         let vk = match VerifyingKey::from_bytes(&pub_array) {
             Ok(k) => k,
-            Err(_) => return false,
+            Err(_) => {
+                return Invalid {
+                    reason: "public_key is not a valid Ed25519 point".into(),
+                }
+            }
         };
-
-        // Trust pin: the embedded pubkey must be a configured root.
-        // An empty store or no matching root rejects -- closes the
-        // self-signed loophole.
-        if !trust.contains(&vk, TrustRootKind::HubCheckpoint) {
-            return false;
-        }
 
         // Reject unknown canonical_versions up front. Pre-v0.10.3
         // checkpoints have merkle_version == 1 which forces the legacy
@@ -337,7 +383,9 @@ impl Checkpoint {
             && self.canonical_version != CANONICAL_VERSION_V2
             && self.canonical_version != CANONICAL_VERSION_V3
         {
-            return false;
+            return Invalid {
+                reason: "unknown canonical/merkle version".into(),
+            };
         }
 
         let canonical = Self::canonical_for_signing(
@@ -355,15 +403,42 @@ impl Checkpoint {
 
         let sig_bytes = match URL_SAFE_NO_PAD.decode(&self.signature) {
             Ok(b) => b,
-            Err(_) => return false,
+            Err(_) => {
+                return Invalid {
+                    reason: "signature is not valid base64url".into(),
+                }
+            }
         };
         let sig_array: [u8; 64] = match sig_bytes.as_slice().try_into() {
             Ok(a) => a,
-            Err(_) => return false,
+            Err(_) => {
+                return Invalid {
+                    reason: "signature is not 64 bytes".into(),
+                }
+            }
         };
         let sig = Signature::from_bytes(&sig_array);
 
-        vk.verify_strict(canonical.as_bytes(), &sig).is_ok()
+        // Signature math first: a bad signature is a genuine failure
+        // regardless of whether the signer would have been pinned.
+        if vk.verify_strict(canonical.as_bytes(), &sig).is_err() {
+            return Invalid {
+                reason: "signature does not verify".into(),
+            };
+        }
+
+        // Signature is cryptographically valid. Trust pin: the embedded
+        // pubkey must be a configured root. An unpinned signer is reported
+        // distinctly (not `Invalid`) so a caller can offer to pin it --
+        // pinning stays the caller's explicit decision, and this arm is
+        // still not `Valid`, so the self-signed loophole remains closed.
+        if !trust.contains(&vk, TrustRootKind::HubCheckpoint) {
+            return SignerNotPinned {
+                public_key: self.public_key.clone(),
+            };
+        }
+
+        Valid
     }
 }
 
@@ -560,6 +635,84 @@ mod trust_pin_tests {
             !forgery.verify(&trust),
             "self-signed forgery must not verify against operator's trust set"
         );
+    }
+
+    // ── verify_detailed: distinguish unpinned-signer from bad-signature ──
+
+    #[test]
+    fn verify_detailed_valid_when_pinned() {
+        let (signer, tree) = signer_and_tree();
+        let cp = Checkpoint::create(1, &tree, &signer).unwrap();
+        assert_eq!(
+            cp.verify_detailed(&trust_with(&signer)),
+            CheckpointVerifyOutcome::Valid
+        );
+    }
+
+    /// A valid signature from a signer the operator has not pinned is
+    /// `SignerNotPinned` (offer to pin), NOT `Invalid` (distrust). This is
+    /// the mislabel the CLI `resolve` fix corrected, now available to the
+    /// browser verifier.
+    #[test]
+    fn verify_detailed_unpinned_signer_is_not_invalid() {
+        let (signer, tree) = signer_and_tree();
+        let cp = Checkpoint::create(1, &tree, &signer).unwrap();
+
+        let out = cp.verify_detailed(&TrustRootStore::empty());
+        match out {
+            CheckpointVerifyOutcome::SignerNotPinned { public_key } => {
+                assert_eq!(
+                    public_key, cp.public_key,
+                    "the served pubkey must be surfaced so the caller can offer a pin"
+                );
+            }
+            other => panic!("unpinned signer must be SignerNotPinned, got {other:?}"),
+        }
+    }
+
+    /// The security-critical case: a self-signed forgery has internally
+    /// consistent signature math but an unpinned key. It must be
+    /// `SignerNotPinned` -- never `Valid` (loophole stays closed) and never
+    /// `Invalid` (that would be the mislabel).
+    #[test]
+    fn verify_detailed_self_signed_forgery_is_unpinned_not_invalid() {
+        let (attacker, tree) = signer_and_tree();
+        let forgery = Checkpoint::create(99, &tree, &attacker).unwrap();
+        let honest = Ed25519Signer::generate("honest_hub").unwrap();
+
+        let out = forgery.verify_detailed(&trust_with(&honest));
+        assert!(
+            matches!(out, CheckpointVerifyOutcome::SignerNotPinned { .. }),
+            "self-signed forgery (valid math, unpinned key) must be SignerNotPinned, got {out:?}"
+        );
+        assert_ne!(out, CheckpointVerifyOutcome::Valid);
+    }
+
+    /// A genuinely bad signature is `Invalid` regardless of trust, and the
+    /// signature is checked before the pin, so this reports `Invalid` even
+    /// when the signer IS pinned.
+    #[test]
+    fn verify_detailed_bad_signature_is_invalid() {
+        let (signer, tree) = signer_and_tree();
+        let mut cp = Checkpoint::create(1, &tree, &signer).unwrap();
+        // A well-formed (64-byte) but wrong signature.
+        cp.signature = URL_SAFE_NO_PAD.encode([0u8; 64]);
+        assert!(matches!(
+            cp.verify_detailed(&trust_with(&signer)),
+            CheckpointVerifyOutcome::Invalid { .. }
+        ));
+    }
+
+    /// Malformed signature encoding is `Invalid`, not a panic.
+    #[test]
+    fn verify_detailed_malformed_signature_is_invalid() {
+        let (signer, tree) = signer_and_tree();
+        let mut cp = Checkpoint::create(1, &tree, &signer).unwrap();
+        cp.signature = "not base64url!!!".into();
+        assert!(matches!(
+            cp.verify_detailed(&trust_with(&signer)),
+            CheckpointVerifyOutcome::Invalid { .. }
+        ));
     }
 }
 

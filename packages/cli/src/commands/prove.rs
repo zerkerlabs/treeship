@@ -52,6 +52,10 @@ pub fn prove_circuit(
         }
     };
 
+    // Fail with the security quarantine reason before probing for setup files.
+    // Missing circuits are not the blocker while the backend itself is unsound.
+    CircomProver::ensure_available()?;
+
     // Find circuits directory
     let circuits_dir = find_circuits_dir()?;
 
@@ -203,6 +207,7 @@ pub fn verify_proof(proof_file: &str, printer: &Printer) -> Result<(), Box<dyn s
     printer.blank();
     printer.info(&format!("Verifying {} proof...", zk_proof.circuit));
 
+    CircomProver::ensure_available()?;
     let circuits_dir = find_circuits_dir()?;
     let prover = CircomProver::new(&circuits_dir)?;
 
@@ -586,6 +591,18 @@ pub fn now_rfc3339_approx() -> String {
 }
 
 fn find_circuits_dir() -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    if let Some(configured) = std::env::var_os("TREESHIP_CIRCUITS_DIR") {
+        let path = std::path::PathBuf::from(configured);
+        if path.is_dir() {
+            return Ok(path);
+        }
+        return Err(format!(
+            "TREESHIP_CIRCUITS_DIR does not name a directory: {}",
+            path.display()
+        )
+        .into());
+    }
+
     // Check common locations for circuits
     let candidates = [
         std::path::PathBuf::from(".treeship/circuits"),
@@ -601,7 +618,7 @@ fn find_circuits_dir() -> Result<std::path::PathBuf, Box<dyn std::error::Error>>
         }
     }
 
-    Err("circuits directory not found\n  Install circuits: treeship zk setup\n  Or set TREESHIP_CIRCUITS_DIR".into())
+    Err("circuits directory not found\n  Provision them under .treeship/circuits\n  Or set TREESHIP_CIRCUITS_DIR".into())
 }
 
 fn sha256_bytes(input: &str) -> [u8; 32] {

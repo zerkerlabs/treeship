@@ -1,10 +1,10 @@
 {
   "name": "treeship-vercel-edge-acceptance",
-  "version": "0.9.1",
+  "version": "0.20.0",
   "private": true,
   "type": "module",
   "dependencies": {
-    "@treeship/verify": "0.9.1"
+    "@treeship/verify": "0.20.0"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",

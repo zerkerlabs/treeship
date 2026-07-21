@@ -165,14 +165,25 @@ impl Workspace {
 // Tests
 // ---------------------------------------------------------------------------
 
-/// Headline lifecycle: mint -> join -> countersign on a single workspace
-/// (host + joiner share keys for simplicity; the restriction is `Open`
-/// so the join is unconditional). The countersign step writes the
-/// finalized envelope with two signatures.
+/// Headline lifecycle: mint -> join -> countersign on a single workspace.
+/// The joiner has its own registered key, so this also proves `--actor`
+/// selects that identity instead of silently using the host's default key.
+/// The restriction is `Open`; countersign writes the finalized envelope.
 #[test]
 fn treeship_session_invite_then_join_roundtrip() {
     let ws = Workspace::new();
     ws.init();
+    let register = ws
+        .cmd()
+        .args(["agent", "register", "--name", "bob", "--own-key"])
+        .output()
+        .expect("register joining agent");
+    assert!(
+        register.status.success(),
+        "register bob failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&register.stdout),
+        String::from_utf8_lossy(&register.stderr)
+    );
     let session_id = ws.session_start();
     let pubkey = ws.default_pubkey_b64();
     ws.add_trust("host_default", &pubkey, "session_host");
@@ -259,6 +270,28 @@ fn treeship_session_invite_then_join_roundtrip() {
         .unwrap_or_else(|_| panic!("countersign stdout not JSON: {stdout}"));
     assert_eq!(cs["status"], "finalized");
     assert_eq!(cs["signatures"], 2);
+
+    // The public verifier must understand the participant protocol's two
+    // canonical signatures and its invitation_ref parent edge. Previously the
+    // countersign command self-verified successfully, but `treeship verify`
+    // routed the same envelope through generic DSSE verification and rejected
+    // it as an invalid host signature with broken chain linkage.
+    let verify_out = ws
+        .cmd()
+        .args(["verify", &participant_id, "--format", "json", "--config"])
+        .arg(ws.config())
+        .output()
+        .expect("verify countersigned participant");
+    let verify_stdout = String::from_utf8_lossy(&verify_out.stdout).to_string();
+    assert!(
+        verify_out.status.success(),
+        "verify participant failed: stdout={verify_stdout} stderr={}",
+        String::from_utf8_lossy(&verify_out.stderr),
+    );
+    let verified: serde_json::Value = serde_json::from_str(&verify_stdout)
+        .unwrap_or_else(|_| panic!("verify stdout not JSON: {verify_stdout}"));
+    assert_eq!(verified["outcome"], "pass");
+    assert_eq!(verified["chain_linkage_ok"], true);
 
     // Second join attempt with the SAME invitation must fail -- single
     // use enforced by the Approval Use Journal.

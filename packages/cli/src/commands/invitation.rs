@@ -538,8 +538,11 @@ pub fn join(
         .into());
     }
 
-    // Joining agent's signer.
-    let joining_signer = c.keys.default_signer()?;
+    // Join as the requested agent's certified key when one is registered.
+    // Falling back unconditionally to the ship default made `--actor` cosmetic:
+    // a per-agent identity could create cards and actions with its own key but
+    // joined sessions under an unrelated ship key.
+    let joining_signer = crate::commands::attest::resolve_actor_signer(&c, &args.actor)?;
     let joiner_pk_b64 = URL_SAFE_NO_PAD.encode(joining_signer.public_key_bytes());
     let joiner_fingerprint = pubkey_fingerprint_short(&format!("ed25519:{}", joiner_pk_b64,));
 
