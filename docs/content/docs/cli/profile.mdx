@@ -1,0 +1,68 @@
+---
+title: profile / verify-profile
+description: A checkpoint-pinned, recomputable track record over an agent's work history. Every number recomputes from the log — a mismatch is a provable lie.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`treeship profile` derives an agent's track record from its signed `session.v1` records — deterministically, over exactly the log prefix covered by a pinned Merkle checkpoint. Because the inputs are pinned, **anyone can recompute the same numbers**: `verify-profile` either reports `checked` or proves the claim false, field by field.
+
+## treeship profile
+
+```bash
+treeship profile <agent> [--attest]
+```
+
+Requires at least one checkpoint (`treeship checkpoint` if you have none). The aggregation covers the checkpoint's prefix in order, cross-checking the root before counting.
+
+**Computed fields:** `sessions_total`, `sessions_self` / `sessions_runtime` / `sessions_countersigned` (class capped to evidence), `actions_total`, `approvals_total`, `handoffs_total`, `tools_exercised` (sorted distinct union), `span_first` / `span_last` — plus the pin itself: `checkpoint_index`, `checkpoint_tree_size`, `checkpoint_root`, and `computed_at`.
+
+| Option | Description |
+|--------|-------------|
+| `--attest` | Sign the computed profile as a `profile.v1` receipt — a ship-signed claim others can verify |
+| `--format json` | Emits the aggregate payload itself (plus `attested_artifact_id` with `--attest`) |
+
+## treeship verify-profile
+
+```bash
+treeship verify-profile <profile-artifact-id>
+```
+
+Verifies the `profile.v1` envelope signature against your local keys + pinned roots, rebuilds the **same pinned prefix**, recomputes every field, and compares (everything except `computed_at`):
+
+```
+✓ profile checked
+  checked — every number recomputed from the log and matched
+```
+
+or, on a doctored claim:
+
+```
+⚠ profile MISMATCH — provably false
+  sessions_total: claimed 40, recomputed 12
+```
+
+**JSON:**
+
+```json
+{
+  "verdict": "checked (recomputed, all fields match)",
+  "ok": true,
+  "profile": "art_…",
+  "agent": "agent://deployer",
+  "signature": { "trusted": true, "verified_key_ids": ["key_…"] },
+  "pinned_checkpoint": { "index": 5, "tree_size": 9, "root": "sha256:…" },
+  "mismatches": []
+}
+```
+
+## Exit codes
+
+| Code | Command | Meaning |
+|------|---------|---------|
+| `0` | both | Computed / checked |
+| `1` | `verify-profile` | MISMATCH — the attested profile does not recompute |
+
+<Callout type="info">
+This is the difference between a résumé and a transcript: the profile isn't a self-description, it's an aggregation whose inputs are pinned in a signed log. Lying about it is detectable by anyone with the log.
+</Callout>

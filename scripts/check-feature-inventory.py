@@ -34,7 +34,7 @@ INVENTORY = ROOT / "docs" / "feature-inventory.yml"
 CLI_MAIN = ROOT / "packages" / "cli" / "src" / "main.rs"
 CLI_CMDS = ROOT / "packages" / "cli" / "src" / "commands"
 
-STATUSES = {"stable", "beta", "experimental", "roadmap", "internal", "deprecated"}
+STATUSES = {"stable", "beta", "experimental", "quarantined", "roadmap", "internal", "deprecated"}
 
 PACKAGE_ROOTS = [
     ROOT / "packages",

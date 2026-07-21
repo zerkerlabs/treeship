@@ -154,14 +154,17 @@ Running [`treeship package verify <path>`](/docs/cli/package#treeship-package-ve
 ```
 PASS receipt.json  -- Parses as valid Session Receipt
 PASS type          -- Correct receipt type
-PASS determinism   -- receipt.json round-trips identically
+PASS determinism   -- receipt.json round-trips identically (structural, NOT a signature)
+WARN receipt_body_binding -- timeline/side-effects/narrative are NOT signed in this package
 PASS merkle_root   -- Merkle root matches recomputed value
 PASS inclusion:... -- Inclusion proof valid (one per artifact)
 PASS leaf_count    -- Leaf count matches artifact count
 PASS timeline_order -- Timeline is correctly ordered
 ```
 
-There is no "partial trust" for receipts. Any FAIL means the package was modified after signing and the trust anchor is broken.
+Read the scope honestly: these checks authenticate the **artifacts and the Merkle root**. The receipt's timeline, side effects, tool usage, and narrative are composed from the unsigned event log and are not cryptographically bound inside the package — an editor who re-serializes those fields passes determinism and the Merkle check, and the verifier's `receipt_body_binding` warning says so on every run. Any FAIL on the artifact/Merkle checks means the bound portion was tampered with.
+
+The authenticated anchor over the whole receipt is the **actor-signed `session.v1` record**: minted by `treeship session close` from the session's sealed evidence, it binds `receipt_digest` (the SHA-256 of `receipt.json`) into the agent's signed chain. To trust the narrative, verify that record (or the published report), not just the package.
 
 <Callout type="info">
 Hubs are convenience. The receipt itself is the trust anchor. A hub serving the receipt at `https://treeship.dev/receipt/<session_id>` does not add cryptographic guarantees. The guarantees come from running `treeship package verify` on the downloaded package.
@@ -192,7 +195,7 @@ Session Receipts describe what was *instrumented*. They do not claim to describe
 
 - **Capture completeness depends on instrumentation.** If an agent bypasses `treeship wrap`, spawns a process directly, or uses a runtime that is not registered with Treeship, those actions will not appear in the receipt.
 - **File read detection is best-effort.** The [daemon's atime watcher](/docs/cli/daemon#sensitive-file-read-detection) emits events tagged with `capture_confidence: "inferred"` because filesystems mounted `noatime` or using `relatime` do not always update access times.
-- **Actor URIs are identity labels, not cryptographic identities.** The current release signs all artifacts from a trust domain with one key. Actor URIs like `human://alice` or `agent://coder` are strings, not independently authenticated identities. A key compromise means actor URIs are unverifiable. Per-actor binding is planned for a later release.
+- **Actor URIs come in two trust grades.** An unregistered actor's artifacts are signed by the shared ship key, and the URI (`human://alice`, `agent://coder`) is a label — the verifier reports `actor proof: asserted`. A registered agent signs with its own key, bound to its URI by a ship-signed certificate, and verifies as `proven (key-bound)`. Register agents with `treeship onboard` (the MCP/A2A bridges do it automatically) when "who did this" needs to be cryptographic rather than claimed.
 - **The receipt is not a correctness proof.** It does not judge whether the agent's output was good, safe, or policy-compliant. It is a high-fidelity record of what happened. Policy decisions sit on top.
 
 These are design boundaries, not bugs. Treeship gives the strongest possible proof for everything inside its capture boundary, and names the boundary explicitly.

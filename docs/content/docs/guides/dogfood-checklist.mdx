@@ -36,10 +36,11 @@ PKG=$(find "$TMP/.treeship/sessions" -name 'ssn_*.treeship' -print -quit)
 treeship package inspect --config "$TMP/.treeship/config.json" "$PKG"
 ```
 
-Then push and grab the shareable URL:
+Then push and grab the shareable URL. `session report` takes a **session ID**, not a package path (with no argument it defaults to the most recently closed session):
 
 ```bash
-treeship session report --config "$TMP/.treeship/config.json" "$PKG"
+SSN=$(basename "$PKG" .treeship)
+treeship session report --config "$TMP/.treeship/config.json" "$SSN"
 # → captures receipt_url, raw_json_url, package_download_url
 ```
 
@@ -94,7 +95,7 @@ Anything that errored, hung, or produced an obviously-wrong result. Include the 
 
 ### Verification
 
-- `treeship verify <receipt_url>` returned `outcome: pass`: ☐ yes / ☐ no
+- `treeship verify <receipt_url>` returned `outcome: structural-pass` with `signatures_verified: false` (a fetched receipt never earns plain `pass`): ☐ yes / ☐ no
 - `treeship package verify --strict <pkg>` returned exit 0: ☐ yes / ☐ no
 - Every approval-authority replay row matched expectations (no overclaim, no silent pass): ☐ yes / ☐ no / ☐ NA
 

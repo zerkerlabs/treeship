@@ -3,12 +3,13 @@ use treeship_core::{
     attestation::{sign, Signer},
     journal::{self, Journal},
     statements::{
-        nonce_digest, payload_type, ActionStatement, ApprovalScope, ApprovalStatement, ApprovalUse,
-        DecisionStatement, EndorsementStatement, HandoffStatement, ReceiptStatement, SubjectRef,
-        TYPE_APPROVAL_USE,
+        irreversibility_requires_quarantine, is_irreversibility_class, nonce_digest, payload_type,
+        ActionStatement, ApprovalScope, ApprovalStatement, ApprovalUse, DecisionStatement,
+        EndorsementStatement, HandoffStatement, ReceiptStatement, SubjectRef,
+        IRREVERSIBILITY_CLASSES, TYPE_APPROVAL_USE,
     },
     storage::Record,
-    trust::{TrustRootKind, TrustRootStore},
+    trust::{decode_ed25519_pubkey, TrustRootKind, TrustRootStore},
 };
 
 use crate::commands::verify::{check_scope_violation, find_approval_by_nonce, now_rfc3339};
@@ -247,6 +248,13 @@ pub struct ApprovalArgs {
     /// scope axis is populated; without it the command refuses since
     /// unscoped approvals are footguns.
     pub unscoped: bool,
+    /// Declared irreversibility class (closed vocabulary; validated
+    /// again here even though clap constrains it, so SDK callers get
+    /// the same fail-closed behavior).
+    pub irreversibility: Option<String>,
+    /// Artifact id of the memory.quarantine-check.v1 receipt gating
+    /// this grant.
+    pub quarantine_receipt: Option<String>,
     pub config: Option<String>,
 }
 
@@ -278,6 +286,73 @@ pub fn approval(args: ApprovalArgs, printer: &Printer) -> Result<(), Box<dyn std
         Some(scope)
     };
 
+    // Irreversibility gate (memory-provenance-binding §2.4-2.6).
+    // A supplied quarantine receipt is validated whenever present -- we
+    // never sign a reference to evidence we did not check. Consequential
+    // and terminal classes REQUIRE that evidence; terminal additionally
+    // requires a human approver. Fail-closed: a dirty, missing, or
+    // unverifiable check refuses the grant -- and the refusal itself is
+    // recorded as a signed blocked.v1 artifact (§2.6), so "the guardrail
+    // fired" is evidence rather than a narrative.
+    //
+    // The vocabulary check stays a plain usage error (no blocked
+    // artifact): clap already prevents it for CLI callers, and a typo is
+    // not a policy refusal.
+    if let Some(class) = &args.irreversibility {
+        if !is_irreversibility_class(class) {
+            return Err(format!(
+                "unknown irreversibility class `{class}`\n  valid: {}",
+                IRREVERSIBILITY_CLASSES.join(", ")
+            )
+            .into());
+        }
+    }
+    let gate: Result<(), (&'static str, String)> = (|| {
+        if let Some(rid) = &args.quarantine_receipt {
+            validate_quarantine_receipt(&ctx, rid)
+                .map_err(|e| ("quarantine_triggered", e.to_string()))?;
+        }
+        if let Some(class) = &args.irreversibility {
+            if class == "one_way_terminal" && !args.approver.starts_with("human://") {
+                return Err((
+                    "human_escalation_pending",
+                    format!(
+                        "one_way_terminal grants require a human approver, got `{}`\n  \
+                         fix: --approver human://<name>",
+                        args.approver
+                    ),
+                ));
+            }
+            if irreversibility_requires_quarantine(class) && args.quarantine_receipt.is_none() {
+                return Err((
+                    "quarantine_triggered",
+                    format!(
+                        "a `{class}` grant requires memory quarantine evidence\n  \
+                         the provider mints it, then pass: --quarantine-receipt <artifact-id>\n  \
+                         (a clean memory.quarantine-check.v1 receipt signed by a key pinned under agent_cert)"
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    })();
+    if let Err((reason_class, msg)) = gate {
+        // Best-effort: a failure to record the refusal must never mask
+        // the refusal itself.
+        let blocked = record_approval_refusal(
+            &ctx,
+            reason_class,
+            msg.lines().next().unwrap_or(reason_class),
+            &args.approver,
+            args.irreversibility.as_deref(),
+            args.quarantine_receipt.as_deref(),
+        );
+        return Err(match blocked {
+            Some(id) => format!("{msg}\n  refusal recorded: {id}").into(),
+            None => msg.into(),
+        });
+    }
+
     // Generate a cryptographically random nonce for approval binding.
     // AUD-24: OS CSPRNG, not thread_rng (policy §5).
     let nonce = {
@@ -294,6 +369,8 @@ pub fn approval(args: ApprovalArgs, printer: &Printer) -> Result<(), Box<dyn std
     stmt.description = args.description.clone();
     stmt.expires_at = args.expires.clone();
     stmt.scope = scope_for_stmt;
+    stmt.irreversibility = args.irreversibility.clone();
+    stmt.quarantine_receipt = args.quarantine_receipt.clone();
     if let Some(id) = &args.subject_id {
         stmt.subject.artifact_id = Some(id.clone());
     }
@@ -341,11 +418,143 @@ pub fn approval(args: ApprovalArgs, printer: &Printer) -> Result<(), Box<dyn std
         }
         printer.hint(&format!("scope: {}", parts.join(", ")));
     }
+    if let Some(class) = &stmt.irreversibility {
+        match &stmt.quarantine_receipt {
+            Some(rid) => printer.hint(&format!(
+                "irreversibility: {class}  (quarantine evidence: {rid})"
+            )),
+            None => printer.hint(&format!("irreversibility: {class}")),
+        }
+    }
     printer.hint(&format!(
         "nonce: {}  (echo this in --approval-nonce when you attest the action)",
         nonce
     ));
     printer.blank();
+    Ok(())
+}
+
+/// Record a refused approval mint as a signed blocked.v1 receipt
+/// (memory-provenance-binding §2.6). Best-effort by contract: every
+/// failure path returns None so the caller's refusal error is never
+/// masked by a recording problem. The artifact is written to storage
+/// and chained like any receipt, but deliberately does NOT move the
+/// `last` pointer -- `verify last` must keep meaning "the artifact you
+/// just minted on purpose", not a refusal tombstone.
+fn record_approval_refusal(
+    ctx: &ctx::Ctx,
+    reason_class: &str,
+    description: &str,
+    approver: &str,
+    irreversibility: Option<&str>,
+    quarantine_receipt: Option<&str>,
+) -> Option<String> {
+    let mut payload = serde_json::json!({
+        "reason_class": reason_class,
+        "refused_kind": "approval",
+        "approver": approver,
+        "description": description,
+    });
+    if let Some(c) = irreversibility {
+        payload["irreversibility"] = c.into();
+    }
+    if let Some(r) = quarantine_receipt {
+        payload["quarantine_receipt"] = r.into();
+    }
+    // Never mint an invalid refusal record: if it does not satisfy its
+    // own predicate, recording is skipped rather than degraded.
+    treeship_core::predicates::validate("blocked.v1", Some(&payload)).ok()?;
+
+    let mut stmt = ReceiptStatement::new(&format!("ship://{}", ctx.config.ship_id), "blocked.v1");
+    stmt.payload = Some(payload);
+    let signer = ctx.keys.default_signer().ok()?;
+    let pt = payload_type("receipt");
+    let result = sign(&pt, &stmt, signer.as_ref()).ok()?;
+    ctx.storage
+        .write(&Record {
+            artifact_id: result.artifact_id.clone(),
+            digest: result.digest.clone(),
+            payload_type: pt,
+            key_id: signer.key_id().to_string(),
+            signed_at: stmt.timestamp.clone(),
+            parent_id: None,
+            envelope: result.envelope,
+            hub_url: None,
+        })
+        .ok()?;
+    Some(result.artifact_id)
+}
+
+/// Validate a memory.quarantine-check.v1 receipt as gate evidence for an
+/// approval grant (memory-provenance-binding §2.4). Fail-closed on every
+/// axis: the receipt must exist locally, be the right kind, validate
+/// against the registered predicate schema, report `clean: true`, and be
+/// signed by a key pinned under `agent_cert` -- the memory provider's own
+/// key, never the ship key of whoever is minting the grant (a self-signed
+/// verdict is not a check).
+fn validate_quarantine_receipt(
+    ctx: &ctx::Ctx,
+    receipt_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let rec = ctx.storage.read(receipt_id).map_err(|_| {
+        format!(
+            "quarantine receipt {receipt_id} not found in local storage\n  \
+             the provider mints it: treeship attest receipt --system system://<provider> \
+             --kind memory.quarantine-check.v1 --payload-file <check.json>"
+        )
+    })?;
+    let stmt: ReceiptStatement = rec.envelope.unmarshal_statement().map_err(|e| {
+        format!("quarantine receipt {receipt_id} is not a receipt statement: {e}")
+    })?;
+    if stmt.kind != "memory.quarantine-check.v1" {
+        return Err(format!(
+            "{receipt_id} is a `{}` receipt, not memory.quarantine-check.v1",
+            stmt.kind
+        )
+        .into());
+    }
+    treeship_core::predicates::validate("memory.quarantine-check.v1", stmt.payload.as_ref())
+        .map_err(|e| format!("quarantine receipt payload is invalid: {e}"))?;
+
+    // The verdict must be the boolean `true`. The predicate schema already
+    // rejects non-boolean values; this rejects a well-formed DIRTY verdict.
+    let payload = stmt.payload.as_ref().expect("validated payload present");
+    if payload.get("clean").and_then(Value::as_bool) != Some(true) {
+        let triggers = payload
+            .get("quarantined_triggers")
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| "[]".into());
+        return Err(format!(
+            "quarantine check {receipt_id} reports DIRTY (clean: false) -- grant refused\n  \
+             quarantined triggers: {triggers}\n  \
+             a high-privilege grant must not act on quarantined memory; \
+             re-check after the provider promotes or forgets the triggering entries"
+        )
+        .into());
+    }
+
+    // Key-bound signer check. Build a verifier from ONLY the agent_cert
+    // pins: the provider's own key (onboard pins it automatically). An
+    // unreadable trust store is an error, never silently empty (lane J).
+    let trust = TrustRootStore::open_default_or_empty()
+        .map_err(|e| format!("trust store unreadable: {e}"))?;
+    let mut provider_keys = std::collections::HashMap::new();
+    for r in trust.roots() {
+        if r.kind == TrustRootKind::AgentCert {
+            if let Ok(vk) = decode_ed25519_pubkey(&r.public_key) {
+                provider_keys.insert(r.key_id.clone(), vk);
+            }
+        }
+    }
+    let verifier = treeship_core::attestation::Verifier::new(provider_keys);
+    verifier.verify_any(&rec.envelope).map_err(|_| {
+        format!(
+            "quarantine receipt {receipt_id} is not signed by a key-bound memory provider\n  \
+             the signer's key must be pinned under agent_cert\n  \
+             fix: treeship onboard <provider>   (or)   \
+             treeship trust add <key_id> <pubkey> --kind agent_cert --yes"
+        )
+    })?;
     Ok(())
 }
 

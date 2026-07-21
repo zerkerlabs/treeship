@@ -1,9 +1,17 @@
 ---
-title: GET /v1/verify/:id
-description: Run server-side verification of an artifact and its chain.
+title: GET /v1/verify/:id (retired)
+description: Server-side verification is retired. The endpoint returns 410 Gone; fetch the signed artifact and verify it locally.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
+
+<Callout type="warn">
+**This endpoint is retired.** It no longer verifies anything. For a known artifact it returns `410 Gone` with a pointer to the raw artifact. Verify locally instead: `treeship verify <artifact-id>` on the CLI, or [`@treeship/verify`](/docs/sdk/verify) anywhere WASM runs.
+</Callout>
+
+## Why it was retired
+
+Any verdict a server produces represents the **server's** trust policy, not yours. The old handler also had no access to a caller's trust roots, so the strongest result it could honestly report was structural consistency. Treeship's model is that the Hub is transport and index only: it stores and serves signed bytes, and callers verify those bytes against their own pinned trust roots. A verifier you don't run yourself is not a verifier.
 
 ## Request
 
@@ -17,69 +25,43 @@ GET /v1/verify/:id
 
 No authentication required.
 
-## Response (passing)
+## Response
+
+For an artifact that exists, the endpoint returns `410 Gone`:
 
 ```json
 {
-  "outcome": "pass",
-  "artifact_id": "art_f7e6d5c4b3a2f7e6",
-  "payload_type": "application/vnd.treeship.action.v1+json",
-  "signed_by": "key_8a3f...",
-  "chain_length": 3,
-  "chain_valid": true,
-  "checks": [
-    { "name": "signature", "result": "pass" },
-    { "name": "id_derivation", "result": "pass" },
-    { "name": "chain_integrity", "result": "pass" }
-  ]
+  "outcome": "retired",
+  "message": "server-side verification is retired; fetch the signed artifact and verify it locally",
+  "artifact_url": "/v1/artifacts/art_f7e6d5c4b3a2f7e6"
 }
 ```
-
-## Response (failing)
-
-```json
-{
-  "outcome": "fail",
-  "artifact_id": "art_f7e6d5c4b3a2f7e6",
-  "checks": [
-    { "name": "signature", "result": "fail", "reason": "signature does not match public key" },
-    { "name": "id_derivation", "result": "pass" },
-    { "name": "chain_integrity", "result": "skip" }
-  ]
-}
-```
-
-## Response (verifier unavailable)
-
-```json
-{
-  "outcome": "error",
-  "message": "verifier unavailable"
-}
-```
-
-This happens if the `treeship` binary is not installed on the Hub server.
-
-## Checks performed
-
-| Check | What it verifies |
-|-------|-----------------|
-| `signature` | The Ed25519 signature matches the public key embedded in the artifact |
-| `id_derivation` | The artifact ID was correctly derived from the content hash |
-| `chain_integrity` | Every parent reference in the chain is valid and unbroken |
 
 ## Errors
 
 | Status | Body | Cause |
 |--------|------|-------|
+| `400` | `{"error": "..."}` | Missing artifact ID |
 | `404` | `{"error": "artifact not found"}` | No artifact exists with this ID |
 
-## Example
+## What to do instead
+
+1. **Fetch the signed artifact:** `GET /v1/artifacts/:id` returns the DSSE envelope exactly as it was pushed.
+2. **Verify it locally** against your own trust roots:
 
 ```bash
-curl https://api.treeship.dev/v1/verify/art_f7e6d5c4b3a2f7e6
+# CLI — local artifact verification (full signature + chain checks)
+treeship verify art_f7e6d5c4b3a2f7e6
 ```
 
+```ts
+// In-process — @treeship/verify, runs anywhere WASM runs
+import { verifyReceipt } from '@treeship/verify';
+const result = await verifyReceipt('https://treeship.dev/receipt/ssn_abc');
+```
+
+The browser verification page at `treeship.dev/verify/:id` still works — it runs the WASM verifier entirely client-side, so the Hub cannot forge a passing result.
+
 <Callout type="info">
-For trustless verification, use the WASM verifier at `treeship.dev/verify/:id` which runs entirely client-side in the browser. The server-side endpoint runs the same open-source verification code, but you are trusting Hub to report the result honestly.
+Note the verdict semantics: a fetched receipt can only earn `structural-pass` (Merkle structure is consistent; signatures and issuer are **not** verified). A full `pass` requires the original envelope bytes and your pinned trust roots — the local CLI path. See [CLI verify](/docs/cli/verify).
 </Callout>

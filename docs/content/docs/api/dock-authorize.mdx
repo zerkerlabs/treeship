@@ -1,6 +1,6 @@
 ---
-title: POST /v1/hub/authorize
-description: Complete the device flow and register hub keys with Hub.
+title: POST /v1/dock/authorize
+description: Complete the device flow and register dock keys with Hub.
 ---
 
 This endpoint has two calling modes depending on whether keys are provided. The browser calls it after the user approves the device code. The CLI calls it with keys to complete hub connection creation.
@@ -12,13 +12,13 @@ When the browser confirms approval without providing Treeship/hub keys, Hub mark
 ### Request
 
 ```
-POST /v1/hub/authorize
+POST /v1/dock/authorize
 Content-Type: application/json
 ```
 
 ```json
 {
-  "device_code": "dvc_a1b2c3d4"
+  "device_code": "a1b2c3d4e5f60718"
 }
 ```
 
@@ -44,22 +44,22 @@ No hub_id is returned. The browser's job is just to approve -- the CLI completes
 
 ## CLI call (with keys)
 
-When the CLI calls this endpoint with Treeship and hub public keys, Hub verifies the challenge is already browser-approved, validates the nonce, atomically claims the challenge for a new `dock_id`, creates the Treeship record, and returns it. The claim is single-use: a concurrent or replayed finalize is rejected as `already_attached`.
+When the CLI calls this endpoint with Treeship and dock public keys, Hub verifies the challenge is already browser-approved, validates the nonce, atomically claims the challenge for a new `dock_id`, creates the Treeship record, and returns it. The claim is single-use: a concurrent or replayed finalize is rejected as `already_attached`.
 
-The challenge **must** already be approved by the browser before the CLI calls this endpoint. The CLI must also provide the `nonce` that was returned by `GET /v1/hub/challenge`.
+The challenge **must** already be approved by the browser before the CLI calls this endpoint. The CLI must also provide the `nonce` that was returned by `GET /v1/dock/challenge`.
 
 ### Request
 
 ```
-POST /v1/hub/authorize
+POST /v1/dock/authorize
 Content-Type: application/json
 ```
 
 ```json
 {
-  "device_code": "dvc_a1b2c3d4",
+  "device_code": "a1b2c3d4e5f60718",
   "ship_public_key": "3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29",
-  "hub_public_key": "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025",
+  "dock_public_key": "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025",
   "nonce": "e4f8a2c1b7d9306f5e1a9c4b8d7f2e0a"
 }
 ```
@@ -68,15 +68,15 @@ Content-Type: application/json
 |-------|------|----------|-------------|
 | `device_code` | string | Yes | The device code from the challenge |
 | `ship_public_key` | string | Yes | Hex-encoded Ed25519 public key used for signing artifacts |
-| `hub_public_key` | string | Yes | Hex-encoded Ed25519 public key used for DPoP authentication |
-| `nonce` | string | Yes | The nonce returned by `GET /v1/hub/challenge` -- must match exactly |
+| `dock_public_key` | string | Yes | Hex-encoded Ed25519 public key used for DPoP authentication |
+| `nonce` | string | Yes | The nonce returned by `GET /v1/dock/challenge` -- must match exactly |
 
 ### Response
 
 ```json
 {
   "state": "attached",
-  "dock_id": "hub_9f8e7d6c",
+  "dock_id": "dck_9f8e7d6c5b4a39281706f5e4d3c2b1a0",
   "next_steps": [
     "treeship status",
     "treeship attest receipt --system system://<your-system> --kind <kind> --payload-file <file>",
@@ -90,7 +90,7 @@ Content-Type: application/json
 | Field | Type | Description |
 |-------|------|-------------|
 | `state` | string | `"attached"` on success. |
-| `dock_id` | string | Unique identifier for this hub connection (format: `dck_`/`hub_` + 32 hex chars) |
+| `dock_id` | string | Unique identifier for this hub connection (format: `dck_` + 32 hex chars) |
 | `next_steps` | string[] | Provider-neutral command templates to surface on the success page. |
 | `example` | string | One illustrative invocation. The placeholders are real; `system://zmem` and `memory.proof` are an example customer's memory-proof workflow, not built-in behavior. `--system` and `--kind` accept any value. |
 
@@ -117,31 +117,31 @@ Every state-bearing response carries a stable `state` field so the activation pa
 ### Browser approval (no keys)
 
 ```bash
-curl -X POST https://api.treeship.dev/v1/hub/authorize \
+curl -X POST https://api.treeship.dev/v1/dock/authorize \
   -H "Content-Type: application/json" \
   -d '{
-    "device_code": "dvc_a1b2c3d4"
+    "device_code": "a1b2c3d4e5f60718"
   }'
 ```
 
 ### CLI registration (with keys)
 
 ```bash
-curl -X POST https://api.treeship.dev/v1/hub/authorize \
+curl -X POST https://api.treeship.dev/v1/dock/authorize \
   -H "Content-Type: application/json" \
   -d '{
-    "device_code": "dvc_a1b2c3d4",
+    "device_code": "a1b2c3d4e5f60718",
     "ship_public_key": "3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29",
-    "hub_public_key": "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025",
+    "dock_public_key": "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025",
     "nonce": "e4f8a2c1b7d9306f5e1a9c4b8d7f2e0a"
   }'
 ```
 
 ## Notes
 
-- The Treeship public key and hub public key must be different Ed25519 keys
+- The Treeship public key and dock public key must be different Ed25519 keys
 - The Treeship key is stored for identification only. Hub never receives any private key
-- The hub key is used to verify DPoP JWT signatures on subsequent API requests
+- The dock key is used to verify DPoP JWT signatures on subsequent API requests
 - Each device code can only be authorized once -- the challenge is atomically claimed (by `dock_id`) on success, and the row is kept so the activation page can still poll and read `attached`
 - If the `ship_public_key` already exists on Hub, the existing Treeship record is reused and a new hub connection is attached to it
 - The `nonce` field prevents replay attacks and binds the CLI request to the specific challenge session

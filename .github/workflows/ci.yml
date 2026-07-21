@@ -39,6 +39,36 @@ jobs:
       - name: Check docs route health
         run: python3 scripts/check-docs-routes.py
 
+  # Docs-to-code drift gates (the 2026-07 audit failure modes). All static,
+  # no build: the OpenAPI spec must match the hub router's route table, docs
+  # may only reference SDK methods/exports that exist in the TypeScript
+  # sources, every entry in feature-inventory.yml must point at real code,
+  # and every spec file must be indexed with an honest status.
+  docs-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Install pyyaml (feature-inventory linter)
+        run: pip install pyyaml
+      - name: Hub OpenAPI matches the router
+        run: python3 scripts/check-hub-openapi.py
+      - name: Docs reference only real SDK methods
+        run: python3 scripts/check-sdk-docs.py
+      - name: Feature inventory entries point at real code
+        run: python3 scripts/check-feature-inventory.py --strict
+      - name: Every protocol spec is indexed
+        run: python3 scripts/check-specs-index.py
+      - name: Generated feature matrix matches the inventory
+        # The generator needs only the `yaml` package (package-lock.json is
+        # gitignored in docs/, so no npm ci; skip the full fumadocs install).
+        run: |
+          cd docs
+          npm install --no-save --ignore-scripts --no-audit --no-fund yaml@^2.9.0
+          node scripts/sync-feature-matrix.mjs --check
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -58,6 +88,17 @@ jobs:
 
       - name: Build CLI
         run: cargo build -p treeship-cli
+
+      # The two gates that need the binary. The command matrix docs page is
+      # generated from the CLI's own help output — a surface change without a
+      # regen fails here. The snippets script executes the flows the README
+      # and docs teach (wrap/verify, scoped approvals, onboard → key-bound,
+      # selective disclosure, structural-pass semantics) and asserts the
+      # documented verdicts, offline, in a throwaway store.
+      - name: Generated CLI command matrix matches the binary
+        run: python3 scripts/gen-cli-reference.py --check --bin target/debug/treeship
+      - name: Documented flows execute with documented verdicts
+        run: bash scripts/check-docs-snippets.sh target/debug/treeship
 
       - name: Build CLI with OTel
         run: cargo build -p treeship-cli --features otel

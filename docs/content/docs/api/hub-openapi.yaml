@@ -15,21 +15,31 @@ security:
   - DPoP: []
 
 components:
+  schemas:
+    EnvelopeEntry:
+      type: object
+      nullable: true
+      description: A raw signed DSSE envelope plus metadata; the client re-verifies it.
+      properties:
+        artifact_id:   { type: string }
+        envelope_json: { type: string }
+        signer_keyid:  { type: string }
+        signed_at:     { type: integer }
   securitySchemes:
     DPoP:
       type: http
       scheme: DPoP
       description: |
         RFC 9449 DPoP proof-of-possession.
-        Every request carries a DPoP JWT signed by the hub key.
+        Every request carries a DPoP JWT signed by the dock key.
         Stolen credentials are useless without the private key.
 
 paths:
-  /v1/hub/challenge:
+  /v1/dock/challenge:
     get:
       summary: Start device flow
       description: Returns a device_code and nonce to begin the RFC 8628 device authorization flow.
-      operationId: hubChallenge
+      operationId: dockChallenge
       security: []
       responses:
         '200':
@@ -39,16 +49,15 @@ paths:
               schema:
                 type: object
                 properties:
-                  device_code: { type: string, example: "dvc_a1b2c3d4" }
-                  nonce:       { type: string, example: "nce_7f8e9d0a" }
-                  expires_at:  { type: integer, example: 1711494000 }
-                  verify_url:  { type: string, example: "https://treeship.dev/hub/activate" }
+                  device_code: { type: string, example: "a1b2c3d4e5f60718" }
+                  nonce:       { type: string, example: "7f8e9d0a1b2c3d4e5f60718293a4b5c6" }
+                  expires_at:  { type: string, example: "1711494000", description: "Unix timestamp as a string" }
 
-  /v1/hub/authorized:
+  /v1/dock/authorized:
     get:
       summary: Poll for device flow completion
       description: Poll after the user has approved at treeship.dev/hub/activate.
-      operationId: hubAuthorized
+      operationId: dockAuthorized
       security: []
       parameters:
         - name: device_code
@@ -67,7 +76,7 @@ paths:
                 type: object
                 properties:
                   state:      { type: string, enum: [approved, attached] }
-                  dock_id:    { type: string, example: "hub_9f8e7d6c" }
+                  dock_id:    { type: string, example: "dck_9f8e7d6c5b4a39281706f5e4d3c2b1a0" }
                   next_steps: { type: array, items: { type: string } }
                   example:    { type: string }
         '202':
@@ -95,11 +104,14 @@ paths:
                 properties:
                   state: { type: string, example: "expired" }
 
-  /v1/hub/authorize:
+  /v1/dock/authorize:
     post:
       summary: Complete device flow authorization
-      description: Called by treeship.dev when the user approves. Stores the keypair binding.
-      operationId: hubAuthorize
+      description: |
+        Two calling modes. The browser calls it with only device_code to approve
+        the challenge. The CLI calls it with keys and the challenge nonce to
+        finalize registration; the challenge must already be browser-approved.
+      operationId: dockAuthorize
       security: []
       requestBody:
         required: true
@@ -107,11 +119,12 @@ paths:
           application/json:
             schema:
               type: object
-              required: [device_code, ship_public_key, hub_public_key]
+              required: [device_code]
               properties:
                 device_code:      { type: string }
-                ship_public_key:  { type: string, description: "hex-encoded Ed25519 public key" }
-                hub_public_key:   { type: string, description: "hex-encoded Ed25519 public key" }
+                ship_public_key:  { type: string, description: "hex-encoded Ed25519 public key (CLI finalize mode)" }
+                dock_public_key:  { type: string, description: "hex-encoded Ed25519 public key (CLI finalize mode)" }
+                nonce:            { type: string, description: "nonce from /v1/dock/challenge; required in CLI finalize mode" }
       responses:
         '200':
           description: |
@@ -195,12 +208,14 @@ paths:
 
   /v1/verify/{id}:
     get:
-      summary: Verify a chain
+      summary: Retired server-side verification endpoint
       description: |
-        Runs treeship verify on the artifact chain server-side.
-        The /verify/:id page also runs the WASM verifier client-side independently --
-        the Hub cannot forge a passing result.
+        Server-side verification is retired. Any verdict the server produced
+        would represent the server's trust policy, not the verifier's. The Hub
+        is transport/index only: fetch the signed artifact from
+        /v1/artifacts/{id} and verify it locally against your own trust roots.
       operationId: verifyChain
+      deprecated: true
       security: []
       parameters:
         - name: id
@@ -208,25 +223,28 @@ paths:
           required: true
           schema: { type: string }
       responses:
-        '200':
-          description: Verification result
+        '410':
+          description: Endpoint retired (artifact exists)
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  outcome:  { type: string, enum: [pass, fail, error] }
-                  chain:    { type: integer, description: "Number of artifacts in chain" }
-                  approver: { type: string, nullable: true }
-                  checks:   { type: array, items: { type: object } }
+                  outcome:      { type: string, enum: [retired] }
+                  message:      { type: string, example: "server-side verification is retired; fetch the signed artifact and verify it locally" }
+                  artifact_url: { type: string, example: "/v1/artifacts/art_f7e6d5c4b3a2f7e6" }
+        '400':
+          description: Missing artifact ID
+        '404':
+          description: Artifact not found
 
-  /v1/workspace/{hubId}:
+  /v1/workspace/{dockId}:
     get:
       summary: Fetch workspace artifacts
       description: Returns all artifacts associated with a hub connection. Requires DPoP authentication.
       operationId: getWorkspace
       parameters:
-        - name: hubId
+        - name: dockId
           in: path
           required: true
           schema: { type: string }
@@ -238,7 +256,7 @@ paths:
               schema:
                 type: object
                 properties:
-                  hub_id: { type: string }
+                  dock_id: { type: string }
                   artifacts: { type: array, items: { type: object } }
         '401':
           description: DPoP authentication failed
@@ -438,6 +456,381 @@ paths:
           description: Missing artifact ID
         '404':
           description: Proof not found
+
+  /v1/receipt/{session_id}:
+    put:
+      summary: Publish a session receipt
+      description: DPoP authenticated. Idempotent upload of a canonical Session Receipt; served afterward at the permanent public URL.
+      operationId: putReceipt
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: A treeship/session-receipt/v1 document
+      responses:
+        '200':
+          description: Receipt stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_id:  { type: string }
+                  receipt_url: { type: string, example: "https://treeship.dev/receipt/ssn_42e740bd9eb238f6" }
+                  agents:      { type: integer }
+                  events:      { type: integer }
+                  uploaded_at: { type: integer }
+        '400':
+          description: Missing session_id, empty body, invalid JSON, or unsupported receipt type
+        '401':
+          description: DPoP authentication failed
+    get:
+      summary: Fetch a session receipt
+      description: Public, permanent URL. Returns the raw receipt JSON verbatim; cached immutably.
+      operationId: getReceipt
+      security: []
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: The receipt JSON, verbatim
+        '404':
+          description: No receipt uploaded for this session
+
+  /v1/ship/agents:
+    get:
+      summary: List the calling ship's agents
+      description: DPoP authenticated (or a workspace share token via ?session=). Registry derived from uploaded receipts.
+      operationId: listShipAgents
+      responses:
+        '200':
+          description: Agent registry
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agents:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:     { type: string }
+                        label:  { type: string }
+                        role:   { type: string }
+                        model:  { type: string }
+                        host:   { type: string }
+                        status: { type: string }
+        '401':
+          description: Authentication failed
+
+  /v1/ship/sessions:
+    get:
+      summary: List the calling ship's sessions
+      description: DPoP authenticated (or a workspace share token via ?session=). Session history derived from uploaded receipts.
+      operationId: listShipSessions
+      responses:
+        '200':
+          description: Session history
+        '401':
+          description: Authentication failed
+
+  /v1/session:
+    post:
+      summary: Mint a short-lived workspace share token
+      description: |
+        DPoP authenticated, no body. Issues a 15-minute opaque token an
+        unauthenticated browser can present via ?session= on the workspace GET.
+        The token is scoped to the authenticated dock only.
+      operationId: mintWorkspaceSession
+      responses:
+        '200':
+          description: Token issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:      { type: string, description: "32 random bytes, base64url" }
+                  dock_id:    { type: string }
+                  expires_at: { type: integer, description: "Unix timestamp, now + 900s" }
+        '401':
+          description: DPoP authentication failed
+
+  /v1/agents:
+    get:
+      summary: Resolve an agent to its verifiable bundle
+      description: |
+        Public. Returns raw signed envelopes (cards, certs, revocations) plus
+        the current card's Merkle proof; the client re-verifies and grades
+        everything offline. The Hub never grades trust.
+      operationId: resolveAgent
+      security: []
+      parameters:
+        - name: agent
+          in: query
+          required: true
+          schema: { type: string }
+          description: Agent URI, e.g. agent://deployer
+      responses:
+        '200':
+          description: Resolvable bundle
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agent:        { type: string }
+                  current_card: { $ref: '#/components/schemas/EnvelopeEntry' }
+                  cards:        { type: array, items: { $ref: '#/components/schemas/EnvelopeEntry' } }
+                  certs:        { type: array, items: { $ref: '#/components/schemas/EnvelopeEntry' } }
+                  revocations:  { type: array, items: { $ref: '#/components/schemas/EnvelopeEntry' } }
+                  transparency: { type: object, nullable: true, description: "Current card's Merkle ProofFile, verbatim" }
+                  note:         { type: string }
+        '400':
+          description: Missing agent query parameter
+
+  /v1/agents/log:
+    get:
+      summary: Agent transparency log
+      description: Public. Append-only receipt history — metadata and Merkle anchors only, never payloads.
+      operationId: agentLog
+      security: []
+      parameters:
+        - name: agent
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Log entries, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agent: { type: string }
+                  entries:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        artifact_id:   { type: string }
+                        kind:          { type: string, enum: [action, agent_card.v1] }
+                        actor:         { type: string }
+                        action:        { type: string }
+                        signed_at:     { type: integer }
+                        digest:        { type: string }
+                        merkle_anchor: { type: object, nullable: true, properties: { checkpoint_id: { type: integer }, leaf_index: { type: integer } } }
+                  committed_anchor: { type: object, nullable: true, description: "The evidence_anchor from the agent's latest signed card" }
+                  note: { type: string }
+        '400':
+          description: Missing agent query parameter
+
+  /v1/agents/history:
+    get:
+      summary: Agent work history
+      description: Public. The transparency log filtered to the agent's signed session.v1 records, as raw envelopes the client re-verifies.
+      operationId: agentHistory
+      security: []
+      parameters:
+        - name: agent
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: History entries, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agent: { type: string }
+                  entries:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        artifact_id:   { type: string }
+                        envelope_json: { type: string }
+                        signer:        { type: string }
+                        signed_at:     { type: integer }
+                        merkle_anchor: { type: object, nullable: true }
+                  count: { type: integer }
+                  note:  { type: string }
+        '400':
+          description: Missing agent query parameter
+
+  /v1/agents/match:
+    get:
+      summary: Match agents by exercised evidence
+      description: |
+        Public. Scans signed session.v1 records for tools matching a glob and
+        ranks candidates by matched sessions (descending). An untrusted index
+        proposal — records ship as raw envelopes so the client re-verifies
+        each one before ranking.
+      operationId: matchAgents
+      security: []
+      parameters:
+        - name: exercised
+          in: query
+          required: true
+          schema: { type: string }
+          description: "Tool glob, e.g. payments.* (single *; no * means exact)"
+        - name: class
+          in: query
+          required: false
+          schema: { type: string, enum: [self, runtime, countersigned] }
+        - name: min_sessions
+          in: query
+          required: false
+          schema: { type: integer, default: 1 }
+      responses:
+        '200':
+          description: Ranked candidates
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  exercised: { type: string }
+                  candidates:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        agent:            { type: string }
+                        matched_tools:    { type: array, items: { type: string } }
+                        matched_sessions: { type: integer }
+                        records:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              artifact_id:   { type: string }
+                              envelope_json: { type: string }
+                              merkle_anchor: { type: object, nullable: true }
+                  count: { type: integer }
+                  note:  { type: string }
+        '400':
+          description: Missing exercised query parameter
+
+  /v1/stats:
+    get:
+      summary: Public adoption metrics
+      description: Counts only, never identifiers. Cache-Control public, max-age=300. Whole request fails 500 rather than returning a partial document.
+      operationId: stats
+      security: []
+      responses:
+        '200':
+          description: Metrics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  artifacts: { type: object, properties: { total: { type: integer }, last_7d: { type: integer } } }
+                  docks:     { type: object, properties: { total: { type: integer }, attached_last_7d: { type: integer }, active_last_7d: { type: integer } } }
+                  sessions:  { type: object, properties: { total: { type: integer }, receipts_uploaded: { type: integer }, uploaded_last_7d: { type: integer } } }
+                  agents:    { type: object, properties: { total: { type: integer }, seen_last_7d: { type: integer } } }
+                  generated_at: { type: string, format: date-time }
+        '500':
+          description: Stats unavailable
+
+  /v1/merkle/consistency:
+    post:
+      summary: Publish a client-computed Merkle consistency proof
+      description: |
+        DPoP authenticated, body capped at 10 MB. The Hub stores and serves
+        verbatim; it never generates or verifies proofs. The signer must be
+        owned by the authenticated dock (it must have published a checkpoint
+        signed by that signer).
+      operationId: publishConsistency
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [signer, from_size, from_root, to_size, to_root, proof_json]
+              properties:
+                signer:     { type: string }
+                from_size:  { type: integer }
+                from_root:  { type: string }
+                to_size:    { type: integer }
+                to_root:    { type: string }
+                version:    { type: integer }
+                proof_json: { type: string, description: "JSON array of hex node hashes, serialized as a string" }
+                signed_at:  { type: string }
+      responses:
+        '200':
+          description: Stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:              { type: integer }
+                  hub_received_at: { type: string, format: date-time }
+        '400':
+          description: Invalid body, missing fields, or from_size > to_size
+        '401':
+          description: DPoP authentication failed
+        '403':
+          description: Signer is not owned by this dock
+    get:
+      summary: Fetch a signer's consistency-proof chain
+      description: Public. Returns consecutive proofs from a given tree size onward — the chain an auditor walks offline.
+      operationId: getConsistency
+      security: []
+      parameters:
+        - name: signer
+          in: query
+          required: true
+          schema: { type: string }
+        - name: from
+          in: query
+          required: false
+          schema: { type: integer, default: 0 }
+      responses:
+        '200':
+          description: Consistency chain
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  signer: { type: string }
+                  from:   { type: integer }
+                  chain:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:         { type: integer }
+                        signer:     { type: string }
+                        from_size:  { type: integer }
+                        from_root:  { type: string }
+                        to_size:    { type: integer }
+                        to_root:    { type: string }
+                        version:    { type: integer }
+                        proof_json: { type: string }
+                        signed_at:  { type: string }
+                        dock_id:    { type: string, nullable: true }
+                  note: { type: string }
+        '400':
+          description: Missing signer or invalid from size
 
   /.well-known/treeship/revoked.json:
     get:

@@ -63,12 +63,15 @@ The output AgentCard contains the canonical Treeship extension:
       "required": false,
       "params": {
         "ship_id": "shp_4a9f2c1d",
-        "receipt_endpoint": "https://treeship.dev/receipt"
+        "receipt_endpoint": "https://treeship.dev/receipt",
+        "verification_key": "ed25519:abc123..."
       }
     }
   ]
 }
 ```
+
+`verification_key` appears only when you supplied one; `receipt_endpoint` defaults to `https://treeship.dev/receipt`.
 
 ## Wrap your task handler
 
@@ -114,12 +117,14 @@ The artifact your peer receives now carries a verifiable trail:
   "parts": [{ "kind": "text", "text": "Research findings..." }],
   "metadata": {
     "treeship_artifact_id": "art_7f8e9d0a1b2c3d4e",
-    "treeship_receipt_url": "https://treeship.dev/receipt/ssn_01HR9W2D4Q4M7A0C",
+    "treeship_receipt_url": "https://treeship.dev/receipt/art_7f8e9d0a1b2c3d4e",
     "treeship_session_id": "ssn_01HR9W2D4Q4M7A0C",
     "treeship_ship_id": "shp_4a9f2c1d"
   }
 }
 ```
+
+`treeship_receipt_url` is `<receiptBaseUrl>/<receipt-artifact-id>` — the path segment is the **receipt artifact ID** (`art_…`, the same value as `treeship_artifact_id`), not the session ID. The base defaults to `https://treeship.dev/receipt` and is configurable via the middleware's `receiptBaseUrl` option.
 
 <Callout type="info">
 Only digests and metadata enter the artifact. Raw task content is never stored. The digest proves which data was involved without exposing the data itself.
@@ -141,6 +146,12 @@ if (!verification || !verification.withinDeclaredBounds) {
   throw new Error('Peer artifact failed Treeship verification');
 }
 ```
+
+`verifyArtifact` fetches the receipt from `treeship_receipt_url` and runs the structural WASM checks. Read the result precisely:
+
+- `structurallyConsistent` — the receipt's Merkle structure and inclusion proofs recompute (`structural-pass`). This does **not** establish who signed it.
+- `cryptographicallyVerified` — true only if envelope signatures were actually verified; for a URL-fetched receipt this is `false`.
+- `withinDeclaredBounds` — `true`/`false` only when the receipt is structurally consistent *and* carries a declaration; `undefined` otherwise (never a default "true"). The `!verification.withinDeclaredBounds` gate above therefore fails closed on undeclared or inconsistent receipts.
 
 ## Record a handoff
 

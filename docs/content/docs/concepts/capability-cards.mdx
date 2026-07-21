@@ -123,10 +123,10 @@ This mints a signed `agent_card_revocation.v1` receipt. verify-capability honors
 
 ## Verifying in the browser
 
-The same check runs client-side. `@treeship/verify-js` exposes `verifyCapability(card, actions, trustRoots)`, backed by a WASM export, that returns the **same verdict the CLI does**, key-bound status, declared tools, and the in/out-of-scope cross-check. The matching logic lives in one shared Rust module (`treeship_core::capability`) used by both the CLI and the WASM verifier, so a browser receipt viewer and the command line cannot disagree.
+The same check runs client-side. `@treeship/verify` exposes `verifyCapability(card, actions, trustRoots)`, backed by a WASM export, that returns the **same verdict the CLI does**, key-bound status, declared tools, and the in/out-of-scope cross-check. The matching logic lives in one shared Rust module (`treeship_core::capability`) used by both the CLI and the WASM verifier, so a browser receipt viewer and the command line cannot disagree.
 
 ```ts
-import { verifyCapability } from '@treeship/verify-js';
+import { verifyCapability } from '@treeship/verify';
 
 const result = await verifyCapability(cardEnvelope, actionEnvelopes, trustRoots);
 // { key_bound: true, in_scope: 2, out_of_scope: 1, status: 'verified', ... }

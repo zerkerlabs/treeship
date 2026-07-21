@@ -1,0 +1,41 @@
+---
+title: GET /v1/dock/authorized
+description: Poll the device-flow state until the challenge is approved and attached.
+---
+
+## Request
+
+```
+GET /v1/dock/authorized?device_code=a1b2c3d4e5f60718
+```
+
+No authentication required.
+
+| Parameter | In | Required | Description |
+|-----------|----|----------|-------------|
+| `device_code` | query | Yes | The device code from [`GET /v1/dock/challenge`](/docs/api/dock-challenge). Hex, 8–16 chars (legacy 8-char prefixes accepted). |
+
+## Responses by state
+
+Every response carries a stable `state` field so a polling client (the CLI, or the activation page) can distinguish outcomes precisely.
+
+| Status | State | Body | Meaning |
+|--------|-------|------|---------|
+| `202` | `pending` | `{"state":"pending","status":"pending"}` | User has not approved yet — keep polling |
+| `200` | `approved` | `{"state":"approved","status":"approved"}` | Browser approved; CLI should now finalize via [`POST /v1/dock/authorize`](/docs/api/dock-authorize) |
+| `200` | `attached` | `{"state":"attached","dock_id":"dck_…","next_steps":[…],"example":"…"}` | Finalized — the challenge was claimed for this `dock_id` |
+| `400` | `invalid` | `{"state":"invalid","error":"missing or invalid device_code"}` | Malformed or missing device code |
+| `404` | `invalid` | `{"state":"invalid","error":"unknown device code"}` | No challenge exists for this code |
+| `410` | `expired` | `{"state":"expired","error":"device code expired"}` | Challenge passed its 5-minute expiry before attaching |
+
+The `status` field on `pending`/`approved` is a legacy alias for `state`, kept for older clients. `attached` is checked before expiry, so an in-flight activation page still reports success on a recently attached (even recently expired) code — claimed challenges stay queryable for about an hour.
+
+## Example
+
+```bash
+curl "https://api.treeship.dev/v1/dock/authorized?device_code=a1b2c3d4e5f60718"
+```
+
+```json
+{"state":"pending","status":"pending"}
+```

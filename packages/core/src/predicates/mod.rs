@@ -42,6 +42,11 @@ const REGISTRY: &[(&str, &str)] = &[
         "memory.read.v1",
         include_str!("schemas/memory.read.v1.json"),
     ),
+    (
+        "memory.quarantine-check.v1",
+        include_str!("schemas/memory.quarantine-check.v1.json"),
+    ),
+    ("blocked.v1", include_str!("schemas/blocked.v1.json")),
     ("boundary.v1", include_str!("schemas/boundary.v1.json")),
     ("agent_card.v1", include_str!("schemas/agent_card.v1.json")),
     (
@@ -262,6 +267,122 @@ mod tests {
             let raw = schema_json(s).unwrap();
             serde_json::from_str::<Value>(raw).expect("embedded schema must be valid JSON");
         }
+    }
+
+    #[test]
+    fn quarantine_check_valid_passes() {
+        let payload = json!({
+            "action_id": "aac_1f2e3d4c",
+            "provider": "system://zmem",
+            "chain_root": "u3v9xJ2kQm4Zr8pW1sTnA7bCdEfGhIjKlMnOpQrStUv",
+            "decision_seq": 1042,
+            "clean": true,
+            "quarantined_triggers": [],
+            "checked_at": "2026-07-17T19:00:00Z"
+        });
+        assert!(validate("memory.quarantine-check.v1", Some(&payload)).is_ok());
+    }
+
+    #[test]
+    fn quarantine_check_missing_verdict_fails_closed() {
+        let payload = json!({
+            "action_id": "aac_1f2e3d4c",
+            "chain_root": "u3v9xJ2kQm4Zr8pW1sTnA7bCdEfGhIjKlMnOpQrStUv",
+            "decision_seq": 1042
+        }); // `clean` missing — the field the whole gate hangs on
+        let err = validate("memory.quarantine-check.v1", Some(&payload)).unwrap_err();
+        assert_eq!(
+            err,
+            PredicateError::MissingField {
+                suffix: "memory.quarantine-check.v1".into(),
+                field: "clean".into()
+            }
+        );
+    }
+
+    #[test]
+    fn quarantine_check_stringly_typed_verdict_fails_closed() {
+        // A "true" string must not pass for a boolean verdict — a lenient
+        // parse here would let a provider bug (or an attacker) launder an
+        // ambiguous verdict into a clean one.
+        let payload = json!({
+            "action_id": "aac_1f2e3d4c",
+            "chain_root": "u3v9xJ2kQm4Zr8pW1sTnA7bCdEfGhIjKlMnOpQrStUv",
+            "decision_seq": 1042,
+            "clean": "true"
+        });
+        let err = validate("memory.quarantine-check.v1", Some(&payload)).unwrap_err();
+        assert_eq!(
+            err,
+            PredicateError::TypeMismatch {
+                suffix: "memory.quarantine-check.v1".into(),
+                field: "clean".into(),
+                expected: "\"boolean\"".into()
+            }
+        );
+    }
+
+    #[test]
+    fn quarantine_check_non_integer_seq_fails_closed() {
+        // decision_seq binds the verdict to a ledger state; a non-integer
+        // seq breaks chain-root rederivation for Class-2 verifiers.
+        let payload = json!({
+            "action_id": "aac_1f2e3d4c",
+            "chain_root": "u3v9xJ2kQm4Zr8pW1sTnA7bCdEfGhIjKlMnOpQrStUv",
+            "decision_seq": "1042",
+            "clean": true
+        });
+        let err = validate("memory.quarantine-check.v1", Some(&payload)).unwrap_err();
+        assert_eq!(
+            err,
+            PredicateError::TypeMismatch {
+                suffix: "memory.quarantine-check.v1".into(),
+                field: "decision_seq".into(),
+                expected: "\"integer\"".into()
+            }
+        );
+    }
+
+    #[test]
+    fn blocked_valid_passes() {
+        let payload = json!({
+            "reason_class": "quarantine_triggered",
+            "refused_kind": "approval",
+            "approver": "human://alice",
+            "irreversibility": "one_way_consequential",
+            "description": "quarantine check reports DIRTY",
+            "quarantine_receipt": "art_deadbeef00112233"
+        });
+        assert!(validate("blocked.v1", Some(&payload)).is_ok());
+    }
+
+    #[test]
+    fn blocked_out_of_vocabulary_reason_fails_closed() {
+        // A refusal record whose reason is not in the closed vocabulary
+        // must not validate -- otherwise "blocked" becomes a freeform
+        // label that policy checks cannot rely on (AUD-06).
+        let payload = json!({
+            "reason_class": "just_felt_like_it",
+            "refused_kind": "approval"
+        });
+        let err = validate("blocked.v1", Some(&payload)).unwrap_err();
+        assert!(
+            matches!(err, PredicateError::NotInEnum { ref field, .. } if field == "reason_class"),
+            "expected NotInEnum on reason_class, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn blocked_missing_reason_fails_closed() {
+        let payload = json!({ "refused_kind": "approval" });
+        let err = validate("blocked.v1", Some(&payload)).unwrap_err();
+        assert_eq!(
+            err,
+            PredicateError::MissingField {
+                suffix: "blocked.v1".into(),
+                field: "reason_class".into()
+            }
+        );
     }
 
     #[test]

@@ -2,7 +2,7 @@ import type { MetadataRoute } from 'next';
 import { source } from '@/lib/source';
 import { blogSource } from '@/lib/blog';
 
-const baseUrl = 'https://treeship.dev';
+const baseUrl = 'https://docs.treeship.dev';
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const docs = source.getPages().map((page) => ({

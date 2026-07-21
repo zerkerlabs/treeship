@@ -1,0 +1,60 @@
+---
+title: receipt export
+description: Export a receipt's offline-verifiable triple — message, signature, public key — checkable by any Ed25519 library, no Treeship code required.
+---
+
+`treeship receipt export` reduces a receipt to the three things independent verification actually needs. The point is **exit-cost zero**: a counterparty (or an auditor five years from now) verifies the signature with any Ed25519 implementation, without installing Treeship.
+
+## Usage
+
+```bash
+treeship receipt export <artifact-id> [--format json]
+```
+
+Works on receipts **this machine signed** (the public key comes from the local keystore).
+
+## The triple
+
+| Field | What it is |
+|-------|-----------|
+| `message` | The exact signed bytes — the DSSE **PAE** (`payload_type` + payload), not the payload JSON alone |
+| `signature` | The envelope's Ed25519 signature |
+| `public_key` | The signer's public key from the local keystore |
+
+All three are emitted as standard base64. Output goes to stdout; no files are written.
+
+```bash
+treeship receipt export art_63c838978363b452 --format json
+```
+
+```json
+{
+  "artifact_id": "art_63c838978363b452…",
+  "algorithm": "ed25519",
+  "encoding": "base64",
+  "message_b64": "…",
+  "signature_b64": "…",
+  "public_key_b64": "…",
+  "key_id": "key_0ea751c13673b32c"
+}
+```
+
+## Independent verification
+
+The repo ships a ~50-line reference verifier, [`scripts/verify-receipt.py`](https://github.com/zerkerlabs/treeship/blob/main/scripts/verify-receipt.py), that uses only the `cryptography` package — no Treeship code:
+
+```bash
+treeship receipt export art_xxx --format json | python3 verify-receipt.py
+# or from a saved file:
+python3 verify-receipt.py triple.json
+```
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | Signature valid |
+| `1` | Signature invalid |
+| `2` | Malformed input (or non-ed25519 algorithm) |
+
+Or in any language: base64-decode the three fields and run Ed25519 `verify(public_key, message, signature)`.
+
+Note the scope: the triple proves **this key signed these bytes**. Deciding whether you trust that key is your [trust-root policy](/docs/cli/trust); walking the chain and checking approvals is [`treeship verify`](/docs/cli/verify).

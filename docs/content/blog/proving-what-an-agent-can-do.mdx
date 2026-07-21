@@ -107,10 +107,10 @@ The interesting design question is not *how to revoke*, it is *who is allowed to
 
 ## Same verdict in the browser
 
-A trust property that only holds on your machine is not a trust property, it is a convenience. So the capability check runs client-side too. `@treeship/verify-js` exposes `verifyCapability(card, actions, trustRoots)`, backed by a WASM build, that returns the **same verdict the CLI does**:
+A trust property that only holds on your machine is not a trust property, it is a convenience. So the capability check runs client-side too. `@treeship/verify` exposes `verifyCapability(card, actions, trustRoots)`, backed by a WASM build, that returns the **same verdict the CLI does**:
 
 ```ts
-import { verifyCapability } from '@treeship/verify-js';
+import { verifyCapability } from '@treeship/verify';
 
 const result = await verifyCapability(cardEnvelope, actionEnvelopes, trustRoots);
 // { key_bound: true, in_scope: 2, out_of_scope: 1, status: 'verified', ... }

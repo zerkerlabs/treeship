@@ -1,0 +1,102 @@
+---
+title: Agent registry endpoints
+description: Resolve an agent to its verifiable bundle, read its transparency log and work history, and match agents by exercised evidence. All public, all client-verified.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Four public read endpoints back `treeship resolve --hub`, `audit`, `history`, and `match`. They share one design rule: **the Hub returns raw signed envelopes and proposes candidates; your machine re-verifies everything against your own trust roots and renders the verdict.** The Hub never grades trust.
+
+No authentication on any of them — resolving an identity is a public act, like a DNS query.
+
+## GET /v1/agents — resolve
+
+Resolve an agent URI to its verifiable bundle.
+
+```
+GET /v1/agents?agent=agent://deployer
+```
+
+| Parameter | In | Required | Description |
+|-----------|----|----------|-------------|
+| `agent` | query | Yes | The agent URI (query param so `//` doesn't collide with path routing) |
+
+**200 response:**
+
+```json
+{
+  "agent": "agent://deployer",
+  "current_card": { "artifact_id": "art_…", "envelope_json": "…", "signer_keyid": "key_…", "signed_at": 1752600000 },
+  "cards": [ … ],
+  "certs": [ … ],
+  "revocations": [ … ],
+  "transparency": { … },
+  "note": "raw signed envelopes; the client re-verifies and grades them offline…"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `current_card` | object \| null | Newest `agent_card.v1` envelope for this agent |
+| `cards` | array | All matching card envelopes (each: `artifact_id`, `envelope_json`, `signer_keyid`, `signed_at`) |
+| `certs` | array | `agent_cert.v1` chain envelopes for this agent |
+| `revocations` | array | Only revocations referencing one of this agent's card IDs |
+| `transparency` | object \| null | The current card's Merkle proof file, verbatim; `null` when not anchored |
+
+Errors: `400` `{"error":"missing agent query parameter"}` · `500` `{"error":"query failed"}`.
+
+## GET /v1/agents/log — transparency log
+
+An agent's append-only receipt history: **metadata and Merkle anchors only, never payloads.**
+
+```
+GET /v1/agents/log?agent=agent://deployer
+```
+
+**200 response:** `{ "agent", "entries": [ … ], "committed_anchor", "note" }`, entries newest-first:
+
+| Entry field | Description |
+|-------------|-------------|
+| `artifact_id`, `kind`, `actor`, `signed_at`, `digest` | Entry metadata (`kind` is `"action"` or `"agent_card.v1"`; actions also carry `action`) |
+| `merkle_anchor` | `{"checkpoint_id","leaf_index"}`, or `null` when unanchored |
+
+`committed_anchor` is the latest card's `evidence_anchor` — what the agent *committed to* in its signed card, which `treeship audit` compares against what the log actually shows.
+
+## GET /v1/agents/history — work history
+
+The transparency log filtered to the agent's signed `session.v1` work records, as raw envelopes.
+
+```
+GET /v1/agents/history?agent=agent://deployer
+```
+
+**200 response:** `{ "agent", "entries": [ … ], "count", "note" }` — each entry: `artifact_id`, `envelope_json` (full signed envelope), `signer` (keyid), `signed_at`, `merkle_anchor`. Newest first. The client re-verifies every envelope and re-proves anchored entries' inclusion offline; see [`treeship history`](/docs/cli/history).
+
+## GET /v1/agents/match — evidence matching
+
+Find agents by what they have **actually exercised**, from their signed `session.v1` records.
+
+```
+GET /v1/agents/match?exercised=payments.*&class=runtime&min_sessions=2
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `exercised` | Yes | Tool glob, e.g. `payments.*` — single `*` matches a prefix/suffix split; no `*` means exact match |
+| `class` | No | Filter by `attestation_class` (`self` \| `runtime` \| `countersigned`) |
+| `min_sessions` | No | Minimum matched sessions per candidate (default 1) |
+
+**200 response:** `{ "exercised", "candidates": [ … ], "count", "note" }` — candidates ranked by `matched_sessions` descending (ties: agent URI ascending):
+
+```json
+{
+  "agent": "agent://deployer",
+  "matched_tools": ["payments.charge", "payments.refund"],
+  "matched_sessions": 4,
+  "records": [ { "artifact_id": "…", "envelope_json": "…", "merkle_anchor": { … } } ]
+}
+```
+
+<Callout type="info">
+The candidate list is an **untrusted index proposal**. Every record ships as a raw signed envelope precisely so `treeship match` can re-verify each one on your machine against your pinned trust roots before ranking what it shows you.
+</Callout>

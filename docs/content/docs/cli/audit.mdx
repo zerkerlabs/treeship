@@ -1,0 +1,58 @@
+---
+title: audit
+description: Audit an agent's transparency log from a Hub — re-verify every anchored entry's inclusion offline, check completeness against the committed anchor, and detect forks, regressions, and rewrites.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`treeship audit` treats the Hub as a **hostile witness**: it fetches the agent's transparency log and re-proves every claim on your machine. A hub that omits records, rewrites history, or shows different views to different auditors gets caught.
+
+## Usage
+
+```bash
+treeship audit <agent-uri> --hub <url> [--watch] [--interval <secs>]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--hub <URL>` | Required. The Hub whose log to audit (local history is `treeship log`) |
+| `--watch` | Monitor mode: re-audit on an interval and keep alerting; never exits on anomaly |
+| `--interval <SECS>` | Seconds between re-audits in watch mode (default 30) |
+| `--format json` | Machine-readable verdict |
+
+## The four checks
+
+1. **Inclusion** — every anchored entry's Merkle proof is re-verified offline; the checkpoint signature must chase to a signer you pinned under `hub_checkpoint`. Marks: `anchored ✓` / `anchored ✗ INVALID` / `anchored (proof unavailable)`.
+2. **Completeness** — the entry count is compared against the `evidence_anchor` the agent **committed to in its own signed card**: `complete (committed C, observed O)` or `OMISSION — committed C, observed O`.
+3. **Witnessing** — each observed checkpoint is persisted under `~/.treeship/merkle/witnessed/` and compared across runs: `FORK DETECTED` (equivocation — different roots for the same index), `REGRESSION`, or `consistent`.
+4. **Append-only** — the Hub's [consistency-proof chain](/docs/api/merkle-consistency) is fetched and re-verified to prove the current tree extends the last witnessed one: `append-only VERIFIED` / `INVALID` / `NOT PROVEN`.
+
+## JSON output
+
+```json
+{
+  "verdict": "clean",
+  "ok": true,
+  "agent": "agent://deployer",
+  "hub": "https://api.treeship.dev",
+  "receipts": 12,
+  "anchored": 12, "anchored_verified": 12, "anchored_invalid": 0,
+  "completeness": "complete (committed 12, observed 12)", "omission": false,
+  "consistency": "consistent (…)", "equivocation_or_regression": false,
+  "append_only": "append-only VERIFIED — …", "append_only_failed": false,
+  "entries": [ { "artifact_id": "…", "kind": "action", "action": "…", "anchored": true } ]
+}
+```
+
+`verdict` is `"clean"` or `"ANOMALY"`.
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Clean |
+| `1` | Anomaly: omission, invalid inclusion, fork/regression, or append-only failure (one-shot mode) |
+
+<Callout type="info">
+`--watch` never exits on anomaly — it is a monitor, not a gate. Use one-shot mode in CI.
+</Callout>
