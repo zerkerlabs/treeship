@@ -2,6 +2,64 @@
 
 ## Unreleased
 
+## 0.21.0 (2026-07-21)
+
+The accountability release. Treeship starts answering not just "was this signed?"
+but "what was it authorized to do, what did it actually touch, and how confident
+are we the effect really happened?" — with the verdict separating *operational
+confidence* from *cryptographic validity*.
+
+### Added
+- **action/v2 receipt format (verification path).** An additive superset of
+  `action.v1`: the signed payload now carries a per-hop **`mandate`** (the authority
+  an action ran under — grantor, scope, audience, expiry, delegation depth,
+  revocation) and an **`effect`** block (what the action touched — input/output/
+  readback hashes, bytes moved, cost, side effects, context snapshot). Fully optional
+  and backward-compatible; existing v1 artifact IDs are unaffected. This release
+  ships the format, the core types, and verification; CLI emission of v2 receipts is
+  a follow-up.
+- **`effect_confidence` — the honest effect verdict ("the ack is not the act").** An
+  actor declares how confident it is that an action's real-world effect happened
+  (`verified` / `partial` / `ambiguous` / `unknown` / `not_verified`). `verify_effect`
+  reconciles that claim against independent, actor-unmintable evidence (an external
+  `readback`, or a witness a trusted authority vouches for): a `Verified` claim with
+  no such evidence is downgraded, never taken on faith, and the verdict separates
+  operational confidence from cryptographic validity. Honest lesser claims pass
+  through unchanged — the verifier blocks inflation, it does not erase an actor's own
+  hedging.
+- **Runtime identity on action/v2.** Optional `provider` / `model` /
+  `tool_schema_hash` / `system_prompt_hash`, bound into the signed statement, so a
+  verifier holding a pinned expectation can detect a swapped model, an altered tool
+  set, or a changed system prompt after the fact.
+- **Witness map on effects.** Independent corroborating observers per effect. A
+  witness lifts the confidence ceiling only once a `WitnessAuthority` confirms its
+  signature against a trusted, non-actor key observing the same post-state; the
+  default authority trusts nothing, so a bundled witness never inflates a verdict on
+  its own.
+- **Unified verifier in the browser and SDKs.** Resolution and presentation
+  verification moved into `treeship-core` and exposed via WASM + the TS/Python SDKs,
+  so browser and edge verification run the same logic as the CLI.
+- **Memory-provenance binding spine.** Quarantine-gated approvals (a high-privilege
+  action's grant is withheld if a memory-provenance check comes back dirty, and the
+  denial is itself signed), and signed **`blocked.v1`** refusal artifacts that make
+  negative space — what an agent was stopped from doing, and why — first-class
+  evidence.
+
+### Changed
+- **`treeship trust add --kind`** accepts the v0.19 split kinds `cert_issuer`,
+  `hub_org`, and `revoker` alongside the existing ones, closing the pin-exchange gap
+  where a counterparty following the documented flow hit a CLI error.
+- **`treeship verify`** surfaces the action/v2 effect verdict — a `runtime:` line and
+  an `effect:` line on the timeline, and the same verdict in `--json` — kept clearly
+  distinct from the signature check.
+
+### Docs
+- **Full docs truth-sync.** Every documented CLI command, Hub API route, and SDK
+  contract regenerated from code and rewritten to match what v0.20+ actually does,
+  plus CI drift gates (generated command matrix, feature inventory, docs routes) that
+  fail on any code-vs-docs divergence — so a docs lie now requires deliberately
+  overriding a failing check rather than simply forgetting.
+
 ## 0.20.0 (2026-07-12)
 
 The private-verification release. Treeship gets a way for an agent to prove a
