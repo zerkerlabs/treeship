@@ -8,7 +8,7 @@ use treeship_core::{
         payload_type, payload_type_v2,
         session_participant::{verify_participant_envelope, SessionParticipantStatement},
         verify_effect, ActionStatement, ActionStatementV2, ApprovalScope, ApprovalStatement,
-        DecisionStatement, EffectConfidence, HandoffStatement, NoWitnessAuthority,
+        DecisionStatement, EffectConfidence, EffectVerdict, HandoffStatement, NoWitnessAuthority,
         ReceiptStatement,
     },
     storage::Store,
@@ -84,6 +84,36 @@ fn effect_label(c: EffectConfidence) -> &'static str {
         EffectConfidence::Unknown => "unknown",
         EffectConfidence::NotVerified => "not-verified",
     }
+}
+
+/// Reconciled effect verdict for an envelope, if it is a treeship/action/v2
+/// receipt that actually carries an effect block. `None` for any other
+/// artifact (or a v2 action with no effect), so callers surface the effect
+/// line only where there is an effect to judge. Uses [`NoWitnessAuthority`]:
+/// the CLI wires no witness trust yet, so witnesses give no evidence lift --
+/// the honest, fail-closed default across every output format.
+fn v2_effect_verdict(env: &Envelope) -> Option<EffectVerdict> {
+    if env.payload_type != payload_type_v2("action") {
+        return None;
+    }
+    let stmt = env.unmarshal_statement::<ActionStatementV2>().ok()?;
+    stmt.effect.as_ref()?;
+    Some(verify_effect(&stmt, &NoWitnessAuthority))
+}
+
+/// Serialize an effect verdict for `--json` output.
+fn effect_verdict_json(v: &EffectVerdict) -> serde_json::Value {
+    let downgraded = v
+        .claimed_confidence
+        .map(|c| c != v.effective_confidence)
+        .unwrap_or(false);
+    serde_json::json!({
+        "effective_confidence": effect_label(v.effective_confidence),
+        "claimed_confidence": v.claimed_confidence.map(effect_label),
+        "downgraded": downgraded,
+        "trusted_witnesses": v.trusted_witnesses,
+        "notes": v.notes,
+    })
 }
 
 pub fn run(
@@ -187,14 +217,28 @@ pub fn run(
     let failed = total - passed;
 
     if printer.format == crate::printer::Format::Json {
+        // Effect verdicts are keyed by artifact id so the signature-focused
+        // `checks` list can carry the operational-confidence verdict alongside
+        // each v2 action without disturbing the nonce-binding synthetic checks.
+        let effect_by_id: HashMap<String, serde_json::Value> = chain_envelopes
+            .iter()
+            .filter_map(|(id, env)| {
+                v2_effect_verdict(env).map(|v| (id.clone(), effect_verdict_json(&v)))
+            })
+            .collect();
+
         let out: Vec<_> = checks
             .iter()
             .map(|c| {
-                serde_json::json!({
+                let mut obj = serde_json::json!({
                     "id":      c.id,
                     "outcome": if c.outcome == Outcome::Pass { "pass" } else { "fail" },
                     "reason":  c.reason,
-                })
+                });
+                if let Some(effect) = effect_by_id.get(&c.id) {
+                    obj["effect"] = effect.clone();
+                }
+                obj
             })
             .collect();
         printer.json(&serde_json::json!({
@@ -857,16 +901,16 @@ fn extract_step_info(index: usize, id: &str, env: &Envelope, storage: &Store) ->
             if let Some(rt) = &stmt.runtime {
                 info.runtime_model = rt.model.clone();
             }
-            // No witness authority is wired into the CLI yet, so witnesses give
-            // no evidence lift here -- the honest, fail-closed default.
-            let verdict = verify_effect(&stmt, &NoWitnessAuthority);
-            info.effect_effective = Some(verdict.effective_confidence);
-            info.effect_claimed = verdict.claimed_confidence;
-            info.effect_trusted_witnesses = verdict.trusted_witnesses;
-            info.effect_downgraded = verdict
-                .claimed_confidence
-                .map(|c| c != verdict.effective_confidence)
-                .unwrap_or(false);
+            // Surface the effect line only when there is an effect to judge.
+            if let Some(verdict) = v2_effect_verdict(env) {
+                info.effect_effective = Some(verdict.effective_confidence);
+                info.effect_claimed = verdict.claimed_confidence;
+                info.effect_trusted_witnesses = verdict.trusted_witnesses;
+                info.effect_downgraded = verdict
+                    .claimed_confidence
+                    .map(|c| c != verdict.effective_confidence)
+                    .unwrap_or(false);
+            }
             if let Some(meta) = &stmt.meta {
                 extract_meta_fields(&mut info, meta);
             }
@@ -1569,6 +1613,29 @@ mod tests {
         );
         assert!(info.effect_downgraded, "downgrade flag must be set");
         assert_eq!(info.effect_trusted_witnesses, 0);
+
+        // Same verdict must surface in the --json path via the shared helper.
+        let verdict = v2_effect_verdict(&env).expect("v2 action with effect");
+        let j = effect_verdict_json(&verdict);
+        assert_eq!(j["effective_confidence"], "not-verified");
+        assert_eq!(j["claimed_confidence"], "verified");
+        assert_eq!(j["downgraded"], true);
+        assert!(j["notes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|n| n.as_str().unwrap().contains("downgraded")));
+
+        // A non-v2 artifact yields no effect verdict at all.
+        let v1 = act("agent://x", "tool.call", None);
+        let v1_env = sign(
+            &treeship_core::statements::payload_type("action"),
+            &v1,
+            &signer,
+        )
+        .unwrap()
+        .envelope;
+        assert!(v2_effect_verdict(&v1_env).is_none());
     }
 
     fn act(actor: &str, action: &str, subject_uri: Option<&str>) -> ActionStatement {
