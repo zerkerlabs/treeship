@@ -28,6 +28,17 @@ type WasmBindings = {
     actions: string,
     trustRoots: string,
   ) => string;
+  verify_resolution: (
+    bundle: string,
+    trustRoots: string,
+    now: string,
+  ) => string;
+  verify_presentation: (
+    presentation: string,
+    trustRoots: string,
+    expectedNonce: string,
+    now: string,
+  ) => string;
 };
 
 /**
@@ -272,5 +283,153 @@ export async function verifyCapability(
   const wasm = await loadWasm();
   return JSON.parse(
     wasm.verify_capability(cardJson, actionsJson, serializeTrustRoots(trustRoots)),
+  );
+}
+
+/** One certificate in a resolution bundle's chain. */
+export interface ResolutionCert {
+  artifact_id: string;
+  /** An `agent_cert.v1` DSSE envelope object. */
+  envelope: Record<string, unknown>;
+}
+
+/**
+ * A resolution bundle: the signed bytes needed to decide whether an agent's
+ * current card is trustworthy. This is the same shape the Hub serves and the
+ * CLI re-verifies — assemble it from a `resolve` response.
+ */
+export interface ResolutionBundleInput {
+  agent: string;
+  /** The agent's current `agent_card.v1` DSSE envelope object. */
+  card: Record<string, unknown>;
+  certs?: ResolutionCert[];
+  /** `agent_card_revocation.v1` DSSE envelope objects. */
+  revocations?: Record<string, unknown>[];
+}
+
+/** Result of {@link verifyResolution}. Mirrors the WASM JSON output. */
+export interface ResolutionVerdict {
+  /** Card signature verified against your roots (directly or via the chain). */
+  sig_ok: boolean;
+  /** Card is key-bound: signer pinned under AgentCert, or chain-certified. */
+  key_bound: boolean;
+  /** If verified via the certificate chain, the cert artifact that vouched. */
+  chain_cert_id: string | null;
+  /** An authorized, verifying revocation was found. */
+  revoked: boolean;
+  revocation_reason: string | null;
+  error_code?: string;
+  message?: string;
+}
+
+/**
+ * Verify an agent resolution bundle in the browser — the same `resolve --hub`
+ * trust decision the CLI makes, via shared Rust logic
+ * (`treeship_core::verify::resolution`). Verifies the card by direct leaf pin
+ * or certificate-chain walk, then honors an authorized revocation.
+ *
+ * `trustRoots` is required for `key_bound` to be true; with none, the bundle
+ * fails closed. `now` defaults to the current time (used for cert validity
+ * windows in the chain walk).
+ */
+export async function verifyResolution(
+  bundle: ResolutionBundleInput,
+  trustRoots?: TrustRootsBundle | TrustRootInput[],
+  now?: Date | string,
+): Promise<ResolutionVerdict> {
+  const nowStr =
+    now === undefined
+      ? new Date().toISOString()
+      : now instanceof Date
+        ? now.toISOString()
+        : now;
+  const wasm = await loadWasm();
+  return JSON.parse(
+    wasm.verify_resolution(
+      JSON.stringify(bundle),
+      serializeTrustRoots(trustRoots),
+      nowStr,
+    ),
+  );
+}
+
+/** The challenge-response outcome within a presentation. */
+export interface PresentationChallenge {
+  outcome:
+    | 'not_requested'
+    | 'present_but_unchecked'
+    | 'no_response'
+    | 'no_established_key'
+    | 'verified'
+    | 'failed';
+  /** Bearer-signed timestamp, when `outcome` is `verified`. */
+  signed_at: string | null;
+  /** Failure reason, when `outcome` is `failed`. */
+  reason: string | null;
+}
+
+/** The staple portion of a presentation verdict. */
+export interface PresentationStaple {
+  verified: boolean;
+  status:
+    | 'no_staple'
+    | 'unparseable'
+    | 'signer_not_trusted'
+    | 'inclusion_invalid'
+    | 'verified';
+  checkpoint_index: number | null;
+  age_secs: number | null;
+}
+
+/** Result of {@link verifyPresentation}. Mirrors the WASM JSON output. */
+export interface PresentationVerdict {
+  agent: string;
+  card_id: string;
+  /** Card signature verified against your roots (directly or via the chain). */
+  sig_ok: boolean;
+  key_bound: boolean;
+  via_chain: boolean;
+  revoked: string | null;
+  challenge: PresentationChallenge;
+  challenge_ok: boolean;
+  staple: PresentationStaple;
+  /** Roll-up: not revoked, key-bound, and (if requested) challenge verified.
+   * Freshness (`--max-staple-age`) is your own policy over `staple.age_secs`. */
+  ok: boolean;
+  error_code?: string;
+  message?: string;
+}
+
+/**
+ * Verify an agent presentation in the browser — the same `verify-presentation`
+ * trust decision the CLI makes, via shared Rust logic
+ * (`treeship_core::verify::presentation`). Verifies the card (direct pin or
+ * chain), honors an authorized revocation, checks challenge liveness (when
+ * `nonce` is given), and verifies the staple.
+ *
+ * `trustRoots` is required for `key_bound`; with none, the presentation fails
+ * closed. `nonce` is the challenge nonce YOU issued (omit to skip liveness).
+ * `now` defaults to the current time.
+ */
+export async function verifyPresentation(
+  presentation: Record<string, unknown>,
+  trustRoots?: TrustRootsBundle | TrustRootInput[],
+  opts?: { nonce?: string; now?: Date | string },
+): Promise<PresentationVerdict> {
+  const now = opts?.now;
+  const nowStr =
+    now === undefined
+      ? new Date().toISOString()
+      : now instanceof Date
+        ? now.toISOString()
+        : now;
+  const wasm = await loadWasm();
+  return JSON.parse(
+    wasm.verify_presentation(
+      JSON.stringify(presentation),
+      serializeTrustRoots(trustRoots),
+      opts?.nonce ?? '',
+      nowStr,
+    ),
   );
 }

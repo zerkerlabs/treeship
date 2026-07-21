@@ -12,12 +12,12 @@
 //! agent marketplace: the search is only ever a lead, the verdict is always
 //! recomputed locally.
 
-use crate::commands::resolve::verifier_from_trust;
 use crate::printer::Printer;
 use treeship_core::attestation::Envelope;
 use treeship_core::capability::tool_matches;
 use treeship_core::statements::ReceiptStatement;
 use treeship_core::trust::TrustRootStore;
+use treeship_core::verify::resolution::verifier_from_trust;
 
 type CmdResult = Result<(), Box<dyn std::error::Error>>;
 

@@ -62,7 +62,7 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
     // signature naming a victim's AgentCert key alongside a second signature by
     // a locally-held key) AND that key pinned under AgentCert.
     let trust = TrustRootStore::open_default_or_empty()?;
-    let verifier = crate::commands::resolve::verifier_from_trust(&trust);
+    let verifier = treeship_core::verify::resolution::verifier_from_trust(&trust);
     let card_verified_keys: Vec<String> = verifier
         .verify_any(&record.envelope)
         .map(|r| r.verified_key_ids)
@@ -455,7 +455,7 @@ pub(crate) fn find_revocation(
         // unverified `signatures[0].keyid`. Otherwise a revocation carrying a
         // forged first keyid (the card's key, or a Ship root) plus a garbage
         // signature would be honored, letting a stranger revoke a card (DoS).
-        let verified: Vec<String> = crate::commands::resolve::verifier_from_trust(trust)
+        let verified: Vec<String> = treeship_core::verify::resolution::verifier_from_trust(trust)
             .verify_any(&rec.envelope)
             .map(|r| r.verified_key_ids)
             .unwrap_or_default();

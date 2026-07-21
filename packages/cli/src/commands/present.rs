@@ -21,101 +21,20 @@
 //! challenge-response mode that proves live key control is slice 3), and
 //! revocation absence is only as current as the staple.
 
-use std::collections::HashMap;
-
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use ed25519_dalek::{Signature, VerifyingKey};
-use sha2::{Digest, Sha256};
 
-use crate::commands::resolve::{chain_verify_card, verifier_from_trust};
 use crate::{ctx, printer::Printer};
 use treeship_core::attestation::Envelope;
-use treeship_core::merkle::{Checkpoint, InclusionProof, MerkleTree};
+use treeship_core::merkle::MerkleTree;
 use treeship_core::statements::{parse_rfc3339_to_unix, payload_type, ReceiptStatement};
-use treeship_core::trust::{decode_ed25519_pubkey, TrustRootKind, TrustRootStore};
+use treeship_core::trust::TrustRootStore;
+use treeship_core::verify::presentation::{
+    challenge_canonical, ChallengeOutcome, PresentationVerdict, StapleStatus,
+};
 
 type CmdResult = Result<(), Box<dyn std::error::Error>>;
 
 pub const PRESENTATION_TYPE: &str = "treeship/presentation/v1";
-
-/// The canonical bytes a challenge response signs (slice 3, the handshake).
-///
-/// Domain-separated and pipe-delimited in the v0.10.4 house shape: every
-/// variable-length, externally-supplied field is folded into a sha256 digest
-/// so no field can inject separators and shift the others (the verifier's
-/// nonce is arbitrary text). Binding all four fields means a challenge
-/// signature cannot be replayed across protocols (domain tag), across agents
-/// or cards (their digests), or across challenges (the nonce digest);
-/// `signed_at` is bound so the reported freshness is bearer-signed, not
-/// bearer-editable.
-pub(crate) fn challenge_canonical(
-    agent: &str,
-    card_id: &str,
-    nonce: &str,
-    signed_at: &str,
-) -> Vec<u8> {
-    let d = |s: &str| hex::encode(Sha256::digest(s.as_bytes()));
-    format!(
-        "v1|presentation-challenge|{}|{}|{}|{signed_at}",
-        d(agent),
-        d(card_id),
-        d(nonce)
-    )
-    .into_bytes()
-}
-
-/// Verify a presentation's challenge block against the nonce THIS verifier
-/// issued and the subject key the card verification established. Returns the
-/// bearer-signed `signed_at` on success; a specific, honest reason on
-/// failure. Pure — unit-tested against real keys.
-pub(crate) fn check_challenge(
-    challenge: &serde_json::Value,
-    agent: &str,
-    card_id: &str,
-    expected_nonce: &str,
-    card_keyid: &str,
-    subject: &VerifyingKey,
-) -> Result<String, String> {
-    let nonce = challenge
-        .get("nonce")
-        .and_then(|v| v.as_str())
-        .ok_or("challenge block carries no nonce")?;
-    if nonce != expected_nonce {
-        return Err(
-            "challenge nonce does not match the one you issued — this response answers a DIFFERENT challenge (replay?)"
-                .into(),
-        );
-    }
-    let key_id = challenge
-        .get("key_id")
-        .and_then(|v| v.as_str())
-        .ok_or("challenge block carries no key_id")?;
-    if key_id != card_keyid {
-        return Err(format!(
-            "challenge signed by {key_id}, but the card is bound to {card_keyid}"
-        ));
-    }
-    let signed_at = challenge
-        .get("signed_at")
-        .and_then(|v| v.as_str())
-        .ok_or("challenge block carries no signed_at")?;
-    let sig_b64 = challenge
-        .get("signature")
-        .and_then(|v| v.as_str())
-        .ok_or("challenge block carries no signature")?;
-    let sig_bytes = URL_SAFE_NO_PAD
-        .decode(sig_b64)
-        .map_err(|_| "challenge signature is not valid base64url")?;
-    let sig_arr: [u8; 64] = sig_bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| "challenge signature is not 64 bytes")?;
-    let canonical = challenge_canonical(agent, card_id, expected_nonce, signed_at);
-    subject
-        .verify_strict(&canonical, &Signature::from_bytes(&sig_arr))
-        .map_err(|_| "challenge signature INVALID for the card's key".to_string())?;
-    Ok(signed_at.to_string())
-}
 
 // ── present ─────────────────────────────────────────────────────────────────
 
@@ -440,177 +359,85 @@ pub fn verify_presentation(
     if pres.get("type").and_then(|v| v.as_str()) != Some(PRESENTATION_TYPE) {
         return Err(format!("{path} is not a {PRESENTATION_TYPE} file").into());
     }
-    let agent = pres
-        .get("agent")
-        .and_then(|v| v.as_str())
-        .ok_or("presentation carries no agent URI")?;
 
-    // ── Card: direct pin, or chain walk to a pinned Ship root ─────────────
-    let card_env_json = pres
+    // The single core trust-decision: card (direct pin or chain), revocation,
+    // challenge liveness, and staple. Same code the WASM verifier and SDKs run.
+    let now = unix_now();
+    let PresentationVerdict {
+        agent,
+        card_id,
+        sig_ok,
+        key_bound,
+        via_chain,
+        revoked,
+        challenge: challenge_outcome,
+        staple: sv,
+    } = treeship_core::verify::presentation::verify_presentation(&pres, &trust, challenge, now)?;
+
+    // Re-parse the card payload for the selective-disclosure display below (the
+    // trust decision above already consumed and verified the envelope).
+    let card: serde_json::Value = pres
         .get("card")
         .and_then(|c| c.get("envelope_json"))
         .and_then(|v| v.as_str())
-        .ok_or("presentation carries no card envelope")?;
-    let card_id = pres
-        .get("card")
-        .and_then(|c| c.get("artifact_id"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let env: Envelope = serde_json::from_str(card_env_json)
-        .map_err(|e| format!("unparseable card envelope: {e}"))?;
-    let mut verifier = verifier_from_trust(&trust);
-    let mut sig_ok = verifier.verify_any(&env).is_ok();
-    let stmt: ReceiptStatement = env.unmarshal_statement()?;
-    if stmt.kind != "agent_card.v1" {
-        return Err(format!(
-            "presentation card is a `{}`, not an agent_card.v1",
-            stmt.kind
-        )
-        .into());
-    }
-    let card = stmt.payload.unwrap_or(serde_json::Value::Null);
-    if card.get("agent").and_then(|v| v.as_str()) != Some(agent) {
-        return Err("card's agent URI does not match the presentation's".into());
-    }
-    let card_keyid = card.get("keyid").and_then(|v| v.as_str()).unwrap_or("");
-    let signer = env
-        .signatures
-        .first()
-        .map(|s| s.keyid.as_str())
-        .unwrap_or("")
-        .to_string();
-    let mut key_bound =
-        sig_ok && treeship_core::capability::is_key_bound(card_keyid, &signer, &trust);
+        .and_then(|ej| serde_json::from_str::<Envelope>(ej).ok())
+        .and_then(|env| env.unmarshal_statement::<ReceiptStatement>().ok())
+        .and_then(|st| st.payload)
+        .unwrap_or(serde_json::Value::Null);
 
-    let served_certs: Vec<(String, Envelope)> = pres
-        .get("certs")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|c| {
-                    let id = c.get("artifact_id").and_then(|v| v.as_str())?;
-                    let ej = c.get("envelope_json").and_then(|v| v.as_str())?;
-                    let cenv: Envelope = serde_json::from_str(ej).ok()?;
-                    Some((id.to_string(), cenv))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let now_rfc = treeship_core::statements::unix_to_rfc3339(unix_now());
-    let mut via_chain = false;
-    // The subject key the verification establishes — the ONLY key a
-    // challenge response may be checked against. From the chain verdict, or
-    // (direct-pin path) decoded from the verifier's own AgentCert root.
-    let mut subject_vk: Option<VerifyingKey> = None;
-    if !key_bound {
-        if let Some(verdict) =
-            chain_verify_card(&env, card_keyid, agent, &served_certs, &trust, &now_rfc)
-        {
-            sig_ok = true;
-            key_bound = true;
-            via_chain = true;
-            subject_vk = Some(verdict.subject_key);
-            verifier.add_key(signer.clone(), verdict.subject_key);
-        }
-    } else {
-        subject_vk = trust
-            .roots()
-            .iter()
-            .find(|r| r.key_id == card_keyid && r.kind == TrustRootKind::AgentCert)
-            .and_then(|r| decode_ed25519_pubkey(&r.public_key).ok());
-    }
-
-    // ── Revocations: honored when authorized, exactly as resolve does ─────
-    let mut revoked: Option<String> = None;
-    if let Some(revs) = pres.get("revocations").and_then(|v| v.as_array()) {
-        for rev in revs {
-            let rev_json = rev
-                .get("envelope_json")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let Ok(rev_env) = serde_json::from_str::<Envelope>(rev_json) else {
-                continue;
-            };
-            if verifier.verify_any(&rev_env).is_err() {
-                continue;
-            }
-            let Ok(rev_stmt) = rev_env.unmarshal_statement::<ReceiptStatement>() else {
-                continue;
-            };
-            if rev_stmt.kind != "agent_card_revocation.v1" {
-                continue;
-            }
-            if rev_stmt
-                .payload
-                .as_ref()
-                .and_then(|p| p.get("card"))
-                .and_then(|v| v.as_str())
-                != Some(card_id)
-            {
-                continue;
-            }
-            let rev_signer = rev_env
-                .signatures
-                .first()
-                .map(|s| s.keyid.as_str())
-                .unwrap_or("");
-            let self_revoke = !card_keyid.is_empty() && rev_signer == card_keyid;
-            // Batch 5: issuer revocation is now scoped to the `Revoker` kind.
-            let issuer = trust
-                .roots()
-                .iter()
-                .any(|r| r.key_id == rev_signer && r.kind == TrustRootKind::Revoker);
-            if self_revoke || issuer {
-                revoked = Some(
-                    rev_stmt
-                        .payload
-                        .as_ref()
-                        .and_then(|p| p.get("reason"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("(no reason given)")
-                        .to_string(),
-                );
-                break;
-            }
-        }
-    }
-
-    // ── Challenge: the handshake — live key control, or nothing ───────────
-    // Checked ONLY against the subject key that card verification itself
-    // established (chain verdict or the verifier's own AgentCert pin). If
-    // the card did not verify key-bound, there is no key to check against
-    // and the challenge fails closed — a signature from an unverified key
-    // proves nothing worth reporting as success.
-    let mut challenge_str: Option<String> = None;
-    let mut challenge_ok = true; // vacuously true when the verifier asked for none
-    if let Some(nonce) = challenge {
-        challenge_ok = false;
-        let verdict = match (pres.get("challenge").filter(|v| !v.is_null()), &subject_vk) {
-            (None, _) => "no challenge response in this presentation — ask the bearer to re-present with --challenge <your nonce>".to_string(),
-            (_, None) => "cannot check: the card did not verify key-bound, so there is no established key to check the response against".to_string(),
-            (Some(block), Some(vk)) => {
-                match check_challenge(block, agent, card_id, nonce, card_keyid, vk) {
-                    Ok(signed_at) => {
-                        challenge_ok = true;
-                        let age = parse_rfc3339_to_unix(&signed_at)
-                            .map(|t| human_secs(unix_now().saturating_sub(t)))
-                            .unwrap_or_else(|| "unknown age".into());
-                        format!("verified — bearer controls {card_keyid} (response {age})")
-                    }
-                    Err(reason) => reason,
-                }
-            }
-        };
-        challenge_str = Some(verdict);
-    } else if pres.get("challenge").filter(|v| !v.is_null()).is_some() {
-        challenge_str = Some(
+    // Challenge display + liveness, formatted from the core outcome.
+    let challenge_ok = challenge_outcome.is_ok();
+    let challenge_str: Option<String> = match &challenge_outcome {
+        ChallengeOutcome::NotRequested => None,
+        ChallengeOutcome::PresentButUnchecked => Some(
             "response present but NOT checked — pass --challenge <the nonce you issued> to verify liveness"
                 .to_string(),
-        );
-    }
+        ),
+        ChallengeOutcome::NoResponse => Some(
+            "no challenge response in this presentation — ask the bearer to re-present with --challenge <your nonce>"
+                .to_string(),
+        ),
+        ChallengeOutcome::NoEstablishedKey => Some(
+            "cannot check: the card did not verify key-bound, so there is no established key to check the response against"
+                .to_string(),
+        ),
+        ChallengeOutcome::Failed { reason } => Some(reason.clone()),
+        ChallengeOutcome::Verified { signed_at } => {
+            let age = parse_rfc3339_to_unix(signed_at)
+                .map(|t| human_secs(now.saturating_sub(t)))
+                .unwrap_or_else(|| "unknown age".into());
+            let keyid = card.get("keyid").and_then(|v| v.as_str()).unwrap_or("");
+            Some(format!("verified — bearer controls {keyid} (response {age})"))
+        }
+    };
 
-    // ── Staple: checkpoint signature + card inclusion, then freshness ─────
-    let (staple_str, staple_ok, staple_age_secs) = verify_staple(&pres, card_id, &trust);
+    let card_id = card_id.as_str();
+    let agent = agent.as_str();
+    let staple_ok = sv.verified;
+    let staple_age_secs = sv.age_secs;
+    let staple_str = match sv.status {
+        StapleStatus::NoStaple => "none included".to_string(),
+        StapleStatus::Unparseable => "unparseable staple".to_string(),
+        StapleStatus::SignerNotTrusted => format!(
+            "checkpoint #{} signer not in your trust roots (or signature invalid) — pin it: treeship trust add <name> ed25519:{} --kind hub_checkpoint --yes",
+            sv.checkpoint_index.unwrap_or(0),
+            sv.checkpoint_public_key.as_deref().unwrap_or("")
+        ),
+        StapleStatus::InclusionInvalid => format!(
+            "checkpoint #{} verified, but card inclusion proof INVALID",
+            sv.checkpoint_index.unwrap_or(0)
+        ),
+        StapleStatus::Verified => {
+            let age_str = sv
+                .age_secs
+                .map(human_secs)
+                .unwrap_or_else(|| "unknown age".into());
+            format!(
+                "checkpoint #{} verified, inclusion verified ({age_str})",
+                sv.checkpoint_index.unwrap_or(0)
+            )
+        }
+    };
 
     // Freshness bound: enforced only when the verifier asks. Reported always.
     let mut stale = false;
@@ -780,61 +607,6 @@ pub fn verify_presentation(
 /// Verify the staple offline: checkpoint signature against pinned
 /// hub_checkpoint roots, then the card's inclusion in that signed root.
 /// Returns (report line, verified, age in seconds when computable).
-fn verify_staple(
-    pres: &serde_json::Value,
-    card_id: &str,
-    trust: &TrustRootStore,
-) -> (String, bool, Option<u64>) {
-    let Some(staple) = pres.get("staple").filter(|v| !v.is_null()) else {
-        return ("none included".into(), false, None);
-    };
-    let Ok(checkpoint) =
-        serde_json::from_value::<Checkpoint>(staple.get("checkpoint").cloned().unwrap_or_default())
-    else {
-        return ("unparseable checkpoint".into(), false, None);
-    };
-    let Ok(proof) = serde_json::from_value::<InclusionProof>(
-        staple.get("inclusion_proof").cloned().unwrap_or_default(),
-    ) else {
-        return ("unparseable inclusion proof".into(), false, None);
-    };
-
-    let age = parse_rfc3339_to_unix(&checkpoint.signed_at).map(|t| unix_now().saturating_sub(t));
-
-    if !checkpoint.verify(trust) {
-        return (
-            format!(
-                "checkpoint #{} signer not in your trust roots (or signature invalid) — pin it: treeship trust add <name> ed25519:{} --kind hub_checkpoint --yes",
-                checkpoint.index, checkpoint.public_key
-            ),
-            false,
-            age,
-        );
-    }
-    let root_hex = checkpoint
-        .root
-        .strip_prefix("sha256:")
-        .unwrap_or(&checkpoint.root);
-    if !MerkleTree::verify_proof(checkpoint.merkle_version, root_hex, card_id, &proof) {
-        return (
-            format!(
-                "checkpoint #{} verified, but card inclusion proof INVALID",
-                checkpoint.index
-            ),
-            false,
-            age,
-        );
-    }
-    let age_str = age.map(human_secs).unwrap_or_else(|| "unknown age".into());
-    (
-        format!(
-            "checkpoint #{} verified, inclusion verified ({age_str})",
-            checkpoint.index
-        ),
-        true,
-        age,
-    )
-}
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -902,112 +674,5 @@ mod tests {
     fn agent_uri_normalization() {
         assert_eq!(normalize_agent_uri("deployer"), "agent://deployer");
         assert_eq!(normalize_agent_uri("agent://deployer"), "agent://deployer");
-    }
-
-    #[test]
-    fn challenge_canonical_resists_separator_injection() {
-        // A nonce containing pipes and field-lookalikes must not collide
-        // with a differently-split canonical — every variable field is
-        // digest-folded.
-        let a = challenge_canonical("agent://a", "art_1", "n|art_2|x", "2026-07-06T12:00:00Z");
-        let b = challenge_canonical("agent://a", "art_1|n", "art_2|x", "2026-07-06T12:00:00Z");
-        assert_ne!(a, b);
-        // And it is deterministic.
-        assert_eq!(
-            challenge_canonical("agent://a", "art_1", "n", "2026-07-06T12:00:00Z"),
-            challenge_canonical("agent://a", "art_1", "n", "2026-07-06T12:00:00Z"),
-        );
-    }
-
-    fn signed_challenge_block(
-        signer: &treeship_core::attestation::Ed25519Signer,
-        agent: &str,
-        card_id: &str,
-        nonce: &str,
-    ) -> serde_json::Value {
-        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-        use treeship_core::attestation::Signer;
-        let signed_at = "2026-07-06T12:00:00Z";
-        let sig = signer
-            .sign(&challenge_canonical(agent, card_id, nonce, signed_at))
-            .unwrap();
-        serde_json::json!({
-            "nonce": nonce,
-            "key_id": signer.key_id(),
-            "signed_at": signed_at,
-            "signature": URL_SAFE_NO_PAD.encode(sig),
-        })
-    }
-
-    fn vk_of(signer: &treeship_core::attestation::Ed25519Signer) -> VerifyingKey {
-        use treeship_core::attestation::Signer;
-        VerifyingKey::from_bytes(&signer.public_key_bytes().try_into().unwrap()).unwrap()
-    }
-
-    #[test]
-    fn challenge_verifies_and_rejects_all_substitutions() {
-        use treeship_core::attestation::Ed25519Signer;
-        let agent_key = Ed25519Signer::generate("key_agent").unwrap();
-        let other_key = Ed25519Signer::generate("key_other").unwrap();
-        let vk = vk_of(&agent_key);
-
-        // Happy path.
-        let block = signed_challenge_block(&agent_key, "agent://a", "art_card", "nonce-1");
-        assert!(
-            check_challenge(&block, "agent://a", "art_card", "nonce-1", "key_agent", &vk).is_ok()
-        );
-
-        // Wrong nonce: a captured response must not answer a new challenge.
-        assert!(
-            check_challenge(&block, "agent://a", "art_card", "nonce-2", "key_agent", &vk)
-                .unwrap_err()
-                .contains("DIFFERENT challenge")
-        );
-
-        // Signed by a different key than the card's.
-        let forged = signed_challenge_block(&other_key, "agent://a", "art_card", "nonce-1");
-        assert!(
-            check_challenge(
-                &forged,
-                "agent://a",
-                "art_card",
-                "nonce-1",
-                "key_agent",
-                &vk
-            )
-            .is_err(),
-            "response signed by a non-card key must reject"
-        );
-
-        // Replayed for a DIFFERENT card of the same agent: canonical binds card_id.
-        assert!(
-            check_challenge(
-                &block,
-                "agent://a",
-                "art_other_card",
-                "nonce-1",
-                "key_agent",
-                &vk
-            )
-            .unwrap_err()
-            .contains("INVALID"),
-            "challenge for one card must not vouch for another"
-        );
-
-        // Replayed for a DIFFERENT agent: canonical binds the agent URI.
-        assert!(
-            check_challenge(&block, "agent://b", "art_card", "nonce-1", "key_agent", &vk)
-                .unwrap_err()
-                .contains("INVALID")
-        );
-
-        // Tampered signed_at: freshness is bearer-signed, not bearer-editable.
-        let mut aged = block.clone();
-        aged["signed_at"] = serde_json::json!("2020-01-01T00:00:00Z");
-        assert!(
-            check_challenge(&aged, "agent://a", "art_card", "nonce-1", "key_agent", &vk)
-                .unwrap_err()
-                .contains("INVALID")
-        );
     }
 }

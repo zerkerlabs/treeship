@@ -10,12 +10,12 @@
 use crate::{ctx, printer::Printer};
 use std::collections::{HashMap, HashSet};
 
-use ed25519_dalek::VerifyingKey;
-use treeship_core::attestation::{Envelope, Verifier};
+use treeship_core::attestation::Envelope;
 use treeship_core::capability::{declared_tools, is_key_bound, matched_capability};
 use treeship_core::merkle::{MerkleTree, ProofFile};
 use treeship_core::statements::{payload_type, ActionStatement, ReceiptStatement};
-use treeship_core::trust::{decode_ed25519_pubkey, TrustRootKind, TrustRootStore};
+use treeship_core::trust::{TrustRootKind, TrustRootStore};
+use treeship_core::verify::resolution::{verify_resolution, ResolutionBundle};
 
 type CmdResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -260,132 +260,6 @@ pub fn resolve(
     Ok(())
 }
 
-/// Build an offline Verifier from the client's pinned trust roots. An agent
-/// whose key the client has not pinned simply will not verify, which is the
-/// honest answer, not an error.
-pub(crate) fn verifier_from_trust(trust: &TrustRootStore) -> Verifier {
-    let mut map: HashMap<String, VerifyingKey> = HashMap::new();
-    for r in trust.roots() {
-        if let Ok(vk) = decode_ed25519_pubkey(&r.public_key) {
-            map.insert(r.key_id.clone(), vk);
-        }
-    }
-    Verifier::new(map)
-}
-
-/// A card verified through the certificate chain rather than a direct leaf
-/// pin: which cert artifact vouched, and the subject key it certified.
-pub(crate) struct ChainVerdict {
-    pub cert_id: String,
-    pub subject_key: VerifyingKey,
-}
-
-/// Walk the certificate chain for a card whose signer key is NOT directly
-/// pinned: find a served `agent_cert.v1` that (in this order, fail-closed at
-/// every step):
-///
-///   1. is signed by a key pinned under `Ship` in MY trust roots — the cert
-///      envelope signature is verified with the PINNED pubkey, never the
-///      wire's, before any payload field is believed;
-///   2. binds THIS agent URI to THIS card signer (`agent` + `subject_key_id`
-///      match, and the card's own `keyid` claim equals its envelope signer,
-///      mirroring `is_key_bound`);
-///   3. is within its validity window at `now` (expired certs reject);
-///   4. certifies a subject key that actually verifies the card envelope.
-///
-/// This is the TLS chain: pin the ship (the CA), verify its agents' leaves
-/// through the cert, no per-leaf pinning. See registry-topology spec slice 1.
-pub(crate) fn chain_verify_card(
-    card_env: &Envelope,
-    card_keyid: &str,
-    agent: &str,
-    certs: &[(String, Envelope)],
-    trust: &TrustRootStore,
-    now: &str,
-) -> Option<ChainVerdict> {
-    // The card must claim the key that signed it (same rule as is_key_bound):
-    // a chain-verified signer vouches only for cards that bind themselves to
-    // that exact key.
-    let card_signer = card_env.signatures.first().map(|s| s.keyid.as_str())?;
-    if card_keyid.is_empty() || card_keyid != card_signer {
-        return None;
-    }
-
-    for (cert_id, cert_env) in certs {
-        // 1. Cert envelope must verify against a PINNED Ship root. The
-        //    pubkey comes from my trust store, never from the wire.
-        let cert_signer = match cert_env.signatures.first() {
-            Some(s) => s.keyid.as_str(),
-            None => continue,
-        };
-        // Batch 5: certificate issuance is now scoped to the `CertIssuer`
-        // kind (was the overloaded `Ship` kind).
-        let Some(ship_root) = trust
-            .roots()
-            .iter()
-            .find(|r| r.key_id == cert_signer && r.kind == TrustRootKind::CertIssuer)
-        else {
-            continue;
-        };
-        let Ok(ship_vk) = decode_ed25519_pubkey(&ship_root.public_key) else {
-            continue;
-        };
-        let mut cert_verifier = Verifier::new(HashMap::new());
-        cert_verifier.add_key(cert_signer.to_string(), ship_vk);
-        if cert_verifier.verify_any(cert_env).is_err() {
-            continue;
-        }
-
-        // Only now are the payload fields issuer-attested and believable.
-        let Ok(stmt) = cert_env.unmarshal_statement::<ReceiptStatement>() else {
-            continue;
-        };
-        if stmt.kind != "agent_cert.v1" {
-            continue;
-        }
-        let Some(p) = stmt.payload else { continue };
-
-        // 2. Binds this agent to this signer.
-        if p.get("agent").and_then(|v| v.as_str()) != Some(agent)
-            || p.get("subject_key_id").and_then(|v| v.as_str()) != Some(card_signer)
-        {
-            continue;
-        }
-
-        // 3. Validity window. Both bounds required — a cert missing either
-        //    field fails closed. RFC 3339 UTC strings from the same
-        //    generator compare lexicographically.
-        let (Some(issued), Some(until)) = (
-            p.get("issued_at").and_then(|v| v.as_str()),
-            p.get("valid_until").and_then(|v| v.as_str()),
-        ) else {
-            continue;
-        };
-        if now < issued || now > until {
-            continue;
-        }
-
-        // 4. The certified subject key must verify the card envelope itself.
-        let Some(subject_b64) = p.get("subject_public_key").and_then(|v| v.as_str()) else {
-            continue;
-        };
-        let Ok(subject_vk) = decode_ed25519_pubkey(&format!("ed25519:{subject_b64}")) else {
-            continue;
-        };
-        let mut card_verifier = Verifier::new(HashMap::new());
-        card_verifier.add_key(card_signer.to_string(), subject_vk);
-        if card_verifier.verify_any(card_env).is_err() {
-            continue;
-        }
-
-        return Some(ChainVerdict {
-            cert_id: cert_id.clone(),
-            subject_key: subject_vk,
-        });
-    }
-    None
-}
-
 /// Resolve an agent over the network: pull the bundle from `hub`, then
 /// re-verify and grade it locally. The Hub serves raw signed envelopes; this
 /// function, against the client's own trust roots, decides what to believe.
@@ -398,8 +272,6 @@ fn resolve_remote(hub: &str, agent: &str, trust: &TrustRootStore, printer: &Prin
         .map_err(|e| format!("could not reach hub {base}: {e}"))?
         .into_json()
         .map_err(|e| format!("hub returned invalid JSON: {e}"))?;
-
-    let verifier = verifier_from_trust(trust);
 
     let Some(card_entry) = bundle.get("current_card").filter(|v| !v.is_null()) else {
         printer.warn("no capability card", &[("agent", agent), ("hub", base)]);
@@ -419,107 +291,63 @@ fn resolve_remote(hub: &str, agent: &str, trust: &TrustRootStore, printer: &Prin
     let env: Envelope = serde_json::from_str(env_json)
         .map_err(|e| format!("hub returned an unparseable card envelope: {e}"))?;
 
-    // Re-verify the signature against OUR trust roots.
-    let mut sig_ok = verifier.verify_any(&env).is_ok();
+    // Parse the card statement for the capability display below.
     let stmt: ReceiptStatement = env.unmarshal_statement()?;
     if stmt.kind != "agent_card.v1" {
         return Err(format!("hub returned a `{}`, not an agent_card.v1", stmt.kind).into());
     }
     let card = stmt.payload.unwrap_or(serde_json::Value::Null);
-    let card_keyid = card.get("keyid").and_then(|v| v.as_str()).unwrap_or("");
-    let signer = env
-        .signatures
-        .first()
-        .map(|s| s.keyid.as_str())
-        .unwrap_or("");
     let tools = declared_tools(&card);
-    let mut key_bound = sig_ok && is_key_bound(card_keyid, signer, trust);
 
-    // Chain walk: when the leaf key is not directly pinned, a served
-    // agent_cert.v1 signed by a PINNED Ship root can vouch for it — the TLS
-    // chain (pin the CA, verify the leaves through the cert). The verifier
-    // used for the agent's revocations gains the chain-certified subject key
-    // too, so a self-revocation signed by the agent's own key still counts.
-    let mut chain_cert_id: Option<String> = None;
-    let mut rev_verifier = verifier;
-    if !key_bound {
-        let served_certs: Vec<(String, Envelope)> = bundle
-            .get("certs")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|c| {
-                        let id = c.get("artifact_id").and_then(|v| v.as_str())?;
-                        let ej = c.get("envelope_json").and_then(|v| v.as_str())?;
-                        let cenv: Envelope = serde_json::from_str(ej).ok()?;
-                        Some((id.to_string(), cenv))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        let now = treeship_core::statements::unix_to_rfc3339(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0),
-        );
-        if let Some(verdict) =
-            chain_verify_card(&env, card_keyid, agent, &served_certs, trust, &now)
-        {
-            sig_ok = true;
-            key_bound = true;
-            rev_verifier.add_key(signer.to_string(), verdict.subject_key);
-            chain_cert_id = Some(verdict.cert_id);
-        }
-    }
-    let verifier = rev_verifier;
-
-    // Honor an authorized, verifying revocation from the bundle.
-    let mut revocation: Option<String> = None;
-    if let Some(revs) = bundle.get("revocations").and_then(|v| v.as_array()) {
-        for rev in revs {
-            let rev_json = rev
-                .get("envelope_json")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let Ok(rev_env) = serde_json::from_str::<Envelope>(rev_json) else {
-                continue;
-            };
-            if verifier.verify_any(&rev_env).is_err() {
-                continue; // unverified revocation -> ignored
-            }
-            let Ok(rev_stmt) = rev_env.unmarshal_statement::<ReceiptStatement>() else {
-                continue;
-            };
-            if rev_stmt.kind != "agent_card_revocation.v1" {
-                continue;
-            }
-            let rev_signer = rev_env
-                .signatures
-                .first()
-                .map(|s| s.keyid.as_str())
-                .unwrap_or("");
-            let self_revoke = !card_keyid.is_empty() && rev_signer == card_keyid;
-            // Batch 5: issuer revocation is now scoped to the `Revoker` kind
-            // (was the overloaded `Ship` kind).
-            let issuer = trust
-                .roots()
-                .iter()
-                .any(|r| r.key_id == rev_signer && r.kind == TrustRootKind::Revoker);
-            if self_revoke || issuer {
-                revocation = Some(
-                    rev_stmt
-                        .payload
-                        .as_ref()
-                        .and_then(|p| p.get("reason"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("(no reason given)")
-                        .to_string(),
-                );
-                break;
-            }
-        }
-    }
+    // The single core trust-decision: verify the card (direct pin or chain
+    // walk), then honor an authorized revocation. Same code path the WASM
+    // verifier and SDKs run — see treeship_core::verify::resolution.
+    let served_certs: Vec<(String, Envelope)> = bundle
+        .get("certs")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|c| {
+                    let id = c.get("artifact_id").and_then(|v| v.as_str())?;
+                    let ej = c.get("envelope_json").and_then(|v| v.as_str())?;
+                    Some((id.to_string(), serde_json::from_str::<Envelope>(ej).ok()?))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let revocation_envs: Vec<Envelope> = bundle
+        .get("revocations")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|r| {
+                    let ej = r.get("envelope_json").and_then(|v| v.as_str())?;
+                    serde_json::from_str::<Envelope>(ej).ok()
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let now = treeship_core::statements::unix_to_rfc3339(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+    );
+    let verdict = verify_resolution(
+        &ResolutionBundle {
+            agent: agent.to_string(),
+            card: env.clone(),
+            certs: served_certs,
+            revocations: revocation_envs,
+        },
+        trust,
+        &now,
+    )
+    .map_err(|e| format!("hub returned an invalid card bundle: {e}"))?;
+    let sig_ok = verdict.sig_ok;
+    let key_bound = verdict.key_bound;
+    let chain_cert_id = verdict.chain_cert_id;
+    let revocation = verdict.revocation_reason;
 
     // Capability provenance from the card (captured/discovered grades travel
     // with it; exercised needs receipts and is unavailable over the network).
@@ -688,261 +516,4 @@ fn resolve_remote(hub: &str, agent: &str, trust: &TrustRootStore, printer: &Prin
         std::process::exit(1);
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod chain_tests {
-    use super::*;
-    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-    use treeship_core::attestation::{sign, Ed25519Signer, Signer};
-    use treeship_core::trust::TrustRoot;
-
-    const NOW: &str = "2026-07-06T12:00:00Z";
-
-    fn cert_payload(agent: &str, subject: &Ed25519Signer) -> serde_json::Value {
-        serde_json::json!({
-            "agent": agent,
-            "subject_key_id": subject.key_id(),
-            "subject_public_key": URL_SAFE_NO_PAD.encode(subject.public_key_bytes()),
-            "issuer": "ship://ship_test",
-            "issued_at": "2026-01-01T00:00:00Z",
-            "valid_until": "2027-01-01T00:00:00Z",
-        })
-    }
-
-    fn signed_receipt(kind: &str, payload: serde_json::Value, signer: &Ed25519Signer) -> Envelope {
-        let mut stmt = ReceiptStatement::new("ship://ship_test", kind);
-        stmt.payload = Some(payload);
-        sign(&payload_type("receipt"), &stmt, signer)
-            .unwrap()
-            .envelope
-    }
-
-    fn signed_card(agent: &str, keyid_claim: &str, signer: &Ed25519Signer) -> Envelope {
-        let mut stmt = ReceiptStatement::new("ship://ship_test", "agent_card.v1");
-        stmt.payload = Some(serde_json::json!({ "agent": agent, "keyid": keyid_claim }));
-        sign(&payload_type("receipt"), &stmt, signer)
-            .unwrap()
-            .envelope
-    }
-
-    fn ship_pinned(ship: &Ed25519Signer, kind: TrustRootKind) -> TrustRootStore {
-        TrustRootStore::with_roots(vec![TrustRoot {
-            key_id: ship.key_id().to_string(),
-            public_key: format!(
-                "ed25519:{}",
-                URL_SAFE_NO_PAD.encode(ship.public_key_bytes())
-            ),
-            kind,
-            label: "test ship".into(),
-            added_at: String::new(),
-        }])
-    }
-
-    #[test]
-    fn chain_verifies_card_through_pinned_ship_root() {
-        let ship = Ed25519Signer::generate("key_ship").unwrap();
-        let agent_key = Ed25519Signer::generate("key_agent").unwrap();
-        let cert = signed_receipt(
-            "agent_cert.v1",
-            cert_payload("agent://a", &agent_key),
-            &ship,
-        );
-        let card = signed_card("agent://a", "key_agent", &agent_key);
-        let trust = ship_pinned(&ship, TrustRootKind::CertIssuer);
-
-        let verdict = chain_verify_card(
-            &card,
-            "key_agent",
-            "agent://a",
-            &[("art_cert".into(), cert)],
-            &trust,
-            NOW,
-        );
-        assert!(verdict.is_some(), "valid chain must verify");
-        assert_eq!(verdict.unwrap().cert_id, "art_cert");
-    }
-
-    #[test]
-    fn chain_rejects_unpinned_ship() {
-        let ship = Ed25519Signer::generate("key_ship").unwrap();
-        let agent_key = Ed25519Signer::generate("key_agent").unwrap();
-        let cert = signed_receipt(
-            "agent_cert.v1",
-            cert_payload("agent://a", &agent_key),
-            &ship,
-        );
-        let card = signed_card("agent://a", "key_agent", &agent_key);
-
-        // Empty roots: a self-signed forgery chain must not verify.
-        let empty = TrustRootStore::with_roots(vec![]);
-        assert!(chain_verify_card(
-            &card,
-            "key_agent",
-            "agent://a",
-            &[("art_cert".into(), cert.clone())],
-            &empty,
-            NOW
-        )
-        .is_none());
-
-        // Pinned under the WRONG kind (agent_cert, not ship) also rejects:
-        // certifying agents is the Ship role, not a leaf role.
-        let wrong_kind = ship_pinned(&ship, TrustRootKind::AgentCert);
-        assert!(chain_verify_card(
-            &card,
-            "key_agent",
-            "agent://a",
-            &[("art_cert".into(), cert)],
-            &wrong_kind,
-            NOW
-        )
-        .is_none());
-    }
-
-    #[test]
-    fn chain_rejects_expired_and_not_yet_valid_certs() {
-        let ship = Ed25519Signer::generate("key_ship").unwrap();
-        let agent_key = Ed25519Signer::generate("key_agent").unwrap();
-        let card = signed_card("agent://a", "key_agent", &agent_key);
-        let trust = ship_pinned(&ship, TrustRootKind::CertIssuer);
-
-        let mut expired = cert_payload("agent://a", &agent_key);
-        expired["valid_until"] = serde_json::json!("2026-01-02T00:00:00Z");
-        let cert = signed_receipt("agent_cert.v1", expired, &ship);
-        assert!(
-            chain_verify_card(
-                &card,
-                "key_agent",
-                "agent://a",
-                &[("c".into(), cert)],
-                &trust,
-                NOW
-            )
-            .is_none(),
-            "expired cert must reject"
-        );
-
-        let mut future = cert_payload("agent://a", &agent_key);
-        future["issued_at"] = serde_json::json!("2026-12-01T00:00:00Z");
-        let cert = signed_receipt("agent_cert.v1", future, &ship);
-        assert!(
-            chain_verify_card(
-                &card,
-                "key_agent",
-                "agent://a",
-                &[("c".into(), cert)],
-                &trust,
-                NOW
-            )
-            .is_none(),
-            "not-yet-valid cert must reject"
-        );
-
-        let mut missing = cert_payload("agent://a", &agent_key);
-        missing.as_object_mut().unwrap().remove("valid_until");
-        let cert = signed_receipt("agent_cert.v1", missing, &ship);
-        assert!(
-            chain_verify_card(
-                &card,
-                "key_agent",
-                "agent://a",
-                &[("c".into(), cert)],
-                &trust,
-                NOW
-            )
-            .is_none(),
-            "missing window must fail closed"
-        );
-    }
-
-    #[test]
-    fn chain_rejects_subject_and_agent_mismatches() {
-        let ship = Ed25519Signer::generate("key_ship").unwrap();
-        let agent_key = Ed25519Signer::generate("key_agent").unwrap();
-        let other_key = Ed25519Signer::generate("key_other").unwrap();
-        let trust = ship_pinned(&ship, TrustRootKind::CertIssuer);
-
-        // Cert certifies a DIFFERENT key than the card's signer.
-        let cert = signed_receipt(
-            "agent_cert.v1",
-            cert_payload("agent://a", &other_key),
-            &ship,
-        );
-        let card = signed_card("agent://a", "key_agent", &agent_key);
-        assert!(
-            chain_verify_card(
-                &card,
-                "key_agent",
-                "agent://a",
-                &[("c".into(), cert)],
-                &trust,
-                NOW
-            )
-            .is_none(),
-            "subject mismatch must reject"
-        );
-
-        // Cert for a DIFFERENT agent URI: key_agent certified for agent://b
-        // must not vouch for a card claiming agent://a.
-        let cert = signed_receipt(
-            "agent_cert.v1",
-            cert_payload("agent://b", &agent_key),
-            &ship,
-        );
-        let card = signed_card("agent://a", "key_agent", &agent_key);
-        assert!(
-            chain_verify_card(
-                &card,
-                "key_agent",
-                "agent://a",
-                &[("c".into(), cert)],
-                &trust,
-                NOW
-            )
-            .is_none(),
-            "agent URI mismatch must reject"
-        );
-
-        // Card signed by a key that is NOT the certified subject (stolen
-        // cert, attacker's card): the subject-key check must catch it.
-        let cert = signed_receipt(
-            "agent_cert.v1",
-            cert_payload("agent://a", &agent_key),
-            &ship,
-        );
-        let card = signed_card("agent://a", "key_agent", &other_key);
-        assert!(
-            chain_verify_card(
-                &card,
-                "key_agent",
-                "agent://a",
-                &[("c".into(), cert)],
-                &trust,
-                NOW
-            )
-            .is_none(),
-            "wrong card signer must reject"
-        );
-
-        // Card whose keyid claim differs from its envelope signer.
-        let cert = signed_receipt(
-            "agent_cert.v1",
-            cert_payload("agent://a", &agent_key),
-            &ship,
-        );
-        let card = signed_card("agent://a", "key_someone_else", &agent_key);
-        assert!(
-            chain_verify_card(
-                &card,
-                "key_someone_else",
-                "agent://a",
-                &[("c".into(), cert)],
-                &trust,
-                NOW
-            )
-            .is_none(),
-            "keyid/signer mismatch must reject"
-        );
-    }
 }

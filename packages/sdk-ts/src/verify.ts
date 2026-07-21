@@ -2,6 +2,9 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type {
   CrossVerifyResult,
+  PresentationVerdict,
+  ResolutionBundleInput,
+  ResolutionVerdict,
   VerifyCertificateResult,
   VerifyReceiptResult,
   VerifyResult,
@@ -26,6 +29,17 @@ type WasmBindings = {
     cert: string,
     now: string,
     trustRoots: string
+  ) => string;
+  verify_resolution: (
+    bundle: string,
+    trustRoots: string,
+    now: string
+  ) => string;
+  verify_presentation: (
+    presentation: string,
+    trustRoots: string,
+    expectedNonce: string,
+    now: string
   ) => string;
 };
 
@@ -221,6 +235,67 @@ export class VerifyModule {
         certJson,
         nowStr,
         serializeTrustRoots(trustRoots)
+      )
+    );
+  }
+
+  /**
+   * Verify an agent resolution bundle — the `resolve --hub` trust decision —
+   * in-process via WASM (shared `treeship_core::verify::resolution`). Verifies
+   * the card by direct leaf pin or certificate-chain walk, then honors an
+   * authorized revocation. `trustRoots` is required for `key_bound`; with none,
+   * the bundle fails closed. `now` defaults to the current time.
+   */
+  async verifyResolution(
+    bundle: ResolutionBundleInput,
+    trustRoots?: TrustRootInput[],
+    now?: Date | string
+  ): Promise<ResolutionVerdict> {
+    const nowStr =
+      now === undefined
+        ? new Date().toISOString()
+        : now instanceof Date
+          ? now.toISOString()
+          : now;
+    const wasm = await loadWasm();
+    return JSON.parse(
+      wasm.verify_resolution(
+        JSON.stringify(bundle),
+        serializeTrustRoots(trustRoots),
+        nowStr
+      )
+    );
+  }
+
+  /**
+   * Verify an agent presentation — the `verify-presentation` trust decision —
+   * in-process via WASM (shared `treeship_core::verify::presentation`). Verifies
+   * the card (direct pin or chain), honors an authorized revocation, checks
+   * challenge liveness (when `nonce` is given), and verifies the staple.
+   *
+   * `trustRoots` is required for `key_bound`; with none, it fails closed.
+   * `nonce` is the challenge nonce YOU issued (omit to skip liveness). `now`
+   * defaults to the current time.
+   */
+  async verifyPresentation(
+    presentation: Record<string, unknown>,
+    trustRoots?: TrustRootInput[],
+    opts?: { nonce?: string; now?: Date | string }
+  ): Promise<PresentationVerdict> {
+    const now = opts?.now;
+    const nowStr =
+      now === undefined
+        ? new Date().toISOString()
+        : now instanceof Date
+          ? now.toISOString()
+          : now;
+    const wasm = await loadWasm();
+    return JSON.parse(
+      wasm.verify_presentation(
+        JSON.stringify(presentation),
+        serializeTrustRoots(trustRoots),
+        opts?.nonce ?? "",
+        nowStr
       )
     );
   }
