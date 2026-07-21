@@ -1,0 +1,63 @@
+---
+title: "The ack is not the act"
+description: "A valid signature proves a receipt is authentic. It does not prove the thing actually happened. Treeship 0.21 makes that difference something you can check, and refuses to fake the part it cannot."
+date: 2026-07-21
+tags: ["release", "v0.21", "effect", "verification", "honesty"]
+readTime: "5 min read"
+---
+
+An agent tells you it shipped the deploy. Exit code 0. Valid JSON came back. CI turned green. The tool call returned "ok."
+
+None of that is proof the deploy happened.
+
+Every one of those signals is an acknowledgement, a receipt of the attempt, not evidence of the result. The acknowledgement is not the act. For a system whose entire job is to let a third party check what an agent actually did, that gap is the whole problem.
+
+Treeship 0.21, the accountability release, closes it. And it does something rarer than closing it: it refuses to fake the part it cannot prove.
+
+## Two questions, not one
+
+Verification has usually answered a single question: is this signature valid? That is worth answering. It tells you the bytes are authentic and nobody tampered with them. But it says nothing about whether the action's effect on the world actually occurred. A perfectly signed receipt can describe a payment that never cleared.
+
+So 0.21 splits the verdict in two:
+
+- **Cryptographic validity.** Is the receipt authentic? (the old question)
+- **Operational confidence.** Did the effect actually happen, and how do we know? (the new one)
+
+Keeping these separate is the honest move. Collapsing them, showing a green checkmark that quietly means only "signature valid," launders trust: you answer a question nobody asked while appearing to answer the one they did. A checkmark that means less than it looks like is worse than no checkmark at all.
+
+## What an honest effect looks like
+
+Every action in 0.21 can carry an **effect** block: what it touched (input and output hashes, a readback of the resulting state, bytes moved, cost, side effects), and the actor's own confidence that the effect happened, on a plain ladder: verified, partial, ambiguous, unknown, not verified.
+
+Here is the part that matters. The actor's confidence is a claim, and the verifier never takes it on faith. It reconciles the claim against independent evidence the actor could not have minted itself: a readback of the real post-state, or a witness signed by someone other than the actor. A "verified" claim carrying no such evidence is downgraded to "not verified," with a note saying exactly why.
+
+An actor can honestly say "I am not sure." It cannot inflate. The verifier blocks the lie and preserves the hedge.
+
+## Who did it, and under what authority
+
+Two more things land in the same release, because "what happened" is incomplete without them.
+
+- **Authority.** Every action can name the grant it ran under: who authorized it, for what scope, until when, how far it could be delegated, and whether that grant was revoked. A working credential is not the same as authorization for this specific act. Now the receipt shows the difference.
+- **Runtime identity.** Optionally, the provider, model, tool-schema hash, and system-prompt hash the action ran under. If someone swaps the model or edits the tools after the fact, a verifier holding a pinned expectation can tell.
+
+Together with the effect verdict, and with signed records of what an agent was blocked from doing, a single receipt now answers the full question: what did it do, under what authority, with what effect, verified how, and what was it refused.
+
+## The market got here on its own
+
+We did not invent this framing in a vacuum. For weeks the same conclusions kept surfacing in public conversation, often in our exact language, including the humility: receipts prove provenance, not correctness. "Exit 0 lies." "A working credential is not authorization." "Name the missing witness." When the market re-derives your thesis, and re-derives the caveats too, you are building the right thing. We just shipped it first.
+
+## Honesty is a feature, not a disclaimer
+
+The most valuable thing a verifier can say is not "verified." It is "here is exactly what this proves, and here is what it does not." An agent that cannot confirm an effect should be able to say so, and Treeship should carry that admission faithfully rather than dress it up as success.
+
+0.21 is available now:
+
+```bash
+npm install -g treeship        # CLI
+pip install treeship-sdk        # Python
+# treeship-core is on crates.io
+```
+
+The full list of changes is in the [changelog](/docs/about/changelog).
+
+The ack is not the act. Now you can check.
