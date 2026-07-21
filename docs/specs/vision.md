@@ -30,9 +30,9 @@ The core "TLS for agents" stack is functionally complete: an agent has a provabl
 
 These are the next big chunks, from the original TLS-for-agents vision. Each gets a spec before any code, the same rhythm that produced the shipped work.
 
-### 1. Transparency-log surface (Certificate Transparency for agents) — mostly shipped (0.14.0)
+### 1. Transparency-log surface (Certificate Transparency for agents) — shipped (0.15.0)
 
-The queryable surface is live: `GET /v1/agents/log` + `treeship audit` give an append-only, monitorable history a third party can audit, with **omission detectable** against the agent's `evidence_anchor`, and `audit --watch` for continuous monitoring. The Merkle **consistency-proof primitive** (append-only, no-rewrite guarantee) is built and test-gated in `core`. Remaining: the slice-3 *plumbing* (Hub consistency endpoint + `audit` checkpoint-witnessing) on top of the primitive. Specs: [transparency-log](./transparency-log.md), [merkle-consistency](./merkle-consistency.md).
+The full surface is live: `GET /v1/agents/log` + `treeship audit` give an append-only, monitorable history a third party can audit, with **omission detectable** against the agent's `evidence_anchor`, `audit --watch` for continuous monitoring, **checkpoint witnessing** (catches a forking/regressing hub), and the **cryptographic append-only proof** (3b): the publisher generates Merkle consistency proofs, the Hub stores/serves them, and `audit` re-verifies the chain offline (start/valid/contiguous/end) to prove no history was rewritten. Deployed to production. Specs: [transparency-log](./transparency-log.md), [merkle-consistency](./merkle-consistency.md).
 
 ### 2. Protocol integration (the distribution flywheel) — shipped (slices 1–3)
 
@@ -42,6 +42,10 @@ Provision a per-agent identity inside the protocols real agents already speak so
 - **A2A** (slice 3): `attest card --from-a2a` maps an agent's own `AgentCard.skills` to a key-bound, verifiable card with the new `discovered` grade; the `@treeship/a2a` middleware provisions its key too.
 
 The provenance vocabulary is now coherent end to end: `captured` (harness) > `exercised` (receipts) > `discovered` (the agent's own descriptor) > `declared` (a bare assertion), each labeled, none laundered. **Deferred** (gated on demand, vocabulary already in place): slice 4 auto-discovery from an agent's *own* tool server (the transparent-proxy case, `discovered:<protocol>`), and slice 5 ACP/others. Publishing stays an explicit operator action, never on bridge startup. Spec: [protocol-integration](./protocol-integration.md).
+
+### 3. Commitments: prove what was promised, and whether it was kept — next to build
+
+Treeship proves *what an agent did* (above). The next chapter, validated by independent demand on the agent-commerce boards ("a receipt is a flight recorder with no contract"), is proving *what an agent promised*. A signed **commitment** before execution (goal, allowed actions, expected outcome, failure condition), checked after, so `verify` reports `satisfied | violated | unfulfilled | refused`. First slice is the smallest and sharpest: **signed refusal receipts** (the "no-send predicate"), honest proof of what the agent *declined* to do, reusing `check_scope_violation` + `boundary.v1`. Composes with the [#107 authorization graph](./workflow-declarations.md) (allowed path) to answer the full question: was every authorized action taken, the promise kept, and nothing unauthorized done? Honest boundary held: this proves the promise was *kept*, not that it was the *right* promise (the oracle/semantic gap stays the domain layer's job). Settlement (proceed/pause/unwind) is the separate Guard layer on top. Spec: [commitments](./commitments.md).
 
 ## What is explicitly out of scope (for now)
 
