@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://treeship.dev/schemas/treeship.boundary.v1.json",
+  "title": "treeship.boundary.v1",
+  "description": "Provider-neutral receipt payload recording an actor-checker evaluation boundary: what a checker was allowed to see, what policy denied, and the decision it reached. Carried as the payload of a Treeship receipt artifact. Treeship proves the boundary; the checker draws it. See docs/content/docs/concepts/actor-checker-boundaries.mdx.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "subject_ref",
+    "actor",
+    "checker",
+    "decision",
+    "policy",
+    "diet_root",
+    "diet",
+    "committed_at"
+  ],
+  "properties": {
+    "schema": {
+      "description": "Schema identifier. Must be exactly this value.",
+      "const": "treeship.boundary.v1"
+    },
+    "subject_ref": {
+      "description": "Content-addressed id of the actor-signed proposal this boundary evaluated.",
+      "type": "string",
+      "pattern": "^art_[0-9a-f]{16,}$"
+    },
+    "actor": { "$ref": "#/$defs/party" },
+    "checker": { "$ref": "#/$defs/party" },
+    "decision": {
+      "description": "Neutral verdict. 'abstain' is an explicit non-authorization (enforcers fail closed), not a silent allow.",
+      "type": "string",
+      "enum": ["allow", "deny", "partial", "abstain"]
+    },
+    "outcome": {
+      "description": "Asserted zone. Provider-specific detail about the decision. Not load-bearing for verification.",
+      "type": "object",
+      "properties": {
+        "profile": {
+          "description": "Optional provider profile label, e.g. 'memory.proof'.",
+          "type": "string"
+        }
+      }
+    },
+    "policy": {
+      "description": "Proven. The exact policy applied, bound by content digest rather than a version string.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["digest"],
+      "properties": {
+        "ref": {
+          "description": "Human-readable policy reference, e.g. 'policy://zmem/default#v1'. Narrative; the digest is what binds.",
+          "type": "string"
+        },
+        "digest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "diet_root": {
+      "description": "Proven. Merkle root over the ordered set of inputs the checker committed to (the information diet).",
+      "$ref": "#/$defs/digest"
+    },
+    "diet": {
+      "description": "Proven. The committed input set composing diet_root. Each entry's class must be permitted by the signed policy; exclusion is derived from policy + this set, never self-reported.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "digest"],
+        "properties": {
+          "type": {
+            "description": "Input class, e.g. 'memory_bundle', 'tool_result', 'query'.",
+            "type": "string"
+          },
+          "digest": { "$ref": "#/$defs/digest" }
+        }
+      }
+    },
+    "committed_at": {
+      "description": "Proven. Anchors the diet before the decision was produced, so inputs are frozen rather than retrofitted (registration before narrative).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["anchor", "ts"],
+      "properties": {
+        "anchor": {
+          "description": "Reference to the anchoring position, e.g. a Merkle checkpoint index.",
+          "type": "string",
+          "minLength": 1
+        },
+        "ts": {
+          "description": "RFC 3339 timestamp of the commitment.",
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "asserted": {
+      "description": "The narrative zone. Anything the checker or actor says about itself. Recorded faithfully, never load-bearing, never rendered as proof. policy_excludes_echo is a display-only convenience and is NOT evidence of exclusion.",
+      "type": "object"
+    }
+  },
+  "$defs": {
+    "digest": {
+      "description": "A content digest. SHA-256 hex, prefixed with the algorithm.",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "party": {
+      "description": "An actor or checker. The keyid is what proves separation; the uri is narrative metadata a verifier never trusts.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["keyid"],
+      "properties": {
+        "uri": {
+          "description": "Human-readable label, e.g. 'agent://codex' or 'system://zmem'. Narrative only.",
+          "type": "string"
+        },
+        "keyid": {
+          "description": "The party's signing key id. The checker signs the receipt with its keyid; it must differ from the actor's and be independently rooted.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}
