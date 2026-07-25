@@ -7,11 +7,12 @@ describe("@treeship/sdk", () => {
     expect(typeof ship).toBe("function");
   });
 
-  it("ship has attest, verify, hub modules", () => {
+  it("ship has attest, verify, hub, session modules", () => {
     const s = ship();
     expect(s.attest).toBeDefined();
     expect(s.verify).toBeDefined();
     expect(s.hub).toBeDefined();
+    expect(s.session).toBeDefined();
   });
 
   it("attest module has action, approval, handoff, decision", () => {
@@ -39,5 +40,10 @@ describe("@treeship/sdk", () => {
     expect(typeof s.hub.push).toBe("function");
     expect(typeof s.hub.pull).toBe("function");
     expect(typeof s.hub.status).toBe("function");
+  });
+
+  it("session module has an event method", () => {
+    const s = ship();
+    expect(typeof s.session.event).toBe("function");
   });
 });
