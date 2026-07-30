@@ -2064,18 +2064,35 @@ mod tests {
     // the seed file under an otherwise-identical machine environment.
     #[test]
     fn different_seed_cannot_decrypt_even_with_identical_machine_id() {
-        let (store, dir) = make_store();
+        // Pre-create the co-located seed instead of relying on first-open to
+        // mint one. `read_or_create_machine_seed` reads
+        // `<store>/../machine_seed` first, then falls back to
+        // `~/.treeship/machine_seed` before creating anything -- and that
+        // global file exists on any machine that has run `treeship init`. So
+        // the create branch never ran for a real developer, no seed appeared
+        // beside the temp store, and this test failed for everyone who had
+        // actually used the tool while passing on clean CI. Seeding the local
+        // path up front makes the test hermetic and keeps it focused on the
+        // property it exists to prove (AUD-19), not on where seeds get minted.
+        let dir = temp_dir_path();
+        let parent = dir.parent().expect("temp store has a parent").to_path_buf();
+        fs::create_dir_all(&parent).unwrap();
+        let seed_path = parent.join("machine_seed");
+        fs::write(&seed_path, hex_encode(&[0x11u8; 32])).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            // check_seed_file_secure refuses anything group/world readable.
+            fs::set_permissions(&seed_path, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+
+        let store = Store::open(&dir).unwrap();
         store.generate(true).unwrap();
         // The default key is now on disk, wrapped under the seed-primary key.
         store.default_signer().expect("own seed must decrypt");
 
         // Swap the seed for a different one. machine-id / hostname / user are
         // unchanged (same test host) — only the secret seed differs.
-        let seed_path = dir.parent().unwrap().join("machine_seed");
-        assert!(
-            seed_path.exists(),
-            "seed must have been created on first open"
-        );
         fs::write(&seed_path, hex_encode(&[0xABu8; 32])).unwrap();
         #[cfg(unix)]
         {
