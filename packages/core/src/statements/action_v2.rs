@@ -43,6 +43,7 @@ use super::invitation::{canonical_json_digest, parse_rfc3339_to_unix};
 use super::SubjectRef;
 use crate::attestation::{Signer, SignerError};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use sha2::{Digest, Sha256};
 use ed25519_dalek::{Signature, VerifyingKey};
 
 /// Statement type tag for the mandate/effect receipt.
@@ -133,6 +134,17 @@ pub struct Mandate {
 
     /// Revocation source + (optional) revoked-at timestamp.
     pub revocation: Revocation,
+
+    /// Ancestors of this grant, root-first, each carrying its own
+    /// `issuer_sig`. Optional and skipped when empty so existing v2 receipts
+    /// keep byte-identical canonical bytes.
+    ///
+    /// Carried inline rather than fetched: `issuer_sig` already exists so one
+    /// receipt can be checked offline, and that promise breaks the moment
+    /// verifying a delegated action requires N network round-trips. The
+    /// carrier's *ordering* is not trusted -- see `resolve_grant_chain`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chain: Vec<Grant>,
 }
 
 /// A metered cost attached to an effect.
@@ -762,6 +774,20 @@ pub struct Grant {
     pub max_delegation: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub objective_hash: Option<String>,
+
+    /// Grantor's detached signature over this grant's canonical bytes.
+    /// Deliberately absent from `canonical_for_signing` -- a signature cannot
+    /// cover itself. Required for any grant carried in a mandate chain;
+    /// `resolve_grant_chain` refuses unsigned ancestors.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issuer_sig: Option<String>,
+
+    /// Content id of the grant this one was delegated from. `None` marks a
+    /// root grant. Signed, so lineage cannot be re-parented after issuance --
+    /// and because ids are content-derived, this is a hash commitment to the
+    /// exact parent, not a reference to a name someone else could also claim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_grant_id: Option<String>,
 }
 
 impl Grant {
@@ -771,19 +797,42 @@ impl Grant {
     /// bump, never a silent extension.
     pub fn canonical_for_signing(&self) -> String {
         let scope_digest = canonical_json_digest(&self.scope);
+        // v2 differs from v1 in two ways: `parent_grant_id` is covered, and
+        // `grant_id` is NOT. The id is derived from these bytes (see
+        // `derive_grant_id`), so including it would be circular -- and it
+        // matches how artifact ids work elsewhere: derived from the signed
+        // bytes, never stored inside them.
         format!(
-            "v1|grant|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-            self.grant_id,
+            "v2|grant|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
             self.grantor,
             scope_digest,
             self.audience,
             self.parent_request_id.as_deref().unwrap_or(""),
+            self.parent_grant_id.as_deref().unwrap_or(""),
             self.delegation_depth,
             self.issued_at,
             self.expiry,
             self.max_delegation,
             self.objective_hash.as_deref().unwrap_or(""),
         )
+    }
+
+    /// The grant's content id: `grn_` + first 16 hex of sha256 over the
+    /// canonical bytes. Mirrors `artifact_id = "art_" + hex(sha256(PAE))[..16]`.
+    ///
+    /// Ids stop being claims and become facts: two grants collide only under a
+    /// hash break, and a `parent_grant_id` therefore commits to one specific
+    /// parent rather than to whatever grant happens to assert that name.
+    pub fn derive_grant_id(&self) -> String {
+        let digest = Sha256::digest(self.canonical_for_signing().as_bytes());
+        format!("grn_{}", hex::encode(&digest[..8]))
+    }
+
+    /// True when the declared `grant_id` matches the derived one. A mismatch
+    /// means the id was chosen rather than computed, so nothing that
+    /// references it by id can be trusted to reference *this* grant.
+    pub fn id_is_consistent(&self) -> bool {
+        self.grant_id == self.derive_grant_id()
     }
 
     /// Sign the grant's canonical bytes; returns the base64url-no-pad
@@ -799,6 +848,12 @@ impl Grant {
     /// math checks out. Does not consult trust roots -- the caller decides
     /// whether `grantor` is a pinned issuer.
     pub fn verify_canonical(&self, signature_b64url: &str) -> bool {
+        // A valid signature over content whose id was chosen by hand is still
+        // unusable for chain walking: the parent pointer would resolve to a
+        // name, not to these bytes. Fail closed before touching the crypto.
+        if !self.id_is_consistent() {
+            return false;
+        }
         let pk_bytes = match URL_SAFE_NO_PAD.decode(self.grantor.as_bytes()) {
             Ok(b) if b.len() == 32 => b,
             _ => return false,
@@ -823,6 +878,135 @@ impl Grant {
     }
 }
 
+/// Why a mandate's grant chain could not be resolved into a trustworthy order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChainResolveError {
+    /// A grant's declared id does not match its content.
+    InconsistentId { grant_id: String },
+    /// `mandate.grant_id` names a grant that is not in the carried chain.
+    LeafMissing { grant_id: String },
+    /// A `parent_grant_id` points at a grant that is not present.
+    AncestorMissing { parent_grant_id: String },
+    /// Following parent links revisited a grant: the links form a cycle.
+    Cycle { grant_id: String },
+    /// The carrier supplied grants that the walk never reached. Extra grants
+    /// are refused rather than ignored -- silently dropping them would let a
+    /// carrier stuff a chain with decoys.
+    UnreachableExtras { count: usize },
+    /// A grant carried no signature, so its content is unattested.
+    Unsigned { grant_id: String },
+    /// A grant's signature does not verify against its grantor.
+    BadSignature { grant_id: String },
+}
+
+impl std::fmt::Display for ChainResolveError {
+    /// Operator-facing wording. The CLI prints these verbatim, so each names
+    /// the grant it is talking about: "unresolvable" without a subject leaves
+    /// a reader nothing to go and look at.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InconsistentId { grant_id } => {
+                write!(f, "grant {grant_id} declares an id that does not match its content")
+            }
+            Self::LeafMissing { grant_id } => {
+                write!(f, "the mandate names grant {grant_id}, which is not in the carried chain")
+            }
+            Self::AncestorMissing { parent_grant_id } => {
+                write!(f, "parent grant {parent_grant_id} is missing from the chain")
+            }
+            Self::Cycle { grant_id } => {
+                write!(f, "parent links revisit grant {grant_id}: the chain is a cycle")
+            }
+            Self::UnreachableExtras { count } => {
+                write!(f, "{count} carried grant(s) are not reachable from the mandate")
+            }
+            Self::Unsigned { grant_id } => {
+                write!(f, "grant {grant_id} carries no issuer signature")
+            }
+            Self::BadSignature { grant_id } => {
+                write!(f, "grant {grant_id} has a signature that does not verify")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ChainResolveError {}
+
+/// Reconstruct the delegation chain for a mandate, root-first, from the
+/// grants it carries.
+///
+/// The carrier hands over a set; this function derives the *order* from the
+/// signed `parent_grant_id` links rather than trusting the sequence it was
+/// given. That is the whole point: `verify_grant_chain` checks attenuation
+/// between adjacent pairs, so if an attacker picks the pairing, the check
+/// establishes nothing. Here, reordering is a no-op, truncation shows up as a
+/// missing ancestor, and splicing shows up as an unreachable extra.
+///
+/// Every grant must be signed by its own grantor and carry a content-consistent
+/// id. Fails closed on anything it cannot establish.
+pub fn resolve_grant_chain(mandate: &Mandate) -> Result<Vec<Grant>, ChainResolveError> {
+    use std::collections::{HashMap, HashSet};
+
+    // Index by content id, checking each grant is self-consistent and attested.
+    let mut by_id: HashMap<String, &Grant> = HashMap::new();
+    for g in &mandate.chain {
+        if !g.id_is_consistent() {
+            return Err(ChainResolveError::InconsistentId {
+                grant_id: g.grant_id.clone(),
+            });
+        }
+        let sig = match g.issuer_sig.as_deref() {
+            Some(s) if !s.is_empty() => s,
+            _ => {
+                return Err(ChainResolveError::Unsigned {
+                    grant_id: g.grant_id.clone(),
+                })
+            }
+        };
+        if !g.verify_canonical(sig) {
+            return Err(ChainResolveError::BadSignature {
+                grant_id: g.grant_id.clone(),
+            });
+        }
+        by_id.insert(g.grant_id.clone(), g);
+    }
+
+    // Walk leaf -> root through signed parent links.
+    let mut leaf_first: Vec<Grant> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut cursor = Some(mandate.grant_id.clone());
+
+    while let Some(id) = cursor {
+        if !seen.insert(id.clone()) {
+            return Err(ChainResolveError::Cycle { grant_id: id });
+        }
+        let g = match by_id.get(&id) {
+            Some(g) => *g,
+            None => {
+                return Err(if leaf_first.is_empty() {
+                    ChainResolveError::LeafMissing { grant_id: id }
+                } else {
+                    ChainResolveError::AncestorMissing {
+                        parent_grant_id: id,
+                    }
+                })
+            }
+        };
+        leaf_first.push(g.clone());
+        cursor = g.parent_grant_id.clone();
+    }
+
+    // Anything the walk never reached is a decoy, not a spare.
+    if seen.len() != by_id.len() {
+        return Err(ChainResolveError::UnreachableExtras {
+            count: by_id.len() - seen.len(),
+        });
+    }
+
+    leaf_first.reverse(); // verify_grant_chain wants root-first
+    Ok(leaf_first)
+}
+
 /// Why a grant chain failed its attenuation invariants.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GrantChainError {
@@ -841,6 +1025,37 @@ pub enum GrantChainError {
     /// child.audience differs from parent.audience.
     AudienceChanged { parent: usize },
 }
+
+impl std::fmt::Display for GrantChainError {
+    /// `parent` is the index of the *parent* in the resolved root-first chain,
+    /// so the violation is reported as the hop between it and its child --
+    /// which is where an operator has to look to fix it.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Empty => write!(f, "the chain is empty"),
+            Self::BadTimestamp { index } => {
+                write!(f, "grant at hop {index} has an unparseable issued_at/expiry")
+            }
+            Self::ScopeWidened { parent } => {
+                write!(f, "scope widens at hop {}->{}", parent, parent + 1)
+            }
+            Self::ExpiryWidened { parent } => {
+                write!(f, "expiry extends past the parent at hop {}->{}", parent, parent + 1)
+            }
+            Self::DepthNotIncremented { parent } => {
+                write!(f, "delegation depth does not increment by one at hop {}->{}", parent, parent + 1)
+            }
+            Self::DepthExceedsMax { parent } => {
+                write!(f, "delegation depth exceeds the parent's max_delegation at hop {}->{}", parent, parent + 1)
+            }
+            Self::AudienceChanged { parent } => {
+                write!(f, "audience changes at hop {}->{}", parent, parent + 1)
+            }
+        }
+    }
+}
+
+impl std::error::Error for GrantChainError {}
 
 /// Verify attenuation across an ordered grant chain (`chain[0]` is the root,
 /// `chain[last]` is the leaf the action was minted from). Every adjacent pair
@@ -1236,6 +1451,7 @@ mod tests {
                 path: "hub://acme/revocations".into(),
                 revoked_at: None,
             },
+            chain: Vec::new(),
         }
     }
 
@@ -1504,9 +1720,11 @@ mod tests {
         Grant {
             grant_id: id.into(),
             grantor: grantor.into(),
+            issuer_sig: None,
             scope: scope.iter().map(|s| (*s).into()).collect(),
             audience: "acme-payments-api".into(),
             parent_request_id: None,
+            parent_grant_id: None,
             delegation_depth: depth,
             issued_at: "2026-07-11T19:00:00Z".into(),
             expiry: expiry.into(),
@@ -1527,6 +1745,9 @@ mod tests {
             "2026-07-11T21:00:00Z",
             3,
         );
+        // Ids are content-derived now; verify_canonical refuses a hand-chosen
+        // one, so compute it before signing.
+        g.grant_id = g.derive_grant_id();
 
         let sig = g.sign_canonical(&signer).unwrap();
         assert!(g.verify_canonical(&sig));
@@ -1672,5 +1893,195 @@ mod tests {
     fn single_grant_chain_ok() {
         let root = grant("g0", "k", &["payments.*"], 0, "2026-07-11T21:00:00Z", 3);
         assert_eq!(verify_grant_chain(&[root]), Ok(()));
+    }
+
+    // ---- grant chain resolution ----
+
+
+    /// Mint a signed grant with a content-consistent id.
+    fn mk_grant(
+        signer: &Ed25519Signer,
+        grantor_pk: &str,
+        scope: Vec<&str>,
+        depth: u32,
+        parent: Option<&str>,
+    ) -> Grant {
+        let mut g = Grant {
+            grant_id: String::new(),
+            grantor: grantor_pk.to_string(),
+            issuer_sig: None,
+            scope: scope.into_iter().map(String::from).collect(),
+            audience: "acme".into(),
+            parent_request_id: None,
+            parent_grant_id: parent.map(String::from),
+            delegation_depth: depth,
+            issued_at: "2026-07-20T10:00:00Z".into(),
+            expiry: "2026-07-20T11:00:00Z".into(),
+            max_delegation: 3,
+            objective_hash: None,
+        };
+        g.grant_id = g.derive_grant_id();
+        g.issuer_sig = Some(g.sign_canonical(signer).unwrap());
+        g
+    }
+
+    fn chain_fixture() -> (Grant, Grant, Ed25519Signer) {
+        let signer = Ed25519Signer::generate("issuer").unwrap();
+        let pk = URL_SAFE_NO_PAD.encode(signer.public_key_bytes());
+        let root = mk_grant(&signer, &pk, vec!["payments.*"], 0, None);
+        let leaf = mk_grant(
+            &signer,
+            &pk,
+            vec!["payments.charge"],
+            1,
+            Some(&root.grant_id),
+        );
+        (root, leaf, signer)
+    }
+
+    fn mandate_with(leaf: &Grant, chain: Vec<Grant>) -> Mandate {
+        let mut m = base_mandate();
+        m.grant_id = leaf.grant_id.clone();
+        m.chain = chain;
+        m
+    }
+
+    #[test]
+    fn grant_id_is_content_derived_and_stable() {
+        let (root, _, _) = chain_fixture();
+        assert!(root.grant_id.starts_with("grn_"));
+        assert_eq!(root.grant_id, root.derive_grant_id());
+        // Changing any covered field must move the id.
+        let mut altered = root.clone();
+        altered.scope = vec!["payments.refund".into()];
+        assert_ne!(altered.derive_grant_id(), root.grant_id);
+    }
+
+    #[test]
+    fn hand_chosen_id_fails_verification() {
+        let (mut root, _, _) = chain_fixture();
+        let sig = root.issuer_sig.clone().unwrap();
+        root.grant_id = "grn_deadbeefdeadbeef".into();
+        assert!(
+            !root.verify_canonical(&sig),
+            "an id that was chosen rather than computed must not verify"
+        );
+    }
+
+    #[test]
+    fn resolves_root_first_regardless_of_carrier_order() {
+        let (root, leaf, _) = chain_fixture();
+        // Carrier hands them over leaf-first; resolution must not care.
+        let m = mandate_with(&leaf, vec![leaf.clone(), root.clone()]);
+        let resolved = resolve_grant_chain(&m).expect("resolves");
+        assert_eq!(resolved.len(), 2);
+        assert_eq!(resolved[0].grant_id, root.grant_id, "root must come first");
+        assert_eq!(resolved[1].grant_id, leaf.grant_id);
+    }
+
+    #[test]
+    fn truncated_chain_is_rejected() {
+        let (_, leaf, _) = chain_fixture();
+        // Drop the root: the leaf still points at it, so the walk must fail
+        // rather than treating the leaf as its own root.
+        let m = mandate_with(&leaf, vec![leaf.clone()]);
+        match resolve_grant_chain(&m) {
+            Err(ChainResolveError::AncestorMissing { .. }) => {}
+            other => panic!("truncation must be caught, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn spliced_decoy_grant_is_rejected() {
+        let (root, leaf, signer) = chain_fixture();
+        let pk = URL_SAFE_NO_PAD.encode(signer.public_key_bytes());
+        // A valid, signed, unrelated grant smuggled into the chain. It must
+        // differ in content from root -- an identical grant has an identical
+        // content id, which is the point of deriving ids from content.
+        let decoy = mk_grant(&signer, &pk, vec!["email.send"], 0, None);
+        assert_ne!(decoy.grant_id, root.grant_id);
+        let m = mandate_with(&leaf, vec![root.clone(), leaf.clone(), decoy]);
+        match resolve_grant_chain(&m) {
+            Err(ChainResolveError::UnreachableExtras { count }) => assert_eq!(count, 1),
+            other => panic!("unreachable extras must be refused, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unsigned_ancestor_is_rejected() {
+        let (mut root, leaf, _) = chain_fixture();
+        root.issuer_sig = None;
+        let m = mandate_with(&leaf, vec![root, leaf.clone()]);
+        assert!(matches!(
+            resolve_grant_chain(&m),
+            Err(ChainResolveError::Unsigned { .. })
+        ));
+    }
+
+    #[test]
+    fn resolved_chain_feeds_attenuation_check() {
+        // End to end: resolution proves the shape, verify_grant_chain then
+        // judges the attenuation. Only together do they mean anything.
+        let (root, leaf, _) = chain_fixture();
+        let m = mandate_with(&leaf, vec![leaf.clone(), root.clone()]);
+        let resolved = resolve_grant_chain(&m).expect("resolves");
+        assert!(
+            verify_grant_chain(&resolved).is_ok(),
+            "narrowing scope at depth+1 must satisfy attenuation"
+        );
+    }
+
+    #[test]
+    fn leaf_not_in_chain_is_rejected() {
+        // The mandate names a grant the carrier did not supply. Distinct from
+        // AncestorMissing: nothing has been walked yet, so the failure has to
+        // point at the leaf rather than at a parent link.
+        let (root, leaf, _) = chain_fixture();
+        let mut m = mandate_with(&leaf, vec![root.clone()]);
+        m.grant_id = leaf.grant_id.clone();
+        match resolve_grant_chain(&m) {
+            Err(ChainResolveError::LeafMissing { grant_id }) => {
+                assert_eq!(grant_id, leaf.grant_id);
+            }
+            other => panic!("a mandate naming an absent leaf must fail, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ancestor_signed_by_a_stranger_is_rejected() {
+        // Content-consistent id, well-formed signature -- but produced by a key
+        // that is not the declared grantor. The id check cannot catch this
+        // because `grantor` is covered by the canonical: only the crypto can.
+        let (root, leaf, _) = chain_fixture();
+        let stranger = Ed25519Signer::generate("stranger").unwrap();
+        let mut forged = root.clone();
+        forged.issuer_sig = Some(forged.sign_canonical(&stranger).unwrap());
+        assert_eq!(
+            forged.grant_id, root.grant_id,
+            "signing with another key must not change the content id"
+        );
+
+        let m = mandate_with(&leaf, vec![forged, leaf.clone()]);
+        match resolve_grant_chain(&m) {
+            Err(ChainResolveError::BadSignature { grant_id }) => {
+                assert_eq!(grant_id, root.grant_id);
+            }
+            other => panic!("a grant signed by a non-grantor must fail, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inconsistent_id_is_caught_before_signature_check() {
+        // A tampered id must be refused as InconsistentId, not surface later as
+        // BadSignature -- the reason an operator is given should name the
+        // actual defect.
+        let (root, leaf, _) = chain_fixture();
+        let mut tampered = root.clone();
+        tampered.grant_id = "grn_0000000000000000".into();
+        let m = mandate_with(&leaf, vec![tampered, leaf.clone()]);
+        assert!(matches!(
+            resolve_grant_chain(&m),
+            Err(ChainResolveError::InconsistentId { .. })
+        ));
     }
 }

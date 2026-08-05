@@ -7,7 +7,8 @@ use treeship_core::{
         invitation::InvitationStatement,
         payload_type, payload_type_v2,
         session_participant::{verify_participant_envelope, SessionParticipantStatement},
-        verify_effect, verify_mandate, ActionStatement, ActionStatementV2, ApprovalScope,
+        resolve_grant_chain, verify_effect, verify_grant_chain, verify_mandate, ActionStatement,
+        ActionStatementV2, ApprovalScope,
         ApprovalStatement, DecisionStatement, EffectConfidence, EffectVerdict, HandoffStatement,
         MandateVerdict, NoRevocationSource, NoWitnessAuthority,
         ReceiptStatement,
@@ -77,8 +78,27 @@ struct StepInfo {
     // "was it allowed". A receipt can be impeccably signed and still record an
     // action outside its grant.
     mandate_verdict: Option<MandateSummary>,
+    // action/v2 delegation chain outcome, when the mandate carries ancestors.
+    chain_summary: Option<ChainSummary>,
     // action/v2 runtime identity (who/what executed the action).
     runtime_model: Option<String>,
+}
+
+/// Delegation-chain outcome for display. Distinct from the mandate verdict:
+/// the mandate asks whether THIS hop was inside its grant, the chain asks
+/// whether the grant itself descends legitimately from a root.
+#[derive(Clone)]
+enum ChainSummary {
+    /// No ancestors carried. A single-hop mandate makes no lineage claim, so
+    /// there is nothing to check -- reported as absent, not as a pass.
+    NotClaimed,
+    /// Links resolved and every hop attenuates.
+    Holds { hops: usize },
+    /// Links resolved but a hop widens scope, extends expiry, jumps depth, or
+    /// changes audience.
+    Widened(String),
+    /// The carried set could not be assembled into a chain at all.
+    Unresolvable(String),
 }
 
 /// Flattened mandate outcome for display. `Unverified` carries the layers we
@@ -133,6 +153,29 @@ fn v2_mandate_summary(env: &Envelope) -> Option<MandateSummary> {
     })
 }
 
+/// Resolve and judge the delegation chain behind a v2 action's mandate.
+///
+/// Two steps that only mean something together: `resolve_grant_chain` derives
+/// the order from signed parent links (so the carrier cannot choose which
+/// pairs get compared), then `verify_grant_chain` checks attenuation across
+/// those pairs. Order first, then invariants.
+fn v2_chain_summary(env: &Envelope) -> Option<ChainSummary> {
+    if env.payload_type != payload_type_v2("action") {
+        return None;
+    }
+    let stmt = env.unmarshal_statement::<ActionStatementV2>().ok()?;
+    if stmt.mandate.chain.is_empty() {
+        return Some(ChainSummary::NotClaimed);
+    }
+    Some(match resolve_grant_chain(&stmt.mandate) {
+        Err(e) => ChainSummary::Unresolvable(e.to_string()),
+        Ok(chain) => match verify_grant_chain(chain.as_slice()) {
+            Ok(()) => ChainSummary::Holds { hops: chain.len() },
+            Err(e) => ChainSummary::Widened(e.to_string()),
+        },
+    })
+}
+
 /// Serialize an effect verdict for `--json` output.
 fn effect_verdict_json(v: &EffectVerdict) -> serde_json::Value {
     let downgraded = v
@@ -146,6 +189,54 @@ fn effect_verdict_json(v: &EffectVerdict) -> serde_json::Value {
         "trusted_witnesses": v.trusted_witnesses,
         "notes": v.notes,
     })
+}
+
+/// Serialize the authority verdict for `--json` output.
+///
+/// `unverified` is a distinct outcome from `pass`, not a softer pass: it means
+/// a layer could not be checked at all (today, revocation). Machine consumers
+/// gating on this must be able to tell those apart, so the outcome string is
+/// carried verbatim rather than collapsed to a boolean.
+fn mandate_summary_json(m: &MandateSummary) -> serde_json::Value {
+    match m {
+        MandateSummary::Pass => serde_json::json!({
+            "outcome": "pass",
+            "reasons": [],
+        }),
+        MandateSummary::Unverified(reasons) => serde_json::json!({
+            "outcome": "unverified",
+            "reasons": reasons,
+        }),
+        MandateSummary::Fail(reasons) => serde_json::json!({
+            "outcome": "fail",
+            "reasons": reasons,
+        }),
+    }
+}
+
+/// Serialize the delegation-chain outcome for `--json` output.
+///
+/// `not_claimed` is reported rather than omitted: a mandate that carries no
+/// ancestors made no lineage claim, which is different from one whose chain we
+/// checked and accepted. Silence would let a consumer read the absence as a pass.
+fn chain_summary_json(c: &ChainSummary) -> serde_json::Value {
+    match c {
+        ChainSummary::NotClaimed => serde_json::json!({
+            "outcome": "not_claimed",
+        }),
+        ChainSummary::Holds { hops } => serde_json::json!({
+            "outcome": "holds",
+            "hops": hops,
+        }),
+        ChainSummary::Widened(why) => serde_json::json!({
+            "outcome": "widened",
+            "detail": why,
+        }),
+        ChainSummary::Unresolvable(why) => serde_json::json!({
+            "outcome": "unresolvable",
+            "detail": why,
+        }),
+    }
 }
 
 pub fn run(
@@ -259,6 +350,32 @@ pub fn run(
             })
             .collect();
 
+        // Authority and delegation-chain outcomes, keyed the same way. These
+        // exist in the human output already; omitting them here would leave the
+        // machine-readable surface -- the one CI gates actually consume --
+        // unable to see that an action fell outside its grant.
+        let authority_by_id: HashMap<String, serde_json::Value> = chain_envelopes
+            .iter()
+            .filter_map(|(id, env)| {
+                v2_mandate_summary(env).map(|m| (id.clone(), mandate_summary_json(&m)))
+            })
+            .collect();
+        let delegation_by_id: HashMap<String, serde_json::Value> = chain_envelopes
+            .iter()
+            .filter_map(|(id, env)| {
+                v2_chain_summary(env).map(|c| (id.clone(), chain_summary_json(&c)))
+            })
+            .collect();
+
+        // One field a gate can test without walking every check. False only for
+        // an outright Fail: `unverified` means a layer could not be checked, and
+        // treating "did not look" as "found a violation" would make the flag
+        // useless the moment any receipt lacks a revocation resolver.
+        let authority_ok = !chain_envelopes
+            .iter()
+            .filter_map(|(_, env)| v2_mandate_summary(env))
+            .any(|m| matches!(m, MandateSummary::Fail(_)));
+
         let out: Vec<_> = checks
             .iter()
             .map(|c| {
@@ -270,6 +387,12 @@ pub fn run(
                 if let Some(effect) = effect_by_id.get(&c.id) {
                     obj["effect"] = effect.clone();
                 }
+                if let Some(authority) = authority_by_id.get(&c.id) {
+                    obj["authority"] = authority.clone();
+                }
+                if let Some(delegation) = delegation_by_id.get(&c.id) {
+                    obj["delegation_chain"] = delegation.clone();
+                }
                 obj
             })
             .collect();
@@ -278,6 +401,7 @@ pub fn run(
             "total": total, "passed": passed, "failed": failed,
             "chain_linkage_ok": linkage_ok,
             "chain_linkage_detail": if linkage_ok { serde_json::Value::Null } else { serde_json::json!(linkage_detail) },
+            "authority_ok": authority_ok,
             "checks": out,
         }));
         if failed > 0 || !linkage_ok {
@@ -779,6 +903,26 @@ fn print_step_card(step: &StepInfo, printer: &Printer) {
         None => {}
     }
 
+    // Delegation chain (action/v2). Printed under authority: a mandate can be
+    // perfectly in scope for a grant that was never legitimately delegated.
+    match &step.chain_summary {
+        Some(ChainSummary::Holds { hops }) => {
+            print_box_line(
+                &format!("chain:     {hops} hop(s), attenuation holds"),
+                printer,
+            );
+        }
+        Some(ChainSummary::Widened(why)) => {
+            print_box_line(&format!("chain:     WIDENED ({why})"), printer);
+        }
+        Some(ChainSummary::Unresolvable(why)) => {
+            print_box_line(&format!("chain:     unresolvable ({why})"), printer);
+        }
+        // No ancestors carried: say nothing rather than imply a single-hop
+        // mandate passed a check that never ran.
+        Some(ChainSummary::NotClaimed) | None => {}
+    }
+
     // Effect verdict (action/v2): operational confidence, reconciled against
     // evidence. Distinct from the signature check -- a valid signature over a
     // Verified claim still reads not-verified here when nothing backs it.
@@ -940,6 +1084,7 @@ fn extract_step_info(index: usize, id: &str, env: &Envelope, storage: &Store) ->
         effect_claimed: None,
         effect_downgraded: false,
         mandate_verdict: None,
+        chain_summary: None,
         effect_trusted_witnesses: 0,
         runtime_model: None,
     };
@@ -958,6 +1103,7 @@ fn extract_step_info(index: usize, id: &str, env: &Envelope, storage: &Store) ->
             }
             // Surface the effect line only when there is an effect to judge.
             info.mandate_verdict = v2_mandate_summary(env);
+            info.chain_summary = v2_chain_summary(env);
             if let Some(verdict) = v2_effect_verdict(env) {
                 info.effect_effective = Some(verdict.effective_confidence);
                 info.effect_claimed = verdict.claimed_confidence;
@@ -1636,6 +1782,7 @@ mod tests {
                 path: "hub://acme/revocations".into(),
                 revoked_at: None,
             },
+            chain: Vec::new(),
         };
         let mut stmt = ActionStatementV2::new("agent://worker", "payments.charge", mandate);
         // Verified claim with NO independent evidence: must downgrade.
@@ -1917,6 +2064,7 @@ mod tests {
                 path: "hub://acme/revocations".into(),
                 revoked_at: None,
             },
+            chain: Vec::new(),
         };
         let signer = Ed25519Signer::generate("agent_worker").unwrap();
         let dir = std::env::temp_dir().join("ts_verify_v2_mandate_test");
@@ -1959,5 +2107,187 @@ mod tests {
             v2_mandate_summary(&v1_env).is_none(),
             "v1 receipts must not claim anything about authority"
         );
+    }
+
+    // ── action/v2 delegation chain wiring ──────────────────────────────
+    #[test]
+    fn v2_chain_summary_reports_holds_widened_and_absent() {
+        use treeship_core::attestation::{sign, Ed25519Signer, Signer as _};
+        use treeship_core::statements::{
+            payload_type_v2, ActionStatementV2, Grant, Mandate, Revocation,
+        };
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+
+        let signer = Ed25519Signer::generate("issuer").unwrap();
+        let pk = URL_SAFE_NO_PAD.encode(signer.public_key_bytes());
+
+        let mk = |scope: Vec<&str>, depth: u32, parent: Option<&str>| -> Grant {
+            let mut g = Grant {
+                grant_id: String::new(),
+                grantor: pk.clone(),
+                issuer_sig: None,
+                scope: scope.into_iter().map(String::from).collect(),
+                audience: "acme".into(),
+                parent_request_id: None,
+                parent_grant_id: parent.map(String::from),
+                delegation_depth: depth,
+                issued_at: "2026-07-20T10:00:00Z".into(),
+                expiry: "2026-07-20T11:00:00Z".into(),
+                max_delegation: 3,
+                objective_hash: None,
+            };
+            g.grant_id = g.derive_grant_id();
+            g.issuer_sig = Some(g.sign_canonical(&signer).unwrap());
+            g
+        };
+
+        let mandate_for = |leaf: &Grant, chain: Vec<Grant>| Mandate {
+            grant_id: leaf.grant_id.clone(),
+            grantor: pk.clone(),
+            issuer_sig: leaf.issuer_sig.clone(),
+            objective_hash: None,
+            scope: leaf.scope.clone(),
+            audience: "acme".into(),
+            parent_request_id: None,
+            delegation_depth: leaf.delegation_depth,
+            issued_at: "2026-07-20T10:00:00Z".into(),
+            expiry: "2026-07-20T11:00:00Z".into(),
+            max_delegation: 3,
+            revocation: Revocation {
+                path: "hub://acme/revocations".into(),
+                revoked_at: None,
+            },
+            chain,
+        };
+
+        let envelope_for = |m: Mandate, action: &str| {
+            let mut st = ActionStatementV2::new("agent://worker", action, m);
+            st.timestamp = "2026-07-20T10:30:00Z".into();
+            st.audience = Some("acme".into());
+            sign(&payload_type_v2("action"), &st, &signer).unwrap().envelope
+        };
+
+        // Holds: child narrows the parent's scope at depth+1.
+        let root = mk(vec!["payments.*"], 0, None);
+        let leaf = mk(vec!["payments.charge"], 1, Some(&root.grant_id));
+        let env = envelope_for(
+            mandate_for(&leaf, vec![leaf.clone(), root.clone()]), // carrier order: leaf first
+            "payments.charge",
+        );
+        match v2_chain_summary(&env) {
+            Some(ChainSummary::Holds { hops }) => assert_eq!(hops, 2),
+            other => panic!("expected Holds, got {}", chain_label(&other)),
+        }
+
+        // Widened: child claims scope the parent never had. Must not pass
+        // just because every individual grant is validly signed.
+        let wroot = mk(vec!["payments.charge"], 0, None);
+        let wleaf = mk(vec!["payments.*"], 1, Some(&wroot.grant_id));
+        let wenv = envelope_for(
+            mandate_for(&wleaf, vec![wroot.clone(), wleaf.clone()]),
+            "payments.charge",
+        );
+        assert!(
+            matches!(v2_chain_summary(&wenv), Some(ChainSummary::Widened(_))),
+            "a scope-widening hop must be reported"
+        );
+
+        // Truncated: the leaf points at a parent that was not carried.
+        let tenv = envelope_for(mandate_for(&leaf, vec![leaf.clone()]), "payments.charge");
+        assert!(
+            matches!(v2_chain_summary(&tenv), Some(ChainSummary::Unresolvable(_))),
+            "a missing ancestor must be unresolvable, not silently rooted"
+        );
+
+        // No ancestors carried: no claim, so no line.
+        let nenv = envelope_for(mandate_for(&leaf, vec![]), "payments.charge");
+        assert!(matches!(
+            v2_chain_summary(&nenv),
+            Some(ChainSummary::NotClaimed)
+        ));
+
+        // v1 artifacts have no chain concept at all.
+        let v1 = act("agent://x", "tool.call", None);
+        let v1_env = sign(&treeship_core::statements::payload_type("action"), &v1, &signer)
+            .unwrap()
+            .envelope;
+        assert!(v2_chain_summary(&v1_env).is_none());
+    }
+
+    fn chain_label(c: &Option<ChainSummary>) -> String {
+        match c {
+            Some(ChainSummary::Holds { hops }) => format!("Holds({hops})"),
+            Some(ChainSummary::Widened(w)) => format!("Widened({w})"),
+            Some(ChainSummary::Unresolvable(w)) => format!("Unresolvable({w})"),
+            Some(ChainSummary::NotClaimed) => "NotClaimed".into(),
+            None => "None".into(),
+        }
+    }
+
+    // ── --json surface ─────────────────────────────────────────────────
+    // The human output already shows authority and chain. These lock the
+    // machine-readable shape, because that is what CI gates read: a verifier
+    // whose most consequential verdict is invisible to `--format json` reports
+    // an out-of-scope action as clean.
+
+    #[test]
+    fn authority_json_distinguishes_pass_unverified_and_fail() {
+        let pass = mandate_summary_json(&MandateSummary::Pass);
+        assert_eq!(pass["outcome"], "pass");
+        assert_eq!(pass["reasons"].as_array().unwrap().len(), 0);
+
+        // Unverified must not serialize as a pass: "we did not look" and "we
+        // looked and it was fine" are different facts.
+        let unver = mandate_summary_json(&MandateSummary::Unverified(vec![
+            "revocation unresolvable".into(),
+        ]));
+        assert_eq!(unver["outcome"], "unverified");
+        assert_eq!(unver["reasons"][0], "revocation unresolvable");
+
+        let fail = mandate_summary_json(&MandateSummary::Fail(vec!["out of scope".into()]));
+        assert_eq!(fail["outcome"], "fail");
+        assert_eq!(fail["reasons"][0], "out of scope");
+    }
+
+    #[test]
+    fn chain_json_reports_not_claimed_rather_than_omitting_it() {
+        // Absence of a lineage claim is itself the answer. If this serialized
+        // to null/omitted, a consumer would read "no chain problems" from a
+        // receipt whose chain was never checked.
+        let nc = chain_summary_json(&ChainSummary::NotClaimed);
+        assert_eq!(nc["outcome"], "not_claimed");
+
+        let holds = chain_summary_json(&ChainSummary::Holds { hops: 3 });
+        assert_eq!(holds["outcome"], "holds");
+        assert_eq!(holds["hops"], 3);
+
+        let widened = chain_summary_json(&ChainSummary::Widened("scope widens at hop 0->1".into()));
+        assert_eq!(widened["outcome"], "widened");
+        assert_eq!(widened["detail"], "scope widens at hop 0->1");
+
+        let unres =
+            chain_summary_json(&ChainSummary::Unresolvable("parent grant is missing".into()));
+        assert_eq!(unres["outcome"], "unresolvable");
+        assert_eq!(unres["detail"], "parent grant is missing");
+    }
+
+    #[test]
+    fn chain_errors_render_as_prose_not_debug_structs() {
+        use treeship_core::statements::{ChainResolveError, GrantChainError};
+
+        // These strings reach the operator verbatim. A Debug-formatted
+        // `AncestorMissing { parent_grant_id: "grn_..." }` is a leaked internal
+        // representation, not a diagnosis.
+        let e = ChainResolveError::AncestorMissing {
+            parent_grant_id: "grn_abc123".into(),
+        };
+        let s = e.to_string();
+        assert!(s.contains("grn_abc123"), "must name the grant: {s}");
+        assert!(!s.contains('{'), "must not be Debug-formatted: {s}");
+
+        let g = GrantChainError::ScopeWidened { parent: 1 };
+        let gs = g.to_string();
+        assert!(gs.contains("scope"), "must name the violated invariant: {gs}");
+        assert!(!gs.contains('{'), "must not be Debug-formatted: {gs}");
     }
 }
