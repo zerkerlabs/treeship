@@ -2,6 +2,82 @@
 
 ## Unreleased
 
+## 0.22.0 (2026-08-05)
+
+The delegation-and-completion release. v0.21 answered *what was authorized* and
+*what happened*. This one answers the two questions sitting behind those: was
+the authority legitimately delegated, and did the change actually land?
+
+**CLI emission of action/v2 receipts still does not exist.** Everything below is
+verification-side and reachable today only from `treeship-core` and the SDKs; a
+CLI user cannot yet produce a receipt that exercises it. That is the whole of
+0.23.
+
+### Added
+- **Grant chain resolution.** `grant_id` is now content-derived
+  (`grn_` + `hex(sha256(canonical))[..16]`), mirroring `artifact_id`, so an id is
+  a fact rather than a claim. Grants carry a signed `parent_grant_id`, making a
+  parent pointer a hash commitment to one specific grant instead of a reference
+  to a name anyone could also assert. `Mandate.chain` carries ancestors inline
+  so a delegated action still verifies offline, and `resolve_grant_chain`
+  *derives* the order from those signed links rather than trusting the order the
+  carrier supplied — reordering becomes a no-op, truncation surfaces as a missing
+  ancestor, and splicing surfaces as an unreachable extra. Only then does
+  `verify_grant_chain` judge attenuation, on a chain whose shape is already
+  proven.
+- **Authority and delegation on `treeship verify`.** A new authority line reports
+  whether an action was in scope, in window, and not revoked, and a chain line
+  reports `holds` / `widened` / `unresolvable` / `not_claimed`. Both appear in
+  `--format json` as per-check `authority` and `delegation_chain` objects, plus a
+  top-level `authority_ok` a CI gate can test in one field. Without a revocation
+  resolver wired the authority verdict is `unverified`, never `pass`: claiming a
+  grant is live because nobody looked is the false pass this verifier exists to
+  refuse.
+- **`EffectFinality` — lifecycle, separate from evidence.**
+  `NotAttempted / Initiated / Finalized / Failed / Indeterminate`, orthogonal to
+  `EffectConfidence`. Collapsing the two lets a receipt be accurate in every
+  field and false as a composite: a write accepted, acknowledged, assigned an
+  id, served back on read, and never committed. `verify_effect` caps an unbacked
+  `Finalized` exactly as it already caps an unbacked `Verified` — those are the
+  only two claims that assert something definite, so the only two an actor can
+  inflate. `NotAttempted` with a bound `input_hash` is the "no authority moved"
+  receipt, making a timeout an explicit signed negative instead of silence.
+- **Resolution deadlines.** `Resolution { deadline, on_deadline }` and
+  `check_resolution` bound an unresolved effect. An effect that never resolves
+  emits nothing forever, which is worse than a timeout — a timeout at least
+  produces a countable transition. `Indefinite` is reported as its own outcome
+  rather than folded into "resolved", because unresolved-with-no-deadline is the
+  failure shape, not the safe default. `check_resolution` takes `now_unix`
+  explicitly; a verifier that reached for the system clock would give different
+  answers on replay.
+
+### Fixed
+- `ChainResolveError` and `GrantChainError` have real `Display` impls. The CLI
+  was formatting them with `{:?}`, so operators read
+  `AncestorMissing { parent_grant_id: "grn_..." }` — an internal representation,
+  not a diagnosis.
+- The AUD-19 seed test is hermetic. It relied on first-open minting a
+  co-located seed, but `read_or_create_machine_seed` falls back to
+  `~/.treeship/machine_seed` first — which exists on any machine that has run
+  `treeship init`. The test therefore failed for every developer who had
+  actually used the tool while passing on clean CI.
+- `docs-drift` is green again. Two stacked failures: the feature inventory
+  pointed at `packages/core/src/verify.rs`, gone since the module became a
+  directory, and `docs/specs/receipt-system.md` had no row in the specs index.
+  The first masked the second.
+
+### Notes
+- Both new `Effect` fields are optional and skipped when absent, so existing v2
+  receipts keep byte-identical canonical bytes.
+- Known wart, deliberately left: `EffectConfidence` serializes `snake_case`, so
+  a receipt carries `not_verified` while `--format json` reports
+  `not-verified`. Changing it breaks a field emitted since v0.21 and is a
+  decision to make on purpose, not as a side effect of adding a neighbouring
+  one. Documented on `effect_label`.
+- Revocation remains unresolvable by design. The hub endpoint is an unsigned,
+  hardcoded-empty stub; wiring a resolver to it would convert an honest
+  `Unverified` into a false `NotRevoked` for every grant ever issued.
+
 ## 0.21.0 (2026-07-21)
 
 The accountability release. Treeship starts answering not just "was this signed?"
