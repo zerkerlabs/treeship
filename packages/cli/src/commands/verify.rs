@@ -7,11 +7,13 @@ use treeship_core::{
         invitation::InvitationStatement,
         payload_type, payload_type_v2,
         session_participant::{verify_participant_envelope, SessionParticipantStatement},
-        resolve_grant_chain, verify_effect, verify_grant_chain, verify_mandate, ActionStatement,
+        check_resolution, resolve_grant_chain, verify_effect, verify_grant_chain, verify_mandate,
+        ActionStatement,
         ActionStatementV2, ApprovalScope,
-        ApprovalStatement, DecisionStatement, EffectConfidence, EffectVerdict, HandoffStatement,
+        ApprovalStatement, DeadlineEvent, DecisionStatement, EffectConfidence, EffectFinality,
+        EffectVerdict, HandoffStatement,
         MandateVerdict, NoRevocationSource, NoWitnessAuthority,
-        ReceiptStatement,
+        ReceiptStatement, ResolutionStatus,
     },
     storage::Store,
     trust::TrustRootStore,
@@ -80,6 +82,12 @@ struct StepInfo {
     mandate_verdict: Option<MandateSummary>,
     // action/v2 delegation chain outcome, when the mandate carries ancestors.
     chain_summary: Option<ChainSummary>,
+    // action/v2 lifecycle stage: how far the state change got, as opposed to
+    // how well the effect is evidenced.
+    effect_finality: Option<EffectFinality>,
+    effect_finality_claimed: Option<EffectFinality>,
+    // action/v2 resolution obligation, evaluated against the clock at print time.
+    resolution: Option<ResolutionStatus>,
     // action/v2 runtime identity (who/what executed the action).
     runtime_model: Option<String>,
 }
@@ -182,13 +190,76 @@ fn effect_verdict_json(v: &EffectVerdict) -> serde_json::Value {
         .claimed_confidence
         .map(|c| c != v.effective_confidence)
         .unwrap_or(false);
+    // Finality is reported beside confidence, never merged into it. They
+    // answer different questions -- how far the change got, and how well that
+    // is evidenced -- and a receipt can be honest on one axis while
+    // overclaiming the other.
+    let finality_downgraded = v
+        .claimed_finality
+        .map(|c| Some(c) != v.effective_finality)
+        .unwrap_or(false);
     serde_json::json!({
         "effective_confidence": effect_label(v.effective_confidence),
         "claimed_confidence": v.claimed_confidence.map(effect_label),
         "downgraded": downgraded,
         "trusted_witnesses": v.trusted_witnesses,
+        "effective_finality": v.effective_finality.map(finality_label),
+        "claimed_finality": v.claimed_finality.map(finality_label),
+        "finality_downgraded": finality_downgraded,
         "notes": v.notes,
     })
+}
+
+/// Human label for a lifecycle stage, matching the wire snake_case.
+fn finality_label(f: EffectFinality) -> &'static str {
+    match f {
+        EffectFinality::NotAttempted => "not_attempted",
+        EffectFinality::Initiated => "initiated",
+        EffectFinality::Finalized => "finalized",
+        EffectFinality::Failed => "failed",
+        EffectFinality::Indeterminate => "indeterminate",
+    }
+}
+
+/// Serialize an effect's resolution obligation for `--json` output.
+///
+/// `indefinite` is carried as its own outcome rather than folded into
+/// `resolved`: an unresolved effect with no declared deadline is the shape that
+/// goes unnoticed for months, and the machine surface is where a monitor would
+/// have to catch it.
+fn resolution_status_json(s: &ResolutionStatus) -> serde_json::Value {
+    match s {
+        ResolutionStatus::Resolved => serde_json::json!({ "outcome": "resolved" }),
+        ResolutionStatus::Indefinite => serde_json::json!({ "outcome": "indefinite" }),
+        ResolutionStatus::Pending { seconds_remaining } => serde_json::json!({
+            "outcome": "pending",
+            "seconds_remaining": seconds_remaining,
+        }),
+        ResolutionStatus::Breached {
+            on_deadline,
+            seconds_overdue,
+        } => serde_json::json!({
+            "outcome": "breached",
+            "on_deadline": match on_deadline {
+                DeadlineEvent::Timeout => "timeout",
+                DeadlineEvent::Escalate => "escalate",
+                DeadlineEvent::Tombstone => "tombstone",
+                DeadlineEvent::Inherit => "inherit",
+            },
+            "seconds_overdue": seconds_overdue,
+        }),
+        ResolutionStatus::BadDeadline => serde_json::json!({ "outcome": "bad_deadline" }),
+    }
+}
+
+/// Evaluate the resolution obligation for a v2 action envelope at `now_unix`.
+/// `None` for anything that is not a v2 action or carries no effect block.
+fn v2_resolution_status(env: &Envelope, now_unix: i64) -> Option<ResolutionStatus> {
+    if env.payload_type != payload_type_v2("action") {
+        return None;
+    }
+    let stmt = env.unmarshal_statement::<ActionStatementV2>().ok()?;
+    stmt.effect.as_ref().map(|e| check_resolution(e, now_unix))
 }
 
 /// Serialize the authority verdict for `--json` output.
@@ -367,6 +438,20 @@ pub fn run(
             })
             .collect();
 
+        // Resolution is time-dependent, so the clock is read once here and
+        // passed down. Reading it per-envelope would let two effects in the
+        // same run be judged against different "now"s.
+        let now_unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let resolution_by_id: HashMap<String, serde_json::Value> = chain_envelopes
+            .iter()
+            .filter_map(|(id, env)| {
+                v2_resolution_status(env, now_unix).map(|r| (id.clone(), resolution_status_json(&r)))
+            })
+            .collect();
+
         // One field a gate can test without walking every check. False only for
         // an outright Fail: `unverified` means a layer could not be checked, and
         // treating "did not look" as "found a violation" would make the flag
@@ -392,6 +477,9 @@ pub fn run(
                 }
                 if let Some(delegation) = delegation_by_id.get(&c.id) {
                     obj["delegation_chain"] = delegation.clone();
+                }
+                if let Some(resolution) = resolution_by_id.get(&c.id) {
+                    obj["resolution"] = resolution.clone();
                 }
                 obj
             })
@@ -949,6 +1037,63 @@ fn print_step_card(step: &StepInfo, printer: &Printer) {
         print_box_line(&line, printer);
     }
 
+    // Lifecycle stage (action/v2), printed under effect because it answers a
+    // different question: effect grades the evidence, this says how far the
+    // change actually got. "Accepted but never committed" is invisible when
+    // those collapse into one line.
+    if let Some(stage) = step.effect_finality {
+        let mut line = format!("state:  {}", finality_label(stage));
+        if let Some(claimed) = step.effect_finality_claimed {
+            if Some(claimed) != step.effect_finality {
+                line.push_str(&format!(
+                    "  (actor claimed {}, downgraded: no independent evidence)",
+                    finality_label(claimed)
+                ));
+            }
+        }
+        print_box_line(&line, printer);
+    }
+
+    // Resolution obligation. Only worth a line when something is still owed --
+    // a resolved effect has nothing outstanding, and saying so every time
+    // would bury the two cases that matter.
+    match &step.resolution {
+        Some(ResolutionStatus::Indefinite) => {
+            print_box_line(
+                "owed:   unresolved with no deadline (nothing will ever fire)",
+                printer,
+            );
+        }
+        Some(ResolutionStatus::Breached {
+            on_deadline,
+            seconds_overdue,
+        }) => {
+            print_box_line(
+                &format!(
+                    "owed:   OVERDUE by {}s, declared action: {}",
+                    seconds_overdue,
+                    match on_deadline {
+                        DeadlineEvent::Timeout => "timeout",
+                        DeadlineEvent::Escalate => "escalate",
+                        DeadlineEvent::Tombstone => "tombstone",
+                        DeadlineEvent::Inherit => "inherit",
+                    }
+                ),
+                printer,
+            );
+        }
+        Some(ResolutionStatus::Pending { seconds_remaining }) => {
+            print_box_line(
+                &format!("owed:   unresolved, {seconds_remaining}s left to resolve"),
+                printer,
+            );
+        }
+        Some(ResolutionStatus::BadDeadline) => {
+            print_box_line("owed:   unresolved, deadline unparseable", printer);
+        }
+        Some(ResolutionStatus::Resolved) | None => {}
+    }
+
     // Approval info (if this action references an approval)
     if let (Some(ref appr_id), Some(ref approver)) = (&step.approval_id, &step.approver) {
         print_box_line(
@@ -1085,6 +1230,9 @@ fn extract_step_info(index: usize, id: &str, env: &Envelope, storage: &Store) ->
         effect_downgraded: false,
         mandate_verdict: None,
         chain_summary: None,
+        effect_finality: None,
+        effect_finality_claimed: None,
+        resolution: None,
         effect_trusted_witnesses: 0,
         runtime_model: None,
     };
@@ -1112,7 +1260,16 @@ fn extract_step_info(index: usize, id: &str, env: &Envelope, storage: &Store) ->
                     .claimed_confidence
                     .map(|c| c != verdict.effective_confidence)
                     .unwrap_or(false);
+                info.effect_finality = verdict.effective_finality;
+                info.effect_finality_claimed = verdict.claimed_finality;
             }
+            info.resolution = v2_resolution_status(
+                env,
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0),
+            );
             if let Some(meta) = &stmt.meta {
                 extract_meta_fields(&mut info, meta);
             }
@@ -2269,6 +2426,117 @@ mod tests {
             chain_summary_json(&ChainSummary::Unresolvable("parent grant is missing".into()));
         assert_eq!(unres["outcome"], "unresolvable");
         assert_eq!(unres["detail"], "parent grant is missing");
+    }
+
+    #[test]
+    fn unresolved_effect_reaches_step_info_as_indefinite() {
+        // End to end through a signed envelope, not just the serializer: an
+        // effect that never says it landed and declares no deadline is the
+        // 181-day pending row, and it has to be visible on the step card.
+        use treeship_core::attestation::{sign, Ed25519Signer};
+        use treeship_core::statements::{
+            payload_type_v2, ActionStatementV2, Effect, EffectFinality, Mandate, Revocation,
+        };
+
+        let mandate = Mandate {
+            grant_id: "grant_1".into(),
+            grantor: "key_parent".into(),
+            issuer_sig: None,
+            objective_hash: None,
+            scope: vec!["payments.charge".into()],
+            audience: "acme".into(),
+            parent_request_id: None,
+            delegation_depth: 0,
+            issued_at: "2026-07-20T10:00:00Z".into(),
+            expiry: "2026-07-20T11:00:00Z".into(),
+            max_delegation: 3,
+            revocation: Revocation {
+                path: "hub://acme/revocations".into(),
+                revoked_at: None,
+            },
+            chain: Vec::new(),
+        };
+        let signer = Ed25519Signer::generate("agent_worker").unwrap();
+        let dir = std::env::temp_dir().join("ts_verify_resolution_test");
+        let store = Store::open(&dir).unwrap();
+
+        let mut stmt = ActionStatementV2::new("agent://worker", "payments.charge", mandate);
+        stmt.timestamp = "2026-07-20T10:30:00Z".into();
+        stmt.audience = Some("acme".into());
+        stmt.effect = Some(Effect {
+            output_hash: Some("sha256:out".into()),
+            // Accepted, not committed, nothing scheduled to fire.
+            finality: Some(EffectFinality::Initiated),
+            ..Default::default()
+        });
+        let env = sign(&payload_type_v2("action"), &stmt, &signer)
+            .unwrap()
+            .envelope;
+
+        let info = extract_step_info(0, "art_pending", &env, &store);
+        assert_eq!(
+            info.effect_finality,
+            Some(EffectFinality::Initiated),
+            "the lifecycle stage must reach the step card"
+        );
+        assert!(
+            matches!(info.resolution, Some(ResolutionStatus::Indefinite)),
+            "an open effect with no deadline must report Indefinite, got {:?}",
+            info.resolution.is_some()
+        );
+    }
+
+    #[test]
+    fn effect_json_carries_finality_beside_confidence() {
+        use treeship_core::statements::{EffectFinality, EffectVerdict};
+
+        // The two axes must both appear and stay distinguishable. A consumer
+        // that can only see confidence cannot tell an accepted-but-uncommitted
+        // write from a committed one.
+        let v = EffectVerdict {
+            effective_confidence: EffectConfidence::Partial,
+            claimed_confidence: Some(EffectConfidence::Partial),
+            trusted_witnesses: 0,
+            notes: vec![],
+            effective_finality: Some(EffectFinality::Indeterminate),
+            claimed_finality: Some(EffectFinality::Finalized),
+        };
+        let j = effect_verdict_json(&v);
+        assert_eq!(j["effective_confidence"], "partial");
+        assert_eq!(j["downgraded"], false, "confidence was not downgraded");
+        assert_eq!(j["effective_finality"], "indeterminate");
+        assert_eq!(j["claimed_finality"], "finalized");
+        assert_eq!(
+            j["finality_downgraded"], true,
+            "the finality downgrade must be visible independently of confidence"
+        );
+    }
+
+    #[test]
+    fn resolution_json_names_indefinite_and_breached() {
+        use treeship_core::statements::DeadlineEvent;
+
+        // `indefinite` is the pending-forever shape and must not serialize as
+        // anything that reads like "fine".
+        let indef = resolution_status_json(&ResolutionStatus::Indefinite);
+        assert_eq!(indef["outcome"], "indefinite");
+
+        let breached = resolution_status_json(&ResolutionStatus::Breached {
+            on_deadline: DeadlineEvent::Escalate,
+            seconds_overdue: 1234,
+        });
+        assert_eq!(breached["outcome"], "breached");
+        assert_eq!(breached["on_deadline"], "escalate");
+        assert_eq!(breached["seconds_overdue"], 1234);
+
+        assert_eq!(
+            resolution_status_json(&ResolutionStatus::Resolved)["outcome"],
+            "resolved"
+        );
+        assert_eq!(
+            resolution_status_json(&ResolutionStatus::BadDeadline)["outcome"],
+            "bad_deadline"
+        );
     }
 
     #[test]
