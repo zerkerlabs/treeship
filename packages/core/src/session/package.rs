@@ -1481,7 +1481,13 @@ const PREVIEW_TEMPLATE: &str = include_str!("preview_template.html");
 /// 300..500. Embedded as base64 into the self-contained preview so the document
 /// renders with the brand type offline, no CDN. Body and mono use the system
 /// stack. See design/fonts/.
-const FRAUNCES_WOFF2: &[u8] = include_bytes!("../../../../design/fonts/fraunces-latin-var.woff2");
+// Vendored inside the crate, not referenced out of the workspace. `cargo
+// package` only tarballs files under the crate root, so an `include_bytes!`
+// reaching up to `design/fonts/` builds fine here and fails to compile once
+// published -- which is exactly how treeship-core missed crates.io in v0.22.0
+// while npm and PyPI shipped. Kept in sync with `design/fonts/` by
+// `scripts/check-vendored-fonts.py`.
+const FRAUNCES_WOFF2: &[u8] = include_bytes!("../../assets/fonts/fraunces-latin-var.woff2");
 
 /// The `data:` URI for the embedded Fraunces woff2, substituted into the
 /// template's `@font-face`. Standard (not URL-safe) base64: it sits in a CSS
