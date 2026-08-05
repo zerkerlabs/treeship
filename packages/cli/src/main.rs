@@ -1398,11 +1398,17 @@ struct WrapArgs {
 enum AttestCommand {
     /// Record that an actor performed an action
     ///
+    /// With `--v2`, emits a `treeship/action/v2` receipt bound to a signed
+    /// grant (mandate + optional effect/runtime). Without it, emits the
+    /// classic action.v1 receipt.
+    ///
     /// Examples:
     ///   treeship attest action --actor agent://researcher --action tool.call
     ///   treeship attest action --actor agent://checkout --action stripe.charge.create \
     ///     --input-digest sha256:abc123 --output-digest sha256:def456 \
     ///     --parent art_a1b2c3d4 --approval-nonce abc123xyz
+    ///   treeship attest action --v2 --actor agent://checkout --action payments.charge \
+    ///     --grant grn_a1b2c3d4e5f60718 --effect-confidence not_verified
     Action(AttestActionArgs),
 
     /// Record that an approver authorized an intent
@@ -1470,6 +1476,86 @@ struct AttestActionArgs {
     /// Action label -- what was done
     #[arg(long, required = true, value_name = "LABEL")]
     action: String,
+
+    /// Emit a `treeship/action/v2` receipt (mandate + optional effect/runtime)
+    /// instead of action.v1. Requires `--grant` or `--grant-file`.
+    #[arg(long)]
+    v2: bool,
+
+    /// Workspace grant id (`grn_…`) this action runs under. Loads
+    /// `.treeship/grants/<id>.json` and walks `parent_grant_id` to build the
+    /// mandate chain. Mutually exclusive with `--grant-file`.
+    #[arg(long, value_name = "ID")]
+    grant: Option<String>,
+
+    /// Path to a Grant JSON file (same shape `treeship grant issue` writes).
+    /// Mutually exclusive with `--grant`.
+    #[arg(long, value_name = "PATH")]
+    grant_file: Option<String>,
+
+    /// Revocation resolver path recorded on the mandate
+    /// (e.g. `hub://acme/revocations`). Defaults to `hub://local/revocations`.
+    /// Without a wired resolver, `treeship verify` reports authority as
+    /// `unverified` — never a false pass.
+    #[arg(long, value_name = "PATH")]
+    revocation_path: Option<String>,
+
+    /// Audience this action targeted. Defaults to the grant's audience.
+    #[arg(long, value_name = "AUD")]
+    audience: Option<String>,
+
+    /// Actor's effect-confidence claim: verified | partial | ambiguous |
+    /// unknown | not_verified. Implies an effect block.
+    #[arg(long, value_name = "LEVEL")]
+    effect_confidence: Option<String>,
+
+    /// Lifecycle stage: not_attempted | initiated | finalized | failed |
+    /// indeterminate. Implies an effect block.
+    #[arg(long, value_name = "STAGE")]
+    finality: Option<String>,
+
+    /// Externally-observed post-state hash (`sha256:…`). Independent evidence
+    /// the actor cannot mint. Implies an effect block.
+    #[arg(long, value_name = "sha256:HEX")]
+    readback: Option<String>,
+
+    /// Hash of the context the agent acted from. Implies an effect block.
+    #[arg(long, value_name = "sha256:HEX")]
+    context_snapshot: Option<String>,
+
+    /// Side effect label. Repeatable. Implies an effect block.
+    #[arg(long, value_name = "LABEL")]
+    side_effect: Vec<String>,
+
+    /// Bytes moved by the action. Implies an effect block.
+    #[arg(long, value_name = "N")]
+    bytes_moved: Option<u64>,
+
+    /// RFC 3339 deadline for an unresolved effect. Implies an effect block.
+    /// Pair with `--on-deadline`.
+    #[arg(long, value_name = "TIMESTAMP")]
+    resolution_deadline: Option<String>,
+
+    /// Obligation when `--resolution-deadline` passes:
+    /// timeout | escalate | tombstone | inherit.
+    #[arg(long, value_name = "EVENT")]
+    on_deadline: Option<String>,
+
+    /// Model provider (runtime identity), e.g. `anthropic`.
+    #[arg(long, value_name = "NAME")]
+    provider: Option<String>,
+
+    /// Model identifier (runtime identity), e.g. `claude-opus-4`.
+    #[arg(long, value_name = "ID")]
+    model: Option<String>,
+
+    /// Hash of the tool schemas available this turn (`sha256:…`).
+    #[arg(long, value_name = "sha256:HEX")]
+    tool_schema_hash: Option<String>,
+
+    /// Hash of the system prompt the agent ran under (`sha256:…`).
+    #[arg(long, value_name = "sha256:HEX")]
+    system_prompt_hash: Option<String>,
 
     /// SHA-256 digest of the input consumed
     #[arg(long, value_name = "sha256:HEX")]
@@ -2847,6 +2933,23 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                     commands::attest::ActionArgs {
                         actor: a.actor.clone(),
                         action: a.action.clone(),
+                        v2: a.v2,
+                        grant: a.grant.clone(),
+                        grant_file: a.grant_file.clone(),
+                        revocation_path: a.revocation_path.clone(),
+                        audience: a.audience.clone(),
+                        effect_confidence: a.effect_confidence.clone(),
+                        finality: a.finality.clone(),
+                        readback: a.readback.clone(),
+                        context_snapshot: a.context_snapshot.clone(),
+                        side_effects: a.side_effect.clone(),
+                        bytes_moved: a.bytes_moved,
+                        resolution_deadline: a.resolution_deadline.clone(),
+                        on_deadline: a.on_deadline.clone(),
+                        provider: a.provider.clone(),
+                        model: a.model.clone(),
+                        tool_schema_hash: a.tool_schema_hash.clone(),
+                        system_prompt_hash: a.system_prompt_hash.clone(),
                         input_digest: a.input_digest.clone(),
                         output_digest: a.output_digest.clone(),
                         content_uri: subject_uri,

@@ -92,6 +92,23 @@ treeship attest action [OPTIONS] --actor <URI> --action <LABEL>
 |---|---|
 | `--actor <URI>` | Actor URI -- who performed the action |
 | `--action <LABEL>` | Action label -- what was done |
+| `--v2` | Emit a `treeship/action/v2` receipt (mandate + optional effect/runtime) instead of action.v1. Requires `--grant` or `--grant-file` |
+| `--grant <ID>` | Workspace grant id (`grn_…`) this action runs under. Loads `.treeship/grants/&lt;id&gt;.json` and walks `parent_grant_id` to build the mandate chain. Mutually exclusive with `--grant-file` |
+| `--grant-file <PATH>` | Path to a Grant JSON file (same shape `treeship grant issue` writes). Mutually exclusive with `--grant` |
+| `--revocation-path <PATH>` | Revocation resolver path recorded on the mandate (e.g. `hub://acme/revocations`). Defaults to `hub://local/revocations`. Without a wired resolver, `treeship verify` reports authority as `unverified` — never a false pass |
+| `--audience <AUD>` | Audience this action targeted. Defaults to the grant's audience |
+| `--effect-confidence <LEVEL>` | Actor's effect-confidence claim: verified \| partial \| ambiguous \| unknown \| not_verified. Implies an effect block |
+| `--finality <STAGE>` | Lifecycle stage: not_attempted \| initiated \| finalized \| failed \| indeterminate. Implies an effect block |
+| `--readback <sha256:HEX>` | Externally-observed post-state hash (`sha256:…`). Independent evidence the actor cannot mint. Implies an effect block |
+| `--context-snapshot <sha256:HEX>` | Hash of the context the agent acted from. Implies an effect block |
+| `--side-effect <LABEL>` | Side effect label. Repeatable. Implies an effect block |
+| `--bytes-moved <N>` | Bytes moved by the action. Implies an effect block |
+| `--resolution-deadline <TIMESTAMP>` | RFC 3339 deadline for an unresolved effect. Implies an effect block. Pair with `--on-deadline` |
+| `--on-deadline <EVENT>` | Obligation when `--resolution-deadline` passes: timeout \| escalate \| tombstone \| inherit |
+| `--provider <NAME>` | Model provider (runtime identity), e.g. `anthropic` |
+| `--model <ID>` | Model identifier (runtime identity), e.g. `claude-opus-4` |
+| `--tool-schema-hash <sha256:HEX>` | Hash of the tool schemas available this turn (`sha256:…`) |
+| `--system-prompt-hash <sha256:HEX>` | Hash of the system prompt the agent ran under (`sha256:…`) |
 | `--input-digest <sha256:HEX>` | SHA-256 digest of the input consumed |
 | `--output-digest <sha256:HEX>` | SHA-256 digest of the output produced |
 | `--content-uri <URI>` | URI to referenced content (for large/external payloads). Sets the action's subject.uri so it can be matched against an approval's --allowed-subject scope. Same role as the older --content-uri flag, named to read symmetrically with the --allowed-subject flag on `attest approval` |

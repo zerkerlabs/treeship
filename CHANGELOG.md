@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+- **`treeship attest action --v2`** — CLI emission of `treeship/action/v2`
+  receipts. Pass `--grant <id>` (workspace store) or `--grant-file <path>`,
+  optionally bind effect (`--effect-confidence`, `--finality`, `--readback`, …)
+  and runtime identity (`--provider`, `--model`, …). `treeship verify` then
+  surfaces authority / effect / runtime on a receipt the CLI itself produced —
+  the half that was verification-only through 0.22.
+
 ## 0.22.0 (2026-08-05)
 
 The delegation-and-completion release. v0.21 answered *what was authorized* and

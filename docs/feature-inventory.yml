@@ -42,6 +42,20 @@
     - packages/core/src/artifacts/verify.rs
   notes: "DSSE envelopes (Ed25519 over PAE bytes, deterministic declaration-order JSON), content-addressed art_ IDs."
 
+- id: action-v2-emission
+  name: action/v2 receipt emission (CLI)
+  section: core
+  status: beta
+  cli:
+    - treeship attest action --v2
+  packages:
+    - treeship-core
+    - treeship-cli
+  tests:
+    - packages/cli/tests/action_v2_emit_e2e.rs
+    - packages/cli/tests/action_v2_verify_e2e.rs
+  notes: "CLI emits treeship/action/v2 receipts bound to a signed grant (--grant / --grant-file), with optional effect and runtime blocks. Verification of mandate/effect shipped in 0.21–0.22; emission is the 0.23 half."
+
 - id: session-reports
   name: Session reports
   section: core
