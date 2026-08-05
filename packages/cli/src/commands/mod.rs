@@ -13,6 +13,7 @@ pub mod dashboard;
 pub mod declare;
 pub mod discovery;
 pub mod doctor;
+pub mod grant;
 pub mod harness;
 pub mod harnesses;
 pub mod history;

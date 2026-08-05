@@ -912,6 +912,51 @@ treeship deny [OPTIONS] [N]
 |---|---|
 | `[N]` | Index of the pending approval to deny (default: 1) |
 
+## `treeship grant`
+
+Mint and inspect signed capability grants
+
+```
+treeship grant [OPTIONS] <COMMAND>
+```
+
+### `treeship grant issue`
+
+Mint a signed grant. With --parent, mints a delegated child
+
+```
+treeship grant issue [OPTIONS] --scope <SCOPE> --audience <AUDIENCE> --expiry <EXPIRY>
+```
+
+| Option | Description |
+|---|---|
+| `--scope <SCOPE>` | Capability this grant admits. Repeatable. A single trailing `*` acts as a prefix wildcard: `payments.*` |
+| `--audience <AUDIENCE>` | Who the grant is for. A delegated grant may not change it |
+| `--expiry <EXPIRY>` | RFC 3339. A delegated grant may not outlive its parent |
+| `--parent <PARENT>` | Delegate from this grant id, narrowing its authority |
+| `--max-delegation <MAX_DELEGATION>` | How many further delegations this grant permits beneath it [default: 3] |
+| `--objective-hash <OBJECTIVE_HASH>` | Optional hash binding the grant to a stated objective |
+
+### `treeship grant list`
+
+List every grant minted in this workspace
+
+```
+treeship grant list [OPTIONS]
+```
+
+### `treeship grant show`
+
+Show one grant, re-deriving its id and re-checking its signature
+
+```
+treeship grant show [OPTIONS] <GRANT_ID>
+```
+
+| Argument | Description |
+|---|---|
+| `<GRANT_ID>` | -- |
+
 ## `treeship doctor`
 
 Diagnostic check -- verify everything is working
