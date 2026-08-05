@@ -92,7 +92,7 @@
     - docs/content/docs/cli/verify.mdx
     - docs/content/docs/concepts/verification-surfaces.mdx
   tests:
-    - packages/core/src/verify.rs
+    - packages/cli/src/commands/verify.rs
   notes: "Walks the parent chain, checks every signature, verifies Merkle inclusion -- all offline. Fetched receipts earn structural-pass, never pass."
 
 - id: wasm-verifier
