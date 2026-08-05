@@ -205,6 +205,21 @@
     - packages/core/src/statements/approval_use.rs
   notes: "Workspace-local store of consumed approval grants. Enforces max_uses + idempotency-key replay safety. Approvals are scoped by default (--allowed-* / --max-uses, or explicit --unscoped)."
 
+- id: capability-grants
+  name: Capability grants + delegation chains
+  section: identity
+  status: beta
+  cli:
+    - treeship grant issue
+    - treeship grant list
+    - treeship grant show
+  packages:
+    - treeship-core
+  tests:
+    - packages/core/src/statements/action_v2.rs
+    - packages/cli/src/commands/grant.rs
+  notes: "The authority an action/v2 receipt runs under. Grant ids are content-derived (grn_ + sha256 of the signed canonical), so a parent pointer commits to one specific grant rather than to a name. Issuing refuses to widen: a delegated grant may only narrow scope, shorten expiry, keep the same audience, and stay inside max_delegation, with depth derived from the parent rather than declared. beta, not stable: grants have no revocation resolver, and no docs page yet."
+
 - id: per-agent-keys
   name: Per-agent keys & onboarding
   section: identity
