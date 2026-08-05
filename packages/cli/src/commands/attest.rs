@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde_json::Value;
 use treeship_core::{
@@ -16,6 +16,9 @@ use treeship_core::{
     trust::{decode_ed25519_pubkey, TrustRootKind, TrustRootStore},
 };
 
+// The grant store is owned by `commands::grant`; emission borrows its layout
+// and read path rather than restating them.
+use crate::commands::grant::{grants_dir_for, read_grant_file, read_grant_id};
 use crate::commands::verify::{check_scope_violation, find_approval_by_nonce, now_rfc3339};
 use crate::{ctx, printer::Printer};
 use treeship_core::session::event::EventType;
@@ -440,42 +443,6 @@ fn action_v2(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std:
     printer.hint(&format!("treeship verify {}", result.artifact_id));
     printer.blank();
     Ok(result.artifact_id)
-}
-
-/// Same layout `treeship grant issue` uses: `<config_dir>/grants/<id>.json`.
-fn grants_dir_for(config_path: &Path) -> PathBuf {
-    config_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("grants")
-}
-
-fn read_grant_file(path: &Path) -> Result<Grant, Box<dyn std::error::Error>> {
-    let raw = std::fs::read_to_string(path)
-        .map_err(|e| format!("could not read grant file {}: {e}", path.display()))?;
-    let g: Grant = serde_json::from_str(&raw)
-        .map_err(|e| format!("grant file is not valid Grant JSON ({}): {e}", path.display()))?;
-    if !g.id_is_consistent() {
-        return Err(format!(
-            "grant {} declares an id that does not match its content\n  \
-             refused: a hand-chosen id cannot anchor a mandate chain",
-            g.grant_id
-        )
-        .into());
-    }
-    Ok(g)
-}
-
-fn read_grant_id(dir: &Path, id: &str) -> Result<Grant, Box<dyn std::error::Error>> {
-    let path = dir.join(format!("{id}.json"));
-    if !path.exists() {
-        return Err(format!(
-            "grant not found: {id}\n  looked in {}\n  mint one with: treeship grant issue …",
-            dir.display()
-        )
-        .into());
-    }
-    read_grant_file(&path)
 }
 
 /// Load the leaf grant and, when it is delegated, every ancestor reachable

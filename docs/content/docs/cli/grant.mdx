@@ -1,0 +1,125 @@
+---
+title: grant
+description: Mint and inspect signed capability grants — the authority an action/v2 receipt runs under.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+A **grant** is the authority an action runs under: a scope, an audience, a window, and a signature from whoever issued it. `treeship attest action --v2` consumes one and records it in the receipt as a *mandate*, so a verifier can later ask not just "was this signed?" but "was it allowed?"
+
+Grants live at `<config-dir>/grants/<grant-id>.json` — workspace-scoped, so a project-local Treeship answers for its own grants rather than a shared global set.
+
+## Subcommands
+
+```bash
+treeship grant issue --scope <scope> --audience <aud> --expiry <rfc3339> [--parent <grant-id>]
+treeship grant list
+treeship grant show <grant-id>
+```
+
+## Issuing a root grant
+
+```bash
+treeship grant issue \
+  --scope 'payments.*' \
+  --audience acme \
+  --expiry 2027-12-31T23:59:59Z
+```
+
+```
+✓ grant issued  grn_5210541d0135a22e
+  scope:     payments.*
+  audience:  acme
+  expiry:    2027-12-31T23:59:59Z
+  depth:     0
+```
+
+`--scope` is repeatable. A single trailing `*` acts as a prefix wildcard, so `payments.*` admits `payments.charge` but not `email.send`.
+
+## The id is derived, not chosen
+
+```
+grant_id = "grn_" + hex(sha256(canonical_for_signing()))[..16]
+```
+
+Same shape as `artifact_id`. This matters for delegation: because a child commits to its parent by **content hash**, a parent pointer names one specific grant rather than a string anyone else could also claim. An id that does not match its content is refused wherever a grant is about to be used.
+
+## Delegating
+
+```bash
+treeship grant issue \
+  --parent grn_5210541d0135a22e \
+  --scope payments.charge \
+  --audience acme \
+  --expiry 2027-06-30T00:00:00Z
+```
+
+A delegated grant may only **narrow** authority, and `issue` refuses to mint one that does not:
+
+| Refused when the child… | Example against a `payments.*` parent |
+|---|---|
+| widens scope | `--scope email.send` — outside the parent entirely |
+| outlives its parent | an expiry later than the parent's |
+| changes audience | `--audience other` when the parent is for `acme` |
+| exceeds `max_delegation` | the parent capped how deep delegation may go |
+| has an expiry already in the past | it could never verify, so minting it is never deliberate |
+
+Narrowing is fine: `--scope payments.refund` is admitted by `payments.*`, and so is `--scope payments.charge`. Each refusal exits `1`.
+
+`delegation_depth` is **derived** from the parent, never accepted from you. A depth declared inside the very chain being verified is not evidence of anything.
+
+<Callout type="info">
+Refusing at mint is deliberate. `treeship verify` would catch an invalid chain later, but an invalid chain that exists is one somebody will eventually be asked to trust. Better that it never gets created.
+</Callout>
+
+## Inspecting
+
+`grant show` re-derives the id and re-checks the signature off disk rather than trusting the file:
+
+```bash
+treeship grant show grn_7ceb15dca9f96b0c
+```
+
+```
+✓ grn_7ceb15dca9f96b0c
+  grantor:             5YHXUAE4HhqiKxYd5TrQN2fOXvJcxykU4T8wBie9fmc
+  scope:               payments.charge
+  audience:            acme
+  expiry:              2027-06-30T00:00:00Z
+  depth:               1
+  parent:              grn_5210541d0135a22e
+  id matches content:  yes
+  issuer signature:    yes
+```
+
+An unsound grant still opens here — that is the point of the command. It reports `no` rather than refusing to show you the thing you are trying to diagnose.
+
+## Using a grant
+
+```bash
+treeship attest action --v2 \
+  --actor agent://worker \
+  --action payments.charge \
+  --grant grn_7ceb15dca9f96b0c \
+  --effect-confidence not_verified \
+  --finality initiated
+```
+
+`treeship verify` then reports the authority and delegation axes:
+
+```json
+"authority":        { "outcome": "unverified", "reasons": ["revocation could not be checked: …"] },
+"delegation_chain": { "hops": 2, "outcome": "holds" }
+```
+
+The ancestors are carried inline in the receipt, so the chain verifies **offline** — no fetch, no hub, no network.
+
+<Callout type="warn">
+**Revocation is not checked.** The CLI wires no revocation resolver, so the authority axis reports `unverified` rather than `pass`, and names revocation as the layer it could not check. This is deliberate: the hub's revocation endpoint is an unsigned, always-empty stub, and reading it would turn an honest "I don't know" into a false "not revoked" for every grant ever issued. A grant you need to withdraw must be withdrawn out of band today.
+</Callout>
+
+## What a grant does not do
+
+- **It does not enforce.** Treeship records what authority an action claimed and lets anyone check whether the action stayed inside it. Nothing stops an agent acting outside its grant; verification is how that becomes visible.
+- **It does not expire itself.** An expired grant fails the window check at verify time; nothing deletes it from disk.
+- **A root grant makes no lineage claim.** Its receipts report `not_claimed` on the delegation axis, not a chain that passes — there is nothing to check, and saying otherwise would imply a check that never ran.
