@@ -7,8 +7,9 @@ use treeship_core::{
         invitation::InvitationStatement,
         payload_type, payload_type_v2,
         session_participant::{verify_participant_envelope, SessionParticipantStatement},
-        verify_effect, ActionStatement, ActionStatementV2, ApprovalScope, ApprovalStatement,
-        DecisionStatement, EffectConfidence, EffectVerdict, HandoffStatement, NoWitnessAuthority,
+        verify_effect, verify_mandate, ActionStatement, ActionStatementV2, ApprovalScope,
+        ApprovalStatement, DecisionStatement, EffectConfidence, EffectVerdict, HandoffStatement,
+        MandateVerdict, NoRevocationSource, NoWitnessAuthority,
         ReceiptStatement,
     },
     storage::Store,
@@ -71,8 +72,22 @@ struct StepInfo {
     effect_claimed: Option<EffectConfidence>,
     effect_downgraded: bool,
     effect_trusted_witnesses: usize,
+    // action/v2 mandate verdict (authority: in scope, in window, not revoked).
+    // Sibling of the effect verdict: effect asks "did it land", authority asks
+    // "was it allowed". A receipt can be impeccably signed and still record an
+    // action outside its grant.
+    mandate_verdict: Option<MandateSummary>,
     // action/v2 runtime identity (who/what executed the action).
     runtime_model: Option<String>,
+}
+
+/// Flattened mandate outcome for display. `Unverified` carries the layers we
+/// could not check rather than silently reading as a pass.
+#[derive(Clone)]
+enum MandateSummary {
+    Pass,
+    Unverified(Vec<String>),
+    Fail(Vec<String>),
 }
 
 /// Human label for an effect confidence level, matching the wire snake_case.
@@ -99,6 +114,23 @@ fn v2_effect_verdict(env: &Envelope) -> Option<EffectVerdict> {
     let stmt = env.unmarshal_statement::<ActionStatementV2>().ok()?;
     stmt.effect.as_ref()?;
     Some(verify_effect(&stmt, &NoWitnessAuthority))
+}
+
+/// Reconciled mandate verdict for an envelope, if it is a treeship/action/v2
+/// receipt. `None` for anything else. Uses [`NoRevocationSource`]: the CLI
+/// wires no revocation resolver yet, so that layer resolves Unknown and the
+/// verdict degrades to Unverified -- claiming a grant is live because we never
+/// looked would be exactly the false pass this verifier exists to refuse.
+fn v2_mandate_summary(env: &Envelope) -> Option<MandateSummary> {
+    if env.payload_type != payload_type_v2("action") {
+        return None;
+    }
+    let stmt = env.unmarshal_statement::<ActionStatementV2>().ok()?;
+    Some(match verify_mandate(&stmt, &NoRevocationSource) {
+        MandateVerdict::Pass => MandateSummary::Pass,
+        MandateVerdict::Unverified(r) => MandateSummary::Unverified(r),
+        MandateVerdict::Fail(r) => MandateSummary::Fail(r),
+    })
 }
 
 /// Serialize an effect verdict for `--json` output.
@@ -725,6 +757,28 @@ fn print_step_card(step: &StepInfo, printer: &Printer) {
         print_box_line(&format!("runtime: {}", model), printer);
     }
 
+    // Authority verdict (action/v2): was this action inside its grant, in
+    // window, and not revoked? Printed before effect: an out-of-scope action
+    // that definitely landed is worse news than one that maybe did not.
+    match &step.mandate_verdict {
+        Some(MandateSummary::Pass) => {
+            print_box_line("authority: in scope, in window, not revoked", printer);
+        }
+        Some(MandateSummary::Unverified(reasons)) => {
+            print_box_line(
+                &format!("authority: unverified ({})", reasons.join("; ")),
+                printer,
+            );
+        }
+        Some(MandateSummary::Fail(reasons)) => {
+            print_box_line(
+                &format!("authority: INVALID ({})", reasons.join("; ")),
+                printer,
+            );
+        }
+        None => {}
+    }
+
     // Effect verdict (action/v2): operational confidence, reconciled against
     // evidence. Distinct from the signature check -- a valid signature over a
     // Verified claim still reads not-verified here when nothing backs it.
@@ -885,6 +939,7 @@ fn extract_step_info(index: usize, id: &str, env: &Envelope, storage: &Store) ->
         effect_effective: None,
         effect_claimed: None,
         effect_downgraded: false,
+        mandate_verdict: None,
         effect_trusted_witnesses: 0,
         runtime_model: None,
     };
@@ -902,6 +957,7 @@ fn extract_step_info(index: usize, id: &str, env: &Envelope, storage: &Store) ->
                 info.runtime_model = rt.model.clone();
             }
             // Surface the effect line only when there is an effect to judge.
+            info.mandate_verdict = v2_mandate_summary(env);
             if let Some(verdict) = v2_effect_verdict(env) {
                 info.effect_effective = Some(verdict.effective_confidence);
                 info.effect_claimed = verdict.claimed_confidence;
@@ -1835,5 +1891,73 @@ mod tests {
         let r = check_scope_violation(&scope, &action);
         assert!(r.is_some());
         assert!(r.unwrap().contains("scope expired"));
+    }
+
+    // ── action/v2 mandate (authority) wiring ───────────────────────────
+    #[test]
+    fn v2_mandate_authority_reaches_step_info() {
+        use treeship_core::attestation::{sign, Ed25519Signer};
+        use treeship_core::statements::{
+            payload_type_v2, ActionStatementV2, Mandate, Revocation,
+        };
+
+        let mandate = |scope: Vec<String>| Mandate {
+            grant_id: "grant_1".into(),
+            grantor: "key_parent".into(),
+            issuer_sig: None,
+            objective_hash: None,
+            scope,
+            audience: "acme".into(),
+            parent_request_id: None,
+            delegation_depth: 0,
+            issued_at: "2026-07-20T10:00:00Z".into(),
+            expiry: "2026-07-20T11:00:00Z".into(),
+            max_delegation: 3,
+            revocation: Revocation {
+                path: "hub://acme/revocations".into(),
+                revoked_at: None,
+            },
+        };
+        let signer = Ed25519Signer::generate("agent_worker").unwrap();
+        let dir = std::env::temp_dir().join("ts_verify_v2_mandate_test");
+        let store = Store::open(&dir).unwrap();
+
+        // In scope: the revocation layer is still unresolvable (the CLI wires
+        // no resolver), so the honest verdict is Unverified -- never Pass.
+        let mut ok = ActionStatementV2::new("agent://worker", "payments.charge", mandate(vec!["payments.charge".into()]));
+        ok.timestamp = "2026-07-20T10:30:00Z".into();
+        ok.audience = Some("acme".into());
+        let ok_env = sign(&payload_type_v2("action"), &ok, &signer).unwrap().envelope;
+        let info = extract_step_info(0, "art_ok", &ok_env, &store);
+        match info.mandate_verdict {
+            Some(MandateSummary::Unverified(ref r)) => {
+                assert!(!r.is_empty(), "unverified must name the layer it could not check");
+            }
+            other => panic!("expected Unverified without a revocation resolver, got {:?}", other.is_some()),
+        }
+
+        // Out of scope: a signature over an unauthorized action must not read
+        // as authorized anywhere in the output.
+        let mut bad = ActionStatementV2::new("agent://worker", "payments.refund", mandate(vec!["payments.charge".into()]));
+        bad.timestamp = "2026-07-20T10:30:00Z".into();
+        bad.audience = Some("acme".into());
+        let bad_env = sign(&payload_type_v2("action"), &bad, &signer).unwrap().envelope;
+        let bad_info = extract_step_info(1, "art_bad", &bad_env, &store);
+        match bad_info.mandate_verdict {
+            Some(MandateSummary::Fail(ref r)) => {
+                assert!(r.iter().any(|x| x.contains("scope")), "reason should name scope: {r:?}");
+            }
+            _ => panic!("an out-of-scope action must produce a Fail verdict"),
+        }
+
+        // v1 artifacts carry no mandate and must not gain an authority line.
+        let v1 = act("agent://x", "tool.call", None);
+        let v1_env = sign(&treeship_core::statements::payload_type("action"), &v1, &signer)
+            .unwrap()
+            .envelope;
+        assert!(
+            v2_mandate_summary(&v1_env).is_none(),
+            "v1 receipts must not claim anything about authority"
+        );
     }
 }
