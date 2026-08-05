@@ -488,7 +488,10 @@ const CERTIFICATE_TEMPLATE: &str = include_str!("certificate_template.html");
 /// Brand display serif (Fraunces, SIL OFL 1.1), latin variable slice, embedded
 /// as base64 so the certificate renders with the brand type offline, no CDN.
 /// See design/fonts/.
-const FRAUNCES_WOFF2: &[u8] = include_bytes!("../../../../design/fonts/fraunces-latin-var.woff2");
+// Vendored inside the crate; see the note in
+// `packages/core/src/session/package.rs`. Reaching outside the crate root
+// compiles locally and breaks `cargo publish`.
+const FRAUNCES_WOFF2: &[u8] = include_bytes!("../../assets/fonts/fraunces-latin-var.woff2");
 
 /// The `data:` URI for the embedded Fraunces woff2, substituted into the
 /// certificate template's `@font-face`.

@@ -61,6 +61,8 @@ jobs:
         run: python3 scripts/check-feature-inventory.py --strict
       - name: Every protocol spec is indexed
         run: python3 scripts/check-specs-index.py
+      - name: Published crates embed only files inside their own root
+        run: python3 scripts/check-vendored-fonts.py
       - name: Generated feature matrix matches the inventory
         # The generator needs only the `yaml` package (package-lock.json is
         # gitignored in docs/, so no npm ci; skip the full fumadocs install).
@@ -85,6 +87,15 @@ jobs:
       # separately; the `zk` feature is pre-release.)
       - name: Run tests
         run: cargo test -p treeship-core -p treeship-cli -p treeship-core-wasm
+
+      - name: The published crate tarball actually compiles
+        # `cargo publish` builds from a tarball containing only files under the
+        # crate root, so an include reaching outside it compiles here and fails
+        # there. That is how treeship-core missed crates.io in v0.22.0 while
+        # npm and PyPI shipped -- a partial release the version preflight could
+        # not catch, because every version was correct. This runs the same
+        # verify step publish does.
+        run: cargo package -p treeship-core --allow-dirty
 
       - name: Build CLI
         run: cargo build -p treeship-cli
