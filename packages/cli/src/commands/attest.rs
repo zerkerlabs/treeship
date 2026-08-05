@@ -478,8 +478,14 @@ fn read_grant_id(dir: &Path, id: &str) -> Result<Grant, Box<dyn std::error::Erro
     read_grant_file(&path)
 }
 
-/// Load the leaf grant and every ancestor reachable via `parent_grant_id`.
-/// The returned chain includes the leaf (required by `resolve_grant_chain`).
+/// Load the leaf grant and, when it is delegated, every ancestor reachable
+/// via `parent_grant_id`.
+///
+/// A root grant (no `parent_grant_id`) returns an **empty** chain. Carrying
+/// the leaf alone would make `verify` report `delegation_chain: holds` for a
+/// grant that never claimed lineage — the honesty regression a single-hop
+/// receipt must not create. `resolve_grant_chain` only runs when the carrier
+/// asserted ancestors; empty means `not_claimed`.
 fn load_grant_and_chain(
     grants_dir: &Path,
     grant_id: Option<&str>,
@@ -490,6 +496,11 @@ fn load_grant_and_chain(
         (None, Some(path)) => read_grant_file(Path::new(path))?,
         _ => unreachable!("validate_v2_flags requires exactly one grant source"),
     };
+
+    // No parent → no lineage claim. Leave mandate.chain empty.
+    if leaf.parent_grant_id.is_none() {
+        return Ok((leaf, Vec::new()));
+    }
 
     let mut chain = Vec::new();
     let mut seen = HashSet::new();

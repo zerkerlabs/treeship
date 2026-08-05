@@ -217,6 +217,51 @@ fn v2_without_grant_is_refused() {
 }
 
 #[test]
+fn root_grant_reports_delegation_not_claimed() {
+    // A single-hop grant never asserted lineage. Stuffing the leaf into
+    // mandate.chain would make verify report `holds` for a check that
+    // never ran — the honesty bug caught in the grant-issue × emit integration.
+    let ws = Workspace::new();
+    let grant = ws.plant_grant(&["tool.call"], "local", "2099-01-01T00:00:00Z");
+    assert!(
+        grant.parent_grant_id.is_none(),
+        "plant_grant must mint a root"
+    );
+
+    let out = ws
+        .cmd()
+        .args([
+            "--format",
+            "json",
+            "attest",
+            "action",
+            "--v2",
+            "--actor",
+            "agent://worker",
+            "--action",
+            "tool.call",
+            "--grant",
+            &grant.grant_id,
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "attest failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let emitted: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&out.stdout)).unwrap();
+    let id = emitted["id"].as_str().unwrap();
+
+    let j = ws.verify_json(id);
+    assert_eq!(
+        j["checks"][0]["delegation_chain"]["outcome"], "not_claimed",
+        "root grant must not claim a holding chain: {j}"
+    );
+}
+
+#[test]
 fn grant_file_emits_without_workspace_store() {
     let ws = Workspace::new();
     let grant = ws.plant_grant(&["tool.call"], "local", "2099-01-01T00:00:00Z");
