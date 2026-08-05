@@ -2,6 +2,82 @@
 
 ## Unreleased
 
+## 0.23.0 (2026-08-05)
+
+The emission release. v0.21 and v0.22 built a verifier that could check
+mandates, delegation chains, effect finality, and resolution deadlines — and
+none of it was reachable, because nothing could mint a grant or emit an
+action/v2 receipt. Both halves now exist, so the loop closes:
+
+```
+treeship grant issue --scope 'payments.*' --audience acme --expiry 2027-12-31T23:59:59Z
+treeship grant issue --parent grn_… --scope payments.charge --audience acme --expiry 2027-06-30T00:00:00Z
+treeship attest action --v2 --actor agent://worker --action payments.charge --grant grn_… \
+  --effect-confidence not_verified --finality initiated
+treeship verify last --format json
+```
+
+```json
+"authority":        { "outcome": "unverified", "reasons": ["revocation could not be checked: …"] },
+"delegation_chain": { "hops": 2, "outcome": "holds" },
+"resolution":       { "outcome": "indefinite" },
+"effect":           { "effective_finality": "initiated" }
+```
+
+### Added
+- **`treeship grant issue` / `list` / `show`.** Mint a signed capability grant,
+  or delegate a narrower one with `--parent`. Ids are content-derived
+  (`grn_` + `hex(sha256(canonical))[..16]`), so a parent pointer is a hash
+  commitment to one specific grant rather than a reference to a name anyone
+  could claim. Grants are workspace-scoped, resolved from the active config the
+  same way the approval-use journal is.
+
+  Attenuation is enforced **at mint**, not only at verify: issuing refuses a
+  child that widens scope, outlives its parent, changes audience, or exceeds
+  `max_delegation`, and `delegation_depth` is derived from the parent rather
+  than accepted from the caller. A verifier catching an invalid chain later is
+  the backstop; refusing to create one is the fix, because an invalid chain
+  that exists is one somebody will eventually be asked to trust. Also refuses
+  an expiry already in the past — a grant that can never verify is never
+  minted deliberately.
+
+  `grant show` re-derives the id and re-checks the signature off disk rather
+  than trusting the file, and will open an unsound grant in order to report it
+  as unsound.
+
+- **`treeship attest action --v2`.** Emits a real action/v2 receipt carrying the
+  mandate from a grant (`--grant` or `--grant-file`), an optional effect block
+  (`--effect-confidence`, `--finality`, `--readback`, `--context-snapshot`,
+  `--resolution-deadline`, `--on-deadline`), and runtime identity. Ancestors are
+  walked from `parent_grant_id` and carried inline, so a delegated action still
+  verifies offline with no fetch.
+
+  A root grant leaves `mandate.chain` empty rather than carrying its lone leaf.
+  A one-element chain has no adjacent pair to check, so reporting it as
+  "attenuation holds" would name a check that never ran; `not_claimed` is the
+  honest answer.
+
+### Fixed
+- **`treeship-core` reaches crates.io again.** It did not publish in v0.22.0
+  while npm and PyPI did — `packages/core/src/session/package.rs` embedded a
+  webfont from `design/fonts/`, outside the crate root, and `cargo publish`
+  builds from a tarball containing only files under that root. The include
+  landed after v0.21.0, which is why the previous release was clean. Each crate
+  now vendors the font under its own `assets/fonts/`.
+
+  Two guards, because the version preflight could never have caught this —
+  every version was correct, the crate simply could not be built:
+  `scripts/check-vendored-fonts.py` flags a published crate embedding anything
+  from outside its root, and CI now runs `cargo package -p treeship-core`, the
+  same verify step publish does.
+
+### Notes
+- Revocation is still unchecked, so the authority axis reports `unverified`
+  rather than `pass` and names the layer it could not check. The hub endpoint
+  remains an unsigned, hardcoded-empty stub; reading it would convert an honest
+  "I don't know" into a false "not revoked" for every grant ever issued.
+- Capability grants ship as **beta**, not stable, for that reason.
+
 ### Added
 - **`treeship attest action --v2`** — CLI emission of `treeship/action/v2`
   receipts. Pass `--grant <id>` (workspace store) or `--grant-file <path>`,
