@@ -106,6 +106,6 @@ A receipt or statement `actor` is an opaque string; Treeship does not enforce th
 |---|---|---|
 | `human://` | A human principal | `human://alice` |
 | `agent://` | An autonomous agent | `agent://support-bot` |
-| `farcaster://` | A Farcaster identity, addressed by numeric FID | `farcaster://fid:12345` |
+| `zerker://` | An agent behind the Zerker Gateway, addressed by its gateway agent ID | `zerker://agt_12345` |
 
-`farcaster://fid:<numeric_fid>` works today with no special handling, it is a documented convention, not a validated type.
+`zerker://agt_<gateway_agent_id>` works today with no special handling, it is a documented convention, not a validated type. (Actor strings written under the former `farcaster://fid:<n>` convention remain valid — actors are opaque.)
