@@ -118,7 +118,17 @@ enum MandateSummary {
     Fail(Vec<String>),
 }
 
-/// Human label for an effect confidence level, matching the wire snake_case.
+/// Human label for an effect confidence level.
+///
+/// NOTE: this does *not* match the wire form, despite what this comment used to
+/// claim. `EffectConfidence` serializes `snake_case`, so a receipt carries
+/// `not_verified` while `--format json` reports `not-verified`. A consumer
+/// round-tripping between the two breaks on exactly that value.
+///
+/// Left as-is deliberately: changing it is a breaking change to a field
+/// `--format json` has emitted since v0.21, and that is a decision to make on
+/// purpose rather than as a side effect of adding a neighbouring field. New
+/// labels (see `finality_label`) follow the wire form.
 fn effect_label(c: EffectConfidence) -> &'static str {
     match c {
         EffectConfidence::Verified => "verified",
