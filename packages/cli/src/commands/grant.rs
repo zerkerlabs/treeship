@@ -26,23 +26,63 @@ use treeship_core::statements::{parse_rfc3339_to_unix, Grant};
 use crate::ctx;
 use crate::printer::{Format, Printer};
 
-fn grants_dir_for(config_path: &Path) -> PathBuf {
+// The grant store's layout and read path live here and only here. `attest
+// action --v2` loads grants through these rather than keeping its own copy:
+// two definitions of "where grants live" agree right up until one of them
+// changes.
+
+/// `<config_dir>/grants/`, resolved from the active config so a project-local
+/// Treeship answers for its own grants.
+pub(crate) fn grants_dir_for(config_path: &Path) -> PathBuf {
     config_path
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join("grants")
 }
 
-fn grant_path(dir: &Path, id: &str) -> PathBuf {
+pub(crate) fn grant_path(dir: &Path, id: &str) -> PathBuf {
     dir.join(format!("{id}.json"))
 }
 
-fn read_grant(dir: &Path, id: &str) -> Result<Grant, Box<dyn std::error::Error>> {
-    let p = grant_path(dir, id);
-    let raw = std::fs::read_to_string(&p)
-        .map_err(|_| format!("grant not found: {id}\n  run: treeship grant list"))?;
-    let g: Grant = serde_json::from_str(&raw)?;
+/// Parse a grant without judging it. Used by `grant show`, whose whole job is
+/// to report whether what is on disk is sound -- a loader that refused unsound
+/// grants would leave the one command meant to diagnose them unable to open
+/// them.
+pub(crate) fn read_grant_unchecked(path: &Path) -> Result<Grant, Box<dyn std::error::Error>> {
+    let raw = std::fs::read_to_string(path)
+        .map_err(|e| format!("could not read grant file {}: {e}", path.display()))?;
+    let g: Grant = serde_json::from_str(&raw)
+        .map_err(|e| format!("grant file is not valid Grant JSON ({}): {e}", path.display()))?;
     Ok(g)
+}
+
+/// Parse a grant that is about to be *used*, refusing one whose declared id
+/// does not match its content. A hand-chosen id cannot anchor a mandate chain:
+/// a parent pointer to it names a string, not a grant.
+pub(crate) fn read_grant_file(path: &Path) -> Result<Grant, Box<dyn std::error::Error>> {
+    let g = read_grant_unchecked(path)?;
+    if !g.id_is_consistent() {
+        return Err(format!(
+            "grant {} declares an id that does not match its content\n  \
+             refused: a hand-chosen id cannot anchor a mandate chain",
+            g.grant_id
+        )
+        .into());
+    }
+    Ok(g)
+}
+
+/// Load a grant by id from the workspace store, checked.
+pub(crate) fn read_grant_id(dir: &Path, id: &str) -> Result<Grant, Box<dyn std::error::Error>> {
+    let path = grant_path(dir, id);
+    if !path.exists() {
+        return Err(format!(
+            "grant not found: {id}\n  looked in {}\n  mint one with: treeship grant issue …",
+            dir.display()
+        )
+        .into());
+    }
+    read_grant_file(&path)
 }
 
 pub struct IssueArgs {
@@ -134,7 +174,9 @@ pub fn issue(args: IssueArgs, printer: &Printer) -> Result<(), Box<dyn std::erro
     std::fs::create_dir_all(&dir)?;
 
     let parent = match &args.parent {
-        Some(pid) => Some(read_grant(&dir, pid)?),
+        // Checked: we are about to delegate from this grant, so an
+        // inconsistent id would produce a child pointing at nothing.
+        Some(pid) => Some(read_grant_id(&dir, pid)?),
         None => None,
     };
 
@@ -300,7 +342,14 @@ pub fn show(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
     let dir = grants_dir_for(&ctx.config_path);
-    let g = read_grant(&dir, id)?;
+    let path = grant_path(&dir, id);
+    if !path.exists() {
+        return Err(format!("grant not found: {id}\n  run: treeship grant list").into());
+    }
+    // Unchecked on purpose: this command reports soundness, so it has to be
+    // able to open an unsound grant and say so. The checked loader is for
+    // callers about to act on a grant.
+    let g = read_grant_unchecked(&path)?;
 
     // Re-verify rather than trust the file. A grant on disk is just bytes, and
     // the point of a content-derived id is that it can be checked.
@@ -440,6 +489,33 @@ mod tests {
             "payments.charge.extra",
             &["payments.charge".into()]
         ));
+    }
+
+    #[test]
+    fn checked_read_refuses_a_tampered_id_but_unchecked_still_opens_it() {
+        // The two readers exist for different jobs and must not collapse into
+        // one. A caller about to *use* a grant needs the refusal; `grant show`
+        // needs to open the same file and report that it is unsound. If the
+        // only loader refused, the command meant to diagnose a bad grant could
+        // never read one.
+        let dir = std::env::temp_dir().join("ts_grant_reader_split_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut g = grant(&["payments.charge"], "acme", "2027-01-01T00:00:00Z", 0, 3);
+        g.grant_id = "grn_0000000000000000".into(); // not derived from content
+        let path = grant_path(&dir, &g.grant_id);
+        std::fs::write(&path, serde_json::to_string(&g).unwrap()).unwrap();
+
+        assert!(
+            read_grant_file(&path).is_err(),
+            "a grant whose id does not match its content must not be usable"
+        );
+        let opened = read_grant_unchecked(&path).expect("show must still be able to open it");
+        assert!(
+            !opened.id_is_consistent(),
+            "and it must be reportable as inconsistent"
+        );
+
+        std::fs::remove_file(&path).ok();
     }
 
     #[test]

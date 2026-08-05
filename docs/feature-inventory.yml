@@ -229,10 +229,12 @@
     - treeship grant show
   packages:
     - treeship-core
+  docs:
+    - docs/content/docs/cli/grant.mdx
   tests:
     - packages/core/src/statements/action_v2.rs
     - packages/cli/src/commands/grant.rs
-  notes: "The authority an action/v2 receipt runs under. Grant ids are content-derived (grn_ + sha256 of the signed canonical), so a parent pointer commits to one specific grant rather than to a name. Issuing refuses to widen: a delegated grant may only narrow scope, shorten expiry, keep the same audience, and stay inside max_delegation, with depth derived from the parent rather than declared. beta, not stable: grants have no revocation resolver, and no docs page yet."
+  notes: "The authority an action/v2 receipt runs under. Grant ids are content-derived (grn_ + sha256 of the signed canonical), so a parent pointer commits to one specific grant rather than to a name. Issuing refuses to widen: a delegated grant may only narrow scope, shorten expiry, keep the same audience, and stay inside max_delegation, with depth derived from the parent rather than declared. beta, not stable: revocation has no resolver, so the authority axis reports unverified rather than pass."
 
 - id: per-agent-keys
   name: Per-agent keys & onboarding
