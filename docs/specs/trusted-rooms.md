@@ -47,7 +47,7 @@ A **Trusted Room** is a verifiable collaboration boundary that binds:
 - budget policy
 - signed room/session reports
 
-The room can be Slack today, Farcaster/Zerker gateway tomorrow, or any other collaboration surface. Treeship should not own the chat surface; it should issue and verify the trust layer for the surface.
+The room can be Slack today, Zerker Gateway tomorrow, or any other collaboration surface. Treeship should not own the chat surface; it should issue and verify the trust layer for the surface.
 
 ## Identity model
 
@@ -60,7 +60,7 @@ human://slack/<team_id>/<user_id>
 agent://claude-tag/<team_id>/<channel_id>
 agent://hermes/<profile-or-install-id>
 agent://perplexity/<surface-or-workspace>
-agent://farcaster/<gateway-agent-id>
+agent://zerker/<gateway-agent-id>
 ```
 
 Display names, personas, avatars, and role labels are metadata. The stable URI is what gets signed.
@@ -103,7 +103,7 @@ A signed binding from platform identity to Treeship human URI.
 
 Captures:
 
-- platform: Slack, Farcaster, GitHub, etc.
+- platform: Slack, Zerker Gateway, GitHub, etc.
 - stable platform IDs
 - display metadata
 - role/persona claims
@@ -155,11 +155,11 @@ Treeship does not need to become the policy runtime initially. It can record the
 ## Reference architecture
 
 ```text
-Slack / Claude Tag / Hermes / Perplexity / Farcaster gateway
+Slack / Claude Tag / Hermes / Perplexity / Zerker Gateway
         |
         | room events, requests, tool events, approvals
         v
-Farcaster gateway / integration adapter
+Zerker Gateway / integration adapter
         |
         | signs or asks Treeship CLI/SDK to sign
         v
@@ -171,7 +171,7 @@ Treeship artifacts + room/session reports
         +--> zmem room-scoped memory index
 ```
 
-Farcaster is the control plane for routing, policy, observability, and product surfaces. Treeship is the evidence layer. ZMem (`zmem`) is the room-scoped verifiable memory layer.
+Zerker Gateway is the control plane for routing, policy, observability, and product surfaces. Treeship is the evidence layer. ZMem (`zmem`) is the room-scoped verifiable memory layer.
 
 ## Claude Tag alignment
 
@@ -210,7 +210,7 @@ Possible pages:
 - `/receipts/<session_id>` — task/session receipt
 - `/agents/<agent_id>` — room-scoped agent identity/capability history
 
-### Slack/Farcaster gateway
+### Slack/Zerker Gateway
 
 Possible bot commands:
 
@@ -228,7 +228,7 @@ Treeship should remain within its direction:
 
 - **Do:** sign, verify, package, publish, and audit evidence.
 - **Do:** model room identities, agent capabilities, approvals, handoffs, and reports.
-- **Do:** integrate with Farcaster/zmem/Slack/Claude Tag as sources and sinks.
+- **Do:** integrate with Zerker Gateway/zmem/Slack/Claude Tag as sources and sinks.
 - **Do not:** become the primary chat UI.
 - **Do not:** claim to observe actions it did not capture.
 - **Do not:** store raw private channel content unless explicitly configured.
@@ -252,7 +252,7 @@ The proof-of-value demo:
 
 ## Open questions
 
-- Which gateway is source-of-truth for room policy: Farcaster, Slack app config, or Treeship Hub?
+- Which gateway is source-of-truth for room policy: Zerker Gateway, Slack app config, or Treeship Hub?
 - What is the first supported human identity provider: Slack only, or Slack + GitHub?
 - Should zmem store signed memory digests, full encrypted memories, or references to external memory stores?
 - What room report is useful enough to sell: daily digest, compliance export, incident report, or PR/task report?
