@@ -328,7 +328,7 @@ pub fn list(agents_dir: &Path) -> Result<Vec<AgentCard>, CardError> {
 }
 
 /// The registered per-agent signing key for an `agent://<name>` actor, if any
-/// card carries one. None for non-agent actors (`human://`, `farcaster://`)
+/// card carries one. None for actors outside the `agent://` scheme (`human://`, `zerker://`)
 /// or agents registered without a per-agent key. This is the actor -> key
 /// binding `attest` resolves to sign, and `verify` checks to label the actor
 /// proven vs asserted.
