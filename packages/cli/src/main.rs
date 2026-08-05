@@ -468,6 +468,22 @@ enum Command {
     #[command(subcommand, hide = true)]
     Approval(ApprovalCommand),
 
+    /// Mint and inspect signed capability grants
+    ///
+    /// A grant is the authority an action/v2 receipt runs under. Delegating
+    /// mints a narrower child grant that commits to its parent by content
+    /// hash, so a verifier can walk the chain offline. Issuing refuses to
+    /// widen: a delegated grant may only narrow scope, shorten expiry, and
+    /// keep the same audience.
+    ///
+    /// Examples:
+    ///   treeship grant issue --scope payments.charge --audience acme --expiry 2026-12-31T23:59:59Z
+    ///   treeship grant issue --parent grn_a1b2c3d4e5f60718 --scope payments.charge.small --audience acme --expiry 2026-06-30T00:00:00Z
+    ///   treeship grant list
+    ///   treeship grant show grn_a1b2c3d4e5f60718
+    #[command(subcommand)]
+    Grant(GrantCommand),
+
     /// Background daemon for automatic file watching
     ///
     /// The daemon watches your project for file changes and automatically
@@ -1198,6 +1214,38 @@ enum ApprovalCommand {
 enum ApprovalJournalCommand {
     /// Walk every record, recompute digests, check the chain.
     Verify,
+}
+
+// --- grant -----------------------------------------------------------------
+
+#[derive(Subcommand)]
+enum GrantCommand {
+    /// Mint a signed grant. With --parent, mints a delegated child.
+    Issue {
+        /// Capability this grant admits. Repeatable. A single trailing `*`
+        /// acts as a prefix wildcard: `payments.*`.
+        #[arg(long, required = true)]
+        scope: Vec<String>,
+        /// Who the grant is for. A delegated grant may not change it.
+        #[arg(long)]
+        audience: String,
+        /// RFC 3339. A delegated grant may not outlive its parent.
+        #[arg(long)]
+        expiry: String,
+        /// Delegate from this grant id, narrowing its authority.
+        #[arg(long)]
+        parent: Option<String>,
+        /// How many further delegations this grant permits beneath it.
+        #[arg(long, default_value_t = 3)]
+        max_delegation: u32,
+        /// Optional hash binding the grant to a stated objective.
+        #[arg(long)]
+        objective_hash: Option<String>,
+    },
+    /// List every grant minted in this workspace.
+    List,
+    /// Show one grant, re-deriving its id and re-checking its signature.
+    Show { grant_id: String },
 }
 
 // --- harness ---------------------------------------------------------------
@@ -2729,6 +2777,32 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
         Command::Approve(a) => commands::approve::approve(a.n, cli.config.as_deref(), printer),
 
         Command::Deny(a) => commands::approve::deny(a.n, cli.config.as_deref(), printer),
+
+        Command::Grant(sub) => match sub {
+            GrantCommand::Issue {
+                scope,
+                audience,
+                expiry,
+                parent,
+                max_delegation,
+                objective_hash,
+            } => commands::grant::issue(
+                commands::grant::IssueArgs {
+                    scope: scope.clone(),
+                    audience: audience.clone(),
+                    expiry: expiry.clone(),
+                    parent: parent.clone(),
+                    max_delegation: *max_delegation,
+                    objective_hash: objective_hash.clone(),
+                    config: cli.config.clone(),
+                },
+                printer,
+            ),
+            GrantCommand::List => commands::grant::list(cli.config.as_deref(), printer),
+            GrantCommand::Show { grant_id } => {
+                commands::grant::show(grant_id, cli.config.as_deref(), printer)
+            }
+        },
 
         Command::Approval(sub) => match sub {
             ApprovalCommand::Uses { grant_id } => commands::approval::uses(
