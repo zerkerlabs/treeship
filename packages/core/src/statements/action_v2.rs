@@ -899,6 +899,39 @@ pub enum ChainResolveError {
     BadSignature { grant_id: String },
 }
 
+impl std::fmt::Display for ChainResolveError {
+    /// Operator-facing wording. The CLI prints these verbatim, so each names
+    /// the grant it is talking about: "unresolvable" without a subject leaves
+    /// a reader nothing to go and look at.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InconsistentId { grant_id } => {
+                write!(f, "grant {grant_id} declares an id that does not match its content")
+            }
+            Self::LeafMissing { grant_id } => {
+                write!(f, "the mandate names grant {grant_id}, which is not in the carried chain")
+            }
+            Self::AncestorMissing { parent_grant_id } => {
+                write!(f, "parent grant {parent_grant_id} is missing from the chain")
+            }
+            Self::Cycle { grant_id } => {
+                write!(f, "parent links revisit grant {grant_id}: the chain is a cycle")
+            }
+            Self::UnreachableExtras { count } => {
+                write!(f, "{count} carried grant(s) are not reachable from the mandate")
+            }
+            Self::Unsigned { grant_id } => {
+                write!(f, "grant {grant_id} carries no issuer signature")
+            }
+            Self::BadSignature { grant_id } => {
+                write!(f, "grant {grant_id} has a signature that does not verify")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ChainResolveError {}
+
 /// Reconstruct the delegation chain for a mandate, root-first, from the
 /// grants it carries.
 ///
@@ -992,6 +1025,37 @@ pub enum GrantChainError {
     /// child.audience differs from parent.audience.
     AudienceChanged { parent: usize },
 }
+
+impl std::fmt::Display for GrantChainError {
+    /// `parent` is the index of the *parent* in the resolved root-first chain,
+    /// so the violation is reported as the hop between it and its child --
+    /// which is where an operator has to look to fix it.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Empty => write!(f, "the chain is empty"),
+            Self::BadTimestamp { index } => {
+                write!(f, "grant at hop {index} has an unparseable issued_at/expiry")
+            }
+            Self::ScopeWidened { parent } => {
+                write!(f, "scope widens at hop {}->{}", parent, parent + 1)
+            }
+            Self::ExpiryWidened { parent } => {
+                write!(f, "expiry extends past the parent at hop {}->{}", parent, parent + 1)
+            }
+            Self::DepthNotIncremented { parent } => {
+                write!(f, "delegation depth does not increment by one at hop {}->{}", parent, parent + 1)
+            }
+            Self::DepthExceedsMax { parent } => {
+                write!(f, "delegation depth exceeds the parent's max_delegation at hop {}->{}", parent, parent + 1)
+            }
+            Self::AudienceChanged { parent } => {
+                write!(f, "audience changes at hop {}->{}", parent, parent + 1)
+            }
+        }
+    }
+}
+
+impl std::error::Error for GrantChainError {}
 
 /// Verify attenuation across an ordered grant chain (`chain[0]` is the root,
 /// `chain[last]` is the leaf the action was minted from). Every adjacent pair
@@ -1965,5 +2029,59 @@ mod tests {
             verify_grant_chain(&resolved).is_ok(),
             "narrowing scope at depth+1 must satisfy attenuation"
         );
+    }
+
+    #[test]
+    fn leaf_not_in_chain_is_rejected() {
+        // The mandate names a grant the carrier did not supply. Distinct from
+        // AncestorMissing: nothing has been walked yet, so the failure has to
+        // point at the leaf rather than at a parent link.
+        let (root, leaf, _) = chain_fixture();
+        let mut m = mandate_with(&leaf, vec![root.clone()]);
+        m.grant_id = leaf.grant_id.clone();
+        match resolve_grant_chain(&m) {
+            Err(ChainResolveError::LeafMissing { grant_id }) => {
+                assert_eq!(grant_id, leaf.grant_id);
+            }
+            other => panic!("a mandate naming an absent leaf must fail, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ancestor_signed_by_a_stranger_is_rejected() {
+        // Content-consistent id, well-formed signature -- but produced by a key
+        // that is not the declared grantor. The id check cannot catch this
+        // because `grantor` is covered by the canonical: only the crypto can.
+        let (root, leaf, _) = chain_fixture();
+        let stranger = Ed25519Signer::generate("stranger").unwrap();
+        let mut forged = root.clone();
+        forged.issuer_sig = Some(forged.sign_canonical(&stranger).unwrap());
+        assert_eq!(
+            forged.grant_id, root.grant_id,
+            "signing with another key must not change the content id"
+        );
+
+        let m = mandate_with(&leaf, vec![forged, leaf.clone()]);
+        match resolve_grant_chain(&m) {
+            Err(ChainResolveError::BadSignature { grant_id }) => {
+                assert_eq!(grant_id, root.grant_id);
+            }
+            other => panic!("a grant signed by a non-grantor must fail, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inconsistent_id_is_caught_before_signature_check() {
+        // A tampered id must be refused as InconsistentId, not surface later as
+        // BadSignature -- the reason an operator is given should name the
+        // actual defect.
+        let (root, leaf, _) = chain_fixture();
+        let mut tampered = root.clone();
+        tampered.grant_id = "grn_0000000000000000".into();
+        let m = mandate_with(&leaf, vec![tampered, leaf.clone()]);
+        assert!(matches!(
+            resolve_grant_chain(&m),
+            Err(ChainResolveError::InconsistentId { .. })
+        ));
     }
 }
