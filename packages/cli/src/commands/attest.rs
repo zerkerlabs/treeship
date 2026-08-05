@@ -1,12 +1,16 @@
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+
 use serde_json::Value;
 use treeship_core::{
     attestation::{sign, Signer},
     journal::{self, Journal},
     statements::{
         irreversibility_requires_quarantine, is_irreversibility_class, nonce_digest, payload_type,
-        ActionStatement, ApprovalScope, ApprovalStatement, ApprovalUse, DecisionStatement,
-        EndorsementStatement, HandoffStatement, ReceiptStatement, SubjectRef,
-        IRREVERSIBILITY_CLASSES, TYPE_APPROVAL_USE,
+        payload_type_v2, ActionStatement, ActionStatementV2, ApprovalScope, ApprovalStatement,
+        ApprovalUse, DeadlineEvent, DecisionStatement, Effect, EffectConfidence, EffectFinality,
+        EndorsementStatement, Grant, HandoffStatement, Mandate, ReceiptStatement, Resolution,
+        Revocation, RuntimeIdentity, SubjectRef, IRREVERSIBILITY_CLASSES, TYPE_APPROVAL_USE,
     },
     storage::Record,
     trust::{decode_ed25519_pubkey, TrustRootKind, TrustRootStore},
@@ -63,6 +67,26 @@ pub(crate) fn resolve_actor_signer(
 pub struct ActionArgs {
     pub actor: String,
     pub action: String,
+    /// Emit `treeship/action/v2` instead of action.v1.
+    pub v2: bool,
+    /// Workspace grant id (`grn_…`) under `.treeship/grants/`.
+    pub grant: Option<String>,
+    /// Path to a Grant JSON file (same shape `grant issue` writes).
+    pub grant_file: Option<String>,
+    pub revocation_path: Option<String>,
+    pub audience: Option<String>,
+    pub effect_confidence: Option<String>,
+    pub finality: Option<String>,
+    pub readback: Option<String>,
+    pub context_snapshot: Option<String>,
+    pub side_effects: Vec<String>,
+    pub bytes_moved: Option<u64>,
+    pub resolution_deadline: Option<String>,
+    pub on_deadline: Option<String>,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub tool_schema_hash: Option<String>,
+    pub system_prompt_hash: Option<String>,
     pub input_digest: Option<String>,
     pub output_digest: Option<String>,
     pub content_uri: Option<String>,
@@ -79,6 +103,54 @@ pub struct ActionArgs {
 }
 
 pub fn action(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std::error::Error>> {
+    validate_v2_flags(&args)?;
+    if args.v2 {
+        return action_v2(args, printer);
+    }
+    action_v1(args, printer)
+}
+
+fn validate_v2_flags(args: &ActionArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let v2_only = args.grant.is_some()
+        || args.grant_file.is_some()
+        || args.revocation_path.is_some()
+        || args.audience.is_some()
+        || args.effect_confidence.is_some()
+        || args.finality.is_some()
+        || args.readback.is_some()
+        || args.context_snapshot.is_some()
+        || !args.side_effects.is_empty()
+        || args.bytes_moved.is_some()
+        || args.resolution_deadline.is_some()
+        || args.on_deadline.is_some()
+        || args.provider.is_some()
+        || args.model.is_some()
+        || args.tool_schema_hash.is_some()
+        || args.system_prompt_hash.is_some();
+    if v2_only && !args.v2 {
+        return Err(
+            "mandate/effect/runtime flags require --v2\n  \
+             example: treeship attest action --v2 --actor agent://me --action tool.call --grant grn_…"
+                .into(),
+        );
+    }
+    if args.v2 && args.grant.is_some() && args.grant_file.is_some() {
+        return Err("--grant and --grant-file are mutually exclusive".into());
+    }
+    if args.v2 && args.grant.is_none() && args.grant_file.is_none() {
+        return Err(
+            "--v2 requires --grant <id> or --grant-file <path>\n  \
+             mint one with: treeship grant issue --scope <action> --audience <aud> --expiry <rfc3339>"
+                .into(),
+        );
+    }
+    if args.resolution_deadline.is_some() ^ args.on_deadline.is_some() {
+        return Err("--resolution-deadline and --on-deadline must be set together".into());
+    }
+    Ok(())
+}
+
+fn action_v1(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std::error::Error>> {
     let ctx = ctx::open(args.config.as_deref())?;
 
     let mut meta: Option<Value> = args
@@ -227,6 +299,349 @@ pub fn action(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std
     printer.hint(&format!("treeship verify {}", result.artifact_id));
     printer.blank();
     Ok(result.artifact_id)
+}
+
+/// Emit a `treeship/action/v2` receipt bound to a signed grant.
+fn action_v2(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std::error::Error>> {
+    let ctx = ctx::open(args.config.as_deref())?;
+
+    let mut meta: Option<Value> = args
+        .meta
+        .as_deref()
+        .map(|m| serde_json::from_str(m))
+        .transpose()
+        .map_err(|e| format!("--meta is not valid JSON: {e}"))?;
+
+    // Approval-use consume still runs against a v1-shaped statement so the
+    // existing journal / scope checks stay one code path. The signed receipt
+    // itself is v2.
+    let mut scope_stmt = ActionStatement::new(&args.actor, &args.action);
+    scope_stmt.subject = SubjectRef {
+        digest: args.input_digest.clone(),
+        uri: args.content_uri.clone(),
+        artifact_id: None,
+    };
+    scope_stmt.parent_id = args.parent_id.clone();
+    scope_stmt.approval_nonce = args.approval_nonce.clone();
+
+    let consumed_use_id = if let Some(ref raw_nonce) = args.approval_nonce {
+        Some(consume_approval(
+            &ctx,
+            raw_nonce,
+            &scope_stmt,
+            args.idempotency_key.as_deref(),
+            printer,
+        )?)
+    } else {
+        None
+    };
+
+    if let Some(ref use_id) = consumed_use_id {
+        let mut obj = match meta.take() {
+            Some(Value::Object(map)) => map,
+            Some(_other) => {
+                return Err("--meta must be a JSON object when --approval-nonce is set".into())
+            }
+            None => serde_json::Map::new(),
+        };
+        obj.insert("approval_use_id".into(), Value::String(use_id.clone()));
+        meta = Some(Value::Object(obj));
+    }
+
+    let grants_dir = grants_dir_for(&ctx.config_path);
+    let (leaf, chain) = load_grant_and_chain(
+        &grants_dir,
+        args.grant.as_deref(),
+        args.grant_file.as_deref(),
+    )?;
+
+    let revocation_path = args
+        .revocation_path
+        .clone()
+        .unwrap_or_else(|| "hub://local/revocations".into());
+    let mandate = mandate_from_grant(&leaf, chain, &revocation_path);
+
+    let mut stmt = ActionStatementV2::new(&args.actor, &args.action, mandate);
+    stmt.audience = Some(
+        args.audience
+            .clone()
+            .unwrap_or_else(|| leaf.audience.clone()),
+    );
+    stmt.subject = SubjectRef {
+        digest: args.input_digest.clone(),
+        uri: args.content_uri.clone(),
+        artifact_id: None,
+    };
+    stmt.parent_id = args.parent_id.clone();
+    stmt.effect = build_effect(&args)?;
+    stmt.runtime = build_runtime(&args);
+    stmt.meta = meta;
+
+    let signer = resolve_actor_signer(&ctx, &args.actor)?;
+    let pt = payload_type_v2("action");
+    let result = sign(&pt, &stmt, signer.as_ref())?;
+
+    let record = Record {
+        artifact_id: result.artifact_id.clone(),
+        digest: result.digest.clone(),
+        payload_type: pt.clone(),
+        key_id: signer.key_id().to_string(),
+        signed_at: stmt.timestamp.clone(),
+        parent_id: args.parent_id.clone(),
+        envelope: result.envelope.clone(),
+        hub_url: None,
+    };
+    ctx.storage.write(&record)?;
+    write_last(&ctx.config.storage_dir, &result.artifact_id);
+
+    if consumed_use_id.is_some() {
+        if let Err(e) = backfill_action_artifact_id(
+            &ctx,
+            consumed_use_id.as_deref().unwrap(),
+            &result.artifact_id,
+        ) {
+            printer.warn(
+                "could not backfill action_artifact_id onto journal record",
+                &[("error", &e.to_string())],
+            );
+        }
+    }
+
+    if let Some(path) = &args.out {
+        let json = result.envelope.to_json()?;
+        if path == "-" {
+            println!("{}", String::from_utf8_lossy(&json));
+        } else {
+            std::fs::write(path, &json)?;
+        }
+    }
+
+    let signed_str = stmt.timestamp.clone();
+    let grant_id = leaf.grant_id.clone();
+    let mut fields: Vec<(&str, String)> = vec![
+        ("id", result.artifact_id.clone()),
+        ("type", "action/v2".into()),
+        ("actor", args.actor.clone()),
+        ("action", args.action.clone()),
+        ("grant", grant_id),
+        ("signed", signed_str),
+    ];
+    if let Some(p) = &args.parent_id {
+        fields.push(("parent", p.clone()));
+    }
+    if let Some(ref effect) = stmt.effect {
+        if let Some(c) = effect.effect_confidence {
+            fields.push(("effect", effect_confidence_label(c).into()));
+        }
+    }
+
+    let field_refs: Vec<(&str, &str)> = fields.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    printer.success("action/v2 attested", &field_refs);
+    printer.hint(&format!("treeship verify {}", result.artifact_id));
+    printer.blank();
+    Ok(result.artifact_id)
+}
+
+/// Same layout `treeship grant issue` uses: `<config_dir>/grants/<id>.json`.
+fn grants_dir_for(config_path: &Path) -> PathBuf {
+    config_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("grants")
+}
+
+fn read_grant_file(path: &Path) -> Result<Grant, Box<dyn std::error::Error>> {
+    let raw = std::fs::read_to_string(path)
+        .map_err(|e| format!("could not read grant file {}: {e}", path.display()))?;
+    let g: Grant = serde_json::from_str(&raw)
+        .map_err(|e| format!("grant file is not valid Grant JSON ({}): {e}", path.display()))?;
+    if !g.id_is_consistent() {
+        return Err(format!(
+            "grant {} declares an id that does not match its content\n  \
+             refused: a hand-chosen id cannot anchor a mandate chain",
+            g.grant_id
+        )
+        .into());
+    }
+    Ok(g)
+}
+
+fn read_grant_id(dir: &Path, id: &str) -> Result<Grant, Box<dyn std::error::Error>> {
+    let path = dir.join(format!("{id}.json"));
+    if !path.exists() {
+        return Err(format!(
+            "grant not found: {id}\n  looked in {}\n  mint one with: treeship grant issue …",
+            dir.display()
+        )
+        .into());
+    }
+    read_grant_file(&path)
+}
+
+/// Load the leaf grant and every ancestor reachable via `parent_grant_id`.
+/// The returned chain includes the leaf (required by `resolve_grant_chain`).
+fn load_grant_and_chain(
+    grants_dir: &Path,
+    grant_id: Option<&str>,
+    grant_file: Option<&str>,
+) -> Result<(Grant, Vec<Grant>), Box<dyn std::error::Error>> {
+    let leaf = match (grant_id, grant_file) {
+        (Some(id), None) => read_grant_id(grants_dir, id)?,
+        (None, Some(path)) => read_grant_file(Path::new(path))?,
+        _ => unreachable!("validate_v2_flags requires exactly one grant source"),
+    };
+
+    let mut chain = Vec::new();
+    let mut seen = HashSet::new();
+    let mut cursor = Some(leaf.grant_id.clone());
+    while let Some(id) = cursor {
+        if !seen.insert(id.clone()) {
+            return Err(format!("grant chain cycles at {id}").into());
+        }
+        // Prefer workspace store; for a --grant-file leaf that is not yet
+        // stored, fall back to the leaf we already hold.
+        let g = if id == leaf.grant_id {
+            leaf.clone()
+        } else {
+            read_grant_id(grants_dir, &id)?
+        };
+        cursor = g.parent_grant_id.clone();
+        chain.push(g);
+    }
+    // resolve_grant_chain does not trust carrier order, but root-first is the
+    // conventional on-disk shape and matches how grant issue writes parents.
+    chain.reverse();
+    Ok((leaf, chain))
+}
+
+fn mandate_from_grant(leaf: &Grant, chain: Vec<Grant>, revocation_path: &str) -> Mandate {
+    Mandate {
+        grant_id: leaf.grant_id.clone(),
+        grantor: leaf.grantor.clone(),
+        issuer_sig: leaf.issuer_sig.clone(),
+        objective_hash: leaf.objective_hash.clone(),
+        scope: leaf.scope.clone(),
+        audience: leaf.audience.clone(),
+        parent_request_id: leaf.parent_request_id.clone(),
+        delegation_depth: leaf.delegation_depth,
+        issued_at: leaf.issued_at.clone(),
+        expiry: leaf.expiry.clone(),
+        max_delegation: leaf.max_delegation,
+        revocation: Revocation {
+            path: revocation_path.into(),
+            revoked_at: None,
+        },
+        chain,
+    }
+}
+
+fn build_effect(args: &ActionArgs) -> Result<Option<Effect>, Box<dyn std::error::Error>> {
+    let wants = args.effect_confidence.is_some()
+        || args.finality.is_some()
+        || args.readback.is_some()
+        || args.context_snapshot.is_some()
+        || !args.side_effects.is_empty()
+        || args.bytes_moved.is_some()
+        || args.resolution_deadline.is_some()
+        || args.input_digest.is_some()
+        || args.output_digest.is_some();
+    if !wants {
+        return Ok(None);
+    }
+
+    let resolution = match (&args.resolution_deadline, &args.on_deadline) {
+        (Some(deadline), Some(event)) => Some(Resolution {
+            deadline: deadline.clone(),
+            on_deadline: parse_deadline_event(event)?,
+        }),
+        _ => None,
+    };
+
+    Ok(Some(Effect {
+        input_hash: args.input_digest.clone(),
+        output_hash: args.output_digest.clone(),
+        readback: args.readback.clone(),
+        bytes_moved: args.bytes_moved,
+        cost: None,
+        side_effects: args.side_effects.clone(),
+        context_snapshot: args.context_snapshot.clone(),
+        effect_confidence: args
+            .effect_confidence
+            .as_deref()
+            .map(parse_effect_confidence)
+            .transpose()?,
+        witnesses: Vec::new(),
+        finality: args.finality.as_deref().map(parse_finality).transpose()?,
+        resolution,
+    }))
+}
+
+fn build_runtime(args: &ActionArgs) -> Option<RuntimeIdentity> {
+    let rt = RuntimeIdentity {
+        provider: args.provider.clone(),
+        model: args.model.clone(),
+        tool_schema_hash: args.tool_schema_hash.clone(),
+        system_prompt_hash: args.system_prompt_hash.clone(),
+    };
+    if rt.is_unbound() {
+        None
+    } else {
+        Some(rt)
+    }
+}
+
+fn parse_effect_confidence(s: &str) -> Result<EffectConfidence, Box<dyn std::error::Error>> {
+    match s {
+        "verified" => Ok(EffectConfidence::Verified),
+        "partial" => Ok(EffectConfidence::Partial),
+        "ambiguous" => Ok(EffectConfidence::Ambiguous),
+        "unknown" => Ok(EffectConfidence::Unknown),
+        "not_verified" | "not-verified" => Ok(EffectConfidence::NotVerified),
+        other => Err(format!(
+            "unknown --effect-confidence '{other}'\n  \
+             expected: verified | partial | ambiguous | unknown | not_verified"
+        )
+        .into()),
+    }
+}
+
+fn effect_confidence_label(c: EffectConfidence) -> &'static str {
+    match c {
+        EffectConfidence::Verified => "verified",
+        EffectConfidence::Partial => "partial",
+        EffectConfidence::Ambiguous => "ambiguous",
+        EffectConfidence::Unknown => "unknown",
+        EffectConfidence::NotVerified => "not_verified",
+    }
+}
+
+fn parse_finality(s: &str) -> Result<EffectFinality, Box<dyn std::error::Error>> {
+    match s {
+        "not_attempted" | "not-attempted" => Ok(EffectFinality::NotAttempted),
+        "initiated" => Ok(EffectFinality::Initiated),
+        "finalized" => Ok(EffectFinality::Finalized),
+        "failed" => Ok(EffectFinality::Failed),
+        "indeterminate" => Ok(EffectFinality::Indeterminate),
+        other => Err(format!(
+            "unknown --finality '{other}'\n  \
+             expected: not_attempted | initiated | finalized | failed | indeterminate"
+        )
+        .into()),
+    }
+}
+
+fn parse_deadline_event(s: &str) -> Result<DeadlineEvent, Box<dyn std::error::Error>> {
+    match s {
+        "timeout" => Ok(DeadlineEvent::Timeout),
+        "escalate" => Ok(DeadlineEvent::Escalate),
+        "tombstone" => Ok(DeadlineEvent::Tombstone),
+        "inherit" => Ok(DeadlineEvent::Inherit),
+        other => Err(format!(
+            "unknown --on-deadline '{other}'\n  \
+             expected: timeout | escalate | tombstone | inherit"
+        )
+        .into()),
+    }
 }
 
 // --- approval ---------------------------------------------------------------
