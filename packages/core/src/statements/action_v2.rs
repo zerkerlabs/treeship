@@ -238,6 +238,22 @@ pub struct Effect {
     /// only effect evidence is the actor's own `readback`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub witnesses: Vec<Witness>,
+    /// How far the state change got, as distinct from how well it is evidenced.
+    /// Optional and skipped when absent so existing v2 receipts keep
+    /// byte-identical canonical bytes.
+    ///
+    /// A `Finalized` claim is capped by [`verify_effect`] the same way
+    /// `EffectConfidence::Verified` is: both assert something definite, so both
+    /// can be inflated, so both require evidence the actor could not mint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finality: Option<EffectFinality>,
+    /// When an unresolved effect must resolve by, and what fires if it does
+    /// not. Absent means no obligation was declared -- which
+    /// [`check_resolution`] reports as `Indefinite` rather than passing over,
+    /// because an unresolved effect with no deadline is the failure shape, not
+    /// the safe default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<Resolution>,
 }
 
 /// How confident the actor is that an action's real-world effect happened,
@@ -265,6 +281,144 @@ pub enum EffectConfidence {
     /// Attempted, but the effect was not independently verified — the common
     /// honest default: the tool returned ok and nothing read it back.
     NotVerified,
+}
+
+/// How far a state change actually got. Orthogonal to [`EffectConfidence`],
+/// which grades the *evidence*: an effect can be `Finalized` with weak evidence,
+/// or `Initiated` with excellent evidence that it is still pending.
+///
+/// Collapsing the two is a real production failure, not a theoretical one. A
+/// receipt that reports a single `success: true` can be accurate in every field
+/// and false as a composite: the write was accepted, acknowledged, assigned an
+/// id, and served back on read -- and never committed. Every predicate held;
+/// "done" did not. Separating the axes is what makes that claim expressible,
+/// and the [`verify_effect`] cap on `Finalized` is what makes it checkable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EffectFinality {
+    /// Authority was exercised but no state change was attempted -- a timeout
+    /// or refusal before the call went out. This is the "no authority moved"
+    /// receipt: an explicit signed negative, so absence stops being
+    /// indistinguishable from a check that was never required.
+    NotAttempted,
+    /// The target accepted the change but has not confirmed it as final.
+    /// Unresolved: an acknowledgement is not a commit.
+    Initiated,
+    /// The target confirmed the change is final.
+    Finalized,
+    /// Attempted, and definitively did not take effect.
+    Failed,
+    /// Attempted; whether it took effect could not be established. Distinct
+    /// from `Initiated`, where the target at least said yes-but-not-yet. Here
+    /// nobody knows, which is a state to escalate from, not to retry blindly.
+    Indeterminate,
+}
+
+impl EffectFinality {
+    /// Whether the lifecycle reached a terminal state. `Initiated` and
+    /// `Indeterminate` are open: something is still owed. Only open effects can
+    /// breach a resolution deadline.
+    pub fn is_resolved(self) -> bool {
+        matches!(
+            self,
+            Self::NotAttempted | Self::Finalized | Self::Failed
+        )
+    }
+}
+
+/// When an unresolved effect must resolve by, and what fires if it does not.
+///
+/// Exists because an effect that never resolves emits nothing forever, which is
+/// strictly worse than a timeout: a timeout produces a countable transition,
+/// and silence produces nothing for a monitor to catch. A declared deadline
+/// turns "still pending after 181 days" from an invisible state into a
+/// checkable one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Resolution {
+    /// RFC3339. After this instant an unresolved effect is stale by definition.
+    pub deadline: String,
+    /// What the declaring party said must happen once the deadline passes.
+    pub on_deadline: DeadlineEvent,
+}
+
+/// The obligation that attaches when a resolution deadline passes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeadlineEvent {
+    /// Treat as timed out. The effect did not land; no authority moved.
+    Timeout,
+    /// Hand to a human or a higher authority. Do not decide automatically.
+    Escalate,
+    /// Mark dead and stop serving it as live state.
+    Tombstone,
+    /// The next agent in a handoff chain takes responsibility for resolving it.
+    Inherit,
+}
+
+/// Whether an effect is still owed a resolution, and whether it is overdue.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolutionStatus {
+    /// The lifecycle reached a terminal state; a deadline is moot.
+    Resolved,
+    /// Unresolved with no declared deadline. Reported rather than passed over:
+    /// this is precisely the pending-forever shape, and staying quiet about it
+    /// is what let it survive unnoticed in the first place.
+    Indefinite,
+    /// Unresolved and inside its declared window.
+    Pending { seconds_remaining: i64 },
+    /// Unresolved and past its deadline. Carries the event the declaring party
+    /// committed to, so a consumer knows which obligation it inherited.
+    Breached {
+        on_deadline: DeadlineEvent,
+        seconds_overdue: i64,
+    },
+    /// A deadline was declared but does not parse, so nothing can be concluded
+    /// from it. Fails toward "unknown", never toward "in window".
+    BadDeadline,
+}
+
+/// Evaluate an effect's resolution obligation against a wall-clock instant.
+///
+/// Kept separate from [`verify_effect`] rather than folded into it: that
+/// function is a pure reconciliation over bytes and stays deterministic, while
+/// this one is time-dependent and the caller must supply `now_unix` explicitly.
+/// A verifier that silently reached for the system clock would give different
+/// answers on replay.
+///
+/// An effect with no finality declared is treated as unresolved. That is the
+/// conservative reading: a receipt that never says where its state change got
+/// to has not told us it landed.
+pub fn check_resolution(effect: &Effect, now_unix: i64) -> ResolutionStatus {
+    let resolved = effect
+        .finality
+        .map(EffectFinality::is_resolved)
+        .unwrap_or(false);
+    if resolved {
+        return ResolutionStatus::Resolved;
+    }
+
+    let res = match &effect.resolution {
+        Some(r) => r,
+        None => return ResolutionStatus::Indefinite,
+    };
+
+    // `parse_rfc3339_to_unix` yields u64; compare in i64 so the difference is
+    // signed and cannot wrap when the deadline sits either side of `now`.
+    let deadline = match parse_rfc3339_to_unix(&res.deadline) {
+        Some(t) if t <= i64::MAX as u64 => t as i64,
+        _ => return ResolutionStatus::BadDeadline,
+    };
+
+    if now_unix > deadline {
+        ResolutionStatus::Breached {
+            on_deadline: res.on_deadline,
+            seconds_overdue: now_unix - deadline,
+        }
+    } else {
+        ResolutionStatus::Pending {
+            seconds_remaining: deadline - now_unix,
+        }
+    }
 }
 
 impl Effect {
@@ -667,6 +821,14 @@ pub struct EffectVerdict {
     pub trusted_witnesses: usize,
     /// Audit notes: downgrades applied, and witnesses that were not trusted.
     pub notes: Vec<String>,
+    /// The lifecycle stage the evidence supports. Equal to the actor's claim
+    /// except that an unbacked `Finalized` is downgraded to `Indeterminate`:
+    /// "the target told me it committed" is the actor's word, and the actor's
+    /// word is what this verifier exists to not take. `None` when the receipt
+    /// declared no finality at all.
+    pub effective_finality: Option<EffectFinality>,
+    /// The actor's own finality claim, echoed for audit.
+    pub claimed_finality: Option<EffectFinality>,
 }
 
 impl EffectVerdict {
@@ -699,6 +861,8 @@ pub fn verify_effect(stmt: &ActionStatementV2, witnesses: &dyn WitnessAuthority)
                 claimed_confidence: None,
                 trusted_witnesses: 0,
                 notes: vec!["receipt carries no effect block; effect is unverified".into()],
+                effective_finality: None,
+                claimed_finality: None,
             }
         }
     };
@@ -739,11 +903,35 @@ pub fn verify_effect(stmt: &ActionStatementV2, witnesses: &dyn WitnessAuthority)
         Some(c) => c,
     };
 
+    // Finality is capped on the same principle as confidence, for the same
+    // reason: `Finalized` is the only lifecycle claim that asserts the change
+    // definitely landed, so it is the only one an actor can inflate. Lesser
+    // stages are admissions and pass through untouched.
+    //
+    // The downgrade target is `Indeterminate`, not `Initiated`: without
+    // evidence we do not know that the target even acknowledged the write, so
+    // asserting the weaker stage would be inventing a fact rather than
+    // withdrawing one.
+    let claimed_finality = effect.finality;
+    let effective_finality = match claimed_finality {
+        Some(EffectFinality::Finalized) if !has_evidence => {
+            notes.push(
+                "actor claimed the effect Finalized but bundled no independent evidence \
+                 (no readback, no trusted witness); downgraded to Indeterminate"
+                    .into(),
+            );
+            Some(EffectFinality::Indeterminate)
+        }
+        other => other,
+    };
+
     EffectVerdict {
         effective_confidence: effective,
         claimed_confidence: claimed,
         trusted_witnesses,
         notes,
+        effective_finality,
+        claimed_finality,
     }
 }
 
@@ -1218,6 +1406,209 @@ mod tests {
             "{:?}",
             v.notes
         );
+    }
+
+    // ---- effect finality (lifecycle) vs confidence (evidence) ----
+
+    #[test]
+    fn finality_and_confidence_are_independent_axes() {
+        // The composite-claim bug in one assertion: a receipt can be honest
+        // about its evidence and still overclaim completion. Weak evidence,
+        // strong completion claim -- the verifier must judge them separately.
+        let mut s = good_stmt();
+        s.effect = Some(Effect {
+            output_hash: Some("sha256:out".into()),
+            effect_confidence: Some(EffectConfidence::Partial),
+            finality: Some(EffectFinality::Finalized),
+            ..Default::default()
+        });
+        let v = verify_effect(&s, &NoWitnessAuthority);
+        // Partial is an admission, so it survives untouched...
+        assert_eq!(v.effective_confidence, EffectConfidence::Partial);
+        // ...while the unbacked Finalized does not.
+        assert_eq!(v.effective_finality, Some(EffectFinality::Indeterminate));
+        assert_eq!(v.claimed_finality, Some(EffectFinality::Finalized));
+    }
+
+    #[test]
+    fn unbacked_finalized_is_downgraded_to_indeterminate() {
+        // The 56%-of-writes case: accepted, acknowledged, served back on read,
+        // never committed. Downgrade must land on Indeterminate, not Initiated
+        // -- without evidence we cannot assert the weaker stage either, and
+        // inventing it would be a different false claim.
+        let mut s = good_stmt();
+        s.effect = Some(Effect {
+            output_hash: Some("sha256:out".into()),
+            finality: Some(EffectFinality::Finalized),
+            ..Default::default()
+        });
+        let v = verify_effect(&s, &NoWitnessAuthority);
+        assert_eq!(v.effective_finality, Some(EffectFinality::Indeterminate));
+        assert!(
+            v.notes.iter().any(|n| n.contains("Finalized")),
+            "the downgrade must be stated, not silent: {:?}",
+            v.notes
+        );
+    }
+
+    #[test]
+    fn finalized_backed_by_readback_survives() {
+        let mut s = good_stmt();
+        s.effect = Some(Effect {
+            readback: Some("sha256:observed".into()),
+            finality: Some(EffectFinality::Finalized),
+            ..Default::default()
+        });
+        let v = verify_effect(&s, &NoWitnessAuthority);
+        assert_eq!(v.effective_finality, Some(EffectFinality::Finalized));
+    }
+
+    #[test]
+    fn lesser_finality_claims_pass_through_unchanged() {
+        // Only the strongest claim can be inflated, so only it is capped.
+        // Downgrading an actor's own hedge would punish honesty.
+        for stage in [
+            EffectFinality::NotAttempted,
+            EffectFinality::Initiated,
+            EffectFinality::Failed,
+            EffectFinality::Indeterminate,
+        ] {
+            let mut s = good_stmt();
+            s.effect = Some(Effect {
+                finality: Some(stage),
+                ..Default::default()
+            });
+            let v = verify_effect(&s, &NoWitnessAuthority);
+            assert_eq!(v.effective_finality, Some(stage), "{stage:?} was altered");
+        }
+    }
+
+    #[test]
+    fn not_attempted_is_the_no_authority_moved_receipt() {
+        // A timeout before the call. The input is bound so the negative is
+        // about a specific request, and the stage is terminal so nothing is
+        // still owed. This is what makes absence expressible instead of silent.
+        let e = Effect {
+            input_hash: Some("sha256:req".into()),
+            finality: Some(EffectFinality::NotAttempted),
+            ..Default::default()
+        };
+        assert!(EffectFinality::NotAttempted.is_resolved());
+        assert_eq!(check_resolution(&e, 4_000_000_000), ResolutionStatus::Resolved);
+    }
+
+    // ---- resolution deadlines ----
+
+    fn open_effect(resolution: Option<Resolution>) -> Effect {
+        Effect {
+            finality: Some(EffectFinality::Initiated),
+            resolution,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn unresolved_without_a_deadline_reports_indefinite() {
+        // The 181-day pending row. Silence here is what made it survivable;
+        // naming the state is the whole point of the field.
+        assert_eq!(
+            check_resolution(&open_effect(None), 1_800_000_000),
+            ResolutionStatus::Indefinite
+        );
+    }
+
+    /// Derive the epoch from the same parser the check uses, rather than
+    /// hand-computing one. A wrong literal here would make the test assert a
+    /// fact about my arithmetic instead of about the function.
+    const DEADLINE: &str = "2026-07-20T11:00:00Z";
+    fn deadline_unix() -> i64 {
+        parse_rfc3339_to_unix(DEADLINE).expect("fixture deadline parses") as i64
+    }
+
+    #[test]
+    fn unresolved_past_its_deadline_reports_the_declared_event() {
+        let e = open_effect(Some(Resolution {
+            deadline: DEADLINE.into(),
+            on_deadline: DeadlineEvent::Escalate,
+        }));
+        match check_resolution(&e, deadline_unix() + 90) {
+            ResolutionStatus::Breached {
+                on_deadline,
+                seconds_overdue,
+            } => {
+                assert_eq!(on_deadline, DeadlineEvent::Escalate);
+                assert_eq!(seconds_overdue, 90);
+            }
+            other => panic!("expected Breached, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unresolved_inside_its_window_is_pending() {
+        let e = open_effect(Some(Resolution {
+            deadline: DEADLINE.into(),
+            on_deadline: DeadlineEvent::Timeout,
+        }));
+        match check_resolution(&e, deadline_unix() - 60) {
+            ResolutionStatus::Pending { seconds_remaining } => {
+                assert_eq!(seconds_remaining, 60)
+            }
+            other => panic!("expected Pending, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_resolved_effect_cannot_breach() {
+        // Finalized long before "now": the deadline is moot, not breached.
+        let e = Effect {
+            finality: Some(EffectFinality::Finalized),
+            resolution: Some(Resolution {
+                deadline: "2026-07-20T11:00:00Z".into(),
+                on_deadline: DeadlineEvent::Tombstone,
+            }),
+            ..Default::default()
+        };
+        assert_eq!(check_resolution(&e, 4_000_000_000), ResolutionStatus::Resolved);
+    }
+
+    #[test]
+    fn unparseable_deadline_fails_toward_unknown() {
+        // Never toward "in window": a deadline nobody can read must not be
+        // treated as one that has not passed yet.
+        let e = open_effect(Some(Resolution {
+            deadline: "whenever".into(),
+            on_deadline: DeadlineEvent::Timeout,
+        }));
+        assert_eq!(
+            check_resolution(&e, 1_800_000_000),
+            ResolutionStatus::BadDeadline
+        );
+    }
+
+    #[test]
+    fn missing_finality_is_treated_as_unresolved() {
+        // A receipt that never says where its state change got to has not told
+        // us it landed. Conservative reading, stated explicitly.
+        let e = Effect {
+            output_hash: Some("sha256:out".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            check_resolution(&e, 1_800_000_000),
+            ResolutionStatus::Indefinite
+        );
+    }
+
+    #[test]
+    fn finality_and_resolution_are_omitted_when_absent() {
+        // Existing v2 receipts must keep byte-identical canonical bytes.
+        let json = serde_json::to_string(&Effect {
+            output_hash: Some("sha256:out".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(!json.contains("finality"), "{json}");
+        assert!(!json.contains("resolution"), "{json}");
     }
 
     #[test]
