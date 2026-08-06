@@ -381,6 +381,10 @@ async function render(){
   const nodeIdx={};nodes.forEach((n,i)=>nodeIdx[n.agent_instance_id]=i);
   const totalActions=nodes.reduce((s,n)=>s+num(n.tool_calls),0)||1;
   const fin=financialActionEvidence(se,arts);
+  // Absent on receipts from sessions with no action/v2, and on every receipt
+  // written before the section existed. Both render as no band at all rather
+  // than an empty one, because an empty authority band reads like a clean bill.
+  const auth=(R.authority&&R.authority.checked)?R.authority:null;
 
   let h='<div class="sheet">';
 
@@ -396,6 +400,7 @@ async function render(){
   h+='<a class="nav-item" href="#files" data-section="files">Files <span class="nav-count">'+((se.files_written||[]).length+(se.files_read||[]).length)+'</span></a>';
   h+='<a class="nav-item" href="#commands" data-section="commands">Commands <span class="nav-count">'+procs.length+'</span></a>';
   h+='<div class="nav-label">Trust</div>';
+  if(auth)h+='<a class="nav-item" href="#authority" data-section="authority">Authority <span class="nav-count">'+auth.checked+'</span></a>';
   h+='<a class="nav-item" href="#security" data-section="security">Findings <span class="nav-count">'+findings.length+'</span></a>';
   if(fin.rows.length)h+='<a class="nav-item" href="#financial" data-section="financial">Financial <span class="nav-count">'+fin.rows.length+'</span></a>';
   h+='<a class="nav-item" href="#trust-chain" data-section="trust-chain">Trust chain</a>';
@@ -627,12 +632,59 @@ async function render(){
     h+='</div></div></section>';
   }
 
+  // ── AUTHORITY ──
+  // What each action/v2 was allowed to do, and whether it stayed inside that.
+  // The signature bands above answer "was this altered". This answers the
+  // question a counterparty is actually deciding on. Omitted entirely when the
+  // session had no action/v2 -- an empty band would read as a clean bill.
+  if(auth){
+    h+='<section class="band" id="authority"><div class="band-label">Authority</div><div class="band-sub">What each action was authorized to do, and whether it stayed inside that. Layers we could not check are named, not omitted.</div><div class="band-body">';
+    // Lead with the counts so the shape is legible before any detail loads.
+    var sumCol = auth.violations?'var(--fail)':(auth.unverified?'var(--warn)':'var(--pass)');
+    var sumGly = auth.violations?'✗':(auth.unverified?'○':'✓');
+    h+='<div class="row-list"><div class="finding">';
+    h+='<div class="mono" style="padding-top:1px;color:'+sumCol+'">'+sumGly+'</div><div>';
+    h+='<div style="font-size:.8rem;font-weight:600">'+auth.checked+' authorized action'+(auth.checked===1?'':'s')+'</div>';
+    h+='<div class="mono" style="font-size:.62rem;color:var(--faint);margin-top:3px">'+auth.violations+' outside grant · '+auth.unverified+' with an unchecked layer · '+auth.bearer+' bearer</div></div>';
+    h+='<span class="badge '+(auth.violations?'badge-risk':(auth.unverified?'badge-warn':'badge-ok'))+'">'+(auth.violations?'outside grant':(auth.unverified?'unverified':'in scope'))+'</span></div></div>';
+    h+='<div class="row-list" style="margin-top:10px">';
+    (auth.actions||[]).forEach(function(a){
+      var vb = a.verdict==='fail' ? 'badge-risk' : (a.verdict==='unverified' ? 'badge-warn' : 'badge-ok');
+      var vt = a.verdict==='fail' ? 'outside grant' : (a.verdict==='unverified' ? 'unverified' : 'in scope');
+      var gc = a.verdict==='fail' ? 'var(--fail)' : (a.verdict==='unverified' ? 'var(--warn)' : 'var(--pass)');
+      var gl = a.verdict==='fail' ? '✗' : (a.verdict==='unverified' ? '○' : '✓');
+      h+='<div class="finding"><div class="mono" style="padding-top:1px;color:'+gc+'">'+gl+'</div><div style="min-width:0">';
+      h+='<div style="font-size:.8rem;font-weight:600">'+esc(a.action||'')+'</div>';
+      h+='<div class="mono" style="font-size:.62rem;color:var(--faint);margin-top:3px">allowed: '+esc((a.scope||[]).join(', '))+' · for '+esc(a.audience||'')+'</div>';
+      // Holder: bearer is a real state, not a blank. Say it.
+      h+='<div class="mono" style="font-size:.62rem;margin-top:3px;color:'+(a.holder_bound?'var(--faint)':'var(--warn,#8a6d1f)')+'">holder: '+(a.holder_bound?'bound to a named key':'BEARER — anyone holding the grant could have done this')+'</div>';
+      // Delegation: not_claimed is absence of a claim, never a passing check.
+      var dl = a.delegation==='holds' ? ('chain holds · '+(a.delegation_hops||0)+' hop'+((a.delegation_hops||0)===1?'':'s'))
+             : a.delegation==='not_claimed' ? 'no lineage claimed'
+             : a.delegation==='widened' ? 'CHAIN WIDENS — a hop granted more than it held'
+             : 'chain unresolvable';
+      h+='<div class="mono" style="font-size:.62rem;color:var(--faint);margin-top:3px">delegation: '+dl+'</div>';
+      if(a.effect_finality||a.resolution){
+        var owed = a.resolution==='breached' ? ' · OVERDUE' : (a.resolution==='indefinite' ? ' · nothing scheduled to resolve it' : (a.resolution==='pending' ? ' · still owed' : ''));
+        h+='<div class="mono" style="font-size:.62rem;color:var(--faint);margin-top:3px">effect: '+esc(a.effect_finality||'not stated')+esc(owed)+'</div>';
+      }
+      (a.reasons||[]).forEach(function(r){
+        h+='<div class="mono" style="font-size:.6rem;color:var(--faint);margin-top:3px">— '+esc(r)+'</div>';
+      });
+      h+='<div class="mono" style="font-size:.58rem;color:var(--faint);margin-top:3px">grant '+esc(a.grant_id||'')+'</div>';
+      h+='</div><span class="badge '+vb+'">'+vt+'</span></div>';
+    });
+    h+='</div>';
+    h+='<div class="pad faint" style="font-size:.66rem;margin-top:8px">Covers every action/v2 signed inside this session’s window, which is a wider set than the artifact chain above. Revocation is never checked: no resolver is wired, so a live grant cannot be distinguished from a withdrawn one.</div>';
+    h+='</section>';
+  }
+
   // ── APPROVAL GATES ──
   h+='<section class="band" id="approvals"><div class="band-label">Approval gates</div><div class="band-sub">Human approval checkpoints during the session.</div><div class="band-body">';
   if(fin.approvals.length){
     h+='<div class="row-list">';
     fin.approvals.forEach(a=>{
-      h+='<div class="finding"><span class="badge badge-ok">✔ approved</span><div><div style="font-size:.8rem;font-weight:600">Approval artifact</div><div class="mono" style="font-size:.62rem;color:var(--faint);margin-top:3px">'+esc(a.artifact_id||a.id||'')+' · '+timeOf(a.signed_at||a.timestamp||'')+'</div></div></div>';
+      h+='<div class="finding"><div class="mono" style="padding-top:1px;color:var(--pass)">✓</div><div><div style="font-size:.8rem;font-weight:600">Approval artifact</div><div class="mono" style="font-size:.62rem;color:var(--faint);margin-top:3px">'+esc(a.artifact_id||a.id||'')+' · '+timeOf(a.signed_at||a.timestamp||'')+'</div></div><span class="badge badge-ok">approved</span></div>';
     });
     h+='</div>';
   }else{

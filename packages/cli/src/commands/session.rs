@@ -1330,7 +1330,18 @@ pub fn close(
     receipt_manifest.closed_at = Some(now_rfc3339());
     receipt_manifest.summary = summary.clone();
 
+    // Stash before the move: the authority pass needs to re-read each v2
+    // envelope out of storage, which the composer cannot do.
     let mut receipt = ReceiptComposer::compose(&receipt_manifest, &events, artifact_entries);
+
+    // Resolution is time-dependent, so the clock is read once for the whole
+    // section rather than per action -- two effects in one session judged
+    // against different "now"s would be a worse report than none.
+    let now_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    receipt.authority = collect_authority(&ctx, &receipt_manifest, now_unix);
 
     // Stamp the in-band incompleteness signal. Defaults to 0 (omitted
     // from canonical JSON via skip_serializing_if) so receipts produced
@@ -2040,6 +2051,7 @@ pub fn report(
             None,
             None,
             None,
+            None,
             &resolved_id,
             &receipt_digest,
             package_digest.as_deref(),
@@ -2064,6 +2076,7 @@ pub fn report(
             if format == "json" {
                 return emit_report_output(
                     format,
+                    None,
                     None,
                     None,
                     None,
@@ -2100,6 +2113,7 @@ pub fn report(
             if format == "json" {
                 return emit_report_output(
                     format,
+                    None,
                     None,
                     None,
                     None,
@@ -2150,6 +2164,7 @@ pub fn report(
                     None,
                     None,
                     None,
+                    None,
                     &resolved_id,
                     &receipt_digest,
                     package_digest.as_deref(),
@@ -2166,6 +2181,7 @@ pub fn report(
             if format == "json" {
                 return emit_report_output(
                     format,
+                    None,
                     None,
                     None,
                     None,
@@ -2193,12 +2209,14 @@ pub fn report(
     // Derive the raw JSON URL and package download URL from the
     // receipt URL's origin. The marketing site routes them at known
     // paths (PR 2 / PR 3 of this same release).
-    let (raw_json_url, package_download_url) = derive_share_urls(&receipt_url, &resolved_id);
+    let (raw_json_url, paper_preview_url, package_download_url) =
+        derive_share_urls(&receipt_url, &resolved_id);
 
     emit_report_output(
         format,
         Some(&receipt_url),
         Some(&raw_json_url),
+        Some(&paper_preview_url),
         Some(&package_download_url),
         &resolved_id,
         &receipt_digest,
@@ -2211,9 +2229,10 @@ pub fn report(
     )
 }
 
-/// Derive `raw_json_url` and `package_download_url` from a hub-issued
-/// `receipt_url`. The convention: the marketing site serves
+/// Derive share URLs from a hub-issued `receipt_url`. The convention:
+/// the marketing site serves
 ///   /receipt/<id>             (the SSR page)
+///   /receipt/<id>/preview     (packaged paper preview.html)
 ///   /api/receipt/<id>         (raw JSON proxy of the hub receipt)
 ///   /api/receipt/<id>/agent   (agent-native curated JSON)
 ///   /receipt/<id>/package     (downloadable .treeship.tar.gz)
@@ -2221,15 +2240,16 @@ pub fn report(
 /// Stripping `/receipt/<id>` from the receipt_url gives us the origin;
 /// we attach the canonical paths from there. Falls back to
 /// www.treeship.dev when the receipt_url's origin can't be parsed.
-fn derive_share_urls(receipt_url: &str, session_id: &str) -> (String, String) {
+fn derive_share_urls(receipt_url: &str, session_id: &str) -> (String, String, String) {
     // Find "/receipt/" in the URL and split there.
     let origin = match receipt_url.find("/receipt/") {
         Some(idx) => &receipt_url[..idx],
         None => "https://www.treeship.dev",
     };
     let raw = format!("{origin}/api/receipt/{session_id}");
+    let preview = format!("{origin}/receipt/{session_id}/preview");
     let pkg = format!("{origin}/receipt/{session_id}/package");
-    (raw, pkg)
+    (raw, preview, pkg)
 }
 
 /// Compute a content-addressed manifest digest for a package
@@ -2343,6 +2363,7 @@ fn emit_report_output(
     format: &str,
     receipt_url: Option<&str>,
     raw_json_url: Option<&str>,
+    paper_preview_url: Option<&str>,
     package_download_url: Option<&str>,
     session_id: &str,
     receipt_digest: &str,
@@ -2362,6 +2383,7 @@ fn emit_report_output(
             "schema":               "treeship/share-result/v1",
             "session_id":           session_id,
             "receipt_url":          receipt_url,
+            "paper_preview_url":    paper_preview_url,
             "raw_json_url":         raw_json_url,
             "package_download_url": package_download_url,
             "receipt_digest":       receipt_digest,
@@ -2386,6 +2408,9 @@ fn emit_report_output(
         printer.blank();
         if let Some(url) = receipt_url {
             printer.info(&format!("  receipt:  {url}"));
+        }
+        if let Some(url) = paper_preview_url {
+            printer.info(&format!("  preview:  {url}"));
         }
         if let Some(url) = raw_json_url {
             printer.info(&format!("  raw json: {url}"));
@@ -2748,5 +2773,156 @@ mod work_history_tests {
         assert_eq!(selfish["tools_exercised"], serde_json::json!([]));
         treeship_core::predicates::validate("session.v1", Some(&selfish))
             .expect("bare-session record must also conform");
+    }
+}
+
+// ── Authority section ────────────────────────────────────────────────
+//
+// The composer sees manifest + events + artifact metadata. It cannot open an
+// envelope or run a verifier, so the authority story -- what each action was
+// allowed to do and whether it stayed inside that -- has to be assembled here,
+// where storage and the verify logic already are.
+//
+// Without this the paper receipt reports signatures and merkle structure and
+// says nothing about authority, which reads as a complete account while
+// omitting the half a counterparty is actually deciding on.
+
+use treeship_core::session::receipt::{AuthorityEntry, AuthoritySection};
+use treeship_core::statements::{
+    check_resolution, payload_type_v2, resolve_grant_chain, verify_effect, verify_grant_chain,
+    verify_mandate, ActionStatementV2, MandateVerdict, NoRevocationSource, NoWitnessAuthority,
+};
+
+/// Build the authority section for every action/v2 emitted during the session
+/// window.
+///
+/// Deliberately NOT sourced from `receipt.artifacts`. That list is the chain
+/// walked back from `.last` via `parent_id`, so an action/v2 that was never
+/// linked into the chain -- which is every one of them today, since `attest
+/// action --v2` sets no parent by default -- would be invisible. An authority
+/// section that silently omits actions is worse than none: it reads as a
+/// complete account of what was authorized.
+///
+/// So this reads the store directly, bounded by the session's own window. The
+/// merkle tree and `artifacts` are untouched; this section describes a
+/// deliberately wider set and says so.
+///
+/// Returns `None` when the window contained no action/v2, so a session with
+/// nothing to say about authority says nothing rather than rendering an empty
+/// band that reads like a clean bill.
+fn collect_authority(
+    ctx: &ctx::Ctx,
+    manifest: &SessionManifest,
+    now_unix: i64,
+) -> Option<AuthoritySection> {
+    let v2 = payload_type_v2("action");
+    let mut out = AuthoritySection::default();
+
+    // Inclusive lower bound, open upper bound: `closed_at` is stamped just
+    // before this runs, so anything signed at exactly that instant belongs.
+    let started = manifest.started_at.as_str();
+    let closed = manifest.closed_at.as_deref();
+
+    let mut in_window: Vec<_> = ctx
+        .storage
+        .list_by_type(&v2)
+        .into_iter()
+        .filter(|e| {
+            e.signed_at.as_str() >= started && closed.is_none_or(|c| e.signed_at.as_str() <= c)
+        })
+        .collect();
+    in_window.sort_by(|a, b| a.signed_at.cmp(&b.signed_at));
+
+    for a in &in_window {
+        let Ok(rec) = ctx.storage.read(a.id.as_str()) else {
+            continue;
+        };
+        let Ok(stmt) = rec.envelope.unmarshal_statement::<ActionStatementV2>() else {
+            continue;
+        };
+        let m = &stmt.mandate;
+
+        // Revocation has no resolver, so this reports Unverified naming that
+        // layer rather than a false clean.
+        let (verdict, reasons) = match verify_mandate(&stmt, &NoRevocationSource) {
+            MandateVerdict::Pass => ("pass", Vec::new()),
+            MandateVerdict::Unverified(r) => ("unverified", r),
+            MandateVerdict::Fail(r) => ("fail", r),
+        };
+
+        // A lone leaf is not a chain: a mandate carrying no ancestors made no
+        // lineage claim, and reporting that as a passing chain would name a
+        // check that never ran.
+        let (delegation, hops) = if m.chain.is_empty() {
+            ("not_claimed", None)
+        } else {
+            match resolve_grant_chain(m) {
+                Err(_) => ("unresolvable", None),
+                Ok(chain) => match verify_grant_chain(chain.as_slice()) {
+                    Ok(()) => ("holds", Some(chain.len() as u32)),
+                    Err(_) => ("widened", Some(chain.len() as u32)),
+                },
+            }
+        };
+
+        let effect_finality = stmt
+            .effect
+            .as_ref()
+            .and_then(|_| verify_effect(&stmt, &NoWitnessAuthority).effective_finality)
+            .map(|f| finality_word(f).to_string());
+        let resolution = stmt
+            .effect
+            .as_ref()
+            .map(|e| resolution_word(&check_resolution(e, now_unix)).to_string());
+
+        let holder_bound = m.grantee.as_deref().is_some_and(|g| !g.is_empty());
+        match verdict {
+            "fail" => out.violations += 1,
+            "unverified" => out.unverified += 1,
+            _ => {}
+        }
+        if !holder_bound {
+            out.bearer += 1;
+        }
+        out.checked += 1;
+
+        out.actions.push(AuthorityEntry {
+            artifact_id: a.id.to_string(),
+            action: stmt.action.clone(),
+            verdict: verdict.into(),
+            reasons,
+            scope: m.scope.clone(),
+            audience: m.audience.clone(),
+            grant_id: m.grant_id.clone(),
+            holder_bound,
+            delegation: delegation.into(),
+            delegation_hops: hops,
+            effect_finality,
+            resolution,
+        });
+    }
+
+    (out.checked > 0).then_some(out)
+}
+
+fn finality_word(f: treeship_core::statements::EffectFinality) -> &'static str {
+    use treeship_core::statements::EffectFinality as F;
+    match f {
+        F::NotAttempted => "not_attempted",
+        F::Initiated => "initiated",
+        F::Finalized => "finalized",
+        F::Failed => "failed",
+        F::Indeterminate => "indeterminate",
+    }
+}
+
+fn resolution_word(r: &treeship_core::statements::ResolutionStatus) -> &'static str {
+    use treeship_core::statements::ResolutionStatus as R;
+    match r {
+        R::Resolved => "resolved",
+        R::Indefinite => "indefinite",
+        R::Pending { .. } => "pending",
+        R::Breached { .. } => "breached",
+        R::BadDeadline => "bad_deadline",
     }
 }
