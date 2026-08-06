@@ -63,6 +63,8 @@ jobs:
         run: python3 scripts/check-specs-index.py
       - name: Published crates embed only files inside their own root
         run: python3 scripts/check-vendored-fonts.py
+      - name: Paper-receipt template matches the copy vendored downstream
+        run: python3 scripts/check-downstream-template.py
       - name: Generated feature matrix matches the inventory
         # The generator needs only the `yaml` package (package-lock.json is
         # gitignored in docs/, so no npm ci; skip the full fumadocs install).
