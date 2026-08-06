@@ -981,7 +981,7 @@ struct SessionReportArgs {
     session_id: Option<String>,
 
     /// Output format: text (default) or json. JSON returns the
-    /// agent-native shape: { receipt_url, raw_json_url,
+    /// agent-native shape: { receipt_url, paper_preview_url, raw_json_url,
     /// package_download_url, receipt_digest, package_digest,
     /// verification_status, warnings }. Stable for AI agents and
     /// orchestration tools.
@@ -990,7 +990,7 @@ struct SessionReportArgs {
 
     /// Skip uploading to the hub. Compute digests + run local
     /// verification, return the agent-native shape with `receipt_url`
-    /// / `raw_json_url` / `package_download_url` set to null. Useful
+    /// / `raw_json_url` / `paper_preview_url` / `package_download_url` set to null. Useful
     /// when running in an environment without hub auth (CI, sandboxed
     /// agent, demo) but the caller still needs a structured share
     /// response.
