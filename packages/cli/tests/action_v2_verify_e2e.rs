@@ -104,6 +104,7 @@ fn mandate(scope: Vec<&str>) -> Mandate {
     Mandate {
         grant_id: "grant_e2e".into(),
         grantor: "key_parent".into(),
+        grantee: None,
         issuer_sig: None,
         objective_hash: None,
         scope: scope.into_iter().map(String::from).collect(),

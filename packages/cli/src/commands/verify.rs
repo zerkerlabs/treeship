@@ -1957,6 +1957,7 @@ mod tests {
         let mandate = Mandate {
             grant_id: "grant_1".into(),
             grantor: "key_parent".into(),
+            grantee: None,
             issuer_sig: None,
             objective_hash: Some("sha256:abc".into()),
             scope: vec!["payments.charge".into()],
@@ -2239,6 +2240,7 @@ mod tests {
         let mandate = |scope: Vec<String>| Mandate {
             grant_id: "grant_1".into(),
             grantor: "key_parent".into(),
+            grantee: None,
             issuer_sig: None,
             objective_hash: None,
             scope,
@@ -2313,6 +2315,7 @@ mod tests {
             let mut g = Grant {
                 grant_id: String::new(),
                 grantor: pk.clone(),
+                grantee: None,
                 issuer_sig: None,
                 scope: scope.into_iter().map(String::from).collect(),
                 audience: "acme".into(),
@@ -2332,6 +2335,7 @@ mod tests {
         let mandate_for = |leaf: &Grant, chain: Vec<Grant>| Mandate {
             grant_id: leaf.grant_id.clone(),
             grantor: pk.clone(),
+            grantee: None,
             issuer_sig: leaf.issuer_sig.clone(),
             objective_hash: None,
             scope: leaf.scope.clone(),
@@ -2472,6 +2476,7 @@ mod tests {
         let mandate = Mandate {
             grant_id: "grant_1".into(),
             grantor: "key_parent".into(),
+            grantee: None,
             issuer_sig: None,
             objective_hash: None,
             scope: vec!["payments.charge".into()],
