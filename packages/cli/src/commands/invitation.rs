@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 
 use treeship_core::{
-    attestation::Envelope,
+    attestation::{Envelope, Signer},
     journal::{self, Journal},
     statements::{
         invitation::{
@@ -38,6 +38,7 @@ use treeship_core::{
     },
     storage::Record,
     trust::{decode_ed25519_pubkey, TrustRootKind, TrustRootStore},
+    verify::session_join_challenge::{check_join_challenge, join_challenge_canonical},
 };
 
 use crate::{
@@ -145,6 +146,23 @@ pub struct JoinArgs {
 
 pub struct CountersignArgs {
     pub participant_id: String,
+    pub format: String,
+    /// The nonce the host issued for the room-join liveness challenge.
+    /// Must be supplied together with `challenge_response`, or neither.
+    pub challenge: Option<String>,
+    /// Path to (or `-` for stdin) the joining agent's signed response to
+    /// `challenge`, produced by `treeship session answer-challenge`.
+    pub challenge_response: Option<String>,
+}
+
+pub struct AnswerChallengeArgs {
+    pub participant_id: String,
+    /// The nonce the host issued out of band for this join.
+    pub challenge: String,
+    /// Joining agent's actor URI. Must resolve to the same key that
+    /// signed the pending participant event.
+    pub actor: String,
+    pub out: Option<String>,
     pub format: String,
 }
 
@@ -838,6 +856,51 @@ pub fn countersign(
         );
     }
 
+    // Optional liveness gate: proves the joining agent controls its key
+    // RIGHT NOW, at countersign time, not just whenever `session join` ran.
+    // Opt-in and additive -- omitting both flags countersigns exactly as
+    // before. Supplying only one is refused rather than silently ignored,
+    // since a half-supplied challenge is the AI-assisted-development
+    // policy's "vacuous pass" failure mode dressed up as a flag.
+    match (&args.challenge, &args.challenge_response) {
+        (None, None) => {}
+        (Some(_), None) | (None, Some(_)) => {
+            return Err(
+                "--challenge and --challenge-response must be supplied together (or neither)"
+                    .into(),
+            );
+        }
+        (Some(nonce), Some(response_src)) => {
+            let response_text = if response_src == "-" {
+                use std::io::Read;
+                let mut s = String::new();
+                std::io::stdin().read_to_string(&mut s)?;
+                s
+            } else {
+                std::fs::read_to_string(response_src)
+                    .map_err(|e| format!("read --challenge-response {response_src}: {e}"))?
+            };
+            let response: serde_json::Value = serde_json::from_str(&response_text)
+                .map_err(|e| format!("challenge response is not valid JSON: {e}"))?;
+            let joiner_pk_bytes: [u8; 32] = URL_SAFE_NO_PAD
+                .decode(stmt.joining_agent.as_bytes())
+                .ok()
+                .and_then(|b| b.try_into().ok())
+                .ok_or("participant.joining_agent is not a 32-byte base64url Ed25519 pubkey")?;
+            let joiner_vk = ed25519_dalek::VerifyingKey::from_bytes(&joiner_pk_bytes)
+                .map_err(|e| format!("participant.joining_agent pubkey invalid: {e}"))?;
+            check_join_challenge(
+                &response,
+                &stmt.session_ref,
+                &args.participant_id,
+                &stmt.joining_agent,
+                nonce,
+                &joiner_vk,
+            )
+            .map_err(|e| format!("join-challenge verification failed: {e}; countersign refused"))?;
+        }
+    }
+
     let finalized =
         SessionParticipantStatement::attach_host_countersign(&rec.envelope, &*host_signer)
             .map_err(|e| format!("attach host countersign: {e}"))?;
@@ -859,15 +922,17 @@ pub fn countersign(
     };
     c.storage.write(&new_record)?;
 
+    let challenge_verified = args.challenge.is_some();
     let format = Format::from_str(&args.format);
     if format == Format::Json {
         printer.json(&serde_json::json!({
-            "status":          "finalized",
-            "participant_id":  args.participant_id,
-            "session_ref":     stmt.session_ref,
-            "invitation_ref":  stmt.invitation_ref,
-            "joining_agent":   stmt.joining_agent,
-            "signatures":      2,
+            "status":             "finalized",
+            "participant_id":     args.participant_id,
+            "session_ref":        stmt.session_ref,
+            "invitation_ref":     stmt.invitation_ref,
+            "joining_agent":      stmt.joining_agent,
+            "signatures":         2,
+            "challenge_verified": challenge_verified,
         }));
         return Ok(());
     }
@@ -877,8 +942,117 @@ pub fn countersign(
             ("participant_id", &args.participant_id),
             ("session_ref", &stmt.session_ref),
             ("invitation_ref", &stmt.invitation_ref),
+            (
+                "challenge_verified",
+                if challenge_verified { "true" } else { "false" },
+            ),
         ],
     );
+    if !challenge_verified {
+        printer.hint(
+            "no --challenge supplied — this join was NOT liveness-checked at countersign time",
+        );
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// `treeship session answer-challenge`
+// ---------------------------------------------------------------------------
+
+/// Sign the host's room-join liveness nonce with the joining agent's own
+/// key. Run by the JOINING AGENT, after `session join`, in response to a
+/// nonce the host generated immediately before running `session
+/// countersign --challenge <nonce> --challenge-response <this output>`.
+pub fn answer_challenge(
+    ctx_override: Option<&str>,
+    args: AnswerChallengeArgs,
+    printer: &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let c = ctx::open(ctx_override)?;
+
+    let rec = c
+        .storage
+        .read(&args.participant_id)
+        .map_err(|e| format!("participant artifact {}: {e}", args.participant_id))?;
+    if rec.payload_type != payload_type("session-participant") {
+        return Err(format!(
+            "artifact {} is not a session-participant envelope (type={})",
+            args.participant_id, rec.payload_type,
+        )
+        .into());
+    }
+    if rec.envelope.signatures.len() != 1 {
+        return Err(format!(
+            "participant artifact {} already carries {} signatures; \
+             a liveness challenge only makes sense before the host's countersign",
+            args.participant_id,
+            rec.envelope.signatures.len(),
+        )
+        .into());
+    }
+
+    let stmt: SessionParticipantStatement = rec
+        .envelope
+        .unmarshal_statement()
+        .map_err(|e| format!("decode participant payload: {e}"))?;
+
+    // The answering key must be the one bound in the pending participant
+    // event -- answering with a DIFFERENT key would prove liveness of the
+    // wrong agent.
+    let signer = crate::commands::attest::resolve_actor_signer(&c, &args.actor)?;
+    let signer_pk_b64 = URL_SAFE_NO_PAD.encode(signer.public_key_bytes());
+    if signer_pk_b64 != stmt.joining_agent {
+        return Err(format!(
+            "the pending participant event is bound to {}, but --actor {} resolves to {} \
+             -- answer with the same key that ran `session join`",
+            stmt.joining_agent, args.actor, signer_pk_b64,
+        )
+        .into());
+    }
+
+    let signed_at = now_rfc3339();
+    let canonical = join_challenge_canonical(
+        &stmt.session_ref,
+        &args.participant_id,
+        &stmt.joining_agent,
+        &args.challenge,
+        &signed_at,
+    );
+    let sig = signer.sign(&canonical)?;
+    let response = serde_json::json!({
+        "nonce": args.challenge,
+        "signed_at": signed_at,
+        "signature": URL_SAFE_NO_PAD.encode(sig),
+    });
+
+    let default_name = format!("{}.challenge-response.json", args.participant_id);
+    let out_path = args.out.as_deref().unwrap_or(&default_name);
+    std::fs::write(out_path, serde_json::to_vec_pretty(&response)?)?;
+
+    let format = Format::from_str(&args.format);
+    if format == Format::Json {
+        printer.json(&serde_json::json!({
+            "status":         "signed",
+            "participant_id": args.participant_id,
+            "nonce":          args.challenge,
+            "signed_at":      signed_at,
+            "file":           out_path,
+        }));
+        return Ok(());
+    }
+    printer.success(
+        "challenge signed",
+        &[
+            ("participant_id", args.participant_id.as_str()),
+            ("nonce", args.challenge.as_str()),
+            ("file", out_path),
+        ],
+    );
+    printer.hint(&format!(
+        "hand this file to the host: treeship session countersign {} --challenge {} --challenge-response {out_path}",
+        args.participant_id, args.challenge,
+    ));
     Ok(())
 }
 

@@ -889,9 +889,28 @@ enum SessionCommand {
     /// the participant envelope carries two signatures (joining agent +
     /// host) and verifies as a finalized join.
     ///
+    /// Pass --challenge/--challenge-response together to gate the
+    /// countersign on a liveness proof: the host picks a nonce, the
+    /// joining agent answers it with `session answer-challenge`, and
+    /// countersign refuses to finalize unless the answer verifies against
+    /// the SAME nonce and the pending event's joining_agent key. Proves
+    /// the joining agent is live right now, not just whenever `join` ran
+    /// -- closes the gap for joins whose pending envelope was pasted
+    /// across machines/sandboxes rather than countersigned immediately.
+    ///
     /// Examples:
     ///   treeship session countersign art_part_abc123
+    ///   treeship session countersign art_part_abc123 --challenge n_8f2a \
+    ///     --challenge-response ./art_part_abc123.challenge-response.json
     Countersign(SessionCountersignArgs),
+
+    /// Sign the host's room-join liveness nonce with the joining agent's
+    /// own key. Run by the JOINING AGENT after `session join`, in
+    /// response to a nonce the host chose out of band.
+    ///
+    /// Examples:
+    ///   treeship session answer-challenge art_part_abc123 --challenge n_8f2a --actor agent://researcher
+    AnswerChallenge(SessionAnswerChallengeArgs),
 }
 
 #[derive(Args)]
@@ -957,6 +976,40 @@ struct SessionJoinArgs {
 struct SessionCountersignArgs {
     /// Participant artifact id (output of `treeship session join`).
     participant_id: String,
+
+    /// The nonce YOU (the host) issue for the room-join liveness
+    /// challenge, right before finalizing. Any string; pick something
+    /// unpredictable. Must be supplied together with --challenge-response.
+    #[arg(long, value_name = "NONCE")]
+    challenge: Option<String>,
+
+    /// Path to the joining agent's signed response to --challenge (output
+    /// of `treeship session answer-challenge`). Use `-` for stdin.
+    #[arg(long, value_name = "PATH")]
+    challenge_response: Option<String>,
+
+    /// Output format: text (default) or json.
+    #[arg(long, value_name = "FORMAT", default_value = "text")]
+    format: String,
+}
+
+#[derive(Args)]
+struct SessionAnswerChallengeArgs {
+    /// Participant artifact id (output of `treeship session join`).
+    participant_id: String,
+
+    /// The nonce the host issued out of band for this join.
+    #[arg(long, value_name = "NONCE")]
+    challenge: String,
+
+    /// Joining agent's actor URI. Must resolve to the same key that ran
+    /// `treeship session join`.
+    #[arg(long, value_name = "URI")]
+    actor: String,
+
+    /// Output path (default: <participant_id>.challenge-response.json)
+    #[arg(long, value_name = "PATH")]
+    out: Option<String>,
 
     /// Output format: text (default) or json.
     #[arg(long, value_name = "FORMAT", default_value = "text")]
@@ -2717,6 +2770,19 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 cli.config.as_deref(),
                 commands::invitation::CountersignArgs {
                     participant_id: a.participant_id.clone(),
+                    format: a.format.clone(),
+                    challenge: a.challenge.clone(),
+                    challenge_response: a.challenge_response.clone(),
+                },
+                printer,
+            ),
+            SessionCommand::AnswerChallenge(a) => commands::invitation::answer_challenge(
+                cli.config.as_deref(),
+                commands::invitation::AnswerChallengeArgs {
+                    participant_id: a.participant_id.clone(),
+                    challenge: a.challenge.clone(),
+                    actor: a.actor.clone(),
+                    out: a.out.clone(),
                     format: a.format.clone(),
                 },
                 printer,
