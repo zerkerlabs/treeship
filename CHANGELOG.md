@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+- **`RoomInfo` on `SessionManifest`.** Optional `room` field (`room_id`,
+  `host_pubkey`, `invitation_authority`, `workflow_ref`, `checkpoint_cadence`,
+  `participants`) following the schema proposed in
+  `docs/specs/agent-invitations-rooms.md` Phase 2. Purely additive — absent on
+  ordinary sessions and on manifests written before this field existed. No CLI
+  surface yet (`treeship room create/status/participants` is the follow-up);
+  this lands the data model first so the wire format is settled.
+
 ## 0.23.0 (2026-08-05)
 
 The emission release. v0.21 and v0.22 built a verifier that could check

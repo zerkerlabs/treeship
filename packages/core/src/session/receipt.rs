@@ -12,7 +12,7 @@ use crate::merkle::{InclusionProof, MerkleTree};
 use super::event::SessionEvent;
 use super::graph::AgentGraph;
 use super::manifest::{
-    HostInfo, LifecycleMode, Participants, SessionManifest, SessionStatus, ToolInfo,
+    HostInfo, LifecycleMode, Participants, RoomInfo, SessionManifest, SessionStatus, ToolInfo,
 };
 use super::render::RenderConfig;
 use super::side_effects::SideEffects;
@@ -170,6 +170,13 @@ pub struct SessionSection {
     /// Cumulative output tokens across all agents.
     #[serde(default)]
     pub total_tokens_out: u64,
+    /// Room this session hosted, mirrored from the manifest. Carried here so
+    /// `invitation_authority` sits inside the DSSE-signed payload instead of
+    /// only in unsigned `session.json` -- see `RoomInfo`'s doc comment for
+    /// why an unsigned authority field is a wire-controllable-dispatch-field
+    /// risk. Absent for ordinary (non-room) sessions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room: Option<RoomInfo>,
 }
 
 /// Structured narrative for the session summary.
@@ -400,6 +407,7 @@ impl ReceiptComposer {
             }),
             total_tokens_in,
             total_tokens_out,
+            room: manifest.room.clone(),
         };
 
         // Render config

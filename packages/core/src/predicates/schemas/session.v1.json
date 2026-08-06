@@ -83,6 +83,48 @@
     "report_url": {
       "description": "Published session report URL, when one exists.",
       "type": ["string", "null"]
+    },
+    "room": {
+      "description": "Room this session hosted, when it was created with `treeship room create`. Mirrored here from session.json so `invitation_authority` -- which decides who may mint invitations -- is bound into the DSSE-signed payload rather than living only in unsigned local state. Absent (null) for ordinary, non-room sessions.",
+      "type": ["object", "null"],
+      "properties": {
+        "room_id": {
+          "description": "Stable room identifier, distinct from session_id.",
+          "type": "string"
+        },
+        "host_pubkey": {
+          "description": "Base64url-no-pad Ed25519 public key the room's invitations are issued under.",
+          "type": "string"
+        },
+        "invitation_authority": {
+          "description": "Who may mint invitations for this room.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": ["host_only", "delegated_to", "open"]
+            },
+            "delegates": {
+              "description": "Present only when kind is delegated_to.",
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          },
+          "required": ["kind"]
+        },
+        "workflow_ref": {
+          "type": ["string", "null"]
+        },
+        "checkpoint_every_actions": {
+          "type": ["number", "null"]
+        },
+        "participants": {
+          "description": "Finalized (both-signed) participant artifact ids, in join order.",
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["room_id", "host_pubkey", "invitation_authority"]
     }
   }
 }
