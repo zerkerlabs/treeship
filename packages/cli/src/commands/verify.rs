@@ -159,16 +159,67 @@ fn v2_effect_verdict(env: &Envelope) -> Option<EffectVerdict> {
 /// wires no revocation resolver yet, so that layer resolves Unknown and the
 /// verdict degrades to Unverified -- claiming a grant is live because we never
 /// looked would be exactly the false pass this verifier exists to refuse.
-fn v2_mandate_summary(env: &Envelope) -> Option<MandateSummary> {
+fn v2_mandate_summary(env: &Envelope, verifier: Option<&Verifier>) -> Option<MandateSummary> {
     if env.payload_type != payload_type_v2("action") {
         return None;
     }
     let stmt = env.unmarshal_statement::<ActionStatementV2>().ok()?;
-    Some(match verify_mandate(&stmt, &NoRevocationSource) {
+    let mut verdict = match verify_mandate(&stmt, &NoRevocationSource) {
         MandateVerdict::Pass => MandateSummary::Pass,
         MandateVerdict::Unverified(r) => MandateSummary::Unverified(r),
         MandateVerdict::Fail(r) => MandateSummary::Fail(r),
-    })
+    };
+
+    // Holder binding needs something `verify_mandate` cannot see: the key that
+    // actually signed this envelope. The statement names who was entitled to
+    // act; only the envelope says who did.
+    if let Some(expected) = stmt.mandate.grantee.as_deref().filter(|g| !g.is_empty()) {
+        match signer_pubkey_b64(env, verifier) {
+            Some(actual) if actual == expected => {}
+            Some(actual) => {
+                // A receipt signed by a key the grant did not name. Both
+                // signatures can be genuine and this still be someone spending
+                // authority that was never issued to them.
+                let reason = format!(
+                    "receipt was signed by {actual} but the grant names {expected} as its holder"
+                );
+                verdict = match verdict {
+                    MandateSummary::Fail(mut r) => {
+                        r.push(reason);
+                        MandateSummary::Fail(r)
+                    }
+                    _ => MandateSummary::Fail(vec![reason]),
+                };
+            }
+            None => {
+                // The signing key is not resolvable here, so entitlement is a
+                // layer we could not check -- reported, never assumed clear.
+                let reason =
+                    "grant names a holder, but the signing key could not be resolved to compare"
+                        .to_string();
+                verdict = match verdict {
+                    MandateSummary::Fail(r) => MandateSummary::Fail(r),
+                    MandateSummary::Unverified(mut r) => {
+                        r.push(reason);
+                        MandateSummary::Unverified(r)
+                    }
+                    MandateSummary::Pass => MandateSummary::Unverified(vec![reason]),
+                };
+            }
+        }
+    }
+    Some(verdict)
+}
+
+/// Base64url-no-pad public key of whoever signed `env`, resolved through the
+/// verifier's trusted key map. `None` when there is no verifier, no signature,
+/// or the key id is not one we hold.
+fn signer_pubkey_b64(env: &Envelope, verifier: Option<&Verifier>) -> Option<String> {
+    let v = verifier?;
+    let keyid = env.signatures.first()?.keyid.as_str();
+    let key = v.public_key(keyid)?;
+    use base64::Engine as _;
+    Some(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.to_bytes()))
 }
 
 /// Resolve and judge the delegation chain behind a v2 action's mandate.
@@ -438,7 +489,7 @@ pub fn run(
         let authority_by_id: HashMap<String, serde_json::Value> = chain_envelopes
             .iter()
             .filter_map(|(id, env)| {
-                v2_mandate_summary(env).map(|m| (id.clone(), mandate_summary_json(&m)))
+                v2_mandate_summary(env, Some(&verifier)).map(|m| (id.clone(), mandate_summary_json(&m)))
             })
             .collect();
         let delegation_by_id: HashMap<String, serde_json::Value> = chain_envelopes
@@ -475,7 +526,7 @@ pub fn run(
         // unverified, one gating a payment should not.
         let summaries: Vec<MandateSummary> = chain_envelopes
             .iter()
-            .filter_map(|(_, env)| v2_mandate_summary(env))
+            .filter_map(|(_, env)| v2_mandate_summary(env, Some(&verifier)))
             .collect();
         let authority_ok = !summaries
             .iter()
@@ -535,6 +586,7 @@ pub fn run(
             &chain_envelopes,
             &checks,
             &ctx.storage,
+            &verifier,
             printer,
             target,
             linkage_ok,
@@ -721,6 +773,7 @@ fn print_full_timeline(
     chain: &[(String, Envelope)],
     checks: &[ArtifactCheck],
     storage: &Store,
+    verifier: &Verifier,
     printer: &Printer,
     target: &str,
     linkage_ok: bool,
@@ -736,7 +789,7 @@ fn print_full_timeline(
     let steps: Vec<StepInfo> = chain
         .iter()
         .enumerate()
-        .map(|(i, (id, env))| extract_step_info(i + 1, id, env, storage))
+        .map(|(i, (id, env))| extract_step_info(i + 1, id, env, storage, Some(verifier)))
         .collect();
 
     // Header
@@ -1231,7 +1284,13 @@ fn determine_connector(
     "\u{2193} chained".to_string()
 }
 
-fn extract_step_info(index: usize, id: &str, env: &Envelope, storage: &Store) -> StepInfo {
+fn extract_step_info(
+    index: usize,
+    id: &str,
+    env: &Envelope,
+    storage: &Store,
+    verifier: Option<&Verifier>,
+) -> StepInfo {
     let mut info = StepInfo {
         index,
         id: id.to_string(),
@@ -1281,7 +1340,7 @@ fn extract_step_info(index: usize, id: &str, env: &Envelope, storage: &Store) ->
                 info.runtime_model = rt.model.clone();
             }
             // Surface the effect line only when there is an effect to judge.
-            info.mandate_verdict = v2_mandate_summary(env);
+            info.mandate_verdict = v2_mandate_summary(env, verifier);
             info.chain_summary = v2_chain_summary(env);
             if let Some(verdict) = v2_effect_verdict(env) {
                 info.effect_effective = Some(verdict.effective_confidence);
@@ -1990,7 +2049,7 @@ mod tests {
         // effect verdict rather than silently taking the v1 branch.
         let dir = std::env::temp_dir().join("ts_verify_v2_effect_test");
         let store = Store::open(&dir).unwrap();
-        let info = extract_step_info(0, "art_test", &env, &store);
+        let info = extract_step_info(0, "art_test", &env, &store, None);
 
         assert_eq!(info.actor, "agent://worker");
         assert_eq!(
@@ -2266,7 +2325,7 @@ mod tests {
         ok.timestamp = "2026-07-20T10:30:00Z".into();
         ok.audience = Some("acme".into());
         let ok_env = sign(&payload_type_v2("action"), &ok, &signer).unwrap().envelope;
-        let info = extract_step_info(0, "art_ok", &ok_env, &store);
+        let info = extract_step_info(0, "art_ok", &ok_env, &store, None);
         match info.mandate_verdict {
             Some(MandateSummary::Unverified(ref r)) => {
                 assert!(!r.is_empty(), "unverified must name the layer it could not check");
@@ -2280,7 +2339,7 @@ mod tests {
         bad.timestamp = "2026-07-20T10:30:00Z".into();
         bad.audience = Some("acme".into());
         let bad_env = sign(&payload_type_v2("action"), &bad, &signer).unwrap().envelope;
-        let bad_info = extract_step_info(1, "art_bad", &bad_env, &store);
+        let bad_info = extract_step_info(1, "art_bad", &bad_env, &store, None);
         match bad_info.mandate_verdict {
             Some(MandateSummary::Fail(ref r)) => {
                 assert!(r.iter().any(|x| x.contains("scope")), "reason should name scope: {r:?}");
@@ -2294,7 +2353,7 @@ mod tests {
             .unwrap()
             .envelope;
         assert!(
-            v2_mandate_summary(&v1_env).is_none(),
+            v2_mandate_summary(&v1_env, None).is_none(),
             "v1 receipts must not claim anything about authority"
         );
     }
@@ -2509,7 +2568,7 @@ mod tests {
             .unwrap()
             .envelope;
 
-        let info = extract_step_info(0, "art_pending", &env, &store);
+        let info = extract_step_info(0, "art_pending", &env, &store, None);
         assert_eq!(
             info.effect_finality,
             Some(EffectFinality::Initiated),

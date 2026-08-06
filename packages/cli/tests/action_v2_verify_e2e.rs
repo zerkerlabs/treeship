@@ -64,6 +64,15 @@ impl Workspace {
         self.root.join(".treeship/artifacts")
     }
 
+    /// This workspace's default public key, base64url-no-pad — the form a
+    /// grant's `grantee` uses.
+    fn public_key_b64(&self) -> String {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+        let keys = KeyStore::open(self.keys_dir()).expect("open keystore");
+        let signer = keys.default_signer().expect("default key");
+        URL_SAFE_NO_PAD.encode(signer.public_key_bytes())
+    }
+
     /// Sign `stmt` with the workspace's default key and write it to the store,
     /// returning the artifact id `verify` will be pointed at.
     fn plant_v2(&self, stmt: &ActionStatementV2) -> String {
@@ -356,5 +365,54 @@ fn a_violation_is_counted_as_a_failure_not_as_unverified() {
     assert_eq!(
         j["authority_unverified"], 0,
         "a Fail is not an Unverified: {j}"
+    );
+}
+
+#[test]
+fn a_receipt_signed_by_a_key_the_grant_did_not_name_fails_authority() {
+    // `attest` refuses to build this, so the only way it exists is if someone
+    // constructed it outside our CLI -- which is exactly the case a verifier
+    // has to survive. Both signatures are genuine; the receipt is still
+    // somebody spending authority that was never issued to them.
+    let ws = Workspace::new();
+    let mut stmt = action(vec!["payments.charge"], "payments.charge");
+    stmt.mandate.grantee = Some("a-key-that-is-not-this-workspace".into());
+    let id = ws.plant_v2(&stmt);
+
+    let j = ws.verify_json(&id);
+    let auth = &j["checks"][0]["authority"];
+    assert_eq!(
+        auth["outcome"], "fail",
+        "a receipt signed by a non-grantee must fail authority: {j}"
+    );
+    assert!(
+        auth["reasons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r.as_str().unwrap_or_default().contains("holder")),
+        "the reason must name the holder mismatch: {j}"
+    );
+    assert_eq!(j["authority_ok"], false, "{j}");
+}
+
+#[test]
+fn a_receipt_signed_by_the_named_grantee_clears_the_holder_layer() {
+    // Same shape, but the grant names the key that signs. Only revocation
+    // should remain unverified.
+    let ws = Workspace::new();
+    let mut stmt = action(vec!["payments.charge"], "payments.charge");
+    stmt.mandate.grantee = Some(ws.public_key_b64());
+    let id = ws.plant_v2(&stmt);
+
+    let j = ws.verify_json(&id);
+    let auth = &j["checks"][0]["authority"];
+    assert_eq!(auth["outcome"], "unverified", "{j}");
+    let reasons = auth["reasons"].as_array().unwrap();
+    assert!(
+        reasons
+            .iter()
+            .all(|r| !r.as_str().unwrap_or_default().contains("holder")),
+        "the holder layer must be clear: {j}"
     );
 }

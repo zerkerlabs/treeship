@@ -81,6 +81,16 @@ impl Verifier {
         self.keys.insert(key_id.into(), pub_key);
     }
 
+    /// The trusted public key registered under `key_id`, if any.
+    ///
+    /// Exposed so a caller can answer questions the signature check does not:
+    /// a valid signature proves *some* trusted key signed the envelope, not
+    /// that it was the key a mandate names as entitled to act. Comparing those
+    /// two needs the bytes behind the id.
+    pub fn public_key(&self, key_id: &str) -> Option<&VerifyingKey> {
+        self.keys.get(key_id)
+    }
+
     /// Verifies all signatures in the envelope.
     ///
     /// Returns `Ok(VerifyResult)` only if **every** signature in the envelope
