@@ -124,6 +124,19 @@ impl Default for InvitationAuthority {
 /// `room` is `Option` on `SessionManifest` -- most sessions are not rooms.
 /// Absent entirely on legacy manifests and on any session that never calls
 /// `treeship room create`.
+///
+/// **Not yet canonical.** `SessionManifest` is local working state, not the
+/// signed artifact -- `ReceiptComposer::compose` (`receipt.rs`) does not
+/// currently read this field, so `room` (including `invitation_authority`,
+/// which decides who may mint invitations) lives only in the local
+/// `session.json` and is not bound into the DSSE-signed `session.v1`
+/// receipt. That's fine today because nothing reads or enforces it yet, but
+/// it means `room` MUST NOT be used to gate any authority decision (e.g. a
+/// future `treeship room create/invite` CLI trusting `invitation_authority`
+/// off disk) until it is folded into the canonical receipt and verified --
+/// an unsigned field that gates authority is exactly the
+/// wire-controllable-dispatch-field failure class `CLAUDE.md` calls out.
+/// Tracked as required follow-up work before any room CLI lands.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RoomInfo {
     /// Stable room identifier, distinct from `session_id` -- a room can in
@@ -147,10 +160,14 @@ pub struct RoomInfo {
     pub workflow_ref: Option<String>,
 
     /// How often the room commits a Merkle checkpoint, independent of
-    /// session close. Free-form for now (e.g. "50actions", "15m") --
-    /// the spec doesn't lock a format, so this isn't a typed duration yet.
+    /// session close, expressed as an action count. Typed rather than the
+    /// free-form string the spec's prose examples use ("50actions", "15m")
+    /// because this value is headed for canonical bytes once room joins
+    /// the signed receipt; a duration-based cadence can be added as a
+    /// separate typed variant if/when something actually needs it, rather
+    /// than smuggling units inside a string now.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub checkpoint_cadence: Option<String>,
+    pub checkpoint_every_actions: Option<u32>,
 
     /// Finalized (both-signed) participant artifact ids, in join order.
     /// A pending (single-signed, not yet countersigned) join does not
@@ -166,7 +183,7 @@ impl RoomInfo {
             host_pubkey: host_pubkey.into(),
             invitation_authority: InvitationAuthority::default(),
             workflow_ref: None,
-            checkpoint_cadence: None,
+            checkpoint_every_actions: None,
             participants: Vec::new(),
         }
     }
@@ -345,7 +362,7 @@ mod tests {
                     delegates: vec!["DeLeGaTe1".into()],
                 },
                 workflow_ref: Some("wf_abc".into()),
-                checkpoint_cadence: Some("50actions".into()),
+                checkpoint_every_actions: Some(50),
                 participants: vec!["art_part_1".into(), "art_part_2".into()],
             }),
         };
