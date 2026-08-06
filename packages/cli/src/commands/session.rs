@@ -129,14 +129,14 @@ fn now_rfc3339() -> String {
     treeship_core::statements::unix_to_rfc3339(secs)
 }
 
-fn epoch_ms() -> u64 {
+pub(crate) fn epoch_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
 }
 
-fn format_duration_ms(ms: u64) -> String {
+pub(crate) fn format_duration_ms(ms: u64) -> String {
     let secs = ms / 1000;
     if secs < 60 {
         format!("{}s", secs)
@@ -172,6 +172,20 @@ pub fn load_session() -> Option<SessionManifest> {
     serde_json::from_str(&data).ok()
 }
 
+/// Persist `manifest` to `.treeship/session.json`, overwriting whatever is
+/// there. `session::start` writes the manifest inline; this is the same
+/// write path pulled out so sugar commands that mutate an already-started
+/// manifest in place (`room create` populating `RoomInfo`, invitation
+/// countersign appending to `room.participants`) don't have to duplicate
+/// the path-resolution + permission-setting logic.
+pub(crate) fn save_session(manifest: &SessionManifest) -> Result<(), Box<dyn std::error::Error>> {
+    let path = session_path().ok_or("no .treeship directory found -- run treeship init first")?;
+    let json = serde_json::to_string_pretty(manifest)?;
+    std::fs::write(&path, &json)?;
+    set_restrictive_permissions(&path);
+    Ok(())
+}
+
 fn write_last(storage_dir: &str, artifact_id: &str) {
     let last_path = Path::new(storage_dir).join(".last");
     let _ = std::fs::write(&last_path, artifact_id);
@@ -200,7 +214,7 @@ fn resolve_last(storage_dir: &str) -> Option<String> {
 }
 
 /// Count artifacts in the chain from .last back to root_artifact_id.
-fn count_chain_artifacts(ctx: &ctx::Ctx, root_id: &str) -> u64 {
+pub(crate) fn count_chain_artifacts(ctx: &ctx::Ctx, root_id: &str) -> u64 {
     let last_path = Path::new(&ctx.config.storage_dir).join(".last");
     let current_id = match std::fs::read_to_string(&last_path) {
         Ok(s) => s.trim().to_string(),

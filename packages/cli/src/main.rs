@@ -273,6 +273,21 @@ enum Command {
     #[command(subcommand, display_order = 5)]
     Session(SessionCommand),
 
+    /// Room sugar over `treeship session` -- create/status/participants
+    /// for long-lived, multi-agent sessions.
+    ///
+    /// A room is just a session with the `room` field populated (see
+    /// docs/specs/agent-invitations-rooms.md). There is no `room close`:
+    /// plain `treeship session close` already works on a room.
+    ///
+    /// Examples:
+    ///   treeship room create
+    ///   treeship room create --invitation-authority delegated --delegate <pubkey>
+    ///   treeship room status
+    ///   treeship room participants
+    #[command(subcommand, display_order = 5)]
+    Room(RoomCommand),
+
     /// Inspect and verify .treeship session packages
     ///
     /// Session packages contain a complete Session Receipt with
@@ -958,6 +973,72 @@ struct SessionCountersignArgs {
     /// Participant artifact id (output of `treeship session join`).
     participant_id: String,
 
+    /// Output format: text (default) or json.
+    #[arg(long, value_name = "FORMAT", default_value = "text")]
+    format: String,
+}
+
+// --- room ---------------------------------------------------------------
+
+#[derive(Subcommand)]
+enum RoomCommand {
+    /// Create a room: sugar over `session start` that also populates
+    /// `SessionManifest.room` (room_id, host_pubkey, invitation_authority,
+    /// workflow_ref, checkpoint_every_actions).
+    ///
+    /// Examples:
+    ///   treeship room create
+    ///   treeship room create --invitation-authority host-only
+    ///   treeship room create --invitation-authority delegated --delegate ed25519:AbC...
+    ///   treeship room create --workflow-ref wf_abc123 --checkpoint-every 50
+    Create(RoomCreateArgs),
+
+    /// Show the active room's status (session status plus room fields).
+    /// Errors if the active session is not a room.
+    Status(RoomStatusArgs),
+
+    /// List the room's finalized (two-signature) participants, in join order.
+    /// Errors if the active session is not a room.
+    Participants(RoomParticipantsArgs),
+}
+
+#[derive(Args)]
+struct RoomCreateArgs {
+    /// Optional workflow this room's participants are bound to (Phase 3,
+    /// not yet enforced -- see docs/specs/agent-invitations-rooms.md).
+    #[arg(long, value_name = "WORKFLOW_ID")]
+    workflow_ref: Option<String>,
+
+    /// Who may mint invitations for this room. Defaults to host-only.
+    #[arg(long, value_name = "host-only|delegated|open")]
+    invitation_authority: Option<String>,
+
+    /// Delegate pubkey(s), only valid with `--invitation-authority delegated`.
+    /// May be repeated.
+    #[arg(long = "delegate", value_name = "PUBKEY")]
+    delegate: Vec<String>,
+
+    /// How often the room commits a Merkle checkpoint, expressed as a
+    /// plain action count (e.g. `--checkpoint-every 50`). Not enforced
+    /// yet -- carried on the manifest for the future checkpoint cadence
+    /// feature.
+    #[arg(long, value_name = "N")]
+    checkpoint_every: Option<String>,
+
+    /// Output format: text (default) or json.
+    #[arg(long, value_name = "FORMAT", default_value = "text")]
+    format: String,
+}
+
+#[derive(Args)]
+struct RoomStatusArgs {
+    /// Output format: text (default) or json.
+    #[arg(long, value_name = "FORMAT", default_value = "text")]
+    format: String,
+}
+
+#[derive(Args)]
+struct RoomParticipantsArgs {
     /// Output format: text (default) or json.
     #[arg(long, value_name = "FORMAT", default_value = "text")]
     format: String,
@@ -2717,6 +2798,34 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 cli.config.as_deref(),
                 commands::invitation::CountersignArgs {
                     participant_id: a.participant_id.clone(),
+                    format: a.format.clone(),
+                },
+                printer,
+            ),
+        },
+
+        Command::Room(sub) => match sub {
+            RoomCommand::Create(a) => commands::room::create(
+                cli.config.as_deref(),
+                commands::room::RoomCreateArgs {
+                    workflow_ref: a.workflow_ref.clone(),
+                    invitation_authority: a.invitation_authority.clone(),
+                    delegate: a.delegate.clone(),
+                    checkpoint_every: a.checkpoint_every.clone(),
+                    format: a.format.clone(),
+                },
+                printer,
+            ),
+            RoomCommand::Status(a) => commands::room::status(
+                cli.config.as_deref(),
+                commands::room::RoomStatusArgs {
+                    format: a.format.clone(),
+                },
+                printer,
+            ),
+            RoomCommand::Participants(a) => commands::room::participants(
+                cli.config.as_deref(),
+                commands::room::RoomParticipantsArgs {
                     format: a.format.clone(),
                 },
                 printer,
