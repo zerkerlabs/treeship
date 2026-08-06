@@ -30,6 +30,24 @@ pub struct Config {
     /// Legacy v0.1/v0.2 hub config -- read for migration, never written.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hub: Option<LegacyHubConfig>,
+
+    /// The on-disk spelling of `storage_dir`/`keys_dir` when either was
+    /// written as a relative path, plus the directory they were resolved
+    /// against. Never serialized: `load` replaces the public fields with
+    /// absolute paths so all 30+ consumers keep seeing absolute paths,
+    /// and `save` writes these originals back so a round-trip through
+    /// the CLI does not silently rewrite a portable config into an
+    /// absolute one. `None` for configs that already use absolute paths.
+    #[serde(skip)]
+    pub(crate) on_disk_paths: Option<OnDiskPaths>,
+}
+
+/// Verbatim relative path strings from a config file, kept so `save`
+/// can write back exactly what was read.
+#[derive(Debug, Clone)]
+pub(crate) struct OnDiskPaths {
+    pub storage_dir: String,
+    pub keys_dir: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -352,6 +370,86 @@ mod tests {
         assert_eq!(found, Some(PathBuf::from("/a/b/.treeship/config.json")));
     }
 
+    // --- portable (relative) store paths -------------------------------------
+
+    /// The bug this prevents: a keystore moved aside keeps pointing at the
+    /// live location, so the "backup" reads whatever replaced it.
+    #[test]
+    fn relative_store_paths_follow_a_moved_keystore() {
+        let home = temp_dir().join("orig");
+        fs::create_dir_all(home.join("keys")).unwrap();
+        let cfg_path = home.join("config.json");
+        fs::write(
+            &cfg_path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "ship_id": "ship_portable",
+                "storage_dir": "artifacts",
+                "keys_dir": "keys",
+                "default_key_id": "key_a",
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let before = load(&cfg_path).expect("relative config loads");
+        assert_eq!(before.keys_dir, home.join("keys").to_string_lossy());
+
+        // Move the whole keystore, exactly as `init` does when it steps aside.
+        let moved = temp_dir().join("moved");
+        fs::create_dir_all(moved.parent().unwrap()).ok();
+        fs::rename(&home, &moved).unwrap();
+
+        let after = load(&moved.join("config.json")).expect("moved config loads");
+        assert_eq!(
+            after.keys_dir,
+            moved.join("keys").to_string_lossy(),
+            "a moved keystore must point at its own keys, not the old location"
+        );
+    }
+
+    /// Absolute paths are load-bearing for every existing install; they
+    /// must keep resolving verbatim.
+    #[test]
+    fn absolute_store_paths_are_left_alone() {
+        let dir = temp_dir();
+        fs::create_dir_all(&dir).unwrap();
+        let cfg_path = write_real_config(&dir, "ship_abs");
+        let cfg = load(&cfg_path).unwrap();
+        assert_eq!(cfg.storage_dir, dir.join("artifacts").to_string_lossy());
+        assert!(cfg.on_disk_paths.is_none(), "no rewrite state for absolute");
+    }
+
+    /// A save must not quietly absolutize a config the user made portable.
+    #[test]
+    fn saving_a_relative_config_keeps_it_relative_on_disk() {
+        let dir = temp_dir();
+        fs::create_dir_all(&dir).unwrap();
+        let cfg_path = dir.join("config.json");
+        fs::write(
+            &cfg_path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "ship_id": "ship_rt",
+                "storage_dir": "artifacts",
+                "keys_dir": "keys",
+                "default_key_id": "key_a",
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let cfg = load(&cfg_path).unwrap();
+        save(&cfg, &cfg_path).unwrap();
+
+        let raw: serde_json::Value = serde_json::from_slice(&fs::read(&cfg_path).unwrap()).unwrap();
+        assert_eq!(raw["keys_dir"], "keys", "round-trip absolutized the path");
+        assert_eq!(raw["storage_dir"], "artifacts");
+        // ...and it still resolves to the right absolute path afterwards.
+        assert_eq!(
+            load(&cfg_path).unwrap().keys_dir,
+            dir.join("keys").to_string_lossy()
+        );
+    }
+
     // --- extends-chain handling (PR 5.B) ------------------------------------
 
     fn write_real_config(dir: &Path, ship_id: &str) -> PathBuf {
@@ -552,10 +650,52 @@ fn load_with_depth(
     }
 
     let mut cfg: Config = serde_json::from_slice(&bytes)?;
+    resolve_store_paths(&mut cfg, path);
     if migrate_legacy_hub(&mut cfg) {
         let _ = save(&cfg, path);
     }
     Ok(cfg)
+}
+
+/// Make `storage_dir`/`keys_dir` absolute, resolving relative paths
+/// against the directory holding the config -- the same rule
+/// `resolve_extends` already applies to `extends`.
+///
+/// Why this exists: these two fields have historically been written as
+/// absolute paths, which makes a keystore un-movable. `mv ~/.treeship
+/// ~/.treeship.bak.N` produces a "backup" whose config still points at
+/// `~/.treeship/keys` -- i.e. at whatever keystore replaced it. The
+/// backup then reads the *new* keys, and the recovery path silently
+/// scrambles state instead of restoring it. That is not hypothetical:
+/// it is how a machine ended up with six `.bak` directories and three
+/// ship identities in play.
+///
+/// Resolving relative paths against the config's own directory makes
+/// `{"keys_dir": "keys"}` mean "the keys next to this file", so moving
+/// or copying a keystore directory keeps it internally consistent.
+/// Absolute paths keep working exactly as before.
+///
+/// Relative paths were never usable before this: nothing resolved them,
+/// so they landed against the process cwd and pointed somewhere
+/// different depending on where you ran the command. This replaces
+/// undefined behavior, it does not change defined behavior.
+fn resolve_store_paths(cfg: &mut Config, config_path: &Path) {
+    let base = config_path.parent().unwrap_or_else(|| Path::new("."));
+    let storage_rel = Path::new(&cfg.storage_dir).is_relative();
+    let keys_rel = Path::new(&cfg.keys_dir).is_relative();
+    if !storage_rel && !keys_rel {
+        return;
+    }
+    cfg.on_disk_paths = Some(OnDiskPaths {
+        storage_dir: cfg.storage_dir.clone(),
+        keys_dir: cfg.keys_dir.clone(),
+    });
+    if storage_rel {
+        cfg.storage_dir = base.join(&cfg.storage_dir).to_string_lossy().into_owned();
+    }
+    if keys_rel {
+        cfg.keys_dir = base.join(&cfg.keys_dir).to_string_lossy().into_owned();
+    }
 }
 
 /// Resolve an `extends` path. Absolute paths are returned as-is;
@@ -592,7 +732,20 @@ pub fn save(cfg: &Config, path: &Path) -> Result<(), ConfigError> {
         use std::os::unix::fs::PermissionsExt;
         let _ = fs::set_permissions(dir, fs::Permissions::from_mode(0o700));
     }
-    let json = serde_json::to_vec_pretty(cfg)?;
+    // Write back the paths exactly as they were read. Without this, the
+    // first save after any load (hub attach, legacy migration, key
+    // rotation) would replace a relative, portable path with the
+    // absolute one resolved in memory -- quietly undoing portability
+    // for the user who deliberately opted into it.
+    let json = match &cfg.on_disk_paths {
+        Some(orig) => {
+            let mut out = cfg.clone();
+            out.storage_dir = orig.storage_dir.clone();
+            out.keys_dir = orig.keys_dir.clone();
+            serde_json::to_vec_pretty(&out)?
+        }
+        None => serde_json::to_vec_pretty(cfg)?,
+    };
     fs::write(path, &json)?;
     #[cfg(unix)]
     {
@@ -665,11 +818,20 @@ pub fn new_config(
     Config {
         ship_id: ship_id.to_string(),
         name,
+        // In memory: absolute, so every consumer is unaffected.
         storage_dir: dir.join("artifacts").to_string_lossy().into_owned(),
         keys_dir: dir.join("keys").to_string_lossy().into_owned(),
         default_key_id: default_key_id.to_string(),
         hub_connections: HashMap::new(),
         active_hub: None,
         hub: None,
+        // On disk: relative, so the keystore directory is movable. These
+        // resolve back to exactly the absolute paths above, because
+        // `resolve_store_paths` joins against this same directory --
+        // identical behavior in place, portable once it moves.
+        on_disk_paths: Some(OnDiskPaths {
+            storage_dir: "artifacts".into(),
+            keys_dir: "keys".into(),
+        }),
     }
 }
