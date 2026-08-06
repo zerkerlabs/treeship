@@ -238,8 +238,21 @@ pub fn issue(args: IssueArgs, printer: &Printer) -> Result<(), Box<dyn std::erro
 
     debug_assert!(g.id_is_consistent(), "freshly minted grant must self-verify");
 
+    // Two grants with the same content have the same id -- that is what content
+    // addressing means. `issued_at` is second-precision, so issuing the same
+    // grant twice inside one second derives the same id and the second write
+    // silently replaced the first. Five commands, five success lines, three
+    // grants on disk.
+    //
+    // The honest behaviour is not a fresh id but an accurate report: this grant
+    // already exists, and the caller now holds its id. Overwriting a signed
+    // artifact while claiming to have issued a new one is the "success that did
+    // not happen" this verifier exists to refuse.
     let path = grant_path(&dir, &g.grant_id);
-    std::fs::write(&path, serde_json::to_string_pretty(&g)?)?;
+    let already_existed = path.exists();
+    if !already_existed {
+        std::fs::write(&path, serde_json::to_string_pretty(&g)?)?;
+    }
 
     if printer.format == Format::Json {
         printer.json(&serde_json::json!({
@@ -252,6 +265,10 @@ pub fn issue(args: IssueArgs, printer: &Printer) -> Result<(), Box<dyn std::erro
             "parent_grant_id": g.parent_grant_id,
             "max_delegation": g.max_delegation,
             "path": path.display().to_string(),
+            // Machine consumers must be able to tell "I created this" from "this
+            // was already here", or a caller counting successful issuances
+            // overcounts exactly the way the human output used to.
+            "already_existed": already_existed,
         }));
         return Ok(());
     }
@@ -259,7 +276,15 @@ pub fn issue(args: IssueArgs, printer: &Printer) -> Result<(), Box<dyn std::erro
     let scope_str = g.scope.join(", ");
     let depth_str = g.delegation_depth.to_string();
     printer.success(
-        &format!("grant issued  {}", g.grant_id),
+        &format!(
+            "{}  {}",
+            if already_existed {
+                "grant already exists"
+            } else {
+                "grant issued"
+            },
+            g.grant_id
+        ),
         &[
             ("scope", &scope_str),
             ("audience", &g.audience),
