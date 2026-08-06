@@ -95,6 +95,83 @@ impl Default for SessionStatus {
     }
 }
 
+/// Who may mint invitations for a room. Mirrors the Q3 decision in
+/// `docs/specs/agent-invitations-rooms.md`: HostOnly is the default,
+/// DelegatedTo and Open are explicit opt-in.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum InvitationAuthority {
+    /// Only the room's host key may mint invitations.
+    HostOnly,
+    /// The host plus a named list of delegate pubkeys may mint invitations.
+    DelegatedTo { delegates: Vec<String> },
+    /// Any current participant may mint invitations.
+    Open,
+}
+
+impl Default for InvitationAuthority {
+    fn default() -> Self {
+        Self::HostOnly
+    }
+}
+
+/// Room wrapper around a session, per `docs/specs/agent-invitations-rooms.md`
+/// Phase 2 ("room concept"). A room is a session whose participant set is
+/// expected to evolve over time via invitations rather than being fixed at
+/// start; this struct carries the fields the spec proposes on top of the
+/// plain session/invitation/participant primitives that already ship.
+///
+/// `room` is `Option` on `SessionManifest` -- most sessions are not rooms.
+/// Absent entirely on legacy manifests and on any session that never calls
+/// `treeship room create`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RoomInfo {
+    /// Stable room identifier, distinct from `session_id` -- a room can in
+    /// principle outlive the session that hosts it (roadmap; today the two
+    /// are 1:1).
+    pub room_id: String,
+
+    /// The room's signing authority. Base64url-no-pad Ed25519 public key,
+    /// same encoding as `SessionParticipantStatement::joining_agent`. This
+    /// is the pubkey invitations are issued under and that a joining
+    /// agent's participant event is countersigned by.
+    pub host_pubkey: String,
+
+    #[serde(default)]
+    pub invitation_authority: InvitationAuthority,
+
+    /// Optional workflow this room's participants are bound to (Phase 3 of
+    /// the spec, PR #107 -- carried here now so the field name is settled
+    /// before that lands).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_ref: Option<String>,
+
+    /// How often the room commits a Merkle checkpoint, independent of
+    /// session close. Free-form for now (e.g. "50actions", "15m") --
+    /// the spec doesn't lock a format, so this isn't a typed duration yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_cadence: Option<String>,
+
+    /// Finalized (both-signed) participant artifact ids, in join order.
+    /// A pending (single-signed, not yet countersigned) join does not
+    /// appear here.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub participants: Vec<String>,
+}
+
+impl RoomInfo {
+    pub fn new(room_id: impl Into<String>, host_pubkey: impl Into<String>) -> Self {
+        Self {
+            room_id: room_id.into(),
+            host_pubkey: host_pubkey.into(),
+            invitation_authority: InvitationAuthority::default(),
+            workflow_ref: None,
+            checkpoint_cadence: None,
+            participants: Vec::new(),
+        }
+    }
+}
+
 /// Enhanced session manifest for Session Receipt v1.
 ///
 /// Backward-compatible with the original CLI SessionManifest:
@@ -162,6 +239,11 @@ pub struct SessionManifest {
     /// sessions started before this field existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_commit_sha: Option<String>,
+
+    /// Set by `treeship room create`. Absent for ordinary (non-room)
+    /// sessions and for any manifest written before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room: Option<RoomInfo>,
 }
 
 impl SessionManifest {
@@ -187,6 +269,7 @@ impl SessionManifest {
             tools: Vec::new(),
             authorized_tools: Vec::new(),
             start_commit_sha: None,
+            room: None,
         }
     }
 }
@@ -255,11 +338,61 @@ mod tests {
             }],
             authorized_tools: vec!["read_file".into(), "write_file".into()],
             start_commit_sha: Some("abc1234567890abcdef1234567890abcdef12345".into()),
+            room: Some(RoomInfo {
+                room_id: "room_001".into(),
+                host_pubkey: "AbCdEf123".into(),
+                invitation_authority: InvitationAuthority::DelegatedTo {
+                    delegates: vec!["DeLeGaTe1".into()],
+                },
+                workflow_ref: Some("wf_abc".into()),
+                checkpoint_cadence: Some("50actions".into()),
+                participants: vec!["art_part_1".into(), "art_part_2".into()],
+            }),
         };
         let json = serde_json::to_string_pretty(&m).unwrap();
         let m2: SessionManifest = serde_json::from_str(&json).unwrap();
         assert_eq!(m2.session_id, "ssn_001");
         assert_eq!(m2.participants.total_agents, 6);
         assert_eq!(m2.hosts.len(), 1);
+        assert_eq!(m2.room.as_ref().unwrap().room_id, "room_001");
+        assert_eq!(m2.room.as_ref().unwrap().participants.len(), 2);
+    }
+
+    #[test]
+    fn legacy_manifest_has_no_room() {
+        // A manifest predating the `room` field must still deserialize,
+        // with `room` defaulting to `None` -- same backward-compat
+        // contract every other v1 field already follows.
+        let json = r#"{
+            "session_id": "ssn_legacy",
+            "actor": "ship://local",
+            "started_at": "2026-04-05T08:00:00Z",
+            "started_at_ms": 1743843600000,
+            "artifact_count": 0
+        }"#;
+        let m: SessionManifest = serde_json::from_str(json).unwrap();
+        assert!(m.room.is_none());
+    }
+
+    #[test]
+    fn room_omitted_from_json_when_absent() {
+        // Ordinary (non-room) sessions shouldn't grow a `"room": null` in
+        // every session.json on disk.
+        let m = SessionManifest::new(
+            "ssn_plain".into(),
+            "ship://local".into(),
+            "2026-04-05T08:00:00Z".into(),
+            1743843600000,
+        );
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(!json.contains("\"room\""));
+    }
+
+    #[test]
+    fn invitation_authority_defaults_to_host_only() {
+        assert_eq!(
+            InvitationAuthority::default(),
+            InvitationAuthority::HostOnly
+        );
     }
 }
