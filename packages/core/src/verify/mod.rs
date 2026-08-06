@@ -426,6 +426,7 @@ mod tests {
                 narrative: None,
                 total_tokens_in: 0,
                 total_tokens_out: 0,
+                room: None,
             },
             participants: Participants::default(),
             hosts: vec![],
