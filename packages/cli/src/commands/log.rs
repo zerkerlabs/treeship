@@ -121,12 +121,31 @@ fn run_follow(ctx: &ctx::Ctx, printer: &Printer) -> Result<(), Box<dyn std::erro
     }
 }
 
+/// `application/vnd.treeship.action.v1+json` -> `action`
+/// `application/vnd.treeship.action.v2+json` -> `action/v2`
+///
+/// Anything that does not match the shape is returned unchanged rather than
+/// mangled: an unrecognised payload type should look unrecognised.
+fn short_payload_label(payload_type: &str) -> String {
+    let Some(rest) = payload_type.strip_prefix("application/vnd.treeship.") else {
+        return payload_type.to_string();
+    };
+    let Some(body) = rest.strip_suffix("+json") else {
+        return payload_type.to_string();
+    };
+    match body.rsplit_once('.') {
+        Some((kind, "v1")) => kind.to_string(),
+        Some((kind, ver)) if ver.starts_with('v') => format!("{kind}/{ver}"),
+        _ => payload_type.to_string(),
+    }
+}
+
 fn print_entry(entry: &treeship_core::storage::IndexEntry, printer: &Printer) {
-    let short_type = entry
-        .payload_type
-        .strip_prefix("application/vnd.treeship.")
-        .and_then(|s| s.strip_suffix(".v1+json"))
-        .unwrap_or(&entry.payload_type);
+    // v1 shows as `action`; anything later keeps its version, because the
+    // version is the interesting part -- an action/v2 carries a mandate and a
+    // v1 does not. Previously only `.v1+json` was stripped, so a v2 receipt
+    // fell through and printed the whole MIME string as its badge.
+    let short_type = short_payload_label(&entry.payload_type);
 
     // Format the type as a badge
     let badge = format!("[{}]", short_type);
@@ -145,4 +164,41 @@ fn print_entry(entry: &treeship_core::storage::IndexEntry, printer: &Printer) {
     };
 
     printer.info(&format!("  {}  {:12}  {}", ts, badge, short_id,));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::short_payload_label;
+
+    #[test]
+    fn v1_drops_the_version_and_v2_keeps_it() {
+        // v1 is the unmarked default; a later version is worth showing,
+        // because an action/v2 carries a mandate and a v1 does not.
+        assert_eq!(
+            short_payload_label("application/vnd.treeship.action.v1+json"),
+            "action"
+        );
+        assert_eq!(
+            short_payload_label("application/vnd.treeship.action.v2+json"),
+            "action/v2"
+        );
+        assert_eq!(
+            short_payload_label("application/vnd.treeship.approval.v1+json"),
+            "approval"
+        );
+    }
+
+    #[test]
+    fn unrecognised_types_are_left_alone() {
+        // Better to show something obviously foreign than to half-parse it
+        // into a label that looks like a known kind.
+        for t in [
+            "application/json",
+            "application/vnd.treeship.action",
+            "application/vnd.other.action.v1+json",
+            "",
+        ] {
+            assert_eq!(short_payload_label(t), t, "mangled {t}");
+        }
+    }
 }
