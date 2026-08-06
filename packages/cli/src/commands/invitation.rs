@@ -923,6 +923,42 @@ pub fn countersign(
     c.storage.write(&new_record)?;
 
     let challenge_verified = args.challenge.is_some();
+
+    // Record the finalized participant on the active room, when this
+    // countersign belongs to it.
+    //
+    // This list is a CACHE, not the authority. `room participants` derives
+    // the roster by walking countersigned participant artifacts in the
+    // store, because `room` now rides inside the DSSE-signed receipt: a
+    // list that anyone with write access to session.json can edit would
+    // otherwise become an attested membership claim. Keeping it means
+    // `room status` can answer cheaply without a store scan; treating it
+    // as authoritative would mean signing whatever the file said.
+    //
+    // Best-effort by the same logic: a session that isn't a room, isn't
+    // active, or doesn't match this participant's session_ref is left
+    // alone. Countersign already succeeded above; this is bookkeeping,
+    // not the authorization gate, and the derived roster is unaffected
+    // either way.
+    if let Some(mut manifest) = crate::commands::session::load_session() {
+        if let Some(ref mut room) = manifest.room {
+            if stmt.session_ref == manifest.session_id
+                && !room.participants.contains(&args.participant_id)
+            {
+                room.participants.push(args.participant_id.clone());
+                if let Err(e) = crate::commands::session::save_session(&manifest) {
+                    printer.warn(
+                        &format!(
+                            "participant countersigned, but failed to record it into \
+                             room.participants: {e}"
+                        ),
+                        &[],
+                    );
+                }
+            }
+        }
+    }
+
     let format = Format::from_str(&args.format);
     if format == Format::Json {
         printer.json(&serde_json::json!({
