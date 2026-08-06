@@ -462,14 +462,29 @@ pub fn run(
             })
             .collect();
 
-        // One field a gate can test without walking every check. False only for
-        // an outright Fail: `unverified` means a layer could not be checked, and
-        // treating "did not look" as "found a violation" would make the flag
-        // useless the moment any receipt lacks a revocation resolver.
-        let authority_ok = !chain_envelopes
+        // Gate fields. `authority_ok` is false only for an outright Fail:
+        // `unverified` means a layer could not be checked, and treating "did not
+        // look" as "found a violation" would make the flag useless the moment
+        // any receipt lacks a revocation resolver -- which is every receipt
+        // today.
+        //
+        // But a lone boolean makes "checked and clean" indistinguishable from
+        // "never checked", which is the shape a gate reading only this field
+        // would mistake for safety. So the counts travel with it and the caller
+        // picks its own policy: a CI job for a low-stakes read can accept
+        // unverified, one gating a payment should not.
+        let summaries: Vec<MandateSummary> = chain_envelopes
             .iter()
             .filter_map(|(_, env)| v2_mandate_summary(env))
+            .collect();
+        let authority_ok = !summaries
+            .iter()
             .any(|m| matches!(m, MandateSummary::Fail(_)));
+        let authority_unverified = summaries
+            .iter()
+            .filter(|m| matches!(m, MandateSummary::Unverified(_)))
+            .count();
+        let authority_checked = summaries.len();
 
         let out: Vec<_> = checks
             .iter()
@@ -500,6 +515,12 @@ pub fn run(
             "chain_linkage_ok": linkage_ok,
             "chain_linkage_detail": if linkage_ok { serde_json::Value::Null } else { serde_json::json!(linkage_detail) },
             "authority_ok": authority_ok,
+            // How many v2 mandates were judged, and how many of those could not
+            // be fully checked. `authority_ok: true` with
+            // `authority_unverified > 0` means nothing was caught, not that
+            // nothing is wrong.
+            "authority_checked": authority_checked,
+            "authority_unverified": authority_unverified,
             "checks": out,
         }));
         if failed > 0 || !linkage_ok {

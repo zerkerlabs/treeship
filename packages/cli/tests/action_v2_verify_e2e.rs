@@ -320,3 +320,40 @@ fn a_v1_receipt_gains_no_v2_claims() {
     );
     assert!(check["resolution"].is_null(), "v1 claimed a resolution: {j}");
 }
+
+#[test]
+fn a_gate_can_tell_checked_and_clean_from_never_checked() {
+    // `authority_ok` alone is a boolean over a three-valued axis, so an
+    // unverified mandate and a fully-checked clean one both read `true`. That
+    // is the shape a CI job reading one field would mistake for safety --
+    // exactly the "200 OK containing a logical dead end" failure.
+    //
+    // The counts travel alongside so the caller picks its own policy: a job
+    // gating a read may accept unverified, one gating a payment may not.
+    let ws = Workspace::new();
+    let id = ws.plant_v2(&action(vec!["payments.charge"], "payments.charge"));
+
+    let j = ws.verify_json(&id);
+    assert_eq!(j["authority_ok"], true, "nothing was violated: {j}");
+    assert_eq!(j["authority_checked"], 1, "one mandate was judged: {j}");
+    assert_eq!(
+        j["authority_unverified"], 1,
+        "and it could not be fully checked -- revocation has no resolver: {j}"
+    );
+}
+
+#[test]
+fn a_violation_is_counted_as_a_failure_not_as_unverified() {
+    // The two must not blur: an out-of-scope action is a finding, not a gap in
+    // our ability to look.
+    let ws = Workspace::new();
+    let id = ws.plant_v2(&action(vec!["payments.charge"], "payments.refund"));
+
+    let j = ws.verify_json(&id);
+    assert_eq!(j["authority_ok"], false, "{j}");
+    assert_eq!(j["authority_checked"], 1, "{j}");
+    assert_eq!(
+        j["authority_unverified"], 0,
+        "a Fail is not an Unverified: {j}"
+    );
+}
