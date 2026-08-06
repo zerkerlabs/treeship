@@ -443,6 +443,7 @@ mod tests {
                 generate_preview: true,
             },
             tool_usage,
+            authority: None,
         }
     }
 

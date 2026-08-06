@@ -52,6 +52,72 @@ pub struct SessionReceipt {
     /// Tool usage summary: declared vs actual tools used during the session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_usage: Option<ToolUsage>,
+
+    /// What each action/v2 in this session was authorized to do, and whether it
+    /// stayed inside that.
+    ///
+    /// Absent when the session contained no action/v2 receipts, which keeps
+    /// older receipts byte-identical. Present-but-empty never happens: a
+    /// session with nothing to say about authority says nothing, rather than
+    /// showing an empty band that reads like a clean bill.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority: Option<AuthoritySection>,
+}
+
+/// Per-action authority for a session.
+///
+/// The signature layer answers "was this receipt tampered with". This answers
+/// the question underneath it: was the action allowed, by whom, and what could
+/// we not check. A session receipt that reports only the former reads as
+/// complete while omitting the half a counterparty is actually deciding on.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AuthoritySection {
+    pub actions: Vec<AuthorityEntry>,
+    /// How many action/v2 receipts were judged.
+    pub checked: u32,
+    /// Actions that fell outside their grant. Any non-zero value is the
+    /// headline.
+    pub violations: u32,
+    /// Actions where some layer could not be checked. Not violations, and not
+    /// clean either -- counted separately so neither can hide in the other.
+    pub unverified: u32,
+    /// Actions run under a grant naming no holder, spendable by anyone who
+    /// obtained it.
+    pub bearer: u32,
+}
+
+/// One action's authority record.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AuthorityEntry {
+    pub artifact_id: String,
+    /// The action label, e.g. `payments.charge`.
+    pub action: String,
+    /// `pass` | `unverified` | `fail`.
+    pub verdict: String,
+    /// Why, in the verifier's own words. Empty on a clean pass.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reasons: Vec<String>,
+    /// What the grant admitted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scope: Vec<String>,
+    pub audience: String,
+    pub grant_id: String,
+    /// Whether the grant named the key entitled to exercise it. `false` means
+    /// bearer, and the surface must say so rather than leave it blank.
+    pub holder_bound: bool,
+    /// `not_claimed` | `holds` | `widened` | `unresolvable`.
+    pub delegation: String,
+    /// Hops in the resolved chain, when one was claimed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegation_hops: Option<u32>,
+    /// How far the state change got: `not_attempted` | `initiated` |
+    /// `finalized` | `failed` | `indeterminate`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect_finality: Option<String>,
+    /// Whether anything is still owed: `resolved` | `indefinite` | `pending` |
+    /// `breached` | `bad_deadline`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<String>,
 }
 
 /// Tool authorization and usage summary for the session.
@@ -362,6 +428,10 @@ impl ReceiptComposer {
             merkle: merkle_section,
             render,
             tool_usage,
+            // Composed from storage by the caller, which is the layer that can
+            // load envelopes and run the verifier. The composer sees only
+            // manifest + events + artifact metadata.
+            authority: None,
         }
     }
 
