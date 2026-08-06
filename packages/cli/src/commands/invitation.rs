@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 
 use treeship_core::{
-    attestation::{Envelope, Signer},
+    attestation::Envelope,
     journal::{self, Journal},
     statements::{
         invitation::{
