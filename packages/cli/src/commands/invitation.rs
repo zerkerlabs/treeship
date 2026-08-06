@@ -859,6 +859,33 @@ pub fn countersign(
     };
     c.storage.write(&new_record)?;
 
+    // Wire the finalized participant into the active room, if the
+    // currently active session is a room and this participant belongs to
+    // it. This is the minimum plumbing needed for `treeship room
+    // participants` to ever show real data -- `room.participants` is
+    // otherwise never populated. Best-effort: a session that isn't a
+    // room, isn't active, or doesn't match this participant's
+    // session_ref is simply not touched (countersign already succeeded
+    // above; this is bookkeeping, not the authorization gate).
+    if let Some(mut manifest) = crate::commands::session::load_session() {
+        if let Some(ref mut room) = manifest.room {
+            if stmt.session_ref == manifest.session_id
+                && !room.participants.contains(&args.participant_id)
+            {
+                room.participants.push(args.participant_id.clone());
+                if let Err(e) = crate::commands::session::save_session(&manifest) {
+                    printer.warn(
+                        &format!(
+                            "participant countersigned, but failed to record it into \
+                             room.participants: {e}"
+                        ),
+                        &[],
+                    );
+                }
+            }
+        }
+    }
+
     let format = Format::from_str(&args.format);
     if format == Format::Json {
         printer.json(&serde_json::json!({

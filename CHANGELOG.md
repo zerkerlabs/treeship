@@ -10,6 +10,20 @@
   ordinary sessions and on manifests written before this field existed. No CLI
   surface yet (`treeship room create/status/participants` is the follow-up);
   this lands the data model first so the wire format is settled.
+- **`treeship room create/status/participants`.** The CLI surface promised
+  above: `room create` is sugar over `session start` that also populates
+  `RoomInfo` (fresh `room_id`, host pubkey, `--invitation-authority
+  host-only|delegated|open`, `--delegate`, `--workflow-ref`,
+  `--checkpoint-every`); `room status` shows session status plus room fields
+  and errors clearly on a plain (non-room) session; `room participants` lists
+  the room's finalized (two-signature) joins by reading each participant
+  artifact. `treeship session invite/join/countersign` are unchanged except
+  that `countersign` now appends the finalized participant id to
+  `room.participants` when the active session is a room, which is the only
+  way `room participants` has real data to show. `invitation_authority`
+  remains informational-only in this PR — nothing gates any authority
+  decision on it yet. There is no `room close`: plain `treeship session
+  close` already works on a room since a room is just a session.
 
 ## 0.23.0 (2026-08-05)
 
