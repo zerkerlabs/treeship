@@ -627,6 +627,19 @@ async function render(){
     h+='</div></div></section>';
   }
 
+  // ── APPROVAL GATES ──
+  h+='<section class="band" id="approvals"><div class="band-label">Approval gates</div><div class="band-sub">Human approval checkpoints during the session.</div><div class="band-body">';
+  if(fin.approvals.length){
+    h+='<div class="row-list">';
+    fin.approvals.forEach(a=>{
+      h+='<div class="finding"><span class="badge badge-ok">✔ approved</span><div><div style="font-size:.8rem;font-weight:600">Approval artifact</div><div class="mono" style="font-size:.62rem;color:var(--faint);margin-top:3px">'+esc(a.artifact_id||a.id||'')+' · '+timeOf(a.signed_at||a.timestamp||'')+'</div></div></div>';
+    });
+    h+='</div>';
+  }else{
+    h+='<div class="pad faint" style="font-size:.72rem">No approval gates recorded. All actions ran without a human review checkpoint.</div>';
+  }
+  h+='</section>';
+
   // ── TRUST CHAIN ──
   h+='<section class="band" id="trust-chain"><div class="band-label">Trust chain</div><div class="band-sub">How this receipt earns your trust, step by step.</div><div class="band-body"><div class="row-list">';
   const steps=[
