@@ -59,6 +59,9 @@ impl Workspace {
         let mut g = Grant {
             grant_id: String::new(),
             grantor: URL_SAFE_NO_PAD.encode(signer.public_key_bytes()),
+            // Bound to the same key that signs the receipts in this suite, so
+            // these fixtures exercise the holder-bound path rather than bearer.
+            grantee: Some(URL_SAFE_NO_PAD.encode(signer.public_key_bytes())),
             issuer_sig: None,
             scope: scope.iter().map(|s| (*s).to_string()).collect(),
             audience: audience.into(),

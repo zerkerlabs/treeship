@@ -92,6 +92,13 @@ pub struct IssueArgs {
     pub parent: Option<String>,
     pub max_delegation: u32,
     pub objective_hash: Option<String>,
+    /// Public key entitled to exercise the grant. `None` mints a bearer grant,
+    /// which `issue` warns about rather than silently producing.
+    pub grantee: Option<String>,
+    /// Bind the grant to the issuing workspace's own key. Convenience for the
+    /// common self-grant case, so the safe path does not require pasting your
+    /// own public key.
+    pub grantee_self: bool,
     pub config: Option<String>,
 }
 
@@ -191,9 +198,20 @@ pub fn issue(args: IssueArgs, printer: &Printer) -> Result<(), Box<dyn std::erro
         .unwrap_or(0);
     let issued_at = format_rfc3339(now);
 
+    let own_key = URL_SAFE_NO_PAD.encode(signer.public_key_bytes());
+    if args.grantee.is_some() && args.grantee_self {
+        return Err("--grantee and --grantee-self are mutually exclusive".into());
+    }
+    let grantee = match (&args.grantee, args.grantee_self) {
+        (Some(k), _) => Some(k.clone()),
+        (None, true) => Some(own_key.clone()),
+        (None, false) => None,
+    };
+
     let mut g = Grant {
         grant_id: String::new(),
-        grantor: URL_SAFE_NO_PAD.encode(signer.public_key_bytes()),
+        grantor: own_key.clone(),
+        grantee,
         issuer_sig: None,
         scope: args.scope.clone(),
         audience: args.audience.clone(),
@@ -292,6 +310,18 @@ pub fn issue(args: IssueArgs, printer: &Printer) -> Result<(), Box<dyn std::erro
             ("depth", &depth_str),
         ],
     );
+    // A bearer grant is a legitimate mode, not an error -- but it is spendable
+    // by anyone who obtains the file, and that has to be said out loud at the
+    // moment it is created rather than discovered when someone else uses it.
+    if !g.binds_holder() {
+        printer.warn(
+            "bearer grant: anyone holding this file can exercise it",
+            &[(
+                "bind it",
+                "re-issue with --grantee-self, or --grantee <public-key>",
+            )],
+        );
+    }
     printer.hint(&format!(
         "treeship grant issue --parent {} --scope <narrower>",
         g.grant_id
@@ -453,6 +483,7 @@ mod tests {
         Grant {
             grant_id: "grn_test".into(),
             grantor: "k".into(),
+            grantee: None,
             issuer_sig: None,
             scope: scope.iter().map(|s| s.to_string()).collect(),
             audience: audience.into(),

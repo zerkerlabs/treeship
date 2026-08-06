@@ -1241,6 +1241,15 @@ enum GrantCommand {
         /// Optional hash binding the grant to a stated objective.
         #[arg(long)]
         objective_hash: Option<String>,
+        /// Public key (base64url, no padding) entitled to exercise this grant.
+        /// Without it the grant is a bearer token: anyone holding the file can
+        /// spend it.
+        #[arg(long)]
+        grantee: Option<String>,
+        /// Bind the grant to this workspace's own key. The safe default for a
+        /// self-grant, without pasting your own public key.
+        #[arg(long)]
+        grantee_self: bool,
     },
     /// List every grant minted in this workspace.
     List,
@@ -2872,6 +2881,8 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 parent,
                 max_delegation,
                 objective_hash,
+                grantee,
+                grantee_self,
             } => commands::grant::issue(
                 commands::grant::IssueArgs {
                     scope: scope.clone(),
@@ -2880,6 +2891,8 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                     parent: parent.clone(),
                     max_delegation: *max_delegation,
                     objective_hash: objective_hash.clone(),
+                    grantee: grantee.clone(),
+                    grantee_self: *grantee_self,
                     config: cli.config.clone(),
                 },
                 printer,

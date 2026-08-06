@@ -135,6 +135,16 @@ pub struct Mandate {
     /// Revocation source + (optional) revoked-at timestamp.
     pub revocation: Revocation,
 
+    /// Base64url-no-pad Ed25519 public key the grant was issued to, mirrored
+    /// from `Grant::grantee` so a verifier can check the receipt's signer
+    /// against it without resolving the chain.
+    ///
+    /// `None` means the grant was bearer. A verifier must report that rather
+    /// than pass silently: a valid signature proves who signed the receipt and
+    /// who issued the grant, never that the two are related.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grantee: Option<String>,
+
     /// Ancestors of this grant, root-first, each carrying its own
     /// `issuer_sig`. Optional and skipped when empty so existing v2 receipts
     /// keep byte-identical canonical bytes.
@@ -766,6 +776,22 @@ pub fn verify_mandate(
         }
     }
 
+    // -- holder binding. A mandate with no `grantee` came from a bearer grant:
+    // authentic, in scope, in window, and spendable by anyone who obtained the
+    // grant bytes. The signature proves who issued the grant and who signed
+    // this receipt; it never proves the two were related.
+    //
+    // Unverified rather than Fail: bearer is a legitimate mode, and the honest
+    // report is that entitlement is a layer we could not check, not that a
+    // violation was found. Silence here would let "correctly signed" read as
+    // "the right party did this".
+    if m.grantee.as_deref().unwrap_or("").is_empty() {
+        unver.push(
+            "grant names no grantee (bearer): any holder of the grant could have produced this"
+                .into(),
+        );
+    }
+
     if !fail.is_empty() {
         MandateVerdict::Fail(fail)
     } else if !unver.is_empty() {
@@ -976,6 +1002,21 @@ pub struct Grant {
     /// exact parent, not a reference to a name someone else could also claim.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_grant_id: Option<String>,
+
+    /// Base64url-no-pad Ed25519 public key of the agent entitled to exercise
+    /// this grant. Signed, so a holder cannot rebind it to themselves.
+    ///
+    /// `None` makes the grant a **bearer credential**: whoever holds the bytes
+    /// holds the authority. That was the only mode before this field existed,
+    /// and it is why a grant file copied into another workspace let a different
+    /// key emit a receipt claiming its authority with nothing to object --
+    /// `grantor` says who issued it and `audience` says which system it acts
+    /// against, but nothing said who was allowed to spend it.
+    ///
+    /// Verification treats absence as a disclosed weakness, not a pass: see
+    /// [`Grant::binds_holder`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grantee: Option<String>,
 }
 
 impl Grant {
@@ -990,19 +1031,45 @@ impl Grant {
         // `derive_grant_id`), so including it would be circular -- and it
         // matches how artifact ids work elsewhere: derived from the signed
         // bytes, never stored inside them.
+        // v3 adds `grantee`. It has to be inside the signed bytes: a holder who
+        // could add or strip it would be choosing who the grant is for, which
+        // is the grantor's decision alone. Bumping the version rather than
+        // appending silently means a v2 line can never be read as a v3 line
+        // with an empty grantee.
         format!(
-            "v2|grant|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+            "v3|grant|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
             self.grantor,
             scope_digest,
             self.audience,
             self.parent_request_id.as_deref().unwrap_or(""),
             self.parent_grant_id.as_deref().unwrap_or(""),
+            self.grantee.as_deref().unwrap_or(""),
             self.delegation_depth,
             self.issued_at,
             self.expiry,
             self.max_delegation,
             self.objective_hash.as_deref().unwrap_or(""),
         )
+    }
+
+    /// Whether this grant names the key allowed to exercise it.
+    ///
+    /// `false` means bearer: authentic, verifiable, and spendable by anyone who
+    /// obtains the bytes. Callers must surface that rather than treat a valid
+    /// signature as sufficient -- the signature proves who *issued* the grant,
+    /// never who is entitled to use it.
+    pub fn binds_holder(&self) -> bool {
+        self.grantee.as_deref().is_some_and(|g| !g.is_empty())
+    }
+
+    /// Whether `holder_pubkey` (base64url-no-pad Ed25519) may exercise this
+    /// grant. A bearer grant returns `true` for every key, which is exactly the
+    /// property [`Grant::binds_holder`] exists to let callers warn about.
+    pub fn exercisable_by(&self, holder_pubkey: &str) -> bool {
+        match self.grantee.as_deref() {
+            Some(g) if !g.is_empty() => g == holder_pubkey,
+            _ => true,
+        }
     }
 
     /// The grant's content id: `grn_` + first 16 hex of sha256 over the
@@ -1829,6 +1896,10 @@ mod tests {
         Mandate {
             grant_id: "grant_9c2f".into(),
             grantor: "key_parent".into(),
+            // Bound, so tests of the scope / audience / window / revocation
+            // layers are not perpetually Unverified on the holder layer. The
+            // bearer case has its own test.
+            grantee: Some("key_holder".into()),
             issuer_sig: None,
             objective_hash: Some("sha256:abc".into()),
             scope: vec!["payments.charge".into()],
@@ -2098,6 +2169,60 @@ mod tests {
         );
     }
 
+    // ---- holder binding ----
+
+    #[test]
+    fn a_bearer_mandate_is_reported_not_passed() {
+        // No grantee means anyone holding the grant bytes could have produced
+        // this receipt. The signature proves who issued the grant and who
+        // signed the receipt; it never proves the two were related.
+        let mut s = good_stmt();
+        s.mandate.grantee = None;
+        match verify_mandate(&s, &StaticRevocation(RevocationStatus::NotRevoked)) {
+            MandateVerdict::Unverified(r) => assert!(
+                r.iter().any(|x| x.contains("bearer")),
+                "the reason must name it: {r:?}"
+            ),
+            other => panic!("bearer must not pass silently, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_bound_mandate_clears_the_holder_layer() {
+        let s = good_stmt();
+        assert_eq!(
+            verify_mandate(&s, &StaticRevocation(RevocationStatus::NotRevoked)),
+            MandateVerdict::Pass
+        );
+    }
+
+    #[test]
+    fn exercisable_by_is_exact_and_bearer_admits_everyone() {
+        let mut g = grant("g", "k", &["a"], 0, "2026-07-11T21:00:00Z", 3);
+        g.grantee = Some("holder-key".into());
+        assert!(g.binds_holder());
+        assert!(g.exercisable_by("holder-key"));
+        assert!(!g.exercisable_by("someone-else"));
+
+        // Bearer: true for every key, which is exactly what `binds_holder`
+        // exists to let a caller warn about.
+        g.grantee = None;
+        assert!(!g.binds_holder());
+        assert!(g.exercisable_by("anyone-at-all"));
+    }
+
+    #[test]
+    fn grantee_is_covered_by_the_signed_bytes() {
+        // A holder who could add or strip the grantee would be choosing who the
+        // grant is for -- the grantor's decision alone.
+        let mut a = grant("g", "k", &["a"], 0, "2026-07-11T21:00:00Z", 3);
+        let mut b = a.clone();
+        a.grantee = Some("alice".into());
+        b.grantee = Some("bob".into());
+        assert_ne!(a.canonical_for_signing(), b.canonical_for_signing());
+        assert_ne!(a.derive_grant_id(), b.derive_grant_id());
+    }
+
     // ---- grant object + chain attenuation ----
 
     fn grant(
@@ -2111,6 +2236,7 @@ mod tests {
         Grant {
             grant_id: id.into(),
             grantor: grantor.into(),
+            grantee: None,
             issuer_sig: None,
             scope: scope.iter().map(|s| (*s).into()).collect(),
             audience: "acme-payments-api".into(),
@@ -2300,6 +2426,7 @@ mod tests {
         let mut g = Grant {
             grant_id: String::new(),
             grantor: grantor_pk.to_string(),
+            grantee: None,
             issuer_sig: None,
             scope: scope.into_iter().map(String::from).collect(),
             audience: "acme".into(),

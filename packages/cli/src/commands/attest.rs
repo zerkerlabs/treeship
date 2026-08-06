@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 use std::path::Path;
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+
 use serde_json::Value;
 use treeship_core::{
     attestation::{sign, Signer},
@@ -358,6 +360,7 @@ fn action_v2(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std:
         args.grant_file.as_deref(),
     )?;
 
+
     let revocation_path = args
         .revocation_path
         .clone()
@@ -381,6 +384,28 @@ fn action_v2(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std:
     stmt.meta = meta;
 
     let signer = resolve_actor_signer(&ctx, &args.actor)?;
+
+    // Refuse to spend a grant issued to somebody else. A grant file is only
+    // bytes: copying one into another workspace was enough to emit a receipt
+    // claiming its authority, because `grantor` says who issued it and
+    // `audience` says which system it acts against, and nothing said who was
+    // allowed to use it. Verify reports this too, but the artifact should never
+    // exist -- an invalid claim that exists is one somebody is eventually asked
+    // to trust.
+    let own_key =
+        URL_SAFE_NO_PAD.encode(signer.public_key_bytes());
+    if !leaf.exercisable_by(&own_key) {
+        return Err(format!(
+            "refusing to attest: grant {} was issued to a different key\n  \
+             grantee:        {}\n  this workspace: {}\n  \
+             a grant stops being a bearer token once it names its holder",
+            leaf.grant_id,
+            leaf.grantee.as_deref().unwrap_or("(none)"),
+            own_key,
+        )
+        .into());
+    }
+
     let pt = payload_type_v2("action");
     let result = sign(&pt, &stmt, signer.as_ref())?;
 
@@ -496,6 +521,9 @@ fn mandate_from_grant(leaf: &Grant, chain: Vec<Grant>, revocation_path: &str) ->
     Mandate {
         grant_id: leaf.grant_id.clone(),
         grantor: leaf.grantor.clone(),
+        // Mirrored so a verifier can check the receipt's signer against the key
+        // the grant was issued to without resolving the whole chain.
+        grantee: leaf.grantee.clone(),
         issuer_sig: leaf.issuer_sig.clone(),
         objective_hash: leaf.objective_hash.clone(),
         scope: leaf.scope.clone(),

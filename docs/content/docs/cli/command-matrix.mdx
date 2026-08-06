@@ -953,6 +953,8 @@ treeship grant issue [OPTIONS] --scope <SCOPE> --audience <AUDIENCE> --expiry <E
 | `--parent <PARENT>` | Delegate from this grant id, narrowing its authority |
 | `--max-delegation <MAX_DELEGATION>` | How many further delegations this grant permits beneath it [default: 3] |
 | `--objective-hash <OBJECTIVE_HASH>` | Optional hash binding the grant to a stated objective |
+| `--grantee <GRANTEE>` | Public key (base64url, no padding) entitled to exercise this grant. Without it the grant is a bearer token: anyone holding the file can spend it |
+| `--grantee-self` | Bind the grant to this workspace's own key. The safe default for a self-grant, without pasting your own public key |
 
 ### `treeship grant list`
 
