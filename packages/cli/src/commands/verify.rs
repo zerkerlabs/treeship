@@ -751,6 +751,19 @@ fn compute_chain_linkage(chain: &[(String, Envelope)]) -> (bool, String) {
                     // protocol object it extends. Treat that invitation ref as
                     // its parent instead of trusting unsigned storage metadata.
                     .or_else(|| v.get("invitation_ref"))
+                    // receipt.v1 (the session record minted by
+                    // `mint_session_record`) carries no top-level parentId. It
+                    // names the session-close artifact it seals as its signed
+                    // `subject.artifactId`, and storage records that same id as
+                    // the parent. That IS a signed edge -- it is inside the
+                    // DSSE payload -- so reading it here is not a relaxation:
+                    // a mismatch still fails below. Before this, every receipt
+                    // landing mid-chain reported "possible tampering" on
+                    // correctly-signed evidence.
+                    .or_else(|| {
+                        v.get("subject")
+                            .and_then(|s| s.get("artifactId").or_else(|| s.get("artifact_id")))
+                    })
                     .and_then(|p| p.as_str())
                     .map(str::to_string)
             });
@@ -2004,6 +2017,70 @@ fn extract_actor(envelope: &Envelope) -> String {
 mod tests {
     use super::*;
     use treeship_core::statements::{ActionStatement, ApprovalScope, SubjectRef};
+
+    // ── signed chain linkage: receipt.v1 subject edge ──────────────────
+    //
+    // `mint_session_record` writes the session-close artifact id BOTH as the
+    // unsigned storage `parent_id` and as the signed `subject.artifactId`.
+    // The linkage check must read the signed one. Regression guard for the
+    // false "possible tampering" every mid-chain receipt used to report.
+
+    /// Build a real signed receipt.v1 envelope whose subject names `subject`.
+    fn signed_receipt(subject: Option<&str>) -> Envelope {
+        use treeship_core::attestation::{sign, Ed25519Signer};
+        use treeship_core::statements::ReceiptStatement;
+
+        let mut stmt = ReceiptStatement::new("system://treeship-session", "session.v1");
+        stmt.subject = subject.map(|id| SubjectRef {
+            artifact_id: Some(id.to_string()),
+            ..Default::default()
+        });
+        let signer = Ed25519Signer::generate("key_receipt_test").unwrap();
+        sign("application/vnd.treeship.receipt.v1+json", &stmt, &signer)
+            .unwrap()
+            .envelope
+    }
+
+    #[test]
+    fn receipt_subject_artifact_id_counts_as_signed_parent() {
+        let parent = "art_1bd9b5b82f7a3de9994f462b2f886800";
+        let chain = vec![
+            (parent.to_string(), signed_receipt(None)),
+            ("art_child".to_string(), signed_receipt(Some(parent))),
+        ];
+        let (ok, detail) = compute_chain_linkage(&chain);
+        assert!(ok, "receipt subject edge should satisfy linkage: {detail}");
+    }
+
+    #[test]
+    fn receipt_subject_naming_another_artifact_still_breaks() {
+        // The subject is an ACCEPTED field, not a bypass: pointing it at
+        // something other than the walked parent must still fail, or this
+        // change would have turned a tampering check into a rubber stamp.
+        let chain = vec![
+            ("art_real_parent".to_string(), signed_receipt(None)),
+            (
+                "art_child".to_string(),
+                signed_receipt(Some("art_somewhere_else")),
+            ),
+        ];
+        let (ok, detail) = compute_chain_linkage(&chain);
+        assert!(!ok, "a subject naming a different artifact must break");
+        assert!(detail.contains("art_somewhere_else"), "detail: {detail}");
+    }
+
+    #[test]
+    fn receipt_without_subject_still_breaks() {
+        // A receipt that names no parent at all cannot prove it belongs
+        // where storage put it. Absence is not permission.
+        let chain = vec![
+            ("art_real_parent".to_string(), signed_receipt(None)),
+            ("art_child".to_string(), signed_receipt(None)),
+        ];
+        let (ok, detail) = compute_chain_linkage(&chain);
+        assert!(!ok, "missing subject must not pass linkage");
+        assert!(detail.contains("(none)"), "detail: {detail}");
+    }
 
     // ── action/v2 effect verdict wiring ────────────────────────────────
     #[test]
