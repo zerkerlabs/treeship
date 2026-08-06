@@ -236,6 +236,45 @@ treeship attest endorsement [OPTIONS] --endorser <URI> --subject <ID> --kind <KI
 | `--parent <ID>` | Parent artifact ID -- links this into a chain |
 | `--out <PATH>` | Write the raw DSSE envelope to a file (- for stdout) |
 
+## `treeship room`
+
+Room sugar over `treeship session` -- create/status/participants for long-lived, multi-agent sessions
+
+```
+treeship room [OPTIONS] <COMMAND>
+```
+
+### `treeship room create`
+
+Create a room: sugar over `session start` that also populates `SessionManifest.room` (room_id, host_pubkey, invitation_authority, workflow_ref, checkpoint_every_actions)
+
+```
+treeship room create [OPTIONS]
+```
+
+| Option | Description |
+|---|---|
+| `--workflow-ref <WORKFLOW_ID>` | Optional workflow this room's participants are bound to (Phase 3, not yet enforced -- see docs/specs/agent-invitations-rooms.md) |
+| `--invitation-authority <host-only\|delegated\|open>` | Who may mint invitations for this room. Defaults to host-only |
+| `--delegate <PUBKEY>` | Delegate pubkey(s), only valid with `--invitation-authority delegated`. May be repeated |
+| `--checkpoint-every <N>` | How often the room commits a Merkle checkpoint, expressed as a plain action count (e.g. `--checkpoint-every 50`). Not enforced yet -- carried on the manifest for the future checkpoint cadence feature |
+
+### `treeship room status`
+
+Show the active room's status (session status plus room fields). Errors if the active session is not a room
+
+```
+treeship room status [OPTIONS]
+```
+
+### `treeship room participants`
+
+List the room's finalized (two-signature) participants, in join order. Errors if the active session is not a room
+
+```
+treeship room participants [OPTIONS]
+```
+
 ## `treeship session`
 
 Manage work sessions
