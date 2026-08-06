@@ -381,6 +381,29 @@ treeship session countersign [OPTIONS] <PARTICIPANT_ID>
 |---|---|
 | `<PARTICIPANT_ID>` | Participant artifact id (output of `treeship session join`) |
 
+| Option | Description |
+|---|---|
+| `--challenge <NONCE>` | The nonce YOU (the host) issue for the room-join liveness challenge, right before finalizing. Any string; pick something unpredictable. Must be supplied together with --challenge-response |
+| `--challenge-response <PATH>` | Path to the joining agent's signed response to --challenge (output of `treeship session answer-challenge`). Use `-` for stdin |
+
+### `treeship session answer-challenge`
+
+Sign the host's room-join liveness nonce with the joining agent's own key. Run by the JOINING AGENT after `session join`, in response to a nonce the host chose out of band
+
+```
+treeship session answer-challenge [OPTIONS] --challenge <NONCE> --actor <URI> <PARTICIPANT_ID>
+```
+
+| Argument | Description |
+|---|---|
+| `<PARTICIPANT_ID>` | Participant artifact id (output of `treeship session join`) |
+
+| Option | Description |
+|---|---|
+| `--challenge <NONCE>` | The nonce the host issued out of band for this join |
+| `--actor <URI>` | Joining agent's actor URI. Must resolve to the same key that ran `treeship session join` |
+| `--out <PATH>` | Output path (default: &lt;participant_id&gt;.challenge-response.json) |
+
 ## `treeship verify`
 
 Verify an artifact or its full parent chain
