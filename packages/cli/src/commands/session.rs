@@ -1039,6 +1039,7 @@ pub(crate) fn session_record_payload(
         "receipt_digest": receipt_digest,
         "receipt_merkle_root": receipt_merkle_root,
         "report_url": null,
+        "room": receipt.session.room,
     })
 }
 
@@ -2733,6 +2734,54 @@ mod work_history_tests {
         );
         assert_eq!(payload["receipt_digest"], "sha256:deadbeef");
         assert_eq!(payload["handoff_count"], 2);
+        assert_eq!(payload["room"], serde_json::Value::Null);
+    }
+
+    /// A room session's `invitation_authority` must reach the signed
+    /// `session.v1` payload, not just `session.json` -- an unsigned field
+    /// that gates who may mint invitations is exactly the
+    /// wire-controllable-dispatch-field risk `RoomInfo`'s doc comment warns
+    /// about. Regression guard for the room-in-receipt follow-up flagged on
+    /// PR #266.
+    #[test]
+    fn session_record_payload_carries_signed_room() {
+        let mut receipt = receipt_fixture();
+        receipt.session.room = Some(treeship_core::session::RoomInfo {
+            room_id: "room_abc".into(),
+            host_pubkey: "pk_host".into(),
+            invitation_authority: treeship_core::session::InvitationAuthority::DelegatedTo {
+                delegates: vec!["pk_delegate".into()],
+            },
+            workflow_ref: None,
+            checkpoint_every_actions: Some(50),
+            participants: vec!["art_p1".into()],
+        });
+
+        let payload = session_record_payload(
+            &receipt,
+            "ssn_test1",
+            "agent://hermes",
+            42,
+            120,
+            0,
+            5400000,
+            "sha256:deadbeef",
+            Some("sha256:cafebabe"),
+        );
+
+        treeship_core::predicates::validate("session.v1", Some(&payload))
+            .expect("a room session's payload must also conform to the schema");
+
+        assert_eq!(payload["room"]["room_id"], "room_abc");
+        assert_eq!(
+            payload["room"]["invitation_authority"]["kind"],
+            "delegated_to"
+        );
+        assert_eq!(
+            payload["room"]["invitation_authority"]["delegates"],
+            serde_json::json!(["pk_delegate"])
+        );
+        assert_eq!(payload["room"]["checkpoint_every_actions"], 50);
     }
 
     /// Consumed approvals upgrade the class to countersigned; a session with
