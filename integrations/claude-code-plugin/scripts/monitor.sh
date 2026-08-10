@@ -1,9 +1,18 @@
 #!/bin/sh
-# Treeship Claude Code plugin -- live monitor
+# Treeship Claude Code plugin -- session monitor
 #
-# Streams a one-line status update for the active Treeship session every
-# few seconds. Each line written to stdout becomes a notification Claude
-# sees in real time, so the agent knows the receipt is being built.
+# Reports STATE TRANSITIONS, not activity. A session opening, sealing, or
+# getting wedged is worth interrupting for. A counter going up is not.
+#
+# The previous version emitted a line every time `receipts` or `events`
+# changed. Events tick on essentially every tool call, so a normal working
+# session produced well over a hundred notifications -- one per event --
+# none of which told the developer anything they needed. That is how a trust
+# tool earns an uninstall: not by being wrong, by being noisy.
+#
+# The rule this now follows: notify when the answer to "is my work being
+# recorded?" changes. It changes when a session opens, when it closes, and
+# when it breaks. It does not change because a counter moved.
 #
 # Silent when there's no active session or no Treeship install; never
 # crashes the session.
@@ -15,23 +24,57 @@ if ! command -v treeship >/dev/null 2>&1; then
   exec sleep 86400
 fi
 
-LAST=""
+# 30s, not 5s. Nothing here is time-critical, and the old interval meant two
+# CLI invocations every five seconds for the life of the session -- a real
+# background cost for information nobody was reading.
+INTERVAL=30
+
+# Session id we last reported on. Empty means nothing reported yet.
+REPORTED=""
+# Whether the wedged-session warning has already fired, so a stuck session
+# warns once instead of every interval.
+WARNED=""
+
+session_id() {
+  treeship session status 2>/dev/null |
+    sed -n 's/.*\(ssn_[0-9a-f][0-9a-f]*\).*/\1/p' | head -1
+}
+
+receipt_count() {
+  treeship session status 2>/dev/null |
+    sed -n 's/.*receipts:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1
+}
 
 while :; do
   if [ -d "./.treeship" ] && treeship session status --check >/dev/null 2>&1; then
-    # Pull the receipts/events counters out of `session status`. The CLI's
-    # default output includes lines like "receipts:  3" and "events:    7".
-    STATUS=$(treeship session status 2>/dev/null || true)
-    RECEIPTS=$(printf '%s\n' "$STATUS" | sed -n 's/.*receipts:[[:space:]]*\([0-9]*\).*/\1/p' | head -1)
-    EVENTS=$(printf '%s\n' "$STATUS" | sed -n 's/.*events:[[:space:]]*\([0-9]*\).*/\1/p' | head -1)
+    SID=$(session_id)
 
-    if [ -n "$RECEIPTS" ] || [ -n "$EVENTS" ]; then
-      LINE="receipts=${RECEIPTS:-0} events=${EVENTS:-0}"
-      if [ "$LINE" != "$LAST" ]; then
-        echo "treeship: $LINE"
-        LAST="$LINE"
-      fi
+    if [ -n "$SID" ] && [ "$SID" != "$REPORTED" ]; then
+      # A session opened, or we switched to a different one. This single
+      # line answers "is Treeship actually on?" -- the reason the monitor
+      # exists at all.
+      echo "treeship: recording $SID"
+      REPORTED="$SID"
+      WARNED=""
+    fi
+  else
+    # No active session. If we were reporting on one, it closed: say so once,
+    # with the receipt count -- the number that actually mattered.
+    if [ -n "$REPORTED" ]; then
+      N=$(receipt_count)
+      echo "treeship: sealed $REPORTED (${N:-0} receipts)"
+      REPORTED=""
+      WARNED=""
+    fi
+
+    # A session.json with no readable status is a wedged session: work is
+    # happening and nothing is being recorded. That is the one failure worth
+    # pushing at someone, so warn -- once.
+    if [ -z "$WARNED" ] && [ -f "./.treeship/session.json" ]; then
+      echo "treeship: session.json present but no active session -- run 'treeship session abandon' if wedged"
+      WARNED="1"
     fi
   fi
-  sleep 5
+
+  sleep "$INTERVAL"
 done
