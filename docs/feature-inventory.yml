@@ -358,6 +358,8 @@
     - treeship session invite
     - treeship session join
     - treeship session countersign
+    - treeship session answer-challenge
+    - treeship session mint-challenge
   packages:
     - treeship-core
   docs:

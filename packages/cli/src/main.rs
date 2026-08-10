@@ -916,7 +916,7 @@ enum SessionCommand {
     ///
     /// Examples:
     ///   treeship session countersign art_part_abc123
-    ///   treeship session countersign art_part_abc123 --challenge n_8f2a \
+    ///   treeship session countersign art_part_abc123 --challenge 9f2c4a1b8e5d7061f3a2c9b4e8d17520 \
     ///     --challenge-response ./art_part_abc123.challenge-response.json
     Countersign(SessionCountersignArgs),
 
@@ -925,8 +925,28 @@ enum SessionCommand {
     /// response to a nonce the host chose out of band.
     ///
     /// Examples:
-    ///   treeship session answer-challenge art_part_abc123 --challenge n_8f2a --actor agent://researcher
+    ///   treeship session answer-challenge art_part_abc123 --challenge 9f2c4a1b8e5d7061f3a2c9b4e8d17520 --actor agent://researcher
     AnswerChallenge(SessionAnswerChallengeArgs),
+
+    /// Mint a 128-bit challenge nonce for a room-join liveness check.
+    ///
+    /// Run by the HOST before countersigning. A challenge nonce is a replay
+    /// guard: if it can be guessed it can be pre-signed, and the liveness
+    /// proof then shows only that a document exists. Both `answer-challenge`
+    /// and `countersign` refuse a nonce shorter than 32 characters or drawn
+    /// from too small an alphabet.
+    ///
+    /// Examples:
+    ///   treeship session mint-challenge
+    ///   treeship session mint-challenge --format json
+    MintChallenge(SessionMintChallengeArgs),
+}
+
+#[derive(Args)]
+struct SessionMintChallengeArgs {
+    /// Output format: text (default) or json.
+    #[arg(long, default_value = "text")]
+    format: String,
 }
 
 #[derive(Args)]
@@ -2865,6 +2885,12 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                     challenge: a.challenge.clone(),
                     actor: a.actor.clone(),
                     out: a.out.clone(),
+                    format: a.format.clone(),
+                },
+                printer,
+            ),
+            SessionCommand::MintChallenge(a) => commands::invitation::mint_challenge(
+                commands::invitation::MintChallengeArgs {
                     format: a.format.clone(),
                 },
                 printer,

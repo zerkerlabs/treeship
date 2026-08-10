@@ -290,3 +290,95 @@ mod tests {
         assert!(err.contains("INVALID"), "got: {err}");
     }
 }
+
+/// Minimum nonce length, in characters.
+///
+/// A challenge nonce is a replay guard: its whole job is to be unguessable by
+/// anyone who did not just receive it. `n_8f2a` -- the value used in our own
+/// help text -- is 6 characters and enumerable in microseconds. An attacker
+/// who can guess the nonce can have the joining agent's key sign it in
+/// advance, and the "liveness" proof then demonstrates nothing beyond
+/// possession of a document, which is exactly what the challenge exists to
+/// improve on.
+///
+/// 32 hex characters is 128 bits, matching the invitation nonce.
+pub const MIN_NONCE_LEN: usize = 32;
+
+/// Reject a nonce too weak to serve as a replay guard.
+///
+/// Called at BOTH ends -- minting and verifying -- because a host that mints
+/// well while accepting anything still accepts a nonce an attacker chose.
+///
+/// This checks shape, not provenance. It cannot tell a `OsRng` nonce from a
+/// counter formatted to look like one, and it cannot detect reuse (see the
+/// note on `check_join_challenge`). It rules out the failure that actually
+/// happens: a human typing something short because the flag asked for a value
+/// and nothing said what kind.
+pub fn validate_nonce(nonce: &str) -> Result<(), String> {
+    if nonce.len() < MIN_NONCE_LEN {
+        return Err(format!(
+            "challenge nonce is {} characters; at least {MIN_NONCE_LEN} are required.\n  \
+             A short nonce can be guessed and pre-signed, which makes the liveness \
+             proof prove nothing.\n  Mint one with: treeship session mint-challenge",
+            nonce.len()
+        ));
+    }
+    // A long string of one repeated character is long and still guessable.
+    let distinct: std::collections::HashSet<char> = nonce.chars().collect();
+    if distinct.len() < 8 {
+        return Err(format!(
+            "challenge nonce uses only {} distinct characters; it is long but \
+             predictable.\n  Mint one with: treeship session mint-challenge",
+            distinct.len()
+        ));
+    }
+    Ok(())
+}
+
+/// Mint a 128-bit challenge nonce.
+///
+/// `OsRng`, not `thread_rng`: this is a security value, and the codebase's own
+/// rule is that ids used for collision-avoidance may use `thread_rng` while
+/// anything acting as a key, nonce, or token must not.
+pub fn mint_nonce() -> String {
+    use rand::RngCore;
+    let mut buf = [0u8; 16];
+    rand::rngs::OsRng.fill_bytes(&mut buf);
+    hex::encode(buf)
+}
+
+#[cfg(test)]
+mod nonce_tests {
+    use super::*;
+
+    #[test]
+    fn minted_nonces_are_128_bit_hex_and_unique() {
+        let a = mint_nonce();
+        assert_eq!(a.len(), 32, "expected 32 hex chars (128 bits)");
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+        assert!(validate_nonce(&a).is_ok());
+        // 1000 draws with no collision is not proof of entropy, but a
+        // counter or a constant would fail it immediately.
+        let set: std::collections::HashSet<String> = (0..1000).map(|_| mint_nonce()).collect();
+        assert_eq!(set.len(), 1000, "minted nonces collided");
+    }
+
+    /// The exact value from our own `--help` examples. If the docs suggest a
+    /// nonce the validator rejects, one of the two is wrong -- and it is the
+    /// docs.
+    #[test]
+    fn the_nonce_from_our_help_text_is_rejected() {
+        assert!(validate_nonce("n_8f2a").is_err());
+    }
+
+    #[test]
+    fn long_but_predictable_is_rejected() {
+        assert!(validate_nonce(&"a".repeat(64)).is_err(), "repeated char");
+        assert!(validate_nonce(&"abab".repeat(16)).is_err(), "tiny alphabet");
+    }
+
+    #[test]
+    fn a_real_nonce_passes() {
+        assert!(validate_nonce("9f2c4a1b8e5d7061f3a2c9b4e8d17520").is_ok());
+    }
+}
