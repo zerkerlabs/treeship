@@ -9,11 +9,13 @@
 //! a session.
 //!
 //! Nothing in this module gates any authority decision on
-//! `invitation_authority`. Per `RoomInfo`'s doc comment
-//! (packages/core/src/session/manifest.rs), `invitation_authority` is
-//! informational/display-only until it is folded into the canonical
-//! receipt and verified end to end -- that's tracked as follow-up work,
-//! not this PR.
+//! `invitation_authority`. It is signed -- the composer binds `room` into
+//! the `session.v1` receipt -- but signed is not enforced: nothing checks
+//! that the invitations actually minted in a session conform to the
+//! authority the receipt declares. Until that conformance check lands
+//! (see `RoomInfo`'s doc comment in packages/core/src/session/manifest.rs,
+//! and Phase 3 of docs/specs/agent-invitations-rooms.md), this module
+//! displays `invitation_authority` and gates nothing on it.
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 

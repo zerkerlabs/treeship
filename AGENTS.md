@@ -484,8 +484,16 @@ curl http://localhost:8080/v1/verify/art_xxxxx
 - Clean `dpop_jtis` older than 5 minutes on every request
 
 ### Revocation
-- `GET /.well-known/treeship/revoked.json` --signed list of revoked key fingerprints
-- Verifiers fetch and cache 24h
+- `GET /.well-known/treeship/revoked.json` -- revoked key fingerprints.
+  **Currently a hardcoded empty list, and unsigned**, despite carrying a
+  fresh `signed_at`. It is served with `Cache-Control: max-age=86400`, so a
+  verifier that trusted it would cache "nothing is revoked" for a day. Do not
+  treat it as authoritative until it is actually populated and signed.
+- The CLI does not consult it: `verify` and `session` both pass
+  `NoRevocationSource`, so the revocation layer resolves `Unknown` and an
+  action/v2 mandate degrades to `Unverified`. That is the fail-safe posture --
+  claiming a grant is live because nobody looked would be a false pass -- but
+  it means capability revocation is designed, not delivered.
 
 ### Honest boundary
 - Trust root is the machine. Root access breaks all guarantees.

@@ -125,18 +125,22 @@ impl Default for InvitationAuthority {
 /// Absent entirely on legacy manifests and on any session that never calls
 /// `treeship room create`.
 ///
-/// **Not yet canonical.** `SessionManifest` is local working state, not the
-/// signed artifact -- `ReceiptComposer::compose` (`receipt.rs`) does not
-/// currently read this field, so `room` (including `invitation_authority`,
-/// which decides who may mint invitations) lives only in the local
-/// `session.json` and is not bound into the DSSE-signed `session.v1`
-/// receipt. That's fine today because nothing reads or enforces it yet, but
-/// it means `room` MUST NOT be used to gate any authority decision (e.g. a
-/// future `treeship room create/invite` CLI trusting `invitation_authority`
-/// off disk) until it is folded into the canonical receipt and verified --
-/// an unsigned field that gates authority is exactly the
-/// wire-controllable-dispatch-field failure class `CLAUDE.md` calls out.
-/// Tracked as required follow-up work before any room CLI lands.
+/// **Signed, but not yet enforced.** `SessionManifest` is local working
+/// state; the signed artifact is the `session.v1` receipt. As of #266 the
+/// composer DOES copy this field into that receipt (`receipt.rs`, in
+/// `compose_with_custody`), so `room` -- including `invitation_authority` --
+/// is bound into the DSSE-signed bytes.
+///
+/// That closes half the gap. It does NOT make `invitation_authority`
+/// trustworthy as an authorization input: the receipt attests what the host
+/// wrote at close time, and nothing verifies that the invitations actually
+/// minted in the session conform to it. So a receipt can honestly attest
+/// `DelegatedTo{[X]}` while an invitation from Y sits in the same session.
+///
+/// The remaining work is conformance checking -- the spec's Phase 3
+/// `participation_conformance` row -- and until it lands, treat
+/// `invitation_authority` as a signed CLAIM, not an enforced rule. `treeship
+/// room` today displays it and gates nothing, which is the honest posture.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RoomInfo {
     /// Stable room identifier, distinct from `session_id` -- a room can in
