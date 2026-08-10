@@ -511,12 +511,15 @@ fn read_counter_hint(events_path: &Path) -> u64 {
         .count() as u64
 }
 
-/// WASM: no fs, no concurrent writers.
+/// WASM: no fs, no concurrent writers, so the in-memory AtomicU64 is the
+/// whole story. There is no wasm `read_counter_or_recount` counterpart --
+/// its only caller is `append_locked`, which is itself native-only.
 #[cfg(target_family = "wasm")]
 fn read_counter_hint(_events_path: &Path) -> u64 {
     0
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn read_counter_or_recount(events_path: &Path) -> Result<u64, EventLogError> {
     if let Some(count) = read_counter_consistent(events_path) {
         return Ok(count);
@@ -531,13 +534,6 @@ fn read_counter_or_recount(events_path: &Path) -> Result<u64, EventLogError> {
     let size = std::fs::metadata(events_path).map(|m| m.len()).unwrap_or(0);
     let _ = write_counter(events_path, count, size);
     Ok(count)
-}
-
-/// WASM has no fs and no concurrent writers; the in-memory AtomicU64 in the
-/// EventLog is sufficient. Initialize to zero on open.
-#[cfg(target_family = "wasm")]
-fn read_counter_or_recount(_events_path: &Path) -> Result<u64, EventLogError> {
-    Ok(0)
 }
 
 /// Atomically replace the counter sidecar with the new (count, byte_size).
