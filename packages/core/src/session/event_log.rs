@@ -100,7 +100,27 @@ impl EventLog {
     pub fn open(session_dir: &Path) -> Result<Self, EventLogError> {
         std::fs::create_dir_all(session_dir)?;
         let path = session_dir.join("events.jsonl");
-        let count = read_counter_or_recount(&path)?;
+        // Read-only. `open` used to call `read_counter_or_recount`, which
+        // REWRITES the counter sidecar when it finds it stale or missing --
+        // an unlocked read-modify-write of the same shared state
+        // `append_locked` takes an exclusive flock to protect.
+        //
+        // In the model that matters, every hook invocation constructs a fresh
+        // handle, so `open` sits inside the contention window: one process
+        // could clobber the counter with a value computed before another
+        // process's append landed. The size check in
+        // `read_counter_consistent` makes that self-healing rather than
+        // fatal, but a constructor writing shared state behind the lock's
+        // back is a discipline violation regardless of whether a given
+        // interleaving is survivable. Issue #275.
+        //
+        // Locking `open` instead would serialize every handle construction
+        // on an exclusive flock just to seed a hint. Not writing is both
+        // cheaper and more obviously correct: on native, this value is only
+        // a hint. `append_locked` re-reads the counter INSIDE the lock and
+        // overwrites `sequence` (see the store at the end of that function),
+        // and counter repair still happens there, where it is serialized.
+        let count = read_counter_hint(&path);
         Ok(Self {
             path,
             sequence: AtomicU64::new(count),
@@ -471,6 +491,35 @@ fn read_counter_consistent(events_path: &Path) -> Option<u64> {
 /// scan, rewriting the sidecar on the way out. This is the recovery path
 /// after a crash that left the counter and events.jsonl out of sync.
 #[cfg(not(target_family = "wasm"))]
+/// Best-effort event count for seeding the in-process hint, with NO writes.
+///
+/// Used by `open`. Never repairs the counter sidecar: repair belongs inside
+/// the append lock, where it cannot race a concurrent writer. A wrong hint is
+/// harmless on native -- `append_locked` re-reads authoritatively under the
+/// lock before assigning any `sequence_no`.
+#[cfg(not(target_family = "wasm"))]
+fn read_counter_hint(events_path: &Path) -> u64 {
+    if let Some(count) = read_counter_consistent(events_path) {
+        return count;
+    }
+    let Ok(f) = std::fs::File::open(events_path) else {
+        return 0;
+    };
+    std::io::BufReader::new(f)
+        .lines()
+        .filter(|l| l.is_ok())
+        .count() as u64
+}
+
+/// WASM: no fs, no concurrent writers, so the in-memory AtomicU64 is the
+/// whole story. There is no wasm `read_counter_or_recount` counterpart --
+/// its only caller is `append_locked`, which is itself native-only.
+#[cfg(target_family = "wasm")]
+fn read_counter_hint(_events_path: &Path) -> u64 {
+    0
+}
+
+#[cfg(not(target_family = "wasm"))]
 fn read_counter_or_recount(events_path: &Path) -> Result<u64, EventLogError> {
     if let Some(count) = read_counter_consistent(events_path) {
         return Ok(count);
@@ -485,13 +534,6 @@ fn read_counter_or_recount(events_path: &Path) -> Result<u64, EventLogError> {
     let size = std::fs::metadata(events_path).map(|m| m.len()).unwrap_or(0);
     let _ = write_counter(events_path, count, size);
     Ok(count)
-}
-
-/// WASM has no fs and no concurrent writers; the in-memory AtomicU64 in the
-/// EventLog is sufficient. Initialize to zero on open.
-#[cfg(target_family = "wasm")]
-fn read_counter_or_recount(_events_path: &Path) -> Result<u64, EventLogError> {
-    Ok(0)
 }
 
 /// Atomically replace the counter sidecar with the new (count, byte_size).
@@ -551,7 +593,7 @@ mod tests {
     use super::*;
     use crate::session::event::*;
 
-    fn make_event(session_id: &str, event_type: EventType) -> SessionEvent {
+    pub(super) fn make_event(session_id: &str, event_type: EventType) -> SessionEvent {
         SessionEvent {
             session_id: session_id.into(),
             event_id: generate_event_id(),
@@ -1254,5 +1296,73 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod open_race_tests {
+    use super::tests::make_event;
+    use super::*;
+    use crate::session::EventType;
+    use std::sync::Arc;
+    use std::thread;
+
+    /// Reproduction harness for #275.
+    ///
+    /// The burst test opens one `EventLog` per thread, which is the real
+    /// model: every hook invocation is a fresh handle on a shared log. That
+    /// makes `open()` part of the contended path, and `open()` performs an
+    /// unlocked read-modify-write of the counter sidecar
+    /// (`read_counter_or_recount` rewrites it on a stale/missing counter)
+    /// while another process may hold the append lock.
+    ///
+    /// More threads and more rounds than the original: the failure is timing
+    /// dependent and did not reproduce locally at 8x25 across 20 runs.
+    #[test]
+    fn open_and_append_interleaved_keep_sequences_unique() {
+        const THREADS: usize = 16;
+        const PER_THREAD: usize = 12;
+        const ROUNDS: usize = 12;
+
+        for round in 0..ROUNDS {
+            let dir =
+                std::env::temp_dir().join(format!("ts-open-race-{}-{}", std::process::id(), round));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let dir = Arc::new(dir);
+
+            let handles: Vec<_> = (0..THREADS)
+                .map(|t| {
+                    let dir = Arc::clone(&dir);
+                    thread::spawn(move || -> Vec<u64> {
+                        let mut seen = Vec::with_capacity(PER_THREAD);
+                        for i in 0..PER_THREAD {
+                            // Re-open every iteration. This is the point: it
+                            // puts open() inside the contention window
+                            // instead of once before it.
+                            let log = EventLog::open(&dir).unwrap();
+                            let mut e =
+                                make_event(&format!("ssn_race_{t}_{i}"), EventType::SessionStarted);
+                            log.append(&mut e).unwrap();
+                            seen.push(e.sequence_no);
+                        }
+                        seen
+                    })
+                })
+                .collect();
+
+            let mut all: Vec<u64> = handles
+                .into_iter()
+                .flat_map(|h| h.join().unwrap())
+                .collect();
+            all.sort_unstable();
+            let expected: Vec<u64> = (0..(THREADS * PER_THREAD) as u64).collect();
+            assert_eq!(
+                all, expected,
+                "round {round}: sequence_no values must be a contiguous range \
+                 with no duplicates and no gaps"
+            );
+            let _ = std::fs::remove_dir_all(&*dir);
+        }
     }
 }
