@@ -43,8 +43,8 @@ use super::invitation::{canonical_json_digest, parse_rfc3339_to_unix};
 use super::SubjectRef;
 use crate::attestation::{Signer, SignerError};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use sha2::{Digest, Sha256};
 use ed25519_dalek::{Signature, VerifyingKey};
+use sha2::{Digest, Sha256};
 
 /// Statement type tag for the mandate/effect receipt.
 pub const TYPE_ACTION_V2: &str = "treeship/action/v2";
@@ -329,10 +329,7 @@ impl EffectFinality {
     /// `Indeterminate` are open: something is still owed. Only open effects can
     /// breach a resolution deadline.
     pub fn is_resolved(self) -> bool {
-        matches!(
-            self,
-            Self::NotAttempted | Self::Finalized | Self::Failed
-        )
+        matches!(self, Self::NotAttempted | Self::Finalized | Self::Failed)
     }
 }
 
@@ -1161,19 +1158,34 @@ impl std::fmt::Display for ChainResolveError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InconsistentId { grant_id } => {
-                write!(f, "grant {grant_id} declares an id that does not match its content")
+                write!(
+                    f,
+                    "grant {grant_id} declares an id that does not match its content"
+                )
             }
             Self::LeafMissing { grant_id } => {
-                write!(f, "the mandate names grant {grant_id}, which is not in the carried chain")
+                write!(
+                    f,
+                    "the mandate names grant {grant_id}, which is not in the carried chain"
+                )
             }
             Self::AncestorMissing { parent_grant_id } => {
-                write!(f, "parent grant {parent_grant_id} is missing from the chain")
+                write!(
+                    f,
+                    "parent grant {parent_grant_id} is missing from the chain"
+                )
             }
             Self::Cycle { grant_id } => {
-                write!(f, "parent links revisit grant {grant_id}: the chain is a cycle")
+                write!(
+                    f,
+                    "parent links revisit grant {grant_id}: the chain is a cycle"
+                )
             }
             Self::UnreachableExtras { count } => {
-                write!(f, "{count} carried grant(s) are not reachable from the mandate")
+                write!(
+                    f,
+                    "{count} carried grant(s) are not reachable from the mandate"
+                )
             }
             Self::Unsigned { grant_id } => {
                 write!(f, "grant {grant_id} carries no issuer signature")
@@ -1289,19 +1301,37 @@ impl std::fmt::Display for GrantChainError {
         match self {
             Self::Empty => write!(f, "the chain is empty"),
             Self::BadTimestamp { index } => {
-                write!(f, "grant at hop {index} has an unparseable issued_at/expiry")
+                write!(
+                    f,
+                    "grant at hop {index} has an unparseable issued_at/expiry"
+                )
             }
             Self::ScopeWidened { parent } => {
                 write!(f, "scope widens at hop {}->{}", parent, parent + 1)
             }
             Self::ExpiryWidened { parent } => {
-                write!(f, "expiry extends past the parent at hop {}->{}", parent, parent + 1)
+                write!(
+                    f,
+                    "expiry extends past the parent at hop {}->{}",
+                    parent,
+                    parent + 1
+                )
             }
             Self::DepthNotIncremented { parent } => {
-                write!(f, "delegation depth does not increment by one at hop {}->{}", parent, parent + 1)
+                write!(
+                    f,
+                    "delegation depth does not increment by one at hop {}->{}",
+                    parent,
+                    parent + 1
+                )
             }
             Self::DepthExceedsMax { parent } => {
-                write!(f, "delegation depth exceeds the parent's max_delegation at hop {}->{}", parent, parent + 1)
+                write!(
+                    f,
+                    "delegation depth exceeds the parent's max_delegation at hop {}->{}",
+                    parent,
+                    parent + 1
+                )
             }
             Self::AudienceChanged { parent } => {
                 write!(f, "audience changes at hop {}->{}", parent, parent + 1)
@@ -1561,7 +1591,10 @@ mod tests {
             ..Default::default()
         };
         assert!(EffectFinality::NotAttempted.is_resolved());
-        assert_eq!(check_resolution(&e, 4_000_000_000), ResolutionStatus::Resolved);
+        assert_eq!(
+            check_resolution(&e, 4_000_000_000),
+            ResolutionStatus::Resolved
+        );
     }
 
     // ---- resolution deadlines ----
@@ -1635,7 +1668,10 @@ mod tests {
             }),
             ..Default::default()
         };
-        assert_eq!(check_resolution(&e, 4_000_000_000), ResolutionStatus::Resolved);
+        assert_eq!(
+            check_resolution(&e, 4_000_000_000),
+            ResolutionStatus::Resolved
+        );
     }
 
     #[test]
@@ -2413,7 +2449,6 @@ mod tests {
     }
 
     // ---- grant chain resolution ----
-
 
     /// Mint a signed grant with a content-consistent id.
     fn mk_grant(

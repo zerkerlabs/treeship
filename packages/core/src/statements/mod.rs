@@ -56,12 +56,11 @@ pub use session_participant::{
 pub mod action_v2;
 pub use action_v2::{
     action_in_scope, check_resolution, payload_type_v2, resolve_grant_chain, verify_effect,
-    verify_grant_chain, verify_mandate, ChainResolveError,
-    ActionStatementV2, Cost, DeadlineEvent, Effect, EffectConfidence, EffectFinality,
-    EffectVerdict, Grant, GrantChainError,
-    Mandate, MandateVerdict, NoRevocationSource, NoWitnessAuthority, Resolution, ResolutionStatus,
-    Revocation, RevocationSource,
-    RevocationStatus, RuntimeIdentity, Witness, WitnessAuthority, TYPE_ACTION_V2,
+    verify_grant_chain, verify_mandate, ActionStatementV2, ChainResolveError, Cost, DeadlineEvent,
+    Effect, EffectConfidence, EffectFinality, EffectVerdict, Grant, GrantChainError, Mandate,
+    MandateVerdict, NoRevocationSource, NoWitnessAuthority, Resolution, ResolutionStatus,
+    Revocation, RevocationSource, RevocationStatus, RuntimeIdentity, Witness, WitnessAuthority,
+    TYPE_ACTION_V2,
 };
 
 use serde::{Deserialize, Serialize};
@@ -770,7 +769,9 @@ mod tests {
         assert!(irreversibility_requires_quarantine("one_way_consequential"));
         assert!(irreversibility_requires_quarantine("one_way_terminal"));
         // Unknown classes get the strictest treatment, never a bypass.
-        assert!(irreversibility_requires_quarantine("definitely_fine_trust_me"));
+        assert!(irreversibility_requires_quarantine(
+            "definitely_fine_trust_me"
+        ));
     }
 
     #[test]

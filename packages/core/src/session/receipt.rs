@@ -395,6 +395,28 @@ impl ReceiptComposer {
         events: &[SessionEvent],
         artifact_entries: Vec<ArtifactEntry>,
     ) -> SessionReceipt {
+        Self::compose_with_custody(manifest, events, artifact_entries, None)
+    }
+
+    /// Compose a receipt for a session whose actor did NOT hold the signing
+    /// key -- a service signing on its behalf.
+    ///
+    /// Use this from any surface that mediates for actors who hold no key of
+    /// their own (a browser-based room being the motivating case). Passing
+    /// `None` is identical to [`compose`]: self-custody is the absence of the
+    /// block, so nothing is added to the signed bytes and existing receipts
+    /// stay byte-identical.
+    ///
+    /// Recording it is not optional politeness. A receipt naming
+    /// `agent://fizz` when a service actually signed is a lie of omission, and
+    /// it is the kind that surfaces in someone else's security review rather
+    /// than ours.
+    pub fn compose_with_custody(
+        manifest: &SessionManifest,
+        events: &[SessionEvent],
+        artifact_entries: Vec<ArtifactEntry>,
+        custody: Option<Custody>,
+    ) -> SessionReceipt {
         // Build agent graph
         let agent_graph = AgentGraph::from_events(events);
 
@@ -519,8 +541,7 @@ impl ReceiptComposer {
             // load envelopes and run the verifier. The composer sees only
             // manifest + events + artifact metadata.
             authority: None,
-            // Self-custody is the default and is represented by absence.
-            custody: None,
+            custody,
         }
     }
 
@@ -1670,5 +1691,130 @@ mod custody_tests {
         });
         assert_eq!(receipt["attestation_class"], "runtime");
         assert_eq!(receipt["custody"]["mode"], "delegated");
+    }
+}
+
+#[cfg(test)]
+mod custody_wiring_tests {
+    use super::*;
+
+    /// The schema is the gate: `validate("session.v1", ..)` runs fail-closed
+    /// before anything is signed, so a custody block the schema rejects would
+    /// mean a service literally cannot emit an honest receipt. That is the
+    /// state this test exists to prevent -- the type existed for a while with
+    /// no schema entry, which made it decorative.
+    #[test]
+    fn a_delegated_receipt_passes_predicate_validation() {
+        let payload = serde_json::json!({
+            "session_id": "ssn_room_demo",
+            "actor": "agent://fizz",
+            "outcome": "completed",
+            "started_at": "2026-08-10T10:00:00Z",
+            "closed_at": "2026-08-10T10:30:00Z",
+            "attestation_class": "runtime",
+            "receipt_digest": format!("sha256:{}", "a".repeat(64)),
+            "custody": {
+                "mode": "delegated",
+                "signer": "svc://gateway-rooms",
+                "on_behalf_of": "agent://fizz",
+                "reason": "browser-mediated room; participants hold no local key"
+            }
+        });
+        crate::predicates::validate("session.v1", Some(&payload))
+            .expect("a delegated-custody receipt must validate");
+    }
+
+    /// Self-custody stays byte-identical: no block, no schema objection.
+    #[test]
+    fn a_self_custody_receipt_still_validates() {
+        let payload = serde_json::json!({
+            "session_id": "ssn_plain",
+            "actor": "ship://local",
+            "outcome": "completed",
+            "started_at": "2026-08-10T10:00:00Z",
+            "closed_at": "2026-08-10T10:30:00Z",
+            "attestation_class": "self",
+            "receipt_digest": format!("sha256:{}", "b".repeat(64)),
+        });
+        crate::predicates::validate("session.v1", Some(&payload))
+            .expect("a self-custody receipt must validate");
+    }
+
+    /// A custody block missing `signer` names no one -- recording "delegated"
+    /// without saying delegated to WHOM is worse than omitting it, because it
+    /// tells a reader the actor did not sign while withholding who did.
+    ///
+    /// Core's validator does NOT catch this: it is documented as "a small,
+    /// dependency-free structural check" over TOP-LEVEL required fields and
+    /// does not recurse into nested objects. The `required` list inside the
+    /// custody schema is therefore documentation for consumers running a full
+    /// JSON Schema validator, not something core enforces.
+    ///
+    /// What actually holds the invariant is the Rust type: `signer` and
+    /// `on_behalf_of` are `String`, not `Option<String>`, so a `Custody`
+    /// cannot be constructed without them. This test pins that, and pins the
+    /// validator's limit so nobody assumes a guarantee that is not there.
+    #[test]
+    fn custody_requires_a_signer_by_type_not_by_validator() {
+        // The type will not let you omit it.
+        let c = Custody::delegated("svc://gateway-rooms", "agent://fizz");
+        assert!(!c.signer.is_empty());
+        assert!(!c.on_behalf_of.is_empty());
+
+        // And core's validator, by design, does not police nested shape --
+        // asserting otherwise would encode a guarantee we do not offer.
+        let payload = serde_json::json!({
+            "session_id": "ssn_bad",
+            "actor": "agent://fizz",
+            "outcome": "completed",
+            "started_at": "2026-08-10T10:00:00Z",
+            "closed_at": "2026-08-10T10:30:00Z",
+            "attestation_class": "self",
+            "receipt_digest": format!("sha256:{}", "c".repeat(64)),
+            "custody": { "mode": "delegated", "on_behalf_of": "agent://fizz" }
+        });
+        assert!(
+            crate::predicates::validate("session.v1", Some(&payload)).is_ok(),
+            "core validates top-level fields only; if this starts failing the \
+             validator gained nested checking and the doc comment above is stale"
+        );
+    }
+
+    /// `compose_with_custody(.., None)` must be indistinguishable from
+    /// `compose` -- otherwise adding the parameter silently changed every
+    /// existing receipt.
+    #[test]
+    fn none_custody_composes_identically() {
+        let m = SessionManifest::new(
+            "ssn_x".into(),
+            "ship://local".into(),
+            "2026-08-10T10:00:00Z".into(),
+            1_760_000_000_000,
+        );
+        let a = ReceiptComposer::compose(&m, &[], Vec::new());
+        let b = ReceiptComposer::compose_with_custody(&m, &[], Vec::new(), None);
+        assert_eq!(
+            serde_json::to_string(&a).unwrap(),
+            serde_json::to_string(&b).unwrap()
+        );
+    }
+
+    #[test]
+    fn delegated_custody_reaches_the_composed_receipt() {
+        let m = SessionManifest::new(
+            "ssn_y".into(),
+            "agent://fizz".into(),
+            "2026-08-10T10:00:00Z".into(),
+            1_760_000_000_000,
+        );
+        let r = ReceiptComposer::compose_with_custody(
+            &m,
+            &[],
+            Vec::new(),
+            Some(Custody::delegated("svc://gateway-rooms", "agent://fizz")),
+        );
+        let v = serde_json::to_value(&r).unwrap();
+        assert_eq!(v["custody"]["signer"], "svc://gateway-rooms");
+        assert_eq!(v["custody"]["on_behalf_of"], "agent://fizz");
     }
 }
