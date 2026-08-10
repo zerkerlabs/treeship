@@ -1,0 +1,92 @@
+---
+title: Logs vs receipts
+description: Why an audit log and a green CI check answer a different question than a receipt.
+---
+
+Logs are good at "why did this break." Receipts are good at "did this happen."
+Most teams have the first and assume it covers the second.
+
+## The difference in one line
+
+A log is **written by the system whose behavior is in question**. A receipt is
+**signed evidence that survives leaving that system**.
+
+Everything else follows from that.
+
+| | Log | Receipt |
+|---|---|---|
+| Written by | the system under question | the same system — but signed |
+| Editable after the fact | yes, by anyone with write access | no; any edit breaks verification |
+| Proves order | by timestamp, which the writer controls | by parent hash, inside the signed bytes |
+| Detects a deleted middle entry | no | yes — the chain breaks |
+| Survives the vendor | no | yes — verify offline with a public key |
+| Checkable by an outsider | only if they trust your logging | yes, with no trust in you |
+| Answers | what happened, roughly | what was reported, by which key, in what order |
+
+A log tells you a story. A receipt gives someone else a way to check it without
+believing you.
+
+## Where logs are better
+
+This is not a replacement. Logs win on:
+
+- **Debugging.** Full text, stack traces, verbose context. Receipts carry
+  hashes; you cannot read a hash.
+- **Volume.** Logging every line is cheap. Signing every line is not.
+- **Unstructured discovery.** Grep is a superb tool for questions you did not
+  know to ask.
+
+Keep your logs. The argument is that they cannot carry the claim receipts
+carry, not that they should be replaced.
+
+## CI checks vs portable receipts
+
+The same distinction, one level up — and this is where it bites hardest.
+
+A green CI check proves **something passed in the CI environment**. It does not
+prove the artifact runs in the environment it ships to. The classic failure:
+twelve checks green, production broken, because the build container had a shared
+library the runtime container did not.
+
+The check was not wrong. It answered a different question than the one everyone
+read it as answering.
+
+| | CI check | Portable receipt |
+|---|---|---|
+| Claim | "this passed in the runner" | "this ran here, under this identity, with this result" |
+| Environment | the builder's | recorded explicitly (`execution_identity`) |
+| Which binary ran | unrecorded | resolved path + sha256 |
+| Lives where | your CI provider | anywhere; verify with a public key |
+| After the account closes | gone | still verifies |
+| Readable by a customer | no | yes |
+
+The upgrade isn't "more checks." It's **stating which claim the check proves**.
+"Builds in runner" and "runs in target" are different receipts, and conflating
+them is how a green dashboard ends up describing a world it never entered.
+
+## When you actually need a receipt
+
+Reach for one when the answer must survive contact with someone who does not
+trust you:
+
+- an agent reports work and a human has to decide whether to believe it
+- an auditor asks what touched a record, six months later
+- a customer asks what your agent did with their data
+- two agents hand off, and the second must not re-derive the first's claims
+- a vendor relationship ends and the evidence has to outlive the account
+
+If the only consumer is you, next Tuesday, debugging — a log is the right tool
+and cheaper.
+
+## Being precise about the claim
+
+A receipt does not prove the recorded claim is *true*. It proves the claim was
+made by a specific key, in a specific order, and has not changed since. That is
+narrower than "verified" and it is exactly why it holds. See
+[what a receipt proves](/docs/concepts/what-receipts-prove).
+
+## Related
+
+- [What a receipt proves](/docs/concepts/what-receipts-prove)
+- [Verification surfaces](/docs/concepts/verification-surfaces)
+- [Artifacts](/docs/concepts/artifacts) — the signed object itself

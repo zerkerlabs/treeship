@@ -92,6 +92,13 @@ pub fn run(
     let git_before = git_head_sha();
     let files_before = file_mtimes(".");
 
+    // Capture execution identity BEFORE spawning. Resolving the binary
+    // afterwards would describe whatever PATH points at once the command has
+    // finished -- and a command that rewrites its own toolchain is exactly
+    // the case worth catching.
+    let exec_identity =
+        crate::execution_identity::ExecutionIdentity::capture(&args, |a| sanitize_command(a));
+
     // ── 1. Output digest: capture stdout/stderr while streaming ────────
     let start = Instant::now();
 
@@ -240,6 +247,18 @@ pub fn run(
     }
     if let Some(ref ga) = git_after {
         meta["git_after"] = serde_json::Value::String(ga.clone());
+    }
+
+    // What actually ran, and under whose authority. `command` above is a
+    // sanitized display string; this is the resolved binary, its digest, the
+    // real argv, cwd, and uid/gid. Without it a receipt cannot distinguish
+    // the `git` on PATH from a shell script named `git` earlier on PATH.
+    //
+    // Captured before execution (see `exec_identity` at the top of this
+    // function) so it describes the process that was launched, not whatever
+    // PATH resolves to after the command has finished mutating things.
+    if !exec_identity.is_empty() {
+        meta["execution_identity"] = serde_json::to_value(&exec_identity)?;
     }
 
     let mut stmt = ActionStatement::new(&actor_uri, &action_label);

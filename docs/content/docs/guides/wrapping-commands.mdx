@@ -1,0 +1,127 @@
+---
+title: Wrapping real commands
+description: curl, gh pr create, kubectl — what each receipt captures and what it proves.
+---
+
+`treeship wrap` runs a command and signs a receipt for it. The command runs
+normally: same stdout, same stderr, same exit code. Afterwards there is an
+artifact saying what ran, which binary ran it, and what changed.
+
+```bash
+treeship wrap -- <command> [args...]
+```
+
+Three worked examples. Each notes what the receipt proves and, more usefully,
+what it does not.
+
+---
+
+## `curl` — an outbound API call
+
+```bash
+treeship wrap --action payments.charge -- \
+  curl -sS -X POST https://api.example.com/v1/charges \
+       -d amount=2500 -d currency=usd
+```
+
+The receipt records the resolved `curl` binary and its `sha256`, the argv, the
+exit code, and `output_digest` — a hash of the response body, not the body.
+
+**Proves:** this exact `curl` binary was invoked with these arguments and
+returned output hashing to *X*.
+
+**Does not prove:** that the charge succeeded. `curl` exits `0` on an HTTP 500
+unless you pass `-f`. If the receipt should mean "the API accepted this," make
+the command fail when the API does:
+
+```bash
+treeship wrap --action payments.charge -- \
+  curl -sS --fail-with-body -X POST https://api.example.com/v1/charges -d amount=2500
+```
+
+Now a non-2xx is a non-zero exit and the receipt says so. **The receipt inherits
+the command's definition of success — so make the command strict.**
+
+<Callout type="warn">
+Secrets in argv are recorded. `-H "Authorization: Bearer sk-live-…"` is **not**
+caught by the redactor — it has no `=`, so it does not match the denylist. Use
+`--config` or an env var. See [secrets and
+redaction](/docs/concepts/secrets-and-redaction).
+</Callout>
+
+---
+
+## `gh pr create` — an action with a durable side effect
+
+```bash
+treeship wrap --action github.pr.open -- \
+  gh pr create --title "Add rate limiting" --body-file /tmp/body.md
+```
+
+Because `wrap` snapshots git before and after, this receipt also carries
+`git_before` and `git_after` SHAs and digests of changed files.
+
+**Proves:** `gh` ran from this working tree at this commit and exited `0`.
+
+**Does not prove:** the PR exists now. It could be closed, force-pushed over, or
+deleted a minute later. A receipt is a record of an action at a time, never a
+claim about current state.
+
+Worth pairing with `--action` naming: `github.pr.open` reads better in a chain
+than `gh`, and the action label is what shows up in
+[authority](/docs/concepts/approval-authority) checks.
+
+---
+
+## `kubectl apply` — a change to shared state
+
+```bash
+treeship wrap --action k8s.apply -- \
+  kubectl apply -f deploy/production.yaml
+```
+
+The `executable_sha256` matters more here than anywhere else. `kubectl` resolves
+through `PATH`, and which `kubectl` ran — a system package, an asdf shim, a
+vendored binary in the repo — determines what actually happened. Two receipts
+with identical argv and different digests are two different events.
+
+**Proves:** this binary applied this file and the API server accepted it.
+
+**Does not prove:** the rollout converged. `apply` returns once the object is
+accepted, not once pods are healthy. If the receipt should mean "it is running,"
+wrap the wait instead:
+
+```bash
+treeship wrap --action k8s.rollout -- \
+  kubectl rollout status deploy/api --timeout=120s
+```
+
+That distinction is the same one [effect
+receipts](/docs/concepts/effect-receipts) draw between `Initiated` and
+`Finalized` — accepted is not durable.
+
+---
+
+## The pattern across all three
+
+**Wrap the command whose exit code means what you want the receipt to mean.**
+
+A receipt is only as strong as the command's own notion of failure. `curl`
+without `--fail-with-body`, `apply` instead of `rollout status`, a test runner
+that exits `0` on skipped tests — in each case the receipt is accurate and the
+reader draws a wrong conclusion. That is not a signing problem; it is a
+"which command did you wrap" problem, and it is the most common way a real
+receipt ends up misleading.
+
+## Verify one
+
+```bash
+treeship verify <artifact-id>          # full chain, offline
+treeship log                           # what has been recorded here
+```
+
+## Related
+
+- [Secrets and redaction](/docs/concepts/secrets-and-redaction)
+- [What a receipt proves](/docs/concepts/what-receipts-prove)
+- [Effect receipts](/docs/concepts/effect-receipts)

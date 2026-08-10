@@ -1,6 +1,7 @@
 mod commands;
 mod config;
 mod ctx;
+mod execution_identity;
 mod otel;
 mod printer;
 mod templates;

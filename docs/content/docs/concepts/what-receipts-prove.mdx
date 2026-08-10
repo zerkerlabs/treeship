@@ -1,0 +1,101 @@
+---
+title: What a receipt proves
+description: The exact claim a Treeship receipt makes, and the claims it does not make.
+---
+
+A receipt is a narrow instrument. It answers a few questions completely and
+says nothing at all about others. Knowing which is which is the difference
+between using it and over-trusting it.
+
+## What it proves
+
+**This artifact has not changed since it was signed.** The artifact ID is
+derived from the signed bytes, so any edit produces a different ID. Change one
+character of one field and verification fails.
+
+**A specific key signed it.** Ed25519 over DSSE pre-authentication encoding.
+Not "someone at this company" — that key, those bytes.
+
+**Its place in the chain.** Each receipt names its parent, and the parent
+edge is inside the signed payload. You cannot remove a receipt from the middle
+of a chain, reorder two receipts, or splice in a new one without breaking
+verification of everything after it.
+
+**Its inclusion in a checkpoint**, when one exists. A Merkle inclusion proof
+shows this artifact was in the log at a published checkpoint — so a receipt
+cannot be back-dated into history that was already anchored.
+
+**That a specific input produced a specific output** — as hashes. `args_hash`
+and `output_hash` let you confirm later that a claimed input really is the one
+that ran, by recomputing the hash. Without disclosing either.
+
+**Which binary ran, and under whose authority**, for wrapped commands.
+`execution_identity` records the resolved executable path, its sha256, the argv
+vector, cwd, and uid/gid. A shell script named `git` earlier on `PATH` produces
+a different receipt than the real one.
+
+**Whether the actor had a mandate**, for `action/v2`. A grant chain establishes
+who authorized the action, with what scope, until when — and `exercisable_by`
+binds a grant to the key entitled to use it.
+
+**All of it offline.** Verification needs the artifact and a public key. No
+network, no Treeship service, no account. If our servers vanish, every receipt
+ever issued still verifies.
+
+## What it does not prove
+
+**That the recorded claim is true.** This is the big one. A receipt captures
+what the agent reported. If a tool returns `{"status": "deployed"}` when nothing
+deployed, the receipt faithfully records that lie — signed, tamper-evident, and
+wrong. What you get is **non-repudiation**: whoever holds the key signed this,
+and it has not been edited since. Not ground truth.
+
+**That the actor is who the URI says.** `actor: agent://researcher` is a string
+the signer chose. Binding a name to a key an outsider can check is a separate
+step ([agent identity](/docs/concepts/agent-identity), capability cards). The
+CLI is explicit about this: it prints `actor proof: asserted` when the binding
+is unproven, and you should read that literally.
+
+**That the timestamp is accurate.** Timestamps are signed by the same key as
+everything else, so a signer who wants to lie about *when* can. Merkle
+checkpoints are what bound a receipt in time — a receipt included in a
+checkpoint existed before that checkpoint was published. Timestamps alone order
+nothing.
+
+**That nothing else happened.** A chain proves that what it contains was not
+altered. It cannot prove that no work happened outside it. An agent that stops
+attesting produces a chain that simply ends. **A gap is legible, but it is not
+self-labeling** — this is why failed actions get receipts too, and why a chain
+that only records successes is much weaker than it looks.
+
+**That the code was correct, the change was safe, or the human approved
+wisely.** Receipts record what occurred and who authorized it. Judgment is not
+attestable.
+
+**Anything about hashed content.** `output_hash` proves you have the same output
+as before. It tells you nothing about what that output *says*. Hashes are for
+confirming a match, never for recovering a value.
+
+## The one-line version
+
+> A receipt proves **what was reported, by which key, in what order, under whose
+> authority — and that none of it has changed since.** It does not prove the
+> report was true.
+
+That is a smaller claim than "verified," and it is the reason the claim holds.
+
+## Why state the limits
+
+A verification tool that oversells becomes a liability precisely when it
+matters. If "verified" is read as "correct," then the first time a signed
+receipt records something false, the entire apparatus loses credibility — and
+the people who relied on it were misled by us, not by the agent.
+
+Narrow claims that always hold beat broad claims that usually do.
+
+## Related
+
+- [Verification surfaces](/docs/concepts/verification-surfaces) — where checking happens
+- [Coverage levels](/docs/guides/coverage-levels) — how completely a session was observed
+- [Trust model](/docs/concepts/trust-model) — what you have to trust, and what you don't
+- [Effect receipts](/docs/concepts/effect-receipts) — grading evidence and lifecycle separately

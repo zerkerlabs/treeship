@@ -1,0 +1,120 @@
+---
+title: Authority delta
+description: What an action was allowed to do, what it did, and the gap between them.
+---
+
+Signature verification answers "was this receipt altered." It does not answer
+the question underneath: **was this action allowed, by whom, and did it stay
+inside that?**
+
+A receipt can be perfectly signed and describe an action nobody authorized. The
+authority section is where that gap becomes visible.
+
+## The three numbers
+
+Every session receipt containing `action/v2` receipts carries an authority
+summary:
+
+| field | meaning |
+|---|---|
+| `checked` | actions judged |
+| `violations` | actions that fell **outside** their grant |
+| `unverified` | actions where some layer **could not be checked** |
+| `bearer` | actions run under a grant naming **no holder** |
+
+`violations` and `unverified` are counted separately on purpose, and that
+separation is the whole design. Folding "we checked and it was wrong" into "we
+could not check" produces a number that means nothing: a zero could be a clean
+session or a session where the verifier gave up. Two counters, two questions.
+
+`authority_ok: true` with `unverified > 0` means **nothing was caught**, not
+that nothing is wrong.
+
+## Per action
+
+Each entry records what the grant admitted and what the action did:
+
+```json
+{
+  "action":        "payments.charge",
+  "verdict":       "fail",
+  "scope":         ["payments.refund"],
+  "audience":      "acme",
+  "grant_id":      "grn_a1b2c3d4",
+  "holder_bound":  true,
+  "delegation":    "widened",
+  "reasons":       ["action payments.charge is outside scope payments.refund"]
+}
+```
+
+The delta is `scope` versus `action`. The grant admitted refunds; the action was
+a charge. That is a violation whether or not the signature is valid — and the
+signature *is* valid, which is the point. A correctly signed record of an
+unauthorized action is exactly what this catches.
+
+## `delegation` — where authority came from
+
+| value | meaning |
+|---|---|
+| `not_claimed` | no delegation chain claimed; the grant stands alone |
+| `holds` | the chain resolves and each hop narrows or preserves scope |
+| `widened` | **a hop granted more than it held** |
+| `unresolvable` | a chain was claimed and could not be walked |
+
+`widened` is the interesting failure. Delegation may narrow authority; it may
+never expand it. A grant for `payments.refund` cannot delegate `payments.*`,
+and a chain that tries is reported rather than silently flattened to its
+broadest link.
+
+`unresolvable` is not a violation. It is an admission — the chain claimed
+something that could not be checked from here, and it lands in `unverified`.
+
+## `holder_bound` — bearer grants
+
+`holder_bound: false` means the grant names no key entitled to spend it. Anyone
+holding the grant can exercise it, like cash.
+
+Bearer grants are not invalid, and the count is surfaced rather than hidden
+because "who could have done this" has a different answer than usual. A
+holder-bound grant answers "one key." A bearer grant answers "anyone who
+obtained a copy."
+
+This was found by testing rather than by reading: two isolated workspaces, B
+copied A's grant, and B's action verified `pass`. Grants are bound at mint and
+checked at verify now, and the receipt reports when one is not.
+
+## Reading a delta
+
+```bash
+treeship verify <artifact-id> --format json | jq '.authority'
+```
+
+Three questions, in order:
+
+1. **`violations > 0`?** Something ran outside its grant. This is the headline.
+2. **`unverified > 0`?** Something could not be checked. Not clean, not a
+   violation — read the `reasons`.
+3. **`bearer > 0`?** Any holder of that grant could have produced the action.
+
+A session with `checked: 12, violations: 0, unverified: 0, bearer: 0` is the
+clean case, and it is the only shape that means what "authorized" sounds like.
+
+## What it does not tell you
+
+**Whether the grant should have been issued.** Authority checks conformance to
+a grant, not the wisdom of granting it. A perfectly conformant action under an
+over-broad grant reports clean.
+
+**Whether the actor is who the URI says.** That is
+[agent identity](/docs/concepts/agent-identity); `actor proof: asserted` means
+unproven.
+
+**Anything about actions with no `action/v2` receipt.** A session with no
+authority section is not a session with clean authority — it is a session that
+said nothing about it. Absence is not a pass.
+
+## Related
+
+- [Approval authority](/docs/concepts/approval-authority) — grants and mandates
+- [Effect receipts](/docs/concepts/effect-receipts) — what the action actually changed
+- [What a receipt proves](/docs/concepts/what-receipts-prove)
