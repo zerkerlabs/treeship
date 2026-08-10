@@ -14,6 +14,7 @@
     "artifacts",
     "what-receipts-prove",
     "logs-vs-receipts",
+    "secrets-and-redaction",
     "effect-receipts",
     "session-receipts",
     "room-sessions",
