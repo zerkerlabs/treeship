@@ -59,6 +59,15 @@ jobs:
         run: python3 scripts/check-sdk-docs.py
       - name: Feature inventory entries point at real code
         run: python3 scripts/check-feature-inventory.py --strict
+
+      # The mechanical half of the capability index. feature-inventory.yml is
+      # curated (what we ship and how stable); this is derived (what is
+      # actually reachable, to the byte). A new route or wire type fails here
+      # until the map is regenerated, so the surface cannot grow in silence.
+      - name: Capability map matches source
+        run: |
+          cargo build --bin treeship --quiet
+          python3 scripts/gen-capability-map.py --check
       - name: Every protocol spec is indexed
         run: python3 scripts/check-specs-index.py
       - name: Published crates embed only files inside their own root

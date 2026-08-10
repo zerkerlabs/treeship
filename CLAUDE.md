@@ -15,7 +15,8 @@ When in doubt, prefer the policy over speed.
 1. [`AGENTS.md`](AGENTS.md) — the design spec and cryptographic invariants. Read in full before changing any code under `packages/core`, `packages/cli`, or `packages/hub`.
 2. [`ONBOARDING.md`](ONBOARDING.md) — repo map, CLI surface, dev setup.
 3. [`CONTRIBUTING.md`](CONTRIBUTING.md) — test matrix, commit-message style, branch flow.
-4. [`docs/quality/ai-assisted-development.md`](docs/quality/ai-assisted-development.md) — the code-quality policy referenced above.
+4. [`docs/quality/capability-index.md`](docs/quality/capability-index.md) — **what Treeship already ships.** Check before proposing a build; "this does not exist" is a claim requiring evidence.
+5. [`docs/quality/ai-assisted-development.md`](docs/quality/ai-assisted-development.md) — the code-quality policy referenced above.
 
 ## What this repo is
 
