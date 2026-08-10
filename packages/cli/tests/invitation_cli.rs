@@ -318,6 +318,240 @@ fn treeship_session_invite_then_join_roundtrip() {
     );
 }
 
+/// Room-join liveness challenge, happy path: join -> answer-challenge ->
+/// countersign --challenge/--challenge-response. The finalized envelope
+/// still verifies exactly as the unchallenged roundtrip does -- the
+/// challenge is an additive, ephemeral gate at countersign time, not a
+/// change to the two-sig envelope schema.
+#[test]
+fn treeship_session_join_liveness_challenge_roundtrip() {
+    let ws = Workspace::new();
+    ws.init();
+    let register = ws
+        .cmd()
+        .args(["agent", "register", "--name", "bob", "--own-key"])
+        .output()
+        .expect("register joining agent");
+    assert!(register.status.success());
+    let session_id = ws.session_start();
+    let pubkey = ws.default_pubkey_b64();
+    ws.add_trust("host_default", &pubkey, "session_host");
+
+    let invite_out = ws
+        .cmd()
+        .args(["session", "invite", &session_id, "--format", "json"])
+        .args(["--open", "--config"])
+        .arg(ws.config())
+        .output()
+        .expect("session invite");
+    assert!(invite_out.status.success());
+    let mint: serde_json::Value = serde_json::from_slice(&invite_out.stdout).unwrap();
+    let blob = mint["bootstrap_blob"].as_str().unwrap().to_string();
+    let blob_path = ws.root.join("invite.blob");
+    std::fs::write(&blob_path, &blob).unwrap();
+
+    let join_out = ws
+        .cmd()
+        .args(["session", "join", "--format", "json"])
+        .args(["--invite-file"])
+        .arg(&blob_path)
+        .args(["--actor", "agent://joiner"])
+        .args(["--config"])
+        .arg(ws.config())
+        .output()
+        .expect("session join");
+    assert!(join_out.status.success());
+    let join: serde_json::Value = serde_json::from_slice(&join_out.stdout).unwrap();
+    let participant_id = join["participant_id"].as_str().unwrap().to_string();
+
+    // Joining agent answers the host's nonce.
+    let nonce = "n_test_liveness_1";
+    let response_path = ws.root.join("response.json");
+    let answer_out = ws
+        .cmd()
+        .args(["session", "answer-challenge", &participant_id])
+        .args(["--challenge", nonce])
+        .args(["--actor", "agent://joiner"])
+        .args(["--out"])
+        .arg(&response_path)
+        .args(["--format", "json", "--config"])
+        .arg(ws.config())
+        .output()
+        .expect("session answer-challenge");
+    assert!(
+        answer_out.status.success(),
+        "answer-challenge failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&answer_out.stdout),
+        String::from_utf8_lossy(&answer_out.stderr),
+    );
+    assert!(response_path.exists());
+
+    // Host countersigns, gated on the liveness response.
+    let cs_out = ws
+        .cmd()
+        .args(["session", "countersign", &participant_id])
+        .args(["--challenge", nonce])
+        .args(["--challenge-response"])
+        .arg(&response_path)
+        .args(["--format", "json", "--config"])
+        .arg(ws.config())
+        .output()
+        .expect("session countersign");
+    let stdout = String::from_utf8_lossy(&cs_out.stdout).to_string();
+    assert!(
+        cs_out.status.success(),
+        "countersign with challenge failed: stdout={stdout} stderr={}",
+        String::from_utf8_lossy(&cs_out.stderr),
+    );
+    let cs: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(cs["status"], "finalized");
+    assert_eq!(cs["challenge_verified"], true);
+
+    // Still verifies as a normal finalized participant envelope.
+    let verify_out = ws
+        .cmd()
+        .args(["verify", &participant_id, "--format", "json", "--config"])
+        .arg(ws.config())
+        .output()
+        .expect("verify countersigned participant");
+    assert!(verify_out.status.success());
+    let verified: serde_json::Value = serde_json::from_slice(&verify_out.stdout).unwrap();
+    assert_eq!(verified["outcome"], "pass");
+}
+
+/// A response answering the WRONG nonce (replay of a stale/different
+/// challenge) must not be accepted -- countersign refuses to finalize.
+#[test]
+fn treeship_session_countersign_rejects_mismatched_challenge_nonce() {
+    let ws = Workspace::new();
+    ws.init();
+    let session_id = ws.session_start();
+    let pubkey = ws.default_pubkey_b64();
+    ws.add_trust("host_default", &pubkey, "session_host");
+
+    let invite_out = ws
+        .cmd()
+        .args(["session", "invite", &session_id, "--format", "json"])
+        .args(["--open", "--config"])
+        .arg(ws.config())
+        .output()
+        .expect("session invite");
+    let mint: serde_json::Value = serde_json::from_slice(&invite_out.stdout).unwrap();
+    let blob = mint["bootstrap_blob"].as_str().unwrap().to_string();
+    let blob_path = ws.root.join("invite.blob");
+    std::fs::write(&blob_path, &blob).unwrap();
+
+    let join_out = ws
+        .cmd()
+        .args(["session", "join", "--format", "json"])
+        .args(["--invite-file"])
+        .arg(&blob_path)
+        .args(["--actor", "agent://joiner"])
+        .args(["--config"])
+        .arg(ws.config())
+        .output()
+        .expect("session join");
+    let join: serde_json::Value = serde_json::from_slice(&join_out.stdout).unwrap();
+    let participant_id = join["participant_id"].as_str().unwrap().to_string();
+
+    let response_path = ws.root.join("response.json");
+    let answer_out = ws
+        .cmd()
+        .args(["session", "answer-challenge", &participant_id])
+        .args(["--challenge", "n_real"])
+        .args(["--actor", "agent://joiner"])
+        .args(["--out"])
+        .arg(&response_path)
+        .args(["--format", "json", "--config"])
+        .arg(ws.config())
+        .output()
+        .expect("session answer-challenge");
+    assert!(answer_out.status.success());
+
+    // Host issues a DIFFERENT nonce than the one that was answered.
+    let cs_out = ws
+        .cmd()
+        .args(["session", "countersign", &participant_id])
+        .args(["--challenge", "n_different"])
+        .args(["--challenge-response"])
+        .arg(&response_path)
+        .args(["--format", "json", "--config"])
+        .arg(ws.config())
+        .output()
+        .expect("session countersign");
+    assert!(
+        !cs_out.status.success(),
+        "countersign must refuse a response answering a different nonce"
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&cs_out.stdout),
+        String::from_utf8_lossy(&cs_out.stderr),
+    );
+    assert!(
+        combined.contains("does not match"),
+        "expected nonce-mismatch rejection, got: {combined}",
+    );
+}
+
+/// Supplying only one of --challenge / --challenge-response is refused
+/// rather than silently skipping the liveness check.
+#[test]
+fn treeship_session_countersign_rejects_half_supplied_challenge() {
+    let ws = Workspace::new();
+    ws.init();
+    let session_id = ws.session_start();
+    let pubkey = ws.default_pubkey_b64();
+    ws.add_trust("host_default", &pubkey, "session_host");
+
+    let invite_out = ws
+        .cmd()
+        .args(["session", "invite", &session_id, "--format", "json"])
+        .args(["--open", "--config"])
+        .arg(ws.config())
+        .output()
+        .expect("session invite");
+    let mint: serde_json::Value = serde_json::from_slice(&invite_out.stdout).unwrap();
+    let blob = mint["bootstrap_blob"].as_str().unwrap().to_string();
+    let blob_path = ws.root.join("invite.blob");
+    std::fs::write(&blob_path, &blob).unwrap();
+
+    let join_out = ws
+        .cmd()
+        .args(["session", "join", "--format", "json"])
+        .args(["--invite-file"])
+        .arg(&blob_path)
+        .args(["--actor", "agent://joiner"])
+        .args(["--config"])
+        .arg(ws.config())
+        .output()
+        .expect("session join");
+    let join: serde_json::Value = serde_json::from_slice(&join_out.stdout).unwrap();
+    let participant_id = join["participant_id"].as_str().unwrap().to_string();
+
+    let cs_out = ws
+        .cmd()
+        .args(["session", "countersign", &participant_id])
+        .args(["--challenge", "n_only_half"])
+        .args(["--format", "json", "--config"])
+        .arg(ws.config())
+        .output()
+        .expect("session countersign");
+    assert!(
+        !cs_out.status.success(),
+        "countersign must refuse a half-supplied challenge, not silently skip it"
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&cs_out.stdout),
+        String::from_utf8_lossy(&cs_out.stderr),
+    );
+    assert!(
+        combined.contains("must be supplied together"),
+        "got: {combined}",
+    );
+}
+
 /// Invitation against a nonexistent / unrelated session id is still
 /// mintable (Phase 1 doesn't validate session existence at the mint
 /// site -- the host knows what session id they meant), but if we pass

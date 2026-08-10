@@ -22,6 +22,12 @@ pub mod resolution;
 /// its check). Same reason: one code path across CLI, WASM, and SDKs.
 pub mod presentation;
 
+/// Session-join challenge canonical (the live-liveness gate `session
+/// countersign --challenge` uses). Same shape as `presentation`, scoped to
+/// proving the joining agent is live at countersign time, not just at join
+/// time.
+pub mod session_join_challenge;
+
 use crate::agent::AgentCertificate;
 use crate::session::package::{VerifyCheck, VerifyStatus};
 use crate::session::receipt::SessionReceipt;
