@@ -1,5 +1,71 @@
 # Changelog
 
+## 0.24.0 (2026-08-10)
+
+**Trusted Rooms, end to end — plus three fixes worth upgrading for.**
+
+### Fixed
+
+- **Legitimate receipts no longer report tampering.** Every `receipt.v1`
+  landing mid-chain reported `chain SIGNED LINKAGE BROKEN — possible
+  tampering` against correctly-signed evidence. `mint_session_record` writes
+  the parent as `subject.artifactId`; the linkage check looked only for a
+  top-level `parentId`. Measured on a real store: 4 of 4 receipts affected,
+  9 of 9 actions fine. A false tampering alarm is worse than a noisy check —
+  it teaches operators to ignore the one signal the product exists to give.
+- **Keystores are portable.** `storage_dir`/`keys_dir` were always absolute,
+  so `mv ~/.treeship ~/.treeship.bak` produced a "backup" whose config still
+  pointed at whatever replaced it. Relative paths now resolve against the
+  config's own directory. Absolute paths are untouched.
+- **The Claude Code plugin monitor stopped shouting.** It emitted a line
+  whenever any counter changed, and `events` ticks on essentially every tool
+  call — one working session produced well over a hundred notifications. Now
+  reports state transitions only: two lines for a full session.
+
+### Added
+
+- **`treeship room create` / `status` / `participants`.** Sugar over
+  `treeship session`; a room is a session whose participant set evolves via
+  invitations. `invitation_authority` is carried and signed but not yet
+  enforced — conformance checking is the follow-up.
+- **`room` rides inside the signed receipt.** `RoomInfo` on `SessionManifest`
+  and mirrored into the DSSE-signed `session.v1`, so `invitation_authority`
+  is attested rather than living only in an editable local file.
+- **The room roster is derived, not stored.** `room participants` walks
+  two-signature participant artifacts instead of reading a list from
+  `session.json` — which anyone with write access could edit, and which was
+  silently incomplete whenever the best-effort append was skipped.
+- **Liveness challenge on countersign.** Opt-in `--challenge` /
+  `--challenge-response` proves the joining agent controls its key *now*,
+  not whenever `join` ran. Omitting both countersigns exactly as before.
+- **`treeship session mint-challenge`.** 128 bits from `OsRng`, because the
+  challenge flag shipped without anything to produce a value and the help
+  text suggested a six-character example. Weak nonces are now refused at both
+  ends: a guessable nonce can be pre-signed, and the proof means nothing.
+- **`Custody` on the session receipt.** Records when a *service* signed on an
+  actor's behalf rather than the actor signing for itself. Deliberately a
+  separate axis from `attestation_class`, which grades how evidence was
+  captured; this grades who held the key. Absent means self-custody, so
+  existing receipts are byte-identical.
+- **`execution_identity` on wrapped commands.** Resolved executable path,
+  sha256, argv, cwd, uid/gid. `git` is `git` only until `PATH` says
+  otherwise; two receipts with identical argv and different digests are two
+  different events. Environment **names** only, never values.
+- **A public Go client for the Hub** (`pkg/dpop`, `pkg/hubclient`). DPoP proof
+  signing existed only in Rust, so a Go service had no path to the API.
+  Tested against the real server verifier, not a stub.
+- **The capability index now covers Hub endpoints and core types.** CI fails
+  when a live endpoint belongs to no feature entry, and a generated
+  `capability-map.json` records every reachable surface — 34 CLI commands,
+  22 routes, 109 wire types.
+
+### Documentation
+
+- New concept pages: what a receipt proves (and does not), logs vs receipts,
+  effect receipts, secrets and redaction, authority delta, wrapping real
+  commands. The redaction page documents, with a measured table, which secret
+  shapes the scrubber catches and which it misses.
+
 ## Unreleased
 
 ### Added
