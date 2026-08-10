@@ -360,7 +360,6 @@ fn action_v2(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std:
         args.grant_file.as_deref(),
     )?;
 
-
     let revocation_path = args
         .revocation_path
         .clone()
@@ -392,8 +391,7 @@ fn action_v2(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std:
     // allowed to use it. Verify reports this too, but the artifact should never
     // exist -- an invalid claim that exists is one somebody is eventually asked
     // to trust.
-    let own_key =
-        URL_SAFE_NO_PAD.encode(signer.public_key_bytes());
+    let own_key = URL_SAFE_NO_PAD.encode(signer.public_key_bytes());
     if !leaf.exercisable_by(&own_key) {
         return Err(format!(
             "refusing to attest: grant {} was issued to a different key\n  \
@@ -924,9 +922,10 @@ fn validate_quarantine_receipt(
              --kind memory.quarantine-check.v1 --payload-file <check.json>"
         )
     })?;
-    let stmt: ReceiptStatement = rec.envelope.unmarshal_statement().map_err(|e| {
-        format!("quarantine receipt {receipt_id} is not a receipt statement: {e}")
-    })?;
+    let stmt: ReceiptStatement = rec
+        .envelope
+        .unmarshal_statement()
+        .map_err(|e| format!("quarantine receipt {receipt_id} is not a receipt statement: {e}"))?;
     if stmt.kind != "memory.quarantine-check.v1" {
         return Err(format!(
             "{receipt_id} is a `{}` receipt, not memory.quarantine-check.v1",

@@ -175,11 +175,7 @@ fn cli_emits_action_v2_that_verify_reads() {
     );
 
     // Runtime is bound into the signed payload; the human timeline surfaces it.
-    let text = ws
-        .cmd()
-        .args(["verify", id, "--full"])
-        .output()
-        .unwrap();
+    let text = ws.cmd().args(["verify", id, "--full"]).output().unwrap();
     let text_out = format!(
         "{}{}",
         String::from_utf8_lossy(&text.stdout),
@@ -296,8 +292,8 @@ fn grant_file_emits_without_workspace_store() {
         "attest --grant-file failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let emitted: serde_json::Value = serde_json::from_str(&String::from_utf8_lossy(&out.stdout))
-        .expect("attest JSON");
+    let emitted: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&out.stdout)).expect("attest JSON");
     assert_eq!(emitted["type"], "action/v2");
     assert_eq!(emitted["status"], "ok");
 }

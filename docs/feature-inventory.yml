@@ -329,6 +329,28 @@
     - packages/core/src/statements/invitation.rs
   notes: "Host-minted invitations gated by the session_host trust kind; joiner signs, host countersigns. Replay rejected; countersigning hardened in v0.19."
 
+- id: room-sessions
+  name: Room sessions
+  section: identity
+  status: experimental
+  cli:
+    - treeship room
+  packages:
+    - treeship-core
+  docs:
+    - docs/specs/agent-invitations-rooms.md
+  tests:
+    - packages/cli/tests/room_cli.rs
+  notes: >-
+    Phase 2 of the agent-invitations spec: a room is a session whose
+    participant set evolves via invitations. `room create` populates
+    RoomInfo on the manifest and it rides into the DSSE-signed receipt;
+    `room participants` derives the roster from two-signature participant
+    artifacts rather than the editable cached list. invitation_authority
+    is carried and signed but NOT yet enforced -- conformance checking
+    (spec Phase 3) is the follow-up. No `room close`: a room is a session,
+    so `session close` already works.
+
 - id: agent-resolver
   name: Agent resolver (local + network)
   section: provenance

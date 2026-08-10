@@ -51,8 +51,12 @@ pub(crate) fn grant_path(dir: &Path, id: &str) -> PathBuf {
 pub(crate) fn read_grant_unchecked(path: &Path) -> Result<Grant, Box<dyn std::error::Error>> {
     let raw = std::fs::read_to_string(path)
         .map_err(|e| format!("could not read grant file {}: {e}", path.display()))?;
-    let g: Grant = serde_json::from_str(&raw)
-        .map_err(|e| format!("grant file is not valid Grant JSON ({}): {e}", path.display()))?;
+    let g: Grant = serde_json::from_str(&raw).map_err(|e| {
+        format!(
+            "grant file is not valid Grant JSON ({}): {e}",
+            path.display()
+        )
+    })?;
     Ok(g)
 }
 
@@ -254,7 +258,10 @@ pub fn issue(args: IssueArgs, printer: &Printer) -> Result<(), Box<dyn std::erro
     g.grant_id = g.derive_grant_id();
     g.issuer_sig = Some(g.sign_canonical(signer.as_ref())?);
 
-    debug_assert!(g.id_is_consistent(), "freshly minted grant must self-verify");
+    debug_assert!(
+        g.id_is_consistent(),
+        "freshly minted grant must self-verify"
+    );
 
     // Two grants with the same content have the same id -- that is what content
     // addressing means. `issued_at` is second-precision, so issuing the same
@@ -450,7 +457,11 @@ pub fn show(
 }
 
 fn yes_no(b: bool) -> String {
-    if b { "yes".into() } else { "NO".into() }
+    if b {
+        "yes".into()
+    } else {
+        "NO".into()
+    }
 }
 
 /// RFC 3339 in UTC from a unix timestamp, without pulling in a date crate the

@@ -4,16 +4,14 @@ use sha2::{Digest, Sha256};
 use treeship_core::{
     attestation::{Envelope, Verifier},
     statements::{
+        check_resolution,
         invitation::InvitationStatement,
-        payload_type, payload_type_v2,
+        payload_type, payload_type_v2, resolve_grant_chain,
         session_participant::{verify_participant_envelope, SessionParticipantStatement},
-        check_resolution, resolve_grant_chain, verify_effect, verify_grant_chain, verify_mandate,
-        ActionStatement,
-        ActionStatementV2, ApprovalScope,
-        ApprovalStatement, DeadlineEvent, DecisionStatement, EffectConfidence, EffectFinality,
-        EffectVerdict, HandoffStatement,
-        MandateVerdict, NoRevocationSource, NoWitnessAuthority,
-        ReceiptStatement, ResolutionStatus,
+        verify_effect, verify_grant_chain, verify_mandate, ActionStatement, ActionStatementV2,
+        ApprovalScope, ApprovalStatement, DeadlineEvent, DecisionStatement, EffectConfidence,
+        EffectFinality, EffectVerdict, HandoffStatement, MandateVerdict, NoRevocationSource,
+        NoWitnessAuthority, ReceiptStatement, ResolutionStatus,
     },
     storage::Store,
     trust::TrustRootStore,
@@ -489,7 +487,8 @@ pub fn run(
         let authority_by_id: HashMap<String, serde_json::Value> = chain_envelopes
             .iter()
             .filter_map(|(id, env)| {
-                v2_mandate_summary(env, Some(&verifier)).map(|m| (id.clone(), mandate_summary_json(&m)))
+                v2_mandate_summary(env, Some(&verifier))
+                    .map(|m| (id.clone(), mandate_summary_json(&m)))
             })
             .collect();
         let delegation_by_id: HashMap<String, serde_json::Value> = chain_envelopes
@@ -509,7 +508,8 @@ pub fn run(
         let resolution_by_id: HashMap<String, serde_json::Value> = chain_envelopes
             .iter()
             .filter_map(|(id, env)| {
-                v2_resolution_status(env, now_unix).map(|r| (id.clone(), resolution_status_json(&r)))
+                v2_resolution_status(env, now_unix)
+                    .map(|r| (id.clone(), resolution_status_json(&r)))
             })
             .collect();
 
@@ -2369,9 +2369,7 @@ mod tests {
     #[test]
     fn v2_mandate_authority_reaches_step_info() {
         use treeship_core::attestation::{sign, Ed25519Signer};
-        use treeship_core::statements::{
-            payload_type_v2, ActionStatementV2, Mandate, Revocation,
-        };
+        use treeship_core::statements::{payload_type_v2, ActionStatementV2, Mandate, Revocation};
 
         let mandate = |scope: Vec<String>| Mandate {
             grant_id: "grant_1".into(),
@@ -2398,37 +2396,62 @@ mod tests {
 
         // In scope: the revocation layer is still unresolvable (the CLI wires
         // no resolver), so the honest verdict is Unverified -- never Pass.
-        let mut ok = ActionStatementV2::new("agent://worker", "payments.charge", mandate(vec!["payments.charge".into()]));
+        let mut ok = ActionStatementV2::new(
+            "agent://worker",
+            "payments.charge",
+            mandate(vec!["payments.charge".into()]),
+        );
         ok.timestamp = "2026-07-20T10:30:00Z".into();
         ok.audience = Some("acme".into());
-        let ok_env = sign(&payload_type_v2("action"), &ok, &signer).unwrap().envelope;
+        let ok_env = sign(&payload_type_v2("action"), &ok, &signer)
+            .unwrap()
+            .envelope;
         let info = extract_step_info(0, "art_ok", &ok_env, &store, None);
         match info.mandate_verdict {
             Some(MandateSummary::Unverified(ref r)) => {
-                assert!(!r.is_empty(), "unverified must name the layer it could not check");
+                assert!(
+                    !r.is_empty(),
+                    "unverified must name the layer it could not check"
+                );
             }
-            other => panic!("expected Unverified without a revocation resolver, got {:?}", other.is_some()),
+            other => panic!(
+                "expected Unverified without a revocation resolver, got {:?}",
+                other.is_some()
+            ),
         }
 
         // Out of scope: a signature over an unauthorized action must not read
         // as authorized anywhere in the output.
-        let mut bad = ActionStatementV2::new("agent://worker", "payments.refund", mandate(vec!["payments.charge".into()]));
+        let mut bad = ActionStatementV2::new(
+            "agent://worker",
+            "payments.refund",
+            mandate(vec!["payments.charge".into()]),
+        );
         bad.timestamp = "2026-07-20T10:30:00Z".into();
         bad.audience = Some("acme".into());
-        let bad_env = sign(&payload_type_v2("action"), &bad, &signer).unwrap().envelope;
+        let bad_env = sign(&payload_type_v2("action"), &bad, &signer)
+            .unwrap()
+            .envelope;
         let bad_info = extract_step_info(1, "art_bad", &bad_env, &store, None);
         match bad_info.mandate_verdict {
             Some(MandateSummary::Fail(ref r)) => {
-                assert!(r.iter().any(|x| x.contains("scope")), "reason should name scope: {r:?}");
+                assert!(
+                    r.iter().any(|x| x.contains("scope")),
+                    "reason should name scope: {r:?}"
+                );
             }
             _ => panic!("an out-of-scope action must produce a Fail verdict"),
         }
 
         // v1 artifacts carry no mandate and must not gain an authority line.
         let v1 = act("agent://x", "tool.call", None);
-        let v1_env = sign(&treeship_core::statements::payload_type("action"), &v1, &signer)
-            .unwrap()
-            .envelope;
+        let v1_env = sign(
+            &treeship_core::statements::payload_type("action"),
+            &v1,
+            &signer,
+        )
+        .unwrap()
+        .envelope;
         assert!(
             v2_mandate_summary(&v1_env, None).is_none(),
             "v1 receipts must not claim anything about authority"
@@ -2438,11 +2461,11 @@ mod tests {
     // ── action/v2 delegation chain wiring ──────────────────────────────
     #[test]
     fn v2_chain_summary_reports_holds_widened_and_absent() {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
         use treeship_core::attestation::{sign, Ed25519Signer, Signer as _};
         use treeship_core::statements::{
             payload_type_v2, ActionStatementV2, Grant, Mandate, Revocation,
         };
-        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 
         let signer = Ed25519Signer::generate("issuer").unwrap();
         let pk = URL_SAFE_NO_PAD.encode(signer.public_key_bytes());
@@ -2492,7 +2515,9 @@ mod tests {
             let mut st = ActionStatementV2::new("agent://worker", action, m);
             st.timestamp = "2026-07-20T10:30:00Z".into();
             st.audience = Some("acme".into());
-            sign(&payload_type_v2("action"), &st, &signer).unwrap().envelope
+            sign(&payload_type_v2("action"), &st, &signer)
+                .unwrap()
+                .envelope
         };
 
         // Holds: child narrows the parent's scope at depth+1.
@@ -2536,9 +2561,13 @@ mod tests {
 
         // v1 artifacts have no chain concept at all.
         let v1 = act("agent://x", "tool.call", None);
-        let v1_env = sign(&treeship_core::statements::payload_type("action"), &v1, &signer)
-            .unwrap()
-            .envelope;
+        let v1_env = sign(
+            &treeship_core::statements::payload_type("action"),
+            &v1,
+            &signer,
+        )
+        .unwrap()
+        .envelope;
         assert!(v2_chain_summary(&v1_env).is_none());
     }
 
@@ -2593,8 +2622,9 @@ mod tests {
         assert_eq!(widened["outcome"], "widened");
         assert_eq!(widened["detail"], "scope widens at hop 0->1");
 
-        let unres =
-            chain_summary_json(&ChainSummary::Unresolvable("parent grant is missing".into()));
+        let unres = chain_summary_json(&ChainSummary::Unresolvable(
+            "parent grant is missing".into(),
+        ));
         assert_eq!(unres["outcome"], "unresolvable");
         assert_eq!(unres["detail"], "parent grant is missing");
     }
@@ -2727,7 +2757,10 @@ mod tests {
 
         let g = GrantChainError::ScopeWidened { parent: 1 };
         let gs = g.to_string();
-        assert!(gs.contains("scope"), "must name the violated invariant: {gs}");
+        assert!(
+            gs.contains("scope"),
+            "must name the violated invariant: {gs}"
+        );
         assert!(!gs.contains('{'), "must not be Debug-formatted: {gs}");
     }
 }

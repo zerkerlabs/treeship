@@ -153,10 +153,7 @@ fn in_scope_action_reports_unverified_authority_not_pass() {
         "authority should be unverified without a revocation resolver: {j}"
     );
     assert!(
-        !check["authority"]["reasons"]
-            .as_array()
-            .unwrap()
-            .is_empty(),
+        !check["authority"]["reasons"].as_array().unwrap().is_empty(),
         "unverified must name the layer it could not check: {j}"
     );
     assert_eq!(
@@ -311,7 +308,12 @@ fn a_v1_receipt_gains_no_v2_claims() {
     let out = ws
         .cmd()
         .args([
-            "attest", "action", "--actor", "agent://legacy", "--action", "tool.call",
+            "attest",
+            "action",
+            "--actor",
+            "agent://legacy",
+            "--action",
+            "tool.call",
         ])
         .output()
         .unwrap();
@@ -328,7 +330,10 @@ fn a_v1_receipt_gains_no_v2_claims() {
         check["delegation_chain"].is_null(),
         "v1 claimed a chain: {j}"
     );
-    assert!(check["resolution"].is_null(), "v1 claimed a resolution: {j}");
+    assert!(
+        check["resolution"].is_null(),
+        "v1 claimed a resolution: {j}"
+    );
 }
 
 #[test]

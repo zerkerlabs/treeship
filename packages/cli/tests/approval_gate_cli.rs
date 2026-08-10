@@ -145,7 +145,12 @@ impl Workspace {
     }
 
     /// Attempt a consequential approval, returning (success, combined output).
-    fn approve_consequential(&self, receipt: Option<&str>, approver: &str, class: &str) -> (bool, String) {
+    fn approve_consequential(
+        &self,
+        receipt: Option<&str>,
+        approver: &str,
+        class: &str,
+    ) -> (bool, String) {
         let mut c = self.cmd();
         c.args(["attest", "approval", "--approver", approver])
             .args(["--description", "irreversible thing"])
@@ -253,14 +258,20 @@ fn dirty_verdict_is_refused() {
     let (ok, output) =
         ws.approve_consequential(Some(&receipt), "human://alice", "one_way_consequential");
     assert!(!ok, "dirty quarantine verdict must refuse the grant");
-    assert!(output.contains("DIRTY"), "refusal must be explicit: {output}");
+    assert!(
+        output.contains("DIRTY"),
+        "refusal must be explicit: {output}"
+    );
     assert!(
         output.contains("mem_poisoned1"),
         "refusal must surface the quarantined triggers: {output}"
     );
     // The refusal record links back to the dirty check receipt.
     let blocked = ws.assert_refusal_recorded(&output);
-    assert_ne!(blocked, receipt, "blocked artifact is distinct from the check receipt");
+    assert_ne!(
+        blocked, receipt,
+        "blocked artifact is distinct from the check receipt"
+    );
 }
 
 #[test]
