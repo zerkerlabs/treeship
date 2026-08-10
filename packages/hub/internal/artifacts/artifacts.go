@@ -29,17 +29,37 @@ type pushRequest struct {
 }
 
 // parseSignedAt handles both unix int and RFC 3339 string.
-func parseSignedAt(raw json.RawMessage) int64 {
+// parseSignedAt reads the caller-supplied signed_at, accepting a unix integer
+// or an RFC3339 string. Returns ok=false when the value is absent or
+// unparseable.
+//
+// It used to return time.Now() on every failure path -- and the string branch
+// never parsed at all, so a perfectly good RFC3339 timestamp was silently
+// replaced by server time. That turned "the client sent something we could not
+// read" into "the client sent this plausible moment," which is the worst of
+// both: the bad input is not rejected, and the fabricated value is
+// indistinguishable from a real one to everything downstream.
+//
+// This value is caller-supplied and the Hub does not verify envelopes, so it
+// is untrusted either way. But untrusted-and-recorded-as-given is auditable;
+// untrusted-and-quietly-replaced is not.
+func parseSignedAt(raw json.RawMessage) (int64, bool) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0, false
+	}
 	var ts int64
 	if json.Unmarshal(raw, &ts) == nil {
-		return ts
+		return ts, true
 	}
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
-		// best-effort parse -- just use current time if it fails
-		return time.Now().Unix()
+		for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+			if t, err := time.Parse(layout, s); err == nil {
+				return t.Unix(), true
+			}
+		}
 	}
-	return time.Now().Unix()
+	return 0, false
 }
 
 // Push handles POST /v1/artifacts [DPoP authenticated]
@@ -68,6 +88,16 @@ func (h *Handlers) Push(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	signedAt, ok := parseSignedAt(req.SignedAt)
+	if !ok {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"error": "signed_at must be a unix timestamp or an RFC3339 string",
+		})
+		return
+	}
+
 	hubURL := "https://treeship.dev/verify/" + req.ArtifactID
 
 	artifact := &db.Artifact{
@@ -75,7 +105,7 @@ func (h *Handlers) Push(w http.ResponseWriter, r *http.Request) {
 		PayloadType:  req.PayloadType,
 		EnvelopeJSON: req.EnvelopeJSON,
 		Digest:       req.Digest,
-		SignedAt:     parseSignedAt(req.SignedAt),
+		SignedAt:     signedAt,
 		ParentID:     req.ParentID,
 		HubURL:       hubURL,
 		DockID:       &dockID,

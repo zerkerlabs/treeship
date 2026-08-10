@@ -110,7 +110,19 @@ func (h *Handlers) Resolve(w http.ResponseWriter, r *http.Request) {
 			if json.Unmarshal(stmt.Payload, &p) != nil || p.Card == "" {
 				continue
 			}
-			revByCard[p.Card] = entry
+			// Artifacts arrive newest-first (ORDER BY signed_at DESC), so an
+			// unconditional assignment left the OLDEST revocation per card --
+			// the last write won. A client asking "is this card revoked, and
+			// when" would get a superseded answer.
+			//
+			// Keep the first one seen, which under that ordering is the
+			// newest. Note the ordering key is caller-supplied signed_at that
+			// the Hub does not verify; this fixes the inversion, it does not
+			// make the choice trustworthy. Clients still decide which
+			// revocations are authorized.
+			if _, seen := revByCard[p.Card]; !seen {
+				revByCard[p.Card] = entry
+			}
 		case "agent_cert.v1":
 			// The certificate chain: ship-signed bindings of this agent's
 			// URI to its per-agent key. Served verbatim so a client that
