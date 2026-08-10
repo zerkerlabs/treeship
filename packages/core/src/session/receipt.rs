@@ -62,6 +62,85 @@ pub struct SessionReceipt {
     /// showing an empty band that reads like a clean bill.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub authority: Option<AuthoritySection>,
+
+    /// Who actually held the signing key, when that is not the actor.
+    ///
+    /// Absent means self-custody -- the actor signed for itself, which is the
+    /// default and the strong case. Present means a service signed on the
+    /// actor's behalf, which is a materially weaker claim and has to be
+    /// legible as such rather than inferred from context.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custody: Option<Custody>,
+}
+
+/// Who signed, when that is not the actor itself.
+///
+/// This is a **separate axis from `attestation_class`**, and keeping them
+/// separate is the point. `attestation_class` grades how evidence was
+/// *captured* (self / runtime / countersigned). Custody grades who held the
+/// *key*. They vary independently: a service-mediated room can have excellent
+/// runtime-captured evidence and still be custodially signed, and an agent
+/// signing for itself can have nothing but its own word.
+///
+/// Collapsing them is the same error `EffectConfidence` and `EffectFinality`
+/// exist to avoid -- one label carrying two unrelated questions, where a
+/// reader cannot tell which one a value is answering.
+///
+/// The distinction is not cosmetic. Under self-custody, forging a
+/// participant's action requires that participant's key. Under delegated
+/// custody, a compromised service can mint any history it likes for every
+/// actor it signs for. Same receipt shape, different threat model, so the
+/// receipt says which.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Custody {
+    /// Custody mode. Only `delegated` is ever serialized -- self-custody is
+    /// represented by the whole section being absent, so existing receipts
+    /// stay byte-identical and "no custody block" cannot be misread as
+    /// "custody unknown".
+    pub mode: CustodyMode,
+
+    /// The identity whose key actually produced the signature, e.g.
+    /// `svc://gateway-rooms`. This is who a verifier is really trusting.
+    pub signer: String,
+
+    /// The actor the signature is claimed to be *for*, e.g. `agent://fizz`.
+    /// A verifier can confirm `signer` signed; it cannot confirm this actor
+    /// agreed, and must not present it as though it could.
+    pub on_behalf_of: String,
+
+    /// Optional human-readable reason the actor did not sign for itself
+    /// (e.g. "browser-mediated room; participants hold no local key").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// How the signature relates to the actor it speaks for.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CustodyMode {
+    /// A service signed on the actor's behalf. The actor may hold no key at
+    /// all. Upgrade path: the actor registers its own key and joins via
+    /// `session invite` / `join` / `countersign`, which produces a
+    /// two-signature participant event no service can forge.
+    Delegated,
+}
+
+impl Custody {
+    /// A service signing for an actor that holds no key of its own.
+    pub fn delegated(signer: impl Into<String>, on_behalf_of: impl Into<String>) -> Self {
+        Self {
+            mode: CustodyMode::Delegated,
+            signer: signer.into(),
+            on_behalf_of: on_behalf_of.into(),
+            reason: None,
+        }
+    }
+
+    /// Attach the reason the actor did not sign for itself.
+    pub fn with_reason(mut self, reason: impl Into<String>) -> Self {
+        self.reason = Some(reason.into());
+        self
+    }
 }
 
 /// Per-action authority for a session.
@@ -440,6 +519,8 @@ impl ReceiptComposer {
             // load envelopes and run the verifier. The composer sees only
             // manifest + events + artifact metadata.
             authority: None,
+            // Self-custody is the default and is represented by absence.
+            custody: None,
         }
     }
 
@@ -1524,5 +1605,70 @@ mod tests {
             tu.unauthorized.iter().any(|t| t == "write_file"),
             "legacy untagged writes must count for back-compat",
         );
+    }
+}
+
+#[cfg(test)]
+mod custody_tests {
+    use super::*;
+
+    /// Self-custody is absence, not a value. Existing receipts must stay
+    /// byte-identical, and a missing block must not read as "unknown".
+    #[test]
+    fn self_custody_serializes_to_nothing() {
+        let c: Option<Custody> = None;
+        let json = serde_json::to_string(&serde_json::json!({ "custody": c })).unwrap();
+        assert_eq!(json, r#"{"custody":null}"#);
+        // ...and on the real struct the field is skipped entirely:
+        #[derive(Serialize)]
+        struct Holder {
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            custody: Option<Custody>,
+        }
+        let s = serde_json::to_string(&Holder { custody: None }).unwrap();
+        assert_eq!(s, "{}", "self-custody must add no bytes");
+    }
+
+    /// A delegated receipt must name BOTH parties. Recording only the actor
+    /// would present a service signature as the actor's own; recording only
+    /// the signer would lose who the claim is about.
+    #[test]
+    fn delegated_custody_names_signer_and_subject() {
+        let c = Custody::delegated("svc://gateway-rooms", "agent://fizz")
+            .with_reason("browser-mediated room; participants hold no local key");
+        let v = serde_json::to_value(&c).unwrap();
+        assert_eq!(v["mode"], "delegated");
+        assert_eq!(v["signer"], "svc://gateway-rooms");
+        assert_eq!(v["on_behalf_of"], "agent://fizz");
+        assert!(v["reason"].as_str().unwrap().contains("no local key"));
+    }
+
+    #[test]
+    fn reason_is_optional_and_omitted_when_unset() {
+        let c = Custody::delegated("svc://x", "agent://y");
+        let v = serde_json::to_value(&c).unwrap();
+        assert!(v.get("reason").is_none(), "unset reason must not serialize");
+    }
+
+    /// Round-trips through JSON unchanged -- this rides inside signed bytes,
+    /// so a lossy field would break verification, not just display.
+    #[test]
+    fn custody_round_trips() {
+        let c = Custody::delegated("svc://gateway-rooms", "agent://fizz").with_reason("r");
+        let back: Custody = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
+        assert_eq!(c, back);
+    }
+
+    /// Custody and attestation_class are independent axes. A service-signed
+    /// receipt can carry runtime-captured evidence -- good evidence, delegated
+    /// key -- and the two labels must not be inferred from each other.
+    #[test]
+    fn custody_is_orthogonal_to_evidence_capture() {
+        let receipt = serde_json::json!({
+            "attestation_class": "runtime",
+            "custody": Custody::delegated("svc://gateway-rooms", "agent://fizz"),
+        });
+        assert_eq!(receipt["attestation_class"], "runtime");
+        assert_eq!(receipt["custody"]["mode"], "delegated");
     }
 }

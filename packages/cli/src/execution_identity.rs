@@ -115,7 +115,14 @@ impl ExecutionIdentity {
     }
 
     /// Capture identity for `argv` as it is about to be executed.
-    pub fn capture(argv: &[String]) -> Self {
+    ///
+    /// `redact` is applied to every argument before it is stored. Callers
+    /// MUST pass the same redactor used for any other rendering of the same
+    /// command: a receipt that scrubs `command` while recording a verbatim
+    /// `argv` has not protected anything, it has just moved the secret one
+    /// field over. Resolution and digesting use the real values; only what
+    /// is written down is redacted.
+    pub fn capture(argv: &[String], redact: impl Fn(&str) -> String) -> Self {
         let program = argv.first().map(String::as_str).unwrap_or_default();
         let executable_path = resolve_executable(program);
         let executable_sha256 = executable_path.as_deref().and_then(digest_file);
@@ -123,7 +130,7 @@ impl ExecutionIdentity {
         Self {
             executable_path: executable_path.map(|p| p.to_string_lossy().into_owned()),
             executable_sha256,
-            argv: argv.to_vec(),
+            argv: argv.iter().map(|a| redact(a)).collect(),
             cwd: std::env::current_dir()
                 .ok()
                 .map(|p| p.to_string_lossy().into_owned()),
@@ -223,9 +230,44 @@ fn current_gid() -> Option<u32> {
 mod tests {
     use super::*;
 
+    /// argv is written into a signed, publishable artifact. `wrap` already
+    /// scrubs the `command` string; recording a verbatim argv beside it would
+    /// not protect anything, it would move the secret one field over.
+    ///
+    /// This regression exists because that is exactly what the first version
+    /// of this module did.
+    #[test]
+    fn argv_is_redacted_by_the_caller_supplied_redactor() {
+        let argv = vec![
+            "deploy".to_string(),
+            "--token=sk-live-SECRET".into(),
+            "--env".into(),
+            "prod".into(),
+        ];
+        let redact = |a: &str| {
+            if a.to_uppercase().contains("TOKEN=") {
+                "[REDACTED]".to_string()
+            } else {
+                a.to_string()
+            }
+        };
+        let id = ExecutionIdentity::capture(&argv, redact);
+        let serialized = serde_json::to_string(&id).unwrap();
+        assert!(
+            !serialized.contains("sk-live-SECRET"),
+            "secret survived into the receipt: {serialized}"
+        );
+        assert_eq!(id.argv[1], "[REDACTED]");
+        // Non-secret arguments must survive intact, or the field is useless.
+        assert_eq!(id.argv[0], "deploy");
+        assert_eq!(id.argv[3], "prod");
+    }
+
     #[test]
     fn resolves_a_program_on_path_to_an_absolute_path() {
-        let id = ExecutionIdentity::capture(&["sh".to_string(), "-c".into(), "true".into()]);
+        let id = ExecutionIdentity::capture(&["sh".to_string(), "-c".into(), "true".into()], |a| {
+            a.to_string()
+        });
         let path = id.executable_path.expect("sh should resolve on PATH");
         assert!(
             Path::new(&path).is_absolute(),
@@ -236,7 +278,7 @@ mod tests {
 
     #[test]
     fn digests_the_binary_that_would_run() {
-        let id = ExecutionIdentity::capture(&["sh".to_string()]);
+        let id = ExecutionIdentity::capture(&["sh".to_string()], |a| a.to_string());
         let digest = id.executable_sha256.expect("sh should be readable");
         assert!(digest.starts_with("sha256:"));
         assert_eq!(digest.len(), "sha256:".len() + 64);
@@ -257,9 +299,11 @@ mod tests {
             std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
 
-        let first = ExecutionIdentity::capture(&[fake.to_string_lossy().into_owned()]);
+        let first =
+            ExecutionIdentity::capture(&[fake.to_string_lossy().into_owned()], |a| a.to_string());
         std::fs::write(&fake, b"#!/bin/sh\necho impostor v2\n").unwrap();
-        let second = ExecutionIdentity::capture(&[fake.to_string_lossy().into_owned()]);
+        let second =
+            ExecutionIdentity::capture(&[fake.to_string_lossy().into_owned()], |a| a.to_string());
 
         assert_eq!(first.executable_path, second.executable_path);
         assert_ne!(
@@ -273,7 +317,9 @@ mod tests {
     /// from `rm a b`, and that difference is the entire command.
     #[test]
     fn argv_preserves_argument_boundaries() {
-        let id = ExecutionIdentity::capture(&["sh".to_string(), "a b".into(), "c".into()]);
+        let id = ExecutionIdentity::capture(&["sh".to_string(), "a b".into(), "c".into()], |a| {
+            a.to_string()
+        });
         assert_eq!(id.argv, vec!["sh", "a b", "c"]);
     }
 
@@ -295,7 +341,10 @@ mod tests {
 
     #[test]
     fn unresolvable_program_yields_no_path_rather_than_a_guess() {
-        let id = ExecutionIdentity::capture(&["ts-definitely-not-a-real-binary-xyz".to_string()]);
+        let id =
+            ExecutionIdentity::capture(&["ts-definitely-not-a-real-binary-xyz".to_string()], |a| {
+                a.to_string()
+            });
         assert!(id.executable_path.is_none());
         assert!(id.executable_sha256.is_none());
         // argv and cwd are still worth recording.
@@ -306,6 +355,6 @@ mod tests {
     #[test]
     fn default_identity_reports_itself_empty() {
         assert!(ExecutionIdentity::default().is_empty());
-        assert!(!ExecutionIdentity::capture(&["sh".to_string()]).is_empty());
+        assert!(!ExecutionIdentity::capture(&["sh".to_string()], |a| a.to_string()).is_empty());
     }
 }

@@ -96,7 +96,8 @@ pub fn run(
     // afterwards would describe whatever PATH points at once the command has
     // finished -- and a command that rewrites its own toolchain is exactly
     // the case worth catching.
-    let exec_identity = crate::execution_identity::ExecutionIdentity::capture(&args);
+    let exec_identity =
+        crate::execution_identity::ExecutionIdentity::capture(&args, |a| sanitize_command(a));
 
     // ── 1. Output digest: capture stdout/stderr while streaming ────────
     let start = Instant::now();

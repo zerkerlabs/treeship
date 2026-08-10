@@ -420,6 +420,7 @@ mod tests {
         SessionReceipt {
             type_: crate::session::receipt::RECEIPT_TYPE.into(),
             schema_version: Some(crate::session::receipt::RECEIPT_SCHEMA_VERSION.into()),
+            custody: None,
             session: SessionSection {
                 id: "ssn_test".into(),
                 name: None,
