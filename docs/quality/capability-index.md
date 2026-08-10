@@ -76,6 +76,50 @@ warn  drift: hub endpoint '/v1/artifacts/{id}' not in any feature entry
 recorded gets rebuilt. The forward check keeps the index truthful; the reverse
 check keeps it *complete*, and only a complete index is safe to plan against.
 
+
+## Two halves: curated and derived
+
+The index has a curated half and a mechanical half, and they answer different
+questions.
+
+| | `docs/feature-inventory.yml` | `docs/capability-map.json` |
+|---|---|---|
+| Maintained by | hand | generated |
+| Answers | what do we ship, and how stable is it | what is reachable, right now, to the byte |
+| Contains | features, status, docs, tests, owners | every CLI command, Hub route, wire type |
+| Kept honest by | `check-feature-inventory.py --strict` | `gen-capability-map.py --check` |
+
+Both run in CI. Regenerate the derived half with:
+
+```bash
+cargo build --bin treeship
+python3 scripts/gen-capability-map.py
+```
+
+### What counts as a "wire type"
+
+`packages/core/src` has 172 public structs and enums. Most are public because
+Rust needs cross-module visibility, not because anyone outside programs against
+them. Listing all 172 would bury the ones that matter.
+
+The map lists the **109 that derive `Serialize`**. A serializable type crosses
+a process boundary -- it lands in a signed artifact, an API response, or a
+config file -- so renaming a field is a breaking change for somebody whether or
+not we intended it. That makes serializability a mechanical, judgment-free
+definition of the public surface, which is why this half can be generated
+instead of argued about.
+
+### Drift names itself
+
+```
+err   docs/capability-map.json is stale
+      + hub route /v1/artifacts/{id}
+      - wire type LegacyReceipt
+```
+
+Naming the delta matters: "regenerate it" alone means a reviewer cannot tell an
+intended API change from an accident.
+
 ## Using it
 
 ```bash
