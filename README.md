@@ -27,7 +27,7 @@ Treeship produces evidence: every **captured** action becomes a signed, timestam
 
 ## The 60-second local demo
 
-No account, no server — and after the install, no network. Every output block below is real, captured from v0.20.
+No account, no server — and after the install, no network. Every output block below is real, captured from v0.24.
 
 ```bash
 npm install -g treeship
@@ -100,7 +100,7 @@ From then on, that agent's actions verify as **proven**, not asserted:
   action:        deploy.production
 ```
 
-And the agent can hand any counterparty a **presentation** — card, certificate chain, revocations — that verifies fully offline, revealing only the capabilities that verifier needs (selective disclosure, new in v0.20):
+And the agent can hand any counterparty a **presentation** — card, certificate chain, revocations — that verifies fully offline, revealing only the capabilities that verifier needs (selective disclosure):
 
 ```bash
 treeship present agent://deployer --disclose 'deploy.*' --out deployer.presentation.json
@@ -276,7 +276,7 @@ The CLI is distributed via npm + [GitHub Releases](https://github.com/zerkerlabs
 
 ## SDK examples
 
-Both SDKs shell out to the `treeship` binary for signing — install the CLI and run `treeship init` first. These examples run as written against v0.20.
+Both SDKs shell out to the `treeship` binary for signing — install the CLI and run `treeship init` first. These examples run as written against v0.24.
 
 ### TypeScript (`@treeship/sdk`)
 
@@ -329,7 +329,7 @@ Treeship builds on existing primitives rather than inventing cryptography:
 
 ## Status and roadmap
 
-Current release: **v0.20.0**. The [`CHANGELOG.md`](./CHANGELOG.md) is the source of truth for what each release shipped; the living roadmap is [`docs/specs/vision.md`](./docs/specs/vision.md).
+Current release: **v0.24.0**. The [`CHANGELOG.md`](./CHANGELOG.md) is the source of truth for what each release shipped; the living roadmap is [`docs/specs/vision.md`](./docs/specs/vision.md).
 
 **Shipped**
 - Signed artifacts, hash chains, Merkle inclusion + consistency proofs, signed checkpoints
@@ -339,7 +339,7 @@ Current release: **v0.20.0**. The [`CHANGELOG.md`](./CHANGELOG.md) is the source
 - Registry-free presentations with certificate chains and nonce challenges (v0.17)
 - Work history and checkpoint-pinned, recomputable agent profiles (v0.18); evidence-based agent matching
 - Split trust-root powers (v0.19); DPoP hub auth and device-flow login
-- **Selective capability disclosure** — present a verifier only the capabilities it needs (v0.20)
+- **Selective capability disclosure** — present a verifier only the capabilities it needs
 - MCP + A2A bridges, Claude Code plugin, TypeScript/Python SDKs, WASM verifier on Node/Deno/browser/edge
 
 **Experimental, explicitly non-authoritative**

@@ -65,12 +65,13 @@ treeship/
   LICENSE                  Apache 2.0
 
   packages/
-    core/                  Rust library (120 tests)
+    core/                  Rust library
       src/
         attestation/       DSSE envelopes, PAE, Ed25519, content-addressed IDs
         statements/        6 types: action, approval, handoff, endorsement, receipt, bundle
         merkle/            Append-only tree, checkpoints, inclusion proofs
-        keys/              AES-256-CTR + HMAC encrypted keystore
+        keys/              AES-256-GCM encrypted keystore
+                               (legacy CTR+HMAC read path for pre-v0.10.3)
         storage/           Local artifact store
         bundle/            Pack/export/import .treeship files
         rules.rs           Policy engine with YAML config
@@ -86,7 +87,7 @@ treeship/
         tui/                Ratatui interactive dashboard
         otel/               OpenTelemetry export (feature-flagged)
 
-    hub/                   Go HTTP server (12 endpoints)
+    hub/                   Go HTTP server
       main.go              Chi router, CORS, all routes
       internal/
         db/                SQLite schema + queries
@@ -110,16 +111,16 @@ treeship/
     mcp/                   MCP bridge (@treeship/mcp)
       src/                 client.ts, attest.ts, utils.ts, types.ts
 
-  docs/                    Fumadocs site (57 pages, Next.js)
+  docs/                    Fumadocs site (Next.js)
     content/
       docs/
         cli/               17 command reference pages
         api/               10 Hub API reference pages
-        concepts/          8 pages (trust model, security, actors, approvals)
-        guides/            4 pages (quickstart, how-it-works, templates)
-        integrations/      6 pages (claude-code, cursor, openclaw, hermes, langchain, mcp)
-        commerce/          3 pages (payment proofs, compliance)
-        sdk/               2 pages
+        concepts/          trust model, security, actors, approvals, receipts
+        guides/            quickstart, how-it-works, templates, wrapping commands
+        integrations/      claude-code, cursor, openclaw, hermes, langchain, mcp, …
+        commerce/          payment proofs, compliance
+        sdk/               TypeScript and Python SDK reference
       blog/                15 technical posts
 
   npm/                     npm binary wrapper (zero-Rust install)
@@ -246,7 +247,7 @@ cd treeship
 
 # Rust (core + CLI)
 cargo build
-cargo test -p treeship-core    # 120 tests
+cargo test -p treeship-core
 
 # Go (Hub)
 cd packages/hub
