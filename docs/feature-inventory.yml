@@ -46,6 +46,12 @@
   name: action/v2 receipt emission (CLI)
   section: core
   status: beta
+  types:
+    - ActionStatementV2
+    - Mandate
+    - Effect
+    - EffectConfidence
+    - EffectFinality
   cli:
     - treeship attest action --v2
   packages:
@@ -60,6 +66,13 @@
   name: Session reports
   section: core
   status: stable
+  types:
+    - SessionReceipt
+    - Custody
+    - AuthoritySection
+  api:
+    - PUT /v1/receipt/{session_id}
+    - GET /v1/receipt/{session_id}
   cli:
     - treeship session start
     - treeship session close
@@ -96,6 +109,8 @@
   name: Offline verifier (Rust CLI)
   section: core
   status: stable
+  api:
+    - GET /v1/verify/{id}
   cli:
     - treeship verify
     - treeship package verify
@@ -127,6 +142,15 @@
   name: Merkle checkpoints
   section: core
   status: stable
+  types:
+    - MerkleTree
+    - InclusionProof
+  api:
+    - POST /v1/merkle/checkpoint
+    - GET /v1/merkle/checkpoint/{id}
+    - GET /v1/merkle/checkpoint/latest
+    - POST /v1/merkle/proof
+    - GET /v1/merkle/{artifactId}
   cli:
     - treeship checkpoint
     - treeship merkle proof
@@ -146,6 +170,8 @@
   name: Merkle consistency proofs (append-only evidence)
   section: core
   status: stable
+  api:
+    - POST /v1/merkle/consistency
   cli:
     - treeship merkle publish
   packages:
@@ -172,6 +198,15 @@
   name: Hub transport (attach, push, pull, DPoP)
   section: core
   status: stable
+  api:
+    - POST /v1/dock/challenge
+    - POST /v1/dock/authorize
+    - GET /v1/dock/authorized
+    - POST /v1/artifacts
+    - GET /v1/artifacts/{id}
+    - POST /v1/session
+    - GET /v1/stats
+    - GET /v1/workspace/{dockId}
   cli:
     - treeship hub attach
     - treeship hub push
@@ -317,6 +352,8 @@
   name: Multi-agent session invitations
   section: identity
   status: beta
+  types:
+    - SessionParticipantStatement
   cli:
     - treeship session invite
     - treeship session join
@@ -333,6 +370,9 @@
   name: Room sessions
   section: identity
   status: experimental
+  types:
+    - RoomInfo
+    - InvitationAuthority
   cli:
     - treeship room
   packages:
@@ -355,6 +395,10 @@
   name: Agent resolver (local + network)
   section: provenance
   status: stable
+  api:
+    - GET /v1/agents
+    - GET /v1/agents/log
+    - GET /v1/agents/history
   cli:
     - treeship resolve
     - treeship publish
@@ -382,6 +426,9 @@
   name: Work history (session.v1 records)
   section: provenance
   status: beta
+  api:
+    - GET /v1/ship/agents
+    - GET /v1/ship/sessions
   cli:
     - treeship history
   packages:
@@ -409,6 +456,8 @@
   name: Evidence-based agent matching
   section: provenance
   status: beta
+  api:
+    - GET /v1/agents/match
   cli:
     - treeship match
   docs:

@@ -134,6 +134,68 @@ def package_has_manifest(name: str) -> bool:
     return False
 
 
+
+# ── Hub API surface ────────────────────────────────────────────────────────
+#
+# Routes live as chi registrations in the Go source. Scanning them means an
+# `api:` entry cannot name an endpoint that was renamed or deleted, and the
+# reverse check catches a live endpoint nobody wrote down -- which is how
+# /v1/artifacts/{id} ended up serving full DSSE envelopes while appearing in
+# no spec, and two separate integrations were scoped without knowing it.
+
+HUB_ROOT = ROOT / "packages" / "hub"
+
+# Verbs chi uses; `Handle` covers method-agnostic mounts.
+_ROUTE_RE = re.compile(
+    r'\.(Get|Post|Put|Patch|Delete|Handle)\(\s*"(/v1/[^"]*)"'
+)
+
+
+def collect_hub_routes() -> set[str]:
+    """Every /v1 route registered anywhere in the Go source."""
+    routes: set[str] = set()
+    if not HUB_ROOT.is_dir():
+        return routes
+    for go in HUB_ROOT.rglob("*.go"):
+        if go.name.endswith("_test.go"):
+            continue
+        try:
+            text = go.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for _verb, path in _ROUTE_RE.findall(text):
+            routes.add(path)
+    return routes
+
+
+def normalize_route(spec: str) -> str:
+    """`GET /v1/receipt/{session_id}` -> `/v1/receipt/{session_id}`."""
+    parts = spec.split(None, 1)
+    return (parts[1] if len(parts) == 2 else parts[0]).strip()
+
+
+# ── Core types ─────────────────────────────────────────────────────────────
+#
+# A `types:` entry names a Rust type a consumer can rely on. Checking it
+# against source stops the inventory promising a struct that was renamed --
+# the failure that makes an index worse than no index, because it is trusted.
+
+CORE_SRC = ROOT / "packages" / "core" / "src"
+
+
+def core_type_exists(name: str) -> bool:
+    if not CORE_SRC.is_dir():
+        return False
+    pat = re.compile(rf"\bpub\s+(?:struct|enum|type|fn|const)\s+{re.escape(name)}\b")
+    for rs in CORE_SRC.rglob("*.rs"):
+        try:
+            if pat.search(rs.read_text(encoding="utf-8", errors="replace")):
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--strict", action="store_true", help="exit 1 on any warning")
@@ -155,6 +217,8 @@ def main() -> int:
     errors: list[str] = []
     seen_ids: set[str] = set()
     cli_in_inventory: set[str] = set()
+    api_in_inventory: set[str] = set()
+    hub_routes = collect_hub_routes()
 
     for entry in data:
         fid = entry.get("id", "<no id>")
@@ -182,6 +246,22 @@ def main() -> int:
             # Loose grep: subcommand should appear in CLI source (doc comment, variant, or handler).
             if sub not in cli_text:
                 warnings.append(f"feature '{fid}' cli '{inv}' -- subcommand '{sub}' not found in CLI source")
+
+        # `api:` entries name Hub endpoints, e.g. "GET /v1/artifacts/{id}".
+        # Verified against the routes actually registered in the Go source, so
+        # an endpoint cannot be documented into existence or silently renamed.
+        for spec in entry.get("api", []) or []:
+            route = normalize_route(spec)
+            api_in_inventory.add(route)
+            if not route.startswith("/v1/"):
+                warnings.append(f"feature '{fid}' api '{spec}' -- expected a /v1/... path")
+            elif hub_routes and route not in hub_routes:
+                warnings.append(f"feature '{fid}' api '{spec}' -- route not registered in packages/hub")
+
+        # `types:` entries name public Rust types a consumer can rely on.
+        for ty in entry.get("types", []) or []:
+            if not core_type_exists(ty):
+                warnings.append(f"feature '{fid}' type '{ty}' -- no `pub struct/enum/type/fn/const` in packages/core/src")
 
         for d in entry.get("docs", []) or []:
             if not (ROOT / d).exists():
@@ -212,7 +292,17 @@ def main() -> int:
     for d in drift:
         warnings.append(f"drift: top-level CLI command 'treeship {d}' not in any feature entry")
 
+    # Reverse drift: a live Hub endpoint no feature entry claims. This is the
+    # direction that actually bit us -- /v1/artifacts/{id} served full DSSE
+    # envelopes for months while two integrations were scoped around the
+    # assumption that it did not.
+    for route in sorted(hub_routes - api_in_inventory):
+        warnings.append(f"drift: hub endpoint '{route}' not in any feature entry")
+
     print(f"  ok  {len(data)} feature entries parsed")
+    if hub_routes:
+        print(f"  ok  {len(hub_routes)} hub routes found in source, "
+              f"{len(api_in_inventory & hub_routes)} claimed by an entry")
     for w in warnings:
         print(f"  warn  {w}")
     for e in errors:
