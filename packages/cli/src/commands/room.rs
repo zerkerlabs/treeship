@@ -18,7 +18,7 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 
 use treeship_core::session::{InvitationAuthority, RoomInfo};
-use treeship_core::statements::SessionParticipantStatement;
+use treeship_core::statements::{payload_type, SessionParticipantStatement};
 
 use crate::{ctx, printer::Printer};
 
@@ -329,18 +329,46 @@ pub fn participants(
 
     let c = ctx::open(ctx_override)?;
 
-    let mut entries = Vec::with_capacity(room.participants.len());
-    for participant_id in &room.participants {
-        let rec = c
-            .storage
-            .read(participant_id)
-            .map_err(|e| format!("participant artifact {participant_id}: {e}"))?;
-        let stmt: SessionParticipantStatement = rec
-            .envelope
-            .unmarshal_statement()
-            .map_err(|e| format!("decode participant {participant_id}: {e}"))?;
-        entries.push((participant_id.clone(), stmt));
+    // Derive the roster from countersigned participant artifacts rather
+    // than reading `room.participants`.
+    //
+    // `room` rides inside the DSSE-signed session receipt, so whatever this
+    // command reports is what the receipt will attest to. `room.participants`
+    // is a plain list in session.json that anyone with write access can edit,
+    // and countersign appends to it best-effort -- so trusting it would mean
+    // signing a membership claim that is both forgeable and silently
+    // incomplete.
+    //
+    // A participant artifact cannot be forged the same way: it carries two
+    // signatures over identical canonical bytes (joining agent, then host
+    // countersign), and `session countersign` re-validates it against the
+    // trust-pinned invitation before attaching the second one. Requiring
+    // both signatures here is what makes the roster self-proving: an entry
+    // that appears cannot have been invented, and an entry that is missing
+    // was never finalized.
+    let mut entries: Vec<(String, SessionParticipantStatement)> = Vec::new();
+    for idx in c.storage.list_by_type(&payload_type("session-participant")) {
+        let rec = match c.storage.read(&idx.id) {
+            Ok(r) => r,
+            Err(_) => continue, // indexed but unreadable: not a member
+        };
+        // Exactly two signatures means finalized. A pending join (one
+        // signature) is not membership, and anything else is malformed.
+        if rec.envelope.signatures.len() != 2 {
+            continue;
+        }
+        let stmt: SessionParticipantStatement = match rec.envelope.unmarshal_statement() {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        if stmt.session_ref != manifest.session_id {
+            continue;
+        }
+        entries.push((idx.id.clone(), stmt));
     }
+    // Stable, meaningful order: when they joined, not when the store
+    // happened to index them.
+    entries.sort_by(|a, b| a.1.joined_at.cmp(&b.1.joined_at).then(a.0.cmp(&b.0)));
 
     if args.format == "json" {
         let json_entries: Vec<_> = entries

@@ -524,3 +524,155 @@ fn room_participants_shows_finalized_join_after_full_cycle() {
         &[serde_json::Value::String("tool.call".into())]
     );
 }
+
+// ---------------------------------------------------------------------------
+// the roster is derived, not read from session.json
+// ---------------------------------------------------------------------------
+
+/// `room` rides inside the DSSE-signed session receipt, so whatever
+/// `room participants` reports becomes an attested membership claim.
+/// `room.participants` in session.json is a plain editable list, so the
+/// roster must NOT come from it.
+///
+/// Writes two fabricated ids into `room.participants` -- the exact edit
+/// available to anyone who can write the file -- and asserts the roster
+/// stays empty. If this test ever fails, membership is forgeable with a
+/// text editor.
+#[test]
+fn fabricated_participant_ids_in_session_json_do_not_become_members() {
+    let ws = Workspace::new();
+    ws.init();
+
+    let create_out = ws
+        .cmd()
+        .args(["room", "create", "--format", "json", "--config"])
+        .arg(ws.config())
+        .output()
+        .expect("room create");
+    assert!(create_out.status.success());
+
+    // Forge membership the cheap way: edit the file.
+    let path = ws.root.join(".treeship/session.json");
+    let mut manifest = ws.session_json();
+    manifest["room"]["participants"] = serde_json::json!([
+        "art_forged000000000000000000000000",
+        "art_forged111111111111111111111111",
+    ]);
+    std::fs::write(&path, serde_json::to_vec_pretty(&manifest).unwrap()).unwrap();
+
+    let out = ws
+        .cmd()
+        .args(["room", "participants", "--format", "json", "--config"])
+        .arg(ws.config())
+        .output()
+        .expect("room participants");
+
+    // Must succeed: a forged list is not a crash, it is simply not evidence.
+    // (Reading the list would instead have errored on the missing artifacts,
+    // which is a different -- and still wrong -- behavior.)
+    assert!(
+        out.status.success(),
+        "room participants failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        body["count"], 0,
+        "fabricated ids in session.json became members: {body}"
+    );
+    assert_eq!(body["participants"].as_array().unwrap().len(), 0);
+}
+
+/// The inverse: a real countersigned participant must still be reported
+/// even when `room.participants` was emptied. Membership comes from the
+/// two-signature artifact, so deleting the cache cannot un-member anyone
+/// -- otherwise the same editor that can't add members could silently
+/// remove them, which is the same forgery in the other direction.
+#[test]
+fn clearing_the_cached_list_does_not_drop_a_real_member() {
+    let ws = Workspace::new();
+    ws.init();
+
+    let register = ws
+        .cmd()
+        .args(["agent", "register", "--name", "bob", "--own-key"])
+        .output()
+        .expect("register joining agent");
+    assert!(register.status.success());
+
+    let create_out = ws
+        .cmd()
+        .args(["room", "create", "--format", "json", "--config"])
+        .arg(ws.config())
+        .output()
+        .expect("room create");
+    assert!(create_out.status.success());
+    let created: serde_json::Value = serde_json::from_slice(&create_out.stdout).unwrap();
+    let session_id = created["session_id"].as_str().unwrap().to_string();
+
+    let pubkey = ws.default_pubkey_b64();
+    ws.add_trust("host_default", &pubkey, "session_host");
+
+    let invite_out = ws
+        .cmd()
+        .args(["session", "invite", &session_id, "--format", "json"])
+        .args(["--open", "--config"])
+        .arg(ws.config())
+        .output()
+        .expect("session invite");
+    assert!(invite_out.status.success());
+    let invite: serde_json::Value = serde_json::from_slice(&invite_out.stdout).unwrap();
+    let blob = invite["bootstrap_blob"].as_str().unwrap().to_string();
+    let blob_path = ws.root.join("invite-clear.blob");
+    std::fs::write(&blob_path, &blob).unwrap();
+
+    let join_out = ws
+        .cmd()
+        .args(["session", "join", "--invite-file"])
+        .arg(&blob_path)
+        .args(["--actor", "agent://bob", "--format", "json", "--config"])
+        .arg(ws.config())
+        .output()
+        .expect("session join");
+    assert!(
+        join_out.status.success(),
+        "join failed: {}",
+        String::from_utf8_lossy(&join_out.stderr)
+    );
+    let joined: serde_json::Value = serde_json::from_slice(&join_out.stdout).unwrap();
+    let participant_id = joined["participant_id"].as_str().unwrap().to_string();
+
+    let cs = ws
+        .cmd()
+        .args(["session", "countersign", &participant_id])
+        .args(["--format", "json", "--config"])
+        .arg(ws.config())
+        .output()
+        .expect("countersign");
+    assert!(
+        cs.status.success(),
+        "countersign failed: {}",
+        String::from_utf8_lossy(&cs.stderr)
+    );
+
+    // Wipe the cache. The signed artifact is untouched.
+    let path = ws.root.join(".treeship/session.json");
+    let mut manifest = ws.session_json();
+    manifest["room"]["participants"] = serde_json::json!([]);
+    std::fs::write(&path, serde_json::to_vec_pretty(&manifest).unwrap()).unwrap();
+
+    let out = ws
+        .cmd()
+        .args(["room", "participants", "--format", "json", "--config"])
+        .arg(ws.config())
+        .output()
+        .expect("room participants");
+    assert!(out.status.success());
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        body["count"], 1,
+        "clearing the cached list dropped a countersigned member: {body}"
+    );
+    assert_eq!(body["participants"][0]["participant_id"], participant_id);
+}
