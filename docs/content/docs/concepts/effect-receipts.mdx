@@ -1,0 +1,119 @@
+---
+title: Effect receipts
+description: Grading the evidence and the lifecycle separately, so "done" cannot hide a pending write.
+---
+
+Most systems report a tool call as `success: true`. That single boolean is
+carrying two unrelated questions, and collapsing them is a real production
+failure rather than a theoretical one:
+
+1. **How far did the state change actually get?** — the lifecycle
+2. **How well do we know that?** — the evidence
+
+A write can be accepted, acknowledged, assigned an ID, and still not be
+durable. A receipt reporting one `success: true` can be accurate in every
+field and false as a composite.
+
+`action/v2` splits them. An `Effect` carries an
+[`EffectFinality`](#lifecycle-effectfinality) *and* an
+[`EffectConfidence`](#evidence-effectconfidence), and they move independently.
+
+## Lifecycle: `EffectFinality`
+
+How far the state change got.
+
+| value | meaning |
+|---|---|
+| `NotAttempted` | the effect was never tried |
+| `Initiated` | started and accepted, not yet durable — the queued write, the pending transaction |
+| `Finalized` | the state change is complete and durable |
+| `Failed` | attempted and did not take effect |
+| `Indeterminate` | genuinely unknown; the actor cannot say |
+
+## Evidence: `EffectConfidence`
+
+How well the actor knows the lifecycle claim it just made.
+
+| value | meaning |
+|---|---|
+| `Verified` | independently confirmed — an external read-back or a witness **the actor could not mint** shows the intended post-state |
+| `Partial` | some evidence, incomplete — the sink accepted the write, but nothing read the post-state back |
+| `Ambiguous` | the observed state is consistent with more than one outcome |
+| `Unknown` | the actor could not determine whether the effect happened |
+| `NotVerified` | attempted, nothing independently checked. **The honest default**: the tool returned ok and nobody read it back |
+
+`NotVerified` deserves emphasis. It is not a failure state, and it is not an
+edge case — it is what most tool calls honestly are. A receipt that says
+`NotVerified` is doing its job.
+
+## Why they must stay orthogonal
+
+The combinations that matter are exactly the ones a boolean erases:
+
+- **`Finalized` + `NotVerified`** — "the API returned 200 and we never checked."
+  Extremely common, and reasonable, as long as it isn't read as proof.
+- **`Initiated` + `Verified`** — "we watched it enter the queue, it is definitely
+  pending, it is definitely not done yet." Strong evidence about an incomplete
+  state.
+- **`Indeterminate` + `Unknown`** — the network died mid-write. The most honest
+  receipt in the set, and the one a boolean cannot express at all.
+
+Notice that evidence quality and completion are not correlated. You can have
+excellent evidence for an unfinished effect and no evidence for a finished one.
+
+## The verifier does not take your word for it
+
+`verify_effect` reconciles the claim against the evidence actually present in
+the receipt. The load-bearing rule:
+
+> **An unbacked `Finalized` is capped to `Indeterminate`.**
+
+If a receipt claims the effect completed but carries no `readback` and no
+independent witness, the verifier refuses to report it as finalized. The claim
+is not deleted — it is graded down to what the evidence supports.
+
+This is the difference between a receipt format and a verifier. A format lets
+you write `Finalized`. A verifier decides whether you get to keep it.
+
+## Evidence fields
+
+An `Effect` carries the raw material the verifier grades:
+
+| field | what it is |
+|---|---|
+| `input_hash` | digest of what went in |
+| `output_hash` | digest of what came back |
+| `readback` | an independent read of the post-state — the field that earns `Verified` |
+| `context_snapshot` | the surrounding state at the time |
+
+Hashes, never content. A receipt proves a specific input produced a specific
+output without disclosing either — so an effect chain is publishable even when
+the data it touched is not.
+
+## Deadlines: `Resolution`
+
+An `Initiated` effect that never resolves is a lie told slowly. `Resolution`
+attaches a deadline and a policy for what happens when it passes:
+
+- `Timeout` — treat it as failed
+- `Escalate` — raise it to a human
+- `Tombstone` — mark it dead, keep the record
+- `Inherit` — defer to the parent's policy
+
+`check_resolution` evaluates this against the current time, returning
+`Resolved`, `Indefinite`, `Pending`, `Breached`, or `BadDeadline`. A pending
+effect past its deadline reports `Breached` rather than quietly staying pending
+forever.
+
+## What this does not give you
+
+It grades **evidence about an effect**, not the effect's correctness. A
+`Verified` + `Finalized` receipt proves the intended post-state was
+independently observed. It does not prove the intended post-state was the right
+one to want. See [what a receipt proves](/docs/concepts/what-receipts-prove).
+
+## Related
+
+- [What a receipt proves](/docs/concepts/what-receipts-prove)
+- [Approval authority](/docs/concepts/approval-authority) — who was allowed to cause the effect
+- [Coverage levels](/docs/guides/coverage-levels) — how completely the session was observed
