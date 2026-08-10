@@ -10,6 +10,72 @@ The latest Treeship releases are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The canonical source and [complete release history](https://github.com/zerkerlabs/treeship/blob/main/CHANGELOG.md) live in `CHANGELOG.md` at the repo root. Edit that file, not this page.
 
+## 0.24.0 (2026-08-10)
+
+**Trusted Rooms, end to end — plus three fixes worth upgrading for.**
+
+### Fixed
+
+- **Legitimate receipts no longer report tampering.** Every `receipt.v1`
+  landing mid-chain reported `chain SIGNED LINKAGE BROKEN — possible
+  tampering` against correctly-signed evidence. `mint_session_record` writes
+  the parent as `subject.artifactId`; the linkage check looked only for a
+  top-level `parentId`. Measured on a real store: 4 of 4 receipts affected,
+  9 of 9 actions fine. A false tampering alarm is worse than a noisy check —
+  it teaches operators to ignore the one signal the product exists to give.
+- **Keystores are portable.** `storage_dir`/`keys_dir` were always absolute,
+  so `mv ~/.treeship ~/.treeship.bak` produced a "backup" whose config still
+  pointed at whatever replaced it. Relative paths now resolve against the
+  config's own directory. Absolute paths are untouched.
+- **The Claude Code plugin monitor stopped shouting.** It emitted a line
+  whenever any counter changed, and `events` ticks on essentially every tool
+  call — one working session produced well over a hundred notifications. Now
+  reports state transitions only: two lines for a full session.
+
+### Added
+
+- **`treeship room create` / `status` / `participants`.** Sugar over
+  `treeship session`; a room is a session whose participant set evolves via
+  invitations. `invitation_authority` is carried and signed but not yet
+  enforced — conformance checking is the follow-up.
+- **`room` rides inside the signed receipt.** `RoomInfo` on `SessionManifest`
+  and mirrored into the DSSE-signed `session.v1`, so `invitation_authority`
+  is attested rather than living only in an editable local file.
+- **The room roster is derived, not stored.** `room participants` walks
+  two-signature participant artifacts instead of reading a list from
+  `session.json` — which anyone with write access could edit, and which was
+  silently incomplete whenever the best-effort append was skipped.
+- **Liveness challenge on countersign.** Opt-in `--challenge` /
+  `--challenge-response` proves the joining agent controls its key *now*,
+  not whenever `join` ran. Omitting both countersigns exactly as before.
+- **`treeship session mint-challenge`.** 128 bits from `OsRng`, because the
+  challenge flag shipped without anything to produce a value and the help
+  text suggested a six-character example. Weak nonces are now refused at both
+  ends: a guessable nonce can be pre-signed, and the proof means nothing.
+- **`Custody` on the session receipt.** Records when a *service* signed on an
+  actor's behalf rather than the actor signing for itself. Deliberately a
+  separate axis from `attestation_class`, which grades how evidence was
+  captured; this grades who held the key. Absent means self-custody, so
+  existing receipts are byte-identical.
+- **`execution_identity` on wrapped commands.** Resolved executable path,
+  sha256, argv, cwd, uid/gid. `git` is `git` only until `PATH` says
+  otherwise; two receipts with identical argv and different digests are two
+  different events. Environment **names** only, never values.
+- **A public Go client for the Hub** (`pkg/dpop`, `pkg/hubclient`). DPoP proof
+  signing existed only in Rust, so a Go service had no path to the API.
+  Tested against the real server verifier, not a stub.
+- **The capability index now covers Hub endpoints and core types.** CI fails
+  when a live endpoint belongs to no feature entry, and a generated
+  `capability-map.json` records every reachable surface — 34 CLI commands,
+  22 routes, 109 wire types.
+
+### Documentation
+
+- New concept pages: what a receipt proves (and does not), logs vs receipts,
+  effect receipts, secrets and redaction, authority delta, wrapping real
+  commands. The redaction page documents, with a measured table, which secret
+  shapes the scrubber catches and which it misses.
+
 ## Unreleased
 
 ### Added
@@ -407,17 +473,6 @@ across the CLI, the WASM browser verifier, the hub, the SDKs, and the bridges.
 ### Fixed
 - **Two agents in one workspace no longer collapse into one card (actor→key mapping destroyed).** `derive_agent_id` hashed `(surface, host, workspace)` — the agent's *name* was not part of its own identity — so registering a second agent from the same workspace reused the first one's card id and the upsert silently overwrote it: the clobbered agent's actor→key mapping (`registered_key_for_actor`, the lookup per-actor signing resolves through) vanished, downgrading its future receipts to self-asserted and orphaning its certificate. Found live when `fable-scout`'s registration destroyed `fable-code`'s. The name is now part of the id hash, and `registered_key_for_actor` picks the newest matching card deterministically (filesystem iteration order must never decide which key an actor signs with). Existing cards keep their on-disk ids; a re-register after this fix creates a correctly-keyed card alongside any stale one.
 - **Hub: re-pushing an already-published artifact no longer 500s.** `InsertArtifact` was a bare `INSERT`, so re-publishing an agent's resolvable set (exactly what an idempotent `onboard --publish` on every agent boot does) hit the `artifact_id` primary key and surfaced as a 500 to the pushing client, aborting the publish. Artifacts are content-addressed, signed envelopes — a re-push of the same id is the same bytes — so the insert is now `ON CONFLICT(artifact_id) DO NOTHING`: idempotent, and deliberately *never* an update, so a colliding id can never overwrite bytes the hub already serves. Regression-tested both ways (duplicate no-op + overwrite rejection).
-
-## 0.16.0 (2026-07-06)
-
-### Added
-- **`treeship keys export` — hand a counterparty your public key.** Prints a key's PUBLIC half in the pinnable `ed25519:<base64url>` form together with the exact `treeship trust add` command(s) the counterparty runs: `--kind agent_cert` for a per-agent key (`--agent agent://deployer`), `--kind ship` + `--kind hub_checkpoint` for the ship key — a remote verifier needs both to get `verified` on resolve and `anchored & verified` on the transparency check. This is the out-of-band half of the trust model: every remote verification is checked against the verifier's own trust roots, and until now there was no sanctioned command that produced the key material those roots need. The private key never leaves the store. `--format json` for scripts.
-- **`session.v1` — every closed session becomes a typed, signed work-history record (work-history slice 1).** `treeship session close` now mints a `session.v1` receipt into the agent's chain alongside the sealed package: headline, outcome, duration, `tools_exercised` (computed from captured tool usage, never hand-written), counts, and a `receipt_digest` binding the record to the exact sealed evidence it summarizes. Each record carries an **attestation class** from the work-history ladder — `self` (the agent's own receipts), `runtime` (a harness hook or bridge the agent cannot forge emitted the log), `countersigned` (a second party signed evidence embedded in the package, e.g. consumed human approvals) — computed from capture-path evidence actually present, labeled, never laundered (`anchored` is a later, derivable state). The record is validated against the registered `session.v1` predicate schema before signing (fail-closed), signed with the actor's own key when it has one (key-bound history for registered agents), and chained to the session-close artifact. Best-effort: a record failure warns and never wedges the close — the sealed package remains the source of truth. This is the atom of the [work-history spec](docs/specs/work-history.md): identity says who the agent is, capability says what it claims, work history says what it has demonstrably done.
-
-### Fixed
-- **`resolve` no longer labels an unpinned checkpoint signer "signature INVALID".** Checkpoint verification fails closed both when the signature is genuinely bad and when the signer simply is not pinned under `hub_checkpoint` in *your* trust roots — but those demand opposite reactions (distrust the hub vs pin a root), and reporting the second as "INVALID" is a mislabel. `resolve` now distinguishes them: an unpinned signer reports `checkpoint signer not in your trust roots` with the ready-to-run `trust add … --kind hub_checkpoint` command (the pubkey comes from the served checkpoint; pinning remains your explicit decision, and verification still happens on your machine), while a pinned signer whose signature fails still reports `INVALID`.
-- **Keystore survives macOS hostname renames (self-healing machine key).** The machine key wrapping on-disk private keys was derived from `hostname` + username, and macOS silently renames `kern.hostname` (network name collisions, DHCP), after which the keystore failed with a misleading `MAC verification failed — wrong machine` and the documented recovery was to abandon it. The keystore's own TODO predicted exactly this; it is now implemented. The primary machine key is derived from a **hardware identifier** (`/etc/machine-id` on Linux, `IOPlatformSerialNumber` on macOS), which survives hostname and network changes; machines with neither identifier keep the v1 derivation with its co-located seed file, preserving project-local keystore isolation. Decryption tries an ordered fallback chain covering every wrapping an existing keystore may carry — the v1 key under the current hostname, the raw-path key (pre-canonicalization symlinks), and on macOS the v1 key under `scutil LocalHostName` variants, which typically retain the name the store was written under after `kern.hostname` drifts away. **Any entry that decrypts via a fallback is transparently rewrapped under the primary** (same locked, idempotent migration path as the v1-format upgrade), so the fix both recovers already-drifted keystores with no user action and immunizes them against the next rename. Verified against a real keystore bricked by three successive hostname renames: it self-healed on first use. Note: entries rewrapped under the hardware key are not decryptable by older Treeship binaries; keep one CLI version per machine.
-- **Capability matching now understands harness-captured glob patterns (`Bash(git:*)`).** `tool_matches` only expanded a *trailing* `*`, but the patterns `attest card --from-harness` captures from a Claude Code `settings.json` carry the wildcard *inside* the permission scope, `Bash(git:*)`, `Read(*)`, so every such pattern silently degraded to an exact string match that could never fire, and a card captured from a real config reported **every** real action out-of-scope. The wildcard may now sit anywhere in the pattern (one `*`, prefix and suffix must both hold), so `Bash(git:*)` matches `Bash(git:status)` and still rejects `Bash(gh:pr)`; the falsifiable cross-check keeps flagging genuinely off-card actions (`payments.charge`). Trailing-glob (`family.*`), bare-`*`, and exact matching are unchanged. Shared `treeship_core::capability` fix, so the CLI and the WASM browser verifier keep returning the same verdict. Found by dogfooding the full TLS-for-agents flow end to end.
 
 ## Older releases
 
