@@ -443,6 +443,14 @@ treeship session answer-challenge [OPTIONS] --challenge <NONCE> --actor <URI> <P
 | `--actor <URI>` | Joining agent's actor URI. Must resolve to the same key that ran `treeship session join` |
 | `--out <PATH>` | Output path (default: &lt;participant_id&gt;.challenge-response.json) |
 
+### `treeship session mint-challenge`
+
+Mint a 128-bit challenge nonce for a room-join liveness check
+
+```
+treeship session mint-challenge [OPTIONS]
+```
+
 ## `treeship verify`
 
 Verify an artifact or its full parent chain

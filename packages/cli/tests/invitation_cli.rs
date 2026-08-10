@@ -365,7 +365,7 @@ fn treeship_session_join_liveness_challenge_roundtrip() {
     let participant_id = join["participant_id"].as_str().unwrap().to_string();
 
     // Joining agent answers the host's nonce.
-    let nonce = "n_test_liveness_1";
+    let nonce = "3f9c1a7d5e2b8046c1d93a5f7e4b28d0";
     let response_path = ws.root.join("response.json");
     let answer_out = ws
         .cmd()
@@ -458,7 +458,7 @@ fn treeship_session_countersign_rejects_mismatched_challenge_nonce() {
     let answer_out = ws
         .cmd()
         .args(["session", "answer-challenge", &participant_id])
-        .args(["--challenge", "n_real"])
+        .args(["--challenge", "7d3e9f1c5a2b48609e8d7c6b5a4f3e2d"])
         .args(["--actor", "agent://joiner"])
         .args(["--out"])
         .arg(&response_path)
@@ -472,7 +472,7 @@ fn treeship_session_countersign_rejects_mismatched_challenge_nonce() {
     let cs_out = ws
         .cmd()
         .args(["session", "countersign", &participant_id])
-        .args(["--challenge", "n_different"])
+        .args(["--challenge", "a1b2c3d4e5f60718293a4b5c6d7e8f90"])
         .args(["--challenge-response"])
         .arg(&response_path)
         .args(["--format", "json", "--config"])
@@ -532,7 +532,7 @@ fn treeship_session_countersign_rejects_half_supplied_challenge() {
     let cs_out = ws
         .cmd()
         .args(["session", "countersign", &participant_id])
-        .args(["--challenge", "n_only_half"])
+        .args(["--challenge", "0f1e2d3c4b5a69788796a5b4c3d2e1f0"])
         .args(["--format", "json", "--config"])
         .arg(ws.config())
         .output()

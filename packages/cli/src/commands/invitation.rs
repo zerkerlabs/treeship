@@ -38,7 +38,9 @@ use treeship_core::{
     },
     storage::Record,
     trust::{decode_ed25519_pubkey, TrustRootKind, TrustRootStore},
-    verify::session_join_challenge::{check_join_challenge, join_challenge_canonical},
+    verify::session_join_challenge::{
+        check_join_challenge, join_challenge_canonical, mint_nonce, validate_nonce,
+    },
 };
 
 use crate::{
@@ -871,6 +873,11 @@ pub fn countersign(
             );
         }
         (Some(nonce), Some(response_src)) => {
+            // Reject a weak nonce before verifying anything against it. A
+            // guessable nonce can be pre-signed, so the signature would
+            // verify perfectly and prove nothing about liveness -- a pass
+            // that means nothing is worse than a refusal.
+            validate_nonce(nonce)?;
             let response_text = if response_src == "-" {
                 use std::io::Read;
                 let mut s = String::new();
@@ -1005,6 +1012,12 @@ pub fn answer_challenge(
     args: AnswerChallengeArgs,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Refuse to answer a weak challenge. The joining agent is the party whose
+    // key is being spent, and it should not sign a nonce an attacker could
+    // have guessed and replayed -- checking only at the host would leave the
+    // signer trusting the verifier to protect them.
+    validate_nonce(&args.challenge)?;
+
     let c = ctx::open(ctx_override)?;
 
     let rec = c
@@ -1217,4 +1230,41 @@ mod tests {
         let back = decode_bootstrap_blob(&blob).unwrap();
         assert_eq!(back.invitation_id, "art_test");
     }
+}
+
+// ---------------------------------------------------------------------------
+// `treeship session mint-challenge`
+// ---------------------------------------------------------------------------
+
+pub struct MintChallengeArgs {
+    pub format: String,
+}
+
+/// Mint a challenge nonce for a room-join liveness check.
+///
+/// Exists because the flag came before the tool did: `--challenge <NONCE>`
+/// asked an operator for a value without saying what kind, and the help text
+/// suggested `n_8f2a` -- six characters, enumerable instantly. A nonce that
+/// can be guessed can be pre-signed, and the liveness proof then proves only
+/// that a document exists.
+pub fn mint_challenge(
+    args: MintChallengeArgs,
+    printer: &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let nonce = mint_nonce();
+    if args.format == "json" {
+        printer.json(&serde_json::json!({
+            "status": "ok",
+            "nonce":  nonce,
+            "bits":   128,
+        }));
+        return Ok(());
+    }
+    printer.success("challenge nonce minted", &[("nonce", &nonce)]);
+    printer.blank();
+    printer.hint(&format!(
+        "give this to the joining agent, then countersign with the same value:\n  \
+         treeship session answer-challenge <participant_id> --challenge {nonce}"
+    ));
+    Ok(())
 }
