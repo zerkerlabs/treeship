@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -192,5 +193,41 @@ func TestAPIErrorCarriesStatusAndMessage(t *testing.T) {
 func TestNewRejectsBadKey(t *testing.T) {
 	if _, err := hubclient.New(hubclient.Config{HubID: "dck_x", SecretHex: "nothex"}); err == nil {
 		t.Fatal("expected an error for a malformed key")
+	}
+}
+
+// Receipts are write-once. A second PUT with different content returns 409,
+// and the client must surface that rather than let a caller treat a failed
+// publish as cosmetic.
+//
+// This test exists because spec 0012 described the endpoint as a
+// "whole-document overwrite" whose races silently lose a write. The DB layer
+// is `InsertSessionWriteOnce`: the race fails loudly instead. Pinning the real
+// behavior so the wrong description cannot quietly become true.
+func TestWriteOnceConflictIsSurfaced(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/receipt/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":"receipt already uploaded for this session; receipts are write-once"}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c, _ := hubclient.New(hubclient.Config{
+		HubID:     "dck_x",
+		SecretHex: hex.EncodeToString(make([]byte, ed25519.SeedSize)),
+		Endpoint:  srv.URL,
+	})
+	_, err := c.PutReceipt(context.Background(), "ssn_abc", []byte(`{"session":{"id":"ssn_abc"}}`))
+
+	apiErr, ok := err.(*hubclient.APIError)
+	if !ok {
+		t.Fatalf("expected *APIError, got %T: %v", err, err)
+	}
+	if apiErr.StatusCode != http.StatusConflict {
+		t.Fatalf("expected 409, got %d", apiErr.StatusCode)
+	}
+	if !strings.Contains(apiErr.Message, "write-once") {
+		t.Fatalf("error should explain write-once semantics, got %q", apiErr.Message)
 	}
 }

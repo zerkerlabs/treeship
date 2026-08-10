@@ -97,11 +97,21 @@ func (e *APIError) Error() string {
 
 // PutReceipt uploads a session receipt and returns its public URL.
 //
-// The endpoint is idempotent per session id: a second PUT for the same session
-// replaces the first. That is a **whole-document overwrite**, so two writers
-// racing on one session will lose one of the writes. If you are emitting
-// per-event, accumulate into an authoritative log on your side and PUT the
-// composed document -- do not PUT per event.
+// Receipts are WRITE-ONCE, not overwrite. The first PUT for a session id wins
+// and seals it; a later PUT with different content returns 409 Conflict
+// ("receipts are write-once"). A byte-identical replay is accepted as
+// idempotent.
+//
+// Two consequences worth designing around:
+//
+//   - Concurrency fails LOUDLY. Two writers racing on one session do not
+//     silently lose a write; the second gets a 409. Handle it -- do not
+//     treat a failed PUT as cosmetic.
+//
+//   - A long-lived room cannot publish progressively under one session id.
+//     There is exactly one PUT per session, ever. Compose the whole document
+//     and publish once at close, or publish successive checkpoints under
+//     their own ids.
 //
 // `sessionID` must match the `session.id` inside `receiptJSON`; the server
 // rejects a mismatch rather than letting one session overwrite another's slot.
