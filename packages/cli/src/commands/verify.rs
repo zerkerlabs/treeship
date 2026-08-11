@@ -886,10 +886,7 @@ fn print_full_timeline(
     //       artifacts; without (b), "no tampering detected" would be a check
     //       we never ran. We only claim tamper-freedom when (b) holds.
     let no_gaps = !checks.iter().any(|c| {
-        c.outcome == Outcome::Fail
-            && c.reason
-                .as_deref()
-                .is_some_and(|r| r.contains("not found"))
+        c.outcome == Outcome::Fail && c.reason.as_deref().is_some_and(|r| r.contains("not found"))
     });
     let chain_ok = no_gaps && linkage_ok;
     let chain_status = if chain_ok {

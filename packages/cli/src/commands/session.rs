@@ -587,13 +587,12 @@ pub fn status(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std
         None => 0,
     };
 
-    if !root_verified
-        && manifest.root_artifact_id.is_some() {
-            printer.warn(
-                "session root artifact not found in storage (file may have been modified)",
-                &[],
-            );
-        }
+    if !root_verified && manifest.root_artifact_id.is_some() {
+        printer.warn(
+            "session root artifact not found in storage (file may have been modified)",
+            &[],
+        );
+    }
 
     if artifact_count != manifest.artifact_count && manifest.artifact_count != 0 {
         printer.warn(

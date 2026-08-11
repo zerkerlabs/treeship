@@ -783,10 +783,10 @@ fn print_approval_authority_panel(
                 }
             }
         }
-        let nonce_ok = bundle.uses.iter().all(|u| {
-            grant_nonce_digest
-                .get(&u.grant_id) == Some(&u.nonce_digest)
-        });
+        let nonce_ok = bundle
+            .uses
+            .iter()
+            .all(|u| grant_nonce_digest.get(&u.grant_id) == Some(&u.nonce_digest));
         printer.dim_info(&format!(
             "  {} approval-use-nonce-binding    {}",
             if nonce_ok { "✓" } else { "✗" },

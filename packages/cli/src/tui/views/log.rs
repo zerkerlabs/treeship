@@ -44,7 +44,6 @@ fn render_log_list(frame: &mut Frame, area: Rect, app: &App) {
 
     let items: Vec<ListItem> = reversed
         .iter()
-        
         .map(|a| {
             let exit_style = if a.exit_code == 0 {
                 Style::default().fg(GREEN)

@@ -16,7 +16,6 @@ pub enum LifecycleMode {
     DailyRollup,
 }
 
-
 /// Summary of all participants in a session.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Participants {
@@ -88,7 +87,6 @@ pub enum SessionStatus {
     Abandoned,
 }
 
-
 /// Who may mint invitations for a room. Mirrors the Q3 decision in
 /// `docs/specs/agent-invitations-rooms.md`: HostOnly is the default,
 /// DelegatedTo and Open are explicit opt-in.
@@ -104,7 +102,6 @@ pub enum InvitationAuthority {
     /// Any current participant may mint invitations.
     Open,
 }
-
 
 /// Room wrapper around a session, per `docs/specs/agent-invitations-rooms.md`
 /// Phase 2 ("room concept"). A room is a session whose participant set is

@@ -233,9 +233,14 @@ jobs:
       # `docs-route-health` and `docs-drift` check content; neither compiles
       # the site. An MDX error or a broken import therefore reached Vercel
       # before anything caught it. This is the build that actually fails.
+      # `npm install`, not `npm ci`: docs/.gitignore excludes package-lock.json
+      # deliberately, so there is no lockfile to install from. That makes this
+      # job non-hermetic -- it resolves against the registry each run and can
+      # break on an upstream release rather than on our change. Worth it to
+      # have the build gated at all; commit the lockfile to make it hermetic.
       - name: Install
         working-directory: docs
-        run: npm ci
+        run: npm install --no-audit --no-fund
 
       - name: Build
         working-directory: docs

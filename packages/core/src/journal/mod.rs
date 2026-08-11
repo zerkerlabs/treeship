@@ -196,8 +196,7 @@ fn safe_name(s: &str) -> String {
 // Head file
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct Head {
     /// 1-indexed; 0 means "no records yet."
     pub index: u64,
@@ -206,7 +205,6 @@ pub struct Head {
     /// Updated on every append.
     pub updated_at: String,
 }
-
 
 fn read_head(j: &Journal) -> Result<Head, JournalError> {
     let path = j.current_head_path();
