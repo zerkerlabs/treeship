@@ -176,7 +176,6 @@ jobs:
       fail-fast: false
       matrix:
         pkg:
-          - packages/sdk-ts
           - packages/verify-js
           - bridges/mcp
           - bridges/a2a
@@ -186,16 +185,50 @@ jobs:
         with:
           node-version: '20'
 
-      # These four suites -- 42 tests total -- existed and ran on nobody's
-      # machine. `cross-sdk` exercises the SDKs against a built CLI, which is a
-      # different claim: it does not run their unit tests, so a regression
-      # inside the TypeScript SDK or either bridge could not fail a build.
+      # These suites existed and ran on nobody's machine. `cross-sdk` looks
+      # like it covers them but does not: it exercises the SDKs against a built
+      # CLI, which is a different claim than running their unit tests, so a
+      # regression inside either bridge could not fail a build.
+      #
+      # Pure JS, no Rust -- `sdk-ts` needs the CLI and gets its own job.
       - name: Install
         working-directory: ${{ matrix.pkg }}
         run: npm ci
 
       - name: Test
         working-directory: ${{ matrix.pkg }}
+        run: npm test
+
+  sdk-ts:
+    name: JS tests (packages/sdk-ts)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable (moving branch; pinned to current tip)
+      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20'
+
+      # Audit item 32. `roundtrip.test.ts` drives the real CLI and builds it
+      # on demand when it is missing -- so on a cold runner the release build
+      # happens *inside* vitest, blocking a worker for ~82s. Every test still
+      # passed, and the run failed anyway: vitest's worker RPC gave up with
+      # `Timeout calling "onTaskUpdate"`.
+      #
+      # Building here first means the test finds the binary already present
+      # and just runs. The build is the same work either way; the difference
+      # is that a build step that takes 82 seconds is normal, and a test that
+      # blocks its reporter for 82 seconds is a flake.
+      - name: Build CLI for the roundtrip suite
+        run: cargo build --release -p treeship-cli
+
+      - name: Install
+        working-directory: packages/sdk-ts
+        run: npm ci
+
+      - name: Test
+        working-directory: packages/sdk-ts
         run: npm test
 
   python-sdk:
