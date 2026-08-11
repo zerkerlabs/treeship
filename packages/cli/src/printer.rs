@@ -143,14 +143,6 @@ impl Printer {
         }
     }
 
-    fn print_json(&self, fields: &[(&str, &str)]) {
-        let mut m = serde_json::Map::new();
-        for (k, v) in fields {
-            m.insert(k.to_string(), serde_json::Value::String(v.to_string()));
-        }
-        println!("{}", serde_json::to_string(&m).unwrap_or_default());
-    }
-
     fn print_json_with_status(&self, status: &str, message: Option<&str>, fields: &[(&str, &str)]) {
         println!("{}", self.json_envelope(status, message, fields));
     }
@@ -218,6 +210,9 @@ impl Printer {
     pub fn bold(&self, s: &str) -> String {
         self.code(s, "\x1b[1m")
     }
+    /// Unused today. Kept so the colour helpers stay a complete set -- a
+    /// partial palette invites call sites to inline raw escape codes.
+    #[allow(dead_code)]
     pub fn cyan(&self, s: &str) -> String {
         self.code(s, "\x1b[36m")
     }

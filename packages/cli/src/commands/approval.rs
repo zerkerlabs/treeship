@@ -118,7 +118,7 @@ pub fn status(
     let uses = journal::list_uses_for_grant(&j, grant_id)?;
 
     let count = uses.len() as u32;
-    let max_uses = uses.iter().filter_map(|u| u.max_uses).last();
+    let max_uses = uses.iter().filter_map(|u| u.max_uses).next_back();
     let exceeded = match max_uses {
         Some(m) => count >= m,
         None => false,

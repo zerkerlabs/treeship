@@ -124,9 +124,9 @@ pub fn run(target: &str, certificate: Option<&str>, printer: &Printer) -> Extern
         }
     };
 
-    if exit_for_load.is_some() {
+    if let Some(code) = exit_for_load {
         // unreachable today; reserved for future early-exit branches
-        return exit_for_load.unwrap();
+        return code;
     }
 
     // Run JSON-level checks for URL mode (no on-disk package).
@@ -510,7 +510,7 @@ fn format_check_label(c: &treeship_core::session::VerifyCheck) -> String {
     }
 }
 
-fn emit_summary(printer: &Printer, receipt: &SessionReceipt) {
+fn emit_summary(_printer: &Printer, receipt: &SessionReceipt) {
     let mut fields: Vec<(&str, String)> = Vec::new();
     fields.push(("Session", receipt.session.id.clone()));
     if let Some(name) = &receipt.session.name {

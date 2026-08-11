@@ -140,6 +140,107 @@ jobs:
       - name: Plugin hook parity suite
         run: sh integrations/tests/parity.sh
 
+  clippy:
+    name: Clippy (-D warnings)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable (moving branch; pinned to current tip)
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2
+
+      # Clippy ran on nobody's machine consistently and gated nothing, so the
+      # workspace had accumulated 149 warnings -- including a live-lock
+      # (`reader.lines().flatten()` spins forever on a persistent read error,
+      # in the thread draining a wrapped child's pipe) and a doc comment whose
+      # function had been deleted, leaving it attached to an unrelated one.
+      #
+      # Lint policy lives in `[workspace.lints.clippy]` in the root Cargo.toml:
+      # anything allowed is allowed there, in writing, with a reason. That
+      # keeps this step at `-D warnings` rather than at a tolerated count,
+      # which is the only version of this gate that stays at zero.
+      #
+      # Scoped to the crates CI builds. treeship-zk-risc0's guest needs the
+      # RISC0 toolchain (riscv32im-risc0-zkvm-elf), which is not installed here.
+      - name: Clippy
+        run: cargo clippy -p treeship-core -p treeship-cli -p treeship-core-wasm --all-targets -- -D warnings
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+  js-suites:
+    name: JS tests (${{ matrix.pkg }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        pkg:
+          - packages/sdk-ts
+          - packages/verify-js
+          - bridges/mcp
+          - bridges/a2a
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20'
+
+      # These four suites -- 42 tests total -- existed and ran on nobody's
+      # machine. `cross-sdk` exercises the SDKs against a built CLI, which is a
+      # different claim: it does not run their unit tests, so a regression
+      # inside the TypeScript SDK or either bridge could not fail a build.
+      - name: Install
+        working-directory: ${{ matrix.pkg }}
+        run: npm ci
+
+      - name: Test
+        working-directory: ${{ matrix.pkg }}
+        run: npm test
+
+  python-sdk:
+    name: Python SDK tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.11'
+
+      # 44 tests, stdlib unittest only -- no pytest, no install step. They
+      # stub subprocess.run, so no treeship binary is needed either.
+      #
+      # `tests/` had no `__init__.py`, so the invocation the test files
+      # themselves document ("python -m unittest discover -s .../tests") failed
+      # with "Start directory is not importable" and only 28 of the 44 were
+      # reachable at all. Added, so discovery finds every test and this job
+      # runs what the docstring promises.
+      - name: Test
+        working-directory: packages/sdk-python
+        run: python -m unittest discover -s tests -t .
+        env:
+          PYTHONPATH: .
+
+  docs-build:
+    name: Docs production build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20'
+
+      # `docs-route-health` and `docs-drift` check content; neither compiles
+      # the site. An MDX error or a broken import therefore reached Vercel
+      # before anything caught it. This is the build that actually fails.
+      - name: Install
+        working-directory: docs
+        run: npm ci
+
+      - name: Build
+        working-directory: docs
+        run: npm run build
+
   hub:
     runs-on: ubuntu-latest
     steps:

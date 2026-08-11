@@ -97,7 +97,7 @@ pub fn run(
     // finished -- and a command that rewrites its own toolchain is exactly
     // the case worth catching.
     let exec_identity =
-        crate::execution_identity::ExecutionIdentity::capture(&args, |a| sanitize_command(a));
+        crate::execution_identity::ExecutionIdentity::capture(args, sanitize_command);
 
     // ── 1. Output digest: capture stdout/stderr while streaming ────────
     let start = Instant::now();
@@ -120,13 +120,17 @@ pub fn run(
     let stdout_thread = std::thread::spawn(move || {
         if let Some(pipe) = stdout_pipe {
             let reader = BufReader::new(pipe);
-            for line in reader.lines() {
-                if let Ok(l) = line {
-                    println!("{}", l);
-                    let mut buf = sb.lock().unwrap();
-                    buf.extend_from_slice(l.as_bytes());
-                    buf.push(b'\n');
-                }
+            // `map_while(Result::ok)`, not `flatten()`: on a persistent read
+            // error `Lines` keeps yielding `Err` forever, and `flatten()`
+            // discards each one and asks for the next -- a live-lock in the
+            // thread draining the child's pipe. Stopping at the first error
+            // truncates the captured output, which is the honest outcome:
+            // the bytes really did stop being readable.
+            for l in reader.lines().map_while(Result::ok) {
+                println!("{}", l);
+                let mut buf = sb.lock().unwrap();
+                buf.extend_from_slice(l.as_bytes());
+                buf.push(b'\n');
             }
         }
     });
@@ -135,13 +139,17 @@ pub fn run(
     let stderr_thread = std::thread::spawn(move || {
         if let Some(pipe) = stderr_pipe {
             let reader = BufReader::new(pipe);
-            for line in reader.lines() {
-                if let Ok(l) = line {
-                    eprintln!("{}", l);
-                    let mut buf = eb.lock().unwrap();
-                    buf.extend_from_slice(l.as_bytes());
-                    buf.push(b'\n');
-                }
+            // `map_while(Result::ok)`, not `flatten()`: on a persistent read
+            // error `Lines` keeps yielding `Err` forever, and `flatten()`
+            // discards each one and asks for the next -- a live-lock in the
+            // thread draining the child's pipe. Stopping at the first error
+            // truncates the captured output, which is the honest outcome:
+            // the bytes really did stop being readable.
+            for l in reader.lines().map_while(Result::ok) {
+                eprintln!("{}", l);
+                let mut buf = eb.lock().unwrap();
+                buf.extend_from_slice(l.as_bytes());
+                buf.push(b'\n');
             }
         }
     });
@@ -494,7 +502,7 @@ fn signal_exit_code(status: &std::process::ExitStatus) -> i32 {
     #[cfg(unix)]
     {
         use std::os::unix::process::ExitStatusExt;
-        return 128 + status.signal().unwrap_or(1);
+        128 + status.signal().unwrap_or(1)
     }
     #[cfg(not(unix))]
     {

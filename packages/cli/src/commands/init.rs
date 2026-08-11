@@ -262,93 +262,6 @@ fn prompt(msg: &str) -> String {
     line
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn tempdir() -> std::path::PathBuf {
-        let p = std::env::temp_dir().join(format!("treeship-init-test-{}", rand::random::<u32>()));
-        std::fs::create_dir_all(&p).unwrap();
-        p
-    }
-
-    #[test]
-    fn config_json_is_real_detects_full_config() {
-        // Mimics what config::save writes after init: full Config with
-        // ship_id. write_project_config should leave this alone.
-        let dir = tempdir();
-        let path = dir.join("config.json");
-        std::fs::write(
-            &path,
-            r#"{
-            "ship_id": "ship_abc123",
-            "name": "test",
-            "storage_dir": "/tmp/proj/.treeship/artifacts",
-            "keys_dir": "/tmp/proj/.treeship/keys",
-            "default_key_id": "key_xyz",
-            "hub_connections": {}
-        }"#,
-        )
-        .unwrap();
-        assert!(
-            config_json_is_real(&path),
-            "real Config with ship_id should be detected as real"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn config_json_is_real_rejects_marker_stub() {
-        // The marker stub write_project_config used to (over)write. The
-        // helper must return false so write_project_config knows it's
-        // safe to overwrite.
-        let dir = tempdir();
-        let path = dir.join("config.json");
-        std::fs::write(
-            &path,
-            r#"{
-            "extends": "/Users/somebody/.treeship/config.json",
-            "project": true
-        }"#,
-        )
-        .unwrap();
-        assert!(
-            !config_json_is_real(&path),
-            "marker stub without ship_id must NOT be detected as real"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn config_json_is_real_rejects_missing_file() {
-        let dir = tempdir();
-        let path = dir.join("does-not-exist.json");
-        assert!(!config_json_is_real(&path));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn config_json_is_real_rejects_garbage() {
-        let dir = tempdir();
-        let path = dir.join("config.json");
-        std::fs::write(&path, "not json").unwrap();
-        assert!(!config_json_is_real(&path));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn config_json_is_real_rejects_empty_ship_id() {
-        let dir = tempdir();
-        let path = dir.join("config.json");
-        std::fs::write(&path, r#"{"ship_id": ""}"#).unwrap();
-        assert!(
-            !config_json_is_real(&path),
-            "empty ship_id should not count as real"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-}
-
 fn detect_language() -> String {
     let cwd = std::env::current_dir().unwrap_or_default();
     if cwd.join("package.json").exists() || cwd.join("node_modules").exists() {
@@ -454,4 +367,91 @@ fn config_json_is_real(path: &std::path::Path) -> bool {
     val.get("ship_id")
         .and_then(|v| v.as_str())
         .is_some_and(|s| !s.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tempdir() -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!("treeship-init-test-{}", rand::random::<u32>()));
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn config_json_is_real_detects_full_config() {
+        // Mimics what config::save writes after init: full Config with
+        // ship_id. write_project_config should leave this alone.
+        let dir = tempdir();
+        let path = dir.join("config.json");
+        std::fs::write(
+            &path,
+            r#"{
+            "ship_id": "ship_abc123",
+            "name": "test",
+            "storage_dir": "/tmp/proj/.treeship/artifacts",
+            "keys_dir": "/tmp/proj/.treeship/keys",
+            "default_key_id": "key_xyz",
+            "hub_connections": {}
+        }"#,
+        )
+        .unwrap();
+        assert!(
+            config_json_is_real(&path),
+            "real Config with ship_id should be detected as real"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn config_json_is_real_rejects_marker_stub() {
+        // The marker stub write_project_config used to (over)write. The
+        // helper must return false so write_project_config knows it's
+        // safe to overwrite.
+        let dir = tempdir();
+        let path = dir.join("config.json");
+        std::fs::write(
+            &path,
+            r#"{
+            "extends": "/Users/somebody/.treeship/config.json",
+            "project": true
+        }"#,
+        )
+        .unwrap();
+        assert!(
+            !config_json_is_real(&path),
+            "marker stub without ship_id must NOT be detected as real"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn config_json_is_real_rejects_missing_file() {
+        let dir = tempdir();
+        let path = dir.join("does-not-exist.json");
+        assert!(!config_json_is_real(&path));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn config_json_is_real_rejects_garbage() {
+        let dir = tempdir();
+        let path = dir.join("config.json");
+        std::fs::write(&path, "not json").unwrap();
+        assert!(!config_json_is_real(&path));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn config_json_is_real_rejects_empty_ship_id() {
+        let dir = tempdir();
+        let path = dir.join("config.json");
+        std::fs::write(&path, r#"{"ship_id": ""}"#).unwrap();
+        assert!(
+            !config_json_is_real(&path),
+            "empty ship_id should not count as real"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

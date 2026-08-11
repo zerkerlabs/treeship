@@ -1,4 +1,12 @@
-use crate::{ctx, printer::Printer};
+// Most of this module exists to serve the `zk` feature. Without it the
+// helpers, circuit table, and proof plumbing are genuinely unreferenced --
+// `cargo clippy --features zk` reports zero dead code here. Scoping the
+// allow to `not(feature = "zk")` keeps the dead-code lint doing real work in
+// the configuration where these items ARE reachable, rather than blanket
+// -allowing the module and losing the signal in both builds.
+#![cfg_attr(not(feature = "zk"), allow(dead_code))]
+
+use crate::printer::Printer;
 
 #[cfg(feature = "zk")]
 use treeship_zk_circom::{CircomProver, ZkProof};

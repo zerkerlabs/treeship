@@ -452,12 +452,8 @@ pub fn invite(
     // Write to stdout directly so the blob is machine-pasteable even
     // when printer adds decoration to info/success lines.
     println!("{blob}");
-    printer.hint(&format!(
-        "Joiner runs:  treeship session join --invite <paste> --actor agent://<their_id>"
-    ));
-    printer.hint(&format!(
-        "Host countersigns:  treeship session countersign <participant_artifact_id>"
-    ));
+    printer.hint("Joiner runs:  treeship session join --invite <paste> --actor agent://<their_id>");
+    printer.hint("Host countersigns:  treeship session countersign <participant_artifact_id>");
     Ok(())
 }
 
@@ -843,7 +839,7 @@ pub fn countersign(
     // hand-crafted a pending envelope to bypass join never consumed the
     // nonce, so there is no journal record and we refuse. `use_number` is
     // `consumed_count + 1`, so a consumed invitation reads >= 2.
-    let j = Journal::new(&journal_dir_for_ctx(&c));
+    let j = Journal::new(journal_dir_for_ctx(&c));
     let nonce_d = nonce_digest(&invitation.nonce);
     let replay = journal::check_replay(&j, &stmt.invitation_ref, &nonce_d, Some(1))
         .map_err(|e| format!("journal check failed: {e}"))?;
@@ -1126,6 +1122,43 @@ fn sha2_digest(bytes: &[u8]) -> Vec<u8> {
 fn _ensure_path_imported(_p: &Path) {}
 
 // ---------------------------------------------------------------------------
+// `treeship session mint-challenge`
+// ---------------------------------------------------------------------------
+
+pub struct MintChallengeArgs {
+    pub format: String,
+}
+
+/// Mint a challenge nonce for a room-join liveness check.
+///
+/// Exists because the flag came before the tool did: `--challenge <NONCE>`
+/// asked an operator for a value without saying what kind, and the help text
+/// suggested `n_8f2a` -- six characters, enumerable instantly. A nonce that
+/// can be guessed can be pre-signed, and the liveness proof then proves only
+/// that a document exists.
+pub fn mint_challenge(
+    args: MintChallengeArgs,
+    printer: &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let nonce = mint_nonce();
+    if args.format == "json" {
+        printer.json(&serde_json::json!({
+            "status": "ok",
+            "nonce":  nonce,
+            "bits":   128,
+        }));
+        return Ok(());
+    }
+    printer.success("challenge nonce minted", &[("nonce", &nonce)]);
+    printer.blank();
+    printer.hint(&format!(
+        "give this to the joining agent, then countersign with the same value:\n  \
+         treeship session answer-challenge <participant_id> --challenge {nonce}"
+    ));
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Tests (unit-level; CLI integration tests live in
 // packages/cli/tests/invitation_cli.rs)
 // ---------------------------------------------------------------------------
@@ -1230,41 +1263,4 @@ mod tests {
         let back = decode_bootstrap_blob(&blob).unwrap();
         assert_eq!(back.invitation_id, "art_test");
     }
-}
-
-// ---------------------------------------------------------------------------
-// `treeship session mint-challenge`
-// ---------------------------------------------------------------------------
-
-pub struct MintChallengeArgs {
-    pub format: String,
-}
-
-/// Mint a challenge nonce for a room-join liveness check.
-///
-/// Exists because the flag came before the tool did: `--challenge <NONCE>`
-/// asked an operator for a value without saying what kind, and the help text
-/// suggested `n_8f2a` -- six characters, enumerable instantly. A nonce that
-/// can be guessed can be pre-signed, and the liveness proof then proves only
-/// that a document exists.
-pub fn mint_challenge(
-    args: MintChallengeArgs,
-    printer: &Printer,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let nonce = mint_nonce();
-    if args.format == "json" {
-        printer.json(&serde_json::json!({
-            "status": "ok",
-            "nonce":  nonce,
-            "bits":   128,
-        }));
-        return Ok(());
-    }
-    printer.success("challenge nonce minted", &[("nonce", &nonce)]);
-    printer.blank();
-    printer.hint(&format!(
-        "give this to the joining agent, then countersign with the same value:\n  \
-         treeship session answer-challenge <participant_id> --challenge {nonce}"
-    ));
-    Ok(())
 }

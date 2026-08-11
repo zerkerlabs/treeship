@@ -379,6 +379,9 @@ fn open_lock_file(path: &Path) -> Result<std::fs::File, std::io::Error> {
 
     let file = std::fs::OpenOptions::new()
         .create(true)
+        // Explicitly NOT truncating: this is a flock target, and its contents
+        // are irrelevant, but truncating would race a concurrent holder.
+        .truncate(false)
         .read(true)
         .write(true)
         .mode(0o600)
@@ -400,9 +403,10 @@ fn open_lock_file(path: &Path) -> Result<std::fs::File, std::io::Error> {
         let owned_by_us = meta.uid() == nix_uid();
         if owned_by_us && mode != 0o600 {
             let fd = file.as_raw_fd();
-            // SAFETY: fd is valid (we just opened it), 0o600 is a
-            // well-formed mode. fchmod is async-signal-safe per POSIX.
-            let rc = unsafe { libc_fchmod(fd, 0o600) };
+            // `libc_fchmod` is a safe wrapper; the unsafe extern lives inside
+            // it. The caller-side obligation it documents still holds here:
+            // fd is valid (we just opened it) and 0o600 is a well-formed mode.
+            let rc = libc_fchmod(fd, 0o600);
             if rc != 0 {
                 let err = std::io::Error::last_os_error();
                 eprintln!(

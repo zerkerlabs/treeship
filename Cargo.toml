@@ -11,6 +11,33 @@ authors = ["Zerker Labs, Inc."]
 repository = "https://github.com/zerkerlabs/treeship"
 homepage = "https://treeship.dev"
 
+# Lint policy for the workspace. CI runs `cargo clippy -- -D warnings`, so
+# every lint below is either fixed in the source or listed here with the
+# reason it is not. Nothing is silenced by default -- `-A` entries are
+# decisions, and each one has to earn its line.
+#
+# Member crates opt in with `[lints] workspace = true`.
+[workspace.lints.clippy]
+# Fights deliberate column alignment. The codebase writes definition lists as
+#   - `"hook"`  : description continuing
+#                 under the description column
+# which clippy wants reflowed to a flat 5-space indent. The aligned form is
+# more readable for the multi-line provenance tables in session/side_effects.rs
+# and session/receipt.rs, and re-indenting them would make the docs worse to
+# satisfy a cosmetic lint.
+doc_overindented_list_items = "allow"
+
+# Design lints, not defect lints. Each flags a shape that is sometimes a smell
+# and here is a deliberate trade-off; taking the suggestion would mean
+# inventing parameter structs and boxing variants purely to quiet a counter.
+# Listed rather than fixed so a genuine regression still has to be argued for
+# in review, not blocked by a threshold.
+too_many_arguments = "allow"      # CLI command entry points mirror their flags
+large_enum_variant = "allow"      # error enums carry context on the cold path
+result_large_err = "allow"        # same, for the Err side
+type_complexity = "allow"         # a few signature-level iterator chains
+only_used_in_recursion = "allow"  # depth/accumulator params in tree walks
+
 # WASM release profile tuned for bundle size. Applies only to
 # treeship-core-wasm so the CLI keeps its standard release tuning for speed.
 # Leaf-level `[profile.release]` in the core-wasm crate would be silently

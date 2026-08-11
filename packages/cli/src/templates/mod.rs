@@ -1,7 +1,7 @@
-/// Template registry -- embedded YAML templates that ship with the binary.
-///
-/// Templates are loaded at compile time via `include_str!()`.
-/// No runtime file access required. Works offline.
+//! Template registry -- embedded YAML templates that ship with the binary.
+//!
+//! Templates are loaded at compile time via `include_str!()`.
+//! No runtime file access required. Works offline.
 
 pub struct Template {
     pub name: &'static str,

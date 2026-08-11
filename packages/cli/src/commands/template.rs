@@ -409,6 +409,14 @@ pub fn apply_for_init(
 // Internal: template YAML format (superset of ProjectConfig)
 // ---------------------------------------------------------------------------
 
+/// The template file schema, as users write it.
+///
+/// Several fields are parsed and never read. They are kept because the struct
+/// IS the schema -- dropping them would not change parsing (there is no
+/// `deny_unknown_fields`) but would delete the only machine-checkable record
+/// of what a template may contain.
+///
+#[allow(dead_code)]
 #[derive(Debug, serde::Deserialize)]
 struct TemplateYaml {
     #[serde(default)]
@@ -455,6 +463,15 @@ struct TemplateAttest {
     paths: Option<Vec<TemplatePath>>,
 }
 
+/// One `attest.commands[]` entry.
+///
+/// `capture_output_digest` is parsed and never read. `PLATFORM.md` documents
+/// it as a supported key, so a user can set it and be told nothing -- the
+/// command is attested without the output digest they asked for. A documented
+/// option that silently no-ops is worse than an undocumented one, because the
+/// user has been told it works. Wire it or drop it from the docs; the
+/// `allow` below only stops the compiler from repeating what this says.
+#[allow(dead_code)]
 #[derive(Debug, serde::Deserialize)]
 struct TemplateCommand {
     pattern: String,

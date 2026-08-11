@@ -321,7 +321,7 @@ fn forged_action_envelope_under_wrong_id_fails_content_addressing() {
         .push(make_use_with_nonce("use_real", &g_id, nonce));
 
     // Real action envelope -> derives to art_a.
-    let (real_art_id, real_env) = fake_action_envelope(nonce, Some("use_real"));
+    let (real_art_id, _real_env) = fake_action_envelope(nonce, Some("use_real"));
     // Different action envelope (different nonce, different
     // approval_use_id) -> derives to a different art_b.
     let (fake_art_id, fake_env) = fake_action_envelope("a_different_nonce", Some("use_real"));

@@ -20,7 +20,7 @@
 //! emitted invalidates BOTH signatures via the canonical binding.
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 
 use crate::attestation::{Envelope, Signature as DsseSignature, Signer, SignerError};

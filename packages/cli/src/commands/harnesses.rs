@@ -699,6 +699,11 @@ pub fn save_state(harnesses_dir: &Path, state: &HarnessState) -> Result<(), Stat
 /// Create-or-merge a harness state record. Preserves on-disk timestamps
 /// and last_smoke_result if the incoming record doesn't set them, so
 /// re-instrumenting doesn't erase prior verification history.
+/// Merge harness state into the on-disk record.
+///
+/// Currently reached only from this module's tests -- the install path writes
+/// state inline. Kept because the merge semantics are the tested contract.
+#[allow(dead_code)]
 pub fn upsert_state(
     harnesses_dir: &Path,
     incoming: HarnessState,

@@ -1,4 +1,4 @@
-use ed25519_dalek::{Signature as DalekSignature, Verifier as DalekVerifier, VerifyingKey};
+use ed25519_dalek::{Signature as DalekSignature, VerifyingKey};
 use std::collections::HashMap;
 
 use crate::attestation::{

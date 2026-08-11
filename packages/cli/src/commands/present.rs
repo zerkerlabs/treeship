@@ -604,9 +604,10 @@ pub fn verify_presentation(
     Ok(())
 }
 
-/// Verify the staple offline: checkpoint signature against pinned
-/// hub_checkpoint roots, then the card's inclusion in that signed root.
-/// Returns (report line, verified, age in seconds when computable).
+// The offline staple check this file used to hold (checkpoint signature
+// against pinned roots, then card inclusion in that signed root) now lives in
+// commands/merkle.rs. Its doc comment outlived it here and, after the blank
+// line, was attaching to `normalize_agent_uri`.
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 

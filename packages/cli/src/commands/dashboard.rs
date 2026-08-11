@@ -521,7 +521,7 @@ fn session_row(pkg_dir: &Path, treeship_id: &str, treeship_name: &str) -> Option
     let failed_commands = se
         .processes
         .iter()
-        .filter(|p| p.exit_code.map_or(false, |code| code != 0))
+        .filter(|p| p.exit_code.is_some_and(|code| code != 0))
         .count();
     let has_daemon_evidence = receipt
         .timeline
@@ -1428,7 +1428,7 @@ fn build_agent_work(state: &DashboardState, rows: &[SessionRow]) -> Vec<AgentWor
                 .processes
                 .iter()
                 .filter(|p| p.agent_instance_id == node.agent_instance_id)
-                .filter(|p| p.exit_code.map_or(false, |code| code != 0))
+                .filter(|p| p.exit_code.is_some_and(|code| code != 0))
                 .count();
             let sensitive = receipt
                 .side_effects

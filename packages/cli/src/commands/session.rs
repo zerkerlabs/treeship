@@ -56,10 +56,6 @@ fn session_dir() -> Option<PathBuf> {
     session_path().and_then(|p| p.parent().map(|d| d.to_path_buf()))
 }
 
-fn sessions_dir() -> Option<PathBuf> {
-    session_dir().map(|d| d.join("sessions"))
-}
-
 fn home_dir() -> Option<PathBuf> {
     home::home_dir().and_then(|p| p.canonicalize().ok())
 }
@@ -93,6 +89,9 @@ impl CloseLock {
         let lock_path = ts_dir.join("session.close.lock");
         let file = std::fs::OpenOptions::new()
             .create(true)
+            // Lock file: contents are never read, so never truncate it out
+            // from under a concurrent holder.
+            .truncate(false)
             .read(true)
             .write(true)
             .open(&lock_path)?;
@@ -588,14 +587,13 @@ pub fn status(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std
         None => 0,
     };
 
-    if !root_verified {
-        if manifest.root_artifact_id.is_some() {
+    if !root_verified
+        && manifest.root_artifact_id.is_some() {
             printer.warn(
                 "session root artifact not found in storage (file may have been modified)",
                 &[],
             );
         }
-    }
 
     if artifact_count != manifest.artifact_count && manifest.artifact_count != 0 {
         printer.warn(
@@ -641,7 +639,7 @@ pub fn status(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std
 // session status --watch (live TUI)
 // ---------------------------------------------------------------------------
 
-pub fn watch(config: Option<&str>, _printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
+pub fn watch(_config: Option<&str>, _printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     use std::collections::BTreeMap;
     use std::io::Write;
 
@@ -692,7 +690,6 @@ pub fn watch(config: Option<&str>, _printer: &Printer) -> Result<(), Box<dyn std
     };
 
     let mut stdout = std::io::stdout();
-    let mut last_count = 0u64;
 
     loop {
         // Read events
@@ -876,7 +873,7 @@ pub fn watch(config: Option<&str>, _printer: &Printer) -> Result<(), Box<dyn std
         // Security summary
         writeln!(stdout, "\x1b[1m SECURITY\x1b[0m\r")?;
         let sr = if sensitive_reads == 0 {
-            format!("\x1b[32m\u{2713} 0 sensitive reads\x1b[0m")
+            "\x1b[32m\u{2713} 0 sensitive reads\x1b[0m".to_string()
         } else {
             format!(
                 "\x1b[33m\u{26a0} {} sensitive read{}\x1b[0m",
@@ -885,7 +882,7 @@ pub fn watch(config: Option<&str>, _printer: &Printer) -> Result<(), Box<dyn std
             )
         };
         let ec = if external_calls == 0 {
-            format!("\x1b[32m\u{2713} 0 external calls\x1b[0m")
+            "\x1b[32m\u{2713} 0 external calls\x1b[0m".to_string()
         } else {
             format!(
                 "\x1b[33m\u{26a0} {} external call{}\x1b[0m",
@@ -894,7 +891,7 @@ pub fn watch(config: Option<&str>, _printer: &Printer) -> Result<(), Box<dyn std
             )
         };
         let fc = if failed_cmds == 0 {
-            format!("\x1b[32m\u{2713} 0 failed commands\x1b[0m")
+            "\x1b[32m\u{2713} 0 failed commands\x1b[0m".to_string()
         } else {
             format!(
                 "\x1b[31m\u{2717} {} failed command{}\x1b[0m",
@@ -919,7 +916,6 @@ pub fn watch(config: Option<&str>, _printer: &Printer) -> Result<(), Box<dyn std
         )?;
 
         stdout.flush()?;
-        last_count = event_count as u64;
 
         // If not a TTY, render one frame and exit
         if !is_tty {
@@ -2100,9 +2096,7 @@ pub fn report(
                     package_digest.as_deref(),
                     &verification_status,
                     &warnings,
-                    Some(&format!(
-                        "hub not attached -- run `treeship hub attach` to publish; receipt verifies locally"
-                    )),
+                    Some("hub not attached -- run `treeship hub attach` to publish; receipt verifies locally"),
                     None,
                     printer,
                 );
@@ -2239,7 +2233,7 @@ pub fn report(
         &verification_status,
         &warnings,
         None,
-        Some((hub_name.as_ref(), agents, events)),
+        Some((hub_name, agents, events)),
         printer,
     )
 }

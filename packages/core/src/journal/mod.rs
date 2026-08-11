@@ -197,6 +197,7 @@ fn safe_name(s: &str) -> String {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Default)]
 pub struct Head {
     /// 1-indexed; 0 means "no records yet."
     pub index: u64,
@@ -206,15 +207,6 @@ pub struct Head {
     pub updated_at: String,
 }
 
-impl Default for Head {
-    fn default() -> Self {
-        Self {
-            index: 0,
-            digest: String::new(),
-            updated_at: String::new(),
-        }
-    }
-}
 
 fn read_head(j: &Journal) -> Result<Head, JournalError> {
     let path = j.current_head_path();

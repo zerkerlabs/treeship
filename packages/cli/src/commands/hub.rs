@@ -347,7 +347,7 @@ pub fn ls(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::er
         "{:<16} {:<24} {:<32} {}",
         "NAME", "HUB ID", "ENDPOINT", "STATUS"
     ));
-    printer.info(&format!("{}", "-".repeat(80)));
+    printer.info(&"-".repeat(80).to_string());
 
     let active = ctx.config.active_hub.as_deref();
 
@@ -605,7 +605,7 @@ pub fn open(
     let resp: serde_json::Value = ureq::post(&session_url)
         .set("Authorization", &format!("DPoP {}", entry.hub_id))
         .set("DPoP", &dpop_jwt)
-        .send_json(&serde_json::json!({}))?
+        .send_json(serde_json::json!({}))?
         .into_json()?;
 
     let token = resp["token"]

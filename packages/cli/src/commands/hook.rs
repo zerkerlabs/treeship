@@ -178,11 +178,7 @@ pub fn post(
 
     // Elapsed time
     let now_ms = epoch_ms();
-    let elapsed_ms = if now_ms > start_ms {
-        now_ms - start_ms
-    } else {
-        0
-    };
+    let elapsed_ms = now_ms.saturating_sub(start_ms);
 
     // Open treeship context (loads keys + storage)
     let ctx = ctx::open(config_override)?;
@@ -231,7 +227,7 @@ pub fn post(
         payload_type: pt,
         key_id: signer.key_id().to_string(),
         signed_at: stmt.timestamp.clone(),
-        parent_id: parent_id,
+        parent_id,
         envelope: result.envelope,
         hub_url: None,
     })?;
