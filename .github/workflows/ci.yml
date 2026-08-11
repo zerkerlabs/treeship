@@ -179,6 +179,11 @@ jobs:
           - packages/verify-js
           - bridges/mcp
           - bridges/a2a
+          # Runs the shared redaction vectors (tests/vectors/redaction.json)
+          # against the plugin's TypeScript redactor. The Rust CLI runs the
+          # same file. Without both in CI the two copies drift silently --
+          # receipts keep being produced, they just stop being safe.
+          - integrations/openclaw-plugin
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4

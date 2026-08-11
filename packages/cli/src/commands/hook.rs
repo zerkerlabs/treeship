@@ -28,48 +28,6 @@ fn find_project_config() -> Option<PathBuf> {
     }
 }
 
-/// Sanitize a command string by redacting tokens, keys, passwords, and other
-/// sensitive values that appear as inline environment variables or flags.
-/// Uses simple string matching (no regex crate dependency).
-fn sanitize_command(cmd: &str) -> String {
-    let sensitive_patterns = [
-        "KEY=",
-        "TOKEN=",
-        "SECRET=",
-        "PASSWORD=",
-        "PASSWD=",
-        "AUTH=",
-        "API_KEY=",
-        "STRIPE_KEY=",
-        "OPENAI_API_KEY=",
-        "CREDENTIAL=",
-        "AWS_SECRET",
-        "PRIVATE_KEY=",
-        "ACCESS_KEY=",
-        "--api-key=",
-        "--token=",
-        "--secret=",
-        "--password=",
-        "--auth=",
-        "--api_key=",
-        "--apikey=",
-    ];
-    let parts: Vec<&str> = cmd.split_whitespace().collect();
-    let sanitized: Vec<String> = parts
-        .iter()
-        .map(|part| {
-            let upper = part.to_uppercase();
-            for pattern in &sensitive_patterns {
-                if upper.contains(pattern) {
-                    return "[REDACTED]".to_string();
-                }
-            }
-            part.to_string()
-        })
-        .collect();
-    sanitized.join(" ")
-}
-
 /// Set file permissions to 0600 (owner read/write only) on Unix.
 #[cfg(unix)]
 fn set_restrictive_permissions(path: &Path) {
@@ -126,7 +84,7 @@ pub fn pre(command: &str, printer: &Printer) -> Result<(), Box<dyn std::error::E
     }
 
     // Sanitize the command before storing to prevent leaking secrets
-    let safe_command = sanitize_command(command);
+    let safe_command = crate::redact::redact_command(command);
 
     // Store pre-execution state for post-hook
     let pending_hook = serde_json::json!({

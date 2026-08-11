@@ -4,6 +4,7 @@ mod ctx;
 mod execution_identity;
 mod otel;
 mod printer;
+mod redact;
 mod templates;
 mod tui;
 
