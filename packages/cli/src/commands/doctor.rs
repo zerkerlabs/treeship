@@ -352,7 +352,7 @@ pub fn run(
     if daemon_running {
         let pid = daemon_pid.unwrap_or(0);
         let uptime = daemon_uptime
-            .map(|s| format_uptime_secs(s))
+            .map(format_uptime_secs)
             .unwrap_or_else(|| "unknown".to_string());
         checks.push(Check::pass(
             "daemon running",

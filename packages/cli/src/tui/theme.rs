@@ -29,6 +29,10 @@ pub const DIM: Color = Color::Rgb(100, 100, 100);
 /// The seal metal (#C6A972). Used for the TREESHIP wordmark.
 pub const BRONZE: Color = Color::Rgb(198, 169, 114);
 /// The cool accent (#37454F), brightened for legibility on a dark terminal.
+/// Unread today. This table mirrors `design/tokens.json`, so a token stays
+/// here whether or not a view happens to use it -- a palette with holes in it
+/// is how the TUI drifts from the design system.
+#[allow(dead_code)]
 pub const STEEL: Color = Color::Rgb(122, 148, 163);
 
 // --- Aliases matching the names the views read at call sites ---

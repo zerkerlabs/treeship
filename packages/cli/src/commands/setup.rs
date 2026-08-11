@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command as ProcCommand;
 
 use crate::commands::cards::{self, AgentCard, CardStatus};
-use crate::commands::discovery::{self, DiscoveredAgent, Env};
+use crate::commands::discovery::{self, Env};
 use crate::ctx;
 use crate::printer::Printer;
 
@@ -435,8 +435,10 @@ struct SmokeSummary {
 }
 
 fn populate_card_counts(result: &mut SetupResult, cards_list: &[AgentCard]) {
-    let mut c = CardCounts::default();
-    c.total = cards_list.len();
+    let mut c = CardCounts {
+        total: cards_list.len(),
+        ..Default::default()
+    };
     for card in cards_list {
         match card.status {
             CardStatus::Draft => c.draft += 1,

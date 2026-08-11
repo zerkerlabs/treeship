@@ -142,8 +142,7 @@ fn wildcard_match(pattern: &str, value: &str) -> bool {
 ///   "Cargo.toml"   -- exact match
 fn path_matches(pattern: &str, path: &str) -> bool {
     // Handle directory glob: "src/**" matches "src/foo.rs", "src/bar/baz.ts"
-    if pattern.ends_with("/**") {
-        let prefix = &pattern[..pattern.len() - 3];
+    if let Some(prefix) = pattern.strip_suffix("/**") {
         return path.starts_with(prefix);
     }
     // Fall through to general wildcard matching

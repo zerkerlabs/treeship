@@ -133,7 +133,7 @@ fn process_alive(_pid: u32) -> bool {
 fn read_start_time(ts: &Path) -> Option<u64> {
     let p = pid_path(ts);
     let txt = std::fs::read_to_string(&p).ok()?;
-    let parts: Vec<&str> = txt.trim().split_whitespace().collect();
+    let parts: Vec<&str> = txt.split_whitespace().collect();
     if parts.len() >= 2 {
         parts[1].parse::<u64>().ok()
     } else {
@@ -1005,7 +1005,7 @@ pub fn daemon_info() -> (bool, Option<u32>, Option<u64>) {
     };
 
     let pid = read_pid(&ts);
-    let running = pid.map(|p| process_alive(p)).unwrap_or(false);
+    let running = pid.map(process_alive).unwrap_or(false);
     let uptime = if running {
         read_start_time(&ts).map(|start| epoch_secs().saturating_sub(start))
     } else {

@@ -589,7 +589,7 @@ pub fn verify_hub_checkpoint_signature(
 ) -> HubCheckpointVerification {
     use crate::trust::TrustRootKind;
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+    use ed25519_dalek::{Signature, VerifyingKey};
 
     if cp.checkpoint_kind != CheckpointKind::HubOrg {
         return HubCheckpointVerification::NotHubKind;

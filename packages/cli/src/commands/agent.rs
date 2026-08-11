@@ -141,8 +141,7 @@ fn mint_cert_receipt(
     treeship_core::predicates::validate("agent_cert.v1", Some(&payload))
         .map_err(|e| format!("agent_cert.v1 validation failed: {e}"))?;
 
-    let mut stmt =
-        ReceiptStatement::new(&format!("ship://{}", ctx.config.ship_id), "agent_cert.v1");
+    let mut stmt = ReceiptStatement::new(format!("ship://{}", ctx.config.ship_id), "agent_cert.v1");
     stmt.payload = Some(payload);
 
     let result = sign(&receipt_pt, &stmt, signer)?;

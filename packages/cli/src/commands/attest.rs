@@ -21,7 +21,7 @@ use treeship_core::{
 // The grant store is owned by `commands::grant`; emission borrows its layout
 // and read path rather than restating them.
 use crate::commands::grant::{grants_dir_for, read_grant_file, read_grant_id};
-use crate::commands::verify::{check_scope_violation, find_approval_by_nonce, now_rfc3339};
+use crate::commands::verify::{check_scope_violation, now_rfc3339};
 use crate::{ctx, printer::Printer};
 use treeship_core::session::event::EventType;
 
@@ -161,7 +161,7 @@ fn action_v1(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std:
     let mut meta: Option<Value> = args
         .meta
         .as_deref()
-        .map(|m| serde_json::from_str(m))
+        .map(serde_json::from_str)
         .transpose()
         .map_err(|e| format!("--meta is not valid JSON: {e}"))?;
 
@@ -313,7 +313,7 @@ fn action_v2(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std:
     let mut meta: Option<Value> = args
         .meta
         .as_deref()
-        .map(|m| serde_json::from_str(m))
+        .map(serde_json::from_str)
         .transpose()
         .map_err(|e| format!("--meta is not valid JSON: {e}"))?;
 
@@ -884,7 +884,7 @@ fn record_approval_refusal(
     // own predicate, recording is skipped rather than degraded.
     treeship_core::predicates::validate("blocked.v1", Some(&payload)).ok()?;
 
-    let mut stmt = ReceiptStatement::new(&format!("ship://{}", ctx.config.ship_id), "blocked.v1");
+    let mut stmt = ReceiptStatement::new(format!("ship://{}", ctx.config.ship_id), "blocked.v1");
     stmt.payload = Some(payload);
     let signer = ctx.keys.default_signer().ok()?;
     let pt = payload_type("receipt");
@@ -1691,7 +1691,7 @@ pub fn endorsement(
     let meta: Option<Value> = args
         .meta
         .as_deref()
-        .map(|m| serde_json::from_str(m))
+        .map(serde_json::from_str)
         .transpose()
         .map_err(|e| format!("--meta is not valid JSON: {e}"))?;
 
@@ -1880,7 +1880,7 @@ fn consume_approval(
 fn reserve_in_journal(
     ctx: &ctx::Ctx,
     grant_id: &str,
-    grant: &ApprovalStatement,
+    _grant: &ApprovalStatement,
     action: &ActionStatement,
     nonce_digest: String,
     max_uses: Option<u32>,

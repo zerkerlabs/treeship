@@ -38,6 +38,7 @@ pub struct FileAccess {
     ///                     close to catch files an agent edited outside any
     ///                     captured tool channel. Lowest direct trust but
     ///                     highest completeness guarantee.
+    ///
     /// Absent on legacy receipts that predate this field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,

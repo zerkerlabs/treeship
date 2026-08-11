@@ -6,7 +6,7 @@
 //! equivalent for AI agents.
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use ed25519_dalek::{Signature as DalekSignature, Verifier as DalekVerifier, VerifyingKey};
+use ed25519_dalek::{Signature as DalekSignature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 
 /// Agent identity: who the agent is.

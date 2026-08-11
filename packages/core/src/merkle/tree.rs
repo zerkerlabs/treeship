@@ -253,7 +253,7 @@ impl MerkleTree {
         while level.len() > 1 {
             // RFC 9162: if idx has a sibling, add it to the proof path.
             // If idx is the unpaired last node, it promotes without a sibling step.
-            if idx + 1 < level.len() && idx % 2 == 0 {
+            if idx + 1 < level.len() && idx.is_multiple_of(2) {
                 // Sibling is to the right
                 path.push(ProofStep {
                     direction: Direction::Right,
@@ -271,7 +271,7 @@ impl MerkleTree {
             // Move up: compute parent hashes (RFC 9162 promotion). The
             // tree-version invariant guarantees hash_internal cannot
             // return UnknownVersion.
-            let mut next_level = Vec::with_capacity((level.len() + 1) / 2);
+            let mut next_level = Vec::with_capacity(level.len().div_ceil(2));
             let mut i = 0;
             while i + 1 < level.len() {
                 next_level.push(
@@ -399,7 +399,7 @@ impl MerkleTree {
         }
         let mut level = leaves.to_vec();
         while level.len() > 1 {
-            let mut next_level = Vec::with_capacity((level.len() + 1) / 2);
+            let mut next_level = Vec::with_capacity(level.len().div_ceil(2));
             let mut i = 0;
             while i + 1 < level.len() {
                 // Invariant: tree version validated at construction.
@@ -779,7 +779,7 @@ mod tests {
         let ids = ["art_a", "art_b", "art_c", "art_d"];
         let mut leaves: Vec<[u8; 32]> = ids.iter().map(|id| hash_leaf_v1(id)).collect();
         while leaves.len() > 1 {
-            let mut next = Vec::with_capacity((leaves.len() + 1) / 2);
+            let mut next = Vec::with_capacity(leaves.len().div_ceil(2));
             let mut i = 0;
             while i + 1 < leaves.len() {
                 next.push(hash_internal_v1(&leaves[i], &leaves[i + 1]));

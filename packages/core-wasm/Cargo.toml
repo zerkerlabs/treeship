@@ -38,3 +38,6 @@ zk = ["ark-groth16", "ark-bn254", "ark-serialize", "ark-ec", "ark-ff"]
 # [profile.release.package.treeship-core-wasm]. Leaf-level [profile.release]
 # is silently ignored in a workspace, so we avoid putting it here to prevent
 # future readers from assuming it takes effect.
+
+[lints]
+workspace = true

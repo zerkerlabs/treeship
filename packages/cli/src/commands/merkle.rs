@@ -538,11 +538,7 @@ pub fn status(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std
             short_hash(&cp.root)
         ));
 
-        let uncheckpointed = if total_artifacts > cp.tree_size {
-            total_artifacts - cp.tree_size
-        } else {
-            0
-        };
+        let uncheckpointed = total_artifacts.saturating_sub(cp.tree_size);
         printer.info(&format!(
             "  uncheckpointed:    {} artifacts",
             uncheckpointed
@@ -743,27 +739,6 @@ pub fn publish(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn st
     Ok(())
 }
 
-#[cfg(test)]
-mod publish_tests {
-    use super::is_missing_hub_artifact;
-
-    #[test]
-    fn only_missing_artifact_404_is_skippable() {
-        assert!(is_missing_hub_artifact(
-            404,
-            &serde_json::json!({"error": "artifact not found"})
-        ));
-        assert!(!is_missing_hub_artifact(
-            404,
-            &serde_json::json!({"error": "checkpoint not found"})
-        ));
-        assert!(!is_missing_hub_artifact(
-            403,
-            &serde_json::json!({"error": "artifact not found"})
-        ));
-    }
-}
-
 /// Load the checkpoint immediately before `index` (i.e. `index - 1`), if it
 /// exists on disk. Used to compute the consistency proof from the previous
 /// published tree to the current one.
@@ -901,4 +876,25 @@ fn build_dpop_jwt(
     let sig_b64 = URL_SAFE_NO_PAD.encode(signature.to_bytes());
 
     Ok(format!("{}.{}.{}", header_b64, payload_b64, sig_b64))
+}
+
+#[cfg(test)]
+mod publish_tests {
+    use super::is_missing_hub_artifact;
+
+    #[test]
+    fn only_missing_artifact_404_is_skippable() {
+        assert!(is_missing_hub_artifact(
+            404,
+            &serde_json::json!({"error": "artifact not found"})
+        ));
+        assert!(!is_missing_hub_artifact(
+            404,
+            &serde_json::json!({"error": "checkpoint not found"})
+        ));
+        assert!(!is_missing_hub_artifact(
+            403,
+            &serde_json::json!({"error": "artifact not found"})
+        ));
+    }
 }

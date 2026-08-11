@@ -316,7 +316,7 @@ fn verify_risc0_proof_inner(proof: &serde_json::Value) -> Result<String, String>
     // Each element must be a u8 (0-255). If any element is out of range or not
     // a number, the receipt is structurally invalid.
     let receipt_valid_structure = receipt_arr
-        .map(|arr| arr.iter().all(|v| v.as_u64().map_or(false, |n| n <= 255)))
+        .map(|arr| arr.iter().all(|v| v.as_u64().is_some_and(|n| n <= 255)))
         .unwrap_or(false);
 
     if !receipt_valid_structure {

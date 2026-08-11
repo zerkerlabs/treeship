@@ -13,8 +13,8 @@
 use std::io::{self, Write};
 use std::path::Path;
 
-use crate::commands::discovery::{self, AgentSurface, DiscoveredAgent, Env};
-use crate::commands::harnesses::{self, HarnessManifest, InstallMethod, InstallProfile};
+use crate::commands::discovery::{self, DiscoveredAgent, Env};
+use crate::commands::harnesses::{self, HarnessManifest, InstallMethod};
 use crate::printer::{Format, Printer};
 
 // ---------------------------------------------------------------------------
@@ -470,6 +470,10 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Only the tests construct surfaces directly. Importing here rather than
+    // at module scope keeps `clippy --fix` from stripping it as unused from
+    // the non-test build -- which it did, twice, breaking `cargo test`.
+    use crate::commands::discovery::AgentSurface;
     use std::path::PathBuf;
 
     /// install_via_manifest drives JSON-merge MCP installs against a tmp HOME.

@@ -439,7 +439,7 @@ pub fn run(
                     payload_type: "unknown".into(),
                     actor_or_sys: "\u{2014}".into(),
                     outcome: Outcome::Fail,
-                    reason: Some(format!("not found in local storage")),
+                    reason: Some("not found in local storage".to_string()),
                 });
                 continue;
             }
@@ -837,7 +837,7 @@ fn print_full_timeline(
 
     // Verification summary.
     let sig_count = chain.len();
-    let nonce_checks: Vec<&ArtifactCheck> = checks
+    let _nonce_checks: Vec<&ArtifactCheck> = checks
         .iter()
         .filter(|c| c.payload_type == "nonce-binding")
         .collect();
@@ -851,7 +851,7 @@ fn print_full_timeline(
         .iter()
         .any(|c| c.outcome == Outcome::Fail && c.payload_type != "nonce-binding")
     {
-        printer.red(&format!("\u{2717}  signatures      FAILED"))
+        printer.red("\u{2717}  signatures      FAILED")
     } else {
         printer.green(&format!(
             "\u{2713}  signatures      all {} Ed25519 signatures valid",
@@ -865,7 +865,7 @@ fn print_full_timeline(
         c.outcome == Outcome::Fail
             && c.reason
                 .as_deref()
-                .map_or(false, |r| r.contains("ID mismatch"))
+                .is_some_and(|r| r.contains("ID mismatch"))
     });
     let id_status = if id_fail {
         printer.red("\u{2717}  content IDs     ID mismatch detected")
@@ -886,10 +886,7 @@ fn print_full_timeline(
     //       artifacts; without (b), "no tampering detected" would be a check
     //       we never ran. We only claim tamper-freedom when (b) holds.
     let no_gaps = !checks.iter().any(|c| {
-        c.outcome == Outcome::Fail
-            && c.reason
-                .as_deref()
-                .map_or(false, |r| r.contains("not found"))
+        c.outcome == Outcome::Fail && c.reason.as_deref().is_some_and(|r| r.contains("not found"))
     });
     let chain_ok = no_gaps && linkage_ok;
     let chain_status = if chain_ok {
@@ -1536,7 +1533,7 @@ fn format_num(n: u64) -> String {
     let bytes = s.as_bytes();
     let mut result = String::with_capacity(s.len() + s.len() / 3);
     for (i, &b) in bytes.iter().enumerate() {
-        if i > 0 && (bytes.len() - i) % 3 == 0 {
+        if i > 0 && (bytes.len() - i).is_multiple_of(3) {
             result.push(',');
         }
         result.push(b as char);

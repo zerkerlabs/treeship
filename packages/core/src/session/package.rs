@@ -586,7 +586,7 @@ pub fn verify_package_with_trust(
         }
         let root_bytes = tree.root();
         let recomputed_root = root_bytes.map(|r| format!("mroot_{}", hex::encode(r)));
-        let root_hex = root_bytes.map(|r| hex::encode(r)).unwrap_or_default();
+        let root_hex = root_bytes.map(hex::encode).unwrap_or_default();
 
         if recomputed_root == receipt.merkle.root {
             checks.push(VerifyCheck::pass(
@@ -825,7 +825,7 @@ pub(crate) fn add_approval_evidence_checks(
         .filter_map(|(key, uses)| {
             let max = uses.iter().filter_map(|u| u.max_uses).next()?;
             if (uses.len() as u32) > max {
-                Some((key.clone(), uses.iter().map(|u| *u).collect(), max))
+                Some((key.clone(), uses.to_vec(), max))
             } else {
                 None
             }
@@ -1251,12 +1251,9 @@ pub(crate) fn add_approval_evidence_checks(
             let next_of: HashMap<&str, &Node> = nodes
                 .iter()
                 .filter(|n| !n.prev.is_empty())
-                .map(|n| (n.prev, *(&n)))
+                .map(|n| (n.prev, n))
                 .collect();
-            let start = match genesis.first() {
-                Some(g) => Some(*g),
-                None => None,
-            };
+            let start = genesis.first().copied();
             let mut visited: HashSet<&str> = HashSet::new();
             let mut current = start;
             while let Some(node) = current {

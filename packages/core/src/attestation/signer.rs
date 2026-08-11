@@ -226,7 +226,7 @@ mod tests {
         let secret = original.secret_bytes();
         // `secret` is Zeroizing<[u8; 32]>; deref to the inner array for
         // `from_bytes`'s `&[u8; 32]` parameter.
-        let restored = Ed25519Signer::from_bytes("key_rt", &*secret).unwrap();
+        let restored = Ed25519Signer::from_bytes("key_rt", &secret).unwrap();
 
         assert_eq!(original.public_key_bytes(), restored.public_key_bytes());
 

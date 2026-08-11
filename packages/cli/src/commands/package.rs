@@ -783,11 +783,10 @@ fn print_approval_authority_panel(
                 }
             }
         }
-        let nonce_ok = bundle.uses.iter().all(|u| {
-            grant_nonce_digest
-                .get(&u.grant_id)
-                .map_or(false, |d| d == &u.nonce_digest)
-        });
+        let nonce_ok = bundle
+            .uses
+            .iter()
+            .all(|u| grant_nonce_digest.get(&u.grant_id) == Some(&u.nonce_digest));
         printer.dim_info(&format!(
             "  {} approval-use-nonce-binding    {}",
             if nonce_ok { "✓" } else { "✗" },
@@ -832,7 +831,7 @@ fn print_approval_authority_panel(
                     Some(uid) if use_ids.contains(uid) => {
                         let expected = nonce_digest(raw_nonce);
                         let matched = bundle.uses.iter().find(|u| u.use_id == uid);
-                        if matched.map_or(false, |u| u.nonce_digest == expected) {
+                        if matched.is_some_and(|u| u.nonce_digest == expected) {
                             bound += 1;
                         } else {
                             all_ok = false;
@@ -1054,98 +1053,6 @@ fn print_decision_cards(
     printer.blank();
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn runtime_artifacts_are_hidden() {
-        // Files Treeship writes during capture must not pollute the
-        // user's "files changed" list.
-        for hidden in &[
-            ".treeship/session.json",
-            ".treeship/session.closing",
-            ".treeship/sessions/ssn_abc.treeship",
-            ".treeship/artifacts/foo.bin",
-            ".treeship/tmp/scratch",
-            "/abs/path/to/proj/.treeship/session.json",
-            "../../.treeship/sessions/ssn_xyz.treeship",
-        ] {
-            assert!(
-                is_treeship_runtime_artifact(hidden),
-                "{hidden} should be filtered out"
-            );
-        }
-    }
-
-    #[test]
-    fn user_authored_treeship_files_are_preserved() {
-        // Trust files the user actually authors must remain visible
-        // even though they live under .treeship/.
-        for visible in &[
-            ".treeship/config.yaml",
-            ".treeship/config.json",
-            ".treeship/policy.yaml",
-            ".treeship/declaration.json",
-            ".treeship/agents/agent_abc.json",
-            ".treeship/harnesses/claude-code.json",
-            "/abs/proj/.treeship/policy.yaml",
-        ] {
-            assert!(
-                !is_treeship_runtime_artifact(visible),
-                "{visible} must NOT be filtered out -- it's a user-authored trust file"
-            );
-        }
-    }
-
-    #[test]
-    fn non_treeship_files_pass_through() {
-        for path in &["src/main.rs", "README.md", "/etc/hosts", "package.json"] {
-            assert!(
-                !is_treeship_runtime_artifact(path),
-                "{path} is not a Treeship file and must pass through"
-            );
-        }
-    }
-
-    #[test]
-    fn unknown_treeship_subpath_stays_visible() {
-        // If someone adds a new file under .treeship/ that we don't
-        // explicitly classify, we err on the side of showing it. The
-        // alternative -- silently filtering anything under .treeship/
-        // -- would hide files the user might care about.
-        assert!(!is_treeship_runtime_artifact(
-            ".treeship/something-new.json"
-        ));
-    }
-
-    #[test]
-    fn source_label_maps_known_provenance() {
-        for (input, want) in &[
-            (Some("hook"), "hook"),
-            (Some("mcp"), "mcp"),
-            (Some("git-reconcile"), "git-reconcile"),
-            (Some("shell-wrap"), "shell-wrap"),
-            (Some("session-event-cli"), "session-event-cli"),
-            (Some("daemon-atime"), "daemon-atime"),
-            (Some("future-source"), "unknown"),
-            (None, "unknown"),
-        ] {
-            let f = FileAccess {
-                file_path: "x".into(),
-                agent_instance_id: "a".into(),
-                timestamp: "t".into(),
-                digest: None,
-                operation: None,
-                additions: None,
-                deletions: None,
-                source: input.map(|s| s.to_string()),
-            };
-            assert_eq!(source_label(&f), *want, "input {input:?}");
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // treeship package verify <path>
 // ---------------------------------------------------------------------------
@@ -1308,4 +1215,96 @@ pub fn verify(
     printer.blank();
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_artifacts_are_hidden() {
+        // Files Treeship writes during capture must not pollute the
+        // user's "files changed" list.
+        for hidden in &[
+            ".treeship/session.json",
+            ".treeship/session.closing",
+            ".treeship/sessions/ssn_abc.treeship",
+            ".treeship/artifacts/foo.bin",
+            ".treeship/tmp/scratch",
+            "/abs/path/to/proj/.treeship/session.json",
+            "../../.treeship/sessions/ssn_xyz.treeship",
+        ] {
+            assert!(
+                is_treeship_runtime_artifact(hidden),
+                "{hidden} should be filtered out"
+            );
+        }
+    }
+
+    #[test]
+    fn user_authored_treeship_files_are_preserved() {
+        // Trust files the user actually authors must remain visible
+        // even though they live under .treeship/.
+        for visible in &[
+            ".treeship/config.yaml",
+            ".treeship/config.json",
+            ".treeship/policy.yaml",
+            ".treeship/declaration.json",
+            ".treeship/agents/agent_abc.json",
+            ".treeship/harnesses/claude-code.json",
+            "/abs/proj/.treeship/policy.yaml",
+        ] {
+            assert!(
+                !is_treeship_runtime_artifact(visible),
+                "{visible} must NOT be filtered out -- it's a user-authored trust file"
+            );
+        }
+    }
+
+    #[test]
+    fn non_treeship_files_pass_through() {
+        for path in &["src/main.rs", "README.md", "/etc/hosts", "package.json"] {
+            assert!(
+                !is_treeship_runtime_artifact(path),
+                "{path} is not a Treeship file and must pass through"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_treeship_subpath_stays_visible() {
+        // If someone adds a new file under .treeship/ that we don't
+        // explicitly classify, we err on the side of showing it. The
+        // alternative -- silently filtering anything under .treeship/
+        // -- would hide files the user might care about.
+        assert!(!is_treeship_runtime_artifact(
+            ".treeship/something-new.json"
+        ));
+    }
+
+    #[test]
+    fn source_label_maps_known_provenance() {
+        for (input, want) in &[
+            (Some("hook"), "hook"),
+            (Some("mcp"), "mcp"),
+            (Some("git-reconcile"), "git-reconcile"),
+            (Some("shell-wrap"), "shell-wrap"),
+            (Some("session-event-cli"), "session-event-cli"),
+            (Some("daemon-atime"), "daemon-atime"),
+            (Some("future-source"), "unknown"),
+            (None, "unknown"),
+        ] {
+            let f = FileAccess {
+                file_path: "x".into(),
+                agent_instance_id: "a".into(),
+                timestamp: "t".into(),
+                digest: None,
+                operation: None,
+                additions: None,
+                deletions: None,
+                source: input.map(|s| s.to_string()),
+            };
+            assert_eq!(source_label(&f), *want, "input {input:?}");
+        }
+    }
 }

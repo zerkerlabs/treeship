@@ -218,7 +218,7 @@ pub fn profile(agent: &str, attest: bool, config: Option<&str>, printer: &Printe
         treeship_core::predicates::validate("profile.v1", Some(&payload))
             .map_err(|e| format!("profile.v1 validation failed: {e}"))?;
         let mut stmt =
-            ReceiptStatement::new(&format!("ship://{}", ctx.config.ship_id), "profile.v1");
+            ReceiptStatement::new(format!("ship://{}", ctx.config.ship_id), "profile.v1");
         stmt.payload = Some(payload.clone());
         // The SHIP signs: a profile is the operator's claim about the
         // agent's record, checked by anyone via recompute — not the agent

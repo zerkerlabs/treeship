@@ -152,7 +152,7 @@ fn audit_once(
                     // then index) -- the most recent trusted state.
                     let higher = current_cp
                         .as_ref()
-                        .map_or(true, |c| (cp.tree_size, cp.index) > (c.tree_size, c.index));
+                        .is_none_or(|c| (cp.tree_size, cp.index) > (c.tree_size, c.index));
                     if higher {
                         current_cp = Some(cp);
                     }

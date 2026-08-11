@@ -41,3 +41,6 @@ fs2           = "0.4"
 # tempfile drives the journal tests (PR 2 of v0.9.9) — every test uses
 # an isolated tmpdir for the on-disk store so they can run in parallel.
 tempfile = "3"
+
+[lints]
+workspace = true

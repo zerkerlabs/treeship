@@ -101,7 +101,7 @@ impl Config {
             && self
                 .active_hub
                 .as_deref()
-                .map_or(false, |name| self.hub_connections.contains_key(name))
+                .is_some_and(|name| self.hub_connections.contains_key(name))
     }
 
     /// Get the active hub connection entry, if any.
@@ -307,266 +307,6 @@ fn walk_up_for_project_config<F: Fn(&Path) -> bool>(
             Some(parent) => dir = parent,
             None => return None,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::collections::HashSet;
-
-    fn fake_exists(present: &[&str]) -> impl Fn(&Path) -> bool {
-        let set: HashSet<PathBuf> = present.iter().map(PathBuf::from).collect();
-        move |p: &Path| set.contains(p)
-    }
-
-    #[test]
-    fn walk_up_finds_nearest_project_config() {
-        // /home/u/work/proj/sub  →  finds /home/u/work/proj/.treeship/config.json
-        let global = PathBuf::from("/home/u/.treeship/config.json");
-        let found = walk_up_for_project_config(
-            Path::new("/home/u/work/proj/sub"),
-            &global,
-            fake_exists(&["/home/u/work/proj/.treeship/config.json"]),
-        );
-        assert_eq!(
-            found,
-            Some(PathBuf::from("/home/u/work/proj/.treeship/config.json"))
-        );
-    }
-
-    #[test]
-    fn walk_up_skips_when_only_match_is_global() {
-        // Running from a subdir of $HOME with no project config -- the only
-        // match in the walk is $HOME/.treeship/config.json itself, which is
-        // the global. Must NOT label that as project-local.
-        let global = PathBuf::from("/home/u/.treeship/config.json");
-        let found = walk_up_for_project_config(
-            Path::new("/home/u/Documents"),
-            &global,
-            fake_exists(&["/home/u/.treeship/config.json"]),
-        );
-        assert_eq!(found, None);
-    }
-
-    #[test]
-    fn walk_up_returns_none_when_nothing_matches() {
-        let global = PathBuf::from("/home/u/.treeship/config.json");
-        let found =
-            walk_up_for_project_config(Path::new("/home/u/work/proj"), &global, fake_exists(&[]));
-        assert_eq!(found, None);
-    }
-
-    #[test]
-    fn walk_up_prefers_nearest_over_ancestor() {
-        // Both /a/b/.treeship/config.json and /a/.treeship/config.json exist
-        // -- prefer the nearest.
-        let global = PathBuf::from("/home/u/.treeship/config.json");
-        let found = walk_up_for_project_config(
-            Path::new("/a/b/c"),
-            &global,
-            fake_exists(&["/a/b/.treeship/config.json", "/a/.treeship/config.json"]),
-        );
-        assert_eq!(found, Some(PathBuf::from("/a/b/.treeship/config.json")));
-    }
-
-    // --- portable (relative) store paths -------------------------------------
-
-    /// The bug this prevents: a keystore moved aside keeps pointing at the
-    /// live location, so the "backup" reads whatever replaced it.
-    #[test]
-    fn relative_store_paths_follow_a_moved_keystore() {
-        let home = temp_dir().join("orig");
-        fs::create_dir_all(home.join("keys")).unwrap();
-        let cfg_path = home.join("config.json");
-        fs::write(
-            &cfg_path,
-            serde_json::to_vec_pretty(&serde_json::json!({
-                "ship_id": "ship_portable",
-                "storage_dir": "artifacts",
-                "keys_dir": "keys",
-                "default_key_id": "key_a",
-            }))
-            .unwrap(),
-        )
-        .unwrap();
-
-        let before = load(&cfg_path).expect("relative config loads");
-        assert_eq!(before.keys_dir, home.join("keys").to_string_lossy());
-
-        // Move the whole keystore, exactly as `init` does when it steps aside.
-        let moved = temp_dir().join("moved");
-        fs::create_dir_all(moved.parent().unwrap()).ok();
-        fs::rename(&home, &moved).unwrap();
-
-        let after = load(&moved.join("config.json")).expect("moved config loads");
-        assert_eq!(
-            after.keys_dir,
-            moved.join("keys").to_string_lossy(),
-            "a moved keystore must point at its own keys, not the old location"
-        );
-    }
-
-    /// Absolute paths are load-bearing for every existing install; they
-    /// must keep resolving verbatim.
-    #[test]
-    fn absolute_store_paths_are_left_alone() {
-        let dir = temp_dir();
-        fs::create_dir_all(&dir).unwrap();
-        let cfg_path = write_real_config(&dir, "ship_abs");
-        let cfg = load(&cfg_path).unwrap();
-        assert_eq!(cfg.storage_dir, dir.join("artifacts").to_string_lossy());
-        assert!(cfg.on_disk_paths.is_none(), "no rewrite state for absolute");
-    }
-
-    /// A save must not quietly absolutize a config the user made portable.
-    #[test]
-    fn saving_a_relative_config_keeps_it_relative_on_disk() {
-        let dir = temp_dir();
-        fs::create_dir_all(&dir).unwrap();
-        let cfg_path = dir.join("config.json");
-        fs::write(
-            &cfg_path,
-            serde_json::to_vec_pretty(&serde_json::json!({
-                "ship_id": "ship_rt",
-                "storage_dir": "artifacts",
-                "keys_dir": "keys",
-                "default_key_id": "key_a",
-            }))
-            .unwrap(),
-        )
-        .unwrap();
-
-        let cfg = load(&cfg_path).unwrap();
-        save(&cfg, &cfg_path).unwrap();
-
-        let raw: serde_json::Value = serde_json::from_slice(&fs::read(&cfg_path).unwrap()).unwrap();
-        assert_eq!(raw["keys_dir"], "keys", "round-trip absolutized the path");
-        assert_eq!(raw["storage_dir"], "artifacts");
-        // ...and it still resolves to the right absolute path afterwards.
-        assert_eq!(
-            load(&cfg_path).unwrap().keys_dir,
-            dir.join("keys").to_string_lossy()
-        );
-    }
-
-    // --- extends-chain handling (PR 5.B) ------------------------------------
-
-    fn write_real_config(dir: &Path, ship_id: &str) -> PathBuf {
-        std::fs::create_dir_all(dir).unwrap();
-        let path = dir.join("config.json");
-        let json = serde_json::json!({
-            "ship_id":        ship_id,
-            "name":           null,
-            "storage_dir":    dir.join("artifacts").to_string_lossy(),
-            "keys_dir":       dir.join("keys").to_string_lossy(),
-            "default_key_id": "key_test",
-            "hub_connections": {},
-        });
-        std::fs::write(&path, serde_json::to_vec_pretty(&json).unwrap()).unwrap();
-        path
-    }
-
-    fn write_stub(dir: &Path, extends_path: &Path) -> PathBuf {
-        std::fs::create_dir_all(dir).unwrap();
-        let path = dir.join("config.json");
-        let json = serde_json::json!({
-            "extends": extends_path.to_string_lossy(),
-            "project": true,
-        });
-        std::fs::write(&path, serde_json::to_vec_pretty(&json).unwrap()).unwrap();
-        path
-    }
-
-    fn temp_dir() -> PathBuf {
-        let mut p = std::env::temp_dir();
-        let mut b = [0u8; 8];
-        use rand::RngCore;
-        rand::thread_rng().fill_bytes(&mut b);
-        p.push(format!("treeship-cfgtest-{}", hex::encode(b)));
-        std::fs::create_dir_all(&p).unwrap();
-        p
-    }
-
-    #[test]
-    fn extends_resolves_parent_ship_id() {
-        let root = temp_dir();
-        let parent_dir = root.join("global");
-        let parent = write_real_config(&parent_dir, "ship_parent_xyz");
-
-        let project_dir = root.join("project");
-        let stub = write_stub(&project_dir, &parent);
-
-        let cfg = load(&stub).expect("stub with extends should resolve");
-        assert_eq!(cfg.ship_id, "ship_parent_xyz");
-
-        std::fs::remove_dir_all(&root).ok();
-    }
-
-    #[test]
-    fn extends_self_reference_caught_by_cycle_detection() {
-        let root = temp_dir();
-        let project_dir = root.join("project");
-        std::fs::create_dir_all(&project_dir).unwrap();
-        let stub = project_dir.join("config.json");
-        // Self-reference: extends path == own path.
-        std::fs::write(
-            &stub,
-            serde_json::to_vec_pretty(&serde_json::json!({
-                "extends": stub.to_string_lossy(),
-                "project": true,
-            }))
-            .unwrap(),
-        )
-        .unwrap();
-
-        let err = load(&stub).expect_err("self-referential stub must error");
-        let msg = err.to_string();
-        assert!(
-            msg.contains("cycle") || msg.contains("loops back"),
-            "expected cycle error, got: {msg}",
-        );
-
-        std::fs::remove_dir_all(&root).ok();
-    }
-
-    #[test]
-    fn extends_chain_too_deep_caught() {
-        let root = temp_dir();
-        // Build a chain longer than EXTENDS_MAX_DEPTH.
-        let mut paths: Vec<PathBuf> = Vec::new();
-        // Innermost: a real Config so the chain has a proper terminal.
-        let real_dir = root.join("real");
-        let real = write_real_config(&real_dir, "ship_terminal");
-        paths.push(real);
-
-        for i in 0..(EXTENDS_MAX_DEPTH as usize + 2) {
-            let dir = root.join(format!("stub-{}", i));
-            let stub = write_stub(&dir, paths.last().unwrap());
-            paths.push(stub);
-        }
-
-        let outermost = paths.last().unwrap();
-        let err = load(outermost).expect_err("over-deep chain must error");
-        assert!(err.to_string().contains("chain exceeded"));
-
-        std::fs::remove_dir_all(&root).ok();
-    }
-
-    // --- global_config_path (PR 5.C) ----------------------------------------
-
-    #[test]
-    fn global_config_path_ignores_project_local_walk() {
-        // Even when cwd has a project-local stub, global_config_path
-        // must return the user-level path. The test relies on the
-        // function ignoring cwd entirely; we don't actually need to
-        // chdir to confirm that.
-        let p = global_config_path().expect("home should be resolvable in CI");
-        assert!(
-            p.ends_with(".treeship/config.json"),
-            "expected ~/.treeship/config.json, got {}",
-            p.display(),
-        );
     }
 }
 
@@ -833,5 +573,265 @@ pub fn new_config(
             storage_dir: "artifacts".into(),
             keys_dir: "keys".into(),
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    fn fake_exists(present: &[&str]) -> impl Fn(&Path) -> bool {
+        let set: HashSet<PathBuf> = present.iter().map(PathBuf::from).collect();
+        move |p: &Path| set.contains(p)
+    }
+
+    #[test]
+    fn walk_up_finds_nearest_project_config() {
+        // /home/u/work/proj/sub  →  finds /home/u/work/proj/.treeship/config.json
+        let global = PathBuf::from("/home/u/.treeship/config.json");
+        let found = walk_up_for_project_config(
+            Path::new("/home/u/work/proj/sub"),
+            &global,
+            fake_exists(&["/home/u/work/proj/.treeship/config.json"]),
+        );
+        assert_eq!(
+            found,
+            Some(PathBuf::from("/home/u/work/proj/.treeship/config.json"))
+        );
+    }
+
+    #[test]
+    fn walk_up_skips_when_only_match_is_global() {
+        // Running from a subdir of $HOME with no project config -- the only
+        // match in the walk is $HOME/.treeship/config.json itself, which is
+        // the global. Must NOT label that as project-local.
+        let global = PathBuf::from("/home/u/.treeship/config.json");
+        let found = walk_up_for_project_config(
+            Path::new("/home/u/Documents"),
+            &global,
+            fake_exists(&["/home/u/.treeship/config.json"]),
+        );
+        assert_eq!(found, None);
+    }
+
+    #[test]
+    fn walk_up_returns_none_when_nothing_matches() {
+        let global = PathBuf::from("/home/u/.treeship/config.json");
+        let found =
+            walk_up_for_project_config(Path::new("/home/u/work/proj"), &global, fake_exists(&[]));
+        assert_eq!(found, None);
+    }
+
+    #[test]
+    fn walk_up_prefers_nearest_over_ancestor() {
+        // Both /a/b/.treeship/config.json and /a/.treeship/config.json exist
+        // -- prefer the nearest.
+        let global = PathBuf::from("/home/u/.treeship/config.json");
+        let found = walk_up_for_project_config(
+            Path::new("/a/b/c"),
+            &global,
+            fake_exists(&["/a/b/.treeship/config.json", "/a/.treeship/config.json"]),
+        );
+        assert_eq!(found, Some(PathBuf::from("/a/b/.treeship/config.json")));
+    }
+
+    // --- portable (relative) store paths -------------------------------------
+
+    /// The bug this prevents: a keystore moved aside keeps pointing at the
+    /// live location, so the "backup" reads whatever replaced it.
+    #[test]
+    fn relative_store_paths_follow_a_moved_keystore() {
+        let home = temp_dir().join("orig");
+        fs::create_dir_all(home.join("keys")).unwrap();
+        let cfg_path = home.join("config.json");
+        fs::write(
+            &cfg_path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "ship_id": "ship_portable",
+                "storage_dir": "artifacts",
+                "keys_dir": "keys",
+                "default_key_id": "key_a",
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let before = load(&cfg_path).expect("relative config loads");
+        assert_eq!(before.keys_dir, home.join("keys").to_string_lossy());
+
+        // Move the whole keystore, exactly as `init` does when it steps aside.
+        let moved = temp_dir().join("moved");
+        fs::create_dir_all(moved.parent().unwrap()).ok();
+        fs::rename(&home, &moved).unwrap();
+
+        let after = load(&moved.join("config.json")).expect("moved config loads");
+        assert_eq!(
+            after.keys_dir,
+            moved.join("keys").to_string_lossy(),
+            "a moved keystore must point at its own keys, not the old location"
+        );
+    }
+
+    /// Absolute paths are load-bearing for every existing install; they
+    /// must keep resolving verbatim.
+    #[test]
+    fn absolute_store_paths_are_left_alone() {
+        let dir = temp_dir();
+        fs::create_dir_all(&dir).unwrap();
+        let cfg_path = write_real_config(&dir, "ship_abs");
+        let cfg = load(&cfg_path).unwrap();
+        assert_eq!(cfg.storage_dir, dir.join("artifacts").to_string_lossy());
+        assert!(cfg.on_disk_paths.is_none(), "no rewrite state for absolute");
+    }
+
+    /// A save must not quietly absolutize a config the user made portable.
+    #[test]
+    fn saving_a_relative_config_keeps_it_relative_on_disk() {
+        let dir = temp_dir();
+        fs::create_dir_all(&dir).unwrap();
+        let cfg_path = dir.join("config.json");
+        fs::write(
+            &cfg_path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "ship_id": "ship_rt",
+                "storage_dir": "artifacts",
+                "keys_dir": "keys",
+                "default_key_id": "key_a",
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let cfg = load(&cfg_path).unwrap();
+        save(&cfg, &cfg_path).unwrap();
+
+        let raw: serde_json::Value = serde_json::from_slice(&fs::read(&cfg_path).unwrap()).unwrap();
+        assert_eq!(raw["keys_dir"], "keys", "round-trip absolutized the path");
+        assert_eq!(raw["storage_dir"], "artifacts");
+        // ...and it still resolves to the right absolute path afterwards.
+        assert_eq!(
+            load(&cfg_path).unwrap().keys_dir,
+            dir.join("keys").to_string_lossy()
+        );
+    }
+
+    // --- extends-chain handling (PR 5.B) ------------------------------------
+
+    fn write_real_config(dir: &Path, ship_id: &str) -> PathBuf {
+        std::fs::create_dir_all(dir).unwrap();
+        let path = dir.join("config.json");
+        let json = serde_json::json!({
+            "ship_id":        ship_id,
+            "name":           null,
+            "storage_dir":    dir.join("artifacts").to_string_lossy(),
+            "keys_dir":       dir.join("keys").to_string_lossy(),
+            "default_key_id": "key_test",
+            "hub_connections": {},
+        });
+        std::fs::write(&path, serde_json::to_vec_pretty(&json).unwrap()).unwrap();
+        path
+    }
+
+    fn write_stub(dir: &Path, extends_path: &Path) -> PathBuf {
+        std::fs::create_dir_all(dir).unwrap();
+        let path = dir.join("config.json");
+        let json = serde_json::json!({
+            "extends": extends_path.to_string_lossy(),
+            "project": true,
+        });
+        std::fs::write(&path, serde_json::to_vec_pretty(&json).unwrap()).unwrap();
+        path
+    }
+
+    fn temp_dir() -> PathBuf {
+        let mut p = std::env::temp_dir();
+        let mut b = [0u8; 8];
+        use rand::RngCore;
+        rand::thread_rng().fill_bytes(&mut b);
+        p.push(format!("treeship-cfgtest-{}", hex::encode(b)));
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn extends_resolves_parent_ship_id() {
+        let root = temp_dir();
+        let parent_dir = root.join("global");
+        let parent = write_real_config(&parent_dir, "ship_parent_xyz");
+
+        let project_dir = root.join("project");
+        let stub = write_stub(&project_dir, &parent);
+
+        let cfg = load(&stub).expect("stub with extends should resolve");
+        assert_eq!(cfg.ship_id, "ship_parent_xyz");
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn extends_self_reference_caught_by_cycle_detection() {
+        let root = temp_dir();
+        let project_dir = root.join("project");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        let stub = project_dir.join("config.json");
+        // Self-reference: extends path == own path.
+        std::fs::write(
+            &stub,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "extends": stub.to_string_lossy(),
+                "project": true,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let err = load(&stub).expect_err("self-referential stub must error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("cycle") || msg.contains("loops back"),
+            "expected cycle error, got: {msg}",
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn extends_chain_too_deep_caught() {
+        let root = temp_dir();
+        // Build a chain longer than EXTENDS_MAX_DEPTH.
+        let mut paths: Vec<PathBuf> = Vec::new();
+        // Innermost: a real Config so the chain has a proper terminal.
+        let real_dir = root.join("real");
+        let real = write_real_config(&real_dir, "ship_terminal");
+        paths.push(real);
+
+        for i in 0..(EXTENDS_MAX_DEPTH as usize + 2) {
+            let dir = root.join(format!("stub-{}", i));
+            let stub = write_stub(&dir, paths.last().unwrap());
+            paths.push(stub);
+        }
+
+        let outermost = paths.last().unwrap();
+        let err = load(outermost).expect_err("over-deep chain must error");
+        assert!(err.to_string().contains("chain exceeded"));
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    // --- global_config_path (PR 5.C) ----------------------------------------
+
+    #[test]
+    fn global_config_path_ignores_project_local_walk() {
+        // Even when cwd has a project-local stub, global_config_path
+        // must return the user-level path. The test relies on the
+        // function ignoring cwd entirely; we don't actually need to
+        // chdir to confirm that.
+        let p = global_config_path().expect("home should be resolvable in CI");
+        assert!(
+            p.ends_with(".treeship/config.json"),
+            "expected ~/.treeship/config.json, got {}",
+            p.display(),
+        );
     }
 }

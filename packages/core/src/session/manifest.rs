@@ -5,19 +5,15 @@ use serde::{Deserialize, Serialize};
 /// Session lifecycle mode.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum LifecycleMode {
     /// User explicitly starts and ends the session.
     Manual,
     /// Auto-starts when registered agents begin activity in a watched workspace.
+    #[default]
     AutoWorkspace,
     /// Day-level session with optional mission segments.
     DailyRollup,
-}
-
-impl Default for LifecycleMode {
-    fn default() -> Self {
-        Self::AutoWorkspace
-    }
 }
 
 /// Summary of all participants in a session.
@@ -82,17 +78,13 @@ pub struct ToolInfo {
 /// Session status.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum SessionStatus {
+    #[default]
     Active,
     Completed,
     Failed,
     Abandoned,
-}
-
-impl Default for SessionStatus {
-    fn default() -> Self {
-        Self::Active
-    }
 }
 
 /// Who may mint invitations for a room. Mirrors the Q3 decision in
@@ -100,19 +92,15 @@ impl Default for SessionStatus {
 /// DelegatedTo and Open are explicit opt-in.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[derive(Default)]
 pub enum InvitationAuthority {
     /// Only the room's host key may mint invitations.
+    #[default]
     HostOnly,
     /// The host plus a named list of delegate pubkeys may mint invitations.
     DelegatedTo { delegates: Vec<String> },
     /// Any current participant may mint invitations.
     Open,
-}
-
-impl Default for InvitationAuthority {
-    fn default() -> Self {
-        Self::HostOnly
-    }
 }
 
 /// Room wrapper around a session, per `docs/specs/agent-invitations-rooms.md`
