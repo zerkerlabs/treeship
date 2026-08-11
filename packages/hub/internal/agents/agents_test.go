@@ -28,7 +28,7 @@ func makeEnvelope(t *testing.T, kind string, payload map[string]any, signer stri
 
 func insertReceipt(t *testing.T, database *sql.DB, id, envJSON string, signedAt int64) {
 	t.Helper()
-	if err := db.InsertArtifact(database, &db.Artifact{
+	if _, err := db.InsertArtifact(database, &db.Artifact{
 		ArtifactID:   id,
 		PayloadType:  receiptPayloadType,
 		EnvelopeJSON: envJSON,
@@ -117,7 +117,7 @@ func makeActionEnvelope(t *testing.T, actor, action string) string {
 
 func insertAction(t *testing.T, database *sql.DB, id, envJSON string, signedAt int64) {
 	t.Helper()
-	if err := db.InsertArtifact(database, &db.Artifact{
+	if _, err := db.InsertArtifact(database, &db.Artifact{
 		ArtifactID:   id,
 		PayloadType:  actionPayloadType,
 		EnvelopeJSON: envJSON,

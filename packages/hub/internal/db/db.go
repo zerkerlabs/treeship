@@ -355,20 +355,40 @@ type Artifact struct {
 	DockID       *string `json:"dock_id"`
 }
 
-func InsertArtifact(db *sql.DB, a *Artifact) error {
-	// Idempotent on artifact_id: artifacts are content-addressed, signed
-	// envelopes, so a re-push of the same id is by definition the same
-	// bytes — re-publishing an agent's resolvable set (e.g. `treeship
-	// onboard` running on every agent boot) must not 500 on the primary
-	// key. DO NOTHING rather than DO UPDATE so a colliding id can never
-	// overwrite previously served bytes (same rule as dock_challenges).
-	_, err := db.Exec(
+// InsertArtifact stores an artifact, idempotently on artifact_id.
+//
+// Reports whether this call actually inserted. That return value is the
+// difference between a re-push and a takeover attempt, and the caller needs
+// it: on `false` the stored bytes are somebody else's, so anchoring to Rekor
+// would attach a transparency-log index to an artifact this dock did not
+// write.
+//
+// The old comment here read "artifacts are content-addressed, signed
+// envelopes, so a re-push of the same id is by definition the same bytes."
+// That was an assumption, not a check -- nothing verified that the submitted
+// id described the submitted envelope, so any dock could claim any id and
+// DO NOTHING would silently drop the legitimate upload while returning 200.
+// `internal/contentaddress` now re-derives the id at ingestion, which makes
+// the sentence true. It is enforced there, not assumed here.
+func InsertArtifact(db *sql.DB, a *Artifact) (inserted bool, err error) {
+	// DO NOTHING rather than DO UPDATE: stored bytes are never overwritten,
+	// so even a derivation bug cannot change what an existing id serves.
+	res, err := db.Exec(
 		`INSERT INTO artifacts (artifact_id, payload_type, envelope_json, digest, signed_at, parent_id, hub_url, rekor_index, dock_id)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(artifact_id) DO NOTHING`,
 		a.ArtifactID, a.PayloadType, a.EnvelopeJSON, a.Digest, a.SignedAt, a.ParentID, a.HubURL, a.RekorIndex, a.DockID,
 	)
-	return err
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		// Driver cannot tell us. Report "not inserted" so the caller takes
+		// the conservative path and skips anchoring.
+		return false, nil
+	}
+	return n > 0, nil
 }
 
 func GetArtifact(db *sql.DB, artifactID string) (*Artifact, error) {

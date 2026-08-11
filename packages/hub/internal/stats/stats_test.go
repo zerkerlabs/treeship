@@ -36,7 +36,7 @@ func insertShip(t *testing.T, database *sql.DB, dockID string, createdAt int64) 
 
 func insertArtifact(t *testing.T, database *sql.DB, id string, signedAt int64, dockID *string) {
 	t.Helper()
-	if err := db.InsertArtifact(database, &db.Artifact{
+	if _, err := db.InsertArtifact(database, &db.Artifact{
 		ArtifactID:   id,
 		PayloadType:  "application/vnd.treeship.action.v1+json",
 		EnvelopeJSON: "{}",

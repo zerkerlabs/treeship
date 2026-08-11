@@ -25,13 +25,13 @@ func TestInsertArtifactIdempotent(t *testing.T) {
 		SignedAt:     1,
 		HubURL:       "https://api.example.dev",
 	}
-	if err := InsertArtifact(database, a); err != nil {
+	if _, err := InsertArtifact(database, a); err != nil {
 		t.Fatalf("first insert: %v", err)
 	}
 
 	// Same id again — must not error (this used to bubble up as a PK
 	// violation and a 500 to the pushing client).
-	if err := InsertArtifact(database, a); err != nil {
+	if _, err := InsertArtifact(database, a); err != nil {
 		t.Fatalf("duplicate insert must be a no-op, got: %v", err)
 	}
 
@@ -39,7 +39,7 @@ func TestInsertArtifactIdempotent(t *testing.T) {
 	// previously served bytes.
 	mutated := *a
 	mutated.EnvelopeJSON = `{"payload":"attacker-swapped"}`
-	if err := InsertArtifact(database, &mutated); err != nil {
+	if _, err := InsertArtifact(database, &mutated); err != nil {
 		t.Fatalf("conflicting insert must be a no-op, got: %v", err)
 	}
 	got, err := GetArtifact(database, "art_test_dup")
@@ -173,7 +173,7 @@ func TestCheckpointAndArtifactOwnershipIsPerDock(t *testing.T) {
 
 	dockA := "dck_a"
 	art := &Artifact{ArtifactID: "art_victim", PayloadType: "x", EnvelopeJSON: "{}", Digest: "sha256:a", SignedAt: 1, HubURL: "h", DockID: &dockA}
-	if err := InsertArtifact(database, art); err != nil {
+	if _, err := InsertArtifact(database, art); err != nil {
 		t.Fatalf("insert artifact: %v", err)
 	}
 	cp := &MerkleCheckpoint{RootHex: "ab", TreeSize: 1, Height: 1, SignedAt: "t", SignerKeyID: "k", SignatureB64: "s", PublicKeyB64: "p"}

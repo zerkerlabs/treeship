@@ -20,7 +20,7 @@ func TestVerifyRetiredInsteadOfReturningFalseServerVerdict(t *testing.T) {
 	defer database.Close()
 
 	const id = "art_retired_verify"
-	if err := db.InsertArtifact(database, &db.Artifact{
+	if _, err := db.InsertArtifact(database, &db.Artifact{
 		ArtifactID:   id,
 		PayloadType:  "application/vnd.treeship.action.v1+json",
 		EnvelopeJSON: `{"payload":"signed-bytes-live-here"}`,
