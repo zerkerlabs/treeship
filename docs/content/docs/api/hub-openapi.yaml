@@ -835,9 +835,67 @@ paths:
   /.well-known/treeship/revoked.json:
     get:
       summary: Revocation list
-      description: Signed JSON list of revoked artifact IDs and key fingerprints.
+      description: >-
+        Revoked artifact IDs and key fingerprints. Currently a hardcoded empty
+        list, and unsigned, despite carrying a fresh signed_at. Served with
+        Cache-Control max-age=86400, so a verifier that trusted it would cache
+        "nothing is revoked" for a day. The CLI does not consult it: verify and
+        session both pass NoRevocationSource, so revocation resolves Unknown and
+        an action/v2 mandate degrades to Unverified. Do not treat as
+        authoritative until it is populated and signed.
       operationId: revocationList
       security: []
       responses:
         '200':
           description: Revocation list
+
+  /healthz:
+    get:
+      summary: Liveness probe
+      description: >-
+        Whether the process is up. Always 200 while the process can answer at
+        all; a load balancer uses this to decide whether to restart, not
+        whether to route. Deliberately outside the public rate-limit budget --
+        a probe that 429s gets the instance declared dead while it is merely
+        busy.
+      operationId: healthz
+      security: []
+      responses:
+        '200':
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ok] }
+
+  /readyz:
+    get:
+      summary: Readiness probe
+      description: >-
+        Whether the process can serve. Distinct from liveness: this is false
+        before the listener is up, false while the database is unreachable, and
+        false from the moment a shutdown signal arrives -- which is what takes
+        an instance out of rotation before its connections are cut rather than
+        after. Pings the database, because readiness that checks nothing is
+        liveness with a longer name.
+      operationId: readyz
+      security: []
+      responses:
+        '200':
+          description: Ready to serve
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ready] }
+        '503':
+          description: Draining, or the database is unreachable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [draining, database unavailable] }
