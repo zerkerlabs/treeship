@@ -552,10 +552,39 @@ pub fn pull(
 
     let envelope: treeship_core::attestation::Envelope = serde_json::from_str(envelope_json_str)?;
 
+    // Re-derive identity from the bytes we were handed, and trust that rather
+    // than the fields alongside them. `artifact_id` used to be taken from the
+    // response and written straight to disk, so a hostile Hub controlled a
+    // filesystem path (fixed in `Store::artifact_path` too -- both halves are
+    // needed: one stops the write, this stops the wrong file being stored
+    // under a name that lies about its contents).
+    //
+    // Deriving also makes `art_x` mean the same bytes on both sides. The Hub
+    // performs the identical derivation at ingestion; a mismatch here means
+    // the bytes are not the artifact that was asked for, whatever the
+    // response says.
+    let payload_bytes = URL_SAFE_NO_PAD
+        .decode(envelope.payload.trim_end_matches('='))
+        .map_err(|e| format!("hub returned an envelope whose payload is not base64url: {e}"))?;
+    let pae = treeship_core::attestation::pae(&envelope.payload_type, &payload_bytes);
+    let derived_id = treeship_core::attestation::artifact_id_from_pae(&pae);
+    let derived_digest = treeship_core::attestation::digest_from_pae(&pae);
+
+    if derived_id != id {
+        return Err(format!(
+            "hub returned the wrong artifact: asked for {id}, \
+             the returned bytes derive {derived_id}"
+        )
+        .into());
+    }
+
     let record = treeship_core::storage::Record {
-        artifact_id: resp["artifact_id"].as_str().unwrap_or(id).to_string(),
-        digest: resp["digest"].as_str().unwrap_or("").to_string(),
-        payload_type: resp["payload_type"].as_str().unwrap_or("").to_string(),
+        artifact_id: derived_id,
+        digest: derived_digest,
+        // payload_type is bound into the PAE above, so the derived id already
+        // proves this value; taking it from the envelope rather than the
+        // response body keeps every stored field sourced from signed bytes.
+        payload_type: envelope.payload_type.clone(),
         key_id: envelope
             .signatures
             .first()
