@@ -22,6 +22,9 @@ pub const TYPE_DECISION: &str = "treeship/decision/v1";
 // v0.9.9 Approval Authority schemas. See `approval_use` for details on
 // the journal-side record types and the `replay_check` metadata shape
 // that verify uses to report what level of replay check actually ran.
+mod session_liveness;
+pub use session_liveness::{LivenessVerdict, SessionLivenessStatement, TYPE_SESSION_LIVENESS};
+
 mod approval_use;
 pub use approval_use::{
     approval_revocation_record_digest, approval_use_record_digest,

@@ -1020,6 +1020,18 @@ struct SessionCountersignArgs {
     #[arg(long, value_name = "NONCE")]
     challenge: Option<String>,
 
+    /// RFC 3339 instant you minted --challenge, as printed by
+    /// `treeship session mint-challenge`.
+    ///
+    /// Supply it and the countersign writes a signed `session-liveness/v1`
+    /// artifact recording the window from challenge to answer, so a
+    /// third-party verifier can later see how long that window was. Without
+    /// it the challenge is still enforced, but leaves no durable evidence --
+    /// a reader cannot distinguish a live-challenged join from an
+    /// unchallenged one.
+    #[arg(long, value_name = "RFC3339")]
+    challenge_issued_at: Option<String>,
+
     /// Path to the joining agent's signed response to --challenge (output
     /// of `treeship session answer-challenge`). Use `-` for stdin.
     #[arg(long, value_name = "PATH")]
@@ -2891,6 +2903,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                     format: a.format.clone(),
                     challenge: a.challenge.clone(),
                     challenge_response: a.challenge_response.clone(),
+                    challenge_issued_at: a.challenge_issued_at.clone(),
                 },
                 printer,
             ),

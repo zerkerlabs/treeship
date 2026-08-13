@@ -3,7 +3,7 @@
   "counts": {
     "cli_commands": 34,
     "hub_routes": 22,
-    "wire_types": 113
+    "wire_types": 115
   },
   "cli_commands": [
     "add",
@@ -504,6 +504,11 @@
       "source": "packages/core/src/session/manifest.rs"
     },
     {
+      "name": "LivenessVerdict",
+      "kind": "enum",
+      "source": "packages/core/src/statements/session_liveness.rs"
+    },
+    {
       "name": "Mandate",
       "kind": "struct",
       "source": "packages/core/src/statements/action_v2.rs"
@@ -642,6 +647,11 @@
       "name": "SessionEvent",
       "kind": "struct",
       "source": "packages/core/src/session/event.rs"
+    },
+    {
+      "name": "SessionLivenessStatement",
+      "kind": "struct",
+      "source": "packages/core/src/statements/session_liveness.rs"
     },
     {
       "name": "SessionManifest",
