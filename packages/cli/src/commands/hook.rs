@@ -188,6 +188,7 @@ pub fn post(
         parent_id,
         envelope: result.envelope,
         hub_url: None,
+        anchors: Vec::new(),
     })?;
 
     // Write .last for auto-chaining

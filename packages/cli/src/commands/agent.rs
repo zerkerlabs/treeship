@@ -154,6 +154,7 @@ fn mint_cert_receipt(
         parent_id: None,
         envelope: result.envelope,
         hub_url: None,
+        anchors: Vec::new(),
     })?;
     Ok(())
 }

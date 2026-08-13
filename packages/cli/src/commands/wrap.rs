@@ -269,6 +269,7 @@ pub fn run(
         parent_id: parent_id.clone(),
         envelope: result.envelope,
         hub_url: None,
+        anchors: Vec::new(),
     })?;
 
     // ── 2. Auto-chaining: write .last ──────────────────────────────────

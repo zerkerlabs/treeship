@@ -22,6 +22,42 @@ pub struct Record {
     pub envelope: Envelope,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hub_url: Option<String>,
+    /// External witnesses to this artifact's existence, in the order they
+    /// were obtained.
+    ///
+    /// Separate from `hub_url` because a URL records *that* something was
+    /// pushed and not *when* -- and when is the whole value. A receipt's own
+    /// timestamp is the signer's claim about itself; an anchor is somebody
+    /// else's record that these bytes existed by a given moment, which is
+    /// what makes a timeline hard to fabricate after the fact.
+    ///
+    /// `#[serde(default)]` so receipts written before this field parse
+    /// unchanged: an old artifact has no anchors recorded, which is exactly
+    /// what an empty list means.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub anchors: Vec<RecordAnchor>,
+}
+
+/// One external witness to an artifact, as observed locally.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordAnchor {
+    /// Which mechanism witnessed it: "hub", "rekor", "ots", "tsa".
+    pub mechanism: String,
+    /// RFC 3339, from the *local* clock at the moment the witness responded.
+    ///
+    /// Honest caveat, and the reason this is not the end of the story: this
+    /// is still our own clock. It records when we observed the witness, not
+    /// when the witness says it saw us. It is trustworthy against an actor
+    /// who fabricates a timeline afterwards -- you cannot obtain a Hub or
+    /// Rekor response for bytes you have not written yet -- and not
+    /// trustworthy against one who sets the system clock and anchors in real
+    /// time. Closing that needs the witness's own signed time, which is
+    /// `time-anchoring.md` slices 3-5.
+    pub observed_at: String,
+    /// Witness-side identifier where one exists: a Rekor log index, a Hub
+    /// artifact URL. Lets a verifier go and check independently.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
 }
 
 /// A lightweight index entry — stored in index.json for fast listing
@@ -164,6 +200,18 @@ impl Store {
         self.write(&record)
     }
 
+    /// Record that an external witness saw this artifact.
+    ///
+    /// Appends rather than replaces: two witnesses are strictly better
+    /// evidence than one, and they fail differently -- a Hub anchor requires
+    /// trusting the Hub, an OpenTimestamps anchor does not. Collapsing them
+    /// would discard that difference.
+    pub fn add_anchor(&self, id: &str, anchor: RecordAnchor) -> Result<(), StorageError> {
+        let mut record = self.read(id)?;
+        record.anchors.push(anchor);
+        self.write(&record)
+    }
+
     /// Returns the most recently stored artifact, if any.
     pub fn latest(&self) -> Option<IndexEntry> {
         self.index.read().unwrap().entries.last().cloned()
@@ -236,6 +284,7 @@ mod tests {
                 }],
             },
             hub_url: None,
+            anchors: Vec::new(),
         }
     }
 
@@ -395,6 +444,7 @@ mod path_traversal_tests {
                 signatures: vec![],
             },
             hub_url: None,
+            anchors: Vec::new(),
         }
     }
 

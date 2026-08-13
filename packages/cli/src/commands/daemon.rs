@@ -465,6 +465,7 @@ fn attest_file_change(
         parent_id,
         envelope: result.envelope,
         hub_url: None,
+        anchors: Vec::new(),
     })?;
 
     write_last(&ctx.config.storage_dir, &result.artifact_id);

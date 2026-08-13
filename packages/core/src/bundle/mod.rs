@@ -153,6 +153,8 @@ pub fn create(
         parent_id: None,
         envelope: result.envelope,
         hub_url: None,
+        // Just signed locally; nothing external has witnessed it yet.
+        anchors: Vec::new(),
     };
 
     storage.write(&record)?;
@@ -326,6 +328,9 @@ fn record_from_envelope(
         parent_id,
         envelope: envelope.clone(),
         hub_url: None,
+        // Imported from a bundle. Any anchors the exporter held are their
+        // evidence, not ours -- we record what we witness.
+        anchors: Vec::new(),
     })
 }
 
@@ -379,6 +384,7 @@ mod tests {
                 parent_id: None,
                 envelope: result.envelope,
                 hub_url: None,
+                anchors: Vec::new(),
             })
             .unwrap();
         result.artifact_id

@@ -339,6 +339,7 @@ pub fn approve(
         parent_id: None,
         envelope: result.envelope,
         hub_url: None,
+        anchors: Vec::new(),
     })?;
 
     // Mark the pending file as approved with the nonce
@@ -414,6 +415,7 @@ pub fn deny(
         parent_id: None,
         envelope: result.envelope,
         hub_url: None,
+        anchors: Vec::new(),
     })?;
 
     // Remove the pending file

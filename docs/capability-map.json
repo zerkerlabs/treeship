@@ -3,7 +3,7 @@
   "counts": {
     "cli_commands": 34,
     "hub_routes": 22,
-    "wire_types": 109
+    "wire_types": 113
   },
   "cli_commands": [
     "add",
@@ -229,6 +229,16 @@
       "source": "packages/core/src/session/graph.rs"
     },
     {
+      "name": "Anchor",
+      "kind": "struct",
+      "source": "packages/core/src/verify/anchoring.rs"
+    },
+    {
+      "name": "AnchorCoverage",
+      "kind": "struct",
+      "source": "packages/core/src/verify/anchoring.rs"
+    },
+    {
       "name": "ApprovalConfig",
       "kind": "struct",
       "source": "packages/core/src/rules.rs"
@@ -332,6 +342,11 @@
       "name": "Cost",
       "kind": "struct",
       "source": "packages/core/src/statements/action_v2.rs"
+    },
+    {
+      "name": "Coverage",
+      "kind": "enum",
+      "source": "packages/core/src/verify/anchoring.rs"
     },
     {
       "name": "Custody",
@@ -565,6 +580,11 @@
     },
     {
       "name": "Record",
+      "kind": "struct",
+      "source": "packages/core/src/storage/mod.rs"
+    },
+    {
+      "name": "RecordAnchor",
       "kind": "struct",
       "source": "packages/core/src/storage/mod.rs"
     },

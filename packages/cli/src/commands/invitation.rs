@@ -400,6 +400,7 @@ pub fn invite(
         parent_id: None,
         envelope: sign_result.envelope.clone(),
         hub_url: None,
+        anchors: Vec::new(),
     };
     c.storage.write(&record)?;
 
@@ -673,6 +674,7 @@ pub fn join(
         parent_id: Some(bundle.invitation_id.clone()),
         envelope: pending_env.clone(),
         hub_url: None,
+        anchors: Vec::new(),
     };
     c.storage.write(&record)?;
 
