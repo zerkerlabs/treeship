@@ -1,0 +1,52 @@
+# cargo-audit configuration.
+#
+# CI runs `cargo audit -D warnings`, so anything not listed here fails the
+# build. Every entry below is a decision with a reason and a condition for
+# removing it -- an ignore list without those is just a way to make a scanner
+# quiet, and a quiet scanner is worse than no scanner because it looks like
+# coverage.
+#
+# Before adding an entry, check whether the advisory reaches the shipped
+# binary:
+#
+#     cargo tree -p treeship-cli -i <crate>
+#
+# If it does, it is not a candidate for this file. Fix it or hold the release.
+
+[advisories]
+ignore = [
+    # ---------------------------------------------------------------------
+    # Confined to treeship-zk-risc0 (pre-release, behind the non-default `zk`
+    # feature). Neither reaches `treeship-cli`; both are transitive through
+    # risc0's own dependency chain, so neither can be fixed here.
+    # ---------------------------------------------------------------------
+
+    # RUSTSEC-2023-0071 -- rsa 0.9.10, Marvin timing sidechannel (5.9 medium).
+    #
+    # Path: rsa <- rzup <- risc0-build <- risc0-zkvm <- treeship-zk-risc0.
+    # rzup is risc0's toolchain installer; the RSA use is signature
+    # verification during toolchain download, not anything Treeship signs
+    # with. There is no fixed 0.9 release -- upstream's fix requires a
+    # breaking change -- so this cannot be resolved by updating.
+    #
+    # Remove when: risc0 moves off rsa 0.9, or the `zk` feature is dropped.
+    "RUSTSEC-2023-0071",
+
+    # RUSTSEC-2025-0055 -- tracing-subscriber 0.2.25, ANSI escape sequences in
+    # logged user input can poison terminal output.
+    #
+    # Path: tracing-subscriber <- ark-relations <- ark-crypto-primitives <-
+    # ark-groth16 <- risc0-groth16 <- risc0-zkvm <- treeship-zk-risc0.
+    # Pinned two minor versions back by the arkworks stack; `cargo update`
+    # cannot move it without arkworks releasing against 0.3.
+    #
+    # Remove when: arkworks upgrades to tracing-subscriber 0.3.20+.
+    "RUSTSEC-2025-0055",
+]
+
+# Unmaintained-crate warnings (bincode, derivative, paste, and the `lru` /
+# `rand` / `spin` unsoundness notices) are informational and are NOT ignored
+# here -- CI reports them without failing, so they stay visible. Promoting
+# them to hard failures would mean pinning the whole risc0 tree to whatever
+# its maintainers happen to depend on, which is not a decision this repo can
+# make. They are worth watching, not worth blocking a release on.

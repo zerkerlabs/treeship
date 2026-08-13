@@ -284,13 +284,90 @@ jobs:
         working-directory: docs
         run: npm run build
 
+  deps-rust:
+    name: Dependency audit (Rust)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable (moving branch; pinned to current tip)
+      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked --version ^0.22
+
+      # Advisories are ignored in .cargo/audit.toml, never inline here, so
+      # every exception carries a written reason and a condition for removing
+      # it. An ignore list buried in a CI command is how a scanner goes quiet
+      # without anyone deciding that it should.
+      #
+      # The rule for adding one: if `cargo tree -p treeship-cli -i <crate>`
+      # resolves, it reaches the shipped binary and is not a candidate.
+      - name: cargo audit
+        run: cargo audit
+
+  deps-go:
+    name: Dependency audit (Go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.26.5'
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      # govulncheck reports only vulnerabilities whose affected symbols are
+      # actually reachable from this code, so a finding here is a real call
+      # path rather than a version-range match. That makes it worth failing
+      # on, and it is why the Go toolchain pin above matters -- most of what
+      # it finds is in the standard library the build ships with.
+      - name: govulncheck
+        working-directory: packages/hub
+        run: govulncheck ./...
+
+  deps-js:
+    name: Dependency audit (JS, ${{ matrix.pkg }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        pkg:
+          - packages/sdk-ts
+          - packages/verify-js
+          - bridges/mcp
+          - bridges/a2a
+          - integrations/openclaw-plugin
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20'
+
+      # --omit=dev: a vulnerability in a test runner is not a vulnerability in
+      # anything users install. Auditing dev dependencies at the same severity
+      # is how these gates get switched off.
+      #
+      # docs/ is deliberately absent: docs/.gitignore excludes its lockfile,
+      # so there is nothing reproducible to audit. That gap is tracked as
+      # audit item 14, and committing the lockfile is what closes it.
+      - name: npm audit
+        working-directory: ${{ matrix.pkg }}
+        run: npm audit --omit=dev --audit-level=high
+
   hub:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: '1.22'
+          # go.mod declares `go 1.22` as the minimum language version; this is
+          # the toolchain that actually builds the binary, and it must be a
+          # supported release. 1.22 stopped receiving security fixes, so the
+          # hub was being built by a compiler that would never be patched --
+          # govulncheck reports GO-2026-5856 (crypto/tls) as *called* from
+          # hub code, fixed in 1.26.5.
+          go-version: '1.26.5'
 
       - name: Build Hub
         working-directory: packages/hub
