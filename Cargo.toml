@@ -1,5 +1,5 @@
 [workspace]
-members = ["packages/core", "packages/cli", "packages/core-wasm", "packages/zk-circom", "packages/zk-risc0", "packages/zk-risc0/methods", "packages/vi"]
+members = ["packages/core", "packages/cli", "packages/core-wasm", "packages/zk-circom", "packages/zk-risc0", "packages/zk-risc0/methods", "packages/vi", "packages/rig"]
 default-members = ["packages/core", "packages/cli"]
 resolver = "2"
 

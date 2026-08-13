@@ -476,6 +476,36 @@ jobs:
       - name: Verify treeship-core on crates.io
         run: .github/scripts/wait-for-crates-version.sh treeship-core "${GITHUB_REF_NAME#v}"
 
+      # rig-treeship depends on treeship-core, so it must go second: crates.io
+      # rejects a publish whose dependency version does not yet exist, and the
+      # verify step above is what guarantees it does.
+      - name: Publish rig-treeship
+        run: |
+          set -e
+          VERSION="${GITHUB_REF_NAME#v}"
+          CRATE="rig-treeship"
+
+          if cargo search "$CRATE" --limit 1 | grep -Fq "$CRATE = \"$VERSION\""; then
+            echo "  ✓ $CRATE $VERSION already live on crates.io; skipping publish"
+            exit 0
+          fi
+
+          if PUBLISH_OUTPUT="$(cargo publish -p "$CRATE" 2>&1)"; then
+            echo "$PUBLISH_OUTPUT"
+            exit 0
+          fi
+          echo "$PUBLISH_OUTPUT"
+          if echo "$PUBLISH_OUTPUT" | grep -qE "already (exists|uploaded)"; then
+            echo "  ✓ $CRATE $VERSION publish race: registry reports already exists; treating as success"
+            exit 0
+          fi
+          exit 1
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Verify rig-treeship on crates.io
+        run: .github/scripts/wait-for-crates-version.sh rig-treeship "${GITHUB_REF_NAME#v}"
+
       # treeship-cli is NOT published to crates.io.
       # It's a binary tool with ZK deps that can't satisfy crates.io requirements.
       # Install via: npm install -g treeship (prebuilt binary)

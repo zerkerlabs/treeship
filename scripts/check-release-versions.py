@@ -373,6 +373,7 @@ def collect_sites() -> list[Site]:
         ("packages/core/Cargo.toml", "rust crate treeship-core"),
         ("packages/cli/Cargo.toml", "rust crate treeship-cli"),
         ("packages/core-wasm/Cargo.toml", "rust crate treeship-core-wasm"),
+        ("packages/rig/Cargo.toml", "rust crate rig-treeship"),
     ]:
         sites.append(
             Site(
@@ -383,15 +384,19 @@ def collect_sites() -> list[Site]:
             )
         )
 
-    # Workspace-internal Cargo pin: cli depends on core at the same version.
-    sites.append(
-        Site(
-            "packages/cli/Cargo.toml",
-            "cargo dep treeship-core (in cli)",
-            cargo_dep_version("packages/cli/Cargo.toml", "treeship-core"),
-            lambda v: set_cargo_dep_version("packages/cli/Cargo.toml", "treeship-core", v),
+    # Workspace-internal Cargo pins: crates that depend on core must name the
+    # same version. `cargo publish` puts this literal in the released manifest,
+    # so a stale pin publishes a crate depending on a version that may not
+    # exist yet -- which fails at the registry, after the tag is already cut.
+    for rel in ["packages/cli/Cargo.toml", "packages/rig/Cargo.toml"]:
+        sites.append(
+            Site(
+                rel,
+                f"cargo dep treeship-core (in {rel.split('/')[1]})",
+                cargo_dep_version(rel, "treeship-core"),
+                lambda v, rel=rel: set_cargo_dep_version(rel, "treeship-core", v),
+            )
         )
-    )
 
     # All published npm packages.
     for rel, label in [

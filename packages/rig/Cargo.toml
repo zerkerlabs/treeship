@@ -1,0 +1,43 @@
+[package]
+name = "rig-treeship"
+# Versioned in lockstep with the rest of the workspace, because the release
+# pipeline derives every crate's version from the git tag. This crate exists to
+# wrap `treeship-core`, so "which treeship does this match" is the most useful
+# thing its version can say.
+version = "0.24.0"
+edition = "2021"
+# Matches rust-toolchain.toml and clippy.toml. 1.88 was this crate's MSRV as a
+# standalone repo, where a dedicated CI job built against it. In the workspace
+# nothing does, and an MSRV nobody builds is a guess -- so this states the
+# version that is actually verified on every commit.
+rust-version = "1.94"
+description = "Ed25519-signed Treeship attestations for every Rig tool call: wrap any PortableTool and get a tamper-evident, offline-verifiable receipt chain."
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["treeship", "rig", "attestation", "agents", "provenance"]
+categories = ["cryptography", "development-tools"]
+
+[dependencies]
+# Rig's context-free tool contract (PortableTool). Providers/HTTP not needed here.
+rig = { package = "rig-core", version = "0.41", default-features = false }
+
+# Path + version: the path keeps the workspace building against the core in
+# this tree (so a breaking change here fails CI in the same commit that makes
+# it), and the version is what `cargo publish` puts in the released manifest.
+treeship-core = { version = "0.24.0", path = "../core" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+hex = "0.4"
+thiserror = "2"
+ed25519-dalek = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tempfile = "3"
+
+[lints]
+workspace = true
