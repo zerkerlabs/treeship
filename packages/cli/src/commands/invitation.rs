@@ -155,6 +155,10 @@ pub struct CountersignArgs {
     /// Path to (or `-` for stdin) the joining agent's signed response to
     /// `challenge`, produced by `treeship session answer-challenge`.
     pub challenge_response: Option<String>,
+    /// RFC 3339 instant the host minted `challenge`, as printed by
+    /// `treeship session mint-challenge`. Supplying it is what makes the
+    /// liveness check leave durable, portable evidence.
+    pub challenge_issued_at: Option<String>,
 }
 
 pub struct AnswerChallengeArgs {
@@ -862,6 +866,7 @@ pub fn countersign(
     // before. Supplying only one is refused rather than silently ignored,
     // since a half-supplied challenge is the AI-assisted-development
     // policy's "vacuous pass" failure mode dressed up as a flag.
+    let mut challenge_answered_at: Option<String> = None;
     match (&args.challenge, &args.challenge_response) {
         (None, None) => {}
         (Some(_), None) | (None, Some(_)) => {
@@ -894,7 +899,7 @@ pub fn countersign(
                 .ok_or("participant.joining_agent is not a 32-byte base64url Ed25519 pubkey")?;
             let joiner_vk = ed25519_dalek::VerifyingKey::from_bytes(&joiner_pk_bytes)
                 .map_err(|e| format!("participant.joining_agent pubkey invalid: {e}"))?;
-            check_join_challenge(
+            let answered_at = check_join_challenge(
                 &response,
                 &stmt.session_ref,
                 &args.participant_id,
@@ -903,6 +908,10 @@ pub fn countersign(
                 &joiner_vk,
             )
             .map_err(|e| format!("join-challenge verification failed: {e}; countersign refused"))?;
+            // The return value used to be discarded, which is why the
+            // liveness check left no trace: it ran, it passed, and nobody
+            // outside this process could ever confirm that it had.
+            challenge_answered_at = Some(answered_at);
         }
     }
 
@@ -964,6 +973,66 @@ pub fn countersign(
         }
     }
 
+    // Emit durable liveness evidence when we know both endpoints of the
+    // window. Until now the check ran host-side and vanished: the CLI printed
+    // `challenge_verified: true` to this terminal and nothing reached the
+    // artifact, so a third-party verifier reading the finalized participant
+    // envelope could not tell a live-challenged join from an unchallenged one.
+    //
+    // Signed separately rather than added to the participant statement: that
+    // statement's canonical bytes are covered by two signatures already (the
+    // joining agent's and the host countersign), and a new field would
+    // invalidate both.
+    //
+    // Only written when `--challenge-issued-at` is supplied, because without
+    // it there is no interval to report -- and a liveness artifact that
+    // cannot answer "how long was the window" is the checkmark again with
+    // extra steps.
+    let mut liveness_interval: Option<i64> = None;
+    if let (Some(nonce), Some(answered_at), Some(issued_at)) = (
+        args.challenge.as_deref(),
+        challenge_answered_at.as_deref(),
+        args.challenge_issued_at.as_deref(),
+    ) {
+        let liveness = treeship_core::statements::SessionLivenessStatement::new(
+            &stmt.session_ref,
+            &args.participant_id,
+            &stmt.joining_agent,
+            nonce,
+            issued_at,
+            answered_at,
+        );
+        liveness_interval = liveness.interval_seconds();
+        if liveness_interval.is_none() {
+            // Refuse rather than sign a window that does not make sense: an
+            // answer predating its challenge means a wrong clock or a
+            // fabricated timestamp, and sealing it would launder that.
+            return Err(format!(
+                "refusing to attest liveness: --challenge-issued-at {issued_at:?} is not before \
+                 the response's signed_at {answered_at:?}"
+            )
+            .into());
+        }
+        let signed = treeship_core::attestation::sign(
+            &payload_type("session-liveness"),
+            &liveness,
+            &*host_signer,
+        )?;
+        c.storage.write(&Record {
+            artifact_id: signed.artifact_id.clone(),
+            digest: signed.digest.clone(),
+            payload_type: signed.envelope.payload_type.clone(),
+            key_id: host_signer.key_id().to_string(),
+            signed_at: now_rfc3339(),
+            // Parented to the participant it attests, so a chain walk from
+            // the participant reaches the evidence.
+            parent_id: Some(args.participant_id.clone()),
+            envelope: signed.envelope.clone(),
+            hub_url: None,
+            anchors: Vec::new(),
+        })?;
+    }
+
     let format = Format::from_str(&args.format);
     if format == Format::Json {
         printer.json(&serde_json::json!({
@@ -974,6 +1043,9 @@ pub fn countersign(
             "joining_agent":      stmt.joining_agent,
             "signatures":         2,
             "challenge_verified": challenge_verified,
+            // The number a skeptical reader wants. `null` means no durable
+            // evidence was written -- not the same as a fast join.
+            "liveness_interval_seconds": liveness_interval,
         }));
         return Ok(());
     }
@@ -986,6 +1058,17 @@ pub fn countersign(
             (
                 "challenge_verified",
                 if challenge_verified { "true" } else { "false" },
+            ),
+            (
+                "liveness",
+                &match liveness_interval {
+                    Some(secs) => format!("attested — answered in {secs}s"),
+                    None if challenge_verified => {
+                        "checked, NOT attested (pass --challenge-issued-at to record the window)"
+                            .to_string()
+                    }
+                    None => "not checked".to_string(),
+                },
             ),
         ],
     );
@@ -1143,19 +1226,33 @@ pub fn mint_challenge(
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let nonce = mint_nonce();
+    // Emitted so the host can hand it back at countersign time. The window
+    // from here to the agent's answer is the number a skeptical reader wants,
+    // and it cannot be reconstructed later -- nothing else records when the
+    // nonce was minted.
+    let issued_at = now_rfc3339();
     if args.format == "json" {
         printer.json(&serde_json::json!({
-            "status": "ok",
-            "nonce":  nonce,
-            "bits":   128,
+            "status":    "ok",
+            "nonce":     nonce,
+            "bits":      128,
+            "issued_at": issued_at,
         }));
         return Ok(());
     }
-    printer.success("challenge nonce minted", &[("nonce", &nonce)]);
+    printer.success(
+        "challenge nonce minted",
+        &[("nonce", &nonce), ("issued_at", &issued_at)],
+    );
     printer.blank();
     printer.hint(&format!(
-        "give this to the joining agent, then countersign with the same value:\n  \
-         treeship session answer-challenge <participant_id> --challenge {nonce}"
+        "give the nonce to the joining agent:\n  \
+         treeship session answer-challenge <participant_id> --challenge {nonce}\n\n\
+         then countersign, passing issued_at so the challenge window is recorded:\n  \
+         treeship session countersign <participant_id> \\\n    \
+         --challenge {nonce} \\\n    \
+         --challenge-issued-at {issued_at} \\\n    \
+         --challenge-response <path>"
     ));
     Ok(())
 }

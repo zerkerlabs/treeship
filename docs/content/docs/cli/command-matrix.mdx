@@ -423,6 +423,7 @@ treeship session countersign [OPTIONS] <PARTICIPANT_ID>
 | Option | Description |
 |---|---|
 | `--challenge <NONCE>` | The nonce YOU (the host) issue for the room-join liveness challenge, right before finalizing. Any string; pick something unpredictable. Must be supplied together with --challenge-response |
+| `--challenge-issued-at <RFC3339>` | RFC 3339 instant you minted --challenge, as printed by `treeship session mint-challenge` |
 | `--challenge-response <PATH>` | Path to the joining agent's signed response to --challenge (output of `treeship session answer-challenge`). Use `-` for stdin |
 
 ### `treeship session answer-challenge`
