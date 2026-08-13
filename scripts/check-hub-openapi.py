@@ -25,7 +25,15 @@ def routes_from_router():
     routes = set()
     with open(MAIN_GO) as f:
         src = f.read()
-    for method, path in re.findall(r'^\s*r\.(Get|Post|Put|Delete|Patch)\("(/[^"]*)"', src, re.MULTILINE):
+    # Any receiver, not just `r`. chi's `Route`/`Group` hand you a fresh
+    # router under whatever name the closure picks -- `r.Group(func(pub
+    # chi.Router) { pub.Get(...) })` is idiomatic and the routes inside are
+    # just as real. Hardcoding `r.` silently dropped five endpoints the moment
+    # they were grouped to share a rate limit, and reported them as *stale
+    # documentation* rather than as a parser that could not see them.
+    for _recv, method, path in re.findall(
+        r'^\s*(\w+)\.(Get|Post|Put|Delete|Patch)\("(/[^"]*)"', src, re.MULTILINE
+    ):
         # normalize chi {param} names -> {param} placeholder-insensitive form
         norm = re.sub(r"\{[^}]+\}", "{}", path)
         routes.add((method.upper(), norm))
