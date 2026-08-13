@@ -4,12 +4,14 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/treeship/hub/internal/auth"
+	"github.com/treeship/hub/internal/contentaddress"
 	"github.com/treeship/hub/internal/db"
 	"github.com/treeship/hub/internal/dpop"
 	"github.com/treeship/hub/internal/rekor"
@@ -98,7 +100,31 @@ func (h *Handlers) Push(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hubURL := "https://treeship.dev/verify/" + req.ArtifactID
+	// Re-derive identity from the envelope's own bytes before believing any
+	// of it. Until this existed, `artifact_id`, `digest` and `payload_type`
+	// were stored exactly as submitted and never checked against the
+	// envelope -- so an authenticated dock could upload unrelated bytes
+	// under a legitimate id, win the first-write race, and have the real
+	// upload silently dropped by ON CONFLICT DO NOTHING while both callers
+	// got a 200.
+	derived, err := contentaddress.Check(
+		req.EnvelopeJSON, req.ArtifactID, req.Digest, req.PayloadType)
+	if err != nil {
+		status := http.StatusBadRequest
+		// Log a mismatch: a malformed envelope is a broken client, but
+		// submitted fields that disagree with the bytes is someone probing
+		// the namespace, and that is worth being able to see.
+		if errors.Is(err, contentaddress.ErrMismatch) {
+			log.Printf("SECURITY: dock %s submitted artifact fields that do not match the envelope: %v",
+				dockID, err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	hubURL := "https://treeship.dev/verify/" + derived.ArtifactID
 
 	artifact := &db.Artifact{
 		ArtifactID:   req.ArtifactID,
@@ -111,11 +137,54 @@ func (h *Handlers) Push(w http.ResponseWriter, r *http.Request) {
 		DockID:       &dockID,
 	}
 
-	if err := db.InsertArtifact(h.DB, artifact); err != nil {
+	inserted, err := db.InsertArtifact(h.DB, artifact)
+	if err != nil {
 		log.Printf("insert artifact error: %v", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": "failed to store artifact"})
+		return
+	}
+
+	if !inserted {
+		// Something is already stored under this id. Now that the id is
+		// derived from the bytes, identical bytes are the only ordinary
+		// case -- a genuine re-push, which succeeds idempotently.
+		existing, gerr := db.GetArtifact(h.DB, derived.ArtifactID)
+		if gerr != nil || existing == nil {
+			log.Printf("artifact %s reported as existing but could not be read: %v",
+				derived.ArtifactID, gerr)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to store artifact"})
+			return
+		}
+		if !contentaddress.SameBytes(existing.EnvelopeJSON, req.EnvelopeJSON) {
+			// Two different envelopes deriving one id means a 128-bit
+			// SHA-256 collision or a bug in the derivation. Either way the
+			// stored bytes stay, the caller is told plainly, and -- the part
+			// that matters -- we do not fall through to Rekor and stamp a
+			// transparency-log index onto another dock's artifact.
+			log.Printf("SECURITY: dock %s pushed artifact %s whose bytes differ from the stored copy",
+				dockID, derived.ArtifactID)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"error":       "artifact id already stored with different bytes",
+				"artifact_id": derived.ArtifactID,
+			})
+			return
+		}
+		// Same bytes: idempotent success. Skip re-anchoring -- the existing
+		// artifact already has whatever rekor_index it earned, and a second
+		// anchor would overwrite it for no gain.
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"artifact_id": existing.ArtifactID,
+			"hub_url":     existing.HubURL,
+			"rekor_index": existing.RekorIndex,
+			"duplicate":   true,
+		})
 		return
 	}
 
