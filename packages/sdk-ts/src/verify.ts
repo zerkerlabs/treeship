@@ -88,6 +88,8 @@ async function loadWasm(): Promise<WasmBindings> {
  * or a URL object. The SDK normalizes all four forms into a JSON string
  * before handing off to WASM.
  */
+import { safeFetchText } from "./safe-fetch.js";
+
 export type VerifyTarget = string | URL | Record<string, unknown>;
 
 async function normalizeToJson(target: VerifyTarget): Promise<string> {
@@ -98,11 +100,10 @@ async function normalizeToJson(target: VerifyTarget): Promise<string> {
   if (raw.startsWith("http://") || raw.startsWith("https://")) {
     // Accept both the Hub JSON API path and the human-readable mirror.
     const apiUrl = raw.replace("/receipt/", "/v1/receipt/");
-    const res = await fetch(apiUrl, { headers: { accept: "application/json" } });
-    if (!res.ok) {
-      throw new Error(`fetch ${apiUrl} returned HTTP ${res.status}`);
-    }
-    return await res.text();
+    // Guarded: this used to be a bare fetch of a caller-supplied URL, which
+    // on a server is SSRF -- see safe-fetch.ts for what the guard does and,
+    // more importantly, what it does not.
+    return await safeFetchText(apiUrl);
   }
   return raw;
 }

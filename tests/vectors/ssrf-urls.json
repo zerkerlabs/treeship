@@ -1,0 +1,42 @@
+{
+  "_comment": [
+    "Shared SSRF vectors, applied to two implementations of the same guard:",
+    "  packages/sdk-ts/src/safe-fetch.ts",
+    "  bridges/mcp/src/safe-fetch.ts",
+    "",
+    "Both fetch a caller-supplied receipt URL, so both need the same rule.",
+    "Two copies of a security control drift, and drift here is silent: the",
+    "bridge keeps verifying receipts, it just stops refusing the bad ones.",
+    "",
+    "`blocked` must throw. `allowed` must not -- a guard that rejects real Hub",
+    "URLs closes the hole and the feature together, which is the failure that",
+    "gets a check reverted rather than fixed."
+  ],
+  "blocked": [
+    { "url": "http://169.254.169.254/latest/meta-data/", "why": "AWS/Azure IMDS via link-local" },
+    { "url": "http://[fd00::1]/receipt/art_x", "why": "IPv6 unique-local" },
+    { "url": "http://metadata.google.internal/computeMetadata/v1/", "why": "GCP metadata by name" },
+    { "url": "http://127.0.0.1:6379/receipt/art_x", "why": "loopback, internal Redis" },
+    { "url": "http://localhost:8080/receipt/art_x", "why": "loopback by name" },
+    { "url": "http://[::1]/receipt/art_x", "why": "IPv6 loopback" },
+    { "url": "http://10.0.0.5/receipt/art_x", "why": "RFC 1918" },
+    { "url": "http://172.16.4.4/receipt/art_x", "why": "RFC 1918, the range most often missed" },
+    { "url": "http://192.168.1.1/receipt/art_x", "why": "RFC 1918" },
+    { "url": "http://100.100.100.200/receipt/art_x", "why": "RFC 6598 CGNAT, Alibaba metadata" },
+    { "url": "http://0.0.0.0/receipt/art_x", "why": "this-network, routes to local on some stacks" },
+    { "url": "http://[::ffff:127.0.0.1]/receipt/art_x", "why": "IPv4-mapped IPv6 loopback" },
+    { "url": "http://redis.internal/receipt/art_x", "why": "private suffix" },
+    { "url": "http://db.local/receipt/art_x", "why": "mDNS suffix" },
+    { "url": "http://anything.localhost/receipt/art_x", "why": "RFC 6761 reserves .localhost for loopback" },
+    { "url": "file:///etc/passwd", "why": "non-http scheme turns fetch-a-receipt into arbitrary read" },
+    { "url": "data:application/json,{}", "why": "non-http scheme" },
+    { "url": "http://user:pw@hub.example.com/receipt/art_x", "why": "embedded credentials are not a public artifact" },
+    { "url": "not-a-url", "why": "unparseable" }
+  ],
+  "allowed": [
+    { "url": "https://treeship.dev/receipt/art_0123456789abcdef", "why": "the real thing" },
+    { "url": "https://hub.example.com/v1/receipt/art_x", "why": "a self-hosted Hub" },
+    { "url": "http://93.184.216.34/receipt/art_x", "why": "a public IP literal is legitimate" },
+    { "url": "https://treeship.dev:8443/receipt/art_x", "why": "a non-default port is not private" }
+  ]
+}

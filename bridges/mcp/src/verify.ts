@@ -35,6 +35,8 @@ async function loadWasm(): Promise<WasmBindings> {
 
 export type VerifyTarget = string | URL | Record<string, unknown>;
 
+import { safeFetchText } from './safe-fetch.js';
+
 async function normalizeToJson(target: VerifyTarget): Promise<string> {
   if (typeof target === 'object' && !(target instanceof URL)) {
     return JSON.stringify(target);
@@ -42,9 +44,9 @@ async function normalizeToJson(target: VerifyTarget): Promise<string> {
   const raw = target instanceof URL ? target.toString() : target;
   if (raw.startsWith('http://') || raw.startsWith('https://')) {
     const apiUrl = raw.replace('/receipt/', '/v1/receipt/');
-    const res = await fetch(apiUrl, { headers: { accept: 'application/json' } });
-    if (!res.ok) throw new Error(`fetch ${apiUrl} returned HTTP ${res.status}`);
-    return await res.text();
+    // Guarded -- see safe-fetch.ts. Same rule as the TypeScript SDK, held in
+    // sync by tests/vectors/ssrf-urls.json.
+    return await safeFetchText(apiUrl);
   }
   return raw;
 }
