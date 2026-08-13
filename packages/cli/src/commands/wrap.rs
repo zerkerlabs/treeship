@@ -17,45 +17,16 @@ use treeship_core::{
 
 use crate::{ctx, printer::Printer};
 
-/// Sanitize a command string by redacting tokens, keys, passwords, and other
-/// sensitive values that appear as inline environment variables or flags.
-fn sanitize_command(cmd: &str) -> String {
-    let sensitive_patterns = [
-        "KEY=",
-        "TOKEN=",
-        "SECRET=",
-        "PASSWORD=",
-        "PASSWD=",
-        "AUTH=",
-        "API_KEY=",
-        "STRIPE_KEY=",
-        "OPENAI_API_KEY=",
-        "CREDENTIAL=",
-        "AWS_SECRET",
-        "PRIVATE_KEY=",
-        "ACCESS_KEY=",
-        "--api-key=",
-        "--token=",
-        "--secret=",
-        "--password=",
-        "--auth=",
-        "--api_key=",
-        "--apikey=",
-    ];
-    let parts: Vec<&str> = cmd.split_whitespace().collect();
-    let sanitized: Vec<String> = parts
-        .iter()
-        .map(|part| {
-            let upper = part.to_uppercase();
-            for pattern in &sensitive_patterns {
-                if upper.contains(pattern) {
-                    return "[REDACTED]".to_string();
-                }
-            }
-            part.to_string()
-        })
-        .collect();
-    sanitized.join(" ")
+/// Whether to record a line of raw program output in the receipt.
+///
+/// Off by default. A digest is a claim about output that discloses nothing;
+/// the text itself is a disclosure decision, and disclosure decisions should
+/// be made deliberately by the operator rather than inherited from a default.
+fn record_output_summary() -> bool {
+    matches!(
+        std::env::var("TREESHIP_RECORD_OUTPUT_SUMMARY").as_deref(),
+        Ok("1") | Ok("true")
+    )
 }
 
 pub fn run(
@@ -97,7 +68,7 @@ pub fn run(
     // finished -- and a command that rewrites its own toolchain is exactly
     // the case worth catching.
     let exec_identity =
-        crate::execution_identity::ExecutionIdentity::capture(args, sanitize_command);
+        crate::execution_identity::ExecutionIdentity::capture(args, crate::redact::redact_argv);
 
     // ── 1. Output digest: capture stdout/stderr while streaming ────────
     let start = Instant::now();
@@ -234,7 +205,7 @@ pub fn run(
 
     // ── Build meta and sign ────────────────────────────────────────────
     let raw_command = args.join(" ");
-    let safe_command = sanitize_command(&raw_command);
+    let safe_command = crate::redact::redact_command(&raw_command);
     let mut meta = serde_json::json!({
         "command":        safe_command,
         "exitCode":       exit_code,
@@ -243,8 +214,20 @@ pub fn run(
         "output_lines":   output_lines,
     });
 
-    if !output_summary.is_empty() {
-        meta["output_summary"] = serde_json::Value::String(sanitize_command(&output_summary));
+    // Program output is recorded as a digest, not text. `output_digest` above
+    // already proves what the command produced, so the raw line adds nothing a
+    // verifier needs -- and it is the one field with no structure to redact
+    // from. The old code ran arbitrary stdout through a *command-flag*
+    // denylist, which could only ever match `KEY=value` shapes; a bearer token
+    // in an error message passed straight through into a signed, immutable,
+    // publishable receipt.
+    //
+    // Opt in with TREESHIP_RECORD_OUTPUT_SUMMARY=1 when the output is known to
+    // be safe. Even then it goes through `redact_text`, which is best-effort
+    // and documented as such.
+    if !output_summary.is_empty() && record_output_summary() {
+        meta["output_summary"] =
+            serde_json::Value::String(crate::redact::redact_text(&output_summary));
     }
     if files_changed_count > 0 {
         meta["files_changed"] = serde_json::json!(files_changed_count);

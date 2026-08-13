@@ -22,10 +22,157 @@
 // every tool call is paired (intent, result) rather than result-only.
 
 import { execFile, execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { homedir } from "node:os";
+
+// ---------------------------------------------------------------------------
+// Redaction
+// ---------------------------------------------------------------------------
+
+// Mirrors packages/cli/src/redact.rs. Kept in sync by
+// test/redaction.test.mjs, which runs the shared vector file through both.
+//
+// The 2026-08 audit found this plugin recording `{ command: cmd }` verbatim
+// and then auto-publishing the receipt at session end. A bearer token typed
+// into a shell became a signed, immutable, published artifact.
+//
+// Two changes came out of that. This function is the smaller one: it
+// understands argv structure, so it can redact the argument *after*
+// `--token`, which a substring denylist cannot. The larger one is that the
+// full command is now recorded as a digest and the redacted text is
+// secondary -- a digest still proves which command ran without disclosing it.
+
+const VALUE_FLAGS = new Set([
+  "--token", "--api-key", "--api_key", "--apikey", "--secret", "--password",
+  "--passwd", "--pass", "--auth", "--authorization", "--credential",
+  "--credentials", "--private-key", "--access-key", "--secret-key",
+  "--session-token", "--bearer", "--key", "-p", "-u", "--user", "--header",
+  "-H", "--data-urlencode",
+]);
+
+const SENSITIVE_ENV = [
+  "KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "AUTH", "CREDENTIAL",
+  "SESSION", "COOKIE", "SIGNATURE", "PASSPHRASE",
+];
+
+const SENSITIVE_QUERY = new Set([
+  "token", "access_token", "id_token", "refresh_token", "key", "api_key",
+  "apikey", "secret", "password", "passwd", "auth", "signature", "sig",
+  "x-amz-signature", "sas", "code",
+]);
+
+const CREDENTIAL_PREFIXES = [
+  "sk_live_", "sk_test_", "rk_live_", "pk_live_", "ghp_", "gho_", "ghu_",
+  "ghs_", "ghr_", "github_pat_", "glpat-", "xoxb-", "xoxp-", "xoxa-", "xoxs-",
+  "AKIA", "ASIA", "AIza", "ya29.", "sk-ant-", "sk-proj-", "hf_", "npm_",
+  "dop_v1_", "shpat_", "SG.", "-----BEGIN",
+];
+
+const REDACTED = "[REDACTED]";
+
+function isValueFlag(t: string): boolean {
+  // Must actually look like a flag. Comparing dash-stripped names on both
+  // sides made bare words match: `gh auth login` treated `auth` as `--auth`
+  // and redacted `login`. Over-redaction destroys the evidence a receipt
+  // exists to carry, so the leading dash is required.
+  if (!t.startsWith("-")) return false;
+  const l = t.toLowerCase();
+  if (VALUE_FLAGS.has(l)) return true;
+  const bare = l.replace(/^-+/, "");
+  for (const f of VALUE_FLAGS) if (f.replace(/^-+/, "") === bare) return true;
+  return false;
+}
+
+function redactUrl(tok: string): string | null {
+  const i = tok.indexOf("://");
+  if (i === -1) return null;
+  const scheme = tok.slice(0, i + 3);
+  const rest = tok.slice(i + 3);
+  const slash = rest.indexOf("/");
+  const authority = slash === -1 ? rest : rest.slice(0, slash);
+  const tail = slash === -1 ? "" : rest.slice(slash);
+
+  let out = scheme;
+  const at = authority.lastIndexOf("@");
+  if (at !== -1) {
+    const userinfo = authority.slice(0, at);
+    const host = authority.slice(at + 1);
+    const colon = userinfo.indexOf(":");
+    out += colon === -1
+      ? `${userinfo}@${host}`
+      : `${userinfo.slice(0, colon)}:${REDACTED}@${host}`;
+  } else {
+    out += authority;
+  }
+
+  const q = tail.indexOf("?");
+  if (q === -1) {
+    out += tail;
+  } else {
+    out += tail.slice(0, q) + "?";
+    out += tail.slice(q + 1).split("&").map((pair) => {
+      const eq = pair.indexOf("=");
+      if (eq === -1) return pair;
+      const k = pair.slice(0, eq);
+      return SENSITIVE_QUERY.has(k.toLowerCase()) ? `${k}=${REDACTED}` : pair;
+    }).join("&");
+  }
+  return out === tok ? null : out;
+}
+
+function redactAssignment(tok: string): string | null {
+  const eq = tok.indexOf("=");
+  if (eq === -1) return null;
+  const name = tok.slice(0, eq);
+  // A URL's first `=` is a query parameter, not an assignment.
+  if (name.includes("://") || name.includes("?")) return null;
+  if (isValueFlag(name)) return `${name}=${REDACTED}`;
+  const upper = name.toUpperCase();
+  if (SENSITIVE_ENV.some((f) => upper.includes(f))) return `${name}=${REDACTED}`;
+  return null;
+}
+
+function looksLikeUserinfoPair(tok: string): boolean {
+  const c = tok.indexOf(":");
+  if (c <= 0 || c === tok.length - 1) return false;
+  if (tok.includes("://") || tok.includes("/")) return false;
+  const pass = tok.slice(c + 1);
+  if (/^\d+$/.test(pass)) return false;
+  return true;
+}
+
+export function redactCommand(cmd: string): string {
+  const out: string[] = [];
+  let redactNext = false;
+  for (const tok of cmd.split(/\s+/).filter(Boolean)) {
+    if (redactNext) {
+      redactNext = false;
+      // A flag here means the value was omitted; redacting it hides nothing.
+      if (tok.startsWith("-") && tok.length > 1) { out.push(tok); continue; }
+      out.push(REDACTED);
+      continue;
+    }
+    const asn = redactAssignment(tok);
+    if (asn !== null) { out.push(asn); continue; }
+    if (isValueFlag(tok)) { redactNext = true; out.push(tok); continue; }
+    if (CREDENTIAL_PREFIXES.some((p) => tok.includes(p))) { out.push(REDACTED); continue; }
+    if (tok.includes("://")) {
+      const u = redactUrl(tok);
+      if (u !== null) { out.push(u); continue; }
+    }
+    if (looksLikeUserinfoPair(tok)) { out.push(REDACTED); continue; }
+    out.push(tok);
+  }
+  return out.join(" ");
+}
+
+export function commandDigest(cmd: string): string {
+  return "sha256:" + createHash("sha256").update(cmd, "utf8").digest("hex");
+}
+
 
 // ---------------------------------------------------------------------------
 // OpenClaw SDK types (best-effort). The real types live in `openclaw`'s
@@ -348,7 +495,15 @@ function onAfterToolCall(event: unknown, _ctx: unknown): void {
           "--tool",
           "bash",
           "--meta",
-          JSON.stringify({ command: cmd, phase: "result" }),
+          // Digest first, redacted text second. The digest proves which
+          // command ran and discloses nothing; the redacted text is
+          // best-effort context. Recording `command: cmd` verbatim here is
+          // what the 2026-08 audit found being auto-published.
+          JSON.stringify({
+            command_digest: commandDigest(cmd),
+            command: redactCommand(cmd),
+            phase: "result",
+          }),
           "--agent-name",
           "openclaw",
         ]);
@@ -462,10 +617,21 @@ function onSessionEnd(_ctx: unknown): void {
   ]);
   if (!close.ok) return;
 
-  // Best-effort publish. URL goes nowhere productive from a Gateway-side
-  // process, but we trigger the publish so the agent can read the URL out
-  // of the local receipt on its next session-status check.
-  runAsync(["session", "report"]);
+  // Publishing is opt-in. This used to run unconditionally, which meant a
+  // session's receipt was uploaded to the configured Hub with no operator in
+  // the loop -- so anything the capture path got wrong became a public,
+  // immutable artifact before anyone could look at it. Immutability is the
+  // point of a receipt and the reason an accidental disclosure cannot be
+  // taken back, so the upload needs a deliberate decision behind it.
+  //
+  // The local receipt is still written either way; `treeship session report`
+  // publishes it whenever the operator chooses to.
+  if (
+    process.env.TREESHIP_AUTO_PUBLISH === "1" ||
+    process.env.TREESHIP_AUTO_PUBLISH === "true"
+  ) {
+    runAsync(["session", "report"]);
+  }
 }
 
 function inferProviderFromModel(model: string): string | null {

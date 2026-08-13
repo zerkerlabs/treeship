@@ -116,13 +116,20 @@ impl ExecutionIdentity {
 
     /// Capture identity for `argv` as it is about to be executed.
     ///
-    /// `redact` is applied to every argument before it is stored. Callers
-    /// MUST pass the same redactor used for any other rendering of the same
-    /// command: a receipt that scrubs `command` while recording a verbatim
+    /// `redact` receives the **whole argv** and returns the redacted form.
+    /// Callers MUST pass the same redactor used for any other rendering of the
+    /// same command: a receipt that scrubs `command` while recording a verbatim
     /// `argv` has not protected anything, it has just moved the secret one
-    /// field over. Resolution and digesting use the real values; only what
-    /// is written down is redacted.
-    pub fn capture(argv: &[String], redact: impl Fn(&str) -> String) -> Self {
+    /// field over. Resolution and digesting use the real values; only what is
+    /// written down is redacted.
+    ///
+    /// This takes the sequence rather than mapping over elements, and that is
+    /// the whole point. A per-element redactor cannot see that the argument
+    /// after `--token` is a secret -- it is handed the bare string
+    /// `"secret123"`, which is indistinguishable from any other word. That is
+    /// exactly how the 2026-08 audit found live credentials in `argv` while
+    /// `command` next to it was scrubbed.
+    pub fn capture(argv: &[String], redact: impl Fn(&[String]) -> Vec<String>) -> Self {
         let program = argv.first().map(String::as_str).unwrap_or_default();
         let executable_path = resolve_executable(program);
         let executable_sha256 = executable_path.as_deref().and_then(digest_file);
@@ -130,7 +137,7 @@ impl ExecutionIdentity {
         Self {
             executable_path: executable_path.map(|p| p.to_string_lossy().into_owned()),
             executable_sha256,
-            argv: argv.iter().map(|a| redact(a)).collect(),
+            argv: redact(argv),
             cwd: std::env::current_dir()
                 .ok()
                 .map(|p| p.to_string_lossy().into_owned()),
@@ -244,30 +251,51 @@ mod tests {
             "--env".into(),
             "prod".into(),
         ];
-        let redact = |a: &str| {
-            if a.to_uppercase().contains("TOKEN=") {
-                "[REDACTED]".to_string()
-            } else {
-                a.to_string()
-            }
-        };
-        let id = ExecutionIdentity::capture(&argv, redact);
+        let id = ExecutionIdentity::capture(&argv, crate::redact::redact_argv);
         let serialized = serde_json::to_string(&id).unwrap();
         assert!(
             !serialized.contains("sk-live-SECRET"),
             "secret survived into the receipt: {serialized}"
         );
-        assert_eq!(id.argv[1], "[REDACTED]");
+        // The flag name survives, only its value goes -- `--token=[REDACTED]`
+        // still tells a reader a token was passed, which is evidence.
+        assert_eq!(id.argv[1], "--token=[REDACTED]");
         // Non-secret arguments must survive intact, or the field is useless.
         assert_eq!(id.argv[0], "deploy");
         assert_eq!(id.argv[3], "prod");
     }
 
+    /// The form the 2026-08 audit found leaking: a secret passed as the
+    /// argument *after* a flag rather than joined with `=`.
+    ///
+    /// The previous redactor was applied per element, so it was handed the
+    /// bare string "sk-live-SECRET" with no way to know what it was. Only a
+    /// redactor that sees the whole sequence can catch this.
+    #[test]
+    fn space_separated_secret_argument_is_redacted() {
+        let argv = vec![
+            "deploy".to_string(),
+            "--token".into(),
+            "sk-live-SECRET".into(),
+            "--env".into(),
+            "prod".into(),
+        ];
+        let id = ExecutionIdentity::capture(&argv, crate::redact::redact_argv);
+        let serialized = serde_json::to_string(&id).unwrap();
+        assert!(
+            !serialized.contains("sk-live-SECRET"),
+            "secret survived into the receipt: {serialized}"
+        );
+        assert_eq!(id.argv[2], "[REDACTED]");
+        assert_eq!(id.argv[4], "prod");
+    }
+
     #[test]
     fn resolves_a_program_on_path_to_an_absolute_path() {
-        let id = ExecutionIdentity::capture(&["sh".to_string(), "-c".into(), "true".into()], |a| {
-            a.to_string()
-        });
+        let id = ExecutionIdentity::capture(
+            &["sh".to_string(), "-c".into(), "true".into()],
+            |a: &[String]| a.to_vec(),
+        );
         let path = id.executable_path.expect("sh should resolve on PATH");
         assert!(
             Path::new(&path).is_absolute(),
@@ -278,7 +306,7 @@ mod tests {
 
     #[test]
     fn digests_the_binary_that_would_run() {
-        let id = ExecutionIdentity::capture(&["sh".to_string()], |a| a.to_string());
+        let id = ExecutionIdentity::capture(&["sh".to_string()], |a: &[String]| a.to_vec());
         let digest = id.executable_sha256.expect("sh should be readable");
         assert!(digest.starts_with("sha256:"));
         assert_eq!(digest.len(), "sha256:".len() + 64);
@@ -300,10 +328,14 @@ mod tests {
         }
 
         let first =
-            ExecutionIdentity::capture(&[fake.to_string_lossy().into_owned()], |a| a.to_string());
+            ExecutionIdentity::capture(&[fake.to_string_lossy().into_owned()], |a: &[String]| {
+                a.to_vec()
+            });
         std::fs::write(&fake, b"#!/bin/sh\necho impostor v2\n").unwrap();
         let second =
-            ExecutionIdentity::capture(&[fake.to_string_lossy().into_owned()], |a| a.to_string());
+            ExecutionIdentity::capture(&[fake.to_string_lossy().into_owned()], |a: &[String]| {
+                a.to_vec()
+            });
 
         assert_eq!(first.executable_path, second.executable_path);
         assert_ne!(
@@ -317,9 +349,10 @@ mod tests {
     /// from `rm a b`, and that difference is the entire command.
     #[test]
     fn argv_preserves_argument_boundaries() {
-        let id = ExecutionIdentity::capture(&["sh".to_string(), "a b".into(), "c".into()], |a| {
-            a.to_string()
-        });
+        let id = ExecutionIdentity::capture(
+            &["sh".to_string(), "a b".into(), "c".into()],
+            |a: &[String]| a.to_vec(),
+        );
         assert_eq!(id.argv, vec!["sh", "a b", "c"]);
     }
 
@@ -341,10 +374,10 @@ mod tests {
 
     #[test]
     fn unresolvable_program_yields_no_path_rather_than_a_guess() {
-        let id =
-            ExecutionIdentity::capture(&["ts-definitely-not-a-real-binary-xyz".to_string()], |a| {
-                a.to_string()
-            });
+        let id = ExecutionIdentity::capture(
+            &["ts-definitely-not-a-real-binary-xyz".to_string()],
+            |a: &[String]| a.to_vec(),
+        );
         assert!(id.executable_path.is_none());
         assert!(id.executable_sha256.is_none());
         // argv and cwd are still worth recording.
@@ -355,6 +388,8 @@ mod tests {
     #[test]
     fn default_identity_reports_itself_empty() {
         assert!(ExecutionIdentity::default().is_empty());
-        assert!(!ExecutionIdentity::capture(&["sh".to_string()], |a| a.to_string()).is_empty());
+        assert!(
+            !ExecutionIdentity::capture(&["sh".to_string()], |a: &[String]| a.to_vec()).is_empty()
+        );
     }
 }

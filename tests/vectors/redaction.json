@@ -1,0 +1,131 @@
+{
+  "_comment": [
+    "Shared redaction vectors. Two implementations must agree on these:",
+    "  packages/cli/src/redact.rs            (redact_command)",
+    "  integrations/openclaw-plugin/src/     (redactCommand)",
+    "",
+    "Every entry under `leaks` is a form the pre-2026-08 sanitizer passed",
+    "through verbatim into a signed receipt. The audit found the OpenClaw",
+    "plugin then auto-publishing that receipt, so these are not hypothetical.",
+    "",
+    "`must_not_contain` is the real assertion -- checking for the presence of",
+    "[REDACTED] would pass on an implementation that redacts the wrong token.",
+    "`preserved` guards the opposite failure: a redactor that destroys the",
+    "whole command line hides the secret and the evidence together."
+  ],
+  "leaks": [
+    {
+      "name": "space-separated token flag",
+      "why": "the exact case the old denylist missed: no `=`, so no pattern hit",
+      "input": "curl --token secret123 https://api.example.com",
+      "must_not_contain": ["secret123"],
+      "preserved": ["curl", "--token", "https://api.example.com"]
+    },
+    {
+      "name": "space-separated password flag",
+      "input": "mytool --password hunter2 --verbose",
+      "must_not_contain": ["hunter2"],
+      "preserved": ["mytool", "--verbose"]
+    },
+    {
+      "name": "short user:password pair",
+      "why": "curl -u takes one positional argument containing both halves",
+      "input": "curl -u admin:s3cr3t https://example.com/api",
+      "must_not_contain": ["s3cr3t"],
+      "preserved": ["curl"]
+    },
+    {
+      "name": "signed URL query parameter",
+      "input": "curl https://example.com/obj?signature=SECRETSIG&expires=123",
+      "must_not_contain": ["SECRETSIG"],
+      "preserved": ["expires=123"]
+    },
+    {
+      "name": "URL userinfo password",
+      "why": "the username is evidence and should survive; the password is not",
+      "input": "git clone https://alice:hunter2@github.com/org/repo.git",
+      "must_not_contain": ["hunter2"],
+      "preserved": ["alice", "github.com"]
+    },
+    {
+      "name": "access token as query parameter",
+      "input": "curl https://api.example.com/v1/me?access_token=ya29.SECRETVALUE",
+      "must_not_contain": ["ya29.SECRETVALUE"],
+      "preserved": ["curl"]
+    },
+    {
+      "name": "stripe live key by prefix",
+      "why": "no flag structure to lean on; only the vendor prefix identifies it",
+      "input": "echo sk_live_abcdef123456",
+      "must_not_contain": ["sk_live_abcdef123456"],
+      "preserved": ["echo"]
+    },
+    {
+      "name": "github token by prefix",
+      "input": "gh auth login --with-token ghp_abcdef1234567890",
+      "must_not_contain": ["ghp_abcdef1234567890"],
+      "preserved": ["gh", "auth", "login"]
+    },
+    {
+      "name": "aws access key id by prefix",
+      "input": "aws configure set aws_access_key_id AKIAIOSFODNN7EXAMPLE",
+      "must_not_contain": ["AKIAIOSFODNN7EXAMPLE"],
+      "preserved": ["aws", "configure"]
+    },
+    {
+      "name": "slack bot token by prefix",
+      "input": "curl -d token=xoxb-111-222-abcdef https://slack.com/api/x",
+      "must_not_contain": ["xoxb-111-222-abcdef"],
+      "preserved": ["curl"]
+    },
+    {
+      "name": "inline env assignment",
+      "why": "the one thing the old sanitizer did catch; must not regress",
+      "input": "AWS_SECRET_ACCESS_KEY=abc123secret aws s3 ls",
+      "must_not_contain": ["abc123secret"],
+      "preserved": ["aws", "s3", "ls"]
+    },
+    {
+      "name": "flag-joined value",
+      "input": "deploy --api-key=verysecretvalue --env prod",
+      "must_not_contain": ["verysecretvalue"],
+      "preserved": ["deploy", "prod"]
+    },
+    {
+      "name": "session cookie assignment",
+      "input": "COOKIE=sessionabc123 ./run.sh",
+      "must_not_contain": ["sessionabc123"],
+      "preserved": ["./run.sh"]
+    },
+    {
+      "name": "private key material",
+      "input": "echo -----BEGIN RSA PRIVATE KEY-----",
+      "must_not_contain": ["BEGIN RSA PRIVATE KEY"],
+      "preserved": ["echo"]
+    }
+  ],
+  "benign": [
+    {
+      "name": "cargo build",
+      "why": "over-redaction destroys the evidence value of a receipt",
+      "input": "cargo build --release"
+    },
+    { "name": "git commit", "input": "git commit -m fix" },
+    { "name": "list files", "input": "ls -la /tmp" },
+    { "name": "npm test", "input": "npm run test" },
+    {
+      "name": "plain url",
+      "why": "a URL with no credentials must pass through untouched",
+      "input": "curl https://example.com/health"
+    },
+    {
+      "name": "timestamp is not a user:password pair",
+      "input": "echo 12:30"
+    },
+    {
+      "name": "flag with omitted value does not consume the next flag",
+      "why": "redacting --verbose here would corrupt the record and hide nothing",
+      "input": "tool --token --verbose run"
+    }
+  ]
+}
