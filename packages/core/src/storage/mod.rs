@@ -7,7 +7,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::attestation::{ArtifactId, Envelope};
+use crate::attestation::{parse_artifact_id, ArtifactId, Envelope};
 
 /// The on-disk record for one stored artifact.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +46,10 @@ pub enum StorageError {
     Io(io::Error),
     Json(serde_json::Error),
     EmptyId,
+    /// The id is not a well-formed `art_<32 hex>`. Returned instead of
+    /// touching the filesystem: an id reaches here from a Hub response, and
+    /// one containing `../` used to resolve to a path outside the store.
+    InvalidId(String),
     NotFound(ArtifactId),
 }
 
@@ -55,6 +59,7 @@ impl std::fmt::Display for StorageError {
             Self::Io(e) => write!(f, "storage io: {}", e),
             Self::Json(e) => write!(f, "storage json: {}", e),
             Self::EmptyId => write!(f, "artifact_id must not be empty"),
+            Self::InvalidId(e) => write!(f, "storage: {}", e),
             Self::NotFound(id) => write!(f, "artifact not found: {}", id),
         }
     }
@@ -103,7 +108,7 @@ impl Store {
         }
 
         let json = serde_json::to_vec_pretty(record)?;
-        write_600(&self.artifact_path(&record.artifact_id), &json)?;
+        write_600(&self.artifact_path(&record.artifact_id)?, &json)?;
 
         let mut idx = self.index.write().unwrap();
         let entry = IndexEntry {
@@ -123,7 +128,7 @@ impl Store {
 
     /// Reads an artifact by ID.
     pub fn read(&self, id: &str) -> Result<Record, StorageError> {
-        let path = self.artifact_path(id);
+        let path = self.artifact_path(id)?;
         if !path.exists() {
             return Err(StorageError::NotFound(id.to_string()));
         }
@@ -133,7 +138,9 @@ impl Store {
 
     /// Returns true if an artifact with this ID is stored locally.
     pub fn exists(&self, id: &str) -> bool {
-        self.artifact_path(id).exists()
+        // A malformed id cannot name a stored artifact, so it does not exist.
+        // Deliberately not a filesystem probe on an unvalidated path.
+        self.artifact_path(id).is_ok_and(|p| p.exists())
     }
 
     /// Lists index entries, most recent first.
@@ -162,8 +169,17 @@ impl Store {
         self.index.read().unwrap().entries.last().cloned()
     }
 
-    fn artifact_path(&self, id: &str) -> PathBuf {
-        self.dir.join(format!("{}.json", id))
+    /// Resolve an artifact id to its on-disk path.
+    ///
+    /// Validates the id first. `join` on an attacker-influenced string is a
+    /// path-traversal primitive: `../../x` resolved to a file outside the
+    /// store, and `hub pull` writes whatever `artifact_id` the server sends
+    /// back. `parse_artifact_id` already existed and enforces
+    /// `art_<32 hex>` -- which cannot contain a separator or a dot -- it was
+    /// simply never called on this path.
+    fn artifact_path(&self, id: &str) -> Result<PathBuf, StorageError> {
+        let id = parse_artifact_id(id).map_err(StorageError::InvalidId)?;
+        Ok(self.dir.join(format!("{}.json", id)))
     }
 }
 
@@ -358,5 +374,84 @@ mod tests {
             Some("https://treeship.dev/verify/art_aabbccdd11223344aabbccdd11223344")
         );
         rm(dir);
+    }
+}
+
+#[cfg(test)]
+mod path_traversal_tests {
+    use super::*;
+
+    fn record_with_id(id: &str) -> Record {
+        Record {
+            artifact_id: id.to_string(),
+            digest: "sha256:00".into(),
+            payload_type: "application/vnd.in-toto+json".into(),
+            key_id: "k".into(),
+            signed_at: "2026-01-01T00:00:00Z".into(),
+            parent_id: None,
+            envelope: Envelope {
+                payload: "e30".into(),
+                payload_type: "application/vnd.in-toto+json".into(),
+                signatures: vec![],
+            },
+            hub_url: None,
+        }
+    }
+
+    /// The vulnerability, as it actually behaved.
+    ///
+    /// `hub pull` writes the `artifact_id` the *server* returned, and
+    /// `artifact_path` used to `join` it unvalidated. A malicious or
+    /// compromised Hub could therefore write an attacker-chosen `.json` file
+    /// anywhere the process could write. Before the fix this test's escaped
+    /// file existed.
+    #[test]
+    fn write_cannot_escape_the_store_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store_dir = tmp.path().join("a").join("b").join("store");
+        let store = Store::open(&store_dir).unwrap();
+
+        for id in [
+            "../../escaped",
+            "../../../etc/cron.d/x",
+            "art_/../../escaped",
+            "/tmp/absolute",
+            "..",
+        ] {
+            let err = store.write(&record_with_id(id)).unwrap_err();
+            assert!(
+                matches!(err, StorageError::InvalidId(_)),
+                "id {id:?} should be rejected as malformed, got {err:?}"
+            );
+        }
+
+        let escaped = tmp.path().join("a").join("escaped.json");
+        assert!(!escaped.exists(), "a file was written outside the store");
+        assert!(!tmp.path().join("absolute.json").exists());
+    }
+
+    /// The check must not be so strict it rejects real ids -- a validator that
+    /// blocks everything closes the hole and the feature together.
+    #[test]
+    fn well_formed_ids_still_write_and_read() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Store::open(tmp.path()).unwrap();
+
+        let id = "art_0123456789abcdef0123456789abcdef";
+        store.write(&record_with_id(id)).expect("write a valid id");
+        assert!(store.exists(id));
+        assert_eq!(store.read(id).unwrap().artifact_id, id);
+    }
+
+    /// `exists` took an unvalidated path to the filesystem. It now answers
+    /// false rather than probing, which is also the honest answer: a malformed
+    /// id cannot name a stored artifact.
+    #[test]
+    fn exists_reports_false_for_malformed_ids_without_probing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Store::open(tmp.path()).unwrap();
+        assert!(!store.exists("../../../etc/passwd"));
+        assert!(!store.exists(""));
+        assert!(!store.exists("art_nothex0000000000000000000000zz"));
     }
 }
