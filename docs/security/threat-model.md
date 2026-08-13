@@ -544,8 +544,36 @@ explicitly so that users do not assume defenses that do not exist.
 - **Long-term archival storage of receipts.** Receipts are durable for
   as long as the bytes survive. Treeship makes no claim about preserving
   receipts past the lifetime of the hub or the user's local store.
-  Long-term archival (e.g. anchoring to Bitcoin via OpenTimestamps) is
-  on the research backlog but not implemented.
+  Long-term archival is on the research backlog but not implemented.
+
+- **Timestamps are self-asserted.** A receipt's `timestamp` comes from
+  `SystemTime::now()` on the signing machine and is signed with that
+  machine's own key. So a receipt proves *"this key asserted this"*, not
+  *"this happened then"*. Signing prevents third-party tampering; it does
+  nothing about first-party fabrication, and an actor holding its own key
+  and controlling its own clock can emit a chain claiming any timeline.
+
+  Two frauds follow, and they need different answers. **Inflation**
+  (making work look older or longer than it was) requires backdating, and
+  is defeated by an external anchor -- a Hub checkpoint, Rekor, or
+  OpenTimestamps -- because those cannot be obtained retroactively.
+  **Omission** (presenting a shorter chain and discarding the rest) is not
+  defeated by anchoring at all: the shortened chain is honestly signed and
+  honestly anchored. Detecting omission needs anchors that are
+  *discoverable by identity*, which is the transparency log's property,
+  not an anchor's.
+
+  Neither is on by default today: `--push` is opt-in, checkpoint cadence is
+  specified for rooms only, and verification does not report anchoring
+  coverage. So a verifier currently has no way to tell a continuously
+  witnessed session from one whose timeline is entirely self-asserted.
+
+  This is a real limitation, not a nuance. Any claim that Treeship shows
+  "what an agent actually did" is, on the time axis, currently a claim
+  about what the agent *reported* doing.
+  [`docs/specs/time-anchoring.md`](../specs/time-anchoring.md) specifies
+  the fix -- external witnessing on a cadence, with coverage reported as a
+  first-class verdict rather than a boolean.
 
 - **Compromised dependencies.** A malicious update to `ed25519-dalek`,
   `aes-gcm`, `sha2`, or any other crate in the dependency tree would
