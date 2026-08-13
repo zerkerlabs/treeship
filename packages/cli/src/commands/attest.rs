@@ -249,6 +249,7 @@ fn action_v1(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std:
         parent_id: args.parent_id.clone(),
         envelope: result.envelope.clone(),
         hub_url: None,
+        anchors: Vec::new(),
     };
     ctx.storage.write(&record)?;
     write_last(&ctx.config.storage_dir, &result.artifact_id);
@@ -416,6 +417,7 @@ fn action_v2(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std:
         parent_id: args.parent_id.clone(),
         envelope: result.envelope.clone(),
         hub_url: None,
+        anchors: Vec::new(),
     };
     ctx.storage.write(&record)?;
     write_last(&ctx.config.storage_dir, &result.artifact_id);
@@ -807,6 +809,7 @@ pub fn approval(args: ApprovalArgs, printer: &Printer) -> Result<(), Box<dyn std
         parent_id: None,
         envelope: result.envelope,
         hub_url: None,
+        anchors: Vec::new(),
     })?;
     write_last(&ctx.config.storage_dir, &result.artifact_id);
 
@@ -899,6 +902,7 @@ fn record_approval_refusal(
             parent_id: None,
             envelope: result.envelope,
             hub_url: None,
+            anchors: Vec::new(),
         })
         .ok()?;
     Some(result.artifact_id)
@@ -1010,6 +1014,7 @@ pub fn handoff(args: HandoffArgs, printer: &Printer) -> Result<(), Box<dyn std::
         parent_id: args.artifacts.first().cloned(),
         envelope: result.envelope,
         hub_url: None,
+        anchors: Vec::new(),
     })?;
     write_last(&ctx.config.storage_dir, &result.artifact_id);
 
@@ -1109,6 +1114,7 @@ pub fn receipt(args: ReceiptArgs, printer: &Printer) -> Result<(), Box<dyn std::
         parent_id: args.subject_id.clone(),
         envelope: result.envelope,
         hub_url: None,
+        anchors: Vec::new(),
     })?;
     write_last(&ctx.config.storage_dir, &result.artifact_id);
 
@@ -1471,6 +1477,7 @@ pub fn card(args: CardArgs, printer: &Printer) -> Result<(), Box<dyn std::error:
         parent_id: None,
         envelope: result.envelope,
         hub_url: None,
+        anchors: Vec::new(),
     })?;
     write_last(&ctx.config.storage_dir, &result.artifact_id);
 
@@ -1561,6 +1568,7 @@ pub fn decision(args: DecisionArgs, printer: &Printer) -> Result<(), Box<dyn std
         parent_id: parent,
         envelope: result.envelope,
         hub_url: None,
+        anchors: Vec::new(),
     })?;
 
     // Write .last for auto-chaining
@@ -1721,6 +1729,7 @@ pub fn endorsement(
         parent_id: parent,
         envelope: result.envelope.clone(),
         hub_url: None,
+        anchors: Vec::new(),
     })?;
 
     // Write .last for auto-chaining

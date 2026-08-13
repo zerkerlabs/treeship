@@ -356,6 +356,7 @@ pub fn start(
         parent_id,
         envelope: result.envelope,
         hub_url: None,
+        anchors: Vec::new(),
     })?;
 
     write_last(&ctx.config.storage_dir, &result.artifact_id);
@@ -1092,6 +1093,7 @@ fn mint_session_record(
         parent_id: Some(close_artifact_id.to_string()),
         envelope: result.envelope,
         hub_url: None,
+        anchors: Vec::new(),
     })?;
     write_last(&ctx.config.storage_dir, &result.artifact_id);
 
@@ -1193,6 +1195,7 @@ pub fn close(
         parent_id,
         envelope: result.envelope,
         hub_url: None,
+        anchors: Vec::new(),
     })?;
 
     write_last(&ctx.config.storage_dir, &result.artifact_id);

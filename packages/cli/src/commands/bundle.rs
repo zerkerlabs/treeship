@@ -194,6 +194,7 @@ mod tests {
                 parent_id: None,
                 envelope: signed.envelope,
                 hub_url: None,
+                anchors: Vec::new(),
             })
             .unwrap();
 

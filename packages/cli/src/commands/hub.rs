@@ -594,6 +594,7 @@ pub fn pull(
         parent_id: resp["parent_id"].as_str().map(|s| s.to_string()),
         envelope,
         hub_url: resp["hub_url"].as_str().map(|s| s.to_string()),
+        anchors: Vec::new(),
     };
 
     ctx.storage.write(&record)?;
@@ -779,6 +780,40 @@ fn push_artifact_to_hub(
     // 4. Update local record with hub_url
     if !hub_url.is_empty() {
         ctx.storage.set_hub_url(id, &hub_url)?;
+    }
+
+    // 5. Record the witnesses, with the time we observed them.
+    //
+    // `hub_url` alone says *that* this was pushed, never *when* -- and when is
+    // the whole value of an anchor. A receipt's own timestamp is the signer's
+    // claim about itself; this is a record that somebody else saw these bytes,
+    // which is what makes a timeline expensive to fabricate afterwards. Until
+    // this existed there was no local data from which anchoring coverage could
+    // be computed at all.
+    //
+    // Hub and Rekor are recorded separately because they fail differently: a
+    // Hub anchor requires trusting the Hub, a Rekor entry is independently
+    // checkable in a public log. Collapsing them would throw that away.
+    let observed_at = now_rfc3339();
+    if !hub_url.is_empty() {
+        ctx.storage.add_anchor(
+            id,
+            treeship_core::storage::RecordAnchor {
+                mechanism: "hub".to_string(),
+                observed_at: observed_at.clone(),
+                reference: Some(hub_url.clone()),
+            },
+        )?;
+    }
+    if let Some(idx) = rekor_index {
+        ctx.storage.add_anchor(
+            id,
+            treeship_core::storage::RecordAnchor {
+                mechanism: "rekor".to_string(),
+                observed_at,
+                reference: Some(idx.to_string()),
+            },
+        )?;
     }
 
     Ok(PushResult {
@@ -973,6 +1008,20 @@ fn format_device_code(code: &str) -> String {
     } else {
         code.to_string()
     }
+}
+
+/// Local wall-clock now, RFC 3339. Used to stamp when a witness responded.
+///
+/// Still our own clock, deliberately: this defends against a timeline
+/// fabricated *after* the work, not against a machine whose clock is wrong in
+/// real time. Getting the witness's own signed time is time-anchoring.md
+/// slices 3-5.
+fn now_rfc3339() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    treeship_core::statements::unix_to_rfc3339(secs)
 }
 
 #[cfg(test)]

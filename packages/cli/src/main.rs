@@ -2127,6 +2127,21 @@ struct VerifyArgs {
     /// Only applies to the artifact-ID form.
     #[arg(long, default_value_t = false)]
     full: bool,
+
+    /// Fail unless every stretch of claimed work was externally witnessed
+    /// within this long (e.g. 15m, 1h, 3600).
+    ///
+    /// A receipt's timestamp is the signer's own clock, signed with the
+    /// signer's own key, so it proves what was claimed and not when it
+    /// happened. An anchor -- a Hub checkpoint or Rekor entry -- is somebody
+    /// else's record that the bytes existed by then, and cannot be obtained
+    /// retroactively. This bounds how long the timeline goes unwitnessed.
+    ///
+    /// Without this flag, coverage is reported and never gates: unanchored
+    /// work is normal (offline machines, network failures) and is not by
+    /// itself evidence of anything.
+    #[arg(long, value_name = "DURATION")]
+    max_unwitnessed: Option<String>,
 }
 
 #[derive(Args)]
@@ -3348,6 +3363,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                     a.no_chain,
                     a.max_depth,
                     a.full,
+                    a.max_unwitnessed.as_deref(),
                     cli.config.as_deref(),
                     printer,
                 )

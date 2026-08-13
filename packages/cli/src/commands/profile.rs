@@ -235,6 +235,7 @@ pub fn profile(agent: &str, attest: bool, config: Option<&str>, printer: &Printe
             parent_id: None,
             envelope: result.envelope,
             hub_url: None,
+            anchors: Vec::new(),
         })?;
         attested_id = Some(result.artifact_id);
     }

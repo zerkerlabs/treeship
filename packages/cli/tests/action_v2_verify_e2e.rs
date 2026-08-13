@@ -90,6 +90,7 @@ impl Workspace {
             parent_id: None,
             envelope: signed.envelope.clone(),
             hub_url: None,
+            anchors: Vec::new(),
         };
         store.write(&record).expect("write record");
         signed.artifact_id.to_string()

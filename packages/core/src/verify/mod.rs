@@ -16,6 +16,7 @@
 /// Card resolution verification (the certificate-chain walk behind
 /// `resolve --hub` and `verify-presentation`). Lives in core so the CLI, the
 /// WASM verifier, and the SDKs run the same code path.
+pub mod anchoring;
 pub mod resolution;
 
 /// Presentation verification primitives (the challenge-response canonical and

@@ -374,9 +374,14 @@ pub fn run(
     no_chain: bool,
     max_depth: usize,
     full: bool,
+    max_unwitnessed: Option<&str>,
     config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let max_unwitnessed_secs = match max_unwitnessed {
+        Some(raw) => Some(parse_duration_secs(raw)?),
+        None => None,
+    };
     let ctx = ctx::open(config)?;
 
     // Resolve "last" keyword to the most recent artifact ID.
@@ -615,6 +620,38 @@ pub fn run(
             if chain_count == 1 { "" } else { "s" }
         );
         printer.success(&header, &[]);
+
+        // Anchoring coverage. Reported on every verify, gating only when the
+        // caller asked -- unanchored work is normal (offline machines, network
+        // failures) and is not by itself evidence of anything. What would be
+        // wrong is staying silent: a reader has no other way to tell a
+        // continuously witnessed timeline from an entirely self-asserted one,
+        // and the receipts look identical either way.
+        let coverage = compute_chain_coverage(&ctx, &chain_ids);
+        printer.dim_info(&format!("  anchoring: {}", coverage.summary()));
+
+        if let Some(limit) = max_unwitnessed_secs {
+            if !coverage.within(limit) {
+                printer.blank();
+                printer.failure(
+                    "UNWITNESSED WORK EXCEEDS POLICY",
+                    &[
+                        (
+                            "longest_unwitnessed",
+                            &human_secs(coverage.unwitnessed_span_seconds),
+                        ),
+                        ("allowed", &human_secs(limit)),
+                        (
+                            "meaning",
+                            "the signatures are valid; nobody outside this machine \
+                             witnessed that stretch of the timeline",
+                        ),
+                    ],
+                );
+                printer.blank();
+                std::process::exit(1);
+            }
+        }
 
         // Show info about the target artifact.
         if let Some((_id, env)) = chain_envelopes.last() {
@@ -2759,5 +2796,107 @@ mod tests {
             "must name the violated invariant: {gs}"
         );
         assert!(!gs.contains('{'), "must not be Debug-formatted: {gs}");
+    }
+}
+
+/// Parse `15m`, `2h`, `90s`, or a bare number of seconds.
+fn parse_duration_secs(raw: &str) -> Result<i64, String> {
+    let t = raw.trim();
+    let (digits, mult) = match t.chars().last() {
+        Some('s') => (&t[..t.len() - 1], 1),
+        Some('m') => (&t[..t.len() - 1], 60),
+        Some('h') => (&t[..t.len() - 1], 3600),
+        Some('d') => (&t[..t.len() - 1], 86_400),
+        _ => (t, 1),
+    };
+    let n: i64 = digits
+        .parse()
+        .map_err(|_| format!("invalid duration {raw:?}: expected e.g. 15m, 2h, 3600"))?;
+    if n < 0 {
+        return Err(format!("invalid duration {raw:?}: must not be negative"));
+    }
+    Ok(n * mult)
+}
+
+fn human_secs(s: i64) -> String {
+    match s {
+        s if s < 60 => format!("{s}s"),
+        s if s < 3600 => format!("{}m", s / 60),
+        s => format!("{}h{:02}m", s / 3600, (s % 3600) / 60),
+    }
+}
+
+/// Gather the claimed timeline and its witnesses across a verified chain.
+///
+/// Claimed times come from each artifact's `signed_at` -- the signer's own
+/// assertion, which is exactly what anchoring exists to constrain. Anchors
+/// come from `Record.anchors`, written when a push was acknowledged.
+///
+/// An artifact whose `signed_at` will not parse is skipped rather than
+/// defaulted: inventing a timestamp for it would shrink or stretch the
+/// computed span with a value nobody asserted.
+fn compute_chain_coverage(
+    ctx: &ctx::Ctx,
+    chain_ids: &[String],
+) -> treeship_core::verify::anchoring::AnchorCoverage {
+    use treeship_core::statements::parse_rfc3339_to_unix;
+    use treeship_core::verify::anchoring::{Anchor, AnchorCoverage};
+
+    let mut event_times: Vec<i64> = Vec::new();
+    let mut anchors: Vec<Anchor> = Vec::new();
+
+    for id in chain_ids {
+        let Ok(record) = ctx.storage.read(id) else {
+            continue;
+        };
+        if let Some(t) = parse_rfc3339_to_unix(&record.signed_at) {
+            event_times.push(t as i64);
+        }
+        for a in &record.anchors {
+            if let Some(t) = parse_rfc3339_to_unix(&a.observed_at) {
+                anchors.push(Anchor {
+                    at: t as i64,
+                    mechanism: a.mechanism.clone(),
+                });
+            }
+        }
+    }
+
+    AnchorCoverage::compute(&event_times, &anchors)
+}
+
+#[cfg(test)]
+mod anchoring_gate_tests {
+    use super::*;
+
+    #[test]
+    fn duration_units_parse() {
+        assert_eq!(parse_duration_secs("90s").unwrap(), 90);
+        assert_eq!(parse_duration_secs("15m").unwrap(), 900);
+        assert_eq!(parse_duration_secs("2h").unwrap(), 7200);
+        assert_eq!(parse_duration_secs("1d").unwrap(), 86_400);
+        // A bare number is seconds, so a caller who passes a raw count of
+        // seconds gets what they meant rather than a parse error.
+        assert_eq!(parse_duration_secs("3600").unwrap(), 3600);
+        assert_eq!(parse_duration_secs("  30m ").unwrap(), 1800);
+    }
+
+    /// A silently-misparsed duration is worse than a rejected one: it would
+    /// gate on a bound the caller never asked for.
+    #[test]
+    fn malformed_durations_are_rejected_not_guessed() {
+        for bad in ["bogus", "", "15x", "m", "1.5h", "-5m", "--"] {
+            assert!(
+                parse_duration_secs(bad).is_err(),
+                "{bad:?} should not parse"
+            );
+        }
+    }
+
+    #[test]
+    fn human_secs_is_readable_at_each_scale() {
+        assert_eq!(human_secs(45), "45s");
+        assert_eq!(human_secs(900), "15m");
+        assert_eq!(human_secs(39_600), "11h00m");
     }
 }

@@ -394,6 +394,7 @@ pub fn revoke_capability(
         parent_id: Some(card_id.to_string()),
         envelope: result.envelope,
         hub_url: None,
+        anchors: Vec::new(),
     })?;
 
     let self_revoke = signer.key_id() == card_keyid;
