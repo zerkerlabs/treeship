@@ -97,7 +97,7 @@ jobs:
       # (treeship-zk-risc0 needs the RISC0 guest toolchain and is added
       # separately; the `zk` feature is pre-release.)
       - name: Run tests
-        run: cargo test -p treeship-core -p treeship-cli -p treeship-core-wasm
+        run: cargo test -p treeship-core -p treeship-cli -p treeship-core-wasm -p rig-treeship
 
       - name: The published crate tarball actually compiles
         # `cargo publish` builds from a tarball containing only files under the
@@ -164,7 +164,7 @@ jobs:
       # Scoped to the crates CI builds. treeship-zk-risc0's guest needs the
       # RISC0 toolchain (riscv32im-risc0-zkvm-elf), which is not installed here.
       - name: Clippy
-        run: cargo clippy -p treeship-core -p treeship-cli -p treeship-core-wasm --all-targets -- -D warnings
+        run: cargo clippy -p treeship-core -p treeship-cli -p treeship-core-wasm -p rig-treeship --all-targets -- -D warnings
 
       - name: Format
         run: cargo fmt --all -- --check
@@ -312,7 +312,7 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.6'
 
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
@@ -365,9 +365,12 @@ jobs:
           # the toolchain that actually builds the binary, and it must be a
           # supported release. 1.22 stopped receiving security fixes, so the
           # hub was being built by a compiler that would never be patched --
-          # govulncheck reports GO-2026-5856 (crypto/tls) as *called* from
-          # hub code, fixed in 1.26.5.
-          go-version: '1.26.5'
+          # This pin goes stale on Go's release cadence, and the deps-go job
+          # is what notices: 1.26.5 was clean when pinned and failed a day
+          # later, when 1.26.6 shipped fixing five stdlib advisories --
+          # including a net/http one that `rekor.Anchor` actually calls.
+          # Bump this when that job goes red; that is the job working.
+          go-version: '1.26.6'
 
       - name: Build Hub
         working-directory: packages/hub

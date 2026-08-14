@@ -221,6 +221,9 @@ impl TreeshipLedger {
                 parent_id: stmt.parent_id.clone(),
                 envelope: signed.envelope.clone(),
                 hub_url: None,
+                // Just signed locally; no external witness yet. A push
+                // records one, which is what anchoring coverage reads.
+                anchors: Vec::new(),
             };
             store
                 .write(&record)
