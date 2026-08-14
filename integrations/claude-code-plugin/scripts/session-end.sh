@@ -29,11 +29,26 @@ fi
 HEADLINE="Claude Code session"
 
 if treeship session close --headline "$HEADLINE" >/dev/null 2>&1; then
-  # `treeship session report` prints the report URL on stdout by default.
-  # Capture it; fall back to a local-only message if reporting fails (no hub
-  # configured, offline, etc.).
-  REPORT_OUT=$(treeship session report 2>/dev/null || true)
-  REPORT_URL=$(printf '%s\n' "$REPORT_OUT" | grep -oE 'https?://[^[:space:]]+' | head -1)
+  # Publishing is opt-in.
+  #
+  # This used to run unconditionally, so ending a session uploaded its receipt
+  # to the configured Hub with no operator in the loop. A receipt is immutable
+  # and the upload is not undoable, so anything the capture path got wrong
+  # became public before anyone could look at it. The OpenClaw plugin was
+  # gated behind this same variable when that was found; this path and the
+  # Kimi one were missed, which is why they are being fixed now rather than
+  # then.
+  #
+  # The local receipt is written either way. `treeship session report`
+  # publishes it whenever the operator chooses to.
+  REPORT_URL=""
+  case "${TREESHIP_AUTO_PUBLISH:-}" in
+    1|true)
+      # `treeship session report` prints the report URL on stdout by default.
+      REPORT_OUT=$(treeship session report 2>/dev/null || true)
+      REPORT_URL=$(printf '%s\n' "$REPORT_OUT" | grep -oE 'https?://[^[:space:]]+' | head -1)
+      ;;
+  esac
 
   if [ -n "$REPORT_URL" ]; then
     cat <<EOF
