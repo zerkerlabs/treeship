@@ -55,6 +55,11 @@ Expected:
       key-bound: yes (AgentCert) · 9 of 9 captured from harness
 [3/4] publish — skipped (local only; re-run with --publish once a hub is attached)
 [4/4] trust bundle — hand these to a counterparty:
+
+    # trust this ship to certify its agents (the CA pin):
+    treeship trust add key_… ed25519:… --kind cert_issuer --yes
+
+    # narrower alternative — trust ONLY this agent:
     treeship trust add key_… ed25519:… --kind agent_cert --yes
 ✓ agent onboarded
 ```

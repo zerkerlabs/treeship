@@ -31,8 +31,16 @@ treeship onboard deployer --from-harness ~/.claude/settings.json --publish
       key-bound: yes (AgentCert) · 9 of 9 captured from harness
 [3/4] publish + anchor to Hub
 [4/4] trust bundle — hand these to a counterparty:
-    treeship trust add key_… ed25519:… --kind agent_cert --yes
+
+    # trust this ship to certify its agents (the CA pin):
+    treeship trust add key_… ed25519:… --kind cert_issuer --yes
+
+    # and to anchor them in the transparency log (the staple):
     treeship trust add key_… ed25519:… --kind hub_checkpoint --yes
+
+    # narrower alternative — trust ONLY this agent. Needs a fresh pin per
+    # agent and breaks on rotation:
+    treeship trust add key_… ed25519:… --kind agent_cert --yes
 ✓ agent onboarded
     treeship resolve --hub https://api.treeship.dev agent://deployer
 ```

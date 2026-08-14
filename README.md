@@ -88,6 +88,12 @@ treeship onboard deployer --tools 'deploy.*,git.push'
   key-bound:   yes (AgentCert)
   tools:       deploy.*, git.push
 [4/4] trust bundle — hand these to a counterparty:
+
+    # trust this ship to certify its agents (the CA pin):
+    treeship trust add key_3f0c1d94ab77e215 ed25519:7iSghpSYV9Rfu1RCNXqk0m1x8dJ2rWvLbQ4T6yZaEo0 --kind cert_issuer --yes
+
+    # narrower alternative — trust ONLY agent://deployer, not everything this
+    # ship certifies. Needs a fresh pin per agent and breaks on rotation:
     treeship trust add key_97fe3be93ca7e2b7 ed25519:K8V6D33O1k2LsQY5y9i2WTigc2CoYvIwdT_-yGgDbPQ --kind agent_cert --yes
 ```
 
