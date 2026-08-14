@@ -15,8 +15,15 @@ if ! treeship session status --check >/dev/null 2>&1; then exit 0; fi
 
 HEADLINE="Kimi Code session"
 if treeship session close --headline "$HEADLINE" >/dev/null 2>&1; then
-  REPORT_OUT=$(treeship session report 2>/dev/null || true)
-  REPORT_URL=$(printf '%s\n' "$REPORT_OUT" | grep -oE 'https?://[^[:space:]]+' | head -1)
+  # Opt-in, same as the Claude Code and OpenClaw plugins. Uploading a receipt
+  # is not undoable, so it needs a deliberate decision rather than a default.
+  REPORT_URL=""
+  case "${TREESHIP_AUTO_PUBLISH:-}" in
+    1|true)
+      REPORT_OUT=$(treeship session report 2>/dev/null || true)
+      REPORT_URL=$(printf '%s\n' "$REPORT_OUT" | grep -oE 'https?://[^[:space:]]+' | head -1)
+      ;;
+  esac
   if [ -n "$REPORT_URL" ]; then
     cat <<EOF
 {"additionalContext": "Treeship session sealed. Receipt: .treeship/sessions/. Report: $REPORT_URL"}
