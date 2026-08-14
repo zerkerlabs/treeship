@@ -206,7 +206,7 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
     let key_bound_str = if key_bound {
         "yes (AgentCert)"
     } else {
-        "no (self-asserted)"
+        "no (asserted)"
     };
     let tools_str = if tools.is_empty() {
         "(none declared)".to_string()

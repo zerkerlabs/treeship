@@ -53,6 +53,14 @@ jobs:
           python-version: '3.12'
       - name: Install pyyaml (feature-inventory linter)
         run: pip install pyyaml
+      # DESIGN.md's verdict table says "no synonyms". Nothing enforced it, and
+      # the 2026-08 dogfood found three vocabularies in one product -- the spec
+      # listing words nothing printed, the CLI printing words it did not name,
+      # and the website verifier inventing four more, after the table existed.
+      # A written-down rule with no check is what produced that.
+      - name: Verdict vocabulary has no synonyms
+        run: python3 scripts/check-verdict-vocabulary.py
+
       - name: Hub OpenAPI matches the router
         run: python3 scripts/check-hub-openapi.py
       - name: Docs reference only real SDK methods
