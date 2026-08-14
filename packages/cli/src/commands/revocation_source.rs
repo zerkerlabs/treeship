@@ -65,9 +65,16 @@ pub struct LocalRevocationSource {
     /// grant_id -> grantor, for grants held locally. Needed because `status`
     /// receives only a grant id and has to decide whether we issued it.
     known_grantors: std::collections::HashMap<String, String>,
+    /// Whether a hub's published list was successfully consulted.
+    ///
+    /// This changes what absence means. Without it, "no revocation found" for
+    /// someone else's grant is ignorance. With it, we asked the hub the grant
+    /// points at and it did not list one -- still not proof (a hub can
+    /// withhold), but a materially better answer than never having looked.
+    consulted_hub: bool,
 }
 
-struct RevocationEntry {
+pub struct RevocationEntry {
     grant_id: String,
     /// Kept for the error message when a revocation fails the grantor check --
     /// naming the key that was expected is what makes that message actionable.
@@ -125,7 +132,15 @@ impl LocalRevocationSource {
             entries,
             own_keys,
             known_grantors,
+            consulted_hub: false,
         }
+    }
+
+    /// Fold in a hub's published list.
+    pub fn with_hub(mut self, mut fetched: Vec<RevocationEntry>) -> Self {
+        self.entries.append(&mut fetched);
+        self.consulted_hub = true;
+        self
     }
 
     /// Whether this ship issued the grant, and so whether the absence of a
@@ -196,13 +211,25 @@ impl RevocationSource for LocalRevocationSource {
             // and we have no record of performing it.
             RevocationStatus::NotRevoked
         } else {
-            // Someone else's grant. An empty local store is ignorance, not
-            // evidence, and saying `NotRevoked` here would let a machine that
-            // has never synced produce a passing verdict out of not knowing.
-            RevocationStatus::Unknown(format!(
-                "no local revocation record for {grant_id}, and this ship did not issue it -- \
-                 a revocation published elsewhere would not be visible here"
-            ))
+            // Someone else's grant.
+            if self.consulted_hub {
+                // We asked a hub and it did not list one. Not proof -- a hub
+                // can withhold, and the grantor may publish elsewhere -- but
+                // it is a checked answer rather than an absence of one, and
+                // holding it at Unknown forever would mean the published list
+                // could never make any verdict better.
+                RevocationStatus::NotRevoked
+            } else {
+                // Never looked. An empty local store is ignorance, not
+                // evidence, and saying `NotRevoked` here would let a machine
+                // that has never synced produce a passing verdict out of not
+                // knowing.
+                RevocationStatus::Unknown(format!(
+                    "no local revocation record for {grant_id}, this ship did not issue it, \
+                     and no hub list was consulted -- a revocation published elsewhere \
+                     would not be visible here"
+                ))
+            }
         }
     }
 }
@@ -245,6 +272,74 @@ fn signed_by(envelope: &Envelope, grantor: &str) -> bool {
         .any(|sig| verify_with_key(envelope, &sig.keyid, vk).is_ok())
 }
 
+/// Fetch a hub's published revocation list.
+///
+/// The hub does not sign the list and does not need to: each entry carries the
+/// grantor-signed `grant_revocation.v1` envelope, and [`signed_by`] checks it
+/// exactly as it checks a locally-held one. A hostile hub can therefore
+/// WITHHOLD revocations -- which is why absence is never treated as proof a
+/// grant is live -- but it cannot manufacture one.
+///
+/// Everything is read from the envelope, never from the hub's sibling summary
+/// fields. Those are the hub's description of the evidence; the envelope is
+/// the evidence, and taking `grant_id` from the summary would let a hub point
+/// a real revocation at a different grant.
+///
+/// Failure is silent at this layer, deliberately. A hub that is down yields no
+/// entries, and the caller's absence rule then reports `Unknown` rather than a
+/// false `NotRevoked`. Returning an error would make an offline `verify` fail
+/// outright when the honest answer is that it could not check.
+pub fn fetch_hub_revocations(endpoint: &str) -> Vec<RevocationEntry> {
+    let url = format!(
+        "{}/.well-known/treeship/revoked.json",
+        endpoint.trim_end_matches('/')
+    );
+    let Ok(resp) = ureq::get(&url)
+        .timeout(std::time::Duration::from_secs(10))
+        .call()
+    else {
+        return Vec::new();
+    };
+    let Ok(body) = resp.into_json::<serde_json::Value>() else {
+        return Vec::new();
+    };
+
+    let empty = Vec::new();
+    let items = body["revoked"].as_array().unwrap_or(&empty);
+    let mut out = Vec::new();
+
+    for item in items {
+        let Some(env_val) = item.get("envelope") else {
+            continue;
+        };
+        let Ok(envelope) = serde_json::from_value::<Envelope>(env_val.clone()) else {
+            continue;
+        };
+        let Ok(stmt) = envelope.unmarshal_statement::<ReceiptStatement>() else {
+            continue;
+        };
+        if stmt.kind != "grant_revocation.v1" {
+            continue;
+        }
+        let Some(p) = stmt.payload else { continue };
+        let (Some(grant_id), Some(grantor), Some(revoked_at)) = (
+            p.get("grant_id").and_then(|v| v.as_str()),
+            p.get("grantor").and_then(|v| v.as_str()),
+            p.get("revoked_at").and_then(|v| v.as_str()),
+        ) else {
+            continue;
+        };
+
+        out.push(RevocationEntry {
+            grant_id: grant_id.to_string(),
+            grantor: grantor.to_string(),
+            revoked_at: revoked_at.to_string(),
+            grantor_signed: signed_by(&envelope, grantor),
+        });
+    }
+    out
+}
+
 /// Build a resolver for this context: the local revocations, plus the two
 /// things needed to know whether an absent revocation is informative -- which
 /// keys this ship holds, and which grants it issued.
@@ -283,7 +378,33 @@ pub fn for_ctx(ctx: &crate::ctx::Ctx) -> LocalRevocationSource {
         }
     }
 
-    LocalRevocationSource::load(&ctx.storage, own_keys, known_grantors)
+    let source = LocalRevocationSource::load(&ctx.storage, own_keys, known_grantors);
+
+    // Consult a hub only when the operator configured one and asked for
+    // network checks. `verify` is offline-first by contract -- silently
+    // reaching out would make a documented-offline command depend on a
+    // network, and a slow hub would then slow every verification.
+    //
+    // TREESHIP_REVOCATION_HUB names it explicitly; otherwise the default
+    // attached hub is used when TREESHIP_CHECK_REVOCATION=1 is set.
+    let endpoint = std::env::var("TREESHIP_REVOCATION_HUB").ok().or_else(|| {
+        let opted_in = matches!(
+            std::env::var("TREESHIP_CHECK_REVOCATION").as_deref(),
+            Ok("1") | Ok("true")
+        );
+        if !opted_in {
+            return None;
+        }
+        ctx.config
+            .resolve_hub(None)
+            .ok()
+            .map(|(_, e)| e.endpoint.clone())
+    });
+
+    match endpoint {
+        Some(url) => source.with_hub(fetch_hub_revocations(&url)),
+        None => source,
+    }
 }
 
 #[cfg(test)]
@@ -306,6 +427,17 @@ mod tests {
             entries,
             own_keys: vec![],
             known_grantors: Default::default(),
+            consulted_hub: false,
+        }
+    }
+
+    /// A source that consulted a hub and got nothing back.
+    fn asked_hub(entries: Vec<RevocationEntry>) -> LocalRevocationSource {
+        LocalRevocationSource {
+            entries,
+            own_keys: vec![],
+            known_grantors: Default::default(),
+            consulted_hub: true,
         }
     }
 
@@ -317,6 +449,7 @@ mod tests {
             known_grantors: [("grn_a".to_string(), "pk1".to_string())]
                 .into_iter()
                 .collect(),
+            consulted_hub: false,
         }
     }
 
@@ -390,6 +523,46 @@ mod tests {
                 panic!("someone else's grant must not resolve from an empty store: {other:?}")
             }
         }
+    }
+
+    /// Consulting a hub changes what absence means, and it is the reason the
+    /// published list is worth having: without this, a fetched-and-empty list
+    /// and never having looked would produce the same verdict forever, and no
+    /// amount of publishing could improve any answer.
+    ///
+    /// Still not proof. A hub can withhold, and the grantor may publish
+    /// somewhere else -- the difference is between a checked answer and the
+    /// absence of one.
+    #[test]
+    fn consulting_a_hub_turns_ignorance_into_an_answer() {
+        match src(vec![]).status("grn_a", "p") {
+            RevocationStatus::Unknown(r) => {
+                assert!(r.contains("no hub list was consulted"), "{r}")
+            }
+            other => panic!("never having looked must not resolve: {other:?}"),
+        }
+        assert_eq!(
+            asked_hub(vec![]).status("grn_a", "p"),
+            RevocationStatus::NotRevoked
+        );
+    }
+
+    /// A hub-published revocation is honored on the same terms as a local one:
+    /// the grantor signature decides, not where the bytes came from.
+    #[test]
+    fn a_hub_supplied_revocation_is_honored_only_when_grantor_signed() {
+        let good = asked_hub(vec![entry("grn_a", "pk1", "2026-08-14T10:00:00Z", true)]);
+        assert_eq!(
+            good.status("grn_a", "p"),
+            RevocationStatus::RevokedAt("2026-08-14T10:00:00Z".into())
+        );
+
+        // A hub that fabricates one cannot make it stick.
+        let forged = asked_hub(vec![entry("grn_a", "pk1", "2026-08-14T10:00:00Z", false)]);
+        assert!(matches!(
+            forged.status("grn_a", "p"),
+            RevocationStatus::Unknown(_)
+        ));
     }
 
     /// A revocation we DO hold decides the outcome regardless of issuer -- the
