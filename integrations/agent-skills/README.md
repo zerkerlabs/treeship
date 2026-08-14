@@ -6,17 +6,25 @@ The skill covers the full Treeship surface: CLI commands (`treeship wrap`, `tree
 
 ## Quick Reference
 
-| Agent | Install Command | `--agent` flag | Skills Path |
-|---|---|---|---|
-| Kimi Code CLI | `npx skills add zerkerlabs/treeship --skill treeship --agent kimi-cli -g -y` | `kimi-cli` | `~/.config/agents/skills/` |
-| Claude Code | `npx skills add zerkerlabs/treeship --skill treeship --agent claude-code -g -y` | `claude-code` | `~/.claude/skills/` |
-| Codex | `npx skills add zerkerlabs/treeship --skill treeship --agent codex -g -y` | `codex` | `~/.codex/skills/` |
-| Codex contributor | `npx skills add zerkerlabs/treeship --skill treeship-dev --agent codex -g -y` | `codex` | `~/.codex/skills/` |
-| Cursor | `npx skills add zerkerlabs/treeship --skill treeship --agent cursor -g -y` | `cursor` | `~/.cursor/skills/` |
-| OpenClaw | `npx skills add zerkerlabs/treeship --skill treeship --agent openclaw -g -y` | `openclaw` | `~/.openclaw/skills/` |
-| Hermes | Manual curl (see below) | — | `~/.hermes/skills/` |
+The canonical one-liner per agent is `treeship add <agent>` — it configures skill + MCP (and hook plugin where available) in one shot. The `npx skills add` alternative ships skill-only and is useful for non-Treeship-native discovery.
 
-The `-g` installs globally (one copy on the machine, every project sees it). `-y` skips the confirmation prompt — useful in CI and scripted setup. Drop both for an interactive install scoped to the current project.
+| Agent | Canonical (skill + MCP + plugin where available) | Skill-only alternative |
+|---|---|---|
+| Kimi Code CLI | `treeship add kimi-code` *(pending; use skill-only today)* | `npx skills add zerkerlabs/treeship --skill treeship --agent kimi-cli -g -y` |
+| Claude Code | `treeship add claude-code` | `npx skills add zerkerlabs/treeship --skill treeship --agent claude-code -g -y` |
+| Codex | `treeship add codex` | `npx skills add zerkerlabs/treeship --skill treeship --agent codex -g -y` |
+| Codex contributor | — | `npx skills add zerkerlabs/treeship --skill treeship-dev --agent codex -g -y` |
+| Cursor | `treeship add cursor` | `npx skills add zerkerlabs/treeship --skill treeship --agent cursor -g -y` |
+| OpenClaw | `treeship add openclaw` | `npx skills add zerkerlabs/treeship --skill treeship --agent openclaw -g -y` |
+| Hermes | `treeship add hermes` | (skill-only path is the same; treeship add is recommended) |
+
+Or instrument everything Treeship detects on this machine in one shot:
+
+```bash
+treeship add
+```
+
+The `-g` flag on `npx skills add` installs globally (one copy on the machine, every project sees it). `-y` skips the confirmation prompt — useful in CI and scripted setup. Drop both for an interactive install scoped to the current project.
 
 ## Per-Agent Setup
 

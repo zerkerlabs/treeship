@@ -16,6 +16,8 @@ import os
 import re
 import sys
 
+import yaml
+
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MAIN_GO = os.path.join(REPO, "packages", "hub", "main.go")
 OPENAPI = os.path.join(REPO, "docs", "content", "docs", "api", "hub-openapi.yaml")
@@ -62,7 +64,53 @@ def routes_from_openapi():
     return routes
 
 
+class _NoDuplicatesLoader(yaml.SafeLoader):
+    """A loader that refuses duplicate mapping keys.
+
+    PyYAML silently keeps the last of a duplicated key. The JS YAML parser the
+    docs build uses rejects the file outright -- so a hand-edit that inserted a
+    block beside an existing one parsed fine here, passed this check, and then
+    failed the production build with an error pointing at an unrelated line.
+
+    Subclassing the loader rather than scanning lines because YAML sequences
+    legitimately repeat keys across items (`- name: / in: / required:`), and a
+    line-based scan flags every one of them.
+    """
+
+
+def _no_duplicates(loader, node, deep=False):
+    mapping = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if key in mapping:
+            mark = key_node.start_mark
+            raise yaml.constructor.ConstructorError(
+                None, None,
+                f"duplicate key {key!r} (line {mark.line + 1})", mark,
+            )
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+_NoDuplicatesLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _no_duplicates
+)
+
+
 def main():
+    try:
+        with open(OPENAPI) as f:
+            yaml.load(f, Loader=_NoDuplicatesLoader)
+    except yaml.YAMLError as e:
+        print(f"  err   {OPENAPI} is not valid YAML for the docs build: {e}")
+        print()
+        print(
+            "PyYAML keeps a duplicated key silently and the JS parser the docs "
+            "build uses rejects the file, so this passed here and failed there. "
+            "Caught before CI now."
+        )
+        return 1
+
     code = routes_from_router()
     spec = routes_from_openapi()
 
