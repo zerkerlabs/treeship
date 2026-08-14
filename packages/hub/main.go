@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log"
@@ -147,7 +149,7 @@ func main() {
 	})
 
 	// Well-known revocation list.
-	r.Get("/.well-known/treeship/revoked.json", revokedHandler)
+	r.Get("/.well-known/treeship/revoked.json", revokedHandler(database))
 
 	// Liveness and readiness are different questions and need different
 	// answers. /healthz says the process is up; a load balancer uses it to
@@ -314,13 +316,126 @@ func redactPath(u *url.URL) string {
 	return u.Path + "?" + q.Encode()
 }
 
+// Revocation entries are small; this bounds the scan and the response. A
+// deployment that outgrows it needs the derived `kind` column (audit item 21),
+// not a bigger number here.
+// receiptPayloadType is the MIME type of treeship receipt envelopes; grant
+// revocations are receipts.
+const receiptPayloadType = "application/vnd.treeship.receipt.v1+json"
+
+const revocationListLimit = 1000
+
 // revokedHandler serves GET /.well-known/treeship/revoked.json
-func revokedHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "max-age=86400")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"revoked":   []interface{}{},
-		"signed_at": time.Now().UTC().Format(time.RFC3339),
-		"version":   "1",
-	})
+//
+// # What changed, and why there is still no Hub signature
+//
+// This used to return a hardcoded empty list carrying a fresh `signed_at`,
+// with `Cache-Control: max-age=86400`. Three problems in nine lines: the list
+// was always empty regardless of what had been revoked, `signed_at` named a
+// signature that did not exist, and a verifier that trusted it would cache
+// "nothing is revoked" for a day.
+//
+// It now serves real revocations, and it still does not sign them -- because
+// it does not need to and cannot honestly. The Hub holds no signing key, and
+// `grant_revocation.v1` receipts are **already DSSE-signed by the grantor**.
+// Serving the envelopes lets a client verify each one against the key the
+// grant names, which is the same check the local resolver runs. A Hub
+// signature over a summary would add a party to trust and prove strictly
+// less: it would attest that the Hub said this, not that the grantor did.
+//
+// That is also the Hub's stated role -- it "stores immutable bytes, serves
+// lookup indices and proofs, and never supplies trust verdicts".
+//
+// So the field is `generated_at`, not `signed_at`. The list is not signed; the
+// entries are, individually, and a client that skips verifying them has
+// learned nothing.
+func revokedHandler(database *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Short, and deliberately not 24h. A stale revocation list is a
+		// withdrawn grant still reading as live, so caching it for a day
+		// converts a revocation into a day-long grace period for whoever
+		// holds the revoked grant.
+		w.Header().Set("Cache-Control", "max-age=300")
+
+		artifacts, truncated, err := db.ListArtifactsByPayloadTypeLimit(
+			database, receiptPayloadType, revocationListLimit)
+		if err != nil {
+			log.Printf("revocation list query failed: %v", err)
+			// 503, not an empty 200. An empty list is indistinguishable from
+			// "nothing is revoked", and answering a revocation query with a
+			// confident wrong answer is worse than failing.
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": "revocation list temporarily unavailable",
+			})
+			return
+		}
+
+		revoked := make([]map[string]any, 0, len(artifacts))
+		for _, a := range artifacts {
+			kind, payload, ok := receiptKindAndPayload(a.EnvelopeJSON)
+			if !ok || kind != "grant_revocation.v1" {
+				continue
+			}
+			grantID, _ := payload["grant_id"].(string)
+			if grantID == "" {
+				continue
+			}
+			revoked = append(revoked, map[string]any{
+				"grant_id":   grantID,
+				"grantor":    payload["grantor"],
+				"revoked_at": payload["revoked_at"],
+				"reason":     payload["reason"],
+				// The signed bytes. A client MUST verify this against the
+				// grantor rather than trusting the fields above, which this
+				// server could have written.
+				"envelope":    json.RawMessage(a.EnvelopeJSON),
+				"artifact_id": a.ArtifactID,
+			})
+		}
+
+		body := map[string]any{
+			"version":      "2",
+			"generated_at": time.Now().UTC().Format(time.RFC3339),
+			"revoked":      revoked,
+			// Silent truncation on a revocation list would drop revocations a
+			// client needed and look identical to their not existing.
+			"truncated": truncated,
+			"note": "Entries are individually DSSE-signed by the grantor. This list is " +
+				"NOT signed by the hub -- verify each envelope against the grantor key " +
+				"before honoring it. Absence from this list is not proof a grant is live.",
+		}
+		if truncated {
+			body["truncation_warning"] = "more revocations exist than were returned; " +
+				"this list is incomplete and must not be treated as exhaustive"
+		}
+		_ = json.NewEncoder(w).Encode(body)
+	}
+}
+
+// receiptKindAndPayload pulls `kind` and `payload` out of a receipt envelope.
+//
+// Returns ok=false rather than partial data: a revocation whose envelope will
+// not decode cannot be evaluated, and emitting it with missing fields would
+// put an entry on the list that no client can verify.
+func receiptKindAndPayload(envelopeJSON string) (string, map[string]any, bool) {
+	var env struct {
+		Payload string `json:"payload"`
+	}
+	if err := json.Unmarshal([]byte(envelopeJSON), &env); err != nil {
+		return "", nil, false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(env.Payload, "="))
+	if err != nil {
+		return "", nil, false
+	}
+	var stmt struct {
+		Kind    string         `json:"kind"`
+		Payload map[string]any `json:"payload"`
+	}
+	if err := json.Unmarshal(raw, &stmt); err != nil {
+		return "", nil, false
+	}
+	return stmt.Kind, stmt.Payload, true
 }

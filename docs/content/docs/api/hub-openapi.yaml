@@ -836,15 +836,25 @@ paths:
     get:
       summary: Revocation list
       description: >-
-        Revoked artifact IDs and key fingerprints. Currently a hardcoded empty
-        list, and unsigned, despite carrying a fresh signed_at. Served with
-        Cache-Control max-age=86400, so a verifier that trusted it would cache
-        "nothing is revoked" for a day. The CLI does not consult it: verify and
-        session both pass NoRevocationSource, so revocation resolves Unknown and
-        an action/v2 mandate degrades to Unverified. Do not treat as
-        authoritative until it is populated and signed.
-      operationId: revocationList
-      security: []
+        Grant revocations published by this hub. Each entry carries the
+        grantor-signed `grant_revocation.v1` DSSE envelope.
+
+        The hub does NOT sign this list and holds no signing key. That is
+        deliberate: the entries are already signed by the grantor who issued
+        the grant, so a client verifies each envelope against that key -- the
+        same check it runs on a locally-held revocation. A hub signature would
+        add a party to trust and prove less, attesting that the hub said this
+        rather than that the grantor did. The timestamp field is therefore
+        `generated_at`, not `signed_at`.
+
+        A hostile hub can WITHHOLD revocations, which is why absence from this
+        list is never proof that a grant is live. It cannot manufacture one.
+
+        Cache-Control is max-age=300. Longer would turn a revocation into a
+        grace period of the same length for whoever holds the revoked grant.
+
+        `truncated` is always present; when true the list is incomplete and
+        must not be treated as exhaustive.
       responses:
         '200':
           description: Revocation list

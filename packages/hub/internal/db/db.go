@@ -452,6 +452,43 @@ func ListArtifactsByDock(db *sql.DB, dockID string) ([]Artifact, error) {
 // ListArtifactsByPayloadType returns every artifact of a given payload type,
 // newest first. Used by the agent resolver to scan receipts. Bounded scans are
 // acceptable for now; an agent-indexed lookup is a later optimization.
+// ListArtifactsByPayloadTypeLimit is the bounded form. Takes newest-first up
+// to `limit`, and reports whether more exist.
+//
+// The unbounded sibling below loads every matching row and JSON-parses each
+// envelope, which is what makes the public read endpoints expensive (audit
+// items 20/21). New callers should use this one; the caller is expected to say
+// something honest about truncation rather than silently serving a prefix.
+func ListArtifactsByPayloadTypeLimit(db *sql.DB, payloadType string, limit int) ([]Artifact, bool, error) {
+	// Fetch one extra to learn whether more exist without a second COUNT.
+	rows, err := db.Query(
+		`SELECT artifact_id, payload_type, envelope_json, digest, signed_at, parent_id, hub_url, rekor_index, dock_id
+		 FROM artifacts WHERE payload_type = ? ORDER BY signed_at DESC LIMIT ?`,
+		payloadType, limit+1)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+
+	var out []Artifact
+	for rows.Next() {
+		var a Artifact
+		if err := rows.Scan(&a.ArtifactID, &a.PayloadType, &a.EnvelopeJSON, &a.Digest, &a.SignedAt, &a.ParentID, &a.HubURL, &a.RekorIndex, &a.DockID); err != nil {
+			return nil, false, err
+		}
+		out = append(out, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+
+	truncated := len(out) > limit
+	if truncated {
+		out = out[:limit]
+	}
+	return out, truncated, nil
+}
+
 func ListArtifactsByPayloadType(db *sql.DB, payloadType string) ([]Artifact, error) {
 	rows, err := db.Query(
 		`SELECT artifact_id, payload_type, envelope_json, digest, signed_at, parent_id, hub_url, rekor_index, dock_id
