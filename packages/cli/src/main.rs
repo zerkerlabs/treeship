@@ -1423,6 +1423,22 @@ enum GrantCommand {
     List,
     /// Show one grant, re-deriving its id and re-checking its signature.
     Show { grant_id: String },
+
+    /// Withdraw a grant. Mints a signed grant_revocation.v1 receipt.
+    ///
+    /// Only the grantor can revoke: a revocation anyone could mint would be a
+    /// denial of service against every grant whose id they know, and grant ids
+    /// appear in published receipts.
+    ///
+    /// Actions signed BEFORE the revocation instant remain authorized.
+    /// Revoking withdraws authority; it does not unmake what was already done
+    /// under it.
+    Revoke {
+        grant_id: String,
+        /// Why, e.g. compromised, task-complete, scope-error, key-rotation.
+        #[arg(long)]
+        reason: Option<String>,
+    },
 }
 
 // --- harness ---------------------------------------------------------------
@@ -3144,6 +3160,9 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 printer,
             ),
             GrantCommand::List => commands::grant::list(cli.config.as_deref(), printer),
+            GrantCommand::Revoke { grant_id, reason } => {
+                commands::grant::revoke(grant_id, reason.as_deref(), cli.config.as_deref(), printer)
+            }
             GrantCommand::Show { grant_id } => {
                 commands::grant::show(grant_id, cli.config.as_deref(), printer)
             }

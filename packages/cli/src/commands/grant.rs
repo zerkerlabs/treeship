@@ -21,7 +21,8 @@
 use std::path::{Path, PathBuf};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use treeship_core::statements::{parse_rfc3339_to_unix, Grant};
+use treeship_core::statements::{parse_rfc3339_to_unix, payload_type, Grant, ReceiptStatement};
+use treeship_core::storage::Record;
 
 use crate::ctx;
 use crate::printer::{Format, Printer};
@@ -484,6 +485,139 @@ fn format_rfc3339(secs: u64) -> String {
     let y = if m <= 2 { y + 1 } else { y };
 
     format!("{y:04}-{m:02}-{d:02}T{h:02}:{mi:02}:{s:02}Z")
+}
+
+/// Withdraw a grant by minting a signed `grant_revocation.v1` receipt.
+///
+/// # Why a receipt and not a flag on the grant
+///
+/// A grant is content-addressed: its id is derived from its bytes. Editing it
+/// to add `revoked: true` would change the id, so every mandate naming the old
+/// id would stop resolving -- the grant would not be revoked, it would vanish,
+/// and receipts already signed under it would become unverifiable rather than
+/// correctly-authorized-then-withdrawn.
+///
+/// So revocation is a separate artifact that points at the grant, exactly as
+/// capability-card revocation already works.
+///
+/// # Who may revoke
+///
+/// Only the grantor. The receipt is signed with the ship's default key and
+/// records the grantor it claims to be; `LocalRevocationSource` honors it only
+/// when those match. A revocation anyone could mint is a denial of service
+/// against every grant whose id they know, and grant ids appear in published
+/// receipts.
+///
+/// # What revocation does not do
+///
+/// It does not invalidate what already happened. `verify_mandate` compares the
+/// revocation instant against the action's `signed_at`, so actions signed
+/// before this moment stay authorized. Withdrawing authority and unmaking the
+/// past are different operations, and only the first is available.
+pub fn revoke(
+    id: &str,
+    reason: Option<&str>,
+    config: Option<&str>,
+    printer: &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = ctx::open(config)?;
+    let dir = grants_dir_for(&ctx.config_path);
+    let path = grant_path(&dir, id);
+    if !path.exists() {
+        return Err(format!("grant not found: {id}\n  run: treeship grant list").into());
+    }
+
+    // Checked, not unchecked: we are about to assert something about this
+    // grant's authority, and an inconsistent id means the bytes are not the
+    // grant that id names.
+    let grant = read_grant_unchecked(&path)?;
+    if !grant.id_is_consistent() {
+        return Err(format!(
+            "grant {id} has an inconsistent id -- its bytes do not derive it. Refusing to \
+             revoke a grant that is not what it claims to be; inspect it with:\n  \
+             treeship grant show {id}"
+        )
+        .into());
+    }
+
+    let signer = ctx.keys.default_signer()?;
+    let signer_pub = URL_SAFE_NO_PAD.encode(signer.public_key_bytes());
+
+    // Refuse up front rather than minting a receipt the resolver will ignore.
+    // A revocation that silently does nothing is worse than an error: the
+    // operator believes the grant is dead.
+    if signer_pub != grant.grantor {
+        return Err(format!(
+            "only the grantor can revoke this grant.\n  \
+             grant was issued by: {}\n  \
+             your default key is: {}\n\n\
+             A revocation signed by anyone else is ignored by verifiers, so minting one \
+             here would tell you the grant was withdrawn when it was not.",
+            grant.grantor, signer_pub
+        )
+        .into());
+    }
+
+    let revoked_at = crate::commands::verify::now_rfc3339();
+    let mut payload = serde_json::Map::new();
+    payload.insert("schema".into(), "grant_revocation.v1".into());
+    payload.insert("grant_id".into(), grant.grant_id.clone().into());
+    payload.insert("grantor".into(), grant.grantor.clone().into());
+    if let Some(r) = reason {
+        payload.insert("reason".into(), r.into());
+    }
+    payload.insert("revoked_at".into(), revoked_at.clone().into());
+    let payload = serde_json::Value::Object(payload);
+
+    treeship_core::predicates::validate("grant_revocation.v1", Some(&payload))
+        .map_err(|e| format!("invalid revocation: {e}"))?;
+
+    let mut stmt = ReceiptStatement::new(
+        format!("ship://{}", ctx.config.ship_id),
+        "grant_revocation.v1",
+    );
+    stmt.payload = Some(payload);
+
+    let signed = treeship_core::attestation::sign(&payload_type("receipt"), &stmt, &*signer)?;
+    ctx.storage.write(&Record {
+        artifact_id: signed.artifact_id.clone(),
+        digest: signed.digest.clone(),
+        payload_type: signed.envelope.payload_type.clone(),
+        key_id: signer.key_id().to_string(),
+        signed_at: revoked_at.clone(),
+        parent_id: None,
+        envelope: signed.envelope.clone(),
+        hub_url: None,
+        anchors: Vec::new(),
+    })?;
+
+    if printer.format == Format::Json {
+        printer.json(&serde_json::json!({
+            "status":     "revoked",
+            "grant_id":   grant.grant_id,
+            "revoked_at": revoked_at,
+            "reason":     reason,
+            "artifact":   signed.artifact_id,
+        }));
+        return Ok(());
+    }
+
+    printer.success(
+        "grant revoked",
+        &[
+            ("grant", grant.grant_id.as_str()),
+            ("revoked_at", revoked_at.as_str()),
+            ("reason", reason.unwrap_or("(none given)")),
+            ("receipt", signed.artifact_id.as_str()),
+        ],
+    );
+    printer.blank();
+    printer.hint(
+        "actions signed BEFORE this instant remain authorized -- revoking withdraws authority, \
+         it does not unmake what was already done under it. Verifiers on other machines honor \
+         this only once they have the revocation receipt; publish it with `treeship publish`.",
+    );
+    Ok(())
 }
 
 #[cfg(test)]

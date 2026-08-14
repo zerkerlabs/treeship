@@ -57,6 +57,10 @@ const REGISTRY: &[(&str, &str)] = &[
         "agent_card_revocation.v1",
         include_str!("schemas/agent_card_revocation.v1.json"),
     ),
+    (
+        "grant_revocation.v1",
+        include_str!("schemas/grant_revocation.v1.json"),
+    ),
     ("session.v1", include_str!("schemas/session.v1.json")),
     ("agent_cert.v1", include_str!("schemas/agent_cert.v1.json")),
     ("profile.v1", include_str!("schemas/profile.v1.json")),

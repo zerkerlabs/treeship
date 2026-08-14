@@ -37,6 +37,7 @@ pub mod publish;
 pub mod quickstart;
 pub mod receipt;
 pub mod resolve;
+pub mod revocation_source;
 pub mod room;
 pub mod session;
 pub mod setup;
