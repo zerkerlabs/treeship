@@ -124,22 +124,43 @@ pub fn onboard(args: OnboardArgs, printer: &Printer) -> Result<(), Box<dyn std::
     }
 
     // ── 4/4 the trust bundle: what a counterparty runs ─────────────────────
-    // The out-of-band handshake, printed instead of implied. The agent key
-    // pins under agent_cert (verifies the card + receipts); the ship key pins
-    // under hub_checkpoint (verifies the transparency anchor).
+    // The out-of-band handshake, printed instead of implied.
+    //
+    // The CA pin comes first, deliberately. This used to print only the AGENT
+    // key under `agent_cert` -- pinning the leaf. That works, and it is the
+    // weaker model: it is HTTP public-key pinning, not the CA-chain
+    // verification this codebase actually implements. `resolution.rs` requires
+    // an agent certificate to be signed by a key pinned under `CertIssuer`,
+    // and a counterparty who pins the leaf never walks that chain. They then
+    // need a new pin for every agent, and a key rotation breaks them.
+    //
+    // Pinning the ship under `cert_issuer` is the analogue of trusting a CA:
+    // one pin, and every agent this ship certifies verifies through it.
+    let ship_key = ctx.keys.default_key_id()?;
+    let ship_pub = pinnable(&ctx, &ship_key)?;
+    let agent_pub = pinnable(&ctx, &key_id)?;
+
     printer.info("[4/4] trust bundle — hand these to a counterparty:");
     printer.blank();
-    let agent_pub = pinnable(&ctx, &key_id)?;
+    printer.info("    # trust this ship to certify its agents (the CA pin):");
     printer.info(&format!(
-        "    treeship trust add {key_id} {agent_pub} --kind agent_cert --yes"
+        "    treeship trust add {ship_key} {ship_pub} --kind cert_issuer --yes"
     ));
     if args.publish {
-        let ship_key = ctx.keys.default_key_id()?;
-        let ship_pub = pinnable(&ctx, &ship_key)?;
+        printer.blank();
+        printer.info("    # and to anchor them in the transparency log (the staple):");
         printer.info(&format!(
             "    treeship trust add {ship_key} {ship_pub} --kind hub_checkpoint --yes"
         ));
     }
+    printer.blank();
+    printer.info(&format!(
+        "    # narrower alternative — trust ONLY {actor}, not everything this"
+    ));
+    printer.info("    # ship certifies. Needs a fresh pin per agent and breaks on rotation:");
+    printer.info(&format!(
+        "    treeship trust add {key_id} {agent_pub} --kind agent_cert --yes"
+    ));
     printer.blank();
     printer.success(
         "agent onboarded",
