@@ -183,7 +183,28 @@ export class TreeshipMCPClient extends Client {
           output_digest: result
             ? hashPayload(JSON.stringify(result.content ?? result))
             : undefined,
-          error_message: error?.message,
+          // Digest, not text.
+          //
+          // Everything else in this payload is a digest -- args, output --
+          // and this was the one raw field. An error message routinely
+          // contains the thing that failed: a URL with a token in the query,
+          // a connection string, a path under a home directory, the body of a
+          // 401. It then goes into a signed receipt, which is immutable and
+          // may be published.
+          //
+          // The digest still distinguishes "failed the same way twice" from
+          // "failed differently", which is what the field was for.
+          error_digest: error?.message ? hashPayload(error.message) : undefined,
+          // Length is safe and occasionally the whole diagnosis -- an empty
+          // message and a 4KB stack trace are different failures.
+          error_length: error?.message?.length,
+          // Raw text only when the operator asks for it, and it is NOT
+          // redacted: the redactor lives in the Rust CLI and the OpenClaw
+          // plugin, and copying it a third time is how the three copies drift.
+          // Wiring the shared one is follow-up; until then this flag means
+          // "I accept unredacted error text in a signed artifact".
+          error_message:
+            process.env.TREESHIP_RECORD_ERROR_TEXT === '1' ? error?.message : undefined,
         },
       });
 
