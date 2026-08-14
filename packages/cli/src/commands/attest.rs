@@ -1506,7 +1506,7 @@ pub fn card(args: CardArgs, printer: &Printer) -> Result<(), Box<dyn std::error:
                 if key_bound {
                     "yes (AgentCert)"
                 } else {
-                    "no (self-asserted)"
+                    "no (asserted)"
                 },
             ),
             ("tools", &tools_str),

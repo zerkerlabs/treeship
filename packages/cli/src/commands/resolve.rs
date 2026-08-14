@@ -188,7 +188,7 @@ pub fn resolve(
     } else if card_key_bound {
         "resolved (violations)"
     } else {
-        "resolved (self-asserted)"
+        "resolved (asserted)"
     };
 
     // --- Report --------------------------------------------------------------
