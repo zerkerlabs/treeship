@@ -47,6 +47,10 @@ const REGISTRY: &[(&str, &str)] = &[
         include_str!("schemas/memory.quarantine-check.v1.json"),
     ),
     ("blocked.v1", include_str!("schemas/blocked.v1.json")),
+    (
+        "reason.authorization.v1",
+        include_str!("schemas/reason.authorization.v1.json"),
+    ),
     ("boundary.v1", include_str!("schemas/boundary.v1.json")),
     ("agent_card.v1", include_str!("schemas/agent_card.v1.json")),
     (
@@ -339,6 +343,94 @@ mod tests {
                 suffix: "memory.quarantine-check.v1".into(),
                 field: "decision_seq".into(),
                 expected: "\"integer\"".into()
+            }
+        );
+    }
+
+    #[test]
+    fn reason_authorization_valid_shape_passes() {
+        // Hand-authored from the public zerker.reason.authorization.v1 schema.
+        // This is a structural predicate test, not a cryptographic test vector.
+        let payload = json!({
+            "schema": "zerker.reason.authorization.v1",
+            "status": "authorized",
+            "request_digest": format!("sha256:{}", "1".repeat(64)),
+            "mission": {
+                "id": "mission_release_140",
+                "digest": format!("sha256:{}", "2".repeat(64))
+            },
+            "action": {
+                "id": "action_deploy_140",
+                "digest": format!("sha256:{}", "3".repeat(64)),
+                "tool": "deploy_release",
+                "arguments": {"environment": "production"},
+                "effects": []
+            },
+            "reasoning": {
+                "schema": "zerker.reason.result.v2",
+                "status": "proved"
+            },
+            "issues": []
+        });
+        assert!(validate("reason.authorization.v1", Some(&payload)).is_ok());
+    }
+
+    #[test]
+    fn reason_authorization_missing_request_digest_fails_closed() {
+        let payload = json!({
+            "schema": "zerker.reason.authorization.v1",
+            "status": "authorized",
+            "mission": {},
+            "action": {},
+            "reasoning": {},
+            "issues": []
+        });
+        let err = validate("reason.authorization.v1", Some(&payload)).unwrap_err();
+        assert_eq!(
+            err,
+            PredicateError::MissingField {
+                suffix: "reason.authorization.v1".into(),
+                field: "request_digest".into()
+            }
+        );
+    }
+
+    #[test]
+    fn reason_authorization_out_of_vocabulary_status_fails_closed() {
+        let payload = json!({
+            "schema": "zerker.reason.authorization.v1",
+            "status": "probably_safe",
+            "request_digest": format!("sha256:{}", "1".repeat(64)),
+            "mission": {},
+            "action": {},
+            "reasoning": {},
+            "issues": []
+        });
+        let err = validate("reason.authorization.v1", Some(&payload)).unwrap_err();
+        assert!(
+            matches!(err, PredicateError::NotInEnum { ref field, .. } if field == "status"),
+            "expected NotInEnum on status, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn reason_authorization_wrong_action_shape_fails_closed() {
+        let payload = json!({
+            "schema": "zerker.reason.authorization.v1",
+            "status": "denied",
+            "request_digest": format!("sha256:{}", "1".repeat(64)),
+            "mission": {},
+            "action": "action_deploy_140",
+            "reasoning": {},
+            "issues": []
+        });
+        let err = validate("reason.authorization.v1", Some(&payload)).unwrap_err();
+        assert_eq!(
+            err,
+            PredicateError::TypeMismatch {
+                suffix: "reason.authorization.v1".into(),
+                field: "action".into(),
+                expected: "\"object\"".into()
             }
         );
     }
