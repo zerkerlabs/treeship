@@ -1,0 +1,90 @@
+---
+title: Zerker Reason authorization certificates
+description: Sign and chain an independently verifiable Zerker Reason action-authorization certificate as a Treeship receipt.
+---
+
+Zerker Reason decides whether an exact proposed action follows from a governed mission, policy, and evidence. Treeship can preserve that authorization certificate as a signed, chained artifact.
+
+The two verifiers answer different questions:
+
+| Verifier | Question |
+|---|---|
+| `reason verify-authorization` | Does this authorization result recompute from this exact mission, action, policy, and evidence? |
+| `treeship verify` | Which key signed these exact certificate bytes, and where do they sit in the artifact chain? |
+
+Run both. A Treeship signature does not replace semantic proof verification, and a valid Reason certificate does not identify who preserved or relied on it.
+
+## Create the authorization certificate
+
+```bash
+reason authorize action-request.json \
+  --certificate-out authorization.json
+
+reason verify-authorization action-request.json authorization.json
+```
+
+Only continue when verification succeeds. Reason uses four fail-closed authorization outcomes:
+
+| Certificate status | Meaning |
+|---|---|
+| `authorized` | Authorization was proved |
+| `insufficient_evidence` | Neither authorization nor explicit denial was proved |
+| `denied` | Explicit denial was proved |
+| `conflicted` | Authorization and denial were both proved |
+
+Treeship records every outcome. Denials and conflicts are evidence too.
+
+## Sign and chain the certificate
+
+```bash
+treeship attest receipt \
+  --system system://zerker-reason \
+  --kind reason.authorization.v1 \
+  --payload-file authorization.json
+```
+
+`reason.authorization.v1` is a registered Treeship predicate. Before signing, Treeship requires the top-level `zerker.reason.authorization.v1` fields, validates their JSON types, and enforces the closed four-state status vocabulary. The complete published JSON Schema also specifies the nested mission, action, and reasoning objects.
+
+The receipt payload contains the certificate itself, including:
+
+- request, mission, and action digests;
+- exact tool name, arguments, and declared effects;
+- complete Reason result;
+- proof and disproof DAGs when present;
+- temporal and authority reports;
+- deterministic authorization issues.
+
+Treat this payload as potentially sensitive. If tool arguments or policy evidence cannot be disclosed, do not use `--payload-file`. Store the certificate privately and attest only a `--payload-digest` under an unregistered private kind until a selective-disclosure profile is defined.
+
+## Verify the composition
+
+```bash
+# Verifies the Treeship signature and chain.
+treeship verify last --full
+
+# Verifies the authorization semantics against the original request.
+reason verify-authorization action-request.json authorization.json
+```
+
+For offline handoff, export the Treeship receipt or include it in a bundle alongside the private authorization files according to your disclosure policy.
+
+## Trust boundary
+
+The `system` URI is a label in the signed receipt. It becomes a proven system identity only when the signing key is bound to that identity under the verifier's trust roots. Anyone controlling a Treeship signing key can otherwise claim `system://zerker-reason`.
+
+The generic `attest receipt` command validates the certificate schema but does not execute the Reason verifier. The safe producer sequence is therefore:
+
+1. run `reason verify-authorization`;
+2. sign the exact verified certificate bytes with Treeship;
+3. preserve the original request for independent semantic replay;
+4. let each counterparty apply its own Treeship trust roots.
+
+A future dedicated adapter can make steps 1 and 2 atomic. Until then, verification is intentionally two-stage and neither stage claims the other passed.
+
+## Component roles
+
+- Zerker Reason produces and independently verifies the authorization certificate.
+- Treeship signs, chains, checkpoints, and transports the certificate.
+- Guard consumes a verified authorization result and enforces the action boundary.
+- Gateway authenticates and routes the request.
+- ZMem supplies governed premises.

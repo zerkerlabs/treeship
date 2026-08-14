@@ -773,6 +773,65 @@ pub fn verify_mandate(
         }
     }
 
+    // -- the mandate must not claim more than the grant it names gave it.
+    //
+    // Every check above judges the action against the mandate's OWN fields.
+    // Those fields are signed -- by the actor, in the action envelope. The
+    // grantor's signature covers the `Grant`, which is a different object.
+    // Nothing tied the two together, so an actor could carry a legitimately
+    // signed, correctly attenuated chain whose leaf granted `payments.charge`,
+    // declare `mandate.scope = ["payments.*"]`, and have `payments.refund`
+    // verify as Pass. The chain was resolved, attenuation-checked, and then
+    // never consulted: real, verified, and decorative.
+    //
+    // Restating a constraint under the signature of the party it constrains is
+    // not a constraint. This reconciles the restatement with the source.
+    // Only when a chain is carried. A chainless mandate's terms are
+    // self-asserted here too, and arguably that should read `Unverified` --
+    // the same way "no revocation source" does a few lines up. But that would
+    // change the verdict of every chainless receipt, which is a product
+    // decision, not a bug fix, and bundling it here would make a security
+    // change hard to review on its own merits. Tracked separately; the design
+    // does support resolving the grant out of band by `grant_id`, so a
+    // verifier that does so can still check what this one cannot.
+    if !m.chain.is_empty() {
+        match resolve_grant_chain(m) {
+            Err(e) => fail.push(format!("grant chain does not resolve: {e}")),
+            Ok(chain) => {
+                if let Err(e) = verify_grant_chain(&chain) {
+                    fail.push(format!("grant chain attenuation: {e}"));
+                } else if let Some(leaf) = chain.last() {
+                    if !scope_subset(&m.scope, &leaf.scope) {
+                        fail.push(format!(
+                            "mandate scope {:?} exceeds the leaf grant's scope {:?}: the \
+                             mandate claims authority the grantor did not give",
+                            m.scope, leaf.scope
+                        ));
+                    }
+                    if m.audience != leaf.audience {
+                        fail.push(format!(
+                            "mandate audience '{}' does not match the leaf grant's '{}'",
+                            m.audience, leaf.audience
+                        ));
+                    }
+                    // Same attenuation rule as between grants: adding an
+                    // objective narrows and is fine; changing or dropping one
+                    // spends authority minted for one task on another.
+                    match (&leaf.objective_hash, &m.objective_hash) {
+                        (Some(g), Some(mm)) if g != mm => fail.push(format!(
+                            "mandate objective '{mm}' does not match the leaf grant's '{g}'"
+                        )),
+                        (Some(g), None) => fail.push(format!(
+                            "leaf grant is bound to objective '{g}' and the mandate declares \
+                             none: dropping the binding removes the constraint"
+                        )),
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
     // -- holder binding. A mandate with no `grantee` came from a bearer grant:
     // authentic, in scope, in window, and spendable by anyone who obtained the
     // grant bytes. The signature proves who issued the grant and who signed
@@ -1291,6 +1350,18 @@ pub enum GrantChainError {
     DepthExceedsMax { parent: usize },
     /// child.audience differs from parent.audience.
     AudienceChanged { parent: usize },
+    /// The declared objective changed, or was dropped, across a delegation.
+    ///
+    /// `objective_hash` commits to *what task* a grant was issued to serve.
+    /// Scope says which actions are permitted; the objective says what they
+    /// were permitted **for**. A delegation that keeps the scope and swaps the
+    /// objective is authority minted for one task being spent on another --
+    /// every existing check passes, because none of them look at why.
+    ///
+    /// Dropping it is the same violation. A child with no objective is
+    /// unconstrained by one, so removing it widens authority exactly as
+    /// extending an expiry does.
+    ObjectiveChanged { parent: usize },
 }
 
 impl std::fmt::Display for GrantChainError {
@@ -1333,6 +1404,13 @@ impl std::fmt::Display for GrantChainError {
                     parent + 1
                 )
             }
+            Self::ObjectiveChanged { parent } => write!(
+                f,
+                "objective changed or was dropped at hop {}->{}: authority granted for one \
+                 task cannot be spent on another",
+                parent,
+                parent + 1
+            ),
             Self::AudienceChanged { parent } => {
                 write!(f, "audience changes at hop {}->{}", parent, parent + 1)
             }
@@ -1390,6 +1468,20 @@ pub fn verify_grant_chain(chain: &[Grant]) -> Result<(), GrantChainError> {
 
         if child.audience != parent.audience {
             return Err(GrantChainError::AudienceChanged { parent: i });
+        }
+
+        // Objective attenuation. A child may ADD an objective the parent did
+        // not declare -- that narrows. It may not change one, and it may not
+        // drop one, because both let a grant issued for task A be spent on
+        // task B with every other check still passing.
+        match (&parent.objective_hash, &child.objective_hash) {
+            (Some(p), Some(c)) if p != c => {
+                return Err(GrantChainError::ObjectiveChanged { parent: i });
+            }
+            (Some(_), None) => {
+                return Err(GrantChainError::ObjectiveChanged { parent: i });
+            }
+            _ => {}
         }
     }
 
@@ -2636,5 +2728,97 @@ mod tests {
             resolve_grant_chain(&m),
             Err(ChainResolveError::InconsistentId { .. })
         ));
+    }
+    /// The bypass this reconciliation closes, kept as the shape it had.
+    ///
+    /// A legitimately signed, correctly attenuated chain whose leaf grants
+    /// only `payments.charge`, carried by a mandate that declares
+    /// `payments.*`, previously verified `payments.refund` as **Pass**. The
+    /// chain resolved, attenuation checked, and then nothing compared the
+    /// mandate against it: real, verified, and decorative.
+    ///
+    /// The root cause is worth naming -- the mandate restates the grant's
+    /// terms, and the restatement is signed by the party being constrained.
+    /// A constraint you author about yourself is not a constraint.
+    #[test]
+    fn mandate_cannot_claim_more_than_the_grant_it_names() {
+        let (root, leaf, _) = chain_fixture();
+        assert_eq!(leaf.scope, vec!["payments.charge".to_string()]);
+
+        let mut m = mandate_with(&leaf, vec![root.clone(), leaf.clone()]);
+        m.scope = vec!["payments.*".into()];
+        m.audience = leaf.audience.clone();
+
+        // The chain itself is genuine: it resolves and it attenuates.
+        let chain = resolve_grant_chain(&m).expect("chain resolves");
+        assert_eq!(verify_grant_chain(&chain), Ok(()));
+
+        let mut stmt = good_stmt();
+        stmt.action = "payments.refund".into();
+        stmt.audience = Some(leaf.audience.clone());
+        stmt.mandate = m;
+
+        match verify_mandate(&stmt, &StaticRevocation(RevocationStatus::NotRevoked)) {
+            MandateVerdict::Fail(reasons) => assert!(
+                reasons.iter().any(|r| r.contains("exceeds the leaf grant")),
+                "failed for the wrong reason: {reasons:?}"
+            ),
+            other => panic!("an action outside the leaf grant must FAIL, got {other:?}"),
+        }
+    }
+
+    /// The honest case must still pass, or the check closes the hole and the
+    /// feature together.
+    #[test]
+    fn a_mandate_within_its_grant_still_passes() {
+        let (root, leaf, _) = chain_fixture();
+        let mut m = mandate_with(&leaf, vec![root.clone(), leaf.clone()]);
+        m.scope = leaf.scope.clone();
+        m.audience = leaf.audience.clone();
+
+        let mut stmt = good_stmt();
+        stmt.action = "payments.charge".into();
+        stmt.audience = Some(leaf.audience.clone());
+        stmt.mandate = m;
+
+        assert_eq!(
+            verify_mandate(&stmt, &StaticRevocation(RevocationStatus::NotRevoked)),
+            MandateVerdict::Pass
+        );
+    }
+
+    /// Objective attenuation between grants: authority minted for one task
+    /// must not be spent on another, and dropping the binding removes the
+    /// constraint exactly as changing it does.
+    #[test]
+    fn objective_cannot_change_or_be_dropped_across_a_delegation() {
+        let (root, leaf, _) = chain_fixture();
+
+        let mut p = root.clone();
+        p.objective_hash = Some("sha256:task-a".into());
+
+        let mut swapped = leaf.clone();
+        swapped.objective_hash = Some("sha256:task-b".into());
+        assert_eq!(
+            verify_grant_chain(&[p.clone(), swapped]),
+            Err(GrantChainError::ObjectiveChanged { parent: 0 })
+        );
+
+        let mut dropped = leaf.clone();
+        dropped.objective_hash = None;
+        assert_eq!(
+            verify_grant_chain(&[p.clone(), dropped]),
+            Err(GrantChainError::ObjectiveChanged { parent: 0 })
+        );
+
+        // Adding an objective the parent did not declare narrows, and is fine.
+        let mut added = leaf.clone();
+        added.objective_hash = Some("sha256:task-a".into());
+        assert_eq!(verify_grant_chain(&[root.clone(), added]), Ok(()));
+
+        // Matching objectives are fine.
+        let mut same = leaf.clone();
+        same.objective_hash = Some("sha256:task-a".into());
+        assert_eq!(verify_grant_chain(&[p, same]), Ok(()));
     }
 }

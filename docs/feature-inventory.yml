@@ -42,6 +42,21 @@
     - packages/core/src/artifacts/verify.rs
   notes: "DSSE envelopes (Ed25519 over PAE bytes, deterministic declaration-order JSON), content-addressed art_ IDs."
 
+- id: reason-authorization-receipts
+  name: Zerker Reason authorization receipts
+  section: core
+  status: beta
+  cli:
+    - treeship attest receipt
+  packages:
+    - treeship-core
+    - treeship-cli
+  docs:
+    - docs/content/docs/integrations/zerker-reason.mdx
+  tests:
+    - packages/core/src/predicates/mod.rs
+  notes: "Registers reason.authorization.v1 as a typed receipt payload for complete Zerker Reason action-authorization certificates. Treeship verifies schema, signature, and chain; semantic replay remains a separate reason verify-authorization step. The generic receipt command does not invoke Reason automatically."
+
 - id: action-v2-emission
   name: action/v2 receipt emission (CLI)
   section: core

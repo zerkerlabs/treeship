@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://treeship.dev/schemas/reason.authorization.v1.json",
+  "title": "reason.authorization.v1",
+  "description": "A complete zerker.reason.authorization.v1 certificate carried as the signed payload of a Treeship receipt. Treeship attests which key committed to these exact bytes and validates their schema. Semantic authorization remains independently checkable with `reason verify-authorization`; a Treeship signature alone does not prove that the reasoning is sound or that the named system URI controls the signing key.",
+  "type": "object",
+  "required": [
+    "schema",
+    "status",
+    "request_digest",
+    "mission",
+    "action",
+    "reasoning",
+    "issues"
+  ],
+  "properties": {
+    "schema": {
+      "const": "zerker.reason.authorization.v1"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "authorized",
+        "denied",
+        "conflicted",
+        "insufficient_evidence"
+      ]
+    },
+    "request_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "mission": {
+      "type": "object",
+      "required": ["id", "digest"],
+      "properties": {
+        "id": { "type": "string" },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "action": {
+      "type": "object",
+      "required": ["id", "digest", "tool", "arguments", "effects"],
+      "properties": {
+        "id": { "type": "string" },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "tool": { "type": "string" },
+        "arguments": { "type": "object" },
+        "effects": { "type": "array" }
+      },
+      "additionalProperties": false
+    },
+    "reasoning": {
+      "type": "object",
+      "required": [
+        "schema",
+        "status",
+        "query",
+        "program_digest",
+        "ontology",
+        "authority",
+        "proof",
+        "disproof",
+        "conflict",
+        "missing",
+        "assumptions",
+        "metrics"
+      ],
+      "properties": {
+        "schema": {
+          "type": "string",
+          "enum": ["zerker.reason.result.v1", "zerker.reason.result.v2"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["proved", "disproved", "inconsistent", "unknown"]
+        },
+        "query": { "type": "object" },
+        "program_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "ontology": { "type": "object" },
+        "authority": { "type": "object" },
+        "temporal": { "type": "object" },
+        "proof": { "type": ["object", "null"] },
+        "disproof": { "type": ["object", "null"] },
+        "conflict": { "type": ["object", "null"] },
+        "missing": { "type": "array" },
+        "assumptions": { "type": "array" },
+        "metrics": { "type": "object" }
+      }
+    },
+    "issues": {
+      "type": "array"
+    }
+  },
+  "additionalProperties": false
+}
