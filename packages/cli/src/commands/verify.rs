@@ -375,6 +375,7 @@ pub fn run(
     max_depth: usize,
     full: bool,
     max_unwitnessed: Option<&str>,
+    require_authority: bool,
     config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -577,9 +578,25 @@ pub fn run(
             // nothing is wrong.
             "authority_checked": authority_checked,
             "authority_unverified": authority_unverified,
+            // Populated only under --require-authority: why the gate refused.
+            // Absent when the flag is off, so the field's presence is itself
+            // the signal that a policy was applied.
+            // Latent capability is not a defect, so it is reported rather
+            // than gated. `out_of_scope` is a defect, and the mandate verdict
+            // fails for it independently.
+            "capability_use": chain_authority_use(&chain_envelopes),
+            "authority_gate": authority_gate_failure(
+                require_authority, authority_checked, authority_unverified, authority_ok,
+            ),
             "checks": out,
         }));
-        if failed > 0 || !linkage_ok {
+        let authority_gate = authority_gate_failure(
+            require_authority,
+            authority_checked,
+            authority_unverified,
+            authority_ok,
+        );
+        if failed > 0 || !linkage_ok || authority_gate.is_some() {
             std::process::exit(1);
         }
         return Ok(());
@@ -648,6 +665,45 @@ pub fn run(
                         ),
                     ],
                 );
+                printer.blank();
+                std::process::exit(1);
+            }
+        }
+
+        // Authority gate. Same policy as the JSON path -- a flag that only
+        // worked in one output mode would be a trap for whichever caller
+        // picked the other.
+        {
+            let summaries: Vec<MandateSummary> = chain_envelopes
+                .iter()
+                .filter_map(|(_, env)| v2_mandate_summary(env, Some(&verifier)))
+                .collect();
+            let checked = summaries.len();
+            let unverified = summaries
+                .iter()
+                .filter(|m| matches!(m, MandateSummary::Unverified(_)))
+                .count();
+            let ok = !summaries
+                .iter()
+                .any(|m| matches!(m, MandateSummary::Fail(_)));
+
+            if checked > 0 {
+                printer.dim_info(&format!(
+                    "  authority:  {checked} mandate(s) judged, {unverified} unverified"
+                ));
+                // Granted vs exercised. Verification already checks that every
+                // action fell inside its scope; the remainder -- capability
+                // granted and never used -- is computed by nobody and shown to
+                // nobody, and it is the difference between a chain that could
+                // only do what it did and one that was a defect away from
+                // doing more.
+                let use_ = chain_authority_use(&chain_envelopes);
+                printer.dim_info(&format!("  capability: {}", use_.summary()));
+            }
+            if let Some(reason) = authority_gate_failure(require_authority, checked, unverified, ok)
+            {
+                printer.blank();
+                printer.failure("AUTHORITY NOT ESTABLISHED", &[("reason", &reason)]);
                 printer.blank();
                 std::process::exit(1);
             }
@@ -2045,6 +2101,77 @@ fn extract_actor(envelope: &Envelope) -> String {
         return s.actor;
     }
     "\u{2014}".into()
+}
+
+/// Collect mandate scopes and performed actions across a verified chain.
+///
+/// Both sides come out of the signed bytes already -- this reads them, it does
+/// not derive anything new. An envelope that will not decode as action/v2 is
+/// skipped rather than defaulted: a missing scope counted as empty would
+/// invent dormant capability, and a missing action counted as absent would
+/// hide an out-of-scope one.
+fn chain_authority_use(
+    chain_envelopes: &[(String, Envelope)],
+) -> treeship_core::verify::authority_use::AuthorityUse {
+    use treeship_core::statements::ActionStatementV2;
+    use treeship_core::verify::authority_use::AuthorityUse;
+
+    let mut scopes: Vec<String> = Vec::new();
+    let mut actions: Vec<String> = Vec::new();
+    for (_, env) in chain_envelopes {
+        if let Ok(stmt) = env.unmarshal_statement::<ActionStatementV2>() {
+            scopes.extend(stmt.mandate.scope.iter().cloned());
+            actions.push(stmt.action.clone());
+        }
+    }
+    AuthorityUse::compute(&scopes, &actions)
+}
+
+/// Why `--require-authority` refuses, or `None` when it is satisfied (or off).
+///
+/// The flag exists because the default exit code answers "are the signatures
+/// valid", and a caller writing `treeship verify "$ART" && deploy` is asking a
+/// different question: "was this agent allowed to do it". Those come apart
+/// exactly when authority could not be checked -- `NoRevocationSource` means
+/// no revocation resolver is configured, so a mandate degrades to `Unverified`
+/// and `authority_ok` stays true. Nothing was caught because nothing looked.
+///
+/// Three ways to fail, deliberately including the third:
+///
+/// * a mandate outright failed;
+/// * a mandate could not be checked;
+/// * **there was no mandate at all.** Requiring authority and finding none is
+///   not a pass. An action/v1 receipt makes no authority claim, so a gate that
+///   accepted it would be satisfied by the absence of the thing it demanded.
+fn authority_gate_failure(
+    require: bool,
+    checked: usize,
+    unverified: usize,
+    ok: bool,
+) -> Option<String> {
+    if !require {
+        return None;
+    }
+    if checked == 0 {
+        return Some(
+            "--require-authority: this receipt carries no action/v2 mandate, so there is no \
+             authority to verify. Absence of a claim is not a passing check."
+                .to_string(),
+        );
+    }
+    if !ok {
+        return Some(format!(
+            "--require-authority: {checked} mandate(s) judged and at least one FAILED"
+        ));
+    }
+    if unverified > 0 {
+        return Some(format!(
+            "--require-authority: {unverified} of {checked} mandate(s) could not be fully \
+             verified (typically no revocation source configured, so a withdrawn grant would \
+             not be detected). Nothing was caught because nothing looked."
+        ));
+    }
+    None
 }
 
 #[cfg(test)]

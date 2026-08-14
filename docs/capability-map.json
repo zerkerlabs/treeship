@@ -3,7 +3,7 @@
   "counts": {
     "cli_commands": 34,
     "hub_routes": 22,
-    "wire_types": 115
+    "wire_types": 116
   },
   "cli_commands": [
     "add",
@@ -302,6 +302,11 @@
       "name": "AuthoritySection",
       "kind": "struct",
       "source": "packages/core/src/session/receipt.rs"
+    },
+    {
+      "name": "AuthorityUse",
+      "kind": "struct",
+      "source": "packages/core/src/verify/authority_use.rs"
     },
     {
       "name": "BudgetUpdate",
