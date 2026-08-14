@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -170,5 +171,60 @@ func assertEq(t *testing.T, name string, got, want int64) {
 	t.Helper()
 	if got != want {
 		t.Errorf("%s = %d, want %d", name, got, want)
+	}
+}
+
+// Audit item 23. `ship_agents` is populated from AgentGraph nodes in uploaded
+// receipts that the hub never cryptographically verifies, so this count is a
+// sum of claims. `agents.total` read as a verified population figure, and a
+// public adoption metric that can be inflated by anyone with a dock should
+// not be phrased as a fact.
+func TestAgentCountsAreLabelledAsClaims(t *testing.T) {
+	t.Setenv("TREESHIP_HUB_DB", filepath.Join(t.TempDir(), "hub.db"))
+	database, err := db.Open()
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer database.Close()
+
+	h := &Handlers{DB: database}
+	rec := httptest.NewRecorder()
+	h.Stats(rec, httptest.NewRequest(http.MethodGet, "/v1/stats", nil))
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("not JSON: %v", err)
+	}
+	agents, _ := body["agents"].(map[string]any)
+	if agents == nil {
+		t.Fatal("no agents block")
+	}
+
+	if _, ok := agents["claimed_total"]; !ok {
+		t.Error("the honest name must be present -- `total` alone reads as verified")
+	}
+	basis, _ := agents["basis"].(string)
+	if basis == "" {
+		t.Fatal("the agents block must state what its numbers are counted from")
+	}
+	if !strings.Contains(basis, "self-reported") {
+		t.Errorf("basis should say plainly that these are claims: %q", basis)
+	}
+
+	// The deprecated name stays for one release and must agree, or a consumer
+	// reading the old field gets a different number from one reading the new.
+	if agents["total"] != agents["claimed_total"] {
+		t.Errorf("deprecated `total` (%v) disagrees with `claimed_total` (%v)",
+			agents["total"], agents["claimed_total"])
+	}
+
+	// Facts must NOT be relabelled as claims. Artifact and dock counts are
+	// statements about the hub's own state; calling them self-reported would
+	// be its own inaccuracy in the opposite direction.
+	for _, block := range []string{"artifacts", "docks", "sessions"} {
+		b, _ := body[block].(map[string]any)
+		if _, ok := b["basis"]; ok {
+			t.Errorf("%s counts the hub's own rows and should not carry a claims caveat", block)
+		}
 	}
 }
