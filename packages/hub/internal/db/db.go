@@ -28,7 +28,12 @@ CREATE TABLE IF NOT EXISTS artifacts (
   parent_id     TEXT,
   hub_url       TEXT NOT NULL,
   rekor_index   INTEGER,
-  dock_id       TEXT REFERENCES ships(dock_id)
+  dock_id       TEXT REFERENCES ships(dock_id),
+  -- Derived from the envelope at ingestion, never from the request. Present
+  -- here for fresh databases; migrate() ALTERs them onto existing ones, and
+  -- tolerates the resulting "duplicate column" on a fresh one.
+  kind          TEXT,
+  actor         TEXT
 );
 
 CREATE TABLE IF NOT EXISTS dock_challenges (
@@ -121,6 +126,11 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_artifacts_payload_type ON artifacts(payload_type, signed_at);
 CREATE INDEX IF NOT EXISTS idx_artifacts_dock_id ON artifacts(dock_id);
+-- Derived-column indices. A kind-only lookup answers "every revocation"; the
+-- composite answers "this agent's receipts" without loading the table and
+-- JSON-parsing every envelope, which is what made the public reads expensive.
+CREATE INDEX IF NOT EXISTS idx_artifacts_kind ON artifacts(kind, signed_at);
+CREATE INDEX IF NOT EXISTS idx_artifacts_actor_kind ON artifacts(actor, kind, signed_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_dock_id ON sessions(dock_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_uploaded_at ON sessions(uploaded_at);
 
@@ -198,6 +208,20 @@ func Open() (*sql.DB, error) {
 func migrate(db *sql.DB) error {
 	addColumns := []string{
 		`ALTER TABLE dock_challenges ADD COLUMN dock_id TEXT`,
+		// Derived indexing columns (audit items 11, 20, 21).
+		//
+		// Both are computed from the envelope's own signed bytes at
+		// ingestion, never taken from the request. That distinction is the
+		// whole point of item 11: an index built from caller-supplied
+		// metadata lets an uploader decide how their artifact is found, and
+		// a resolver filtering on it is filtering on the uploader's claim.
+		//
+		// Nullable, because rows written before this migration have neither
+		// and a backfill cannot invent them for an envelope that will not
+		// decode. A NULL here means "not derived", which is why queries must
+		// not treat it as "does not match".
+		`ALTER TABLE artifacts ADD COLUMN kind TEXT`,
+		`ALTER TABLE artifacts ADD COLUMN actor TEXT`,
 	}
 	for _, stmt := range addColumns {
 		if _, err := db.Exec(stmt); err != nil {
@@ -208,6 +232,57 @@ func migrate(db *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+// BackfillDerivedIndex populates `kind`/`actor` for rows written before those
+// columns existed.
+//
+// Only touches rows where both are NULL, so it is a no-op on an up-to-date
+// database and does not re-examine rows a previous run found unindexable.
+//
+// Errors are returned rather than logged and ignored: a half-populated index
+// answers queries with a subset, which looks like an empty result rather than
+// a failure.
+func BackfillDerivedIndex(db *sql.DB, derive func(string) (kind, actor *string)) (int, error) {
+	rows, err := db.Query(
+		`SELECT artifact_id, envelope_json FROM artifacts
+		 WHERE kind IS NULL AND actor IS NULL`)
+	if err != nil {
+		return 0, err
+	}
+	type row struct{ id, env string }
+	var pending []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.env); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		pending = append(pending, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	n := 0
+	for _, r := range pending {
+		kind, actor := derive(r.env)
+		if kind == nil && actor == nil {
+			// Nothing derivable. Left NULL rather than written as empty
+			// strings, so "not derived" stays distinguishable from "derived
+			// to nothing".
+			continue
+		}
+		if _, err := db.Exec(
+			`UPDATE artifacts SET kind = ?, actor = ? WHERE artifact_id = ?`,
+			kind, actor, r.id,
+		); err != nil {
+			return n, err
+		}
+		n++
+	}
+	return n, nil
 }
 
 // --- dock_challenges ---
@@ -353,6 +428,9 @@ type Artifact struct {
 	HubURL       string  `json:"hub_url"`
 	RekorIndex   *int64  `json:"rekor_index"`
 	DockID       *string `json:"dock_id"`
+	// Derived at ingestion from the envelope, not accepted from the caller.
+	Kind  *string `json:"kind"`
+	Actor *string `json:"actor"`
 }
 
 // InsertArtifact stores an artifact, idempotently on artifact_id.
@@ -374,10 +452,10 @@ func InsertArtifact(db *sql.DB, a *Artifact) (inserted bool, err error) {
 	// DO NOTHING rather than DO UPDATE: stored bytes are never overwritten,
 	// so even a derivation bug cannot change what an existing id serves.
 	res, err := db.Exec(
-		`INSERT INTO artifacts (artifact_id, payload_type, envelope_json, digest, signed_at, parent_id, hub_url, rekor_index, dock_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO artifacts (artifact_id, payload_type, envelope_json, digest, signed_at, parent_id, hub_url, rekor_index, dock_id, kind, actor)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(artifact_id) DO NOTHING`,
-		a.ArtifactID, a.PayloadType, a.EnvelopeJSON, a.Digest, a.SignedAt, a.ParentID, a.HubURL, a.RekorIndex, a.DockID,
+		a.ArtifactID, a.PayloadType, a.EnvelopeJSON, a.Digest, a.SignedAt, a.ParentID, a.HubURL, a.RekorIndex, a.DockID, a.Kind, a.Actor,
 	)
 	if err != nil {
 		return false, err
@@ -452,6 +530,48 @@ func ListArtifactsByDock(db *sql.DB, dockID string) ([]Artifact, error) {
 // ListArtifactsByPayloadType returns every artifact of a given payload type,
 // newest first. Used by the agent resolver to scan receipts. Bounded scans are
 // acceptable for now; an agent-indexed lookup is a later optimization.
+// ListArtifactsByKind returns artifacts of one derived kind, newest first,
+// bounded, reporting whether more exist.
+//
+// This is the point of the derived columns. The alternative -- and what the
+// revocation endpoint did before -- is to select every receipt, JSON-decode
+// each envelope, base64-decode each payload, and discard the 99% that are not
+// the kind you wanted. That cost is per-request and unauthenticated.
+//
+// Rows with a NULL kind are not returned. They are not "no match", they are
+// "never derived" (written before the column existed and not backfillable), so
+// a caller that needs completeness has to say so rather than assume this is
+// exhaustive.
+func ListArtifactsByKind(db *sql.DB, kind string, limit int) ([]Artifact, bool, error) {
+	rows, err := db.Query(
+		`SELECT artifact_id, payload_type, envelope_json, digest, signed_at, parent_id, hub_url, rekor_index, dock_id, kind, actor
+		 FROM artifacts WHERE kind = ? ORDER BY signed_at DESC LIMIT ?`,
+		kind, limit+1)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+
+	var out []Artifact
+	for rows.Next() {
+		var a Artifact
+		if err := rows.Scan(&a.ArtifactID, &a.PayloadType, &a.EnvelopeJSON, &a.Digest,
+			&a.SignedAt, &a.ParentID, &a.HubURL, &a.RekorIndex, &a.DockID, &a.Kind, &a.Actor); err != nil {
+			return nil, false, err
+		}
+		out = append(out, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+
+	truncated := len(out) > limit
+	if truncated {
+		out = out[:limit]
+	}
+	return out, truncated, nil
+}
+
 // ListArtifactsByPayloadTypeLimit is the bounded form. Takes newest-first up
 // to `limit`, and reports whether more exist.
 //
