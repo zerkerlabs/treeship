@@ -158,10 +158,21 @@ fn cli_emits_action_v2_that_verify_reads() {
         "emitted v2 receipt must verify: {j}"
     );
 
-    // Authority is unverified without a revocation resolver — never a false pass.
+    // Authority passes, and the reason it may is narrow.
+    //
+    // This asserted `unverified` for as long as the CLI wired no revocation
+    // resolver: every mandate degraded, because claiming a grant was live when
+    // nobody had looked would be a false pass. There is a resolver now.
+    //
+    // It resolves `NotRevoked` here only because this ship ISSUED the grant --
+    // `grant issue` above wrote it to this workspace, so we are the grantor,
+    // revoking is an act we would have performed, and we have no record of it.
+    // For a grant issued by anyone else an empty local store is ignorance
+    // rather than evidence, and still resolves Unknown; the resolver's unit
+    // tests cover that side.
     assert_eq!(
-        check["authority"]["outcome"], "unverified",
-        "authority must be unverified without a revocation resolver: {j}"
+        check["authority"]["outcome"], "pass",
+        "a grant this ship issued, with no revocation on record, is not revoked: {j}"
     );
 
     // Effect claim reaches verify (kebab label on the machine surface).

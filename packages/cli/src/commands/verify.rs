@@ -10,8 +10,8 @@ use treeship_core::{
         session_participant::{verify_participant_envelope, SessionParticipantStatement},
         verify_effect, verify_grant_chain, verify_mandate, ActionStatement, ActionStatementV2,
         ApprovalScope, ApprovalStatement, DeadlineEvent, DecisionStatement, EffectConfidence,
-        EffectFinality, EffectVerdict, HandoffStatement, MandateVerdict, NoRevocationSource,
-        NoWitnessAuthority, ReceiptStatement, ResolutionStatus,
+        EffectFinality, EffectVerdict, HandoffStatement, MandateVerdict, NoWitnessAuthority,
+        ReceiptStatement, ResolutionStatus,
     },
     storage::Store,
     trust::TrustRootStore,
@@ -153,16 +153,29 @@ fn v2_effect_verdict(env: &Envelope) -> Option<EffectVerdict> {
 }
 
 /// Reconciled mandate verdict for an envelope, if it is a treeship/action/v2
-/// receipt. `None` for anything else. Uses [`NoRevocationSource`]: the CLI
-/// wires no revocation resolver yet, so that layer resolves Unknown and the
-/// verdict degrades to Unverified -- claiming a grant is live because we never
-/// looked would be exactly the false pass this verifier exists to refuse.
-fn v2_mandate_summary(env: &Envelope, verifier: Option<&Verifier>) -> Option<MandateSummary> {
+/// receipt. `None` for anything else.
+///
+/// `revocation` is the resolver. It used to be hardcoded to
+/// [`NoRevocationSource`], so the layer always resolved Unknown and every
+/// verdict degraded to Unverified -- honest, and permanently so: a withdrawn
+/// grant was indistinguishable from a live one. Callers now pass
+/// `LocalRevocationSource`, which reads `grant_revocation.v1` receipts from
+/// the store.
+///
+/// Still fails toward Unverified when the resolver cannot answer. Claiming a
+/// grant is live because nobody looked is the false pass this verifier exists
+/// to refuse, and a local store that has never seen a revocation is not
+/// evidence that none was issued.
+fn v2_mandate_summary(
+    env: &Envelope,
+    verifier: Option<&Verifier>,
+    revocation: &dyn treeship_core::statements::RevocationSource,
+) -> Option<MandateSummary> {
     if env.payload_type != payload_type_v2("action") {
         return None;
     }
     let stmt = env.unmarshal_statement::<ActionStatementV2>().ok()?;
-    let mut verdict = match verify_mandate(&stmt, &NoRevocationSource) {
+    let mut verdict = match verify_mandate(&stmt, revocation) {
         MandateVerdict::Pass => MandateSummary::Pass,
         MandateVerdict::Unverified(r) => MandateSummary::Unverified(r),
         MandateVerdict::Fail(r) => MandateSummary::Fail(r),
@@ -400,6 +413,12 @@ pub fn run(
     // Local keys cover artifacts produced here; pinned roots cover artifacts
     // pulled or imported from trusted counterparties.
     let trust = TrustRootStore::open_default_or_empty()?;
+
+    // Loaded once. A chain of N mandates would otherwise rescan the store N
+    // times, and every mandate must be judged against the same revocation
+    // state -- reloading mid-chain could have two hops disagree about whether
+    // the same grant was live.
+    let revocation = crate::commands::revocation_source::for_ctx(&ctx);
     let verifier = crate::commands::verifier::from_local_and_trust(&ctx.keys, &trust)?
         .ok_or("no local or trusted verification keys are configured")?;
 
@@ -493,7 +512,7 @@ pub fn run(
         let authority_by_id: HashMap<String, serde_json::Value> = chain_envelopes
             .iter()
             .filter_map(|(id, env)| {
-                v2_mandate_summary(env, Some(&verifier))
+                v2_mandate_summary(env, Some(&verifier), &revocation)
                     .map(|m| (id.clone(), mandate_summary_json(&m)))
             })
             .collect();
@@ -532,7 +551,7 @@ pub fn run(
         // unverified, one gating a payment should not.
         let summaries: Vec<MandateSummary> = chain_envelopes
             .iter()
-            .filter_map(|(_, env)| v2_mandate_summary(env, Some(&verifier)))
+            .filter_map(|(_, env)| v2_mandate_summary(env, Some(&verifier), &revocation))
             .collect();
         let authority_ok = !summaries
             .iter()
@@ -676,7 +695,7 @@ pub fn run(
         {
             let summaries: Vec<MandateSummary> = chain_envelopes
                 .iter()
-                .filter_map(|(_, env)| v2_mandate_summary(env, Some(&verifier)))
+                .filter_map(|(_, env)| v2_mandate_summary(env, Some(&verifier), &revocation))
                 .collect();
             let checked = summaries.len();
             let unverified = summaries
@@ -1443,7 +1462,11 @@ fn extract_step_info(
                 info.runtime_model = rt.model.clone();
             }
             // Surface the effect line only when there is an effect to judge.
-            info.mandate_verdict = v2_mandate_summary(env, verifier);
+            info.mandate_verdict = v2_mandate_summary(
+                env,
+                verifier,
+                &treeship_core::statements::NoRevocationSource,
+            );
             info.chain_summary = v2_chain_summary(env);
             if let Some(verdict) = v2_effect_verdict(env) {
                 info.effect_effective = Some(verdict.effective_confidence);
@@ -2614,7 +2637,12 @@ mod tests {
         .unwrap()
         .envelope;
         assert!(
-            v2_mandate_summary(&v1_env, None).is_none(),
+            v2_mandate_summary(
+                &v1_env,
+                None,
+                &treeship_core::statements::NoRevocationSource
+            )
+            .is_none(),
             "v1 receipts must not claim anything about authority"
         );
     }

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://treeship.dev/schemas/grant_revocation.v1.json",
+  "title": "grant_revocation.v1",
+  "description": "Withdraws a previously-issued capability grant. Carried as the payload of a Treeship receipt with kind=grant_revocation.v1. Honored only when the signer is the grant's own grantor: a revocation anyone could mint would be a denial-of-service against every grant whose id they knew. Revocation is evaluated at the action's signed_at, so an action signed BEFORE the revocation instant stays valid -- withdrawing authority is not the same as retroactively unmaking what was already done under it.",
+  "type": "object",
+  "required": ["schema", "grant_id", "grantor", "revoked_at"],
+  "properties": {
+    "schema": {
+      "description": "Schema identifier. Must be exactly this value.",
+      "const": "grant_revocation.v1"
+    },
+    "grant_id": {
+      "description": "Content-derived id (grn_...) of the grant being withdrawn.",
+      "type": "string"
+    },
+    "grantor": {
+      "description": "Ed25519 public key of the grant's issuer, base64url-no-pad. Recorded so a verifier can confirm the revocation was signed by the party that issued the grant, without re-resolving the grant itself.",
+      "type": "string"
+    },
+    "reason": {
+      "description": "Optional human-readable reason, e.g. compromised, task-complete, scope-error, key-rotation.",
+      "type": "string"
+    },
+    "revoked_at": {
+      "description": "RFC 3339 instant the grant was withdrawn. An action whose signed_at is at or after this instant is unauthorized; one signed strictly before it is not affected.",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

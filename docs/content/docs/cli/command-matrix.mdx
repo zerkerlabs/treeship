@@ -1049,6 +1049,22 @@ treeship grant show [OPTIONS] <GRANT_ID>
 |---|---|
 | `<GRANT_ID>` | -- |
 
+### `treeship grant revoke`
+
+Withdraw a grant. Mints a signed grant_revocation.v1 receipt
+
+```
+treeship grant revoke [OPTIONS] <GRANT_ID>
+```
+
+| Argument | Description |
+|---|---|
+| `<GRANT_ID>` | -- |
+
+| Option | Description |
+|---|---|
+| `--reason <REASON>` | Why, e.g. compromised, task-complete, scope-error, key-rotation |
+
 ## `treeship doctor`
 
 Diagnostic check -- verify everything is working
