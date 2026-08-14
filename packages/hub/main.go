@@ -21,6 +21,7 @@ import (
 	"github.com/go-chi/httprate"
 	"github.com/treeship/hub/internal/agents"
 	"github.com/treeship/hub/internal/artifacts"
+	"github.com/treeship/hub/internal/contentaddress"
 	"github.com/treeship/hub/internal/db"
 	"github.com/treeship/hub/internal/dock"
 	"github.com/treeship/hub/internal/merkle"
@@ -36,6 +37,25 @@ func main() {
 		log.Fatalf("failed to open database: %v", err)
 	}
 	defer database.Close()
+
+	// Populate the derived index for rows written before those columns
+	// existed. Without this, every indexed query silently returns only
+	// artifacts ingested after the upgrade -- an empty revocation list on a
+	// hub that holds revocations, which is the worst shape of wrong answer.
+	//
+	// Fatal on error rather than logged and continued: serving from a
+	// half-populated index answers queries with a subset that looks exactly
+	// like a complete result.
+	backfilled, err := db.BackfillDerivedIndex(database, func(env string) (*string, *string) {
+		idx := contentaddress.DeriveIndexable(env)
+		return idx.Kind, idx.Actor
+	})
+	if err != nil {
+		log.Fatalf("derived-index backfill failed: %v", err)
+	}
+	if backfilled > 0 {
+		log.Printf("backfilled derived index for %d artifact(s)", backfilled)
+	}
 
 	dockHandlers := &dock.Handlers{DB: database}
 	artifactHandlers := &artifacts.Handlers{DB: database}
@@ -358,8 +378,11 @@ func revokedHandler(database *sql.DB) http.HandlerFunc {
 		// holds the revoked grant.
 		w.Header().Set("Cache-Control", "max-age=300")
 
-		artifacts, truncated, err := db.ListArtifactsByPayloadTypeLimit(
-			database, receiptPayloadType, revocationListLimit)
+		// Indexed lookup. This used to select every receipt and decode each
+		// envelope to find the few that were revocations -- per request, on an
+		// unauthenticated endpoint.
+		artifacts, truncated, err := db.ListArtifactsByKind(
+			database, "grant_revocation.v1", revocationListLimit)
 		if err != nil {
 			log.Printf("revocation list query failed: %v", err)
 			// 503, not an empty 200. An empty list is indistinguishable from

@@ -151,3 +151,75 @@ func Check(envelopeJSON, claimedID, claimedDigest, claimedPayloadType string) (*
 func SameBytes(a, b string) bool {
 	return a == b
 }
+
+// Indexable is the metadata the hub indexes on, derived from the envelope's
+// own signed bytes.
+//
+// Derived, never accepted. An index built from caller-supplied fields lets an
+// uploader choose how their artifact is found -- and a resolver filtering on
+// it is filtering on the uploader's claim about itself, not on the content.
+// That is audit item 11, and it is the same reason `Check` above re-derives
+// the artifact id rather than trusting the one submitted.
+//
+// Both fields are optional. A statement without a `kind`, or one that is not a
+// receipt, indexes as NULL rather than as a guess, and queries must treat NULL
+// as "not derived" rather than "does not match".
+type Indexable struct {
+	Kind  *string
+	Actor *string
+}
+
+// DeriveIndexable extracts the indexable fields from an envelope.
+//
+// Never errors: an envelope that will not decode simply has nothing to index,
+// and refusing the whole ingestion over an unindexable artifact would reject
+// content the store is otherwise happy to hold.
+func DeriveIndexable(envelopeJSON string) Indexable {
+	var env Envelope
+	if json.Unmarshal([]byte(envelopeJSON), &env) != nil {
+		return Indexable{}
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(env.Payload, "="))
+	if err != nil {
+		return Indexable{}
+	}
+
+	// Receipts carry `kind` plus a payload that may name an actor; action
+	// statements name the actor at the top level. Read both shapes rather than
+	// assuming one, since the store holds both.
+	var stmt struct {
+		Kind    string          `json:"kind"`
+		Actor   string          `json:"actor"`
+		Payload json.RawMessage `json:"payload"`
+	}
+	if json.Unmarshal(payload, &stmt) != nil {
+		return Indexable{}
+	}
+
+	out := Indexable{}
+	if stmt.Kind != "" {
+		k := stmt.Kind
+		out.Kind = &k
+	}
+	actor := stmt.Actor
+	if actor == "" && len(stmt.Payload) > 0 {
+		var inner struct {
+			Actor string `json:"actor"`
+			Agent string `json:"agent"`
+		}
+		if json.Unmarshal(stmt.Payload, &inner) == nil {
+			// `agent` is the agent_card/cert spelling of the same idea. Folding
+			// them into one column is what lets a single index answer "this
+			// agent's records" across receipt kinds.
+			if inner.Actor != "" {
+				actor = inner.Actor
+			} else if inner.Agent != "" {
+				actor = inner.Agent
+			}
+		}
+	}
+	if actor != "" {
+		out.Actor = &actor
+	}
+	return out
+}

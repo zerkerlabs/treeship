@@ -126,7 +126,14 @@ func (h *Handlers) Push(w http.ResponseWriter, r *http.Request) {
 
 	hubURL := "https://treeship.dev/verify/" + derived.ArtifactID
 
+	// Indexed fields come from the envelope, not the request. See
+	// contentaddress.DeriveIndexable: an index built from caller-supplied
+	// metadata lets an uploader choose how their artifact is found.
+	idx := contentaddress.DeriveIndexable(req.EnvelopeJSON)
+
 	artifact := &db.Artifact{
+		Kind:         idx.Kind,
+		Actor:        idx.Actor,
 		ArtifactID:   req.ArtifactID,
 		PayloadType:  req.PayloadType,
 		EnvelopeJSON: req.EnvelopeJSON,

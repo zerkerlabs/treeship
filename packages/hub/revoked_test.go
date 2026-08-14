@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/treeship/hub/internal/contentaddress"
 	"github.com/treeship/hub/internal/db"
 )
 
@@ -63,9 +64,14 @@ func getRevoked(t *testing.T, mux *http.ServeMux) (map[string]any, *httptest.Res
 	return body, rec
 }
 
+// Mirrors what Push does: the indexed fields are derived from the envelope.
+// A fixture that set them by hand would test the query and not the derivation.
 func artifact(id, env string) *db.Artifact {
 	dock := "dock_a"
+	idx := contentaddress.DeriveIndexable(env)
 	return &db.Artifact{
+		Kind:         idx.Kind,
+		Actor:        idx.Actor,
 		ArtifactID:   id,
 		PayloadType:  receiptPayloadType,
 		EnvelopeJSON: env,
@@ -169,5 +175,81 @@ func TestTruncationIsReported(t *testing.T) {
 	body, _ := getRevoked(t, hubWith(t))
 	if _, present := body["truncated"]; !present {
 		t.Error("`truncated` must always be present, so its absence is never ambiguous")
+	}
+}
+
+// A hub upgraded in place holds artifacts written before `kind` existed. If
+// the backfill does not run, every indexed query returns only what was
+// ingested after the upgrade -- an empty revocation list on a hub that holds
+// revocations, which is the worst shape of wrong answer: confident and wrong.
+//
+// This writes a row the way a pre-upgrade hub would (no derived fields), then
+// asserts it is invisible until backfilled and present afterwards.
+func TestBackfillMakesPreUpgradeRowsVisible(t *testing.T) {
+	t.Setenv("TREESHIP_HUB_DB", filepath.Join(t.TempDir(), "hub.db"))
+	database, err := db.Open()
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer database.Close()
+
+	if _, err := database.Exec(
+		`INSERT INTO ships (dock_id, ship_public_key, dock_public_key, created_at)
+		 VALUES (?, ?, ?, ?)`, "dock_a", []byte("s"), []byte("d"), 1,
+	); err != nil {
+		t.Fatalf("register dock: %v", err)
+	}
+
+	env := receiptEnvelope(t, "grant_revocation.v1", map[string]any{
+		"grant_id": "grn_old", "grantor": "pk1", "revoked_at": "2026-08-01T10:00:00Z",
+	})
+	// Deliberately NULL kind/actor -- exactly what a pre-migration row looks like.
+	if _, err := database.Exec(
+		`INSERT INTO artifacts
+		 (artifact_id, payload_type, envelope_json, digest, signed_at, hub_url, dock_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		"art_old", receiptPayloadType, env, "sha256:00", 100, "https://x/art_old", "dock_a",
+	); err != nil {
+		t.Fatalf("insert legacy row: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/treeship/revoked.json", revokedHandler(database))
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/.well-known/treeship/revoked.json", nil))
+	var before map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &before)
+	if list, _ := before["revoked"].([]any); len(list) != 0 {
+		t.Fatalf("a row with no derived kind should not be found by an indexed query; got %d", len(list))
+	}
+
+	n, err := db.BackfillDerivedIndex(database, func(e string) (*string, *string) {
+		idx := contentaddress.DeriveIndexable(e)
+		return idx.Kind, idx.Actor
+	})
+	if err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("backfill should have updated 1 row, updated %d", n)
+	}
+
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/.well-known/treeship/revoked.json", nil))
+	var after map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &after)
+	list, _ := after["revoked"].([]any)
+	if len(list) != 1 {
+		t.Fatalf("after backfill the legacy revocation must appear; got %d", len(list))
+	}
+
+	// Idempotent: a second run must not re-touch rows it already decided.
+	n2, err := db.BackfillDerivedIndex(database, func(e string) (*string, *string) {
+		idx := contentaddress.DeriveIndexable(e)
+		return idx.Kind, idx.Actor
+	})
+	if err != nil || n2 != 0 {
+		t.Fatalf("second backfill should be a no-op, got n=%d err=%v", n2, err)
 	}
 }
