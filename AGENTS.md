@@ -1,7 +1,16 @@
 # TREESHIP --AGENT INSTRUCTIONS
 
 > **Read this file first. Every time. It is the single source of truth.**
-> Last updated: May 2026 · 257 core lib tests passing · CLI + Hub + SDK + MCP + Claude Code plugin shipped (v0.10.2).
+> Last updated: August 2026 · shipped at v0.24.0 · CLI + Hub + SDKs + MCP/A2A
+> bridges + Claude Code / OpenClaw / Kimi plugins + a Rig integration.
+>
+> **This file is orientation, not inventory.** It described v0.10.2 for four
+> months while the product reached 0.24, and the specific numbers in it were
+> the part that rotted: a test count, a cipher, a list of "not built yet" items
+> that had shipped. Counts are deliberately gone now -- `cargo test` answers
+> that question and cannot be out of date. For what exists today, the
+> CI-checked source is
+> [`docs/quality/capability-index.md`](docs/quality/capability-index.md).
 
 ---
 
@@ -33,7 +42,7 @@ Treeship is a portable trust layer for AI agent workflows. Every action, approva
 
 | Component | Location | Status |
 |-----------|----------|--------|
-| Rust core library | `packages/core/` | 257 tests passing |
+| Rust core library | `packages/core/` | signing, verification, keystore, Merkle |
 | Rust CLI binary | `packages/cli/` | 25+ commands |
 | TUI (Ratatui) | `packages/cli/` | Interactive terminal dashboard (`treeship ui`) |
 | OTel export | `packages/cli/` | OpenTelemetry span export (feature-flagged) |
@@ -42,7 +51,7 @@ Treeship is a portable trust layer for AI agent workflows. Every action, approva
 | TypeScript SDK | `packages/sdk-ts/` | @treeship/sdk, 6 tests |
 | Python SDK | `packages/sdk-python/` | treeship-sdk, parity-tested vs TS via cross-SDK suite |
 | Cross-SDK contract suite | `tests/cross-sdk/` | 4 vectors, runs in CI matrix (Ubuntu+macOS, Node 20/22, Python 3.11/3.12) |
-| MCP bridge | `bridges/mcp/` | @treeship/mcp, 3 tests |
+| MCP bridge | `bridges/mcp/` | @treeship/mcp |
 | Fumadocs site | `docs/` | 62 pages + 18 blog posts |
 | Website | (separate repo) | 8 pages |
 
@@ -50,9 +59,14 @@ Treeship is a portable trust layer for AI agent workflows. Every action, approva
 
 1. **ZK TLS (TLSNotary)** -- fully specced, feature-flagged, TLSNotary still alpha
 2. **`treeship attach claude/cursor`** -- agent process detection (the official Claude Code plugin at `integrations/claude-code-plugin/` covers Claude Code via PostToolUse hooks; standalone process attach for Cursor/Cline is still planned)
-3. **Hub Merkle Rekor anchoring** -- Rekor integration is best-effort, not yet live
-4. **Verifier-side enforcement of `valid_until` on rotated keys** -- the metadata is captured in v0.9.5 (`Store::rotate`) but verifiers do not yet refuse signatures from expired keys; slated for v0.10.0 behind an opt-in flag
-5. **Compromise-revocation primitive** -- `rotate` is graceful (predecessor stays valid through grace window); a separate revocation primitive for compromised keys is its own design
+3. **Hub Merkle Rekor anchoring** -- wired and best-effort: `rekor.Anchor` runs on push and a failure does not fail the push, so an artifact may have no `rekor_index`. Treat it as supplemental until end-to-end tests confirm it.
+4. **Certificate pinning to `api.treeship.dev`** -- hub writes are DPoP-authenticated (RFC 9449), which binds the request to a dock keypair, but the TLS connection itself is trusted on the system root store. A machine with a hostile root CA sees a hub it should not trust.
+5. **Selective disclosure of receipt fields** -- receipts are all-or-nothing today; `present --disclose` narrows a capability card, not a session receipt's contents.
+
+Two items previously listed here have since shipped and are removed rather
+than left as "not built": verifier-side `valid_until` enforcement (now in
+`verify/resolution.rs`) and the compromise-revocation primitive (`treeship
+grant revoke`, honored by `verify` locally and via a hub's published list).
 
 ---
 
@@ -65,11 +79,11 @@ treeship/                           # monorepo root
 ├── AGENTS.md                       # this file
 │
 ├── packages/
-│   ├── core/                       # Rust library (257 tests)
+│   ├── core/                       # Rust library
 │   │   └── src/
 │   │       ├── attestation/        # DSSE, PAE, Ed25519, content-addressed IDs
 │   │       ├── statements/         # 8 statement types (action, approval, handoff, endorsement, receipt, bundle, decision, declaration), nonce binding
-│   │       ├── keys/               # AES-256-CTR + HMAC encrypted keystore
+│   │       ├── keys/               # AES-256-GCM encrypted keystore
 │   │       ├── storage/            # local artifact store
 │   │       ├── bundle/             # pack/export/import .treeship files
 │   │       ├── merkle/             # tree, checkpoint, proof
