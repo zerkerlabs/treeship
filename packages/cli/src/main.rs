@@ -2154,6 +2154,21 @@ struct VerifyArgs {
     /// itself evidence of anything.
     #[arg(long, value_name = "DURATION")]
     max_unwitnessed: Option<String>,
+
+    /// Exit non-zero unless authority was actually checked and passed.
+    ///
+    /// The default exit code answers "are the signatures valid". A caller
+    /// writing `treeship verify "$ART" && deploy` is asking something else --
+    /// "was this agent allowed to do it" -- and the two come apart exactly
+    /// when authority could not be checked: with no revocation source
+    /// configured a mandate degrades to `unverified` while `authority_ok`
+    /// stays true, because nothing was caught by nothing looking.
+    ///
+    /// Under this flag, a failed mandate, an unverifiable one, or **no
+    /// mandate at all** are each non-zero. The last one matters: requiring
+    /// authority and finding none is not a pass.
+    #[arg(long, default_value_t = false)]
+    require_authority: bool,
 }
 
 #[derive(Args)]
@@ -3377,6 +3392,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                     a.max_depth,
                     a.full,
                     a.max_unwitnessed.as_deref(),
+                    a.require_authority,
                     cli.config.as_deref(),
                     printer,
                 )
