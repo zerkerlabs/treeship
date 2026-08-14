@@ -202,7 +202,20 @@ pub fn history(
 
     if rows.is_empty() {
         printer.warn("no work history", &[("agent", agent.as_str())]);
-        printer.hint("session.v1 records are minted on `treeship session close` (0.16.0+); publish them with `treeship publish` + `merkle publish` to serve history from a hub.");
+        // The common way to land here is not "this agent has done nothing".
+        // It is having attested actions AS the agent while the session was
+        // opened by the ship -- so no session.v1 record names the agent and
+        // this reads empty. Say that first; the publishing mechanics are
+        // secondary and were the only thing this hint used to cover.
+        printer.hint(
+            "history reads session.v1 records, not raw actions. If you attested actions as \
+             this agent but the session was opened in the ship's name, no record names the \
+             agent and this is empty -- which is not the same as the agent having done \
+             nothing. Open the session as the agent:\n  \
+             treeship session start --actor <agent>\n\n\
+             session.v1 records are minted on `treeship session close` (0.16.0+); publish \
+             them with `treeship publish` + `merkle publish` to serve history from a hub.",
+        );
         printer.blank();
         return Ok(());
     }

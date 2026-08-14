@@ -241,12 +241,75 @@ pub fn profile(agent: &str, attest: bool, config: Option<&str>, printer: &Printe
     }
 
     if printer.format == crate::printer::Format::Json {
-        let mut body = payload;
+        let mut body = payload.clone();
         if let Some(id) = &attested_id {
             body["attested_artifact_id"] = serde_json::json!(id);
         }
+        // Outside the signed payload deliberately: `payload` is what gets
+        // attested and validated against `profile.v1`, and adding a field
+        // there would change the schema and the signed bytes. This is a note
+        // to the reader of THIS invocation, not part of the claim.
+        //
+        // A machine consumer has the same problem a human does -- zero
+        // sessions and zero actions are indistinguishable from an agent that
+        // did nothing -- and is likelier to branch on the number.
+        if sessions.is_empty() {
+            body["_note"] = serde_json::json!({
+                "sessions_found": 0,
+                "meaning": format!(
+                    "no session.v1 receipt within checkpoint #{} names {agent} as actor. \
+                     Zero counts here do NOT mean the agent performed no actions -- a \
+                     profile aggregates sessions, and actions attested outside a session \
+                     (or inside one opened in the ship's name) are not counted.",
+                    checkpoint.index
+                ),
+                // `log` has no actor filter and `history` reads the same
+                // session.v1 records, so neither is a drop-in answer.
+                "see_instead": "treeship log (unfiltered receipt log; there is no --actor filter)",
+                "history_has_the_same_blind_spot": true,
+            });
+        }
         printer.json(&body);
         return Ok(());
+    }
+
+    // An empty result and a genuine zero are different answers, and printing
+    // `actions: 0` for both makes the first one read as the second.
+    //
+    // A profile aggregates `session.v1` receipts whose payload names this
+    // agent as `actor`. Actions attested directly -- `treeship attest action
+    // --actor agent://x` outside a session, or inside a session the ship
+    // opened in its own name -- are never counted, because no session receipt
+    // names the agent. So an agent that demonstrably attested a dozen actions
+    // reports zero, and nothing in the output says why.
+    if sessions.is_empty() {
+        printer.warn(
+            &format!(
+                "no session receipts name {agent} as actor within checkpoint #{}",
+                checkpoint.index
+            ),
+            &[],
+        );
+        printer.blank();
+        printer
+            .info("  A profile aggregates session.v1 receipts, not raw actions. Zero here means");
+        printer.info("  no session named this agent -- NOT that the agent did nothing. Actions");
+        printer.info("  attested outside a session, or inside one the ship opened in its own");
+        printer.info("  name, are invisible to this command.");
+        printer.blank();
+        // `treeship log` has no --actor filter, and `history` is session.v1
+        // filtered too, so it has exactly this same blind spot. Pointing at
+        // either as though it answered the question would just move the
+        // confusion one command along.
+        printer.hint(&format!(
+            "raw attestations are in the receipt log (no actor filter yet):\n  \
+             treeship log\n\n\
+             `treeship history {agent}` reads the same session.v1 records as this \
+             command, so it will also be empty.\n\n\
+             to give this agent a session history, open the session as the agent:\n  \
+             treeship session start --actor {agent}"
+        ));
+        printer.blank();
     }
 
     printer.success(
