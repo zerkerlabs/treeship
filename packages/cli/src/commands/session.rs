@@ -1789,7 +1789,19 @@ pub fn event(
         "sequence_no": evt.sequence_no,
     });
 
-    printer.info(&serde_json::to_string(&output).unwrap_or_default());
+    // `printer.info` returns early in JSON mode, so this command built its
+    // response and then discarded it: `session event --format json` exited 0
+    // and printed nothing. Every SDK wrapper reading `event_id` off the
+    // result got `undefined` from an empty document.
+    //
+    // `printer.json` is the emitter that actually writes in JSON mode. In
+    // human mode the id is not what a reader wants, so it stays a one-line
+    // confirmation.
+    if printer.format == crate::printer::Format::Json {
+        printer.json(&output);
+    } else {
+        printer.info(&serde_json::to_string(&output).unwrap_or_default());
+    }
 
     Ok(())
 }
