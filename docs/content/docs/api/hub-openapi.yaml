@@ -743,7 +743,21 @@ paths:
                   artifacts: { type: object, properties: { total: { type: integer }, last_7d: { type: integer } } }
                   docks:     { type: object, properties: { total: { type: integer }, attached_last_7d: { type: integer }, active_last_7d: { type: integer } } }
                   sessions:  { type: object, properties: { total: { type: integer }, receipts_uploaded: { type: integer }, uploaded_last_7d: { type: integer } } }
-                  agents:    { type: object, properties: { total: { type: integer }, seen_last_7d: { type: integer } } }
+                  agents:
+                    type: object
+                    description: >-
+                      Counts CLAIMS, unlike the blocks above. Populated from
+                      AgentGraph nodes in uploaded session receipts, which the
+                      hub does not cryptographically verify -- so an
+                      authenticated dock can inflate these. Artifact, dock and
+                      session counts are facts about the hub's own state and
+                      are unaffected.
+                    properties:
+                      claimed_total: { type: integer }
+                      claimed_seen_last_7d: { type: integer }
+                      basis: { type: string, description: "States plainly that these are self-reported." }
+                      total: { type: integer, deprecated: true, description: "Same value as claimed_total. Removed at the next major." }
+                      seen_last_7d: { type: integer, deprecated: true, description: "Same value as claimed_seen_last_7d." }
                   generated_at: { type: string, format: date-time }
         '500':
           description: Stats unavailable

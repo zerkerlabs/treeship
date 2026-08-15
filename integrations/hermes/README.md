@@ -1,5 +1,6 @@
 # Treeship + Hermes Integration
 
+<<<<<<< Updated upstream
 Hermes integrates via the universal MCP bridge and a declarative skill file — there is **no Hermes-native in-process plugin** today. Coverage is skill-driven + MCP-routed; if you need hook-based bypass-proof capture, that lives in the Claude Code, Kimi Code, or OpenClaw plugins.
 
 The target outcome is a **provable Hermes session**: Hermes has its own Treeship agent identity, MCP-routed tool calls are signed as `agent://hermes`, important shell commands are wrapped, and the final session report verifies offline.
@@ -11,17 +12,42 @@ curl -fsSL https://treeship.dev/install | sh
 treeship init
 npm install -g @treeship/mcp
 ```
+=======
+## Quick install (recommended)
+>>>>>>> Stashed changes
 
-## Method 1: Skill file (instruction-based)
+From a project with `treeship init` already run:
 
+<<<<<<< Updated upstream
 Copy this integration skill into Hermes:
+=======
+```bash
+treeship add hermes
+```
+
+That command installs the Treeship skill to `~/.hermes/skills/treeship/SKILL.md` and configures the Hermes MCP path. The actor URI is `agent://hermes` so receipts identify Hermes as the tool caller. Idempotent — safe to re-run.
+
+To instrument every detected agent on this machine at once:
+
+```bash
+treeship add
+```
+
+## Method 1: Manual skill install
+
+If `treeship add hermes` isn't available (older CLI) or you want to install by hand:
+>>>>>>> Stashed changes
 
 ```bash
 mkdir -p ~/.hermes/skills/treeship
 cp integrations/hermes/treeship.skill/SKILL.md ~/.hermes/skills/treeship/SKILL.md
 ```
 
+<<<<<<< Updated upstream
 Or install from GitHub:
+=======
+Or from the repo:
+>>>>>>> Stashed changes
 
 ```bash
 mkdir -p ~/.hermes/skills/treeship

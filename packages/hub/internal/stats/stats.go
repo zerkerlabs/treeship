@@ -49,9 +49,32 @@ type sessionStats struct {
 	UploadedLast7d   int64 `json:"uploaded_last_7d"`
 }
 
+// agentStats counts CLAIMS, unlike every other block on this endpoint.
+//
+// `ship_agents` is populated from `AgentGraph.Nodes` in receipts uploaded by
+// authenticated docks, and the hub does not cryptographically verify a receipt
+// before deriving from it -- verification is the client's job, by design. So a
+// dock can name as many agents as it likes in a receipt and this count follows.
+//
+// Artifacts, docks and sessions are different: those are facts about the hub's
+// own state (a row exists, a dock completed the DPoP flow, an upload landed).
+// Only this block is downstream of content the hub did not check, which is why
+// only this block is relabelled.
 type agentStats struct {
+	// The honest names. A reader who sees `claimed_total` cannot mistake it
+	// for a verified population count.
+	ClaimedTotal      int64 `json:"claimed_total"`
+	ClaimedSeenLast7d int64 `json:"claimed_seen_last_7d"`
+
+	// Deprecated, and duplicated rather than removed: this is a public
+	// endpoint and renaming a field is a breaking change for anyone reading
+	// it. They carry the same values and will go at the next major.
 	Total      int64 `json:"total"`
 	SeenLast7d int64 `json:"seen_last_7d"`
+
+	// Impossible to miss when reading the JSON, which is the point -- a
+	// caveat in documentation nobody opens is not a caveat.
+	Basis string `json:"basis"`
 }
 
 type response struct {
@@ -84,8 +107,8 @@ func (h *Handlers) Stats(w http.ResponseWriter, r *http.Request) {
 		{&resp.Sessions.Total, `SELECT COUNT(*) FROM sessions`, nil},
 		{&resp.Sessions.ReceiptsUploaded, `SELECT COUNT(*) FROM sessions WHERE receipt_json IS NOT NULL`, nil},
 		{&resp.Sessions.UploadedLast7d, `SELECT COUNT(*) FROM sessions WHERE uploaded_at IS NOT NULL AND uploaded_at >= ?`, []any{cutoff}},
-		{&resp.Agents.Total, `SELECT COUNT(DISTINCT agent_id) FROM ship_agents`, nil},
-		{&resp.Agents.SeenLast7d, `SELECT COUNT(DISTINCT agent_id) FROM ship_agents WHERE last_seen >= ?`, []any{cutoff}},
+		{&resp.Agents.ClaimedTotal, `SELECT COUNT(DISTINCT agent_id) FROM ship_agents`, nil},
+		{&resp.Agents.ClaimedSeenLast7d, `SELECT COUNT(DISTINCT agent_id) FROM ship_agents WHERE last_seen >= ?`, []any{cutoff}},
 	}
 	for _, item := range queries {
 		if err := h.DB.QueryRow(item.query, item.args...).Scan(item.dst); err != nil {
@@ -95,6 +118,15 @@ func (h *Handlers) Stats(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Mirror the honest names into the deprecated ones so both are correct
+	// for the release in which they coexist.
+	resp.Agents.Total = resp.Agents.ClaimedTotal
+	resp.Agents.SeenLast7d = resp.Agents.ClaimedSeenLast7d
+	resp.Agents.Basis = "self-reported: counted from AgentGraph nodes in uploaded " +
+		"session receipts, which the hub does not cryptographically verify. An " +
+		"authenticated dock can inflate this. Artifact, dock and session counts are " +
+		"facts about the hub's own state and are not affected."
+
 	resp.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
 
 	w.Header().Set("Content-Type", "application/json")
