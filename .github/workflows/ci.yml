@@ -76,6 +76,12 @@ jobs:
         run: |
           cargo build --bin treeship --quiet
           python3 scripts/gen-capability-map.py --check
+      # PR #308 committed nine conflict markers into a published doc. Every
+      # other gate passed -- none of them read that file. This one is a grep
+      # that runs, which is the whole point: the markers were not hard to see,
+      # nothing looked.
+      - name: No committed conflict markers
+        run: python3 scripts/check-conflict-markers.py
       - name: Every protocol spec is indexed
         run: python3 scripts/check-specs-index.py
       - name: Published crates embed only files inside their own root
