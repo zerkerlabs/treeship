@@ -426,6 +426,7 @@ pub fn list(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::
 /// signature re-checked rather than taken from the file.
 pub fn show(
     id: &str,
+    check_log: bool,
     config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -471,6 +472,39 @@ pub fn show(
         },
         None => String::new(),
     };
+    // --check-log: ask the hub for the dock's consistency chain and re-verify
+    // every link. Only meaningful when there is an anchored revocation to
+    // check; saying "log consistent" about a grant with no revocation would
+    // answer a question nobody asked.
+    let log_str = if check_log {
+        match (
+            revocations.anchor_for(&g.grant_id),
+            ctx.config
+                .resolve_hub(None)
+                .ok()
+                .map(|(_, e)| e.endpoint.clone())
+                .as_deref(),
+        ) {
+            (Some(a), Some(hub)) => Some(match crate::commands::revocation_source::check_dock_log(
+                hub, &a.dock_id,
+            ) {
+                crate::commands::revocation_source::LogCheck::Consistent { from, to } => {
+                    format!("consistent, {from} -> {to} (every link re-verified offline)")
+                }
+                crate::commands::revocation_source::LogCheck::Inconsistent(why) => {
+                    format!("INCONSISTENT -- {why}")
+                }
+                crate::commands::revocation_source::LogCheck::Unknown(why) => {
+                    format!("unknown -- {why}")
+                }
+            }),
+            (None, _) => Some("not checked -- no anchored revocation for this grant".to_string()),
+            (_, None) => Some("not checked -- no hub configured".to_string()),
+        }
+    } else {
+        None
+    };
+
     let revocation_str = match &revocation {
         RevocationStatus::NotRevoked => "not revoked".to_string(),
         RevocationStatus::RevokedAt(at) => format!("REVOKED at {at}{anchor_note}"),
@@ -520,6 +554,9 @@ pub fn show(
             ("revocation", &revocation_str),
         ],
     );
+    if let Some(l) = &log_str {
+        printer.info(&format!("  log:                 {l}"));
+    }
     Ok(())
 }
 

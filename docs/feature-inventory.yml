@@ -652,6 +652,14 @@
     - docs/content/docs/integrations/agent-skills.mdx
   notes: "One skills/treeship/SKILL.md taught to every supported agent (Claude Code, Codex, Cursor, OpenClaw, Hermes, Kimi Code CLI). Kimi is a SKILL consumer, not a detected surface."
 
+- id: workflow-conformance
+  name: Workflow declarations and conformance
+  section: core
+  status: roadmap
+  docs:
+    - docs/specs/workflow-declarations.md
+  notes: "Slice 1 only: minimal workflow.v1 design and golden report fixtures. No predicate registration, reducer, mint command, or verifier surface ships yet."
+
 - id: zk-circom-cli
   name: ZK -- Circom Groth16 (snarkjs shell-out)
   section: zk

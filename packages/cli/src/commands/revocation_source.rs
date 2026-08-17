@@ -96,6 +96,31 @@ pub struct RevocationEntry {
     anchor: Option<RevocationAnchor>,
 }
 
+/// Whether a dock's log is self-consistent, checked against the hub.
+///
+/// This is the step the anchor references exist for. #315 published
+/// `dock_id` so a client *could* ask; this is the asking.
+///
+/// What it establishes: the log has not been rewritten between the
+/// checkpoints the hub serves. A log that fails consistency has been forked,
+/// and a revocation served from it can be withdrawn without trace.
+///
+/// What it does NOT establish: that the revocation list is complete.
+/// Completeness is not provable from a list, and a consistent log can still
+/// be a log that never had the entry added.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LogCheck {
+    /// Every consecutive proof from `from` to `to` verified.
+    Consistent { from: u64, to: u64 },
+    /// A proof in the chain did not verify. The log was rewritten.
+    Inconsistent(String),
+    /// Could not be established -- unreachable hub, no checkpoints, malformed
+    /// response. Deliberately distinct from `Inconsistent`: not knowing is not
+    /// the same as knowing something is wrong, and collapsing them would
+    /// either cry wolf or bury a real fork.
+    Unknown(String),
+}
+
 /// Log references a client can use to check a revocation for itself.
 #[derive(Debug, Clone)]
 pub struct RevocationAnchor {
@@ -334,6 +359,121 @@ fn signed_by(envelope: &Envelope, grantor: &str) -> bool {
 /// entries, and the caller's absence rule then reports `Unknown` rather than a
 /// false `NotRevoked`. Returning an error would make an offline `verify` fail
 /// outright when the honest answer is that it could not check.
+/// Walk a dock's consistency chain and verify every link offline.
+///
+/// The hub stores client-submitted proofs and says so outright: "the hub
+/// stores but never verifies them. re-verify each link offline against your
+/// trust roots." So this re-verifies, using core's RFC 6962
+/// `verify_consistency` -- the same primitive `audit` uses. Trusting the
+/// hub's chain because the hub served it would make the whole exercise
+/// circular.
+///
+/// A single failing link is `Inconsistent`: the log was rewritten between two
+/// checkpoints it published, and a revocation served from it can be withdrawn
+/// without trace.
+///
+/// An empty chain is `Unknown`, not `Consistent`. Nothing verified, so nothing
+/// was established -- reporting a clean result from zero proofs is the vacuous
+/// pass this codebase keeps finding.
+pub fn check_dock_log(endpoint: &str, dock_id: &str) -> LogCheck {
+    let base = endpoint.trim_end_matches('/');
+
+    // dock_id -> the checkpoint signer, which is what /consistency keys on.
+    let cp_url = format!("{base}/v1/merkle/checkpoint/latest?dock_id={dock_id}");
+    let Ok(cp_resp) = ureq::get(&cp_url)
+        .timeout(std::time::Duration::from_secs(10))
+        .call()
+    else {
+        return LogCheck::Unknown(format!("no checkpoint served for dock {dock_id}"));
+    };
+    let Ok(cp) = cp_resp.into_json::<serde_json::Value>() else {
+        return LogCheck::Unknown("checkpoint response was not JSON".into());
+    };
+    let Some(signer) = cp["signer_key_id"].as_str().filter(|s| !s.is_empty()) else {
+        return LogCheck::Unknown(format!("checkpoint for dock {dock_id} names no signer"));
+    };
+
+    let chain_url = format!("{base}/v1/merkle/consistency?signer={signer}&from=0");
+    let Ok(chain_resp) = ureq::get(&chain_url)
+        .timeout(std::time::Duration::from_secs(10))
+        .call()
+    else {
+        return LogCheck::Unknown(format!("consistency chain unreachable for signer {signer}"));
+    };
+    let Ok(body) = chain_resp.into_json::<serde_json::Value>() else {
+        return LogCheck::Unknown("consistency response was not JSON".into());
+    };
+
+    let empty = Vec::new();
+    let chain = body["chain"].as_array().unwrap_or(&empty);
+    if chain.is_empty() {
+        return LogCheck::Unknown(format!(
+            "no consistency proofs published for signer {signer}; nothing was verified"
+        ));
+    }
+
+    let mut lowest = u64::MAX;
+    let mut highest = 0u64;
+
+    for link in chain {
+        let (Some(from_size), Some(from_root), Some(to_size), Some(to_root)) = (
+            link["from_size"].as_u64(),
+            link["from_root"].as_str(),
+            link["to_size"].as_u64(),
+            link["to_root"].as_str(),
+        ) else {
+            return LogCheck::Unknown("a chain link was missing its sizes or roots".into());
+        };
+        // No default. Guessing the hash version and guessing wrong makes a
+        // genuine proof fail to verify, which this function would then report
+        // as `Inconsistent` -- accusing an honest log of having been
+        // rewritten. A false fork accusation is worse than admitting the
+        // version was not stated.
+        //
+        // (Trees default to V2, so v1 was the wrong guess to have made.)
+        let Some(version) = link["version"].as_u64() else {
+            return LogCheck::Unknown(format!(
+                "link {from_size}->{to_size} states no hash version; refusing to guess, \
+                 because guessing wrong reads as a rewritten log"
+            ));
+        };
+        let version = version as u8;
+
+        // `proof_json` is a JSON-encoded array carried as a string.
+        let proof: Vec<String> = link["proof_json"]
+            .as_str()
+            .and_then(|raw| serde_json::from_str(raw).ok())
+            .unwrap_or_default();
+        if proof.is_empty() && from_size != 0 {
+            return LogCheck::Unknown(format!(
+                "link {from_size}->{to_size} carried no proof; nothing to verify"
+            ));
+        }
+
+        if !treeship_core::merkle::verify_consistency(
+            version,
+            from_size as usize,
+            from_root,
+            to_size as usize,
+            to_root,
+            &proof,
+        ) {
+            return LogCheck::Inconsistent(format!(
+                "consistency proof {from_size}->{to_size} for signer {signer} does not verify -- \
+                 this log was rewritten, and a revocation served from it can be withdrawn"
+            ));
+        }
+
+        lowest = lowest.min(from_size);
+        highest = highest.max(to_size);
+    }
+
+    LogCheck::Consistent {
+        from: lowest,
+        to: highest,
+    }
+}
+
 pub fn fetch_hub_revocations(endpoint: &str) -> Vec<RevocationEntry> {
     let url = format!(
         "{}/.well-known/treeship/revoked.json",
@@ -706,5 +846,95 @@ mod tests {
             src.status("grn_c", ""),
             RevocationStatus::Unknown(_)
         ));
+    }
+
+    // ── check_dock_log: the shapes that must not be confused ──────────────
+    //
+    // These exercise the verification logic against real Merkle data rather
+    // than a live hub. Building the chain from `MerkleTree` means the proofs
+    // are genuine: a hand-written fixture would test that the parser accepts
+    // my own invention.
+
+    use treeship_core::merkle::{verify_consistency, MerkleTree};
+
+    fn tree_of(n: usize) -> (String, usize) {
+        let mut t = MerkleTree::new();
+        for i in 0..n {
+            t.append(&format!("art_{i:04x}"));
+        }
+        (hex::encode(t.root().expect("non-empty tree has a root")), n)
+    }
+
+    /// The load-bearing property: a genuine extension verifies.
+    #[test]
+    fn a_real_consistency_proof_verifies() {
+        let (old_root, old_size) = tree_of(4);
+        let (new_root, new_size) = tree_of(7);
+        let mut t = MerkleTree::new();
+        for i in 0..new_size {
+            t.append(&format!("art_{i:04x}"));
+        }
+        let proof = t
+            .consistency_proof(old_size)
+            .expect("4 -> 7 has a consistency proof");
+        assert!(
+            verify_consistency(2, old_size, &old_root, new_size, &new_root, &proof),
+            "a genuine extension must verify, or the check below proves nothing"
+        );
+    }
+
+    /// A rewritten log must fail. If this passed, `check_dock_log` reporting
+    /// `Consistent` would be worthless.
+    #[test]
+    fn a_rewritten_log_fails_consistency() {
+        let (_, old_size) = tree_of(4);
+        let (new_root, new_size) = tree_of(7);
+
+        // Same size, different history -- the shape of a log that dropped or
+        // swapped an entry rather than appending.
+        let mut forked = MerkleTree::new();
+        for i in 0..old_size {
+            forked.append(&format!("other_{i:04x}"));
+        }
+        let forged_old_root = hex::encode(forked.root().unwrap());
+
+        let mut t = MerkleTree::new();
+        for i in 0..new_size {
+            t.append(&format!("art_{i:04x}"));
+        }
+        let proof = t.consistency_proof(old_size).unwrap();
+
+        assert!(
+            !verify_consistency(2, old_size, &forged_old_root, new_size, &new_root, &proof),
+            "a proof must not verify against a root from a different history"
+        );
+    }
+
+    /// An unknown version is rejected rather than assumed compatible.
+    #[test]
+    fn an_unknown_merkle_version_is_rejected() {
+        let (old_root, old_size) = tree_of(4);
+        let (new_root, new_size) = tree_of(7);
+        let mut t = MerkleTree::new();
+        for i in 0..new_size {
+            t.append(&format!("art_{i:04x}"));
+        }
+        let proof = t.consistency_proof(old_size).unwrap();
+        assert!(
+            !verify_consistency(99, old_size, &old_root, new_size, &new_root, &proof),
+            "an unrecognised hashing version must not pass"
+        );
+    }
+
+    /// Unknown and Inconsistent are different answers and must stay different.
+    /// Collapsing them either cries wolf on an unreachable hub or buries a
+    /// real fork under a shrug.
+    #[test]
+    fn unknown_is_not_inconsistent() {
+        let unreachable = LogCheck::Unknown("hub unreachable".into());
+        let forked = LogCheck::Inconsistent("proof 4->7 does not verify".into());
+        assert_ne!(unreachable, forked);
+        assert!(matches!(unreachable, LogCheck::Unknown(_)));
+        assert!(matches!(forked, LogCheck::Inconsistent(_)));
     }
 }

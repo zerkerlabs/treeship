@@ -1422,7 +1422,20 @@ enum GrantCommand {
     /// List every grant minted in this workspace.
     List,
     /// Show one grant, re-deriving its id and re-checking its signature.
-    Show { grant_id: String },
+    Show {
+        grant_id: String,
+        /// Verify the log holding this grant's revocation, against the hub.
+        ///
+        /// Walks the dock's consistency chain and re-verifies every link
+        /// offline (RFC 6962). Establishes that the log has not been
+        /// rewritten -- NOT that the revocation list is complete, which is not
+        /// provable from a list.
+        ///
+        /// Opt-in because it is two network round trips; `show` is otherwise
+        /// local.
+        #[arg(long)]
+        check_log: bool,
+    },
 
     /// Withdraw a grant. Mints a signed grant_revocation.v1 receipt.
     ///
@@ -3163,9 +3176,10 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             GrantCommand::Revoke { grant_id, reason } => {
                 commands::grant::revoke(grant_id, reason.as_deref(), cli.config.as_deref(), printer)
             }
-            GrantCommand::Show { grant_id } => {
-                commands::grant::show(grant_id, cli.config.as_deref(), printer)
-            }
+            GrantCommand::Show {
+                grant_id,
+                check_log,
+            } => commands::grant::show(grant_id, *check_log, cli.config.as_deref(), printer),
         },
 
         Command::Approval(sub) => match sub {
