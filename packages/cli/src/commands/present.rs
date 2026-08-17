@@ -211,6 +211,26 @@ pub fn present(
             )
             .into());
         }
+        // The checkpoint can legitimately describe a larger tree than this
+        // store holds: `load_latest_checkpoint` reads
+        // ~/.treeship/merkle/checkpoints unconditionally, while `build_tree`
+        // reads the artifacts for THIS context -- so `--config`, a second
+        // workspace, or a pruned store all produce tree_size > len.
+        //
+        // Slicing on that panicked with "range end index N out of range",
+        // which is a crash where the honest answer is "these two stores do
+        // not describe the same history". The guard above only checked that
+        // the card is not newer than the checkpoint; it never checked the
+        // other direction.
+        if checkpoint.tree_size > artifact_ids.len() {
+            return Err(format!(
+                "checkpoint #{} describes {} artifact(s) but this store holds {}.\n\n  Checkpoints live in ~/.treeship/merkle/checkpoints and are NOT scoped by --config, so a checkpoint written from another workspace does not describe this one.\n\n  Fix: treeship checkpoint  (write one for this store)",
+                checkpoint.index,
+                checkpoint.tree_size,
+                artifact_ids.len()
+            )
+            .into());
+        }
         let mut cp_tree = MerkleTree::new();
         for id in &artifact_ids[..checkpoint.tree_size] {
             cp_tree.append(id);
