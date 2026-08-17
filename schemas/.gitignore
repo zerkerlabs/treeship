@@ -1,2 +1,9 @@
 node_modules/
-package-lock.json
+# package-lock.json is deliberately NOT ignored.
+#
+# It was, and that is the same trap the docs site hit: `npm ci` requires a
+# committed lockfile, so CI could only ever use `npm install`, which resolves
+# fresh every run. For a package whose whole job is validating a security-
+# relevant schema, unpinned transitive dependencies are the wrong default --
+# and a local pass proves nothing when it succeeded against an untracked
+# lockfile nobody else has.

@@ -84,6 +84,19 @@ jobs:
         run: python3 scripts/check-conflict-markers.py
       - name: Every protocol spec is indexed
         run: python3 scripts/check-specs-index.py
+      # `schemas/` is the publishable copy; the predicate registry has its own.
+      # Both carry the same $id, so a resolver can get either -- and this repo
+      # has already produced three verdict vocabularies and two redactors from
+      # exactly this shape. Each pair agreed on the day it was duplicated.
+      - name: Publishable schemas agree with the predicate registry
+        run: python3 scripts/check-schema-single-source.py
+      # The schema package ships its own fixtures, including a negative case
+      # asserting a smuggled self-report is rejected. Nothing ran them.
+      - name: Schema fixtures behave as documented
+        run: |
+          cd schemas
+          npm ci --no-audit --no-fund
+          node validate.mjs
       - name: Published crates embed only files inside their own root
         run: python3 scripts/check-vendored-fonts.py
       - name: Paper-receipt template matches the copy vendored downstream
