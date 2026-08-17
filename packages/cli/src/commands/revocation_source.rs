@@ -84,6 +84,26 @@ pub struct RevocationEntry {
     /// Whether the DSSE signature verifies under the `grantor` key the payload
     /// names. Computed at load, because that is where the envelope is.
     grantor_signed: bool,
+    /// Where this revocation sits in an append-only log, when it does.
+    ///
+    /// A grantor-signed revocation is unforgeable on its own, so this is not
+    /// about validity. It is about durability: a revocation recorded in a
+    /// checkpointed log cannot later be un-served without the log forking,
+    /// which /v1/merkle/consistency detects. One a hub asserts and never
+    /// anchored can simply stop being served tomorrow.
+    ///
+    /// `None` means not anchored -- never "anchored and we did not check".
+    anchor: Option<RevocationAnchor>,
+}
+
+/// Log references a client can use to check a revocation for itself.
+#[derive(Debug, Clone)]
+pub struct RevocationAnchor {
+    /// The dock whose Merkle log holds this artifact. Names which checkpoint
+    /// to fetch; without it a client cannot form the inclusion request.
+    pub dock_id: String,
+    /// Rekor index, when the hub's best-effort anchor landed.
+    pub rekor_index: Option<i64>,
 }
 
 impl LocalRevocationSource {
@@ -125,6 +145,10 @@ impl LocalRevocationSource {
                 grantor: grantor.to_string(),
                 revoked_at: revoked_at.to_string(),
                 grantor_signed: signed_by(&record.envelope, grantor),
+                // Held locally in our own store. A hub log reference would be
+                // meaningless here, and inventing one would imply a check that
+                // did not happen.
+                anchor: None,
             });
         }
 
@@ -155,6 +179,27 @@ impl LocalRevocationSource {
                     .any(|k| k.strip_prefix("ed25519:").unwrap_or(k) == g)
             })
             .unwrap_or(false)
+    }
+}
+
+impl LocalRevocationSource {
+    /// Where the authorized revocation for `grant_id` is anchored, if anywhere.
+    ///
+    /// Deliberately separate from `status()` rather than folded into
+    /// `RevocationStatus::RevokedAt`. That enum is the verdict, shared with
+    /// core and matched in twenty-odd places; anchoring is provenance about
+    /// how durable the verdict is, not part of the verdict itself. A revoked
+    /// grant is revoked whether or not the record is in a log.
+    ///
+    /// Applies the same grantor check as `status`, so this never reports an
+    /// anchor for a revocation that failed authorization -- that would dress
+    /// up an unauthorized entry with log provenance.
+    pub fn anchor_for(&self, grant_id: &str) -> Option<&RevocationAnchor> {
+        self.entries
+            .iter()
+            .filter(|e| e.grant_id == grant_id && e.grantor_signed)
+            .min_by(|a, b| a.revoked_at.cmp(&b.revoked_at))
+            .and_then(|e| e.anchor.as_ref())
     }
 }
 
@@ -330,8 +375,19 @@ pub fn fetch_hub_revocations(endpoint: &str) -> Vec<RevocationEntry> {
             continue;
         };
 
+        // Present-and-null is meaningful: the hub distinguishes "not anchored"
+        // from "field absent", and so must this.
+        let anchor = item
+            .get("dock_id")
+            .and_then(|v| v.as_str())
+            .map(|dock| RevocationAnchor {
+                dock_id: dock.to_string(),
+                rekor_index: item.get("rekor_index").and_then(|v| v.as_i64()),
+            });
+
         out.push(RevocationEntry {
             grant_id: grant_id.to_string(),
+            anchor,
             grantor: grantor.to_string(),
             revoked_at: revoked_at.to_string(),
             grantor_signed: signed_by(&envelope, grantor),
@@ -417,6 +473,7 @@ mod tests {
             grantor: grantor.into(),
             revoked_at: at.into(),
             grantor_signed,
+            anchor: None,
         }
     }
 
@@ -581,6 +638,72 @@ mod tests {
         let s = src(vec![entry("grn_a", "pk1", "2026-08-14T10:00:00Z", false)]);
         assert!(matches!(
             s.status("grn_a", "p"),
+            RevocationStatus::Unknown(_)
+        ));
+    }
+
+    fn anchored(
+        grant: &str,
+        grantor: &str,
+        at: &str,
+        dock: &str,
+        rekor: Option<i64>,
+    ) -> RevocationEntry {
+        RevocationEntry {
+            grant_id: grant.into(),
+            grantor: grantor.into(),
+            revoked_at: at.into(),
+            grantor_signed: true,
+            anchor: Some(RevocationAnchor {
+                dock_id: dock.into(),
+                rekor_index: rekor,
+            }),
+        }
+    }
+
+    /// A revocation held only by a hub can stop being served tomorrow. One
+    /// recorded in a checkpointed log cannot, without the log forking. The
+    /// verdict is the same either way; the durability is not, and a caller
+    /// that wants to check inclusion needs to know which log to ask.
+    #[test]
+    fn anchor_is_reported_for_an_authorized_revocation() {
+        let src = src(vec![anchored(
+            "grn_a",
+            "pk1",
+            "2026-08-01T00:00:00Z",
+            "dock_x",
+            Some(42),
+        )]);
+        let a = src
+            .anchor_for("grn_a")
+            .expect("anchored entry must report its log");
+        assert_eq!(a.dock_id, "dock_x");
+        assert_eq!(a.rekor_index, Some(42));
+    }
+
+    /// None means "not anchored", and must not be confused with "anchored but
+    /// we did not look".
+    #[test]
+    fn an_unanchored_revocation_reports_no_anchor() {
+        let src = src(vec![entry("grn_b", "pk1", "2026-08-01T00:00:00Z", true)]);
+        assert!(src.anchor_for("grn_b").is_none());
+    }
+
+    /// An entry that failed the grantor check must not be dressed up with log
+    /// provenance -- that would make a forgery attempt look better sourced
+    /// than an honest unanchored revocation.
+    #[test]
+    fn an_unauthorized_revocation_never_reports_an_anchor() {
+        let mut bad = anchored("grn_c", "pk1", "2026-08-01T00:00:00Z", "dock_x", Some(7));
+        bad.grantor_signed = false;
+        let src = src(vec![bad]);
+        assert!(
+            src.anchor_for("grn_c").is_none(),
+            "an unauthorized revocation must not carry an anchor"
+        );
+        // And the verdict itself stays Unknown, not NotRevoked.
+        assert!(matches!(
+            src.status("grn_c", ""),
             RevocationStatus::Unknown(_)
         ));
     }

@@ -458,10 +458,22 @@ pub fn show(
     // `for_ctx` is the same resolver `verify` uses: it reads local
     // `grant_revocation.v1` receipts and verifies their signatures rather
     // than trusting a filename.
-    let revocation = crate::commands::revocation_source::for_ctx(&ctx).status(&g.grant_id, "");
+    let revocations = crate::commands::revocation_source::for_ctx(&ctx);
+    let revocation = revocations.status(&g.grant_id, "");
+    // Whether the revocation is in an append-only log, which is what stops a
+    // hub quietly ceasing to serve it. Not part of the verdict -- a revoked
+    // grant is revoked either way -- but it is the difference between a record
+    // that can be withdrawn and one that cannot.
+    let anchor_note = match revocations.anchor_for(&g.grant_id) {
+        Some(a) => match a.rekor_index {
+            Some(idx) => format!(" (log {}, rekor #{idx})", a.dock_id),
+            None => format!(" (log {}, not rekor-anchored)", a.dock_id),
+        },
+        None => String::new(),
+    };
     let revocation_str = match &revocation {
         RevocationStatus::NotRevoked => "not revoked".to_string(),
-        RevocationStatus::RevokedAt(at) => format!("REVOKED at {at}"),
+        RevocationStatus::RevokedAt(at) => format!("REVOKED at {at}{anchor_note}"),
         // Unknown is not "fine". It says the question could not be answered,
         // which is the honest output when no resolver could be consulted.
         RevocationStatus::Unknown(why) => format!("unknown -- {why}"),
