@@ -21,7 +21,10 @@
 use std::path::{Path, PathBuf};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use treeship_core::statements::{parse_rfc3339_to_unix, payload_type, Grant, ReceiptStatement};
+use treeship_core::statements::{
+    parse_rfc3339_to_unix, payload_type, Grant, ReceiptStatement, RevocationSource,
+    RevocationStatus,
+};
 use treeship_core::storage::Record;
 
 use crate::ctx;
@@ -360,6 +363,12 @@ pub fn list(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::
     }
     grants.sort_by(|a, b| a.issued_at.cmp(&b.issued_at));
 
+    // Listing grants without their revocation state showed a withdrawn grant
+    // exactly like a live one. Built once and reused across every row rather
+    // than per-grant, since it reads the whole receipt store.
+    let revocations = crate::commands::revocation_source::for_ctx(&ctx);
+    let state_of = |g: &Grant| revocations.status(&g.grant_id, "");
+
     if printer.format == Format::Json {
         let out: Vec<_> = grants
             .iter()
@@ -371,6 +380,15 @@ pub fn list(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::
                     "expiry": g.expiry,
                     "delegation_depth": g.delegation_depth,
                     "parent_grant_id": g.parent_grant_id,
+                    "revocation": match state_of(g) {
+                        RevocationStatus::NotRevoked => serde_json::json!({ "state": "not_revoked" }),
+                        RevocationStatus::RevokedAt(at) => {
+                            serde_json::json!({ "state": "revoked", "revoked_at": at })
+                        }
+                        RevocationStatus::Unknown(why) => {
+                            serde_json::json!({ "state": "unknown", "reason": why })
+                        }
+                    },
                 })
             })
             .collect();
@@ -384,8 +402,16 @@ pub fn list(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::
         return Ok(());
     }
     for g in &grants {
+        // The marker goes first: scanning a list, the thing that changes
+        // whether a row means anything should not be at the end of the line.
+        let mark = match state_of(g) {
+            RevocationStatus::NotRevoked => "",
+            RevocationStatus::RevokedAt(_) => "REVOKED  ",
+            RevocationStatus::Unknown(_) => "revocation unknown  ",
+        };
         printer.info(&format!(
-            "{}  depth {}  {}  expires {}",
+            "{}{}  depth {}  {}  expires {}",
+            mark,
             g.grant_id,
             g.delegation_depth,
             g.scope.join(", "),
@@ -423,11 +449,38 @@ pub fn show(
         .map(|s| g.verify_canonical(s))
         .unwrap_or(false);
 
+    // A grant's signature stays valid forever; revocation is what makes it
+    // stop counting. `show` reported the signature and never the revocation,
+    // so a grant revoked seconds earlier printed a clean success -- the
+    // command whose whole job is "tell me about this grant" was the one
+    // surface that never looked.
+    //
+    // `for_ctx` is the same resolver `verify` uses: it reads local
+    // `grant_revocation.v1` receipts and verifies their signatures rather
+    // than trusting a filename.
+    let revocation = crate::commands::revocation_source::for_ctx(&ctx).status(&g.grant_id, "");
+    let revocation_str = match &revocation {
+        RevocationStatus::NotRevoked => "not revoked".to_string(),
+        RevocationStatus::RevokedAt(at) => format!("REVOKED at {at}"),
+        // Unknown is not "fine". It says the question could not be answered,
+        // which is the honest output when no resolver could be consulted.
+        RevocationStatus::Unknown(why) => format!("unknown -- {why}"),
+    };
+
     if printer.format == Format::Json {
         printer.json(&serde_json::json!({
             "grant": g,
             "id_consistent": id_ok,
             "signature_valid": sig_ok,
+            "revocation": match &revocation {
+                RevocationStatus::NotRevoked => serde_json::json!({ "state": "not_revoked" }),
+                RevocationStatus::RevokedAt(at) => {
+                    serde_json::json!({ "state": "revoked", "revoked_at": at })
+                }
+                RevocationStatus::Unknown(why) => {
+                    serde_json::json!({ "state": "unknown", "reason": why })
+                }
+            },
         }));
         return Ok(());
     }
@@ -452,6 +505,7 @@ pub fn show(
             ("parent", &parent_str),
             ("id matches content", &id_str),
             ("issuer signature", &sig_str),
+            ("revocation", &revocation_str),
         ],
     );
     Ok(())
