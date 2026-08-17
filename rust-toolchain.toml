@@ -20,7 +20,8 @@
 #
 # Targets: the release workflow cross-compiles for x86_64-apple-darwin
 # (from macOS arm64 runners), aarch64-apple-darwin (native), and
-# x86_64-unknown-linux-musl (from ubuntu glibc runners). Without these
+# x86_64-unknown-linux-musl and aarch64-unknown-linux-musl on native
+# GitHub Linux runners. Without these
 # listed, the `profile = "minimal"` toolchain ships only the runner's
 # native stdlib and cross-compile builds fail with `can't find crate for
 # 'core'`. The initial v0.10.4 release push (commit cf13139, tag pushed
@@ -30,4 +31,4 @@
 channel    = "1.94.1"
 components = ["clippy", "rustfmt"]
 profile    = "minimal"
-targets    = ["x86_64-apple-darwin", "aarch64-apple-darwin", "x86_64-unknown-linux-musl"]
+targets    = ["x86_64-apple-darwin", "aarch64-apple-darwin", "x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl"]
