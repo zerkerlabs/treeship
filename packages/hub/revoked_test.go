@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/treeship/hub/internal/contentaddress"
@@ -251,5 +252,72 @@ func TestBackfillMakesPreUpgradeRowsVisible(t *testing.T) {
 	})
 	if err != nil || n2 != 0 {
 		t.Fatalf("second backfill should be a no-op, got n=%d err=%v", n2, err)
+	}
+}
+
+// The entries are individually signed, so this server cannot forge one. It
+// CAN omit one, and an omitted revocation is indistinguishable from a grant
+// nobody revoked -- the failure Certificate Transparency exists to detect.
+//
+// Completeness cannot be proven from a list. What the response must do is
+// carry what a client needs to check inclusion for itself, and say plainly
+// that absence proves nothing. A response that stayed silent on both would
+// invite exactly the inference it cannot support.
+func TestRevocationListShipsAnchorRefsAndDisclaimsCompleteness(t *testing.T) {
+	t.Setenv("TREESHIP_HUB_DB", filepath.Join(t.TempDir(), "hub.db"))
+	database, err := db.Open()
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer database.Close()
+
+	if _, err := database.Exec(
+		`INSERT INTO ships (dock_id, ship_public_key, dock_public_key, created_at)
+		 VALUES (?, ?, ?, ?)`, "dock_a", []byte("s"), []byte("d"), 1,
+	); err != nil {
+		t.Fatalf("register dock: %v", err)
+	}
+
+	env := receiptEnvelope(t, "grant_revocation.v1", map[string]any{
+		"grant_id": "grn_anchored", "grantor": "pk1", "revoked_at": "2026-08-01T10:00:00Z",
+	})
+	if _, err := db.InsertArtifact(database, artifact("art_anchored", env)); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/treeship/revoked.json", revokedHandler(database))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/.well-known/treeship/revoked.json", nil))
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("not JSON: %v", err)
+	}
+
+	note, _ := body["completeness"].(string)
+	if !strings.Contains(note, "unproven") {
+		t.Errorf("the response must say absence proves nothing; got %q", note)
+	}
+
+	list, _ := body["revoked"].([]any)
+	if len(list) != 1 {
+		t.Fatalf("expected the revocation, got %d", len(list))
+	}
+	entry, _ := list[0].(map[string]any)
+
+	// dock_id names the log to check inclusion against. Without it a client
+	// cannot even form the request.
+	if entry["dock_id"] != "dock_a" {
+		t.Errorf("entry must name its dock log, got %v", entry["dock_id"])
+	}
+	// Present-and-null is the point: null means "not anchored", which a client
+	// must be able to tell apart from the field being missing.
+	if _, present := entry["rekor_index"]; !present {
+		t.Error("rekor_index must be present even when null -- null means not anchored")
+	}
+	// And the signed bytes must still travel, or none of the above matters.
+	if _, ok := entry["envelope"]; !ok {
+		t.Error("the DSSE envelope is what makes an entry unforgeable; it must ship")
 	}
 }
