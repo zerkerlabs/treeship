@@ -12,7 +12,7 @@ Treeship's release pipeline publishes to four registries. Each one carries a del
 | Registry | Package | What it is |
 |---|---|---|
 | **npm** | `treeship` | The CLI wrapper. `npm install -g treeship` installs the platform binary for your OS via `optionalDependencies`. |
-| **npm** | `@treeship/cli-darwin-arm64`, `@treeship/cli-darwin-x64`, `@treeship/cli-linux-x64` | Per-platform CLI binaries. Selected automatically by the wrapper based on `process.platform`. |
+| **npm** | `@treeship/cli-darwin-arm64`, `@treeship/cli-darwin-x64`, `@treeship/cli-linux-arm64`, `@treeship/cli-linux-x64` | Per-platform CLI binaries. Selected automatically by the wrapper based on `process.platform` and `process.arch`. |
 | **npm** | `@treeship/sdk` | TypeScript / Node SDK. Wraps the CLI. |
 | **npm** | `@treeship/mcp` | MCP server bridge. Drop-in for Claude Code, Cursor, Cline, Codex. |
 | **npm** | `@treeship/a2a` | A2A bridge. |
@@ -20,7 +20,7 @@ Treeship's release pipeline publishes to four registries. Each one carries a del
 | **npm** | `@treeship/core-wasm` | Core verification logic compiled to WebAssembly. Used by `@treeship/verify`. |
 | **PyPI** | `treeship-sdk` | Python SDK. Wraps the CLI. |
 | **crates.io** | `treeship-core` | Rust library. The trust primitives (signing, verification, Merkle, journal) — *not* the CLI. |
-| **GitHub Releases** | `treeship-darwin-aarch64`, `treeship-darwin-x86_64`, `treeship-linux-x86_64` | Raw, signed CLI binaries. Direct download for systems without npm. |
+| **GitHub Releases** | `treeship-darwin-aarch64`, `treeship-darwin-x86_64`, `treeship-linux-aarch64`, `treeship-linux-x86_64` | Raw CLI binaries with release SHA-256 commitments. Direct download for systems without npm. |
 
 ## What's intentionally NOT on each registry
 
@@ -45,7 +45,7 @@ What runs the prebuilt binary today, and what's still pending. AI agents and CI 
 | macOS arm64 (Apple Silicon) | Supported | Primary developer platform. |
 | macOS x86_64 (Intel) | Supported | |
 | Linux x86_64 (any distro) | Supported as of v0.10.1 | Single statically linked musl binary covers Ubuntu 22.04+, Debian 12+, Fedora, RHEL/Rocky 8+, Amazon Linux 2023, Alpine, and minimal containers (distroless, busybox, scratch). No GLIBC requirement. |
-| Linux aarch64 (ARM64) | **Not yet shipped** | Tracked separately; ETA after the v0.10.1 release stabilizes. |
+| Linux aarch64 (ARM64) | Supported in the next release | Native arm64 CI builds a static musl binary and smoke-tests it on Ubuntu 24.04 and Alpine before publication. |
 | Windows native | **Not supported** | The `treeship` npm package fails fast on `process.platform === 'win32'`. Use WSL. A native Windows binary is not on the current roadmap. |
 
 <Callout type="info">

@@ -86,6 +86,7 @@ treeship/
     @treeship/
       cli-darwin-arm64/
       cli-darwin-x64/
+      cli-linux-arm64/
       cli-linux-x64/
   docs/             # Fumadocs (Next.js) -- docs.treeship.dev
   scripts/
@@ -113,7 +114,8 @@ All release-train packages share a single version (enforced by `scripts/check-re
 | `treeship-sdk` | [PyPI](https://pypi.org/project/treeship-sdk/) | `pip install treeship-sdk` | Python SDK |
 | `@treeship/cli-darwin-arm64` | [npm](https://www.npmjs.com/package/@treeship/cli-darwin-arm64) | (auto-installed) | Binary for Apple Silicon |
 | `@treeship/cli-darwin-x64` | [npm](https://www.npmjs.com/package/@treeship/cli-darwin-x64) | (auto-installed) | Binary for Intel Mac |
-| `@treeship/cli-linux-x64` | [npm](https://www.npmjs.com/package/@treeship/cli-linux-x64) | (auto-installed) | Binary for Linux |
+| `@treeship/cli-linux-arm64` | [npm](https://www.npmjs.com/package/@treeship/cli-linux-arm64) | (auto-installed) | Binary for Linux arm64 |
+| `@treeship/cli-linux-x64` | [npm](https://www.npmjs.com/package/@treeship/cli-linux-x64) | (auto-installed) | Binary for Linux x86_64 |
 
 **Note:** the `treeship-cli` crate on crates.io is orphaned at v0.4.0. It is no longer the canonical install path; use the `treeship` npm wrapper instead. The crate name is preserved on crates.io to avoid squatting and to keep download counters meaningful for historical references.
 
@@ -533,6 +535,7 @@ npm install -g treeship
 Platform packages:
 - `@treeship/cli-darwin-arm64` -- Apple Silicon (M1/M2/M3)
 - `@treeship/cli-darwin-x64` -- Intel Mac
+- `@treeship/cli-linux-arm64` -- Linux arm64
 - `@treeship/cli-linux-x64` -- Linux x86_64
 
 If the binary download fails, postinstall prints a fallback message pointing the user to the shell installer (`curl -fsSL treeship.dev/install | sh`) or the one-liner setup (`curl -fsSL treeship.dev/setup | sh`). The `cargo install treeship-cli` fallback is no longer offered (that crate is orphaned at v0.4.0).

@@ -406,6 +406,7 @@ def collect_sites() -> list[Site]:
         ("packages/verify-js/package.json", "npm @treeship/verify"),
         ("npm/treeship/package.json", "npm treeship (wrapper)"),
         ("npm/@treeship/cli-linux-x64/package.json", "npm @treeship/cli-linux-x64"),
+        ("npm/@treeship/cli-linux-arm64/package.json", "npm @treeship/cli-linux-arm64"),
         ("npm/@treeship/cli-darwin-arm64/package.json", "npm @treeship/cli-darwin-arm64"),
         ("npm/@treeship/cli-darwin-x64/package.json", "npm @treeship/cli-darwin-x64"),
         ("tests/runtime-acceptance/aws-lambda/package.json", "acceptance AWS Lambda"),
@@ -481,7 +482,7 @@ def collect_sites() -> list[Site]:
     # The wrapper's optionalDependencies select the right CLI binary for each
     # platform; they MUST match the platform packages it routes to or `npm i
     # treeship` resolves to a stale binary.
-    for cli in ("@treeship/cli-linux-x64", "@treeship/cli-darwin-arm64", "@treeship/cli-darwin-x64"):
+    for cli in ("@treeship/cli-linux-x64", "@treeship/cli-linux-arm64", "@treeship/cli-darwin-arm64", "@treeship/cli-darwin-x64"):
         pin = pkg_json_dep_version(
             "npm/treeship/package.json", cli, group="optionalDependencies"
         )

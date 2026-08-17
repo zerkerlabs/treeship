@@ -128,6 +128,7 @@ treeship/
     @treeship/             Platform-specific binary packages
       cli-darwin-arm64/
       cli-darwin-x64/
+      cli-linux-arm64/
       cli-linux-x64/
 
   .github/workflows/

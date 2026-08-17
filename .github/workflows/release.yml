@@ -41,6 +41,10 @@ jobs:
             target: x86_64-unknown-linux-musl
             artifact: treeship-linux-x86_64
             apt: musl-tools
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            artifact: treeship-linux-aarch64
+            apt: musl-tools
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: treeship-darwin-aarch64
@@ -74,12 +78,12 @@ jobs:
       # silently falls back to runtime-loading and breaks on Alpine.
       # We catch that here, not in user issues.
       - name: Verify static linkage (Linux musl only)
-        if: matrix.target == 'x86_64-unknown-linux-musl'
+        if: endsWith(matrix.target, '-unknown-linux-musl')
         run: |
           BIN="target/${{ matrix.target }}/release/treeship"
           file "$BIN"
           if file "$BIN" | grep -qE 'dynamically linked|interpreter'; then
-            echo "::error::treeship-linux-x86_64 is not statically linked. Aborting release."
+            echo "::error::${{ matrix.artifact }} is not statically linked. Aborting release."
             file "$BIN"
             exit 1
           fi
@@ -108,36 +112,39 @@ jobs:
   # exists.
   smoke:
     needs: build
-    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        distro:
-          # Each entry mounts the linux-x86_64 binary into a fresh
-          # container and runs install/init/sign/verify against it.
-          - { nick: debian12, image: 'debian:12',     pm: apt }
-          - { nick: ubuntu22, image: 'ubuntu:22.04',  pm: apt }
-          - { nick: ubuntu24, image: 'ubuntu:24.04',  pm: apt }
-          - { nick: alpine,   image: 'alpine:3.20',   pm: apk }
+        include:
+          # Native runners execute the matching static binary inside
+          # same-architecture containers. QEMU is deliberately not trusted
+          # as the only release smoke for Linux arm64.
+          - { os: ubuntu-latest,    artifact: treeship-linux-x86_64,  nick: debian12, image: 'debian:12',    pm: apt }
+          - { os: ubuntu-latest,    artifact: treeship-linux-x86_64,  nick: ubuntu22, image: 'ubuntu:22.04', pm: apt }
+          - { os: ubuntu-latest,    artifact: treeship-linux-x86_64,  nick: ubuntu24, image: 'ubuntu:24.04', pm: apt }
+          - { os: ubuntu-latest,    artifact: treeship-linux-x86_64,  nick: alpine,   image: 'alpine:3.20',  pm: apk }
+          - { os: ubuntu-24.04-arm, artifact: treeship-linux-aarch64, nick: ubuntu24, image: 'ubuntu:24.04', pm: apt }
+          - { os: ubuntu-24.04-arm, artifact: treeship-linux-aarch64, nick: alpine,   image: 'alpine:3.20',  pm: apk }
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
       - name: Download Linux binary artifact
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
-          name: treeship-linux-x86_64
+          name: ${{ matrix.artifact }}
           path: artifact
 
       - name: Mark binary executable
-        run: chmod +x artifact/treeship-linux-x86_64
+        run: chmod +x artifact/${{ matrix.artifact }}
 
-      - name: Smoke ${{ matrix.distro.nick }} (${{ matrix.distro.image }})
+      - name: Smoke ${{ matrix.artifact }} on ${{ matrix.nick }} (${{ matrix.image }})
         run: |
           set -e
-          BIN_HOST="$(pwd)/artifact/treeship-linux-x86_64"
+          BIN_HOST="$(pwd)/artifact/${{ matrix.artifact }}"
           test -x "$BIN_HOST" || { echo "::error::binary missing at $BIN_HOST"; exit 1; }
 
-          if [ "${{ matrix.distro.pm }}" = "apt" ]; then
+          if [ "${{ matrix.pm }}" = "apt" ]; then
             PREP='set -e
                   export DEBIAN_FRONTEND=noninteractive
                   apt-get update -qq
@@ -151,7 +158,7 @@ jobs:
           # the smoke. Using a mounted volume avoids a docker cp dance.
           docker run --rm \
             -v "$BIN_HOST:/usr/local/bin/treeship:ro" \
-            "${{ matrix.distro.image }}" \
+            "${{ matrix.image }}" \
             sh -c "$PREP
 
           echo '--- treeship --version'
@@ -186,6 +193,7 @@ jobs:
 
     outputs:
       sha256_linux_x86_64:    ${{ steps.checksums.outputs.sha256_linux_x86_64 }}
+      sha256_linux_aarch64:   ${{ steps.checksums.outputs.sha256_linux_aarch64 }}
       sha256_darwin_aarch64:  ${{ steps.checksums.outputs.sha256_darwin_aarch64 }}
       sha256_darwin_x86_64:   ${{ steps.checksums.outputs.sha256_darwin_x86_64 }}
 
@@ -211,12 +219,14 @@ jobs:
           # named after the artifact, with the binary inside.
           (
             cd treeship-linux-x86_64    && sha256sum treeship-linux-x86_64
+            cd ../treeship-linux-aarch64   && sha256sum treeship-linux-aarch64
             cd ../treeship-darwin-aarch64  && sha256sum treeship-darwin-aarch64
             cd ../treeship-darwin-x86_64   && sha256sum treeship-darwin-x86_64
           ) | sort > SHA256SUMS
           cat SHA256SUMS
           # Surface the bare hex hashes as job outputs.
           echo "sha256_linux_x86_64=$(   awk '/treeship-linux-x86_64/    {print $1}' SHA256SUMS)" >> "$GITHUB_OUTPUT"
+          echo "sha256_linux_aarch64=$(  awk '/treeship-linux-aarch64/   {print $1}' SHA256SUMS)" >> "$GITHUB_OUTPUT"
           echo "sha256_darwin_aarch64=$( awk '/treeship-darwin-aarch64/  {print $1}' SHA256SUMS)" >> "$GITHUB_OUTPUT"
           echo "sha256_darwin_x86_64=$(  awk '/treeship-darwin-x86_64/   {print $1}' SHA256SUMS)" >> "$GITHUB_OUTPUT"
 
@@ -225,6 +235,7 @@ jobs:
         with:
           files: |
             treeship-linux-x86_64/treeship-linux-x86_64
+            treeship-linux-aarch64/treeship-linux-aarch64
             treeship-darwin-aarch64/treeship-darwin-aarch64
             treeship-darwin-x86_64/treeship-darwin-x86_64
             SHA256SUMS
@@ -280,6 +291,7 @@ jobs:
             @treeship/mcp \
             @treeship/a2a \
             @treeship/cli-linux-x64 \
+            @treeship/cli-linux-arm64 \
             @treeship/cli-darwin-arm64 \
             @treeship/cli-darwin-x64 \
             treeship; do
@@ -386,9 +398,10 @@ jobs:
       - name: Embed expected SHA-256 into platform npm packages
         run: |
           set -e
-          for slug in linux-x86_64 darwin-aarch64 darwin-x86_64; do
+          for slug in linux-x86_64 linux-aarch64 darwin-aarch64 darwin-x86_64; do
             case "$slug" in
               linux-x86_64)   pkg=cli-linux-x64    sha='${{ needs.release.outputs.sha256_linux_x86_64 }}';;
+              linux-aarch64)  pkg=cli-linux-arm64  sha='${{ needs.release.outputs.sha256_linux_aarch64 }}';;
               darwin-aarch64) pkg=cli-darwin-arm64 sha='${{ needs.release.outputs.sha256_darwin_aarch64 }}';;
               darwin-x86_64)  pkg=cli-darwin-x64   sha='${{ needs.release.outputs.sha256_darwin_x86_64 }}';;
             esac
@@ -406,6 +419,13 @@ jobs:
 
       - name: Verify @treeship/cli-linux-x64 version landed
         run: .github/scripts/wait-for-npm-version.sh @treeship/cli-linux-x64 "${GITHUB_REF_NAME#v}"
+
+      - name: Publish @treeship/cli-linux-arm64
+        working-directory: npm/@treeship/cli-linux-arm64
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/npm-publish-if-needed.sh" @treeship/cli-linux-arm64 "${GITHUB_REF_NAME#v}"
+
+      - name: Verify @treeship/cli-linux-arm64 version landed
+        run: .github/scripts/wait-for-npm-version.sh @treeship/cli-linux-arm64 "${GITHUB_REF_NAME#v}"
 
       - name: Publish @treeship/cli-darwin-arm64
         working-directory: npm/@treeship/cli-darwin-arm64
@@ -552,9 +572,10 @@ jobs:
           set -e
           DATA_DIR="packages/sdk-python/treeship_sdk/_data"
           mkdir -p "$DATA_DIR"
-          for slug in linux-x86_64 darwin-aarch64 darwin-x86_64; do
+          for slug in linux-x86_64 linux-aarch64 darwin-aarch64 darwin-x86_64; do
             case "$slug" in
               linux-x86_64)   asset=treeship-linux-x86_64    sha='${{ needs.release.outputs.sha256_linux_x86_64 }}';;
+              linux-aarch64)  asset=treeship-linux-aarch64   sha='${{ needs.release.outputs.sha256_linux_aarch64 }}';;
               darwin-aarch64) asset=treeship-darwin-aarch64  sha='${{ needs.release.outputs.sha256_darwin_aarch64 }}';;
               darwin-x86_64)  asset=treeship-darwin-x86_64   sha='${{ needs.release.outputs.sha256_darwin_x86_64 }}';;
             esac
@@ -630,7 +651,7 @@ jobs:
           # when the directory layout disagrees with the manifest, which
           # would ship an unverifiable wheel that fails install for
           # every user. Catch it here instead.
-          for asset in treeship-linux-x86_64 treeship-darwin-aarch64 treeship-darwin-x86_64; do
+          for asset in treeship-linux-x86_64 treeship-linux-aarch64 treeship-darwin-aarch64 treeship-darwin-x86_64; do
             if ! python -m zipfile -l "$EXPECTED_WHEEL" | grep -q "treeship_sdk/_data/expected-checksum-${asset}.txt"; then
               echo "::error::built wheel is missing treeship_sdk/_data/expected-checksum-${asset}.txt"
               echo "::error::wheel contents:"

@@ -20,6 +20,7 @@
   ],
   "optionalDependencies": {
     "@treeship/cli-linux-x64": "0.24.0",
+    "@treeship/cli-linux-arm64": "0.24.0",
     "@treeship/cli-darwin-arm64": "0.24.0",
     "@treeship/cli-darwin-x64": "0.24.0"
   },

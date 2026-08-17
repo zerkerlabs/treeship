@@ -6,6 +6,7 @@ const os = require('os');
 
 const PLATFORM_MAP = {
   'linux-x64':    '@treeship/cli-linux-x64',
+  'linux-arm64':  '@treeship/cli-linux-arm64',
   'darwin-arm64': '@treeship/cli-darwin-arm64',
   'darwin-x64':   '@treeship/cli-darwin-x64',
 };
@@ -15,7 +16,7 @@ const pkg = PLATFORM_MAP[key];
 
 if (!pkg) {
   console.error(`treeship: unsupported platform ${key}`);
-  console.error('Install via: cargo install treeship-cli');
+  console.error('Build from source: git clone https://github.com/zerkerlabs/treeship && cd treeship && cargo build --release -p treeship-cli');
   process.exit(1);
 }
 
