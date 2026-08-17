@@ -11,7 +11,7 @@ use treeship_core::{
         verify_effect, verify_grant_chain, verify_mandate, ActionStatement, ActionStatementV2,
         ApprovalScope, ApprovalStatement, DeadlineEvent, DecisionStatement, EffectConfidence,
         EffectFinality, EffectVerdict, HandoffStatement, MandateVerdict, NoWitnessAuthority,
-        ReceiptStatement, ResolutionStatus,
+        ReceiptStatement, ResolutionStatus, RevocationSource,
     },
     storage::Store,
     trust::TrustRootStore,
@@ -632,6 +632,7 @@ pub fn run(
             target,
             linkage_ok,
             &linkage_detail,
+            &revocation,
         );
         if failed > 0 || !chain_ok {
             std::process::exit(1);
@@ -903,6 +904,11 @@ fn print_full_timeline(
     target: &str,
     linkage_ok: bool,
     linkage_detail: &str,
+    // Threaded through rather than defaulted: this display previously passed
+    // `NoRevocationSource`, so the mandate line on a full timeline always
+    // resolved Unknown even when the caller had a working resolver in scope
+    // two hundred lines up.
+    revocation: &dyn RevocationSource,
 ) -> bool {
     // Returns whether the CHAIN is intact (no gaps + signed linkage). The
     // caller must exit nonzero when this is false, even if every individual
@@ -914,7 +920,9 @@ fn print_full_timeline(
     let steps: Vec<StepInfo> = chain
         .iter()
         .enumerate()
-        .map(|(i, (id, env))| extract_step_info(i + 1, id, env, storage, Some(verifier)))
+        .map(|(i, (id, env))| {
+            extract_step_info(i + 1, id, env, storage, Some(verifier), revocation)
+        })
         .collect();
 
     // Header
@@ -1412,6 +1420,7 @@ fn extract_step_info(
     env: &Envelope,
     storage: &Store,
     verifier: Option<&Verifier>,
+    revocation: &dyn RevocationSource,
 ) -> StepInfo {
     let mut info = StepInfo {
         index,
@@ -1462,11 +1471,7 @@ fn extract_step_info(
                 info.runtime_model = rt.model.clone();
             }
             // Surface the effect line only when there is an effect to judge.
-            info.mandate_verdict = v2_mandate_summary(
-                env,
-                verifier,
-                &treeship_core::statements::NoRevocationSource,
-            );
+            info.mandate_verdict = v2_mandate_summary(env, verifier, revocation);
             info.chain_summary = v2_chain_summary(env);
             if let Some(verdict) = v2_effect_verdict(env) {
                 info.effect_effective = Some(verdict.effective_confidence);
@@ -2200,7 +2205,9 @@ fn authority_gate_failure(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use treeship_core::statements::{ActionStatement, ApprovalScope, SubjectRef};
+    use treeship_core::statements::{
+        ActionStatement, ApprovalScope, NoRevocationSource, SubjectRef,
+    };
 
     // ── signed chain linkage: receipt.v1 subject edge ──────────────────
     //
@@ -2310,7 +2317,7 @@ mod tests {
         // effect verdict rather than silently taking the v1 branch.
         let dir = std::env::temp_dir().join("ts_verify_v2_effect_test");
         let store = Store::open(&dir).unwrap();
-        let info = extract_step_info(0, "art_test", &env, &store, None);
+        let info = extract_step_info(0, "art_test", &env, &store, None, &NoRevocationSource);
 
         assert_eq!(info.actor, "agent://worker");
         assert_eq!(
@@ -2590,7 +2597,7 @@ mod tests {
         let ok_env = sign(&payload_type_v2("action"), &ok, &signer)
             .unwrap()
             .envelope;
-        let info = extract_step_info(0, "art_ok", &ok_env, &store, None);
+        let info = extract_step_info(0, "art_ok", &ok_env, &store, None, &NoRevocationSource);
         match info.mandate_verdict {
             Some(MandateSummary::Unverified(ref r)) => {
                 assert!(
@@ -2616,7 +2623,7 @@ mod tests {
         let bad_env = sign(&payload_type_v2("action"), &bad, &signer)
             .unwrap()
             .envelope;
-        let bad_info = extract_step_info(1, "art_bad", &bad_env, &store, None);
+        let bad_info = extract_step_info(1, "art_bad", &bad_env, &store, None, &NoRevocationSource);
         match bad_info.mandate_verdict {
             Some(MandateSummary::Fail(ref r)) => {
                 assert!(
@@ -2864,7 +2871,7 @@ mod tests {
             .unwrap()
             .envelope;
 
-        let info = extract_step_info(0, "art_pending", &env, &store, None);
+        let info = extract_step_info(0, "art_pending", &env, &store, None, &NoRevocationSource);
         assert_eq!(
             info.effect_finality,
             Some(EffectFinality::Initiated),
