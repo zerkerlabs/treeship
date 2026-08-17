@@ -415,13 +415,45 @@ func revokedHandler(database *sql.DB) http.HandlerFunc {
 				// server could have written.
 				"envelope":    json.RawMessage(a.EnvelopeJSON),
 				"artifact_id": a.ArtifactID,
+				// Where to check this entry against the log.
+				//
+				// The entries are individually DSSE-signed, so this server
+				// cannot forge one. What it CAN do is omit one, and an omitted
+				// revocation is indistinguishable from a grant that was never
+				// revoked -- the same failure Certificate Transparency exists
+				// to make detectable.
+				//
+				// Nothing here proves the list is complete; completeness
+				// cannot be proven from a list. These fields are what a client
+				// needs to start checking: `dock_id` names the log this
+				// artifact belongs to, so a client can fetch that dock's
+				// checkpoint (/v1/merkle/checkpoint/latest) and request an
+				// inclusion proof, and can run /v1/merkle/consistency across
+				// checkpoints to detect a forked log. Without them a client
+				// cannot even ask.
+				//
+				// `rekor_index` is null when the best-effort Rekor anchor did
+				// not land; null means "not anchored", never "anchoring
+				// failed silently and this is fine".
+				"dock_id":     a.DockID,
+				"rekor_index": a.RekorIndex,
 			})
 		}
 
 		body := map[string]any{
-			"version":      "2",
+			"version":      "3",
 			"generated_at": time.Now().UTC().Format(time.RFC3339),
 			"revoked":      revoked,
+			// Say what this document does not prove, in the document.
+			//
+			// A client that treats an absent grant as "not revoked" is making
+			// an inference this endpoint cannot support: the entries are
+			// signed, so nothing here is forged, but a withheld entry looks
+			// exactly like a grant nobody revoked. Callers that need better
+			// than that must verify inclusion against the per-entry dock log.
+			"completeness": "unproven: entries are individually signed and cannot be " +
+				"forged, but absence from this list is not evidence a grant was not " +
+				"revoked. Check inclusion per entry via its dock_id checkpoint.",
 			// Silent truncation on a revocation list would drop revocations a
 			// client needed and look identical to their not existing.
 			"truncated": truncated,

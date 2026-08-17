@@ -869,6 +869,15 @@ paths:
 
         `truncated` is always present; when true the list is incomplete and
         must not be treated as exhaustive.
+
+        Each entry carries `dock_id` and `rekor_index` so a client can act on
+        the withholding caveat above rather than only be warned about it:
+        `dock_id` names the log the artifact belongs to, so inclusion can be
+        checked against that dock's checkpoint and a forked log detected via
+        /v1/merkle/consistency. `rekor_index` is null when the best-effort
+        anchor did not land -- null means "not anchored", never "anchored and
+        fine". The response also carries a `completeness` field stating in the
+        document itself that absence proves nothing.
       responses:
         '200':
           description: Revocation list
