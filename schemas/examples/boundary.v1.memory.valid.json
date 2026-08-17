@@ -1,0 +1,24 @@
+{
+  "schema": "treeship.boundary.v1",
+  "subject_ref": "art_4644b09895a4b817f09e0d5148a95cdc",
+  "actor":   { "uri": "agent://codex", "keyid": "key_aaaa1111" },
+  "checker": { "uri": "system://zmem", "keyid": "key_bbbb2222" },
+  "decision": "partial",
+  "outcome":  { "profile": "memory.proof", "injected": 3, "withheld": 2 },
+  "policy":   {
+    "ref": "policy://zmem/default#v1",
+    "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "diet_root": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "diet": [
+    { "type": "memory_bundle", "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111" },
+    { "type": "query",         "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222" }
+  ],
+  "committed_at": { "anchor": "merkle://zmem/checkpoint#4821", "ts": "2026-06-06T00:00:00Z" },
+  "asserted": {
+    "policy_excludes_echo": ["chain_of_thought", "scratchpad"],
+    "injected_memory_ids": ["mem_a", "mem_b", "mem_c"],
+    "withheld_memory_ids": ["mem_d", "mem_e"],
+    "note": "Injected task-preference memories; withheld two stale entries per policy."
+  }
+}
