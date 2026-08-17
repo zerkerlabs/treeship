@@ -1,6 +1,7 @@
 # Commitments: proving what an agent promised, and whether it kept it
 
-**Status:** draft, not implemented
+**Status:** draft. Two pieces have since shipped independently -- see
+"What changed since this was written" below. Slices 1-4 are unbuilt.
 **Pairs with:** [workflow-declarations](./workflow-declarations.md) (#107, the authorization graph), `boundary.v1`, per-actor signing, the transparency log
 **Last updated:** 2026-06-29
 
@@ -40,15 +41,16 @@ This is a container over primitives Treeship ships, not new crypto:
 | Existing primitive | Role |
 |---|---|
 | `boundary.v1` predicate | already records `decision` / `outcome` / `policy`, the obligation/boundary receipt. A refusal is a `boundary` with `decision: deny`. |
-| `check_scope_violation` (verify) | already detects when an action falls outside an approval scope, the refusal trigger. |
+| `action_in_scope` (`capability/mod.rs`, `statements/action_v2.rs`) | already detects when an action falls outside an approval scope, the refusal trigger. Note: this spec originally named it `check_scope_violation`, which does not exist under that name -- there are two `action_in_scope` functions, one per scope model. |
 | Per-actor signing (0.13+) | the runtime signs the refusal/consequence; the agent cannot forge what it never held. |
 | Predicate registry | the commitment is a typed predicate (`commitment.v1`), validated at attest time. |
+| **`blocked.v1` predicate** | **already exists**, with nine fields (`reason_class`, `refused_kind`, `approver`, `actor`, `irreversibility`, `description`, `quarantine_receipt`, `evidence_digest`, `reevaluate_when`) and a `scope_violation` reason class. Nothing in the product emits it -- only the validation tests reference it. Slice 1 is therefore *wiring an existing predicate*, not designing a new one, which makes it considerably cheaper than this spec assumed when it proposed `refusal.v1`. |
 | Transparency log + checkpoints | the commitment is checkpoint-anchored, so a verifier can prove it existed **before** the execution trace. |
 | Approval Use Journal | a commitment can require approval-use-bound actions; the nonce binding already works. |
 
 ## Slices
 
-1. **Signed refusal receipts (the "no-send predicate").** The cheapest, most self-contained slice, and the clearest demonstration of a property nobody else has: *honest proof of what did not happen*. When an action would violate an approval scope (`check_scope_violation` returns a reason), the runtime emits a signed `refusal.v1` (a `boundary` with `decision: deny`) recording the attempted action, the policy/scope that denied it, the reason, and a null consequence. `verify` surfaces refusals as a distinct, attested outcome, *attempted X, denied by policy Y*, neither a pass nor a fail. One predicate + one emit path + one verify row.
+1. **Signed refusal receipts (the "no-send predicate").** The cheapest, most self-contained slice, and the clearest demonstration of a property nobody else has: *honest proof of what did not happen*. When an action would violate an approval scope (`action_in_scope` returns false), the runtime emits a signed `blocked.v1` recording the attempted action, the policy/scope that denied it, the reason, and a null consequence. `verify` surfaces refusals as a distinct, attested outcome, *attempted X, denied by policy Y*, neither a pass nor a fail. One predicate + one emit path + one verify row.
 2. **Commitment receipt + satisfaction check.** `treeship commit` signs a `commitment.v1` before execution: `{ goal, allowed_actions, expected_outcome, failure_condition, expires_at, authority }`. After execution, `verify` cross-checks the action receipts against it and reports **satisfied** (the expected outcome is present and in scope), **violated** (an action outside `allowed_actions`, or the failure condition tripped), or **unfulfilled** (the commitment expired or the expected outcome never appeared). The commitment is checkpoint-anchored so its pre-existence is provable.
 3. **Commitment/policy hash in the session header.** Hash the active commitment (and policy) set at session start and reference it in every receipt, so an auditor can answer *which version of the rule governed this action*. Small; builds on `policy_ref`.
 4. **Compose with the #107 authorization graph.** The commitment names the *obligation* (promised outcome); #107's workflow names the *allowed path* (authorized action set, with `deviation`/`gap`). Together they answer the full question: *was every authorized action taken, the promise kept, and nothing unauthorized done?*
@@ -69,4 +71,31 @@ A bounded result enum, `satisfied | violated | unfulfilled | refused`, is the pu
 
 ## First slice to build
 
-Slice 1, signed refusal receipts. It reuses `check_scope_violation` and the `boundary.v1` shape, needs no new commitment container, and on day one lets `verify` show the refusals alongside the actions, turning "success theater" into an honest account of what the agent did *and chose not to do*. It is the smallest change that makes the strongest point.
+Slice 1, signed refusal receipts. It reuses `action_in_scope` and the existing `blocked.v1` predicate, needs no new commitment container, and on day one lets `verify` show the refusals alongside the actions, turning "success theater" into an honest account of what the agent did *and chose not to do*. It is the smallest change that makes the strongest point.
+
+## What changed since this was written
+
+Written 2026-06-29 and reviewed 2026-08-15. Two of its ideas arrived from other
+directions, which is worth recording so nobody builds them twice:
+
+- **"A high Boundary with a null Consequence"** -- the case this spec calls out
+  as *"the agent was allowed to do X and did nothing"*, distinct from both
+  success and failure -- shipped as `AuthorityUse` (#297). It reports `granted`,
+  `exercised`, `dormant` and `out_of_scope` as separate sets, so unused
+  authority is visible rather than collapsing into a pass.
+- **Binding a promise to its execution** shipped in narrower form for
+  action/v2 mandates (#298): `objective_hash` was signed and never compared, so
+  a delegated grant could silently change the objective mid-chain. `verify`
+  now rejects an objective that changes across a chain
+  (`GrantChainError::ObjectiveChanged`) and reconciles a mandate against its
+  leaf grant's scope, audience and objective.
+
+Neither is the commitment container this spec describes. Both are the same
+insight applied where a signed field already existed and was going unchecked,
+and both narrow what slice 2 still has to do.
+
+One correction to the spec's own premises: it lists `check_scope_violation` as
+an existing primitive. No such function exists. The real ones are two
+`action_in_scope` implementations, one per scope model. A spec that sends an
+implementer looking for a function that was never written costs more than one
+that admits it needs to find the right entry point.
