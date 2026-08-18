@@ -12,7 +12,7 @@ Treeship's release pipeline publishes to four registries. Each one carries a del
 | Registry | Package | What it is |
 |---|---|---|
 | **npm** | `treeship` | The CLI wrapper. `npm install -g treeship` installs the platform binary for your OS via `optionalDependencies`. |
-| **npm** | `@treeship/cli-darwin-arm64`, `@treeship/cli-darwin-x64`, `@treeship/cli-linux-x64`, `@treeship/cli-linux-arm64` (first published in the release after v0.24.0) | Per-platform CLI binaries. Selected automatically by the wrapper based on `process.platform` and `process.arch`, via `optionalDependencies` on the `treeship` package. |
+| **npm** | `@treeship/cli-darwin-arm64`, `@treeship/cli-darwin-x64`, `@treeship/cli-linux-x64`, `@treeship/cli-linux-arm64` (first published in v0.25.0) | Per-platform CLI binaries. Selected automatically by the wrapper based on `process.platform` and `process.arch`, via `optionalDependencies` on the `treeship` package. |
 | **npm** | `@treeship/sdk` | TypeScript / Node SDK. Wraps the CLI. |
 | **npm** | `@treeship/mcp` | MCP server bridge. Drop-in for Claude Code, Cursor, Cline, Codex. |
 | **npm** | `@treeship/a2a` | A2A bridge. |
@@ -20,7 +20,7 @@ Treeship's release pipeline publishes to four registries. Each one carries a del
 | **npm** | `@treeship/core-wasm` | Core verification logic compiled to WebAssembly. Used by `@treeship/verify`. |
 | **PyPI** | `treeship-sdk` | Python SDK. Wraps the CLI. |
 | **crates.io** | `treeship-core` | Rust library. The trust primitives (signing, verification, Merkle, journal) — *not* the CLI. |
-| **GitHub Releases** | `treeship-darwin-aarch64`, `treeship-darwin-x86_64`, `treeship-linux-x86_64`, `treeship-linux-aarch64` (from the release after v0.24.0) | Raw CLI binaries with release SHA-256 commitments. Direct download for systems without npm. |
+| **GitHub Releases** | `treeship-darwin-aarch64`, `treeship-darwin-x86_64`, `treeship-linux-x86_64`, `treeship-linux-aarch64` (from v0.25.0) | Raw CLI binaries with release SHA-256 commitments. Direct download for systems without npm. |
 
 ## What's intentionally NOT on each registry
 
@@ -45,7 +45,7 @@ What runs the prebuilt binary today, and what's still pending. AI agents and CI 
 | macOS arm64 (Apple Silicon) | Supported | Primary developer platform. |
 | macOS x86_64 (Intel) | Supported | |
 | Linux x86_64 (any distro) | Supported as of v0.10.1 | Single statically linked musl binary covers Ubuntu 22.04+, Debian 12+, Fedora, RHEL/Rocky 8+, Amazon Linux 2023, Alpine, and minimal containers (distroless, busybox, scratch). No GLIBC requirement. |
-| Linux aarch64 (ARM64) | Supported from the next release | Native arm64 CI builds a static musl binary on an `ubuntu-24.04-arm` runner and smoke-executes it on Ubuntu 24.04 and Alpine, so a broken target blocks merge. The v0.24.0 *release* predates that work, so its published artifacts carry no `treeship-linux-aarch64` asset and `@treeship/cli-linux-arm64` is not yet on npm. Until the next release, installing here falls back to `cargo install --git`, which needs a Rust toolchain. |
+| Linux aarch64 (ARM64) | Supported from v0.25.0 | Native arm64 CI builds a static musl binary on an `ubuntu-24.04-arm` runner and smoke-executes it on Ubuntu 24.04 and Alpine, so a broken target blocks merge. The v0.24.0 *release* was cut a week before that work merged, so its published artifacts carry no `treeship-linux-aarch64` asset and `@treeship/cli-linux-arm64` is not yet on npm. Until v0.25.0, installing here falls back to `cargo install --git`, which needs a Rust toolchain. |
 | Windows native | **Not supported** | The `treeship` npm package fails fast on `process.platform === 'win32'`. Use WSL. A native Windows binary is not on the current roadmap. |
 
 <Callout type="info">
@@ -122,8 +122,8 @@ smoke-executed in CI on a native arm runner, and `@treeship/cli-linux-arm64` is
 wired into the wrapper's `optionalDependencies` — but that landed *after* v0.24.0
 was cut, so the currently published artifacts do not include it. On Linux arm64
 today both `curl | sh` and `npm install -g treeship` fall through to a cargo
-build; expect a multi-minute install and a Rust toolchain requirement until the
-next release.
+build; expect a multi-minute install and a Rust toolchain requirement until
+v0.25.0.
 
 ## Sandbox / agent-friendly install
 

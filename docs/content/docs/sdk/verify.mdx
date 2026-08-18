@@ -42,8 +42,9 @@ installed the tarball and imported it the way a user does.
 
 Installing a fixed `@treeship/core-wasm` at top level does **not** work around
 it. This package pins core-wasm to an exact version, so npm installs the pinned
-copy nested under `@treeship/verify`, and the nested copy wins resolution. The
-fix has to arrive as a new `@treeship/verify` release with a bumped pin.
+copy nested under `@treeship/verify`, where it wins resolution over anything at
+top level. The fix arrives as a coordinated release: v0.25.0 bumps core-wasm and
+every dependent's pin together, which is what makes it reach you.
 
 Until then, verify server-side with the CLI (`treeship verify <target> --format
 json`) or `@treeship/sdk`'s `s.verify.verify()`, which shells out to the binary
