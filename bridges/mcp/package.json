@@ -36,7 +36,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@treeship/core-wasm": "0.24.0",
+    "@treeship/core-wasm": "0.24.1",
     "zod": "^3.25.76"
   },
   "devDependencies": {

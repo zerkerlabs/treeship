@@ -123,6 +123,15 @@ jobs:
       # Node at all. Nobody caught it because the only consumer exercised was
       # the website, which vendors and bundles the wasm. This installs the
       # tarball and imports it the way a user does.
+      # #320 fixed core-wasm and tested core-wasm. The package users install is
+      # @treeship/verify, which pins core-wasm EXACTLY -- so a green core-wasm
+      # gate can sit beside a broken user install indefinitely. This exercises
+      # the package a user actually gets.
+      - name: "@treeship/verify installs and verifies under Node"
+        run: |
+          cargo install wasm-pack --version 0.14.0 --locked || true
+          bash packages/core-wasm/build-npm.sh "$(node -p "require('./packages/verify-js/package.json').dependencies['@treeship/core-wasm']")"
+          bash scripts/check-verify-js-loads.sh
       - name: core-wasm installs and verifies under Node
         run: |
           cargo install wasm-pack --version 0.14.0 --locked || true

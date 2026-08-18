@@ -40,7 +40,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@treeship/core-wasm": "0.24.0"
+    "@treeship/core-wasm": "0.24.1"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
