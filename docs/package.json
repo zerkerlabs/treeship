@@ -15,10 +15,11 @@
     "lint": "next lint",
     "check:links": "python3 scripts/check-internal-links.py content",
     "check:cli": "python3 scripts/check-cli-commands.py ${TREESHIP_BIN:-treeship} content",
-    "check:all": "npm run check:links && npm run check:external && npm run check:api && npm run check:cli && npm run check:flags",
+    "check:all": "npm run check:links && npm run check:external && npm run check:api && npm run check:cli && npm run check:flags && npm run check:tables",
     "check:flags": "python3 scripts/check-cli-flags.py ${TREESHIP_BIN:-treeship} content",
     "check:external": "python3 scripts/check-external-links.py content",
-    "check:api": "python3 scripts/check-api-routes.py content ../packages/hub/main.go"
+    "check:api": "python3 scripts/check-api-routes.py content ../packages/hub/main.go",
+    "check:tables": "python3 scripts/check-cli-option-tables.py ${TREESHIP_BIN:-treeship} content"
   },
   "dependencies": {
     "fumadocs-core": "^15.8.5",

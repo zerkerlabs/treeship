@@ -131,27 +131,45 @@ That writes a `.agent` package (signed certificate) and a card at `needs-review`
 
 ## What you'll see after setup
 
-Cards (run `treeship agents`):
+Cards (run `treeship agents list` — bare `treeship agents` prints the
+subcommand help):
 
 ```
-Agent cards (5 in workspace)
-  ✓ Claude Code            (claude-code, harness: claude-code, active)
-  ✓ Cursor                 (cursor-agent, harness: cursor, active)
-  ✓ Codex CLI              (codex, harness: codex, active)
-  ✓ OpenClaw               (openclaw, harness: openclaw, active)
-  · SuperNinja             (ninjatech-superninja, harness: ninjatech-superninja, draft)
+Agent cards (/path/to/.treeship/agents)
+
+  · Claude Code  (claude-code)
+    id:         agent_2c2942ac8e2b3795
+    status:     active
+    coverage:   high
+    provenance: discovered
+
+  · SuperNinja  (ninjatech-superninja)
+    id:         agent_6d1ac290ff78a45d
+    status:     draft
+    coverage:   basic
+    provenance: discovered
 ```
 
 Harness coverage (run `treeship harness list`):
 
 ```
 Harnesses (10 known)
-  ✓ Claude Code Native Hook Harness     id: claude-code      coverage: high      status: instrumented
-  ✓ Cursor MCP Harness                  id: cursor           coverage: medium    status: instrumented
-  ✓ Codex CLI MCP Harness               id: codex            coverage: medium    status: instrumented
-  · NinjaTech / SuperNinja Remote       id: ninjatech-superninja  coverage: basic   status: detected
-  ...
+
+  · Claude Code Native Hook Harness
+    id:       claude-code
+    surface:  claude-code
+    coverage: high
+    status:   detected
+
+  · Cursor MCP Harness
+    id:       cursor
+    surface:  cursor-agent
+    coverage: medium
+    status:   detected
 ```
+
+Each entry is a block, not a row — the list stays readable as fields are added.
+`status` reads `detected` until the harness is instrumented.
 
 ## What's next
 
