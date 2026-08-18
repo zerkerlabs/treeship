@@ -16,6 +16,29 @@ Everything `treeship verify --format json` produces on the CLI, `@treeship/verif
 npm install @treeship/verify
 ```
 
+## Runtime support
+
+<Callout type="warn">
+**`@treeship/core-wasm@0.24.0` does not load under Node 22.** Importing it —
+directly, through `@treeship/verify`, or through `@treeship/sdk`'s offline
+verify methods — throws before any verification runs:
+
+```
+WebAssembly.Table.grow(): failed to grow table by 4
+```
+
+Reproduced deterministically on Node **22.20.0** and **22.23.1**
+(darwin-arm64), on a clean `npm install @treeship/verify@0.24.0`. The failure is
+at module load, so every export is affected: `verifyReceipt`,
+`verifyCertificate`, `crossVerify`, `verifyCapability`, `verifyResolution`,
+`verifyPresentation`.
+
+Until this is fixed, verify server-side with the CLI (`treeship verify <target>
+--format json`) or `@treeship/sdk`'s `s.verify.verify()`, which shells out to
+the binary and is unaffected. Browser runtimes were not tested here — this note
+records only what was reproduced under Node.
+</Callout>
+
 Same verification semantics in every runtime. The package ships with `@treeship/core-wasm` pinned to an exact version (no caret), so there is no silent drift between the WASM you install and the rules this package documents.
 
 ## Trust roots
