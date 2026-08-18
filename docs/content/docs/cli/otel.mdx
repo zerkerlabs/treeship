@@ -25,7 +25,11 @@ Rebuild from source with: cargo build --release --bin treeship --features otel
 ```
 
 <Callout type="warn">
-Do NOT use `cargo install treeship-cli` from crates.io -- that crate is orphaned at v0.4.0. The CLI ships exclusively via the npm wrapper (`npm install -g treeship`) and the `treeship.dev/install` script, which fetch a prebuilt platform binary. To get a Rust toolchain build, clone the repo and `cargo build` as above.
+Do NOT use `cargo install treeship-cli` from crates.io. It does not install an old
+version -- it fails: all seven published versions are yanked, so crates.io reports
+`max_version: 0.0.0` and cargo answers *could not find `treeship-cli` in registry*.
+(This previously said "orphaned at v0.4.0", which implied you would get 0.4.0. The
+newest yanked version is 0.5.0, and none of them are installable.) The CLI ships exclusively via the npm wrapper (`npm install -g treeship`) and the `treeship.dev/install` script, which fetch a prebuilt platform binary. To get a Rust toolchain build, clone the repo and `cargo build` as above.
 </Callout>
 
 ## Commands

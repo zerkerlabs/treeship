@@ -22,7 +22,22 @@ The fastest path to a signed receipt is a single `treeship setup`. It detects th
 npm install -g treeship
 ```
 
-Or via Homebrew, Cargo, or the binary download — see [installation](/docs/guides/quickstart#install).
+Or via the binary download — see [installation](/docs/guides/quickstart#install).
+
+<Callout type="warn">
+This line used to offer **Homebrew** and **Cargo**. Neither works:
+
+- There is no Homebrew formula. `brew info treeship` returns *No available
+  formula with the name "treeship"*, and the quickstart it links to never
+  mentioned Homebrew either.
+- `cargo install treeship-cli` fails outright. All seven published versions
+  are yanked, so crates.io reports `max_version: 0.0.0` and cargo answers
+  *could not find `treeship-cli` in registry `crates-io`*.
+
+Naming an install route that does not exist costs more than listing one
+fewer option: the reader tries it, it fails, and they have no way to tell
+whether they mistyped it or it was never real.
+</Callout>
 
 </Step>
 
