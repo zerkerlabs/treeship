@@ -51,6 +51,17 @@ npm i "$CORE/$CORE_TGZ" "$ROOT/packages/verify-js/$VFY_TGZ" --silent >/dev/null 
 
 # The pin must resolve to the local build, not the registry.
 #
+# This works without touching the pin because the CI step builds core-wasm at
+# whatever version the pin already names -- so the LOCAL, fixed build is
+# installed under the pinned version and npm dedupes. The gate therefore tests
+# the repaired build under today's pin, with nothing unpublished involved.
+#
+# Bumping the four pins by hand was the wrong instinct and CI said so: it
+# pointed them at 0.24.1, which does not exist on npm, and six jobs failed with
+# ETARGET. `check-release-versions.py` already enforces that all four pins move
+# in lockstep with core-wasm -- it was added because exactly this shipped broken
+# at 0.9.6 -- so the bump belongs to the release, not to a fix PR.
+#
 # This is the check that catches the propagation bug. verify-js pins
 # core-wasm EXACTLY, so if the pin still names a published-broken version,
 # npm installs the local fixed copy at top level AND the broken one nested
