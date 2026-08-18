@@ -119,6 +119,14 @@ jobs:
       # nothing looked.
       - name: No committed conflict markers
         run: python3 scripts/check-conflict-markers.py
+      # The 2026-08-18 docs QA found documented commands that do not exist,
+      # including one offered as the fix for a fail-closed error. Probes the
+      # built binary rather than parsing a help listing -- the first version
+      # parsed the listing and falsely flagged seven real hidden commands.
+      - name: Documented CLI commands exist
+        run: |
+          cargo build --bin treeship --quiet
+          python3 scripts/check-documented-commands.py
       - name: Every protocol spec is indexed
         run: python3 scripts/check-specs-index.py
       # `schemas/` is the publishable copy; the predicate registry has its own.

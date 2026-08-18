@@ -94,9 +94,19 @@ Trust pinning is mandatory and fail-closed: if the issuer key is not in your tru
 
 ```bash
 treeship trust add <key_id> <pubkey> --kind agent_cert
-# or sync from your hub:
-treeship hub sync-trust
 ```
+
+<Callout type="warn">
+This page previously offered `treeship hub sync-trust` here as an easier
+alternative. **That command has never existed.** A reader who hit the
+fail-closed error and followed the suggestion got `unrecognized subcommand`
+and no way forward, which is worse than no suggestion at all.
+
+There is no automatic trust sync. Pinning is a deliberate act: `onboard`
+prints the issuer key to pin, and pinning the **issuer** (`--kind
+cert_issuer`) rather than a leaf agent means one pin covers every agent that
+ship certifies.
+</Callout>
 </Tab>
 <Tab value="Cross-verify">
 ```bash

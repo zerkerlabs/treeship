@@ -79,9 +79,21 @@ Together, these fields let any verifier confirm the agent acted within scope, fo
 
 Treeship is embedded inside L3. It does not replace the Verifiable Intent credential; it provides the cryptographic evidence that makes the L3 credential trustworthy.
 
-## Key management
+## Proposed: key management (not implemented)
 
-Verifiable Intent uses P-256 (secp256r1) for credential signatures. Treeship can generate and manage P-256 keys alongside its default Ed25519 keys:
+Verifiable Intent uses P-256 (secp256r1) for credential signatures.
+
+<Callout type="warn">
+**The `treeship vi` commands below are a design sketch and are not
+implemented.** The CLI has no `vi` subcommand today; running any of them gives
+`unrecognized subcommand`. They were written in the present tense, which read
+as shipped.
+
+Treeship signs with Ed25519 today. P-256 support is the prerequisite for this
+integration and does not exist yet.
+</Callout>
+
+The intended shape, for design review rather than for running:
 
 ```bash
 treeship vi keygen
