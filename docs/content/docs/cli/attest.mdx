@@ -88,8 +88,17 @@ Record that an approver authorized an intent. A random nonce is generated automa
 treeship attest approval \
   --approver human://alice \
   --description "approve stripe charge max $500 to acme" \
-  --expires 2026-03-26T18:00:00Z
+  --expires 2026-03-26T18:00:00Z \
+  --allowed-actor agent://checkout \
+  --allowed-action stripe.charge.create \
+  --max-uses 1
 ```
+
+At least one scope flag (`--allowed-actor`, `--allowed-action`,
+`--allowed-subject`, `--max-uses`) is required. Without one the command refuses
+with `approval has no scope`; pass `--unscoped` to mint a bearer approval on
+purpose. Note also that `--expires` takes an RFC 3339 timestamp -- a duration
+like `1h` is stored verbatim and reads as already expired.
 
 Returns the approval artifact ID and the nonce. Pass the nonce to the agent so it can echo it in `--approval-nonce` when attesting the action.
 

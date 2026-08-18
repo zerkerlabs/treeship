@@ -27,7 +27,7 @@ treeship session close [--summary TEXT] # close the active session
 treeship wrap -- <cmd>                  # attest any command execution
 treeship attest action                  # record an action
 treeship attest decision                # record an LLM decision
-treeship attest approval                # record an approval
+treeship attest approval --allowed-action <label>  # record an approval (needs a scope flag)
 treeship attest handoff                 # record a handoff
 treeship attest endorsement             # record an endorsement
 treeship attest receipt                 # record a receipt

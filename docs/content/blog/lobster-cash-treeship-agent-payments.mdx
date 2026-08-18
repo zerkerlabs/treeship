@@ -31,7 +31,10 @@ This separation matters. Payment infrastructure and trust infrastructure have di
 ```bash
 treeship attest approval \
   --approver human://ops \
-  --description "approve $49.99 USDC for API credits"
+  --description "approve $49.99 USDC for API credits" \
+  --allowed-actor agent://payments \
+  --allowed-action lobster.payment.create \
+  --max-uses 1
 ```
 
 ### 2. Agent calls Lobster.cash to execute payment
@@ -44,7 +47,8 @@ Option A: Wrap the API call directly.
 
 ```bash
 treeship wrap \
-  --approval-nonce abc123def456 \
+  --actor agent://payer \
+  --action payment.execute \
   -- curl -X POST https://api.lobster.cash/v1/payments \
     -H "Authorization: Bearer $LOBSTER_TOKEN" \
     -d '{"amount": "49.99", "currency": "USDC", "recipient": "0x..."}'
@@ -80,7 +84,7 @@ human://ops approved "$49.99 USDC for API credits"
 ### 5. Anyone can verify
 
 ```bash
-treeship verify --full
+treeship verify last --full
 ```
 
 The receipt travels with the transaction. Verification happens offline, client-side. No callback to Treeship or Lobster.cash required.

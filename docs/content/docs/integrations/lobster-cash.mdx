@@ -70,18 +70,31 @@ A human (or policy engine) approves the spend. The approval binds to the intent 
 ```bash
 treeship attest approval \
   --approver human://ops \
-  --description "approve $49.99 USDC for 500 API credits"
+  --description "approve $49.99 USDC for 500 API credits" \
+  --allowed-actor agent://payer \
+  --allowed-action payment.execute \
+  --max-uses 1
 ```
 </Step>
 <Step>
 ### 4. Delegate to Lobster Cash
 
-The agent calls Lobster Cash to execute the payment. Treeship wraps the call and binds it to the approval nonce.
+The agent calls Lobster Cash to execute the payment. `wrap` signs what ran;
+`attest action` binds that execution to the approval nonce (`wrap` itself has no
+`--approval-nonce` flag).
 
 ```bash
 treeship wrap \
-  --approval-nonce <nonce> \
+  --actor agent://payer \
+  --action payment.execute \
   -- lobster pay --amount 49.99 --currency USDC --to 0x...
+#   → art_2f8a... (the execution artifact)
+
+treeship attest action \
+  --actor agent://payer \
+  --action payment.execute \
+  --approval-nonce <nonce> \
+  --parent art_2f8a...
 ```
 </Step>
 <Step>
@@ -90,7 +103,7 @@ treeship wrap \
 Anyone can verify the full chain: wallet check, intent, approval, payment, and settlement.
 
 ```bash
-treeship verify --full
+treeship verify last --full
 ```
 </Step>
 </Steps>
@@ -140,7 +153,7 @@ treeship.dev/verify/[session-id]
 Or via the CLI:
 
 ```bash
-treeship verify --session <session-id> --full
+treeship verify <session-id> --full
 ```
 
 <Callout type="info">

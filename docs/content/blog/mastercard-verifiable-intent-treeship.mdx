@@ -41,16 +41,20 @@ An agent purchasing cloud compute credits:
 # Human approves
 treeship attest approval \
   --approver human://devops-lead \
-  --description "approve up to $200 for cloud compute credits"
+  --description "approve up to $200 for cloud compute credits" \
+  --allowed-actor agent://procurement \
+  --allowed-action cloud.credits.purchase \
+  --max-uses 1
 
 # Agent acts
 treeship wrap \
-  --approval-nonce nonce_x7k9 \
+  --actor agent://procurement \
+  --action cloud.credits.purchase \
   -- curl -X POST https://api.cloudvendor.com/v1/credits \
     -d '{"amount": 150, "currency": "USD"}'
 
 # Verify
-treeship verify --full
+treeship verify last --full
 ```
 
 ### Verifiable Intent side

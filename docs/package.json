@@ -12,7 +12,11 @@
     "dev": "next dev --port 3001",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "check:links": "python3 scripts/check-internal-links.py content",
+    "check:cli": "python3 scripts/check-cli-commands.py ${TREESHIP_BIN:-treeship} content",
+    "check:all": "npm run check:links && npm run check:cli && npm run check:flags",
+    "check:flags": "python3 scripts/check-cli-flags.py ${TREESHIP_BIN:-treeship} content"
   },
   "dependencies": {
     "fumadocs-core": "^15.8.5",

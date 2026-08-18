@@ -391,10 +391,13 @@
     - RoomInfo
     - InvitationAuthority
   cli:
-    - treeship room
+    - treeship room create
+    - treeship room status
+    - treeship room participants
   packages:
     - treeship-core
   docs:
+    - docs/content/docs/concepts/room-sessions.mdx
     - docs/specs/agent-invitations-rooms.md
   tests:
     - packages/cli/tests/room_cli.rs

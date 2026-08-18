@@ -47,7 +47,9 @@ treeship attest approval \
   --approver human://approver \
   --description "authorize stripe charge $450 to acme-corp invoice INV-2847" \
   --expires 2026-03-26T17:00:00Z \
-  --scope '{"allowed_actions":["stripe.charge.create"],"max_amount":450,"max_actions":1}'
+  --allowed-action stripe.charge.create \
+  --allowed-actor agent://checkout \
+  --max-uses 1
 ```
 
 This produces an ApprovalStatement signed with the approver's Ed25519 key. The statement contains a random nonce -- a one-time value that appears nowhere else.

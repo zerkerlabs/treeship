@@ -43,44 +43,60 @@ treeship verify art_confirm456
 For payments that require human authorization:
 
 ```bash
-# Finance director creates an approval
+# Finance director creates an approval.
+# --expires takes an RFC 3339 timestamp, not a duration like "1h".
 treeship attest approval \
   --approver human://alice \
-  --scope "payment.execute" \
-  --expires 1h
+  --allowed-action payment.execute \
+  --allowed-actor agent://payment-processor \
+  --expires 2026-08-19T12:00:00Z
 
-# The approval returns a nonce
-# nonce: nce_a1b2c3d4e5f6
+# The approval prints the nonce the action must echo back:
+#   → nonce: 90671ba228b375ca304c2233914f68e1
 
 # Payment agent uses the approval nonce
 treeship attest action \
   --actor agent://payment-processor \
   --action payment.execute \
-  --approval-nonce nce_a1b2c3d4e5f6
+  --approval-nonce 90671ba228b375ca304c2233914f68e1
 ```
 
 The verifier confirms that the approval nonce matches a valid signed approval (binding) and -- if the approver set scope flags -- that the action's actor / action / subject fall inside the approval's allow-lists (scope). Replay posture is reported as package-local; v0.10 adds a local Approval Use Journal for device/workspace replay, v0.11+ adds Hub checkpoints for distributed replay.
 
 ## Using treeship wrap
 
-For payments executed as shell commands, `treeship wrap` captures the entire operation:
+For payments executed as shell commands, `treeship wrap` captures the execution
+itself -- the exit code, timing, and command line -- in a signed artifact:
 
 ```bash
 # Approve the payment
 treeship attest approval \
   --approver human://alice \
-  --scope "payment.execute" \
-  --expires 1h
+  --allowed-action payment.execute \
+  --allowed-actor agent://payment-processor \
+  --expires 2026-08-19T12:00:00Z
+#   → nonce: 90671ba228b375ca304c2233914f68e1
 
-# Wrap the payment execution with the approval nonce
+# Run the payment; wrap signs what actually executed
 treeship wrap \
   --actor agent://payment-processor \
   --action payment.execute \
-  --approval-nonce nce_a1b2c3d4e5f6 \
   -- python execute_payment.py --order ord_123
+#   → art_7c1d... (the execution artifact)
+
+# Bind that execution to the approval that authorized it
+treeship attest action \
+  --actor agent://payment-processor \
+  --action payment.execute \
+  --approval-nonce 90671ba228b375ca304c2233914f68e1 \
+  --parent art_7c1d...
 ```
 
-The wrap captures the exit code, timing, and binds it all to the approval in a single signed artifact.
+<Callout type="warn">
+`treeship wrap` has no `--approval-nonce` flag. Approval binding lives on
+`treeship attest action`, which is why this is two commands: `wrap` proves *what
+ran*, `attest action` proves *what authorized it*, and `--parent` chains them.
+</Callout>
 
 ## Sharing payment proof
 

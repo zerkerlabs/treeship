@@ -30,7 +30,16 @@ const SECTIONS = [
 
 const entries = parseYaml(await readFile(SRC, "utf8"));
 
+const GITHUB_BLOB = "https://github.com/zerkerlabs/treeship/blob/main";
+
 async function docLink(path) {
+  // Only files under docs/content/ are published as pages. Anything else
+  // (docs/specs/*.md, design notes) has no route on the docs site, so linking
+  // it as /docs/... would 404 — point at the file on GitHub instead.
+  if (!path.startsWith("docs/content/")) {
+    const name = path.split("/").pop().replace(/\.(md|mdx)$/, "");
+    return `[${name} spec](${GITHUB_BLOB}/${path})`;
+  }
   // docs/content/docs/x/y.mdx -> [title](/docs/x/y), title from frontmatter.
   const route = "/" + path.replace(/^docs\/content\//, "").replace(/\.mdx$/, "");
   const raw = await readFile(join(REPO_ROOT, path), "utf8");

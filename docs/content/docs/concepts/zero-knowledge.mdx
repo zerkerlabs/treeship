@@ -139,7 +139,8 @@ treeship verify artifact.json
 Verify a Merkle inclusion proof (always available):
 
 ```bash
-treeship verify --merkle artifact.json
+treeship merkle proof <artifact-id>   # emit the inclusion proof
+treeship merkle verify proof.json     # check it, fully offline
 ```
 
 Verify a Circom policy proof (requires `--features zk` build and `snarkjs`

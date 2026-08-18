@@ -95,7 +95,10 @@ For order placement, the default should be explicit approval. Treeship already h
 ```bash
 treeship attest approval \
   --approver human://operator \
-  --description "Approve one Robinhood Agentic account order under the reviewed budget."
+  --description "Approve one Robinhood Agentic account order under the reviewed budget." \
+  --allowed-actor agent://robinhood-trader \
+  --allowed-action robinhood.order.place \
+  --max-uses 1
 ```
 
 The nonce prevents a generic "approval" from becoming a reusable blank check.

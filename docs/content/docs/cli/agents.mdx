@@ -16,7 +16,7 @@ treeship agents <SUBCOMMAND>
 Manages the workspace's **Agent Card** store at `<config>/agents/<id>.json`. Each card is a per-workspace trust object describing one agent: who it is (surface, host, workspace), what it's allowed to do (capabilities), how Treeship is attached (`active_harness_id`), and what status it's at (`Draft`, `NeedsReview`, `Active`, `Verified`).
 
 <Callout type="info">
-Cards are workspace-local trust objects. They're distinct from the `.agent` *certificate* package produced by [`treeship agent register`](/cli/agent) — the certificate is the portable artifact, the card is the local accountability object. Same data, two sites, no schema fork.
+Cards are workspace-local trust objects. They're distinct from the `.agent` *certificate* package produced by [`treeship agent register`](/docs/cli/agents) — the certificate is the portable artifact, the card is the local accountability object. Same data, two sites, no schema fork.
 </Callout>
 
 The card status `Verified` is intentionally not exposed as a manual flag. Only a successful smoke session writes that status — see [`treeship setup`](/cli/setup) and [`treeship harness smoke`](/cli/harness#harness-smoke-id).
@@ -100,6 +100,6 @@ Each card's id is `agent_<8 hex chars>`, derived as `sha256("<surface>|<host>|<w
 
 - [setup](/cli/setup) — orchestrates discover + draft cards + instrument + smoke
 - [add](/cli/add) — instrument a specific agent (or list with `--discover`)
-- [agent](/cli/agent) — register an agent and produce its `.agent` certificate package
+- [agent](/docs/cli/agents) — register an agent and produce its `.agent` certificate package
 - [harness](/cli/harness) — the attachment surface cards point at via `active_harness_id`
 - [Agent Cards](/concepts/agent-cards) — concept page

@@ -106,7 +106,10 @@ For real order placement, issue a scoped approval and bind it to the execution s
 ```bash
 treeship attest approval \
   --approver human://operator \
-  --description "Approve one Robinhood Agentic account order under the reviewed strategy and budget."
+  --description "Approve one Robinhood Agentic account order under the reviewed strategy and budget." \
+  --allowed-actor agent://robinhood-trader \
+  --allowed-action robinhood.order.place \
+  --max-uses 1
 ```
 
 Use the returned nonce only for the reviewed action.

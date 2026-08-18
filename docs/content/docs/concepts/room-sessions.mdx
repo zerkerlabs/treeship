@@ -3,6 +3,8 @@ title: Room Sessions
 description: Shared multi-agent sessions with separate identities, one report, and Merkle-sealed evidence.
 ---
 
+import { Callout } from 'fumadocs-ui/components/callout';
+
 # Room Sessions
 
 Room Sessions are the proposed model for a shared multi-agent workspace:
@@ -186,11 +188,34 @@ OpenTimestamps lifecycle states:
 
 Timestamp semantics are intentionally limited: they prove data existed no later than the timestamp. They do not prove who created it, whether the data is true, or whether the capture was complete.
 
-## Proposed CLI
+## CLI
+
+### What ships today
+
+`treeship room` exists in the CLI as of v0.24 with three subcommands:
 
 ```bash
+treeship room create        # sugar over `session start` that also populates SessionManifest.room
+treeship room status        # the active room's status (session status plus room fields)
+treeship room participants  # finalized (two-signature) participants, in join order
+```
+
+`room create` is sugar over `session start`, so the rest of the room lifecycle
+runs through the session commands you already know: `treeship session invite` /
+`join` / `countersign` for participants, `treeship session close` to finalize,
+`treeship session report` to publish.
+
+### Proposed surface
+
+<Callout type="warn">
+Everything below is **design, not implemented**. These commands do not exist in
+any released CLI and will fail with `unrecognized subcommand`. They are recorded
+here so the eventual shape is reviewable — do not copy them into scripts.
+</Callout>
+
+```text
+# NOT IMPLEMENTED — design sketch only
 treeship room start [--provider slack|mcp|a2a|terminal|custom] [--room <uri>]
-treeship room status [room_id]
 treeship room event <room_id> --type <event_type> --json <event.json>
 treeship room handoff <room_id> --to <actor_uri> --scope <scope>
 treeship room approve <room_id> <artifact_id>

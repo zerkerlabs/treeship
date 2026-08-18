@@ -4,7 +4,7 @@ import { useState, useCallback } from 'react';
 
 export function CopyInstall() {
   const [copied, setCopied] = useState(false);
-  const command = 'curl -fsSL treeship.dev/install | sh';
+  const command = 'curl -fsSL treeship.dev/setup | sh';
 
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(command).then(() => {

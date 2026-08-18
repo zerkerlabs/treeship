@@ -24,7 +24,10 @@ treeship attest approval \
   --approver human://alice \
   --description "approve financial filing" \
   --subject art_pending123 \
-  --expires 2026-04-01T12:00:00Z
+  --expires 2026-04-01T12:00:00Z \
+  --allowed-actor agent://filing-system \
+  --allowed-action report.file \
+  --max-uses 1
 
 # Agent uses the nonce -- without it, the action has no approval binding
 treeship attest action \
@@ -54,13 +57,17 @@ treeship attest action \
 treeship attest approval \
   --approver human://alice \
   --description "reviewed Q1 10-Q financials" \
-  --subject art_report123
+  --subject art_report123 \
+  --allowed-action report.file \
+  --max-uses 1
 
 # CFO signs off
 treeship attest approval \
   --approver human://bob \
   --description "approve Q1 10-Q filing" \
-  --subject art_report123
+  --subject art_report123 \
+  --allowed-action report.file \
+  --max-uses 1
 
 # Final action with approval nonce
 treeship attest action \

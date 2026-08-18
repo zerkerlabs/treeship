@@ -59,7 +59,10 @@ treeship hub push art_handoff_xyz
 ```bash
 # Company B -- verify before acting
 treeship hub pull art_handoff_xyz
-treeship verify art_handoff_xyz --trusted-key ./company-a-public.pem
+# Pin Company A's issuer key once, then verify against your own trust store.
+# There is no --trusted-key flag: trust roots are pinned, not passed per call.
+treeship trust add company-a ed25519:<company-a-pubkey> --kind cert_issuer
+treeship verify art_handoff_xyz
 
 # ✓ verified
 #   from:      agent://company-a/researcher

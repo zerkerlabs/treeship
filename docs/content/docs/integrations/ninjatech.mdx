@@ -100,28 +100,42 @@ Then run a normal session — git-reconcile at close picks up the diff. The rece
 
 #### 2. Manual register + GitHub Actions evidence
 
-If SuperNinja opens PRs against this repo, you can verify those PRs separately and link the receipts. Coming as part of the GitHub verification surface — see [GitHub verification](/docs/integrations/github) (v0.9.9).
+If SuperNinja opens PRs against this repo, you can verify those PRs separately and link the receipts. Today this is manual: verify each PR's receipts with `treeship verify` and link them yourself. A dedicated GitHub verification surface is not yet built.
 
 #### 3. MCP if the remote routes through it
 
 If your SuperNinja deployment exposes an MCP endpoint, you can point a local `@treeship/mcp` proxy at it and Treeship will see MCP-routed tool calls. This is the same shape as [Generic MCP](/docs/integrations/mcp).
 
-### What lands in v0.9.9
+### Remote enrollment (design, not shipped)
 
-```bash
+<Callout type="warn">
+Neither `treeship agent invite` nor `treeship join` exists in v0.24 — both fail
+with `unrecognized subcommand`. This block was written against a v0.9.9 plan that
+did not ship. It is kept as the intended design; do not copy it. To enroll a
+remote agent today, run `curl -fsSL treeship.dev/setup | sh` inside the VM and
+onboard it there with [`treeship onboard`](/docs/cli/onboard).
+</Callout>
+
+```text
+# NOT IMPLEMENTED — design sketch only
+
 # On your local machine
 treeship agent invite \
   --name superninja \
   --kind ninjatech-superninja \
   --host remote-vm
 
-# Output:
+# Intended output:
 #   Run on the remote VM:
 #     curl -fsSL treeship.dev/setup | sh
 #     treeship join --invite trj_8xK2...
 ```
 
-The invite encodes which Ship/workspace the remote should join, expires in 15 minutes, and produces a Host Card + Agent Instance Card on this side once the remote runs `join`. After `join` succeeds, the SuperNinja harness can run *inside* the VM, lifting coverage from basic to medium (or higher if MCP plumbing is wired).
+The invite would encode which Ship/workspace the remote joins, expire in 15
+minutes, and produce a Host Card + Agent Instance Card on this side once the
+remote runs `join`. With that in place the SuperNinja harness could run *inside*
+the VM, lifting coverage from basic to medium (or higher if MCP plumbing is
+wired).
 
 This is intentionally not in v0.9.8. The principle is local-first: get a signed receipt from local agents before adding the remote-attach configuration burden.
 

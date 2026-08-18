@@ -25,8 +25,9 @@ treeship attest action \
 # Human approves the purchase
 treeship attest approval \
   --approver human://alice \
-  --scope "procurement.approve" \
-  --expires 1h
+  --allowed-action procurement.approve \
+  --allowed-actor agent://procurement \
+  --expires 2026-08-19T12:00:00Z
 
 # Agent executes the purchase with the approval nonce
 treeship attest action \
@@ -60,9 +61,21 @@ Create an approval with a scope that limits what the agent can do:
 ```bash
 treeship attest approval \
   --approver human://alice \
-  --scope "procurement.approve" \
-  --expires 24h
+  --allowed-action procurement.approve \
+  --allowed-actor agent://procurement \
+  --allowed-subject order://ord_123 \
+  --max-uses 1 \
+  --expires 2026-08-19T12:00:00Z
 ```
+
+<Callout type="warn">
+`--expires` on `attest approval` takes an **RFC 3339 timestamp**, not a duration.
+A value like `1h` is accepted at the command line but stored verbatim and
+compared as a string, so the grant reads as already expired and the next
+`attest action` fails with `approval grant … expired at 1h`. (The duration form
+`30s` / `5m` / `7d` is correct for `treeship session invite`, which is a
+different flag on a different command.)
+</Callout>
 
 The approval's `--max-uses` is signed into the grant and the scope (`allowed_action`, `allowed_subject`) constrains what the agent can do with the nonce. Replay is observed within a verified package, and replay is enforced beyond the package by the **Approval Use Journal** (shipped, `stable`): `treeship attest action` consumes a grant use *before* signing, and `treeship approval uses` inspects the ledger. Distributed multi-hub replay coordination remains in progress.
 
