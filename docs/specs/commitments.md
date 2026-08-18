@@ -1,7 +1,9 @@
 # Commitments: proving what an agent promised, and whether it kept it
 
-**Status:** draft. Two pieces have since shipped independently -- see
-"What changed since this was written" below. Slices 1-4 are unbuilt.
+**Status:** draft. Two pieces have since shipped independently, and
+`blocked.v1` is emitted for refused approval mints only. See "What changed
+since this was written" below. The general out-of-scope action refusal path and
+slices 2-4 are unbuilt.
 **Pairs with:** [workflow-declarations](./workflow-declarations.md) (#107, the authorization graph), `boundary.v1`, per-actor signing, the transparency log
 **Last updated:** 2026-06-29
 
@@ -44,13 +46,13 @@ This is a container over primitives Treeship ships, not new crypto:
 | `action_in_scope` (`capability/mod.rs`, `statements/action_v2.rs`) | already detects when an action falls outside an approval scope, the refusal trigger. Note: this spec originally named it `check_scope_violation`, which does not exist under that name -- there are two `action_in_scope` functions, one per scope model. |
 | Per-actor signing (0.13+) | the runtime signs the refusal/consequence; the agent cannot forge what it never held. |
 | Predicate registry | the commitment is a typed predicate (`commitment.v1`), validated at attest time. |
-| **`blocked.v1` predicate** | **already exists**, with nine fields (`reason_class`, `refused_kind`, `approver`, `actor`, `irreversibility`, `description`, `quarantine_receipt`, `evidence_digest`, `reevaluate_when`) and a `scope_violation` reason class. Nothing in the product emits it -- only the validation tests reference it. Slice 1 is therefore *wiring an existing predicate*, not designing a new one, which makes it considerably cheaper than this spec assumed when it proposed `refusal.v1`. |
+| **`blocked.v1` predicate** | **already exists**, with nine fields (`reason_class`, `refused_kind`, `approver`, `actor`, `irreversibility`, `description`, `quarantine_receipt`, `evidence_digest`, `reevaluate_when`) and a `scope_violation` reason class. `packages/cli/src/commands/attest.rs::record_approval_refusal` emits it when a gate refuses an approval mint. No general runtime path emits it for an attempted out-of-scope action. Slice 1 is therefore *extending the existing emit wiring*, not designing a new predicate. |
 | Transparency log + checkpoints | the commitment is checkpoint-anchored, so a verifier can prove it existed **before** the execution trace. |
 | Approval Use Journal | a commitment can require approval-use-bound actions; the nonce binding already works. |
 
 ## Slices
 
-1. **Signed refusal receipts (the "no-send predicate").** The cheapest, most self-contained slice, and the clearest demonstration of a property nobody else has: *honest proof of what did not happen*. When an action would violate an approval scope (`action_in_scope` returns false), the runtime emits a signed `blocked.v1` recording the attempted action, the policy/scope that denied it, the reason, and a null consequence. `verify` surfaces refusals as a distinct, attested outcome, *attempted X, denied by policy Y*, neither a pass nor a fail. One predicate + one emit path + one verify row.
+1. **Signed refusal receipts (the "no-send predicate").** The predicate and one narrow emit path already exist: refused approval mints produce `blocked.v1`. The remaining slice wires the action boundary. When an action would violate an approval scope (`action_in_scope` returns false), the runtime emits a signed `blocked.v1` recording the attempted action, the policy/scope that denied it, the reason, and a null consequence. `verify` surfaces refusals as a distinct, attested outcome, *attempted X, denied by policy Y*, neither a pass nor a fail.
 2. **Commitment receipt + satisfaction check.** `treeship commit` signs a `commitment.v1` before execution: `{ goal, allowed_actions, expected_outcome, failure_condition, expires_at, authority }`. After execution, `verify` cross-checks the action receipts against it and reports **satisfied** (the expected outcome is present and in scope), **violated** (an action outside `allowed_actions`, or the failure condition tripped), or **unfulfilled** (the commitment expired or the expected outcome never appeared). The commitment is checkpoint-anchored so its pre-existence is provable.
 3. **Commitment/policy hash in the session header.** Hash the active commitment (and policy) set at session start and reference it in every receipt, so an auditor can answer *which version of the rule governed this action*. Small; builds on `policy_ref`.
 4. **Compose with the #107 authorization graph.** The commitment names the *obligation* (promised outcome); #107's workflow names the *allowed path* (authorized action set, with `deviation`/`gap`). Together they answer the full question: *was every authorized action taken, the promise kept, and nothing unauthorized done?*
@@ -78,6 +80,7 @@ Slice 1, signed refusal receipts. It reuses `action_in_scope` and the existing `
 Written 2026-06-29 and reviewed 2026-08-15. Two of its ideas arrived from other
 directions, which is worth recording so nobody builds them twice:
 
+- **A narrow `blocked.v1` emit path** shipped for approval-mint gates. `record_approval_refusal` records a signed refusal when the CLI declines to mint an approval. It does not yet cover an attempted action rejected by `action_in_scope`, so slice 1 remains partial rather than absent.
 - **"A high Boundary with a null Consequence"** -- the case this spec calls out
   as *"the agent was allowed to do X and did nothing"*, distinct from both
   success and failure -- shipped as `AuthorityUse` (#297). It reports `granted`,

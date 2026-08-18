@@ -1,0 +1,34 @@
+{
+  "fixture_version": 1,
+  "run": {
+    "run_id": "run_authority_deviation",
+    "status": "completed",
+    "workflow_ref": "art_workflow_fixture",
+    "pre_existence": {
+      "declaration_checkpoint": "chk_10",
+      "declaration_tree_size": 10,
+      "first_run_leaf_index": 10,
+      "consistency_to": "chk_20"
+    },
+    "attempts": [
+      { "node_id": "inspect", "iteration": 0, "actor": "agent://claude-code", "tools": ["Read"], "outcome": "completed", "grade": "checked", "evidence": ["art_inspect"] },
+      { "node_id": "change", "iteration": 0, "actor": "agent://claude-code", "tools": ["Edit", "Bash"], "outcome": "completed", "grade": "checked", "evidence": ["art_change", "art_bash"] },
+      { "node_id": "qa", "iteration": 0, "actor": "agent://gstack", "capabilities": ["qa.browser"], "tools": ["gstack.qa"], "outcome": "pass", "grade": "checked", "evidence": ["art_qa"] },
+      { "node_id": "finish", "iteration": 0, "actor": "agent://claude-code", "tools": [], "outcome": "completed", "grade": "checked", "evidence": ["art_finish"] }
+    ]
+  },
+  "expected_report": {
+    "run_id": "run_authority_deviation",
+    "workflow_ref": "art_workflow_fixture",
+    "pre_existence": { "grade": "checked" },
+    "path": { "grade": "checked", "deviations": [], "gaps": [] },
+    "authority": {
+      "deviations": [
+        { "node_id": "change", "kind": "tool_out_of_scope", "value": "Bash", "evidence": ["art_bash"] }
+      ]
+    },
+    "loops": [
+      { "id": "repair", "iterations": 0, "max_iterations": 2, "limit_exceeded": false, "budget_exceeded": false }
+    ]
+  }
+}

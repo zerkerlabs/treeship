@@ -73,6 +73,11 @@ pub struct AgentEdge {
 pub struct AgentGraph {
     pub nodes: Vec<AgentNode>,
     pub edges: Vec<AgentEdge>,
+    /// Cycles found in the untrusted parent relationship. A cycle has no
+    /// meaningful root depth, so affected nodes retain depth 0 and the
+    /// malformed topology is reported rather than silently normalized.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub invalid_parent_cycles: Vec<Vec<String>>,
 }
 
 impl AgentGraph {
@@ -265,19 +270,36 @@ impl AgentGraph {
             }
         }
 
-        // Compute depths from parent map
+        // Compute depths from the untrusted parent map without recursion.
+        // A self-parent or A -> B -> A pair used to recurse until stack
+        // overflow here while composing a session receipt.
         let mut depth_cache: BTreeMap<String, u32> = BTreeMap::new();
+        let mut invalid_parent_cycles: BTreeSet<Vec<String>> = BTreeSet::new();
         let instances: Vec<String> = nodes_map.keys().cloned().collect();
         for inst in &instances {
-            let depth = compute_depth(inst, &parent_map, &mut depth_cache);
-            if let Some(node) = nodes_map.get_mut(inst) {
-                node.depth = depth;
+            match compute_depth(inst, &parent_map, &mut depth_cache) {
+                Ok(depth) => {
+                    if let Some(node) = nodes_map.get_mut(inst) {
+                        node.depth = depth;
+                    }
+                }
+                Err(mut cycle) => {
+                    // Canonicalize the cycle so starting the walk at a
+                    // different member cannot emit the same anomaly twice.
+                    cycle.sort();
+                    cycle.dedup();
+                    invalid_parent_cycles.insert(cycle);
+                }
             }
         }
 
         let nodes: Vec<AgentNode> = nodes_map.into_values().collect();
 
-        AgentGraph { nodes, edges }
+        AgentGraph {
+            nodes,
+            edges,
+            invalid_parent_cycles: invalid_parent_cycles.into_iter().collect(),
+        }
     }
 
     /// Return the maximum depth in the graph.
@@ -311,16 +333,46 @@ fn compute_depth(
     instance_id: &str,
     parent_map: &BTreeMap<String, String>,
     cache: &mut BTreeMap<String, u32>,
-) -> u32 {
-    if let Some(&d) = cache.get(instance_id) {
-        return d;
-    }
-    let depth = match parent_map.get(instance_id) {
-        Some(parent) => 1 + compute_depth(parent, parent_map, cache),
-        None => 0,
+) -> Result<u32, Vec<String>> {
+    let mut path = Vec::new();
+    let mut path_positions: BTreeMap<String, usize> = BTreeMap::new();
+    let mut current = instance_id.to_string();
+
+    let mut depth = loop {
+        if let Some(&cached) = cache.get(&current) {
+            break cached;
+        }
+        if let Some(&cycle_start) = path_positions.get(&current) {
+            return Err(path[cycle_start..].to_vec());
+        }
+
+        path_positions.insert(current.clone(), path.len());
+        path.push(current.clone());
+
+        match parent_map.get(&current) {
+            Some(parent) => current = parent.clone(),
+            None => {
+                // The final path member is the root. Preserve the existing
+                // convention that roots have depth 0.
+                let root = path
+                    .pop()
+                    .expect("depth path contains the current root; please report a bug");
+                cache.insert(root, 0);
+                break 0;
+            }
+        }
     };
-    cache.insert(instance_id.to_string(), depth);
-    depth
+
+    for child in path.into_iter().rev() {
+        depth = depth
+            .checked_add(1)
+            .expect("agent graph depth exceeds u32; please report a bug");
+        cache.insert(child, depth);
+    }
+
+    Ok(*cache
+        .get(instance_id)
+        .expect("depth walk caches the requested instance; please report a bug"))
 }
 
 #[cfg(test)]
@@ -399,6 +451,53 @@ mod tests {
         assert_eq!(graph.handoff_count(), 1);
         assert_eq!(graph.spawn_count(), 2);
         assert_eq!(graph.host_ids().len(), 2);
+    }
+
+    #[test]
+    fn parent_cycles_are_reported_without_recursing() {
+        let self_parent = AgentGraph::from_events(&[evt(
+            "a",
+            "h",
+            EventType::AgentStarted {
+                parent_agent_instance_id: Some("a".into()),
+            },
+        )]);
+        assert_eq!(self_parent.invalid_parent_cycles, vec![vec!["a"]]);
+        assert_eq!(self_parent.nodes[0].depth, 0);
+
+        let two_node_cycle = AgentGraph::from_events(&[
+            evt(
+                "a",
+                "h",
+                EventType::AgentStarted {
+                    parent_agent_instance_id: Some("b".into()),
+                },
+            ),
+            evt(
+                "b",
+                "h",
+                EventType::AgentStarted {
+                    parent_agent_instance_id: Some("a".into()),
+                },
+            ),
+        ]);
+        assert_eq!(
+            two_node_cycle.invalid_parent_cycles,
+            vec![vec!["a".to_string(), "b".to_string()]]
+        );
+        assert!(two_node_cycle.nodes.iter().all(|node| node.depth == 0));
+    }
+
+    #[test]
+    fn deep_parent_chains_do_not_use_the_call_stack() {
+        let mut parent_map = BTreeMap::new();
+        for i in 1..20_000 {
+            parent_map.insert(format!("n{i}"), format!("n{}", i - 1));
+        }
+
+        let depth = compute_depth("n19999", &parent_map, &mut BTreeMap::new())
+            .expect("an acyclic parent chain has a depth");
+        assert_eq!(depth, 19_999);
     }
 
     #[test]

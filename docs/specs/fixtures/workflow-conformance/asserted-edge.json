@@ -1,0 +1,38 @@
+{
+  "fixture_version": 1,
+  "run": {
+    "run_id": "run_asserted_edge",
+    "status": "completed",
+    "workflow_ref": "art_workflow_fixture",
+    "pre_existence": {
+      "declaration_checkpoint": "chk_10",
+      "declaration_tree_size": 10,
+      "first_run_leaf_index": 10,
+      "consistency_to": "chk_20"
+    },
+    "attempts": [
+      { "node_id": "inspect", "iteration": 0, "actor": "agent://claude-code", "tools": ["Read"], "outcome": "completed", "grade": "checked", "evidence": ["art_inspect"] },
+      { "node_id": "change", "iteration": 0, "actor": "agent://claude-code", "tools": ["Edit"], "outcome": "completed", "grade": "checked", "evidence": ["art_change"] },
+      { "node_id": "qa", "iteration": 0, "actor": "agent://gstack", "capabilities": ["qa.browser"], "tools": ["gstack.qa"], "outcome": "pass", "grade": "asserted", "evidence": ["evt_adapter_claim"] },
+      { "node_id": "finish", "iteration": 0, "actor": "agent://claude-code", "tools": [], "outcome": "completed", "grade": "checked", "evidence": ["art_finish"] }
+    ]
+  },
+  "expected_report": {
+    "run_id": "run_asserted_edge",
+    "workflow_ref": "art_workflow_fixture",
+    "pre_existence": { "grade": "checked" },
+    "path": {
+      "grade": "asserted",
+      "deviations": [],
+      "gaps": [],
+      "asserted_edges": [
+        { "from": "change", "to": "qa", "evidence": ["art_change", "evt_adapter_claim"] },
+        { "from": "qa", "to": "finish", "evidence": ["evt_adapter_claim", "art_finish"] }
+      ]
+    },
+    "authority": { "deviations": [] },
+    "loops": [
+      { "id": "repair", "iterations": 0, "max_iterations": 2, "limit_exceeded": false, "budget_exceeded": false }
+    ]
+  }
+}

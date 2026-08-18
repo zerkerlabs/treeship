@@ -1,0 +1,31 @@
+{
+  "fixture_version": 1,
+  "run": {
+    "run_id": "run_not_preexisting",
+    "status": "completed",
+    "workflow_ref": "art_workflow_fixture",
+    "pre_existence": {
+      "declaration_signed_at": "2026-08-17T10:00:00Z",
+      "first_run_signed_at": "2026-08-17T10:01:00Z"
+    },
+    "attempts": [
+      { "node_id": "inspect", "iteration": 0, "actor": "agent://claude-code", "tools": ["Read"], "outcome": "completed", "grade": "checked", "evidence": ["art_inspect"] },
+      { "node_id": "change", "iteration": 0, "actor": "agent://claude-code", "tools": ["Edit"], "outcome": "completed", "grade": "checked", "evidence": ["art_change"] },
+      { "node_id": "qa", "iteration": 0, "actor": "agent://gstack", "capabilities": ["qa.browser"], "tools": ["gstack.qa"], "outcome": "pass", "grade": "checked", "evidence": ["art_qa"] },
+      { "node_id": "finish", "iteration": 0, "actor": "agent://claude-code", "tools": [], "outcome": "completed", "grade": "checked", "evidence": ["art_finish"] }
+    ]
+  },
+  "expected_report": {
+    "run_id": "run_not_preexisting",
+    "workflow_ref": "art_workflow_fixture",
+    "pre_existence": {
+      "grade": "asserted",
+      "reason": "signed_timestamps_do_not_prove_log_order"
+    },
+    "path": { "grade": "checked", "deviations": [], "gaps": [] },
+    "authority": { "deviations": [] },
+    "loops": [
+      { "id": "repair", "iterations": 0, "max_iterations": 2, "limit_exceeded": false, "budget_exceeded": false }
+    ]
+  }
+}

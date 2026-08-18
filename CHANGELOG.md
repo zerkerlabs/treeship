@@ -68,6 +68,16 @@
 
 ## Unreleased
 
+### Fixed
+- **Cyclic agent-parent events no longer overflow the stack during session close.**
+  `AgentGraph` depth calculation recursively followed untrusted
+  `parent_agent_instance_id` links and only cached a node after visiting its
+  parent. A self-parent or `A -> B -> A` cycle therefore recursed until the
+  process crashed while composing the receipt. Depth calculation is now
+  iterative, malformed cycles are recorded in `invalid_parent_cycles`, and
+  cyclic nodes retain depth 0 instead of being presented with a fabricated
+  hierarchy.
+
 ### Added
 - **`RoomInfo` on `SessionManifest`.** Optional `room` field (`room_id`,
   `host_pubkey`, `invitation_authority`, `workflow_ref`, `checkpoint_cadence`,
@@ -90,6 +100,14 @@
   remains informational-only in this PR — nothing gates any authority
   decision on it yet. There is no `room close`: plain `treeship session
   close` already works on a room since a room is just a session.
+
+### Documentation
+- **Workflow conformance now has an executable design contract.** Added the
+  missing `docs/specs/workflow-declarations.md` referenced by commitments,
+  rooms, vision, and the v0.11 changelog. Seven golden reports pin valid runs, undeclared
+  edges, missing terminals, loop-cap breaches, asserted edge evidence,
+  declaration pre-existence, and out-of-scope tools before a reducer or CLI
+  surface is built. `workflow.v1` remains roadmap, not shipped behavior.
 
 ## 0.23.0 (2026-08-05)
 
