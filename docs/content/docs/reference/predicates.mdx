@@ -87,7 +87,9 @@ A signed, verifiable agent capability card: a key attests an identity and a capa
 
 ### `agent_card_revocation.v1`
 
-Revokes a previously-minted `agent_card.v1`. Mint with `treeship revoke-capability`. `verify-capability` honors a revocation **only when its signer is authorized** — the card's own key (self-revocation) or a `Ship` trust root (issuer revocation); any other signer is ignored (fail-closed).
+Revokes a previously-minted `agent_card.v1`. Mint with `treeship revoke-capability`. `verify-capability` honors a revocation **only when its signer is authorized** — the card's own key (self-revocation) or a key pinned under the `revoker` trust kind (issuer revocation); any other signer is ignored (fail-closed).
+
+The old single `ship` trust kind is **deprecated and inert**: no verifier accepts it, and `treeship trust add --kind ship` is rejected outright. It used to grant three unrelated powers at once — hub dedup, certificate issuance, and capability revocation — so pinning a hub silently let it kill capabilities. Pin `revoker` for this power, `cert_issuer` to issue certificates, `hub_org` for global single-use.
 
 | Field | Type | Required |
 |---|---|---|
@@ -97,6 +99,80 @@ Revokes a previously-minted `agent_card.v1`. Mint with `treeship revoke-capabili
 | `keyid` | string | no |
 | `reason` | string | no |
 | `supersedes` | string or null | no |
+
+### `agent_cert.v1`
+
+The ship-signed certificate binding a per-agent key to its `agent://` URI. This
+is what makes an actor `proven (key-bound)` rather than `asserted`. Minted by
+`treeship agent register --own-key` and `treeship onboard`.
+
+| Field | Type | Required |
+|---|---|---|
+| `agent` | string (actor URI) | yes |
+| `subject_key_id` | string | yes |
+| `subject_public_key` | string | yes |
+| `issuer` | string | yes |
+| `issued_at` | string (RFC3339) | yes |
+| `valid_until` | string (RFC3339) | yes |
+| `model` | string or null | no |
+| `description` | string or null | no |
+
+### `grant_revocation.v1`
+
+Withdraws a capability grant. Minted by `treeship grant revoke`. Only the grantor
+may revoke — a revocation anyone could mint would be a denial of service against
+every grant whose id they know, and grant ids appear in published receipts.
+Actions signed *before* the revocation instant remain authorized.
+
+| Field | Type | Required |
+|---|---|---|
+| `schema` | const `grant_revocation.v1` | yes |
+| `grant_id` | string | yes |
+| `grantor` | string | yes |
+| `revoked_at` | string (RFC3339) | yes |
+| `reason` | string | no |
+
+### `session.v1`
+
+The actor-signed record of a completed session — the authenticated counterpart
+to a `.treeship` package, which binds artifacts and the Merkle root but not the
+narrative. `treeship history` and `treeship profile` read these.
+
+19 fields; the seven required are `session_id`, `actor`, `outcome`,
+`started_at`, `closed_at`, plus the schema's structural fields. Optional fields
+cover `headline`, `duration_ms`, `harness`, and a `custody` object.
+
+### `profile.v1`
+
+A derived, checkpoint-pinned track record over an agent's work history. Every
+number recomputes from the log at the pinned checkpoint, which is what makes
+`treeship verify-profile` able to call a mismatch a provable lie rather than a
+disagreement.
+
+15 fields, 6 required: `agent`, `checkpoint_index`, `checkpoint_tree_size`,
+`checkpoint_root`, `computed_at`, `sessions_total`. The checkpoint triple is
+what pins the claim to a point in the log.
+
+### `blocked.v1`
+
+Records that an action was *refused* — the negative-space receipt. Two required
+fields, `reason_class` and `refused_kind`; the rest (`approver`, `actor`,
+`irreversibility`, `quarantine_receipt`, `evidence_digest`, `reevaluate_when`)
+describe what was refused and under what authority.
+
+### `memory.quarantine-check.v1`
+
+Gates an approval on a memory-provider quarantine result. Required:
+`action_id`, `chain_root`, `decision_seq`, `clean`. A grant with
+`--irreversibility one_way_consequential` or higher requires one of these,
+clean, signed by a key pinned under `agent_cert`.
+
+### `reason.authorization.v1`
+
+An authorization decision from a reasoning provider. All seven fields are
+required: `schema`, `status`, `request_digest`, `mission`, `action`,
+`reasoning`, `issues` — the schema refuses a partial decision, so a receipt
+cannot record a verdict without the reasoning behind it.
 
 ## Actor URI schemes
 

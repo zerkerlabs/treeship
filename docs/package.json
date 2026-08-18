@@ -15,13 +15,14 @@
     "lint": "next lint",
     "check:links": "python3 scripts/check-internal-links.py content",
     "check:cli": "python3 scripts/check-cli-commands.py ${TREESHIP_BIN:-treeship} content",
-    "check:all": "npm run check:links && npm run check:external && npm run check:api && npm run check:cli && npm run check:flags && npm run check:tables && npm run check:rows && npm run check:events",
+    "check:all": "npm run check:links && npm run check:external && npm run check:api && npm run check:cli && npm run check:flags && npm run check:tables && npm run check:rows && npm run check:events && npm run check:predicates",
     "check:flags": "python3 scripts/check-cli-flags.py ${TREESHIP_BIN:-treeship} content",
     "check:external": "python3 scripts/check-external-links.py content",
     "check:api": "python3 scripts/check-api-routes.py content ../packages/hub/main.go",
     "check:tables": "python3 scripts/check-cli-option-tables.py ${TREESHIP_BIN:-treeship} content",
     "check:rows": "python3 scripts/check-verify-rows.py content ../packages",
-    "check:events": "python3 scripts/check-event-types.py content ../packages/core/src/session/event.rs"
+    "check:events": "python3 scripts/check-event-types.py content ../packages/core/src/session/event.rs",
+    "check:predicates": "python3 scripts/check-predicates.py content ../packages/core/src/predicates/schemas"
   },
   "dependencies": {
     "fumadocs-core": "^15.8.5",
