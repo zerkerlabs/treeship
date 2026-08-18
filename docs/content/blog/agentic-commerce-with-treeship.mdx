@@ -6,6 +6,16 @@ tags: ["commerce", "approvals"]
 readTime: "6 min read"
 ---
 
+> **Update (2026-08-18, v0.24).** This post's replay section describes the
+> v0.9.6 posture, where enforcement was package-local and the Approval Use
+> Journal was still roadmap. The journal has since shipped and is `stable`: a
+> reused nonce is now refused at attest time (`could not reserve approval use in
+> journal: … would exceed max_uses`), across every package and workspace on the
+> device. Distributed single-use across machines is the part still open. Treat
+> the "v0.9.6 (today)" / "v0.10" / "v0.11+" framing below as a snapshot of
+> March 2026, not as current status.
+
+
 When an agent makes a purchase, executes a payment, or commits to a contract, there is no portable proof that a human authorized it. The agent might have a token, but tokens are bearer instruments. They don't prove intent. They prove possession.
 
 This is the gap Treeship closes: cryptographic proof of human approval, bound to a specific action, verifiable by anyone.

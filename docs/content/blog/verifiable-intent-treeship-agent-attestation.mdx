@@ -6,7 +6,16 @@ tags: ["verifiable-intent", "commerce", "mastercard", "zk"]
 readTime: "6 min read"
 ---
 
-> **Update (2026-07):** The signed attestation, mandate binding, and scope cross-check described here ship today. Any reference to zero-knowledge proofs of policy or spend-limit compliance is the experimental ZK layer, which is excluded from release binaries and being rebuilt statement-first (the selective-disclosure presentation surface is designed, not yet shipped). See the [ZK verification spec](https://github.com/treeship/treeship/blob/main/docs/specs/private-verification.md).
+> **Update (2026-07):** The signed attestation, mandate binding, and scope cross-check described here ship today. Any reference to zero-knowledge proofs of policy or spend-limit compliance is the experimental ZK layer, which is excluded from release binaries and being rebuilt statement-first (the selective-disclosure presentation surface is designed, not yet shipped). See the [ZK verification spec](https://github.com/zerkerlabs/treeship/blob/main/docs/specs/private-verification.md).
+>
+> **Further update (2026-08-18, v0.24):** one half of that has since shipped.
+> **Selective disclosure is real**: `treeship present --disclose <caps>` emits a
+> presentation carrying a re-signed, digests-only capability card with openings
+> for only the named capabilities — the rest stay opaque. Because a disclosed
+> presentation is an ephemeral privacy-preserving re-sign, it is not
+> transparency-anchored and omits the Merkle staple. What remains unshipped is
+> the *zero-knowledge* tier (proving a property without revealing the value at
+> all), which is still being rebuilt statement-first.
 
 A user tells an agent to buy something. The agent has a wallet, API keys, and a mandate. It makes the purchase. The transaction settles.
 
@@ -95,6 +104,15 @@ All of this happens without contacting Treeship, the agent, or the user. The pro
 
 ## Status
 
-The foundation for Verifiable Intent support shipped in Treeship v0.6.0: P-256 key generation, session linking, and basic `agent_attestation` field generation. Full L3 credential assembly, including ZK proof embedding and mandate validation, is coming in v0.7.0.
+The foundation for Verifiable Intent support shipped in Treeship v0.6.0: P-256
+key generation, session linking, and basic `agent_attestation` field generation.
+
+**As of v0.24 that is still where it stands.** The P-256 key and credential
+types live in `packages/vi` as a Rust library with no CLI surface — there is no
+`treeship vi` command, and full L3 credential assembly (ZK proof embedding,
+mandate validation) has not shipped. This post originally said that work was
+"coming in v0.7.0"; that did not happen, and naming a version we passed long ago
+was worse than naming none. Build against the library, and see the integration
+page for the current status table.
 
 See the [Verifiable Intent integration docs](/docs/integrations/verifiable-intent) for setup instructions and the [Lobster Cash integration](/docs/integrations/lobster-cash) for the payment execution side.
