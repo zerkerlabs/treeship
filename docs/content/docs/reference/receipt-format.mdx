@@ -116,12 +116,33 @@ field with the same version string. Current media types:
 
 ```
 application/vnd.treeship.action.v1+json
+application/vnd.treeship.action.v2+json
 application/vnd.treeship.approval.v1+json
 application/vnd.treeship.handoff.v1+json
 application/vnd.treeship.endorsement.v1+json
 application/vnd.treeship.receipt.v1+json
+application/vnd.treeship.session.v1+json
 application/vnd.treeship.bundle.v1+json
 ```
+
+`action.v2` is what `treeship attest action --v2` emits: an action bound to a
+signed grant, carrying the mandate and optional effect/runtime fields. Plain
+`attest action` still emits `action.v1`, so both are current — v2 is not a
+replacement you are migrated onto.
+
+Command artifacts (the downward direction — instructions to a ship rather than
+receipts from one) use their own family:
+
+```
+application/vnd.treeship.command.kill.v1+json
+application/vnd.treeship.command.terminate_session.v1+json
+application/vnd.treeship.command.approval_decision.v1+json
+application/vnd.treeship.command.mandate_update.v1+json
+application/vnd.treeship.command.budget_update.v1+json
+```
+
+These are schemas with a library helper and no CLI surface; see
+[command artifacts](/docs/concepts/command-artifacts).
 
 Typed payloads carried inside a `receipt` (capability cards, session records,
 certificates, and other predicates) are validated against a registered JSON

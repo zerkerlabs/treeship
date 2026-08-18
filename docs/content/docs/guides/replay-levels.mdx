@@ -110,7 +110,19 @@ treeship package verify --strict ./session.treeship
 echo "exit code: $?"   # non-zero on any approval anomaly
 ```
 
-Existing receipt-determinism and event-log warnings stay warnings. Only the `replay-*` and `approval-use-integrity` rows are promoted.
+Existing receipt-determinism and event-log warnings stay warnings. Only the
+approval-evidence rows are promoted: every `replay-*` row, plus
+
+- `approval-use-record-digest`
+- `approval-use-nonce-binding`
+- `approval-use-action-binding`
+- `approval-use-chain-continuity`
+
+The rule is "strict mode fails on duplicate use, tampered record, broken
+checkpoint chain". `approval-use-integrity` is still accepted in the promotion
+set for external tooling that pinned on it, but the emitter has not produced
+that row for some time — if you are matching on output, match the four names
+above.
 
 ## Decision Cards
 
