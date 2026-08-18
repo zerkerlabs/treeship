@@ -72,18 +72,40 @@ Room providers normalize their native activity into room events. The v1 target p
 - Terminal multiplexers
 - Custom room providers
 
-Core event families:
+### The event vocabulary that ships today
+
+`SessionEventType` in `packages/core/src/session/event.rs` is the real,
+serialized vocabulary. These are the values you will see in a receipt's
+timeline:
 
 | Event | Purpose |
+| --- | --- |
+| `session.started` / `session.closed` | Session lifecycle |
+| `agent.started` / `agent.completed` / `agent.failed` / `agent.returned` | Agent lifecycle |
+| `agent.spawned` / `agent.collaborated` / `agent.handoff` | Multi-agent structure |
+| `agent.called_tool` | A tool invocation |
+| `agent.read_file` / `agent.wrote_file` | File access |
+| `agent.started_process` / `agent.completed_process` | Subprocess execution |
+| `agent.connected_network` / `agent.opened_port` | Network access |
+| `agent.decision` | A recorded decision point |
+
+### Proposed room event families
+
+<Callout type="warn">
+The events below are **design, not implemented**. They are the room-specific
+vocabulary this model would add — room and actor lifecycle, message capture,
+approval linkage, and explicit evidence-absence markers. None of them serialize
+today; `evidence.missing` and `handoff.requested` in particular appear nowhere
+in the codebase. Do not match on them.
+</Callout>
+
+| Proposed event | Purpose |
 | --- | --- |
 | `room.opened` | Starts a room session |
 | `room.closed` | Seals the room session |
 | `actor.joined` | Adds a human, agent, or host |
 | `actor.left` | Records departure |
 | `message.sent` | Captures a chat message or normalized message summary |
-| `agent.called_tool` | Captures a tool invocation |
-| `agent.wrote_file` | Captures a file write |
-| `agent.read_file` | Captures a file read |
 | `network.requested` | Captures network access |
 | `process.started` | Captures subprocess execution |
 | `approval.requested` | Links an action to a required human approval |
@@ -93,6 +115,10 @@ Core event families:
 | `handoff.accepted` | Records acceptance |
 | `evidence.missing` | States that expected evidence is absent |
 | `evidence.redacted` | States that evidence exists but was intentionally withheld |
+
+`approval.denied` is the one name here that also exists in the shipped CLI, but
+as an **action label** minted by `treeship deny` — not as a session event type.
+The overlap is a naming collision, not a partial implementation.
 
 Events should carry enough fields for deterministic ordering and attribution:
 

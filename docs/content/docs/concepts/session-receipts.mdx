@@ -104,6 +104,7 @@ A chronologically ordered list of every event emitted during the session. Event 
 - `agent.called_tool`, `agent.read_file`, `agent.wrote_file`
 - `agent.opened_port`, `agent.connected_network`
 - `agent.started_process`, `agent.completed_process`
+- `agent.decision`
 
 Every event carries W3C Trace Context fields (`trace_id`, `span_id`, `parent_span_id`), agent identity fields (`agent_id`, `agent_instance_id`, `agent_name`, `agent_role`), host identity, and a monotonic sequence number.
 
