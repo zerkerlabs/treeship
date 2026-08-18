@@ -40,11 +40,15 @@ Node to the `nodejs` output. It went unnoticed because the only consumer anyone
 exercised was the website, which vendors and bundles the wasm — nobody
 installed the tarball and imported it the way a user does.
 
-Until a fixed version is published, verify server-side with the CLI
-(`treeship verify <target> --format json`) or `@treeship/sdk`'s
-`s.verify.verify()`, which shells out to the binary and is unaffected. Browser
-runtimes were not tested here — this note records only what was reproduced
-under Node.
+Installing a fixed `@treeship/core-wasm` at top level does **not** work around
+it. This package pins core-wasm to an exact version, so npm installs the pinned
+copy nested under `@treeship/verify`, and the nested copy wins resolution. The
+fix has to arrive as a new `@treeship/verify` release with a bumped pin.
+
+Until then, verify server-side with the CLI (`treeship verify <target> --format
+json`) or `@treeship/sdk`'s `s.verify.verify()`, which shells out to the binary
+and is unaffected. Browser runtimes were not tested here — this note records
+only what was reproduced under Node.
 </Callout>
 
 Same verification semantics in every runtime. The package ships with `@treeship/core-wasm` pinned to an exact version (no caret), so there is no silent drift between the WASM you install and the rules this package documents.
