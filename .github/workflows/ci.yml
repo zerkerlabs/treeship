@@ -119,6 +119,15 @@ jobs:
       # nothing looked.
       - name: No committed conflict markers
         run: python3 scripts/check-conflict-markers.py
+      # v0.24.0 published a bundler-only wasm build that would not load in
+      # Node at all. Nobody caught it because the only consumer exercised was
+      # the website, which vendors and bundles the wasm. This installs the
+      # tarball and imports it the way a user does.
+      - name: core-wasm installs and verifies under Node
+        run: |
+          cargo install wasm-pack --version 0.14.0 --locked || true
+          bash packages/core-wasm/build-npm.sh "$(node -p "require('./packages/core-wasm/pkg/package.json').version" 2>/dev/null || echo 0.0.0-ci)"
+          bash scripts/check-wasm-loads.sh packages/core-wasm/pkg
       - name: Every protocol spec is indexed
         run: python3 scripts/check-specs-index.py
       # `schemas/` is the publishable copy; the predicate registry has its own.
