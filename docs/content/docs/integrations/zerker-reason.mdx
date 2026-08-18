@@ -1,29 +1,35 @@
 ---
 title: Zerker Reason authorization certificates
-description: Sign and chain an independently verifiable Zerker Reason action-authorization certificate as a Treeship receipt.
+description: Atomically verify an exact Zerker Reason authorization bundle before signing its byte commitment as a Treeship receipt.
 ---
 
-Zerker Reason decides whether an exact proposed action follows from a governed mission, policy, and evidence. Treeship can preserve that authorization certificate as a signed, chained artifact.
+Zerker Reason decides whether an exact proposed action follows from a governed mission, policy, and evidence. Treeship can preserve a verified authorization certificate as a signed, chained artifact.
 
 The two verifiers answer different questions:
 
 | Verifier | Question |
 |---|---|
-| `reason verify-authorization` | Does this authorization result recompute from this exact mission, action, policy, and evidence? |
-| `treeship verify` | Which key signed these exact certificate bytes, and where do they sit in the artifact chain? |
+| `reason verify-authorization-bundle` | Does this authorization result recompute from this exact mission, action, policy, and evidence, and is it authorized? |
+| `treeship verify` | Which key signed the certificate and exact bundle-byte commitment, and where does the receipt sit in the artifact chain? |
 
-Run both. A Treeship signature does not replace semantic proof verification, and a valid Reason certificate does not identify who preserved or relied on it.
+Both must run. A Treeship signature does not replace Reason semantic verification, and a valid Reason certificate does not identify the Treeship signer.
 
-## Create the authorization certificate
+## Build one atomic bundle
+
+Create the certificate, then place the original request and certificate in the v1 bundle:
 
 ```bash
 reason authorize action-request.json \
   --certificate-out authorization.json
 
-reason verify-authorization action-request.json authorization.json
+jq -n \
+  --slurpfile request action-request.json \
+  --slurpfile certificate authorization.json \
+  '{schema:"zerker.reason.authorization-bundle.v1",request:$request[0],certificate:$certificate[0]}' \
+  > authorization-bundle.json
 ```
 
-Only continue when verification succeeds. Reason uses four fail-closed authorization outcomes:
+Reason has four fail-closed authorization outcomes:
 
 | Certificate status | Meaning |
 |---|---|
@@ -32,59 +38,54 @@ Only continue when verification succeeds. Reason uses four fail-closed authoriza
 | `denied` | Explicit denial was proved |
 | `conflicted` | Authorization and denial were both proved |
 
-Treeship records every outcome. Denials and conflicts are evidence too.
+Only `authorized` can produce a `reason.authorization.v1` Treeship receipt through the dedicated adapter.
 
-## Sign and chain the certificate
+## Verify, then sign atomically
 
 ```bash
-treeship attest receipt \
-  --system system://zerker-reason \
-  --kind reason.authorization.v1 \
-  --payload-file authorization.json
+treeship attest reason-authorization \
+  --bundle-file authorization-bundle.json
 ```
 
-`reason.authorization.v1` is a registered Treeship predicate. Before signing, Treeship requires the top-level `zerker.reason.authorization.v1` fields, validates their JSON types, and enforces the closed four-state status vocabulary. The complete published JSON Schema also specifies the nested mission, action, and reasoning objects.
+The adapter:
 
-The receipt payload contains the certificate itself, including:
+1. reads one bounded bundle source exactly once;
+2. sends those exact bytes over stdin to `reason verify-authorization-bundle - --require-authorized`;
+3. requires exit zero and the exact `verified` plus `authorized` v1 output contract;
+4. validates the authorized certificate as a registered Treeship predicate;
+5. only then opens the Treeship key and artifact stores and signs the receipt.
 
-- request, mission, and action digests;
-- exact tool name, arguments, and declared effects;
-- complete Reason result;
-- proof and disproof DAGs when present;
-- temporal and authority reports;
-- deterministic authorization issues.
+The receipt embeds the complete authorization certificate. Its `payloadDigest` and `meta.authorization_bundle.digest` are SHA-256 commitments to the exact bundle bytes supplied to Reason. `meta.reason_verification` preserves Reason's request and reasoning-result digests.
 
-Treat this payload as potentially sensitive. If tool arguments or policy evidence cannot be disclosed, do not use `--payload-file`. Store the certificate privately and attest only a `--payload-digest` under an unregistered private kind until a selective-disclosure profile is defined.
+Malformed input, tampering, mismatches, stale or insufficient evidence, denial, conflict, timeout, oversized input or output, missing verifier, and malformed verifier output all fail before signing or storage. The verifier defaults to `reason` on `PATH`, a two-second timeout, a 1 MiB input limit, and a 64 KiB output limit. Operators can select a pinned executable and a narrower operational timeout:
 
-## Verify the composition
+```bash
+treeship attest reason-authorization \
+  --bundle-file authorization-bundle.json \
+  --reason-bin /opt/zerker/bin/reason \
+  --timeout-ms 1000
+```
+
+Use `--bundle-file -` to supply the same atomic bundle on stdin.
+
+The generic `treeship attest receipt` path refuses `reason.authorization.v1`. This prevents an unverified certificate from being hand-signed under the dedicated adapter's receipt kind.
+
+## Verify the resulting evidence
 
 ```bash
 # Verifies the Treeship signature and chain.
 treeship verify last --full
 
-# Verifies the authorization semantics against the original request.
-reason verify-authorization action-request.json authorization.json
+# Independently replays Reason semantics over the preserved private bundle.
+reason verify-authorization-bundle authorization-bundle.json --require-authorized
 ```
 
-For offline handoff, export the Treeship receipt or include it in a bundle alongside the private authorization files according to your disclosure policy.
+For offline handoff, export the Treeship receipt and retain the original bundle bytes according to your disclosure policy. The receipt's bundle digest lets a counterparty detect substitution before Reason replay.
+
+The certificate can include tool arguments, governed policy evidence, proof DAGs, and other sensitive material. If those fields cannot be disclosed, do not use this adapter until a selective-disclosure profile is defined. A digest-only generic receipt must not claim `reason.authorization.v1`.
 
 ## Trust boundary
 
-The `system` URI is a label in the signed receipt. It becomes a proven system identity only when the signing key is bound to that identity under the verifier's trust roots. Anyone controlling a Treeship signing key can otherwise claim `system://zerker-reason`.
+`system://zerker-reason` is a signed label. It becomes a proven system identity only when the Treeship signing key is bound to that identity under the verifier's trust roots. This command enforces local Reason verification before it asks Treeship to sign. The resulting receipt proves signer identity and byte commitments, not that a particular executable ran: anyone controlling the signing key could construct a different receipt outside this CLI. Counterparties must still replay Reason over the committed bundle. Treeship does not implement or independently duplicate Reason semantics.
 
-The generic `attest receipt` command validates the certificate schema but does not execute the Reason verifier. The safe producer sequence is therefore:
-
-1. run `reason verify-authorization`;
-2. sign the exact verified certificate bytes with Treeship;
-3. preserve the original request for independent semantic replay;
-4. let each counterparty apply its own Treeship trust roots.
-
-A future dedicated adapter can make steps 1 and 2 atomic. Until then, verification is intentionally two-stage and neither stage claims the other passed.
-
-## Component roles
-
-- Zerker Reason produces and independently verifies the authorization certificate.
-- Treeship signs, chains, checkpoints, and transports the certificate.
-- Guard consumes a verified authorization result and enforces the action boundary.
-- Gateway authenticates and routes the request.
-- ZMem supplies governed premises.
+This command creates evidence; it does not execute the authorized action or consume a replay token. Re-attesting the same bundle is allowed and does not renew stale evidence. Gateway or another enforcement point must separately compare the actual action, run Reason, and block before payment or forwarding.
