@@ -1,6 +1,6 @@
 // Treeship npm wrapper -- preinstall platform guard.
 //
-// We ship prebuilt binaries for darwin-arm64, darwin-x64, and linux-x64.
+// We ship prebuilt binaries for darwin-arm64, darwin-x64, linux-arm64, and linux-x64.
 // As of v0.10.1 the Linux binary is statically linked against musl, so it
 // runs on every glibc and musl distribution we know of (Ubuntu, Debian,
 // Fedora, RHEL/Rocky, Amazon Linux, Alpine, distroless, busybox).

@@ -20,6 +20,43 @@ jobs:
           python-version: '3.12'
       - name: Check internal version consistency
         run: python3 scripts/check-release-versions.py --consistency
+      - name: Check release platform topology
+        run: python3 scripts/check-release-platforms.py
+
+  # The tag-only release workflow cannot validate a new target on a PR. Build
+  # and execute the exact static Linux arm64 target here so a broken linker,
+  # target, or runner label blocks merge instead of failing on release day.
+  release-linux-arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable (moving branch; pinned to current tip)
+        with:
+          toolchain: '1.94.1'
+          targets: aarch64-unknown-linux-musl
+      - name: Install musl linker
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+      - name: Build static Linux arm64 CLI
+        run: cargo build --release --target aarch64-unknown-linux-musl -p treeship-cli
+      - name: Verify and smoke the release binary
+        run: |
+          set -e
+          BIN=target/aarch64-unknown-linux-musl/release/treeship
+          file "$BIN"
+          if file "$BIN" | grep -qE 'dynamically linked|interpreter'; then
+            echo "::error::treeship-linux-aarch64 is not statically linked"
+            exit 1
+          fi
+          "$BIN" --version
+          TMPHOME=$(mktemp -d)
+          "$BIN" --config "$TMPHOME/config.json" init >/dev/null
+          OUT=$("$BIN" --config "$TMPHOME/config.json" attest action \
+            --actor agent://ci-arm64 --action smoke.sign --format json)
+          ID=$(printf '%s' "$OUT" | sed -n 's/.*"id":"\([a-z0-9_]\+\)".*/\1/p')
+          test -n "$ID"
+          "$BIN" --config "$TMPHOME/config.json" verify "$ID" >/dev/null
 
   # Static check that every page advertised in a docs `meta.json`
   # resolves to a real `.mdx` file (or a sub-section), every section

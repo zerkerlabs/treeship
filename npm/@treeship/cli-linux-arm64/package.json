@@ -1,0 +1,25 @@
+{
+  "name": "@treeship/cli-linux-arm64",
+  "version": "0.24.0",
+  "description": "Treeship CLI binary for linux arm64",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "license": "Apache-2.0",
+  "files": [
+    "postinstall.js",
+    "binary.js",
+    "expected-checksum.txt",
+    "README.md"
+  ],
+  "scripts": {
+    "postinstall": "node postinstall.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zerkerlabs/treeship"
+  }
+}

@@ -46,6 +46,7 @@ and `scripts/check-release-versions.py <version>` verifies it.
 | `@treeship/a2a` | `bridges/a2a/package.json` | `npm @treeship/a2a` |
 | `treeship` (npm wrapper) | `npm/treeship/package.json` | `npm treeship (wrapper)` |
 | `@treeship/cli-linux-x64` | `npm/@treeship/cli-linux-x64/package.json` | platform CLI binary |
+| `@treeship/cli-linux-arm64` | `npm/@treeship/cli-linux-arm64/package.json` | platform CLI binary |
 | `@treeship/cli-darwin-arm64` | `npm/@treeship/cli-darwin-arm64/package.json` | platform CLI binary |
 | `@treeship/cli-darwin-x64` | `npm/@treeship/cli-darwin-x64/package.json` | platform CLI binary |
 | `treeship-sdk` (PyPI) | `packages/sdk-python/pyproject.toml` | `pypi treeship-sdk (pyproject)` |

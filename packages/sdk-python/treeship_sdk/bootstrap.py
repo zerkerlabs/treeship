@@ -216,6 +216,8 @@ def platform_release_asset() -> tuple[str, Optional[str]]:
     if sys_platform.startswith("linux"):
         if machine in ("x86_64", "amd64"):
             return ("treeship-linux-x86_64", None)
+        if machine in ("aarch64", "arm64"):
+            return ("treeship-linux-aarch64", None)
         return ("", f"unsupported Linux arch {machine}")
     if sys_platform == "win32":
         return ("", "Windows install must use `npm install -g treeship` (no Windows binary on the GitHub Release)")
