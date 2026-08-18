@@ -177,6 +177,27 @@ jobs:
           npm install --no-save --ignore-scripts --no-audit --no-fund yaml@^2.9.0
           node scripts/sync-feature-matrix.mjs --check
 
+      # The 2026-08 docs audit found five internal links that 404'd live, three
+      # hub endpoints with no page at all, a predicate registry half
+      # undocumented, and an event table where only three of seventeen names
+      # serialized. Each was found by hand once; these run it every time.
+      - name: Internal links resolve
+        run: cd docs && python3 scripts/check-internal-links.py content
+      - name: Documented hub routes match the router
+        run: cd docs && python3 scripts/check-api-routes.py content ../packages/hub/main.go
+      - name: Verify row names exist in the source
+        run: cd docs && python3 scripts/check-verify-rows.py content ../packages
+      - name: Event tables name types the core serializes
+        run: cd docs && python3 scripts/check-event-types.py content ../packages/core/src/session/event.rs
+      - name: Every registered predicate is documented
+        run: cd docs && python3 scripts/check-predicates.py content ../packages/core/src/predicates/schemas
+      # Reaches the public internet, so a third-party outage would fail an
+      # unrelated PR. Reported, never blocking; read the log when docs links
+      # change.
+      - name: External links resolve
+        continue-on-error: true
+        run: cd docs && python3 scripts/check-external-links.py content
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -216,6 +237,17 @@ jobs:
         run: python3 scripts/gen-cli-reference.py --check --bin target/debug/treeship
       - name: Documented flows execute with documented verdicts
         run: bash scripts/check-docs-snippets.sh target/debug/treeship
+      # Command names were already covered by the snippets script; these cover
+      # the flags. The same audit found `wrap --approval-nonce` (the flag is on
+      # `attest action`), `attest approval --scope`, and `verify --full` with no
+      # TARGET -- all in copy-paste blocks, none caught, because nothing checked
+      # a flag against the binary that owns it.
+      - name: Documented commands exist
+        run: cd docs && python3 scripts/check-cli-commands.py ../target/debug/treeship content
+      - name: Documented flags exist on their command
+        run: cd docs && python3 scripts/check-cli-flags.py ../target/debug/treeship content
+      - name: CLI option tables match --help
+        run: cd docs && python3 scripts/check-cli-option-tables.py ../target/debug/treeship content
 
       - name: Build CLI with OTel
         run: cargo build -p treeship-cli --features otel
