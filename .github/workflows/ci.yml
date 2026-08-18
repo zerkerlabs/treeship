@@ -128,6 +128,12 @@ jobs:
           cargo install wasm-pack --version 0.14.0 --locked || true
           bash packages/core-wasm/build-npm.sh "$(node -p "require('./packages/core-wasm/pkg/package.json').version" 2>/dev/null || echo 0.0.0-ci)"
           bash scripts/check-wasm-loads.sh packages/core-wasm/pkg
+      # Three separate cases: a Homebrew formula that does not exist, a Kimi
+      # skill shipping `cargo install treeship-cli`, and that command being
+      # described as "orphaned at v0.4.0" when it actually fails outright.
+      # Offline by default -- a registry outage must not fail CI.
+      - name: Documented install routes exist
+        run: python3 scripts/check-install-routes.py
       - name: Every protocol spec is indexed
         run: python3 scripts/check-specs-index.py
       # `schemas/` is the publishable copy; the predicate registry has its own.
