@@ -27,8 +27,36 @@ if ! command -v wasm-pack >/dev/null 2>&1; then
   exit 3
 fi
 
-echo "Building @treeship/core-wasm v${VERSION} with wasm-pack..."
+# Two targets, not one.
+#
+# The bundler build emits `import * as wasm from "./..._bg.wasm"`, which needs
+# a bundler to resolve. Published alone, it made `@treeship/core-wasm` fail to
+# load in Node with
+#
+#     WebAssembly.Table.grow(): failed to grow table by 4
+#
+# at `__wbindgen_start()` -- reproduced on Node 22.20.0 and 22.23.1 from a
+# clean install. That took down `@treeship/verify`, the "no CLI required"
+# verifier, and every SDK method that calls it. The site was unaffected
+# because it vendors the wasm and bundles it, which is exactly why this went
+# unnoticed.
+#
+# The `exports` map below routes Node to the nodejs build and everything else
+# to the bundler build, so both consumers get a package that works.
+echo "Building @treeship/core-wasm v${VERSION} with wasm-pack (bundler + nodejs)..."
 wasm-pack build --target bundler --out-dir pkg --release
+wasm-pack build --target nodejs --out-dir pkg/node --release
+# wasm-pack writes a full package.json into each out-dir; the nested one would
+# shadow the real manifest. Replace it with a type marker rather than deleting
+# it outright.
+#
+# The marker is load-bearing. The nodejs target emits CommonJS, the root
+# manifest says "type": "module", and without this Node reads node/*.js as ESM
+# and dies with `exports is not defined in ES module scope`. Deleting the
+# nested manifest fixed the shadowing and introduced that, which the tarball
+# test caught -- the exports map alone was not enough.
+rm -f pkg/node/README.md pkg/node/.gitignore
+printf '{\n  "type": "commonjs"\n}\n' > pkg/node/package.json
 
 # Optional: shrink with wasm-opt if it's on PATH (not required; wasm-pack
 # already produces a minimal binary under our workspace release profile).
@@ -73,11 +101,39 @@ Object.assign(pkg, {
   sideEffects: false,
 });
 
-// Make sure the files array covers everything wasm-pack emits.
+// Route Node to the nodejs build and everything else to the bundler build.
+//
+// `main` stays the bundler entry so older resolvers keep the behaviour they
+// had; `exports.node` is what stops Node from loading a build that needs a
+// bundler and failing at `WebAssembly.Table.grow()`.
+//
+// `import` and `require` are both mapped under node because the nodejs target
+// emits CommonJS, and a bare `import` of this package in Node must not fall
+// through to the bundler build.
+pkg.exports = {
+  '.': {
+    node: {
+      require: './node/treeship_core_wasm.js',
+      import: './node/treeship_core_wasm.js',
+      types: './node/treeship_core_wasm.d.ts',
+    },
+    default: {
+      import: './treeship_core_wasm.js',
+      types: './treeship_core_wasm.d.ts',
+    },
+  },
+  './package.json': './package.json',
+};
+
+// Make sure the files array covers everything wasm-pack emits, including the
+// nodejs build -- omitting `node/` would publish an exports map pointing at
+// files that are not in the tarball, which fails at install rather than at
+// import and is harder to diagnose.
 pkg.files = [
   '*.wasm',
   '*.js',
   '*.d.ts',
+  'node/',
   'README.md',
   'LICENSE',
 ];
