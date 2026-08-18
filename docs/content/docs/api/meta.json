@@ -16,6 +16,7 @@
     "verify",
     "merkle-proof",
     "merkle-checkpoint",
-    "merkle-consistency"
+    "merkle-consistency",
+    "revoked"
   ]
 }

@@ -1,0 +1,78 @@
+---
+title: Revocation feed
+description: The public well-known list of revoked grants, what it proves, and what it deliberately does not.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+## `GET /.well-known/treeship/revoked.json`
+
+Public. No authentication, no DPoP, no account. Returns every
+`grant_revocation.v1` receipt the hub holds, as signed envelopes.
+
+```bash
+curl https://api.treeship.dev/.well-known/treeship/revoked.json
+```
+
+Served with `Cache-Control: max-age=300`. The window is short on purpose: a stale
+revocation list is a withdrawn grant still reading as live, so caching it for a
+day would convert a revocation into a day-long grace period for whoever holds the
+revoked grant.
+
+## Response
+
+```json
+{
+  "version": "3",
+  "generated_at": "2026-08-18T03:00:43Z",
+  "revoked": [
+    {
+      "grant_id": "grn_a1b2c3d4e5f60718",
+      "grantor": "ship://ship_9ab777a9716e9e04",
+      "revoked_at": "2026-08-17T22:14:05Z",
+      "reason": "compromised",
+      "envelope": { "payload": "…", "signatures": [ … ] },
+      "artifact_id": "art_…",
+      "dock_id": "dck_…",
+      "rekor_index": 4821
+    }
+  ],
+  "completeness": "unproven: …",
+  "truncated": false
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `envelope` | The signed bytes. Verify this against the grantor — do not trust the flattened fields beside it, which this server wrote. |
+| `dock_id` | Which log the entry belongs to, so you can fetch that dock's checkpoint and request an inclusion proof. |
+| `rekor_index` | `null` means *not anchored*. It never means "anchoring failed silently and that is fine". |
+| `truncated` | `true` when more revocations exist than were returned (the cap is 1000). A truncated list adds `truncation_warning`. |
+
+<Callout type="warn">
+**Absence from this list is not proof a grant is live.** The entries are
+individually DSSE-signed, so the hub cannot forge one. What it can do is *omit*
+one — and an omitted revocation is indistinguishable from a grant nobody ever
+revoked. That is the failure Certificate Transparency exists to make detectable,
+and it is why each entry carries `dock_id`: check inclusion per entry against
+that dock's checkpoint, and run
+[`GET /v1/merkle/consistency`](/docs/api/merkle-consistency) across checkpoints
+to detect a forked log.
+
+The list is **not signed by the hub**. Verify each envelope against the grantor
+key before honoring it.
+</Callout>
+
+A query failure returns `503` with `{"error": "revocation list temporarily
+unavailable"}` rather than an empty `200` — an empty list is indistinguishable
+from "nothing is revoked", and answering a revocation query with a confident
+wrong answer is worse than failing.
+
+<Callout type="info">
+**Deployed shape lags the current contract.** As of 2026-08-18 the hub at
+`api.treeship.dev` still answers with the older `version: "1"` document —
+`{"revoked": [], "signed_at": "…", "version": "1"}` — which has no
+`completeness`, `truncated`, or per-entry `dock_id` / `rekor_index`. The `version`
+field is what to branch on; treat anything below `"3"` as lacking the
+inclusion-checking fields.
+</Callout>
