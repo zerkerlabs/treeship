@@ -66,7 +66,7 @@ A `JournalCheckpoint` with `checkpoint_kind: hub-org` carries five extra fields:
 Anything short of all three: the row is `✗` (warning by default, fail under `--strict`). When no Hub-kind checkpoint is embedded at all, the row reports **`not checked (no Hub checkpoint in package)`** — absent evidence is reported as absent, never as a silent pass.
 
 <Callout type="info">
-**Out of scope for v0.9.9:** the Hub server itself — the thing that signs checkpoints — lives in a separate release. v0.9.9 ships only the consumer-side verifier. Until you have a Hub signing checkpoints and embedding them in packages, the row will keep reading `not checked`.
+**Still not built as of v0.24:** the Hub server itself — the thing that signs checkpoints. Only the consumer-side verifier ships. There is no journal-checkpoint signer in `packages/hub`, so until one exists and you embed its checkpoints in packages, this row keeps reading `not checked`.
 </Callout>
 
 <Callout type="warn">

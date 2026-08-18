@@ -90,7 +90,7 @@ Verify reports each property separately:
 ⚠  replay check     package-local only -- no global ledger consulted
 ```
 
-If the action's actor / action / subject falls outside the signed scope, verification fails on the scope line and the audit reader sees exactly why. Replay observation is package-local in v0.9.6; cross-package enforcement lands in v0.10 via a local Approval Use Journal (append-only hash chain with signed Merkle checkpoints), and v0.11+ adds Hub-backed checkpoints for distributed replay.
+If the action's actor / action / subject falls outside the signed scope, verification fails on the scope line and the audit reader sees exactly why. Replay is enforced at attest time by the local Approval Use Journal (an append-only hash chain with signed Merkle checkpoints): the use is reserved before the action is signed, so a nonce cannot be spent twice on this device or workspace. Distributed replay across machines additionally needs a Hub-signed journal checkpoint, which is not yet built on the Hub side.
 
 ## Rekor anchoring
 

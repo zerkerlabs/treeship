@@ -61,7 +61,7 @@ treeship attest action \
   --approval-nonce 90671ba228b375ca304c2233914f68e1
 ```
 
-The verifier confirms that the approval nonce matches a valid signed approval (binding) and -- if the approver set scope flags -- that the action's actor / action / subject fall inside the approval's allow-lists (scope). Replay posture is reported as package-local; v0.10 adds a local Approval Use Journal for device/workspace replay, v0.11+ adds Hub checkpoints for distributed replay.
+The verifier confirms that the approval nonce matches a valid signed approval (binding) and -- if the approver set scope flags -- that the action's actor / action / subject fall inside the approval's allow-lists (scope). Replay is enforced at attest time by the local Approval Use Journal, which reserves a use before the action is signed, so a nonce cannot be spent twice on this device or workspace. Distributed replay across machines additionally needs a Hub-signed journal checkpoint; the verifier for that exists, the Hub-side signer does not yet.
 
 ## Using treeship wrap
 

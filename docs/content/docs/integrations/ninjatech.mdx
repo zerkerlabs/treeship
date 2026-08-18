@@ -78,7 +78,7 @@ known gaps:
 ```
 
 <Callout type="warn">
-**The full remote attach flow lands in v0.9.9.** Today, you can register a SuperNinja card so it appears in your inventory, but `verified_captures` will stay empty until v0.9.9 ships `treeship agent invite` / `treeship join --invite` and the harness can actually run inside the remote VM.
+**The full remote attach flow is still not built.** You can register a SuperNinja card so it appears in your inventory, but `verified_captures` stays empty: as of v0.24 neither `treeship agent invite` nor `treeship join --invite` exists, so the harness cannot be enrolled inside the remote VM this way. This was slated for v0.9.9 and did not ship. Run `curl -fsSL treeship.dev/setup | sh` inside the VM and onboard there instead.
 </Callout>
 
 ### What works today (v0.9.8)
