@@ -1,5 +1,78 @@
 # Changelog
 
+## 0.25.0 (2026-08-19)
+
+**Upgrade if you use any npm package. `@treeship/core-wasm@0.24.0` cannot be
+loaded in Node at all, and npm does not allow republishing a version — a new
+release is the only way to fix it.**
+
+### Fixed
+
+- **`@treeship/core-wasm` threw on import in Node.** `WebAssembly.Table.grow():
+  failed to grow table by 4`, reproduced from a clean install on Node 22.20.0
+  and 22.23.1. The module never finished loading, so every export was
+  unreachable — taking down `@treeship/verify` and every SDK method that calls
+  it. `build-npm.sh` ran only `wasm-pack --target bundler`, which emits an
+  import that needs a bundler to resolve. It survived a release because the one
+  consumer anyone exercised was the website, which vendors and bundles the wasm.
+  Now dual-target with an `exports` map routing Node to a nodejs build. (#320)
+- **`treeship session event --format json` exited 0 and printed nothing.** It
+  built the response and passed it to `printer.info`, which returns early in
+  JSON mode. Every SDK wrapper reading `event_id` got `undefined` from an empty
+  document, with a success exit code. (#311)
+- **`treeship present` panicked on a fresh onboard.** `range end index N out of
+  range` — checkpoints load from `~/.treeship/merkle` regardless of `--config`
+  while artifacts come from the scoped store, so the two could describe
+  different histories. Now a typed error naming both sizes. (#313)
+- **`grant show` and `grant list` put a clean checkmark on revoked grants.** A
+  signature stays valid forever; revocation is what makes a grant stop counting.
+  Both commands reported the signature and neither consulted the revocation
+  receipt the CLI had just written. (#314)
+- **`profile` and `history` reported 0 where the answer was "unknown".** An
+  empty result is not a zero. (#302)
+- **The MCP bridge recorded raw error text into signed receipts.** Everything
+  beside it was a digest; an error message routinely contains the thing that
+  failed. Now digested, with raw text behind an explicit opt-in. (#309)
+
+### Added
+
+- **Revocation works end to end.** `treeship grant revoke` mints a signed
+  `grant_revocation.v1`; `verify` honors it locally and from a hub's published
+  list; the hub publishes real revocations over an indexed lookup and states in
+  the response that absence is not evidence; each entry carries `dock_id` and
+  `rekor_index` so a client can check inclusion itself; and
+  `grant show --check-log` walks the dock's consistency chain and re-verifies
+  every link with RFC 6962. Unknown stays a third state throughout — never a
+  quiet pass. (#303, #305, #306, #314, #315, #316, #317)
+- **Linux arm64 binaries**, built *and executed* on a native `ubuntu-24.04-arm`
+  runner so a broken target blocks merge rather than failing on release day.
+  (#318)
+- **`verify` gates on authority** and reports what was granted but never used,
+  so `authority_ok: true` can no longer mean "checked nothing". (#297)
+- **`ship.session.event()` in the TypeScript SDK.** (#203, contributed by
+  @piyushpathakqa)
+
+### Changed
+
+- **Hub `/v1/stats` labels agent counts as claims.** They are derived from
+  `AgentGraph` nodes in uploaded receipts, which the hub does not
+  cryptographically verify. Artifact, dock and session counts are facts about
+  the hub's own state and are unaffected. `claimed_total` is the honest name;
+  the old keys remain for one release. (#308)
+- **The hub indexes on fields derived from the envelope**, never accepted from
+  the caller — so a resolver filters on content rather than an uploader's claim
+  about itself. (#307)
+
+### Known limitations
+
+- `invitation_authority` on a room is **recorded and not enforced**. `verify`
+  does not read it, so a receipt naming `host-only` and an invite minted by a
+  non-host both verify clean. Fail-safe today because nothing trusts the field,
+  but do not treat it as access control.
+- A receipt fetched by URL is verified **structurally only** — Merkle root,
+  inclusion proofs, leaf count, timeline order. Signatures and issuer are not
+  checked from that source; use the local artifact form for those.
+
 ## 0.24.0 (2026-08-10)
 
 **Trusted Rooms, end to end — plus three fixes worth upgrading for.**
