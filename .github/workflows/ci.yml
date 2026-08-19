@@ -286,39 +286,48 @@ jobs:
       # Pure JS, no Rust -- `sdk-ts` needs the CLI and gets its own job.
       # A release PR bumps @treeship/core-wasm to the version being released,
       # which by definition is not on npm yet -- `npm ci` fails with
-      # `ETARGET notarget No matching version found`. That is not a regression
-      # in the package under test; it is the release doing its job.
-      #
-      # Build the local core-wasm at the pinned version and install it first,
-      # so the pin resolves to the tree being tested. On a normal PR the pinned
-      # version already exists and this is a no-op that costs one wasm-pack
-      # build; on a release PR it is the only way the job can run at all.
+      # `ETARGET notarget No matching version found`. That is the release
+      # doing its job, not a regression in the package under test.
       #
       # These jobs did not exist at the v0.24.0 release (17 checks, zero JS
       # tests), which is why this never surfaced before.
-      - name: Provide the pinned core-wasm locally
+      #
+      # Both halves happen in ONE step on purpose. Providing the local build
+      # in a separate step did not work: `npm ci` deletes node_modules before
+      # installing, so it erased the local package that had just been placed
+      # there. When the pin is unpublished the job must skip `npm ci`
+      # entirely and resolve the pin from this tree instead.
+      - name: Install
         run: |
+          set -euo pipefail
+          PKG="${{ matrix.pkg }}"
           PIN="$(node -p "
-            const p=require('./${{ matrix.pkg }}/package.json');
+            const p=require('./$PKG/package.json');
             ((p.dependencies||{})['@treeship/core-wasm'])
               || ((p.peerDependencies||{})['@treeship/core-wasm']) || ''
           ")"
-          if [ -z "$PIN" ]; then
-            echo "no core-wasm dependency in ${{ matrix.pkg }}; nothing to provide"
+
+          if [ -z "$PIN" ] || npm view "@treeship/core-wasm@$PIN" version >/dev/null 2>&1; then
+            echo "core-wasm pin ${PIN:-<none>} is resolvable from the registry; normal install"
+            cd "$PKG"
+            npm ci
             exit 0
           fi
-          if npm view "@treeship/core-wasm@$PIN" version >/dev/null 2>&1; then
-            echo "@treeship/core-wasm@$PIN is published; using the registry"
-            exit 0
-          fi
+
           echo "@treeship/core-wasm@$PIN is not published; building it from this tree"
           cargo install wasm-pack --version 0.14.0 --locked || true
           bash packages/core-wasm/build-npm.sh "$PIN"
-          ( cd "${{ matrix.pkg }}" && npm install "$GITHUB_WORKSPACE/packages/core-wasm/pkg" --no-save --no-audit --no-fund )
-
-      - name: Install
-        working-directory: ${{ matrix.pkg }}
-        run: npm ci || npm install --no-audit --no-fund
+          cd "$PKG"
+          # One install, not two. `npm install <path>` brings the whole
+          # dependency tree with it (55 packages for verify-js), so a
+          # following bare `npm install` adds nothing -- and fails, because
+          # it re-reconciles package.json against a registry that does not
+          # have the pinned version. That second call was the actual error.
+          #
+          # `npm install`, not `ci`: the lockfile names a version the registry
+          # does not have, and `ci` refuses to deviate from a lockfile it
+          # cannot satisfy.
+          npm install "$GITHUB_WORKSPACE/packages/core-wasm/pkg" --no-save --no-audit --no-fund
 
       - name: Test
         working-directory: ${{ matrix.pkg }}
