@@ -34,6 +34,15 @@ CORE="$ROOT/packages/core-wasm/pkg"
 # Deps first: a missing node_modules made this report "build failed" when the
 # build was fine, which is exactly the misattribution this file complains
 # about. Show the real output on failure instead of swallowing it.
+# Install the LOCAL core-wasm into verify-js before its own install.
+#
+# On a release PR the pin names the version being released, which is not on
+# npm yet, so a plain `npm install` here dies with ETARGET -- the release
+# doing its job, not a regression. Providing the local build first makes the
+# pin resolvable. On a normal PR the pinned version already exists and this
+# is redundant but harmless.
+( cd "$ROOT/packages/verify-js" \
+    && npm install "$CORE" --no-save --no-audit --no-fund --silent >/dev/null 2>&1 ) || true
 ( cd "$ROOT/packages/verify-js" && npm install --silent >/dev/null 2>&1 ) || true
 if ! ( cd "$ROOT/packages/verify-js" && npm run build 2>&1 | tail -20 ); then
   echo "  err   verify-js build failed (output above)"
