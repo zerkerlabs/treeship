@@ -786,6 +786,30 @@ pub fn approval(args: ApprovalArgs, printer: &Printer) -> Result<(), Box<dyn std
         })
     };
 
+    // Reject a non-RFC-3339 expiry at parse time.
+    //
+    // `--expires 1h` was accepted verbatim and signed into an immutable
+    // artifact. Expiry is then compared as a STRING against
+    // `now_rfc3339()` -- see the `*expires < now` check below -- so "1h"
+    // sorts before every real timestamp and the approval is born expired,
+    // failing on the very next command with no hint that the input was the
+    // problem.
+    //
+    // `grant issue` already rejects this for `--expiry`; approval did not,
+    // and the two paths write to the same kind of signed field. Validating
+    // here rather than at use keeps garbage out of the signed bytes, which
+    // is the rule that matters: a signature over a malformed value is still
+    // a signature, and it is permanent.
+    if let Some(ref expires) = args.expires {
+        if treeship_core::statements::parse_rfc3339_to_unix(expires).is_none() {
+            return Err(format!(
+                "--expires must be RFC 3339: {expires}\n                   example: --expires 2026-12-31T23:59:59Z\n                   (a duration like `1h` is not accepted; it would be signed verbatim \
+                 and compared as text, producing an approval that is already expired)"
+            )
+            .into());
+        }
+    }
+
     let mut stmt = ApprovalStatement::new(&args.approver, &nonce);
     stmt.description = args.description.clone();
     stmt.expires_at = args.expires.clone();
@@ -1711,6 +1735,30 @@ pub fn endorsement(
         digest: None,
         uri: None,
     };
+    // Reject a non-RFC-3339 expiry at parse time.
+    //
+    // `--expires 1h` was accepted verbatim and signed into an immutable
+    // artifact. Expiry is then compared as a STRING against
+    // `now_rfc3339()` -- see the `*expires < now` check below -- so "1h"
+    // sorts before every real timestamp and the approval is born expired,
+    // failing on the very next command with no hint that the input was the
+    // problem.
+    //
+    // `grant issue` already rejects this for `--expiry`; approval did not,
+    // and the two paths write to the same kind of signed field. Validating
+    // here rather than at use keeps garbage out of the signed bytes, which
+    // is the rule that matters: a signature over a malformed value is still
+    // a signature, and it is permanent.
+    if let Some(ref expires) = args.expires {
+        if treeship_core::statements::parse_rfc3339_to_unix(expires).is_none() {
+            return Err(format!(
+                "--expires must be RFC 3339: {expires}\n                   example: --expires 2026-12-31T23:59:59Z\n                   (a duration like `1h` is not accepted; it would be signed verbatim \
+                 and compared as text, producing an approval that is already expired)"
+            )
+            .into());
+        }
+    }
+
     stmt.rationale = args.rationale.clone();
     stmt.expires_at = args.expires.clone();
     stmt.policy_ref = args.policy_ref.clone();
