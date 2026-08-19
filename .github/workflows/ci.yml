@@ -357,9 +357,31 @@ jobs:
       - name: Build CLI for the roundtrip suite
         run: cargo build --release -p treeship-cli
 
+      # Same unpublished-pin problem as the matrix job above: a release bumps
+      # the core-wasm pin to the version being released, which is not on npm
+      # yet. This job has its own Install because it also needs the CLI, so
+      # the fix has to be repeated rather than shared.
       - name: Install
-        working-directory: packages/sdk-ts
-        run: npm ci
+        run: |
+          set -euo pipefail
+          PIN="$(node -p "
+            const p=require('./packages/sdk-ts/package.json');
+            ((p.dependencies||{})['@treeship/core-wasm'])
+              || ((p.peerDependencies||{})['@treeship/core-wasm']) || ''
+          ")"
+
+          if [ -z "$PIN" ] || npm view "@treeship/core-wasm@$PIN" version >/dev/null 2>&1; then
+            echo "core-wasm pin ${PIN:-<none>} is resolvable from the registry; normal install"
+            cd packages/sdk-ts
+            npm ci
+            exit 0
+          fi
+
+          echo "@treeship/core-wasm@$PIN is not published; building it from this tree"
+          cargo install wasm-pack --version 0.14.0 --locked || true
+          bash packages/core-wasm/build-npm.sh "$PIN"
+          cd packages/sdk-ts
+          npm install "$GITHUB_WORKSPACE/packages/core-wasm/pkg" --no-save --no-audit --no-fund
 
       - name: Test
         working-directory: packages/sdk-ts
