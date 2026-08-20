@@ -1642,6 +1642,15 @@ enum AttestCommand {
     ///     --payload '{"eventId":"evt_abc","status":"succeeded"}'
     Receipt(AttestReceiptArgs),
 
+    /// Atomically verify and attest an authorized Zerker Reason bundle
+    ///
+    /// Reads the bundle once, passes those exact bytes to Reason over stdin,
+    /// and signs their digest only after Reason returns verified+authorized.
+    ///
+    /// Example:
+    ///   treeship attest reason-authorization --bundle-file authorization-bundle.json
+    ReasonAuthorization(AttestReasonAuthorizationArgs),
+
     /// Mint a signed agent capability card (agent_card.v1)
     ///
     /// Declares an agent's identity and capability set as a typed, signed
@@ -1925,6 +1934,21 @@ struct AttestReceiptArgs {
     /// Digest of the external payload, for example sha256:<hex>
     #[arg(long, value_name = "DIGEST")]
     payload_digest: Option<String>,
+}
+
+#[derive(Args)]
+struct AttestReasonAuthorizationArgs {
+    /// Atomic zerker.reason.authorization-bundle.v1 JSON file (`-` for stdin)
+    #[arg(long, required = true, value_name = "PATH")]
+    bundle_file: String,
+
+    /// Zerker Reason verifier executable
+    #[arg(long, default_value = "reason", value_name = "PATH")]
+    reason_bin: String,
+
+    /// Maximum verifier runtime in milliseconds
+    #[arg(long, default_value_t = 2_000, value_name = "MS")]
+    timeout_ms: u64,
 }
 
 #[derive(Args)]
@@ -3292,6 +3316,15 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                     payload: a.payload.clone(),
                     payload_file: a.payload_file.clone(),
                     payload_digest: a.payload_digest.clone(),
+                    config: cli.config.clone(),
+                },
+                printer,
+            ),
+            AttestCommand::ReasonAuthorization(a) => commands::reason_authorization::run(
+                commands::reason_authorization::Args {
+                    bundle_file: a.bundle_file.clone(),
+                    reason_bin: a.reason_bin.clone(),
+                    timeout_ms: a.timeout_ms,
                     config: cli.config.clone(),
                 },
                 printer,
