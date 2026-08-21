@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.25.1 (2026-08-21)
+
+**Upgrade if you use the Python SDK or `treeship wrap --format json`.** Two
+SDK entry points could not work at all — not misconfigured, structurally
+unable to succeed — which is the same shape as the bug that forced 0.25.0.
+
+### Fixed
+
+- **`attest_approval` in the Python SDK could not mint an approval.** It
+  forwarded none of the scoping arguments the CLI requires and passed
+  `expires_in` where the CLI takes `expires_at`, so every call that reached the
+  subprocess was rejected. The scoping arguments (`allowed_actions`,
+  `allowed_actors`, `allowed_subjects`, `max_uses`, `unscoped`) are now
+  forwarded, and an unscoped approval must say so explicitly rather than
+  becoming one by omission. (#331)
+- **`treeship wrap --format json` printed nothing parseable.** It emitted the
+  result through a path that returns early in JSON mode, and interleaved the
+  wrapped command's own stdout into the document, so callers got either an
+  empty string or invalid JSON. The result is now emitted as JSON and the child
+  process's stdout is routed to stderr, leaving stdout a single document. (#332)
+- **`treeship attest --expires 1h` signed a timestamp already in the past.**
+  `--expires` takes an absolute RFC 3339 time; a duration parsed to epoch zero
+  and was signed into the artifact, producing an approval born expired with a
+  valid signature. Durations are now refused with a message naming the expected
+  form. (#328)
+- **`treeship init` told a fresh directory it was "already initialized."** The
+  guard tested the resolved config path, which falls back to the global config,
+  so any directory on a machine with a global Treeship config was reported as
+  already set up. It now distinguishes a local workspace from the global
+  fallback. (#333)
+- **`treeship setup --help` promised a verdict the command does not produce.**
+  It documented promoting cards to `Verified`; the code deliberately sets
+  `Active`. (#330)
+- **`release.sh prepare` could not update the npm lockfiles it exists to
+  update.** `npm install --package-lock-only` resolves against the registry, so
+  it failed on the version being released, which is not published yet — the
+  step added to prevent v0.25.0's out-of-sync lockfiles could never run during
+  a release. Prepare now writes the declared range offline and
+  `release.sh refresh-lockfiles` fills in resolved entries after publish. The
+  sync check also covered only four hardcoded packages; it now discovers all
+  ten, which surfaced three runtime-acceptance lockfiles five releases behind.
+
+### Documentation
+
+- Documentation QA pass across 127 pages, plus eight gates that keep the docs
+  and the CLI from drifting apart: internal links, API routes, verify rows,
+  event types, predicates, command names, flags, and option tables. Four of the
+  fixes above were found by those gates. (#321)
+
 ## 0.25.0 (2026-08-19)
 
 **Upgrade if you use any npm package. `@treeship/core-wasm@0.24.0` cannot be
