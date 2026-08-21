@@ -322,8 +322,9 @@ if (!verification?.withinDeclaredBounds) {
 Claude Code repeats the same dance with the Cursor and Hermes agents, then gates the merge on a human approval:
 
 ```bash
-treeship attest approval --approver human://senior-engineer
-treeship session close --report
+treeship attest approval --approver human://senior-engineer --unscoped
+treeship session close --summary "PR 247 reviewed by three agents"
+treeship session report
 ```
 
 The session closes and emits a single URL: `treeship.dev/receipt/ssn_pr247`. Posted as a PR comment, that URL takes any reviewer to a page showing the full delegation graph: which agent ran, when, what they checked, what artifacts they returned, the digest of each artifact, the human approval that fired, and a cryptographic proof the chain is intact.
@@ -340,10 +341,9 @@ The owner declares the policy first:
 
 ```bash
 treeship declare \
-  --bounded-actions "purchase_compute,purchase_storage" \
-  --max-spend 500 \
-  --requires-approval-above 100 \
-  --killswitch-enabled
+  --tools "purchase_compute,purchase_storage" \
+  --escalation "purchase_compute,purchase_storage" \
+  --forbidden "transfer_funds"
 ```
 
 The shopping agent starts a Treeship session and discovers vendors:
@@ -405,7 +405,8 @@ Because $87 is under the $100 auto-approve threshold, the agent pays directly:
 
 ```bash
 treeship wrap -- lobster-cash pay --vendor hetzner --amount 87
-treeship session close --report
+treeship session close --summary "Paid hetzner $87 under the auto-approve threshold"
+treeship session report
 ```
 
 The session receipt now records:

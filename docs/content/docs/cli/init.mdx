@@ -29,17 +29,27 @@ treeship init
 
 ```
 ✓ Treeship initialized
-  name: my-workspace
-  key:  key_9f8e7d6c (ed25519, encrypted at rest)
+  Ship ID:  ship_0ab4e2205a1c05c5
+  Key ID:   key_f9a10fde95b3bccc
+
+
+  Next:
+   → treeship add               instrument your AI agents
+   → treeship session start     begin recording a session
 ```
+
+The key is encrypted at rest under `.treeship/keys/`. `--name` is recorded in
+the config but is not echoed back in this output.
 
 ## Options
 
 | Option | Description |
 |--------|-------------|
-| `--name <name>` | Treeship name (optional) |
+| `--name <NAME>` | Treeship name (optional) |
+| `--template <TEMPLATE>` | Apply a trust template by name or file path |
 | `--force` | Overwrite an existing config |
-| `--config <path>` | Config file path |
+| `--global` | Initialize the global store instead of a project-local one |
+| `--config <PATH>` | Config file path |
 
 ## Non-interactive
 

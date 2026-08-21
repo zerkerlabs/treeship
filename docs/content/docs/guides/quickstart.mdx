@@ -84,7 +84,31 @@ This creates a `.treeship` package with a self-verifying `preview.html` that ope
 treeship package verify .treeship/sessions/ssn_*.treeship
 ```
 
-Should show all PASS. This runs offline with zero network calls.
+This runs offline with zero network calls. A healthy package looks like this:
+
+```
+  PASS receipt.json -- Parses as valid Session Receipt
+  PASS determinism -- receipt.json round-trips identically
+  WARN receipt_body_binding -- timeline/side-effects/narrative are NOT signed in
+       this package -- only the artifacts and Merkle root are cryptographically bound
+  PASS merkle_root -- Merkle root matches recomputed value
+  PASS inclusion:art_... -- Inclusion proof valid
+  PASS leaf_count -- Leaf count matches artifact count
+  PASS timeline_order -- Timeline is correctly ordered
+
+  9 passed, 0 failed, 1 warnings
+
+✓ package verified
+```
+
+<Callout type="info">
+The `receipt_body_binding` warning is expected on a local package, not a
+failure. A `.treeship` package cryptographically binds the artifacts and the
+Merkle root; the human-readable timeline, side effects, and narrative around
+them are not themselves signed. For an authenticated record of the whole
+session, verify the actor-signed `session.v1` record or the published report.
+What matters is **0 failed**.
+</Callout>
 </Step>
 <Step>
 ### Share (optional)

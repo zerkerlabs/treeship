@@ -6,6 +6,15 @@ tags: ["templates", "attestation", "workflows", "release"]
 readTime: "8 min read"
 ---
 
+> **Editorial note (2026-08-18).** This post is kept as published. Two commands
+> it describes were never shipped: `treeship template install <url>` and
+> `treeship template publish`, along with the `treeship template check-updates`
+> notifications. The community registry does not exist. The template surface
+> that *did* ship, and still works in v0.24, is `treeship template preview |
+> apply | validate | save` plus `treeship init --template <name-or-path>`. See
+> [the templates guide](/docs/guides/templates) for what runs today.
+
+
 The most common question we hear from developers trying Treeship is a version of the same thing: "I understand what it does, but how do I know what to attest in *my* workflow?"
 
 It's the right question. Treeship gives you the primitives — wrap a command, attest an action, issue an approval, verify a chain. But a CI/CD pipeline has different meaningful moments than a clinical AI system, which has different meaningful moments than a smart contract audit. Figuring out what to capture, and when, requires thinking about your specific workflow before you write a single line of config.
@@ -159,10 +168,13 @@ Team members apply it:
 treeship init --template .treeship/templates/solidity-audit.yaml
 ```
 
-Or install from a URL:
+Or, from a URL — download the YAML, then apply it by path:
 
 ```bash
-treeship template install https://raw.githubusercontent.com/org/repo/main/template.yaml
+curl -fsSL -o solidity-audit.yaml \
+  https://raw.githubusercontent.com/org/repo/main/template.yaml
+treeship template validate solidity-audit.yaml
+treeship init --template solidity-audit.yaml
 ```
 
 ---
@@ -171,13 +183,14 @@ treeship template install https://raw.githubusercontent.com/org/repo/main/templa
 
 If your template is useful beyond your team, publish it.
 
-```bash
+```text
+# NEVER SHIPPED — there is no community registry and no `template publish`
 treeship template publish solidity-audit.yaml
 ```
 
 Published templates go through automated validation — schema check, no credentials in YAML, MIT license, onboarding message present. No human review required. Templates are YAML, not executable code.
 
-Community templates are versioned. When you ship improvements, users get `treeship template check-updates` notifications and can review the diff before applying.
+The intent was for community templates to be versioned, with `treeship template check-updates` notifications and a reviewable diff before applying. That did not ship either. Share templates as files in your own repo and apply them by path.
 
 ---
 

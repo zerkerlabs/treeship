@@ -30,9 +30,9 @@ That is the entire core loop. Everything else builds on it.
 
 ## How it works
 
-**One key signs everything.** When you run `treeship init`, Treeship generates an Ed25519 keypair and encrypts it at rest. This key is your identity boundary.
+**One key to start, per-agent keys when you need them.** `treeship init` generates an Ed25519 keypair — the **ship key** — and encrypts it at rest. The ship key is your identity boundary and the default signer. Agents you register with their own key (`treeship onboard`, or `treeship agent register --own-key`) sign with **per-agent keys**, each bound to its `agent://` URI by a ship-signed certificate.
 
-**Actors are humans and AI.** Every person or agent that performs work is identified by a URI like `human://alice` or `agent://deployer`. All actors sign under the same Treeship key.
+**Actors are humans and AI.** Every person or agent that performs work is identified by a URI like `human://alice` or `agent://deployer`. How strongly that identity is proven is graded on the artifact: `asserted` when the ship key signed and the actor URI is a label inside the signed payload, `proven (key-bound)` when the actor's own certified key signed it. See [How it works](/docs/guides/how-it-works) for the full model.
 
 **Artifacts chain together.** Each artifact references its parent by content-addressed ID. The result is an ordered, tamper-evident chain of everything that happened in your workflow.
 

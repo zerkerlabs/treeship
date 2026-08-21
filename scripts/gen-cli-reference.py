@@ -96,8 +96,16 @@ def parse_section(help_text, section):
 GLOBAL_FLAGS = {"--config", "--format", "--quiet", "--no-color", "-h, --help", "--help"}
 
 
+# A bare URL in help text renders as a clickable link, but these are default
+# *values* (an endpoint to pass, not a page to visit) and several answer 404 at
+# the root. Wrap them in code spans so they read as values and the docs
+# link-checker skips them.
+URL_IN_PROSE = re.compile(r'(?<![`\w])(https?://[^\s)\],;`]+)')
+
+
 def esc(text):
     """Escape MDX-hostile characters in prose (JSX braces/tags, table pipes)."""
+    text = URL_IN_PROSE.sub(r"`\1`", text)
     return (
         text.replace("{", "&#123;")
         .replace("}", "&#125;")

@@ -66,3 +66,33 @@ GET /v1/merkle/consistency?signer=key_9f8e7d6c&from=0
 Errors: `400` `{"error":"missing signer"}` / `{"error":"invalid from size"}` · `500`.
 
 The verifier walks the chain checking each proof offline and that each link's `to_size`/`to_root` matches the next link's `from_size`/`from_root` — any gap or mismatch is evidence of a rewritten log. See [Merkle proofs](/docs/guides/merkle-proofs).
+
+## `POST /v1/merkle/consistency`
+
+Publish one consistency proof linking two checkpoint states. DPoP-authenticated;
+`treeship merkle publish` calls it.
+
+**Body**
+
+| Field | Type | Description |
+|---|---|---|
+| `signer` | `string` | Checkpoint signer key id |
+| `from_size` | `integer` | Tree size the proof starts from |
+| `from_root` | `string` | Root at `from_size` |
+| `to_size` | `integer` | Tree size the proof ends at |
+| `to_root` | `string` | Root at `to_size` |
+| `version` | `integer` | Proof format version |
+| `proof_json` | `string` | The serialized consistency proof |
+| `signed_at` | `string` | RFC 3339 timestamp from the signer |
+
+**Response** `200` — `{ "id": 17, "hub_received_at": "2026-08-18T03:00:43Z" }`
+
+`hub_received_at` is when this hub received the proof. It is not evidence of when
+the proof was made — the hub does not witness time, and `signed_at` is asserted by
+the signer.
+
+| Status | Cause |
+|---|---|
+| `400` | Invalid JSON or missing fields |
+| `401` | Missing or invalid DPoP `Authorization` header |
+| `500` | Storage failure |

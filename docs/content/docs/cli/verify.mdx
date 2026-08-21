@@ -94,9 +94,13 @@ Trust pinning is mandatory and fail-closed: if the issuer key is not in your tru
 
 ```bash
 treeship trust add <key_id> <pubkey> --kind agent_cert
-# or sync from your hub:
-treeship hub sync-trust
 ```
+
+The issuer gets you those two values by running `treeship keys export` on their
+side -- it prints the public half plus the exact `treeship trust add` line you
+paste. There is no command that bulk-syncs trust roots from a hub: pinning is a
+deliberate, per-issuer act, so attaching to a hub can never silently widen what
+you trust.
 </Tab>
 <Tab value="Cross-verify">
 ```bash

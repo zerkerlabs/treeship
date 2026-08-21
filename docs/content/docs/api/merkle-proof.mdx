@@ -97,10 +97,12 @@ The proof is self-contained. To verify locally:
 treeship merkle verify proof.json
 ```
 
-You can also fetch and verify in one step:
+`merkle proof` emits the proof and `merkle verify` checks it; there is no
+single-step `--verify` flag. Pipe one into the other:
 
 ```bash
-treeship merkle proof art_f7e6d5c4b3a2f7e6 --verify
+treeship merkle proof art_f7e6d5c4b3a2f7e6 > proof.json
+treeship merkle verify proof.json
 ```
 
 ## Errors
@@ -115,3 +117,33 @@ treeship merkle proof art_f7e6d5c4b3a2f7e6 --verify
 ```bash
 curl https://api.treeship.dev/v1/merkle/art_f7e6d5c4b3a2f7e6
 ```
+
+## `POST /v1/merkle/proof`
+
+Publish an inclusion proof binding an artifact to a checkpoint. DPoP-authenticated
+— `treeship merkle publish` calls this; you rarely call it by hand.
+
+**Body**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `artifact_id` | `string` | Yes | Artifact the proof is for |
+| `checkpoint_id` | `integer` | Yes | Checkpoint the artifact is proved into |
+| `leaf_index` | `integer` | No | Index of the leaf in the tree |
+| `leaf_hash` | `string` | No | Hash of the leaf |
+| `proof_json` | `string` | Yes | The serialized inclusion proof |
+
+**Response** `200` — `{ "artifact_id": "art_…", "stored": true }`
+
+The caller must own **both** the artifact and the checkpoint. This is object-level
+authorization, not a formality: because proofs are stored per
+`(artifact_id, checkpoint_id)` and the highest checkpoint wins, any authenticated
+dock that could write a proof it did not own could shadow another dock's proof and
+make anchored artifacts read as un-anchored.
+
+| Status | Cause |
+|---|---|
+| `400` | Invalid JSON, or `artifact_id` / `checkpoint_id` / `proof_json` missing |
+| `401` | Missing or invalid DPoP `Authorization` header |
+| `403` | The checkpoint or the artifact belongs to a different dock |
+| `404` | Checkpoint or artifact not found |

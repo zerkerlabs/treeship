@@ -82,7 +82,10 @@ When you run `treeship attest approval`, Treeship generates a cryptographically 
 $ treeship attest approval \
   --approver human://approver \
   --description "approve stripe charge $50 to acme" \
-  --expires 2025-10-07T15:00:00Z
+  --expires 2025-10-07T15:00:00Z \
+  --allowed-actor agent://checkout \
+  --allowed-action stripe.charge.create \
+  --max-uses 1
 
 # ✓ approval attested
 # id:      art_e5f6a7b8c9d0e5f6

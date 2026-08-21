@@ -6,6 +6,16 @@ tags: ["commerce", "approvals"]
 readTime: "6 min read"
 ---
 
+> **Update (2026-08-18, v0.24).** This post's replay section describes the
+> v0.9.6 posture, where enforcement was package-local and the Approval Use
+> Journal was still roadmap. The journal has since shipped and is `stable`: a
+> reused nonce is now refused at attest time (`could not reserve approval use in
+> journal: … would exceed max_uses`), across every package and workspace on the
+> device. Distributed single-use across machines is the part still open. Treat
+> the "v0.9.6 (today)" / "v0.10" / "v0.11+" framing below as a snapshot of
+> March 2026, not as current status.
+
+
 When an agent makes a purchase, executes a payment, or commits to a contract, there is no portable proof that a human authorized it. The agent might have a token, but tokens are bearer instruments. They don't prove intent. They prove possession.
 
 This is the gap Treeship closes: cryptographic proof of human approval, bound to a specific action, verifiable by anyone.
@@ -32,19 +42,31 @@ This creates a signed approval artifact with a binding nonce and the signed scop
 
 ```bash
 treeship wrap \
-  --approval-nonce abc123def456 \
+  --actor agent://checkout \
+  --action stripe.charge.create \
   -- stripe charges create \
     --amount 49900 \
     --currency usd \
     --customer cus_acme
+#   → art_9d2c... (the execution artifact)
+
+treeship attest action \
+  --actor agent://checkout \
+  --action stripe.charge.create \
+  --approval-nonce abc123def456 \
+  --parent art_9d2c...
 ```
 
-The `wrap` command runs the payment command, captures its output, and produces a signed action receipt. That receipt includes the approval nonce, binding it to the specific approval from Step 1.
+`wrap` runs the payment command, captures its output, and produces a signed
+execution receipt. `attest action` then echoes the approval nonce and chains to
+that receipt with `--parent`, binding the execution to the specific approval from
+Step 1. The nonce lives on `attest action`, not on `wrap` -- `wrap` proves *what
+ran*, `attest action` proves *what authorized it*.
 
 ### Step 3: Anyone verifies the chain
 
 ```bash
-treeship verify --full
+treeship verify last --full
 ```
 
 The verification checks (and reports each independently):
@@ -75,11 +97,19 @@ That binding is the foundation. Replay enforcement layers on top:
 ```bash
 # Today: this fails when verified together with the first use
 treeship wrap \
-  --approval-nonce abc123def456 \
+  --actor agent://checkout \
+  --action stripe.charge.create \
   -- stripe charges create \
     --amount 99900 \
     --currency usd \
     --customer cus_other
+#   → art_1e7b...
+
+treeship attest action \
+  --actor agent://checkout \
+  --action stripe.charge.create \
+  --approval-nonce abc123def456 \
+  --parent art_1e7b...
 # verify error: nonce already consumed by art_... in this package (package-local replay)
 
 # Cross-package replay (e.g. running the same nonce in a different

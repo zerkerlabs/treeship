@@ -64,7 +64,10 @@ The real power is combining the bridge with approval-based authorization. Before
 treeship attest approval \
   --approver human://approver \
   --description "authorize stripe charge max $500 to acme-corp" \
-  --expires 2026-03-26T18:00:00Z
+  --expires 2026-03-26T18:00:00Z \
+  --allowed-actor agent://checkout \
+  --allowed-action stripe.charge.create \
+  --max-uses 1
 # nonce: nce_7f8e9d0a
 ```
 

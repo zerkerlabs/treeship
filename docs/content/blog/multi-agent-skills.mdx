@@ -75,12 +75,20 @@ The agent didn't guess. The skill told it that `treeship wrap` is the right shap
 
 When you ask "can you also have someone approve this first?", the skill knows the answer:
 
+> **Correction (2026-08-18, v0.24).** The snippet below no longer runs as
+> written. `expires_in` is passed straight through to `--expires`, so it must be
+> an RFC 3339 string, not seconds — `expires_in=3600` raises `TypeError:
+> expected str, bytes or os.PathLike object, not int`. And the Python SDK's
+> `attest_approval()` sends no scope flag, which CLI 0.24 refuses outright.
+> Mint approvals through the CLI for now; see the
+> [Python SDK page](/docs/sdk/python#attest_approvalapprover-description-expires_innone).
+
 ```python
 # 1. Human creates approval
 approval = ts.attest_approval(
     approver="human://alice",
     description="approve staging deploy",
-    expires_in=3600
+    expires_in="2026-05-02T12:00:00Z",   # RFC 3339, not seconds
 )
 
 # 2. Agent uses the approval nonce

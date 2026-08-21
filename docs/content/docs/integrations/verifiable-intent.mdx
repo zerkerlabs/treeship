@@ -3,6 +3,8 @@ title: Verifiable Intent
 description: Treeship as the agent_attestation scheme for Verifiable Intent credentials
 ---
 
+import { Callout } from 'fumadocs-ui/components/callout';
+
 <Callout type="warn">
 **The `treeship vi` command set is not yet shipped.** The `packages/vi`
 library (P-256 keys, credential types) exists in the repository, but no
@@ -12,9 +14,6 @@ run today. This page stays published as the integration spec; treat every
 command block below as roadmap.
 </Callout>
 
-
-import { Callout } from 'fumadocs-ui/components/callout';
-import { Steps, Step } from 'fumadocs-ui/components/steps';
 
 [Verifiable Intent](https://verifiableintent.dev/) is an open credential standard for agent commerce. It defines a three-layer credential chain that proves an agent was authorized to act on a user's behalf. Treeship provides the `agent_attestation` field in Layer 3 credentials, supplying the cryptographic proof that the agent executed correctly.
 
@@ -81,41 +80,32 @@ Treeship is embedded inside L3. It does not replace the Verifiable Intent creden
 
 ## Key management
 
-Verifiable Intent uses P-256 (secp256r1) for credential signatures. Treeship can generate and manage P-256 keys alongside its default Ed25519 keys:
+Verifiable Intent uses P-256 (secp256r1) for credential signatures, alongside
+Treeship's default Ed25519 keys.
 
-```bash
+<Callout type="warn">
+**There is no `treeship vi` command.** As of v0.24 the P-256 key and credential
+types ship as a Rust library only (`packages/vi`); the CLI surface below is
+planned and will fail with `unrecognized subcommand 'vi'` if you run it today.
+Build against the library, or track the CLI wiring in the status table at the
+end of this page.
+</Callout>
+
+### Planned CLI
+
+```text
+# NOT IMPLEMENTED — planned surface, do not copy into scripts
+
+# Generate a P-256 VI signing key into the Treeship keyring
 treeship vi keygen
-```
 
-This generates a P-256 keypair stored in your Treeship keyring. The key is used when signing `agent_attestation` fields for VI credentials.
-
-<Steps>
-<Step>
-### Generate a VI signing key
-
-```bash
-treeship vi keygen
-```
-</Step>
-<Step>
-### Verify the key is registered
-
-```bash
+# Confirm the key is registered
 treeship vi keys list
-```
-</Step>
-<Step>
-### Sign an L3 attestation
 
-```bash
-treeship vi attest \
-  --session <session-id> \
-  --mandate <l2-credential-id>
+# Sign an L3 attestation, producing the agent_attestation payload
+# ready to embed in the L3 credential
+treeship vi attest --session <session-id> --mandate <l2-credential-id>
 ```
-
-This produces the `agent_attestation` payload ready to embed in the L3 credential.
-</Step>
-</Steps>
 
 ## Status
 

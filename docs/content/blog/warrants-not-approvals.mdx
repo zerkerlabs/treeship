@@ -6,9 +6,25 @@ tags: ["security", "authorization", "cryptography", "agents"]
 readTime: "8 min read"
 ---
 
-> **Implementation status (v0.9.6).** This post describes the approval-grant model end to end. As of v0.9.6, Treeship's verify pass enforces three of the four properties below **statelessly**: binding (the nonce ↔ approval link), scope (the actor / action / subject / expiry constraints signed into the grant), and **package-local replay** (a second action claiming the same nonce inside one verified package fails). The fourth property — **cross-package / cross-machine single-use** — requires verifier-side state and is on the roadmap: a local Approval Use Journal in v0.10, Hub-backed checkpoints in v0.11+. Verify reports the replay-check posture honestly today (`replay check: package-local only -- no global ledger consulted`) instead of claiming a guarantee that hasn't been consulted.
+> **Implementation status (updated 2026-08-18, v0.24).** All four properties
+> below now hold on a single device or workspace. Binding and scope are enforced
+> statelessly at verify time, as this post described. The fourth property —
+> single-use beyond one package — no longer waits on the roadmap: the **local
+> Approval Use Journal shipped and is `stable`**, and it reserves a use
+> *before* the action is signed. A second action claiming a spent nonce is
+> refused at attest time, not merely flagged at verify time:
 >
-> Bookmark this post; the body below describes the destination, and we'll update it as the journal layers land.
+> ```
+> ✗ could not reserve approval use in journal: approval grant art_… would
+>   exceed max_uses (1/1)
+> ```
+>
+> Inspect the ledger with `treeship approval uses`, `treeship approval status`,
+> and `treeship approval journal verify`. What remains open is *distributed*
+> single-use — coordinating the journal across machines and teams via
+> Hub-backed checkpoints. The original note below this line said that layer was
+> coming in v0.10/v0.11; the device-local half of it has been shipping for many
+> releases.
 
 Imagine your agent needs human authorization before executing a payment. You've built an approval flow: the human clicks Approve in a UI, a token is generated and passed to the agent, the agent includes the token in its action record, and downstream systems can verify the token was present.
 
@@ -47,7 +63,9 @@ treeship attest approval \
   --approver human://approver \
   --description "authorize stripe charge $450 to acme-corp invoice INV-2847" \
   --expires 2026-03-26T17:00:00Z \
-  --scope '{"allowed_actions":["stripe.charge.create"],"max_amount":450,"max_actions":1}'
+  --allowed-action stripe.charge.create \
+  --allowed-actor agent://checkout \
+  --max-uses 1
 ```
 
 This produces an ApprovalStatement signed with the approver's Ed25519 key. The statement contains a random nonce -- a one-time value that appears nowhere else.

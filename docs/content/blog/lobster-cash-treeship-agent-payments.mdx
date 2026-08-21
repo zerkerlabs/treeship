@@ -6,7 +6,7 @@ tags: ["integrations", "commerce"]
 readTime: "5 min read"
 ---
 
-> **Update (2026-07):** The signed-receipt verification described here ships and works today. Any mention of an automatic zero-knowledge spend-limit proof refers to the experimental ZK layer, which is excluded from release binaries and being rebuilt statement-first; see the [ZK verification spec](https://github.com/treeship/treeship/blob/main/docs/specs/private-verification.md). Spend-limit conformance is currently proven by the signed approval, not by a ZK proof.
+> **Update (2026-07):** The signed-receipt verification described here ships and works today. Any mention of an automatic zero-knowledge spend-limit proof refers to the experimental ZK layer, which is excluded from release binaries and being rebuilt statement-first; see the [ZK verification spec](https://github.com/zerkerlabs/treeship/blob/main/docs/specs/private-verification.md). Spend-limit conformance is currently proven by the signed approval, not by a ZK proof.
 
 [Lobster.cash](https://www.lobster.cash/) (by Crossmint) gives agents a payment layer: wallet provisioning, transaction signing, settlement. Treeship adds the verification layer: every transaction gets a signed receipt.
 
@@ -31,7 +31,10 @@ This separation matters. Payment infrastructure and trust infrastructure have di
 ```bash
 treeship attest approval \
   --approver human://ops \
-  --description "approve $49.99 USDC for API credits"
+  --description "approve $49.99 USDC for API credits" \
+  --allowed-actor agent://payments \
+  --allowed-action lobster.payment.create \
+  --max-uses 1
 ```
 
 ### 2. Agent calls Lobster.cash to execute payment
@@ -44,7 +47,8 @@ Option A: Wrap the API call directly.
 
 ```bash
 treeship wrap \
-  --approval-nonce abc123def456 \
+  --actor agent://payer \
+  --action payment.execute \
   -- curl -X POST https://api.lobster.cash/v1/payments \
     -H "Authorization: Bearer $LOBSTER_TOKEN" \
     -d '{"amount": "49.99", "currency": "USDC", "recipient": "0x..."}'
@@ -80,7 +84,7 @@ human://ops approved "$49.99 USDC for API credits"
 ### 5. Anyone can verify
 
 ```bash
-treeship verify --full
+treeship verify last --full
 ```
 
 The receipt travels with the transaction. Verification happens offline, client-side. No callback to Treeship or Lobster.cash required.

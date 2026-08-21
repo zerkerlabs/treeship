@@ -15,6 +15,40 @@ pip install treeship-sdk
 The Python SDK shells out to the `treeship` CLI binary. The CLI must be installed and initialized (`treeship init`) before using the SDK.
 </Callout>
 
+<Callout type="warn">
+**Verified against CLI 0.24.0 on 2026-08-18. Two methods do not currently
+work**, because the CLI surface moved and the wrapper did not follow:
+
+- `attest_approval()` always fails — it sends no scope flag, and the CLI now
+  refuses `approval has no scope (no --allowed-actor / --allowed-action /
+  --allowed-subject / --max-uses)`.
+- `wrap()` always fails — `treeship wrap` has no JSON output mode, so the
+  wrapper cannot parse an artifact id out of it
+  (`treeship wrap --actor returned invalid JSON`).
+
+Everything else on this page was executed end to end and works:
+`attest_action`, `attest_decision`, `attest_handoff`, `verify`, and
+`session_report` (with a hub attached). For approvals and wrapping, shell out
+to the CLI directly until the wrapper catches up.
+</Callout>
+
+## Constructing a client
+
+`Treeship()` takes keyword arguments only:
+
+| Parameter | Type | Description |
+|-----------|------|------|
+| `cli_path` | `Optional[str \| Path]` | Explicit path to the `treeship` binary. Highest priority. |
+| `bot_mode` | `bool` | Bootstrap the CLI if it is missing — resolves `$TREESHIP_BIN`, then a cache, then a GitHub Release or npm install. |
+| `timeout` | `Optional[int]` | Default subprocess timeout in seconds. |
+| `cwd` | `Optional[str \| Path]` | Working directory for CLI calls. |
+| `env` | `Optional[Mapping[str, str]]` | Environment for CLI calls. |
+
+Resolution order for the binary is `cli_path` > `bot_mode` bootstrap > plain
+`treeship` on `PATH`. Note that `$TREESHIP_BIN` is consulted only on the
+bootstrap path: a default `Treeship()` runs whatever `treeship` your `PATH`
+resolves, even if `$TREESHIP_BIN` points elsewhere.
+
 ## Quick start
 
 ```python
@@ -67,7 +101,28 @@ Returns `ActionResult(artifact_id)`.
 
 ### `attest_approval(approver, description, allowed_actions=None, allowed_actors=None, allowed_subjects=None, max_uses=None, unscoped=False, expires_at=None)`
 
-Create a signed approval receipt with a binding nonce. (Replay posture is package-local in v0.9.6; cross-package enforcement lands in v0.10 via the local Approval Use Journal.)
+Create a signed approval receipt with a binding nonce.
+
+<Callout type="warn">
+**Currently broken against CLI 0.24.** The wrapper sends no scope flag, and the
+CLI refuses a scopeless approval outright. Until this is fixed, mint approvals
+through the CLI:
+
+```bash
+treeship attest approval --approver human://alice \
+  --allowed-actor agent://checkout \
+  --allowed-action stripe.charge.create \
+  --max-uses 1 --expires 2026-12-31T23:59:59Z --format json
+```
+</Callout>
+
+Despite the name, `expires_in` is passed straight through to `--expires`, so it
+must be an **RFC 3339 timestamp**, not a duration. A value like `"1h"` is stored
+verbatim and compares as already expired.
+
+Replay is enforced by the local Approval Use Journal, which reserves a use
+before the action is signed — a reused nonce is refused at attest time, on this
+device or workspace. Distributed single-use across machines is still open.
 
 **A scope is required.** Pass at least one of `allowed_actions`, `allowed_actors`, `allowed_subjects` or `max_uses` — or `unscoped=True` to mint a bearer approval deliberately. An approval that constrains nothing *is* a bearer token, and the CLI refuses to create one by omission.
 
@@ -114,17 +169,26 @@ Push an artifact to the configured hub.
 
 Returns `PushResult(hub_url, rekor_index)`.
 
-### `wrap(command, actor=None)`
+### `wrap(command, actor=None, *, timeout=None)`
 
-Wrap a shell command with a signed receipt.
+Wrap a shell command with a signed receipt. `command` accepts a string or a
+sequence of arguments.
 
-```python
-result = ts.wrap("npm test", actor="agent://ci")
+<Callout type="warn">
+**Currently broken against CLI 0.24.** `treeship wrap` has no JSON output mode —
+it streams the wrapped command's own stdout and prints a human-readable summary
+— so the wrapper cannot parse an artifact id back out and raises
+`TreeshipError: treeship wrap --actor returned invalid JSON`. This fails for
+every command, including silent ones. Call the CLI directly:
+
+```bash
+treeship wrap --actor agent://ci --action test.run -- npm test
 ```
+</Callout>
 
 Returns `ActionResult(artifact_id)`.
 
-### `session_report(session_id=None)`
+### `session_report(session_id=None, *, timeout=None)`
 
 Upload a closed session's [Session Receipt](/docs/concepts/session-receipts) to the configured hub and return the permanent public URL.
 
@@ -148,6 +212,15 @@ This method shells out to [`treeship session report`](/docs/cli/session#treeship
 
 <Callout type="info">
 The returned `receipt_url` is permanent and public. Share it freely; no token, no expiry, no auth required to fetch it. See the [receipt API docs](/docs/api/receipt-get) for the endpoint reference.
+</Callout>
+
+<Callout type="warn">
+`session_report()` requires an attached hub. Without one the CLI returns
+`receipt_url: null` alongside `hub not attached -- run \`treeship hub attach\` to
+publish; receipt verifies locally`, and the wrapper raises `TreeshipError:
+session report JSON missing receipt_url`. Run
+`treeship hub attach --endpoint https://api.treeship.dev` first. The receipt still verifies offline without a
+hub — publishing is what needs one.
 </Callout>
 
 ## Result types

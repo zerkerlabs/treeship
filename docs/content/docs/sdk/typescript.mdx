@@ -42,12 +42,18 @@ console.log(hubUrl); // https://treeship.dev/verify/art_xxx
 
 ### `Ship.checkCli()`
 
-Static method that checks whether the `treeship` CLI binary is installed and available on PATH. Returns the version string (e.g. `"0.4.1"`). Throws a descriptive error if the binary is not found.
+Static method that checks whether the `treeship` CLI binary is installed and
+available on PATH. Throws a descriptive error if the binary is not found.
+
+It shells out to `treeship version` and returns that command's **whole output
+line**, not a bare semver — on 0.24 that is `"treeship 0.24.0 (rust)"`. Parse it
+if you need the number; do not compare it to `"0.24.0"`.
 
 ```ts
 import { Ship } from '@treeship/sdk';
 
-const version = await Ship.checkCli();
+const line = await Ship.checkCli();      // "treeship 0.24.0 (rust)"
+const version = line.split(' ')[1];      // "0.24.0"
 console.log(`Treeship CLI version: ${version}`);
 ```
 
@@ -125,6 +131,21 @@ Note: The `modelVersion` field exists in the TypeScript type but is not currentl
 
 Record that an approver authorized an intent. Returns a nonce that can be echoed back when attesting the approved action.
 
+<Callout type="warn">
+**Currently broken against CLI 0.24.** `ApprovalParams` has no scope fields, so
+the SDK sends none, and the CLI refuses every scopeless approval:
+`approval has no scope (no --allowed-actor / --allowed-action /
+--allowed-subject / --max-uses)`. There is no combination of documented params
+that succeeds. Mint approvals through the CLI until `ApprovalParams` grows
+`allowedActor` / `allowedAction` / `allowedSubject` / `maxUses` / `unscoped`:
+
+```bash
+treeship attest approval --approver human://alice \
+  --allowed-actor agent://checkout --allowed-action stripe.charge.create \
+  --max-uses 1 --expires 2026-12-31T23:59:59Z --format json
+```
+</Callout>
+
 ```ts
 const { artifactId, nonce } = await s.attest.approval({
   approver: 'human://alice',
@@ -185,6 +206,30 @@ const result = await s.verify.verify('art_abc123');
 | `outcome` | `'pass' \| 'fail' \| 'error'` | Verification result |
 | `chain` | `number` | Number of artifacts in the chain |
 | `target` | `string` | The artifact ID that was verified |
+
+### Offline verification methods
+
+`VerifyModule` also carries five WASM-backed methods that verify in-process
+without shelling out to the CLI. They are the same entry points
+[`@treeship/verify`](/docs/sdk/verify) exposes:
+
+| Method | Signature |
+|---|---|
+| `verifyReceipt` | `(target: VerifyTarget) => Promise<VerifyReceiptResult>` |
+| `verifyCertificate` | `(target: VerifyTarget, now?: Date \| string, trustRoots?: TrustRootInput[]) => Promise<VerifyCertificateResult>` |
+| `crossVerify` | `(receipt: VerifyTarget, certificate: VerifyTarget, now?: Date \| string, trustRoots?: TrustRootInput[]) => Promise<CrossVerifyResult>` |
+| `verifyResolution` | `(bundle: ResolutionBundleInput, trustRoots?: TrustRootInput[], now?: Date \| string) => Promise<ResolutionVerdict>` |
+| `verifyPresentation` | `(presentation: Record<string, unknown>, trustRoots?: TrustRootInput[], opts?: { nonce?: string; now?: Date \| string }) => Promise<PresentationVerdict>` |
+
+`VerifyTarget` is `string | URL | Record<string, unknown>` — an artifact id, a
+receipt URL, or an already-parsed receipt object.
+
+<Callout type="warn">
+These five load `@treeship/core-wasm`, which **fails to load under Node 22** —
+see the [`@treeship/verify` page](/docs/sdk/verify#runtime-support) for the
+tested detail. `s.verify.verify()` is unaffected because it shells out to the
+CLI.
+</Callout>
 
 ## Hub module
 

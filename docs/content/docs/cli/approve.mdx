@@ -49,10 +49,10 @@ treeship deny 2
 
 This creates a denial artifact. The requesting agent receives the denial and should not proceed with the action.
 
-<Callout type="warn" title="Replay posture (v0.9.6)">
-Treeship's verifier observes nonce replay **only within a single verified package** -- two actions in one package that claim the same nonce, the second fails. This is enforced in the Rust core and cannot be bypassed.
+<Callout type="warn" title="Replay posture (v0.24)">
+Replay is enforced **per device or workspace**, not globally. The local Approval Use Journal is shipped and `stable`: `treeship attest action` reserves a use *before* it signs, so a reused nonce is refused at attest time on this device or workspace (`could not reserve approval use in journal: … would exceed max_uses`). Inspect it with `treeship approval uses` / `status` / `journal verify`. Distributed replay across machines needs a Hub that signs journal checkpoints; the consumer-side verifier for that exists, the Hub-side signer does not.
 
-Cross-package and cross-machine replay enforcement is **not yet shipped**. A `--max-uses` value is signed into the grant for future enforcement; verify reports the replay check posture honestly (`replay check: package-local only -- no global ledger consulted`) rather than claiming global single-use.
-
-Roadmap: a local Approval Use Journal lands in v0.10 (device/workspace replay), Hub-backed checkpoints in v0.11+ (distributed replay).
+Until a Hub signs and you embed a checkpoint covering every `use_id`, a "global
+single-use" claim would be overclaiming, and verify reports the narrower posture
+rather than asserting one it cannot check.
 </Callout>

@@ -47,7 +47,7 @@ The signing key is Ed25519. Verification requires only the public key and the en
 
 ```bash
 # Verify all signatures in the chain
-treeship verify --full
+treeship verify last --full
 ```
 
 The verify page at treeship.dev performs the same verification client-side via WASM. The same Rust code that signs artifacts in the CLI verifies them in the browser.
@@ -66,10 +66,20 @@ treeship attest approval \
   --max-uses 1
 # Output includes: nonce = "n_8f3a..."
 
-# Action must echo the nonce AND match the scope
+# Run it under wrap, then bind the execution to the approval.
+# (wrap has no --approval-nonce; that flag lives on `attest action`.)
 treeship wrap \
-  --approval-nonce n_8f3a... \
+  --actor agent://deployer \
+  --action deploy.staging \
   -- kubectl apply -f staging.yaml
+#   → art_4b9e... (the execution artifact)
+
+# Action must echo the nonce AND match the scope
+treeship attest action \
+  --actor agent://deployer \
+  --action deploy.staging \
+  --approval-nonce n_8f3a... \
+  --parent art_4b9e...
 ```
 
 Verify reports each property separately:
@@ -80,7 +90,7 @@ Verify reports each property separately:
 ⚠  replay check     package-local only -- no global ledger consulted
 ```
 
-If the action's actor / action / subject falls outside the signed scope, verification fails on the scope line and the audit reader sees exactly why. Replay observation is package-local in v0.9.6; cross-package enforcement lands in v0.10 via a local Approval Use Journal (append-only hash chain with signed Merkle checkpoints), and v0.11+ adds Hub-backed checkpoints for distributed replay.
+If the action's actor / action / subject falls outside the signed scope, verification fails on the scope line and the audit reader sees exactly why. Replay is enforced at attest time by the local Approval Use Journal (an append-only hash chain with signed Merkle checkpoints): the use is reserved before the action is signed, so a nonce cannot be spent twice on this device or workspace. Distributed replay across machines additionally needs a Hub-signed journal checkpoint, which is not yet built on the Hub side.
 
 ## Rekor anchoring
 
@@ -89,7 +99,7 @@ When attached to the Hub, receipts are optionally anchored to Sigstore's Rekor t
 Rekor anchoring adds a property that local hash chaining cannot provide on its own: third-party proof of time. A local chain proves ordering (A before B before C). A Rekor entry proves "A existed before 2026-03-28T14:30:00Z" according to a public log that Treeship does not control.
 
 ```bash
-treeship verify --full
+treeship verify last --full
 ```
 
 Output with Rekor anchoring:
@@ -162,7 +172,7 @@ Verification checks three things:
 3. **Signature**: the Ed25519 signature over the canonical checkpoint string is valid
 
 ```bash
-treeship verify --full
+treeship verify last --full
 ```
 
 Output with Merkle verification:
@@ -177,7 +187,7 @@ Merkle checkpoint ............ PASS (tree_size=4096, root=sha256:7e3a...)
 
 ## Verification summary
 
-When you run `treeship verify --full`, these are the checks:
+When you run `treeship verify last --full`, these are the checks:
 
 | Check | What it proves |
 |-------|---------------|

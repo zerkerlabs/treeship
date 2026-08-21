@@ -35,7 +35,10 @@ Each step chains to the previous via `--parent` or the `TREESHIP_PARENT` env var
 ```bash
 treeship attest approval \
   --approver human://alice \
-  --description "approve deploy to production"
+  --description "approve deploy to production" \
+  --allowed-actor agent://deployer \
+  --allowed-action deploy.production \
+  --max-uses 1
 
 # Pass the nonce to the agent
 treeship wrap --parent $TREESHIP_LAST -- ./deploy.sh

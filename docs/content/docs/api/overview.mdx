@@ -13,6 +13,22 @@ https://api.treeship.dev
 
 All endpoints are prefixed with `/v1/`.
 
+<Callout type="info">
+**IDs in the examples are illustrative.** Every `art_…`, `ssn_…`, and
+`hub_…` value on these API pages is a placeholder chosen to show the shape of
+the identifier — pasting one into `curl` returns `404`, which is the correct
+answer for an id that was never pushed. Substitute an id from your own
+`treeship status` or `treeship hub push` output.
+
+Two endpoints take no id and answer for anyone, so they are the ones to reach
+for when you want to confirm Hub is up:
+
+```bash
+curl -s https://api.treeship.dev/v1/merkle/checkpoint/latest
+curl -s https://api.treeship.dev/v1/dock/challenge
+```
+</Callout>
+
 ## What Hub does
 
 Hub is optional infrastructure. Artifact validity never depends on it -- the signatures are the trust. Hub provides three things:
@@ -107,4 +123,4 @@ HTTP status codes:
 
 ## OpenAPI spec
 
-The full OpenAPI 3.1 spec is available at [hub-openapi.yaml](/docs/api/hub-openapi.yaml) for code generation and tooling.
+The full OpenAPI 3.1 spec is available at [hub-openapi.yaml](/api/hub-openapi.yaml) for code generation and tooling.

@@ -22,21 +22,23 @@ The fastest path to a signed receipt is a single `treeship setup`. It detects th
 npm install -g treeship
 ```
 
-Or via the binary download — see [installation](/docs/guides/quickstart#install).
+Or `curl -fsSL treeship.dev/setup | sh`, which installs the CLI and runs the rest of this page for you. See [how Treeship is distributed](/docs/guides/install) for every channel and why each absence is on purpose.
 
 <Callout type="warn">
-This line used to offer **Homebrew** and **Cargo**. Neither works:
+Two routes this page used to offer do not work, and the difference matters if
+you try them:
 
-- There is no Homebrew formula. `brew info treeship` returns *No available
-  formula with the name "treeship"*, and the quickstart it links to never
-  mentioned Homebrew either.
-- `cargo install treeship-cli` fails outright. All seven published versions
-  are yanked, so crates.io reports `max_version: 0.0.0` and cargo answers
-  *could not find `treeship-cli` in registry `crates-io`*.
+- **Homebrew** — there is no formula. `brew info treeship` returns *No
+  available formula with the name "treeship"*, and the quickstart it linked to
+  never mentioned Homebrew either.
+- **Cargo** — `cargo install treeship-cli` does not install an old version, it
+  fails. All seven published versions are yanked, so crates.io reports
+  `max_version: 0.0.0` and cargo answers *could not find `treeship-cli` in
+  registry `crates-io`*.
 
-Naming an install route that does not exist costs more than listing one
-fewer option: the reader tries it, it fails, and they have no way to tell
-whether they mistyped it or it was never real.
+Naming a route that does not exist costs more than listing one fewer option:
+the reader tries it, it fails, and they cannot tell whether they mistyped it or
+it was never real.
 </Callout>
 
 </Step>
@@ -129,27 +131,45 @@ That writes a `.agent` package (signed certificate) and a card at `needs-review`
 
 ## What you'll see after setup
 
-Cards (run `treeship agents`):
+Cards (run `treeship agents list` — bare `treeship agents` prints the
+subcommand help):
 
 ```
-Agent cards (5 in workspace)
-  ✓ Claude Code            (claude-code, harness: claude-code, active)
-  ✓ Cursor                 (cursor-agent, harness: cursor, active)
-  ✓ Codex CLI              (codex, harness: codex, active)
-  ✓ OpenClaw               (openclaw, harness: openclaw, active)
-  · SuperNinja             (ninjatech-superninja, harness: ninjatech-superninja, draft)
+Agent cards (/path/to/.treeship/agents)
+
+  · Claude Code  (claude-code)
+    id:         agent_2c2942ac8e2b3795
+    status:     active
+    coverage:   high
+    provenance: discovered
+
+  · SuperNinja  (ninjatech-superninja)
+    id:         agent_6d1ac290ff78a45d
+    status:     draft
+    coverage:   basic
+    provenance: discovered
 ```
 
 Harness coverage (run `treeship harness list`):
 
 ```
 Harnesses (10 known)
-  ✓ Claude Code Native Hook Harness     id: claude-code      coverage: high      status: instrumented
-  ✓ Cursor MCP Harness                  id: cursor           coverage: medium    status: instrumented
-  ✓ Codex CLI MCP Harness               id: codex            coverage: medium    status: instrumented
-  · NinjaTech / SuperNinja Remote       id: ninjatech-superninja  coverage: basic   status: detected
-  ...
+
+  · Claude Code Native Hook Harness
+    id:       claude-code
+    surface:  claude-code
+    coverage: high
+    status:   detected
+
+  · Cursor MCP Harness
+    id:       cursor
+    surface:  cursor-agent
+    coverage: medium
+    status:   detected
 ```
+
+Each entry is a block, not a row — the list stays readable as fields are added.
+`status` reads `detected` until the harness is instrumented.
 
 ## What's next
 

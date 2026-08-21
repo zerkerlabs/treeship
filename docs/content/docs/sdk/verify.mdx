@@ -16,6 +16,42 @@ Everything `treeship verify --format json` produces on the CLI, `@treeship/verif
 npm install @treeship/verify
 ```
 
+## Runtime support
+
+<Callout type="warn">
+**`@treeship/core-wasm@0.24.0` does not load under Node 22.** Importing it —
+directly, through `@treeship/verify`, or through `@treeship/sdk`'s offline
+verify methods — throws before any verification runs:
+
+```
+WebAssembly.Table.grow(): failed to grow table by 4
+```
+
+Reproduced deterministically on Node **22.20.0** and **22.23.1**
+(darwin-arm64), on a clean `npm install @treeship/verify@0.24.0`. The failure is
+at module load, so every export is affected: `verifyReceipt`,
+`verifyCertificate`, `crossVerify`, `verifyCapability`, `verifyResolution`,
+`verifyPresentation`.
+
+The cause is that the package shipped only the wasm-pack `--target bundler`
+build, which emits `import * as wasm from "./..._bg.wasm"` and needs a bundler
+to resolve. A fix is in flight: dual-target build plus an `exports` map routing
+Node to the `nodejs` output. It went unnoticed because the only consumer anyone
+exercised was the website, which vendors and bundles the wasm — nobody
+installed the tarball and imported it the way a user does.
+
+Installing a fixed `@treeship/core-wasm` at top level does **not** work around
+it. This package pins core-wasm to an exact version, so npm installs the pinned
+copy nested under `@treeship/verify`, where it wins resolution over anything at
+top level. The fix arrives as a coordinated release: v0.25.0 bumps core-wasm and
+every dependent's pin together, which is what makes it reach you.
+
+Until then, verify server-side with the CLI (`treeship verify <target> --format
+json`) or `@treeship/sdk`'s `s.verify.verify()`, which shells out to the binary
+and is unaffected. Browser runtimes were not tested here — this note records
+only what was reproduced under Node.
+</Callout>
+
 Same verification semantics in every runtime. The package ships with `@treeship/core-wasm` pinned to an exact version (no caret), so there is no silent drift between the WASM you install and the rules this package documents.
 
 ## Trust roots
