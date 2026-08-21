@@ -420,7 +420,12 @@ enum Command {
     ///   3. confirm before modifying any agent's config
     ///   4. instrument those agents (Treeship MCP, hooks, skill files)
     ///   5. run a smoke session to prove Treeship can capture
-    ///   6. promote cards to Verified on smoke success
+    ///   6. promote confirmed cards to Active on smoke success
+    ///
+    /// The smoke proves Treeship can capture on this machine; it does not
+    /// exercise any specific harness's path, so cards move to Active rather
+    /// than Verified. `Verified` is reserved for per-harness smokes that
+    /// assert on specific signals.
     ///
     /// Examples:
     ///   treeship setup
