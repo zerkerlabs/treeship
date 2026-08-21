@@ -8,17 +8,28 @@
 //!   4. confirm with the user before instrumenting (or `--yes`)
 //!   5. delegate to existing `add::run` for actual config writes
 //!   6. optional smoke session that proves Treeship can capture; on success,
-//!      promote the matching card's status to `Verified`
+//!      promote the matching card's status to `Active`
 //!
 //! `setup` deliberately doesn't have its own detector or its own
 //! instrumenter. Adding either would re-introduce the "two of these
 //! exist now" problem that PRs 1 and 2 closed.
 //!
-//! Verification semantics: `Verified` means a smoke session proved
-//! Treeship can capture session events end-to-end on this machine, against
-//! a real isolated keystore. It is *not* a claim about the live agent
-//! itself doing the right thing -- v0.9.8 has no global identity check.
-//! The verify pass output preserves this honesty.
+//! Verification semantics. The smoke session proves Treeship can capture
+//! session events end-to-end on this machine against a real isolated
+//! keystore. It does NOT exercise any specific harness's capture path: no
+//! Claude native hook fires, no Cursor MCP tool is routed, no Codex
+//! shell-wrap is tested. So confirmed cards move Draft -> **Active**, and
+//! `CardStatus::Verified` is deliberately not used here.
+//!
+//! This header used to say the smoke promotes cards to `Verified`. The code
+//! has always set `Active`, with a comment explaining that marking harnesses
+//! Verified "would over-claim". The help text over-claimed in precisely the
+//! place the implementation refused to -- which is worse than a normal doc
+//! drift, because the two were written against different intentions and
+//! nothing compared them.
+//!
+//! `HarnessStatus::Verified` remains reserved for per-harness smokes that
+//! assert on specific signals (files.read, mcp.call, and so on).
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
