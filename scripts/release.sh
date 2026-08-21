@@ -52,6 +52,28 @@ cmd_prepare() {
   echo "Updating Cargo.lock..."
   cargo check -p treeship-core 2>/dev/null || true
 
+  # npm lockfiles too.
+  #
+  # `--write` stamps package.json but not package-lock.json, so after a
+  # release prepare the two disagree about @treeship/core-wasm and `npm ci`
+  # refuses on EVERY subsequent PR:
+  #
+  #   npm error code EUSAGE
+  #   `npm ci` can only install packages when your package.json and
+  #   package-lock.json are in sync.
+  #
+  # That is not a per-PR problem, it is main being unbuildable for JS. v0.25.0
+  # shipped that way and blocked four PRs until it was noticed. `--package-lock-only`
+  # updates the lockfile without touching node_modules or the network beyond
+  # metadata.
+  echo "Updating npm lockfiles..."
+  for pkg in packages/verify-js packages/sdk-ts bridges/mcp bridges/a2a; do
+    if [ -f "$pkg/package-lock.json" ]; then
+      ( cd "$pkg" && npm install --package-lock-only --no-audit --no-fund --silent ) \
+        || { echo "lockfile update failed in $pkg" >&2; exit 1; }
+    fi
+  done
+
   echo
   echo "Running release version preflight..."
   if ! python3 "$(dirname "$0")/check-release-versions.py" "$VERSION"; then
