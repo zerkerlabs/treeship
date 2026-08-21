@@ -288,3 +288,110 @@ fn clean_keybound_check_mints_grant_with_evidence_signed_in() {
         "the evidence link must be visible on the grant: {output}"
     );
 }
+
+/// `--expires 1h` was accepted verbatim and signed into an immutable artifact.
+///
+/// Expiry is compared as a *string* against `now_rfc3339()`, so "1h" sorts
+/// before every real timestamp: the approval was born expired and failed on
+/// the next command, with nothing pointing at the input as the cause.
+///
+/// The rule this protects is narrower than "validate input". A signature over
+/// a malformed value is still a signature, and it is permanent — so the check
+/// has to happen before signing, not at use. `grant issue` already rejected
+/// this for `--expiry`; approval wrote to the same kind of signed field and
+/// did not.
+#[test]
+fn approval_rejects_a_non_rfc3339_expiry_before_signing() {
+    let workspace = TempDir::new().unwrap();
+    let root = workspace.path();
+    let config = root.join(".treeship/config.json");
+    let cfg = config.to_str().unwrap();
+
+    let run = |args: &[&str]| {
+        let mut cmd = Command::new(cli_path());
+        cmd.current_dir(root).env("HOME", root).args(args);
+        cmd.output().expect("run treeship")
+    };
+
+    let init = run(&["init", "--config", cfg, "--name", "expires-test"]);
+    assert!(
+        init.status.success(),
+        "init: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+
+    // ── the bug ──
+    let bad = run(&[
+        "attest",
+        "approval",
+        "--config",
+        cfg,
+        "--allowed-action",
+        "deploy.*",
+        "--approver",
+        "me",
+        "--expires",
+        "1h",
+    ]);
+    assert!(
+        !bad.status.success(),
+        "a duration must not be accepted as an expiry; it would be signed verbatim"
+    );
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&bad.stdout),
+        String::from_utf8_lossy(&bad.stderr)
+    );
+    assert!(
+        msg.contains("RFC 3339"),
+        "the error must name the expected format, or the user cannot fix it: {msg}"
+    );
+    // Nothing may have been written. A rejected input that still signs is the
+    // failure this guards against.
+    let artifacts = root.join(".treeship/artifacts");
+    if artifacts.exists() {
+        let count = std::fs::read_dir(&artifacts)
+            .map(|d| d.count())
+            .unwrap_or(0);
+        assert_eq!(
+            count, 0,
+            "a rejected expiry must not leave a signed artifact"
+        );
+    }
+
+    // ── a real timestamp still works, or the guard is too strict ──
+    let good = run(&[
+        "attest",
+        "approval",
+        "--config",
+        cfg,
+        "--allowed-action",
+        "deploy.*",
+        "--approver",
+        "me",
+        "--expires",
+        "2030-12-31T23:59:59Z",
+    ]);
+    assert!(
+        good.status.success(),
+        "a valid RFC 3339 expiry must still be accepted: {}",
+        String::from_utf8_lossy(&good.stderr)
+    );
+
+    // ── and omitting it entirely is still valid ──
+    let none = run(&[
+        "attest",
+        "approval",
+        "--config",
+        cfg,
+        "--allowed-action",
+        "deploy.*",
+        "--approver",
+        "me",
+    ]);
+    assert!(
+        none.status.success(),
+        "an approval without an expiry must still be accepted: {}",
+        String::from_utf8_lossy(&none.stderr)
+    );
+}
