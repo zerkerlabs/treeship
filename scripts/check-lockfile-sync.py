@@ -24,12 +24,26 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-PACKAGES = [
-    "packages/verify-js",
-    "packages/sdk-ts",
-    "bridges/mcp",
-    "bridges/a2a",
-]
+# Every directory with both a package.json and a package-lock.json is in
+# scope. An explicit list looks safer and is not: this list originally held
+# only the four packages whose CI jobs broke at v0.25.0, so the three
+# runtime-acceptance lockfiles drifted five releases behind on
+# @treeship/verify with the gate reporting "4 package(s)" and passing.
+#
+# Discovering them means a new package is covered the day it is added rather
+# than the day someone remembers to extend this list.
+SKIP_DIRS = {"node_modules", ".git", "target", "dist", "pkg"}
+
+
+def discover(root: Path):
+    found = []
+    for lock in sorted(root.rglob("package-lock.json")):
+        rel = lock.relative_to(root)
+        if any(part in SKIP_DIRS for part in rel.parts):
+            continue
+        if (lock.parent / "package.json").is_file():
+            found.append(str(rel.parent))
+    return found
 
 
 def declared(pkg: Path) -> dict:
@@ -54,7 +68,7 @@ def locked(pkg: Path) -> dict:
 def main() -> int:
     checked = 0
     bad = []
-    for rel in PACKAGES:
+    for rel in discover(ROOT):
         pkg = ROOT / rel
         if not (pkg / "package.json").is_file() or not (pkg / "package-lock.json").is_file():
             continue
