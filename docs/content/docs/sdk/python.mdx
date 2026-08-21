@@ -65,9 +65,22 @@ result = ts.attest_action(
 
 Returns `ActionResult(artifact_id)`.
 
-### `attest_approval(approver, description, expires_in=None)`
+### `attest_approval(approver, description, allowed_actions=None, allowed_actors=None, allowed_subjects=None, max_uses=None, unscoped=False, expires_at=None)`
 
 Create a signed approval receipt with a binding nonce. (Replay posture is package-local in v0.9.6; cross-package enforcement lands in v0.10 via the local Approval Use Journal.)
+
+**A scope is required.** Pass at least one of `allowed_actions`, `allowed_actors`, `allowed_subjects` or `max_uses` — or `unscoped=True` to mint a bearer approval deliberately. An approval that constrains nothing *is* a bearer token, and the CLI refuses to create one by omission.
+
+`expires_at` is an RFC 3339 timestamp (`2030-12-31T23:59:59Z`), not a duration. It was named `expires_in` before, which invited `"1h"` — a value the CLI signed verbatim and then compared as text, producing an approval that was already expired.
+
+```python
+approval = ts.attest_approval(
+    approver="human://alice",
+    description="approve payment max $500",
+    allowed_actions=["payments.charge"],
+    max_uses=1,
+)
+```
 
 Returns `ApprovalResult(artifact_id, nonce)`.
 

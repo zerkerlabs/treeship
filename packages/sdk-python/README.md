@@ -40,6 +40,8 @@ ts.attest_decision(
 approval = ts.attest_approval(
     approver="human://alice",
     description="approve payment max $500",
+    allowed_actions=["payments.charge"],   # a scope is required
+    max_uses=1,
 )
 print(approval.nonce)  # binding token; replay enforcement is package-local in v0.9.6
 
@@ -68,7 +70,7 @@ print(result.artifact_id)
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `attest_action(actor, action, ...)` | `ActionResult` | Sign an action receipt |
-| `attest_approval(approver, description, ...)` | `ApprovalResult` | Sign an approval with nonce |
+| `attest_approval(approver, description, allowed_actions=..., ...)` | `ApprovalResult` | Sign a scoped approval with nonce |
 | `attest_handoff(from_actor, to_actor, artifacts)` | `ActionResult` | Sign a handoff receipt |
 | `attest_decision(actor, model, ...)` | `ActionResult` | Sign a decision receipt |
 | `verify(artifact_id)` | `VerifyResult` | Verify an artifact chain |

@@ -370,14 +370,52 @@ class Treeship:
         self,
         approver: str,
         description: str,
-        expires_in: Optional[str] = None,
+        allowed_actions: Optional[List[str]] = None,
+        allowed_actors: Optional[List[str]] = None,
+        allowed_subjects: Optional[List[str]] = None,
+        max_uses: Optional[int] = None,
+        unscoped: bool = False,
+        expires_at: Optional[str] = None,
     ) -> ApprovalResult:
-        """Create a signed approval receipt with a binding nonce."""
+        """Create a signed approval receipt with a binding nonce.
+
+        A scope is required. The CLI refuses an approval that constrains
+        nothing -- an unscoped approval is a bearer token, and minting one by
+        omission rather than by choice is how blanket authority gets created
+        accidentally. Pass at least one of ``allowed_actions``,
+        ``allowed_actors``, ``allowed_subjects`` or ``max_uses``, or set
+        ``unscoped=True`` to say you meant it.
+
+        Before this existed the method sent no scope at all, so every call
+        failed with "approval has no scope" and there was no way to succeed
+        from inside the SDK.
+
+        ``expires_at`` is an RFC 3339 timestamp, not a duration. It was
+        previously named ``expires_in``, which reads as "expires in 1h" -- and
+        the CLI accepted such a value verbatim, signed it, and then compared
+        it as a string, producing an approval that was already expired. The
+        CLI rejects that now; the parameter is renamed so the SDK stops
+        inviting it.
+        """
         _reject_option_like("approver", approver)
         _check_length("approver", approver, _MAX_ACTOR_LEN)
         _check_length("description", description, _MAX_DESCRIPTION_LEN)
-        if expires_in is not None:
-            _reject_option_like("expires_in", expires_in)
+        if expires_at is not None:
+            _reject_option_like("expires_at", expires_at)
+
+        scopes = [allowed_actions, allowed_actors, allowed_subjects]
+        has_scope = any(v for v in scopes) or max_uses is not None
+        if not has_scope and not unscoped:
+            raise ValueError(
+                "attest_approval requires a scope: pass allowed_actions, "
+                "allowed_actors, allowed_subjects or max_uses, or "
+                "unscoped=True to mint a bearer approval deliberately"
+            )
+        if has_scope and unscoped:
+            raise ValueError(
+                "unscoped=True contradicts the scope arguments you passed; "
+                "an approval is either constrained or it is a bearer token"
+            )
 
         args: List[str] = [
             "attest", "approval",
@@ -385,8 +423,20 @@ class Treeship:
             "--description", description,
             "--format", "json",
         ]
-        if expires_in is not None:
-            args += ["--expires", expires_in]
+        for flag, values in (
+            ("--allowed-action", allowed_actions),
+            ("--allowed-actor", allowed_actors),
+            ("--allowed-subject", allowed_subjects),
+        ):
+            for value in values or []:
+                _reject_option_like(flag.lstrip("-"), value)
+                args += [flag, value]
+        if max_uses is not None:
+            args += ["--max-uses", str(max_uses)]
+        if unscoped:
+            args.append("--unscoped")
+        if expires_at is not None:
+            args += ["--expires", expires_at]
         result = self._run_cli_json(args)
         return ApprovalResult(
             artifact_id=self._artifact_id(result, args),
