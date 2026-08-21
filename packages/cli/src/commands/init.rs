@@ -23,6 +23,7 @@ pub fn run(
     //   2. --global         (forces user-level path even when a project
     //                        stub would otherwise be discovered)
     //   3. default          (walks up cwd for project-local; falls back to global)
+    let config_path_arg_was_none = config_path.is_none();
     let config_path: PathBuf = match config_path {
         Some(p) => PathBuf::from(p),
         None if global => global_config_path()?,
@@ -54,6 +55,43 @@ pub fn run(
                  \n  This guard exists because earlier versions silently rotated the\n\
                  global default_key_id under --force, breaking signature continuity\n\
                  for every receipt that referenced the old key.",
+                config_path.display()
+            )
+            .into());
+        }
+    }
+
+    // A fresh directory should not be told it is "already initialized"
+    // because the GLOBAL config exists.
+    //
+    // `default_config_path` walks up for a project-local config and falls back
+    // to `~/.treeship/config.json` when it finds none. So in a brand-new
+    // directory the fallback resolves to the global, this guard sees a file
+    // there, and `init` refuses:
+    //
+    //     $ cd /a/brand/new/dir && treeship init
+    //     ✗ already initialized at /Users/you/.treeship/config.json
+    //
+    // Nothing about that directory is initialized. Every command run there
+    // then uses the home workspace, silently -- receipts from unrelated
+    // projects land in one store, and `--config` becomes the only way to
+    // separate them.
+    //
+    // The walk itself is careful and deliberately skips the global path (see
+    // `walk_up_for_project_config`). It is this guard that conflates "a config
+    // exists somewhere" with "this location is initialized".
+    //
+    // So: when the target came from the global fallback rather than an
+    // explicit choice, offer the project-local path instead of refusing.
+    if config_path.exists() && !force && !global && config_path_arg_was_none {
+        let from_global_fallback = global_config_path()
+            .map(|g| g == config_path)
+            .unwrap_or(false);
+        if from_global_fallback {
+            return Err(format!(
+                "no Treeship workspace here, and the global one at {} is not this \
+                 directory's.\n\n                   Create a project-local workspace:  treeship init --config .treeship/config.json\n                   Or use the global workspace:       treeship init --global\n\n                   Commands run here would otherwise use the global workspace, so \
+                 receipts from unrelated projects share one store.",
                 config_path.display()
             )
             .into());
