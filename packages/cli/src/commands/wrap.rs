@@ -87,6 +87,22 @@ pub fn run(
     let stdout_pipe = child.stdout.take();
     let stderr_pipe = child.stderr.take();
 
+    // In JSON mode the child's stdout must not share our stdout.
+    //
+    // `--format json` promises one machine-readable document on stdout. The
+    // child's own output was written there with `println!`, so a caller got
+    //
+    //     hi
+    //     {"artifact_id": "art_...", ...}
+    //
+    // and `json.loads` failed on the first line. Emitting the receipt was
+    // necessary but not sufficient: the stream also has to be clean.
+    //
+    // The child's output is not discarded -- it moves to stderr, so a human
+    // running `--format json` still sees it and a pipeline still gets exactly
+    // one JSON document. It is captured into `stdout_buf` either way, so the
+    // output digest in the receipt is unchanged.
+    let child_stdout_to_stderr = printer.format == crate::printer::Format::Json;
     let sb = Arc::clone(&stdout_buf);
     let stdout_thread = std::thread::spawn(move || {
         if let Some(pipe) = stdout_pipe {
@@ -98,7 +114,11 @@ pub fn run(
             // truncates the captured output, which is the honest outcome:
             // the bytes really did stop being readable.
             for l in reader.lines().map_while(Result::ok) {
-                println!("{}", l);
+                if child_stdout_to_stderr {
+                    eprintln!("{}", l);
+                } else {
+                    println!("{}", l);
+                }
                 let mut buf = sb.lock().unwrap();
                 buf.extend_from_slice(l.as_bytes());
                 buf.push(b'\n');
@@ -416,6 +436,35 @@ pub fn run(
     } else {
         "none detected".to_string()
     };
+
+    // JSON mode emits one document and returns.
+    //
+    // Every line below goes through `printer.info`, which returns early when
+    // the format is JSON. So `wrap --format json` printed NOTHING -- not the
+    // artifact id, not an error -- and still exited 0. The only thing on the
+    // pipe was the wrapped command's own stdout, so a caller parsing the
+    // output got the program's output where a receipt should be.
+    //
+    // That is why the Python SDK's `wrap()` could not work: it asks for
+    // `--format json` and parses the result, and there was never a result.
+    //
+    // Same shape as `session event --format json` (#311): a document built
+    // and then handed to a printer that discards it in the very mode that
+    // asked for it. A sweep of every command that accepts `--format json`
+    // found exactly two left -- this and `profile`.
+    if printer.format == crate::printer::Format::Json {
+        printer.json(&serde_json::json!({
+            "artifact_id": result.artifact_id,
+            "digest": result.digest,
+            "command": args,
+            "exit_code": exit_code,
+            "succeeded": succeeded,
+            "elapsed_ms": elapsed_ms,
+            "files_changed": files_changed_count,
+            "hub_url": hub_url,
+        }));
+        return Ok(());
+    }
 
     let separator = "  ----------------------------------------";
 
