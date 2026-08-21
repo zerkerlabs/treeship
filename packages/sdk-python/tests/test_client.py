@@ -278,3 +278,93 @@ class CLIMissingErrorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ApprovalScopeTests(unittest.TestCase):
+    """attest_approval sent no scope, so every call failed at the CLI.
+
+    The CLI refuses an approval that constrains nothing: an unscoped approval
+    is a bearer token, and minting one by omission rather than by choice is
+    how blanket authority gets created accidentally. The SDK exposed no way to
+    pass a scope, so there was no workaround from inside it.
+
+    These assert on the argv the SDK builds rather than on a live CLI, so they
+    fail on a wrong flag name rather than only on a wrong outcome.
+    """
+
+    def test_no_scope_is_refused_by_the_sdk_not_the_cli(self) -> None:
+        ts = Treeship()
+        with patch("subprocess.run") as mock_run:
+            with self.assertRaises(ValueError) as ctx:
+                ts.attest_approval(approver="me", description="d")
+            self.assertIn("scope", str(ctx.exception))
+            # Refused before spawning: a failing subprocess would be a worse
+            # error for the same mistake.
+            mock_run.assert_not_called()
+
+    def test_scope_flags_reach_the_cli(self) -> None:
+        ts = Treeship()
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = _completed(
+                stdout=json.dumps({"id": "art_1", "nonce": "n"}),
+            )
+            ts.attest_approval(
+                approver="me",
+                description="d",
+                allowed_actions=["deploy.*", "build.*"],
+                allowed_actors=["agent://ci"],
+                max_uses=3,
+            )
+            argv = mock_run.call_args.args[0]
+            self.assertEqual(argv.count("--allowed-action"), 2)
+            self.assertIn("deploy.*", argv)
+            self.assertIn("build.*", argv)
+            self.assertIn("--allowed-actor", argv)
+            self.assertIn("agent://ci", argv)
+            self.assertIn("--max-uses", argv)
+            self.assertIn("3", argv)
+            self.assertNotIn("--unscoped", argv)
+
+    def test_unscoped_is_explicit_and_reaches_the_cli(self) -> None:
+        ts = Treeship()
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = _completed(
+                stdout=json.dumps({"id": "art_1", "nonce": "n"}),
+            )
+            ts.attest_approval(approver="me", description="d", unscoped=True)
+            self.assertIn("--unscoped", mock_run.call_args.args[0])
+
+    def test_scope_and_unscoped_together_is_refused(self) -> None:
+        """Silently preferring one would make the caller's intent unknowable."""
+        ts = Treeship()
+        with patch("subprocess.run") as mock_run:
+            with self.assertRaises(ValueError):
+                ts.attest_approval(
+                    approver="me",
+                    description="d",
+                    allowed_actions=["x"],
+                    unscoped=True,
+                )
+            mock_run.assert_not_called()
+
+    def test_expires_at_is_a_timestamp_not_a_duration(self) -> None:
+        """The parameter was `expires_in`, which invites `1h`.
+
+        The CLI used to accept that verbatim, sign it, then compare it as a
+        string -- producing an approval that was born expired. The CLI rejects
+        it now; the SDK stops inviting it.
+        """
+        ts = Treeship()
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = _completed(
+                stdout=json.dumps({"id": "art_1", "nonce": "n"}),
+            )
+            ts.attest_approval(
+                approver="me",
+                description="d",
+                unscoped=True,
+                expires_at="2030-12-31T23:59:59Z",
+            )
+            argv = mock_run.call_args.args[0]
+            self.assertIn("--expires", argv)
+            self.assertIn("2030-12-31T23:59:59Z", argv)
