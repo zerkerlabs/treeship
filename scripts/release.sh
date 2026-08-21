@@ -66,13 +66,25 @@ cmd_prepare() {
   # shipped that way and blocked four PRs until it was noticed. `--package-lock-only`
   # updates the lockfile without touching node_modules or the network beyond
   # metadata.
+  # `--package-lock-only` still resolves against the registry, so during a
+  # prepare it fails ETARGET on the version being released -- it does not
+  # exist yet. Fall back to writing the one field `npm ci` compares against
+  # package.json. See scripts/lockfile-pin.py for why the resolved entry and
+  # its integrity hash are deliberately left alone until after publish.
   echo "Updating npm lockfiles..."
-  for pkg in packages/verify-js packages/sdk-ts bridges/mcp bridges/a2a; do
+  for pkg in packages/verify-js packages/sdk-ts bridges/mcp bridges/a2a \
+           tests/runtime-acceptance/aws-lambda \
+           tests/runtime-acceptance/cloudflare-worker \
+           tests/runtime-acceptance/vercel-edge; do
     if [ -f "$pkg/package-lock.json" ]; then
-      ( cd "$pkg" && npm install --package-lock-only --no-audit --no-fund --silent ) \
-        || { echo "lockfile update failed in $pkg" >&2; exit 1; }
+      if ! ( cd "$pkg" && npm install --package-lock-only --no-audit --no-fund --silent 2>/dev/null ); then
+        python3 "$(dirname "$0")/lockfile-pin.py" "$pkg" "$VERSION" \
+          || { echo "lockfile update failed in $pkg" >&2; exit 1; }
+      fi
     fi
   done
+  echo "  note: resolved entries are refreshed by 'release.sh refresh-lockfiles'"
+  echo "        once @treeship/core-wasm@$VERSION is on the registry."
 
   echo
   echo "Running release version preflight..."
@@ -191,6 +203,38 @@ EOF
   echo "  git push origin v${VERSION}"
 }
 
+# ---------- refresh-lockfiles ----------------------------------------------
+
+# The other half of the prepare-time lockfile fallback. Prepare can only write
+# the declared range, because at that point the version has no tarball and so
+# no honest integrity hash. Once it is published there is one, and the
+# lockfiles should carry it -- a lockfile whose resolved entry points at the
+# previous release is not locking anything.
+cmd_refresh_lockfiles() {
+  local failed=0
+  for pkg in packages/verify-js packages/sdk-ts bridges/mcp bridges/a2a \
+           tests/runtime-acceptance/aws-lambda \
+           tests/runtime-acceptance/cloudflare-worker \
+           tests/runtime-acceptance/vercel-edge; do
+    [ -f "$pkg/package-lock.json" ] || continue
+    if ( cd "$pkg" && npm install --package-lock-only --no-audit --no-fund --silent ); then
+      echo "  ✓ $pkg"
+    else
+      echo "  err   $pkg: still unresolvable -- is the version published yet?" >&2
+      failed=1
+    fi
+  done
+  [ "$failed" -eq 0 ] || exit 1
+  echo
+  if git diff --quiet -- '*package-lock.json'; then
+    echo "Lockfiles already current; nothing to commit."
+  else
+    git --no-pager diff --stat -- '*package-lock.json'
+    echo
+    echo "Review the diff, then commit these lockfiles."
+  fi
+}
+
 # ---------- usage / dispatch -----------------------------------------------
 
 usage() {
@@ -204,6 +248,10 @@ Treeship release script.
       Create the annotated tag. Required after the prepare PR has merged
       and you have explicit approval to release.
 
+  scripts/release.sh refresh-lockfiles
+      Rewrite npm lockfile resolved entries + integrity hashes. Run after
+      the release is published; prepare can only write the declared range.
+
 The default invocation (no subcommand) intentionally errors out so a stray
 \`scripts/release.sh 0.9.7\` cannot retain its old "do everything" semantics.
 
@@ -216,6 +264,7 @@ EOF
 case "${1:-}" in
   prepare) shift; cmd_prepare "$@" ;;
   tag)     shift; cmd_tag "$@" ;;
+  refresh-lockfiles) shift; cmd_refresh_lockfiles "$@" ;;
   ""|-h|--help|help) usage; exit 0 ;;
   *)
     cat >&2 <<EOF
