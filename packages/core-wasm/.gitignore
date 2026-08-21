@@ -1,3 +1,5 @@
 # wasm-pack output. Regenerated on every release by build-npm.sh and
 # published to npm from CI. Never commit.
 pkg/
+# `npm pack` output from check-wasm-loads.sh.
+*.tgz

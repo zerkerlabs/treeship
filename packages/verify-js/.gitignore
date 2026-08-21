@@ -1,2 +1,6 @@
 dist/
 node_modules/
+# `npm pack` output. check-verify-js-loads.sh packs this package on every
+# run, and two of those tarballs reached main via `git add -A` in the
+# v0.25.0 release branch. Build artifacts are not source.
+*.tgz
