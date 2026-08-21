@@ -117,6 +117,13 @@ jobs:
       # other gate passed -- none of them read that file. This one is a grep
       # that runs, which is the whole point: the markers were not hard to see,
       # nothing looked.
+      # v0.25.0 stamped package.json to 0.25.0 and left every lockfile at
+      # 0.24.0, so `npm ci` refused on four open PRs at once. The CI error
+      # names the symptom ("your lockfile is out of date") on PRs that never
+      # touched a lockfile, so it reads as a per-PR problem instead of main
+      # being unbuildable for JS.
+      - name: package.json and lockfiles agree
+        run: python3 scripts/check-lockfile-sync.py
       - name: No committed conflict markers
         run: python3 scripts/check-conflict-markers.py
       # v0.24.0 published a bundler-only wasm build that would not load in
