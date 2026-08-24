@@ -270,21 +270,41 @@ jobs:
         run: npm install -g npm@11.5.1
 
       # Pre-flight: every package we intend to publish must already exist on
-      # the @treeship scope with the OIDC trusted publisher configured. npm
-      # returns 404 (not 403) when a new scoped package name is requested by
-      # a publisher that lacks scope-create permission, which silently
-      # cascades through any downstream package's `npm install`. Fail loud
-      # here so a mis-configured scope never produces a partial release.
+      # the @treeship scope AND have this workflow configured as an OIDC
+      # trusted publisher. Those are two different things, and checking only
+      # the first is what produced the v0.25.1 partial release.
       #
-      # To bootstrap a new package into the scope, do ONE manual publish
-      # locally with `npm publish --access public --auth-type=web` from an
-      # npm account that owns the @treeship scope. Once the package name
-      # exists on the registry at any version, this check passes and future
-      # automated publishes work.
-      - name: Pre-flight check @treeship scope packages exist on npm
+      # `npm view <pkg> version` is an unauthenticated read. It answers "does
+      # this name exist", not "may this workflow write to it". npm returns 404
+      # (not 403) on a PUT it will not authorize, so a package that exists but
+      # has no trusted publisher configured looks identical to a typo -- and
+      # it looks fine to an existence check.
+      #
+      # v0.25.1: @treeship/cli-linux-arm64 was bootstrapped by hand on
+      # 2026-08-19, after the other packages had their trusted publishers set
+      # up, and never got one of its own. Preflight passed. The job then
+      # published six packages, hit 404 on the seventh, and stopped -- leaving
+      # core-wasm, sdk, mcp, a2a, verify and cli-linux-x64 live at 0.25.1
+      # while the `treeship` wrapper stayed at 0.25.0. Exactly the partial
+      # release this step exists to prevent.
+      #
+      # The signal used here is provenance. A package published through OIDC
+      # trusted publishing carries a provenance attestation; one that has only
+      # ever been published by hand carries none. So "latest version has no
+      # attestation" means CI has never successfully published this package,
+      # which is precisely the condition that fails mid-release.
+      #
+      # To bootstrap a new package: publish once locally with
+      #   npm publish --access public --auth-type=web
+      # then configure the trusted publisher for it on npmjs.com (Settings ->
+      # Trusted publisher) pointing at this repo, release.yml, and the
+      # npm-publish environment. Both steps are required.
+      - name: Pre-flight check @treeship packages are publishable by this workflow
         run: |
           set -e
+          VERSION="${GITHUB_REF_NAME#v}"
           MISSING=()
+          UNTRUSTED=()
           for pkg in \
             @treeship/core-wasm \
             @treeship/verify \
@@ -296,18 +316,44 @@ jobs:
             @treeship/cli-darwin-arm64 \
             @treeship/cli-darwin-x64 \
             treeship; do
-            if npm view "$pkg" version > /dev/null 2>&1; then
-              echo "  ✓ $pkg exists"
-            else
+            if ! npm view "$pkg" version > /dev/null 2>&1; then
               echo "::error::$pkg does not exist on npm."
               MISSING+=("$pkg")
+              continue
+            fi
+
+            # Already live at the exact version this run would publish, so the
+            # publish step will skip it (npm-publish-if-needed.sh) and no write
+            # permission is needed for it in this run.
+            if [ "$(npm view "${pkg}@${VERSION}" version 2>/dev/null || true)" = "$VERSION" ]; then
+              echo "  ✓ $pkg@$VERSION already live; no publish needed this run"
+              continue
+            fi
+
+            if [ -n "$(npm view "$pkg" dist.attestations.url 2>/dev/null || true)" ]; then
+              echo "  ✓ $pkg exists and has published with provenance"
+            else
+              echo "::error::$pkg exists but has never been published with provenance."
+              echo "::error::  CI has never successfully published it, so its OIDC trusted"
+              echo "::error::  publisher is probably not configured. Publishing would 404."
+              UNTRUSTED+=("$pkg")
             fi
           done
+
+          FAIL=0
           if [ ${#MISSING[@]} -gt 0 ]; then
             echo "::error::${#MISSING[@]} package(s) missing: ${MISSING[*]}"
             echo "::error::Bootstrap each with: npm publish --access public --auth-type=web"
-            exit 1
+            FAIL=1
           fi
+          if [ ${#UNTRUSTED[@]} -gt 0 ]; then
+            echo "::error::${#UNTRUSTED[@]} package(s) without a confirmed trusted publisher: ${UNTRUSTED[*]}"
+            echo "::error::Configure each on npmjs.com -> the package -> Settings ->"
+            echo "::error::Trusted publisher: repo zerkerlabs/treeship, workflow release.yml,"
+            echo "::error::environment npm-publish. Then re-run this job."
+            FAIL=1
+          fi
+          [ "$FAIL" -eq 0 ] || exit 1
 
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable (moving branch; pinned to current tip)
         with:
