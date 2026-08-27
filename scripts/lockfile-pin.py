@@ -23,12 +23,26 @@ no honest value to write. Inventing one, or copying the previous release's
 hash forward, would put a wrong integrity hash in a lockfile -- the failure
 this repo cares about most.
 
-npm handles the resulting state correctly: the sync check passes (no EUSAGE),
-and because the resolved entry no longer satisfies the declared range npm
-re-resolves from the registry rather than silently installing the stale
-version. Before publish that is a loud ETARGET; after publish it fetches the
-right tarball. `release.sh refresh-lockfiles` then rewrites the resolved
-entries for real, with hashes of tarballs that exist.
+The resulting lockfile is deliberately incomplete, and `npm ci` rejects it:
+
+    npm error Invalid: lock file's @treeship/core-wasm@0.25.0
+              does not satisfy @treeship/core-wasm@0.25.1
+
+That is not a side effect to tolerate -- it is the point. The alternative is
+a lockfile that claims to pin a version while resolving to a different one,
+which installs the wrong bytes quietly. Refusing loudly is correct.
+
+But it means the tree between `prepare` and publish does not build for JS,
+so `release.sh refresh-lockfiles` is a required step of the release and not
+a cleanup task. Run it as soon as the packages are on the registry; it
+rewrites the resolved entries with real hashes of tarballs that exist.
+
+(An earlier version of this comment claimed npm accepted the intermediate
+state, on the strength of a pre-publish test that returned ETARGET. The
+ETARGET came from registry resolution and masked the EUSAGE underneath;
+once the version was published, the EUSAGE surfaced and broke `npm ci` in
+every JS package on main. Testing the failure path proved nothing about the
+success path.)
 """
 
 import json

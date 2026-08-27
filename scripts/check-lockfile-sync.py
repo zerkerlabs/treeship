@@ -16,9 +16,22 @@ with each PR rather than with main.
 Checked here rather than left to `npm ci` because the CI error names the
 symptom and not the cause: a reader sees "your lockfile is out of date" on a
 PR that never touched a lockfile.
+
+Two fields have to agree, not one. `npm ci` compares package.json against
+BOTH the declared range in packages[""] and the version of the installed
+entry in packages["node_modules/<name>"]:
+
+    npm error Invalid: lock file's @treeship/core-wasm@0.25.0
+              does not satisfy @treeship/core-wasm@0.25.1
+
+v0.25.1 checked only the first and passed on a tree where `npm ci` failed in
+every JS package on main -- the same outage as v0.25.0, reported green by the
+check written to prevent it. A gate that verifies a strict subset of what the
+real tool verifies will eventually pass something the real tool rejects.
 """
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -56,12 +69,34 @@ def declared(pkg: Path) -> dict:
 
 
 def locked(pkg: Path) -> dict:
+    """The declared ranges recorded in the lockfile's root entry."""
     with open(pkg / "package-lock.json", encoding="utf-8") as f:
         d = json.load(f)
     root = d.get("packages", {}).get("", {})
     out = {}
     for key in ("dependencies", "peerDependencies"):
         out.update(root.get(key, {}))
+    return out
+
+
+def installed(pkg: Path) -> dict:
+    """The concrete version of each entry the lockfile would install.
+
+    This is the half `npm ci` rejects on and the half the check used to miss.
+    """
+    with open(pkg / "package-lock.json", encoding="utf-8") as f:
+        d = json.load(f)
+    out = {}
+    for path, entry in d.get("packages", {}).items():
+        if not path.startswith("node_modules/"):
+            continue
+        name = path[len("node_modules/") :]
+        # Nested paths (a/node_modules/b) describe a dependency's own tree,
+        # not this package's top-level resolution.
+        if "/node_modules/" in path:
+            continue
+        if "version" in entry:
+            out[name] = entry["version"]
     return out
 
 
@@ -73,11 +108,19 @@ def main() -> int:
         if not (pkg / "package.json").is_file() or not (pkg / "package-lock.json").is_file():
             continue
         checked += 1
-        dec, lck = declared(pkg), locked(pkg)
+        dec, lck, inst = declared(pkg), locked(pkg), installed(pkg)
         for name, want in dec.items():
             got = lck.get(name)
             if got != want:
-                bad.append((rel, name, want, got))
+                bad.append((rel, name, want, got, "declared range in the lockfile"))
+                continue
+            # Exact pins only. A range like ^1.2.0 is legitimately satisfied by
+            # many versions, and deciding which needs a semver implementation;
+            # every @treeship/* pin is exact, which is the case that broke.
+            if re.fullmatch(r"\d+\.\d+\.\d+", want):
+                res = inst.get(name)
+                if res is not None and res != want:
+                    bad.append((rel, name, want, res, "installed entry"))
 
     if not checked:
         # A check that examined nothing passes vacuously and reads as a pass.
@@ -85,8 +128,8 @@ def main() -> int:
         return 1
 
     if bad:
-        for rel, name, want, got in bad:
-            print(f"  err   {rel}: {name} is {want!r} in package.json but {got!r} in the lockfile")
+        for rel, name, want, got, where in bad:
+            print(f"  err   {rel}: {name} is {want!r} in package.json but {got!r} in the {where}")
         print()
         print(
             f"{len(bad)} mismatch(es). `npm ci` will refuse on every PR until the "

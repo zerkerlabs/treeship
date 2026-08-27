@@ -83,8 +83,13 @@ cmd_prepare() {
       fi
     fi
   done
-  echo "  note: resolved entries are refreshed by 'release.sh refresh-lockfiles'"
-  echo "        once @treeship/core-wasm@$VERSION is on the registry."
+  echo
+  echo "  IMPORTANT: these lockfiles are now incomplete on purpose -- the resolved"
+  echo "  entries still name the previous version, because $VERSION has no tarball"
+  echo "  to hash yet. 'npm ci' will refuse until you run, after publish:"
+  echo "        scripts/release.sh refresh-lockfiles"
+  echo "  That is a required release step, not cleanup. Skipping it leaves main"
+  echo "  unbuildable for JS."
 
   echo
   echo "Running release version preflight..."
