@@ -801,11 +801,52 @@ impl Store {
              corrupted."
         };
 
-        // Resolve the user's ~/.treeship path for the recovery command, so
-        // we give a copy-pasteable command rather than a generic instruction.
-        let ts_dir = std::env::var("HOME")
-            .map(|h| format!("{h}/.treeship"))
-            .unwrap_or_else(|_| "~/.treeship".into());
+        // Name the keystore that actually failed, not the default one.
+        //
+        // This used to read $HOME/.treeship unconditionally, which is the
+        // store root only in the default layout. `self.dir` is the keys
+        // directory (KeyStore::open is always called with cfg.keys_dir), so
+        // under `--config`, or any custom keys_dir, the old message told the
+        // user to move a keystore that was working and leave the broken one
+        // in place: advice that damages a good store and fixes nothing.
+        //
+        // `mv` on a store directory is exactly the operation that has
+        // scrambled state here before -- see resolve_dirs in the CLI's
+        // config.rs, where one machine reached six .bak directories and
+        // three ship identities. Aiming it at the wrong directory is not a
+        // cosmetic flaw in the message; it is the message handing over a
+        // footgun pointed somewhere else.
+        let keys_dir = self.dir.display().to_string();
+
+        // A non-default store needs --config on the way back in, or
+        // `treeship init` re-creates the *default* store and the user is
+        // still broken, now with an extra keystore.
+        //
+        // --force is required rather than optional: moving the keys aside
+        // leaves config.json behind, and plain `init` then refuses with
+        // "already initialized" while `attest` says "no default key -- run
+        // treeship init". Verified: without --force the two commands send
+        // the user in a circle.
+        // Compare canonicalized paths, not strings: on macOS $HOME and the
+        // resolved store path can differ by the /tmp -> /private/tmp symlink,
+        // and a string compare then reports a default store as custom. The
+        // custom branch is still correct when that happens (it just names a
+        // --config that was already implied), so this only sharpens the
+        // message; it cannot make it wrong.
+        let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let default_keys = std::env::var("HOME")
+            .ok()
+            .map(|h| canon(&PathBuf::from(h).join(".treeship").join("keys")));
+        let init_cmd = if default_keys.as_deref() == Some(canon(&self.dir).as_path()) {
+            "treeship init --force".to_string()
+        } else {
+            let root = self
+                .dir
+                .parent()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| keys_dir.clone());
+            format!("treeship --config {root}/config.json init --force")
+        };
 
         // The outer KeyError::Crypto Display impl already prepends
         // "keys crypto: "; don't double it. Start with the raw MAC error
@@ -814,11 +855,15 @@ impl Store {
         let msg = format!(
             "{raw}\n\n  \
              Diagnosis: {diagnosis}\n\n  \
-             Recovery (nondestructive -- the old keystore is moved aside, \
-             not deleted; any sealed .treeship packages you produced remain \
-             verifiable since their receipts embed the old public key):\n\n    \
-             mv {ts_dir} {ts_dir}.bak.$(date +%s)\n    \
-             treeship init\n"
+             Recovery (reversible -- the old keystore is moved aside, not \
+             deleted, and moving it back restores the previous state):\n\n    \
+             mv {keys_dir} {keys_dir}.bak.$(date +%s)\n    \
+             {init_cmd}\n\n  \
+             After this you sign under a new key. Receipts already signed by \
+             the old key verify as `unknown key` until that keystore is \
+             restored, so keep the .bak directory. Sealed .treeship packages \
+             are unaffected -- they embed the public key they were signed \
+             with.\n"
         );
 
         KeyError::Crypto(msg)
