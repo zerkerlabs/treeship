@@ -343,7 +343,9 @@ jobs:
           FAIL=0
           if [ ${#MISSING[@]} -gt 0 ]; then
             echo "::error::${#MISSING[@]} package(s) missing: ${MISSING[*]}"
-            echo "::error::Bootstrap each with: npm publish --access public --auth-type=web"
+            echo "::error::Bootstrap is TWO steps, both required:"
+            echo "::error::  1. npm publish --access public --auth-type=web"
+            echo "::error::  2. configure the trusted publisher on npmjs.com (see below)"
             FAIL=1
           fi
           if [ ${#UNTRUSTED[@]} -gt 0 ]; then
