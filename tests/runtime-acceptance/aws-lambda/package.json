@@ -1,11 +1,11 @@
 {
   "name": "treeship-aws-lambda-acceptance",
-  "version": "0.25.2",
+  "version": "0.25.3",
   "private": true,
   "type": "module",
   "main": "dist/handler.js",
   "dependencies": {
-    "@treeship/verify": "0.25.2"
+    "@treeship/verify": "0.25.3"
   },
   "devDependencies": {
     "@types/aws-lambda": "^8.10.0",

@@ -1,10 +1,10 @@
 {
   "name": "treeship-cloudflare-worker-acceptance",
-  "version": "0.25.2",
+  "version": "0.25.3",
   "private": true,
   "type": "module",
   "dependencies": {
-    "@treeship/verify": "0.25.2"
+    "@treeship/verify": "0.25.3"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240000.0",
