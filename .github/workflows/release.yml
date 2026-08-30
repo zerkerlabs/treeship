@@ -761,3 +761,9 @@ jobs:
 
       - name: Fresh-install publish smoke (npm + PyPI)
         run: bash .github/scripts/publish-smoke.sh "${GITHUB_REF_NAME#v}"
+
+      # The step above installs the published CLI, which is a Rust binary and
+      # never touches the wasm. This one installs the published JS verifier
+      # and calls it -- the artifact users get, not the one CI built.
+      - name: Published @treeship/verify verifies in Node
+        run: bash .github/scripts/publish-smoke-verify-js.sh "${GITHUB_REF_NAME#v}"
