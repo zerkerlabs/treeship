@@ -4,7 +4,7 @@ name = "rig-treeship"
 # pipeline derives every crate's version from the git tag. This crate exists to
 # wrap `treeship-core`, so "which treeship does this match" is the most useful
 # thing its version can say.
-version = "0.25.1"
+version = "0.25.2"
 edition = "2021"
 # Matches rust-toolchain.toml and clippy.toml. 1.88 was this crate's MSRV as a
 # standalone repo, where a dedicated CI job built against it. In the workspace
@@ -26,7 +26,7 @@ rig = { package = "rig-core", version = "0.41", default-features = false }
 # Path + version: the path keeps the workspace building against the core in
 # this tree (so a breaking change here fails CI in the same commit that makes
 # it), and the version is what `cargo publish` puts in the released manifest.
-treeship-core = { version = "0.25.1", path = "../core" }
+treeship-core = { version = "0.25.2", path = "../core" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

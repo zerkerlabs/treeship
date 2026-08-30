@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.25.2 (2026-08-30)
+
+**Upgrade if you use `@treeship/verify`, `@treeship/sdk`, or any npm package
+that verifies in Node.** Those packages could not verify anything at all in
+0.25.1 or 0.25.0.
+
+### Fixed
+
+- **`@treeship/verify` threw on first use in Node.** `WebAssembly.Table.grow():
+  failed to grow table by 4`, from a clean install, on Node 20.19.5, 22.17.1,
+  22.20.0, 22.23.1 and 23.2.0. This is the failure 0.25.0 was released to fix.
+  The structural half of that fix worked — `require()` resolves to the nodejs
+  build rather than a bundler-only one — but the binary it resolved to was
+  miscompiled: the export named `__wbindgen_externrefs` was bound to the
+  funcref table, which wasm-pack emits with `min == max` and therefore cannot
+  grow. Same rustc, same wasm-bindgen, same wasm-pack as a local build that
+  works; the difference is the host platform, which made it invisible to
+  anyone building on a Mac and fatal to everything published from Linux CI.
+  `build-npm.sh` now loads its own nodejs output and calls into it before
+  packaging, so a build that does not work cannot be packaged. (#341)
+- **Nothing tested the published packages.** Every check ran against an
+  artifact CI had just built: `check-verify-js-loads.sh` packs a local build,
+  and the post-publish smoke installs the published CLI — a Rust binary that
+  never touches the wasm. So a broken `@treeship/verify` shipped twice under
+  green checks. The release now installs `@treeship/verify` from the registry
+  after publishing and calls a verify function, because the wasm loads lazily
+  and an import proves nothing. (#340)
+- **`release.sh prepare` could not update the lockfiles it exists to update,
+  and `npm ci` then failed on main.** `--package-lock-only` resolves against
+  the registry, so it failed on the unpublished version being released.
+  Prepare now writes the declared range offline; `refresh-lockfiles` fills in
+  resolved entries after publish. The sync check also compared only the
+  declared range, not the installed entry `npm ci` actually rejects on, so it
+  reported green on a tree where every JS job failed. (#337)
+- **The npm preflight checked that packages exist, not that CI can publish
+  them.** `npm view` is an unauthenticated read; npm returns 404 rather than
+  403 for an unauthorized write. A package bootstrapped by hand but never
+  given a trusted publisher passed the check and then failed mid-publish,
+  leaving 0.25.1 split across three registries. Preflight now checks
+  provenance, which is the observable trace of a successful CI publish. (#335)
+- **Keystore recovery advice named the wrong keystore.** The path came from
+  `$HOME/.treeship`, but that is the store root only in the default layout, so
+  under `--config` a user was told to move their global keystore while the
+  broken one stayed in place. The command also did not work — moving keys
+  aside leaves `config.json`, so `init` refused as "already initialized" while
+  `attest` said to run `init`. And it promised existing receipts stay
+  verifiable; they report `unknown key` until the old keystore is restored.
+  All three corrected, and every command in the message is now executed
+  verbatim in testing. (#338)
+
 ## 0.25.1 (2026-08-21)
 
 **Upgrade if you use the Python SDK or `treeship wrap --format json`.** Two
