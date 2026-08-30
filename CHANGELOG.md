@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.25.3 (2026-08-31)
+
+**Upgrade if you use `@treeship/verify`, `@treeship/sdk`, or any npm package
+that verifies in Node.** 0.25.2 never reached npm: the gate added in 0.25.2
+caught that the artifact still did not load and refused to publish it, so npm
+remained on the broken 0.25.1 while crates.io and PyPI moved to 0.25.2. This
+release fixes the underlying cause and brings every registry back in line.
+
+### Fixed
+
+- **`@treeship/core-wasm` was rewritten by whatever `wasm-opt` the build
+  machine happened to have.** `wasm-pack` runs `wasm-opt` on the package it
+  just built whenever binaryen is on `PATH`. The release workflow installed
+  binaryen from apt, which on Ubuntu noble is `108-1` -- a 2022 build
+  predating the `bulk-memory-opt` and `call-indirect-overlong` features the
+  module declares. It lowered the externref table to a non-growable one, so
+  `require()` threw `WebAssembly.Table.grow(): failed to grow table by 4` on
+  first use. A machine with no `wasm-opt`, or a current one, built the same
+  commit correctly, which is why 0.25.0 and 0.25.1 both shipped broken.
+
+  `wasm-pack`'s `wasm-opt` pass is now disabled for `core-wasm`, so the
+  published nodejs artifact is `wasm-bindgen`'s output and nothing else.
+
+### Changed
+
+- The release and CI workflows install a checksummed binaryen 132 tarball
+  instead of an unpinned apt package. `wasm-pack` was already pinned with
+  `cargo install --locked` specifically so the release job would not run
+  whatever a CDN served at job runtime; the tool that rewrites the artifact
+  is now pinned to the same standard.
+- CI installs binaryen at all, which it previously did not. The two pipelines
+  built differently, so every gate ran against an artifact that was never the
+  one published.
+- `rust-toolchain.toml` pins `wasm32-unknown-unknown`. This did not cause the
+  failure above, but it was the other unpinned input feeding the same
+  artifact.
+
 ## 0.25.2 (2026-08-30)
 
 **Upgrade if you use `@treeship/verify`, `@treeship/sdk`, or any npm package
