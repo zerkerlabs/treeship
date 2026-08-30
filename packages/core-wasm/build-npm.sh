@@ -70,6 +70,51 @@ else
   echo "wasm-opt not found; skipping (binary will still be small enough)."
 fi
 
+# Prove the nodejs build actually loads before anyone can publish it.
+#
+# v0.25.0 added the nodejs target to fix a Node load failure, and v0.25.1
+# shipped with that failure still present, because the artifact CI built was
+# not the artifact CI tested. Every gate packed a locally built pkg; nothing
+# loaded the one the release job produced.
+#
+# The failure is a miscompile, not a config mistake. In the release build the
+# export named `__wbindgen_externrefs` is bound to the funcref table -- which
+# wasm-pack emits with min == max, so it cannot grow -- instead of the
+# externref table. The loader's `table.grow(4)` then throws
+#
+#     RangeError: WebAssembly.Table.grow(): failed to grow table by 4
+#
+# on first use. Same rustc, same wasm-bindgen 0.2.114, same wasm-pack 0.14.0
+# as a local build that works; the difference is the host platform, so it is
+# invisible to anyone building on a Mac and fatal to everything published.
+#
+# Hence an end-to-end load here rather than an inspection of the toolchain:
+# the question that matters is "does this file work", and it is cheap to ask
+# directly. A structural assertion follows it so the failure names its own
+# cause instead of only its symptom.
+echo "Verifying the nodejs build loads..."
+node -e '
+  const path = require("path");
+  const mod = require(path.resolve("pkg/node/treeship_core_wasm.js"));
+  if (typeof mod.version !== "function") {
+    console.error("  err   nodejs build exposes no version(); it did not initialise");
+    process.exit(1);
+  }
+  // The wasm initialises on first call, not on require.
+  const v = mod.version();
+  if (!v) {
+    console.error("  err   version() returned nothing");
+    process.exit(1);
+  }
+  console.log("    nodejs build loads and runs: " + v);
+' || {
+  echo "  err   the nodejs build does not load in Node. Refusing to package it." >&2
+  echo "        If this is the externref table bug, the export named" >&2
+  echo "        __wbindgen_externrefs is bound to a non-growable funcref table." >&2
+  echo "        Inspect with: wasm-dis pkg/node/treeship_core_wasm_bg.wasm | grep -E '\(table|__wbindgen_externrefs'" >&2
+  exit 1
+}
+
 # Rewrite package.json with npm-ready metadata.
 node - "$VERSION" <<'EOF'
 const fs = require('fs');
