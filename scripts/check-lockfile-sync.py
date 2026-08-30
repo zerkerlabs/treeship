@@ -31,6 +31,7 @@ real tool verifies will eventually pass something the real tool rejects.
 """
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -45,6 +46,21 @@ ROOT = Path(__file__).resolve().parents[1]
 #
 # Discovering them means a new package is covered the day it is added rather
 # than the day someone remembers to extend this list.
+# Between `release.sh prepare` and publish, the resolved entries legitimately
+# lag the declared range: the version being released has no tarball yet, so
+# there is no honest integrity hash to write (see scripts/lockfile-pin.py).
+# On a release branch that is the expected state, not drift, and failing here
+# would make every release PR unmergeable by a check the release itself
+# created.
+#
+# Deliberately narrow: only the installed-entry half is relaxed, only on a
+# release branch. The declared-range half -- the one that made main
+# unbuildable at v0.25.0 -- still runs everywhere, and `refresh-lockfiles`
+# after publish restores the resolved entries so the full check applies to
+# main.
+_ref = os.environ.get("GITHUB_HEAD_REF") or os.environ.get("GITHUB_REF_NAME") or ""
+RELEASE_WINDOW = _ref.startswith("release/v")
+
 SKIP_DIRS = {"node_modules", ".git", "target", "dist", "pkg"}
 
 
@@ -117,7 +133,7 @@ def main() -> int:
             # Exact pins only. A range like ^1.2.0 is legitimately satisfied by
             # many versions, and deciding which needs a semver implementation;
             # every @treeship/* pin is exact, which is the case that broke.
-            if re.fullmatch(r"\d+\.\d+\.\d+", want):
+            if re.fullmatch(r"\d+\.\d+\.\d+", want) and not RELEASE_WINDOW:
                 res = inst.get(name)
                 if res is not None and res != want:
                     bad.append((rel, name, want, res, "installed entry"))
@@ -137,7 +153,14 @@ def main() -> int:
         )
         return 1
 
-    print(f"  ✓ package.json and lockfile agree in {checked} package(s)")
+    if RELEASE_WINDOW:
+        print(
+            f"  ✓ declared ranges agree in {checked} package(s); installed-entry "
+            f"check relaxed on release branch {_ref!r}"
+        )
+        print("        Run `scripts/release.sh refresh-lockfiles` after publish.")
+    else:
+        print(f"  ✓ package.json and lockfile agree in {checked} package(s)")
     return 0
 
 
