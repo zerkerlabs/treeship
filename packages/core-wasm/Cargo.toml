@@ -1,6 +1,6 @@
 [package]
 name = "treeship-core-wasm"
-version = "0.25.2"
+version = "0.25.3"
 edition = "2021"
 description = "Treeship verification in the browser via WebAssembly"
 license = "Apache-2.0"
@@ -38,6 +38,25 @@ zk = ["ark-groth16", "ark-bn254", "ark-serialize", "ark-ec", "ark-ff"]
 # [profile.release.package.treeship-core-wasm]. Leaf-level [profile.release]
 # is silently ignored in a workspace, so we avoid putting it here to prevent
 # future readers from assuming it takes effect.
+
+# wasm-pack runs `wasm-opt` on the package it just built whenever binaryen is
+# anywhere on PATH, before build-npm.sh ever sees the output. That made the
+# published artifact a function of whatever binaryen the environment happened
+# to have. release.yml installed Ubuntu's apt binaryen -- 108-1, a 2022 build
+# that predates the `bulk-memory-opt` and `call-indirect-overlong` features
+# this module declares. It lowered the externref table to a non-growable one,
+# so `__wbindgen_init_externref_table` threw `WebAssembly.Table.grow(): failed
+# to grow table by 4` on require(). 0.25.0 and 0.25.1 shipped that way. A
+# developer machine with no wasm-opt, or a modern one, produced a working
+# build from the same commit, which is why it stayed invisible for two
+# releases.
+#
+# Turning it off here means the artifact is wasm-bindgen's output and nothing
+# else. build-npm.sh still runs its own pinned `wasm-opt -Oz` over pkg/*.wasm
+# for the bundler build; the nodejs build is not size-critical and is the one
+# that broke.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
 
 [lints]
 workspace = true
