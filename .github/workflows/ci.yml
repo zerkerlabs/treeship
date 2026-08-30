@@ -134,6 +134,38 @@ jobs:
       # @treeship/verify, which pins core-wasm EXACTLY -- so a green core-wasm
       # gate can sit beside a broken user install indefinitely. This exercises
       # the package a user actually gets.
+      # Install binaryen so CI's build follows the same path as the release
+      # job's. release.yml installs it; ci.yml did not, so the two pipelines
+      # produced different artifacts and the gates ran against the one that
+      # was never published -- a build step present in one pipeline and absent
+      # in the other is how an artifact difference stays invisible.
+      #
+      # Note this is NOT build-npm.sh's own `wasm-opt -Oz`, which globs
+      # pkg/*.wasm and never matches pkg/node/. wasm-pack runs wasm-opt itself
+      # on the package it just built whenever binaryen is on PATH. That is the
+      # invocation that broke 0.25.1, and core-wasm's Cargo.toml now disables
+      # it. binaryen is still installed here for the bundler build's -Oz pass,
+      # and pinned so both pipelines optimize with the same tool.
+      # Pin binaryen the way wasm-pack is pinned two steps up. Ubuntu's apt
+      # binaryen is 108-1, a 2022 build that predates the `bulk-memory-opt`
+      # and `call-indirect-overlong` features core-wasm declares; it lowered
+      # the externref table to a non-growable one and shipped a
+      # @treeship/core-wasm that threw on require() in 0.25.0 and 0.25.1.
+      # `cargo install --locked` was chosen for wasm-pack so the job would not
+      # run "whatever the CDN served at job runtime" -- installing the tool
+      # that rewrites the artifact from an unpinned distro package left that
+      # same hole open. Checksummed so the release job, which holds
+      # id-token: write, cannot be handed a substituted tarball.
+      - name: Install wasm-opt (binaryen, pinned)
+        run: |
+          set -euo pipefail
+          V=132
+          URL="https://github.com/WebAssembly/binaryen/releases/download/version_${V}/binaryen-version_${V}-x86_64-linux.tar.gz"
+          curl -fsSL --retry 5 --retry-connrefused -o /tmp/binaryen.tar.gz "$URL"
+          echo "195ddc94f9bc89f45abdabb0b9eea86023d727ba90eac8b35b80f2544fc30572  /tmp/binaryen.tar.gz" | sha256sum -c -
+          sudo tar -xzf /tmp/binaryen.tar.gz -C /opt
+          echo "/opt/binaryen-version_${V}/bin" >> "$GITHUB_PATH"
+
       - name: "@treeship/verify installs and verifies under Node"
         run: |
           cargo install wasm-pack --version 0.14.0 --locked || true

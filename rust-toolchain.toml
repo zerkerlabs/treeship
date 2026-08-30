@@ -18,6 +18,14 @@
 # pinned channel on first cargo invocation, so local devs do not need to run
 # `rustup component add` manually.
 #
+# wasm32-unknown-unknown is listed for the same reason. Without it the wasm
+# target's stdlib is whatever each environment installs on demand, so the one
+# artifact whose correctness is platform-sensitive was the one target not
+# pinned. This is not what broke 0.25.0 and 0.25.1 -- that was an unpinned
+# binaryen rewriting the externref table, fixed in core-wasm's Cargo.toml and
+# the two workflows. It is pinned here so the next difference between a
+# developer build and a release build is not discovered the same way.
+#
 # Targets: the release workflow cross-compiles for x86_64-apple-darwin
 # (from macOS arm64 runners), aarch64-apple-darwin (native), and
 # x86_64-unknown-linux-musl and aarch64-unknown-linux-musl on native
@@ -31,4 +39,4 @@
 channel    = "1.94.1"
 components = ["clippy", "rustfmt"]
 profile    = "minimal"
-targets    = ["x86_64-apple-darwin", "aarch64-apple-darwin", "x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl"]
+targets    = ["x86_64-apple-darwin", "aarch64-apple-darwin", "x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl", "wasm32-unknown-unknown"]
