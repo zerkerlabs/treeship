@@ -1,8 +1,12 @@
 # Merkle Consistency Proofs (transparency-log slice 3)
 
-**Status:** draft, NOT implemented — deliberately deferred to a careful, dedicated build
+**Status:** SHIPPED in v0.15. Kept as the design record; it is no longer a plan.
+Tracked in `docs/feature-inventory.yml` as `merkle-consistency` (status: stable).
+**Implementation:** `consistency_proof` / `verify_consistency` in
+`packages/core/src/merkle/tree.rs`, `POST /v1/merkle/consistency` on the Hub,
+and `treeship merkle publish`. The audit chain walks the proofs offline.
 **Pairs with:** [transparency-log](./transparency-log.md), `packages/core/src/merkle/tree.rs`
-**Last updated:** 2026-06-24
+**Last updated:** 2026-08-31
 
 ## What this is
 

@@ -166,3 +166,29 @@ applied to receipts.
 Route scanning matches chi registrations by literal string. A route built at
 runtime from a variable will not be found, and will surface as reverse drift
 only if it is *also* undocumented. Adding one is fine; it just needs its entry.
+
+**Design specs under `docs/specs/` are not covered by this index, and they
+drift the dangerous direction.** Nothing cross-checks a spec's `**Status:**`
+line against the feature it describes, so a spec can go on saying "draft, not
+implemented" for releases after the thing shipped. That is worse than an
+out-of-date doc: the standing rule above says "this does not exist" is a claim
+requiring evidence, and a stale spec *is* that claim, stated in the repo's own
+voice, where an agent will find it and rebuild something that already works.
+
+Two were corrected on 2026-08-31 after exactly that near-miss:
+`per-actor-signing.md` said "draft, not implemented" for the feature this
+index records as shipped in v0.13, and `merkle-consistency.md` said "NOT
+implemented — deliberately deferred" for `merkle-consistency` (status:
+stable, shipped v0.15). Both were verified before editing — per-actor signing
+by onboarding an agent and observing `actor proof: proven (key-bound)`, merkle
+consistency by locating `consistency_proof` in `tree.rs`.
+
+Nine further specs still say "draft, not implemented" while naming CLI
+commands or feature ids this index lists: `agent-capability-cards`,
+`agent-resolver`, `transparency-log`, `work-history`, `receipt-system`,
+`capability-provenance`, `time-anchoring`, `protocol-integration`,
+`registry-topology`, `agent-invitations-rooms`. Keyword overlap is not proof —
+a spec may legitimately describe more than what shipped — so each needs
+checking individually before its status is changed. Until a spec declares the
+inventory ids it corresponds to, this cannot be automated the way the rest of
+the index is.
