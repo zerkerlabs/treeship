@@ -15,7 +15,7 @@ use crate::attestation::{Envelope, Verifier};
 use crate::merkle::{
     verify_consistency, Checkpoint, CheckpointVerifyOutcome, MerkleTree, ProofFile,
 };
-use crate::statements::{action_in_scope, payload_type, ActionStatement};
+use crate::statements::{action_in_scope, payload_type, ActionStatement, ReceiptStatement};
 use crate::trust::TrustRootStore;
 
 /// Minimal signed authorization graph for workflow conformance v1.
@@ -1285,6 +1285,189 @@ fn invalid(errors: &mut Vec<WorkflowValidationError>, field: &str, detail: &str)
     });
 }
 
+/// Every way the composed workflow verification path can refuse before a
+/// report exists. Each variant is a refusal, never a downgrade: the only
+/// downgrade in this path is pre-existence, which becomes `asserted` when no
+/// checkpoint proof is supplied.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkflowRunVerifyError {
+    /// The declaration envelope did not verify against the caller's verifier.
+    DeclarationSignature(String),
+    /// The declaration envelope is not a receipt.
+    DeclarationWrongPayloadType { actual: String },
+    /// The declaration envelope's statement did not parse.
+    DeclarationMalformed(String),
+    /// The receipt is signed, but it is not a `workflow.v1` declaration.
+    DeclarationNotAWorkflow { actual: String },
+    /// A `workflow.v1` receipt carried no payload to read a declaration from.
+    DeclarationMissingPayload,
+    /// The payload is not a well-formed declaration.
+    InvalidDeclaration(Vec<WorkflowValidationError>),
+    /// The observation set names a different workflow than the one signed.
+    WorkflowRefMismatch { declaration: String, run: String },
+    /// The first-run artifact did not verify, or does not bind this workflow.
+    RunBinding(WorkflowRunBindingError),
+    /// A pre-existence proof was supplied and did not hold.
+    PreExistence(WorkflowPreExistenceError),
+    /// The declaration and observations are individually sound, but the run
+    /// itself is not reducible (vacuous or self-contradicting).
+    Conformance(WorkflowConformanceError),
+}
+
+impl fmt::Display for WorkflowRunVerifyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            WorkflowRunVerifyError::DeclarationSignature(detail) => {
+                write!(f, "workflow declaration did not verify: {detail}")
+            }
+            WorkflowRunVerifyError::DeclarationWrongPayloadType { actual } => write!(
+                f,
+                "workflow declaration has payload type `{actual}`, expected a receipt"
+            ),
+            WorkflowRunVerifyError::DeclarationMalformed(detail) => {
+                write!(f, "workflow declaration statement is unreadable: {detail}")
+            }
+            WorkflowRunVerifyError::DeclarationNotAWorkflow { actual } => write!(
+                f,
+                "signed receipt is `{actual}`, not a workflow.v1 declaration"
+            ),
+            WorkflowRunVerifyError::DeclarationMissingPayload => {
+                write!(f, "workflow.v1 receipt carries no declaration payload")
+            }
+            WorkflowRunVerifyError::InvalidDeclaration(errors) => {
+                let detail = errors
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                write!(f, "workflow declaration is invalid: {detail}")
+            }
+            WorkflowRunVerifyError::WorkflowRefMismatch { declaration, run } => write!(
+                f,
+                "observation set names workflow `{run}`, but the signed declaration is `{declaration}`"
+            ),
+            WorkflowRunVerifyError::RunBinding(error) => {
+                write!(f, "first-run binding failed: {error}")
+            }
+            WorkflowRunVerifyError::PreExistence(error) => {
+                write!(f, "pre-existence proof failed: {error}")
+            }
+            WorkflowRunVerifyError::Conformance(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for WorkflowRunVerifyError {}
+
+/// Verify one workflow run end to end and return its conformance report.
+///
+/// This is the fail-closed composition of the pieces above, and it exists so
+/// that no caller has to remember the order. In particular it is the only
+/// place that decides the `pre_existence` grade: whatever the observation set
+/// claims is **discarded** and replaced with what the supplied evidence
+/// actually proves. A hand-written run file that asserts `checked` therefore
+/// reports `asserted`, which is the difference between a verifier and a
+/// formatter.
+///
+/// The steps, each fatal:
+///
+/// 1. the declaration envelope verifies, is a receipt, and is `workflow.v1`;
+/// 2. the declaration is structurally valid;
+/// 3. the observation set names that same declaration;
+/// 4. the first-run artifact verifies and its signed `session.start` binds
+///    this workflow;
+/// 5. when a proof is supplied, both checkpoints, both inclusion proofs, leaf
+///    ordering, log identity, and the consistency proof hold.
+///
+/// Only then does the pure reducer run. Omitting the proof is allowed and
+/// costs the run its `checked` pre-existence grade; it is never an error,
+/// because an unproven ordering claim is a weaker report rather than a
+/// malformed one.
+pub fn verify_workflow_run(
+    declaration_envelope: &Envelope,
+    first_run_envelope: &Envelope,
+    pre_existence_proof: Option<&WorkflowPreExistenceProof>,
+    observed: &ObservedWorkflowRun,
+    verifier: &Verifier,
+    trust: &TrustRootStore,
+) -> Result<WorkflowConformanceReport, WorkflowRunVerifyError> {
+    let verified_declaration = verifier
+        .verify(declaration_envelope)
+        .map_err(|e| WorkflowRunVerifyError::DeclarationSignature(e.to_string()))?;
+
+    let expected_receipt = payload_type("receipt");
+    if verified_declaration.payload_type != expected_receipt {
+        return Err(WorkflowRunVerifyError::DeclarationWrongPayloadType {
+            actual: verified_declaration.payload_type,
+        });
+    }
+
+    let receipt: ReceiptStatement = declaration_envelope
+        .unmarshal_statement()
+        .map_err(|e| WorkflowRunVerifyError::DeclarationMalformed(e.to_string()))?;
+    if receipt.kind != "workflow.v1" {
+        return Err(WorkflowRunVerifyError::DeclarationNotAWorkflow {
+            actual: receipt.kind,
+        });
+    }
+    let payload = receipt
+        .payload
+        .ok_or(WorkflowRunVerifyError::DeclarationMissingPayload)?;
+    let declaration: WorkflowDeclaration = serde_json::from_value(payload)
+        .map_err(|e| WorkflowRunVerifyError::DeclarationMalformed(e.to_string()))?;
+    declaration
+        .validate()
+        .map_err(WorkflowRunVerifyError::InvalidDeclaration)?;
+
+    // The workflow reference is the id of the artifact whose signature we just
+    // checked, never a caller-supplied string.
+    let workflow_ref = verified_declaration.artifact_id;
+    if observed.workflow_ref != workflow_ref {
+        return Err(WorkflowRunVerifyError::WorkflowRefMismatch {
+            declaration: workflow_ref,
+            run: observed.workflow_ref.clone(),
+        });
+    }
+
+    // Same rule for the run: identify the first-run artifact by verifying it,
+    // then require the inclusion proof to be about that same id.
+    let first_run_artifact = verifier
+        .verify(first_run_envelope)
+        .map_err(|e| {
+            WorkflowRunVerifyError::RunBinding(WorkflowRunBindingError::Signature(e.to_string()))
+        })?
+        .artifact_id;
+    verify_first_run_workflow_binding(
+        &workflow_ref,
+        &first_run_artifact,
+        first_run_envelope,
+        verifier,
+    )
+    .map_err(WorkflowRunVerifyError::RunBinding)?;
+
+    let pre_existence = match pre_existence_proof {
+        Some(proof) => {
+            verify_workflow_pre_existence(proof, &workflow_ref, &first_run_artifact, trust)
+                .map_err(WorkflowRunVerifyError::PreExistence)?
+        }
+        None => PreExistenceEvidence {
+            grade: EvidenceGrade::Asserted,
+            reason: Some("no checkpoint proof supplied; declaration ordering is unproven".into()),
+            declaration_checkpoint: None,
+            declaration_tree_size: None,
+            first_run_leaf_index: None,
+            consistency_to: None,
+            declaration_signed_at: None,
+            first_run_signed_at: None,
+        },
+    };
+
+    let mut run = observed.clone();
+    run.pre_existence = pre_existence;
+
+    evaluate_workflow_conformance(&declaration, &run).map_err(WorkflowRunVerifyError::Conformance)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1300,6 +1483,16 @@ mod tests {
     }
 
     fn real_pre_existence_proof() -> (WorkflowPreExistenceProof, TrustRootStore) {
+        pre_existence_proof_for("art_workflow", "art_first_run")
+    }
+
+    /// Build real checkpoints, inclusion proofs, and a consistency proof over
+    /// two concrete artifact ids, so a composed test can use the ids that were
+    /// actually signed rather than fixture placeholders.
+    fn pre_existence_proof_for(
+        declaration_id: &str,
+        first_run_id: &str,
+    ) -> (WorkflowPreExistenceProof, TrustRootStore) {
         use ed25519_dalek::VerifyingKey;
 
         let signer = Ed25519Signer::generate("key_workflow_checkpoint")
@@ -1319,14 +1512,14 @@ mod tests {
         }]);
 
         let mut tree = MerkleTree::new();
-        tree.append("art_workflow");
+        tree.append(declaration_id);
         let declaration_inclusion = tree
             .inclusion_proof(0)
             .expect("declaration inclusion proof exists");
         let declaration_checkpoint =
             Checkpoint::create(10, &tree, &signer).expect("declaration checkpoint signs");
 
-        tree.append("art_first_run");
+        tree.append(first_run_id);
         let first_run_inclusion = tree
             .inclusion_proof(1)
             .expect("first-run inclusion proof exists");
@@ -1345,13 +1538,13 @@ mod tests {
         (
             WorkflowPreExistenceProof {
                 declaration: ProofFile {
-                    artifact_id: "art_workflow".into(),
+                    artifact_id: declaration_id.into(),
                     artifact_summary: summary("workflow.declare"),
                     inclusion_proof: declaration_inclusion,
                     checkpoint: declaration_checkpoint,
                 },
                 first_run: ProofFile {
-                    artifact_id: "art_first_run".into(),
+                    artifact_id: first_run_id.into(),
                     artifact_summary: summary("workflow.start"),
                     inclusion_proof: first_run_inclusion,
                     checkpoint: first_run_checkpoint,
@@ -1741,5 +1934,223 @@ mod tests {
         let error = evaluate_workflow_conformance(&valid_declaration(), &run)
             .expect_err("empty evidence cannot produce a clean report");
         assert!(matches!(error, WorkflowConformanceError::InvalidRun(_)));
+    }
+
+    // ---- composed fail-closed path (slice 2) ----
+
+    fn observed_golden_run() -> ObservedWorkflowRun {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/workflow-conformance/valid.json"
+        ))
+        .expect("golden fixture parses");
+        serde_json::from_value(fixture["run"].clone()).expect("golden observed run parses")
+    }
+
+    /// Sign a declaration as a `workflow.v1` receipt and return its real
+    /// artifact id, envelope, and the authority signer.
+    fn signed_declaration(declaration: &WorkflowDeclaration) -> (String, Envelope, Ed25519Signer) {
+        let signer = Ed25519Signer::generate("key_workflow_authority")
+            .expect("test signer generation succeeds");
+        let mut receipt = ReceiptStatement::new("system://treeship-test", "workflow.v1");
+        receipt.payload = Some(serde_json::to_value(declaration).expect("declaration serializes"));
+        let result =
+            sign(&payload_type("receipt"), &receipt, &signer).expect("workflow declaration signs");
+        (result.artifact_id, result.envelope, signer)
+    }
+
+    fn verifier_over(signers: &[&Ed25519Signer]) -> Verifier {
+        use ed25519_dalek::VerifyingKey;
+        let mut verifier = Verifier::new(std::collections::HashMap::new());
+        for signer in signers {
+            let bytes: [u8; 32] = signer
+                .public_key_bytes()
+                .try_into()
+                .expect("Ed25519 public key is 32 bytes");
+            verifier.add_key(
+                signer.key_id(),
+                VerifyingKey::from_bytes(&bytes).expect("test public key is valid"),
+            );
+        }
+        verifier
+    }
+
+    /// A whole composed case: real signed declaration, real signed
+    /// `session.start`, real checkpoints over those two real artifact ids.
+    struct ComposedCase {
+        declaration_envelope: Envelope,
+        first_run_envelope: Envelope,
+        proof: WorkflowPreExistenceProof,
+        trust: TrustRootStore,
+        verifier: Verifier,
+        workflow_ref: String,
+        run: ObservedWorkflowRun,
+    }
+
+    fn composed_case() -> ComposedCase {
+        let declaration = valid_declaration();
+        let (workflow_ref, declaration_envelope, authority) = signed_declaration(&declaration);
+
+        let run_signer =
+            Ed25519Signer::generate("key_workflow_run").expect("test signer generation succeeds");
+        let mut action = ActionStatement::new("agent://claude-code", "session.start");
+        action.meta = Some(serde_json::json!({
+            "session_start": true,
+            "workflow_ref": workflow_ref,
+        }));
+        let signed_run = sign(&payload_type("action"), &action, &run_signer)
+            .expect("session start action signs");
+
+        let (proof, trust) = pre_existence_proof_for(&workflow_ref, &signed_run.artifact_id);
+
+        let mut run = observed_golden_run();
+        run.workflow_ref = workflow_ref.clone();
+
+        ComposedCase {
+            declaration_envelope,
+            first_run_envelope: signed_run.envelope,
+            proof,
+            trust,
+            verifier: verifier_over(&[&authority, &run_signer]),
+            workflow_ref,
+            run,
+        }
+    }
+
+    #[test]
+    fn composed_path_discards_a_claimed_pre_existence_grade() {
+        let case = composed_case();
+        // The golden run asserts `checked` pre-existence with placeholder
+        // checkpoint ids. With no proof supplied, the composed path must not
+        // let that claim through.
+        assert_eq!(case.run.pre_existence.grade, EvidenceGrade::Checked);
+
+        let report = verify_workflow_run(
+            &case.declaration_envelope,
+            &case.first_run_envelope,
+            None,
+            &case.run,
+            &case.verifier,
+            &case.trust,
+        )
+        .expect("a run with no checkpoint proof still produces a report");
+
+        assert_eq!(
+            report.pre_existence.grade,
+            EvidenceGrade::Asserted,
+            "an unproven pre-existence claim must be downgraded, not trusted"
+        );
+    }
+
+    #[test]
+    fn composed_path_grades_pre_existence_checked_only_with_real_proof() {
+        let case = composed_case();
+        let report = verify_workflow_run(
+            &case.declaration_envelope,
+            &case.first_run_envelope,
+            Some(&case.proof),
+            &case.run,
+            &case.verifier,
+            &case.trust,
+        )
+        .expect("real checkpoints over real artifact ids verify");
+
+        assert_eq!(report.pre_existence.grade, EvidenceGrade::Checked);
+        assert_eq!(report.workflow_ref, case.workflow_ref);
+    }
+
+    #[test]
+    fn composed_path_refuses_a_declaration_signed_by_an_untrusted_key() {
+        let case = composed_case();
+        let stranger =
+            Ed25519Signer::generate("key_stranger").expect("test signer generation succeeds");
+        let verifier = verifier_over(&[&stranger]);
+
+        let error = verify_workflow_run(
+            &case.declaration_envelope,
+            &case.first_run_envelope,
+            Some(&case.proof),
+            &case.run,
+            &verifier,
+            &case.trust,
+        )
+        .expect_err("an unverifiable declaration must never reach the reducer");
+        assert!(matches!(
+            error,
+            WorkflowRunVerifyError::DeclarationSignature(_)
+        ));
+    }
+
+    #[test]
+    fn composed_path_refuses_a_run_that_names_another_workflow() {
+        let case = composed_case();
+        let mut run = case.run.clone();
+        run.workflow_ref = "art_some_other_workflow".into();
+
+        let error = verify_workflow_run(
+            &case.declaration_envelope,
+            &case.first_run_envelope,
+            Some(&case.proof),
+            &run,
+            &case.verifier,
+            &case.trust,
+        )
+        .expect_err("an observation set for another workflow must be refused");
+        assert!(matches!(
+            error,
+            WorkflowRunVerifyError::WorkflowRefMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn composed_path_refuses_a_first_run_bound_to_another_workflow() {
+        let case = composed_case();
+        let (_, other_envelope, _) = {
+            let run_signer = Ed25519Signer::generate("key_workflow_run")
+                .expect("test signer generation succeeds");
+            let mut action = ActionStatement::new("agent://claude-code", "session.start");
+            action.meta = Some(serde_json::json!({
+                "session_start": true,
+                "workflow_ref": "art_some_other_workflow",
+            }));
+            let signed = sign(&payload_type("action"), &action, &run_signer)
+                .expect("session start action signs");
+            let verifier = verifier_over(&[&run_signer]);
+            (verifier, signed.envelope, signed.artifact_id)
+        };
+
+        let error = verify_workflow_run(
+            &case.declaration_envelope,
+            &other_envelope,
+            None,
+            &case.run,
+            &case.verifier,
+            &case.trust,
+        )
+        .expect_err("a session.start bound to a different workflow must be refused");
+        assert!(matches!(error, WorkflowRunVerifyError::RunBinding(_)));
+    }
+
+    #[test]
+    fn composed_path_refuses_a_receipt_that_is_not_a_workflow_declaration() {
+        let case = composed_case();
+        let signer = Ed25519Signer::generate("key_workflow_authority")
+            .expect("test signer generation succeeds");
+        let mut receipt = ReceiptStatement::new("system://treeship-test", "memory.read.v1");
+        receipt.payload = Some(serde_json::json!({ "note": "not a workflow" }));
+        let signed = sign(&payload_type("receipt"), &receipt, &signer).expect("receipt signs");
+
+        let error = verify_workflow_run(
+            &signed.envelope,
+            &case.first_run_envelope,
+            None,
+            &case.run,
+            &verifier_over(&[&signer]),
+            &case.trust,
+        )
+        .expect_err("a non-workflow receipt must not be read as a declaration");
+        assert!(matches!(
+            error,
+            WorkflowRunVerifyError::DeclarationNotAWorkflow { .. }
+        ));
     }
 }
