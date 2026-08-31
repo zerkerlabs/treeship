@@ -391,6 +391,28 @@ impl MerkleTree {
         hex::encode(current) == root_hex
     }
 
+    /// Verify an inclusion proof and bind its claimed leaf index to a trusted
+    /// tree size.
+    ///
+    /// [`verify_proof`](Self::verify_proof) can recompute a root from a sibling
+    /// path, but the root hash alone does not tell it whether the wire-provided
+    /// `leaf_index` matches that path. Callers making ordering claims must use
+    /// this stricter form with the size from a signature-verified checkpoint.
+    pub fn verify_proof_at_size(
+        expected_version: u8,
+        root_hex: &str,
+        artifact_id: &str,
+        proof: &InclusionProof,
+        tree_size: usize,
+    ) -> bool {
+        if proof.leaf_index >= tree_size
+            || !proof_position_matches_tree(proof.leaf_index, tree_size, &proof.path)
+        {
+            return false;
+        }
+        Self::verify_proof(expected_version, root_hex, artifact_id, proof)
+    }
+
     /// Internal: compute root from a slice of leaf hashes.
     /// RFC 9162 construction: odd nodes are promoted without hashing.
     fn compute_root(&self, leaves: &[[u8; 32]]) -> [u8; 32] {
@@ -439,6 +461,41 @@ impl MerkleTree {
                 .collect(),
         )
     }
+}
+
+/// Confirm that a proof's left/right steps are exactly the steps implied by
+/// its claimed leaf index and the trusted RFC 9162 tree size. Promoted odd
+/// nodes consume no path element.
+fn proof_position_matches_tree(
+    mut leaf_index: usize,
+    mut level_size: usize,
+    path: &[ProofStep],
+) -> bool {
+    if level_size == 0 {
+        return false;
+    }
+    let mut step_index = 0usize;
+    while level_size > 1 {
+        let expected_direction = if leaf_index % 2 == 1 {
+            Some(Direction::Left)
+        } else if leaf_index + 1 < level_size {
+            Some(Direction::Right)
+        } else {
+            None
+        };
+        if let Some(expected) = expected_direction {
+            let Some(step) = path.get(step_index) else {
+                return false;
+            };
+            if step.direction != expected {
+                return false;
+            }
+            step_index += 1;
+        }
+        leaf_index /= 2;
+        level_size = level_size.div_ceil(2);
+    }
+    step_index == path.len()
 }
 
 /// Merkle Tree Hash of a slice of leaf hashes, the same level-by-level
@@ -703,6 +760,46 @@ mod tests {
             "art_b",
             &proof
         ));
+    }
+
+    #[test]
+    fn strict_inclusion_verification_binds_leaf_index_to_checkpoint_size() {
+        let mut tree = MerkleTree::new();
+        tree.append("art_a");
+        tree.append("art_b");
+
+        let root = hex::encode(tree.root().unwrap());
+        let mut proof = tree.inclusion_proof(0).unwrap();
+        proof.leaf_index = 1; // Same hashes, false position claim.
+
+        assert!(!MerkleTree::verify_proof_at_size(
+            MERKLE_VERSION_V2,
+            &root,
+            "art_a",
+            &proof,
+            tree.len(),
+        ));
+    }
+
+    #[test]
+    fn strict_inclusion_accepts_generated_paths_with_odd_node_promotion() {
+        for width in 1..=9 {
+            let mut tree = MerkleTree::new();
+            for index in 0..width {
+                tree.append(&format!("art_{index}"));
+            }
+            let root = hex::encode(tree.root().unwrap());
+            for index in 0..width {
+                let proof = tree.inclusion_proof(index).unwrap();
+                assert!(MerkleTree::verify_proof_at_size(
+                    MERKLE_VERSION_V2,
+                    &root,
+                    &format!("art_{index}"),
+                    &proof,
+                    width,
+                ));
+            }
+        }
     }
 
     #[test]

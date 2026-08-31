@@ -1255,6 +1255,10 @@ struct SessionStartArgs {
     #[arg(long, value_name = "URI")]
     actor: Option<String>,
 
+    /// Signed workflow.v1 artifact to bind into the session-start receipt
+    #[arg(long, value_name = "ARTIFACT_ID")]
+    workflow_ref: Option<String>,
+
     /// Allow starting from a dangerous git root such as $HOME.
     #[arg(long)]
     allow_dangerous_root: bool,
@@ -2875,6 +2879,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             SessionCommand::Start(a) => commands::session::start(
                 a.name.clone(),
                 a.actor.clone(),
+                a.workflow_ref.clone(),
                 a.allow_dangerous_root,
                 cli.config.as_deref(),
                 printer,

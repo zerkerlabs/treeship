@@ -50,6 +50,7 @@ pub fn run(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::e
     super::session::start(
         Some("quickstart session".into()),
         None,
+        None,
         false,
         config,
         printer,

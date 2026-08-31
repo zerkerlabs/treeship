@@ -240,6 +240,12 @@ pub struct SessionSection {
     /// Agent Certificate reference the same ship.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ship_id: Option<String>,
+    /// Workflow declaration bound into the signed session-start root action.
+    /// This copy makes the binding visible on the composed session receipt;
+    /// verifiers must compare it with the root action rather than trusting an
+    /// unsigned manifest value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_ref: Option<String>,
     /// Structured narrative for human review. All fields optional.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub narrative: Option<Narrative>,
@@ -501,6 +507,7 @@ impl ReceiptComposer {
             status: manifest.status.clone(),
             duration_ms,
             ship_id: parse_ship_id_from_actor(&manifest.actor),
+            workflow_ref: manifest.workflow_ref.clone(),
             narrative: manifest.summary.as_ref().map(|s| Narrative {
                 headline: manifest.name.clone(),
                 summary: Some(s.clone()),
@@ -1139,6 +1146,23 @@ mod tests {
         assert_eq!(receipt.side_effects.files_written.len(), 1);
         assert_eq!(receipt.merkle.leaf_count, 2);
         assert!(receipt.merkle.root.is_some());
+    }
+
+    #[test]
+    fn composed_receipt_mirrors_bound_workflow_reference() {
+        let mut manifest = make_manifest();
+        manifest.workflow_ref = Some("art_0123456789abcdef0123456789abcdef".into());
+
+        let receipt = ReceiptComposer::compose(&manifest, &make_events(), vec![]);
+
+        assert_eq!(
+            receipt.session.workflow_ref.as_deref(),
+            Some("art_0123456789abcdef0123456789abcdef")
+        );
+        let json = ReceiptComposer::to_canonical_json(&receipt).unwrap();
+        assert!(String::from_utf8(json)
+            .unwrap()
+            .contains(r#""workflow_ref":"art_0123456789abcdef0123456789abcdef""#));
     }
 
     #[test]

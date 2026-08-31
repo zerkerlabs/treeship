@@ -67,6 +67,37 @@ Which memories an agent retrieved for an action, and the query that produced the
 
 A provider-neutral actor-checker evaluation boundary: what a checker was allowed to see, what policy denied, and the decision it reached. See [Actor-Checker Boundaries](/concepts/actor-checker-boundaries) for the model. The full schema is `treeship.boundary.v1`.
 
+### `workflow.v1`
+
+A signed declaration of the path an agent workflow is **allowed** to take: its
+nodes, the edges between them, which node starts a run, which nodes may end
+one, and how many times a loop may repeat.
+
+Declared before execution and signed, so the allowed path provably pre-exists
+the run it judges. Treeship then reconstructs the observed path from captured
+receipts and reports whether it conformed.
+
+Treeship does **not** execute, schedule, or enforce the workflow. A declaration
+is evidence about a run, evaluated after the fact — the runtime (LangGraph,
+Temporal, Claude Code, an orchestrator of your own) still does the work. A
+clean report means every action in the evidence set fit the declaration and no
+declared step lacked evidence; it does not mean the evidence set is complete.
+See [Workflow declarations](https://github.com/zerkerlabs/treeship/blob/main/docs/specs/workflow-declarations.md)
+for the model, including the three graphs (declared, observed, evidence) the
+verifier keeps separate.
+
+| Field | Type | Required |
+|---|---|---|
+| `kind` | const `workflow.v1` | yes |
+| `schema_version` | const `1` | yes |
+| `workflow_id` | string | yes |
+| `authority` | string (actor URI that declared it) | yes |
+| `entry_node` | string (node id a run must start at) | yes |
+| `terminal_nodes` | array of node ids a run may end at | yes |
+| `nodes` | array (declared steps, with their allowed actors and tools) | yes |
+| `edges` | array (allowed transitions between nodes) | yes |
+| `loops` | array (bounded repeats, with an explicit iteration limit) | no |
+
 ### `agent_card.v1`
 
 A signed, verifiable agent capability card: a key attests an identity and a capability set. Carried as the payload of a receipt with `kind=agent_card.v1`. A card is **key-bound** only when its `keyid` is the envelope signer pinned under `AgentCert`; self-signed cards are reported `self-asserted`. Mint with `treeship attest card`; check against captured evidence with `treeship verify-capability`. See [Capability Cards](/docs/concepts/capability-cards).

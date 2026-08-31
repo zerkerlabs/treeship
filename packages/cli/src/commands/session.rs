@@ -1,9 +1,14 @@
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
+use ed25519_dalek::VerifyingKey;
 use fs2::FileExt;
 use treeship_core::{
-    attestation::sign,
+    attestation::{sign, Verifier},
     journal::{self, Journal},
+    predicates,
     session::{
         self, build_package_with_approvals,
         event::{generate_event_id, generate_span_id, generate_trace_id},
@@ -289,9 +294,190 @@ fn base_event(
 // session start
 // ---------------------------------------------------------------------------
 
+fn local_keystore_verifier(ctx: &ctx::Ctx) -> Result<Verifier, Box<dyn std::error::Error>> {
+    let mut public_keys = HashMap::new();
+    for key in ctx.keys.list()? {
+        let bytes: [u8; 32] = key.public_key.as_slice().try_into().map_err(|_| {
+            format!(
+                "local key {} has malformed public key length {}; expected 32 bytes",
+                key.id,
+                key.public_key.len()
+            )
+        })?;
+        let verifying_key = VerifyingKey::from_bytes(&bytes).map_err(|e| {
+            format!(
+                "local key {} has an invalid Ed25519 public key: {e}",
+                key.id
+            )
+        })?;
+        public_keys.insert(key.id, verifying_key);
+    }
+    Ok(Verifier::new(public_keys))
+}
+
+/// Load and cryptographically validate the workflow declaration before its
+/// artifact id is bound into a new session's signed root action.
+///
+/// This initial binding path accepts declarations signed by a key in the local
+/// keystore. External workflow authorities need an explicit workflow-authority
+/// trust-root kind before their artifacts can be accepted without conflating
+/// unrelated trust powers.
+fn validate_workflow_ref(
+    ctx: &ctx::Ctx,
+    workflow_ref: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if workflow_ref.trim().is_empty() {
+        return Err("--workflow-ref must not be empty".into());
+    }
+
+    let record = ctx.storage.read(workflow_ref).map_err(|e| {
+        format!(
+            "workflow declaration {workflow_ref} is not available locally: {e}\n\n  fix: mint or pull the workflow.v1 artifact before starting the session"
+        )
+    })?;
+    if record.artifact_id != workflow_ref {
+        return Err(format!(
+            "workflow record id mismatch: requested {workflow_ref}, record contains {}",
+            record.artifact_id
+        )
+        .into());
+    }
+
+    let expected_payload_type = payload_type("receipt");
+    if record.payload_type != expected_payload_type {
+        return Err(format!(
+            "{workflow_ref} has payload type `{}`, expected `{expected_payload_type}` for workflow.v1",
+            record.payload_type
+        )
+        .into());
+    }
+
+    let verified = local_keystore_verifier(ctx)?
+        .verify(&record.envelope)
+        .map_err(|e| {
+            format!(
+                "workflow declaration {workflow_ref} is not signed by a locally trusted key: {e}\n\n  fix: mint the declaration with this Treeship keystore"
+            )
+        })?;
+    if verified.artifact_id != workflow_ref
+        || verified.digest != record.digest
+        || verified.payload_type != record.payload_type
+    {
+        return Err(format!(
+            "workflow declaration {workflow_ref} failed record binding: verified id, digest, or payload type differs"
+        )
+        .into());
+    }
+
+    let statement: ReceiptStatement = record
+        .envelope
+        .unmarshal_statement()
+        .map_err(|e| format!("workflow declaration {workflow_ref} is not a receipt: {e}"))?;
+    if statement.kind != "workflow.v1" {
+        return Err(format!(
+            "{workflow_ref} is `{}`, not a workflow.v1 declaration",
+            statement.kind
+        )
+        .into());
+    }
+    predicates::validate(&statement.kind, statement.payload.as_ref())
+        .map_err(|e| format!("workflow declaration {workflow_ref} is invalid: {e}"))?;
+
+    Ok(())
+}
+
+/// Re-derive the workflow binding from the trusted session root before close.
+/// The manifest is mutable discovery state, so it may only mirror this value.
+fn verified_root_workflow_ref(
+    ctx: &ctx::Ctx,
+    manifest: &SessionManifest,
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    let root_id = manifest.root_artifact_id.as_deref().ok_or(
+        "session manifest has no root artifact; cannot verify its workflow binding before close",
+    )?;
+    let record = ctx.storage.read(root_id).map_err(|e| {
+        format!(
+            "session root artifact {root_id} is unavailable; refusing to sign a close receipt: {e}"
+        )
+    })?;
+    let verified = local_keystore_verifier(ctx)?
+        .verify(&record.envelope)
+        .map_err(|e| {
+            format!("session root artifact {root_id} is not signed by a locally trusted key: {e}")
+        })?;
+    if verified.artifact_id != root_id
+        || record.artifact_id != root_id
+        || verified.digest != record.digest
+        || verified.payload_type != record.payload_type
+        || verified.payload_type != payload_type("action")
+    {
+        return Err(format!(
+            "session root artifact {root_id} failed record binding; refusing to sign derived session claims"
+        )
+        .into());
+    }
+
+    let action: ActionStatement = record
+        .envelope
+        .unmarshal_statement()
+        .map_err(|e| format!("session root artifact {root_id} is not an action: {e}"))?;
+    if action.action != "session.start" {
+        return Err(format!(
+            "session root action is `{}`, expected `session.start`",
+            action.action
+        )
+        .into());
+    }
+    if action.actor != manifest.actor {
+        return Err(format!(
+            "session manifest actor mismatch: root binds `{}`, manifest claims `{}`",
+            action.actor, manifest.actor
+        )
+        .into());
+    }
+    let root_session_id = action
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.get("session_id"))
+        .and_then(serde_json::Value::as_str)
+        .ok_or("signed session root has no session_id binding")?;
+    if root_session_id != manifest.session_id {
+        return Err(format!(
+            "session manifest id mismatch: root binds `{root_session_id}`, manifest claims `{}`",
+            manifest.session_id
+        )
+        .into());
+    }
+
+    let root_workflow_ref = match action
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.get("workflow_ref"))
+    {
+        Some(value) => Some(
+            value
+                .as_str()
+                .ok_or("signed session root workflow_ref is not a string")?
+                .to_string(),
+        ),
+        None => None,
+    };
+    if root_workflow_ref != manifest.workflow_ref {
+        return Err(format!(
+            "session manifest workflow mismatch: root binds `{}`, manifest claims `{}`; refusing to sign the mutable manifest value",
+            root_workflow_ref.as_deref().unwrap_or("none"),
+            manifest.workflow_ref.as_deref().unwrap_or("none"),
+        )
+        .into());
+    }
+
+    Ok(root_workflow_ref)
+}
+
 pub fn start(
     name: Option<String>,
     actor: Option<String>,
+    workflow_ref: Option<String>,
     allow_dangerous_root: bool,
     config: Option<&str>,
     printer: &Printer,
@@ -313,6 +499,10 @@ pub fn start(
 
     let ctx = ctx::open(config)?;
 
+    if let Some(reference) = workflow_ref.as_deref() {
+        validate_workflow_ref(&ctx, reference)?;
+    }
+
     if !allow_dangerous_root {
         if let Ok(cwd) = std::env::current_dir() {
             if let Some(root) = session::git_toplevel(&cwd) {
@@ -333,11 +523,16 @@ pub fn start(
     // Create the session-start action artifact
     let parent_id = resolve_last(&ctx.config.storage_dir);
 
-    let meta = serde_json::json!({
+    let mut meta = serde_json::json!({
         "session_start": true,
         "session_id": session_id,
         "name": name,
     });
+    if let Some(reference) = workflow_ref.as_ref() {
+        meta.as_object_mut()
+            .expect("session start metadata is constructed as an object")
+            .insert("workflow_ref".into(), reference.clone().into());
+    }
 
     let mut stmt = ActionStatement::new(&actor_uri, "session.start");
     stmt.parent_id = parent_id.clone();
@@ -366,6 +561,7 @@ pub fn start(
     let mut manifest = manifest;
     manifest.name = name.clone();
     manifest.root_artifact_id = Some(result.artifact_id.clone());
+    manifest.workflow_ref = workflow_ref.clone();
     manifest.authorized_tools = super::declare::read_authorized_tools();
 
     // Capture the git HEAD SHA at session start so close-time
@@ -403,6 +599,9 @@ pub fn start(
         printer.info(&format!("  name:   {}", n));
     }
     printer.info(&format!("  actor:  {}", actor_uri));
+    if let Some(reference) = workflow_ref.as_ref() {
+        printer.info(&format!("  workflow:  {}", reference));
+    }
     printer.blank();
     printer.hint("treeship session status  to check progress");
     printer.hint("treeship session close   when done");
@@ -1023,7 +1222,7 @@ pub(crate) fn session_record_payload(
 
     let class = session_attestation_class(receipt.participants.tool_runtimes, consumed_approvals);
 
-    serde_json::json!({
+    let mut payload = serde_json::json!({
         "session_id": session_id,
         "actor": actor,
         "headline": receipt
@@ -1050,7 +1249,14 @@ pub(crate) fn session_record_payload(
         "receipt_merkle_root": receipt_merkle_root,
         "report_url": null,
         "room": receipt.session.room,
-    })
+    });
+    if let Some(workflow_ref) = receipt.session.workflow_ref.as_ref() {
+        payload
+            .as_object_mut()
+            .expect("session record payload is constructed as an object")
+            .insert("workflow_ref".into(), workflow_ref.clone().into());
+    }
+    payload
 }
 
 /// Mint the signed `session.v1` record: validate against the registered
@@ -1107,7 +1313,7 @@ pub fn close(
     config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let manifest = match load_session() {
+    let mut manifest = match load_session() {
         Some(m) => m,
         None => {
             return Err(
@@ -1119,15 +1325,10 @@ pub fn close(
 
     let ctx = ctx::open(config)?;
 
-    // Verify the root artifact actually exists in storage
-    if let Some(ref root_id) = manifest.root_artifact_id {
-        if ctx.storage.read(root_id).is_err() {
-            printer.warn(
-                "session root artifact not found in storage (file may have been modified)",
-                &[],
-            );
-        }
-    }
+    // session.json is mutable discovery state. Re-derive the authoritative
+    // workflow reference from the verified root before writing any close
+    // event or artifact, and refuse a mismatch rather than signing it.
+    manifest.workflow_ref = verified_root_workflow_ref(&ctx, &manifest)?;
 
     // Don't trust session.json counts -- verify from artifact chain
     let artifact_count = match &manifest.root_artifact_id {
@@ -2757,6 +2958,35 @@ mod work_history_tests {
         assert_eq!(payload["receipt_digest"], "sha256:deadbeef");
         assert_eq!(payload["handoff_count"], 2);
         assert_eq!(payload["room"], serde_json::Value::Null);
+        assert!(
+            payload.get("workflow_ref").is_none(),
+            "unbound sessions should not gain a null workflow claim"
+        );
+    }
+
+    #[test]
+    fn session_record_payload_carries_workflow_binding() {
+        let mut receipt = receipt_fixture();
+        receipt.session.workflow_ref = Some("art_0123456789abcdef0123456789abcdef".into());
+
+        let payload = session_record_payload(
+            &receipt,
+            "ssn_test1",
+            "agent://hermes",
+            42,
+            120,
+            0,
+            5_400_000,
+            "sha256:deadbeef",
+            Some("sha256:cafebabe"),
+        );
+
+        treeship_core::predicates::validate("session.v1", Some(&payload))
+            .expect("a workflow-bound session payload must conform to the schema");
+        assert_eq!(
+            payload["workflow_ref"],
+            "art_0123456789abcdef0123456789abcdef"
+        );
     }
 
     /// A room session's `invitation_authority` must reach the signed

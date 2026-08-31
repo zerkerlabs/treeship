@@ -157,7 +157,7 @@ pub fn create(
     // with the real printer would emit a second JSON object ahead of
     // this command's own room-create response.
     let quiet_printer = Printer::new(printer.format, true, printer.no_color);
-    session_cmd::start(None, None, false, ctx_override, &quiet_printer)?;
+    session_cmd::start(None, None, None, false, ctx_override, &quiet_printer)?;
 
     let mut manifest = session_cmd::load_session()
         .ok_or("room create: session started but manifest not found on disk")?;

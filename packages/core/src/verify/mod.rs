@@ -19,6 +19,7 @@
 pub mod anchoring;
 pub mod authority_use;
 pub mod resolution;
+pub mod workflow_conformance;
 
 /// Presentation verification primitives (the challenge-response canonical and
 /// its check). Same reason: one code path across CLI, WASM, and SDKs.
@@ -432,6 +433,7 @@ mod tests {
                 status: SessionStatus::Completed,
                 duration_ms: Some(1_800_000),
                 ship_id: ship_id.map(str::to_string),
+                workflow_ref: None,
                 narrative: None,
                 total_tokens_in: 0,
                 total_tokens_out: 0,
