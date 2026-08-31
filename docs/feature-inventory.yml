@@ -665,9 +665,11 @@
     - WorkflowConformanceReport
     - WorkflowPreExistenceProof
     - WorkflowRunBindingError
+    - WorkflowRunVerifyError
   cli:
     - treeship attest receipt
     - treeship session start
+    - treeship workflow verify
   packages:
     - treeship-core
     - treeship-cli
@@ -676,7 +678,7 @@
   tests:
     - packages/core/tests/workflow_conformance_golden.rs
     - packages/cli/tests/workflow_cli.rs
-  notes: "Slices 1-2 plus slice-3 primitives: workflow.v1 is fully validated and signs through generic attest receipt; core verifies real checkpoint pre-existence and signed first-run binding. `session start --workflow-ref` validates a local declaration before writing state and binds it into the signed root action. Automatic checkpoint composition, external workflow-authority trust, and CLI conformance verification remain."
+  notes: "Slices 1-3: workflow.v1 is fully validated and signs through generic attest receipt; `session start --workflow-ref` validates a local declaration before writing state and binds it into the signed root action. `verify_workflow_run` composes signature, declaration validity, first-run binding, and checkpoint pre-existence into one fail-closed path and is the only place the pre-existence grade is decided -- a claimed grade is discarded, never echoed. `treeship workflow verify` exposes it; `--strict` makes findings fatal for callers who want a gate. Automatic checkpoint composition, external workflow-authority trust, and evidence-derived observation sets remain."
 
 - id: zk-circom-cli
   name: ZK -- Circom Groth16 (snarkjs shell-out)

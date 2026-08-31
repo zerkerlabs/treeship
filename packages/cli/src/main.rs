@@ -290,6 +290,22 @@ enum Command {
     #[command(subcommand, display_order = 5)]
     Room(RoomCommand),
 
+    /// Verify a workflow run against its signed declaration
+    ///
+    /// Composes every check in one fail-closed path: the declaration's
+    /// signature and validity, the signed session.start that binds the run,
+    /// and -- when a checkpoint proof is supplied -- the Merkle evidence that
+    /// the declaration existed before the run. The grade an observation set
+    /// claims for itself is discarded and replaced with what the evidence
+    /// proves.
+    ///
+    /// Examples:
+    ///   treeship workflow verify --workflow art_abc --first-run art_def --run observed.json
+    ///   treeship workflow verify --workflow art_abc --first-run art_def --run observed.json --proof proof.json
+    ///   treeship workflow verify ... --strict --format json
+    #[command(subcommand)]
+    Workflow(WorkflowCommand),
+
     /// Inspect and verify .treeship session packages
     ///
     /// Session packages contain a complete Session Receipt with
@@ -1068,6 +1084,44 @@ struct SessionAnswerChallengeArgs {
     /// Output format: text (default) or json.
     #[arg(long, value_name = "FORMAT", default_value = "text")]
     format: String,
+}
+
+// --- workflow -----------------------------------------------------------
+
+#[derive(Subcommand)]
+enum WorkflowCommand {
+    /// Verify one workflow run and print its conformance report.
+    Verify(WorkflowVerifyArgs),
+}
+
+#[derive(Args)]
+struct WorkflowVerifyArgs {
+    /// Artifact id of the signed workflow.v1 declaration.
+    #[arg(long, value_name = "ARTIFACT_ID")]
+    workflow: String,
+
+    /// Artifact id of the signed session.start that opened the run.
+    #[arg(long, value_name = "ARTIFACT_ID")]
+    first_run: String,
+
+    /// Path to the observation set for this run (JSON).
+    #[arg(long, value_name = "FILE")]
+    run: String,
+
+    /// Optional checkpoint proof that the declaration pre-existed the run.
+    /// Without it, pre-existence can never grade better than `asserted`.
+    #[arg(long, value_name = "FILE")]
+    proof: Option<String>,
+
+    /// Exit non-zero when the report has any deviation, gap, or exceeded
+    /// limit. Off by default: the substrate reports the file rather than
+    /// assigning a score, so the pass/fail policy is the caller's.
+    #[arg(long)]
+    strict: bool,
+
+    /// Path to the Treeship config file.
+    #[arg(long, value_name = "FILE")]
+    config: Option<String>,
 }
 
 // --- room ---------------------------------------------------------------
@@ -2980,6 +3034,17 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             ),
         },
 
+        Command::Workflow(sub) => match sub {
+            WorkflowCommand::Verify(a) => commands::workflow::verify(
+                &a.workflow,
+                &a.first_run,
+                &a.run,
+                a.proof.as_deref(),
+                a.strict,
+                a.config.as_deref().or(cli.config.as_deref()),
+                printer,
+            ),
+        },
         Command::Room(sub) => match sub {
             RoomCommand::Create(a) => commands::room::create(
                 cli.config.as_deref(),

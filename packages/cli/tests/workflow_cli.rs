@@ -369,3 +369,179 @@ fn session_start_refuses_missing_workflow_before_writing_root() {
     assert_eq!(before, workspace.artifact_count());
     assert!(!workspace.root.join(".treeship/session.json").exists());
 }
+
+// ---- `treeship workflow verify` (composed CLI path) ----
+
+/// Mint a declaration, open a workflow-bound session, and return
+/// (workflow artifact id, signed session.start artifact id).
+fn bound_run(workspace: &Workspace) -> (String, String) {
+    let attested = workspace.attest_workflow(&declaration().to_string());
+    assert_success("attest workflow.v1", &attested);
+    let workflow_id = artifact_id(&attested);
+
+    let started = workspace.start_with_workflow(&workflow_id);
+    assert_success("session start --workflow-ref", &started);
+
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(workspace.root.join(".treeship/session.json"))
+            .expect("session manifest exists"),
+    )
+    .expect("session manifest is JSON");
+    let root_id = manifest["root_artifact_id"]
+        .as_str()
+        .expect("manifest carries signed root artifact id")
+        .to_string();
+    (workflow_id, root_id)
+}
+
+fn observed_run(workflow_ref: &str, tools: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "run_id": "run_cli",
+        "status": "completed",
+        "workflow_ref": workflow_ref,
+        // Deliberately the strongest claim an input can make. The CLI must
+        // not honor it without a proof.
+        "pre_existence": {
+            "grade": "checked",
+            "declaration_checkpoint": "chk_1",
+            "declaration_tree_size": 1,
+            "first_run_leaf_index": 2,
+            "consistency_to": "chk_2"
+        },
+        "attempts": [{
+            "node_id": "qa",
+            "iteration": 0,
+            "actor": "agent://claude-code",
+            "capabilities": ["qa.browser"],
+            "tools": tools,
+            "outcome": "pass",
+            "grade": "checked",
+            "evidence": ["art_qa"]
+        }]
+    })
+}
+
+fn write_run(workspace: &Workspace, run: &serde_json::Value) -> String {
+    let path = workspace.root.join("observed.json");
+    std::fs::write(&path, run.to_string()).expect("observation set writes");
+    path.display().to_string()
+}
+
+fn verify_workflow(workspace: &Workspace, args: &[&str]) -> Output {
+    workspace
+        .command()
+        .args(["workflow", "verify"])
+        .args(args)
+        .args(["--format", "json", "--config"])
+        .arg(workspace.config())
+        .output()
+        .expect("workflow verify runs")
+}
+
+#[test]
+fn workflow_verify_downgrades_a_pre_existence_grade_it_cannot_prove() {
+    let workspace = Workspace::new();
+    let (workflow_id, root_id) = bound_run(&workspace);
+    let run_path = write_run(
+        &workspace,
+        &observed_run(&workflow_id, serde_json::json!(["gstack.qa"])),
+    );
+
+    let output = verify_workflow(
+        &workspace,
+        &[
+            "--workflow",
+            &workflow_id,
+            "--first-run",
+            &root_id,
+            "--run",
+            &run_path,
+        ],
+    );
+    assert_success("workflow verify", &output);
+
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("report is JSON");
+    assert_eq!(
+        report["pre_existence"]["grade"],
+        "asserted",
+        "an unproven ordering claim must be downgraded, not echoed: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(report["workflow_ref"], workflow_id);
+}
+
+#[test]
+fn workflow_verify_refuses_an_observation_set_for_another_workflow() {
+    let workspace = Workspace::new();
+    let (workflow_id, root_id) = bound_run(&workspace);
+    let run_path = write_run(
+        &workspace,
+        &observed_run("art_some_other_workflow", serde_json::json!(["gstack.qa"])),
+    );
+
+    let output = verify_workflow(
+        &workspace,
+        &[
+            "--workflow",
+            &workflow_id,
+            "--first-run",
+            &root_id,
+            "--run",
+            &run_path,
+        ],
+    );
+    assert!(
+        !output.status.success(),
+        "a run naming another workflow must be refused"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("names workflow"),
+        "refusal should name the mismatch: {stderr}"
+    );
+}
+
+#[test]
+fn workflow_verify_reports_an_out_of_scope_tool_and_strict_makes_it_fatal() {
+    let workspace = Workspace::new();
+    let (workflow_id, root_id) = bound_run(&workspace);
+    // `Bash` is outside the node's allowed_tools: an authority deviation.
+    let run_path = write_run(
+        &workspace,
+        &observed_run(&workflow_id, serde_json::json!(["gstack.qa", "Bash"])),
+    );
+    let base = [
+        "--workflow",
+        workflow_id.as_str(),
+        "--first-run",
+        root_id.as_str(),
+        "--run",
+        run_path.as_str(),
+    ];
+
+    // Default: report the finding, exit zero. The substrate does not score.
+    let output = verify_workflow(&workspace, &base);
+    assert_success("workflow verify (non-strict)", &output);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("report is JSON");
+    let deviations = report["authority"]["deviations"]
+        .as_array()
+        .expect("authority deviations are an array");
+    assert_eq!(deviations.len(), 1, "out-of-scope tool should be reported");
+    assert_eq!(deviations[0]["value"], "Bash");
+    assert!(
+        report["path"]["deviations"]
+            .as_array()
+            .expect("path deviations are an array")
+            .is_empty(),
+        "an authority finding must not be reported as a path deviation"
+    );
+
+    // --strict: same report, non-zero exit.
+    let mut strict_args = base.to_vec();
+    strict_args.push("--strict");
+    let strict = verify_workflow(&workspace, &strict_args);
+    assert!(
+        !strict.status.success(),
+        "--strict must exit non-zero when the report has findings"
+    );
+}

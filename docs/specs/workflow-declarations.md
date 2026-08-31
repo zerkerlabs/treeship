@@ -1,8 +1,8 @@
 # Workflow declarations: proving the allowed path
 
-**Status:** slices 1-2 implemented; slice 3 signing, pre-existence, and first-run binding primitives implemented; automatic checkpoint composition and CLI conformance verification remain
+**Status:** slices 1-3 implemented; `verify_workflow_run` composes signature, declaration validity, first-run binding, and pre-existence into one fail-closed path, exposed as `treeship workflow verify`; automatic checkpoint composition and evidence-derived observation sets remain
 **Pairs with:** [commitments](./commitments.md), [agent-invitations-rooms](./agent-invitations-rooms.md), `action/v2`, approval-use binding, Merkle consistency
-**Last updated:** 2026-08-17
+**Last updated:** 2026-08-31
 
 ## The question
 

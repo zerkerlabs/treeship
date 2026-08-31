@@ -802,6 +802,30 @@ treeship log [OPTIONS]
 | `--follow` | Watch for new receipts in real time |
 | `--tail <TAIL>` | Number of recent receipts to show [default: 20] |
 
+## `treeship workflow`
+
+Verify a workflow run against its signed declaration
+
+```
+treeship workflow [OPTIONS] <COMMAND>
+```
+
+### `treeship workflow verify`
+
+Verify one workflow run and print its conformance report
+
+```
+treeship workflow verify [OPTIONS] --workflow <ARTIFACT_ID> --first-run <ARTIFACT_ID> --run <FILE>
+```
+
+| Option | Description |
+|---|---|
+| `--workflow <ARTIFACT_ID>` | Artifact id of the signed workflow.v1 declaration |
+| `--first-run <ARTIFACT_ID>` | Artifact id of the signed session.start that opened the run |
+| `--run <FILE>` | Path to the observation set for this run (JSON) |
+| `--proof <FILE>` | Optional checkpoint proof that the declaration pre-existed the run. Without it, pre-existence can never grade better than `asserted` |
+| `--strict` | Exit non-zero when the report has any deviation, gap, or exceeded limit. Off by default: the substrate reports the file rather than assigning a score, so the pass/fail policy is the caller's |
+
 ## `treeship package`
 
 Inspect and verify .treeship session packages
