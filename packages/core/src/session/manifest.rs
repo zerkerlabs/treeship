@@ -206,6 +206,14 @@ pub struct SessionManifest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub root_artifact_id: Option<String>,
 
+    /// Signed workflow declaration selected before this session began.
+    ///
+    /// The session-start root action carries the same reference in its signed
+    /// `meta`, so this local manifest field is a convenience copy rather than
+    /// the authority. The composed `session.v1` receipt mirrors it as well.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_ref: Option<String>,
+
     // --- v1 fields below ---
     #[serde(default)]
     pub mode: LifecycleMode,
@@ -266,6 +274,7 @@ impl SessionManifest {
             started_at_ms,
             artifact_count: 0,
             root_artifact_id: None,
+            workflow_ref: None,
             mode: LifecycleMode::default(),
             status: SessionStatus::Active,
             workspace_id: None,
@@ -301,6 +310,7 @@ mod tests {
         }"#;
         let m: SessionManifest = serde_json::from_str(json).unwrap();
         assert_eq!(m.session_id, "ssn_abc123");
+        assert_eq!(m.workflow_ref, None);
         assert_eq!(m.mode, LifecycleMode::AutoWorkspace);
         assert_eq!(m.status, SessionStatus::Active);
         assert_eq!(m.participants.total_agents, 0);
@@ -316,6 +326,7 @@ mod tests {
             started_at_ms: 1743843600000,
             artifact_count: 12,
             root_artifact_id: Some("art_root".into()),
+            workflow_ref: Some("art_workflow".into()),
             mode: LifecycleMode::Manual,
             status: SessionStatus::Completed,
             workspace_id: Some("ws_abc".into()),
@@ -361,6 +372,7 @@ mod tests {
         let json = serde_json::to_string_pretty(&m).unwrap();
         let m2: SessionManifest = serde_json::from_str(&json).unwrap();
         assert_eq!(m2.session_id, "ssn_001");
+        assert_eq!(m2.workflow_ref.as_deref(), Some("art_workflow"));
         assert_eq!(m2.participants.total_agents, 6);
         assert_eq!(m2.hosts.len(), 1);
         assert_eq!(m2.room.as_ref().unwrap().room_id, "room_001");

@@ -1,6 +1,6 @@
 # Workflow declarations: proving the allowed path
 
-**Status:** design, golden report fixtures written; no verifier or mint command yet
+**Status:** slices 1-2 implemented; slice 3 signing, pre-existence, and first-run binding primitives implemented; automatic checkpoint composition and CLI conformance verification remain
 **Pairs with:** [commitments](./commitments.md), [agent-invitations-rooms](./agent-invitations-rooms.md), `action/v2`, approval-use binding, Merkle consistency
 **Last updated:** 2026-08-17
 
@@ -44,7 +44,7 @@ A clean report means: every action in the evidence set fit the declaration, no r
 
 ## Report first
 
-The golden fixtures in [`fixtures/workflow-conformance/`](./fixtures/workflow-conformance/) define the first report contract before implementation:
+The golden fixtures in [`packages/core/tests/fixtures/workflow-conformance/`](../../packages/core/tests/fixtures/workflow-conformance/) define the first report contract before implementation:
 
 | Fixture | Required result |
 |---|---|
@@ -60,7 +60,18 @@ These are design fixtures, not cryptographic vectors. Their `art_*` and `chk_*` 
 
 ## Minimal `workflow.v1`
 
-`workflow.v1` is a registered predicate carried by the existing signed `receipt.v1` envelope. This reuses predicate validation, DSSE signing, artifact IDs, storage, and Merkle publication. It does not introduce another signature format.
+`workflow.v1` is a registered predicate carried by the existing signed `receipt.v1` envelope. This reuses predicate validation, DSSE signing, artifact IDs, storage, and Merkle publication. It does not introduce another signature format. The registry runs the full typed graph validator, not only the registry's shallow top-level schema walk, before signing.
+
+A declaration can be minted today through the existing generic receipt path:
+
+```bash
+treeship attest receipt \
+  --system human://operator \
+  --kind workflow.v1 \
+  --payload-file workflow.json
+```
+
+This proves the signing key asserted the declaration. The `authority` URI remains a label unless the verifier's trust policy binds that authority to the signer. The command must not present the URI alone as proven identity.
 
 ```json
 {
@@ -120,7 +131,7 @@ Input/output schemas, redaction rules, retry policy, idempotency, and generalize
 
 ### Loops
 
-A loop names one declared back edge. `max_iterations` counts verified traversals of that back edge, not an adapter's claimed iteration number. `budget.max_actions` counts captured signed actions attributed to attempts in that loop.
+A loop names one declared back edge. `max_iterations` counts verified traversals of that back edge, not an adapter's claimed iteration number. `budget.max_actions` counts the attempt's verified `action_evidence` artifact references after the first back-edge traversal, never tool labels. Each action reference must also appear in that attempt's evidence set and may be counted only once.
 
 V1 does not use cyclic parent relationships. Agent parentage remains a hierarchy. Repeated work creates a new attempt carrying `{ node_id, attempt, iteration }`.
 
@@ -128,14 +139,37 @@ V1 does not use cyclic parent relationships. Agent parentage remains a hierarchy
 
 A workflow hash identifies content but proves no ordering. A signed timestamp is also only the signer's assertion.
 
-Pre-existence grades `checked` only when the verifier can establish all of the following:
+`verify_workflow_pre_existence` in `treeship-core` establishes the ordering primitive over real `ProofFile` values. Pre-existence grades `checked` only when the verifier can establish all of the following:
 
 1. The signed workflow artifact is included in checkpoint of tree size `N`.
-2. The first run artifact is included at zero-based leaf index `>= N` in a later checkpoint.
+2. The first run artifact is included at zero-based leaf index `>= N` in a later checkpoint. The strict inclusion verifier binds that claimed index to the proof's left/right path and trusted checkpoint size; a wire-edited index is rejected.
 3. A valid consistency proof shows that the later checkpoint extends the declaration checkpoint.
-4. Both checkpoint signatures satisfy the verifier's own trust roots.
+4. Both checkpoints carry the same signing public key, which is the v1 log identity. Two unrelated trusted checkpoint keys cannot be composed into one ordering proof. Explicit key rotation continuity is deferred until the checkpoint format can bind it.
+5. Both checkpoint signatures satisfy the verifier's own trust roots.
 
 This proves log order, not trusted wall-clock time. Without that chain, the declaration may still be signed and useful, but pre-existence grades `asserted`.
+
+## Binding the run to the declaration
+
+A run opts into a workflow before execution with:
+
+```bash
+treeship session start --workflow-ref art_...
+```
+
+The command fails before signing or writing active-session state unless the referenced local artifact:
+
+- exists,
+- has the receipt payload type,
+- has a valid DSSE signature from a key in the local keystore,
+- re-derives to the requested artifact ID and stored digest, and
+- carries a fully valid `workflow.v1` payload.
+
+On success, `workflow_ref` is written inside the signed `session.start` root action's `meta`. The local manifest and composed `session.v1` receipt mirror the reference for discovery, but they are not substitutes for the root binding. At close, the CLI re-verifies the locally trusted root, re-derives its artifact binding, and refuses to sign when the mutable manifest differs from the root's workflow reference. `verify_first_run_workflow_binding` independently checks the trusted root signature, re-derived first-run artifact ID, action type, and exact workflow reference.
+
+This initial CLI path intentionally accepts local-keystore workflow signers only. Supporting external workflow authorities requires a separate workflow-authority trust power; Treeship must not reuse an unrelated checkpoint, certificate, or room-host trust root.
+
+Run binding and pre-existence answer different questions. The root action proves which declaration the run selected. Checkpoint inclusion and consistency prove that declaration existed in the log before that root action.
 
 ## Deriving the observed path
 
@@ -151,7 +185,7 @@ Useful evidence includes:
 - evaluator receipts,
 - Merkle order under trusted checkpoints.
 
-A session event or adapter statement may help group evidence into an attempt, but it does not become stronger merely by naming a node or edge.
+A session event or adapter statement may help group evidence into an attempt, but it does not become stronger merely by naming a node or edge. Normalized attempts list signed action artifact references separately as `action_evidence`; this prevents loop action budgets from accidentally counting tool names instead of actions.
 
 ## Edge and path provenance
 
@@ -163,7 +197,7 @@ Each derived edge inherits the weakest grade of the evidence needed to establish
 | `captured` | A configured runtime hook observed the transition, but no independent binding lets the verifier recompute it. |
 | `asserted` | The runtime or adapter reported the transition without supporting captured evidence. |
 
-The path grade is the weakest edge grade. A valid declared edge supported only by an adapter claim is therefore `asserted`, never bare "verified".
+The path grade is the weakest edge grade. Authority and loop-limit reports carry their own grade from the evidence they consume, so a clean boolean cannot hide asserted inputs. A valid declared edge supported only by an adapter claim is therefore `asserted`, never bare "verified".
 
 "Signed" and "independent" are not synonyms. If the adapter that is under review minted the tool receipt, the receipt proves what that adapter asserted. The report names that provenance rather than laundering it into independence.
 
@@ -190,10 +224,11 @@ The initial machine report has this shape:
     "deviations": [],
     "gaps": []
   },
-  "authority": { "deviations": [] },
+  "authority": { "grade": "checked", "deviations": [] },
   "loops": [
     {
       "id": "repair",
+      "grade": "checked",
       "iterations": 1,
       "max_iterations": 2,
       "limit_exceeded": false,
@@ -235,9 +270,9 @@ Existing Claude Code hooks and Treeship receipts provide the evidence. No LangGr
 
 ## Slices
 
-1. **Golden reports and minimal declaration spec.** The fixtures in this directory and this document. No runtime behavior yet.
-2. **Pure conformance reducer.** Parse a validated declaration plus already-verified observations and reproduce every golden report. No signing or CLI surface in this slice.
-3. **Signed, checkpoint-anchored declaration.** Register `workflow.v1`, mint it through `receipt.v1`, publish its checkpoint, and bind a run's first receipt to the declaration artifact.
+1. **Golden reports and minimal declaration spec.** The core test fixtures and this document.
+2. **Pure conformance reducer.** Implemented in `packages/core/src/verify/workflow_conformance.rs`. It validates declarations, rejects empty evidence, removes bounded back edges before cycle detection, and reproduces every golden report. No signing or CLI surface in this slice.
+3. **Signed, checkpoint-anchored declaration.** Partial. `workflow.v1` is registered and fully validated before the generic `attest receipt` path signs it. `verify_workflow_pre_existence` checks trusted checkpoint signatures, both strict inclusion proofs, leaf order, and consistency. `session start --workflow-ref` validates a locally signed declaration before minting and binds its artifact ID inside the signed root action; `verify_first_run_workflow_binding` checks that binding independently. Automatic checkpoint publication/composition, external workflow-authority trust, and a CLI conformance command remain.
 4. **Claude Code and gstack dogfood.** Group existing evidence into node attempts and verify the real QA loop.
 5. **External adapters.** Add adapters only after the report distinguishes checked, captured, and asserted paths end to end.
 

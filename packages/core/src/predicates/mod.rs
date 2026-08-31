@@ -64,6 +64,7 @@ const REGISTRY: &[(&str, &str)] = &[
     ("session.v1", include_str!("schemas/session.v1.json")),
     ("agent_cert.v1", include_str!("schemas/agent_cert.v1.json")),
     ("profile.v1", include_str!("schemas/profile.v1.json")),
+    ("workflow.v1", include_str!("schemas/workflow.v1.json")),
 ];
 
 /// Returns the raw JSON Schema text for a registered predicate suffix, if any.
@@ -100,6 +101,10 @@ pub enum PredicateError {
     },
     /// The embedded schema itself failed to parse (a build-time bug).
     SchemaParse { suffix: String, detail: String },
+    /// A registered predicate with nested control semantics failed its full,
+    /// typed validator. Structural top-level validation alone is not enough
+    /// for workflow graphs because it cannot detect dangling edges or cycles.
+    InvalidPayload { suffix: String, detail: String },
 }
 
 impl fmt::Display for PredicateError {
@@ -129,6 +134,9 @@ impl fmt::Display for PredicateError {
             ),
             PredicateError::SchemaParse { suffix, detail } => {
                 write!(f, "{suffix}: registered schema is invalid JSON: {detail}")
+            }
+            PredicateError::InvalidPayload { suffix, detail } => {
+                write!(f, "{suffix}: invalid payload: {detail}")
             }
         }
     }
@@ -220,6 +228,29 @@ pub fn validate(suffix: &str, payload: Option<&Value>) -> Result<(), PredicateEr
         }
     }
 
+    // workflow.v1 carries nested control semantics that the dependency-free
+    // top-level schema walk above cannot enforce. Run the same typed validator
+    // the conformance reducer uses before signing, so an unknown control field,
+    // dangling edge, or undeclared cycle cannot enter a signed declaration.
+    if suffix == "workflow.v1" {
+        use crate::verify::workflow_conformance::WorkflowDeclaration;
+        let declaration: WorkflowDeclaration =
+            serde_json::from_value(value.clone()).map_err(|e| PredicateError::InvalidPayload {
+                suffix: suffix.to_string(),
+                detail: e.to_string(),
+            })?;
+        declaration
+            .validate()
+            .map_err(|errors| PredicateError::InvalidPayload {
+                suffix: suffix.to_string(),
+                detail: errors
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            })?;
+    }
+
     Ok(())
 }
 
@@ -275,6 +306,42 @@ mod tests {
             let raw = schema_json(s).unwrap();
             serde_json::from_str::<Value>(raw).expect("embedded schema must be valid JSON");
         }
+    }
+
+    #[test]
+    fn workflow_declaration_runs_full_typed_validation_before_signing() {
+        let valid: Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/workflow-conformance/declaration.json"
+        ))
+        .expect("golden workflow declaration parses");
+        assert!(validate("workflow.v1", Some(&valid)).is_ok());
+
+        let mut unknown_field = valid.clone();
+        unknown_field["nodes"][0]["retry_policy"] = json!({ "max": 99 });
+        assert!(matches!(
+            validate("workflow.v1", Some(&unknown_field)),
+            Err(PredicateError::InvalidPayload { .. })
+        ));
+
+        let mut missing_allowed_tools = valid.clone();
+        missing_allowed_tools["nodes"][0]
+            .as_object_mut()
+            .expect("workflow node is an object")
+            .remove("allowed_tools");
+        let error = validate("workflow.v1", Some(&missing_allowed_tools))
+            .expect_err("schema-required nested fields must be refused before signing");
+        assert!(matches!(error, PredicateError::InvalidPayload { .. }));
+        assert!(error.to_string().contains("allowed_tools"));
+
+        let mut unbounded_cycle = valid;
+        unbounded_cycle["edges"]
+            .as_array_mut()
+            .expect("edges is an array")
+            .push(json!({ "from": "finish", "to": "inspect", "when": "always" }));
+        let error = validate("workflow.v1", Some(&unbounded_cycle))
+            .expect_err("an undeclared workflow cycle must be refused before signing");
+        assert!(matches!(error, PredicateError::InvalidPayload { .. }));
+        assert!(error.to_string().contains("bounded loop"));
     }
 
     #[test]

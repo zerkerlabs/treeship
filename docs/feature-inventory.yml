@@ -655,10 +655,25 @@
 - id: workflow-conformance
   name: Workflow declarations and conformance
   section: core
-  status: roadmap
+  status: experimental
+  types:
+    - WorkflowDeclaration
+    - ObservedWorkflowRun
+    - WorkflowConformanceReport
+    - WorkflowPreExistenceProof
+    - WorkflowRunBindingError
+  cli:
+    - treeship attest receipt
+    - treeship session start
+  packages:
+    - treeship-core
+    - treeship-cli
   docs:
     - docs/specs/workflow-declarations.md
-  notes: "Slice 1 only: minimal workflow.v1 design and golden report fixtures. No predicate registration, reducer, mint command, or verifier surface ships yet."
+  tests:
+    - packages/core/tests/workflow_conformance_golden.rs
+    - packages/cli/tests/workflow_cli.rs
+  notes: "Slices 1-2 plus slice-3 primitives: workflow.v1 is fully validated and signs through generic attest receipt; core verifies real checkpoint pre-existence and signed first-run binding. `session start --workflow-ref` validates a local declaration before writing state and binds it into the signed root action. Automatic checkpoint composition, external workflow-authority trust, and CLI conformance verification remain."
 
 - id: zk-circom-cli
   name: ZK -- Circom Groth16 (snarkjs shell-out)

@@ -109,6 +109,10 @@
       "description": "Published session report URL, when one exists.",
       "type": ["string", "null"]
     },
+    "workflow_ref": {
+      "description": "Content-addressed workflow.v1 artifact selected in the signed session.start root action. Absent when the run was not workflow-bound.",
+      "type": "string"
+    },
     "room": {
       "description": "Room this session hosted, when it was created with `treeship room create`. Mirrored here from session.json so `invitation_authority` -- which decides who may mint invitations -- is bound into the DSSE-signed payload rather than living only in unsigned local state. Absent (null) for ordinary, non-room sessions.",
       "type": ["object", "null"],
