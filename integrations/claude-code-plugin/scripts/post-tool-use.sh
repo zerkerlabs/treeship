@@ -13,6 +13,8 @@
 #   NotebookEdit       ->  agent.wrote_file --file <path>
 #   Bash               ->  agent.completed_process --tool <cmd> --exit-code <N>
 #   WebFetch           ->  agent.connected_network --destination <host>
+#   AskUserQuestion    ->  agent.called_tool + the question and the operator's
+#                          answer, and (opt-in) a signed approval artifact
 #   *                  ->  agent.called_tool --tool <name>
 #
 # Without the dispatch, every tool was emitted as agent.called_tool only, so
@@ -211,6 +213,71 @@ case "$TOOL_NAME" in
       emit_called_tool
     fi
     ;;
+  AskUserQuestion)
+    # The one place a human's judgement enters the session. Previously this
+    # fell through to the catch-all, so a session in which an operator
+    # approved an irreversible action recorded exactly:
+    #
+    #   {"type": "agent.called_tool", "tool_name": "AskUserQuestion"}
+    #
+    # -- no question, no answer, no approver. The decision that mattered most
+    # in the run was the one the receipt said least about.
+    #
+    # Two things happen here, and they claim very different amounts.
+    QUESTION=$(extract tool_input.questions)
+    ANSWERS=$(extract tool_response.answers)
+    [ -z "$ANSWERS" ] && ANSWERS=$(extract tool_response)
+
+    # (a) Always: record the exchange in the timeline. Redacted first --
+    #     this string can reach a published, no-auth receipt (AUD-26) -- then
+    #     capped, because option descriptions run long and the timeline is not
+    #     the place for a full prompt.
+    Q_SAFE=$(redact_secrets "${QUESTION:-}" | cut -c1-400)
+    A_SAFE=$(redact_secrets "${ANSWERS:-}" | cut -c1-400)
+    META=$(python3 -c "
+import json, sys
+print(json.dumps({'question': sys.argv[1], 'answer': sys.argv[2]}))
+" "$Q_SAFE" "$A_SAFE" 2>/dev/null)
+
+    if [ -n "$META" ]; then
+      treeship session event \
+        --type "agent.called_tool" \
+        --tool "$TOOL_NAME" \
+        --agent-name "claude-code" \
+        --meta "$META" \
+        >/dev/null 2>&1 || emit_called_tool
+    else
+      emit_called_tool
+    fi
+
+    # (b) Opt-in only: mint a signed approval artifact.
+    #
+    # Fail-closed on identity. The hook observes that *someone* at this
+    # terminal chose an option; it cannot prove who. Deriving an approver from
+    # $USER or a git config would manufacture an identity claim the evidence
+    # does not support, which is exactly the failure mode this repo's policy
+    # names. So: no configured approver, no artifact. The timeline entry above
+    # still records what happened.
+    #
+    # Setting TREESHIP_APPROVER is the operator asserting "answers I give in
+    # this session are mine, and may be recorded as authorization records."
+    # That assertion is theirs to make, and it is what the artifact rests on.
+    #
+    # Note also that AskUserQuestion is a general-purpose question tool, not an
+    # approval gate -- most answers authorize nothing. The description below
+    # therefore states only what was observed (operator answered X to question
+    # Y) and never that the answer authorized any particular action.
+    if [ -n "${TREESHIP_APPROVER:-}" ]; then
+      DESC=$(printf 'operator answered %s | question: %s' "$A_SAFE" "$Q_SAFE" | cut -c1-500)
+      treeship attest approval \
+        --approver "$TREESHIP_APPROVER" \
+        --description "$DESC" \
+        --unscoped \
+        --quiet \
+        >/dev/null 2>&1 || true
+    fi
+    ;;
+
   *)
     # Glob, Grep, Task, TodoWrite, ScheduleWakeup, etc. -- generic call.
     emit_called_tool
