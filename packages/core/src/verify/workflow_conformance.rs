@@ -1468,6 +1468,364 @@ pub fn verify_workflow_run(
     evaluate_workflow_conformance(&declaration, &run).map_err(WorkflowRunVerifyError::Conformance)
 }
 
+// ---------------------------------------------------------------------------
+// Evidence-derived observation sets
+// ---------------------------------------------------------------------------
+
+/// One verified action, reduced to the signed fields attribution depends on.
+///
+/// Signature verification, trust policy, and causal ordering happen upstream.
+/// This is the already-trusted projection the deriver is allowed to reason
+/// about, which is why every field here is one the signer committed to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedAction {
+    /// Artifact id of the verified action. Becomes the attempt's evidence
+    /// reference, so it must not be empty.
+    pub artifact_id: String,
+    pub actor: String,
+    /// The signed action label, matched against a node's `allowed_tools`.
+    pub tool: String,
+    /// Capabilities the verified mandate carried.
+    pub capabilities: Vec<String>,
+    pub outcome: NodeOutcome,
+    /// Grouping hint recorded by the runtime under review. It may pick among
+    /// nodes the signed fields already admit; it can never name a node they do
+    /// not, never applies when attribution is already unambiguous, and never
+    /// lifts an attempt above `captured`.
+    pub node_label: Option<String>,
+}
+
+/// An action the declaration could not unambiguously place. Reported, never
+/// guessed away: a run that silently drops what it cannot attribute is a
+/// verifier that passes because it looked at less.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AttributionIssue {
+    /// More than one node admits the action and no label picks among them.
+    Ambiguous {
+        artifact_id: String,
+        candidates: Vec<String>,
+    },
+    /// A label named a node that cannot admit the action.
+    LabelNotAdmissible {
+        artifact_id: String,
+        label: String,
+        candidates: Vec<String>,
+    },
+    /// No declared node's executor admits the signer at all.
+    UndeclaredExecutor { artifact_id: String, actor: String },
+}
+
+impl AttributionIssue {
+    pub fn artifact_id(&self) -> &str {
+        match self {
+            Self::Ambiguous { artifact_id, .. }
+            | Self::LabelNotAdmissible { artifact_id, .. }
+            | Self::UndeclaredExecutor { artifact_id, .. } => artifact_id,
+        }
+    }
+}
+
+impl fmt::Display for AttributionIssue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Ambiguous {
+                artifact_id,
+                candidates,
+            } => write!(
+                f,
+                "{artifact_id} is admitted by {} nodes ({}) and no label picks among them",
+                candidates.len(),
+                candidates.join(", ")
+            ),
+            Self::LabelNotAdmissible {
+                artifact_id,
+                label,
+                candidates,
+            } => write!(
+                f,
+                "{artifact_id} is labelled `{label}`, which does not admit it; admissible nodes are {}",
+                candidates.join(", ")
+            ),
+            Self::UndeclaredExecutor { artifact_id, actor } => write!(
+                f,
+                "{artifact_id} was signed by `{actor}`, which no declared node's executor admits"
+            ),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DerivationError {
+    /// Zero verified actions. An empty observation set is refused rather than
+    /// reduced into a vacuously clean report.
+    NoActions,
+    EmptyArtifactId {
+        index: usize,
+    },
+    /// The same verified action appears twice. Loop budgets count unique
+    /// signed-action references, so a repeat would inflate a budget with one
+    /// action counted twice.
+    DuplicateAction {
+        artifact_id: String,
+    },
+    /// Every action failed attribution, so there is nothing to reduce.
+    NoAttributableActions {
+        issues: Vec<AttributionIssue>,
+    },
+}
+
+impl fmt::Display for DerivationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoActions => write!(
+                f,
+                "no verified actions: an observation set cannot be derived from nothing"
+            ),
+            Self::EmptyArtifactId { index } => {
+                write!(f, "verified action {index} has an empty artifact id")
+            }
+            Self::DuplicateAction { artifact_id } => write!(
+                f,
+                "verified action `{artifact_id}` appears more than once; duplicate action references fail closed"
+            ),
+            Self::NoAttributableActions { issues } => {
+                let detail = issues
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                write!(
+                    f,
+                    "no action could be attributed to a declared node: {detail}"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for DerivationError {}
+
+/// A derived observation set plus everything the derivation refused to place.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DerivedObservation {
+    pub run: ObservedWorkflowRun,
+    /// Actions that could not be attributed. Non-empty means the run is
+    /// incomplete evidence, not a clean run: callers must surface these.
+    pub issues: Vec<AttributionIssue>,
+}
+
+/// Build an [`ObservedWorkflowRun`] from verified actions and a declaration.
+///
+/// Attribution is by admissibility, not by label. A node admits an action when
+/// its executor matches the signed actor (or a capability the verified mandate
+/// carried) and its `allowed_tools` covers the signed action label. Exactly one
+/// admitting node means the verifier recomputed the attribution from signed
+/// fields alone, which is the only case that earns `checked`.
+///
+/// The deliberate asymmetries:
+///
+/// - A label is consulted **only** when the signed fields leave a choice, so a
+///   runtime cannot relabel work the declaration already places.
+/// - A label that names a non-admitting node is an issue, never a tiebreak.
+/// - An action no node's `allowed_tools` covers is still attributed by executor
+///   -- to the node the run is currently in when that node admits the signer --
+///   so the authority axis reports the out-of-scope tool instead of the action
+///   vanishing into an issue list nobody reads.
+/// - Pre-existence is left `asserted`. Derivation sees no checkpoints, and
+///   `verify_workflow_run` is the only place that grades ordering.
+pub fn derive_observed_run(
+    declaration: &WorkflowDeclaration,
+    run_id: &str,
+    workflow_ref: &str,
+    status: WorkflowRunStatus,
+    actions: &[VerifiedAction],
+) -> Result<DerivedObservation, DerivationError> {
+    if actions.is_empty() {
+        return Err(DerivationError::NoActions);
+    }
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    for (index, action) in actions.iter().enumerate() {
+        if action.artifact_id.trim().is_empty() {
+            return Err(DerivationError::EmptyArtifactId { index });
+        }
+        if !seen.insert(action.artifact_id.as_str()) {
+            return Err(DerivationError::DuplicateAction {
+                artifact_id: action.artifact_id.clone(),
+            });
+        }
+    }
+
+    let mut attempts: Vec<ObservedNodeAttempt> = Vec::new();
+    let mut issues = Vec::new();
+    let mut iterations: BTreeMap<String, u32> = BTreeMap::new();
+
+    for action in actions {
+        let current_node = attempts.last().map(|attempt| attempt.node_id.clone());
+        let (node_id, grade) = match attribute_action(declaration, action, current_node.as_deref())
+        {
+            Ok(attributed) => attributed,
+            Err(issue) => {
+                issues.push(issue);
+                continue;
+            }
+        };
+
+        let extends_current = attempts
+            .last()
+            .is_some_and(|attempt| attempt.node_id == node_id);
+        if !extends_current {
+            let iteration = iterations
+                .entry(node_id.clone())
+                .and_modify(|seen| *seen += 1)
+                .or_insert(0);
+            attempts.push(ObservedNodeAttempt {
+                node_id,
+                iteration: *iteration,
+                actor: action.actor.clone(),
+                capabilities: action.capabilities.clone(),
+                tools: Vec::new(),
+                outcome: action.outcome,
+                grade,
+                evidence: Vec::new(),
+                action_evidence: Vec::new(),
+                tool_evidence: BTreeMap::new(),
+            });
+        }
+
+        let attempt = attempts
+            .last_mut()
+            .expect("an attempt was just pushed or extended");
+        if !attempt.tools.contains(&action.tool) {
+            attempt.tools.push(action.tool.clone());
+        }
+        attempt.evidence.push(action.artifact_id.clone());
+        attempt.action_evidence.push(action.artifact_id.clone());
+        attempt
+            .tool_evidence
+            .entry(action.tool.clone())
+            .or_default()
+            .push(action.artifact_id.clone());
+        for capability in &action.capabilities {
+            if !attempt.capabilities.contains(capability) {
+                attempt.capabilities.push(capability.clone());
+            }
+        }
+        // The last action decides the attempt's outcome, and the weakest
+        // attribution decides its grade.
+        attempt.outcome = action.outcome;
+        attempt.grade = attempt.grade.weakest(grade);
+    }
+
+    if attempts.is_empty() {
+        return Err(DerivationError::NoAttributableActions { issues });
+    }
+
+    for attempt in &mut attempts {
+        attempt.tools.sort();
+    }
+
+    Ok(DerivedObservation {
+        run: ObservedWorkflowRun {
+            run_id: run_id.to_string(),
+            status,
+            workflow_ref: workflow_ref.to_string(),
+            pre_existence: PreExistenceEvidence {
+                grade: EvidenceGrade::Asserted,
+                reason: Some("derived observation set carries no checkpoint evidence".into()),
+                declaration_checkpoint: None,
+                declaration_tree_size: None,
+                first_run_leaf_index: None,
+                consistency_to: None,
+                declaration_signed_at: None,
+                first_run_signed_at: None,
+            },
+            attempts,
+        },
+        issues,
+    })
+}
+
+/// Decide which declared node an action belongs to. See
+/// [`derive_observed_run`] for why the label is consulted where it is.
+fn attribute_action(
+    declaration: &WorkflowDeclaration,
+    action: &VerifiedAction,
+    current_node: Option<&str>,
+) -> Result<(String, EvidenceGrade), AttributionIssue> {
+    let executor_candidates: Vec<&WorkflowNode> = declaration
+        .nodes
+        .iter()
+        .filter(|node| executor_admits(&node.executor, action))
+        .collect();
+    if executor_candidates.is_empty() {
+        return Err(AttributionIssue::UndeclaredExecutor {
+            artifact_id: action.artifact_id.clone(),
+            actor: action.actor.clone(),
+        });
+    }
+
+    let admitting: Vec<&WorkflowNode> = executor_candidates
+        .iter()
+        .copied()
+        .filter(|node| action_in_scope(&action.tool, &node.allowed_tools))
+        .collect();
+
+    match admitting.len() {
+        // Recomputed from signed fields alone; the label is not consulted.
+        1 => Ok((admitting[0].id.clone(), EvidenceGrade::Checked)),
+        0 => {
+            // No node claims this tool. Keep the action attached to the run so
+            // the authority axis reports it, preferring the node the run is
+            // already in when that node admits this signer.
+            if let Some(current) = current_node {
+                if executor_candidates.iter().any(|node| node.id == current) {
+                    return Ok((current.to_string(), EvidenceGrade::Captured));
+                }
+            }
+            if executor_candidates.len() == 1 {
+                return Ok((executor_candidates[0].id.clone(), EvidenceGrade::Captured));
+            }
+            label_tiebreak(action, &executor_candidates)
+        }
+        _ => label_tiebreak(action, &admitting),
+    }
+}
+
+fn executor_admits(executor: &ExecutorConstraint, action: &VerifiedAction) -> bool {
+    match (&executor.actor, &executor.capability) {
+        (Some(actor), _) => actor == &action.actor,
+        (None, Some(capability)) => action.capabilities.contains(capability),
+        // Validation rejects a declaration with neither, so nothing admits.
+        (None, None) => false,
+    }
+}
+
+/// Let the recorded label pick within a set the signed fields already allow.
+/// A label naming anything outside that set is an issue, not a choice.
+fn label_tiebreak(
+    action: &VerifiedAction,
+    candidates: &[&WorkflowNode],
+) -> Result<(String, EvidenceGrade), AttributionIssue> {
+    let names: Vec<String> = candidates.iter().map(|node| node.id.clone()).collect();
+    let Some(label) = &action.node_label else {
+        return Err(AttributionIssue::Ambiguous {
+            artifact_id: action.artifact_id.clone(),
+            candidates: names,
+        });
+    };
+    if names.iter().any(|name| name == label) {
+        // The label only narrowed an already-admissible set, so the attempt
+        // rests partly on a runtime claim and cannot be `checked`.
+        Ok((label.clone(), EvidenceGrade::Captured))
+    } else {
+        Err(AttributionIssue::LabelNotAdmissible {
+            artifact_id: action.artifact_id.clone(),
+            label: label.clone(),
+            candidates: names,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2152,5 +2510,298 @@ mod tests {
             error,
             WorkflowRunVerifyError::DeclarationNotAWorkflow { .. }
         ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Evidence-derived observation sets
+    // -----------------------------------------------------------------------
+
+    fn action(artifact_id: &str, actor: &str, tool: &str) -> VerifiedAction {
+        VerifiedAction {
+            artifact_id: artifact_id.into(),
+            actor: actor.into(),
+            tool: tool.into(),
+            capabilities: vec![],
+            outcome: NodeOutcome::Completed,
+            node_label: None,
+        }
+    }
+
+    /// Two nodes that admit exactly the same actor and tool. Attribution
+    /// cannot be recomputed from signed fields alone once this exists, which
+    /// is what makes the label cases below reachable at all.
+    fn ambiguous_declaration() -> WorkflowDeclaration {
+        let mut declaration = valid_declaration();
+        declaration.nodes.push(WorkflowNode {
+            id: "review".into(),
+            executor: ExecutorConstraint {
+                actor: Some("agent://claude-code".into()),
+                capability: None,
+            },
+            allowed_tools: vec!["Read".into(), "Grep".into()],
+        });
+        declaration.edges.push(WorkflowEdge {
+            from: "inspect".into(),
+            to: "review".into(),
+            when: EdgeCondition::Always,
+        });
+        declaration.edges.push(WorkflowEdge {
+            from: "review".into(),
+            to: "change".into(),
+            when: EdgeCondition::Always,
+        });
+        declaration
+    }
+
+    #[test]
+    fn unique_admissibility_ignores_a_label_that_names_another_node() {
+        // `Read` by claude-code is admitted by `inspect` alone, so the
+        // declaration already decides attribution. A runtime claiming the work
+        // happened in `change` must not be able to move it: a label is a
+        // grouping hint, never a relabeling power.
+        let mut lying = action("art_read", "agent://claude-code", "Read");
+        lying.node_label = Some("change".into());
+
+        let derived = derive_observed_run(
+            &valid_declaration(),
+            "run_1",
+            "art_workflow",
+            WorkflowRunStatus::Completed,
+            &[lying],
+        )
+        .expect("a uniquely admissible action derives");
+
+        assert!(derived.issues.is_empty(), "no attribution issue expected");
+        assert_eq!(derived.run.attempts.len(), 1);
+        assert_eq!(derived.run.attempts[0].node_id, "inspect");
+        assert_eq!(
+            derived.run.attempts[0].grade,
+            EvidenceGrade::Checked,
+            "recomputed from signed fields alone"
+        );
+    }
+
+    #[test]
+    fn ambiguous_attribution_is_reported_instead_of_guessed() {
+        let derived = derive_observed_run(
+            &ambiguous_declaration(),
+            "run_1",
+            "art_workflow",
+            WorkflowRunStatus::Completed,
+            &[action("art_read", "agent://claude-code", "Read")],
+        )
+        .expect_err("an unattributable action set cannot become a run");
+
+        assert!(
+            matches!(derived, DerivationError::NoAttributableActions { ref issues }
+                if matches!(issues.as_slice(), [AttributionIssue::Ambiguous { candidates, .. }]
+                    if candidates == &["inspect".to_string(), "review".to_string()])),
+            "expected an ambiguity issue naming both candidates, got {derived:?}"
+        );
+    }
+
+    #[test]
+    fn a_label_narrows_an_admissible_set_but_caps_the_grade_at_captured() {
+        let mut labeled = action("art_read", "agent://claude-code", "Read");
+        labeled.node_label = Some("review".into());
+
+        let derived = derive_observed_run(
+            &ambiguous_declaration(),
+            "run_1",
+            "art_workflow",
+            WorkflowRunStatus::Completed,
+            &[labeled],
+        )
+        .expect("a label may pick within the admissible set");
+
+        assert_eq!(derived.run.attempts[0].node_id, "review");
+        assert_eq!(
+            derived.run.attempts[0].grade,
+            EvidenceGrade::Captured,
+            "a runtime label cannot buy a checked grade"
+        );
+    }
+
+    #[test]
+    fn a_label_outside_the_admissible_set_is_refused_as_a_tiebreak() {
+        // `qa` runs under a capability this action never carried. A label
+        // pointing there is evidence of a deviation, not a tiebreak, and must
+        // not silently attribute the action to a node that cannot admit it.
+        let mut lying = action("art_read", "agent://claude-code", "Read");
+        lying.node_label = Some("qa".into());
+
+        let error = derive_observed_run(
+            &ambiguous_declaration(),
+            "run_1",
+            "art_workflow",
+            WorkflowRunStatus::Completed,
+            &[lying],
+        )
+        .expect_err("a label outside the admissible set is refused");
+
+        assert!(
+            matches!(error, DerivationError::NoAttributableActions { ref issues }
+                if matches!(issues.as_slice(), [AttributionIssue::LabelNotAdmissible { label, .. }]
+                    if label == "qa")),
+            "expected a non-admissible label issue, got {error:?}"
+        );
+    }
+
+    #[test]
+    fn an_out_of_scope_tool_stays_visible_to_the_authority_axis() {
+        // The trap: dropping an action no node's `allowed_tools` admits would
+        // produce a clean report for a run that used an out-of-scope tool.
+        // Executor match alone attributes it, so the authority axis still sees
+        // the tool -- and the attempt cannot claim `checked`.
+        let derived = derive_observed_run(
+            &valid_declaration(),
+            "run_1",
+            "art_workflow",
+            WorkflowRunStatus::Completed,
+            &[
+                action("art_read", "agent://claude-code", "Read"),
+                action("art_bash", "agent://claude-code", "Bash"),
+            ],
+        )
+        .expect("an out-of-scope tool is attributed, not dropped");
+
+        let report = evaluate_workflow_conformance(&valid_declaration(), &derived.run)
+            .expect("the derived run reduces");
+        assert!(
+            report
+                .authority
+                .deviations
+                .iter()
+                .any(|d| d.kind == "tool_out_of_scope" && d.value == "Bash"),
+            "the out-of-scope tool must reach the report: {:?}",
+            report.authority.deviations
+        );
+        assert_eq!(report.authority.grade, EvidenceGrade::Captured);
+    }
+
+    #[test]
+    fn an_action_no_declared_executor_admits_is_surfaced() {
+        let error = derive_observed_run(
+            &valid_declaration(),
+            "run_1",
+            "art_workflow",
+            WorkflowRunStatus::Completed,
+            &[action("art_read", "agent://stranger", "Read")],
+        )
+        .expect_err("an undeclared executor cannot be attributed");
+
+        assert!(
+            matches!(error, DerivationError::NoAttributableActions { ref issues }
+                if matches!(issues.as_slice(), [AttributionIssue::UndeclaredExecutor { actor, .. }]
+                    if actor == "agent://stranger")),
+            "expected an undeclared-executor issue, got {error:?}"
+        );
+    }
+
+    #[test]
+    fn deriving_from_zero_actions_is_an_error_not_an_empty_passing_run() {
+        let error = derive_observed_run(
+            &valid_declaration(),
+            "run_1",
+            "art_workflow",
+            WorkflowRunStatus::Completed,
+            &[],
+        )
+        .expect_err("an empty observation set is refused");
+
+        assert!(matches!(error, DerivationError::NoActions));
+    }
+
+    #[test]
+    fn revisiting_a_node_opens_a_new_iteration_instead_of_merging() {
+        let derived = derive_observed_run(
+            &valid_declaration(),
+            "run_1",
+            "art_workflow",
+            WorkflowRunStatus::Completed,
+            &[
+                action("art_edit_1", "agent://claude-code", "Edit"),
+                VerifiedAction {
+                    capabilities: vec!["qa.browser".into()],
+                    ..action("art_qa_1", "agent://qa-runner", "gstack.qa")
+                },
+                action("art_edit_2", "agent://claude-code", "Write"),
+            ],
+        )
+        .expect("a revisit derives");
+
+        let change: Vec<_> = derived
+            .run
+            .attempts
+            .iter()
+            .filter(|a| a.node_id == "change")
+            .collect();
+        assert_eq!(change.len(), 2, "the revisit is a second attempt");
+        assert_eq!(change[0].iteration, 0);
+        assert_eq!(change[1].iteration, 1);
+        assert_eq!(change[1].evidence, vec!["art_edit_2".to_string()]);
+    }
+
+    #[test]
+    fn consecutive_actions_on_one_node_merge_into_a_single_attempt() {
+        let derived = derive_observed_run(
+            &valid_declaration(),
+            "run_1",
+            "art_workflow",
+            WorkflowRunStatus::Completed,
+            &[
+                action("art_read", "agent://claude-code", "Read"),
+                action("art_grep", "agent://claude-code", "Grep"),
+            ],
+        )
+        .expect("consecutive same-node actions derive");
+
+        assert_eq!(derived.run.attempts.len(), 1);
+        assert_eq!(derived.run.attempts[0].tools, vec!["Grep", "Read"]);
+        assert_eq!(
+            derived.run.attempts[0].action_evidence,
+            vec!["art_read".to_string(), "art_grep".to_string()]
+        );
+    }
+
+    #[test]
+    fn duplicate_action_references_fail_closed() {
+        // Loop budgets count unique signed-action references. Accepting the
+        // same artifact twice would let one action pay for two.
+        let error = derive_observed_run(
+            &valid_declaration(),
+            "run_1",
+            "art_workflow",
+            WorkflowRunStatus::Completed,
+            &[
+                action("art_read", "agent://claude-code", "Read"),
+                action("art_read", "agent://claude-code", "Grep"),
+            ],
+        )
+        .expect_err("a repeated action reference is refused");
+
+        assert!(
+            matches!(error, DerivationError::DuplicateAction { ref artifact_id }
+                if artifact_id == "art_read"),
+            "expected a duplicate-action error, got {error:?}"
+        );
+    }
+
+    #[test]
+    fn a_derived_run_never_claims_its_own_pre_existence() {
+        let derived = derive_observed_run(
+            &valid_declaration(),
+            "run_1",
+            "art_workflow",
+            WorkflowRunStatus::Completed,
+            &[action("art_read", "agent://claude-code", "Read")],
+        )
+        .expect("derives");
+
+        assert_eq!(
+            derived.run.pre_existence.grade,
+            EvidenceGrade::Asserted,
+            "derivation sees no checkpoints; only verify_workflow_run grades ordering"
+        );
     }
 }
