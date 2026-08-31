@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://treeship.dev/schemas/workflow.v1.json",
+  "title": "workflow.v1",
+  "description": "A signed declaration of the path an agent workflow is allowed to take. Treeship verifies conformance over captured evidence; it does not execute or enforce the workflow.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "schema_version", "workflow_id", "authority", "entry_node", "terminal_nodes", "nodes", "edges"],
+  "properties": {
+    "kind": { "const": "workflow.v1" },
+    "schema_version": { "const": "1" },
+    "workflow_id": { "type": "string", "minLength": 1 },
+    "authority": { "type": "string", "minLength": 1 },
+    "entry_node": { "type": "string", "minLength": 1 },
+    "terminal_nodes": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "nodes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "executor", "allowed_tools"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "executor": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "actor": { "type": "string", "minLength": 1 },
+              "capability": { "type": "string", "minLength": 1 }
+            },
+            "oneOf": [
+              { "required": ["actor"], "not": { "required": ["capability"] } },
+              { "required": ["capability"], "not": { "required": ["actor"] } }
+            ]
+          },
+          "allowed_tools": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "uniqueItems": true
+          }
+        }
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["from", "to", "when"],
+        "properties": {
+          "from": { "type": "string", "minLength": 1 },
+          "to": { "type": "string", "minLength": 1 },
+          "when": { "enum": ["always", "on_pass", "on_fail", "on_refused"] }
+        }
+      }
+    },
+    "loops": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "back_edge", "max_iterations"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "back_edge": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["from", "to"],
+            "properties": {
+              "from": { "type": "string", "minLength": 1 },
+              "to": { "type": "string", "minLength": 1 }
+            }
+          },
+          "max_iterations": { "type": "integer", "minimum": 1 },
+          "budget": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "max_actions": { "type": "integer", "minimum": 1 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

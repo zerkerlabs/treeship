@@ -87,8 +87,33 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
   iterative, malformed cycles are recorded in `invalid_parent_cycles`, and
   cyclic nodes retain depth 0 instead of being presented with a fabricated
   hierarchy.
+- **Workflow conformance now fails closed at five trust boundaries.** Session
+  close re-verifies the signed root instead of signing a mutable manifest's
+  substituted workflow reference; pre-existence proofs require one checkpoint
+  signing identity rather than composing unrelated trusted logs; loop action
+  budgets count verified action artifacts instead of tool labels; every
+  undeclared observed node produces a deviation, including a one-node run; and
+  schema-required `allowed_tools` can no longer deserialize as an omitted
+  default.
 
 ### Added
+- **Pure workflow-conformance reducer.** `treeship-core` now validates the
+  minimal `workflow.v1` graph and compares it with already-verified node
+  observations. It reports path deviations, missing terminals, actor/tool
+  authority deviations, bounded-loop breaches, and `checked | captured |
+  asserted` provenance as separate axes. Undeclared graph cycles and empty
+  evidence fail closed. Seven golden reports pin the contract. `workflow.v1`
+  is now a registered predicate whose nested graph runs the same full validator
+  before the generic `attest receipt` path signs it. Real checkpoint ordering
+  can be checked with `verify_workflow_pre_existence`: trusted signatures, both
+  inclusion proofs, leaf position, and consistency must all pass.
+  `treeship session start --workflow-ref art_...` now validates a locally signed
+  declaration before writing any run state and binds the artifact ID inside the
+  signed `session.start` root action. The manifest and composed session receipt
+  mirror the reference, while `verify_first_run_workflow_binding` independently
+  checks the trusted root signature, content-derived run ID, action type, and
+  exact declaration reference. Automatic checkpoint composition, external
+  workflow-authority trust, and CLI conformance verification remain follow-ups.
 - **`RoomInfo` on `SessionManifest`.** Optional `room` field (`room_id`,
   `host_pubkey`, `invitation_authority`, `workflow_ref`, `checkpoint_cadence`,
   `participants`) following the schema proposed in
@@ -114,10 +139,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
 ### Documentation
 - **Workflow conformance now has an executable design contract.** Added the
   missing `docs/specs/workflow-declarations.md` referenced by commitments,
-  rooms, vision, and the v0.11 changelog. Seven golden reports pin valid runs, undeclared
-  edges, missing terminals, loop-cap breaches, asserted edge evidence,
-  declaration pre-existence, and out-of-scope tools before a reducer or CLI
-  surface is built. `workflow.v1` remains roadmap, not shipped behavior.
+  rooms, vision, and the v0.11 changelog. Seven golden reports pin valid runs,
+  undeclared edges, missing terminals, loop-cap breaches, asserted edge
+  evidence, declaration pre-existence, and out-of-scope tools before broader
+  CLI wiring.
 
 ## 0.23.0 (2026-08-05)
 

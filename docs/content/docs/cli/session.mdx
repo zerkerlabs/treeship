@@ -17,6 +17,7 @@ Start a new session.
 treeship session start
 treeship session start --name "fix auth bug"
 treeship session start --actor agent://coder
+treeship session start --workflow-ref art_0123456789abcdef0123456789abcdef
 treeship session start --allow-dangerous-root
 ```
 
@@ -26,9 +27,12 @@ treeship session start --allow-dangerous-root
 |--------|-------------|
 | `--name <text>` | Human-readable session name |
 | `--actor <uri>` | Default actor URI for attestations in this session |
+| `--workflow-ref <artifact-id>` | Validate a local signed `workflow.v1` declaration and bind it into the signed session-start root action |
 | `--allow-dangerous-root` | Permit a session whose git root is your home directory |
 
 Starting a session writes `.treeship/session.json`, initializes an append-only event log at `.treeship/sessions/<session_id>/events.jsonl`, and emits a `session.started` event. All subsequent attestations and wrap calls are linked to the session.
+
+With `--workflow-ref`, Treeship verifies that the local artifact is a valid `workflow.v1` receipt signed by a key in the current keystore before writing any session state. The artifact ID is then included inside the signed `session.start` action and preserved in the final signed session record. At close, Treeship re-verifies the root action and refuses to sign if the mutable manifest claims a different workflow. This binds the run to a declaration; separate checkpoint proofs establish whether the declaration pre-existed the run.
 
 <Callout type="warn">
 Treeship refuses to start a session when the git toplevel is your home directory. Start from a project checkout instead. Use `--allow-dangerous-root` only when you intentionally want a home-scoped session.
