@@ -38,6 +38,8 @@ The plugin requires the `treeship` CLI binary on your PATH and a `.treeship/` di
 - **Every tool call is captured.** MCP tool calls flow through the bundled Treeship MCP server (`@treeship/mcp`); built-in Claude Code tools (Read, Write, Edit, Bash, Grep, Glob, etc.) flow through a PostToolUse hook. Combined: full timeline.
 - **Sessions seal automatically.** When the Claude Code session ends, a SessionEnd hook closes the session and surfaces the shareable session report URL back into the conversation. You don't have to ask.
 - **Live status while you work.** A background monitor streams the receipt counter (`receipts=N events=M`) into Claude's context every few seconds, so the agent knows the receipt is being built.
+- **Human answers are recorded, not just counted.** When Claude asks you something through `AskUserQuestion` -- often the moment you authorize something irreversible -- the hook records the question and the option you chose. Previously this was stored as a bare tool name, so the most consequential moment in a session was the one the receipt said least about.
+
 - **Three skills for the moments that need agency.** `treeship-session` for closing with a real headline before SessionEnd auto-closes. `treeship-verify` for confirming a receipt someone shared with you. `treeship-report` for explicitly publishing a session report URL.
 
 ## Design rationale
@@ -61,6 +63,34 @@ The brief was: zero configuration, sessions start and close themselves, the URL 
 **No `settings.json`.** The Claude Code plugin settings layer currently only takes `agent` and `subagentStatusLine` keys. Treeship doesn't ship a custom agent or status line, so a settings file would be empty noise.
 
 **Why hooks instead of asking the model nicely.** The brief is explicit: zero configuration, sessions should start and close automatically. Hooks are deterministic — they fire on every session regardless of which model is running, what's in the system prompt, or what the user remembered to ask for. A model-prompted approach would drift the moment someone forgets to mention Treeship, or runs a small model that ignores the instruction, or is mid-session when behavior changes. Hooks are the right primitive for any guarantee that has to hold every time.
+
+### Signing approvals: `TREESHIP_APPROVER`
+
+By default the hook records what was asked and answered, and mints nothing.
+It deliberately stops short of a signed approval artifact, because it cannot
+prove *who* answered -- it only knows someone at this terminal chose an
+option. Deriving an approver from `$USER` or your git config would put a
+manufactured identity claim into a signed, publishable record.
+
+Set an approver to opt in:
+
+```bash
+export TREESHIP_APPROVER="human://alice"
+```
+
+With it set, each answer also mints a signed `approval.v1` artifact naming
+that approver. You are asserting that answers given in this session are
+yours and may be recorded as authorization records; the artifact rests on
+that assertion, not on anything the hook independently verified.
+
+Two limits worth stating plainly:
+
+- `AskUserQuestion` is a general-purpose question tool, not an approval gate.
+  Most answers authorize nothing, so the artifact records only that you
+  answered X to question Y -- never that the answer authorized a specific
+  action.
+- The approval is minted after the fact. It witnesses your answer; it does
+  not gate the action Claude takes next.
 
 ## File tree
 
