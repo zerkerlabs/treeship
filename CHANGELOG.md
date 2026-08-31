@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`treeship workflow verify`: one fail-closed path from a signed declaration
+  to a conformance report.** The three verification pieces -- declaration
+  signature and validity, the signed `session.start` that binds the run, and
+  the Merkle evidence that the declaration pre-existed it -- existed
+  separately, and nothing composed them. `verify_workflow_run` does, and it is
+  now the only place the pre-existence grade is decided.
+
+  This closes a hole rather than adding a feature.
+  `evaluate_workflow_conformance` reads `pre_existence.grade` off its input,
+  and its doc comment made not-lying an obligation on callers. An observation
+  set that claimed `checked` with placeholder checkpoint ids got a `checked`
+  report. The composed path discards whatever the input claims and replaces it
+  with what the supplied evidence proves, so a run with no `--proof` reports
+  `asserted` no matter what its file says. Omitting the proof is allowed and
+  costs the run its `checked` grade; it is not an error, because an unproven
+  ordering claim is a weaker report rather than a malformed one.
+
+  The workflow reference and the first-run id are both read from artifacts
+  whose signatures were just checked, never from caller-supplied strings.
+
+  `--strict` exits non-zero on any deviation, gap, or exceeded limit. It is
+  off by default: the spec is explicit that there is no single workflow score,
+  so the pass/fail policy belongs to the caller and the substrate reports the
+  file. Path, authority, and loop findings stay on separate axes in both the
+  text and `--format json` output; one never summarizes another.
+
 ## 0.25.3 (2026-08-31)
 
 **Upgrade if you use `@treeship/verify`, `@treeship/sdk`, or any npm package
