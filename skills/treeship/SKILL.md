@@ -275,7 +275,7 @@ All methods raise `TreeshipError` on failure.
 - **Ed25519** (RFC 8032) — signatures
 - **DSSE** — envelope format (Sigstore/in-toto compatible)
 - **SHA-256** — content addressing + Merkle tree
-- **RFC 8785** — JSON canonicalization
+- **Canonical JSON** — compact, declaration-order fields (not RFC 8785/JCS); reproduce it or verify the exported PAE bytes
 
 ## Resources
 

@@ -164,7 +164,7 @@ treeship session report    # → shareable session report URL
 Two honesty notes:
 
 - The public receipt page's in-browser verdict is **structural** (Merkle consistency), not issuer-authenticated. Full signature verification against your trust roots happens locally: `treeship verify <artifact-id>`.
-- The Claude Code plugin's SessionEnd hook **automatically runs `treeship session report`** when a hub is attached, which uploads the session receipt. If you want capture without auto-publishing, don't attach a hub (everything stays local), or detach with `treeship hub detach`.
+- The Claude Code plugin's SessionEnd hook publishes **only when you opt in** with `TREESHIP_AUTO_PUBLISH=1`. Without it the session is sealed locally and nothing leaves the machine, whether or not a hub is attached. Publish when you choose to with `treeship session report`.
 
 The Hub stores immutable bytes, serves lookup indices and proofs, and enforces write auth ([DPoP](https://docs.treeship.dev/docs/api/overview)) — it never supplies trust verdicts. Server-side verification was deliberately retired (the endpoint returns `410 Gone`): a verifier you don't run yourself is not a verifier.
 
@@ -252,7 +252,7 @@ claude plugin marketplace add zerkerlabs/treeship
 claude plugin install treeship@treeship
 ```
 
-Every Claude Code session in a `.treeship/`-initialized project auto-records to a signed session package via SessionStart / PostToolUse / SessionEnd hooks. **Disclosure:** with a hub attached, the SessionEnd hook also auto-publishes the session report (see [Share it](#share-it-optional-separate-step)). Design: [`integrations/claude-code-plugin/`](./integrations/claude-code-plugin/).
+Every Claude Code session in a `.treeship/`-initialized project auto-records to a signed session package via SessionStart / PostToolUse / SessionEnd hooks. **Disclosure:** the SessionEnd hook publishes the session report only when `TREESHIP_AUTO_PUBLISH=1` is set; by default the receipt stays on your machine (see [Share it](#share-it-optional-separate-step)). Design: [`integrations/claude-code-plugin/`](./integrations/claude-code-plugin/).
 
 ### Other agent integrations
 

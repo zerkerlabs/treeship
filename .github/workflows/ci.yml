@@ -201,6 +201,13 @@ jobs:
         run: python3 scripts/check-vendored-fonts.py
       - name: Paper-receipt template matches the copy vendored downstream
         run: python3 scripts/check-downstream-template.py
+      # integrations/agents.json names "treeship.dev/integrations docs page" as
+      # one of its consumers. That page did not exist for the file's whole
+      # life, which is how a shipping partner skill and a shipping plugin
+      # stayed invisible. Now it is generated, so it cannot drift again.
+      - name: Integrations index matches what ships
+        run: python3 scripts/gen-integrations-index.py --check
+
       - name: Generated feature matrix matches the inventory
         # The generator needs only the `yaml` package (package-lock.json is
         # gitignored in docs/, so no npm ci; skip the full fumadocs install).

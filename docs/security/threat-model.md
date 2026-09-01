@@ -116,7 +116,7 @@ acceptable agents per ship.
 All signing in Treeship goes through one path:
 
 ```
-Statement (JSON) ──► RFC 8785 canonicalize ──► PAE bind type+payload ──► Ed25519 sign
+Statement (JSON) ──► compact JSON, declaration-order fields ──► PAE bind type+payload ──► Ed25519 sign
 ```
 
 ### Ed25519
@@ -590,7 +590,7 @@ explicitly so that users do not assume defenses that do not exist.
 |----------------------------------|-------------------------|----------------------------------|--------------------------------------------------------------------------------|
 | Signing                          | Ed25519                 | `ed25519-dalek` 2.x              | NCC Group audited. Constant-time via `subtle`.                                 |
 | Hashing                          | SHA-256                 | RustCrypto `sha2`                | Used for content addressing, Merkle tree, fingerprints.                        |
-| Canonical JSON                   | RFC 8785 JCS            | In-tree, `packages/core/src/statements/canonical.rs` | Deterministic key ordering, no whitespace.                                     |
+| Canonical JSON                   | Compact `serde_json`, declaration-order fields | In-tree, `packages/core/src/attestation/sign.rs` | No whitespace; field order fixed by the struct. Not RFC 8785/JCS — an outside verifier must reproduce declaration order, or verify the exported PAE bytes (`treeship receipt export`). |
 | Envelope binding                 | DSSE PAE                | In-tree, `packages/core/src/attestation/pae.rs`      | `DSSEv1 <type-len> <type> <payload-len> <payload>`                             |
 | Keystore AEAD (`v0.10.3`+)       | AES-256-GCM             | RustCrypto `aes-gcm` 0.10        | 96-bit nonce, framing prefix bound into AAD. See TS-2026-001.                  |
 | Authenticated transport          | TLS 1.2/1.3             | `rustls` (client), system store (cert validation) | No certificate pinning to the hub today.                                       |

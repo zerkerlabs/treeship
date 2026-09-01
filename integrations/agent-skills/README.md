@@ -178,7 +178,7 @@ Per-agent commands above show the wiring. The MCP bridge runs on stdio, talks to
 - **Chained workflows** — `parent_id`-linked attestation chains across multi-agent handoffs
 - **MCP bridge wiring** — per-agent setup snippets the agent can paste back to a user
 - **Hub API surface** — DPoP auth, public verification URLs, Merkle inclusion proofs
-- **Standards reference** — Ed25519, DSSE, SHA-256, RFC 8785 canonicalization
+- **Standards reference** — Ed25519, DSSE, SHA-256, and the declaration-order compact-JSON canonical form (not RFC 8785)
 - **Result types** — `ActionResult`, `ApprovalResult`, `VerifyResult`, `PushResult`, `SessionReportResult`
 
 The skill is **declarative, not procedural**: it doesn't run anything itself. It teaches the agent the API and the right shape for each use case. The agent decides when to call the CLI / SDK based on what the user asked for.
