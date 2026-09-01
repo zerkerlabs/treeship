@@ -1,10 +1,10 @@
 # Agent-to-agent verification
 
-**Status:** draft — protocol exists; default-on enforcement does not
+**Status:** slices 1–4 shipped (0.27.0): the gate is default-on in `@treeship/a2a` and `@treeship/mcp`, every harness skill teaches it, `attest handoff --verified` records the verify as `custody: live` and `verify` grades it, `--close-loop` binds sealed-session evidence. Slice 3b (Grok approvals) is blocked; see grok-bot-h2a.md
 **Pairs with:** [protocol-integration](./protocol-integration.md), [per-actor-signing](./per-actor-signing.md), [agent-capability-cards](./agent-capability-cards.md), [agent-resolver](./agent-resolver.md), [agent-invitations-rooms](./agent-invitations-rooms.md), `docs/content/docs/concepts/agent-handshake.mdx`, `@treeship/a2a`, `@treeship/mcp`
 **Implementation (Grok first, adapter for others):** [grok-bot-a2a](./grok-bot-a2a.md)
 **Harness note (H2A verbs only):** [grok-bot-h2a](./grok-bot-h2a.md)
-**Last updated:** 2026-09-01
+**Last updated:** 2026-09-02
 
 ## The shift
 

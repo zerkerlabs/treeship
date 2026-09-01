@@ -2,6 +2,56 @@
 
 ## Unreleased
 
+### Added
+
+- **A handoff records how custody was established, and `verify` grades it.**
+  `treeship attest handoff --verified <presentation> --challenge <nonce>`
+  re-runs the core presentation verifier and, only on a clean live verdict,
+  signs a `custody` block: the sha256 of the exact presentation bytes, the
+  nonce this ship minted, the card id, the verifier, and the time. A failing
+  presentation refuses to mint rather than downgrading quietly; a
+  presentation for one agent cannot certify a handoff `--from` another;
+  `--verified` without `--challenge` is a parser error. `--custody-reason
+  same_computer` records the shared-keystore case as what it is.
+
+  `verify` grades the block itself rather than echoing it: `custody: live`
+  only when the block carries the digest and the nonce a live check produces;
+  a `live` without them, an unknown grade, and no block at all all print as
+  `asserted` with the reason. `--format json` carries the same grade as
+  `checks[].custody.live`. Canonical bytes of every existing handoff are
+  unchanged.
+
+- **`--close-loop <session_id>` binds sealed-session evidence to a handoff.**
+  The session's `receipt.json` digest is signed into the statement; a session
+  the machine cannot find is refused. Evidence never upgrades custody.
+
+- **The A2A gate records what it verified.** After `admitTask` passes,
+  `@treeship/a2a` mints the receiver-signed `custody: live` handoff and
+  returns it as `handoffId`; the opt-out path never gets one. `handoff`
+  envelopes are validated on parse. `treeship_attest_handoff` in
+  `@treeship/mcp` takes `verified` + `challenge`.
+
+- **Every harness skill teaches the gate.** The universal skill, the Hermes,
+  OpenClaw, Kimi and Perplexity skills, the Claude Code / Codex / Cursor
+  integration notes, a new `treeship-handshake` skill in the Claude Code
+  plugin, and the Grok Bot skill all carry the same four steps: mint the
+  nonce, verify the presentation, refuse on any failure, record the verify.
+
+### Fixed
+
+- **Every handoff the CLI can mint failed chain linkage.** `attest handoff`
+  records `--artifacts[0]` as the storage parent, but handoff/v1 has no
+  `parentId`, so `verify` reported "claims parent (none)" and
+  `chain_linkage_ok: false` on correctly-signed evidence. The signed
+  `artifacts` list is the edge, the same shape as receipt.v1's
+  `subject.artifactId`; the walk now reads it.
+
+### Blocked
+
+- Grok Bot approvals (slice 3b of the A2A spec): the decision is visible
+  only in Grok's app UI, so the packaged skill states the boundary instead of
+  recording an approval nobody observed.
+
 ## 0.26.0 (2026-09-01)
 
 ### Added
