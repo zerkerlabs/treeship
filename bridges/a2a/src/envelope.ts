@@ -115,6 +115,36 @@ export function parseEnvelope(text: string): ParseResult {
     }
   }
 
+  if (raw.kind === 'handoff') {
+    // The handoff is the A2A object. A malformed one is refused here so a
+    // host never records custody from fields it could not read.
+    const body = raw.body as Record<string, unknown>;
+    for (const field of ['from', 'to'] as const) {
+      if (!isNonEmptyString(body[field])) {
+        return { ok: false, error: `handoff.body.${field} must be a non-empty string` };
+      }
+    }
+    if (!Array.isArray(body.artifacts) || !(body.artifacts as unknown[]).every(isNonEmptyString)) {
+      return { ok: false, error: 'handoff.body.artifacts must be an array of artifact ids' };
+    }
+    if (
+      body.verify_artifact !== undefined &&
+      body.verify_artifact !== null &&
+      !isNonEmptyString(body.verify_artifact)
+    ) {
+      return { ok: false, error: 'handoff.body.verify_artifact must be an artifact id or null' };
+    }
+    if (body.close_loop !== undefined && body.close_loop !== null) {
+      const cl = body.close_loop;
+      if (!isObject(cl) || !isNonEmptyString(cl.kind) || !isNonEmptyString(cl.session_id)) {
+        return {
+          ok: false,
+          error: 'handoff.body.close_loop must be null or an object with kind and session_id',
+        };
+      }
+    }
+  }
+
   if (/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(text)) {
     return { ok: false, error: 'envelope contains a private key; envelopes carry no secrets' };
   }

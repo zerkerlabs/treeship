@@ -116,6 +116,12 @@ export interface HandoffContext {
 /** Result returned by middleware after a task completes. */
 export interface TaskAttestationResult {
   intentId?: string;
+  /**
+   * The receiver-signed handoff recording the live verify that admitted this
+   * task (`custody: live`). Absent when the gate did not verify -- an
+   * unverified or ungated task never gets a handoff that claims it was.
+   */
+  handoffId?: string;
   receiptId?: string;
   receiptUrl?: string;
   shipId: string;
