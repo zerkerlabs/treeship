@@ -126,11 +126,6 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_artifacts_payload_type ON artifacts(payload_type, signed_at);
 CREATE INDEX IF NOT EXISTS idx_artifacts_dock_id ON artifacts(dock_id);
--- Derived-column indices. A kind-only lookup answers "every revocation"; the
--- composite answers "this agent's receipts" without loading the table and
--- JSON-parsing every envelope, which is what made the public reads expensive.
-CREATE INDEX IF NOT EXISTS idx_artifacts_kind ON artifacts(kind, signed_at);
-CREATE INDEX IF NOT EXISTS idx_artifacts_actor_kind ON artifacts(actor, kind, signed_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_dock_id ON sessions(dock_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_uploaded_at ON sessions(uploaded_at);
 
@@ -150,6 +145,23 @@ CREATE TABLE IF NOT EXISTS ship_agents (
   PRIMARY KEY (dock_id, agent_id)
 );
 CREATE INDEX IF NOT EXISTS idx_ship_agents_dock_id ON ship_agents(dock_id);
+`
+
+// derivedIndexes must run AFTER migrate(), never inside schema.
+//
+// Derived-column indices. A kind-only lookup answers "every revocation"; the
+// composite answers "this agent's receipts" without loading the table and
+// JSON-parsing every envelope, which is what made the public reads expensive.
+//
+// These lived in `schema` until 2026-09-01, which worked on every fresh
+// database and on no upgraded one: CREATE TABLE IF NOT EXISTS leaves an
+// existing artifacts table without `kind`, `schema` runs before migrate()
+// adds it, and the CREATE INDEX fails with "no such column: kind". Production
+// crash-looped on its July volume exactly that way. Anything that references
+// a column migrate() introduces belongs here.
+const derivedIndexes = `
+CREATE INDEX IF NOT EXISTS idx_artifacts_kind ON artifacts(kind, signed_at);
+CREATE INDEX IF NOT EXISTS idx_artifacts_actor_kind ON artifacts(actor, kind, signed_at);
 `
 
 // Open opens (or creates) the SQLite database and applies the schema.
@@ -195,6 +207,11 @@ func Open() (*sql.DB, error) {
 	if err := migrate(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
+	}
+
+	if _, err := db.Exec(derivedIndexes); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("apply derived indexes: %w", err)
 	}
 
 	return db, nil
