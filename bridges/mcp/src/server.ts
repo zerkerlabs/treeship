@@ -263,17 +263,41 @@ server.registerTool(
 server.registerTool(
   'treeship_attest_handoff',
   {
-    title: 'Record a handoff to another agent',
+    title: 'Record a handoff, and how custody was established',
     description:
-      'Sign a record that custody of some artifacts passed from one agent to another. Note the current limit: the handoff does not yet reference the presentation or nonce you verified, so custody here is asserted. Run treeship_verify_presentation first regardless — the check is what makes the handoff trustworthy, even while the record cannot cite it.',
+      'Sign a record that custody of some artifacts passed from one agent to another. Pass the presentation file you verified with treeship_verify_presentation and the nonce you minted, and the CLI re-checks it and signs custody: live bound to that file and nonce — or refuses to write anything if it no longer verifies. Without them the handoff is custody: asserted, and treeship verify says so. Agents sharing this computer are never live: use custody_reason "same_computer".',
     inputSchema: {
       to: z.string().describe('Receiving actor URI, e.g. agent://claude-code'),
       artifacts: z.array(z.string()).min(1).describe('Artifact ids being handed over'),
       from: z.string().optional().describe('Sending actor URI (defaults to this bridge’s actor)'),
+      verified: z
+        .string()
+        .optional()
+        .describe('Presentation file you verified; requires challenge. Records custody: live only if it still verifies'),
+      challenge: z.string().optional().describe('The nonce THIS host minted that the presentation answers'),
+      max_staple_age: z.string().optional().describe('Freshness bound for the staple, e.g. 1h; unknown age fails closed'),
+      custody_reason: z
+        .string()
+        .optional()
+        .describe('Record custody: asserted with this reason, e.g. same_computer (conflicts with verified)'),
+      close_loop: z
+        .string()
+        .optional()
+        .describe('A sealed local session id (ssn_…) to bind as close-loop evidence'),
     },
   },
-  async ({ to, artifacts, from }) =>
-    formatExec(await runTreeship(attestHandoffArgs(from ?? ACTOR, to, artifacts))),
+  async ({ to, artifacts, from, verified, challenge, max_staple_age, custody_reason, close_loop }) =>
+    formatExec(
+      await runTreeship(
+        attestHandoffArgs(from ?? ACTOR, to, artifacts, {
+          verified,
+          challenge,
+          maxStapleAge: max_staple_age,
+          custodyReason: custody_reason,
+          closeLoop: close_loop,
+        }),
+      ),
+    ),
 );
 
 async function main() {
