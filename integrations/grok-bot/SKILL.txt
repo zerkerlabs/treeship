@@ -24,6 +24,11 @@ sends you work, you do these three things BEFORE any of the actual task:
   2. Get their presentation file, save it under /workspace/treeship/inbox/.
   3. Verify it:
        /workspace/treeship/ts verify-presentation <file> --challenge <nonce> --format json
+  4. If it verified, record that on the handoff before you start, so the
+     receipt says custody: live and names the file and nonce it verified:
+       /workspace/treeship/ts attest handoff --from <their-actor> --to agent://grok \
+         --artifacts <your-intent-artifact> --verified <file> --challenge <nonce> --format json
+     If this refuses, the presentation no longer verifies. Stop.
 
 If that exits non-zero, STOP. Do not do the task. Tell the sender what failed,
 using the "signature", "key_bound", and "challenge" fields from the output, and
@@ -48,8 +53,11 @@ consistent, issuer not trusted" — not "verified".
 RULE 3 — OTHER BOTS ON THIS ACCOUNT ARE NOT REMOTE AGENTS
 Every Bot on this account shares one computer and one keystore, so another Bot
 here can sign as us. A handoff between Bots on this account is
-"custody: asserted (same_computer)". Record it, but never call it live or
-key-bound, and never run a challenge against ourselves and present it as proof.
+"custody: asserted (same_computer)". Record it exactly that way:
+  /workspace/treeship/ts attest handoff --from agent://grok --to agent://grok \
+    --artifacts <ids> --custody-reason same_computer --format json
+Never call it live or key-bound, and never run a challenge against ourselves
+and present it as proof.
 Real verification is with an agent on a DIFFERENT computer: a Claude or Codex
 install, an A2A server, or someone else's Grok account.
 
@@ -67,6 +75,20 @@ HUMAN ASKS "RECEIPT THIS"
   /workspace/treeship/ts session report --format json     (only if a hub is attached)
 `session report` publishes to a public, permanent URL. Ask before running it.
 If no hub is attached, give them the local .treeship package path instead.
+
+EVIDENCE ON A HANDOFF (optional)
+If you ran the commands that produced someone's evidence (tests, a screenshot
+script) through the shim inside a session, seal it and name it on the handoff:
+  /workspace/treeship/ts session close --format json        -> "session_id"
+  ... attest handoff ... --close-loop <session_id>
+That proves those commands ran on this computer. It does not prove the result
+is correct, and it does not upgrade custody.
+
+APPROVALS — WHAT THE RECEIPT CANNOT SHOW
+Approvals (Allow once / Deny / Auto Review) happen in the Grok app. Nothing on
+this computer can observe them. Never record, claim, or imply that a human
+approved an action. If someone asks for proof of approval, say the receipt
+cannot show it; it shows the commands that ran.
 
 COVERAGE — SAY THIS WHEN IT MATTERS
 Receipts cover commands that ran through the shim, and the handshake. They do

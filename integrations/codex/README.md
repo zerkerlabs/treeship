@@ -58,6 +58,10 @@ npx skills add zerkerlabs/treeship --skill treeship-dev --agent codex -g -y
 
 Maintainers preparing submission should keep the plugin-bundled skill in sync with [`skills/treeship-dev/SKILL.md`](../../skills/treeship-dev/SKILL.md), review the manifest metadata, test in a fresh Codex session, and submit `plugins/treeship-dev/` through the current Codex plugin submission process.
 
+## Foreign work (agent-to-agent)
+
+When another agent hands Codex work, the MCP bridge exposes the handshake: `treeship_mint_challenge` (you mint the nonce), the sender presents against it, `treeship_verify_presentation` (not `ok` → do not act), then `treeship_attest_handoff` with `verified` and `challenge` so the receipt records `custody: live`. A handoff without them is `custody: asserted`, and `treeship verify` prints that. The universal skill's "Foreign Work" section has the full reading of each verdict.
+
 ## Prerequisites
 
 - [Codex CLI](https://github.com/openai/codex) installed (so `~/.codex/` exists — run `codex` once if the folder is missing).

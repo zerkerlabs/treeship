@@ -40,7 +40,7 @@ The plugin requires the `treeship` CLI binary on your PATH and a `.treeship/` di
 - **Live status while you work.** A background monitor streams the receipt counter (`receipts=N events=M`) into Claude's context every few seconds, so the agent knows the receipt is being built.
 - **Human answers are recorded, not just counted.** When Claude asks you something through `AskUserQuestion` -- often the moment you authorize something irreversible -- the hook records the question and the option you chose. Previously this was stored as a bare tool name, so the most consequential moment in a session was the one the receipt said least about.
 
-- **Three skills for the moments that need agency.** `treeship-session` for closing with a real headline before SessionEnd auto-closes. `treeship-verify` for confirming a receipt someone shared with you. `treeship-report` for explicitly publishing a session report URL.
+- **Four skills for the moments that need agency.** `treeship-session` for closing with a real headline before SessionEnd auto-closes. `treeship-verify` for confirming a receipt someone shared with you. `treeship-report` for explicitly publishing a session report URL. `treeship-handshake` for refusing work from another agent until it proves live key control, and recording that verify in the handoff.
 
 ## Design rationale
 
@@ -55,10 +55,11 @@ The brief was: zero configuration, sessions start and close themselves, the URL 
 
 **Monitor (`monitors/monitors.json`).** Per the docs, monitors stream live notifications into Claude's context — perfect for "the receipt is currently being built" signaling without polluting the chat. The monitor watches `session status` and only emits when counters change, so it stays quiet when nothing's happening.
 
-**Skills (`skills/`).** Three small skills, each one focused on a moment when the agent needs to act with intention rather than fire a hook.
+**Skills (`skills/`).** Four small skills, each one focused on a moment when the agent needs to act with intention rather than fire a hook.
 - `treeship-session` — fires when the user finishes a meaningful unit of work and wants the receipt to carry a real headline (not the auto-headline SessionEnd would write). Teaches Claude how to write commit-message-quality headlines.
 - `treeship-verify` — fires when someone shares a receipt URL or local `.treeship` file and wants confirmation it's authentic. Teaches Claude to be honest about what verification proves vs. doesn't.
 - `treeship-report` — fires when the user wants the shareable URL on demand. Reinforces that the receipt is theirs and publishing is opt-in.
+- `treeship-handshake` — fires when another agent hands Claude work, or a human asks Claude to prove who it is. Mint the nonce, verify the presentation, refuse on any failure, and record the verify with `attest handoff --verified` so the receipt says `custody: live` rather than asserted.
 
 **No `settings.json`.** The Claude Code plugin settings layer currently only takes `agent` and `subagentStatusLine` keys. Treeship doesn't ship a custom agent or status line, so a settings file would be empty noise.
 
@@ -111,6 +112,7 @@ integrations/claude-code-plugin/
 ├── skills/
 │   ├── treeship-session/SKILL.md            # close with a real headline
 │   ├── treeship-verify/SKILL.md             # verify a shared receipt
+│   ├── treeship-handshake/SKILL.md          # gate foreign work; record the verify
 │   └── treeship-report/SKILL.md             # publish the report URL
 └── README.md                                # this file
 ```
