@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.26.0 (2026-09-01)
+
 ### Added
 
 - **`treeship workflow verify`: one fail-closed path from a signed declaration
@@ -29,6 +31,39 @@
   so the pass/fail policy belongs to the caller and the substrate reports the
   file. Path, authority, and loop findings stay on separate axes in both the
   text and `--format json` output; one never summarizes another.
+
+- **Observation sets can be derived from verified actions instead of typed by
+  hand.** `treeship workflow verify --run` read a file somebody wrote, which
+  meant the attribution rule -- which declared node an action belongs to --
+  lived outside the trust boundary entirely. `derive_observed_run` builds the
+  observation set from verified actions, so that rule is now code with tests
+  against it.
+
+  Attribution is by admissibility, never by label. A node admits an action when
+  its executor matches the signed actor (or a capability the verified mandate
+  carried) and its `allowed_tools` covers the signed action label. Exactly one
+  admitting node is the only case that earns `checked`, and a recorded node
+  label is not consulted there at all: a runtime cannot relabel work the
+  declaration already places. A label may only pick within an already
+  admissible set, which caps that attempt at `captured`, and a label naming a
+  node that cannot admit the action is reported rather than used as a
+  tiebreak.
+
+  Two ways this could have reported a clean run for a dirty one, both now
+  regression tests. Dropping an action that no node's `allowed_tools` covers
+  would have hidden an out-of-scope tool, so such an action stays attributed by
+  executor match and the authority axis still reports it. Accepting a repeated
+  action reference would have let one action pay twice against a loop's
+  `budget.max_actions`, which counts unique signed-action references, so
+  duplicates are refused during derivation -- `validate_run` only dedupes
+  within a single attempt.
+
+  Derivation leaves `pre_existence` asserted. `verify_workflow_run` remains the
+  only place that grades ordering.
+
+- **The recovered workflow conformance verifier.** `workflow_conformance.rs`,
+  its golden fixtures, and the `workflow.v1` predicate schema had existed only
+  in a local stash since 2026-08-18. They are on main.
 
 ## 0.25.3 (2026-08-31)
 
