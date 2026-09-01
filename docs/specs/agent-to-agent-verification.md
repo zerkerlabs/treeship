@@ -2,7 +2,8 @@
 
 **Status:** draft — protocol exists; default-on enforcement does not
 **Pairs with:** [protocol-integration](./protocol-integration.md), [per-actor-signing](./per-actor-signing.md), [agent-capability-cards](./agent-capability-cards.md), [agent-resolver](./agent-resolver.md), [agent-invitations-rooms](./agent-invitations-rooms.md), `docs/content/docs/concepts/agent-handshake.mdx`, `@treeship/a2a`, `@treeship/mcp`
-**Supersedes as the v1 product:** [grok-bot-h2a](./grok-bot-h2a.md) (that file is now a harness note under this spec)
+**Implementation (Grok first, adapter for others):** [grok-bot-a2a](./grok-bot-a2a.md)
+**Harness note (H2A verbs only):** [grok-bot-h2a](./grok-bot-h2a.md)
 **Last updated:** 2026-09-01
 
 ## The shift

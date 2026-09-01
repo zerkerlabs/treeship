@@ -1,0 +1,22 @@
+{
+  "agent": "agent://grok",
+  "card": "art_153aaacdf22bd4f6b18c65d69a71a480",
+  "challenge": "cannot check: the card did not verify key-bound, so there is no established key to check the response against",
+  "challenge_checked": true,
+  "challenge_ok": false,
+  "disclosed": false,
+  "key_bound": false,
+  "ok": false,
+  "revealed_capabilities": [],
+  "revocation": "none included — current as of the staple (24s old); for currency, audit a log",
+  "revoked": null,
+  "signature": "UNVERIFIED (key not in your trust roots)",
+  "staple": {
+    "age_secs": 24,
+    "detail": "checkpoint #1 signer not in your trust roots (or signature invalid) — pin it: treeship trust add <name> ed25519:PPUAtyjw2EXz3oOz2SKnVH8FMbIDRoFSh7n0dT0tabs --kind hub_checkpoint --yes",
+    "stale": false,
+    "verified": false
+  },
+  "verdict": "CHALLENGE FAILED (record may verify, but the bearer did not prove key control)",
+  "via_chain": false
+}

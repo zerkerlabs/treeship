@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 // The gate shells out to the CLI. Every test drives the CLI's behaviour
@@ -20,7 +21,12 @@ vi.mock('node:child_process', () => ({ execFile: execFileMock }));
 
 import { classifyRefusal, gateInbound, mintChallenge } from '../src/gate.js';
 
-function cliSucceeds(stdout = '{"status":"verified"}') {
+// Real captured output, not a hand-written approximation. See fixtures/README.md.
+const ACCEPTED = readFileSync(new URL('./fixtures/verify-accepted.json', import.meta.url), 'utf8');
+const UNPINNED = readFileSync(new URL('./fixtures/verify-unpinned-issuer.json', import.meta.url), 'utf8');
+const REPLAYED = readFileSync(new URL('./fixtures/verify-replayed-nonce.json', import.meta.url), 'utf8');
+
+function cliSucceeds(stdout = ACCEPTED) {
   execFileMock.impl = async () => ({ stdout, stderr: '' });
 }
 function cliFails(stderr: string, code = 1) {
@@ -74,7 +80,7 @@ describe('the gate refuses before it runs the work', () => {
     let seenArgs: string[] = [];
     execFileMock.impl = async (_bin: string, args: string[]) => {
       seenArgs = args;
-      return { stdout: '{"status":"verified"}', stderr: '' };
+      return { stdout: ACCEPTED, stderr: '' };
     };
     const nonce = 'a'.repeat(32);
     await gateInbound({ presentationPath: '/tmp/peer.json', challenge: nonce });
@@ -106,6 +112,26 @@ describe('refusal reasons are legible to the calling agent', () => {
       // words survive rather than being replaced by our label.
       expect(result.message).toContain(stderr.slice(0, 12));
     }
+  });
+
+  it('calls an unpinned issuer untrusted_issuer, not challenge_failed', () => {
+    // Both real outputs print verdict `CHALLENGE FAILED`. Only the structured
+    // fields say which one is the sender's problem and which is ours.
+    expect(classifyRefusal(UNPINNED)).toBe('untrusted_issuer');
+  });
+
+  it('calls a replayed nonce challenge_failed', () => {
+    expect(classifyRefusal(REPLAYED)).toBe('challenge_failed');
+  });
+
+  it('refuses a document whose ok flag disagrees with a zero exit', () => {
+    // Exit 0 is necessary, not sufficient.
+    cliSucceeds(REPLAYED);
+    return gateInbound({ presentationPath: '/tmp/peer.json', challenge: 'a'.repeat(32) }).then(
+      (result) => {
+        expect(result.allowed).toBe(false);
+      },
+    );
   });
 
   it('classifies case-insensitively', () => {
@@ -217,7 +243,7 @@ describe('admitTask leaves evidence for every outcome', () => {
   it('stamps the gate outcome onto the intent artifact', async () => {
     execFileMock.impl = async (_bin: string, args: string[]) => {
       if (args.includes('mint-challenge')) return { stdout: `{"challenge":"${'c'.repeat(32)}"}`, stderr: '' };
-      return { stdout: '{"status":"verified"}', stderr: '' };
+      return { stdout: ACCEPTED, stderr: '' };
     };
     const mw = await middleware();
     await mw.mintTaskChallenge('t4');

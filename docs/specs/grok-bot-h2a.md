@@ -2,6 +2,7 @@
 
 **Status:** draft, not implemented — **harness note**, not the product
 **Product spec:** [agent-to-agent-verification](./agent-to-agent-verification.md)
+**Implementation:** [grok-bot-a2a](./grok-bot-a2a.md)
 **Pairs with:** [protocol-integration](./protocol-integration.md), [per-actor-signing](./per-actor-signing.md), [agent-capability-cards](./agent-capability-cards.md), [agent-resolver](./agent-resolver.md), `skills/treeship/SKILL.md`, `@treeship/mcp`
 **Last updated:** 2026-09-01 (retargeted: A2A is v1; H2A is the same gate with a human)
 **Audience:** whoever wires Grok Bot as a Treeship peer (Claude / Codex / A2A servers use the same gate)

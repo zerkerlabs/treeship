@@ -67,19 +67,73 @@ function isCliMissing(err: unknown): boolean {
   return e.code === 'ENOENT' && (e.path === 'treeship' || !e.path);
 }
 
+/** The shape `verify-presentation --format json` returns. Fields are optional
+ * because a partial document must not be read as a pass. */
+type VerifyOutput = {
+  ok?: boolean;
+  key_bound?: boolean;
+  challenge_ok?: boolean;
+  challenge_checked?: boolean;
+  signature?: string;
+  revocation?: string;
+  staple?: { stale?: boolean; verified?: boolean };
+  verdict?: string;
+};
+
+/** Pull the JSON document out of output that may also carry warning lines. */
+export function parseVerifyOutput(text: string): VerifyOutput | null {
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start === -1 || end <= start) return null;
+  try {
+    const parsed = JSON.parse(text.slice(start, end + 1)) as unknown;
+    return parsed && typeof parsed === 'object' ? (parsed as VerifyOutput) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Classify from the verifier's structured fields, in root-cause order.
+ *
+ * The verdict STRING is not enough. An unpinned issuer and a replayed nonce
+ * both print `CHALLENGE FAILED`, because a card that never verified key-bound
+ * has no established key to check a response against -- the challenge failure
+ * is a consequence, not the cause. Telling a sender its challenge failed when
+ * we simply never pinned its issuer sends it to fix the wrong thing, so trust
+ * failures are classified before challenge failures.
+ *
+ * See test/fixtures/ for the real outputs these rules were derived from.
+ */
+function classifyStructured(out: VerifyOutput): GateRefusal {
+  const signature = (out.signature ?? '').toLowerCase();
+  if (out.key_bound === false || signature.includes('unverified') || signature.includes('not in your trust roots')) {
+    return 'untrusted_issuer';
+  }
+  const revocation = (out.revocation ?? '').toLowerCase();
+  if (revocation.includes('revoked') && !revocation.includes('none included')) return 'revoked';
+  if (out.staple?.stale === true) return 'stale';
+  if (out.challenge_ok === false) return 'challenge_failed';
+  return 'verification_failed';
+}
+
 /**
  * Map the verifier's output to a refusal the other agent can act on.
  *
- * Unrecognized output is `verification_failed`, never a pass: an unmapped
- * complaint is still a complaint.
+ * Prefers the structured document; falls back to substrings only when the
+ * output is not JSON. Unrecognized output is `verification_failed`, never a
+ * pass: an unmapped complaint is still a complaint.
  */
 export function classifyRefusal(text: string): GateRefusal {
+  const structured = parseVerifyOutput(text);
+  if (structured) return classifyStructured(structured);
+
   const t = text.toLowerCase();
-  if (t.includes('challenge failed') || t.includes('challenge_failed')) return 'challenge_failed';
-  if (t.includes('stale')) return 'stale';
   if (t.includes('untrusted issuer') || t.includes('not trusted') || t.includes('no pinned'))
     return 'untrusted_issuer';
   if (t.includes('revoked')) return 'revoked';
+  if (t.includes('stale')) return 'stale';
+  if (t.includes('challenge failed') || t.includes('challenge_failed')) return 'challenge_failed';
   return 'verification_failed';
 }
 
@@ -150,7 +204,14 @@ export async function gateInbound(opts: GateInboundOptions): Promise<GateResult>
 
   try {
     const { stdout } = await exec('treeship', args, { timeout: opts.timeoutMs ?? 10000 });
-    return { allowed: true, verdict: stdout.trim() };
+    // Exit 0 is necessary, not sufficient. A verifier that returns Ok for the
+    // wrong reason is worse than one that crashes, so the document has to
+    // agree with the exit code before foreign work runs.
+    const out = parseVerifyOutput(stdout);
+    if (out && out.ok !== true) {
+      return refuse(classifyStructured(out), out.verdict ?? stdout.trim());
+    }
+    return { allowed: true, verdict: (out?.verdict ?? stdout).trim() };
   } catch (err) {
     if (isCliMissing(err)) {
       return refuse(
