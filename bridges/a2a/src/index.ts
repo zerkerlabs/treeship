@@ -17,6 +17,12 @@ export {
 
 export { fetchReceipt, verifyReceipt, verifyArtifact } from './verify.js';
 
+// The inbound gate. Unlike everything above it, this path is allowed to
+// refuse: it decides whether foreign work runs at all. See gate.ts for why it
+// inverts the "attestation never breaks the agent path" rule.
+export { gateInbound, mintChallenge, classifyRefusal } from './gate.js';
+export type { GateResult, GateResultLike, GateRefusal, GateInboundOptions } from './gate.js';
+
 // Provision a per-agent key so this agent's receipts verify as `proven`. The
 // middleware calls it on construction; exported so it can also be run
 // explicitly (e.g. at deploy time) if preferred.

@@ -5,8 +5,11 @@ import {
   currentSessionId,
   provisionAgentKey,
 } from './attest.js';
+import { gateInbound, mintChallenge } from './gate.js';
+import type { GateResultLike } from './gate.js';
 import { hashPayload, stableStringify } from './utils.js';
 import type {
+  AdmitTaskContext,
   HandoffContext,
   TaskAttestationResult,
   TaskCompletedContext,
@@ -35,6 +38,12 @@ export class TreeshipA2AMiddleware {
   /** intentId per active task — used to chain receipts. */
   private readonly intents = new Map<string, string>();
 
+  /** Nonce this ship minted per task. Never a caller-supplied value. */
+  private readonly challenges = new Map<string, string>();
+
+  /** Gate outcome per task, so the intent artifact can record it. */
+  private readonly gateStatus = new Map<string, 'verified' | 'unverified'>();
+
   constructor(opts: TreeshipA2AOptions) {
     if (!opts.shipId) throw new Error('TreeshipA2AMiddleware: shipId is required');
     this.shipId = opts.shipId;
@@ -54,6 +63,72 @@ export class TreeshipA2AMiddleware {
   }
 
   /**
+   * Mint the challenge nonce this ship will require for one inbound task.
+   *
+   * Hand the returned nonce to the calling agent; it must produce a
+   * presentation answering *this* nonce. Returns null when the CLI cannot
+   * mint one, which `admitTask` treats as a refusal rather than inventing a
+   * nonce whose freshness this process guessed at.
+   */
+  async mintTaskChallenge(taskId: string): Promise<string | null> {
+    const nonce = await mintChallenge();
+    if (nonce) this.challenges.set(taskId, nonce);
+    return nonce;
+  }
+
+  /**
+   * Decide whether inbound foreign work runs at all. Call this BEFORE
+   * executing the task, and do not execute when `allowed` is false.
+   *
+   * Unlike every other method on this class, this one is allowed to withhold
+   * the agent path. Attestation must never break the work; the gate exists to
+   * break it. A gate that could not run refuses.
+   */
+  async admitTask(ctx: AdmitTaskContext): Promise<GateResultLike> {
+    const result = await gateInbound({
+      presentationPath: ctx.presentationPath,
+      challenge: this.challenges.get(ctx.taskId),
+      maxStapleAge: ctx.maxStapleAge,
+    });
+
+    if (result.allowed) {
+      this.gateStatus.set(ctx.taskId, result.unverified ? 'unverified' : 'verified');
+      if (result.unverified) {
+        // The opt-out fired. Record the skip as its own signed action: a
+        // skipped gate that leaves no artifact reads exactly like a gate that
+        // passed, which is the failure this whole path exists to prevent.
+        await attestAction({
+          actor: this.actor,
+          action: 'a2a.gate.skipped',
+          meta: {
+            a2a_task_id: ctx.taskId,
+            ship_id: this.shipId,
+            session_id: currentSessionId(),
+            reason: result.reason,
+          },
+        });
+      }
+      return result;
+    }
+
+    // Refusals are evidence too. Without this, "refused the work" and "never
+    // received the work" are the same silence in the log.
+    await attestAction({
+      actor: this.actor,
+      action: 'a2a.gate.refused',
+      meta: {
+        a2a_task_id: ctx.taskId,
+        ship_id: this.shipId,
+        session_id: currentSessionId(),
+        refusal: result.refusal,
+        detail: result.message,
+      },
+    });
+    this.challenges.delete(ctx.taskId);
+    return result;
+  }
+
+  /**
    * Call when an A2A task arrives. Records an intent artifact so the eventual
    * receipt can chain back to it. Awaited — proof of what was about to happen.
    */
@@ -68,6 +143,7 @@ export class TreeshipA2AMiddleware {
         from_agent: ctx.fromAgent,
         ship_id: this.shipId,
         session_id: currentSessionId(),
+        gate_status: ctx.gateStatus ?? this.gateStatus.get(ctx.taskId) ?? 'not_gated',
       },
     });
     if (intentId) this.intents.set(ctx.taskId, intentId);

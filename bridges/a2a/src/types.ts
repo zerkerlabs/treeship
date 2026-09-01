@@ -75,6 +75,21 @@ export interface TaskReceivedContext {
   skill?: string;
   /** Optional A2A message ID. */
   messageId?: string;
+  /**
+   * Outcome of `admitTask` for this task, stamped onto the intent artifact.
+   * `unverified` here is the record that the gate was skipped -- a skip that
+   * leaves no trace is indistinguishable from a gate that passed.
+   */
+  gateStatus?: 'verified' | 'unverified' | 'not_gated';
+}
+
+/** Context passed to admitTask. */
+export interface AdmitTaskContext {
+  taskId: string;
+  /** Path to the presentation the calling agent supplied. */
+  presentationPath?: string;
+  /** Passed through to the verifier, e.g. '1h'. */
+  maxStapleAge?: string;
 }
 
 /** Context passed to onTaskCompleted. */
