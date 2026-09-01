@@ -27,6 +27,33 @@ import type {
  *
  * Failures never throw. Treeship attestation must never break the agent path.
  */
+/**
+ * Thrown when a task from another agent reaches `onTaskReceived` without
+ * having passed `admitTask` first.
+ *
+ * This is the one error this package raises on purpose. Everything else here
+ * swallows failures because attestation must never break the agent path; a
+ * task from a foreign actor that was never gated is not an attestation
+ * problem, it is unverified work about to run.
+ */
+export class ForeignWorkNotGatedError extends Error {
+  readonly taskId: string;
+  readonly fromAgent: string;
+
+  constructor(taskId: string, fromAgent: string) {
+    super(
+      `refusing task ${taskId} from ${fromAgent}: call admitTask() first. ` +
+        'Mint a nonce with mintTaskChallenge(), have the sender answer it with ' +
+        '`treeship present <actor> --challenge <nonce>`, then pass the presentation ' +
+        'to admitTask(). To accept unverified foreign work, set TREESHIP_A2A_UNVERIFIED=1 ' +
+        '(the receipt will record that the gate was skipped).',
+    );
+    this.name = 'ForeignWorkNotGatedError';
+    this.taskId = taskId;
+    this.fromAgent = fromAgent;
+  }
+}
+
 export class TreeshipA2AMiddleware {
   readonly shipId: string;
   readonly actor: string;
@@ -133,6 +160,13 @@ export class TreeshipA2AMiddleware {
    * receipt can chain back to it. Awaited — proof of what was about to happen.
    */
   async onTaskReceived(ctx: TaskReceivedContext): Promise<string | undefined> {
+    // Foreign work that was never gated must not slip through as `not_gated`.
+    // An integration that forgets to call `admitTask` would otherwise get
+    // exactly today's behaviour, which is the failure this whole path exists
+    // to remove: the gate has to be the default, not an available option.
+    if (ctx.fromAgent && !this.gateStatus.has(ctx.taskId)) {
+      throw new ForeignWorkNotGatedError(ctx.taskId, ctx.fromAgent);
+    }
     const intentId = await attestAction({
       actor: this.actor,
       action: `a2a.task.${ctx.skill ?? 'unknown'}.intent`,

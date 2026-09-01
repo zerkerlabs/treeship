@@ -157,8 +157,10 @@ export async function mintChallenge(timeoutMs = 5000): Promise<string | null> {
       ['session', 'mint-challenge', '--format', 'json'],
       { timeout: timeoutMs },
     );
-    const parsed = JSON.parse(stdout) as { challenge?: string };
-    const nonce = parsed.challenge;
+    // The CLI emits `nonce` (128 bits, 32 hex chars). It is NOT `challenge`;
+    // see test/fixtures/mint-challenge.json for the real document.
+    const parsed = JSON.parse(stdout) as { nonce?: string };
+    const nonce = parsed.nonce;
     if (typeof nonce !== 'string' || nonce.length < MIN_NONCE_LENGTH) return null;
     return nonce;
   } catch {

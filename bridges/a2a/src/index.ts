@@ -6,7 +6,7 @@
  * into outgoing A2A artifact metadata so peers can verify the work.
  */
 
-export { TreeshipA2AMiddleware } from './middleware.js';
+export { TreeshipA2AMiddleware, ForeignWorkNotGatedError } from './middleware.js';
 
 export {
   buildAgentCard,

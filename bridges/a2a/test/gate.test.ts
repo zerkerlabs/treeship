@@ -171,13 +171,24 @@ describe('mintChallenge', () => {
   it('rejects a short nonce even if the CLI returned one', async () => {
     // Matches the CLI's own rule: a guessable nonce can be pre-signed, which
     // makes the liveness proof prove only that a document exists.
-    execFileMock.impl = async () => ({ stdout: '{"challenge":"tooshort"}', stderr: '' });
+    execFileMock.impl = async () => ({ stdout: '{"bits":128,"nonce":"tooshort","status":"ok"}', stderr: '' });
     expect(await mintChallenge()).toBeNull();
+  });
+
+  it('reads the field the CLI actually emits', async () => {
+    // Regression: this read `challenge`, a field the CLI has never emitted, so
+    // mintChallenge returned null against the real binary while the unit test
+    // passed against an invented shape.
+    const real = readFileSync(new URL('./fixtures/mint-challenge.json', import.meta.url), 'utf8');
+    execFileMock.impl = async () => ({ stdout: real, stderr: '' });
+    const nonce = await mintChallenge();
+    expect(nonce).toBe(JSON.parse(real).nonce);
+    expect(nonce).toHaveLength(32);
   });
 
   it('returns the minted nonce', async () => {
     const nonce = 'b'.repeat(32);
-    execFileMock.impl = async () => ({ stdout: JSON.stringify({ challenge: nonce }), stderr: '' });
+    execFileMock.impl = async () => ({ stdout: JSON.stringify({ bits: 128, nonce, status: 'ok' }), stderr: '' });
     expect(await mintChallenge()).toBe(nonce);
   });
 });
@@ -213,7 +224,7 @@ describe('admitTask leaves evidence for every outcome', () => {
 
   it('attests a refusal', async () => {
     execFileMock.impl = async (_bin: string, args: string[]) => {
-      if (args.includes('mint-challenge')) return { stdout: `{"challenge":"${'c'.repeat(32)}"}`, stderr: '' };
+      if (args.includes('mint-challenge')) return { stdout: `{"nonce":"${'c'.repeat(32)}","bits":128}`, stderr: '' };
       throw Object.assign(new Error('x'), { stderr: 'CHALLENGE FAILED', code: 1 });
     };
     const mw = await middleware();
@@ -228,7 +239,7 @@ describe('admitTask leaves evidence for every outcome', () => {
   it('attests the skip when the opt-out is used', async () => {
     process.env.TREESHIP_A2A_UNVERIFIED = '1';
     execFileMock.impl = async (_bin: string, args: string[]) => {
-      if (args.includes('mint-challenge')) return { stdout: `{"challenge":"${'c'.repeat(32)}"}`, stderr: '' };
+      if (args.includes('mint-challenge')) return { stdout: `{"nonce":"${'c'.repeat(32)}","bits":128}`, stderr: '' };
       throw Object.assign(new Error('x'), { stderr: 'CHALLENGE FAILED', code: 1 });
     };
     const mw = await middleware();
@@ -242,7 +253,7 @@ describe('admitTask leaves evidence for every outcome', () => {
 
   it('stamps the gate outcome onto the intent artifact', async () => {
     execFileMock.impl = async (_bin: string, args: string[]) => {
-      if (args.includes('mint-challenge')) return { stdout: `{"challenge":"${'c'.repeat(32)}"}`, stderr: '' };
+      if (args.includes('mint-challenge')) return { stdout: `{"nonce":"${'c'.repeat(32)}","bits":128}`, stderr: '' };
       return { stdout: ACCEPTED, stderr: '' };
     };
     const mw = await middleware();
