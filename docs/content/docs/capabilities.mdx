@@ -40,7 +40,7 @@ Everything above the line is built on a handful of primitives that predate the a
 ### Sign, verify, and the artifact
 `Since 0.1.0`
 
-**What:** Every artifact is a DSSE envelope (a standard signed-message format) over a canonical JSON payload (RFC 8785, so the exact bytes are reproducible), signed with Ed25519. `treeship init` creates your ship and key; `attest action` signs a record that an agent did something; `verify` re-checks the signature and the parent chain. These three are the atoms; every card, receipt, and session is built from them.
+**What:** Every artifact is a DSSE envelope (a standard signed-message format) over a canonical JSON payload (compact JSON with fields in declaration order, so the exact bytes are reproducible), signed with Ed25519. `treeship init` creates your ship and key; `attest action` signs a record that an agent did something; `verify` re-checks the signature and the parent chain. These three are the atoms; every card, receipt, and session is built from them.
 
 **Use / Test:**
 ```bash

@@ -143,7 +143,7 @@ See the [coverage levels guide](https://docs.treeship.dev/guides/coverage-levels
 - **Chained workflows** — multi-agent handoffs linked by `parent_id`, the chain walk that `treeship verify` runs.
 - **MCP bridge wiring per agent** — exact `claude mcp add`, `kimi mcp add`, Cursor `mcp.json`, Codex `config.toml` snippets.
 - **Hub API surface** — DPoP auth, public verification URLs, Merkle inclusion proofs.
-- **Standards reference** — Ed25519 (RFC 8032), DSSE, SHA-256, RFC 8785 canonicalization.
+- **Standards reference** — Ed25519 (RFC 8032), DSSE, SHA-256, and a deterministic declaration-order compact-JSON canonical form (not RFC 8785/JCS).
 
 The skill is **declarative, not procedural**: it doesn't run anything itself. It teaches the agent the API and the right shape for each use case. The agent decides when to call the CLI or SDK based on what the user actually asked for. That keeps the skill safe (it's just text) and portable (the same file lands on every agent).
 
