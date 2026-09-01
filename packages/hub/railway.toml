@@ -1,0 +1,15 @@
+# Railway config-as-code for the hub service.
+#
+# Without this, Railway picks its auto-detect builder (Railpack), which fails
+# on this tree ("railpack prepare exited with an error") and never reaches the
+# Dockerfile. Both 2026-09-01 deploys died that way. Pinning the builder here
+# means `railway up` from this directory builds what CI builds.
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/readyz"
+healthcheckTimeout = 120
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5

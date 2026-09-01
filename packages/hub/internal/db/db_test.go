@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
 )
@@ -252,4 +253,100 @@ func TestGetSignerPublicKeyFirstWriterBinding(t *testing.T) {
 	if pub == "PUBKEY_ATTACKER" {
 		t.Fatal("binding must not resolve to an attacker key")
 	}
+}
+
+// The schema production was created with in July 2026: artifacts without
+// `kind`/`actor`, dock_challenges without `dock_id`. Copied verbatim from the
+// deployed commit (ca9a4af2) rather than derived from `schema`, because a
+// fixture derived from the current schema cannot represent a database that
+// predates it -- which is the only database this test exists for.
+const julySchema = `
+CREATE TABLE IF NOT EXISTS ships (
+  dock_id     TEXT PRIMARY KEY,
+  public_key  BLOB NOT NULL,
+  created_at  INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS artifacts (
+  artifact_id   TEXT PRIMARY KEY,
+  payload_type  TEXT NOT NULL,
+  envelope_json TEXT NOT NULL,
+  digest        TEXT NOT NULL,
+  signed_at     INTEGER NOT NULL,
+  parent_id     TEXT,
+  hub_url       TEXT NOT NULL,
+  rekor_index   INTEGER,
+  dock_id       TEXT REFERENCES ships(dock_id)
+);
+CREATE TABLE IF NOT EXISTS dock_challenges (
+  device_code     TEXT PRIMARY KEY,
+  nonce           TEXT NOT NULL,
+  expires_at      INTEGER NOT NULL,
+  approved        INTEGER DEFAULT 0,
+  dock_public_key BLOB,
+  ship_public_key BLOB
+);
+CREATE INDEX IF NOT EXISTS idx_artifacts_payload_type ON artifacts(payload_type, signed_at);
+CREATE INDEX IF NOT EXISTS idx_artifacts_dock_id ON artifacts(dock_id);
+`
+
+// Open must upgrade a database created before `kind`/`actor` existed.
+//
+// Regression: the derived-column indexes were part of `schema`, which runs
+// before migrate() adds the columns, so Open failed with "apply schema: no
+// such column: kind" on every pre-August database and succeeded on every
+// fresh one. Production crash-looped on 2026-09-01. A test that only ever
+// opens a fresh TempDir database cannot see this, so this one builds the
+// old shape first.
+func TestOpenUpgradesDatabaseCreatedBeforeDerivedColumns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hub.db")
+	t.Setenv("TREESHIP_HUB_DB", path)
+
+	old, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := old.Exec(julySchema); err != nil {
+		t.Fatalf("create July schema: %v", err)
+	}
+	if _, err := old.Exec(
+		`INSERT INTO artifacts (artifact_id, payload_type, envelope_json, digest, signed_at, hub_url)
+		 VALUES ('art_old', 'application/vnd.treeship.action.v1+json', '{}', 'd', 1, 'https://api.treeship.dev')`,
+	); err != nil {
+		t.Fatalf("insert pre-migration row: %v", err)
+	}
+	if err := old.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := Open()
+	if err != nil {
+		t.Fatalf("Open on a July-shaped database: %v", err)
+	}
+	defer db.Close()
+
+	// The columns arrived, the index that references them exists, and the
+	// pre-existing row survived with kind unset ("not derived", not "no match").
+	var kind *string
+	if err := db.QueryRow(`SELECT kind FROM artifacts WHERE artifact_id = 'art_old'`).Scan(&kind); err != nil {
+		t.Fatalf("read migrated row: %v", err)
+	}
+	if kind != nil {
+		t.Fatalf("kind should be NULL on an un-backfilled row, got %q", *kind)
+	}
+	var n int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN ('idx_artifacts_kind', 'idx_artifacts_actor_kind')`,
+	).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("expected both derived indexes after upgrade, found %d", n)
+	}
+
+	// Opening again must be a no-op, not a second migration.
+	db2, err := Open()
+	if err != nil {
+		t.Fatalf("second Open: %v", err)
+	}
+	db2.Close()
 }
