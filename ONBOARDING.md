@@ -307,4 +307,4 @@ Built-in templates for common workflows:
 
 - **Zerker Labs** is the company. **Treeship** is the open-source protocol and CLI. **treeship.dev Hub** is the hosted service.
 - Built with: Rust (core + CLI), Go (Hub), TypeScript (SDK + MCP), Python (SDK), WASM (browser verifier)
-- Standards: DSSE, Ed25519 (RFC 8032), RFC 8785 (JSON Canonicalization), SHA-256
+- Standards: DSSE, Ed25519 (RFC 8032), SHA-256. Canonical JSON is compact with fields in declaration order — not RFC 8785/JCS

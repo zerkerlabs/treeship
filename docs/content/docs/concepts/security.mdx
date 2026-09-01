@@ -83,13 +83,17 @@ Treeship provides strong guarantees against retroactive tampering, unauthorized 
 
 ## Revocation
 
-The Hub publishes a signed revocation list at:
+Grant revocation is a signed receipt, not a Hub verdict. `treeship grant revoke` mints a `grant_revocation.v1` artifact signed by the grantor. `treeship verify` honors it from the local store or from a Hub's published list, and `treeship grant show --check-log` re-verifies the dock's consistency chain with RFC 6962.
+
+The Hub serves the revocations it has received at:
 
 ```
 GET /.well-known/treeship/revoked.json
 ```
 
-This list contains revoked artifact IDs and key fingerprints. Verifiers that have network access check this list. Offline verifiers skip it and rely solely on cryptographic validity.
+Each entry carries the grantor-signed DSSE envelope plus `dock_id` and `rekor_index`, so a verifier checks the entry against the grantor's key and can request an inclusion proof for it. **The list itself is not signed by the Hub.** The Hub holds no signing key, and a Hub signature would only attest that the Hub said so — strictly less than the grantor's signature already on each entry. The document states what it cannot prove: absence from the list is not evidence a grant was never revoked, because a withheld entry looks identical to one that never existed. When the query fails the Hub answers 503, never an empty 200.
+
+Offline verifiers see only the revocation artifacts they possess; a revocation minted after a receipt was packaged is invisible until a log is consulted. Unknown stays a third state throughout — `verify` reports authority as unverified rather than passing.
 
 ## Privacy
 

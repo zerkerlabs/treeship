@@ -311,7 +311,7 @@ These never change. Do not suggest modifications to them.
 
 - **Signature algorithm:** Ed25519 (RFC 8032)
 - **Envelope format:** DSSE (Sigstore/in-toto compatible)
-- **Canonicalization:** RFC 8785 JSON Canonicalization Scheme
+- **Canonicalization:** compact JSON with fields in declaration order (not RFC 8785/JCS)
 - **Content addressing:** SHA-256
 - **PAE format:** `"DSSEv1" SP LEN(payloadType) SP payloadType SP LEN(payload) SP payload`
 - **Artifact ID:** `"art_" + hex(sha256(PAE_bytes)[..16])`

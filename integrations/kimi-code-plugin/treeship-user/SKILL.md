@@ -472,7 +472,7 @@ landed in **v0.10.2** (#75); before that, `--provider` was rejected by
 - **Ed25519** (RFC 8032): Digital signatures
 - **DSSE**: Envelope format (Sigstore/in-toto compatible)
 - **SHA-256**: Content addressing and Merkle tree
-- **RFC 8785**: JSON canonicalization for deterministic signing
+- **Canonical JSON**: compact, declaration-order fields for deterministic signing (not RFC 8785/JCS)
 - **Merkle tree**: Append-only log with inclusion proofs
 
 ## Resources
