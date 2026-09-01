@@ -321,7 +321,171 @@ pub struct HandoffStatement {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meta: Option<serde_json::Value>,
+
+    /// How custody was established for this transfer.
+    ///
+    /// Absent on every handoff minted before custody grading existed and on
+    /// every handoff that recorded no verification. Absent means `asserted`,
+    /// never `live`: the verifier grades a missing block exactly like an
+    /// explicit assertion (see [`HandoffCustody::effective`]). Signed, so a
+    /// holder cannot promote an asserted handoff to live on the wire.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custody: Option<HandoffCustody>,
+
+    /// Close-loop evidence the sender attached: a sealed local session whose
+    /// receipt digest this handoff binds. It proves the sender ran the
+    /// commands in that session; it does not bind the UI pixels or the task
+    /// result to the presentation key. Optional by design -- slice 4 of
+    /// `docs/specs/agent-to-agent-verification.md` says a receiver may require
+    /// it as policy, and v1 must not.
+    #[serde(rename = "closeLoop", default, skip_serializing_if = "Option::is_none")]
+    pub close_loop: Option<CloseLoopEvidence>,
 }
+
+/// Custody grade vocabulary. Closed on purpose: `verify` treats any other
+/// string as `asserted` and says so, rather than letting a new word read as a
+/// stronger claim than the verifier knows how to check.
+pub const CUSTODY_LIVE: &str = "live";
+pub const CUSTODY_ASSERTED: &str = "asserted";
+
+/// How a handoff's custody was established. Lives inside the signed
+/// statement; every field here is covered by the handoff signature.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandoffCustody {
+    /// `live` or `asserted`. See [`CUSTODY_LIVE`] / [`CUSTODY_ASSERTED`].
+    pub grade: String,
+
+    /// Why the grade is what it is. For `asserted`, the reason the receiver
+    /// gave (`same_computer` for a shared-keystore roster handoff). For `live`,
+    /// normally absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+
+    /// `sha256:<hex>` of the exact presentation file bytes that verified.
+    /// Required for `live`; a live grade without it is downgraded by the
+    /// verifier.
+    #[serde(
+        rename = "presentationDigest",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub presentation_digest: Option<String>,
+
+    /// The nonce the verifier minted and the bearer answered. Required for
+    /// `live`: without it there was no liveness check, whatever the grade says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub challenge: Option<String>,
+
+    /// Artifact id of the capability card that verified key-bound.
+    #[serde(rename = "cardId", default, skip_serializing_if = "Option::is_none")]
+    pub card_id: Option<String>,
+
+    /// Actor URI that ran the verification -- the receiving side of the
+    /// handoff, since only the receiver holds the nonce it minted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verifier: Option<String>,
+
+    /// RFC 3339 time the verification ran, by the verifier's clock.
+    #[serde(
+        rename = "verifiedAt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub verified_at: Option<String>,
+}
+
+/// The grade a verifier reports, after refusing to launder a claim the block
+/// does not support.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectiveCustody {
+    pub live: bool,
+    pub detail: String,
+}
+
+impl HandoffCustody {
+    /// An asserted custody block with an operator-supplied reason.
+    pub fn asserted(reason: impl Into<String>) -> Self {
+        Self {
+            grade: CUSTODY_ASSERTED.into(),
+            reason: Some(reason.into()),
+            presentation_digest: None,
+            challenge: None,
+            card_id: None,
+            verifier: None,
+            verified_at: None,
+        }
+    }
+
+    /// Grade a handoff's custody the way `verify` reports it.
+    ///
+    /// The signed block is the signer's claim. This decides what that claim is
+    /// worth on its face: `live` is honored only when the block carries the
+    /// evidence a live check produces (a presentation digest and the nonce it
+    /// answered). A `live` without them, an unknown grade, or no block at all
+    /// is reported as `asserted` with the reason spelled out, because the
+    /// failure this guards against is a receipt reader seeing "live" and
+    /// stopping there.
+    pub fn effective(custody: Option<&HandoffCustody>) -> EffectiveCustody {
+        let Some(c) = custody else {
+            return EffectiveCustody {
+                live: false,
+                detail: "asserted (no verification recorded)".into(),
+            };
+        };
+        match c.grade.as_str() {
+            CUSTODY_LIVE => {
+                if c.presentation_digest.is_none() || c.challenge.is_none() {
+                    return EffectiveCustody {
+                        live: false,
+                        detail: "asserted (claims live without presentation digest and challenge)"
+                            .into(),
+                    };
+                }
+                let mut detail = String::from("live");
+                if let Some(card) = &c.card_id {
+                    detail.push_str(&format!(" -- card {card}"));
+                }
+                if let Some(v) = &c.verifier {
+                    detail.push_str(&format!(", verified by {v}"));
+                }
+                if let Some(t) = &c.verified_at {
+                    detail.push_str(&format!(" at {t}"));
+                }
+                EffectiveCustody { live: true, detail }
+            }
+            CUSTODY_ASSERTED => EffectiveCustody {
+                live: false,
+                detail: match &c.reason {
+                    Some(r) => format!("asserted ({r})"),
+                    None => "asserted".into(),
+                },
+            },
+            other => EffectiveCustody {
+                live: false,
+                detail: format!("asserted (unknown custody grade {other:?})"),
+            },
+        }
+    }
+}
+
+/// Close-loop evidence bound into a handoff: a sealed session package on the
+/// sender's side whose `receipt.json` digest is recorded here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CloseLoopEvidence {
+    /// Evidence kind. `session` is the only kind today.
+    pub kind: String,
+
+    /// The sealed session id (`ssn_...`).
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+
+    /// `sha256:<hex>` of the package's `receipt.json` bytes, the same digest
+    /// the `session.v1` record binds.
+    #[serde(rename = "receiptDigest")]
+    pub receipt_digest: String,
+}
+
+pub const CLOSE_LOOP_SESSION: &str = "session";
 
 /// Records that a signer asserts confidence about an existing artifact.
 ///
@@ -562,6 +726,8 @@ impl HandoffStatement {
             task_ref: None,
             policy_ref: None,
             meta: None,
+            custody: None,
+            close_loop: None,
         }
     }
 }
@@ -737,6 +903,108 @@ mod tests {
         let bytes = serde_json::to_string(&approval).unwrap();
         assert!(!bytes.contains("irreversibility"));
         assert!(!bytes.contains("quarantineReceipt"));
+    }
+
+    #[test]
+    fn handoff_without_custody_keeps_canonical_bytes() {
+        // Handoffs are content-addressed. If the new optional blocks were ever
+        // emitted when absent, every existing handoff would change id.
+        let handoff = HandoffStatement::new("agent://a", "agent://b", vec!["art_1".into()]);
+        let bytes = serde_json::to_string(&handoff).unwrap();
+        assert!(!bytes.contains("custody"));
+        assert!(!bytes.contains("closeLoop"));
+    }
+
+    #[test]
+    fn handoff_custody_and_close_loop_roundtrip_signed() {
+        let signer = Ed25519Signer::generate("key_receiver").unwrap();
+        let mut handoff =
+            HandoffStatement::new("agent://grok", "agent://claude", vec!["art_1".into()]);
+        handoff.custody = Some(HandoffCustody {
+            grade: CUSTODY_LIVE.into(),
+            reason: None,
+            presentation_digest: Some(format!("sha256:{}", "ab".repeat(32))),
+            challenge: Some("0123456789abcdef0123456789abcdef".into()),
+            card_id: Some("art_card".into()),
+            verifier: Some("agent://claude".into()),
+            verified_at: Some("2026-09-02T00:00:00Z".into()),
+        });
+        handoff.close_loop = Some(CloseLoopEvidence {
+            kind: CLOSE_LOOP_SESSION.into(),
+            session_id: "ssn_0011".into(),
+            receipt_digest: format!("sha256:{}", "cd".repeat(32)),
+        });
+        let pt = payload_type("handoff");
+        let result = sign(&pt, &handoff, &signer).unwrap();
+        let decoded: HandoffStatement = result.envelope.unmarshal_statement().unwrap();
+        assert_eq!(decoded.custody, handoff.custody);
+        assert_eq!(decoded.close_loop, handoff.close_loop);
+    }
+
+    #[test]
+    fn custody_missing_block_is_asserted() {
+        let e = HandoffCustody::effective(None);
+        assert!(!e.live);
+        assert_eq!(e.detail, "asserted (no verification recorded)");
+    }
+
+    #[test]
+    fn custody_live_without_evidence_is_downgraded() {
+        // A signer can write `live` into the block; without the digest and the
+        // nonce there was no liveness check, and the verifier must not repeat
+        // the word.
+        let c = HandoffCustody {
+            grade: CUSTODY_LIVE.into(),
+            reason: None,
+            presentation_digest: None,
+            challenge: Some("0123456789abcdef0123456789abcdef".into()),
+            card_id: None,
+            verifier: None,
+            verified_at: None,
+        };
+        let e = HandoffCustody::effective(Some(&c));
+        assert!(!e.live);
+        assert!(
+            e.detail.starts_with("asserted (claims live"),
+            "{}",
+            e.detail
+        );
+    }
+
+    #[test]
+    fn custody_unknown_grade_is_asserted_and_named() {
+        let mut c = HandoffCustody::asserted("x");
+        c.grade = "verified".into();
+        let e = HandoffCustody::effective(Some(&c));
+        assert!(!e.live);
+        assert_eq!(e.detail, "asserted (unknown custody grade \"verified\")");
+    }
+
+    #[test]
+    fn custody_asserted_carries_its_reason() {
+        let c = HandoffCustody::asserted("same_computer");
+        let e = HandoffCustody::effective(Some(&c));
+        assert!(!e.live);
+        assert_eq!(e.detail, "asserted (same_computer)");
+    }
+
+    #[test]
+    fn custody_live_with_evidence_is_live() {
+        let c = HandoffCustody {
+            grade: CUSTODY_LIVE.into(),
+            reason: None,
+            presentation_digest: Some(format!("sha256:{}", "ab".repeat(32))),
+            challenge: Some("0123456789abcdef0123456789abcdef".into()),
+            card_id: Some("art_card".into()),
+            verifier: Some("agent://claude".into()),
+            verified_at: Some("2026-09-02T00:00:00Z".into()),
+        };
+        let e = HandoffCustody::effective(Some(&c));
+        assert!(e.live);
+        assert_eq!(
+            e.detail,
+            "live -- card art_card, verified by agent://claude at 2026-09-02T00:00:00Z"
+        );
     }
 
     #[test]

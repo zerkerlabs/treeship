@@ -1961,6 +1961,27 @@ struct AttestHandoffArgs {
     /// Comma-separated obligations the receiver must satisfy
     #[arg(long, value_delimiter = ',', value_name = "TEXT")]
     obligations: Vec<String>,
+
+    /// Presentation file the receiver verified live. Records custody: live
+    /// only if it verifies right now against this ship's trust roots
+    #[arg(long, value_name = "FILE", requires = "challenge")]
+    verified: Option<String>,
+
+    /// The nonce THIS ship minted that the presentation answers
+    #[arg(long, value_name = "NONCE", requires = "verified")]
+    challenge: Option<String>,
+
+    /// Freshness bound for the presentation's Merkle staple (30s, 15m, 2h, 1d); unknown age fails closed
+    #[arg(long, value_name = "DURATION", requires = "verified")]
+    max_staple_age: Option<String>,
+
+    /// Record custody: asserted with this reason (e.g. same_computer)
+    #[arg(long, value_name = "REASON", conflicts_with = "verified")]
+    custody_reason: Option<String>,
+
+    /// Bind a sealed local session as close-loop evidence; its receipt digest is signed into the handoff
+    #[arg(long, value_name = "SESSION_ID")]
+    close_loop: Option<String>,
 }
 
 #[derive(Args)]
@@ -3355,6 +3376,11 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                     artifacts: a.artifacts.clone(),
                     approvals: a.approvals.clone(),
                     obligations: a.obligations.clone(),
+                    verified: a.verified.clone(),
+                    challenge: a.challenge.clone(),
+                    max_staple_age: a.max_staple_age.clone(),
+                    custody_reason: a.custody_reason.clone(),
+                    close_loop: a.close_loop.clone(),
                     config: cli.config.clone(),
                 },
                 printer,

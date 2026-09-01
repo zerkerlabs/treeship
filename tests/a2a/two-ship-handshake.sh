@@ -9,6 +9,12 @@
 #   1. Receiver has NOT pinned the sender's cert_issuer  -> refuse (exit 1)
 #   2. Receiver pinned it, sender answers the live nonce -> accept (exit 0)
 #   3. Same presentation replayed against a DIFFERENT nonce -> refuse (exit 1)
+#   4. `attest handoff --verified` on the live presentation -> custody: live,
+#      and `verify` grades it live from the signed evidence
+#   5. `attest handoff --verified` on the replayed presentation -> refuses to
+#      mint, writes nothing (the same decision as case 3, one command later)
+#   6. `attest handoff` with no verification -> custody: asserted, and
+#      `verify` says so rather than staying silent
 #
 # Isolation needs BOTH `HOME` and `TREESHIP_CONFIG`. `TREESHIP_HOME` does not
 # move the ship (it is the rig ledger's variable), and `--config` alone leaves
@@ -107,5 +113,55 @@ assert d.get("key_bound") is True, "the card is still key-bound; only the nonce 
 PY
 pass "refused as a challenge failure, with the card still key-bound"
 
+# --- 4. verified handoff -----------------------------------------------------
+echo "== 4. a handoff that records the live verify must grade live =="
+INTENT="$(as_ship C attest action --actor agent://claude --action a2a.task.intent --format json \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("id") or d.get("artifact_id"))')"
+[ -n "$INTENT" ] && [ "$INTENT" != "None" ] || fail "C could not attest an intent artifact"
+as_ship C attest handoff --from agent://grok --to agent://claude --artifacts "$INTENT" \
+  --verified "$PRESENTATION" --challenge "$NONCE" --format json > "$ROOT/handoff-live.json"
+HANDOFF="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("id") or d.get("artifact_id"))' "$ROOT/handoff-live.json")"
+[ -n "$HANDOFF" ] && [ "$HANDOFF" != "None" ] || fail "attest handoff --verified produced no artifact id"
+as_ship C verify "$HANDOFF" --format json > "$ROOT/verify-live.json"
+DIGEST="sha256:$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$PRESENTATION")"
+python3 - "$ROOT/verify-live.json" "$HANDOFF" "$DIGEST" "$NONCE" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); hid, digest, nonce = sys.argv[2:5]
+assert d.get("outcome") == "pass", f"handoff chain must verify, got {d.get('outcome')}"
+c = next(c for c in d["checks"] if c["id"] == hid)
+cu = c["custody"]
+assert cu["live"] is True, f"expected the verifier to grade custody live, got {cu}"
+assert cu["presentation_digest"] == digest, "the signed digest must be of the exact presentation bytes"
+assert cu["challenge"] == nonce, "the signed challenge must be the nonce C minted"
+assert cu["verifier"] == "agent://claude", "the receiver is the verifier"
+PY
+pass "custody: live, bound to the presentation digest and C's nonce"
+
+# --- 5. verified handoff on a replay -----------------------------------------
+echo "== 5. a handoff must refuse to record live custody from a replayed presentation =="
+set +e
+as_ship C attest handoff --from agent://grok --to agent://claude --artifacts "$INTENT" \
+  --verified "$PRESENTATION" --challenge "$OTHER_NONCE" --format json > "$ROOT/handoff-replay.json" 2>&1
+REPLAY_HANDOFF_EXIT=$?
+set -e
+[ "$REPLAY_HANDOFF_EXIT" -ne 0 ] || fail "attest handoff recorded custody: live from a presentation that answers a different nonce"
+grep -q "custody: live was NOT recorded" "$ROOT/handoff-replay.json" || fail "refusal did not say that live custody was not recorded: $(cat "$ROOT/handoff-replay.json")"
+pass "refused; no handoff written"
+
+# --- 6. unverified handoff ---------------------------------------------------
+echo "== 6. a handoff with no verification must be graded asserted, out loud =="
+PLAIN="$(as_ship C attest handoff --from agent://grok --to agent://claude --artifacts "$INTENT" --format json \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("id") or d.get("artifact_id"))')"
+as_ship C verify "$PLAIN" --format json > "$ROOT/verify-plain.json"
+python3 - "$ROOT/verify-plain.json" "$PLAIN" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); hid = sys.argv[2]
+c = next(c for c in d["checks"] if c["id"] == hid)
+assert c["custody"]["live"] is False
+assert c["custody"]["grade"] is None
+assert "no verification recorded" in c["custody"]["detail"], c["custody"]
+PY
+pass "custody: asserted (no verification recorded)"
+
 echo
-echo "PASS: two-ship handshake refuses an unpinned issuer and a replayed nonce, and accepts a live one."
+echo "PASS: two-ship handshake refuses an unpinned issuer and a replayed nonce, accepts a live one, and the handoff records only what verified."

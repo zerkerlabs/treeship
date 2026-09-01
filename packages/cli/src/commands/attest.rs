@@ -10,9 +10,10 @@ use treeship_core::{
     statements::{
         irreversibility_requires_quarantine, is_irreversibility_class, nonce_digest, payload_type,
         payload_type_v2, ActionStatement, ActionStatementV2, ApprovalScope, ApprovalStatement,
-        ApprovalUse, DeadlineEvent, DecisionStatement, Effect, EffectConfidence, EffectFinality,
-        EndorsementStatement, Grant, HandoffStatement, Mandate, ReceiptStatement, Resolution,
-        Revocation, RuntimeIdentity, SubjectRef, IRREVERSIBILITY_CLASSES, TYPE_APPROVAL_USE,
+        ApprovalUse, CloseLoopEvidence, DeadlineEvent, DecisionStatement, Effect, EffectConfidence,
+        EffectFinality, EndorsementStatement, Grant, HandoffCustody, HandoffStatement, Mandate,
+        ReceiptStatement, Resolution, Revocation, RuntimeIdentity, SubjectRef, CLOSE_LOOP_SESSION,
+        CUSTODY_LIVE, IRREVERSIBILITY_CLASSES, TYPE_APPROVAL_USE,
     },
     storage::Record,
     trust::{decode_ed25519_pubkey, TrustRootKind, TrustRootStore},
@@ -1014,6 +1015,15 @@ pub struct HandoffArgs {
     pub artifacts: Vec<String>,
     pub approvals: Vec<String>,
     pub obligations: Vec<String>,
+    /// Presentation file the receiver verified; with `challenge`, records
+    /// `custody: live` -- but only if it verifies right now.
+    pub verified: Option<String>,
+    pub challenge: Option<String>,
+    pub max_staple_age: Option<String>,
+    /// Record `custody: asserted` with this reason instead.
+    pub custody_reason: Option<String>,
+    /// Sealed local session to bind as close-loop evidence.
+    pub close_loop: Option<String>,
     pub config: Option<String>,
 }
 
@@ -1023,6 +1033,84 @@ pub fn handoff(args: HandoffArgs, printer: &Printer) -> Result<(), Box<dyn std::
     let mut stmt = HandoffStatement::new(&args.from, &args.to, args.artifacts.clone());
     stmt.approval_ids = args.approvals.clone();
     stmt.obligations = args.obligations.clone();
+
+    // Custody. Everything below is decided BEFORE anything is signed or
+    // written: a handoff that fails its live check leaves no artifact, so
+    // "refused to record live" and "recorded live" can never be confused.
+    stmt.custody = match (&args.verified, &args.custody_reason) {
+        (Some(path), _) => {
+            let Some(nonce) = args.challenge.as_deref() else {
+                return Err(
+                    "--verified needs --challenge <the nonce THIS ship minted>: \
+                            a presentation without a challenge proves the record, not the bearer, \
+                            and cannot be recorded as custody: live"
+                        .into(),
+                );
+            };
+            let check = crate::commands::present::check_presentation_live(
+                path,
+                nonce,
+                args.max_staple_age.as_deref(),
+            )?;
+            if !check.ok {
+                return Err(format!(
+                    "presentation did not verify live, so custody: live was NOT recorded and no handoff was written\n  \
+                     reason: {}\n  \
+                     to record this transfer anyway, drop --verified: the handoff is then custody: asserted, and verify says so",
+                    check.reason
+                )
+                .into());
+            }
+            // The live grade names the actor who proved key control. A
+            // presentation for one agent must not certify custody from another.
+            let from_norm = crate::commands::present::normalize_agent_uri(&args.from);
+            if check.agent != from_norm {
+                return Err(format!(
+                    "the presentation proves live control for {}, but --from is {}; \
+                     custody: live must name the actor who answered the challenge",
+                    check.agent, from_norm
+                )
+                .into());
+            }
+            Some(HandoffCustody {
+                grade: CUSTODY_LIVE.into(),
+                reason: None,
+                presentation_digest: Some(check.presentation_digest),
+                challenge: Some(nonce.to_string()),
+                card_id: Some(check.card_id),
+                // The receiver holds the nonce, so the receiver is the
+                // verifier -- whichever key ends up signing this statement.
+                verifier: Some(args.to.clone()),
+                verified_at: Some(now_rfc3339()),
+            })
+        }
+        (None, Some(reason)) => Some(HandoffCustody::asserted(reason.clone())),
+        (None, None) => None,
+    };
+
+    // Close-loop evidence: cite only a session this machine can actually
+    // find, and bind the digest of its receipt.json as written. A session id
+    // that resolves to nothing is an error, not an unverified note -- a
+    // handoff must never name evidence that does not exist.
+    stmt.close_loop = match &args.close_loop {
+        Some(session_id) => {
+            let Some(pkg) = crate::commands::session::find_package_for_session(session_id) else {
+                return Err(format!(
+                    "no sealed session package for {session_id} under this workspace's .treeship/sessions/; \
+                     close it first (treeship session close) or check the id (treeship session list)"
+                )
+                .into());
+            };
+            let receipt_bytes = std::fs::read(pkg.join("receipt.json"))?;
+            use sha2::{Digest, Sha256};
+            Some(CloseLoopEvidence {
+                kind: CLOSE_LOOP_SESSION.into(),
+                session_id: session_id.clone(),
+                receipt_digest: format!("sha256:{}", hex::encode(Sha256::digest(&receipt_bytes))),
+            })
+        }
+        None => None,
+    };
 
     // The handing-off agent (`from`) signs; use its own key when registered.
     let signer = resolve_actor_signer(&ctx, &args.from)?;
@@ -1042,6 +1130,12 @@ pub fn handoff(args: HandoffArgs, printer: &Printer) -> Result<(), Box<dyn std::
     })?;
     write_last(&ctx.config.storage_dir, &result.artifact_id);
 
+    let custody_str = HandoffCustody::effective(stmt.custody.as_ref()).detail;
+    let close_loop_str = stmt
+        .close_loop
+        .as_ref()
+        .map(|c| format!("{} {} ({})", c.kind, c.session_id, c.receipt_digest))
+        .unwrap_or_else(|| "none".to_string());
     printer.success(
         "handoff attested",
         &[
@@ -1049,6 +1143,8 @@ pub fn handoff(args: HandoffArgs, printer: &Printer) -> Result<(), Box<dyn std::
             ("from", &args.from),
             ("to", &args.to),
             ("artifacts", &args.artifacts.join(", ")),
+            ("custody", &custody_str),
+            ("evidence", &close_loop_str),
             ("signed", &stmt.timestamp),
         ],
     );

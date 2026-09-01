@@ -363,6 +363,101 @@ pub fn present(
     Ok(())
 }
 
+// ── live check for `attest handoff --verified` ─────────────────────────────
+
+/// What `attest handoff --verified` learns about a presentation.
+pub(crate) struct LiveCheck {
+    /// The same decision `verify-presentation --challenge` exits 0 on.
+    pub ok: bool,
+    /// Why not, in the verifier's words. Empty when `ok`.
+    pub reason: String,
+    pub agent: String,
+    pub card_id: String,
+    /// `sha256:<hex>` over the exact file bytes that were checked.
+    pub presentation_digest: String,
+}
+
+/// Decide whether a presentation proves live key control against THIS ship's
+/// trust roots, for binding into a handoff.
+///
+/// Same core call and the same `ok` formula as [`verify_presentation`]; this
+/// exists so `attest handoff` can record custody without shelling out to its
+/// own binary or re-deriving the verdict. `tests/a2a/two-ship-handshake.sh`
+/// asserts the two agree on real ships. A challenge is mandatory here: a
+/// static presentation proves the record, not the bearer, and cannot be the
+/// basis of `custody: live`.
+pub(crate) fn check_presentation_live(
+    path: &str,
+    challenge: &str,
+    max_staple_age: Option<&str>,
+) -> Result<LiveCheck, Box<dyn std::error::Error>> {
+    use sha2::{Digest, Sha256};
+
+    let trust = TrustRootStore::open_default_or_empty()?;
+    let bytes = std::fs::read(path).map_err(|e| format!("could not read {path}: {e}"))?;
+    let presentation_digest = format!("sha256:{}", hex::encode(Sha256::digest(&bytes)));
+    let pres: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|e| format!("{path} is not valid JSON: {e}"))?;
+    if pres.get("type").and_then(|v| v.as_str()) != Some(PRESENTATION_TYPE) {
+        return Err(format!("{path} is not a {PRESENTATION_TYPE} file").into());
+    }
+
+    let now = unix_now();
+    let v = treeship_core::verify::presentation::verify_presentation(
+        &pres,
+        &trust,
+        Some(challenge),
+        now,
+    )?;
+
+    let mut stale = false;
+    if let Some(max) = max_staple_age {
+        let max_secs = parse_duration_secs(max).ok_or(format!(
+            "--max-staple-age {max} is not a duration (try 30s, 15m, 2h, 1d)"
+        ))?;
+        stale = !matches!(v.staple.age_secs, Some(age) if age <= max_secs);
+    }
+
+    // Root-cause order, matching how the A2A gate classifies: a missing pin
+    // makes the challenge unfailable-but-failed, so name the pin first.
+    let reason = if let Some(r) = &v.revoked {
+        format!("REVOKED -- {r}")
+    } else if !v.key_bound {
+        "issuer not in your trust roots (key_bound: false); pin their ship with \
+         `treeship trust add <key_id> <ed25519:...> --kind cert_issuer --yes`"
+            .to_string()
+    } else if let ChallengeOutcome::Failed { reason } = &v.challenge {
+        reason.clone()
+    } else if let ChallengeOutcome::NoResponse = &v.challenge {
+        "no challenge response in this presentation; ask the bearer to re-present with --challenge <your nonce>".to_string()
+    } else if let ChallengeOutcome::NoEstablishedKey = &v.challenge {
+        "the card did not verify key-bound, so the response cannot be checked".to_string()
+    } else if stale {
+        match v.staple.age_secs {
+            Some(age) => format!(
+                "staple is {} -- older than --max-staple-age",
+                human_secs(age)
+            ),
+            None => "staple age unknown; --max-staple-age fails closed".to_string(),
+        }
+    } else {
+        String::new()
+    };
+    let ok = v.revoked.is_none() && v.key_bound && !stale && v.challenge.is_ok();
+    debug_assert!(
+        ok == reason.is_empty(),
+        "live check verdict and reason disagree"
+    );
+
+    Ok(LiveCheck {
+        ok,
+        reason,
+        agent: v.agent,
+        card_id: v.card_id,
+        presentation_digest,
+    })
+}
+
 // ── verify-presentation ─────────────────────────────────────────────────────
 
 pub fn verify_presentation(
@@ -631,7 +726,7 @@ pub fn verify_presentation(
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-fn normalize_agent_uri(agent: &str) -> String {
+pub(crate) fn normalize_agent_uri(agent: &str) -> String {
     if agent.starts_with("agent://") {
         agent.to_string()
     } else {

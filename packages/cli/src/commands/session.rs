@@ -2170,7 +2170,7 @@ fn find_incomplete_package() -> Option<(PathBuf, String)> {
 }
 
 /// Locate the package directory for an explicit session_id.
-fn find_package_for_session(session_id: &str) -> Option<PathBuf> {
+pub(crate) fn find_package_for_session(session_id: &str) -> Option<PathBuf> {
     let ts_dir = session_dir()?;
     let pkg = ts_dir
         .join("sessions")
