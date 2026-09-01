@@ -1,0 +1,12 @@
+Every weekday at 8:00 AM, run this in the terminal:
+
+  bash /workspace/treeship/bootstrap.sh
+
+Then report only whether the ship key changed. It should never change. If it
+did, stop and tell me — that means a new identity was minted and every peer
+who pinned the old one can no longer verify us.
+
+Why this exists: the Grok docs say to treat manually installed packages as
+replaceable, so the Treeship binary will disappear on its own eventually.
+Bootstrap reinstalls it without touching the keystore, which lives in
+/workspace and survives.

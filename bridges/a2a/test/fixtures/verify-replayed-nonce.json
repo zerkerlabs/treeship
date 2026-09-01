@@ -1,0 +1,22 @@
+{
+  "agent": "agent://grok",
+  "card": "art_153aaacdf22bd4f6b18c65d69a71a480",
+  "challenge": "challenge nonce does not match the one you issued — this response answers a DIFFERENT challenge (replay?)",
+  "challenge_checked": true,
+  "challenge_ok": false,
+  "disclosed": false,
+  "key_bound": true,
+  "ok": false,
+  "revealed_capabilities": [],
+  "revocation": "none included — current as of the staple (55s old); for currency, audit a log",
+  "revoked": null,
+  "signature": "verified (chain to pinned ship root)",
+  "staple": {
+    "age_secs": 55,
+    "detail": "checkpoint #1 verified, inclusion verified (55s old)",
+    "stale": false,
+    "verified": true
+  },
+  "verdict": "CHALLENGE FAILED (record may verify, but the bearer did not prove key control)",
+  "via_chain": true
+}

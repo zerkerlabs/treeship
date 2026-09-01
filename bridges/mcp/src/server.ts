@@ -5,7 +5,14 @@ import { execFile } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
 import { z } from 'zod';
-import { sessionReportCommands, verifyArgs } from './cli-args.js';
+import {
+  attestHandoffArgs,
+  mintChallengeArgs,
+  presentArgs,
+  sessionReportCommands,
+  verifyArgs,
+  verifyPresentationArgs,
+} from './cli-args.js';
 
 const exec = promisify(execFile);
 
@@ -191,6 +198,83 @@ async function provisionAgentKey(): Promise<void> {
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// The handshake.
+//
+// Everything above this line records what THIS agent did. These four let it
+// decide whether to act on what ANOTHER agent hands it, which is the half that
+// was missing: the bridge exposed five tools and none of them could check a
+// counterparty.
+//
+// The shape is deliberate. `mint_challenge` and `verify_presentation` belong to
+// the receiver, `present` belongs to the sender, and the receiver never accepts
+// a nonce the sender chose. A presentation answering a challenge the sender
+// picked shows a document exists; it does not show the sender holds the key.
+// ---------------------------------------------------------------------------
+
+server.registerTool(
+  'treeship_mint_challenge',
+  {
+    title: 'Mint a challenge nonce',
+    description:
+      'Mint a 128-bit challenge nonce to hand to another agent. YOU are the receiver: run this before accepting any work from another agent, then require that agent to answer THIS nonce with treeship_present. Never accept a nonce the other party generated — a nonce they chose can be pre-signed, which proves only that a document exists.',
+    inputSchema: {},
+  },
+  async () => formatExec(await runTreeship(mintChallengeArgs())),
+);
+
+server.registerTool(
+  'treeship_present',
+  {
+    title: 'Present this agent’s proof',
+    description:
+      'Package this agent’s card, certificate chain, known revocations, and a Merkle staple into a presentation file, answering a challenge nonce the counterparty minted. Use when another agent or a human asks you to prove who you are. Presenting without a challenge is not proof of identity and this tool requires one.',
+    inputSchema: {
+      challenge: z
+        .string()
+        .min(32)
+        .describe('The nonce the COUNTERPARTY minted. At least 32 characters; a shorter nonce can be guessed and pre-answered.'),
+      actor: z.string().optional().describe('Actor URI to present (defaults to this bridge’s actor)'),
+    },
+  },
+  async ({ challenge, actor }) => formatExec(await runTreeship(presentArgs(actor ?? ACTOR, challenge))),
+);
+
+server.registerTool(
+  'treeship_verify_presentation',
+  {
+    title: 'Verify another agent’s presentation',
+    description:
+      'Verify a counterparty presentation against YOUR pinned trust roots, fully offline. Run this BEFORE doing work another agent asked for, and do not proceed if it fails. Read the structured fields rather than the verdict line: an unpinned issuer and a replayed nonce both print CHALLENGE FAILED, but key_bound=false with signature "UNVERIFIED (key not in your trust roots)" means you never pinned them — your side to fix, not theirs.',
+    inputSchema: {
+      file: z.string().describe('Path to the presentation file the counterparty gave you'),
+      challenge: z.string().min(32).describe('The nonce YOU minted for this exchange'),
+      maxStapleAge: z
+        .string()
+        .optional()
+        .describe('Reject a staple older than this, e.g. "1h". Freshness is reported as an explicit bound, never as "current".'),
+    },
+  },
+  async ({ file, challenge, maxStapleAge }) =>
+    formatExec(await runTreeship(verifyPresentationArgs(file, challenge, maxStapleAge))),
+);
+
+server.registerTool(
+  'treeship_attest_handoff',
+  {
+    title: 'Record a handoff to another agent',
+    description:
+      'Sign a record that custody of some artifacts passed from one agent to another. Note the current limit: the handoff does not yet reference the presentation or nonce you verified, so custody here is asserted. Run treeship_verify_presentation first regardless — the check is what makes the handoff trustworthy, even while the record cannot cite it.',
+    inputSchema: {
+      to: z.string().describe('Receiving actor URI, e.g. agent://claude-code'),
+      artifacts: z.array(z.string()).min(1).describe('Artifact ids being handed over'),
+      from: z.string().optional().describe('Sending actor URI (defaults to this bridge’s actor)'),
+    },
+  },
+  async ({ to, artifacts, from }) =>
+    formatExec(await runTreeship(attestHandoffArgs(from ?? ACTOR, to, artifacts))),
+);
 
 async function main() {
   await provisionAgentKey();

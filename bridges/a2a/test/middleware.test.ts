@@ -63,12 +63,29 @@ describe('@treeship/a2a', () => {
     });
 
     it('onTaskReceived returns undefined gracefully when CLI is missing', async () => {
-      const id = await mw.onTaskReceived({
-        taskId: 'task_1',
-        skill: 'web-research',
-        fromAgent: 'agent://claude-code',
-      });
+      // Local work: no `fromAgent`, so no gate applies and the old contract
+      // holds -- a missing CLI must never break the agent path.
+      const id = await mw.onTaskReceived({ taskId: 'task_1', skill: 'web-research' });
       expect(id).toBeUndefined();
+    });
+
+    it('refuses foreign work that never passed the gate', async () => {
+      // BREAKING, and deliberately so: a task carrying `fromAgent` is foreign,
+      // and foreign work that was never gated must not run. Attestation still
+      // swallows its own failures; this is not an attestation failure.
+      await expect(
+        mw.onTaskReceived({
+          taskId: 'task_1',
+          skill: 'web-research',
+          fromAgent: 'agent://claude-code',
+        }),
+      ).rejects.toThrow(/call admitTask\(\) first/);
+    });
+
+    it('names the escape hatch in the refusal, so the caller is not stuck', async () => {
+      await expect(
+        mw.onTaskReceived({ taskId: 'task_2', fromAgent: 'agent://claude-code' }),
+      ).rejects.toThrow(/TREESHIP_A2A_UNVERIFIED=1/);
     });
 
     it('onTaskCompleted returns a result with shipId even on attestation failure', async () => {

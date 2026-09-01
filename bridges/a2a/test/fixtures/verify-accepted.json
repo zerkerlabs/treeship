@@ -1,0 +1,22 @@
+{
+  "agent": "agent://grok",
+  "card": "art_153aaacdf22bd4f6b18c65d69a71a480",
+  "challenge": "verified — bearer controls key_ae3b656c4c51566c (response 55s old)",
+  "challenge_checked": true,
+  "challenge_ok": true,
+  "disclosed": false,
+  "key_bound": true,
+  "ok": true,
+  "revealed_capabilities": [],
+  "revocation": "none included — current as of the staple (55s old); for currency, audit a log",
+  "revoked": null,
+  "signature": "verified (chain to pinned ship root)",
+  "staple": {
+    "age_secs": 55,
+    "detail": "checkpoint #1 verified, inclusion verified (55s old)",
+    "stale": false,
+    "verified": true
+  },
+  "verdict": "verified (key-bound, anchored, live)",
+  "via_chain": true
+}
