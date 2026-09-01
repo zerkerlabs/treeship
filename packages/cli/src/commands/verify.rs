@@ -877,6 +877,19 @@ fn compute_chain_linkage(chain: &[(String, Envelope)]) -> (bool, String) {
                         v.get("subject")
                             .and_then(|s| s.get("artifactId").or_else(|| s.get("artifact_id")))
                     })
+                    // handoff/v1 carries no parentId either. `attest handoff`
+                    // records `artifacts[0]` as the storage parent, and that
+                    // list is inside the signed payload, so the first entry
+                    // is the signed edge. Before this, every handoff that
+                    // named the work it transferred -- which is every handoff
+                    // the CLI can mint, `--artifacts` is required -- verified
+                    // as "claims parent (none)" and failed chain linkage on
+                    // correctly-signed evidence.
+                    .or_else(|| {
+                        v.get("artifacts")
+                            .and_then(|a| a.as_array())
+                            .and_then(|a| a.first())
+                    })
                     .and_then(|p| p.as_str())
                     .map(str::to_string)
             });
