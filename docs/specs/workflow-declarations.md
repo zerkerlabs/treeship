@@ -187,6 +187,39 @@ Useful evidence includes:
 
 A session event or adapter statement may help group evidence into an attempt, but it does not become stronger merely by naming a node or edge. Normalized attempts list signed action artifact references separately as `action_evidence`; this prevents loop action budgets from accidentally counting tool names instead of actions.
 
+### Attributing an action to a declared node
+
+Observation sets were hand-written until this slice. `derive_observed_run` builds
+one from verified action statements, so the rule that decides which declared node
+an action belongs to is itself part of the trust boundary.
+
+Attribution is by **admissibility**, not by label. A declared node admits a
+verified action when both hold:
+
+1. the node's `executor` matches -- `executor.actor` equals the action's signed
+   `actor`, or `executor.capability` appears in the action's verified mandate
+   scope; and
+2. the action's signed `action` label appears in the node's `allowed_tools`.
+
+The number of admitting nodes decides the grade:
+
+| Admitting nodes | Grade | Rationale |
+|---|---|---|
+| exactly one | `checked` | The verifier recomputed the attribution from signed fields alone. No party's claim was consulted. |
+| more than one, and a recorded label selects one of them | `captured` | The signed evidence narrowed the choice to a set; a runtime label picked within it. The label is a grouping hint, so the attempt cannot exceed `captured`. |
+| more than one, and no label selects among them | gap | Ambiguous attribution is reported, never guessed. |
+| more than one, and the label names a node that does not admit the action | reported, not attributed | A label pointing outside the admissible set is evidence of a deviation, not a tiebreak. |
+| zero, but one node's executor admits the signer | `captured` | No node claims the tool. The action stays attached to the node the run is in, so the authority axis reports the out-of-scope tool rather than the action vanishing. |
+| zero, and no node's executor admits the signer | reported, not attributed | The signer is outside every declared node's authority. |
+
+A label never promotes a grade, never creates an attempt on its own, and is
+never consulted while exactly one node admits the action -- a runtime cannot
+relabel work that the declaration already attributes unambiguously. An
+observation set derived from zero verified actions -- or one in which no action
+could be attributed -- is an error, not an empty passing run. A repeated action
+reference is refused outright, because loop budgets count unique signed-action
+references and one action must not pay for two.
+
 ## Edge and path provenance
 
 Each derived edge inherits the weakest grade of the evidence needed to establish it:
