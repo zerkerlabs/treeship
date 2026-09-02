@@ -1,6 +1,7 @@
 import {
   attestAction,
   attestHandoff,
+  attestVerifiedHandoff,
   attestReceipt,
   currentSessionId,
   provisionAgentKey,
@@ -67,6 +68,10 @@ export class TreeshipA2AMiddleware {
 
   /** Nonce this ship minted per task. Never a caller-supplied value. */
   private readonly challenges = new Map<string, string>();
+  /** Presentation each admitted task verified against, until its handoff is recorded. */
+  private readonly presentations = new Map<string, { path: string; maxStapleAge?: string }>();
+  /** Receiver-signed `custody: live` handoff per admitted task. */
+  private readonly handoffs = new Map<string, string>();
 
   /** Gate outcome per task, so the intent artifact can record it. */
   private readonly gateStatus = new Map<string, 'verified' | 'unverified'>();
@@ -120,6 +125,12 @@ export class TreeshipA2AMiddleware {
 
     if (result.allowed) {
       this.gateStatus.set(ctx.taskId, result.unverified ? 'unverified' : 'verified');
+      if (!result.unverified && ctx.presentationPath) {
+        this.presentations.set(ctx.taskId, {
+          path: ctx.presentationPath,
+          maxStapleAge: ctx.maxStapleAge,
+        });
+      }
       if (result.unverified) {
         // The opt-out fired. Record the skip as its own signed action: a
         // skipped gate that leaves no artifact reads exactly like a gate that
@@ -181,6 +192,36 @@ export class TreeshipA2AMiddleware {
       },
     });
     if (intentId) this.intents.set(ctx.taskId, intentId);
+
+    // The receiver records the verify it just performed as a handoff with
+    // `custody: live`, signed here, naming the presentation digest and the
+    // nonce this ship minted. Only a gate that actually verified gets one:
+    // an unverified opt-out already left `a2a.gate.skipped`, and a handoff
+    // claiming live custody for it would be the laundering this whole path
+    // exists to prevent.
+    const nonce = this.challenges.get(ctx.taskId);
+    const presentation = this.presentations.get(ctx.taskId);
+    if (
+      ctx.fromAgent &&
+      intentId &&
+      nonce &&
+      presentation &&
+      this.gateStatus.get(ctx.taskId) === 'verified'
+    ) {
+      const handoffId = await attestVerifiedHandoff({
+        from: ctx.fromAgent,
+        to: this.actor,
+        artifacts: [intentId],
+        presentationPath: presentation.path,
+        challenge: nonce,
+        maxStapleAge: presentation.maxStapleAge,
+      });
+      if (handoffId) this.handoffs.set(ctx.taskId, handoffId);
+    }
+    // A nonce answers exactly one task. Once the task is admitted and its
+    // handoff recorded, the nonce must not be available to answer another.
+    this.challenges.delete(ctx.taskId);
+    this.presentations.delete(ctx.taskId);
     return intentId;
   }
 
@@ -190,8 +231,11 @@ export class TreeshipA2AMiddleware {
    * are swallowed internally.
    */
   async onTaskCompleted(ctx: TaskCompletedContext): Promise<TaskAttestationResult> {
+    const handoffId = this.handoffs.get(ctx.taskId);
+    this.handoffs.delete(ctx.taskId);
+
     if (!this.attestComplete) {
-      return { shipId: this.shipId };
+      return { shipId: this.shipId, handoffId };
     }
 
     const intentId = this.intents.get(ctx.taskId);
@@ -216,6 +260,7 @@ export class TreeshipA2AMiddleware {
 
     return {
       intentId,
+      handoffId,
       receiptId,
       receiptUrl: receiptId ? `${this.receiptBaseUrl}/${receiptId}` : undefined,
       shipId: this.shipId,
@@ -252,6 +297,7 @@ export class TreeshipA2AMiddleware {
     const meta: Record<string, unknown> = {
       treeship_artifact_id: result.receiptId,
       treeship_receipt_url: result.receiptUrl,
+      treeship_handoff_id: result.handoffId,
       treeship_session_id: currentSessionId(),
       treeship_ship_id: result.shipId,
     };

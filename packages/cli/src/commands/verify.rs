@@ -10,8 +10,8 @@ use treeship_core::{
         session_participant::{verify_participant_envelope, SessionParticipantStatement},
         verify_effect, verify_grant_chain, verify_mandate, ActionStatement, ActionStatementV2,
         ApprovalScope, ApprovalStatement, DeadlineEvent, DecisionStatement, EffectConfidence,
-        EffectFinality, EffectVerdict, HandoffStatement, MandateVerdict, NoWitnessAuthority,
-        ReceiptStatement, ResolutionStatus, RevocationSource,
+        EffectFinality, EffectVerdict, HandoffCustody, HandoffStatement, MandateVerdict,
+        NoWitnessAuthority, ReceiptStatement, ResolutionStatus, RevocationSource,
     },
     storage::Store,
     trust::TrustRootStore,
@@ -362,6 +362,38 @@ fn mandate_summary_json(m: &MandateSummary) -> serde_json::Value {
 /// `not_claimed` is reported rather than omitted: a mandate that carries no
 /// ancestors made no lineage claim, which is different from one whose chain we
 /// checked and accepted. Silence would let a consumer read the absence as a pass.
+/// JSON for a handoff's custody and close-loop evidence, graded.
+fn handoff_custody_json(h: &HandoffStatement) -> serde_json::Value {
+    let effective = HandoffCustody::effective(h.custody.as_ref());
+    let custody = match &h.custody {
+        Some(c) => serde_json::json!({
+            "live": effective.live,
+            "detail": effective.detail,
+            "grade": c.grade,
+            "reason": c.reason,
+            "presentation_digest": c.presentation_digest,
+            "challenge": c.challenge,
+            "card_id": c.card_id,
+            "verifier": c.verifier,
+            "verified_at": c.verified_at,
+        }),
+        None => serde_json::json!({
+            "live": false,
+            "detail": effective.detail,
+            "grade": serde_json::Value::Null,
+        }),
+    };
+    let close_loop = match &h.close_loop {
+        Some(c) => serde_json::json!({
+            "kind": c.kind,
+            "session_id": c.session_id,
+            "receipt_digest": c.receipt_digest,
+        }),
+        None => serde_json::Value::Null,
+    };
+    serde_json::json!({ "custody": custody, "close_loop": close_loop })
+}
+
 fn chain_summary_json(c: &ChainSummary) -> serde_json::Value {
     match c {
         ChainSummary::NotClaimed => serde_json::json!({
@@ -523,6 +555,19 @@ pub fn run(
             })
             .collect();
 
+        // Handoff custody and close-loop evidence, keyed the same way. `live`
+        // here is the verifier's grade (see HandoffCustody::effective), so a
+        // consumer reading `custody.live` gets the same answer the text
+        // output prints, not the signer's word for it.
+        let custody_by_id: HashMap<String, serde_json::Value> = chain_envelopes
+            .iter()
+            .filter_map(|(id, env)| {
+                env.unmarshal_statement::<HandoffStatement>()
+                    .ok()
+                    .map(|h| (id.clone(), handoff_custody_json(&h)))
+            })
+            .collect();
+
         // Resolution is time-dependent, so the clock is read once here and
         // passed down. Reading it per-envelope would let two effects in the
         // same run be judged against different "now"s.
@@ -581,6 +626,10 @@ pub fn run(
                 }
                 if let Some(resolution) = resolution_by_id.get(&c.id) {
                     obj["resolution"] = resolution.clone();
+                }
+                if let Some(custody) = custody_by_id.get(&c.id) {
+                    obj["custody"] = custody["custody"].clone();
+                    obj["close_loop"] = custody["close_loop"].clone();
                 }
                 obj
             })
@@ -768,6 +817,18 @@ pub fn run(
             } else if let Ok(handoff) = env.unmarshal_statement::<HandoffStatement>() {
                 fields.push(("actor", format!("{} -> {}", handoff.from, handoff.to)));
                 fields.push(proof(&handoff.from));
+                // Custody is graded by the verifier, never echoed from the
+                // block: a `live` without its evidence prints as asserted.
+                fields.push((
+                    "custody",
+                    HandoffCustody::effective(handoff.custody.as_ref()).detail,
+                ));
+                if let Some(c) = &handoff.close_loop {
+                    fields.push((
+                        "evidence",
+                        format!("{} {} ({})", c.kind, c.session_id, c.receipt_digest),
+                    ));
+                }
                 fields.push(("time", handoff.timestamp.clone()));
             } else if let Ok(receipt) = env.unmarshal_statement::<ReceiptStatement>() {
                 fields.push(("system", receipt.system.clone()));
@@ -876,6 +937,19 @@ fn compute_chain_linkage(chain: &[(String, Envelope)]) -> (bool, String) {
                     .or_else(|| {
                         v.get("subject")
                             .and_then(|s| s.get("artifactId").or_else(|| s.get("artifact_id")))
+                    })
+                    // handoff/v1 carries no parentId either. `attest handoff`
+                    // records `artifacts[0]` as the storage parent, and that
+                    // list is inside the signed payload, so the first entry
+                    // is the signed edge. Before this, every handoff that
+                    // named the work it transferred -- which is every handoff
+                    // the CLI can mint, `--artifacts` is required -- verified
+                    // as "claims parent (none)" and failed chain linkage on
+                    // correctly-signed evidence.
+                    .or_else(|| {
+                        v.get("artifacts")
+                            .and_then(|a| a.as_array())
+                            .and_then(|a| a.first())
                     })
                     .and_then(|p| p.as_str())
                     .map(str::to_string)

@@ -1,10 +1,10 @@
 # Grok Bot A2A verification — implementation (reference host)
 
-**Status:** draft, not implemented
+**Status:** implemented — slices 1–4 shipped (0.27.0); slice 3b blocked (see [grok-bot-h2a](./grok-bot-h2a.md) §3b). Not yet exercised on a Grok Bot VM; the handshake is proven on two real ships in `tests/a2a/two-ship-handshake.sh`
 **Product:** [agent-to-agent-verification](./agent-to-agent-verification.md)
 **Harness note (H2A verbs only):** [grok-bot-h2a](./grok-bot-h2a.md)
 **Sources checked:** docs.x.ai/grok-bot/* (2026-09-01), Lauren @poteto pstack Pt.1 (2026-08-31), Treeship CLI/bridges as of this repo
-**Last updated:** 2026-09-01
+**Last updated:** 2026-09-02
 
 This is the build spec. Grok Bot is the first host. The adapter in §4 is what Claude, Codex, Hermes, and `@treeship/a2a` copy. Do not invent a second handshake for those hosts.
 
@@ -427,17 +427,17 @@ Done when: on a Grok VM, bootstrap is idempotent across a documented package wip
 - `onTaskReceived`: if `fromAgent` is set, refuse unless gate passes. This inverts today's "attestation must never break the agent path" for **foreign** tasks only. Local/unknown-without-from stays attest-only.
 - MCP: add `treeship_mint_challenge`, `treeship_present`, `treeship_verify_presentation`, `treeship_attest_handoff`. Grok does not need these until Plugins accepts MCP.
 
-### 3. Handoff records the verify
+### 3. Handoff records the verify — shipped
 
-`attest handoff` grows an optional `--verified <art_or_path>` (or meta). `verify` prints `custody: live` vs `custody: asserted`. Same-computer Grok handoffs are `custody: asserted (same_computer)`.
+`attest handoff --verified <presentation> --challenge <nonce>` re-runs the core presentation verifier and signs a `custody` block (presentation digest, nonce, card, verifier, time) only on a clean live verdict; any failure refuses to write. `verify` grades the block itself (`HandoffCustody::effective`): `live` only with digest + nonce, otherwise `asserted` with the reason. Same-computer Grok handoffs are `--custody-reason same_computer`. `@treeship/a2a` mints this automatically after `admitTask` verifies; `@treeship/mcp` exposes it on `treeship_attest_handoff`.
 
-### 3b. Grok approvals
+### 3b. Grok approvals — blocked
 
-Blocked until a process on the VM can read Allow/Deny. Then Approval Use Journal. Never invent an approver (#347).
+Checked 2026-09-02 against docs.x.ai/grok-bot/approvals-security-and-privacy: an approval is shown in the conversation ("the conversation shows the proposed operation and its inputs"; Allow once / Deny / Always allow), and Auto-review rules "are stored on the current desktop and synced to its Grok Bot computer". No log, file, API, or event on the VM exposes the decision to a process. Recording it would mean inferring approval from the action having happened, which #347 forbids. The packaged skill says so instead ("APPROVALS — WHAT THE RECEIPT CANNOT SHOW"). Unblocks the day a supported surface exposes the decision; then Approval Use Journal, never an invented approver.
 
-### 4. Close-loop attach
+### 4. Close-loop attach — shipped
 
-§6. Only if `/control-app` or a wrap-able evidence command exists.
+§6. `attest handoff --close-loop <session_id>` binds a sealed session's `receipt.json` digest into the signed handoff and refuses a session it cannot find; `verify` prints it as `evidence:`; it never upgrades custody. The `handoff` envelope's `close_loop` is validated on parse. Still only if a wrap-able evidence command exists on the sender.
 
 ---
 

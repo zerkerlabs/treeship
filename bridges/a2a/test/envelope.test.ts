@@ -121,3 +121,58 @@ describe('resolveSenderPath confines a path the other agent chose', () => {
     expect(resolveSenderPath(base, 'sub/peer.json')).toBe('/workspace/treeship/inbox/sub/peer.json');
   });
 });
+
+describe('handoff envelopes carry a readable custody record', () => {
+  const handoff = (body: Record<string, unknown>) =>
+    JSON.stringify({
+      spec: A2A_SPEC,
+      kind: 'handoff',
+      id: 'a2a_01',
+      from: 'agent://grok',
+      to: 'agent://claude',
+      created_at: '2026-09-02T00:00:00Z',
+      reply_to: 'a2a_00',
+      body,
+    });
+
+  it('accepts the shape the spec documents', () => {
+    const r = parseEnvelope(
+      handoff({
+        from: 'agent://grok',
+        to: 'agent://claude',
+        artifacts: ['art_1'],
+        verify_artifact: 'art_handoff',
+        close_loop: { kind: 'wrap', session_id: 'ssn_1', command: 'npm test' },
+      }),
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('accepts null verify_artifact and null close_loop (asserted custody, no evidence)', () => {
+    const r = parseEnvelope(
+      handoff({ from: 'agent://a', to: 'agent://b', artifacts: [], verify_artifact: null, close_loop: null }),
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('refuses a handoff that names no parties', () => {
+    const r = parseEnvelope(handoff({ to: 'agent://b', artifacts: ['art_1'] }));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/handoff\.body\.from/);
+  });
+
+  it('refuses artifacts that are not a list of ids', () => {
+    const r = parseEnvelope(handoff({ from: 'agent://a', to: 'agent://b', artifacts: 'art_1' }));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/artifacts/);
+  });
+
+  it('refuses close-loop evidence that cannot be located', () => {
+    // Evidence without a session id is a note, not evidence.
+    const r = parseEnvelope(
+      handoff({ from: 'agent://a', to: 'agent://b', artifacts: ['art_1'], close_loop: { kind: 'wrap' } }),
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/close_loop/);
+  });
+});

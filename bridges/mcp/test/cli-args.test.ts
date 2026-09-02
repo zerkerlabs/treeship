@@ -74,6 +74,50 @@ describe('handshake args match the CLI surface', () => {
     ]);
   });
 
+  it('records a verified handoff only as the --verified/--challenge pair', () => {
+    expect(
+      attestHandoffArgs('agent://grok', 'agent://claude', ['art_1'], {
+        verified: 'inbox/grok.presentation.json',
+        challenge: 'n'.repeat(32),
+        maxStapleAge: '1h',
+        closeLoop: 'ssn_1',
+      }),
+    ).toEqual([
+      'attest',
+      'handoff',
+      '--from',
+      'agent://grok',
+      '--to',
+      'agent://claude',
+      '--artifacts',
+      'art_1',
+      '--verified',
+      'inbox/grok.presentation.json',
+      '--challenge',
+      'n'.repeat(32),
+      '--max-staple-age',
+      '1h',
+      '--close-loop',
+      'ssn_1',
+      '--format',
+      'json',
+    ]);
+  });
+
+  it('never emits --verified without the challenge it answered', () => {
+    // A static presentation proves the record, not the bearer. Dropping the
+    // pair is the honest fallback: the handoff records as asserted.
+    const args = attestHandoffArgs('agent://a', 'agent://b', ['art_1'], { verified: 'p.json' });
+    expect(args).not.toContain('--verified');
+    expect(args).not.toContain('--challenge');
+  });
+
+  it('records a same-computer handoff as asserted with its reason', () => {
+    expect(
+      attestHandoffArgs('agent://a', 'agent://b', ['art_1'], { custodyReason: 'same_computer' }),
+    ).toContain('--custody-reason');
+  });
+
   it('uses no flag the CLI does not define', () => {
     // Guard against re-introducing `--verified`: slice 3 of the A2A spec adds
     // it, and until the CLI grows it this must not appear.
@@ -81,9 +125,26 @@ describe('handshake args match the CLI surface', () => {
       ...mintChallengeArgs(),
       ...presentArgs('agent://a', 'x'.repeat(32)),
       ...verifyPresentationArgs('f', 'x'.repeat(32), '1h'),
-      ...attestHandoffArgs('agent://a', 'agent://b', ['art_1']),
+      ...attestHandoffArgs('agent://a', 'agent://b', ['art_1'], {
+        verified: 'p.json',
+        challenge: 'x'.repeat(32),
+        maxStapleAge: '1h',
+        closeLoop: 'ssn_1',
+      }),
+      ...attestHandoffArgs('agent://a', 'agent://b', ['art_1'], { custodyReason: 'same_computer' }),
     ].filter((a) => a.startsWith('--'));
-    const known = new Set(['--format', '--challenge', '--max-staple-age', '--from', '--to', '--artifacts']);
+    // Every flag `treeship attest handoff --help` defines as of 0.27.0.
+    const known = new Set([
+      '--format',
+      '--challenge',
+      '--max-staple-age',
+      '--from',
+      '--to',
+      '--artifacts',
+      '--verified',
+      '--custody-reason',
+      '--close-loop',
+    ]);
     for (const flag of all) expect(known.has(flag)).toBe(true);
   });
 });

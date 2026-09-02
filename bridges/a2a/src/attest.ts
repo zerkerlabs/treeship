@@ -179,6 +179,53 @@ export async function attestHandoff(opts: {
 }
 
 /**
+ * Record the RECEIVER's side of a verified handoff.
+ *
+ * `attest handoff --verified` re-runs the presentation check inside the CLI
+ * and signs `custody: live` only if it still passes -- the digest of the
+ * exact presentation bytes, the nonce this ship minted, the card, the
+ * verifier. If the CLI refuses (the presentation no longer verifies, or the
+ * presenter is not `from`), nothing is written and this returns undefined;
+ * the work has already been admitted by the gate, so a failure to RECORD
+ * must not un-admit it. The gate refuses; this only remembers.
+ */
+export async function attestVerifiedHandoff(opts: {
+  from: string;
+  to: string;
+  artifacts: string[];
+  presentationPath: string;
+  challenge: string;
+  maxStapleAge?: string;
+}): Promise<string | undefined> {
+  if (process.env.TREESHIP_DISABLE === '1') return undefined;
+  const args = [
+    'attest',
+    'handoff',
+    '--from',
+    opts.from,
+    '--to',
+    opts.to,
+    '--artifacts',
+    opts.artifacts.join(','),
+    '--verified',
+    opts.presentationPath,
+    '--challenge',
+    opts.challenge,
+    '--format',
+    'json',
+  ];
+  if (opts.maxStapleAge) args.push('--max-staple-age', opts.maxStapleAge);
+  try {
+    const { stdout } = await exec('treeship', args, { timeout: 10000 });
+    const result = JSON.parse(stdout);
+    return result.id || result.artifact_id;
+  } catch (err) {
+    warnOnce(`attestVerifiedHandoff(${opts.from} -> ${opts.to})`, err);
+    return undefined;
+  }
+}
+
+/**
  * Read the current Treeship session ID from the environment, if any.
  * Set by `treeship session start` so wrapped commands inherit it.
  */

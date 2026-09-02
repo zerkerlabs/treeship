@@ -573,7 +573,7 @@
     - docs/content/docs/sdk/mcp.mdx
   tests:
     - bridges/mcp/test/client.test.ts
-  notes: "Five tools: session_status, session_event, attest_action, verify, session_report. Provisions a per-agent key on startup so receipts verify proven (key-bound). Drop-in for Claude Code, Codex, Cursor, Cline."
+  notes: "Nine tools: session_status, session_event, attest_action, verify, session_report, and the handshake -- mint_challenge, present, verify_presentation, attest_handoff (which records custody: live when given the verified presentation and nonce). Provisions a per-agent key on startup so receipts verify proven (key-bound). Drop-in for Claude Code, Codex, Cursor, Cline."
 
 - id: a2a-bridge
   name: A2A bridge (@treeship/a2a)
@@ -585,7 +585,10 @@
     - docs/content/docs/integrations/a2a.mdx
   tests:
     - bridges/a2a/test/middleware.test.ts
-  notes: "Attests A2A task intents/results and verifies receipts attached to agent-to-agent messages. Provisions its actor's per-agent key on construction."
+    - bridges/a2a/test/gate.test.ts
+    - bridges/a2a/test/middleware-handoff.test.ts
+    - tests/a2a/two-ship-handshake.sh
+  notes: "Fail-closed gate: onTaskReceived refuses foreign work that never passed admitTask (mint the nonce, verify-presentation --challenge); refusals and opt-out skips are signed. After a verified admit the receiver mints attest handoff --verified, so the chain carries custody: live bound to the presentation digest and nonce. Attests A2A task intents/results, validates treeship.a2a/v1 envelopes, provisions its actor's per-agent key on construction."
 
 - id: npm-binary-integrity
   name: npm binary SHA-256 integrity check

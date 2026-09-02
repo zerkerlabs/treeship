@@ -50,3 +50,7 @@ Treeship no longer rewrites project rules automatically (`treeship add` focuses 
 
 - MCP tool name, SHA-256 digests of arguments and output (not raw content), duration, `isError`, and optional error text on failure.
 - See [`TREESHIP.md`](../../TREESHIP.md) in the repo root for the full field list and trust model.
+
+## Foreign work (agent-to-agent)
+
+Work that arrives from another agent is not started until the sender proves live key control: `treeship_mint_challenge` (you mint it), they present against it, `treeship_verify_presentation` (not `ok` → do not act), then `treeship_attest_handoff` with `verified` + `challenge` so the receipt records `custody: live`. Without them the handoff is `custody: asserted`, and `treeship verify` says so.

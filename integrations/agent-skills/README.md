@@ -176,6 +176,7 @@ Per-agent commands above show the wiring. The MCP bridge runs on stdio, talks to
 - **Statement type vocabulary** — when to attest action vs. approval vs. handoff vs. decision
 - **Approval-gated workflows** — the create-approval / consume-with-nonce / verify pattern
 - **Chained workflows** — `parent_id`-linked attestation chains across multi-agent handoffs
+- **Foreign work** — the agent-to-agent gate: mint the nonce, verify the presentation, refuse on any failure, record the verify with `attest handoff --verified` so custody grades `live` rather than `asserted`
 - **MCP bridge wiring** — per-agent setup snippets the agent can paste back to a user
 - **Hub API surface** — DPoP auth, public verification URLs, Merkle inclusion proofs
 - **Standards reference** — Ed25519, DSSE, SHA-256, and the declaration-order compact-JSON canonical form (not RFC 8785)

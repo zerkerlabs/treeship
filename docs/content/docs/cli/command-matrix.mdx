@@ -156,6 +156,11 @@ treeship attest handoff [OPTIONS] --from <URI> --to <URI> --artifacts <IDS>
 | `--artifacts <IDS>` | Comma-separated artifact IDs being transferred |
 | `--approvals <IDS>` | Comma-separated approval IDs the receiver inherits |
 | `--obligations <TEXT>` | Comma-separated obligations the receiver must satisfy |
+| `--verified <FILE>` | Presentation file the receiver verified live. Records custody: live only if it verifies right now against this ship's trust roots |
+| `--challenge <NONCE>` | The nonce THIS ship minted that the presentation answers |
+| `--max-staple-age <DURATION>` | Freshness bound for the presentation's Merkle staple (30s, 15m, 2h, 1d); unknown age fails closed |
+| `--custody-reason <REASON>` | Record custody: asserted with this reason (e.g. same_computer) |
+| `--close-loop <SESSION_ID>` | Bind a sealed local session as close-loop evidence; its receipt digest is signed into the handoff |
 
 ### `treeship attest receipt`
 

@@ -155,6 +155,31 @@ treeship attest handoff \
 | `--artifacts <ids>` | Comma-separated artifact IDs being transferred (required) |
 | `--approvals <ids>` | Comma-separated approval IDs the receiver inherits |
 | `--obligations <text>` | Comma-separated obligations the receiver must satisfy |
+| `--verified <file>` | Presentation file the receiver verified live. Requires `--challenge`. Records `custody: live` only if it verifies right now against this ship's trust roots; otherwise refuses and writes nothing |
+| `--challenge <nonce>` | The nonce **this** ship minted that the presentation answers |
+| `--max-staple-age <duration>` | Freshness bound for the presentation's Merkle staple; unknown age fails closed |
+| `--custody-reason <reason>` | Record `custody: asserted` with a reason, e.g. `same_computer` for agents sharing one keystore. Conflicts with `--verified` |
+| `--close-loop <session_id>` | Bind a sealed local session as close-loop evidence; its `receipt.json` digest is signed into the handoff. Refuses a session it cannot find |
+
+### Custody
+
+A handoff records **how** custody was established, and `verify` grades it rather than repeating the signer's word:
+
+```bash
+# The receiver minted the nonce, the sender answered it, and it verified:
+treeship attest handoff --from agent://grok --to agent://claude \
+  --artifacts art_intent --verified grok.presentation.json --challenge "$NONCE"
+#   custody: live -- card art_…, verified by agent://claude at 2026-09-02T…
+```
+
+| Recorded | `verify` prints | When |
+|---|---|---|
+| `--verified` + `--challenge`, and the check passed | `custody: live -- card …, verified by …` | The signed block carries the presentation digest and the nonce |
+| nothing | `custody: asserted (no verification recorded)` | Every handoff minted without a verify, including all handoffs before 0.27.0 |
+| `--custody-reason same_computer` | `custody: asserted (same_computer)` | Agents sharing a keystore; a challenge against yourself is not liveness |
+| a block claiming `live` without digest or nonce | `custody: asserted (claims live without presentation digest and challenge)` | The verifier refuses to launder a claim the evidence does not support |
+
+`--verified` binds the live grade to the presenter: a presentation for `agent://grok` cannot certify a handoff `--from agent://codex`. `custody` and `close_loop` are inside the signed statement, so neither can be added or upgraded on the wire. In `--format json`, `checks[].custody.live` is the verifier's grade, and `checks[].close_loop` carries the evidence.
 </Tab>
 <Tab value="endorsement">
 ## treeship attest endorsement

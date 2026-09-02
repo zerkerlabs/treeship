@@ -3,7 +3,7 @@
   "counts": {
     "cli_commands": 35,
     "hub_routes": 22,
-    "wire_types": 140
+    "wire_types": 142
   },
   "cli_commands": [
     "add",
@@ -345,6 +345,11 @@
       "source": "packages/core/src/statements/approval_use.rs"
     },
     {
+      "name": "CloseLoopEvidence",
+      "kind": "struct",
+      "source": "packages/core/src/statements/mod.rs"
+    },
+    {
       "name": "CommandRule",
       "kind": "struct",
       "source": "packages/core/src/rules.rs"
@@ -458,6 +463,11 @@
       "name": "GrantedCapabilities",
       "kind": "struct",
       "source": "packages/core/src/statements/invitation.rs"
+    },
+    {
+      "name": "HandoffCustody",
+      "kind": "struct",
+      "source": "packages/core/src/statements/mod.rs"
     },
     {
       "name": "HandoffStatement",

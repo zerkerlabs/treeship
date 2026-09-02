@@ -118,6 +118,7 @@ The artifact your peer receives now carries a verifiable trail:
   "metadata": {
     "treeship_artifact_id": "art_7f8e9d0a1b2c3d4e",
     "treeship_receipt_url": "https://treeship.dev/receipt/art_7f8e9d0a1b2c3d4e",
+    "treeship_handoff_id": "art_2c3d4e5f6a7b8c9d",
     "treeship_session_id": "ssn_01HR9W2D4Q4M7A0C",
     "treeship_ship_id": "shp_4a9f2c1d"
   }
@@ -153,6 +154,32 @@ if (!verification || !verification.withinDeclaredBounds) {
 - `cryptographicallyVerified` — true only if envelope signatures were actually verified; for a URL-fetched receipt this is `false`.
 - `withinDeclaredBounds` — `true`/`false` only when the receipt is structurally consistent *and* carries a declaration; `undefined` otherwise (never a default "true"). The `!verification.withinDeclaredBounds` gate above therefore fails closed on undeclared or inconsistent receipts.
 
+## Gate foreign work before it runs
+
+`onTaskReceived` **throws** for a task that carries `fromAgent` unless `admitTask` ran first. The gate is the one place attestation is allowed to break the agent path: failing to *record* work is no reason to refuse it, but foreign work that never proved who sent it is.
+
+```ts
+// 1. Mint the nonce this ship will require. Hand it to the calling agent.
+const nonce = await treeship.mintTaskChallenge(taskId);
+
+// 2. They answer it: treeship present agent://them --challenge <nonce>
+//    and send back a presentation file. Confine the path they name:
+const presentationPath = resolveSenderPath(inboxDir, task.metadata.presentation_path);
+
+// 3. Decide, BEFORE running anything.
+const gate = await treeship.admitTask({ taskId, presentationPath, maxStapleAge: '1h' });
+if (!gate.allowed) return refuse(gate.refusal, gate.message); // no_presentation | no_challenge | challenge_failed | untrusted_issuer | revoked | stale | verification_failed | gate_unavailable
+
+// 4. Now the intent, and -- because the gate verified -- a receiver-signed
+//    handoff recording custody: live, bound to the presentation digest and
+//    the nonce this ship minted.
+await treeship.onTaskReceived({ taskId, fromAgent: task.from, skill });
+```
+
+Refusals are signed too (`a2a.gate.refused` names the failing step), so "refused the work" and "never received the work" are not the same silence. The opt-out `TREESHIP_A2A_UNVERIFIED=1` executes but signs `a2a.gate.skipped`; a skipped gate never gets a live handoff.
+
+`onTaskCompleted` returns `handoffId` when the gate verified, and `decorateArtifact` stamps it as `treeship_handoff_id`. `treeship verify <handoffId>` prints `custody: live -- card …, verified by <this actor>`; a handoff recorded any other way prints `custody: asserted` with the reason.
+
 ## Record a handoff
 
 ```ts
@@ -164,7 +191,7 @@ await treeship.onHandoff({
 });
 ```
 
-This is the same artifact `treeship attest handoff` produces from the CLI, it appears in the parent session's receipt as a delegation boundary.
+This is the same artifact `treeship attest handoff` produces from the CLI, it appears in the parent session's receipt as a delegation boundary. It records the *sender's* delegation and is `custody: asserted`; the receiver's live-verified handoff is the one `onTaskReceived` mints after `admitTask`.
 
 ## Environment variables
 

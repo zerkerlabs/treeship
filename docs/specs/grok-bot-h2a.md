@@ -1,6 +1,6 @@
 # Grok Bot harness: same A2A handshake, chat-native capture
 
-**Status:** draft, not implemented — **harness note**, not the product
+**Status:** implemented via the A2A gate (slices 1–4 shipped in 0.27.0); slice 3b blocked — **harness note**, not the product
 **Product spec:** [agent-to-agent-verification](./agent-to-agent-verification.md)
 **Implementation:** [grok-bot-a2a](./grok-bot-a2a.md)
 **Pairs with:** [protocol-integration](./protocol-integration.md), [per-actor-signing](./per-actor-signing.md), [agent-capability-cards](./agent-capability-cards.md), [agent-resolver](./agent-resolver.md), `skills/treeship/SKILL.md`, `@treeship/mcp`
@@ -105,6 +105,8 @@ That is a human decision being made and then discarded. It is also the one claim
 **Done when:** an approved action carries a receipt naming what was approved, by whom, and when, and a denial is recorded as a denial. Reuse the Approval Use Journal. Follow #347's rule exactly -- record the human's answer, and never invent an approver. If the approval event is not observable through any supported surface, the slice is blocked; say so rather than inferring approval from the action having happened.
 
 Why this outranks tool capture: "a human approved this deploy, here is the signed artifact" is stronger and more honest than "a tool ran," and it is the one thing here that grades above `captured`.
+
+**Blocked, checked 2026-09-02.** docs.x.ai/grok-bot/approvals-security-and-privacy describes approvals as an in-app decision: "the conversation shows the proposed operation and its inputs", with Allow once / Deny / Always allow, and Auto-review rules "stored on the current desktop and synced to its Grok Bot computer". Nothing there is readable by a process on the VM — no log, no file, no API, no event. So this slice ships as a boundary statement in the packaged skill (never record or imply an approval), not as code.
 
 ### 4. A2A is the default (same bytes as prove-you)
 
