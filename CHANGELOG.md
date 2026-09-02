@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.27.0 (2026-09-02)
+
+**Upgrade if you use `@treeship/a2a` or `@treeship/mcp`.** Foreign work is
+now refused until the other agent proves live key control, and the receipt
+records that it did. Integrations that pass `fromAgent` to `onTaskReceived`
+without calling `admitTask` first will throw; that is the fail-closed
+default this release exists to make.
+
 ### Added
 
 - **A handoff records how custody was established, and `verify` grades it.**
