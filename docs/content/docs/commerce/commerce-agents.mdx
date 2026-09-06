@@ -84,7 +84,8 @@ What is deliberately **not** in a receipt:
 ```bash
 # in a clone of anthropics/commerce-agents, with its venv active
 pip install -r requirements.txt                  # the reference's packages; unregistered on PyPI by design
-pip install treeship-sdk treeship-commerce
+pip install treeship-sdk
+pip install "treeship-commerce @ git+https://github.com/zerkerlabs/treeship.git#subdirectory=integrations/commerce-agents"
 curl -fsSL https://treeship.dev/install | sh     # the CLI does the signing
 treeship init
 ```
@@ -221,6 +222,6 @@ session           receipts=10 events=6 root_verified=True
 
 ## Reference
 
-- Package: [`integrations/commerce-agents/`](https://github.com/zerkerlabs/treeship/tree/main/integrations/commerce-agents) on PyPI as `treeship-commerce`
+- Package: [`integrations/commerce-agents/`](https://github.com/zerkerlabs/treeship/tree/main/integrations/commerce-agents); installs from the repository today, PyPI publication follows with the next release
 - Tests: eight cases on a real ship over the reference's retail mock, run in CI against the reviewed commit of the reference
 - Related: [Integration overview](/integrations/commerce-agents), [Agentic commerce](/commerce/overview), [Payment proofs](/commerce/payment-proofs), [Trust model](/concepts/trust-model)

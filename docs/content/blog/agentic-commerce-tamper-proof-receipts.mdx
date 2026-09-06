@@ -97,7 +97,8 @@ After that, the checkout hand-off: a signed digest of exactly the cart that went
 ```bash
 # in a clone of anthropics/commerce-agents
 pip install -r requirements.txt
-pip install treeship-sdk treeship-commerce
+pip install treeship-sdk
+pip install "treeship-commerce @ git+https://github.com/zerkerlabs/treeship.git#subdirectory=integrations/commerce-agents"
 curl -fsSL https://treeship.dev/install | sh && treeship init
 python -m treeship_commerce.demo
 ```
