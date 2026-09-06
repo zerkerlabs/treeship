@@ -57,7 +57,11 @@ async def test_intent_precedes_result_and_chains_from_the_session_root(ship: Shi
 
     status = ship.cli_json("session", "status")
     assert status["receipts"] == 4
-    assert status["events"] >= 2  # one timeline event per tool call
+    # One timeline event per tool call -- when the SDK can append them. On
+    # treeship-sdk 0.27.0 (no session_event) the timeline stays at the
+    # session-start event and the signed receipts are the only record.
+    expected_events = 1 + (2 if hasattr(ship.client, "session_event") else 0)
+    assert status["events"] == expected_events
 
 
 async def test_a_held_call_is_signed_as_blocked_with_the_gate_named(ship: Ship, executor):
