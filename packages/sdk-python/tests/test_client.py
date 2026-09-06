@@ -368,3 +368,44 @@ class ApprovalScopeTests(unittest.TestCase):
             argv = mock_run.call_args.args[0]
             self.assertIn("--expires", argv)
             self.assertIn("2030-12-31T23:59:59Z", argv)
+
+
+class SessionEventTests(unittest.TestCase):
+    """``session_event`` mirrors the TypeScript SDK's ``ship.session.event()``."""
+
+    def test_session_event_builds_the_cli_argv_and_parses_the_result(self) -> None:
+        ts = Treeship(cli_path="/usr/bin/treeship")
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = _completed(
+                stdout='{"event_id":"evt_1","sequence_no":7,"session_id":"ssn_abc","status":"ok"}'
+            )
+            result = ts.session_event(
+                "agent.called_tool", tool="search_products", actor="agent://shopping",
+                exit_code=2, duration_ms=41,
+            )
+            argv = mock_run.call_args.args[0]
+        self.assertEqual(argv[1:3], ["session", "event"])
+        self.assertIn("--type", argv)
+        self.assertEqual(argv[argv.index("--type") + 1], "agent.called_tool")
+        self.assertEqual(argv[argv.index("--tool") + 1], "search_products")
+        self.assertEqual(argv[argv.index("--actor") + 1], "agent://shopping")
+        self.assertEqual(argv[argv.index("--exit-code") + 1], "2")
+        self.assertEqual(argv[argv.index("--duration-ms") + 1], "41")
+        self.assertEqual(result.event_id, "evt_1")
+        self.assertEqual(result.sequence_no, 7)
+        self.assertEqual(result.session_id, "ssn_abc")
+
+    def test_session_event_rejects_option_like_values(self) -> None:
+        # A tool name starting with "-" would be parsed as a flag by the CLI.
+        ts = Treeship(cli_path="/usr/bin/treeship")
+        with self.assertRaises(TreeshipError):
+            ts.session_event("agent.called_tool", tool="--config")
+        with self.assertRaises(TreeshipError):
+            ts.session_event("--type")
+
+    def test_session_event_refuses_a_result_without_an_event_id(self) -> None:
+        ts = Treeship(cli_path="/usr/bin/treeship")
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = _completed(stdout='{"status":"ok"}')
+            with self.assertRaises(TreeshipError):
+                ts.session_event("agent.called_tool", tool="x")
