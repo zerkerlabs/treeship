@@ -29,7 +29,8 @@ Never written: the arguments, the result text (fenced third-party content on the
 ```bash
 # from a clone of anthropics/commerce-agents, with its venv active
 pip install -r requirements.txt          # the reference's packages; unregistered on PyPI by design
-pip install treeship-sdk treeship-commerce
+pip install treeship-sdk
+pip install "treeship-commerce @ git+https://github.com/zerkerlabs/treeship.git#subdirectory=integrations/commerce-agents"
 curl -fsSL https://treeship.dev/install | sh && treeship init
 ```
 
@@ -54,7 +55,17 @@ attach(executor, TreeshipReceipts(ts, actor="agent://shopping",
 close_session(ts, summary="...")     # seals a .treeship package; `treeship session report` publishes it
 ```
 
-On the Agent SDK path, pass `receipted(ShoppingToolExecutor)` as the toolset's `executor_class`. `MerchantToolExecutor` wraps the same way.
+All three runtimes construct executors themselves through `executor_class`; give `receipted()` a `recorder` factory and each executor gets its own recorder on its first call:
+
+```python
+ReceiptedShopping = receipted(ShoppingToolExecutor, recorder=lambda ex: TreeshipReceipts(
+    ts, actor="agent://shopping", session_id=ex._session.session_id, parent_id=root))
+ShoppingAgent(..., executor_class=ReceiptedShopping)      # Messages API
+ShoppingToolset(..., executor_class=ReceiptedShopping)    # Agent SDK
+build_server(..., executor_class=ReceiptedShopping)       # Managed Agents MCP server
+```
+
+`MerchantToolExecutor` wraps the same way.
 
 Recording never breaks the agent path. A receipt that cannot be written warns once, is counted in `TreeshipReceipts.dropped`, and later results carry `intent_recorded: false` where the intent is missing; nothing is invented. `TREESHIP_DISABLE=1` turns recording off.
 
@@ -84,4 +95,4 @@ session           receipts=10 events=6 root_verified=True
 - **Approvals, yet.** The merchant `apply_change` gate checks a mark the host sets and clears around the click. Turning that mark into a signed, single-use Treeship approval, with the apply receipt echoing the nonce, is the next piece.
 - **The checkout hand-off, yet.** Signing the cart digest and the hosted-checkout URL digest at `checkout_handoff`, chained to the host's order placement, follows.
 
-Source: [`integrations/commerce-agents/`](https://github.com/zerkerlabs/treeship/tree/main/integrations/commerce-agents).
+Full guide, with wiring for each runtime, a decoded receipt, and the trust boundary: [Claude Commerce Agents](/commerce/commerce-agents). Source: [`integrations/commerce-agents/`](https://github.com/zerkerlabs/treeship/tree/main/integrations/commerce-agents).

@@ -7,6 +7,12 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 Treeship's artifact system applies naturally to commerce workflows where AI agents execute transactions, manage procurement, or handle payments. The core mechanism is the **approval receipt with nonce binding** -- a signed proof that a specific human authorized a specific action before it happened.
 
+## What ships today
+
+- **Receipts for Anthropic's commerce reference.** `treeship-commerce` wraps the one executor every tool call passes through in [anthropics/commerce-agents](https://github.com/anthropics/commerce-agents), on the Messages API, the Agent SDK, and Managed Agents: a signed intent receipt before each tool runs, a signed result receipt after, a held call signed as `blocked` with its gate. Guide: [Claude Commerce Agents](/commerce/commerce-agents).
+- **Approvals with nonce binding and single use**, enforced by the Approval Use Journal, for any agent that asks a human before it acts. Below, and in [Payment Proofs](/commerce/payment-proofs).
+- **Handoffs with graded custody.** Since 0.27 a handoff records whether the receiving agent verified the sender live; `verify` prints `custody: live` only when the signed evidence supports it.
+
 ## The problem
 
 When an AI agent makes a purchase or executes a payment, how do you prove after the fact that a human actually approved it? Emails and Slack messages are not cryptographically verifiable. Treeship's approval artifacts are.
@@ -109,8 +115,9 @@ treeship attest endorsement \
 
 ## Related reading
 
-- [Payment Proofs](/docs/commerce/payment-proofs) -- step-by-step payment verification flow
-- [Compliance](/docs/commerce/compliance) -- audit trails, export bundles, and regulatory patterns
+- [Claude Commerce Agents](/commerce/commerce-agents) -- receipts for every tool call in Anthropic's reference, on all three runtimes
+- [Payment Proofs](/commerce/payment-proofs) -- step-by-step payment verification flow
+- [Compliance](/commerce/compliance) -- audit trails, export bundles, and regulatory patterns
 
 <Callout type="info">
 ZK proof integration (planned for v2) will add privacy-preserving commerce capabilities. Agents will be able to prove budget compliance and vendor authorization without revealing transaction details.

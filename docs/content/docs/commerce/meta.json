@@ -1,4 +1,9 @@
 {
   "title": "Commerce",
-  "pages": ["overview", "payment-proofs", "compliance"]
+  "pages": [
+    "overview",
+    "commerce-agents",
+    "payment-proofs",
+    "compliance"
+  ]
 }

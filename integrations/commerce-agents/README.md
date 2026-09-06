@@ -35,7 +35,8 @@ can correlate and a reader cannot.
 ```bash
 # from a clone of anthropics/commerce-agents, with its venv active
 pip install -r requirements.txt            # their seven packages (unregistered on PyPI)
-pip install treeship-sdk treeship-commerce
+pip install treeship-sdk
+pip install "treeship-commerce @ git+https://github.com/zerkerlabs/treeship.git#subdirectory=integrations/commerce-agents"   # PyPI publication follows the next release
 curl -fsSL https://treeship.dev/install | sh && treeship init
 ```
 
@@ -58,8 +59,17 @@ attach(executor, TreeshipReceipts(ts, actor="agent://shopping", session_id=sessi
 close_session(ts, summary="...")          # seals a .treeship package; `treeship session report` publishes it
 ```
 
-On the Agent SDK path, pass `receipted(ShoppingToolExecutor)` as the toolset's
-`executor_class`. Same for `MerchantToolExecutor`.
+All three runtimes construct executors themselves through `executor_class`
+(`ShoppingAgent`, `ShoppingToolset`, the MCP server's `build_server`). Give
+`receipted()` a `recorder` factory and each executor gets its own recorder on
+its first tool call:
+
+```python
+ReceiptedShopping = receipted(ShoppingToolExecutor, recorder=lambda ex: TreeshipReceipts(
+    ts, actor="agent://shopping", session_id=ex._session.session_id, parent_id=root))
+```
+
+Same for `MerchantToolExecutor`.
 
 Recording never breaks the agent path: a receipt that cannot be written warns once, is
 counted in `TreeshipReceipts.dropped`, and later results say `intent_recorded: false` where

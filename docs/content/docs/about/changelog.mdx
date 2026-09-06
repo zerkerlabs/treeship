@@ -10,6 +10,338 @@ The latest Treeship releases are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The canonical source and [complete release history](https://github.com/zerkerlabs/treeship/blob/main/CHANGELOG.md) live in `CHANGELOG.md` at the repo root. Edit that file, not this page.
 
+## Unreleased
+
+## 0.27.0 (2026-09-02)
+
+**Upgrade if you use `@treeship/a2a` or `@treeship/mcp`.** Foreign work is
+now refused until the other agent proves live key control, and the receipt
+records that it did. Integrations that pass `fromAgent` to `onTaskReceived`
+without calling `admitTask` first will throw; that is the fail-closed
+default this release exists to make.
+
+### Added
+
+- **A handoff records how custody was established, and `verify` grades it.**
+  `treeship attest handoff --verified <presentation> --challenge <nonce>`
+  re-runs the core presentation verifier and, only on a clean live verdict,
+  signs a `custody` block: the sha256 of the exact presentation bytes, the
+  nonce this ship minted, the card id, the verifier, and the time. A failing
+  presentation refuses to mint rather than downgrading quietly; a
+  presentation for one agent cannot certify a handoff `--from` another;
+  `--verified` without `--challenge` is a parser error. `--custody-reason
+  same_computer` records the shared-keystore case as what it is.
+
+  `verify` grades the block itself rather than echoing it: `custody: live`
+  only when the block carries the digest and the nonce a live check produces;
+  a `live` without them, an unknown grade, and no block at all all print as
+  `asserted` with the reason. `--format json` carries the same grade as
+  `checks[].custody.live`. Canonical bytes of every existing handoff are
+  unchanged.
+
+- **`--close-loop <session_id>` binds sealed-session evidence to a handoff.**
+  The session's `receipt.json` digest is signed into the statement; a session
+  the machine cannot find is refused. Evidence never upgrades custody.
+
+- **The A2A gate records what it verified.** After `admitTask` passes,
+  `@treeship/a2a` mints the receiver-signed `custody: live` handoff and
+  returns it as `handoffId`; the opt-out path never gets one. `handoff`
+  envelopes are validated on parse. `treeship_attest_handoff` in
+  `@treeship/mcp` takes `verified` + `challenge`.
+
+- **Every harness skill teaches the gate.** The universal skill, the Hermes,
+  OpenClaw, Kimi and Perplexity skills, the Claude Code / Codex / Cursor
+  integration notes, a new `treeship-handshake` skill in the Claude Code
+  plugin, and the Grok Bot skill all carry the same four steps: mint the
+  nonce, verify the presentation, refuse on any failure, record the verify.
+
+### Fixed
+
+- **Every handoff the CLI can mint failed chain linkage.** `attest handoff`
+  records `--artifacts[0]` as the storage parent, but handoff/v1 has no
+  `parentId`, so `verify` reported "claims parent (none)" and
+  `chain_linkage_ok: false` on correctly-signed evidence. The signed
+  `artifacts` list is the edge, the same shape as receipt.v1's
+  `subject.artifactId`; the walk now reads it.
+
+### Blocked
+
+- Grok Bot approvals (slice 3b of the A2A spec): the decision is visible
+  only in Grok's app UI, so the packaged skill states the boundary instead of
+  recording an approval nobody observed.
+
+## 0.26.0 (2026-09-01)
+
+### Added
+
+- **`treeship workflow verify`: one fail-closed path from a signed declaration
+  to a conformance report.** The three verification pieces -- declaration
+  signature and validity, the signed `session.start` that binds the run, and
+  the Merkle evidence that the declaration pre-existed it -- existed
+  separately, and nothing composed them. `verify_workflow_run` does, and it is
+  now the only place the pre-existence grade is decided.
+
+  This closes a hole rather than adding a feature.
+  `evaluate_workflow_conformance` reads `pre_existence.grade` off its input,
+  and its doc comment made not-lying an obligation on callers. An observation
+  set that claimed `checked` with placeholder checkpoint ids got a `checked`
+  report. The composed path discards whatever the input claims and replaces it
+  with what the supplied evidence proves, so a run with no `--proof` reports
+  `asserted` no matter what its file says. Omitting the proof is allowed and
+  costs the run its `checked` grade; it is not an error, because an unproven
+  ordering claim is a weaker report rather than a malformed one.
+
+  The workflow reference and the first-run id are both read from artifacts
+  whose signatures were just checked, never from caller-supplied strings.
+
+  `--strict` exits non-zero on any deviation, gap, or exceeded limit. It is
+  off by default: the spec is explicit that there is no single workflow score,
+  so the pass/fail policy belongs to the caller and the substrate reports the
+  file. Path, authority, and loop findings stay on separate axes in both the
+  text and `--format json` output; one never summarizes another.
+
+- **Observation sets can be derived from verified actions instead of typed by
+  hand.** `treeship workflow verify --run` read a file somebody wrote, which
+  meant the attribution rule -- which declared node an action belongs to --
+  lived outside the trust boundary entirely. `derive_observed_run` builds the
+  observation set from verified actions, so that rule is now code with tests
+  against it.
+
+  Attribution is by admissibility, never by label. A node admits an action when
+  its executor matches the signed actor (or a capability the verified mandate
+  carried) and its `allowed_tools` covers the signed action label. Exactly one
+  admitting node is the only case that earns `checked`, and a recorded node
+  label is not consulted there at all: a runtime cannot relabel work the
+  declaration already places. A label may only pick within an already
+  admissible set, which caps that attempt at `captured`, and a label naming a
+  node that cannot admit the action is reported rather than used as a
+  tiebreak.
+
+  Two ways this could have reported a clean run for a dirty one, both now
+  regression tests. Dropping an action that no node's `allowed_tools` covers
+  would have hidden an out-of-scope tool, so such an action stays attributed by
+  executor match and the authority axis still reports it. Accepting a repeated
+  action reference would have let one action pay twice against a loop's
+  `budget.max_actions`, which counts unique signed-action references, so
+  duplicates are refused during derivation -- `validate_run` only dedupes
+  within a single attempt.
+
+  Derivation leaves `pre_existence` asserted. `verify_workflow_run` remains the
+  only place that grades ordering.
+
+- **The recovered workflow conformance verifier.** `workflow_conformance.rs`,
+  its golden fixtures, and the `workflow.v1` predicate schema had existed only
+  in a local stash since 2026-08-18. They are on main.
+
+## 0.25.3 (2026-08-31)
+
+**Upgrade if you use `@treeship/verify`, `@treeship/sdk`, or any npm package
+that verifies in Node.** 0.25.2 never reached npm: the gate added in 0.25.2
+caught that the artifact still did not load and refused to publish it, so npm
+remained on the broken 0.25.1 while crates.io and PyPI moved to 0.25.2. This
+release fixes the underlying cause and brings every registry back in line.
+
+### Fixed
+
+- **`@treeship/core-wasm` was rewritten by whatever `wasm-opt` the build
+  machine happened to have.** `wasm-pack` runs `wasm-opt` on the package it
+  just built whenever binaryen is on `PATH`. The release workflow installed
+  binaryen from apt, which on Ubuntu noble is `108-1` -- a 2022 build
+  predating the `bulk-memory-opt` and `call-indirect-overlong` features the
+  module declares. It lowered the externref table to a non-growable one, so
+  `require()` threw `WebAssembly.Table.grow(): failed to grow table by 4` on
+  first use. A machine with no `wasm-opt`, or a current one, built the same
+  commit correctly, which is why 0.25.0 and 0.25.1 both shipped broken.
+
+  `wasm-pack`'s `wasm-opt` pass is now disabled for `core-wasm`, so the
+  published nodejs artifact is `wasm-bindgen`'s output and nothing else.
+
+### Changed
+
+- The release and CI workflows install a checksummed binaryen 132 tarball
+  instead of an unpinned apt package. `wasm-pack` was already pinned with
+  `cargo install --locked` specifically so the release job would not run
+  whatever a CDN served at job runtime; the tool that rewrites the artifact
+  is now pinned to the same standard.
+- CI installs binaryen at all, which it previously did not. The two pipelines
+  built differently, so every gate ran against an artifact that was never the
+  one published.
+- `rust-toolchain.toml` pins `wasm32-unknown-unknown`. This did not cause the
+  failure above, but it was the other unpinned input feeding the same
+  artifact.
+
+## 0.25.2 (2026-08-30)
+
+**Upgrade if you use `@treeship/verify`, `@treeship/sdk`, or any npm package
+that verifies in Node.** Those packages could not verify anything at all in
+0.25.1 or 0.25.0.
+
+### Fixed
+
+- **`@treeship/verify` threw on first use in Node.** `WebAssembly.Table.grow():
+  failed to grow table by 4`, from a clean install, on Node 20.19.5, 22.17.1,
+  22.20.0, 22.23.1 and 23.2.0. This is the failure 0.25.0 was released to fix.
+  The structural half of that fix worked — `require()` resolves to the nodejs
+  build rather than a bundler-only one — but the binary it resolved to was
+  miscompiled: the export named `__wbindgen_externrefs` was bound to the
+  funcref table, which wasm-pack emits with `min == max` and therefore cannot
+  grow. Same rustc, same wasm-bindgen, same wasm-pack as a local build that
+  works; the difference is the host platform, which made it invisible to
+  anyone building on a Mac and fatal to everything published from Linux CI.
+  `build-npm.sh` now loads its own nodejs output and calls into it before
+  packaging, so a build that does not work cannot be packaged. (#341)
+- **Nothing tested the published packages.** Every check ran against an
+  artifact CI had just built: `check-verify-js-loads.sh` packs a local build,
+  and the post-publish smoke installs the published CLI — a Rust binary that
+  never touches the wasm. So a broken `@treeship/verify` shipped twice under
+  green checks. The release now installs `@treeship/verify` from the registry
+  after publishing and calls a verify function, because the wasm loads lazily
+  and an import proves nothing. (#340)
+- **`release.sh prepare` could not update the lockfiles it exists to update,
+  and `npm ci` then failed on main.** `--package-lock-only` resolves against
+  the registry, so it failed on the unpublished version being released.
+  Prepare now writes the declared range offline; `refresh-lockfiles` fills in
+  resolved entries after publish. The sync check also compared only the
+  declared range, not the installed entry `npm ci` actually rejects on, so it
+  reported green on a tree where every JS job failed. (#337)
+- **The npm preflight checked that packages exist, not that CI can publish
+  them.** `npm view` is an unauthenticated read; npm returns 404 rather than
+  403 for an unauthorized write. A package bootstrapped by hand but never
+  given a trusted publisher passed the check and then failed mid-publish,
+  leaving 0.25.1 split across three registries. Preflight now checks
+  provenance, which is the observable trace of a successful CI publish. (#335)
+- **Keystore recovery advice named the wrong keystore.** The path came from
+  `$HOME/.treeship`, but that is the store root only in the default layout, so
+  under `--config` a user was told to move their global keystore while the
+  broken one stayed in place. The command also did not work — moving keys
+  aside leaves `config.json`, so `init` refused as "already initialized" while
+  `attest` said to run `init`. And it promised existing receipts stay
+  verifiable; they report `unknown key` until the old keystore is restored.
+  All three corrected, and every command in the message is now executed
+  verbatim in testing. (#338)
+
+## 0.25.1 (2026-08-21)
+
+**Upgrade if you use the Python SDK or `treeship wrap --format json`.** Two
+SDK entry points could not work at all — not misconfigured, structurally
+unable to succeed — which is the same shape as the bug that forced 0.25.0.
+
+### Fixed
+
+- **`attest_approval` in the Python SDK could not mint an approval.** It
+  forwarded none of the scoping arguments the CLI requires and passed
+  `expires_in` where the CLI takes `expires_at`, so every call that reached the
+  subprocess was rejected. The scoping arguments (`allowed_actions`,
+  `allowed_actors`, `allowed_subjects`, `max_uses`, `unscoped`) are now
+  forwarded, and an unscoped approval must say so explicitly rather than
+  becoming one by omission. (#331)
+- **`treeship wrap --format json` printed nothing parseable.** It emitted the
+  result through a path that returns early in JSON mode, and interleaved the
+  wrapped command's own stdout into the document, so callers got either an
+  empty string or invalid JSON. The result is now emitted as JSON and the child
+  process's stdout is routed to stderr, leaving stdout a single document. (#332)
+- **`treeship attest --expires 1h` signed a timestamp already in the past.**
+  `--expires` takes an absolute RFC 3339 time; a duration parsed to epoch zero
+  and was signed into the artifact, producing an approval born expired with a
+  valid signature. Durations are now refused with a message naming the expected
+  form. (#328)
+- **`treeship init` told a fresh directory it was "already initialized."** The
+  guard tested the resolved config path, which falls back to the global config,
+  so any directory on a machine with a global Treeship config was reported as
+  already set up. It now distinguishes a local workspace from the global
+  fallback. (#333)
+- **`treeship setup --help` promised a verdict the command does not produce.**
+  It documented promoting cards to `Verified`; the code deliberately sets
+  `Active`. (#330)
+- **`release.sh prepare` could not update the npm lockfiles it exists to
+  update.** `npm install --package-lock-only` resolves against the registry, so
+  it failed on the version being released, which is not published yet — the
+  step added to prevent v0.25.0's out-of-sync lockfiles could never run during
+  a release. Prepare now writes the declared range offline and
+  `release.sh refresh-lockfiles` fills in resolved entries after publish. The
+  sync check also covered only four hardcoded packages; it now discovers all
+  ten, which surfaced three runtime-acceptance lockfiles five releases behind.
+
+### Documentation
+
+- Documentation QA pass across 127 pages, plus eight gates that keep the docs
+  and the CLI from drifting apart: internal links, API routes, verify rows,
+  event types, predicates, command names, flags, and option tables. Four of the
+  fixes above were found by those gates. (#321)
+
+## 0.25.0 (2026-08-19)
+
+**Upgrade if you use any npm package. `@treeship/core-wasm@0.24.0` cannot be
+loaded in Node at all, and npm does not allow republishing a version — a new
+release is the only way to fix it.**
+
+### Fixed
+
+- **`@treeship/core-wasm` threw on import in Node.** `WebAssembly.Table.grow():
+  failed to grow table by 4`, reproduced from a clean install on Node 22.20.0
+  and 22.23.1. The module never finished loading, so every export was
+  unreachable — taking down `@treeship/verify` and every SDK method that calls
+  it. `build-npm.sh` ran only `wasm-pack --target bundler`, which emits an
+  import that needs a bundler to resolve. It survived a release because the one
+  consumer anyone exercised was the website, which vendors and bundles the wasm.
+  Now dual-target with an `exports` map routing Node to a nodejs build. (#320)
+- **`treeship session event --format json` exited 0 and printed nothing.** It
+  built the response and passed it to `printer.info`, which returns early in
+  JSON mode. Every SDK wrapper reading `event_id` got `undefined` from an empty
+  document, with a success exit code. (#311)
+- **`treeship present` panicked on a fresh onboard.** `range end index N out of
+  range` — checkpoints load from `~/.treeship/merkle` regardless of `--config`
+  while artifacts come from the scoped store, so the two could describe
+  different histories. Now a typed error naming both sizes. (#313)
+- **`grant show` and `grant list` put a clean checkmark on revoked grants.** A
+  signature stays valid forever; revocation is what makes a grant stop counting.
+  Both commands reported the signature and neither consulted the revocation
+  receipt the CLI had just written. (#314)
+- **`profile` and `history` reported 0 where the answer was "unknown".** An
+  empty result is not a zero. (#302)
+- **The MCP bridge recorded raw error text into signed receipts.** Everything
+  beside it was a digest; an error message routinely contains the thing that
+  failed. Now digested, with raw text behind an explicit opt-in. (#309)
+
+### Added
+
+- **Revocation works end to end.** `treeship grant revoke` mints a signed
+  `grant_revocation.v1`; `verify` honors it locally and from a hub's published
+  list; the hub publishes real revocations over an indexed lookup and states in
+  the response that absence is not evidence; each entry carries `dock_id` and
+  `rekor_index` so a client can check inclusion itself; and
+  `grant show --check-log` walks the dock's consistency chain and re-verifies
+  every link with RFC 6962. Unknown stays a third state throughout — never a
+  quiet pass. (#303, #305, #306, #314, #315, #316, #317)
+- **Linux arm64 binaries**, built *and executed* on a native `ubuntu-24.04-arm`
+  runner so a broken target blocks merge rather than failing on release day.
+  (#318)
+- **`verify` gates on authority** and reports what was granted but never used,
+  so `authority_ok: true` can no longer mean "checked nothing". (#297)
+- **`ship.session.event()` in the TypeScript SDK.** (#203, contributed by
+  @piyushpathakqa)
+
+### Changed
+
+- **Hub `/v1/stats` labels agent counts as claims.** They are derived from
+  `AgentGraph` nodes in uploaded receipts, which the hub does not
+  cryptographically verify. Artifact, dock and session counts are facts about
+  the hub's own state and are unaffected. `claimed_total` is the honest name;
+  the old keys remain for one release. (#308)
+- **The hub indexes on fields derived from the envelope**, never accepted from
+  the caller — so a resolver filters on content rather than an uploader's claim
+  about itself. (#307)
+
+### Known limitations
+
+- `invitation_authority` on a room is **recorded and not enforced**. `verify`
+  does not read it, so a receipt naming `host-only` and an invite minted by a
+  non-host both verify clean. Fail-safe today because nothing trusts the field,
+  but do not treat it as access control.
+- A receipt fetched by URL is verified **structurally only** — Merkle root,
+  inclusion proofs, leaf count, timeline order. Signatures and issuer are not
+  checked from that source; use the local artifact form for those.
+
 ## 0.24.0 (2026-08-10)
 
 **Trusted Rooms, end to end — plus three fixes worth upgrading for.**
@@ -361,161 +693,6 @@ confidence* from *cryptographic validity*.
   plus CI drift gates (generated command matrix, feature inventory, docs routes) that
   fail on any code-vs-docs divergence, so a docs lie now requires deliberately
   overriding a failing check rather than simply forgetting.
-
-## 0.20.0 (2026-07-12)
-
-The private-verification release. Treeship gets a way for an agent to prove a
-*subset* of what it is authorized to do without revealing the rest, and the
-experimental zero-knowledge path gets rebuilt on an honest foundation.
-
-### Added
-- **Selective capability disclosure — `treeship present --disclose <caps>`.** An
-  agent card commits to its full capability set, but a holder can present only the
-  capabilities a given verifier needs. Built as an SD-JWT-style disclosure layered
-  over the existing DSSE signature (core: `disclose_capabilities` /
-  `reconstruct_capabilities`): the verifier reconstructs the disclosed subset,
-  checks it against the signed commitment, and learns nothing about the withheld
-  entries — while the card's signature still verifies. The withheld set cannot be
-  forged or silently extended, and an omitted capability cannot be presented as
-  disclosed. Round-trip tested end to end.
-
-### Changed
-- **Honest zero-knowledge rebuild (statement-first).** The experimental Groth16
-  path was not sound to ship — it had no trusted-setup ceremony and its proofs were
-  not bound to the statement being proven, so a proof could be replayed or forged
-  (identified in the ZK audit). That path is now **quarantined**, the dead ZK code
-  deleted, and the docs corrected to stop implying it was authoritative. A
-  statement-first *private-verification* design (renamed from `zk-verification`)
-  supersedes it and names the two tiers concretely; `treeship zk-setup` and
-  `zk-tls-setup` scaffold the SRI-identified building blocks. The `zk` feature
-  remains **pre-release and non-authoritative** — nothing in the default trust path
-  depends on it.
-
-### Docs
-- Private-verification spec (statement-first) with the first-principles argument
-  and citations, and a first-draft "cyberlogic" theory of Treeship's trust model.
-
-## 0.19.1 (2026-07-11)
-
-The portable-verification release. The headline is a small command that closes a
-real gap: a Treeship signature is over the DSSE PAE (`DSSEv1 &lt;len> &lt;payloadType>
-&lt;len> &lt;payload>`), not the payload JSON, and nothing exported those exact bytes —
-so a counterparty verifying a receipt with a third-party Ed25519 library had to
-guess the PAE construction and failed. The "portable, offline, don't-trust-us"
-promise was true in the bytes but unusable without reading the source.
-
-### Added
-- **`treeship receipt export <id>` — the offline-verifiable triple.** Emits the
-  exact `{message (the PAE), signature, public_key, algorithm}` in copy-safe
-  base64, so a counterparty confirms a receipt with any Ed25519 library and zero
-  Treeship code. `--format json` pipes the triple straight to a partner. The
-  message is reconstructed from the same `payload_type`+`payload` the verifier
-  sees, so what is exported is provably what the signature covers; the public key
-  comes from the local keystore (export is for a receipt you produced — a
-  received receipt is checked with `treeship verify`).
-- **`scripts/verify-receipt.py` — the reference verifier.** Dependency-light,
-  independent Ed25519, offline: `treeship receipt export &lt;id> --format json |
-  python3 scripts/verify-receipt.py` → `VALID`. The canonical thing a partner
-  copies.
-- **[Receipt format](docs/content/docs/reference/receipt-format.mdx) reference.**
-  The stable, partner-facing description of the byte format — envelope, PAE,
-  id derivation, a language-agnostic verification recipe — so anyone can
-  implement a verifier without reading the Rust. The format is frozen; this
-  documents it.
-
-### Fixed
-- **A clean session reports `verification_status: "pass"`, not `"warn"` (#231).**
-  The always-on `receipt_body_binding` scope caveat added in 0.19.0 is
-  informational (every package carries it), but it was flipping every
-  cryptographically-clean session's top-line verdict to `warn`, making `pass`
-  unreachable and breaking any caller that gates on `status == "pass"`. It is now
-  surfaced in `warnings` for transparency but no longer downgrades the verdict;
-  real warnings (git-degraded, event-log skips, determinism drift) still do.
-  Caught by the post-publish smoke test; regression-tested.
-- **Release tooling: npm pinned to 11.5.1 (#230).** The 0.19.0 publish failed on
-  npm because `npm@latest` on the runner's Node 24 shipped a build whose bundled
-  `sigstore` module was unresolvable, crashing trusted-publishing provenance
-  (crates.io and PyPI published fine). npm is now pinned to the trusted-publishing
-  floor instead of tracking `@latest`.
-- **Dead verify URL in the lobster-cash demo.** It printed the non-resolving
-  `hub.treeship.dev/verify/`; the public verify URL is `https://treeship.dev/verify/<id>`
-  (the hub's own `hub_url`).
-
-## 0.19.0 (2026-07-09)
-
-The security-hardening release. Two independent AI-assisted adversarial audits
-were run against the codebase, and **every confirmed finding that ships in the
-default binary is fixed**, each with a regression test that fails before the
-fix. Highlights below; the recurring theme both audits named was "a higher-level
-surface reporting `verified` / `authentic` / `pass` from attacker-controlled
-input without anchoring to a verified signature," and that class is now closed
-across the CLI, the WASM browser verifier, the hub, the SDKs, and the bridges.
-
-### Changed (breaking)
-- **The `ship` trust-root kind is split into `hub_org` / `cert_issuer` / `revoker`.** A single `--kind ship` pin used to authorize three unrelated powers at once — promoting a local journal claim to a global single-use claim (hub-org checkpoints), issuing agent certificates, and revoking capabilities — so pinning a hub for dedup silently also let it mint certs and kill your capabilities. Each verifier is now scoped to the one power it needs. **Hard cutover:** no verifier honors `ship` any more, and `treeship trust add --kind ship` is rejected with guidance to the three new kinds. Existing `trust.json` files still load (the deprecated `ship` kind stays parseable but inert); a legacy `ship` pin is inert until re-pinned. Nothing published breaks — the trust kind is a local, verifier-side setting, not stored on the hub or embedded in any artifact. `keys export` now emits the new kinds. Migration: `treeship trust add <key_id> <pubkey> --kind cert_issuer` (or `hub_org` / `revoker`).
-
-### Security
-- **`treeship verify` on a fetched receipt/URL/package no longer reports "authentic" without checking a signature.** These paths ran only keyless, self-referential checks (recomputed Merkle root vs the receipt's own root, inclusion proofs, leaf-count, timeline) and then printed "Verified. This receipt is authentic." (JSON `outcome: "pass"`). Any internally-consistent forgery, or an empty receipt, passed. Verification now says **"Structurally consistent"** with an explicit warning that signatures and issuer were NOT verified, the JSON `outcome` is **`structural-pass`** (never `pass`) with `signatures_verified: false`, and an empty receipt is a `fail`. The same fix lands on the WASM `verify_receipt` surface.
-- **The hub DPoP signing key is encrypted at rest.** It was written to `config.json` as plaintext hex, so a passive read (backup, dotfile sync, container layer, a committed `.treeship`, a co-tenant) handed an attacker full impersonation of your ship to the hub. It is now sealed under the machine key with the same AES-256-GCM path the ship key already uses — a stolen `config.json` is useless on another machine.
-- **The browser/WASM `verify_capability` now actually verifies signatures.** It reported a card as key-bound / "verified" from the unverified `signatures[0].keyid` string (a public label, not a secret), so a forged card naming your pinned key could show as cryptographically bound to you in a receipt viewer. It now builds a real verifier from the pinned trust roots and requires the card's key to have produced a valid signature — matching the native CLI by construction.
-- **The hub verifies checkpoint signatures and binds each signer to its first public key.** `PublishCheckpoint` stored signer/signature/public key with no Ed25519 verification, which let an attacker mint the "ownership" signal used to shadow another tenant's consistency chain. The CLI now sends the exact signed canonical bytes; the hub verifies them and cross-checks the stored fields, plus a trust-on-first-use `signer → public_key` binding.
-- **At-rest keystore keys derive from a secret, not from guessable machine identifiers.** The AES key wrapping every signing key was `SHA256(machine-id/serial/hostname ‖ path)` — all guessable — so an exfiltrated `keys/*.json` was forgeable by anyone who knew your hostname. It now derives from a 32-byte OS-CSPRNG `machine_seed` (mode 0600, the primary entropy on every platform), with the machine id mixed in only as a binding salt; the old derivations remain as decrypt-only migration fallbacks that re-wrap on first open. Two hosts with identical machine-id/hostname but different seeds can no longer decrypt each other's keystore. The seed file is also hardened against planted symlinks / loose permissions.
-- **Ed25519 verification is strict across the whole core, and `treeship verify` cryptographically checks chain linkage.** Every core verifier now uses `verify_strict` (rejecting signature malleability, small-order keys, and cross-SDK split-view; previously only `present.rs` did). And the chain walk now cross-checks each child's **signed** `parentId` against the walked parent instead of trusting the unsigned `parent_id` storage metadata, exiting non-zero with `SIGNED LINKAGE BROKEN` on a mismatch rather than printing "no tampering detected" for a check it never ran.
-- **`verify-capability`: three ways it could be fooled, all closed.** `meta.tool` can no longer rescue a concrete out-of-scope action into scope; key-boundness / the action cross-check / revocation authorization now use the re-verified signer rather than the unverified `signatures[0].keyid`; and provenance grades read off a card that is not key-bound are marked `SELF-ASSERTED (not machine-verified)`. The Layer-4 authorization pass additionally hardened invitation countersigning (re-validates the joiner's statement before the host signs), `capability revoke` (refuses to print success for a revocation no verifier will honor), and scope checking (fails closed on `extra` constraints it cannot evaluate).
-- **The trust-ladder can no longer be laundered.** A self-declared `attestation_class` on a work-history record was tallied verbatim, so a hand-signed `session.v1` with `attestation_class: "countersigned"` laundered into the highest trust bucket. `session.v1` can no longer be minted through the generic attest path, the predicate validator now enforces `enum`/`const`, and `profile` / `history` cap the declared class to what the record's own evidence supports.
-- **Hub object-level authorization and availability.** Publishing a Merkle proof or consistency row now requires the caller to own the artifact / checkpoint / signer (was any authenticated dock, enabling cross-tenant shadowing). The hub gained request timeouts (Slowloris protection), a timeout + response cap on its Rekor call (no full-hub freeze during a Rekor outage), and a body cap on the unauthenticated `/dock/authorize`. `session close` now stamps a `reconcile_degraded` marker when the git backstop was disabled mid-session, and `package verify` warns on it, instead of sealing an incomplete file ledger as clean.
-- **CLI security nonces use the OS CSPRNG, and the A2A bridge stops trusting unverified JSON.** Every key/nonce/token in the CLI (hub keypair, DPoP jti, approval and invitation nonces) moved from `thread_rng` to `OsRng`, with sub-128-bit nonces widened to 128. The A2A `verifyReceipt` no longer returns `shipId` / `withinDeclaredBounds` computed from the raw fetched JSON when the receipt did not verify (and no longer defaults `withinDeclaredBounds` to `true` when there is no declaration).
-- **The Claude Code / Kimi plugins redact secrets from captured commands.** Bash commands were recorded verbatim into the session timeline, which is publishable to a no-auth URL, so `AWS_SECRET_ACCESS_KEY=… cmd` / `Bearer …` / `--token=…` leaked into shareable receipts. Env-assignment secrets, secret CLI flags, and bearer tokens are now redacted before capture.
-- **Lower-severity hardening:** stored artifact `key_id` is taken from the signature that actually verified (not `signatures.first()`); `format_device_code` no longer panics on a multibyte device code; an unreadable file's digest is recorded as `null` rather than an empty string; the SDK↔WASM trust-root ABI is fixed; and the event-log read no longer aborts the whole session on one bad byte, nor does `package verify` imply it authenticated the unsigned session narrative.
-- **`zk`-feature (pre-release) soundness:** the RISC0 chain guest now fails closed on empty content/signatures (was scoring an empty chain as validly signed), the hand-rolled base64 in the signature path is replaced with a real decoder, and the Groth16 verifier output no longer echoes an unverified `artifact_id` as bound. The `zk` feature remains pre-release and non-authoritative.
-
-### Added
-- **`treeship match --exercised <glob>` + `GET /v1/agents/match` — find agents by exercised evidence (work-history slice 4).** Declared capability gets an agent *found*; exercised history gets it *chosen*. The Hub indexes `tools_exercised` from the signed `session.v1` records it already holds and proposes candidates (filterable by `--class` / `--min-sessions`); the client **re-verifies every candidate on this machine** and re-ranks by verified sessions, showing records that do not verify as `unverified` rather than trusting the Hub's own match. See the [work-history spec](docs/specs/work-history.md).
-- **`GET /v1/stats` — public adoption metrics.** Counts only, never identifiers: artifacts pushed (total / last 7d), docks attached vs **active** (active = pushed in the window), session receipts uploaded, distinct agents seen. Any query failure returns 500, never a partial zeros document — zeros on error would read as "no adoption", a lie in the dangerous direction. Verify-page traffic and package downloads deliberately stay in external systems; the hub reports only what its own tables can answer, so every number is checkable against the same database the transparency endpoints serve.
-
-### Changed
-- **`treeship --help` now reads like a protocol, not a platform.** The core loop (quickstart → init → add → wrap → attest → session → verify → hub → publish) surfaces first; 21 extension and experimental commands (ui, dashboard, templates, otel, daemon, merkle, bundle, the zk family, …) are hidden from default help but unchanged in behavior. `treeship help --all` lists everything.
-- **One site list now stamps AND checks every release-version site.** `check-release-versions.py --write <version>` inverts every parser into a writer; release.sh's parallel sed/npm/node bump list is deleted. Forgetting one side of the dual list is the drift class behind the 0.9.6, 0.10.2, and 0.17.0 misses. The four npm `package-lock.json` files become first-class checked sites (26 → 30).
-- **CI now runs the full shipped-binary test surface** (`treeship-cli`, `treeship-core-wasm`, the hub's Go tests, and the plugin hook parity suite), not just `treeship-core` — so a fix's regression test actually gates merges on push.
-
-
-## 0.18.0 (2026-07-07)
-
-### Added
-- **`treeship profile` / `verify-profile` — the checkpoint-pinned track record (work-history slice 3).** A profile ("N sessions, N actions, these tools, this span") is a *claim*, and claims are `asserted` until checked. Every number is a **deterministic aggregation over the log's first `tree_size` leaves at a pinned checkpoint** whose root travels in the payload; `verify-profile` rebuilds exactly that prefix, cross-checks its root against the pin, recomputes every field through the same shared aggregation path as compute (the two cannot drift), and compares — match grades the profile **`checked`**; mismatch is a **provable lie, named field by field** (nonzero exit, structured JSON). `--attest` signs the profile as a ship claim (`profile.v1`, new registered predicate — the operator's claim about the agent's record, never the agent grading itself). Demonstrated live: an attested profile re-verifies `checked` even after the log grows, because the pin freezes the prefix. Reputation pinned to a root is falsifiable; reputation that floats is marketing. See the [work-history spec](docs/specs/work-history.md).
-- **`treeship history <agent>` + `GET /v1/agents/history` — the work-history projection (work-history slice 2).** An agent's work history is its transparency log filtered to signed `session.v1` records — no new store, no new trust surface. The Hub serves raw signed envelopes plus Merkle anchors (it filters and serves, never interprets); the CLI re-verifies **every envelope on your machine** against your own trust roots, re-proves each anchored entry's Merkle inclusion offline, and reads the typed fields from the verified envelope — never from transport metadata. Sortable and filterable on schema fields (`--class self|runtime|countersigned`, `--since <rfc3339>`, `--limit`), newest first; `--format json` emits one structured object, and a served entry whose inclusion proof fails flips the exit code nonzero, per the honest-verdicts rule. The output states the honest bound on every run: *history proves what was recorded, never everything that happened.* See the [work-history spec](docs/specs/work-history.md).
-
-### Fixed
-- **`status` now shows WHICH store it resolved.** Store discovery walks up from the working directory and silently switches between project-local and global `.treeship` config — previously visible only in `doctor`, and the root cause of a whole class of wrong-keystore confusion (it struck three separate times in one working day, including twice against the maintainers). `status` prints `store: project-local -- <path>` in text mode and a `store` object in JSON.
-- **A failed append-only proof no longer advances the audit witness.** The witness is the monitor's memory of the last state the hub *proved*; previously it advanced on any monotonic growth, so a hub that could not prove its log only appended (possible rewrite) triggered the alarm exactly once and every subsequent audit compared against the new, unproven baseline and reported clean. The witness now persists only when neither equivocation nor an append-only failure contradicted it — the alarm keeps firing until the hub actually proves the extension, and the output says `witness NOT advanced (extension unproven)`.
-
-### Fixed
-- **Hub hardening (audit Batch G).** Four fixes and a test wall for the network layer: **(1)** request bodies on `POST /v1/artifacts` and all `POST /v1/merkle/*` are now capped at 10 MB (the receipts handler always was; the other four buffered unbounded uploads into memory). **(2)** New indexes `artifacts(payload_type, signed_at)` and `artifacts(dock_id)` — the public, unauthenticated `GET /v1/agents` and `/v1/agents/log` endpoints were full-table scans that decode every receipt row per request and only get slower as the log grows. **(3)** `PRAGMA foreign_keys=ON`: every `REFERENCES` clause in the schema was decorative (SQLite ignores them unless enabled); a write claiming a dock the hub never registered is now refused by the database itself. **(4)** Re-POSTing a checkpoint no longer inserts a duplicate row forever — `InsertCheckpoint` is idempotent on its natural key (signer, root, tree_size) and returns the original row's id, matching the artifact/consistency insert discipline. **(5)** The public `GET /v1/verify/{id}` no longer echoes the verifier's stderr and internal error strings to anonymous callers (logged server-side; the response is a generic verdict — anyone wanting detail runs `treeship verify` themselves). And the **DPoP authentication boundary — through which every authenticated write funnels — now has a test suite** (it had zero): the accept path plus jti replay, foreign-key signature, unknown dock, htm/htu binding mismatches, clock skew, alg confusion, malformed JWTs, and payload tampering under a stale signature are all pinned.
-
-## 0.17.1 (2026-07-06)
-
-### Fixed
-- **The version train now covers the plugin manifests (the 0.9.5-plugin bug).** The Claude Code plugin's own `plugin.json` advertised **0.9.5** — eight releases stale — because it was covered by neither `release.sh` nor the version guard (the sibling *marketplace* manifest was; the plugin's own manifest was not). Same class: the OpenClaw plugin manifests sat at 0.10.3. All three are bumped, `release.sh prepare` now bumps them, and the preflight guard walks them (23 → 26 sites), so this class of drift fails the release instead of shipping. Also swept in the same pass: `PLATFORM.md`/`TREESHIP.md` no longer hardcode a "current version" in prose (one claimed "all packages are at v0.9.5"); the README's roadmap block ("v0.10.1 in flight", fully shipped long ago) is replaced with a pointer to the living `vision.md`; the report skill's `treeship package export` instruction (a command that does not exist) now describes the real portable-package flow; the Kimi skill's `cargo install treeship-cli` (an orphaned 0.4.0 stub the rest of the docs explicitly warn against) now says `npm install -g treeship`; and stale `@v0.10.0` skill-pin examples are current. Found by a user with the repo checked out; generalized by the audit.
-- **Merkle inclusion proofs are now generated from the checkpoint's tree, not the current one.** `merkle publish` and `merkle proof` computed authentication paths over the FULL current tree while pairing them with the latest checkpoint — but a path is a function of the total leaf count, so whenever any artifact was appended after checkpointing (a completely normal workflow), every emitted proof reconstructed the wrong root and the hub served proofs that verifiably fail, making legitimate, in-log artifacts read `inclusion INVALID` to every auditor. Both commands now rebuild the tree truncated to exactly the checkpoint's `tree_size` and cross-check the rebuilt root against the checkpoint's before emitting anything (the same rule `merkle publish`'s consistency proofs and `present` already applied), and `merkle proof` gains the missing membership guard: an artifact newer than the checkpoint is refused with the fix (`treeship checkpoint`) instead of handed a proof that cannot verify. Verified live both ways: with the store grown past the checkpoint, an old artifact's proof verifies offline against the checkpoint root, and a too-new artifact is refused. Also fixed in the same class: the receipt verifier reported `0/0 inclusion proofs passed` as a green check — a check that ran nothing now reports a warning, not a pass.
-- **`hub attach` probes the hub before claiming "reconnected".** With stored keys, attach previously set the active connection and reported success without ever contacting the server — so keys that outlived the hub's dock registration (e.g. after a hub database reset) produced a confident "reconnected" followed by 401s on every push. Reconnect now makes one authenticated, read-only DPoP request first; if the stored keys no longer authenticate, it says so plainly and falls through to a fresh device flow instead of lying. Found live during the hub-recovery incident, confirmed by the audit.
-- **A2A handoff attestation actually records handoffs now.** The `@treeship/a2a` middleware invoked `attest handoff` with flags the CLI does not have (`--task-id`, `--context`, `--a2a-message-id`) and omitted the required `--artifacts`, so **every** handoff attestation failed — silently, because bridge errors are deliberately swallowed. A2A delegation boundaries were never recorded. The bridge now does the honest two-step: it first attests the delegation itself as an action signed by the sender (`a2a.delegate`, with the task/context/message ids in `meta`), then records the handoff transferring that attested artifact — both real CLI primitives, no phantom flags. Found by the full-codebase audit.
-- **The MCP bridge no longer introduces itself as 0.10.0.** The handshake version clients see was hardcoded seven releases stale; it now reads from the package manifest and rides the release train.
-- **Verification commands no longer exit 0 on hostile verdicts, and emit real JSON.** `resolve`, `audit`, and `verify-capability` computed hostile verdicts — a REVOKED card, out-of-scope violations, an OMISSION against the committed anchor, an invalid inclusion proof, an equivocating checkpoint, a failed append-only proof — printed a warning, and **returned success**, so any script, CI gate, or monitor keying off the exit code treated a detected history rewrite as green. All four verification surfaces (including `verify-presentation`) now exit nonzero on a hostile verdict. `audit --watch` deliberately keeps looping and alerting instead of exiting — a monitor's job is to keep watching. In JSON mode (`--format json`) each of the four now emits **one structured verdict object** carrying every field the text output shows; previously `resolve`/`verify-capability` returned a bare success envelope, `verify-presentation` returned essentially nothing (its verdict lines went through info, which JSON mode suppresses), and `audit` streamed multiple concatenated JSON objects no parser could consume. Programmatic callers — the bridges, the gateway, CI — can finally gate on these commands.
-
-## 0.17.0 (2026-07-06)
-
-### Added
-- **Challenge mode — the handshake (registry-topology slice 3).** A static presentation proves the *record*; challenge mode proves the *bearer*. The verifier mints a nonce; the agent answers with `present --challenge <nonce>`, signing a domain-separated canonical that binds the agent URI, the exact card, the nonce, and a bearer-signed timestamp (every variable field digest-folded, so no field can inject separators and shift the others); the verifier runs `verify-presentation --challenge <the same nonce>` and the response is checked **only against the subject key the card verification itself established** (chain verdict or the verifier's own AgentCert pin — never a key the wire supplied). Verdict: `challenge: verified — bearer controls <key> (response 2s old)`, status `verified (key-bound, anchored, live)`. Fail-closed everywhere: signing requires the agent's own key and refuses the ship-key fallback (a ship signature would prove the operator, not the agent); a card/key drift refuses to answer; an unverified card means there is no key to check against and the challenge fails rather than "verifying" against nothing. Adversarially exercised live and in tests: a captured response replayed against a new nonce, a response signed by a non-card key, a response replayed for a different card or agent, and a tampered timestamp all reject with specific reasons.
-- **`treeship present` / `verify-presentation` — agent verification with no registry in the loop (registry-topology slice 2).** In real TLS the server *hands you* its certificate chain; `present` gives agents the same move: one file carrying the current capability card, the certificate chain to its ship, any known revocations referencing the card (included, never filtered — the verifier judges their authority), and a **Merkle staple** — the latest checkpoint plus the card's inclusion proof, computed over the tree truncated to exactly the checkpoint's size with the root cross-checked before anything is written. `verify-presentation` re-verifies everything **fully offline** against the verifier's own trust roots: direct leaf pin or certificate-chain walk to a pinned ship root (the same code path as `resolve --hub`), authorized revocations honored, staple checkpoint signature + inclusion re-checked, and **freshness reported as an explicit bound** — `revocation: none included — current as of the staple (9m old)` — with `--max-staple-age 30s|15m|2h|1d` turning the bound into an enforced verdict (`STALE`). Honest constraint printed in both commands: a static presentation is replayable — it proves the *record*, not the *bearer*; challenge mode (nonce signing, slice 3) is what proves live key control. Adversarially exercised: a card forged to grant itself an extra capability reports `UNVERIFIED` (stale signature caught by the chain's subject-key check), an unparseable envelope fails hard, and a verifier with no pins gets actionable pin commands, not false verdicts.
-
-### Added
-- **`treeship onboard` — an agent goes from nothing to verifiable in one command.** Composes the existing lifecycle — `agent register --own-key`, `attest card` (`--from-harness` / `--tools-json` / `--from-a2a` / `--tools`), and with `--publish` the full `publish` + `merkle checkpoint` + `merkle publish` anchor — into one idempotent pass, and ends by printing the **trust bundle**: the exact `trust add` command(s) a counterparty runs (`agent_cert` for the agent key, `hub_checkpoint` for the ship key) plus the `resolve`/`audit` commands that verify the agent. One name in, one URI out: `onboard deployer` and `onboard agent://deployer` are the same call, closing the register-takes-a-name / everything-else-takes-a-URI trap. Adds no new attestation surface — every artifact is minted by the same code paths as the individual commands. Born directly from the 13-item friction ledger of a real end-to-end dogfood run.
-
-- **Certificate-chain delivery: pin the ship, verify its agents (registry-topology slice 1).** `agent register --own-key` now also mints the protocol-native certificate — a typed **`agent_cert.v1`** receipt whose envelope signature by the ship key binds `agent://<name>` to its per-agent public key (idempotent per agent+key; the `.agent` package cert remains the human-portable rendering). `treeship publish` pushes the cert chain with the resolvable set, the Hub serves it verbatim in a new `certs` field, and `resolve --hub` **walks the chain when the leaf key is not directly pinned**: cert envelope verified against a pinned `Ship` root (the pubkey always comes from your trust store, never the wire), agent URI + subject key matched, validity window enforced fail-closed, and the certified subject key must itself verify the card. Verdicts read `verified (chain to pinned ship root)` / `yes (AgentCert via ship chain)`. This is the TLS chain shape: a counterparty pins one ship key and verifies every agent under it, instead of pinning each leaf — the gap found in the end-to-end dogfood. Chain-certified keys also count for self-revocations served in the bundle. Adversarially tested: unpinned ship, wrong trust-root kind, expired / not-yet-valid / missing-window certs, subject and agent-URI mismatches, stolen-cert-wrong-signer, and keyid/signer mismatch all reject.
-
-### Fixed
-- **Two agents in one workspace no longer collapse into one card (actor→key mapping destroyed).** `derive_agent_id` hashed `(surface, host, workspace)` — the agent's *name* was not part of its own identity — so registering a second agent from the same workspace reused the first one's card id and the upsert silently overwrote it: the clobbered agent's actor→key mapping (`registered_key_for_actor`, the lookup per-actor signing resolves through) vanished, downgrading its future receipts to self-asserted and orphaning its certificate. Found live when `fable-scout`'s registration destroyed `fable-code`'s. The name is now part of the id hash, and `registered_key_for_actor` picks the newest matching card deterministically (filesystem iteration order must never decide which key an actor signs with). Existing cards keep their on-disk ids; a re-register after this fix creates a correctly-keyed card alongside any stale one.
-- **Hub: re-pushing an already-published artifact no longer 500s.** `InsertArtifact` was a bare `INSERT`, so re-publishing an agent's resolvable set (exactly what an idempotent `onboard --publish` on every agent boot does) hit the `artifact_id` primary key and surfaced as a 500 to the pushing client, aborting the publish. Artifacts are content-addressed, signed envelopes — a re-push of the same id is the same bytes — so the insert is now `ON CONFLICT(artifact_id) DO NOTHING`: idempotent, and deliberately *never* an update, so a colliding id can never overwrite bytes the hub already serves. Regression-tested both ways (duplicate no-op + overwrite rejection).
 
 ## Older releases
 

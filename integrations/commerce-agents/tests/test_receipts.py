@@ -57,7 +57,11 @@ async def test_intent_precedes_result_and_chains_from_the_session_root(ship: Shi
 
     status = ship.cli_json("session", "status")
     assert status["receipts"] == 4
-    assert status["events"] >= 2  # one timeline event per tool call
+    # One timeline event per tool call -- when the SDK can append them. On
+    # treeship-sdk 0.27.0 (no session_event) the timeline stays at the
+    # session-start event and the signed receipts are the only record.
+    expected_events = 1 + (2 if hasattr(ship.client, "session_event") else 0)
+    assert status["events"] == expected_events
 
 
 async def test_a_held_call_is_signed_as_blocked_with_the_gate_named(ship: Ship, executor):
@@ -173,3 +177,94 @@ def test_args_digest_is_canonical():
     assert args_digest({}) == args_digest(None)
     assert args_digest({"a": 1}) != args_digest({"a": 2})
     assert json.dumps({"a": 1}) and args_digest({"a": 1}).startswith("sha256:")
+
+
+async def test_a_recorder_factory_gives_each_executor_its_own_chain(ship: Ship):
+    # The runtimes construct executors themselves through `executor_class`,
+    # so the factory is the only way to record there. Two executors, two
+    # commerce sessions, two recorders, two tags -- never one shared chain.
+    from commerce_common.memory import InMemoryMemoryStore
+    from commerce_common.skills import SkillRegistry
+    from shopping_agent import ShoppingAgentConfig, ShoppingSessionContext, ShoppingSessionState
+    from shopping_agent.executor import ShoppingToolExecutor, build_memory
+    from shopping_agent_sdk import load_mock_backend
+
+    config = ShoppingAgentConfig(brand_name="ACME")
+    cls = receipted(
+        ShoppingToolExecutor,
+        recorder=lambda ex: TreeshipReceipts(
+            ship.client,
+            actor="agent://shopping",
+            session_id=ex._session.session_id,
+            parent_id=ship.session_root,
+        ),
+    )
+
+    def build(session_id: str):
+        return cls(
+            backend=load_mock_backend(),
+            config=config,
+            skills=SkillRegistry([]),
+            session=ShoppingSessionContext(session_id=session_id, user_id="u"),
+            state=ShoppingSessionState(),
+            memory=build_memory(config, InMemoryMemoryStore()),
+            inline_context=True,
+        )
+
+    a, b = build("session-A"), build("session-B")
+    assert a.treeship_receipts is None  # nothing recorded until the first call
+    await a.execute("search_products", {"query": "tent"})
+    await b.execute("search_products", {"query": "tent"})
+    assert a.treeship_receipts is not b.treeship_receipts
+    assert a.treeship_receipts.session_tag != b.treeship_receipts.session_tag
+    assert len(a.treeship_receipts.recorded) == 2 and len(b.treeship_receipts.recorded) == 2
+    for ex in (a, b):
+        assert ship.cli_json("verify", ex.treeship_receipts.head)["outcome"] == "pass"
+
+
+class _OldSdkClient:
+    """A treeship-sdk 0.27.0 client: attest_action exists, session_event does not."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def attest_action(self, *args, **kwargs):
+        return self._inner.attest_action(*args, **kwargs)
+
+
+async def test_an_sdk_without_session_event_still_writes_signed_receipts(ship: Ship, executor):
+    # The SDK on PyPI at launch (0.27.0) predates session_event(). The
+    # receipts are the evidence; the timeline must degrade, never raise into
+    # the tool call. Before this guard, AttributeError escaped execute().
+    attach(
+        executor,
+        TreeshipReceipts(
+            _OldSdkClient(ship.client),
+            actor="agent://shopping",
+            session_id=COMMERCE_SESSION_ID,
+            parent_id=ship.session_root,
+        ),
+    )
+    outcome = await executor.execute("search_products", {"query": "tent"})
+    assert not outcome.refused
+    receipts: TreeshipReceipts = executor.treeship_receipts
+    assert len(receipts.recorded) == 2 and receipts.dropped == 0
+    assert ship.cli_json("verify", receipts.head)["outcome"] == "pass"
+
+
+async def test_a_client_that_raises_anything_never_breaks_the_tool(ship: Ship, executor):
+    class Explodes:
+        def attest_action(self, *a, **k):
+            raise RuntimeError("simulated SDK bug")
+
+        def session_event(self, *a, **k):
+            raise KeyError("simulated SDK bug")
+
+    attach(
+        executor,
+        TreeshipReceipts(Explodes(), actor="agent://shopping", parent_id=ship.session_root),
+    )
+    outcome = await executor.execute("search_products", {"query": "tent"})
+    assert not outcome.refused
+    assert executor.treeship_receipts.recorded == []
+    assert executor.treeship_receipts.dropped >= 2
