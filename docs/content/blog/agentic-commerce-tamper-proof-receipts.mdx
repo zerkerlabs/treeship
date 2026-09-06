@@ -1,0 +1,105 @@
+---
+title: "You can't have agentic commerce without tamper-proof receipts"
+description: "Anthropic's commerce-agents reference enforces its gates in code and leaves the record to the deployment. treeship-commerce is that record: a signed intent and result receipt for every tool call, on all three runtimes, verifiable offline."
+date: 2026-09-06
+tags: ["commerce", "integrations", "release"]
+readTime: "6 min read"
+---
+
+# You can't have agentic commerce without tamper-proof receipts
+
+Last week Anthropic published [commerce-agents](https://github.com/anthropics/commerce-agents), a reference blueprint for a shopping agent and a merchant agent on Claude. It is a careful piece of work. Third-party text is fenced before the model reads it. A cart write accepts only product ids a catalog read returned in that session. Merchant writes are staged and apply only through a host-approval mark. Checkout renders the cart and hands off a URL the model never sees. Nothing in the repo charges a card.
+
+It is also honest about where it stops. Its safety page has a section called *What a deployment owns*: authentication, credentials, business rules, payment, the approval surface, and log hygiene. The gate checks that your code set the approval mark; who set it, and whether anyone can prove it later, is yours.
+
+Today we are shipping `treeship-commerce`: the record of what happened, for that reference, on all three of its runtimes.
+
+---
+
+## One method, three runtimes
+
+The reference has a property that makes this easy to do well. Every tool call on the Messages API, the Agent SDK, and Managed Agents passes through one method, `BaseToolExecutor.execute`. The reference relies on that for its own guarantees; its safety table says so in the first paragraph.
+
+So we wrap that one method. Before dispatch, a signed **intent** receipt: the tool, a SHA-256 of the canonical arguments, and a session tag. Then the tool, exactly as the reference runs it. After, a signed **result** receipt: `ok`, or `blocked` with the gate's name, or `error`, plus a digest of the result text, the events the tool emitted, and timing. Each receipt names its parent, so the session reads intent → result → intent → result from its root, and `treeship verify` walks it as one chain.
+
+```python
+ReceiptedShopping = receipted(
+    ShoppingToolExecutor,
+    recorder=lambda ex: TreeshipReceipts(ts, actor="agent://shopping",
+                                         session_id=ex._session.session_id, parent_id=root),
+)
+agent = ShoppingAgent(backend=..., skills_dir=..., config=..., executor_class=ReceiptedShopping)
+```
+
+That is the whole integration. The reference's `executor_class` seam exists on the Messages API runtime, the SDK toolset, and the MCP server, and we did not change a line of the reference to use it.
+
+---
+
+## A refusal is a receipt too
+
+Here is the run from a clean ship, driving the reference's shopping executor over its retail mock. No model, no API key; the executor is called the way the reference's own tests call it.
+
+```text
+tool calls        intent-id result-id
+  search_products        ok                   art_51a9a028… art_2c9f6de1…
+  get_product_details    ok                   art_8a25d056… art_dcf51c09…
+  add_to_cart            ok                   art_21639e62… art_21f62db3…
+  add_to_cart            blocked:provenance   art_57b39c31… art_e4159011…
+  checkout               ok                   art_83f3fd84… art_45b69620…
+
+session           receipts=10 events=6 root_verified=True
+```
+
+The fourth call tried to add a product id that never came from a catalog read. The reference's provenance gate held it. The receipt for that call says so, signed:
+
+```json
+"meta": {
+  "status": "blocked",
+  "gate": "provenance",
+  "result_digest": "sha256:3ab4b78a4205d1c7dd613f0cd8860e5bb5ae767026ab5191f281f41530404308",
+  "intent_recorded": true,
+  "tool": "add_to_cart"
+}
+```
+
+This is the point. Agentic commerce will be full of things that did not happen: the add that was refused, the change the operator declined, the checkout that was never placed. A log that only records successes cannot distinguish "refused" from "never asked." A signed receipt for the refusal can.
+
+---
+
+## What is not in the receipt
+
+The reference is strict about what reaches the model and what reaches the logs. The receipts keep that discipline.
+
+Not the arguments: a holder of the arguments can recompute the digest; a holder of the receipt learns nothing. Not the result text: on the reference that is fenced third-party content. Not the session id: the reference treats it as the request credential and logs only a twelve-hex tag. The receipt carries that same tag, computed by the reference's own helper, so an operator holding the id can correlate a receipt with a log line and nobody else can.
+
+And nothing is invented. If a receipt cannot be written, the tool still runs, the drop is counted, and the next result says `intent_recorded: false` where the intent is missing. A recorder that quietly reports nothing is worse than none; `attach()` refuses an executor that would.
+
+---
+
+## What it proves, and what it does not
+
+A receipt proves that this ship's key signed, at that time, that `add_to_cart` was about to run with arguments of that digest, and then that the gate held it. It proves the chain is unbroken from the session root and that nobody edited it since, checkable on any machine without asking us or anyone.
+
+It does not prove the catalog was truthful, that the tool's answer was right, or that the customer got what they wanted. A wrong answer with a perfect receipt is still wrong. Treeship authenticates statements. It does not adjudicate commerce, and we are not going to pretend otherwise on a page about provenance.
+
+---
+
+## What comes next
+
+The reference's merchant gate applies a change only when the host marked its id approved, a mark set just before the operator's click and cleared just after. That is an approval with a nonce and a single use, described in prose. The next piece makes it one in cryptography: the click mints a scoped `attest approval --max-uses 1`, the apply receipt echoes the nonce, and the Approval Use Journal refuses a second spend. The reference's staged change already carries the operator's principal, so the approver is never invented.
+
+After that, the checkout hand-off: a signed digest of exactly the cart that went to the hosted checkout, chained to the order the host places. And a command in the reference's own plugin format, next to its `/add-commerce-flow`.
+
+---
+
+## Try it
+
+```bash
+# in a clone of anthropics/commerce-agents
+pip install -r requirements.txt
+pip install treeship-sdk treeship-commerce
+curl -fsSL https://treeship.dev/install | sh && treeship init
+python -m treeship_commerce.demo
+```
+
+Background on the approval side, from March: [Agentic Commerce with Treeship](/blog/agentic-commerce-with-treeship), on how an agent proves it had approval before spending money. Docs: [Claude Commerce Agents](/commerce/commerce-agents). Source: [`integrations/commerce-agents`](https://github.com/zerkerlabs/treeship/tree/main/integrations/commerce-agents). Eight tests on a real ship, run in CI against the reviewed commit of the reference.

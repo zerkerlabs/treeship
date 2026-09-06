@@ -1,0 +1,226 @@
+---
+title: Claude Commerce Agents
+description: Wire tamper-proof receipts into anthropics/commerce-agents on the Messages API, the Agent SDK, and Managed Agents, verify a session offline, and know exactly what a receipt does and does not prove.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+[anthropics/commerce-agents](https://github.com/anthropics/commerce-agents) is Anthropic's reference blueprint for two agents on Claude: a **shopping agent** a business embeds for customers and a **merchant agent** its staff use for the back office. Each runs on three paths, the Messages API, the Claude Agent SDK, and Managed Agents, over one set of tool contracts, gates, and skills.
+
+The reference draws a clear line in its `docs/safety.md`. Enforced in code: fencing of third-party content, provenance gates on every write, caps, memory validation, and a host-approval gate on merchant changes. Left to the deployment: the approval surface, payment, and log hygiene. `treeship-commerce` is what a deployment adds for the **record** of what happened. It records; the reference's gates still decide what runs.
+
+<Callout type="info">
+Anthropic publishes the reference as a reference: it is not maintained and does not accept contributions. `treeship-commerce` is a separate package that wraps it through the `executor_class` seam every runtime already exposes. No line of the reference changes.
+</Callout>
+
+## Why one wrapper covers three runtimes
+
+Every tool call, on every path, passes through one method: `commerce_common.execution.BaseToolExecutor.execute`. The reference relies on that for its own guarantees; its safety table says "a rule enforced inside a tool call holds on all three paths." `TreeshipExecutorMixin` overrides that one method:
+
+1. **Intent receipt**, signed, before dispatch: the tool name, a SHA-256 of the canonical arguments, the role, and the session tag.
+2. **The tool**, exactly as the reference runs it: validation, gates, handler, fencing.
+3. **Result receipt**, signed, after: status (`ok`, `blocked` with the gate's name, or `error`), a SHA-256 of the result text, the event types the tool emitted, elapsed time, and whether the intent was recorded.
+
+Each receipt names its parent. A session reads `intent → result → intent → result …` from the Treeship session's root artifact, and `treeship verify` walks it as one chain. A call the provenance gate holds is a **signed refusal**: the receipt exists, says `blocked`, and names `provenance`.
+
+## Anatomy of a receipt
+
+Both receipts below are real, from `python -m treeship_commerce.demo` on a fresh ship. This is the add-to-cart the reference's provenance gate held, because the product id never came from a catalog read in that session.
+
+The intent, decoded from its DSSE envelope:
+
+```json
+{
+  "type": "treeship/action/v1",
+  "timestamp": "2026-09-06T19:33:00Z",
+  "actor": "agent://shopping",
+  "action": "commerce.tool.add_to_cart.intent",
+  "parentId": "art_21f62db3cbb2f1d839262a0d672b503b",
+  "meta": {
+    "args_digest": "sha256:bbb323b035288b725c4c593fb5c1ee9422d4ff43d18a928dc3e24ae9562c6ad1",
+    "role": "shopping",
+    "session_tag": "ea993c8c62ea",
+    "tool": "add_to_cart"
+  }
+}
+```
+
+The result, whose parent is that intent:
+
+```json
+{
+  "type": "treeship/action/v1",
+  "timestamp": "2026-09-06T19:33:00Z",
+  "actor": "agent://shopping",
+  "action": "commerce.tool.add_to_cart.result",
+  "parentId": "art_57b39c3177d8bf4d95002b9c25344149",
+  "meta": {
+    "status": "blocked",
+    "gate": "provenance",
+    "result_digest": "sha256:3ab4b78a4205d1c7dd613f0cd8860e5bb5ae767026ab5191f281f41530404308",
+    "events": [],
+    "elapsed_ms": 0,
+    "intent_recorded": true,
+    "role": "shopping",
+    "session_tag": "ea993c8c62ea",
+    "tool": "add_to_cart"
+  }
+}
+```
+
+Around each statement sits the standard Treeship record: the DSSE envelope with the Ed25519 signature, `payload_type: application/vnd.treeship.action.v1+json`, the signing `key_id`, and the content-addressed `artifact_id` (`art_` + the first 16 bytes of SHA-256 over the signed bytes). Change one byte of the statement and the id no longer matches.
+
+What is deliberately **not** in a receipt:
+
+| Not written | Why |
+|---|---|
+| The arguments | A reader with the arguments can recompute `args_digest`; a reader with the receipt learns nothing about them. |
+| The result text | On the reference it is fenced third-party content (catalog rows, reviews, policies). |
+| The commerce session id | The reference treats it as the request credential and logs only a twelve-hex tag. The receipt carries that same tag, from the reference's own `session_tag` helper, so an operator holding the id can correlate and nobody else can. |
+
+## Install
+
+```bash
+# in a clone of anthropics/commerce-agents, with its venv active
+pip install -r requirements.txt                  # the reference's packages; unregistered on PyPI by design
+pip install treeship-sdk treeship-commerce
+curl -fsSL https://treeship.dev/install | sh     # the CLI does the signing
+treeship init
+```
+
+## Wire it
+
+<Steps>
+<Step>
+### Open a Treeship session around the commerce session
+
+```python
+from treeship_sdk import Treeship
+from treeship_commerce.lifecycle import start_session
+
+ts = Treeship()
+root = start_session(ts, name="storefront:acme", actor="agent://shopping")
+```
+
+`root` is the session's root artifact id, the parent every tool receipt chains from. `start_session` and `close_session` take a `cwd`; the CLI finds the workspace by walking up from the working directory, so a host that runs elsewhere passes the directory it initialized.
+</Step>
+
+<Step>
+### Build the receipted executor class
+
+```python
+from treeship_commerce import TreeshipReceipts, receipted
+from shopping_agent.executor import ShoppingToolExecutor
+
+ReceiptedShopping = receipted(
+    ShoppingToolExecutor,
+    recorder=lambda ex: TreeshipReceipts(
+        ts,
+        actor="agent://shopping",
+        session_id=ex._session.session_id,   # tagged, never written
+        parent_id=root,
+    ),
+)
+```
+
+`receipted` puts the mixin first in the MRO. The `recorder` factory runs once per executor on its first tool call, so each executor, which the reference builds per session, gets its own chain and its own tag. `MerchantToolExecutor` wraps the same way with `actor="agent://merchant"`.
+</Step>
+
+<Step>
+### Hand it to the runtime you use
+
+**Messages API** (`shopping_agent_runtime.ShoppingAgent`):
+
+```python
+agent = ShoppingAgent(
+    backend=your_backend,
+    skills_dir=Path("shopping-agent/skills"),
+    config=ShoppingAgentConfig(brand_name="Your Store"),
+    executor_class=ReceiptedShopping,
+)
+```
+
+**Agent SDK** (`shopping_agent_sdk.ShoppingToolset`):
+
+```python
+toolset = ShoppingToolset(backend=your_backend, executor_class=ReceiptedShopping)
+```
+
+**Managed Agents** (the storefront MCP server, `build_server`):
+
+```python
+server = build_server(backend=your_backend, config=config, executor_class=ReceiptedShopping)
+```
+
+On Managed Agents the executor lives inside your MCP server, one per client connection, so the receipts are written where your backend runs, next to the credentials the model never sees.
+</Step>
+
+<Step>
+### Seal the session
+
+```python
+from treeship_commerce.lifecycle import close_session
+
+sealed = close_session(ts, summary="14 tool calls, 1 held by the provenance gate, checkout handed off")
+sealed["package"]      # .../.treeship/sessions/ssn_….treeship
+```
+
+`treeship session report` publishes the package to a hub and returns a permanent receipt URL; that step is a deliberate, separate action.
+</Step>
+</Steps>
+
+If you construct executors yourself, `attach(executor, receipts)` works on an instance of a `receipted` class. It refuses a plain reference executor, because one that silently recorded nothing would be the exact failure this exists to remove.
+
+## Verify a session
+
+Offline, from the CLI, against your own trust roots:
+
+```bash
+treeship verify art_45b696204da9e0b9bdacccc8d2edd763       # the chain head
+#   pass · 13 artifacts · chain linkage ok
+treeship package verify .treeship/sessions/ssn_ae4e97c9e7a5d18d.treeship
+#   18 passed, 0 failed
+```
+
+`--format json` gives a CI-consumable document: every check by artifact id, `chain_linkage_ok`, and the outcome. A published session renders at `treeship.dev/receipt/<id>` with the timeline and the same verifier running in the browser (`@treeship/verify`, WebAssembly); the hub stores bytes and serves proofs, it never issues a verdict.
+
+The demo's output, from a clean ship:
+
+```text
+tool calls        intent-id result-id
+  search_products        ok                   art_51a9a0284cfe4d7b… art_2c9f6de1d8e7ffe8…
+  get_product_details    ok                   art_8a25d0564a34df52… art_dcf51c090f1b69f0…
+  add_to_cart            ok                   art_21639e62f897bcfc… art_21f62db3cbb2f1d8…
+  add_to_cart            blocked:provenance   art_57b39c3177d8bf4d… art_e415901189dc1613…
+  checkout               ok                   art_83f3fd84bebb9ae2… art_45b696204da9e0b9…
+
+session           receipts=10 events=6 root_verified=True
+```
+
+## What a receipt proves, and what it does not
+
+**Proves.** That this ship's key signed, at that time, the statement that `add_to_cart` was about to run with arguments of that digest, and then that the provenance gate held it. That the receipts form an unbroken chain from the session root. That nobody edited any of them after the fact, on any machine, checkable without contacting anyone.
+
+**Does not prove.** That the tool's answer was correct, that the catalog was truthful, or that the customer got what they wanted. A wrong answer with a perfect receipt is still wrong. Treeship authenticates statements; it does not adjudicate commerce.
+
+**Trust boundary.** The signing key lives on the machine that runs the executor. That is the right place for a deployment's own record of its agent, and it is a boundary: root on that machine can sign anything. A counterparty who wants to trust these receipts pins your ship key once (`treeship keys export` prints the line) and verifies against it.
+
+## Operating it
+
+- **Recording never breaks the agent path.** A receipt that cannot be written (CLI missing, ship not initialized, disk full) warns once, the tool runs anyway, and `TreeshipReceipts.dropped` counts it. A result whose intent is missing says `intent_recorded: false` and chains from the previous head; no id is ever invented.
+- **`TREESHIP_DISABLE=1`** turns recording off. `TREESHIP_DEBUG=1` logs every drop instead of the first.
+- **Cost.** Two CLI invocations per tool call, run off the event loop in a thread; tens of milliseconds each on a laptop. The timeline event is a third, cheaper append.
+- **Log hygiene.** The receipt's `session_tag` is the reference's own `session_tag(session_id)` when `commerce_common` is importable, so your log lines and your receipts correlate on the same twelve hex characters.
+
+## What comes next
+
+- **Approvals.** The merchant `apply_change` gate passes only for a change id the host marked approved, a mark set just before the click and cleared just after. The next piece turns that mark into a signed, scoped, single-use Treeship approval: `attest approval --allowed-actions apply_change --allowed-subjects <change_id> --max-uses 1`, the apply receipt echoing the nonce, and the Approval Use Journal making it unspendable twice. The reference's `StagedChange` already carries the operator principal, so the approver is never invented.
+- **Checkout hand-off.** `checkout_handoff` returns a hosted URL the model never sees. Signing the cart digest and the URL digest at that moment, chained to the host's order placement, gives the customer a receipt for exactly the cart that went to checkout. See [Payment Proofs](/commerce/payment-proofs) for the pattern.
+- **A plugin command** in the reference's own marketplace format, alongside its `/add-commerce-flow`.
+
+## Reference
+
+- Package: [`integrations/commerce-agents/`](https://github.com/zerkerlabs/treeship/tree/main/integrations/commerce-agents) on PyPI as `treeship-commerce`
+- Tests: eight cases on a real ship over the reference's retail mock, run in CI against the reviewed commit of the reference
+- Related: [Integration overview](/integrations/commerce-agents), [Agentic commerce](/commerce/overview), [Payment proofs](/commerce/payment-proofs), [Trust model](/concepts/trust-model)
