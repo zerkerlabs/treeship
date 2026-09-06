@@ -36,3 +36,7 @@ packages/zk-circom/build/
 # Never track dependency trees anywhere in the repo (a stray npm install
 # in a subdirectory once committed 543 files under schemas/node_modules).
 node_modules/
+
+# Python bytecode caches (sdk-python tests, integrations/commerce-agents)
+__pycache__/
+*.pyc

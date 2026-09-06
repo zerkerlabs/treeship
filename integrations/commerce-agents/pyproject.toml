@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "treeship-commerce"
+version = "0.27.0"
+description = "Signed, offline-verifiable receipts for every tool call in anthropics/commerce-agents, on all three of its runtimes."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.11"
+dependencies = ["treeship-sdk>=0.27.0"]
+# The commerce-agents packages (commerce-common, shopping-agent-core, ...) are
+# deliberately unregistered on PyPI; install them from a clone first
+# (`pip install -r requirements.txt` in anthropics/commerce-agents). This
+# package imports them lazily and says so when they are missing.
+
+[project.urls]
+Homepage = "https://treeship.dev"
+Documentation = "https://docs.treeship.dev/integrations/commerce-agents"
+Source = "https://github.com/zerkerlabs/treeship/tree/main/integrations/commerce-agents"
+
+[tool.setuptools.packages.find]
+include = ["treeship_commerce*"]
+
+[tool.pytest.ini_options]
+addopts = "-p asyncio"
+asyncio_mode = "auto"
+testpaths = ["tests"]
