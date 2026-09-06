@@ -118,7 +118,10 @@ def package_has_manifest(name: str) -> bool:
             for manifest in ("package.json", "Cargo.toml", "pyproject.toml"):
                 if (t / manifest).exists():
                     return True
-    # Fallback: grep package.json `name` field across the relevant roots.
+    # Fallback: match the manifest's own `name` field across the relevant
+    # roots -- package.json for npm, pyproject.toml for Python. This is what
+    # covers a package whose directory is not its name (integrations/
+    # commerce-agents publishes `treeship-commerce`).
     for root in [ROOT / "packages", ROOT / "bridges", ROOT / "integrations", ROOT / "npm"]:
         if not root.is_dir():
             continue
@@ -131,6 +134,16 @@ def package_has_manifest(name: str) -> bool:
                     return True
             except Exception:
                 continue
+        for pyproject in root.rglob("pyproject.toml"):
+            if ".venv" in pyproject.parts or "node_modules" in pyproject.parts:
+                continue
+            try:
+                text = pyproject.read_text()
+            except OSError:
+                continue
+            m = re.search(r'^\s*name\s*=\s*"([^"]+)"', text, re.M)
+            if m and m.group(1) == name:
+                return True
     return False
 
 

@@ -40,6 +40,7 @@ CATEGORIES: dict[str, tuple[str, str]] = {
     "agent-skills": ("Skills", "One skill file, any agent that reads skills."),
     "install": ("Skills", ""),
     "langchain": ("Frameworks", "Wrap a framework's calls."),
+    "commerce-agents": ("Frameworks", ""),
     "memory-proofs": ("Sibling products", "Other Zerker systems that emit or consume Treeship evidence."),
     "zerker-reason": ("Sibling products", ""),
     "ninjatech": ("Partners and applied work", "Shipped elsewhere, verifiable here."),

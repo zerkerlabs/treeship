@@ -488,6 +488,43 @@ jobs:
         env:
           PYTHONPATH: .
 
+  commerce-agents:
+    name: commerce-agents receipts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable (moving branch; pinned to current tip)
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.11'
+
+      # The tests drive the reference's real shopping executor over its retail
+      # mock and a real isolated ship, so they need the CLI and the reference.
+      - name: Build CLI
+        run: cargo build -p treeship-cli
+
+      # Pinned to the commit the integration was written against. The reference
+      # is "not maintained" upstream, so drift is unlikely, but a moving clone
+      # would make a green run mean "still compatible with whatever is on main
+      # today" rather than "still compatible with the reference we reviewed".
+      - name: Clone anthropics/commerce-agents at the reviewed commit
+        run: |
+          git init -q /tmp/commerce-agents
+          git -C /tmp/commerce-agents fetch -q --depth 1 https://github.com/anthropics/commerce-agents.git fd4d59224ab96b43c6dc6888207c67b3bd5a24cf
+          git -C /tmp/commerce-agents checkout -q FETCH_HEAD
+
+      - name: Install the reference, the SDK, and the integration
+        run: |
+          pip install -q -r /tmp/commerce-agents/requirements.txt -r /tmp/commerce-agents/requirements-dev.txt
+          pip install -q -e packages/sdk-python -e integrations/commerce-agents
+        working-directory: /tmp/commerce-agents
+
+      - name: Test
+        working-directory: integrations/commerce-agents
+        run: python -m pytest -q -p asyncio
+        env:
+          TREESHIP_BIN: ${{ github.workspace }}/target/debug/treeship
+
   docs-build:
     name: Docs production build
     runs-on: ubuntu-latest
