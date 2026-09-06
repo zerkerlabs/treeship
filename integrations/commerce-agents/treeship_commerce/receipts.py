@@ -40,7 +40,7 @@ import os
 import time
 from typing import Any, Callable, Mapping, Sequence
 
-from treeship_sdk import Treeship, TreeshipError
+from treeship_sdk import Treeship
 
 try:  # The reference's own helper, so tags line up with its log lines.
     from commerce_common.turn import session_tag as _session_tag
@@ -119,6 +119,7 @@ class TreeshipReceipts:
         self._head: str | None = parent_id
         self._lock = asyncio.Lock()
         self._warned = False
+        self._timeline_unavailable_warned = False
         self.recorded: list[str] = []
         """Artifact ids written by this recorder, in chain order."""
         self.dropped = 0
@@ -155,7 +156,7 @@ class TreeshipReceipts:
             result = await asyncio.to_thread(
                 self.client.attest_action, self.actor, action, parent, None, meta
             )
-        except (TreeshipError, OSError, ValueError) as err:
+        except Exception as err:  # noqa: BLE001 -- a recorder must never break the tool
             self._warn(action, err)
             return None
         async with self._lock:
@@ -214,16 +215,29 @@ class TreeshipReceipts:
         the receipt page renders). The signed receipts are the evidence."""
         if self.disabled:
             return
+        session_event = getattr(self.client, "session_event", None)
+        if session_event is None:
+            # treeship-sdk < 0.28 has no session_event. The signed receipts are
+            # the evidence; the timeline is a rendering convenience. Say so
+            # once rather than raise into the tool call.
+            if not self._timeline_unavailable_warned:
+                self._timeline_unavailable_warned = True
+                logger.warning(
+                    "treeship-sdk %s has no session_event(); timeline events are skipped "
+                    "(signed receipts are still written). Upgrade treeship-sdk to restore them.",
+                    getattr(self.client, "__module__", "?"),
+                )
+            return
         try:
             await asyncio.to_thread(
-                self.client.session_event,
+                session_event,
                 "agent.called_tool",
                 tool=name,
                 actor=self.actor,
                 exit_code=_EXIT_CODES[status],
                 duration_ms=int(elapsed_ms),
             )
-        except (TreeshipError, OSError, ValueError) as err:
+        except Exception as err:  # noqa: BLE001 -- a recorder must never break the tool
             self._warn(f"session event {name}", err)
 
 

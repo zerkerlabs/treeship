@@ -216,3 +216,51 @@ async def test_a_recorder_factory_gives_each_executor_its_own_chain(ship: Ship):
     assert len(a.treeship_receipts.recorded) == 2 and len(b.treeship_receipts.recorded) == 2
     for ex in (a, b):
         assert ship.cli_json("verify", ex.treeship_receipts.head)["outcome"] == "pass"
+
+
+class _OldSdkClient:
+    """A treeship-sdk 0.27.0 client: attest_action exists, session_event does not."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def attest_action(self, *args, **kwargs):
+        return self._inner.attest_action(*args, **kwargs)
+
+
+async def test_an_sdk_without_session_event_still_writes_signed_receipts(ship: Ship, executor):
+    # The SDK on PyPI at launch (0.27.0) predates session_event(). The
+    # receipts are the evidence; the timeline must degrade, never raise into
+    # the tool call. Before this guard, AttributeError escaped execute().
+    attach(
+        executor,
+        TreeshipReceipts(
+            _OldSdkClient(ship.client),
+            actor="agent://shopping",
+            session_id=COMMERCE_SESSION_ID,
+            parent_id=ship.session_root,
+        ),
+    )
+    outcome = await executor.execute("search_products", {"query": "tent"})
+    assert not outcome.refused
+    receipts: TreeshipReceipts = executor.treeship_receipts
+    assert len(receipts.recorded) == 2 and receipts.dropped == 0
+    assert ship.cli_json("verify", receipts.head)["outcome"] == "pass"
+
+
+async def test_a_client_that_raises_anything_never_breaks_the_tool(ship: Ship, executor):
+    class Explodes:
+        def attest_action(self, *a, **k):
+            raise RuntimeError("simulated SDK bug")
+
+        def session_event(self, *a, **k):
+            raise KeyError("simulated SDK bug")
+
+    attach(
+        executor,
+        TreeshipReceipts(Explodes(), actor="agent://shopping", parent_id=ship.session_root),
+    )
+    outcome = await executor.execute("search_products", {"query": "tent"})
+    assert not outcome.refused
+    assert executor.treeship_receipts.recorded == []
+    assert executor.treeship_receipts.dropped >= 2
