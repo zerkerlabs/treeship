@@ -20,6 +20,7 @@ from treeship_sdk.bootstrap import (
     ensure_cli,
 )
 from treeship_sdk.client import (
+    SessionEventResult,
     SessionReportResult,
     Treeship,
     TreeshipError,
@@ -27,6 +28,7 @@ from treeship_sdk.client import (
 
 __all__ = [
     "BootstrapResult",
+    "SessionEventResult",
     "SessionReportResult",
     "Treeship",
     "TreeshipBootstrapError",

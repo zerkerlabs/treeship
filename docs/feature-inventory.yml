@@ -590,6 +590,18 @@
     - tests/a2a/two-ship-handshake.sh
   notes: "Fail-closed gate: onTaskReceived refuses foreign work that never passed admitTask (mint the nonce, verify-presentation --challenge); refusals and opt-out skips are signed. After a verified admit the receiver mints attest handoff --verified, so the chain carries custody: live bound to the presentation digest and nonce. Attests A2A task intents/results, validates treeship.a2a/v1 envelopes, provisions its actor's per-agent key on construction."
 
+- id: commerce-agents-receipts
+  name: Claude Commerce Agents receipts (treeship-commerce)
+  section: capture
+  status: beta
+  packages:
+    - treeship-commerce
+  docs:
+    - docs/content/docs/integrations/commerce-agents.mdx
+  tests:
+    - integrations/commerce-agents/tests/test_receipts.py
+  notes: "Wraps the one executor every tool call passes through in anthropics/commerce-agents (Messages API, Agent SDK, Managed Agents): a signed intent receipt before dispatch, a signed result receipt after, chained from the Treeship session root. Held calls are signed as blocked with the gate's name. Receipts carry digests and the reference's own session tag, never arguments, result text, or the session id. Records only; the reference's gates still decide what runs. Approvals and the checkout hand-off receipt are next."
+
 - id: npm-binary-integrity
   name: npm binary SHA-256 integrity check
   section: supply-chain

@@ -69,6 +69,20 @@ class SessionReportResult:
     events: int = 0
 
 
+@dataclass
+class SessionEventResult:
+    """Result of appending an event to the active session's timeline.
+
+    event_id    -- the event's id in the session log
+    sequence_no -- its position in the log (monotonic within the session)
+    session_id  -- the session it was appended to
+    """
+
+    event_id: str
+    sequence_no: int
+    session_id: str
+
+
 # Single source of truth for option-injection rejection. Any user-facing
 # argument that becomes a CLI value must clear this. The SDK never
 # enables shell expansion (subprocess shell=False), so the only attack
@@ -635,6 +649,61 @@ class Treeship:
         return ActionResult(artifact_id=self._artifact_id(result, args))
 
     # ---- sessions ------------------------------------------------------------
+
+    def session_event(
+        self,
+        event_type: str,
+        *,
+        tool: Optional[str] = None,
+        file: Optional[str] = None,
+        destination: Optional[str] = None,
+        actor: Optional[str] = None,
+        agent_name: Optional[str] = None,
+        duration_ms: Optional[int] = None,
+        exit_code: Optional[int] = None,
+    ) -> SessionEventResult:
+        """Append a structured event to the active session's timeline.
+
+        Mirrors ``ship.session.event()`` in the TypeScript SDK. The timeline
+        is what the receipt page renders (unsigned, in the session's
+        ``events.jsonl``); signed artifacts are the evidence. Typical types:
+        ``agent.called_tool``, ``agent.wrote_file``, ``agent.read_file``,
+        ``agent.connected_network``, ``agent.decision``.
+        """
+        _reject_option_like("event_type", event_type)
+        _check_length("event_type", event_type, _MAX_ACTION_LEN)
+        args: List[str] = ["session", "event", "--type", event_type, "--format", "json"]
+        for flag, name, value in (
+            ("--tool", "tool", tool),
+            ("--file", "file", file),
+            ("--destination", "destination", destination),
+            ("--actor", "actor", actor),
+            ("--agent-name", "agent_name", agent_name),
+        ):
+            if value is not None:
+                _reject_option_like(name, value)
+                _check_length(name, value, _MAX_ACTION_LEN)
+                args += [flag, value]
+        if duration_ms is not None:
+            if not isinstance(duration_ms, int) or isinstance(duration_ms, bool) or duration_ms < 0:
+                raise ValueError("duration_ms must be a non-negative int")
+            args += ["--duration-ms", str(duration_ms)]
+        if exit_code is not None:
+            if not isinstance(exit_code, int) or isinstance(exit_code, bool):
+                raise ValueError("exit_code must be an int")
+            args += ["--exit-code", str(exit_code)]
+        result = self._run_cli_json(args)
+        event_id = result.get("event_id")
+        session_id = result.get("session_id")
+        if not isinstance(event_id, str) or not event_id or not isinstance(session_id, str):
+            raise TreeshipError(
+                f"treeship session event returned no event_id/session_id: {result}", args
+            )
+        return SessionEventResult(
+            event_id=event_id,
+            sequence_no=int(result.get("sequence_no") or 0),
+            session_id=session_id,
+        )
 
     def session_report(
         self,
