@@ -513,11 +513,15 @@ jobs:
           git -C /tmp/commerce-agents fetch -q --depth 1 https://github.com/anthropics/commerce-agents.git fd4d59224ab96b43c6dc6888207c67b3bd5a24cf
           git -C /tmp/commerce-agents checkout -q FETCH_HEAD
 
-      - name: Install the reference, the SDK, and the integration
-        run: |
-          pip install -q -r /tmp/commerce-agents/requirements.txt -r /tmp/commerce-agents/requirements-dev.txt
-          pip install -q -e packages/sdk-python -e integrations/commerce-agents
+      # The reference's requirements files install its own packages by relative
+      # path, so that step runs inside the clone; ours install from the
+      # workspace, so that step names it absolutely rather than relying on the
+      # working directory (the first run did, and installed nothing).
+      - name: Install the reference
+        run: pip install -q -r requirements.txt -r requirements-dev.txt
         working-directory: /tmp/commerce-agents
+      - name: Install the SDK and the integration
+        run: pip install -q -e "$GITHUB_WORKSPACE/packages/sdk-python" -e "$GITHUB_WORKSPACE/integrations/commerce-agents"
 
       - name: Test
         working-directory: integrations/commerce-agents
