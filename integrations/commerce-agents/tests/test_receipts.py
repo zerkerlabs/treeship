@@ -173,3 +173,46 @@ def test_args_digest_is_canonical():
     assert args_digest({}) == args_digest(None)
     assert args_digest({"a": 1}) != args_digest({"a": 2})
     assert json.dumps({"a": 1}) and args_digest({"a": 1}).startswith("sha256:")
+
+
+async def test_a_recorder_factory_gives_each_executor_its_own_chain(ship: Ship):
+    # The runtimes construct executors themselves through `executor_class`,
+    # so the factory is the only way to record there. Two executors, two
+    # commerce sessions, two recorders, two tags -- never one shared chain.
+    from commerce_common.memory import InMemoryMemoryStore
+    from commerce_common.skills import SkillRegistry
+    from shopping_agent import ShoppingAgentConfig, ShoppingSessionContext, ShoppingSessionState
+    from shopping_agent.executor import ShoppingToolExecutor, build_memory
+    from shopping_agent_sdk import load_mock_backend
+
+    config = ShoppingAgentConfig(brand_name="ACME")
+    cls = receipted(
+        ShoppingToolExecutor,
+        recorder=lambda ex: TreeshipReceipts(
+            ship.client,
+            actor="agent://shopping",
+            session_id=ex._session.session_id,
+            parent_id=ship.session_root,
+        ),
+    )
+
+    def build(session_id: str):
+        return cls(
+            backend=load_mock_backend(),
+            config=config,
+            skills=SkillRegistry([]),
+            session=ShoppingSessionContext(session_id=session_id, user_id="u"),
+            state=ShoppingSessionState(),
+            memory=build_memory(config, InMemoryMemoryStore()),
+            inline_context=True,
+        )
+
+    a, b = build("session-A"), build("session-B")
+    assert a.treeship_receipts is None  # nothing recorded until the first call
+    await a.execute("search_products", {"query": "tent"})
+    await b.execute("search_products", {"query": "tent"})
+    assert a.treeship_receipts is not b.treeship_receipts
+    assert a.treeship_receipts.session_tag != b.treeship_receipts.session_tag
+    assert len(a.treeship_receipts.recorded) == 2 and len(b.treeship_receipts.recorded) == 2
+    for ex in (a, b):
+        assert ship.cli_json("verify", ex.treeship_receipts.head)["outcome"] == "pass"

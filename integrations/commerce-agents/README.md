@@ -58,8 +58,17 @@ attach(executor, TreeshipReceipts(ts, actor="agent://shopping", session_id=sessi
 close_session(ts, summary="...")          # seals a .treeship package; `treeship session report` publishes it
 ```
 
-On the Agent SDK path, pass `receipted(ShoppingToolExecutor)` as the toolset's
-`executor_class`. Same for `MerchantToolExecutor`.
+All three runtimes construct executors themselves through `executor_class`
+(`ShoppingAgent`, `ShoppingToolset`, the MCP server's `build_server`). Give
+`receipted()` a `recorder` factory and each executor gets its own recorder on
+its first tool call:
+
+```python
+ReceiptedShopping = receipted(ShoppingToolExecutor, recorder=lambda ex: TreeshipReceipts(
+    ts, actor="agent://shopping", session_id=ex._session.session_id, parent_id=root))
+```
+
+Same for `MerchantToolExecutor`.
 
 Recording never breaks the agent path: a receipt that cannot be written warns once, is
 counted in `TreeshipReceipts.dropped`, and later results say `intent_recorded: false` where

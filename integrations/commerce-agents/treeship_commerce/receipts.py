@@ -38,7 +38,7 @@ import json
 import logging
 import os
 import time
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from treeship_sdk import Treeship, TreeshipError
 
@@ -233,15 +233,27 @@ class TreeshipExecutorMixin:
         class ReceiptedShoppingToolExecutor(TreeshipExecutorMixin, ShoppingToolExecutor):
             pass
 
-    or let :func:`receipted` build that class. Then set ``treeship_receipts``
-    on the instance (see :func:`attach`). Without a recorder attached the
-    executor behaves exactly as the reference does.
+    or let :func:`receipted` build that class. Give the instance its recorder
+    with :func:`attach`, or give the class a ``recorder`` factory through
+    :func:`receipted` so every runtime that constructs executors itself (all
+    three of the reference's do, through ``executor_class``) gets one per
+    executor on first use. Without either, the executor behaves exactly as
+    the reference does.
     """
 
     treeship_receipts: TreeshipReceipts | None = None
+    treeship_recorder_factory: Callable[[Any], TreeshipReceipts] | None = None
+
+    def _treeship_recorder(self) -> TreeshipReceipts | None:
+        if self.treeship_receipts is None and self.treeship_recorder_factory is not None:
+            # One recorder per executor. The reference builds one executor per
+            # session (Messages API), per toolset (Agent SDK), or per MCP
+            # connection (Managed Agents), so this is one chain per session.
+            self.treeship_receipts = self.treeship_recorder_factory(self)
+        return self.treeship_receipts
 
     async def execute(self, name: str, tool_input: dict[str, Any] | None) -> Any:
-        receipts = self.treeship_receipts
+        receipts = self._treeship_recorder()
         if receipts is None:
             return await super().execute(name, tool_input)  # type: ignore[misc]
         intent_id = await receipts.intent(name, tool_input)
@@ -252,15 +264,38 @@ class TreeshipExecutorMixin:
         return outcome
 
 
-def receipted(executor_cls: type) -> type:
+def receipted(
+    executor_cls: type,
+    *,
+    recorder: Callable[[Any], TreeshipReceipts] | None = None,
+) -> type:
     """``ShoppingToolExecutor`` in, ``ReceiptedShoppingToolExecutor`` out.
 
-    The reference's SDK toolsets take an ``executor_class``; pass the result
-    there and every path that builds an executor from it records receipts.
+    All three of the reference's runtimes take an ``executor_class``
+    (``ShoppingAgent(executor_class=)``, ``ShoppingToolset(executor_class=)``,
+    ``build_server(executor_class=)``) and construct executors themselves, so
+    there is no instance to :func:`attach` to. Pass ``recorder``, a callable
+    from the executor to its :class:`TreeshipReceipts`, and each executor gets
+    one on its first tool call. The executor's ``_session`` carries the
+    commerce session id the recorder should tag::
+
+        receipted(ShoppingToolExecutor, recorder=lambda ex: TreeshipReceipts(
+            ts, actor="agent://shopping", session_id=ex._session.session_id, parent_id=root))
     """
-    if issubclass(executor_cls, TreeshipExecutorMixin):
+    if issubclass(executor_cls, TreeshipExecutorMixin) and recorder is None:
         return executor_cls
-    return type(f"Receipted{executor_cls.__name__}", (TreeshipExecutorMixin, executor_cls), {})
+    body: dict[str, Any] = {}
+    if recorder is not None:
+        body["treeship_recorder_factory"] = staticmethod(recorder)
+    bases = (
+        (executor_cls,)
+        if issubclass(executor_cls, TreeshipExecutorMixin)
+        else (
+            TreeshipExecutorMixin,
+            executor_cls,
+        )
+    )
+    return type(f"Receipted{executor_cls.__name__.removeprefix('Receipted')}", bases, body)
 
 
 def attach(executor: Any, receipts: TreeshipReceipts) -> Any:
