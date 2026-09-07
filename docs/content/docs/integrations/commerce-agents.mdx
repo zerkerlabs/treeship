@@ -29,8 +29,7 @@ Never written: the arguments, the result text (fenced third-party content on the
 ```bash
 # from a clone of anthropics/commerce-agents, with its venv active
 pip install -r requirements.txt          # the reference's packages; unregistered on PyPI by design
-pip install treeship-sdk
-pip install "treeship-commerce @ git+https://github.com/zerkerlabs/treeship.git#subdirectory=integrations/commerce-agents"
+pip install treeship-sdk treeship-commerce
 curl -fsSL https://treeship.dev/install | sh && treeship init
 ```
 

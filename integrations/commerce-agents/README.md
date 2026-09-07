@@ -35,8 +35,7 @@ can correlate and a reader cannot.
 ```bash
 # from a clone of anthropics/commerce-agents, with its venv active
 pip install -r requirements.txt            # their seven packages (unregistered on PyPI)
-pip install treeship-sdk
-pip install "treeship-commerce @ git+https://github.com/zerkerlabs/treeship.git#subdirectory=integrations/commerce-agents"   # PyPI publication follows the next release
+pip install treeship-sdk treeship-commerce
 curl -fsSL https://treeship.dev/install | sh && treeship init
 ```
 
