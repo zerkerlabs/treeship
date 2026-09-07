@@ -23,4 +23,4 @@ __all__ = [
     "receipted",
     "text_digest",
 ]
-__version__ = "0.27.0"
+__version__ = "0.28.0"

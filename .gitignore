@@ -40,3 +40,6 @@ node_modules/
 # Python bytecode caches (sdk-python tests, integrations/commerce-agents)
 __pycache__/
 *.pyc
+
+# Python packaging metadata from editable installs
+*.egg-info/

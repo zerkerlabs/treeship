@@ -2,6 +2,58 @@
 
 ## Unreleased
 
+## 0.28.0 (2026-09-07)
+
+**Upgrade if you build on Anthropic's commerce-agents reference, or use the
+Python SDK.** `treeship-commerce` is a new package, published to PyPI with
+this release, that gives every tool call in the reference a signed receipt
+on all three of its runtimes. The Python SDK gains `session_event()`.
+
+### Added
+
+- **`treeship-commerce`: signed receipts for every tool call in
+  anthropics/commerce-agents.** One method, `BaseToolExecutor.execute`, runs
+  every tool call on the Messages API, the Agent SDK, and Managed Agents;
+  `TreeshipExecutorMixin` overrides it with a signed intent receipt before
+  dispatch (tool, SHA-256 of the canonical arguments, session tag) and a
+  signed result receipt after (`ok` / `blocked` with the gate's name /
+  `error`, result digest, event types, timing), chained from the Treeship
+  session root. A call the provenance gate holds is a signed refusal, not a
+  gap. Never written: the arguments, the fenced result text, or the commerce
+  session id (only the reference's own twelve-hex tag). `receipted(cls,
+  recorder=...)` wires all three runtimes through their `executor_class`;
+  `attach()` refuses an executor that would record nothing. Recording never
+  breaks the tool: a write that fails is counted in `dropped`, a result whose
+  intent is missing says `intent_recorded: false`, and a client without
+  `session_event` (treeship-sdk 0.27.0) skips timeline events with one
+  warning. Fourteen tests on a real ship over the reference's retail mock,
+  including one per runtime; CI runs them against the reviewed commit of the
+  reference. Guide: docs `/commerce/commerce-agents`. (#360, #361)
+
+- **Python SDK: `Treeship.session_event(...)`.** Appends to the active
+  session's timeline; parity with `ship.session.event()` in the TypeScript
+  SDK. Option-like values are refused, integers are checked as integers, and
+  a CLI document without an `event_id` is an error, not an empty result.
+  (#360)
+
+- **`treeship-commerce` publishes to PyPI by trusted publishing** (OIDC, no
+  new token), in lockstep with the SDK; the release installs it back from the
+  registry and imports it before it is considered published. (#362)
+
+### Changed
+
+- `check-feature-inventory.py` matches a `pyproject.toml` name the way it
+  matched `package.json`, so an inventory entry can name a Python package
+  whose directory is not its name. (#360)
+
+### Documentation
+
+- Commerce: the Claude Commerce Agents guide (wiring for each runtime, a real
+  decoded intent and blocked result, verification, the trust boundary), the
+  overview leading with what ships, and the post "You can't have agentic
+  commerce without tamper-proof receipts". Every id in them is from a run
+  with the released CLI. (#361)
+
 ## 0.27.0 (2026-09-02)
 
 **Upgrade if you use `@treeship/a2a` or `@treeship/mcp`.** Foreign work is
