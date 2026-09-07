@@ -144,3 +144,55 @@ def executor(ship: Ship):
         parent_id=ship.session_root,
     )
     return attach(ex, receipts)
+
+
+MERCHANT_SESSION_ID = "m-secret-session-3d81"
+
+
+def _merchant_executor(ship: Ship, *, enforce: bool):
+    """A receipted merchant executor over the ACME mock, with a signed
+    approval surface bound to its apply tool."""
+    from commerce_common.memory import InMemoryMemoryStore
+    from commerce_common.skills import SkillRegistry
+    from merchant_agent import MerchantAgentConfig, MerchantSessionContext, MerchantSessionState
+    from merchant_agent.executor import MerchantToolExecutor, build_memory
+    from merchant_agent_sdk import load_mock_backend
+
+    from treeship_commerce import MerchantApprovals, approved
+
+    config = MerchantAgentConfig()
+    approvals = MerchantApprovals(
+        ship.client, approver="human://operator", actor="agent://merchant"
+    )
+    cls = approved(receipted(MerchantToolExecutor), approvals, enforce=enforce)
+    ex = cls(
+        backend=load_mock_backend(),
+        config=config,
+        skills=SkillRegistry([]),
+        session=MerchantSessionContext(
+            session_id=MERCHANT_SESSION_ID, merchant_id="m-1", operator="human://operator"
+        ),
+        state=MerchantSessionState(),
+        memory=build_memory(config, InMemoryMemoryStore()),
+    )
+    attach(
+        ex,
+        TreeshipReceipts(
+            ship.client,
+            actor="agent://merchant",
+            session_id=MERCHANT_SESSION_ID,
+            role="merchant",
+            parent_id=ship.session_root,
+        ),
+    )
+    return ex, approvals
+
+
+@pytest.fixture
+def merchant(ship: Ship):
+    return _merchant_executor(ship, enforce=False)
+
+
+@pytest.fixture
+def merchant_enforcing(ship: Ship):
+    return _merchant_executor(ship, enforce=True)

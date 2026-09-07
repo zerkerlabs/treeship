@@ -165,6 +165,40 @@ class ArtifactIdHandlingTests(unittest.TestCase):
             self.assertEqual(r.artifact_id, "art_bbb")
 
 
+class ActionSubjectTests(unittest.TestCase):
+    """``subject`` is what an approval's allowed_subjects scope is matched
+    against. Without it a scoped grant refuses every action, so these check
+    the flag reaches the CLI and is validated like every other argument."""
+
+    def _args(self, mock_run) -> list:
+        return mock_run.call_args[0][0]
+
+    def test_subject_is_passed_through_to_the_cli(self) -> None:
+        ts = Treeship()
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = _completed(stdout=json.dumps({"id": "art_1"}))
+            ts.attest_action(
+                actor="agent://merchant",
+                action="commerce.tool.apply_change.intent",
+                subject="change://chg_7f2",
+            )
+            args = self._args(mock_run)
+        self.assertIn("--subject", args)
+        self.assertEqual(args[args.index("--subject") + 1], "change://chg_7f2")
+
+    def test_subject_is_omitted_when_not_given(self) -> None:
+        ts = Treeship()
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = _completed(stdout=json.dumps({"id": "art_1"}))
+            ts.attest_action(actor="agent://t", action="x")
+            self.assertNotIn("--subject", self._args(mock_run))
+
+    def test_subject_rejects_option_like_values(self) -> None:
+        ts = Treeship()
+        with self.assertRaises(TreeshipError):
+            ts.attest_action(actor="agent://t", action="x", subject="--config")
+
+
 class SessionReportTests(unittest.TestCase):
     def test_session_report_uses_json_format(self) -> None:
         ts = Treeship()

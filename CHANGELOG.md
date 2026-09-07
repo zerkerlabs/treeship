@@ -2,6 +2,43 @@
 
 ## Unreleased
 
+### Added
+
+- **`treeship-commerce`: signed single-use operator approvals on the merchant
+  `apply_change`.** The reference gates `apply_change` on an in-process set the
+  host fills from its y/N; the set leaves no record and cannot refuse a second
+  apply inside the same window. `MerchantApprovals.grant(change_id)` mints a
+  signed Approval Grant scoped to one actor, one action, and
+  `change://<change_id>` with `max_uses=1`; `approved(receipted(
+  MerchantToolExecutor), approvals)` signs the apply's intent receipt with the
+  grant's nonce, so the CLI reserves a use in the Approval Use Journal before
+  it signs. A replay finds the grant spent; a grant for another change is
+  refused by scope, because the action's subject is taken from the call's own
+  arguments and never from the grant. The receipt says `approval: "proven"` or
+  `"unproven"` with the CLI's reason. Recording only by default; `enforce=True`
+  holds an unproven apply in the reference's own held-outcome shape, and the
+  hold is itself a signed refusal. On an SDK without `subject` it warns once
+  and mints nothing. `approving(toolset, approvals)` wraps the Agent SDK
+  `MerchantToolset`'s `host_approve` / `host_clear` in place, so the reference
+  console's y/N loop mints and forgets grants unchanged. Merchant demo
+  `demo_merchant.py` (`--enforce` for the gating mode); twelve tests,
+  including the replay and wrong-change refusals and the merchant side on all
+  three runtimes through `executor_class`.
+
+- **`treeship-commerce`: arguments that are not JSON-native no longer break
+  the tool.** The reference's MCP server hands the executor parsed pydantic
+  models; the argument digest called `json.dumps` on them outside the guarded
+  path and the stage call died inside the recorder. The digest is now total
+  (pydantic v1/v2, dataclasses, sets, bytes, datetimes, Decimal, Enum, paths,
+  and a typed repr for anything else) and equal to the digest of the same
+  arguments as plain dicts, and nothing raised while describing a call can
+  reach the tool.
+
+- **Python SDK: `attest_action(..., subject=)`.** Sets the action's
+  `subject.uri`, the field an approval's `allowed_subjects` scope is matched
+  against. Without it a subject-scoped grant refused every action from the
+  SDK; the CLI has taken `--subject` since the scope check existed.
+
 ## 0.28.0 (2026-09-07)
 
 **Upgrade if you build on Anthropic's commerce-agents reference, or use the

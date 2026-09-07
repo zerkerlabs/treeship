@@ -268,3 +268,64 @@ async def test_a_client_that_raises_anything_never_breaks_the_tool(ship: Ship, e
     assert not outcome.refused
     assert executor.treeship_receipts.recorded == []
     assert executor.treeship_receipts.dropped >= 2
+
+
+def test_args_digest_is_total_over_non_json_arguments():
+    """The reference's MCP server hands the executor parsed pydantic models as
+    arguments. The digest must exist for those -- and be the same digest as
+    for the plain dicts the other runtimes pass -- or the recorder is the
+    thing that broke the tool."""
+    import dataclasses
+    import datetime
+    import decimal
+    import enum
+    import pathlib
+
+    from merchant_agent.types import InventoryActionItem
+
+    item = InventoryActionItem(listing_id="AR-1105", action="restock", quantity=24)
+    assert args_digest({"items": [item]}) == args_digest({"items": [item.model_dump(mode="json")]})
+
+    @dataclasses.dataclass
+    class Point:
+        x: int
+        y: int
+
+    class Colour(enum.Enum):
+        RED = "red"
+
+    weird = {
+        "dc": Point(1, 2),
+        "set": {3, 1, 2},
+        "bytes": b"\x00\x01",
+        "when": datetime.datetime(2026, 9, 7, 10, 0, tzinfo=datetime.timezone.utc),
+        "money": decimal.Decimal("9.99"),
+        "colour": Colour.RED,
+        "path": pathlib.PurePosixPath("/tmp/x"),
+        "opaque": object,  # a type: no dump, no dict, no dataclass
+    }
+    first = args_digest(weird)
+    assert first == args_digest(dict(reversed(list(weird.items())))), "order-independent"
+    assert first != args_digest({**weird, "set": {3, 1}})
+
+
+async def test_a_pydantic_argument_neither_breaks_the_tool_nor_the_receipt(ship: Ship):
+    """End to end on the merchant executor: a stage call whose items are
+    already-parsed models (the MCP server's shape) runs, stages, and gets a
+    signed intent and result like any other call."""
+    from merchant_agent.types import InventoryActionItem
+
+    from .conftest import _merchant_executor
+
+    executor, _ = _merchant_executor(ship, enforce=False)
+    await executor.execute("search_listings", {"query": "headphones"})
+    item = InventoryActionItem(listing_id="AR-1105", action="restock", quantity=24)
+    outcome = await executor.execute("stage_inventory_action", {"items": [item]})
+    assert not outcome.refused, outcome.result_text
+    assert executor._state.seen_changes, "the change was staged"
+    receipts: TreeshipReceipts = executor.treeship_receipts
+    assert receipts.dropped == 0
+    assert len(receipts.recorded) == 4
+    intent = ship.artifacts()[receipts.recorded[2]]["statement"]["meta"]
+    assert intent["tool"] == "stage_inventory_action"
+    assert intent["args_digest"] == args_digest({"items": [item.model_dump(mode="json")]})

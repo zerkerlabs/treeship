@@ -101,6 +101,7 @@ _MAX_SUMMARY_LEN = 4096     # decision summary (LLM reasoning blurb)
 _MAX_MODEL_LEN = 256        # model identifier
 _MAX_NONCE_LEN = 256        # approval nonce
 _MAX_ARTIFACT_ID_LEN = 256  # art_<hex>
+_MAX_SUBJECT_LEN = 2048     # subject URI an action targets
 _MAX_TOKEN_COUNT = 100_000_000  # 100M tokens — well past any single decision
 
 
@@ -352,8 +353,18 @@ class Treeship:
         parent_id: Optional[str] = None,
         approval_nonce: Optional[str] = None,
         meta: Optional[Dict[str, Any]] = None,
+        subject: Optional[str] = None,
     ) -> ActionResult:
-        """Create a signed action receipt."""
+        """Create a signed action receipt.
+
+        ``subject`` is the URI this action targets. It sets the statement's
+        ``subject.uri``, which is the field an approval's ``allowed_subjects``
+        scope is matched against -- so an approval minted for one target
+        cannot be spent on another. Without it a scoped approval that names
+        subjects refuses every action, because the action carries no subject
+        to match; the CLI has taken ``--subject`` since the scope check
+        existed, and this is the SDK catching up.
+        """
         _reject_option_like("actor", actor)
         _check_length("actor", actor, _MAX_ACTOR_LEN)
         _reject_option_like("action", action)
@@ -364,6 +375,9 @@ class Treeship:
         if approval_nonce is not None:
             _reject_option_like("approval_nonce", approval_nonce)
             _check_length("approval_nonce", approval_nonce, _MAX_NONCE_LEN)
+        if subject is not None:
+            _reject_option_like("subject", subject)
+            _check_length("subject", subject, _MAX_SUBJECT_LEN)
 
         args: List[str] = [
             "attest", "action",
@@ -375,6 +389,8 @@ class Treeship:
             args += ["--parent", parent_id]
         if approval_nonce is not None:
             args += ["--approval-nonce", approval_nonce]
+        if subject is not None:
+            args += ["--subject", subject]
         if meta is not None:
             args += ["--meta", json.dumps(meta)]
         result = self._run_cli_json(args)

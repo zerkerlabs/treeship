@@ -91,7 +91,7 @@ session           receipts=10 events=6 root_verified=True
 
 - **Gate.** The reference's provenance gates, caps, and host approval decide what runs. This records the decision.
 - **Prove the work is correct.** A receipt is evidence of what ran and what the gates said. A wrong answer with a perfect receipt is still wrong.
-- **Approvals, yet.** The merchant `apply_change` gate checks a mark the host sets and clears around the click. Turning that mark into a signed, single-use Treeship approval, with the apply receipt echoing the nonce, is the next piece.
+- **Gate on approvals, by default.** The merchant side mints a signed single-use grant when the operator says yes, and the apply's receipt is signed with its nonce so the Approval Use Journal refuses a replay. A missing or spent grant is recorded as unproven; it holds the call only with `enforce=True`. See the guide's approvals section.
 - **The checkout hand-off, yet.** Signing the cart digest and the hosted-checkout URL digest at `checkout_handoff`, chained to the host's order placement, follows.
 
 Full guide, with wiring for each runtime, a decoded receipt, and the trust boundary: [Claude Commerce Agents](/commerce/commerce-agents). Source: [`integrations/commerce-agents/`](https://github.com/zerkerlabs/treeship/tree/main/integrations/commerce-agents).

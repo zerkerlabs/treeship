@@ -84,11 +84,33 @@ Runs the reference's shopping executor over the retail mock with no model and no
 a search, a product read, an add, an add the provenance gate holds, a checkout hand-off.
 Prints every receipt id, seals the session, and shows the `treeship verify` command.
 
+```bash
+TREESHIP_BIN=... python -m treeship_commerce.demo_merchant
+```
+
+The merchant side: a staged price change, held while unapproved, applied once under a
+signed single-use operator approval, then refused on replay while the reference's own
+in-process approval mark is still set. Prints the grant id and the journal's record of
+its one use.
+
+## Approvals
+
+`MerchantApprovals` turns the host's y/N into a signed Approval Grant scoped to one actor,
+one action, and one change (`change://<change_id>`), `max_uses=1`. `approved(receipted(
+MerchantToolExecutor), approvals)` signs the apply's intent receipt with the grant's nonce,
+so the CLI reserves a use in the Approval Use Journal before signing. A second apply finds
+the grant spent; a grant for another change is refused by scope. The receipt says
+`approval: "proven"` or `"unproven"` with the reason. Recording only, unless
+`enforce=True`. Needs a `treeship-sdk` whose `attest_action` takes `subject`.
+
+On the Agent SDK runtime, `approving(toolset, approvals)` wraps `MerchantToolset.host_approve`
+and `host_clear` in place, so the reference console's y/N loop mints and forgets grants with
+no edits. On the Messages API the host calls `approvals.grant()` beside its own mark. On
+Managed Agents the platform's prompt is the approval surface and the click is outside the
+process; an apply there is receipted with no approval claim, never an invented one.
+
 ## What this does not do (yet)
 
-- **Approvals.** The merchant `apply_change` gate checks a mark the host sets. Turning that
-  mark into a signed, single-use Treeship approval (nonce echoed by the apply receipt,
-  enforced by the Approval Use Journal) is the next piece.
 - **Checkout hand-off receipt.** Signing the cart digest and hosted-checkout URL digest at
   `checkout_handoff`, chained to the host's order placement.
 - **Prove the work is correct.** A receipt is evidence of what ran and what the gates
@@ -100,7 +122,11 @@ Prints every receipt id, seals the session, and shows the `treeship verify` comm
 TREESHIP_BIN=/path/to/treeship python -m pytest
 ```
 
-Six cases on a real isolated ship and the real retail mock: chain order and linkage, a held
-call signed as blocked with its gate, digests-only content, recording failure leaving the
-tool untouched, `TREESHIP_DISABLE`, and `attach` refusing an executor that would record
-nothing.
+Twenty-eight cases on a real isolated ship over the real retail and merchant mocks: chain
+order and linkage, a held call signed as blocked with its gate, digests-only content,
+recording failure leaving the tool untouched, `TREESHIP_DISABLE`, `attach` refusing an
+executor that would record nothing, one per runtime, and the approval properties: a grant
+binds to its receipt, is spendable once, is refused for another change, `enforce=True`
+holds an unapproved apply, the receipt note is the CLI's reason rather than the SDK's
+wrapper, the merchant side on all three runtimes through `executor_class`, and arguments
+that arrive as parsed pydantic models (the MCP server's shape) digesting like their dicts.
