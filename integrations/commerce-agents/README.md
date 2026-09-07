@@ -93,6 +93,14 @@ signed single-use operator approval, then refused on replay while the reference'
 in-process approval mark is still set. Prints the grant id and the journal's record of
 its one use.
 
+## Checkout
+
+`receipted_backend(backend)` wraps a storefront backend so `checkout_handoff` also signs a
+hand-off receipt: cart digest, item count, subtotal, currency, and a digest of each hosted
+URL (never the URL). `order_placed(receipts, order_ref=..., amount=..., currency=...)` is
+the host's half: a signed order receipt chained onto the hand-off, the order reference
+digested. A holder of the checkout card can recompute the cart digest from the card alone.
+
 ## Approvals
 
 `MerchantApprovals` turns the host's y/N into a signed Approval Grant scoped to one actor,
@@ -111,8 +119,6 @@ process; an apply there is receipted with no approval claim, never an invented o
 
 ## What this does not do (yet)
 
-- **Checkout hand-off receipt.** Signing the cart digest and hosted-checkout URL digest at
-  `checkout_handoff`, chained to the host's order placement.
 - **Prove the work is correct.** A receipt is evidence of what ran and what the gates
   decided. It does not make a wrong answer right.
 
@@ -122,11 +128,14 @@ process; an apply there is receipted with no approval claim, never an invented o
 TREESHIP_BIN=/path/to/treeship python -m pytest
 ```
 
-Twenty-eight cases on a real isolated ship over the real retail and merchant mocks: chain
+Thirty-five cases on a real isolated ship over the real retail and merchant mocks: chain
 order and linkage, a held call signed as blocked with its gate, digests-only content,
 recording failure leaving the tool untouched, `TREESHIP_DISABLE`, `attach` refusing an
 executor that would record nothing, one per runtime, and the approval properties: a grant
 binds to its receipt, is spendable once, is refused for another change, `enforce=True`
 holds an unapproved apply, the receipt note is the CLI's reason rather than the SDK's
 wrapper, the merchant side on all three runtimes through `executor_class`, and arguments
-that arrive as parsed pydantic models (the MCP server's shape) digesting like their dicts.
+that arrive as parsed pydantic models (the MCP server's shape) digesting like their dicts,
+and the checkout hand-off: the cart digest recomputable from the card, the URL never
+written, the host's order chaining from the hand-off, and an unwrapped backend's order
+saying so.

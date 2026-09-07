@@ -45,6 +45,7 @@ import logging
 import os
 import pathlib
 import time
+import weakref
 from typing import Any, Callable, Mapping, Sequence
 
 from treeship_sdk import Treeship
@@ -184,6 +185,9 @@ def outcome_status(outcome: Any) -> str:
     return "ok"
 
 
+_RECORDERS: "weakref.WeakValueDictionary[str, TreeshipReceipts]" = weakref.WeakValueDictionary()
+
+
 class TreeshipReceipts:
     """The recorder one executor instance carries.
 
@@ -223,6 +227,39 @@ class TreeshipReceipts:
         just before an apply, so the next intent is signed with that grant's
         nonce and subject. Cleared by the same mixin."""
         self._approval_outcome: str | None = None
+        self.last_handoff: str | None = None
+        """The most recent checkout hand-off receipt, for the host's order
+        receipt to chain from. See :mod:`treeship_commerce.checkout`."""
+        if session_id:
+            # So a wrapped backend, which sees only the commerce session, can
+            # find the recorder for it. Weak: an executor's recorder dies with
+            # the executor, and a stale entry must not be found by a new one.
+            _RECORDERS[self.session_tag] = self
+
+    @classmethod
+    def for_session(cls, session_id: str | None) -> "TreeshipReceipts | None":
+        """The live recorder tagged with this commerce session, if any."""
+        if not session_id:
+            return None
+        return _RECORDERS.get(_session_tag(session_id))
+
+    async def attest(
+        self,
+        action: str,
+        meta: dict[str, Any],
+        *,
+        parent: str | None = None,
+    ) -> str | None:
+        """Sign one more receipt on this chain, outside the intent/result pair
+        (a checkout hand-off, an order). ``parent`` defaults to the chain
+        head. Never raises; a failed write is counted in ``dropped``."""
+        if parent is None:
+            async with self._lock:
+                parent = self._head
+        artifact_id = await self._attest(action, {**meta, "session_tag": self.session_tag}, parent)
+        if artifact_id is not None and action == "commerce.checkout.handoff":
+            self.last_handoff = artifact_id
+        return artifact_id
 
     @property
     def disabled(self) -> bool:
