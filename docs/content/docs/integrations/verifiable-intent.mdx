@@ -8,10 +8,18 @@ import { Callout } from 'fumadocs-ui/components/callout';
 <Callout type="warn">
 **The `treeship vi` command set is not yet shipped.** The `packages/vi`
 library (P-256 keys, credential types) exists in the repository, but no
-`treeship vi` subcommand is wired into the CLI at the current release — the
+`treeship vi` subcommand is wired into the CLI at the current release. The
 commands on this page describe the intended design, not something you can
 run today. This page stays published as the integration spec; treat every
 command block below as roadmap.
+
+The slot Treeship targets is the spec's own. Verifiable Intent v0.1 (draft,
+February 2026) defines an optional, selectively disclosable
+`agent_attestation` claim on Layer 3 credentials, shaped `{ "type", "value" }`,
+and requires verifiers to ignore types they do not recognize rather than
+reject the credential. Treeship did not invent the field; it supplies one
+`type` for it. The `packages/vi` types were written in April 2026 against an
+earlier draft and will be realigned to v0.1 when the CLI is wired.
 </Callout>
 
 
@@ -44,7 +52,7 @@ L3: Agent execution
 
 ## How Treeship integrates
 
-The L3 credential includes an `agent_attestation` field. Treeship populates this field with four components:
+Layer 3 credentials in the v0.1 draft carry an optional `agent_attestation` claim of the form `{ "type": "<scheme>", "value": <payload> }`. Treeship registers one scheme name for the `type` and fills the `value` with four components:
 
 | Field | What it contains |
 |-------|-----------------|
@@ -54,6 +62,8 @@ The L3 credential includes an `agent_attestation` field. Treeship populates this
 | `zk_proofs` | Zero-knowledge proofs of policy compliance and spend-limit adherence |
 
 Together, these fields let any verifier confirm the agent acted within scope, followed policy, and did not exceed limits, without needing access to the full session log.
+
+A verifier that does not know the Treeship scheme ignores the claim and checks the rest of the chain as usual, which is the behavior the spec mandates for unknown attestation types. A verifier that does know it gets the receipt chain's head and Merkle checkpoint and can run `treeship verify` offline against the exported session package.
 
 ## The trust stack
 
@@ -111,7 +121,8 @@ treeship vi attest --session <session-id> --mandate <l2-credential-id>
 
 | Stage | Capability |
 |---------|-----------|
-| library (shipped) | P-256 key + credential types in `packages/vi` — no CLI surface yet |
+| spec (external) | `agent_attestation` claim on L3, `{ type, value }`, unknown types ignored: defined by Verifiable Intent v0.1, not by Treeship |
+| library (shipped) | P-256 key + credential types in `packages/vi`, written against a pre-v0.1 draft; no CLI surface yet |
 | planned | `treeship vi` keygen / keys list / attest wiring |
 | planned | Full L3 builder: complete credential assembly, mandate validation |
 
