@@ -33,10 +33,17 @@ fabricated id. ``TREESHIP_DISABLE=1`` turns recording off entirely.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import datetime
+import decimal
+import enum
+import functools
 import hashlib
+import inspect
 import json
 import logging
 import os
+import pathlib
 import time
 from typing import Any, Callable, Mapping, Sequence
 
@@ -52,6 +59,23 @@ except ImportError:  # pragma: no cover - only when commerce-agents is absent
 
 logger = logging.getLogger("treeship_commerce")
 
+
+@functools.lru_cache(maxsize=1)
+def sdk_supports_subject() -> bool:
+    """Whether the installed SDK can name an action's subject.
+
+    Signed approvals need it: a grant scoped to ``change://<id>`` is matched
+    against the action's ``subject.uri``, so an action that carries no subject
+    is refused by the grant's own scope. SDKs before that parameter existed
+    cannot mint a usable grant at all, which is worth saying out loud rather
+    than discovering as a scope refusal on every apply.
+    """
+    try:
+        return "subject" in inspect.signature(Treeship.attest_action).parameters
+    except (TypeError, ValueError):  # pragma: no cover - exotic client objects
+        return False
+
+
 INTENT_ACTION = "commerce.tool.{name}.intent"
 RESULT_ACTION = "commerce.tool.{name}.result"
 
@@ -60,9 +84,78 @@ RESULT_ACTION = "commerce.tool.{name}.result"
 _EXIT_CODES = {"ok": 0, "error": 1, "blocked": 2}
 
 
+
+def _refusal_reason(err: BaseException) -> str:
+    """Why an approval would not spend, in the words the CLI used.
+
+    The SDK wraps a CLI failure as ``treeship attest action failed (exit=1):
+    {"error": "..."}``. The useful half is inside that JSON; signing the
+    wrapper verbatim would put a transport detail in the evidence and bury
+    the reason. Falls back to the raw first line when the shape is anything
+    else, because an unrecognised error still has to be recorded.
+    """
+    text = str(err)
+    if not text:
+        return type(err).__name__
+    start = text.find("{")
+    if start != -1:
+        try:
+            payload = json.loads(text[start:])
+        except (ValueError, TypeError):
+            payload = None
+        if isinstance(payload, dict) and isinstance(payload.get("error"), str):
+            return payload["error"][:200]
+    return text.splitlines()[0][:200]
+
+
+def _jsonable(value: Any) -> Any:
+    """What ``json.dumps`` calls for anything it cannot serialise itself.
+
+    Tool arguments are not always JSON-native by the time they reach the
+    executor: the reference's MCP server hands it parsed pydantic models
+    (``InventoryActionItem``, ``PriceUpdateItem``), and a deployment's own
+    runtime may pass dataclasses, sets, bytes, or timestamps. The digest has
+    to be the same for the same arguments however they arrived, and it has to
+    exist -- a recorder that raises on an argument type is a recorder that
+    broke the tool.
+    """
+    dump = getattr(value, "model_dump", None)  # pydantic v2
+    if callable(dump):
+        return dump(mode="json")
+    as_dict = getattr(value, "dict", None)  # pydantic v1
+    if callable(as_dict) and not isinstance(value, dict):
+        return as_dict()
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return dataclasses.asdict(value)
+    if isinstance(value, (set, frozenset)):
+        # Order by canonical text, not by value: elements may be dicts or
+        # models, which Python will not compare, and the order must not
+        # depend on hash seeds.
+        members = [_jsonable(v) for v in value]
+        return sorted(members, key=lambda m: json.dumps(m, sort_keys=True, default=_jsonable))
+    if isinstance(value, (bytes, bytearray)):
+        return {"__bytes_sha256__": hashlib.sha256(bytes(value)).hexdigest()}
+    if isinstance(value, (datetime.date, datetime.datetime, datetime.time)):
+        return value.isoformat()
+    if isinstance(value, decimal.Decimal):
+        return str(value)
+    if isinstance(value, enum.Enum):
+        return _jsonable(value.value)
+    if isinstance(value, pathlib.PurePath):
+        return str(value)
+    # Last resort: name the type and its repr. Deterministic for anything with
+    # a stable repr, and it never raises. The receipt then still says *that*
+    # the call ran with *some* arguments of this shape.
+    return {"__type__": type(value).__qualname__, "__repr__": repr(value)}
+
+
 def _canonical(tool_input: Mapping[str, Any] | None) -> bytes:
     return json.dumps(
-        dict(tool_input or {}), sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        dict(tool_input or {}),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        default=_jsonable,
     ).encode("utf-8")
 
 
@@ -125,6 +218,11 @@ class TreeshipReceipts:
         self.dropped = 0
         """Receipts that could not be written. Non-zero means the chain has
         gaps that ``intent_recorded: false`` on later results points at."""
+        self.pending_approval: Any = None
+        """Set by :class:`~treeship_commerce.approvals.TreeshipApprovalMixin`
+        just before an apply, so the next intent is signed with that grant's
+        nonce and subject. Cleared by the same mixin."""
+        self._approval_outcome: str | None = None
 
     @property
     def disabled(self) -> bool:
@@ -149,35 +247,114 @@ class TreeshipReceipts:
         elif os.environ.get("TREESHIP_DEBUG") == "1":
             logger.warning("treeship receipt not written (%s): %s", context, err)
 
-    async def _attest(self, action: str, meta: dict[str, Any], parent: str | None) -> str | None:
-        if self.disabled:
-            return None
-        try:
-            result = await asyncio.to_thread(
-                self.client.attest_action, self.actor, action, parent, None, meta
-            )
-        except Exception as err:  # noqa: BLE001 -- a recorder must never break the tool
-            self._warn(action, err)
-            return None
+    async def _sign(
+        self,
+        action: str,
+        meta: dict[str, Any],
+        parent: str | None,
+        *,
+        nonce: str | None = None,
+        subject: str | None = None,
+    ) -> str:
+        """Sign one receipt and advance the chain. Raises on failure; the
+        caller decides whether that failure is a dropped receipt or, for an
+        approval consume, a refusal worth recording in its own right."""
+        call = functools.partial(
+            self.client.attest_action, self.actor, action, parent, nonce, meta
+        )
+        if subject is not None:
+            call = functools.partial(call, subject=subject)
+        result = await asyncio.to_thread(call)
         async with self._lock:
             self._head = result.artifact_id
             self.recorded.append(result.artifact_id)
         return result.artifact_id
 
+    async def _attest(self, action: str, meta: dict[str, Any], parent: str | None) -> str | None:
+        if self.disabled:
+            return None
+        try:
+            return await self._sign(action, meta, parent)
+        except Exception as err:  # noqa: BLE001 -- a recorder must never break the tool
+            self._warn(action, err)
+            return None
+
     async def intent(self, name: str, tool_input: Mapping[str, Any] | None) -> str | None:
-        """Sign that ``name`` is about to run with these (digested) arguments."""
+        """Sign that ``name`` is about to run with these (digested) arguments.
+
+        When an approval grant is pending, the receipt is signed *with* its
+        nonce, which makes the CLI reserve a use in the Approval Use Journal
+        first. That reservation is the single-use guarantee: a replay of the
+        same approved change is refused here, before the receipt exists.
+
+        Nothing raised in here reaches the tool. A failure to even describe
+        the call (an argument the digest cannot canonicalise, a client that
+        misbehaves before signing) is a dropped receipt, counted and warned
+        about, and the tool runs.
+        """
+        try:
+            return await self._intent(name, tool_input)
+        except Exception as err:  # noqa: BLE001 -- a recorder must never break the tool
+            self._warn(INTENT_ACTION.format(name=name), err)
+            return None
+
+    async def _intent(self, name: str, tool_input: Mapping[str, Any] | None) -> str | None:
         async with self._lock:
             parent = self._head
-        return await self._attest(
-            INTENT_ACTION.format(name=name),
-            {
-                "tool": name,
-                "role": self.role,
-                "args_digest": args_digest(tool_input),
-                "session_tag": self.session_tag,
-            },
-            parent,
-        )
+        action = INTENT_ACTION.format(name=name)
+        meta: dict[str, Any] = {
+            "tool": name,
+            "role": self.role,
+            "args_digest": args_digest(tool_input),
+            "session_tag": self.session_tag,
+        }
+        grant = self.pending_approval
+        if grant is None:
+            return await self._attest(action, meta, parent)
+
+        if self.disabled:
+            return None
+        meta["change_id"] = grant.change_id
+        meta["approval_grant"] = grant.grant_id
+        try:
+            artifact_id = await self._sign(
+                action,
+                {**meta, "approval": "proven"},
+                parent,
+                nonce=grant.nonce,
+                subject=grant.subject,
+            )
+        except Exception as err:  # noqa: BLE001 -- a refused consume is data, not a crash
+            # The grant would not spend: already used, expired, or scoped to
+            # something else. Record the attempt without approval evidence --
+            # silence here would be the one failure that matters.
+            self._approval_outcome = "unproven"
+            logger.warning(
+                "treeship approval not consumed for change %s: %s. The receipt is "
+                "written without approval evidence; the tool is still gated by the "
+                "reference's own approval check.",
+                grant.change_id,
+                err,
+            )
+            return await self._attest(
+                action,
+                {**meta, "approval": "unproven", "approval_note": _refusal_reason(err)},
+                parent,
+            )
+        self._approval_outcome = "proven"
+        return artifact_id
+
+    @property
+    def approval_outcome(self) -> str | None:
+        """The most recent intent's approval verdict, without clearing it."""
+        return self._approval_outcome
+
+    def take_approval_outcome(self) -> str | None:
+        """``"proven"``, ``"unproven"``, or ``None`` when no grant was offered.
+        Reading it clears it, so one apply's outcome cannot be read as the
+        next one's."""
+        outcome, self._approval_outcome = self._approval_outcome, None
+        return outcome
 
     async def result(
         self,
@@ -187,7 +364,22 @@ class TreeshipReceipts:
         intent_id: str | None,
         elapsed_ms: int,
     ) -> str | None:
-        """Sign what ``name`` produced: status, gate, digests, events, timing."""
+        """Sign what ``name`` produced: status, gate, digests, events, timing.
+        Like :meth:`intent`, nothing raised in here reaches the caller."""
+        try:
+            return await self._result(name, outcome, intent_id=intent_id, elapsed_ms=elapsed_ms)
+        except Exception as err:  # noqa: BLE001 -- a recorder must never break the tool
+            self._warn(RESULT_ACTION.format(name=name), err)
+            return None
+
+    async def _result(
+        self,
+        name: str,
+        outcome: Any,
+        *,
+        intent_id: str | None,
+        elapsed_ms: int,
+    ) -> str | None:
         status = outcome_status(outcome)
         meta: dict[str, Any] = {
             "tool": name,
@@ -266,13 +458,25 @@ class TreeshipExecutorMixin:
             self.treeship_receipts = self.treeship_recorder_factory(self)
         return self.treeship_receipts
 
+    def _treeship_hold(self, name: str, tool_input: dict[str, Any] | None) -> Any | None:
+        """A hook for a mixin above this one to hold a call *after* its intent
+        receipt is signed and before the tool runs. Returns the held outcome,
+        or ``None`` to let the call through. Here so an enforced refusal is a
+        signed refusal with the gate's name, never a call that left no trace."""
+        return None
+
     async def execute(self, name: str, tool_input: dict[str, Any] | None) -> Any:
         receipts = self._treeship_recorder()
         if receipts is None:
+            held = self._treeship_hold(name, tool_input)
+            if held is not None:
+                return held
             return await super().execute(name, tool_input)  # type: ignore[misc]
         intent_id = await receipts.intent(name, tool_input)
         started = time.monotonic()
-        outcome = await super().execute(name, tool_input)  # type: ignore[misc]
+        outcome = self._treeship_hold(name, tool_input)
+        if outcome is None:
+            outcome = await super().execute(name, tool_input)  # type: ignore[misc]
         elapsed_ms = int((time.monotonic() - started) * 1000)
         await receipts.result(name, outcome, intent_id=intent_id, elapsed_ms=elapsed_ms)
         return outcome

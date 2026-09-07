@@ -6,6 +6,14 @@ every call a signed intent receipt before it runs and a signed result
 receipt after, chained from the session's root. See ``receipts.py``.
 """
 
+from .approvals import (
+    Grant,
+    MerchantApprovals,
+    TreeshipApprovalMixin,
+    approved,
+    change_subject,
+)
+from .host import approving
 from .receipts import (
     TreeshipExecutorMixin,
     TreeshipReceipts,
@@ -16,10 +24,16 @@ from .receipts import (
 )
 
 __all__ = [
+    "Grant",
+    "MerchantApprovals",
+    "TreeshipApprovalMixin",
     "TreeshipExecutorMixin",
     "TreeshipReceipts",
+    "approved",
+    "approving",
     "args_digest",
     "attach",
+    "change_subject",
     "receipted",
     "text_digest",
 ]

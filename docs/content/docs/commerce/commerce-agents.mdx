@@ -207,6 +207,64 @@ session           receipts=10 events=6 root_verified=True
 
 **Trust boundary.** The signing key lives on the machine that runs the executor. That is the right place for a deployment's own record of its agent, and it is a boundary: root on that machine can sign anything. A counterparty who wants to trust these receipts pins your ship key once (`treeship keys export` prints the line) and verifies against it.
 
+## Approvals: the operator's yes, spendable once
+
+The merchant side has one tool that mutates a merchant's system of record, `apply_change`, and the reference already gates it well: the change must have been staged in this session, must pass the configured guardrails, and, when `require_host_approval` is on, must be in `state.approved_change_ids`. The console's y/N puts it there with `toolset.host_approve(change_id)` and takes it out with `host_clear` when the apply turn returns.
+
+That set is an in-process boolean. It is right while the process runs and gone afterwards, so it cannot answer the two questions an operator is asked later: *did a human approve this, and when?* and *was that approval used more than once?* `MerchantApprovals` answers both. When the operator says yes it mints a signed Approval Grant scoped to one actor, one action, and one change, with `max_uses=1`. The apply's intent receipt is then signed with that grant's nonce, which makes the CLI reserve a use in the local Approval Use Journal before it will sign. A second apply of the same change finds the grant spent. A grant for one change cannot be spent on another, because the action names `change://<change_id>` as its subject and the grant's scope names the same URI. The subject comes from the call's own arguments, never from the grant, so the scope check cannot compare a grant against itself.
+
+```python
+from treeship_commerce import MerchantApprovals, approved, receipted
+from merchant_agent.executor import MerchantToolExecutor
+
+approvals = MerchantApprovals(ts, approver="human://operator", actor="agent://merchant")
+Executor = approved(receipted(MerchantToolExecutor, recorder=make_recorder), approvals)
+
+# in the host's y/N loop, where it currently calls host_approve alone:
+approvals.grant(change.change_id, summary=change.summary)   # the evidence
+toolset.host_approve(change.change_id)                      # the reference's own gate
+```
+
+Both calls, because they answer different questions: the mark lets the apply run, the grant proves it was allowed to. The apply's intent receipt then carries `approval: "proven"`, the grant's artifact id, and the change id. When a grant is missing, spent, expired, or scoped to another change, the receipt is still written and says `approval: "unproven"` with the CLI's reason (`would exceed max_uses (1/1)`, `scope refused this action: subject ...`). The tool still runs into the reference's `check_apply_change`, which is what holds it. Pass `enforce=True` to `approved(...)` to hold an unproven apply before the tool runs, using the reference's own held-outcome shape.
+
+```bash
+treeship approval uses <grant-id>       # the journal's record of the one use
+treeship approval journal verify        # the journal's own hash chain
+```
+
+`treeship package verify` on the sealed session reports the same evidence as a check of its own: `PASS replay-local-journal -- local Approval Use Journal passed, use 1/1`.
+
+### Per runtime
+
+The three runtimes differ in *where* the human's yes enters the process, so they differ in what can be signed.
+
+- **Agent SDK.** `MerchantToolset` is the approval surface: the console calls `host_approve` on yes and `host_clear` when the apply turn returns. `approving(toolset, approvals)` wraps those two methods on the toolset you already built, so the console's loop is unchanged and every yes mints a grant, every clear forgets it:
+
+  ```python
+  from treeship_commerce import MerchantApprovals, approved, approving, receipted
+
+  approvals = MerchantApprovals(ts, approver="human://operator")
+  toolset = approving(
+      MerchantToolset(backend=backend, executor_class=approved(
+          receipted(MerchantToolExecutor, recorder=make_recorder), approvals)),
+      approvals,
+  )
+  # main.py's confirm_staged_changes() runs as-is.
+  ```
+
+- **Messages API.** `MerchantAgent` leaves `state.approved_change_ids` to the host. Where the host adds the id, it also calls `approvals.grant(change_id, summary=...)`. The executor the orchestrator builds per turn picks the grant up through `executor_class`.
+- **Managed Agents.** The MCP server runs with `require_host_approval=False` because the platform's `always_ask` prompt is the approval surface, and that click happens outside the process. Nothing here can sign it. An apply there is receipted, and its receipt carries no approval claim rather than a fabricated one; `enforce=True` on that runtime would hold every apply, which is the honest reading of "no signed approval".
+
+All three are exercised in the test suite through each runtime's own `executor_class` seam, the way a deployment wires them.
+
+Requires a `treeship-sdk` whose `attest_action` takes `subject` (added after 0.28.0). On an older SDK `grant()` warns once and mints nothing, and the apply stays gated exactly as the unwrapped reference gates it.
+
+The merchant demo runs all of it with no model and no API key: a staged price change held unapproved, applied once under a signed grant, and refused on replay while the reference's own mark is still set.
+
+```bash
+python -m treeship_commerce.demo_merchant
+```
+
 ## Operating it
 
 - **Recording never breaks the agent path.** A receipt that cannot be written (CLI missing, ship not initialized, disk full) warns once, the tool runs anyway, and `TreeshipReceipts.dropped` counts it. A result whose intent is missing says `intent_recorded: false` and chains from the previous head; no id is ever invented.
@@ -216,12 +274,11 @@ session           receipts=10 events=6 root_verified=True
 
 ## What comes next
 
-- **Approvals.** The merchant `apply_change` gate passes only for a change id the host marked approved, a mark set just before the click and cleared just after. The next piece turns that mark into a signed, scoped, single-use Treeship approval: `attest approval --allowed-actions apply_change --allowed-subjects <change_id> --max-uses 1`, the apply receipt echoing the nonce, and the Approval Use Journal making it unspendable twice. The reference's `StagedChange` already carries the operator principal, so the approver is never invented.
 - **Checkout hand-off.** `checkout_handoff` returns a hosted URL the model never sees. Signing the cart digest and the URL digest at that moment, chained to the host's order placement, gives the customer a receipt for exactly the cart that went to checkout. See [Payment Proofs](/commerce/payment-proofs) for the pattern.
 - **A plugin command** in the reference's own marketplace format, alongside its `/add-commerce-flow`.
 
 ## Reference
 
 - Package: [`integrations/commerce-agents/`](https://github.com/zerkerlabs/treeship/tree/main/integrations/commerce-agents); on PyPI as `treeship-commerce`
-- Tests: eight cases on a real ship over the reference's retail mock, run in CI against the reviewed commit of the reference
+- Tests: twenty-eight cases on a real ship over the reference's retail and merchant mocks, run in CI against the reviewed commit of the reference; eight cover approvals, including the replay and the wrong-change refusals, and four drive the merchant side through each runtime's `executor_class` seam
 - Related: [Integration overview](/integrations/commerce-agents), [Agentic commerce](/commerce/overview), [Payment proofs](/commerce/payment-proofs), [Trust model](/concepts/trust-model)
