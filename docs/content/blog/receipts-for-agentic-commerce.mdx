@@ -93,7 +93,11 @@ The blueprint has rules. The networks have signed payment authority. Neither has
 | The merchant's approval | The host's y/N, the moment it sets the reference's approval mark | A grant scoped to one operator, one action, one change, usable once. The apply is signed with the grant; a second apply of the same change is refused before anything is signed. A grant for change 41 cannot be spent on change 42. |
 | The shopping checkout | `backend.checkout_handoff(session, cart)`, the one moment "this cart" and "this checkout" meet | A digest of the cart's lines, the item count, subtotal and currency, and a digest of the payment URL. The host then chains its order onto it, with the order reference digested. |
 
-From the merchant demo, run on a clean machine with no model and no API key. Every id is real.
+From the shopping demo, run on a clean machine with no model and no API key. A product id the agent never saw in a catalog read is pushed at the cart, the way a poisoned listing would push it. The reference's provenance gate refuses it, and the refusal is inside the signed receipt, not in a log line:
+
+![The shopping demo: a search, a product read, an add, an add the provenance gate refused, the hand-off and the chained order; the refused add's signed receipt decoded to show status blocked and gate provenance; the sealed package verifying offline with that receipt's inclusion proof passing](/blog/shopping-provenance.gif)
+
+From the merchant demo, same machine. Every id is real.
 
 ```text
 # the same change, applied three times

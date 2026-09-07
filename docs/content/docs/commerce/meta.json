@@ -3,6 +3,7 @@
   "pages": [
     "overview",
     "commerce-agents",
+    "verify-a-package",
     "payment-proofs",
     "compliance"
   ]

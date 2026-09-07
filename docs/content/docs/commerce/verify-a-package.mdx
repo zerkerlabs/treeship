@@ -1,0 +1,176 @@
+---
+title: Verify a session package
+description: For the person handed a .treeship package. What to run, what each PASS means, and what it does not prove.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+This page is written for the reader on the other side of the counter: the dispute analyst, the auditor, the acquirer's risk team, the customer's lawyer. Someone gave you a `.treeship` package, or a bundle file, or a receipt id, and told you it proves what an agent did. You do not need an account, a network connection, or Treeship's cooperation to check it. You need the free CLI and about ten minutes.
+
+Every command and every line of output below is from a real run on a clean machine with the released 0.30.0 CLI, against the shopping demo from Anthropic's commerce-agents reference. Nothing is simulated.
+
+```bash
+curl -fsSL https://treeship.dev/install | sh    # or: npm install -g treeship
+treeship init --name reviewer                   # a ship of your own; it signs nothing you will show anyone
+```
+
+## What you were handed
+
+A session package is a directory named `<session-id>.treeship`. The pieces that matter to you:
+
+| File | What it is |
+|---|---|
+| `receipt.json` | The session receipt: the list of every signed artifact by id and digest, the Merkle root over them, a timeline, and prose (a headline, a narrative). |
+| `proofs/<id>.proof.json` | One Merkle inclusion proof per artifact. |
+| `merkle.json` | The tree itself. |
+| `approvals/` | Present when a human approval was spent in the session: the signed grant, the use records, the checkpoints. |
+| `artifacts/` | The signed envelopes of the grant and of the actions that consumed it. For the other artifacts, only the digest and the proof travel in the package; the signed bytes live in the producer's store, in a bundle, or on the hub. |
+| `preview.html` | The receipt page. Opens in a browser, verifies the Merkle structure client-side, no network. |
+
+The last two rows are the first thing to understand. **The package proves structure. The bundle, the hub, or the producer's machine proves signatures.** The commands below cover both.
+
+## Step 1. The package: structure and approvals
+
+```bash
+treeship package verify retail.treeship
+```
+
+From the shopping demo's package, verbatim, with the twelve per-artifact inclusion lines folded:
+
+```text
+  PASS receipt.json -- Parses as valid Session Receipt
+  PASS type -- Correct receipt type
+  PASS determinism -- receipt.json round-trips identically (structural, NOT a signature)
+  WARN receipt_body_binding -- timeline/side-effects/narrative are NOT signed in this package — only the artifacts and Merkle root are cryptographically bound. ...
+  PASS merkle_root -- Merkle root matches recomputed value
+  PASS inclusion:art_a58a450ef62841c91d85fe27cca7d987 -- Inclusion proof valid
+  ... (one line per artifact)
+  PASS leaf_count -- Leaf count matches artifact count
+  PASS timeline_order -- Timeline is correctly ordered
+
+  19 passed, 0 failed, 1 warnings
+
+✓ package verified
+```
+
+What each line establishes:
+
+| Check | It proves | It does not prove |
+|---|---|---|
+| `receipt.json`, `type` | The file is a well-formed session receipt of the expected type. | Anything about its truth. |
+| `determinism` | The receipt re-serializes to the same bytes, so a digest of it is meaningful. | It is explicitly not a signature check. |
+| `receipt_body_binding` (always `WARN` on an unpublished package) | Nothing. It is a reminder: the headline, the narrative, the timeline summaries and the side-effect lists are the producer's prose and are **not** under any signature. | Do not quote the narrative as evidence. Quote artifacts. |
+| `merkle_root` | The root written in the receipt is the root of the tree over exactly the artifact digests listed. | That those digests belong to receipts you have seen. |
+| `inclusion:<id>` | That artifact's digest was a leaf of the tree when the session was sealed. Nothing was added or removed since. | What the artifact says. |
+| `leaf_count`, `timeline_order` | The count and the ordering are internally consistent. | Wall-clock time. The timestamps are the signer's own clock. |
+
+The line to look for in a dispute is the inclusion line for the artifact in question. In the shopping demo that is `art_a58a450e…`, the result receipt of the add the provenance gate refused. Its presence in the tree means the refusal was part of the sealed record, not reconstructed after the fact.
+
+When the session spent a human approval, the merchant demo's package adds six more lines:
+
+```text
+  PASS replay-package-local -- no duplicate approval use inside package (1 uses scanned)
+  PASS approval-use-record-digest -- 1 use record(s) recompute identically
+  PASS approval-use-nonce-binding -- 1 use record(s) bind to content-addressed grant signed nonces
+  PASS approval-use-action-binding -- 1 consuming action(s) bind cleanly to content-addressed envelope(s)
+  PASS approval-use-chain-continuity -- 1 record(s) form a single connected linked list from one genesis with no cycles or forks
+  PASS replay-local-journal -- local Approval Use Journal passed, use 1/1
+
+  24 passed, 0 failed, 1 warnings
+```
+
+Together these say: one grant was issued, it was spent exactly once, the action that spent it is the one the signed use record names, and the use records form one unbroken chain. `treeship approval uses <grant-id>` prints the human-readable version: who spent it, on what subject, when, with the digest of the nonce (never the nonce). `--strict` turns missing approval evidence from a warning into a failure. `--format json` gives the same result to a script.
+
+<Callout type="warn">
+`package verify` ends with a line you should read every time: **not checked: who signed this receipt**. It checks the tree, not the signatures. Step 2 is not optional.
+</Callout>
+
+## Step 2. The signatures: pin the key, verify the chain
+
+Every artifact is a DSSE envelope signed with the producer's Ed25519 key. To check signatures you need the signed bytes and a decision about which key you trust. Ask the producer for two things: their public key, and a bundle of the chain.
+
+On the producer's side, this is what they run (shown so you know what to ask for):
+
+```bash
+treeship keys export                      # prints the public key and the exact pin command
+treeship bundle create --artifacts <every id in the chain> --tag retail-demo
+treeship bundle export <bundle-id> --out retail-chain.treeship
+```
+
+On yours:
+
+```bash
+treeship trust add key_35c719307744c26e ed25519:jwVAw8_amVMB1TDNbJO3UHW5uyKn3KJ63ujtnMAgG7I --kind cert_issuer --yes
+treeship bundle import retail-chain.treeship
+treeship verify art_e8aad1f89cb61f4ed5f4bbfb3f80a1ce      # the chain head, here the placed order
+```
+
+Verbatim from a second ship that had never seen the first:
+
+```text
+✓ verified  (13 artifacts . chain intact)
+  anchoring: UNWITNESSED — 2m of claimed work with no external anchor; the timeline rests on the signer's own clock
+  target:        art_e8aad1f89cb61f4e
+  actor:         agent://shopping
+  actor proof:   asserted
+  action:        commerce.order.placed
+  time:          2026-09-07T18:12:42Z
+```
+
+Read every line, because three of them are limits:
+
+- **`verified … chain intact`** is the claim you came for. Every envelope from the placed order back to the session root carries a valid signature from the pinned key, every content-addressed id re-derives from its bytes, and every parent link resolves. Change one byte anywhere and this line fails. Importing the bundle before pinning the key fails too, with `no valid signature from any trusted key`; that is the trust root doing its job.
+- **`anchoring: UNWITNESSED`** means no third party recorded that these bytes existed by a given time. The timestamps are the signer's clock, signed by the signer. If the dispute turns on *when*, ask whether the session was anchored to a hub checkpoint or a transparency log, and run `treeship verify <id> --max-unwitnessed 1h` to fail unless every stretch of work was witnessed within your bound.
+- **`actor proof: asserted`** means the string `agent://shopping` is a claim made by whoever holds the key. The signature proves the key; it does not by itself bind the key to a company or a person. That binding comes from an Agent Certificate (`--certificate <path-or-url>`) or from the producer's hub attachment. Without one, "the agent" in this record is "the holder of key `key_35c7…`".
+
+One more flag is worth knowing. `--require-authority` fails unless the receipt carries a mandate that was checked and passed. On the shopping demo it fails with `AUTHORITY NOT ESTABLISHED: this receipt carries no action/v2 mandate`, and the message adds: *absence of a claim is not a passing check.* Commerce receipts as shipped prove what the agent did and what the gates decided; they do not carry a delegation credential. That is the seam [Verifiable Intent](/integrations/verifiable-intent) is designed to fill.
+
+`treeship verify <id> --full` draws the chain as a timeline. `--format json` returns every check by artifact id, `outcome`, `passed`, `failed`, `chain_linkage_ok`, `authority_ok` and `authority_checked`, for a script.
+
+If the session was published, skip the bundle: `treeship verify https://treeship.dev/receipt/<id>` fetches the envelopes from the hub and runs the same checks on your machine. The hub stores bytes; it never issues the verdict.
+
+## Step 3. One receipt, read
+
+A receipt's signed payload is small and plain. The producer can hand you any single receipt as three base64 strings:
+
+```bash
+treeship receipt export art_a58a450ef62841c91d85fe27cca7d987 --format json
+```
+
+That gives `message_b64` (the DSSE pre-authentication encoding), `signature_b64` and `public_key_b64`. Any Ed25519 library in any language confirms it with `verify(public_key, message, signature)`, no Treeship code. Decode the message and this is the whole signed statement for the refused add, from the shopping demo:
+
+```json
+{"type":"treeship/action/v1","timestamp":"2026-09-07T18:05:36Z","actor":"agent://shopping",
+ "action":"commerce.tool.add_to_cart.result","parentId":"art_5ffe80dc…",
+ "meta":{"elapsed_ms":0,"events":[],"gate":"provenance","intent_recorded":true,
+         "result_digest":"sha256:3ab4b78a…","role":"shopping","session_tag":"341b50bd9f40",
+         "status":"blocked","tool":"add_to_cart"}}
+```
+
+`"status":"blocked"` and `"gate":"provenance"` are under the signature. The reference's gate said no, and the agent's own runtime signed that it said no. What the gate saw, the product id it refused, is in the intent receipt one link up (`parentId`), as a digest of the arguments.
+
+`receipt export` runs on the machine whose keystore holds the signing key, so it is something the producer sends you, not something you run on an imported bundle. On your own ship, `treeship verify <id>` after Step 2 covers the same signature.
+
+## What a PASS does not prove
+
+This is the section to keep open during a dispute.
+
+1. **Not that the commerce was right.** Treeship authenticates statements; it does not adjudicate. A signed `blocked` proves the gate refused. It does not prove the gate was correct to refuse, and a signed `ok` does not prove the cart was a good idea. The gate's logic is the reference's, and the reference's policy is the deployment's.
+2. **Not the contents, unless you are shown them.** Receipts carry digests: of the arguments, of the result text, of the cart, of the payment URL, of the order reference. A digest proves that *a specific thing* was there and has not changed. To learn *what* it was, the merchant supplies the preimage (the cart lines, the result text), you hash it with SHA-256, and compare. A merchant who kept no preimages has receipts that prove tampering did not happen and cannot prove what the agent saw. The [integration guide](/commerce/commerce-agents#operating-it) tells producers to keep them.
+3. **Not who.** `actor proof: asserted`, as above. A key, not a name, until a certificate or hub attachment binds it.
+4. **Not when.** `anchoring: UNWITNESSED`, as above. A signed timestamp is a signed claim.
+5. **Not completeness.** A chain proves what was recorded, never everything that happened. A tool call that was never receipted leaves no trace, except that the shipped wrapper counts drops and the demos print a warning when any receipt was not written. Ask the producer for that count. Ask whether recording was on for the whole session. Gaps in parent links show up as a failed walk; calls that were never attempted to be recorded do not.
+6. **Not the story.** Everything under `receipt_body_binding`: headline, narrative, timeline summaries. Prose, unsigned.
+7. **Not that the approval gate held.** In the merchant demo the replay attempt shows `error` in the default run and `blocked:approval` under `--enforce`. In both, the Approval Use Journal refused a second use of the grant before anything was signed, and `replay-local-journal … use 1/1` says so. What differs is whether the wrapper also stopped the tool. Read the journal line, not the status word.
+
+## A checklist for the file
+
+- `treeship package verify` passes, and the inclusion line for the artifact in dispute is present.
+- The producer's public key is pinned from a channel you trust, not from inside the package.
+- `treeship verify <chain head>` passes on your ship, after `bundle import`, with `chain intact`.
+- You have read the `anchoring` and `actor proof` lines and decided whether they are good enough for this dispute.
+- For the artifact in dispute, you have the preimage from the producer and its SHA-256 matches the digest in the signed payload.
+- If an approval is involved, `treeship approval uses <grant>` shows the use count you expect, and `approval-use-nonce-binding` passed.
+- You are quoting artifacts, not the narrative.
+
+If every box is ticked, what you can say is precise: *these signed statements, by the holder of this key, existed in this order when the session was sealed, and the ones I was shown preimages for say exactly what the producer claims.* That is a great deal more than a log, and it is not more than that.
