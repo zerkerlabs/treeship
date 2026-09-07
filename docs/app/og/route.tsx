@@ -7,8 +7,27 @@ function clamp(text: string, max: number): string {
   return `${text.slice(0, max - 1).trimEnd()}…`;
 }
 
+const GEIST_400 = 'https://fonts.gstatic.com/s/geist/v5/gyBhhwUxId8gMGYQMKR3pzfaWI_RnOM4nQ.ttf';
+const GEIST_700 = 'https://fonts.gstatic.com/s/geist/v5/gyBhhwUxId8gMGYQMKR3pzfaWI_Re-Q4nQ.ttf';
+
+async function loadFont(url: string): Promise<ArrayBuffer | null> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return await res.arrayBuffer();
+  } catch {
+    return null;
+  }
+}
+
 export async function GET(request: Request) {
   const url = new URL(request.url);
+  const [regular, bold] = await Promise.all([loadFont(GEIST_400), loadFont(GEIST_700)]);
+  const fonts = [
+    regular ? { name: 'Geist', data: regular, weight: 400 as const, style: 'normal' as const } : null,
+    bold ? { name: 'Geist', data: bold, weight: 700 as const, style: 'normal' as const } : null,
+  ].filter(Boolean) as { name: string; data: ArrayBuffer; weight: 400 | 700; style: 'normal' }[];
+  const family = fonts.length ? 'Geist' : 'sans-serif';
   const title = clamp(url.searchParams.get('title') || 'Treeship Docs', 80);
   const description = clamp(
     url.searchParams.get('description') ||
@@ -29,6 +48,7 @@ export async function GET(request: Request) {
           background: '#f8f8f6',
           color: '#101010',
           padding: '64px 72px',
+          fontFamily: family,
         }}
       >
         <div
@@ -39,18 +59,23 @@ export async function GET(request: Request) {
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-            <div
-              style={{ width: 16, height: 16, borderRadius: 4, background: '#0a0a0a', transform: 'skewX(-14deg)' }}
-            />
+            <svg width="40" height="40" viewBox="0 0 26 26" fill="none">
+              <circle cx="13" cy="5" r="3" fill="#0a0a0a" />
+              <circle cx="5" cy="20" r="3" fill="#0a0a0a" fillOpacity="0.55" />
+              <circle cx="21" cy="20" r="3" fill="#0a0a0a" fillOpacity="0.55" />
+              <line x1="13" y1="8" x2="5" y2="17" stroke="#0a0a0a" strokeWidth="1.5" strokeOpacity="0.45" />
+              <line x1="13" y1="8" x2="21" y2="17" stroke="#0a0a0a" strokeWidth="1.5" strokeOpacity="0.45" />
+              <line x1="5" y1="20" x2="21" y2="20" stroke="#0a0a0a" strokeWidth="1" strokeOpacity="0.2" strokeDasharray="2 3" />
+            </svg>
             <div
               style={{
-                fontSize: 26,
-                letterSpacing: 6,
+                fontSize: 30,
+                letterSpacing: -0.5,
                 color: '#0a0a0a',
-                fontWeight: 600,
+                fontWeight: 700,
               }}
             >
-              TREESHIP
+              Treeship
             </div>
           </div>
           <div
@@ -99,6 +124,6 @@ export async function GET(request: Request) {
         </div>
       </div>
     ),
-    { width: 1200, height: 630 },
+    { width: 1200, height: 630, fonts },
   );
 }
