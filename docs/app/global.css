@@ -1,146 +1,321 @@
 @import 'tailwindcss';
 @import 'fumadocs-ui/css/preset.css';
 
-/* ── Treeship color tokens ─────────────────────────────── */
+/* ── Treeship design system ─────────────────────────────────────────────
+   Tokens adopted 2026-09-07 from the Zerker web design system; the source
+   of truth is treeship.dev-repo/DESIGN.md. Light warm-white by default,
+   Geist / Geist Mono, one purple accent, dark #161616 surfaces reserved for
+   evidence (code, terminals, receipts). Consumed through the fumadocs
+   --color-fd-* tokens so every fumadocs component picks the palette up. */
 @theme {
-  --color-treeship-green: #4ade80;
-  --color-treeship-green-dim: rgba(74, 222, 128, 0.08);
-  --color-treeship-green-border: rgba(74, 222, 128, 0.2);
-  --color-treeship-green-code: rgba(74, 222, 128, 0.09);
-  --color-treeship-text: #ededed;
-  --color-treeship-muted: #999999;
+  --color-zk-bg: #f8f8f6;
+  --color-zk-surface: #ffffff;
+  --color-zk-ink: #0a0a0a;
+  --color-zk-text: #101010;
+  --color-zk-text-secondary: #5f6561;
+  --color-zk-hairline: #e4e4e0;
+  --color-zk-hairline-strong: #d9d9d4;
+  --color-zk-accent: #6656fb;
+  --color-zk-accent-soft: rgba(102, 86, 251, 0.09);
+  --color-zk-success: #16866a;
+  --color-zk-warning: #a86f00;
+  --color-zk-danger: #c33e4b;
+  --color-zk-evidence: #161616;
+  --color-zk-evidence-ink: #f0f0ee;
 
-  --color-fd-background: #0a0f0a;
-  --color-fd-foreground: #ededed;
-  --color-fd-muted: #1a1f1a;
-  --color-fd-muted-foreground: #999999;
-  --color-fd-popover: #111611;
-  --color-fd-popover-foreground: #ededed;
-  --color-fd-card: #111611;
-  --color-fd-card-foreground: #ededed;
-  --color-fd-border: rgba(255, 255, 255, 0.08);
-  --color-fd-primary: #4ade80;
-  --color-fd-primary-foreground: #0a0f0a;
-  --color-fd-secondary: #1a1f1a;
-  --color-fd-secondary-foreground: #ededed;
-  --color-fd-accent: rgba(74, 222, 128, 0.12);
-  --color-fd-accent-foreground: #ededed;
-  --color-fd-ring: #4ade80;
+  --color-fd-background: #f8f8f6;
+  --color-fd-foreground: #101010;
+  --color-fd-muted: #efefec;
+  --color-fd-muted-foreground: #5f6561;
+  --color-fd-popover: #ffffff;
+  --color-fd-popover-foreground: #101010;
+  --color-fd-card: #ffffff;
+  --color-fd-card-foreground: #101010;
+  --color-fd-border: #e4e4e0;
+  --color-fd-primary: #6656fb;
+  --color-fd-primary-foreground: #ffffff;
+  --color-fd-secondary: #efefec;
+  --color-fd-secondary-foreground: #101010;
+  --color-fd-accent: rgba(102, 86, 251, 0.09);
+  --color-fd-accent-foreground: #101010;
+  --color-fd-ring: #6656fb;
 
-  --font-sans: 'Geist', system-ui, sans-serif;
-  --font-mono: 'Geist Mono', monospace;
+  --font-sans: 'Geist', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'Segoe UI', sans-serif;
+  --font-mono: 'Geist Mono', 'SF Mono', ui-monospace, Menlo, monospace;
 }
 
-/* ── Force dark mode ───────────────────────────────────── */
+/* Dark: the evidence palette from DESIGN.md, so a viewer who toggles the
+   theme keeps a readable page. Not the default. */
 .dark {
-  --color-fd-background: #0a0f0a;
-  --color-fd-foreground: #ededed;
-  --color-fd-muted: #1a1f1a;
-  --color-fd-muted-foreground: #999999;
-  --color-fd-popover: #111611;
-  --color-fd-popover-foreground: #ededed;
-  --color-fd-card: #111611;
-  --color-fd-card-foreground: #ededed;
-  --color-fd-border: rgba(255, 255, 255, 0.08);
-  --color-fd-primary: #4ade80;
-  --color-fd-primary-foreground: #0a0f0a;
-  --color-fd-secondary: #1a1f1a;
-  --color-fd-secondary-foreground: #ededed;
-  --color-fd-accent: rgba(74, 222, 128, 0.12);
-  --color-fd-accent-foreground: #ededed;
-  --color-fd-ring: #4ade80;
+  --color-zk-bg: #161616;
+  --color-zk-surface: #1c1c1c;
+  --color-zk-ink: #f2f2ef;
+  --color-zk-text: #ececE8;
+  --color-zk-text-secondary: #9aa09b;
+  --color-zk-hairline: #2a2a27;
+  --color-zk-hairline-strong: #363632;
+  --color-zk-accent: #8f83ff;
+  --color-zk-accent-soft: rgba(143, 131, 255, 0.14);
+  --color-zk-success: #4fc39c;
+  --color-zk-warning: #e0a94a;
+  --color-zk-danger: #e5717c;
+  --color-zk-evidence: #0a0a0a;
+  --color-zk-evidence-ink: #f0f0ee;
+
+  --color-fd-background: #161616;
+  --color-fd-foreground: #ececE8;
+  --color-fd-muted: #1c1c1c;
+  --color-fd-muted-foreground: #9aa09b;
+  --color-fd-popover: #1c1c1c;
+  --color-fd-popover-foreground: #ececE8;
+  --color-fd-card: #1c1c1c;
+  --color-fd-card-foreground: #ececE8;
+  --color-fd-border: #2a2a27;
+  --color-fd-primary: #8f83ff;
+  --color-fd-primary-foreground: #0a0a0a;
+  --color-fd-secondary: #1c1c1c;
+  --color-fd-secondary-foreground: #ececE8;
+  --color-fd-accent: rgba(143, 131, 255, 0.14);
+  --color-fd-accent-foreground: #ececE8;
+  --color-fd-ring: #8f83ff;
 }
 
 html {
-  color-scheme: dark;
+  color-scheme: light dark;
 }
 
 /* ── Base ──────────────────────────────────────────────── */
 @layer base {
   body {
     @apply flex flex-col min-h-screen;
+    font-family: var(--font-sans);
+    letter-spacing: -0.011em;
+    -webkit-font-smoothing: antialiased;
   }
 }
 
-/* ── Headings ──────────────────────────────────────────── */
+/* ── Prose: the document page ──────────────────────────── */
+.prose {
+  font-size: 17px;
+  line-height: 1.6;
+  color: var(--color-zk-text);
+}
+
 .prose h1,
 .prose h2,
 .prose h3,
 .prose h4 {
-  color: var(--color-treeship-text);
-  font-weight: 500;
+  color: var(--color-zk-ink);
+  text-wrap: balance;
+}
+
+.prose h1 {
+  font-size: clamp(30px, 4vw, 42px);
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+  font-weight: 750;
 }
 
 .prose h2 {
-  border-bottom: 1px solid var(--color-treeship-green-border);
-  padding-bottom: 0.4em;
+  font-size: 24px;
+  letter-spacing: -0.02em;
+  font-weight: 700;
+  border-bottom: 0;
+  padding-bottom: 0;
+  margin-top: 2.6em;
+}
+
+.prose h3 {
+  font-size: 18px;
+  letter-spacing: -0.015em;
+  font-weight: 650;
+}
+
+.prose p,
+.prose li {
+  max-width: 780px;
+}
+
+/* fumadocs wraps heading text in an anchor; a heading is not a link. */
+.prose h1 a,
+.prose h2 a,
+.prose h3 a,
+.prose h4 a {
+  color: inherit;
+  text-decoration: none;
 }
 
 /* ── Links ─────────────────────────────────────────────── */
 .prose a {
-  color: var(--color-treeship-green);
-  text-decoration: none;
+  color: var(--color-zk-accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
   transition: opacity 0.15s ease;
 }
 
 .prose a:hover {
-  opacity: 0.8;
-  text-decoration: underline;
+  opacity: 0.85;
 }
 
-/* ── Code blocks (Mintlify-style) ─────────────────────── */
-pre {
-  background: #1e1e1e !important;
+/* ── Code blocks: the evidence surface ─────────────────── */
+pre,
+.prose pre,
+figure[data-rehype-pretty-code-figure] pre,
+.shiki {
+  background: var(--color-zk-evidence) !important;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 8px;
-  padding: 1.2em 1.4em !important;
+  border-radius: 12px;
+  padding: 14px 16px !important;
 }
 
-pre code {
-  color: #d4d4d4 !important;
-  font-size: 0.875rem;
-  line-height: 1.75;
+pre code,
+.shiki code {
+  color: var(--color-zk-evidence-ink) !important;
+  font-size: 13.5px;
+  line-height: 1.55;
   font-family: var(--font-mono);
 }
 
-/* Code block copy button area */
-pre:hover {
-  border-color: rgba(255, 255, 255, 0.15);
+/* Shiki emits per-token colors tuned for dark backgrounds; the dark
+   evidence surface keeps them readable in both themes. */
+.shiki span {
+  color: var(--shiki-dark, inherit);
 }
 
-/* ── Inline code (Mintlify-style) ─────────────────────── */
+/* ── Inline code ───────────────────────────────────────── */
 :not(pre) > code {
-  background: rgba(255, 255, 255, 0.06);
-  color: #e8e8e8;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 4px;
-  padding: 2px 6px;
-  font-size: 0.84em;
+  background: var(--color-zk-accent-soft);
+  color: var(--color-zk-ink);
+  border: 0;
+  border-radius: 6px;
+  padding: 0.05em 0.35em;
+  font-size: 0.92em;
+  font-family: var(--font-mono);
 }
 
-/* ── Blockquotes ───────────────────────────────────────── */
-blockquote {
-  border-left: 3px solid var(--color-treeship-green);
-  padding-left: 1em;
-  color: var(--color-treeship-muted);
+/* ── Blockquotes: the purple note ──────────────────────── */
+blockquote,
+.prose blockquote {
+  border-left: 3px solid var(--color-zk-accent);
+  padding-left: 14px;
+  margin: 14px 0;
+  color: var(--color-zk-text-secondary);
   font-style: normal;
+  font-size: 15px;
+}
+
+.prose blockquote p {
+  font-size: 15px;
+  color: inherit;
+}
+
+/* ── Tables: white card, hairline grid, mono headers ───── */
+.prose table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--color-zk-surface);
+  border: 1px solid var(--color-zk-hairline);
+  border-radius: 14px;
+  overflow: hidden;
+  font-size: 15px;
+  line-height: 1.45;
+  max-width: none;
+}
+
+.prose table th,
+.prose table td {
+  text-align: left;
+  vertical-align: top;
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--color-zk-hairline);
+}
+
+.prose table tr:last-child td {
+  border-bottom: 0;
+}
+
+.prose table th {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-zk-text-secondary);
+  font-weight: 600;
+  background: var(--color-zk-bg);
+}
+
+.prose table td:first-child {
+  font-weight: 600;
+}
+
+/* fumadocs wraps MDX tables in a scrolling container; when it does not,
+   this keeps a wide table from pushing the page sideways. */
+.prose > table,
+.prose > div > table {
+  display: block;
+  overflow-x: auto;
+}
+
+/* Blog posts carry their title in frontmatter (rendered by the template)
+   and again as an MDX `# H1`; the template's H1 is the visible one. */
+.blog-prose > h1:first-child {
+  display: none;
+}
+
+/* ── Eyebrows, kickers, meta ───────────────────────────── */
+.doc-kicker {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--color-zk-accent);
+}
+
+.doc-meta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-zk-text-secondary);
+}
+
+.doc-lede {
+  font-size: 19px;
+  line-height: 1.55;
+  color: var(--color-zk-text-secondary);
+}
+
+/* ── Callouts ──────────────────────────────────────────── */
+.nd-callout,
+[data-callout] {
+  border-radius: 12px;
 }
 
 /* ── Active sidebar link ───────────────────────────────── */
 [data-active='true'] {
-  color: var(--color-treeship-green) !important;
-  background: var(--color-treeship-green-dim);
-  border-radius: 6px;
+  color: var(--color-zk-accent) !important;
+  background: var(--color-zk-accent-soft);
+  border-radius: 8px;
 }
 
 /* ── Sidebar install banner ────────────────────────────── */
 .sidebar-install-banner {
-  background: var(--color-treeship-green-dim);
-  border: 0.5px solid var(--color-treeship-green-border);
+  background: var(--color-zk-surface);
+  border: 1px solid var(--color-zk-hairline);
 }
 
-/* ── Tables ────────────────────────────────────────────── */
-.prose table th {
-  color: var(--color-treeship-text);
-  font-weight: 500;
+.sidebar-install-banner:hover {
+  border-color: var(--color-zk-hairline-strong);
+}
+
+/* ── Motion ────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }
