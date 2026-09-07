@@ -236,6 +236,12 @@ class TreeshipApprovalMixin:
     treeship_approvals_factory: Callable[[Any], MerchantApprovals] | None = None
     treeship_apply_tool: str = "apply_change"
     treeship_enforce_approval: bool = False
+    #: What the most recent apply's intent receipt says about its grant:
+    #: ``"proven"``, ``"unproven"`` (the grant would not spend: already used,
+    #: expired, or scoped to another change), or ``None`` when no grant was
+    #: offered. Set after every apply so a host can print or log the verdict
+    #: next to the tool's own outcome.
+    treeship_last_approval: str | None = None
     _treeship_apply_lock: asyncio.Lock | None = None
 
     def _treeship_approvals(self) -> MerchantApprovals | None:
@@ -302,6 +308,7 @@ class TreeshipApprovalMixin:
                 if receipts is not None:
                     receipts.pending_approval = None
                     spent = receipts.take_approval_outcome()
+                    self.treeship_last_approval = spent
                     if spent is not None and grant is not None:
                         # A grant is spendable once; drop the handle either
                         # way, so a second apply cannot even offer the nonce.

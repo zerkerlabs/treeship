@@ -14,7 +14,10 @@ The third is the one that matters. The reference's approval *gate* lets it
 through, because the host's in-process mark is still set for the rest of the
 turn; the mock backend then happens to refuse it as already applied, which is
 backend state, not evidence. The Approval Use Journal refuses it regardless of
-what the backend knows, before anything is signed, and the receipt says so.
+what the backend knows, before anything is signed, and the receipt says so:
+the row reads ``error, approval unproven`` in the default run (the tool ran
+and the backend refused it; the receipt carries no approval) and
+``blocked:approval`` under ``--enforce`` (the wrapper held the tool itself).
 Every id printed is real; verify them with the commands printed at the end.
 """
 
@@ -93,14 +96,23 @@ async def run(*, enforce: bool) -> int:
             if outcome.blocked
             else ("error" if outcome.is_error else "ok")
         )
+        # What the receipt says about the grant, next to what the tool did.
+        # ``unproven`` is the replay in the default run: the journal refused
+        # a second use before anything was signed, the wrapper recorded the
+        # call without approval evidence, and the mock backend then refused
+        # it as already applied. ``error`` alone would let the backend take
+        # the credit for a refusal the journal made.
+        approval = getattr(executor, "treeship_last_approval", None)
+        if approval:
+            status = f"{status}, approval {approval}"
         new = receipts.recorded[before:]
-        print(f"  {label:<26} {status:<22} {' '.join(new) or '(no receipt written)'}")
+        print(f"  {label:<26} {status:<26} {' '.join(new) or '(no receipt written)'}")
         return outcome
 
     tag = hashlib.sha256(commerce_session.encode()).hexdigest()[:12]
     print(f"session root      {root}")
     print(f"commerce session  sha256:{tag}  (tag; the id itself is never written)")
-    print("steps                      outcome                receipt ids")
+    print("steps                      outcome                    receipt ids")
 
     await call("search_listings", "search_listings", {"query": ""})
     listings = [
@@ -131,7 +143,7 @@ async def run(*, enforce: bool) -> int:
     #    evidence, and the reference's mark, which is what lets the apply run.
     grant = approvals.grant(change_id, summary=f"3% clearance on {listing_id}")
     executor._state.approved_change_ids.add(change_id)
-    print(f"  operator approves          grant signed           {grant.artifact_id}")
+    print(f"  operator approves          grant signed               {grant.artifact_id}")
     await call("apply (approved)", "apply_change", {"change_id": change_id})
 
     # 3. The replay. The reference's mark is still set, so its gate allows this;

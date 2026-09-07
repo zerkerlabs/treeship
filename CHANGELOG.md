@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **treeship-commerce: the approval verdict next to the tool outcome.** `TreeshipApprovalMixin` now sets `treeship_last_approval` (`proven`, `unproven`, or `None`) on the executor after every apply, so a host can print or log what the intent receipt says about the grant beside what the tool did. `demo_merchant` uses it: the replay row reads `error, approval unproven` in the default run (the journal refused a second use before anything was signed; the mock backend then refused the apply as already applied) instead of a bare `error` that let the backend take credit for the journal's refusal. Under `--enforce` the row is unchanged, `blocked:approval`.
+- **Docs: verify a session package**, a page for the person handed a `.treeship` package (`/commerce/verify-a-package`): what each check proves and does not, the counterparty signature flow (`keys export` → `trust add` → `bundle import` → `verify`), and the limits (`anchoring: UNWITNESSED`, `actor proof: asserted`, `--require-authority` on receipts with no mandate). Shopping demo recording added to the integration page and the announcement post.
+
 ## 0.30.0 (2026-09-07)
 
 **Upgrade if you build on Anthropic's commerce-agents reference.** The
