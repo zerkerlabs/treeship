@@ -137,6 +137,7 @@ process; an apply there is receipted with no approval claim, never an invented o
 
 ```bash
 TREESHIP_BIN=/path/to/treeship python -m pytest
+ANTHROPIC_API_KEY=... TREESHIP_BIN=/path/to/treeship python -m pytest tests/test_live.py   # one real turn
 ```
 
 Thirty-five cases on a real isolated ship over the real retail and merchant mocks: chain
