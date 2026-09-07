@@ -552,6 +552,24 @@ def collect_sites() -> list[Site]:
             lambda v: set_pyproject_version("packages/sdk-python/pyproject.toml", v),
         )
     )
+    # treeship-commerce (integrations/commerce-agents): released and published
+    # in lockstep with the SDK it depends on.
+    sites.append(
+        Site(
+            "integrations/commerce-agents/pyproject.toml",
+            "pypi treeship-commerce (pyproject)",
+            pyproject_version("integrations/commerce-agents/pyproject.toml"),
+            lambda v: set_pyproject_version("integrations/commerce-agents/pyproject.toml", v),
+        )
+    )
+    sites.append(
+        Site(
+            "integrations/commerce-agents/treeship_commerce/__init__.py",
+            "python treeship_commerce.__version__",
+            py_dunder_version("integrations/commerce-agents/treeship_commerce/__init__.py"),
+            lambda v: set_py_dunder_version("integrations/commerce-agents/treeship_commerce/__init__.py", v),
+        )
+    )
     sites.append(
         Site(
             "packages/sdk-python/treeship_sdk/__init__.py",

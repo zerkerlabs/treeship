@@ -750,6 +750,57 @@ jobs:
       - name: Verify treeship-sdk on PyPI
         run: .github/scripts/wait-for-pypi-version.sh treeship-sdk "${GITHUB_REF_NAME#v}"
 
+      # treeship-commerce (integrations/commerce-agents) publishes through
+      # PyPI trusted publishing (OIDC), not the long-lived token above: the
+      # project was created on PyPI as a pending publisher for this
+      # workflow, so the first upload creates it. Same version as the CLI
+      # and the SDK -- check-release-versions.py stamps its pyproject.
+      - name: Build treeship-commerce
+        id: build_commerce
+        working-directory: integrations/commerce-agents
+        run: |
+          set -e
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$(curl -s -o /dev/null -w '%{http_code}' "https://pypi.org/pypi/treeship-commerce/${VERSION}/json")" = "200" ]; then
+            echo "  ✓ treeship-commerce $VERSION already live on PyPI; skipping publish"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          rm -rf dist build *.egg-info
+          python -m build
+          WHEEL="dist/treeship_commerce-${VERSION}-py3-none-any.whl"
+          SDIST="dist/treeship_commerce-${VERSION}.tar.gz"
+          for f in "$WHEEL" "$SDIST"; do
+            [ -f "$f" ] || { echo "::error::expected $f; pyproject drifted from the tag"; ls -la dist/ || true; exit 1; }
+          done
+          UNEXPECTED="$(find dist -mindepth 1 -maxdepth 1 ! -name "$(basename "$WHEEL")" ! -name "$(basename "$SDIST")" -print)"
+          [ -z "$UNEXPECTED" ] || { echo "::error::unexpected artifacts in dist/: $UNEXPECTED"; exit 1; }
+          twine check "$WHEEL" "$SDIST"
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+
+      - name: Publish treeship-commerce (trusted publishing)
+        if: steps.build_commerce.outputs.publish == 'true'
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: integrations/commerce-agents/dist
+          skip-existing: true
+
+      - name: Verify treeship-commerce on PyPI
+        run: .github/scripts/wait-for-pypi-version.sh treeship-commerce "${GITHUB_REF_NAME#v}"
+
+      # Install from the registry, not from the tree, and import it. A wheel
+      # that uploads but does not import is the failure this catches.
+      - name: treeship-commerce installs from PyPI and imports
+        run: |
+          set -e
+          VERSION="${GITHUB_REF_NAME#v}"
+          python -m venv /tmp/tc && . /tmp/tc/bin/activate
+          for i in 1 2 3 4 5 6; do
+            pip install -q "treeship-commerce==${VERSION}" && break
+            echo "  registry not serving ${VERSION} yet (attempt $i); waiting"; sleep 20
+          done
+          python -c "import treeship_commerce, treeship_sdk; assert treeship_commerce.__version__ == '${VERSION}', treeship_commerce.__version__; print('treeship-commerce', treeship_commerce.__version__, 'on treeship-sdk', treeship_sdk.__version__)"
+
   # Install from npm and PyPI the way users do — not via a mounted GitHub
   # Release binary. Catches wrapper/optional-dep/postinstall failures and
   # PyPI wheel checksum/bootstrap gaps that the `smoke` job cannot see.
