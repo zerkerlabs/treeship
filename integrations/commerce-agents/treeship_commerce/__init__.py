@@ -13,6 +13,7 @@ from .approvals import (
     approved,
     change_subject,
 )
+from .checkout import ReceiptedBackend, cart_digest, order_placed, receipted_backend
 from .host import approving
 from .receipts import (
     TreeshipExecutorMixin,
@@ -26,6 +27,7 @@ from .receipts import (
 __all__ = [
     "Grant",
     "MerchantApprovals",
+    "ReceiptedBackend",
     "TreeshipApprovalMixin",
     "TreeshipExecutorMixin",
     "TreeshipReceipts",
@@ -33,8 +35,11 @@ __all__ = [
     "approving",
     "args_digest",
     "attach",
+    "cart_digest",
     "change_subject",
+    "order_placed",
     "receipted",
+    "receipted_backend",
     "text_digest",
 ]
 __version__ = "0.29.0"

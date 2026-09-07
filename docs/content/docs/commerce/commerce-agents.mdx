@@ -207,6 +207,34 @@ session           receipts=10 events=6 root_verified=True
 
 **Trust boundary.** The signing key lives on the machine that runs the executor. That is the right place for a deployment's own record of its agent, and it is a boundary: root on that machine can sign anything. A counterparty who wants to trust these receipts pins your ship key once (`treeship keys export` prints the line) and verifies against it.
 
+## Checkout: a receipt for exactly the cart that went to checkout
+
+The reference's `checkout` tool takes no cart and never shows the model a payment URL. When the model calls it, the presentation layer reads the cart from the backend and asks `backend.checkout_handoff(session, cart)` where that cart is paid for: the platform's hosted checkout URL, or one per seller on a marketplace. The URL goes on the card the host renders and nowhere else. That call is the one moment "this cart" and "this checkout" meet, inside the backend the deployment owns.
+
+`receipted_backend(backend)` wraps a storefront backend so that call also signs a **hand-off receipt**: a digest of the cart's lines, the item count, subtotal and currency, and a digest of each URL handed off (with the seller when there is one). It sits on the session chain between the `checkout` intent and its result. The URL itself is never written; a holder of it can check the digest, a reader learns nothing. The cart's lines are never written either; a holder of the checkout card can recompute the digest from the card's own `cart` payload, and the tests do exactly that.
+
+```python
+from treeship_commerce import receipted_backend, order_placed
+
+backend = receipted_backend(MyStorefront())     # once, where the runtime is built
+# ... the runtime and the receipted executor as before ...
+
+# later, when the host has placed the order on its own checkout page:
+await order_placed(receipts, order_ref=order.order_id, amount=order.total, currency="USD")
+```
+
+`order_placed` is the host's half of the seam. It chains a signed **order receipt** onto the hand-off: a digest of the order reference (never the reference itself, which is the customer's lookup key), the amount and the currency. A customer, a merchant, or an auditor holding the cart can recompute its digest and check that the order chains from a hand-off for exactly that cart, offline. When the host never wrapped its backend, the order receipt still lands on the session chain and says `handoff_recorded: false` rather than pointing at something invented.
+
+The wrapped backend finds the right recorder by the commerce session: every `TreeshipReceipts` registers itself under its session tag, and the backend looks the session up the same way. That is the default and needs no wiring beyond the `receipted(...)` executor class; pass `recorder=` to override it.
+
+The shopping demo now ends with the hand-off and a mock order chained onto it:
+
+```text
+  checkout               ok                   art_… art_…
+  checkout hand-off      cart signed          art_…
+  order placed           chained              art_…
+```
+
 ## Approvals: the operator's yes, spendable once
 
 The merchant side has one tool that mutates a merchant's system of record, `apply_change`, and the reference already gates it well: the change must have been staged in this session, must pass the configured guardrails, and, when `require_host_approval` is on, must be in `state.approved_change_ids`. The console's y/N puts it there with `toolset.host_approve(change_id)` and takes it out with `host_clear` when the apply turn returns.
@@ -274,11 +302,10 @@ python -m treeship_commerce.demo_merchant
 
 ## What comes next
 
-- **Checkout hand-off.** `checkout_handoff` returns a hosted URL the model never sees. Signing the cart digest and the URL digest at that moment, chained to the host's order placement, gives the customer a receipt for exactly the cart that went to checkout. See [Payment Proofs](/commerce/payment-proofs) for the pattern.
 - **A plugin command** in the reference's own marketplace format, alongside its `/add-commerce-flow`.
 
 ## Reference
 
 - Package: [`integrations/commerce-agents/`](https://github.com/zerkerlabs/treeship/tree/main/integrations/commerce-agents); on PyPI as `treeship-commerce`
-- Tests: twenty-eight cases on a real ship over the reference's retail and merchant mocks, run in CI against the reviewed commit of the reference; eight cover approvals, including the replay and the wrong-change refusals, and four drive the merchant side through each runtime's `executor_class` seam
+- Tests: thirty-five cases on a real ship over the reference's retail and merchant mocks, run in CI against the reviewed commit of the reference; eight cover approvals, including the replay and the wrong-change refusals, four drive the merchant side through each runtime's `executor_class` seam, and seven cover the checkout hand-off and the chained order
 - Related: [Integration overview](/integrations/commerce-agents), [Agentic commerce](/commerce/overview), [Payment proofs](/commerce/payment-proofs), [Trust model](/concepts/trust-model)

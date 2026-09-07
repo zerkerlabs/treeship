@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Added
+
+- **`treeship-commerce`: a receipt for exactly the cart that went to
+  checkout.** `receipted_backend(backend)` wraps a storefront backend so the
+  reference's `checkout_handoff(session, cart)` also signs a hand-off receipt
+  on the session chain: the cart's digest, item count, subtotal and currency,
+  and a digest of each hosted URL with its seller. The URL is never written;
+  the cart's lines are never written, and a holder of the checkout card can
+  recompute the digest from the card's own payload. `order_placed(receipts,
+  order_ref=, amount=, currency=)` is the host's half: a signed order receipt
+  chained onto the hand-off with the order reference digested. An order
+  without a hand-off says `handoff_recorded: false` instead of inventing a
+  parent. The wrapped backend finds the session's recorder by the reference's
+  own session tag. Seven tests; the shopping demo ends with the hand-off and
+  a chained mock order.
+
 ## 0.29.0 (2026-09-07)
 
 **Upgrade if you run the merchant side of Anthropic's commerce-agents

@@ -21,7 +21,7 @@ import uuid
 
 from treeship_sdk import Treeship
 
-from . import TreeshipReceipts, attach, receipted
+from . import TreeshipReceipts, attach, order_placed, receipted, receipted_backend
 from .lifecycle import close_session, session_status, start_session
 
 ACTOR = "agent://shopping"
@@ -39,10 +39,22 @@ def _build_executor(session_id: str):
             f"commerce-agents packages are not installed ({err}). From a clone of "
             "anthropics/commerce-agents: pip install -r requirements.txt"
         )
+    from shopping_agent.types import CheckoutHandoff
+
+    base = load_mock_backend()
+
+    class HostedCheckout(type(base)):
+        """The retail mock plus what a platform backend has: a hosted
+        checkout URL for this cart. The model never sees it; the receipt
+        carries only its digest."""
+
+        async def checkout_handoff(self, session, cart):
+            return [CheckoutHandoff(url=f"https://pay.acme.example/c/{session.session_id}")]
+
     config = ShoppingAgentConfig(brand_name="ACME", assistant_name="Scout")
     cls = receipted(ShoppingToolExecutor)
     return cls(
-        backend=load_mock_backend(),
+        backend=receipted_backend(HostedCheckout()),
         config=config,
         skills=SkillRegistry([]),
         session=ShoppingSessionContext(session_id=session_id, user_id="demo-user"),
@@ -87,6 +99,12 @@ async def run(report: bool) -> int:
     await call("add_to_cart", {"product_id": seen[0], "quantity": 1})
     await call("add_to_cart", {"product_id": "p-not-from-this-session", "quantity": 1})
     await call("checkout", {"note": "Ready when you are."})
+    handoff = executor._backend.handoffs[-1] if executor._backend.handoffs else None
+    print(f"  {'checkout hand-off':<22} {'cart signed':<20} {handoff or '(not written)'}")
+    # The host, out of the agent's sight, places the order on its checkout
+    # page and chains it onto the hand-off. Mock order; no card charged.
+    order = await order_placed(receipts, order_ref="ord_demo_0001", amount=None, currency="USD")
+    print(f"  {'order placed':<22} {'chained':<20} {order or '(not written)'}")
 
     status = session_status(ts)
     print(
@@ -99,7 +117,8 @@ async def run(report: bool) -> int:
         ts,
         summary=(
             f"Retail demo: {len(receipts.recorded) // 2} tool calls signed, one add held by the "
-            "provenance gate, checkout handed off. No order placed, no card charged."
+            "provenance gate, the cart signed at checkout hand-off, a mock order chained onto "
+            "it. No card charged."
         ),
         headline="Receipted shopping session over the ACME retail mock",
     )
