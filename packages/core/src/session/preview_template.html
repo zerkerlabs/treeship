@@ -208,6 +208,7 @@ table.files tr:last-child td{border-bottom:none}
 </head>
 <body>
 <script id="receipt-data" type="application/json">__RECEIPT_JSON__</script>
+<script id="approvals-data" type="application/json">__APPROVALS_JSON__</script>
 <div id="loading">Verifying receipt...</div>
 
 <script>
@@ -680,8 +681,27 @@ async function render(){
   }
 
   // ── APPROVAL GATES ──
-  h+='<section class="band" id="approvals"><div class="band-label">Approval gates</div><div class="band-sub">Human approval checkpoints during the session.</div><div class="band-body">';
-  if(fin.approvals.length){
+  // Grants and uses the package embeds under approvals/ (what `package
+  // verify` checks as replay-local-journal), then any approval artifacts on
+  // the chain itself.
+  let A=null;try{const el=document.getElementById('approvals-data');A=el?JSON.parse(el.textContent):null}catch(e){A=null}
+  const grants=(A&&A.grants)||[],uses=(A&&A.uses)||[];
+  h+='<section class="band" id="approvals"><div class="band-label">Approval gates</div><div class="band-sub">Human approval checkpoints during the session. A grant is spendable up to its max; each use names the action that spent it.</div><div class="band-body">';
+  if(grants.length||uses.length){
+    h+='<div class="row-list">';
+    const byGrant={};uses.forEach(u=>{(byGrant[u.grant_id]=byGrant[u.grant_id]||[]).push(u)});
+    grants.forEach(g=>{
+      const gu=byGrant[g.grant_id]||[];const sc=g.scope||{};const max=sc.max_uses!=null?sc.max_uses:null;
+      const spent=gu.length;const status=spent===0?'granted, unspent':(max!=null&&spent>=max?'spent '+spent+'/'+max:'used '+spent+(max!=null?'/'+max:''));
+      const who=g.parsed?esc(g.approver||'')+(g.description?' · '+esc(g.description):''):'grant envelope present, not parsed here';
+      const scope=g.parsed?[(sc.allowed_subjects||[]).map(esc).join(', '),(sc.allowed_actions||[]).map(esc).join(', '),(sc.allowed_actors||[]).map(esc).join(', ')].filter(Boolean).join(' · '):'';
+      h+='<div class="finding"><div class="mono" style="padding-top:1px;color:var(--pass)">✓</div><div><div style="font-size:.8rem;font-weight:600">'+who+'</div>'+(scope?'<div class="mono" style="font-size:.62rem;color:var(--faint);margin-top:3px">scope: '+scope+'</div>':'')+'<div class="mono" style="font-size:.62rem;color:var(--faint);margin-top:3px">'+esc(g.grant_id||'')+(g.timestamp?' · '+timeOf(g.timestamp):'')+'</div>';
+      gu.forEach((u,i)=>{h+='<div class="mono" style="font-size:.62rem;margin-top:4px">use '+(i+1)+(max!=null?'/'+max:'')+' · '+esc(u.action||'')+(u.subject?' → '+esc(u.subject):'')+' · by '+esc(u.actor||'')+(u.action_artifact_id?' · spent by '+esc(u.action_artifact_id):'')+'</div>'});
+      h+='</div><span class="badge '+(spent?'badge-ok':'badge-warn')+'">'+esc(status)+'</span></div>';
+    });
+    uses.filter(u=>!grants.some(g=>g.grant_id===u.grant_id)).forEach(u=>{h+='<div class="finding"><div class="mono" style="padding-top:1px;color:var(--pass)">✓</div><div><div style="font-size:.8rem;font-weight:600">Approval use without its grant in this package</div><div class="mono" style="font-size:.62rem;color:var(--faint);margin-top:3px">'+esc(u.use_id||'')+' · grant '+esc(u.grant_id||'')+'</div></div><span class="badge badge-warn">grant not embedded</span></div>'});
+    h+='</div>';
+  }else if(fin.approvals.length){
     h+='<div class="row-list">';
     fin.approvals.forEach(a=>{
       h+='<div class="finding"><div class="mono" style="padding-top:1px;color:var(--pass)">✓</div><div><div style="font-size:.8rem;font-weight:600">Approval artifact</div><div class="mono" style="font-size:.62rem;color:var(--faint);margin-top:3px">'+esc(a.artifact_id||a.id||'')+' · '+timeOf(a.signed_at||a.timestamp||'')+'</div></div><span class="badge badge-ok">approved</span></div>';

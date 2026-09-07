@@ -31,7 +31,7 @@ ROOT = Path(__file__).resolve().parent.parent
 TEMPLATE = ROOT / "packages" / "core" / "src" / "session" / "preview_template.html"
 
 # sha256 of the template as last synced downstream.
-EXPECTED_SHA256 = "ba08ea3dd0ca4dfcb672dfe1cc6f7c674063cce544801a8c3cd5bd19e3cf3887"
+EXPECTED_SHA256 = "9b8a5a58a65640c75c8ca5b32806b51aaff6857d439ece02dbdda2254af85837"
 
 DOWNSTREAM = (
     "zerkerlabs/treeship.dev  lib/receipt-preview/preview_template.html\n"

@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Fixed
+
+- **The sealed package's preview page now shows the approvals it embeds.**
+  `preview.html` read approvals only from the chained artifacts, so a
+  session whose approval was minted, spent once, and exported under
+  `approvals/` (where `package verify` checks it as
+  `replay-local-journal`) rendered "No approval gates recorded". The
+  preview now carries an `approvals-data` block built from the same bundle
+  the verifier reads, and the Approval gates section lists each grant
+  (approver, description, scope, time) with its uses (`use 1/1`, the action
+  and subject that spent it, the consuming artifact). A grant envelope
+  that does not parse is listed by id as unparsed rather than dropped; a
+  use whose grant is not embedded says so. No bundle renders a JSON `null`,
+  never an empty block that would throw in the page's parser.
+
 ### Added
 
 - **`treeship-commerce`: a receipt for exactly the cart that went to
