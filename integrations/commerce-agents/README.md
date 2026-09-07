@@ -128,6 +128,14 @@ no edits. On the Messages API the host calls `approvals.grant()` beside its own 
 Managed Agents the platform's prompt is the approval surface and the click is outside the
 process; an apply there is receipted with no approval claim, never an invented one.
 
+## Keep the preimages
+
+Receipts carry digests only. To settle a dispute you also need the originals: the arguments
+and result keyed to the receipt's `artifact_id`, the cart that went to checkout, the order
+reference. Keep them in your own store under your own retention rules; Treeship deliberately
+does not. `args_digest`, `text_digest` and `cart_digest` recompute the digests from the
+originals, and then a receipt proves *this* ran, not something with the same hash.
+
 ## What this does not do (yet)
 
 - **Prove the work is correct.** A receipt is evidence of what ran and what the gates
