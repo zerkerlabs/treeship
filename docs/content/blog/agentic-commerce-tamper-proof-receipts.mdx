@@ -104,6 +104,16 @@ Payment stays with the host. The receipt says what was handed off and what was p
 
 ---
 
+## What the merchant, the customer, or the auditor sees
+
+A closed session is a `.treeship` package: the receipts, the Merkle proofs, and a self-contained page that verifies them in the browser with no network and no server. Open it and the page recomputes the Merkle root and every inclusion proof with Web Crypto, lists the timeline, and, since 0.30.0, shows the approval gates from the same evidence the command-line verifier checks: who approved which change, under what scope, and that the grant was spent exactly once.
+
+![The sealed session's own receipt page: verdict, timeline, the approval gate showing the operator's grant spent 1/1, the trust chain, and seventeen client-side checks passing](/blog/receipt-walkthrough.gif)
+
+`treeship session report` publishes the same package to a hub for a shareable receipt page. That is a deliberate, separate step; nothing is published by default.
+
+---
+
 ## What is not in any receipt
 
 The reference is strict about what reaches the model and what reaches the logs. The receipts keep that discipline.
