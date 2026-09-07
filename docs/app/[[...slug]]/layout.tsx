@@ -9,7 +9,7 @@ export default function Layout({ children }: { children: ReactNode }) {
       tree={source.pageTree}
       nav={{
         title: (
-          <span className="font-serif text-xl text-fd-primary">
+          <span className="text-base font-semibold tracking-tight text-fd-foreground">
             Treeship
           </span>
         ),

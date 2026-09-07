@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { blogSource } from '@/lib/blog';
+import { BlogChrome } from './chrome';
 
 export default function BlogIndex() {
   const posts = blogSource.getPages().sort((a, b) => {
@@ -12,57 +13,57 @@ export default function BlogIndex() {
   const rest = posts.slice(1);
 
   return (
-    <main className="mx-auto max-w-3xl px-6 py-16">
-      <h1 className="mb-2 text-3xl font-semibold tracking-tight">Blog</h1>
-      <p className="mb-12 text-fd-muted-foreground">
-        Thinking about agent trust, portable verification, and cryptographic accountability in AI workflows.
-      </p>
+    <>
+      <BlogChrome crumb="Writing" />
+      <main className="mx-auto w-full max-w-[860px] px-7 pb-20 pt-14">
+        <p className="doc-kicker mb-3">Writing</p>
+        <h1 className="mb-4 text-[clamp(30px,4vw,42px)] font-[750] leading-[1.08] tracking-[-0.03em] text-zk-ink">
+          Blog
+        </h1>
+        <p className="doc-lede mb-10 max-w-[780px]">
+          Agent trust, portable verification, and cryptographic accountability in AI workflows.
+        </p>
 
-      {/* Featured / Latest */}
-      {featured && (
-        <Link
-          href={featured.url}
-          className="group mb-10 block rounded-xl border border-fd-border p-6 sm:p-8 transition-colors hover:border-fd-primary/40 hover:bg-fd-accent/50"
-        >
-          <span className="text-xs font-medium uppercase tracking-wider text-fd-primary">
-            Latest
-          </span>
-          <h2 className="mt-3 text-2xl font-semibold tracking-tight group-hover:text-fd-primary">
-            {featured.data.title}
-          </h2>
-          <p className="mt-3 text-sm leading-relaxed text-fd-muted-foreground">
-            {featured.data.description}
-          </p>
-          <time className="mt-4 block text-xs text-fd-muted-foreground font-mono">
-            {featured.data.date}
-          </time>
-        </Link>
-      )}
-
-      {/* Rest */}
-      <div className="flex flex-col gap-4">
-        {rest.map((post) => (
+        {featured && (
           <Link
-            key={post.url}
-            href={post.url}
-            className="group block rounded-lg border border-fd-border p-5 transition-colors hover:border-fd-primary/40 hover:bg-fd-accent/50"
+            href={featured.url}
+            className="group mb-8 block rounded-[14px] border border-zk-hairline bg-zk-surface p-6 no-underline transition-colors hover:border-zk-hairline-strong sm:p-8"
           >
-            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-1 sm:gap-6">
-              <div className="flex-1">
-                <h2 className="text-base font-medium group-hover:text-fd-primary">
-                  {post.data.title}
-                </h2>
-                <p className="mt-1.5 text-sm text-fd-muted-foreground line-clamp-2">
-                  {post.data.description}
-                </p>
-              </div>
-              <time className="shrink-0 text-xs text-fd-muted-foreground font-mono sm:mt-1">
-                {post.data.date}
-              </time>
-            </div>
+            <span className="doc-meta text-zk-accent">Latest · {featured.data.date}</span>
+            <h2 className="mt-3 text-2xl font-bold leading-tight tracking-[-0.02em] text-zk-ink">
+              {featured.data.title}
+            </h2>
+            <p className="mt-3 max-w-[780px] text-[15px] leading-relaxed text-zk-text-secondary">
+              {featured.data.description}
+            </p>
+            {featured.data.readTime && (
+              <span className="doc-meta mt-4 block">{featured.data.readTime}</span>
+            )}
           </Link>
-        ))}
-      </div>
-    </main>
+        )}
+
+        <div className="flex flex-col divide-y divide-zk-hairline rounded-[14px] border border-zk-hairline bg-zk-surface">
+          {rest.map((post) => (
+            <Link
+              key={post.url}
+              href={post.url}
+              className="group block p-5 no-underline transition-colors hover:bg-zk-accent-soft first:rounded-t-[14px] last:rounded-b-[14px]"
+            >
+              <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
+                <div className="flex-1">
+                  <h2 className="text-[17px] font-semibold leading-snug tracking-[-0.01em] text-zk-ink">
+                    {post.data.title}
+                  </h2>
+                  <p className="mt-1.5 line-clamp-2 text-[14px] leading-relaxed text-zk-text-secondary">
+                    {post.data.description}
+                  </p>
+                </div>
+                <time className="doc-meta shrink-0 sm:mt-1">{post.data.date}</time>
+              </div>
+            </Link>
+          ))}
+        </div>
+      </main>
+    </>
   );
 }
