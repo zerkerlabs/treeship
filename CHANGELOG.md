@@ -202,6 +202,23 @@ default this release exists to make.
 ## 0.26.0 (2026-09-01)
 
 ### Added
+- **Pure workflow-conformance reducer.** `treeship-core` now validates the
+  minimal `workflow.v1` graph and compares it with already-verified node
+  observations. It reports path deviations, missing terminals, actor/tool
+  authority deviations, bounded-loop breaches, and `checked | captured |
+  asserted` provenance as separate axes. Undeclared graph cycles and empty
+  evidence fail closed. Seven golden reports pin the contract. `workflow.v1`
+  is now a registered predicate whose nested graph runs the same full validator
+  before the generic `attest receipt` path signs it. Real checkpoint ordering
+  can be checked with `verify_workflow_pre_existence`: trusted signatures, both
+  inclusion proofs, leaf position, and consistency must all pass.
+  `treeship session start --workflow-ref art_...` now validates a locally signed
+  declaration before writing any run state and binds the artifact ID inside the
+  signed `session.start` root action. The manifest and composed session receipt
+  mirror the reference, while `verify_first_run_workflow_binding` independently
+  checks the trusted root signature, content-derived run ID, action type, and
+  exact declaration reference. Automatic checkpoint composition, external
+  workflow-authority trust, and CLI conformance verification remain follow-ups.
 
 - **`treeship workflow verify`: one fail-closed path from a signed declaration
   to a conformance report.** The three verification pieces -- declaration
@@ -271,6 +288,14 @@ remained on the broken 0.25.1 while crates.io and PyPI moved to 0.25.2. This
 release fixes the underlying cause and brings every registry back in line.
 
 ### Fixed
+- **Workflow conformance now fails closed at five trust boundaries.** Session
+  close re-verifies the signed root instead of signing a mutable manifest's
+  substituted workflow reference; pre-existence proofs require one checkpoint
+  signing identity rather than composing unrelated trusted logs; loop action
+  budgets count verified action artifacts instead of tool labels; every
+  undeclared observed node produces a deviation, including a one-node run; and
+  schema-required `allowed_tools` can no longer deserialize as an omitted
+  default.
 
 - **`@treeship/core-wasm` was rewritten by whatever `wasm-opt` the build
   machine happened to have.** `wasm-pack` runs `wasm-opt` on the package it
@@ -298,6 +323,14 @@ release fixes the underlying cause and brings every registry back in line.
 - `rust-toolchain.toml` pins `wasm32-unknown-unknown`. This did not cause the
   failure above, but it was the other unpinned input feeding the same
   artifact.
+
+### Documentation
+- **Workflow conformance now has an executable design contract.** Added the
+  missing `docs/specs/workflow-declarations.md` referenced by commitments,
+  rooms, vision, and the v0.11 changelog. Seven golden reports pin valid runs,
+  undeclared edges, missing terminals, loop-cap breaches, asserted edge
+  evidence, declaration pre-existence, and out-of-scope tools before broader
+  CLI wiring.
 
 ## 0.25.2 (2026-08-30)
 
@@ -405,6 +438,14 @@ loaded in Node at all, and npm does not allow republishing a version — a new
 release is the only way to fix it.**
 
 ### Fixed
+- **Cyclic agent-parent events no longer overflow the stack during session close.**
+  `AgentGraph` depth calculation recursively followed untrusted
+  `parent_agent_instance_id` links and only cached a node after visiting its
+  parent. A self-parent or `A -> B -> A` cycle therefore recursed until the
+  process crashed while composing the receipt. Depth calculation is now
+  iterative, malformed cycles are recorded in `invalid_parent_cycles`, and
+  cyclic nodes retain depth 0 instead of being presented with a fabricated
+  hierarchy.
 
 - **`@treeship/core-wasm` threw on import in Node.** `WebAssembly.Table.grow():
   failed to grow table by 4`, reproduced from a clean install on Node 22.20.0
@@ -536,74 +577,6 @@ release is the only way to fix it.**
   effect receipts, secrets and redaction, authority delta, wrapping real
   commands. The redaction page documents, with a measured table, which secret
   shapes the scrubber catches and which it misses.
-
-## Unreleased
-
-### Fixed
-- **Cyclic agent-parent events no longer overflow the stack during session close.**
-  `AgentGraph` depth calculation recursively followed untrusted
-  `parent_agent_instance_id` links and only cached a node after visiting its
-  parent. A self-parent or `A -> B -> A` cycle therefore recursed until the
-  process crashed while composing the receipt. Depth calculation is now
-  iterative, malformed cycles are recorded in `invalid_parent_cycles`, and
-  cyclic nodes retain depth 0 instead of being presented with a fabricated
-  hierarchy.
-- **Workflow conformance now fails closed at five trust boundaries.** Session
-  close re-verifies the signed root instead of signing a mutable manifest's
-  substituted workflow reference; pre-existence proofs require one checkpoint
-  signing identity rather than composing unrelated trusted logs; loop action
-  budgets count verified action artifacts instead of tool labels; every
-  undeclared observed node produces a deviation, including a one-node run; and
-  schema-required `allowed_tools` can no longer deserialize as an omitted
-  default.
-
-### Added
-- **Pure workflow-conformance reducer.** `treeship-core` now validates the
-  minimal `workflow.v1` graph and compares it with already-verified node
-  observations. It reports path deviations, missing terminals, actor/tool
-  authority deviations, bounded-loop breaches, and `checked | captured |
-  asserted` provenance as separate axes. Undeclared graph cycles and empty
-  evidence fail closed. Seven golden reports pin the contract. `workflow.v1`
-  is now a registered predicate whose nested graph runs the same full validator
-  before the generic `attest receipt` path signs it. Real checkpoint ordering
-  can be checked with `verify_workflow_pre_existence`: trusted signatures, both
-  inclusion proofs, leaf position, and consistency must all pass.
-  `treeship session start --workflow-ref art_...` now validates a locally signed
-  declaration before writing any run state and binds the artifact ID inside the
-  signed `session.start` root action. The manifest and composed session receipt
-  mirror the reference, while `verify_first_run_workflow_binding` independently
-  checks the trusted root signature, content-derived run ID, action type, and
-  exact declaration reference. Automatic checkpoint composition, external
-  workflow-authority trust, and CLI conformance verification remain follow-ups.
-- **`RoomInfo` on `SessionManifest`.** Optional `room` field (`room_id`,
-  `host_pubkey`, `invitation_authority`, `workflow_ref`, `checkpoint_cadence`,
-  `participants`) following the schema proposed in
-  `docs/specs/agent-invitations-rooms.md` Phase 2. Purely additive — absent on
-  ordinary sessions and on manifests written before this field existed. No CLI
-  surface yet (`treeship room create/status/participants` is the follow-up);
-  this lands the data model first so the wire format is settled.
-- **`treeship room create/status/participants`.** The CLI surface promised
-  above: `room create` is sugar over `session start` that also populates
-  `RoomInfo` (fresh `room_id`, host pubkey, `--invitation-authority
-  host-only|delegated|open`, `--delegate`, `--workflow-ref`,
-  `--checkpoint-every`); `room status` shows session status plus room fields
-  and errors clearly on a plain (non-room) session; `room participants` lists
-  the room's finalized (two-signature) joins by reading each participant
-  artifact. `treeship session invite/join/countersign` are unchanged except
-  that `countersign` now appends the finalized participant id to
-  `room.participants` when the active session is a room, which is the only
-  way `room participants` has real data to show. `invitation_authority`
-  remains informational-only in this PR — nothing gates any authority
-  decision on it yet. There is no `room close`: plain `treeship session
-  close` already works on a room since a room is just a session.
-
-### Documentation
-- **Workflow conformance now has an executable design contract.** Added the
-  missing `docs/specs/workflow-declarations.md` referenced by commitments,
-  rooms, vision, and the v0.11 changelog. Seven golden reports pin valid runs,
-  undeclared edges, missing terminals, loop-cap breaches, asserted edge
-  evidence, declaration pre-existence, and out-of-scope tools before broader
-  CLI wiring.
 
 ## 0.23.0 (2026-08-05)
 
