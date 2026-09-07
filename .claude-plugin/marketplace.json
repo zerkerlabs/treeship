@@ -18,6 +18,16 @@
         "url": "https://treeship.dev"
       },
       "source": "./integrations/claude-code-plugin"
+    },
+    {
+      "name": "treeship-commerce",
+      "description": "Add Treeship receipts to an anthropics/commerce-agents deployment: every tool call signed on all three runtimes, the merchant's approval as a signed single-use grant, and a receipt for exactly the cart that went to checkout.",
+      "version": "0.29.0",
+      "author": {
+        "name": "Zerker Labs",
+        "url": "https://treeship.dev"
+      },
+      "source": "./integrations/commerce-agents/plugin"
     }
   ]
 }

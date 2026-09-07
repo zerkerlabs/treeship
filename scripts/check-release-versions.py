@@ -516,6 +516,10 @@ def collect_sites() -> list[Site]:
             "integrations/openclaw-plugin/openclaw.plugin.json",
             "openclaw.plugin.json version",
         ),
+        (
+            "integrations/commerce-agents/plugin/.claude-plugin/plugin.json",
+            "treeship-commerce plugin.json version",
+        ),
     ]:
         sites.append(
             Site(rel, label, pkg_json_version(rel), lambda v, rel=rel: set_pkg_json_version(rel, v))
@@ -539,6 +543,16 @@ def collect_sites() -> list[Site]:
             "claude-plugin marketplace plugins[treeship].version",
             marketplace_plugin_version(".claude-plugin/marketplace.json", "treeship"),
             lambda v: set_marketplace_plugin_version(".claude-plugin/marketplace.json", "treeship", v),
+        )
+    )
+    sites.append(
+        Site(
+            ".claude-plugin/marketplace.json",
+            "claude-plugin marketplace plugins[treeship-commerce].version",
+            marketplace_plugin_version(".claude-plugin/marketplace.json", "treeship-commerce"),
+            lambda v: set_marketplace_plugin_version(
+                ".claude-plugin/marketplace.json", "treeship-commerce", v
+            ),
         )
     )
 
