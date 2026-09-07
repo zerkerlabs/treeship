@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.30.0 (2026-09-07)
+
+**Upgrade if you build on Anthropic's commerce-agents reference.** The
+customer gets a receipt for exactly the cart that went to checkout, with
+the host's order chained onto it; the `treeship-commerce` Claude Code
+plugin wires every seam with one command; and the sealed package's own
+receipt page now shows the approvals it embeds instead of "No approval
+gates recorded".
+
 ### Fixed
 
 - **The sealed package's preview page now shows the approvals it embeds.**
