@@ -11,6 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::statements::ApprovalStatement;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -213,7 +214,7 @@ pub fn build_package_with_approvals(
 
     // 5. preview.html stub
     if receipt.render.generate_preview {
-        let preview = render_preview_html(receipt);
+        let preview = render_preview_html_with_approvals(receipt, bundle);
         std::fs::write(pkg_dir.join(PREVIEW_FILE), preview.as_bytes())?;
         file_count += 1;
     }
@@ -1502,6 +1503,69 @@ fn fraunces_data_uri() -> String {
 /// Open it in any modern browser and it automatically verifies the receipt
 /// and shows pass/fail for each check.
 pub fn render_preview_html(receipt: &SessionReceipt) -> String {
+    render_preview_html_with_approvals(receipt, None)
+}
+
+/// What the preview shows under "Approval gates": every grant the package
+/// embeds under `approvals/grants` and every use under `approvals/uses`.
+///
+/// The preview used to read approvals only from the chained artifacts, so a
+/// session whose approvals were consumed (and therefore exported into the
+/// `approvals/` directory, where the verifier checks them) rendered "No
+/// approval gates recorded" while `package verify` printed `PASS
+/// replay-local-journal`. This is the same evidence the verifier reads,
+/// summarised for a reader. A grant envelope that does not parse is listed
+/// by id with `parsed: false` rather than dropped: the reader should see
+/// that evidence exists even when this page cannot describe it.
+pub fn preview_approvals_json(bundle: Option<&ApprovalsBundle>) -> serde_json::Value {
+    let Some(b) = bundle else {
+        return serde_json::Value::Null;
+    };
+    if b.grants.is_empty() && b.uses.is_empty() {
+        return serde_json::Value::Null;
+    }
+    let grants: Vec<serde_json::Value> = b
+        .grants
+        .iter()
+        .map(|(grant_id, bytes)| {
+            let parsed = crate::attestation::Envelope::from_json(bytes)
+                .ok()
+                .and_then(|env| env.unmarshal_statement::<ApprovalStatement>().ok());
+            match parsed {
+                Some(st) => serde_json::json!({
+                    "grant_id": grant_id,
+                    "parsed": true,
+                    "approver": st.approver,
+                    "description": st.description,
+                    "timestamp": st.timestamp,
+                    "expires_at": st.expires_at,
+                    "scope": st.scope.as_ref().map(|sc| serde_json::json!({
+                        "allowed_actors": sc.allowed_actors,
+                        "allowed_actions": sc.allowed_actions,
+                        "allowed_subjects": sc.allowed_subjects,
+                        "max_uses": sc.max_actions,
+                        "valid_until": sc.valid_until,
+                    })),
+                }),
+                None => serde_json::json!({ "grant_id": grant_id, "parsed": false }),
+            }
+        })
+        .collect();
+    let uses: Vec<serde_json::Value> = b
+        .uses
+        .iter()
+        .map(|u| serde_json::to_value(u).unwrap_or(serde_json::Value::Null))
+        .collect();
+    serde_json::json!({ "grants": grants, "uses": uses })
+}
+
+/// `render_preview_html`, plus the approval evidence the package embeds.
+pub fn render_preview_html_with_approvals(
+    receipt: &SessionReceipt,
+    bundle: Option<&ApprovalsBundle>,
+) -> String {
+    let approvals_json = preview_approvals_json(bundle).to_string();
+    let safe_approvals = approvals_json.replace('<', r"\u003c");
     let receipt_json = serde_json::to_string_pretty(receipt).unwrap_or_else(|_| "{}".to_string());
     // Defense-in-depth: escape </script sequences so a malicious receipt
     // field cannot break out of the JSON data block. The primary defense
@@ -1520,6 +1584,7 @@ pub fn render_preview_html(receipt: &SessionReceipt) -> String {
     // reason. The page title is set at runtime from the parsed JSON.
     PREVIEW_TEMPLATE
         .replacen("__RECEIPT_JSON__", &safe_json, 1)
+        .replacen("__APPROVALS_JSON__", &safe_approvals, 1)
         .replace("__FONT_FRAUNCES__", &fraunces_data_uri())
 }
 
@@ -1707,6 +1772,103 @@ mod tests {
         assert!(err.is_err());
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn preview_html_renders_approval_evidence_from_the_bundle() {
+        // The package embeds consumed approvals under approvals/ (that is what
+        // `package verify` checks as replay-local-journal). The preview must
+        // show them too: a reader saw "No approval gates recorded" on a
+        // session whose approval was minted, spent once, and verified.
+        use crate::attestation::sign::sign;
+        use crate::attestation::Ed25519Signer;
+        use crate::statements::ApprovalScope;
+        use crate::statements::TYPE_APPROVAL_USE;
+
+        let receipt = make_receipt();
+        assert_eq!(preview_approvals_json(None), serde_json::Value::Null);
+        assert_eq!(
+            preview_approvals_json(Some(&ApprovalsBundle::default())),
+            serde_json::Value::Null,
+            "an empty bundle is the same as none"
+        );
+
+        let signer = Ed25519Signer::generate("key_test_preview").unwrap();
+        let mut grant = ApprovalStatement::new("human://operator", "nonce-preview-0001");
+        grant.description = Some("apply change chg-0001: 3% clearance".into());
+        grant.scope = Some(ApprovalScope {
+            max_actions: Some(1),
+            valid_until: None,
+            allowed_actors: vec!["agent://merchant".into()],
+            allowed_actions: vec!["commerce.tool.apply_change.intent".into()],
+            allowed_subjects: vec!["change://chg-0001".into()],
+            extra: None,
+        });
+        let signed = sign("application/vnd.treeship.approval.v1+json", &grant, &signer).unwrap();
+        let grant_id = signed.artifact_id.to_string();
+        let grant_bytes = serde_json::to_vec(&signed.envelope).unwrap();
+
+        let use_record = ApprovalUse {
+            type_: TYPE_APPROVAL_USE.into(),
+            use_id: "use_preview_0001".into(),
+            grant_id: grant_id.clone(),
+            grant_digest: signed.digest.clone(),
+            nonce_digest: "sha256:00".into(),
+            actor: "agent://merchant".into(),
+            action: "commerce.tool.apply_change.intent".into(),
+            subject: "change://chg-0001".into(),
+            session_id: Some("ssn_pkg_test".into()),
+            action_artifact_id: Some("art_apply_intent".into()),
+            receipt_digest: None,
+            use_number: 1,
+            max_uses: Some(1),
+            idempotency_key: None,
+            created_at: "2026-09-07T10:45:49Z".into(),
+            expires_at: None,
+            previous_record_digest: String::new(),
+            record_digest: String::new(),
+            signature: None,
+            signature_alg: None,
+            signing_key_id: None,
+        };
+        let bundle = ApprovalsBundle {
+            grants: vec![
+                (grant_id.clone(), grant_bytes),
+                ("art_garbage".into(), b"not json".to_vec()),
+            ],
+            uses: vec![use_record],
+            ..Default::default()
+        };
+
+        let summary = preview_approvals_json(Some(&bundle));
+        let grants = summary["grants"].as_array().unwrap();
+        assert_eq!(grants.len(), 2);
+        assert_eq!(grants[0]["parsed"], true);
+        assert_eq!(grants[0]["approver"], "human://operator");
+        assert_eq!(grants[0]["scope"]["max_uses"], 1);
+        assert_eq!(
+            grants[0]["scope"]["allowed_subjects"][0],
+            "change://chg-0001"
+        );
+        // An unparsable grant is listed, not dropped, and says so.
+        assert_eq!(grants[1]["parsed"], false);
+        assert_eq!(grants[1]["grant_id"], "art_garbage");
+        let uses = summary["uses"].as_array().unwrap();
+        assert_eq!(uses[0]["use_number"], 1);
+        assert_eq!(uses[0]["action_artifact_id"], "art_apply_intent");
+
+        let html = render_preview_html_with_approvals(&receipt, Some(&bundle));
+        assert!(html.contains("id=\"approvals-data\""));
+        assert!(html.contains("\"approver\":\"human://operator\""));
+        assert!(html.contains("\"subject\":\"change://chg-0001\""));
+        assert!(
+            !html.contains("__APPROVALS_JSON__"),
+            "placeholder must be substituted"
+        );
+        // Without a bundle the data block is a JSON null, never an empty
+        // string that would throw in JSON.parse and hide the whole page.
+        let plain = render_preview_html(&receipt);
+        assert!(plain.contains("type=\"application/json\">null</script>"));
     }
 
     #[test]
