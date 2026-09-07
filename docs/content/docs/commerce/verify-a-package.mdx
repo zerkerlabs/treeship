@@ -60,7 +60,7 @@ What each line establishes:
 | `receipt.json`, `type` | The file is a well-formed session receipt of the expected type. | Anything about its truth. |
 | `determinism` | The receipt re-serializes to the same bytes, so a digest of it is meaningful. | It is explicitly not a signature check. |
 | `receipt_body_binding` (always `WARN` on an unpublished package) | Nothing. It is a reminder: the headline, the narrative, the timeline summaries and the side-effect lists are the producer's prose and are **not** under any signature. | Do not quote the narrative as evidence. Quote artifacts. |
-| `merkle_root` | The root written in the receipt is the root of the tree over exactly the artifact digests listed. | That those digests belong to receipts you have seen. |
+| `merkle_root` | The root written in the receipt is the root of the tree over exactly the artifact ids listed. Ids are content-addressed, so an id names one exact set of signed bytes. | That those bytes are ones you have seen. The `digest` column beside each id is informational and is not itself recomputed by this step; the id is what the tree binds. |
 | `inclusion:<id>` | That artifact's digest was a leaf of the tree when the session was sealed. Nothing was added or removed since. | What the artifact says. |
 | `leaf_count`, `timeline_order` | The count and the ordering are internally consistent. | Wall-clock time. The timestamps are the signer's own clock. |
 

@@ -127,10 +127,14 @@ async def test_a_grant_is_spendable_once(ship: Ship, merchant):
 
     first = await executor.execute("apply_change", {"change_id": change_id})
     assert not first.refused, first.result_text
+    assert executor.treeship_last_approval == "proven"
     # The host would normally re-approve; here the same grant is offered twice
     # on purpose, which is exactly the replay the journal has to refuse.
     approvals._grants[change_id] = grant
     await executor.execute("apply_change", {"change_id": change_id})
+    # The verdict a host prints next to the tool's outcome: the backend may
+    # say "already applied", the receipt says the approval was not proven.
+    assert executor.treeship_last_approval == "unproven"
 
     receipts: TreeshipReceipts = executor.treeship_receipts
     intents = [
