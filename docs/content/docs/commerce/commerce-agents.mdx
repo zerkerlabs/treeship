@@ -89,6 +89,15 @@ curl -fsSL https://treeship.dev/install | sh     # the CLI does the signing
 treeship init
 ```
 
+Or let Claude Code do the wiring. The `treeship-commerce` plugin mirrors the reference's own `commerce-builder`: one command that reads your project, wraps the executor on your runtime, signs the merchant approval surface or the shopping checkout hand-off, and records what it decided in your `CLAUDE.md` decision record.
+
+```bash
+claude plugin marketplace add zerkerlabs/treeship
+claude plugin install treeship-commerce@treeship
+# then, in your project:
+/add-treeship-receipts merchant      # or shopping, or both
+```
+
 ## Wire it
 
 <Steps>

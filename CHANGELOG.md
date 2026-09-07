@@ -18,6 +18,16 @@
   own session tag. Seven tests; the shopping demo ends with the hand-off and
   a chained mock order.
 
+- **`treeship-commerce` Claude Code plugin.** `claude plugin install
+  treeship-commerce@treeship` from the Treeship marketplace, mirroring the
+  reference's own `commerce-builder`: `/add-treeship-receipts [shopping |
+  merchant | both]` reads the project, wraps the executor on its runtime,
+  signs the merchant approval surface or the shopping checkout hand-off,
+  adds the verify step to CI, and writes to the project's decision record;
+  the `treeship-commerce-receipts` skill says what each receipt carries and
+  never carries, the approval scope and replay rule, and per-runtime
+  differences. The plugin runs no code of its own.
+
 ## 0.29.0 (2026-09-07)
 
 **Upgrade if you run the merchant side of Anthropic's commerce-agents

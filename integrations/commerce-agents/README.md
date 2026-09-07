@@ -39,6 +39,17 @@ pip install treeship-sdk treeship-commerce
 curl -fsSL https://treeship.dev/install | sh && treeship init
 ```
 
+## Or let Claude Code wire it
+
+```bash
+claude plugin marketplace add zerkerlabs/treeship
+claude plugin install treeship-commerce@treeship
+/add-treeship-receipts merchant      # or shopping, or both
+```
+
+The plugin ([`plugin/`](plugin/)) mirrors the reference's `commerce-builder`: one command that reads
+your project and wires the seams below on your runtime, and one skill on what the receipts carry.
+
 ## Use
 
 ```python
