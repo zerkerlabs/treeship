@@ -1,0 +1,72 @@
+---
+title: "The operator's yes, signed once"
+description: "In Anthropic's commerce-agents reference, a merchant change applies only after a human approves it. treeship-commerce 0.29.0 makes that click a signed, single-use grant the apply receipt spends exactly once, on all three runtimes, with the console loop unchanged."
+date: 2026-09-07
+tags: ["commerce", "integrations", "release"]
+readTime: "5 min read"
+---
+
+# The operator's yes, signed once
+
+The merchant half of Anthropic's [commerce-agents](https://github.com/anthropics/commerce-agents) reference has one tool that touches a merchant's system of record: `apply_change`. Everything else reads or stages. A price update, a restock, a promotion: the agent stages it, a human sees the card and clicks approve, and only then does the agent apply. The gate is enforced in code. `check_apply_change` refuses unless the change was staged in this session, clears the configured guardrails, and, when the deployment requires host approval, appears in a set the host fills from its y/N.
+
+That set is the whole approval record, and it is a variable inside the running process.
+
+It is correct while the process lives. The console adds the id on yes, asks the agent to apply, and removes the id when the turn returns. What it cannot do is answer, later, the two questions a merchant is actually asked. *Did a person approve change 42, and when?* The set is gone. *Was that approval used more than once?* The set cannot say, because adding an id is idempotent and a second apply inside the same turn passes the same check.
+
+## What 0.29.0 does
+
+`treeship-commerce` 0.29.0 makes the click a signed Approval Grant. It is scoped to one actor, one action, and one change, with `max_uses=1`. When the apply runs, its intent receipt is signed with the grant's nonce, and the CLI reserves a use in the local Approval Use Journal before it will sign anything. A second apply of the same change finds the grant spent and gets a receipt that says so. A grant minted for one change cannot be spent on another: the action names `change://<change_id>` as its subject, the grant's scope names the same URI, and the subject comes from the call's own arguments, never from the grant.
+
+That last sentence is there because the first version got it wrong. It took the subject from the grant, so the scope check compared the grant with itself and passed for every change. The test that offers change 41's grant for change 42 failed, and that is the version that shipped.
+
+![The merchant demo: an apply held unapproved, applied once under a signed grant, refused on replay, then the sealed session verifying offline with the journal check](/blog/merchant-approvals.gif)
+
+The console loop in the reference's `main.py` is unchanged. It calls `toolset.host_approve(change_id)` on yes and `toolset.host_clear(change_id)` when the apply turn returns, and `approving(toolset, approvals)` wraps those two methods in place:
+
+```python
+from treeship_commerce import MerchantApprovals, approved, approving, receipted
+
+approvals = MerchantApprovals(ts, approver="human://operator")
+toolset = approving(
+    MerchantToolset(backend=backend, executor_class=approved(
+        receipted(MerchantToolExecutor, recorder=make_recorder), approvals)),
+    approvals,
+)
+```
+
+The reference's mark is set first, so the gate behaves exactly as before even when a grant cannot be signed. The grant is the evidence; the mark is what lets the apply run. Both, because they answer different questions.
+
+## What the receipt says
+
+The apply's intent receipt carries `approval: "proven"`, the grant's artifact id, and the change id. When a grant is missing, spent, expired, or scoped to another change, the receipt is still written and says `approval: "unproven"` with the CLI's reason, `would exceed max_uses (1/1)` or `scope refused this action: subject ...`. The tool still runs into the reference's own `check_apply_change`, which is what holds it. Recording never breaks the agent path.
+
+A deployment that wants the receipt to be the authority passes `enforce=True`. Then a missing or spent grant holds the call, in the reference's own held-outcome shape, and the hold happens after the intent receipt, so a refusal is itself signed with the gate's name. Never a call that left no trace.
+
+`treeship package verify` on the sealed session reports the journal as a check of its own:
+
+```text
+PASS replay-local-journal -- local Approval Use Journal passed, use 1/1
+24 passed, 0 failed, 1 warnings
+✓ package verified
+```
+
+## Per runtime
+
+The three runtimes differ in where the human's yes enters the process, so they differ in what can be signed. On the Agent SDK, the toolset is the approval surface and `approving()` covers it. On the Messages API, the orchestrator leaves the mark to the host, and the host calls `approvals.grant()` beside it. On Managed Agents, the platform's `always_ask` prompt is the approval surface, and that click happens outside the process. Nothing here can sign it. An apply there is receipted with no approval claim rather than an invented one, and `enforce=True` on that runtime would hold every apply, which is the honest reading of "no signed approval".
+
+All three are exercised in the test suite through each runtime's own `executor_class` seam, the way a deployment wires them.
+
+## One more thing the tests found
+
+The reference's MCP server hands the executor parsed pydantic models as arguments, not the plain dicts the other runtimes pass. The argument digest called `json.dumps` on them outside the guarded path and the stage call died inside the recorder. That broke the one promise the package makes. The digest is now total over any argument type, equal to the digest of the same arguments as plain dicts, and nothing raised while describing a call can reach the tool. It is in the changelog because a tester on that runtime would have hit it first.
+
+## Try it
+
+```bash
+pip install treeship-sdk treeship-commerce      # 0.29.0
+python -m treeship_commerce.demo_merchant       # from a clone of commerce-agents
+python -m treeship_commerce.demo_merchant --enforce
+```
+
+Docs: [Claude Commerce Agents](/commerce/commerce-agents). Source: [`integrations/commerce-agents`](https://github.com/zerkerlabs/treeship/tree/main/integrations/commerce-agents). Twenty-eight tests on a real ship, run in CI against the reviewed commit of the reference. Background: [You can't have agentic commerce without tamper-proof receipts](/blog/agentic-commerce-tamper-proof-receipts).

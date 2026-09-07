@@ -8,6 +8,9 @@ readTime: "6 min read"
 
 # You can't have agentic commerce without tamper-proof receipts
 
+> **Update, 7 September 2026.** The "next piece" below shipped in 0.29.0: the merchant's approval is now a signed, single-use grant, and the apply receipt spends it once. The details, and the replay refusal, are in [The operator's yes, signed once](/blog/merchant-approvals-signed-once); the wiring is in the [guide's approvals section](/commerce/commerce-agents#approvals-the-operators-yes-spendable-once). The test count below is as of publication; it is twenty-eight now.
+
+
 Last week Anthropic published [commerce-agents](https://github.com/anthropics/commerce-agents), a reference blueprint for a shopping agent and a merchant agent on Claude. It is a careful piece of work. Third-party text is fenced before the model reads it. A cart write accepts only product ids a catalog read returned in that session. Merchant writes are staged and apply only through a host-approval mark. Checkout renders the cart and hands off a URL the model never sees. Nothing in the repo charges a card.
 
 It is also honest about where it stops. Its safety page has a section called *What a deployment owns*: authentication, credentials, business rules, payment, the approval surface, and log hygiene. The gate checks that your code set the approval mark; who set it, and whether anyone can prove it later, is yours.
