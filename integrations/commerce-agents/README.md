@@ -101,7 +101,7 @@ MerchantToolExecutor), approvals)` signs the apply's intent receipt with the gra
 so the CLI reserves a use in the Approval Use Journal before signing. A second apply finds
 the grant spent; a grant for another change is refused by scope. The receipt says
 `approval: "proven"` or `"unproven"` with the reason. Recording only, unless
-`enforce=True`. Needs a `treeship-sdk` whose `attest_action` takes `subject`.
+`enforce=True`. Needs `treeship-sdk` 0.29.0 or later (`attest_action` takes `subject`).
 
 On the Agent SDK runtime, `approving(toolset, approvals)` wraps `MerchantToolset.host_approve`
 and `host_clear` in place, so the reference console's y/N loop mints and forgets grants with

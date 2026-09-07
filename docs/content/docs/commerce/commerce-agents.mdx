@@ -186,7 +186,7 @@ treeship package verify .treeship/sessions/ssn_a52cd0de94f479d3.treeship
 
 `--format json` gives a CI-consumable document: every check by artifact id, `chain_linkage_ok`, and the outcome. A published session renders at `treeship.dev/receipt/<id>` with the timeline and the same verifier running in the browser (`@treeship/verify`, WebAssembly); the hub stores bytes and serves proofs, it never issues a verdict.
 
-The demo's output, from a clean ship with the released 0.28.0 CLI and the SDK from PyPI (the `1 warnings` above is the package's always-on note that the narrative fields are not signature-bound; the artifacts and Merkle root are):
+The demo's output, from a clean ship with the released 0.29.0 CLI and the SDK from PyPI (the `1 warnings` above is the package's always-on note that the narrative fields are not signature-bound; the artifacts and Merkle root are):
 
 ```text
 tool calls        intent-id result-id
@@ -257,7 +257,7 @@ The three runtimes differ in *where* the human's yes enters the process, so they
 
 All three are exercised in the test suite through each runtime's own `executor_class` seam, the way a deployment wires them.
 
-Requires a `treeship-sdk` whose `attest_action` takes `subject` (added after 0.28.0). On an older SDK `grant()` warns once and mints nothing, and the apply stays gated exactly as the unwrapped reference gates it.
+Requires `treeship-sdk` 0.29.0 or later, whose `attest_action` takes `subject`; `treeship-commerce` 0.29.0 declares that floor. On an older SDK `grant()` warns once and mints nothing, and the apply stays gated exactly as the unwrapped reference gates it.
 
 The merchant demo runs all of it with no model and no API key: a staged price change held unapproved, applied once under a signed grant, and refused on replay while the reference's own mark is still set.
 

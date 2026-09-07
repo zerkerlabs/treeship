@@ -9,7 +9,7 @@ description = "Signed, offline-verifiable receipts for every tool call in anthro
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.11"
-dependencies = ["treeship-sdk>=0.27.0"]
+dependencies = ["treeship-sdk>=0.29.0"]
 # The commerce-agents packages (commerce-common, shopping-agent-core, ...) are
 # deliberately unregistered on PyPI; install them from a clone first
 # (`pip install -r requirements.txt` in anthropics/commerce-agents). This

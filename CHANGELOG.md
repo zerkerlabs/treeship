@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.29.0 (2026-09-07)
+
+**Upgrade if you run the merchant side of Anthropic's commerce-agents
+reference.** The operator's approval becomes a signed, scoped, single-use
+grant that the apply's receipt spends exactly once, on all three runtimes,
+with the reference console's loop unchanged. The Python SDK gains
+`attest_action(subject=)`, which scoped approvals need; `treeship-commerce`
+now requires `treeship-sdk>=0.29.0`.
+
 ### Added
 
 - **`treeship-commerce`: signed single-use operator approvals on the merchant
