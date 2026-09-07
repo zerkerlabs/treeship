@@ -47,7 +47,7 @@
   section: core
   status: beta
   cli:
-    - treeship attest receipt
+    - treeship attest reason-authorization
   packages:
     - treeship-core
     - treeship-cli
@@ -55,7 +55,8 @@
     - docs/content/docs/integrations/zerker-reason.mdx
   tests:
     - packages/core/src/predicates/mod.rs
-  notes: "Registers reason.authorization.v1 as a typed receipt payload for complete Zerker Reason action-authorization certificates. Treeship verifies schema, signature, and chain; semantic replay remains a separate reason verify-authorization step. The generic receipt command does not invoke Reason automatically."
+    - packages/cli/tests/reason_authorization_cli.rs
+  notes: "Reads one bounded authorization bundle, passes those exact bytes to the independent Reason CLI, requires the exact verified+authorized v1 result, then signs a receipt containing the certificate and SHA-256 commitment to the verified bundle bytes. The generic receipt path refuses this dedicated kind."
 
 - id: action-v2-emission
   name: action/v2 receipt emission (CLI)

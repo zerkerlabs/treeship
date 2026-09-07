@@ -35,6 +35,10 @@ pub(crate) fn close_only_kind_owner(kind: &str) -> Option<&'static str> {
         // session.v1 records carry a self-declared `attestation_class` that
         // `session close` derives from consumed approvals / tool runtimes.
         "session.v1" => Some("treeship session close"),
+        // A reason.authorization.v1 receipt is evidence that the dedicated
+        // adapter ran Reason over the exact committed bundle bytes. Allowing
+        // generic hand-signing under the same kind would create a bypass.
+        "reason.authorization.v1" => Some("treeship attest reason-authorization"),
         _ => None,
     }
 }
@@ -1166,6 +1170,18 @@ pub struct ReceiptArgs {
 }
 
 pub fn receipt(args: ReceiptArgs, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
+    // Dedicated kinds must fail before opening keys or reading caller-selected
+    // payload files. This closes the generic hand-signing bypass without any
+    // signing or storage side effect.
+    if let Some(owner) = close_only_kind_owner(&args.kind) {
+        return Err(format!(
+            "kind '{}' is minted only by `{owner}` from verified sealed evidence; \
+             it cannot be hand-signed via `attest receipt`.",
+            args.kind
+        )
+        .into());
+    }
+
     let ctx = ctx::open(args.config.as_deref())?;
 
     let payload_text = match (&args.payload, &args.payload_file) {
@@ -1184,25 +1200,6 @@ pub fn receipt(args: ReceiptArgs, printer: &Printer) -> Result<(), Box<dyn std::
         .map(serde_json::from_str)
         .transpose()
         .map_err(|e| format!("receipt payload is not valid JSON: {e}"))?;
-
-    // AUD-06: some receipt kinds are minted ONLY by a command that derives
-    // every field from sealed session evidence (e.g. `session close` computes
-    // `attestation_class` from consumed approvals / tool runtimes). Letting a
-    // caller hand-sign them through the generic attest path is a trust-ladder
-    // laundering vector: an attacker mints `session.v1` with
-    // `attestation_class:"countersigned"` and an inflated `action_count`, no
-    // countersignature or runtime evidence, and it aggregates into the highest
-    // trust classes. Refuse those kinds here.
-    if let Some(owner) = close_only_kind_owner(&args.kind) {
-        return Err(format!(
-            "kind '{}' is minted only by `{owner}` from sealed session evidence; \
-             it cannot be hand-signed via `attest receipt`. This prevents forging a \
-             work-history record with a self-declared attestation_class. \
-             See docs/specs/work-history.md.",
-            args.kind
-        )
-        .into());
-    }
 
     // Typed-predicate validation: if `kind` is a registered predicate, the
     // payload must conform to its schema before we sign. Unregistered kinds
@@ -2173,7 +2170,7 @@ fn backfill_action_artifact_id(
 }
 
 /// Write the artifact_id to {storage_dir}/.last for auto-chaining.
-fn write_last(storage_dir: &str, artifact_id: &str) {
+pub(crate) fn write_last(storage_dir: &str, artifact_id: &str) {
     let last_path = std::path::Path::new(storage_dir).join(".last");
     let _ = std::fs::write(&last_path, artifact_id);
     #[cfg(unix)]
@@ -2195,6 +2192,14 @@ mod aud06_tests {
         assert_eq!(
             close_only_kind_owner("session.v1"),
             Some("treeship session close")
+        );
+    }
+
+    #[test]
+    fn reason_authorization_is_owned_by_the_verified_adapter() {
+        assert_eq!(
+            close_only_kind_owner("reason.authorization.v1"),
+            Some("treeship attest reason-authorization")
         );
     }
 

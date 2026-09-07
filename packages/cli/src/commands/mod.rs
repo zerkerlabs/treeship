@@ -35,6 +35,7 @@ pub mod profile;
 pub mod prove;
 pub mod publish;
 pub mod quickstart;
+pub mod reason_authorization;
 pub mod receipt;
 pub mod resolve;
 pub mod revocation_source;
