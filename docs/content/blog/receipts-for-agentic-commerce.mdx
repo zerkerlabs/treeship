@@ -1,0 +1,173 @@
+---
+title: "Receipts for agentic commerce: what the blueprint enforces, where the networks stop, and what a receipt adds"
+description: "Anthropic's Claude Commerce Agents blueprint tells an agent what it may do in a store. Visa, Mastercard and Google are deciding how an agent may pay. Nobody in that stack keeps a record a stranger can check. Checked against a fresh clone."
+date: 2026-09-07
+tags: ["commerce", "integrations", "trust-model"]
+readTime: "10 min read"
+---
+
+# Receipts for agentic commerce
+
+Anthropic's Claude Commerce Agents blueprint tells an AI agent what it may do in a store. Visa, Mastercard and Google are deciding how an agent may pay. Nobody in that stack keeps a record a stranger can check. This is what each layer covers, where each one stops, and what a signed receipt adds.
+
+Everything about the blueprint below was checked against a fresh clone of [anthropics/commerce-agents](https://github.com/anthropics/commerce-agents) at commit `fd4d592` (31 August 2026), the only commit in the repository. Sources are at the end.
+
+---
+
+## What Anthropic shipped
+
+On 2 September 2026 Anthropic published the repository under Apache-2.0: a reference blueprint, not a product, and it says so in its own README, "a reference implementation; it is not maintained and does not accept contributions." It contains two agents.
+
+- **A shopping agent** a business embeds for customers. It searches a catalog, compares products, builds a cart, answers order and policy questions, and remembers what a customer tells it. Five flows, twenty tools under the default config.
+- **A merchant agent** the staff use for the back office. It explains performance, maintains listings, acts on inventory and order alerts, prices and promotes, and drafts campaigns. Five flows, twenty-two tools. Every write is staged until a person approves it.
+
+Each agent is defined once and runs on three of Anthropic's runtimes: the Messages API, the Claude Agent SDK, and Managed Agents. Four fictional verticals (retail, travel, telecom, ticketing) ship as runnable examples with eight web apps between them, plus a Claude Code plugin that scaffolds an agent against your own systems. The test suite collects 1,105 tests.
+
+| What the blueprint is | What it is not |
+|---|---|
+| Prompts, skills, tool contracts, and gates for two agents, written once and run on three runtimes | A hosted service. You run it, on your infrastructure, with your API key |
+| Guardrails enforced in code: fencing, provenance, caps, staging, host approval | A payment protocol, a product catalog, or an advertising layer. The launch coverage is explicit that none is included |
+| Interfaces your systems implement: `StorefrontBackend` (14 methods), `MerchantBackend` (18 methods) | An integration with any payment network. The repository never names Visa, Mastercard, Stripe or any card rail |
+| Four verticals, eight web apps, a plugin, 1,105 tests | Authentication, rate limits, fraud rules, or a record of what happened. The safety page lists these as "what a deployment owns" |
+
+**About Visa and Mastercard.** Press coverage paired the launch with both networks. Read closely, the relationship is distribution: "Accenture, Mastercard and Visa are working with Anthropic to bring the blueprint to their clients and merchant networks." There is no technical integration in the code. Shopify and Priceline are named as merchants already running customer-facing agents on Claude. The "carts 35% larger, 60% more likely to complete" figures are Anthropic's own reported numbers, not an independent benchmark.
+
+---
+
+## What the blueprint enforces, in plain words
+
+The safety page is the most careful part of the repository. Every rule below is enforced inside the tool call, so it holds on all three runtimes.
+
+- **The model only reads fenced text.** Product descriptions, reviews, and any third-party content are sanitized and wrapped before the model sees them. A listing that says "ignore your instructions" is just text.
+- **The cart accepts only what a search returned.** A product id the model invents is refused. The refusal is returned as a normal result marked `blocked` with the gate's name.
+- **Nothing places an order or charges a card.** The storefront interface has no such method. Checkout renders the cart and hands the customer a payment link the model never sees.
+- **Merchant writes are staged, then approved by a person.** Price moves, restocks, and campaigns are staged changes. `apply_change` succeeds only for an id the host marked approved. Guardrails run at staging and again at apply.
+- **Memory is filtered.** Facts about a customer are capped, categorized, and refused if they look like identifiers.
+
+---
+
+## Where the blueprint ends
+
+The same page lists what it leaves to you: authentication, credentials, rate limits, fraud and business rules, payment, memory as personal data, log hygiene, the approval surface, and the guardrail values. Three of those matter here.
+
+**The approval is a mark your code sets.** The gate checks membership in a set called `approved_change_ids`. The example portal adds the id when a person clicks approve and removes it when the apply turn returns. The safety page says it directly: "The gate checks only that your code set the mark." When a change is applied, the reference stamps `applied_by` and `applied_at` on the change record, so your own database does keep a note of who applied what. That note is an ordinary database field. It can be edited, it proves nothing to anyone outside the company, and nothing stops the same approval from being used twice inside the same turn.
+
+**The checkout produces a card, not a record.** When the model calls `checkout`, the presentation layer reads the cart and asks your backend where that cart is paid for. The answer is a hosted URL on a card. No artifact says "this exact cart, these lines, this total, went to payment," and nothing ties the order you later place back to the cart the agent built.
+
+**Logging is one line per model call.** Each model call logs one `INFO` line: round, model, stop reason, token usage, time, and a twelve-character digest of the session id. Tool calls and gate decisions are not logged by default. This is deliberate and good hygiene, since the session id is also the request credential. It also means the record of what the agent did is whatever your host chooses to write down, in a form only your host can vouch for.
+
+---
+
+## Where the payment layer ends
+
+The card networks and the platform companies are building the other half of the stack: how an agent proves it is allowed to pay. Four efforts matter in September 2026.
+
+| Effort | What it signs | Who verifies | Where it stops | Status |
+|---|---|---|---|---|
+| Visa Trusted Agent Protocol | The agent's identity and stated intent on each HTTP request to the merchant, with signatures that are merchant- and purpose-specific and time-bound | The merchant, by fetching Visa's keys | Message authentication at the storefront edge. Not the agent's reasoning, not merchant-side operations, not non-payment actions | In development |
+| Mastercard Agent Pay | Agentic Tokens bound to one agent, one merchant scope, one spend policy; Verifiable Intent records the user's request as a signed Intent Artifact that each transaction references | The issuer, on Mastercard infrastructure | The payment leg. The intent artifact lives on the network and is checked against the transaction, not against the agent's earlier steps | Verifiable Intent in pilot since February 2026 |
+| Google AP2 | Intent, Cart, and Payment Mandates the user signs for the agent | Merchants and payment providers in the AP2 network | Authority to pay for a cart. Nothing about what the agent did to build it, nothing on the merchant's side of the counter | Open standard, 60+ partners |
+| OpenAI + Stripe ACP | A checkout API and payment delegation between an agent platform and a merchant | The merchant's checkout | Checkout and order lifecycle. ChatGPT's Instant Checkout was retired in March 2026; the protocol continues | Spec dated 2026-04-17 |
+
+We wrote about Mastercard's design in [an earlier post](/blog/verifiable-intent-treeship-agent-attestation). These are real and they are valuable. They answer "is this agent allowed to spend this money on this merchant," and the networks are the right party to answer it. Notice the shape they share: every one of them signs the moment of payment, stores the proof on the network's or the platform's own infrastructure, and says nothing about the merchant's back office, the refused cart add, or the price change an operator approved on a Tuesday afternoon.
+
+---
+
+## Logs are not receipts
+
+**A log** is written by the party that ran the agent, in its own store. It is editable, deletable, and silently skippable. It records successes by default; a refused call may leave no line at all. It proves something only to people who already trust the server.
+
+**A receipt** is signed by the deployment's own key at the moment of the action. Any edit after signing breaks the signature, and every receipt names its parent, so a deleted one leaves a gap. A refusal is a signed statement, not an absence. It is verifiable on any machine, offline, without asking the store or a vendor.
+
+The blueprint has rules. The networks have signed payment authority. Neither has a receipt for what the agent actually did between "find me a tent" and the payment link, or for what the merchant's agent changed and who allowed it. That is the gap, and it is the whole of it.
+
+---
+
+## What Treeship adds
+
+[treeship-commerce](/commerce/commerce-agents) is a Python package that plugs into the blueprint at three places, without changing a line of the reference. It records; the reference's gates keep deciding.
+
+| Seam | Where in the blueprint | What gets a signed receipt |
+|---|---|---|
+| Every tool call | The one method all three runtimes route through, `BaseToolExecutor.execute` | An intent receipt before the call (tool, digest of the arguments, session tag) and a result receipt after (`ok`, or `blocked` with the gate's name, or `error`; digest of the result; timing). Refusals included. |
+| The merchant's approval | The host's y/N, the moment it sets the reference's approval mark | A grant scoped to one operator, one action, one change, usable once. The apply is signed with the grant; a second apply of the same change is refused before anything is signed. A grant for change 41 cannot be spent on change 42. |
+| The shopping checkout | `backend.checkout_handoff(session, cart)`, the one moment "this cart" and "this checkout" meet | A digest of the cart's lines, the item count, subtotal and currency, and a digest of the payment URL. The host then chains its order onto it, with the order reference digested. |
+
+From the merchant demo, run on a clean machine with no model and no API key. Every id is real.
+
+```text
+# the same change, applied three times
+  apply (not yet approved)   blocked:approval       art_75dc2ed0…  art_eb5028ba…
+  operator approves          grant signed           art_205dbb64…
+  apply (approved)           ok                     art_e94e7f87…  art_24edaa84…
+  apply again (replay)       blocked:approval       art_6085c563…  art_87d1f2fa…
+
+# the sealed session, verified offline
+  PASS replay-local-journal -- local Approval Use Journal passed, use 1/1
+  24 passed, 0 failed, 1 warnings
+✓ package verified
+```
+
+![The sealed session's own receipt page: verdict, timeline, the approval gate showing the operator's grant spent 1/1, the trust chain, and seventeen client-side checks passing](/blog/receipt-walkthrough.gif)
+
+**What a receipt never carries.** The blueprint is strict about what reaches the model and the logs, and the receipts keep that discipline. Not the arguments, only their digest. Not the result text, which is fenced third-party content. Not the session id, only the same twelve-character tag the reference's own logs use. Not the payment URL, not the order reference, not the cart's lines. A holder of the original can recompute every digest; a holder of the receipt learns nothing from one.
+
+**Where Treeship ends.** A receipt proves that this deployment's key signed, at that time, that this call was about to run with arguments of this digest, and what the gate decided. It proves a named person's approval was minted for change 42 and spent once. It proves a cart of this digest was handed to checkout and an order chained from it. It proves nobody edited any of it since. It does not prove the catalog was truthful, that the price was right, that the tool's answer was correct, or that money moved. Payment stays with the host and the networks. Treeship authenticates statements. It does not adjudicate commerce.
+
+---
+
+## Who signs what
+
+The same question from the reader's side: after a purchase, who holds signed evidence of each step?
+
+| Step | Blueprint | Visa / Mastercard / AP2 | Treeship |
+|---|---|---|---|
+| The agent searched, compared, and was refused an invented product | No record by default | Out of scope | Signed, refusal included |
+| Exactly this cart went to checkout | A card on screen | AP2 cart mandate, held in the network | Cart digest, offline-verifiable |
+| The agent was allowed to pay this merchant this amount | Not the blueprint's job | Yes, this is their job | Not Treeship's job |
+| Money moved | No | Yes | No |
+| The order the store placed matches the cart the agent built | No link | Intent checked against the transaction, on the network | Order chained to the cart receipt |
+| A named person approved this merchant change, once | A database field | Out of scope | Scoped single-use grant, journal-checked |
+| Anyone can check all of the above without trusting the store | No | The network is trusted | Yes, offline |
+
+---
+
+## Why this is the important piece
+
+Three reasons, none of them about us.
+
+1. **Disputes will be about the steps, not the swipe.** The networks can prove the agent was allowed to pay. The first wave of agentic commerce disputes will be "I never asked for that item," "the agent changed my order," "who lowered that price by 40%." Those live in the agent's actions and the merchant's back office, exactly where nobody is signing anything.
+2. **Merchants now have agents writing to their systems of record.** The merchant agent is the less discussed half of the blueprint and the more consequential one. A staged price change applied by an agent under a human's click needs evidence that survives the click: who, what, when, once. A database column is not evidence.
+3. **Trust between parties needs proof that leaves the building.** A marketplace seller, an auditor, a regulator, a customer in a chargeback: none of them can read your logs, and none of them should have to trust that you kept them honestly. A receipt they can verify on their own laptop is a different kind of object.
+
+The blueprint's authors drew the line themselves: the gates are theirs, the record is yours. Treeship is that record, and it is built to be worth something to the people on the other side of the line.
+
+---
+
+## Try it in five minutes
+
+```bash
+# in a clone of anthropics/commerce-agents
+pip install -r requirements.txt
+pip install treeship-sdk treeship-commerce          # 0.30.0
+curl -fsSL https://treeship.dev/install | sh && treeship init
+python -m treeship_commerce.demo                    # shopping: the gate, the hand-off, the order
+python -m treeship_commerce.demo_merchant           # merchant: held, approved once, refused on replay
+
+# or let Claude Code wire it into your own deployment
+claude plugin marketplace add zerkerlabs/treeship
+claude plugin install treeship-commerce@treeship
+/add-treeship-receipts merchant
+```
+
+Docs: [Claude Commerce Agents](/commerce/commerce-agents). Source: [`integrations/commerce-agents`](https://github.com/zerkerlabs/treeship/tree/main/integrations/commerce-agents), Apache-2.0, 35 tests on a real ship over the reference's own mocks, run in CI against the reviewed commit. The earlier post, with the full receipt design: [You can't have agentic commerce without tamper-proof receipts](/blog/agentic-commerce-tamper-proof-receipts).
+
+## Sources
+
+- [anthropics/commerce-agents](https://github.com/anthropics/commerce-agents), README and `docs/safety.md` at commit `fd4d592`, checked on a fresh clone
+- [PYMNTS, "Anthropic Built the Shopping Brain and Skipped the Wallet"](https://www.pymnts.com/news/artificial-intelligence/2026/anthropic-built-the-shopping-brain-and-skipped-the-wallet/), 3 September 2026: the Visa, Mastercard and Accenture distribution relationship, the "no payment protocol, no product catalog, no advertising layer" line, and the caveat on Anthropic's own figures
+- [Digital Commerce 360](https://www.digitalcommerce360.com/2026/09/02/anthropic-debuts-claude-features-focused-on-agentic-commerce/amp/) and [MarkTechPost](https://www.marktechpost.com/2026/09/03/anthropic-released-claude-commerce-agents-an-apache-2-0-blueprint-for-shopping-and-merchant-agents-across-retail-travel-telecom-and-entertainment/) on the launch
+- [Anthropic webinar, Building Claude Commerce Agents](https://www.anthropic.com/webinars/building-claude-commerce-agents)
+- [Visa Developer, Trusted Agent Protocol overview](https://developer.visa.com/capabilities/trusted-agent-protocol/overview); [Visa press release, October 2025](https://investor.visa.com/news/news-details/2025/Visa-Introduces-Trusted-Agent-Protocol-An-Ecosystem-Led-Framework-for-AI-Commerce/default.aspx)
+- [Mastercard Agent Pay](https://www.mastercard.com/global/en/business/artificial-intelligence/mastercard-agent-pay.html); [Stellagent on Agentic Tokens and Verifiable Intent](https://stellagent.ai/insights/mastercard-agent-pay-agentic-tokens)
+- [AP2 explained](https://eco.com/support/en/articles/15192002-ap2-protocol-explained-google-s-agentic-commerce-standard-2026); [ACP explained](https://eco.com/support/en/articles/14845478-acp-agentic-commerce-protocol-explained); [Applied Technology Index, 2026 comparative analysis](https://appliedtechnologyindex.com/research/2026-comparative-analysis-agentic-commerce-payment-protocols/)
