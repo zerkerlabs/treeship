@@ -33,7 +33,7 @@ export default async function BlogPost(props: {
           </Link>
         </div>
 
-        <article className="prose max-w-none">
+        <article className="prose blog-prose max-w-none">
           <MDX components={{ ...defaultMdxComponents }} />
         </article>
       </main>

@@ -258,6 +258,12 @@ blockquote,
   overflow-x: auto;
 }
 
+/* Blog posts carry their title in frontmatter (rendered by the template)
+   and again as an MDX `# H1`; the template's H1 is the visible one. */
+.blog-prose > h1:first-child {
+  display: none;
+}
+
 /* ── Eyebrows, kickers, meta ───────────────────────────── */
 .doc-kicker {
   font-family: var(--font-mono);

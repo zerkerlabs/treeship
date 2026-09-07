@@ -42,7 +42,7 @@ export default function Layout({ children }: { children: ReactNode }) {
         />
       </head>
       <body>
-        <RootProvider>{children}</RootProvider>
+        <RootProvider theme={{ defaultTheme: 'light' }}>{children}</RootProvider>
         <Script
           src="https://www.googletagmanager.com/gtag/js?id=G-SHQD226S2V"
           strategy="afterInteractive"

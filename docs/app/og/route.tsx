@@ -26,8 +26,8 @@ export async function GET(request: Request) {
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'space-between',
-          background: '#0a0f0a',
-          color: '#ffffff',
+          background: '#f8f8f6',
+          color: '#101010',
           padding: '64px 72px',
         }}
       >
@@ -40,13 +40,13 @@ export async function GET(request: Request) {
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
             <div
-              style={{ width: 16, height: 16, borderRadius: 5, background: '#4ade80' }}
+              style={{ width: 16, height: 16, borderRadius: 4, background: '#0a0a0a', transform: 'skewX(-14deg)' }}
             />
             <div
               style={{
                 fontSize: 26,
                 letterSpacing: 6,
-                color: '#4ade80',
+                color: '#0a0a0a',
                 fontWeight: 600,
               }}
             >
@@ -59,8 +59,8 @@ export async function GET(request: Request) {
               fontSize: 20,
               letterSpacing: 3,
               textTransform: 'uppercase',
-              color: '#cbd5cf',
-              border: '1px solid rgba(255,255,255,0.18)',
+              color: '#5f6561',
+              border: '1px solid #d9d9d4',
               borderRadius: 999,
               padding: '8px 18px',
             }}
@@ -87,13 +87,13 @@ export async function GET(request: Request) {
               display: 'flex',
               fontSize: 29,
               lineHeight: 1.4,
-              color: '#d6dbd6',
+              color: '#5f6561',
               maxWidth: 1000,
             }}
           >
             {description}
           </div>
-          <div style={{ display: 'flex', fontSize: 24, color: '#8aa090' }}>
+          <div style={{ display: 'flex', fontSize: 24, color: '#6656fb' }}>
             docs.treeship.dev
           </div>
         </div>
