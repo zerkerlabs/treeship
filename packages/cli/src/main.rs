@@ -204,6 +204,23 @@ enum Command {
     #[command(subcommand)]
     Keys(KeysCommand),
 
+    /// Verifiable Intent (v0.1 draft) credentials with a Treeship attestation
+    ///
+    /// An independent implementation against the open spec at
+    /// verifiableintent.dev. Generate the agent's P-256 key, check a purchase
+    /// against a Layer 2 mandate, sign the Layer 3 pair (L3a for the payment
+    /// network, L3b for the merchant) with the spec's optional
+    /// agent_attestation claim carrying a signed pointer into this ship's
+    /// receipt chain, and verify a pair the way the reference verifier does.
+    ///
+    /// Examples:
+    ///   treeship vi keygen
+    ///   treeship vi check  --mandate l2.sdjwt --merchant merchant-uuid-1 --item BAB86345 --amount 27999 --currency USD
+    ///   treeship vi attest --mandate l2.sdjwt --checkout-jwt checkout.jwt --merchant merchant-uuid-1 --item BAB86345 --amount 27999 --currency USD --aud-network https://www.mastercard.com --aud-merchant https://tennis-warehouse.com --out ./vi-out
+    ///   treeship vi verify --mandate l2.sdjwt --l3a vi-out/l3a.sdjwt --l3b vi-out/l3b.sdjwt --l2-payment vi-out/l2-payment.sdjwt --l2-checkout vi-out/l2-checkout.sdjwt --local
+    #[command(subcommand)]
+    Vi(ViCommand),
+
     /// Manage pinned trust roots (issuer keys)
     ///
     /// Trust roots gate the three self-signed verification surfaces:
@@ -2476,6 +2493,133 @@ struct OnboardCliArgs {
 }
 
 #[derive(Subcommand)]
+enum ViCommand {
+    /// Generate the agent's P-256 key and print the public JWK a wallet binds under cnf.jwk
+    Keygen {
+        /// A label for `treeship vi keys`
+        #[arg(long)]
+        label: Option<String>,
+    },
+    /// Manage VI agent keys
+    #[command(subcommand)]
+    Keys(ViKeysCommand),
+    /// Check a purchase against a Layer 2 mandate without signing anything (exit 1 on a violation)
+    Check(ViPurchaseArgs),
+    /// Sign the Layer 3 pair for a purchase, with a Treeship attestation chained onto this ship's receipts
+    Attest(ViAttestArgs),
+    /// Verify a Layer 3 pair against its Layer 2 (and Layer 2 against Layer 1), then the Treeship attestation
+    Verify(ViVerifyArgs),
+}
+
+#[derive(Subcommand)]
+enum ViKeysCommand {
+    /// List VI agent keys
+    List,
+    /// Print a key's public JWK (the default key when there is one)
+    Export {
+        #[arg(long)]
+        key: Option<String>,
+    },
+    /// Import a private JWK (with `d`) and seal it in this ship's keystore
+    Import {
+        /// Path to a private JWK JSON file
+        #[arg(long)]
+        jwk: String,
+        #[arg(long)]
+        label: Option<String>,
+    },
+}
+
+#[derive(Args)]
+struct ViPurchaseArgs {
+    /// The Layer 2 mandate: a serialized SD-JWT, as a file path, `-` for stdin, or inline
+    #[arg(long)]
+    mandate: String,
+    /// The merchant, by the `id` or `name` the mandate's allowlist uses
+    #[arg(long)]
+    merchant: String,
+    /// A cart line as `<product-id>[:<quantity>]`; repeat per line
+    #[arg(long = "item", value_name = "ID[:QTY]")]
+    items: Vec<String>,
+    /// Amount in integer minor units (27999 = $279.99)
+    #[arg(long)]
+    amount: i64,
+    /// ISO 4217 currency code
+    #[arg(long, default_value = "USD")]
+    currency: String,
+}
+
+#[derive(Args)]
+struct ViAttestArgs {
+    #[command(flatten)]
+    purchase: ViPurchaseArgs,
+    /// The merchant-signed checkout JWT (file path, `-`, or inline)
+    #[arg(long)]
+    checkout_jwt: String,
+    /// L3a audience: the payment network URI
+    #[arg(long)]
+    aud_network: String,
+    /// L3b audience: the merchant URI
+    #[arg(long)]
+    aud_merchant: String,
+    /// `iss` on both halves (optional)
+    #[arg(long)]
+    iss: Option<String>,
+    /// Seconds until the pair expires (recommended 300, at most 3600)
+    #[arg(long, default_value_t = 300)]
+    exp_secs: u64,
+    /// VI key id to sign with (the only key when omitted)
+    #[arg(long)]
+    key: Option<String>,
+    /// Actor URI on the attestation (defaults to the active session's actor)
+    #[arg(long)]
+    actor: Option<String>,
+    /// Chain head the attestation is chained onto (defaults to the latest local artifact)
+    #[arg(long)]
+    head: Option<String>,
+    /// Treeship session id to name (defaults to the active session)
+    #[arg(long)]
+    session: Option<String>,
+    /// Directory to write l3a.sdjwt, l3b.sdjwt, the two L2 presentations, attestation.json and summary.json
+    #[arg(long)]
+    out: String,
+    /// Sign the attestation but do not store it as an artifact on the chain
+    #[arg(long, default_value_t = false)]
+    no_receipt: bool,
+}
+
+#[derive(Args)]
+struct ViVerifyArgs {
+    /// The Layer 2 the L3 pair binds to: full SD-JWT or the presentation this recipient received
+    #[arg(long)]
+    mandate: String,
+    /// L3a (payment mandate) file
+    #[arg(long)]
+    l3a: Option<String>,
+    /// L3b (checkout mandate) file
+    #[arg(long)]
+    l3b: Option<String>,
+    /// The L2 presentation the network received (what L3a's sd_hash covers)
+    #[arg(long)]
+    l2_payment: Option<String>,
+    /// The L2 presentation the merchant received (what L3b's sd_hash covers)
+    #[arg(long)]
+    l2_checkout: Option<String>,
+    /// Layer 1 issuer credential, to verify the L2 signature and binding
+    #[arg(long)]
+    l1: Option<String>,
+    /// The issuer's public JWK (file), to verify L1 itself
+    #[arg(long)]
+    issuer_jwk: Option<String>,
+    /// Also check the attestation's chain head and Merkle checkpoint against this ship's local storage
+    #[arg(long, default_value_t = false)]
+    local: bool,
+    /// Fail unless the pair carries a Treeship attestation
+    #[arg(long, default_value_t = false)]
+    require_attestation: bool,
+}
+
+#[derive(Subcommand)]
 enum KeysCommand {
     /// List all signing keys
     List,
@@ -3298,6 +3442,71 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                     printer,
                 ),
             },
+        },
+
+        Command::Vi(sub) => match sub {
+            ViCommand::Keygen { label } => {
+                commands::vi::keygen(label.as_deref(), cli.config.as_deref(), printer)
+            }
+            ViCommand::Keys(k) => match k {
+                ViKeysCommand::List => commands::vi::keys_list(cli.config.as_deref(), printer),
+                ViKeysCommand::Export { key } => {
+                    commands::vi::keys_export(key.as_deref(), cli.config.as_deref(), printer)
+                }
+                ViKeysCommand::Import { jwk, label } => {
+                    commands::vi::keys_import(jwk, label.as_deref(), cli.config.as_deref(), printer)
+                }
+            },
+            ViCommand::Check(p) => commands::vi::check(
+                &commands::vi::PurchaseArgs {
+                    mandate: &p.mandate,
+                    merchant: &p.merchant,
+                    items: &p.items,
+                    amount: p.amount,
+                    currency: &p.currency,
+                },
+                cli.config.as_deref(),
+                printer,
+            ),
+            ViCommand::Attest(a) => commands::vi::attest(
+                &commands::vi::AttestArgs {
+                    purchase: commands::vi::PurchaseArgs {
+                        mandate: &a.purchase.mandate,
+                        merchant: &a.purchase.merchant,
+                        items: &a.purchase.items,
+                        amount: a.purchase.amount,
+                        currency: &a.purchase.currency,
+                    },
+                    checkout_jwt: &a.checkout_jwt,
+                    aud_network: &a.aud_network,
+                    aud_merchant: &a.aud_merchant,
+                    iss: a.iss.as_deref(),
+                    exp_secs: a.exp_secs,
+                    key: a.key.as_deref(),
+                    actor: a.actor.as_deref(),
+                    head: a.head.as_deref(),
+                    session: a.session.as_deref(),
+                    out: &a.out,
+                    no_receipt: a.no_receipt,
+                },
+                cli.config.as_deref(),
+                printer,
+            ),
+            ViCommand::Verify(v) => commands::vi::verify(
+                &commands::vi::VerifyArgs {
+                    mandate: &v.mandate,
+                    l3a: v.l3a.as_deref(),
+                    l3b: v.l3b.as_deref(),
+                    l2_payment: v.l2_payment.as_deref(),
+                    l2_checkout: v.l2_checkout.as_deref(),
+                    l1: v.l1.as_deref(),
+                    issuer_jwk: v.issuer_jwk.as_deref(),
+                    local: v.local,
+                    require_attestation: v.require_attestation,
+                },
+                cli.config.as_deref(),
+                printer,
+            ),
         },
 
         Command::Daemon(sub) => match sub {

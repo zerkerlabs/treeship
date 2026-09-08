@@ -269,6 +269,26 @@
     - packages/core/src/statements/approval_use.rs
   notes: "Workspace-local store of consumed approval grants. Enforces max_uses + idempotency-key replay safety. Approvals are scoped by default (--allowed-* / --max-uses, or explicit --unscoped)."
 
+- id: verifiable-intent
+  name: Verifiable Intent (treeship vi)
+  section: integrations
+  status: beta
+  cli:
+    - treeship vi keygen
+    - treeship vi check
+    - treeship vi attest
+    - treeship vi verify
+  packages:
+    - treeship-core
+    - treeship-cli
+  docs:
+    - docs/content/docs/cli/vi.mdx
+    - docs/content/docs/integrations/verifiable-intent.mdx
+  tests:
+    - packages/core/tests/vi_reference_fixture.rs
+    - packages/cli/tests/vi_cli.rs
+  notes: "Independent implementation of the Verifiable Intent v0.1 draft (Mastercard-maintained): P-256 agent key, mandate constraint check, key-bound SD-JWT L3a/L3b with the spec's agent_attestation claim carrying a ship-signed vi.l3.attested receipt (session, chain head, Merkle checkpoint, approval use). Two-way interop with the reference SDK in CI (tests/vi-interop). Beta: single mandate pair only; cumulative budget/occurrence counting is the network's."
+
 - id: capability-grants
   name: Capability grants + delegation chains
   section: identity

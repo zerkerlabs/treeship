@@ -14,3 +14,4 @@ pub mod statements;
 pub mod storage;
 pub mod trust;
 pub mod verify;
+pub mod vi;

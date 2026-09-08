@@ -743,6 +743,130 @@ treeship keys rotate [OPTIONS]
 | `--grace-hours <GRACE_HOURS>` | Hours the predecessor remains valid for verifiers honoring the grace window. Default 24h matches the typical client-cache TTL for fetched public-key bundles [default: 24] |
 | `--no-default` | Mint the successor without promoting it to default. Useful for staging a rotation for review before the active signer flips |
 
+## `treeship vi`
+
+Verifiable Intent (v0.1 draft) credentials with a Treeship attestation
+
+```
+treeship vi [OPTIONS] <COMMAND>
+```
+
+### `treeship vi keygen`
+
+Generate the agent's P-256 key and print the public JWK a wallet binds under cnf.jwk
+
+```
+treeship vi keygen [OPTIONS]
+```
+
+| Option | Description |
+|---|---|
+| `--label <LABEL>` | A label for `treeship vi keys` |
+
+### `treeship vi keys`
+
+Manage VI agent keys
+
+```
+treeship vi keys [OPTIONS] <COMMAND>
+```
+
+#### `treeship vi keys list`
+
+List VI agent keys
+
+```
+treeship vi keys list [OPTIONS]
+```
+
+#### `treeship vi keys export`
+
+Print a key's public JWK (the default key when there is one)
+
+```
+treeship vi keys export [OPTIONS]
+```
+
+| Option | Description |
+|---|---|
+| `--key <KEY>` | -- |
+
+#### `treeship vi keys import`
+
+Import a private JWK (with `d`) and seal it in this ship's keystore
+
+```
+treeship vi keys import [OPTIONS] --jwk <JWK>
+```
+
+| Option | Description |
+|---|---|
+| `--jwk <JWK>` | Path to a private JWK JSON file |
+| `--label <LABEL>` | -- |
+
+### `treeship vi check`
+
+Check a purchase against a Layer 2 mandate without signing anything (exit 1 on a violation)
+
+```
+treeship vi check [OPTIONS] --mandate <MANDATE> --merchant <MERCHANT> --amount <AMOUNT>
+```
+
+| Option | Description |
+|---|---|
+| `--mandate <MANDATE>` | The Layer 2 mandate: a serialized SD-JWT, as a file path, `-` for stdin, or inline |
+| `--merchant <MERCHANT>` | The merchant, by the `id` or `name` the mandate's allowlist uses |
+| `--item <ID[:QTY]>` | A cart line as `&lt;product-id&gt;[:&lt;quantity&gt;]`; repeat per line |
+| `--amount <AMOUNT>` | Amount in integer minor units (27999 = $279.99) |
+| `--currency <CURRENCY>` | ISO 4217 currency code [default: USD] |
+
+### `treeship vi attest`
+
+Sign the Layer 3 pair for a purchase, with a Treeship attestation chained onto this ship's receipts
+
+```
+treeship vi attest [OPTIONS] --mandate <MANDATE> --merchant <MERCHANT> --amount <AMOUNT> --checkout-jwt <CHECKOUT_JWT> --aud-network <AUD_NETWORK> --aud-merchant <AUD_MERCHANT> --out <OUT>
+```
+
+| Option | Description |
+|---|---|
+| `--mandate <MANDATE>` | The Layer 2 mandate: a serialized SD-JWT, as a file path, `-` for stdin, or inline |
+| `--merchant <MERCHANT>` | The merchant, by the `id` or `name` the mandate's allowlist uses |
+| `--item <ID[:QTY]>` | A cart line as `&lt;product-id&gt;[:&lt;quantity&gt;]`; repeat per line |
+| `--amount <AMOUNT>` | Amount in integer minor units (27999 = $279.99) |
+| `--currency <CURRENCY>` | ISO 4217 currency code [default: USD] |
+| `--checkout-jwt <CHECKOUT_JWT>` | The merchant-signed checkout JWT (file path, `-`, or inline) |
+| `--aud-network <AUD_NETWORK>` | L3a audience: the payment network URI |
+| `--aud-merchant <AUD_MERCHANT>` | L3b audience: the merchant URI |
+| `--iss <ISS>` | `iss` on both halves (optional) |
+| `--exp-secs <EXP_SECS>` | Seconds until the pair expires (recommended 300, at most 3600) [default: 300] |
+| `--key <KEY>` | VI key id to sign with (the only key when omitted) |
+| `--actor <ACTOR>` | Actor URI on the attestation (defaults to the active session's actor) |
+| `--head <HEAD>` | Chain head the attestation is chained onto (defaults to the latest local artifact) |
+| `--session <SESSION>` | Treeship session id to name (defaults to the active session) |
+| `--out <OUT>` | Directory to write l3a.sdjwt, l3b.sdjwt, the two L2 presentations, attestation.json and summary.json |
+| `--no-receipt` | Sign the attestation but do not store it as an artifact on the chain |
+
+### `treeship vi verify`
+
+Verify a Layer 3 pair against its Layer 2 (and Layer 2 against Layer 1), then the Treeship attestation
+
+```
+treeship vi verify [OPTIONS] --mandate <MANDATE>
+```
+
+| Option | Description |
+|---|---|
+| `--mandate <MANDATE>` | The Layer 2 the L3 pair binds to: full SD-JWT or the presentation this recipient received |
+| `--l3a <L3A>` | L3a (payment mandate) file |
+| `--l3b <L3B>` | L3b (checkout mandate) file |
+| `--l2-payment <L2_PAYMENT>` | The L2 presentation the network received (what L3a's sd_hash covers) |
+| `--l2-checkout <L2_CHECKOUT>` | The L2 presentation the merchant received (what L3b's sd_hash covers) |
+| `--l1 <L1>` | Layer 1 issuer credential, to verify the L2 signature and binding |
+| `--issuer-jwk <ISSUER_JWK>` | The issuer's public JWK (file), to verify L1 itself |
+| `--local` | Also check the attestation's chain head and Merkle checkpoint against this ship's local storage |
+| `--require-attestation` | Fail unless the pair carries a Treeship attestation |
+
 ## `treeship trust`
 
 Manage pinned trust roots (issuer keys)

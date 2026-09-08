@@ -310,6 +310,27 @@ The merchant demo runs all of it with no model and no API key: a staged price ch
 python -m treeship_commerce.demo_merchant
 ```
 
+## Verifiable Intent at hand-off
+
+[Verifiable Intent](/integrations/verifiable-intent) is the Mastercard-maintained v0.1 draft for proving an agent was authorized to buy: an issuer credential, a user mandate that delegates to the agent's key with constraints, and a Layer 3 pair the agent signs for the network and the merchant. [`treeship vi attest`](/cli/vi) signs that pair with the spec's optional `agent_attestation` claim pointing at this receipt chain. Run at hand-off, the chain head it names is the hand-off receipt, so the credential binds the cart that went to checkout to the mandate that authorized it.
+
+```python
+from treeship_commerce import attest_at_handoff, vi_verify
+
+summary = attest_at_handoff(
+    ts, receipts,
+    mandate=l2_sdjwt, checkout_jwt=merchant_jwt,
+    merchant="merchant-uuid-1", items=[("BAB86345", 1)],
+    amount_minor=27999, currency="USD",
+    aud_network="https://www.mastercard.com", aud_merchant="https://tennis-warehouse.com",
+    out="./vi-out",
+)
+summary["attestation"]["chain_head"] == receipts.last_handoff    # True
+vi_verify(ts, mandate=l2_sdjwt, out="./vi-out")["outcome"]       # "pass"
+```
+
+The purchase values must describe the cart. The mandate check runs before anything is signed; a purchase outside it raises and writes nothing. The attestation is a receipt (`vi.l3.attested`) chained onto the hand-off, and `order_placed` chains the host's order onto it, so the sealed package holds the whole story: the calls, the refusals, the cart, the credential, the order. What goes to the network (`l3a.sdjwt` with `l2-payment.sdjwt`) and to the merchant (`l3b.sdjwt` with `l2-checkout.sdjwt`) is in `--out`. Needs treeship 0.31.
+
 ## Operating it
 
 - **Keep the preimages.** A receipt carries digests, never the arguments, the result text, the cart's lines, or the payment URL. That is the right privacy posture, and it means a receipt alone proves that *something with this digest* ran. To settle a dispute you also need the original: the arguments and result keyed to the receipt's artifact id, the cart that went to checkout, the order reference. Keep them in your own store, under your own retention and access rules, keyed by `artifact_id` (or by the receipt's `session_tag` plus timestamp when you already log that way). The reference's `DEBUG` logs contain request bodies and are one such store; its safety page says what retention they need. Treeship deliberately does not keep this for you: it would put customer data under a key that is not yours. When someone presents the original, `args_digest`, `result_digest`, `cart_digest` and `order_ref_digest` are recomputable with the functions in `treeship_commerce` (`args_digest`, `text_digest`, `cart_digest`), and the receipt then proves *this* ran, not something like it.

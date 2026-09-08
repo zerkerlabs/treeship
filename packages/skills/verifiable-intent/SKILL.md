@@ -1,6 +1,6 @@
 ---
 name: verifiable-intent
-version: 0.6.0
+version: 0.31.0
 description: Credential chain skill for delegating user intent to agents via Verifiable Intent (VI)
 metadata:
   spec: verifiable-intent-v1
@@ -37,6 +37,13 @@ Treeship provides `agent_attestation`, embedded directly in every L3 credential.
 4. Signs the attestation and embeds it in the L3 credential.
 
 This means any verifier can check not only the credential chain but also that a trusted runtime (Treeship) confirmed constraint compliance at execution time.
+
+## Commands (shipped in treeship 0.31)
+
+- `treeship vi keygen`: mint the agent's P-256 key; give the printed JWK to the wallet, which binds it under `cnf.jwk` in the L2 mandate.
+- `treeship vi check --mandate <l2> --merchant <id> --item <id[:qty]> --amount <minor> --currency <ISO>`: is this purchase inside the mandate? Exit 1 with every violation if not. Run it before acting.
+- `treeship vi attest --mandate <l2> --checkout-jwt <jwt> ... --aud-network <uri> --aud-merchant <uri> --out <dir>`: sign L3a and L3b with the Treeship attestation; refuses anything outside the mandate before signing.
+- `treeship vi verify --mandate <l2> --l3a ... --l3b ... [--l1 ... --issuer-jwk ...] [--local]`: verify a pair the way the reference verifier does, then the attestation.
 
 ## Workflow
 
