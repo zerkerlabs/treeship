@@ -14,9 +14,35 @@ export default async function BlogPost(props: {
   const MDX = post.data.body;
   const tags: string[] = post.data.tags ?? [];
   const kicker = [post.data.date, ...tags].filter(Boolean).join(' · ');
+  const image = `https://docs.treeship.dev/og?${new URLSearchParams({
+    title: post.data.title,
+    description: post.data.description ?? '',
+    section: 'blog',
+  }).toString()}`;
+  const structuredData = {
+    '@context': 'https://schema.org',
+    '@type': 'BlogPosting',
+    headline: post.data.title,
+    description: post.data.description ?? '',
+    datePublished: post.data.date ? `${post.data.date}T00:00:00Z` : undefined,
+    image,
+    keywords: tags.join(', ') || undefined,
+    mainEntityOfPage: `https://docs.treeship.dev${post.url}`,
+    author: { '@type': 'Organization', name: 'Zerker Labs', url: 'https://zerkerlabs.com' },
+    publisher: {
+      '@type': 'Organization',
+      name: 'Zerker Labs',
+      url: 'https://zerkerlabs.com',
+      logo: { '@type': 'ImageObject', url: 'https://www.treeship.dev/icon-512.png' },
+    },
+  };
 
   return (
     <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}
+      />
       <BlogChrome crumb={post.data.title} />
       <main className="mx-auto w-full max-w-[860px] px-7 pb-20 pt-14">
         <p className="doc-kicker mb-3">{kicker}</p>
@@ -61,10 +87,16 @@ export async function generateMetadata(props: {
   return {
     title: post.data.title,
     description: post.data.description,
+    alternates: { canonical: post.url },
     openGraph: {
       type: 'article',
       title: post.data.title,
       description: post.data.description,
+      url: post.url,
+      siteName: 'Treeship',
+      publishedTime: post.data.date ? `${post.data.date}T00:00:00Z` : undefined,
+      authors: ['Zerker Labs'],
+      tags: post.data.tags ?? [],
       images: [{ url: image, width: 1200, height: 630, alt: post.data.title }],
     },
     twitter: {
