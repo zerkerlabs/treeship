@@ -547,7 +547,7 @@ jobs:
       - name: Clone agent-intent/verifiable-intent at the reviewed commit
         run: |
           git init -q /tmp/verifiable-intent
-          git -C /tmp/verifiable-intent fetch -q --depth 1 https://github.com/agent-intent/verifiable-intent.git 356c296
+          git -C /tmp/verifiable-intent fetch -q --depth 1 https://github.com/agent-intent/verifiable-intent.git 356c29635f1c44df7de02edb58699ca9f29bece6
           git -C /tmp/verifiable-intent checkout -q FETCH_HEAD
       - name: Install the reference SDK
         run: pip install -q -e /tmp/verifiable-intent pytest
