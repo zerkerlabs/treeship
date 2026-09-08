@@ -1,15 +1,13 @@
 import Link from 'next/link';
+import { TreeshipWordmark } from '@/components/treeship-mark';
 
 // The sticky document chrome from the design system: wordmark, a crumb, and
 // the two places a reader of a post goes next. Server component; no state.
 export function BlogChrome({ crumb }: { crumb: string }) {
   return (
     <div className="sticky top-0 z-10 flex items-center gap-4 border-b border-zk-hairline bg-zk-bg/90 px-7 py-3.5 font-mono text-[11px] uppercase tracking-[0.12em] text-zk-text-secondary backdrop-blur">
-      <Link
-        href="https://treeship.dev"
-        className="inline-flex items-center gap-2 font-bold tracking-[0.3em] text-zk-ink no-underline"
-      >
-        Treeship
+      <Link href="https://treeship.dev" className="no-underline" aria-label="Treeship home">
+        <TreeshipWordmark />
       </Link>
       <span className="flex-1 truncate">{crumb}</span>
       <Link href="/blog" className="text-zk-ink no-underline hover:text-zk-accent">
