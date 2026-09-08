@@ -5,8 +5,8 @@ signed (see :mod:`treeship_commerce.checkout`) and a hosted checkout takes
 over. Verifiable Intent (the Mastercard-maintained v0.1 draft) wants a chain
 from the user's mandate to the transaction. ``treeship vi attest`` signs that
 chain's Layer 3 pair with the spec's ``agent_attestation`` claim pointing at
-the receipt chain; run at hand-off, the chain head it names is the hand-off
-receipt, so the credential binds the cart that went to checkout.
+the receipt chain; run at hand-off, the chain it names runs through the
+hand-off receipt, so the credential binds the cart that went to checkout.
 
     from treeship_commerce.vi import attest_at_handoff
 
@@ -18,7 +18,7 @@ receipt, so the credential binds the cart that went to checkout.
         aud_network="https://www.mastercard.com", aud_merchant="https://tennis-warehouse.com",
         out="./vi-out",
     )
-    summary["attestation"]["chain_head"] == receipts.last_handoff   # True
+    summary["handoff"] == receipts.last_handoff                    # True
 
 Nothing here changes what the reference does. The mandate check happens
 before anything is signed; a cart outside the mandate raises and writes
@@ -93,14 +93,17 @@ def attest_at_handoff(
 ) -> dict[str, Any]:
     """Sign the Layer 3 pair for the cart that just went to checkout.
 
-    ``head`` defaults to the recorder's most recent hand-off receipt, so the
-    attestation names it as the chain head. Returns ``summary.json`` as a
+    ``head`` defaults to the recorder's current head, which sits after the
+    hand-off receipt on the same chain (never the hand-off itself: signing
+    onto it would fork the chain and leave the checkout result unsealed).
+    The returned summary carries ``handoff`` so the credential's chain and
+    the hand-off it followed are both named. Returns ``summary.json`` as a
     dict. Raises :class:`treeship_sdk.TreeshipError` when the purchase is
     outside the mandate (nothing is signed) or the CLI fails.
     """
-    chain_head = head or receipts.last_handoff or receipts.head
+    chain_head = head or receipts.head
     if chain_head is None:
-        raise ValueError("no chain head: sign the hand-off first (receipted_backend) or pass head=")
+        raise ValueError("no chain head: record something first (receipted_backend signs the hand-off) or pass head=")
     work = Path(workdir or ".")
     mandate_path = _write(work / ".vi", "l2.sdjwt", mandate)
     jwt_path = _write(work / ".vi", "checkout.jwt", checkout_jwt)
@@ -120,7 +123,8 @@ def attest_at_handoff(
     if key:
         args += ["--key", key]
     summary = _run_json(client, args, env=env, cwd=workdir)
-    # The attestation is a receipt chained onto the hand-off; keep the
+    summary["handoff"] = receipts.last_handoff
+    # The attestation is a receipt chained onto the head; keep the
     # recorder's head current so the host's order chains onto it too.
     art = summary.get("attestation", {}).get("artifact_id")
     if art and summary.get("attestation", {}).get("recorded"):

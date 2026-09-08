@@ -33,8 +33,9 @@ calls this internally so an agent can do:
     # Treeship now has a working CLI even on a fresh machine; no prompt.
 
 There is also a ``python -m treeship_sdk.bootstrap_cli`` entry point
-that prints the JSON result and exits — useful for shell scripts and
-agents that want to bootstrap without instantiating the SDK first.
+that prints the resolved binary path and exits, or the full JSON result
+with ``--json`` — useful for shell scripts and agents that want to
+bootstrap without instantiating the SDK first.
 """
 
 from __future__ import annotations

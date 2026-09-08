@@ -18,7 +18,7 @@ receipts, so it sits after the ``checkout`` intent that caused it.
 
 Then the host places the order, on its own checkout page, out of the agent's
 sight. :func:`order_placed` lets the host chain a signed **order receipt**
-onto the hand-off: a digest of the order reference, the amount and currency.
+after the hand-off, naming it: a digest of the order reference, the amount and currency.
 A customer, a merchant, or an auditor holding the cart can recompute the cart
 digest and check that the order chains from a hand-off for exactly that cart.
 
@@ -188,27 +188,42 @@ async def order_placed(
     currency: str | None,
     handoff_id: str | None = None,
 ) -> str | None:
-    """The host's side of the seam: chain the placed order onto the hand-off.
+    """The host's side of the seam: the placed order, chained onto the chain
+    after the hand-off and naming it.
 
-    ``handoff_id`` defaults to the most recent hand-off receipt this recorder
-    wrote; pass it explicitly when the host places orders asynchronously. The
-    order reference is digested, never written: it is the customer's lookup
-    key on the host, and the receipt only needs to let a holder of it check.
+    The order is signed onto the recorder's current head, which sits after
+    the hand-off receipt (the checkout result follows the hand-off on the
+    same chain). It is *not* signed onto the hand-off itself: that would
+    fork the chain, and the checkout result would branch off the path the
+    session seals, so it would be missing from the package (QA finding
+    TS-002 on 0.31.0). ``meta.handoff`` names the hand-off receipt
+    explicitly, so a holder of the cart still finds the order that followed
+    it in one step. ``handoff_id`` defaults to the most recent hand-off
+    this recorder wrote; pass it when the host places orders asynchronously.
+    The order reference is digested, never written: it is the customer's
+    lookup key on the host, and the receipt only needs to let a holder of
+    it check.
     """
-    parent = handoff_id or receipts.last_handoff
-    if parent is None:
+    handoff = handoff_id or receipts.last_handoff
+    if handoff is None:
         logger.warning(
-            "treeship order receipt has no hand-off to chain from; writing it on the "
-            "session chain instead. Wrap the backend with receipted_backend() so the "
+            "treeship order receipt has no hand-off to name; writing it on the "
+            "session chain without one. Wrap the backend with receipted_backend() so the "
             "cart that went to checkout is signed first."
         )
     meta: dict[str, Any] = {
         "order_ref_digest": text_digest(str(order_ref)),
         "amount": amount,
         "currency": currency,
-        "handoff_recorded": parent is not None,
+        "handoff_recorded": handoff is not None,
         "session_tag": receipts.session_tag,
     }
+    if handoff is not None:
+        meta["handoff"] = handoff
+    # Chain onto the head (never fork), unless the caller names a hand-off
+    # that is not on this recorder's chain at all (an asynchronous host
+    # with its own recorder), in which case it is the only link we have.
+    parent = receipts.head if receipts.head is not None else handoff
     return await receipts.attest(ORDER_ACTION, meta, parent=parent)
 
 

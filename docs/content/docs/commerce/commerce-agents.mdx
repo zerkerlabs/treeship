@@ -82,11 +82,11 @@ What is deliberately **not** in a receipt:
 ## Install
 
 ```bash
-# in a clone of anthropics/commerce-agents, with its venv active
+# in a clone of anthropics/commerce-agents, with its venv active (Python 3.11+)
 pip install -r requirements.txt                  # the reference's packages; unregistered on PyPI by design
 pip install treeship-sdk treeship-commerce
-curl -fsSL https://treeship.dev/install | sh     # the CLI does the signing
-treeship init
+curl -fsSL https://treeship.dev/install | sh     # the CLI does the signing; the demos also fetch it themselves
+treeship init --config .treeship/config.json     # a workspace for this directory
 ```
 
 Or let Claude Code do the wiring. The `treeship-commerce` plugin mirrors the reference's own `commerce-builder`: one command that reads your project, wraps the executor on your runtime, signs the merchant approval surface or the shopping checkout hand-off, and records what it decided in your `CLAUDE.md` decision record.
@@ -240,7 +240,7 @@ backend = receipted_backend(MyStorefront())     # once, where the runtime is bui
 await order_placed(receipts, order_ref=order.order_id, amount=order.total, currency="USD")
 ```
 
-`order_placed` is the host's half of the seam. It chains a signed **order receipt** onto the hand-off: a digest of the order reference (never the reference itself, which is the customer's lookup key), the amount and the currency. A customer, a merchant, or an auditor holding the cart can recompute its digest and check that the order chains from a hand-off for exactly that cart, offline. When the host never wrapped its backend, the order receipt still lands on the session chain and says `handoff_recorded: false` rather than pointing at something invented.
+`order_placed` is the host's half of the seam. It signs an **order receipt** onto the chain after the hand-off, naming the hand-off in `meta.handoff` (never onto the hand-off itself, which would fork the chain and leave the checkout result out of the sealed package): a digest of the order reference (never the reference itself, which is the customer's lookup key), the amount and the currency. A customer, a merchant, or an auditor holding the cart can recompute its digest and check that the order chains from a hand-off for exactly that cart, offline. When the host never wrapped its backend, the order receipt still lands on the session chain and says `handoff_recorded: false` rather than pointing at something invented.
 
 The wrapped backend finds the right recorder by the commerce session: every `TreeshipReceipts` registers itself under its session tag, and the backend looks the session up the same way. That is the default and needs no wiring beyond the `receipted(...)` executor class; pass `recorder=` to override it.
 
@@ -329,7 +329,7 @@ summary["attestation"]["chain_head"] == receipts.last_handoff    # True
 vi_verify(ts, mandate=l2_sdjwt, out="./vi-out")["outcome"]       # "pass"
 ```
 
-The purchase values must describe the cart. The mandate check runs before anything is signed; a purchase outside it raises and writes nothing. The attestation is a receipt (`vi.l3.attested`) chained onto the hand-off, and `order_placed` chains the host's order onto it, so the sealed package holds the whole story: the calls, the refusals, the cart, the credential, the order. What goes to the network (`l3a.sdjwt` with `l2-payment.sdjwt`) and to the merchant (`l3b.sdjwt` with `l2-checkout.sdjwt`) is in `--out`. Needs treeship 0.31.
+The purchase values must describe the cart. The mandate check runs before anything is signed; a purchase outside it raises and writes nothing. The attestation is a receipt (`vi.l3.attested`) on the chain after the hand-off, and `order_placed` chains the host's order onto it, so the sealed package holds the whole story: the calls, the refusals, the cart, the credential, the order. What goes to the network (`l3a.sdjwt` with `l2-payment.sdjwt`) and to the merchant (`l3b.sdjwt` with `l2-checkout.sdjwt`) is in `--out`. Needs treeship 0.31.
 
 ## Operating it
 

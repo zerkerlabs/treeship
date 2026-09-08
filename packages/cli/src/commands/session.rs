@@ -1538,6 +1538,24 @@ pub fn close(
     let artifact_entries: Vec<session::receipt::ArtifactEntry> =
         collect_artifact_entries(&ctx, &manifest);
 
+    // Artifacts that branch off this chain (their parent is on it, they are
+    // not) are signed but will not be sealed: the package walks one path
+    // from the head. Silence here let a checkout result go missing from an
+    // otherwise clean package (QA finding TS-002 on 0.31.0). Name them.
+    let unsealed_branches = find_unsealed_branches(&ctx, &artifact_entries);
+    if !unsealed_branches.is_empty() {
+        printer.warn(
+            &format!(
+                "{} signed artifact(s) branch off this chain and will not be in the package",
+                unsealed_branches.len()
+            ),
+            &[("unsealed", &unsealed_branches.join(", "))],
+        );
+        printer.hint(
+            "a receipt signed with a stale --parent forks the chain; sign onto the current head",
+        );
+    }
+
     // Update manifest for receipt composition
     let mut receipt_manifest = manifest.clone();
     receipt_manifest.status = session::SessionStatus::Completed;
@@ -1715,6 +1733,7 @@ pub fn close(
             "receipts": artifact_count,
             "events": event_log.event_count(),
             "package": sealed_pkg_path.as_ref().map(|path| path.display().to_string()),
+            "unsealed_branches": unsealed_branches,
         }));
     } else {
         printer.blank();
@@ -2049,6 +2068,35 @@ fn has_zk_proofs(ts_dir: &Path, session_id: &str) -> bool {
 // ---------------------------------------------------------------------------
 // Collect artifact entries from the chain for receipt composition
 // ---------------------------------------------------------------------------
+
+/// Signed artifacts whose parent is on the sealed chain but which are not on
+/// it themselves: forks the package will not carry. Only the index is read,
+/// so this is one directory listing, not a walk.
+fn find_unsealed_branches(
+    ctx: &ctx::Ctx,
+    chain: &[session::receipt::ArtifactEntry],
+) -> Vec<String> {
+    let on_chain: std::collections::HashSet<&str> =
+        chain.iter().map(|e| e.artifact_id.as_str()).collect();
+    if on_chain.is_empty() {
+        return Vec::new();
+    }
+    let mut out: Vec<String> = ctx
+        .storage
+        .list()
+        .into_iter()
+        .filter(|e| !on_chain.contains(e.id.as_str()))
+        .filter(|e| {
+            e.parent_id
+                .as_deref()
+                .map(|p| on_chain.contains(p))
+                .unwrap_or(false)
+        })
+        .map(|e| e.id.clone())
+        .collect();
+    out.sort();
+    out
+}
 
 fn collect_artifact_entries(
     ctx: &ctx::Ctx,

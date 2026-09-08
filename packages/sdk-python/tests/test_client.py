@@ -443,3 +443,31 @@ class SessionEventTests(unittest.TestCase):
             mock_run.return_value = _completed(stdout='{"status":"ok"}')
             with self.assertRaises(TreeshipError):
                 ts.session_event("agent.called_tool", tool="x")
+
+
+def test_warns_once_when_the_cli_is_on_another_release_line(tmp_path, monkeypatch):
+    """A warm CLI cache after a pip upgrade pairs a new SDK with an old CLI
+    silently otherwise (QA TS-003 on 0.31.0)."""
+    import warnings
+
+    from treeship_sdk import Treeship, __version__
+
+    fake = tmp_path / "treeship"
+    fake.write_text("#!/bin/sh\nif [ \"$1\" = --version ]; then echo treeship 0.1.0; exit 0; fi\necho '{\"status\":\"ok\"}'\n")
+    fake.chmod(0o755)
+    ts = Treeship(cli_path=fake)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        ts._run_cli_raw(["status"])
+        ts._run_cli_raw(["status"])
+    hits = [w for w in caught if issubclass(w.category, RuntimeWarning) and "different release lines" in str(w.message)]
+    assert len(hits) == 1, [str(w.message) for w in caught]
+    assert __version__ in str(hits[0].message)
+
+    same = tmp_path / "treeship-same"
+    same.write_text(f"#!/bin/sh\nif [ \"$1\" = --version ]; then echo treeship {__version__}; exit 0; fi\necho ok\n")
+    same.chmod(0o755)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        Treeship(cli_path=same)._run_cli_raw(["status"])
+    assert not [w for w in caught if "different release lines" in str(w.message)]

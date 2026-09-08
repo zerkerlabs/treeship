@@ -30,10 +30,10 @@ import os
 import sys
 import uuid
 
-from treeship_sdk import Treeship
+from treeship_sdk import Treeship, TreeshipError
 
 from . import MerchantApprovals, TreeshipReceipts, approved, attach, receipted
-from .lifecycle import _run_json, close_session, session_status, start_session
+from .lifecycle import _run_json, close_session, open_demo_session, session_status
 from .receipts import sdk_supports_subject
 
 ACTOR = "agent://merchant"
@@ -76,9 +76,11 @@ async def run(*, enforce: bool) -> int:
             "the installed treeship-sdk cannot name an action's subject, so a "
             "single-use grant would be refused by its own scope. Upgrade treeship-sdk."
         )
-    ts = Treeship()
+    # bot_mode resolves the CLI (PATH, then the per-user cache, then the
+    # matching GitHub release) instead of assuming it is on PATH.
+    ts = Treeship(bot_mode=True)
     commerce_session = f"demo-{uuid.uuid4().hex}"  # the reference treats this as a credential
-    root = start_session(ts, name="commerce:merchant-demo", actor=ACTOR)
+    root = open_demo_session(ts, name="commerce:merchant-demo", actor=ACTOR)
     approvals = MerchantApprovals(ts, approver=APPROVER, actor=ACTOR)
     executor = attach(
         _build_executor(commerce_session, approvals, enforce=enforce),
@@ -178,6 +180,24 @@ async def run(*, enforce: bool) -> int:
     return 0 if receipts.dropped == 0 else 2
 
 
+def _explain(err: Exception) -> str | None:
+    """A one-line remedy for the two setup failures a fresh machine hits,
+    or ``None`` when the error is not one of them."""
+    text = str(err)
+    if "not initialized" in text or "no .treeship directory" in text or "treeship init" in text:
+        return (
+            "no Treeship workspace in this directory. Create one:\n"
+            "  treeship init --config .treeship/config.json"
+        )
+    if "CLI not found" in text or "bootstrap failed" in text or isinstance(err, FileNotFoundError):
+        return (
+            "the treeship CLI is not installed. Install it:\n"
+            "  curl -fsSL https://treeship.dev/install | sh\n"
+            "  (or: python -m treeship_sdk.bootstrap_cli)"
+        )
+    return None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -188,7 +208,14 @@ def main() -> None:
     args = parser.parse_args()
     if os.environ.get("TREESHIP_DISABLE") == "1":
         sys.exit("TREESHIP_DISABLE=1 is set; this demo exists to write receipts")
-    sys.exit(asyncio.run(run(enforce=args.enforce)))
+    try:
+        code = asyncio.run(run(enforce=args.enforce))
+    except (TreeshipError, FileNotFoundError) as err:
+        remedy = _explain(err)
+        if remedy is None:
+            raise
+        sys.exit(f"{remedy}\n\n  (treeship said: {err})")
+    sys.exit(code)
 
 
 if __name__ == "__main__":

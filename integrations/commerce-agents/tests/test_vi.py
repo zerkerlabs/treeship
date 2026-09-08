@@ -49,13 +49,16 @@ async def test_the_credential_names_the_handoff_and_the_order_chains_onto_it(shi
     _import_agent_key(ship)
     _, receipts = await _handed_off(ship)
     handoff = receipts.last_handoff
+    head_before = receipts.head  # the checkout result, after the hand-off
 
     summary = attest_at_handoff(
         ship.client, receipts, mandate=FIXTURE["l2"], checkout_jwt=FIXTURE["checkout_jwt"],
         **PURCHASE, **AUD, iss="https://agent.example.com", out=ship.root / "vi-out", workdir=ship.root, env=ship.env,
     )
     att = summary["attestation"]
-    assert att["chain_head"] == handoff, "the credential names the hand-off receipt"
+    assert att["chain_head"] == head_before, "onto the head, never a fork off the hand-off"
+    assert summary["handoff"] == handoff
+    assert handoff in {c["record"]["artifact_id"] for c in ship.chain(att["chain_head"])}, "the chain it names runs through the hand-off"
     assert att["recorded"] is True
     assert att["reaches_session_root"] is True
     assert att["checkpoint"].startswith("mroot_")
@@ -67,7 +70,7 @@ async def test_the_credential_names_the_handoff_and_the_order_chains_onto_it(shi
     assert receipts.head == att["artifact_id"]
     statement = ship.artifacts()[att["artifact_id"]]["statement"]
     assert statement["action"] == "vi.l3.attested"
-    assert statement["parentId"] == handoff
+    assert statement["parentId"] == head_before
     assert statement["meta"]["transaction_id"] == summary["checkout_hash"]
 
     # The host's order chains onto the attestation, so the sealed session
@@ -75,10 +78,12 @@ async def test_the_credential_names_the_handoff_and_the_order_chains_onto_it(shi
     order = await order_placed(receipts, order_ref="ord_1", amount=279.99, currency="USD", handoff_id=att["artifact_id"])
     assert ship.artifacts()[order]["statement"]["parentId"] == att["artifact_id"]
     assert ship.cli_json("verify", order)["outcome"] == "pass"
+    on_chain = {c["record"]["artifact_id"] for c in ship.chain(order)}
+    assert set(receipts.recorded) <= on_chain, "nothing this recorder wrote is left off the sealed chain"
 
     report = vi_verify(ship.client, mandate=FIXTURE["l2"], out=ship.root / "vi-out", l1=FIXTURE["l1"], issuer_jwk=FIXTURE["issuer_public_jwk"], workdir=ship.root, env=ship.env)
     assert report["outcome"] == "pass", [c for c in report["checks"] if not c["pass"]]
-    assert report["attestation"]["chain_head"] == handoff
+    assert report["attestation"]["chain_head"] == head_before
 
 
 async def test_a_cart_outside_the_mandate_is_refused_with_nothing_written(ship: Ship):

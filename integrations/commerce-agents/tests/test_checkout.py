@@ -142,12 +142,20 @@ async def test_the_hosts_order_chains_from_the_handoff(ship: Ship):
     await executor.execute("checkout", {})
     receipts: TreeshipReceipts = executor.treeship_receipts
 
+    head_before = receipts.head  # the checkout result, which follows the hand-off
     order_id = await order_placed(receipts, order_ref="ord_77accf", amount=199.0, currency="USD")
     assert order_id is not None
     order = ship.artifacts()[order_id]
     assert order["statement"]["action"] == ORDER_ACTION
-    assert order["statement"]["parentId"] == backend.handoffs[0]
+    # Onto the head, never onto the hand-off: signing onto the hand-off
+    # forks the chain and the checkout result drops out of the package
+    # (QA TS-002 on 0.31.0). The hand-off is named in meta instead.
+    assert order["statement"]["parentId"] == head_before
     meta = order["statement"]["meta"]
+    assert meta["handoff"] == backend.handoffs[0]
+    # Every receipt this recorder wrote is on the one chain the session seals.
+    on_chain = {c["record"]["artifact_id"] for c in ship.chain(receipts.head)}
+    assert set(receipts.recorded) <= on_chain, set(receipts.recorded) - on_chain
     assert meta["order_ref_digest"] == text_digest("ord_77accf")
     assert "ord_77accf" not in order["raw"]
     assert meta["amount"] == 199.0 and meta["currency"] == "USD"
