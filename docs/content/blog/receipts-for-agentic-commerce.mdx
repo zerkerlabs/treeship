@@ -154,7 +154,8 @@ The blueprint's authors drew the line themselves: the gates are theirs, the reco
 # in a clone of anthropics/commerce-agents
 pip install -r requirements.txt
 pip install treeship-sdk treeship-commerce          # 0.30.0
-curl -fsSL https://treeship.dev/install | sh && treeship init
+curl -fsSL https://treeship.dev/install | sh
+treeship init --config .treeship/config.json     # a workspace for this directory
 python -m treeship_commerce.demo                    # shopping: the gate, the hand-off, the order
 python -m treeship_commerce.demo_merchant           # merchant: held, approved once, refused on replay
 

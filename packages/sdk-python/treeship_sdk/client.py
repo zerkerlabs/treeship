@@ -7,6 +7,7 @@ import os
 import re
 import shlex
 import subprocess
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
@@ -217,6 +218,7 @@ class Treeship:
         # back to PATH. The fix: store the resolved path and require
         # every subprocess invocation to go through `_run_cli`.
         self._bootstrap: Optional[BootstrapResult] = None
+        self._version_checked = False
 
         if cli_path is not None:
             self._binary: str = str(cli_path)
@@ -253,6 +255,45 @@ class Treeship:
 
     # ---- subprocess helpers --------------------------------------------------
 
+    def _check_cli_version(self) -> None:
+        """Once per client: warn when the CLI and this SDK are on different
+        release lines. A warm ``~/.cache/treeship/bin`` after a ``pip``
+        upgrade pairs a new SDK with an old CLI silently otherwise (QA
+        finding TS-003 on 0.31.0). Never raises; a CLI that cannot report
+        its version is left to fail on the real call with a real error."""
+        if self._version_checked:
+            return
+        self._version_checked = True
+        # Only a binary that resolves on disk is probed; a bare name that
+        # does not resolve is left for the real call to report. Popen rather
+        # than subprocess.run so the probe is invisible to callers (and
+        # tests) that wrap `subprocess.run` around the real command.
+        import shutil
+
+        resolved = self._binary if os.path.isfile(self._binary) else shutil.which(self._binary)
+        if not resolved:
+            return
+        try:
+            proc = subprocess.Popen(
+                [resolved, "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
+            stdout, _ = proc.communicate(timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            return
+        cli = stdout.strip().split()[-1] if stdout and stdout.strip() else ""
+        from treeship_sdk import __version__ as sdk  # the package resolves its own version
+        if not cli or cli == sdk:
+            return
+        line = lambda v: ".".join(v.split(".")[:2])  # noqa: E731
+        if line(cli) != line(sdk):
+            warnings.warn(
+                f"treeship CLI {cli} at {self._binary!r} and treeship-sdk {sdk} are on different release lines; "
+                f"upgrade the CLI (curl -fsSL treeship.dev/install | sh, or python -m treeship_sdk.bootstrap_cli) "
+                f"or pin the SDK to match.",
+                RuntimeWarning,
+                stacklevel=3,
+            )
+
     def _run_cli_raw(
         self,
         args: Sequence[str],
@@ -272,6 +313,7 @@ class Treeship:
         if self._env is not None:
             env = {**os.environ, **self._env} if self._env_is_extension() else dict(self._env)
 
+        self._check_cli_version()
         try:
             return subprocess.run(
                 [self._binary, *args],

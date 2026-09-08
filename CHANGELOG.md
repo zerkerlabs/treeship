@@ -2,7 +2,12 @@
 
 ## Unreleased
 
-_Nothing yet._
+- **treeship-commerce: the order receipt no longer forks the chain (QA TS-002, P0).** `order_placed` signed the host's order onto the hand-off receipt. The checkout result, which also follows the hand-off, became a branch off the path the session seals, so it was signed, verifiable on its own, and absent from the package, while `package verify` reported a clean package. The order now chains onto the recorder's head and names the hand-off in `meta.handoff`; `attest_at_handoff` does the same. A test asserts every receipt a recorder writes is on the sealed chain.
+- **`session close` names unsealed branches (QA TS-002).** Signed artifacts whose parent is on the sealed chain but which are not on it themselves are listed in the close output (`unsealed_branches` in JSON, a warning in text) instead of vanishing silently.
+- **The demos run on a clean machine (QA TS-001, TS-004).** `demo` and `demo_merchant` construct the SDK with `bot_mode=True`, so the CLI is resolved (PATH, cache, then the matching release) rather than assumed; a missing workspace or CLI prints a one-line remedy instead of a traceback; a session a previous run left open is closed with a summary that says so, so a second run works.
+- **The SDK warns when the CLI is on another release line (QA TS-003).** Once per client, on the first call: `treeship --version` against the SDK's own version, a `RuntimeWarning` naming both and the upgrade command.
+- **Quickstarts use the project-local init (QA TS-006).** `treeship init --config .treeship/config.json` in every commerce quickstart. Bare `treeship init` refuses when a global workspace already exists and the current directory is not it (that guard predates 0.31; it was the first command in the quickstarts that was wrong).
+- **`bootstrap.py` docstring matches `bootstrap_cli` (QA TS-005):** the entry point prints the binary path, or the JSON result with `--json`.
 
 ## 0.31.0 (2026-09-08)
 

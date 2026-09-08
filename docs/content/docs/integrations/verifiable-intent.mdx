@@ -72,9 +72,9 @@ Anthropic's [commerce-agents](/integrations/commerce-agents) reference stops at 
 
 | Verifiable Intent | Treeship commerce receipt | Note |
 |---|---|---|
-| L2 mandate constraints (`amount_range`, `allowed_payees`, `line_items`) | `commerce.checkout.handoff` carries `subtotal`, `currency`, `item_count`, and a per-hand-off `seller` | `treeship vi attest` is run at hand-off with the cart's values; the attestation's `chain_head` is the hand-off receipt, so the claim binds the cart that went to checkout to the credential |
+| L2 mandate constraints (`amount_range`, `allowed_payees`, `line_items`) | `commerce.checkout.handoff` carries `subtotal`, `currency`, `item_count`, and a per-hand-off `seller` | `treeship vi attest` is run at hand-off with the cart's values; the chain the attestation names runs through the hand-off receipt, so the claim binds the cart that went to checkout to the credential |
 | L3b `checkout_hash` (SHA-256 of the merchant's checkout JWT) | `cart_digest` (SHA-256 over the canonical cart) | Different preimages by design: the spec hashes the merchant's token, Treeship hashes the cart the agent built. The claim's `transaction_id` is the former; the chain it names covers the latter |
-| L3a payment leg | `commerce.order.placed`, chained to the hand-off | Treeship records that an order was placed and for how much, digesting the order reference. It does not touch the payment instrument; that stays on the network |
+| L3a payment leg | `commerce.order.placed`, on the chain after the hand-off, naming it | Treeship records that an order was placed and for how much, digesting the order reference. It does not touch the payment instrument; that stays on the network |
 | Provenance-gate refusals | `commerce.tool.*` receipts with status `blocked` | Not part of VI at all, and the part an issuer is most likely to ask about: the planted cart add that the gate refused is in the same chain the credential cites |
 
 Merchant-side approvals (the signed, single-use grants in the merchant vertical) are outside Verifiable Intent, which is the buyer's chain. They stay in the merchant's own session package.

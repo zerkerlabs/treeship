@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import subprocess
 from typing import Any, Mapping, Sequence
 
@@ -56,6 +57,31 @@ def _run_json(
     if not docs:
         raise TreeshipError(f"treeship {' '.join(args[:2])} printed no JSON", list(args))
     return docs[-1]
+
+
+def open_demo_session(
+    client: Treeship,
+    *,
+    name: str,
+    actor: str,
+    env: Mapping[str, str] | None = None,
+    cwd: str | os.PathLike[str] | None = None,
+) -> str:
+    """``start_session`` for a demo that must run twice in a row: a session a
+    previous run left open (a crash, a Ctrl-C) is closed first, with a
+    summary that says so, instead of failing the run with a traceback.
+    Returns the new session's root artifact id."""
+    status = session_status(client, env=env, cwd=cwd)
+    if status.get("active"):
+        stale = status.get("session_id", "?")
+        print(f"closing session {stale} that a previous run left open", file=sys.stderr)
+        _run_json(
+            client,
+            ["session", "close", "--summary", f"Closed by a later demo run; this run did not finish."],
+            env=env,
+            cwd=cwd,
+        )
+    return start_session(client, name=name, actor=actor, env=env, cwd=cwd)
 
 
 def start_session(

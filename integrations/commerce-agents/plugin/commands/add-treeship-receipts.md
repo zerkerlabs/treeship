@@ -13,7 +13,7 @@ Without a role, read the project and infer it; with both roles present, wire bot
 
 1. The reference (`anthropics/commerce-agents`): the current repo, a local clone, or a fresh clone. Treeship needs it only for the tests and the demos; the deployment imports `treeship_commerce` and its own reference packages.
 2. The user's agent and its runtime. Look for the `executor_class` seam: `ShoppingAgent(...)` / `MerchantAgent(...)` (Messages API), `ShoppingToolset(...)` / `MerchantToolset(...)` (Agent SDK), or `build_server(...)` in a `*-mcp-server` (Managed Agents). A project from `/scaffold-commerce-agent` names its runtime in the `## Commerce agent decision record` of `CLAUDE.md`; read it, and read the approval surface entry for a merchant agent.
-3. A Treeship ship. `treeship --version` must print 0.29.0 or later, and `treeship init` must have run in the deployment's working directory (or `TREESHIP_CONFIG` must point at one). Without a ship, receipts are dropped and counted, never invented; say so and offer to run `treeship init`.
+3. A Treeship ship. `treeship --version` must print 0.29.0 or later, and `treeship init --config .treeship/config.json` must have run in the deployment's working directory (or `TREESHIP_CONFIG` must point at one). Without a ship, receipts are dropped and counted, never invented; say so and offer to run `treeship init --config .treeship/config.json`.
 
 ## Step 2: Install
 

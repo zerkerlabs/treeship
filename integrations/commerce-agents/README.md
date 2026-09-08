@@ -33,10 +33,11 @@ can correlate and a reader cannot.
 ## Install
 
 ```bash
-# from a clone of anthropics/commerce-agents, with its venv active
+# from a clone of anthropics/commerce-agents, with its venv active (Python 3.11+)
 pip install -r requirements.txt            # their seven packages (unregistered on PyPI)
 pip install treeship-sdk treeship-commerce
-curl -fsSL https://treeship.dev/install | sh && treeship init
+curl -fsSL https://treeship.dev/install | sh   # the CLI does the signing; the demos also fetch it themselves
+treeship init --config .treeship/config.json   # a workspace for this directory
 ```
 
 ## Or let Claude Code wire it
@@ -109,7 +110,7 @@ its one use.
 `receipted_backend(backend)` wraps a storefront backend so `checkout_handoff` also signs a
 hand-off receipt: cart digest, item count, subtotal, currency, and a digest of each hosted
 URL (never the URL). `order_placed(receipts, order_ref=..., amount=..., currency=...)` is
-the host's half: a signed order receipt chained onto the hand-off, the order reference
+the host's half: a signed order receipt on the chain after the hand-off, naming it, the order reference
 digested. A holder of the checkout card can recompute the cart digest from the card alone.
 
 ## Approvals
@@ -148,7 +149,7 @@ summary["attestation"]["chain_head"] == receipts.last_handoff   # True
 vi_verify(ts, mandate=l2_sdjwt, out="./vi-out")["outcome"]      # "pass"
 ```
 
-The purchase values you pass must describe the cart: the check against the mandate happens before anything is signed, and a purchase outside it raises with nothing written. The attestation is itself a receipt (`vi.l3.attested`) chained onto the hand-off, and the host's order chains onto it. Needs treeship 0.31.
+The purchase values you pass must describe the cart: the check against the mandate happens before anything is signed, and a purchase outside it raises with nothing written. The attestation is itself a receipt (`vi.l3.attested`) on the chain after the hand-off, and the host's order chains onto it. Needs treeship 0.31.
 
 ## Keep the preimages
 
