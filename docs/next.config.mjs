@@ -12,6 +12,24 @@ const config = {
   // treat the user's entire home directory as this application's trace root.
   outputFileTracingRoot: docsRoot,
   allowedDevOrigins: ['localhost', '127.0.0.1'],
+  async headers() {
+    return [
+      {
+        source: '/:path*',
+        headers: [
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=(), payment=()' },
+        ],
+      },
+      {
+        // The blog GIFs are up to 1.8 MB; Vercel revalidates public/ files on
+        // every view by default.
+        source: '/:path*.(gif|png|webp|jpg|jpeg|ico|svg|mp4)',
+        headers: [{ key: 'Cache-Control', value: 'public, max-age=86400, stale-while-revalidate=604800' }],
+      },
+    ];
+  },
   async redirects() {
     return [
       {
