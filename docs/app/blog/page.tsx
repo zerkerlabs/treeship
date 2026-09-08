@@ -2,6 +2,25 @@ import Link from 'next/link';
 import { blogSource } from '@/lib/blog';
 import { BlogChrome } from './chrome';
 
+const indexImage = `/og?${new URLSearchParams({
+  title: 'Treeship blog',
+  description: 'Agent trust, portable verification, and cryptographic accountability in AI workflows.',
+  section: 'blog',
+}).toString()}`;
+
+export const metadata = {
+  title: 'Blog',
+  description: 'Agent trust, portable verification, and cryptographic accountability in AI workflows.',
+  alternates: { canonical: '/blog' },
+  openGraph: {
+    title: 'Treeship blog',
+    description: 'Agent trust, portable verification, and cryptographic accountability in AI workflows.',
+    url: '/blog',
+    images: [{ url: indexImage, width: 1200, height: 630, alt: 'Treeship blog' }],
+  },
+  twitter: { card: 'summary_large_image', title: 'Treeship blog', images: [indexImage] },
+};
+
 export default function BlogIndex() {
   const posts = blogSource.getPages().sort((a, b) => {
     const da = a.data.date ?? '0';
