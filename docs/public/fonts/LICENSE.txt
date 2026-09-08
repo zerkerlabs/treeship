@@ -1,0 +1,5 @@
+Geist and Geist Mono are designed by Vercel and released under the
+SIL Open Font License, Version 1.1 (https://openfontlicense.org/).
+Source: https://github.com/vercel/geist-font. The two files here are the
+Latin-subset variable WOFF2 builds served by Google Fonts, vendored so the
+site does not depend on a third-party origin for its type.
