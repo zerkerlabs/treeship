@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+_Nothing yet._
+
+## 0.31.1 (2026-09-08)
+
 - **treeship-commerce: the order receipt no longer forks the chain (QA TS-002, P0).** `order_placed` signed the host's order onto the hand-off receipt. The checkout result, which also follows the hand-off, became a branch off the path the session seals, so it was signed, verifiable on its own, and absent from the package, while `package verify` reported a clean package. The order now chains onto the recorder's head and names the hand-off in `meta.handoff`; `attest_at_handoff` does the same. A test asserts every receipt a recorder writes is on the sealed chain.
 - **`session close` names unsealed branches (QA TS-002).** Signed artifacts whose parent is on the sealed chain but which are not on it themselves are listed in the close output (`unsealed_branches` in JSON, a warning in text) instead of vanishing silently.
 - **The demos run on a clean machine (QA TS-001, TS-004).** `demo` and `demo_merchant` construct the SDK with `bot_mode=True`, so the CLI is resolved (PATH, cache, then the matching release) rather than assumed; a missing workspace or CLI prints a one-line remedy instead of a traceback; a session a previous run left open is closed with a summary that says so, so a second run works.
