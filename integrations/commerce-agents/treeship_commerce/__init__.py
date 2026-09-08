@@ -25,6 +25,9 @@ from .receipts import (
 )
 
 __all__ = [
+    "attest_at_handoff",
+    "vi_check",
+    "vi_verify",
     "Grant",
     "MerchantApprovals",
     "ReceiptedBackend",
@@ -43,3 +46,4 @@ __all__ = [
     "text_digest",
 ]
 __version__ = "0.30.0"
+from .vi import attest_at_handoff, vi_check, vi_verify  # noqa: E402

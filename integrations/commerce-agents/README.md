@@ -128,6 +128,28 @@ no edits. On the Messages API the host calls `approvals.grant()` beside its own 
 Managed Agents the platform's prompt is the approval surface and the click is outside the
 process; an apply there is receipted with no approval claim, never an invented one.
 
+## Verifiable Intent at hand-off
+
+[Verifiable Intent](https://docs.treeship.dev/integrations/verifiable-intent) is the Mastercard-maintained v0.1 draft for proving an agent was authorized to buy. `treeship vi attest` signs its Layer 3 pair with the spec's `agent_attestation` claim pointing at this receipt chain. Run it at hand-off and the chain head it names is the hand-off receipt, so the credential binds the cart that went to checkout:
+
+```python
+from treeship_commerce import attest_at_handoff, vi_verify
+
+summary = attest_at_handoff(
+    ts, receipts,
+    mandate=l2_sdjwt,                 # the user's Layer 2, from their wallet
+    checkout_jwt=merchant_jwt,        # the merchant's checkout token
+    merchant="merchant-uuid-1", items=[("BAB86345", 1)],
+    amount_minor=27999, currency="USD",
+    aud_network="https://www.mastercard.com", aud_merchant="https://tennis-warehouse.com",
+    out="./vi-out",
+)
+summary["attestation"]["chain_head"] == receipts.last_handoff   # True
+vi_verify(ts, mandate=l2_sdjwt, out="./vi-out")["outcome"]      # "pass"
+```
+
+The purchase values you pass must describe the cart: the check against the mandate happens before anything is signed, and a purchase outside it raises with nothing written. The attestation is itself a receipt (`vi.l3.attested`) chained onto the hand-off, and the host's order chains onto it. Needs treeship 0.31.
+
 ## Keep the preimages
 
 Receipts carry digests only. To settle a dispute you also need the originals: the arguments

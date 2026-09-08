@@ -270,6 +270,14 @@ class TreeshipReceipts:
         """The most recent artifact in the chain, or the seed parent."""
         return self._head
 
+    def adopt(self, artifact_id: str) -> None:
+        """Make an artifact this recorder did not write the chain head, so
+        the next receipt chains onto it. For receipts another tool wrote
+        onto this chain on purpose, such as the ``vi.l3.attested`` receipt
+        ``treeship vi attest`` chains onto the hand-off."""
+        self._head = artifact_id
+        self.recorded.append(artifact_id)
+
     def _warn(self, context: str, err: BaseException) -> None:
         self.dropped += 1
         if not self._warned:

@@ -1364,7 +1364,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5e6043086bf7973472e0c7dff2142ea0b680d30e18d9cc40f267efbf222bd47"
 dependencies = [
  "base16ct",
- "base64ct",
  "crypto-bigint",
  "digest",
  "ff",
@@ -1374,8 +1373,6 @@ dependencies = [
  "pkcs8",
  "rand_core 0.6.4",
  "sec1",
- "serde_json",
- "serdect",
  "subtle",
  "zeroize",
 ]
@@ -3618,7 +3615,6 @@ dependencies = [
  "der",
  "generic-array",
  "pkcs8",
- "serdect",
  "subtle",
  "zeroize",
 ]
@@ -3767,16 +3763,6 @@ dependencies = [
  "ryu",
  "serde",
  "unsafe-libyaml",
-]
-
-[[package]]
-name = "serdect"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a84f14a19e9a014bb9f4512488d9829a68e04ecabffb0f9904cd1ace94598177"
-dependencies = [
- "base16ct",
- "serde",
 ]
 
 [[package]]
@@ -4374,6 +4360,7 @@ dependencies = [
  "fs2",
  "hex",
  "hostname",
+ "p256",
  "rand 0.8.5",
  "serde",
  "serde_json",
@@ -4401,20 +4388,6 @@ dependencies = [
  "serde_json",
  "treeship-core",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "treeship-vi"
-version = "0.6.0"
-dependencies = [
- "base64",
- "hex",
- "p256",
- "rand 0.8.5",
- "serde",
- "serde_json",
- "sha2",
- "treeship-core",
 ]
 
 [[package]]

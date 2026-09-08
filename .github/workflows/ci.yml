@@ -529,6 +529,34 @@ jobs:
         env:
           TREESHIP_BIN: ${{ github.workspace }}/target/debug/treeship
 
+  vi-interop:
+    name: verifiable intent interop
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable (moving branch; pinned to current tip)
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.11'
+      - name: Build CLI
+        run: cargo build -p treeship-cli
+
+      # The reference SDK is the oracle: both directions must hold against the
+      # commit the integration was written against. A moving clone would turn
+      # a green run into "still agrees with whatever the draft says today".
+      - name: Clone agent-intent/verifiable-intent at the reviewed commit
+        run: |
+          git init -q /tmp/verifiable-intent
+          git -C /tmp/verifiable-intent fetch -q --depth 1 https://github.com/agent-intent/verifiable-intent.git 356c29635f1c44df7de02edb58699ca9f29bece6
+          git -C /tmp/verifiable-intent checkout -q FETCH_HEAD
+      - name: Install the reference SDK
+        run: pip install -q -e /tmp/verifiable-intent pytest
+
+      - name: Test
+        run: python -m pytest -q tests/vi-interop
+        env:
+          TREESHIP_BIN: ${{ github.workspace }}/target/debug/treeship
+
   docs-build:
     name: Docs production build
     runs-on: ubuntu-latest

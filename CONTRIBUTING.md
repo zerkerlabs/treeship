@@ -29,7 +29,6 @@ packages/hub/        Go HTTP server (Hub API)
 packages/sdk-ts/     TypeScript SDK (@treeship/sdk)
 packages/sdk-python/ Python SDK (treeship-sdk)
 packages/core-wasm/  WASM build for browser verification
-packages/vi/         Verifiable Intent credentials (sibling, own cadence)
 packages/zk-circom/  Circom proof circuits (prototype, own cadence)
 packages/zk-risc0/   RISC Zero guest program (prototype, own cadence)
 bridges/mcp/         MCP bridge (@treeship/mcp)
@@ -39,7 +38,7 @@ tests/cross-sdk/     Cross-language SDK contract suite
 ```
 
 **Version skew across `packages/` is deliberate.** Most packages move
-together on the main Treeship release train, but `packages/vi`,
+together on the main Treeship release train, but
 `packages/zk-circom`, and `packages/zk-risc0` are `publish = false`
 sibling crates that run on their own cadence. The release preflight
 (`scripts/check-release-versions.py`) intentionally does not walk

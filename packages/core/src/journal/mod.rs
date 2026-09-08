@@ -729,6 +729,31 @@ pub fn check_replay(
     })
 }
 
+/// Find a use record by its `use_id`, scanning the records directory. The
+/// journal indexes by grant and by nonce; a caller holding only the id an
+/// action's `meta.approval_use_id` names (the VI attestation builder, an
+/// auditor with a receipt in hand) needs this lookup.
+pub fn find_use_by_id(j: &Journal, use_id: &str) -> Result<Option<ApprovalUse>, JournalError> {
+    let dir = j.records_dir();
+    if !dir.is_dir() {
+        return Ok(None);
+    }
+    for entry in fs::read_dir(&dir)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !name.contains(".approval-use.") {
+            continue;
+        }
+        let bytes = fs::read(entry.path())?;
+        if let Ok(rec) = serde_json::from_slice::<ApprovalUse>(&bytes) {
+            if rec.use_id == use_id {
+                return Ok(Some(rec));
+            }
+        }
+    }
+    Ok(None)
+}
+
 fn load_use_record(j: &Journal, index: u64) -> Result<Option<ApprovalUse>, JournalError> {
     let dir = j.records_dir();
     if !dir.is_dir() {

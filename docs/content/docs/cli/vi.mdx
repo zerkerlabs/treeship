@@ -1,0 +1,116 @@
+---
+title: treeship vi
+description: Verifiable Intent (v0.1 draft) credentials with a Treeship attestation inside them
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`treeship vi` is an independent implementation of the [Verifiable Intent](https://verifiableintent.dev/) v0.1 draft, the Mastercard-maintained, Google co-developed credential standard for agent commerce. It interoperates with the standard's reference SDK in both directions and is tested against it in CI. It is not endorsed by, and does not speak for, the standard's maintainers.
+
+The chain, in one paragraph: an issuer signs **L1** for the user; the user's wallet signs **L2**, a mandate that delegates bounded authority to one agent key and states the constraints; in autonomous mode the agent signs the **L3** pair, L3a for the payment network and L3b for the merchant, each bound to the L2 by a hash over exactly the part of the L2 that recipient is shown, and to each other by `transaction_id == checkout_hash == SHA-256(checkout_jwt)`. Every layer is ES256.
+
+Treeship's part is the spec's own optional `agent_attestation` claim: a ship-signed statement, stored as a receipt chained onto the agent's chain, that names the session, the chain head, the Merkle checkpoint over it, and the approval use the action ran under. A verifier that does not know the scheme ignores the claim, as the spec requires. One that does can fetch the session package and check that the credential was minted at the end of exactly that sequence of signed steps.
+
+## Commands
+
+### `treeship vi keygen`
+
+Mint the agent's P-256 key. The private scalar is sealed by the ship keystore's machine key (the same AES-256-GCM construction that protects the Ed25519 keys) under `<keys_dir>/vi/<kid>.json`; it is never printed. The public JWK, with its `kid`, is what the wallet binds under `cnf.jwk` in the L2 mandate.
+
+```bash
+treeship vi keygen --label shopping-agent
+#  ✓ VI agent key generated (P-256, ES256)
+#    kid:  vik_5f3a…
+#    public JWK, for the wallet that issues the Layer 2 mandate:
+#    {"crv":"P-256","kid":"vik_5f3a…","kty":"EC","x":"…","y":"…"}
+```
+
+`treeship vi keys list`, `treeship vi keys export [--key <kid>]`, and `treeship vi keys import --jwk <private-jwk.json>` (for a key a wallet or HSM issued) round it out.
+
+### `treeship vi check`
+
+Ask whether a purchase fits a mandate, without signing anything. Exit 1 on a violation, with every violation listed.
+
+```bash
+treeship vi check --mandate l2.sdjwt --merchant merchant-uuid-1 --item BAB86345 --amount 27999 --currency USD
+#  PASS mandate.payment.amount_range
+#  PASS mandate.payment.allowed_payees
+#  PASS mandate.checkout.allowed_merchants
+#  PASS mandate.checkout.line_items
+#  ✓ within the mandate
+```
+
+The eight registered constraint types are checked with the reference checker's semantics: `amount_range`, `allowed_payees`, `allowed_merchants`, `line_items` (allowlist, per-item and total quantity caps, `match_mode`), `budget` (the per-transaction bounds; the cumulative cap is the network's), `recurrence` and `agent_recurrence` (date window), `reference` (structural, verified by the chain binding). An unknown constraint type on an open mandate is a violation: an open mandate must bound every power.
+
+### `treeship vi attest`
+
+Sign the L3 pair for a purchase. The request is checked against the mandate first; if it is outside, nothing is signed and nothing is written.
+
+```bash
+treeship vi attest \
+  --mandate l2.sdjwt --checkout-jwt checkout.jwt \
+  --merchant merchant-uuid-1 --item BAB86345 --amount 27999 --currency USD \
+  --aud-network https://www.mastercard.com --aud-merchant https://tennis-warehouse.com \
+  --iss https://agent.example.com --out ./vi-out
+#  ✓ Layer 3 credentials signed
+#    out:          ./vi-out
+#    transaction:  tqtg8uApQdpEzAeCFTAzn34OIM8jLNgXZTmudkOBego
+#    attestation:  art_620c1e8fcb875c729682de3d83aecc3b
+#    chain:        13 artifacts . mroot_8fe333bf3882
+#    approval:     use_93afa24b35af148dfdd4f9deae92f525
+```
+
+What lands in `--out`:
+
+| File | Goes to | What it is |
+|---|---|---|
+| `l3a.sdjwt` | the payment network | Payment mandate: `transaction_id`, payee, `payment_amount`, the `payment_instrument` the L2 authorized (repeated exactly) |
+| `l2-payment.sdjwt` | the payment network | The L2 presentation L3a's `sd_hash` covers: base JWT, the payment mandate disclosure, the payee's merchant disclosure |
+| `l3b.sdjwt` | the merchant | Checkout mandate: `checkout_jwt`, `checkout_hash`, line items |
+| `l2-checkout.sdjwt` | the merchant | The L2 presentation L3b's `sd_hash` covers: base JWT, the checkout mandate disclosure, the cart's item disclosures |
+| `attestation.json` | anyone | The `agent_attestation` claim both halves carry |
+| `summary.json` | you | Ids, digests, what was checked |
+
+The attestation is a receipt: an ordinary `treeship/action/v1` statement with action `vi.l3.attested`, signed with the ship's Ed25519 key, stored under the artifact id shown, chained onto the previous head inside the signature (`parentId`), and it becomes the new head, so `treeship verify`, `package verify`, the receipt page and the hub all treat it like any other step. Its signed fields: `session`, `chain_head`, `chain_length`, `checkpoint` (`mroot_…` over the chain from the session root to the head), `approval_use` (the digest of the most recent approval-use record a receipt in that chain consumed, when there is one), `mandate_digest` (SHA-256 of the L2 base JWT) and `transaction_id`. The claim embeds the envelope and the signing public key, so any Ed25519 library confirms the signature without Treeship, and `treeship verify <artifact-id>` walks the chain it sits on. `--no-receipt` signs without storing. `--head`, `--session` and `--actor` override what the active session provides.
+
+If the chain from the head does not reach the active session's root (an artifact signed without `--parent`, a head from another workspace), the attestation still names what it saw and the command says so.
+
+### `treeship vi verify`
+
+Verify a pair the way the reference verifier does, then the attestation.
+
+```bash
+treeship vi verify --mandate l2.sdjwt \
+  --l3a vi-out/l3a.sdjwt --l3b vi-out/l3b.sdjwt \
+  --l2-payment vi-out/l2-payment.sdjwt --l2-checkout vi-out/l2-checkout.sdjwt \
+  --l1 l1.sdjwt --issuer-jwk issuer.jwk --local --require-attestation
+#  PASS l1_signature -- L1 issuer signature (ES256)
+#  PASS l2_signature -- L2 signed by the user key L1 binds (cnf.jwk)
+#  PASS l2_sd_hash -- L2 sd_hash binds the presented L1
+#  PASS l3a_signature -- signed by the agent key L2 delegates to (cnf.jwk)
+#  PASS l3a_kid -- header kid 'agent-key-1' matches L2 cnf.jwk.kid
+#  PASS l3a_sd_hash -- sd_hash binds the L2 presentation this recipient saw
+#  PASS l3a_instrument_matches_l2 -- payment_instrument is the one L2 authorized
+#  PASS l3a_constraints -- checked: mandate.payment.amount_range, mandate.payment.allowed_payees
+#  PASS l3b_checkout_hash -- checkout_hash = B64U(SHA-256(checkout_jwt))
+#  PASS l3_cross_reference -- L3a transaction_id == L3b checkout_hash
+#  PASS l3a_attestation -- Treeship attestation art_620c… signed by key_f384…
+#  PASS attestation_mandate_digest -- attestation names this L2
+#  PASS local_checkpoint -- Merkle root over 13 local artifacts recomputes to the attested checkpoint
+#  …
+#  ✓ verified  (47 passed, 0 failed)
+```
+
+A network verifies its half with `--l3a` and `--l2-payment`; a merchant its half with `--l3b` and `--l2-checkout`; anyone holding both checks the cross-reference. `--l1` and `--issuer-jwk` add the L1 and L2 checks. `--local` checks the attestation's chain head and Merkle checkpoint against this ship's own storage, which is the producer's view; a stranger runs `treeship verify <chain head>` against a package or bundle the producer exported, after pinning the producer's key with `treeship trust add`. `--require-attestation` fails a pair without one.
+
+<Callout type="warn">
+What `verify` does not decide: whether the attestation's signing key is one you trust. It prints the key; pinning it is your call, out of band. And the attestation proves the credential was minted at the end of a specific signed sequence; it does not prove the sequence was wise. A receipt for a bad purchase is still a receipt.
+</Callout>
+
+## Interop
+
+`tests/vi-interop` runs in CI against the reference SDK pinned at the commit this was written against: the reference's `verify_chain` and `check_constraints` accept a pair `treeship vi attest` signed, and read past the `agent_attestation` claim as the spec requires of an unknown scheme; `treeship vi verify` accepts a mandate the reference issued; a request outside the mandate is refused before anything is signed; one edited byte fails on both verifiers. The Rust side of the same contract, byte-identical re-serialization of reference-issued tokens included, is `packages/core/tests/vi_reference_fixture.rs`.
+
+## Not in scope
+
+Multi-pair L2 mandates (several checkout/payment pairs in one L2) are refused with a clear error. Cumulative budget and occurrence counting across transactions are the network's, as the spec assigns them. Immediate mode (two layers, user present) has no L3 and nothing for the agent to sign.

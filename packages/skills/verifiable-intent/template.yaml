@@ -1,6 +1,6 @@
 trust_template:
   name: verifiable-intent
-  version: 0.6.0
+  version: 0.31.0
 
   bounded_actions:
     - vi.mandate.receive
@@ -32,10 +32,6 @@ trust_template:
   actors:
     - agent://vi-commerce
     - human://approver
-
-  zk:
-    auto_prove: true
-    on: constraint_satisfaction
 
   session:
     auto_start: true

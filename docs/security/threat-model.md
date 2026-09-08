@@ -610,7 +610,7 @@ These are tracked, not hidden. Each one has a path forward and is open
 in the project tracker.
 
 - **`treeship-vi` keystore migration is pending.** The companion crate
-  at `packages/vi` continues to use the pre-fix keystore construction
+  at `packages/vi` continued to use the pre-fix keystore construction (that crate is retired; the VI agent key now lives in `<keys_dir>/vi/` sealed by `KeyStore::encrypt_secret`, the v2 AES-256-GCM construction)
   described in [TS-2026-001](./TS-2026-001.md) until its own migration
   release ships. If you use `treeship vi` to sign L2/L3 mandates, plan
   to rotate vi-issued keys after the vi migration release.

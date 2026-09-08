@@ -11,11 +11,11 @@
 ## TL;DR
 
 Most packages under `packages/` are pinned to a single monorepo version
-that ticks each release. Three are deliberately not:
+that ticks each release. Two are deliberately not (a third, `packages/vi`,
+was folded into `treeship-core` as `vi::` when `treeship vi` shipped):
 
 | Package | Current | Tracks monorepo? | Reason |
 |---|---|---|---|
-| `packages/vi` (`treeship-vi`) | 0.6.0 | No | Sibling experiment, independent cadence, `publish = false` |
 | `packages/zk-circom` (`treeship-zk-circom`) | 0.5.0 | No | Early-stage proof prototype, `publish = false` |
 | `packages/zk-risc0` (`treeship-zk-risc0`) | 0.5.0 | No | Early-stage proof prototype, `publish = false` |
 | `packages/zk-circom/package.json` (npm side) | 1.0.0 | No | Scaffolding-default from `npm init`, never published, never consumed |

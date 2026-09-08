@@ -47,6 +47,7 @@ pub mod trust;
 pub mod verifier;
 pub mod verify;
 pub mod verify_external;
+pub mod vi;
 pub mod workflow;
 pub mod wrap;
 pub mod zk;
