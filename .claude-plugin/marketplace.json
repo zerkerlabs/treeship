@@ -6,13 +6,13 @@
   },
   "metadata": {
     "description": "Official Treeship marketplace. Portable, cryptographically signed receipts for AI coding sessions.",
-    "version": "0.31.1"
+    "version": "0.31.2"
   },
   "plugins": [
     {
       "name": "treeship",
       "description": "Portable, cryptographically signed receipts for everything Claude Code does. Proof that stays true after the session ends.",
-      "version": "0.31.1",
+      "version": "0.31.2",
       "author": {
         "name": "Zerker Labs",
         "url": "https://treeship.dev"
@@ -22,7 +22,7 @@
     {
       "name": "treeship-commerce",
       "description": "Add Treeship receipts to an anthropics/commerce-agents deployment: every tool call signed on all three runtimes, the merchant's approval as a signed single-use grant, and a receipt for exactly the cart that went to checkout.",
-      "version": "0.31.1",
+      "version": "0.31.2",
       "author": {
         "name": "Zerker Labs",
         "url": "https://treeship.dev"
