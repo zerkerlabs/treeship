@@ -851,7 +851,7 @@ fn verify_sealed_envelopes(
             .exists()
     });
     if !any_envelope {
-        let detail = "the package carries no artifact envelopes (built before 0.31.2), so nothing here is signature-checked: the sealed set is structurally consistent and nothing more. Verify the artifacts from the producer's store, a bundle, or the hub with `treeship verify <id>`, or accept structure only with --structural-only";
+        let detail = "the package carries no artifact envelopes (built before 0.31.2), so nothing here is signature-checked: the sealed set is structurally consistent and nothing more. Verify the artifacts from the producer's store, a bundle, or the hub with `treeship verify <id>`, or read structure only with --structural (verdict: structural-pass)";
         checks.push(if structural_only {
             VerifyCheck::warn("envelopes", detail)
         } else {

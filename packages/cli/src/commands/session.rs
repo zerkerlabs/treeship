@@ -2095,12 +2095,29 @@ fn find_unchained(
 ) -> Vec<session::receipt::ArtifactEntry> {
     let on_chain: std::collections::HashSet<&str> =
         chain.iter().map(|e| e.artifact_id.as_str()).collect();
-    let mut out: Vec<session::receipt::ArtifactEntry> = ctx
-        .storage
-        .list()
+    // The index is append-ordered (`list()` returns newest first), so "during
+    // the session" is "after the root artifact was written": a position, not
+    // a timestamp. Second-resolution timestamps would sweep in whatever the
+    // workspace signed in the same second before the session started.
+    let mut index = ctx.storage.list();
+    index.reverse();
+    let after_root: Vec<_> = match manifest
+        .root_artifact_id
+        .as_deref()
+        .and_then(|root| index.iter().position(|e| e.id == root))
+    {
+        // The root itself stays in: when nothing chained onto it, the walk
+        // from the close artifact never reaches it, and it is still the
+        // session's anchor.
+        Some(pos) => index.into_iter().skip(pos).collect(),
+        None => index
+            .into_iter()
+            .filter(|e| e.signed_at.as_str() > manifest.started_at.as_str())
+            .collect(),
+    };
+    let mut out: Vec<session::receipt::ArtifactEntry> = after_root
         .into_iter()
         .filter(|e| !on_chain.contains(e.id.as_str()))
-        .filter(|e| e.signed_at.as_str() >= manifest.started_at.as_str())
         .filter_map(|e| ctx.storage.read(&e.id).ok())
         .map(|rec| session::receipt::ArtifactEntry {
             artifact_id: rec.artifact_id.clone(),
@@ -2151,7 +2168,7 @@ fn collect_sealed_envelopes(
             }
         }
     }
-    if !missing.is_empty() {
+    if !missing.is_empty() && printer.format != crate::printer::Format::Json {
         printer.warn(
             "some sealed artifacts cannot be signature-verified from this package",
             &[("missing", &missing.join(", "))],

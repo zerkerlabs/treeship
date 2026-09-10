@@ -26,7 +26,7 @@ treeship package inspect .treeship/sessions/ssn_42e740bd9eb238f6.treeship
 | Option | Description |
 |--------|-------------|
 | `--strict` | Promote approval-evidence warnings and the unpinned-signer warning (`signer_trust`) to failures. |
-| `--structural-only` | Check structure and approvals only; do not require or verify the envelopes. For packages built before 0.31.2, which carry no envelopes and otherwise fail at `envelopes`. The verdict line says `package structure verified (signatures not checked)`. |
+| `--structural` | Check structure and approvals only; do not require or verify the envelopes. For packages built before 0.31.2, which carry no envelopes and otherwise fail at `envelopes`. The verdict line reads `structural-pass: structure and approvals verified, signatures not checked`, never `verified`. |
 | `--format json` | The same checks as a JSON array, for a script. |
 
 Output includes:
@@ -105,7 +105,7 @@ treeship package verify .treeship/sessions/ssn_42e740bd9eb238f6.treeship
 | `determinism` | Re-serializing the parsed receipt byte-matches the on-disk file |
 | `merkle_root` | Recomputing the Merkle tree over the artifact ids produces the root stored in the receipt |
 | `inclusion:<id>` | Each stored inclusion proof verifies against the recomputed root |
-| `envelopes` | Only emitted when it fails: the package carries no `artifacts/` envelopes (built before 0.31.2) or no readable `keys.json`. `WARN` under `--structural-only` |
+| `envelopes` | Only emitted when it fails: the package carries no `artifacts/` envelopes (built before 0.31.2) or no readable `keys.json`. `WARN` under `--structural` |
 | `signature:<id>` | The envelope in `artifacts/<id>.json` verifies under a key in `keys.json`, its `art_` id re-derives from the signed bytes, and the receipt's digest column matches |
 | `chain_linkage` | Every chained artifact names the previous one as `parentId` inside the signature, in the order the receipt lists them |
 | `chain_completeness` | `WARN` naming sealed artifacts that were signed during the session without `--parent` (marked `unchained` in the receipt): verifiable on their own, their order is the signer's unsigned claim |
@@ -139,7 +139,7 @@ package verification
 ✓ package verified
 ```
 
-Any FAIL exits nonzero and prints a warning summary. WARNs (for example, `signer_trust` on a key you have not pinned) are non-fatal. A package built before 0.31.2 fails at `envelopes` because there is nothing in it to check a signature against; run it with `--structural-only` to read its structure and approvals, and verify its artifacts from a bundle or the hub with [`treeship verify`](/docs/cli/verify).
+Any FAIL exits nonzero and prints a warning summary. WARNs (for example, `signer_trust` on a key you have not pinned) are non-fatal. A package built before 0.31.2 fails at `envelopes` because there is nothing in it to check a signature against; run it with `--structural` to read its structure and approvals, and verify its artifacts from a bundle or the hub with [`treeship verify`](/docs/cli/verify).
 
 <Callout type="info">
 Local verification is the trust anchor. A hub serving a receipt at `https://treeship.dev/receipt/<session_id>` is a convenience layer; the cryptographic trust comes from running `treeship package verify` on the downloaded package, reading every row, and pinning the signer's key yourself.

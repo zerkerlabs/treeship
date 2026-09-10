@@ -297,7 +297,7 @@ fn packages_without_envelopes_fail_the_default_verifier() {
         .find(|c| c.name == "envelopes")
         .expect("envelopes row");
     assert_eq!(env.status, VerifyStatus::Fail, "{env:?}");
-    assert!(env.detail.contains("--structural-only"));
+    assert!(env.detail.contains("--structural"));
     let structural = verify_package_structural(&pkg).expect("structural");
     let env2 = structural.iter().find(|c| c.name == "envelopes").unwrap();
     assert_eq!(env2.status, VerifyStatus::Warn);

@@ -28,7 +28,7 @@ A session package is a directory named `<session-id>.treeship`. The pieces that 
 | `keys.json` | The public keys the envelopes were signed with, by key id. The package names them. Whether to trust them is your decision, and Step 2 is where you make it. |
 | `preview.html` | The receipt page. Opens in a browser, verifies the Merkle structure client-side, no network. |
 
-Two rows are the first thing to understand. **Since 0.31.2 the package carries its own signed bytes, so `package verify` checks the signatures from the file you were handed.** A package from an earlier release proves structure only; the default verifier fails it and says why, and `--structural-only` reports what such a package can still show. In both cases the package cannot tell you whose keys these are. The commands below cover both.
+Two rows are the first thing to understand. **Since 0.31.2 the package carries its own signed bytes, so `package verify` checks the signatures from the file you were handed.** A package from an earlier release proves structure only; the default verifier fails it and says why, and `--structural` reports what such a package can still show. In both cases the package cannot tell you whose keys these are. The commands below cover both.
 
 ## Step 1. The package: structure, signatures, approvals
 
@@ -77,7 +77,7 @@ Since 0.31.2, the same command continues past the tree into the envelopes. From 
 
 | Check | It proves | It does not prove |
 |---|---|---|
-| `envelopes` (only when it fails) | The package carries a signed envelope for its artifacts. A package built before 0.31.2 fails here, and the message says to verify from a bundle or the hub, or to read structure only with `--structural-only`. | Anything else. When the envelopes are present this row is silent and the per-artifact rows speak. |
+| `envelopes` (only when it fails) | The package carries a signed envelope for its artifacts. A package built before 0.31.2 fails here, and the message says to verify from a bundle or the hub, or to read structure only with `--structural`. | Anything else. When the envelopes are present this row is silent and the per-artifact rows speak. |
 | `signature:<id>` | The envelope in `artifacts/<id>.json` carries a valid Ed25519 signature from one of the keys in `keys.json`, its content-addressed id re-derives from the signed bytes, and the digest column matches. Replace the id with an invented one, or edit one byte of the envelope, and this row fails. | Whose key that is. |
 | `chain_linkage` | Every chained artifact names the previous one as its parent, inside the signature, so the order the package presents is the order the signer committed to. Reorder two receipts and this fails. | The order of unchained artifacts. |
 | `chain_completeness` (`WARN` when it applies) | Names every sealed artifact that was signed during the session but never chained onto it: signed and verifiable on its own, but its place in the sequence is the signer's unsigned claim. | That the list is complete. An artifact signed into another workspace is not in this package at all. |

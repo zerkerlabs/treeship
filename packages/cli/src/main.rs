@@ -1379,7 +1379,7 @@ enum PackageCommand {
     /// Examples:
     ///   treeship package verify .treeship/sessions/ssn_abc.treeship
     ///   treeship package verify --strict .treeship/sessions/ssn_abc.treeship
-    ///   treeship package verify --structural-only old.treeship   # built before 0.31.2
+    ///   treeship package verify --structural old.treeship   # built before 0.31.2
     Verify(PackageVerifyArgs),
 }
 
@@ -1398,8 +1398,9 @@ struct PackageVerifyArgs {
 
     /// Check structure and approvals only; do not require or verify the
     /// artifact envelopes. Needed for packages built before 0.31.2, which
-    /// carry no envelopes and otherwise fail. The verdict says so.
-    #[arg(long)]
+    /// carry no envelopes and otherwise fail. The verdict is
+    /// `structural-pass`, never `verified`.
+    #[arg(long = "structural")]
     structural_only: bool,
 }
 

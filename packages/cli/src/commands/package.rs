@@ -1195,8 +1195,7 @@ pub fn verify(
         );
     }
     if structural_only {
-        printer
-            .dim_info("  --structural-only: structure and approvals checked; signatures are NOT");
+        printer.dim_info("  --structural: structure and approvals checked; signatures are NOT");
     }
     printer.blank();
 
@@ -1221,7 +1220,10 @@ pub fn verify(
         return Err("package verification failed".into());
     } else if structural_only {
         printer.blank();
-        printer.success("package structure verified (signatures not checked)", &[]);
+        printer.success(
+            "structural-pass: structure and approvals verified, signatures not checked",
+            &[],
+        );
     } else {
         printer.blank();
         printer.success("package verified", &[]);
