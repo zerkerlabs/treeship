@@ -16,8 +16,8 @@
 use std::path::Path;
 
 use treeship_core::session::{
-    build_package, read_package, verify_package, ArtifactEntry, EventType, LifecycleMode,
-    ReceiptComposer, SessionEvent, SessionManifest, SessionStatus, VerifyStatus,
+    build_package, read_package, verify_package_structural, ArtifactEntry, EventType,
+    LifecycleMode, ReceiptComposer, SessionEvent, SessionManifest, SessionStatus, VerifyStatus,
 };
 
 // ============================================================================
@@ -108,12 +108,14 @@ fn build_synthesized_legacy_package(tmp: &Path) -> std::path::PathBuf {
             payload_type: "action".into(),
             digest: None,
             signed_at: None,
+            unchained: false,
         },
         ArtifactEntry {
             artifact_id: "art_002".into(),
             payload_type: "action".into(),
             digest: None,
             signed_at: None,
+            unchained: false,
         },
     ];
     let mut receipt = ReceiptComposer::compose(&manifest, &events, artifacts);
@@ -139,12 +141,14 @@ fn print_legacy_receipt_json() {
             payload_type: "action".into(),
             digest: None,
             signed_at: None,
+            unchained: false,
         },
         ArtifactEntry {
             artifact_id: "art_002".into(),
             payload_type: "action".into(),
             digest: None,
             signed_at: None,
+            unchained: false,
         },
     ];
     let mut receipt = ReceiptComposer::compose(&manifest, &events, artifacts);
@@ -184,7 +188,7 @@ fn synthesized_legacy_receipt_verifies_under_current_code() {
     );
 
     // Run the full verifier.
-    let checks = verify_package(&pkg).expect("verify legacy package");
+    let checks = verify_package_structural(&pkg).expect("verify legacy package");
     let fails: Vec<_> = checks
         .iter()
         .filter(|c| c.status == VerifyStatus::Fail)
@@ -245,7 +249,7 @@ fn committed_v0_7_2_fixture_passes_package_verification() {
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
     let pkg = copy_fixture_to_package(V0_7_2_FIXTURE, &tmp);
-    let checks = verify_package(&pkg).expect("verify v0.7.2 fixture");
+    let checks = verify_package_structural(&pkg).expect("verify v0.7.2 fixture");
     let fails: Vec<_> = checks
         .iter()
         .filter(|c| c.status == VerifyStatus::Fail)
@@ -264,7 +268,7 @@ fn committed_v0_8_0_fixture_passes_package_verification() {
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
     let pkg = copy_fixture_to_package(V0_8_0_FIXTURE, &tmp);
-    let checks = verify_package(&pkg).expect("verify v0.8.0 fixture");
+    let checks = verify_package_structural(&pkg).expect("verify v0.8.0 fixture");
     let fails: Vec<_> = checks
         .iter()
         .filter(|c| c.status == VerifyStatus::Fail)
@@ -275,4 +279,26 @@ fn committed_v0_8_0_fixture_passes_package_verification() {
         fails
     );
     let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// Audit 2026-09, AUD-31: a package that carries no artifact envelopes cannot
+/// be signature-verified from its own bytes, and the default verifier says
+/// so with a FAIL. Every pre-0.31.2 package is in that position; the
+/// structural entry point exists for readers who know that is what they hold.
+#[test]
+fn packages_without_envelopes_fail_the_default_verifier() {
+    use treeship_core::session::verify_package;
+    let tmp = std::env::temp_dir().join(format!("treeship-legacy-env-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    let pkg = build_synthesized_legacy_package(&tmp);
+    let checks = verify_package(&pkg).expect("verify");
+    let env = checks
+        .iter()
+        .find(|c| c.name == "envelopes")
+        .expect("envelopes row");
+    assert_eq!(env.status, VerifyStatus::Fail, "{env:?}");
+    assert!(env.detail.contains("--structural-only"));
+    let structural = verify_package_structural(&pkg).expect("structural");
+    let env2 = structural.iter().find(|c| c.name == "envelopes").unwrap();
+    assert_eq!(env2.status, VerifyStatus::Warn);
 }

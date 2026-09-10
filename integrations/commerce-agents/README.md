@@ -33,7 +33,8 @@ can correlate and a reader cannot.
 ## Install
 
 ```bash
-# from a clone of anthropics/commerce-agents, with its venv active (Python 3.11+)
+git clone https://github.com/anthropics/commerce-agents && cd commerce-agents
+python3.11 -m venv .venv && source .venv/bin/activate   # the reference needs Python 3.11+
 pip install -r requirements.txt            # their seven packages (unregistered on PyPI)
 pip install treeship-sdk treeship-commerce
 curl -fsSL https://treeship.dev/install | sh   # the CLI does the signing; the demos also fetch it themselves

@@ -135,7 +135,8 @@ It does not prove the catalog was truthful, that the tool's answer was right, th
 ## Try it
 
 ```bash
-# in a clone of anthropics/commerce-agents
+git clone https://github.com/anthropics/commerce-agents && cd commerce-agents
+python3.11 -m venv .venv && source .venv/bin/activate   # Python 3.11+
 pip install -r requirements.txt
 pip install treeship-sdk treeship-commerce
 curl -fsSL https://treeship.dev/install | sh

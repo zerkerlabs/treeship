@@ -42,6 +42,7 @@ Full detail: [`docs/security/threat-model.md`](docs/security/threat-model.md) (c
 Key properties:
 - Ed25519 signatures via ed25519-dalek (NCC Group audited)
 - AES-256-GCM encrypted keystore, machine-bound (see [TS-2026-001](docs/security/TS-2026-001.md) for migration from prior construction)
+- `.treeship` packages carry every sealed artifact's signed envelope and the signing keys; `package verify` checks the signatures, not only the tree (see [TS-2026-002](docs/security/TS-2026-002.md) for packages built before 0.31.2)
 - Content-addressed artifact IDs derived from PAE bytes
 - Hub: device authorization for **enrollment**, **DPoP (RFC 9449)** for **every authenticated Hub write** (no bearer session tokens for that path)
 - Approval nonce binding prevents approval reuse

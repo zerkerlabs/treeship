@@ -21,6 +21,14 @@ treeship package inspect .treeship/sessions/ssn_42e740bd9eb238f6.treeship
 |----------|-------------|
 | `<path>` | Path to a `.treeship` package directory |
 
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--strict` | Promote approval-evidence warnings and the unpinned-signer warning (`signer_trust`) to failures. |
+| `--structural-only` | Check structure and approvals only; do not require or verify the envelopes. For packages built before 0.31.2, which carry no envelopes and otherwise fail at `envelopes`. The verdict line says `package structure verified (signatures not checked)`. |
+| `--format json` | The same checks as a JSON array, for a script. |
+
 Output includes:
 
 - Session metadata: id, name, mode, status, started, ended, duration
@@ -76,7 +84,7 @@ merkle
 
 ## treeship package verify
 
-Run local verification checks against a `.treeship` package. All checks are offline; no hub, no network.
+Run local verification checks against a `.treeship` package. All checks are offline; no hub, no network. Since 0.31.2 the checks go past the Merkle tree into the signed envelopes the package carries: every sealed artifact's Ed25519 signature, its content-addressed id re-derived from the signed bytes, the parent links inside the signatures, and whether the signing keys are pinned trust roots.
 
 ```bash
 treeship package verify .treeship/sessions/ssn_42e740bd9eb238f6.treeship
@@ -97,35 +105,44 @@ treeship package verify .treeship/sessions/ssn_42e740bd9eb238f6.treeship
 | `determinism` | Re-serializing the parsed receipt byte-matches the on-disk file |
 | `merkle_root` | Recomputing the Merkle tree over the artifact ids produces the root stored in the receipt |
 | `inclusion:<id>` | Each stored inclusion proof verifies against the recomputed root |
+| `envelopes` | Only emitted when it fails: the package carries no `artifacts/` envelopes (built before 0.31.2) or no readable `keys.json`. `WARN` under `--structural-only` |
+| `signature:<id>` | The envelope in `artifacts/<id>.json` verifies under a key in `keys.json`, its `art_` id re-derives from the signed bytes, and the receipt's digest column matches |
+| `chain_linkage` | Every chained artifact names the previous one as `parentId` inside the signature, in the order the receipt lists them |
+| `chain_completeness` | `WARN` naming sealed artifacts that were signed during the session without `--parent` (marked `unchained` in the receipt): verifiable on their own, their order is the signer's unsigned claim |
+| `signer_trust` | `PASS` when every signing key is a pinned trust root; otherwise `WARN` with the `treeship trust add` command for each key (`FAIL` under `--strict`) |
 | `leaf_count` | `merkle.leaf_count` matches the artifact count in the receipt |
 | `timeline_order` | Timeline entries are in deterministic `(timestamp, sequence_no, event_id)` order |
 
-Example output:
+Example output, from a session with four chained actions and one signed without `--parent`, on a ship whose key is not yet a pinned trust root:
 
 ```
 package verification
-  package: .treeship/sessions/ssn_42e740bd9eb238f6.treeship
+  package: .treeship/sessions/ssn_048b0184f2abd3e0.treeship
 
   PASS receipt.json -- Parses as valid Session Receipt
   PASS type -- Correct receipt type
-  PASS determinism -- receipt.json round-trips identically
+  PASS determinism -- receipt.json round-trips identically (structural, NOT a signature)
+  WARN receipt_body_binding -- timeline/side-effects/narrative are NOT signed in this package — only the artifacts and Merkle root are cryptographically bound. ...
   PASS merkle_root -- Merkle root matches recomputed value
-  PASS inclusion:art_6c7ff9c5a8d20e0f18f504375ef28a24 -- Inclusion proof valid
-  PASS inclusion:art_d9823ce56401fa900ac3adbf63bc5125 -- Inclusion proof valid
-  PASS inclusion:art_aacba22f6fa864322cd8d116e931ad1c -- Inclusion proof valid
-  PASS inclusion:art_e5e2782c3579100f1dd1c21f79c4a387 -- Inclusion proof valid
+  PASS inclusion:art_7f536ce61435c17afd16c3af6484d4eb -- Inclusion proof valid
+  ... (one line per artifact)
+  PASS signature:art_7f536ce61435c17afd16c3af6484d4eb -- Ed25519 signature by key_ba973a7083d45f8d verifies; id and digest re-derived from the signed bytes
+  ... (one line per artifact)
+  PASS chain_linkage -- 4 chained artifacts each name the previous one as parent, inside the signature
+  WARN chain_completeness -- 1 sealed artifact(s) were signed during the session but never chained onto it (art_cd9bf1738355ae7d9ee10125cdf24359); signed and sealed, but their order relative to the chain is the signer's claim only
+  WARN signer_trust -- signature(s) verify for the key(s) the package names, but 1 of them are not pinned trust roots here: key_ba973a7083d45f8d. Pin what you have decided to trust: treeship trust add key_ba973a7083d45f8d ed25519:tyFBDCyMLbUV2NtlPaBaTiZvktwXxxOcI2j7ME9GSrw --kind cert_issuer
   PASS leaf_count -- Leaf count matches artifact count
   PASS timeline_order -- Timeline is correctly ordered
 
-  10 passed, 0 failed, 0 warnings
+  17 passed, 0 failed, 3 warnings
 
 ✓ package verified
 ```
 
-Any FAIL causes the command to print a warning summary. WARNs (for example, "no artifacts to verify") are non-fatal and still allow the package to be considered valid for inspection.
+Any FAIL exits nonzero and prints a warning summary. WARNs (for example, `signer_trust` on a key you have not pinned) are non-fatal. A package built before 0.31.2 fails at `envelopes` because there is nothing in it to check a signature against; run it with `--structural-only` to read its structure and approvals, and verify its artifacts from a bundle or the hub with [`treeship verify`](/docs/cli/verify).
 
 <Callout type="info">
-Local verification is the trust anchor. A hub serving a receipt at `https://treeship.dev/receipt/<session_id>` is a convenience layer; the cryptographic trust comes from running `treeship package verify` on the downloaded package and getting 10 PASS.
+Local verification is the trust anchor. A hub serving a receipt at `https://treeship.dev/receipt/<session_id>` is a convenience layer; the cryptographic trust comes from running `treeship package verify` on the downloaded package, reading every row, and pinning the signer's key yourself.
 </Callout>
 
 ## Package format
@@ -138,7 +155,8 @@ A `.treeship` package is a directory containing:
 ├── merkle.json           standalone copy of the Merkle section
 ├── render.json           Explorer render hints
 ├── preview.html          static preview you can open in a browser
-├── artifacts/            reserved for artifact payloads
+├── keys.json             public keys the envelopes were signed with, by key id (0.31.2+)
+├── artifacts/            the signed DSSE envelope of every sealed artifact (0.31.2+)
 └── proofs/
     ├── art_xxx.proof.json
     └── ...

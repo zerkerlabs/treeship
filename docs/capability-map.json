@@ -3,7 +3,7 @@
   "counts": {
     "cli_commands": 36,
     "hub_routes": 22,
-    "wire_types": 150
+    "wire_types": 151
   },
   "cli_commands": [
     "add",
@@ -629,6 +629,11 @@
       "name": "ObservedWorkflowRun",
       "kind": "struct",
       "source": "packages/core/src/verify/workflow_conformance.rs"
+    },
+    {
+      "name": "PackageKeys",
+      "kind": "struct",
+      "source": "packages/core/src/session/package.rs"
     },
     {
       "name": "Participants",

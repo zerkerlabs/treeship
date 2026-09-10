@@ -82,7 +82,8 @@ What is deliberately **not** in a receipt:
 ## Install
 
 ```bash
-# in a clone of anthropics/commerce-agents, with its venv active (Python 3.11+)
+git clone https://github.com/anthropics/commerce-agents && cd commerce-agents
+python3.11 -m venv .venv && source .venv/bin/activate   # the reference needs Python 3.11+
 pip install -r requirements.txt                  # the reference's packages; unregistered on PyPI by design
 pip install treeship-sdk treeship-commerce
 curl -fsSL https://treeship.dev/install | sh     # the CLI does the signing; the demos also fetch it themselves

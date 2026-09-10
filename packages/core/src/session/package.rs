@@ -15,7 +15,7 @@ use crate::statements::ApprovalStatement;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::receipt::{SessionReceipt, RECEIPT_TYPE};
+use super::receipt::{ArtifactEntry, SessionReceipt, RECEIPT_TYPE};
 use crate::statements::{
     approval_revocation_record_digest, approval_use_record_digest,
     journal_checkpoint_record_digest, ApprovalRevocation, ApprovalUse, JournalCheckpoint,
@@ -115,7 +115,30 @@ pub struct ApprovalsBundle {
     /// pre-v0.9.10 packages; readers must treat absence as "binding
     /// not asserted by package" rather than "binding present and OK."
     pub action_envelopes: Vec<(String, Vec<u8>)>,
+
+    /// Every sealed artifact's signed envelope, `(artifact_id, raw_envelope_json)`,
+    /// so the package verifies its own signatures instead of asking the
+    /// reader to trust the sealed set (audit 2026-09, AUD-31). Written to
+    /// `artifacts/<id>.json`, the same directory the consuming actions above
+    /// already use. Empty in pre-0.31.2 packages.
+    pub sealed_envelopes: Vec<(String, Vec<u8>)>,
+    /// The public half of every key that signed a sealed envelope,
+    /// `(key_id, "ed25519:<base64url>")`, written to `keys.json`. A verifier
+    /// checks each signature against the key the package names, then
+    /// separately reports whether that key is one it has pinned.
+    pub signer_keys: Vec<(String, String)>,
 }
+
+/// `keys.json` at the package root.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PackageKeys {
+    pub schema: String,
+    /// key_id -> `ed25519:<base64url public key>`
+    pub keys: std::collections::BTreeMap<String, String>,
+}
+
+pub const KEYS_FILE: &str = "keys.json";
+pub const PACKAGE_KEYS_SCHEMA: &str = "treeship/package-keys/v1";
 
 /// `approvals/index.json` -- top-level inventory of evidence in the
 /// package. Lets a consumer pre-flight what's there before opening
@@ -224,6 +247,27 @@ pub fn build_package_with_approvals(
     // bundle behaves the same as None so a session with no consumed
     // approvals doesn't leave behind an empty `approvals/` directory.
     if let Some(b) = bundle {
+        // The sealed set's own envelopes and keys, independent of whether
+        // any approval evidence exists.
+        if !b.sealed_envelopes.is_empty() {
+            std::fs::create_dir_all(pkg_dir.join(ARTIFACTS_DIR))?;
+            for (artifact_id, envelope_bytes) in &b.sealed_envelopes {
+                let safe = sanitize_filename(artifact_id);
+                let path = pkg_dir.join(ARTIFACTS_DIR).join(format!("{safe}.json"));
+                if !path.exists() {
+                    std::fs::write(path, envelope_bytes)?;
+                    file_count += 1;
+                }
+            }
+        }
+        if !b.signer_keys.is_empty() {
+            let keys = PackageKeys {
+                schema: PACKAGE_KEYS_SCHEMA.into(),
+                keys: b.signer_keys.iter().cloned().collect(),
+            };
+            std::fs::write(pkg_dir.join(KEYS_FILE), serde_json::to_vec_pretty(&keys)?)?;
+            file_count += 1;
+        }
         if !b.grants.is_empty()
             || !b.uses.is_empty()
             || !b.checkpoints.is_empty()
@@ -490,6 +534,26 @@ pub fn verify_package_with_trust(
     pkg_dir: &Path,
     trust: &crate::trust::TrustRootStore,
 ) -> Result<Vec<VerifyCheck>, PackageError> {
+    verify_package_with_options(pkg_dir, trust, false)
+}
+
+/// Structural checks only: the receipt, the Merkle tree, the approvals
+/// evidence. A package that carries no artifact envelopes (every package
+/// built before 0.31.2) cannot be signature-verified from its own bytes,
+/// and the default verifier fails it for that reason. This entry point
+/// downgrades that failure to a warning for callers who know they are
+/// looking at structure, not evidence.
+pub fn verify_package_structural(pkg_dir: &Path) -> Result<Vec<VerifyCheck>, PackageError> {
+    let trust = crate::trust::TrustRootStore::open_default_or_empty()
+        .unwrap_or_else(|_| crate::trust::TrustRootStore::empty());
+    verify_package_with_options(pkg_dir, &trust, true)
+}
+
+pub fn verify_package_with_options(
+    pkg_dir: &Path,
+    trust: &crate::trust::TrustRootStore,
+    structural_only: bool,
+) -> Result<Vec<VerifyCheck>, PackageError> {
     let mut checks = Vec::new();
 
     // 1. receipt.json exists and parses
@@ -641,6 +705,10 @@ pub fn verify_package_with_trust(
         checks.push(VerifyCheck::warn("merkle_root", "No artifacts to verify"));
     }
 
+    // Signatures and chain linkage, from the package's own envelopes
+    // (audit 2026-09, AUD-31 / AUD-32; QA TS-002b).
+    verify_sealed_envelopes(pkg_dir, &receipt, trust, structural_only, &mut checks);
+
     // 6. Leaf count matches artifacts
     if receipt.merkle.leaf_count == receipt.artifacts.len() {
         checks.push(VerifyCheck::pass(
@@ -742,6 +810,246 @@ pub fn verify_package_with_trust(
 /// Used by the early-return path when an unknown merkle version aborts
 /// Merkle recomputation — those two checks are independent of the tree
 /// version and still meaningful to surface.
+/// Which trust-root kinds mean "I accept receipts signed by this key".
+const SIGNER_KINDS: &[crate::trust::TrustRootKind] = &[
+    crate::trust::TrustRootKind::CertIssuer,
+    crate::trust::TrustRootKind::AgentCert,
+    crate::trust::TrustRootKind::SessionHost,
+];
+
+fn read_package_keys(pkg_dir: &Path) -> Option<PackageKeys> {
+    let raw = std::fs::read(pkg_dir.join(KEYS_FILE)).ok()?;
+    serde_json::from_slice(&raw).ok()
+}
+
+/// For every sealed artifact: the envelope is in the package, its id
+/// re-derives from the signed bytes, its Ed25519 signature verifies against
+/// the key the package names, and each chained entry names the previous
+/// sealed entry as its parent. Then, separately, whether the signing keys
+/// are pinned trust roots.
+///
+/// A package with no envelopes at all (pre-0.31.2 layout) gets one `envelopes`
+/// FAIL, or a WARN under `structural_only`: structure without signatures is
+/// not verification, and a forged sealed set is indistinguishable from an
+/// honest legacy one from the package's bytes alone.
+fn verify_sealed_envelopes(
+    pkg_dir: &Path,
+    receipt: &SessionReceipt,
+    trust: &crate::trust::TrustRootStore,
+    structural_only: bool,
+    checks: &mut Vec<VerifyCheck>,
+) {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    if receipt.artifacts.is_empty() {
+        return;
+    }
+    let art_dir = pkg_dir.join(ARTIFACTS_DIR);
+    let any_envelope = receipt.artifacts.iter().any(|a| {
+        art_dir
+            .join(format!("{}.json", sanitize_filename(&a.artifact_id)))
+            .exists()
+    });
+    if !any_envelope {
+        let detail = "the package carries no artifact envelopes (built before 0.31.2), so nothing here is signature-checked: the sealed set is structurally consistent and nothing more. Verify the artifacts from the producer's store, a bundle, or the hub with `treeship verify <id>`, or accept structure only with --structural-only";
+        checks.push(if structural_only {
+            VerifyCheck::warn("envelopes", detail)
+        } else {
+            VerifyCheck::fail("envelopes", detail)
+        });
+        return;
+    }
+
+    // Keys the package names. A key missing here fails the signature check
+    // for its artifacts; the package cannot vouch for a key it does not carry.
+    let mut keys: BTreeMap<String, ed25519_dalek::VerifyingKey> = BTreeMap::new();
+    match read_package_keys(pkg_dir) {
+        Some(pk) => {
+            for (id, encoded) in pk.keys {
+                match crate::trust::decode_ed25519_pubkey(&encoded) {
+                    Ok(vk) => {
+                        keys.insert(id, vk);
+                    }
+                    Err(e) => checks.push(VerifyCheck::fail(
+                        "keys.json",
+                        &format!("key {id} is not a valid ed25519 public key: {e}"),
+                    )),
+                }
+            }
+        }
+        None => checks.push(VerifyCheck::fail(
+            "keys.json",
+            "package has artifact envelopes but no keys.json naming the signing keys",
+        )),
+    }
+
+    let mut parents: Vec<(String, Option<String>)> = Vec::new();
+    let mut signers: BTreeSet<String> = BTreeSet::new();
+    let mut ok_count = 0usize;
+    for entry in &receipt.artifacts {
+        let id = &entry.artifact_id;
+        let name = format!("signature:{id}");
+        let path = art_dir.join(format!("{}.json", sanitize_filename(id)));
+        let raw = match std::fs::read(&path) {
+            Ok(b) => b,
+            Err(_) => {
+                checks.push(VerifyCheck::fail(
+                    &name,
+                    "sealed in the Merkle tree but its signed envelope is not in the package",
+                ));
+                parents.push((id.clone(), None));
+                continue;
+            }
+        };
+        let envelope = match crate::attestation::Envelope::from_json(&raw) {
+            Ok(e) => e,
+            Err(e) => {
+                checks.push(VerifyCheck::fail(
+                    &name,
+                    &format!("envelope does not parse: {e}"),
+                ));
+                parents.push((id.clone(), None));
+                continue;
+            }
+        };
+        let Some(sig) = envelope.signatures.first() else {
+            checks.push(VerifyCheck::fail(&name, "envelope carries no signature"));
+            parents.push((id.clone(), None));
+            continue;
+        };
+        let Some(vk) = keys.get(&sig.keyid) else {
+            checks.push(VerifyCheck::fail(
+                &name,
+                &format!("signed by {}, a key the package does not carry", sig.keyid),
+            ));
+            parents.push((id.clone(), None));
+            continue;
+        };
+        match crate::attestation::verify_with_key(&envelope, &sig.keyid, *vk) {
+            Ok(res) => {
+                if res.artifact_id != *id {
+                    checks.push(VerifyCheck::fail(
+                        &name,
+                        &format!(
+                            "the signed bytes re-derive to {}, not the sealed id",
+                            res.artifact_id
+                        ),
+                    ));
+                } else if entry
+                    .digest
+                    .as_deref()
+                    .map(|d| d != res.digest)
+                    .unwrap_or(false)
+                {
+                    checks.push(VerifyCheck::fail(
+                        &name,
+                        &format!(
+                            "receipt lists digest {} but the signed bytes digest to {}",
+                            entry.digest.clone().unwrap_or_default(),
+                            res.digest
+                        ),
+                    ));
+                } else {
+                    ok_count += 1;
+                    signers.insert(sig.keyid.clone());
+                    checks.push(VerifyCheck::pass(&name, &format!("Ed25519 signature by {} verifies; id and digest re-derived from the signed bytes", sig.keyid)));
+                }
+            }
+            Err(e) => checks.push(VerifyCheck::fail(
+                &name,
+                &format!("invalid signature for key {}: {e}", sig.keyid),
+            )),
+        }
+        let parent = envelope
+            .payload_bytes()
+            .ok()
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+            .and_then(|v| {
+                v.get("parentId")
+                    .and_then(|p| p.as_str())
+                    .map(str::to_string)
+            });
+        parents.push((id.clone(), parent));
+    }
+
+    // Chain linkage: each chained entry's signed parentId is the previous
+    // sealed entry. The first entry's parent may lie outside the package
+    // (a previous session), so it is reported, not judged.
+    let chained: Vec<(usize, &ArtifactEntry)> = receipt
+        .artifacts
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| !a.unchained)
+        .collect();
+    let mut broken: Vec<String> = Vec::new();
+    for w in chained.windows(2) {
+        let (i_prev, prev) = w[0];
+        let (i_cur, cur) = w[1];
+        let _ = (i_prev, i_cur);
+        let signed_parent = parents
+            .iter()
+            .find(|(id, _)| *id == cur.artifact_id)
+            .and_then(|(_, p)| p.clone());
+        match signed_parent {
+            Some(p) if p == prev.artifact_id => {}
+            Some(p) => broken.push(format!(
+                "{} names parent {} but follows {}",
+                cur.artifact_id, p, prev.artifact_id
+            )),
+            None => broken.push(format!("{} has no readable parentId", cur.artifact_id)),
+        }
+    }
+    if chained.len() >= 2 {
+        if broken.is_empty() {
+            checks.push(VerifyCheck::pass("chain_linkage", &format!("{} chained artifacts each name the previous one as parent, inside the signature", chained.len())));
+        } else {
+            checks.push(VerifyCheck::fail("chain_linkage", &broken.join("; ")));
+        }
+    }
+    let unchained: Vec<&str> = receipt
+        .artifacts
+        .iter()
+        .filter(|a| a.unchained)
+        .map(|a| a.artifact_id.as_str())
+        .collect();
+    if !unchained.is_empty() {
+        checks.push(VerifyCheck::warn("chain_completeness", &format!("{} sealed artifact(s) were signed during the session but never chained onto it ({}); signed and sealed, but their order relative to the chain is the signer's claim only", unchained.len(), unchained.join(", "))));
+    }
+
+    // Trust: valid signatures by keys the package names; are those keys yours?
+    if ok_count > 0 {
+        let unpinned: Vec<String> = signers
+            .iter()
+            .filter(|k| {
+                let vk = keys.get(*k).expect("signer seen in keys");
+                !SIGNER_KINDS.iter().any(|kind| trust.contains(vk, *kind))
+            })
+            .cloned()
+            .collect();
+        if unpinned.is_empty() {
+            checks.push(VerifyCheck::pass(
+                "signer_trust",
+                &format!(
+                    "all {} signing key(s) are pinned trust roots",
+                    signers.len()
+                ),
+            ));
+        } else {
+            let pins: Vec<String> = unpinned
+                .iter()
+                .map(|k| {
+                    let vk = keys.get(k).expect("key");
+                    format!(
+                        "treeship trust add {k} {} --kind cert_issuer",
+                        crate::trust::encode_ed25519_pubkey(vk)
+                    )
+                })
+                .collect();
+            checks.push(VerifyCheck::warn("signer_trust", &format!("signature(s) verify for the key(s) the package names, but {} of them are not pinned trust roots here: {}. Pin what you have decided to trust: {}", unpinned.len(), unpinned.join(", "), pins.join("; "))));
+        }
+    }
+}
+
 fn finish_package_checks(
     mut checks: Vec<VerifyCheck>,
     receipt: &SessionReceipt,
@@ -1665,6 +1973,7 @@ mod tests {
             payload_type: "action".into(),
             digest: None,
             signed_at: None,
+            unchained: false,
         }];
 
         ReceiptComposer::compose(&manifest, &events, artifacts)
@@ -1699,7 +2008,7 @@ mod tests {
             std::env::temp_dir().join(format!("treeship-pkg-verify-{}", rand::random::<u32>()));
 
         let output = build_package(&receipt, &tmp).unwrap();
-        let checks = verify_package(&output.path).unwrap();
+        let checks = verify_package_structural(&output.path).unwrap();
 
         let fails: Vec<_> = checks
             .iter()
@@ -1731,7 +2040,7 @@ mod tests {
             std::env::temp_dir().join(format!("treeship-pkg-degraded-{}", rand::random::<u32>()));
 
         let output = build_package(&receipt, &tmp).unwrap();
-        let checks = verify_package(&output.path).unwrap();
+        let checks = verify_package_structural(&output.path).unwrap();
 
         let warned = checks
             .iter()
@@ -1754,7 +2063,7 @@ mod tests {
         let tmp =
             std::env::temp_dir().join(format!("treeship-pkg-clean-{}", rand::random::<u32>()));
         let output = build_package(&receipt, &tmp).unwrap();
-        let checks = verify_package(&output.path).unwrap();
+        let checks = verify_package_structural(&output.path).unwrap();
         assert!(
             !checks.iter().any(|c| c.name == "reconcile_degraded"),
             "clean receipt must not emit a reconcile_degraded check"

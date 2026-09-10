@@ -14,8 +14,8 @@
 use serde_json::{json, Value};
 
 use treeship_core::session::{
-    build_package_with_approvals, read_approvals_bundle, verify_package, ApprovalsBundle,
-    VerifyStatus,
+    build_package_with_approvals, read_approvals_bundle, verify_package_structural,
+    ApprovalsBundle, VerifyStatus,
 };
 use treeship_core::statements::{
     approval_use_record_digest, nonce_digest, ApprovalUse, TYPE_APPROVAL_USE,
@@ -175,6 +175,7 @@ fn make_minimal_receipt(action_artifact_ids: &[&str]) -> treeship_core::session:
             payload_type: "application/vnd.treeship.action.v1+json".into(),
             digest: None,
             signed_at: None,
+            unchained: false,
         })
         .collect();
     ReceiptComposer::compose(&manifest, &events, artifacts)
@@ -211,7 +212,7 @@ fn action_envelope_with_correct_use_id_binds_cleanly() {
     bundle.action_envelopes.push((art_id.clone(), env));
 
     let pkg = build(bundle, &[art_id.as_str()]);
-    let checks = verify_package(&pkg).unwrap();
+    let checks = verify_package_structural(&pkg).unwrap();
 
     let row = find_check(&checks, "approval-use-action-binding")
         .expect("approval-use-action-binding row required");
@@ -240,7 +241,7 @@ fn action_envelope_with_nonexistent_use_id_fails_binding() {
     bundle.action_envelopes.push((art_id.clone(), env));
 
     let pkg = build(bundle, &[art_id.as_str()]);
-    let checks = verify_package(&pkg).unwrap();
+    let checks = verify_package_structural(&pkg).unwrap();
 
     let row = find_check(&checks, "approval-use-action-binding")
         .expect("approval-use-action-binding row required");
@@ -269,7 +270,7 @@ fn action_envelope_missing_use_id_pointer_fails_binding() {
     bundle.action_envelopes.push((art_id.clone(), env));
 
     let pkg = build(bundle, &[art_id.as_str()]);
-    let checks = verify_package(&pkg).unwrap();
+    let checks = verify_package_structural(&pkg).unwrap();
 
     let row = find_check(&checks, "approval-use-action-binding")
         .expect("approval-use-action-binding row required");
@@ -292,7 +293,7 @@ fn package_without_action_envelopes_warns_binding_unasserted() {
         .push(make_use_with_nonce("use_real", &g_id, nonce));
 
     let pkg = build(bundle, &[]);
-    let checks = verify_package(&pkg).unwrap();
+    let checks = verify_package_structural(&pkg).unwrap();
 
     let row = find_check(&checks, "approval-use-action-binding")
         .expect("approval-use-action-binding row required");
@@ -337,7 +338,7 @@ fn forged_action_envelope_under_wrong_id_fails_content_addressing() {
         .push((real_art_id.clone(), fake_env));
 
     let pkg = build(bundle, &[real_art_id.as_str()]);
-    let checks = verify_package(&pkg).unwrap();
+    let checks = verify_package_structural(&pkg).unwrap();
 
     let row = find_check(&checks, "approval-use-action-binding")
         .expect("approval-use-action-binding row required");
@@ -368,7 +369,7 @@ fn use_nonce_digest_matches_grant_signed_nonce_passes() {
         .push(make_use_with_nonce("use_real", &g_id, nonce));
 
     let pkg = build(bundle, &[]);
-    let checks = verify_package(&pkg).unwrap();
+    let checks = verify_package_structural(&pkg).unwrap();
 
     let row = find_check(&checks, "approval-use-nonce-binding")
         .expect("approval-use-nonce-binding row required");
@@ -391,7 +392,7 @@ fn tampered_use_nonce_digest_fails_binding() {
     bundle.uses.push(tampered_use);
 
     let pkg = build(bundle, &[]);
-    let checks = verify_package(&pkg).unwrap();
+    let checks = verify_package_structural(&pkg).unwrap();
 
     let row = find_check(&checks, "approval-use-nonce-binding")
         .expect("approval-use-nonce-binding row required");
@@ -417,7 +418,7 @@ fn use_referencing_unknown_grant_fails_binding() {
         .push(make_use_with_nonce("use_orphan", "g_missing", "n"));
 
     let pkg = build(bundle, &[]);
-    let checks = verify_package(&pkg).unwrap();
+    let checks = verify_package_structural(&pkg).unwrap();
 
     let row = find_check(&checks, "approval-use-nonce-binding")
         .expect("approval-use-nonce-binding row required");
@@ -451,7 +452,7 @@ fn forged_grant_envelope_under_real_id_fails_content_addressing() {
         .push(make_use_with_nonce("use_real", &real_g_id, real_nonce));
 
     let pkg = build(bundle, &[]);
-    let checks = verify_package(&pkg).unwrap();
+    let checks = verify_package_structural(&pkg).unwrap();
 
     let row = find_check(&checks, "approval-use-nonce-binding")
         .expect("approval-use-nonce-binding row required");
@@ -482,7 +483,7 @@ fn embedded_chain_anchored_to_genesis_passes() {
         .push(make_use_with_nonce("use_real", &g_id, nonce));
 
     let pkg = build(bundle, &[]);
-    let checks = verify_package(&pkg).unwrap();
+    let checks = verify_package_structural(&pkg).unwrap();
     let row = find_check(&checks, "approval-use-chain-continuity")
         .expect("approval-use-chain-continuity row required");
     assert_eq!(row.status, VerifyStatus::Pass);
@@ -500,7 +501,7 @@ fn dangling_previous_record_digest_fails_chain_continuity() {
     bundle.uses.push(u);
 
     let pkg = build(bundle, &[]);
-    let checks = verify_package(&pkg).unwrap();
+    let checks = verify_package_structural(&pkg).unwrap();
 
     let row = find_check(&checks, "approval-use-chain-continuity")
         .expect("approval-use-chain-continuity row required");
@@ -535,7 +536,7 @@ fn two_use_chain_with_correct_links_passes() {
     bundle.uses.push(u2);
 
     let pkg = build(bundle, &[]);
-    let checks = verify_package(&pkg).unwrap();
+    let checks = verify_package_structural(&pkg).unwrap();
 
     let row = find_check(&checks, "approval-use-chain-continuity")
         .expect("approval-use-chain-continuity row required");
@@ -568,7 +569,7 @@ fn multiple_genesis_records_fail_chain_continuity() {
     bundle.uses.push(u2);
 
     let pkg = build(bundle, &[]);
-    let checks = verify_package(&pkg).unwrap();
+    let checks = verify_package_structural(&pkg).unwrap();
 
     let row = find_check(&checks, "approval-use-chain-continuity")
         .expect("approval-use-chain-continuity row required");
@@ -610,7 +611,7 @@ fn forked_chain_two_records_share_prev_fails_chain_continuity() {
     bundle.uses.push(u3);
 
     let pkg = build(bundle, &[]);
-    let checks = verify_package(&pkg).unwrap();
+    let checks = verify_package_structural(&pkg).unwrap();
 
     let row = find_check(&checks, "approval-use-chain-continuity")
         .expect("approval-use-chain-continuity row required");
@@ -655,7 +656,7 @@ fn disconnected_subchain_fails_chain_continuity() {
     bundle.uses.push(u2);
 
     let pkg = build(bundle, &[]);
-    let checks = verify_package(&pkg).unwrap();
+    let checks = verify_package_structural(&pkg).unwrap();
 
     let row = find_check(&checks, "approval-use-chain-continuity")
         .expect("approval-use-chain-continuity row required");
@@ -691,7 +692,7 @@ fn renamed_record_digest_row_emits_for_present_uses() {
         .push(make_use_with_nonce("use_real", &g_id, nonce));
 
     let pkg = build(bundle, &[]);
-    let checks = verify_package(&pkg).unwrap();
+    let checks = verify_package_structural(&pkg).unwrap();
 
     assert!(
         find_check(&checks, "approval-use-record-digest").is_some(),
