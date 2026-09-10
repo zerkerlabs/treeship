@@ -989,7 +989,8 @@ treeship package verify [OPTIONS] <PATH>
 
 | Option | Description |
 |---|---|
-| `--strict` | Promote approval-evidence warnings (missing journal records, included-checkpoint anomalies) to verification failures. Existing receipt-determinism / event-log warnings are unchanged |
+| `--strict` | Promote approval-evidence warnings (missing journal records, included-checkpoint anomalies) and the unpinned-signer warning to verification failures. Existing receipt-determinism / event-log warnings are unchanged |
+| `--structural` | Check structure and approvals only; do not require or verify the artifact envelopes. Needed for packages built before 0.31.2, which carry no envelopes and otherwise fail. The verdict is `structural-pass`, never `verified` |
 
 ## `treeship onboard`
 

@@ -1365,10 +1365,13 @@ enum PackageCommand {
 
     /// Verify a .treeship session package
     ///
-    /// Runs local verification checks: receipt parsing, Merkle root
-    /// recomputation, inclusion proof validation, and timeline ordering.
-    /// As of v0.9.9, also reports approval-replay evidence at three
-    /// distinct levels:
+    /// Runs local verification checks from the package's own bytes: receipt
+    /// parsing, Merkle root recomputation, inclusion proofs, timeline
+    /// ordering, then (since 0.31.2) every sealed artifact's Ed25519
+    /// signature against the keys the package names, its content-addressed
+    /// id re-derived from the signed bytes, the parent links inside the
+    /// signatures, and whether those keys are pinned trust roots here.
+    /// Approval-replay evidence is reported at three levels:
     ///   * package-local       (duplicate uses inside the package)
     ///   * local-journal       (workspace .treeship/journals/approval-use)
     ///   * included-checkpoint (offline checkpoint records)
@@ -1376,6 +1379,7 @@ enum PackageCommand {
     /// Examples:
     ///   treeship package verify .treeship/sessions/ssn_abc.treeship
     ///   treeship package verify --strict .treeship/sessions/ssn_abc.treeship
+    ///   treeship package verify --structural old.treeship   # built before 0.31.2
     Verify(PackageVerifyArgs),
 }
 
@@ -1386,10 +1390,18 @@ struct PackageVerifyArgs {
     path: std::path::PathBuf,
 
     /// Promote approval-evidence warnings (missing journal records,
-    /// included-checkpoint anomalies) to verification failures.
-    /// Existing receipt-determinism / event-log warnings are unchanged.
+    /// included-checkpoint anomalies) and the unpinned-signer warning to
+    /// verification failures. Existing receipt-determinism / event-log
+    /// warnings are unchanged.
     #[arg(long)]
     strict: bool,
+
+    /// Check structure and approvals only; do not require or verify the
+    /// artifact envelopes. Needed for packages built before 0.31.2, which
+    /// carry no envelopes and otherwise fail. The verdict is
+    /// `structural-pass`, never `verified`.
+    #[arg(long = "structural")]
+    structural_only: bool,
 }
 
 #[derive(Args)]
@@ -3242,9 +3254,13 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             PackageCommand::Inspect(a) => {
                 commands::package::inspect(a.path.clone(), cli.config.as_deref(), printer)
             }
-            PackageCommand::Verify(a) => {
-                commands::package::verify(a.path.clone(), cli.config.as_deref(), a.strict, printer)
-            }
+            PackageCommand::Verify(a) => commands::package::verify(
+                a.path.clone(),
+                cli.config.as_deref(),
+                a.strict,
+                a.structural_only,
+                printer,
+            ),
         },
 
         Command::Declare(a) => {

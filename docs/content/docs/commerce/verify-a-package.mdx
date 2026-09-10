@@ -7,7 +7,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 This page is written for the reader on the other side of the counter: the dispute analyst, the auditor, the acquirer's risk team, the customer's lawyer. Someone gave you a `.treeship` package, or a bundle file, or a receipt id, and told you it proves what an agent did. You do not need an account, a network connection, or Treeship's cooperation to check it. You need the free CLI and about ten minutes.
 
-Every command and every line of output below is from a real run on a clean machine with the released 0.30.0 CLI, against the shopping demo from Anthropic's commerce-agents reference. Nothing is simulated.
+Every command and every line of output below is from a real run on a clean machine, against the shopping demo from Anthropic's commerce-agents reference: the shopping-demo transcripts with the released 0.30.0 CLI, the signature rows with a from-source build of 0.31.2. Nothing is simulated.
 
 ```bash
 curl -fsSL https://treeship.dev/install | sh    # or: npm install -g treeship
@@ -24,12 +24,13 @@ A session package is a directory named `<session-id>.treeship`. The pieces that 
 | `proofs/<id>.proof.json` | One Merkle inclusion proof per artifact. |
 | `merkle.json` | The tree itself. |
 | `approvals/` | Present when a human approval was spent in the session: the signed grant, the use records, the checkpoints. |
-| `artifacts/` | The signed envelopes of the grant and of the actions that consumed it. For the other artifacts, only the digest and the proof travel in the package; the signed bytes live in the producer's store, in a bundle, or on the hub. |
+| `artifacts/` | The signed DSSE envelope of every sealed artifact, one file per id. Packages built before 0.31.2 carried only the approval grant and the actions that consumed it; for everything else the signed bytes lived in the producer's store, a bundle, or the hub. |
+| `keys.json` | The public keys the envelopes were signed with, by key id. The package names them. Whether to trust them is your decision, and Step 2 is where you make it. |
 | `preview.html` | The receipt page. Opens in a browser, verifies the Merkle structure client-side, no network. |
 
-The last two rows are the first thing to understand. **The package proves structure. The bundle, the hub, or the producer's machine proves signatures.** The commands below cover both.
+Two rows are the first thing to understand. **Since 0.31.2 the package carries its own signed bytes, so `package verify` checks the signatures from the file you were handed.** A package from an earlier release proves structure only; the default verifier fails it and says why, and `--structural` reports what such a package can still show. In both cases the package cannot tell you whose keys these are. The commands below cover both.
 
-## Step 1. The package: structure and approvals
+## Step 1. The package: structure, signatures, approvals
 
 ```bash
 treeship package verify retail.treeship
@@ -64,6 +65,24 @@ What each line establishes:
 | `inclusion:<id>` | That artifact's digest was a leaf of the tree when the session was sealed. Nothing was added or removed since. | What the artifact says. |
 | `leaf_count`, `timeline_order` | The count and the ordering are internally consistent. | Wall-clock time. The timestamps are the signer's own clock. |
 
+Since 0.31.2, the same command continues past the tree into the envelopes. From a from-source build, on a session with four chained actions and one that was signed without `--parent`:
+
+```text
+  PASS signature:art_7f536ce61435c17afd16c3af6484d4eb -- Ed25519 signature by key_ba973a7083d45f8d verifies; id and digest re-derived from the signed bytes
+  ... (one line per artifact)
+  PASS chain_linkage -- 4 chained artifacts each name the previous one as parent, inside the signature
+  WARN chain_completeness -- 1 sealed artifact(s) were signed during the session but never chained onto it (art_cd9bf1738355ae7d9ee10125cdf24359); signed and sealed, but their order relative to the chain is the signer's claim only
+  WARN signer_trust -- signature(s) verify for the key(s) the package names, but 1 of them are not pinned trust roots here: key_ba973a7083d45f8d. Pin what you have decided to trust: treeship trust add key_ba973a7083d45f8d ed25519:tyFBDCyMLbUV2NtlPaBaTiZvktwXxxOcI2j7ME9GSrw --kind cert_issuer
+```
+
+| Check | It proves | It does not prove |
+|---|---|---|
+| `envelopes` (only when it fails) | The package carries a signed envelope for its artifacts. A package built before 0.31.2 fails here, and the message says to verify from a bundle or the hub, or to read structure only with `--structural`. | Anything else. When the envelopes are present this row is silent and the per-artifact rows speak. |
+| `signature:<id>` | The envelope in `artifacts/<id>.json` carries a valid Ed25519 signature from one of the keys in `keys.json`, its content-addressed id re-derives from the signed bytes, and the digest column matches. Replace the id with an invented one, or edit one byte of the envelope, and this row fails. | Whose key that is. |
+| `chain_linkage` | Every chained artifact names the previous one as its parent, inside the signature, so the order the package presents is the order the signer committed to. Reorder two receipts and this fails. | The order of unchained artifacts. |
+| `chain_completeness` (`WARN` when it applies) | Names every sealed artifact that was signed during the session but never chained onto it: signed and verifiable on its own, but its place in the sequence is the signer's unsigned claim. | That the list is complete. An artifact signed into another workspace is not in this package at all. |
+| `signer_trust` | `PASS` when every signing key is a trust root you pinned. `WARN` otherwise, with the exact pin command for each key. `--strict` makes the warning a failure. | That the key belongs to the company or person named in the receipt. That is Step 2. |
+
 The line to look for in a dispute is the inclusion line for the artifact in question. In the shopping demo that is `art_a58a450e…`, the result receipt of the add the provenance gate refused. Its presence in the tree means the refusal was part of the sealed record, not reconstructed after the fact.
 
 When the session spent a human approval, the merchant demo's package adds six more lines:
@@ -82,12 +101,12 @@ When the session spent a human approval, the merchant demo's package adds six mo
 Together these say: one grant was issued, it was spent exactly once, the action that spent it is the one the signed use record names, and the use records form one unbroken chain. `treeship approval uses <grant-id>` prints the human-readable version: who spent it, on what subject, when, with the digest of the nonce (never the nonce). `--strict` turns missing approval evidence from a warning into a failure. `--format json` gives the same result to a script.
 
 <Callout type="warn">
-`package verify` ends with a line you should read every time: **not checked: who signed this receipt**. It checks the tree, not the signatures. Step 2 is not optional.
+`package verify` checks that the signatures are valid for the keys the package names. It cannot decide whether those keys are the producer's; that is why `signer_trust` stays a warning until you pin them. Step 2 is not optional. On a package built before 0.31.2 the command fails at `envelopes`, and the signatures can only be checked the Step 2 way.
 </Callout>
 
 ## Step 2. The signatures: pin the key, verify the chain
 
-Every artifact is a DSSE envelope signed with the producer's Ed25519 key. To check signatures you need the signed bytes and a decision about which key you trust. Ask the producer for two things: their public key, and a bundle of the chain.
+Every artifact is a DSSE envelope signed with the producer's Ed25519 key. Step 1 verified those signatures against the keys the package carries; what it could not do is decide which key you trust. Ask the producer for their public key through a channel you would accept in a dispute, and pin it. Ask for a bundle of the chain too when the package predates 0.31.2, or when you want the chain walked with the same checks the producer's own `treeship verify` runs: anchoring, actor proof, authority.
 
 On the producer's side, this is what they run (shown so you know what to ask for):
 

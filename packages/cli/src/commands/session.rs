@@ -1535,26 +1535,37 @@ pub fn close(
     }
 
     // Build artifact entries from the chain
-    let artifact_entries: Vec<session::receipt::ArtifactEntry> =
+    let mut artifact_entries: Vec<session::receipt::ArtifactEntry> =
         collect_artifact_entries(&ctx, &manifest);
 
-    // Artifacts that branch off this chain (their parent is on it, they are
-    // not) are signed but will not be sealed: the package walks one path
-    // from the head. Silence here let a checkout result go missing from an
-    // otherwise clean package (QA finding TS-002 on 0.31.0). Name them.
+    // Everything signed in this workspace during the session that the chain
+    // walk did not reach: a receipt with no --parent, or one whose parent is
+    // off the sealed path (a fork). Both used to be dropped from the package
+    // in silence (QA TS-002 on 0.31.0; audit 2026-09 AUD-32). They are now
+    // sealed too, after the chain, and marked `unchained` so a verifier can
+    // tell a linked step from a loose one.
     let unsealed_branches = find_unsealed_branches(&ctx, &artifact_entries);
-    if !unsealed_branches.is_empty() {
-        printer.warn(
+    let unchained = find_unchained(&ctx, &manifest, &artifact_entries);
+    if !unchained.is_empty() {
+        let ids: Vec<&str> = unchained.iter().map(|e| e.artifact_id.as_str()).collect();
+        // The JSON result carries `sealed_unchained`; a warning object ahead
+        // of it on stdout would break every caller that parses the stream.
+        let text_printer = printer.format != crate::printer::Format::Json;
+        if text_printer {
+            printer.warn(
             &format!(
-                "{} signed artifact(s) branch off this chain and will not be in the package",
-                unsealed_branches.len()
+                "{} signed artifact(s) were not on the session chain; sealed anyway and marked unchained",
+                unchained.len()
             ),
-            &[("unsealed", &unsealed_branches.join(", "))],
-        );
-        printer.hint(
-            "a receipt signed with a stale --parent forks the chain; sign onto the current head",
-        );
+            &[("unchained", &ids.join(", "))],
+            );
+            printer.hint(
+                "pass --parent <previous id> to treeship attest so each receipt links to the one before it",
+            );
+        }
+        artifact_entries.extend(unchained.iter().cloned());
     }
+    let sealed_unchained: Vec<String> = unchained.iter().map(|e| e.artifact_id.clone()).collect();
 
     // Update manifest for receipt composition
     let mut receipt_manifest = manifest.clone();
@@ -1629,7 +1640,10 @@ pub fn close(
     // journal, and any covering checkpoint. Quiet on missing journal
     // -- a session without consumed approvals produces an empty bundle
     // and the resulting package omits the `approvals/` dir entirely.
-    let approvals = collect_approval_evidence(&ctx, &receipt);
+    let mut approvals = collect_approval_evidence(&ctx, &receipt);
+    let (sealed_envelopes, signer_keys) = collect_sealed_envelopes(&ctx, &receipt, printer);
+    approvals.sealed_envelopes = sealed_envelopes;
+    approvals.signer_keys = signer_keys;
 
     match build_package_with_approvals(&receipt, &pkg_dir, Some(&approvals)) {
         Ok(pkg_output) => {
@@ -1734,6 +1748,7 @@ pub fn close(
             "events": event_log.event_count(),
             "package": sealed_pkg_path.as_ref().map(|path| path.display().to_string()),
             "unsealed_branches": unsealed_branches,
+            "sealed_unchained": sealed_unchained,
         }));
     } else {
         printer.blank();
@@ -2069,6 +2084,99 @@ fn has_zk_proofs(ts_dir: &Path, session_id: &str) -> bool {
 // Collect artifact entries from the chain for receipt composition
 // ---------------------------------------------------------------------------
 
+/// Signed artifacts from this session's window that the chain walk did not
+/// reach, oldest first. The window is the manifest's start time to now, in
+/// this workspace's store: everything signed here while the session was
+/// open belongs to the session. The close artifact itself is on the chain.
+fn find_unchained(
+    ctx: &ctx::Ctx,
+    manifest: &SessionManifest,
+    chain: &[session::receipt::ArtifactEntry],
+) -> Vec<session::receipt::ArtifactEntry> {
+    let on_chain: std::collections::HashSet<&str> =
+        chain.iter().map(|e| e.artifact_id.as_str()).collect();
+    // The index is append-ordered (`list()` returns newest first), so "during
+    // the session" is "after the root artifact was written": a position, not
+    // a timestamp. Second-resolution timestamps would sweep in whatever the
+    // workspace signed in the same second before the session started.
+    let mut index = ctx.storage.list();
+    index.reverse();
+    let after_root: Vec<_> = match manifest
+        .root_artifact_id
+        .as_deref()
+        .and_then(|root| index.iter().position(|e| e.id == root))
+    {
+        // The root itself stays in: when nothing chained onto it, the walk
+        // from the close artifact never reaches it, and it is still the
+        // session's anchor.
+        Some(pos) => index.into_iter().skip(pos).collect(),
+        None => index
+            .into_iter()
+            .filter(|e| e.signed_at.as_str() > manifest.started_at.as_str())
+            .collect(),
+    };
+    let mut out: Vec<session::receipt::ArtifactEntry> = after_root
+        .into_iter()
+        .filter(|e| !on_chain.contains(e.id.as_str()))
+        .filter_map(|e| ctx.storage.read(&e.id).ok())
+        .map(|rec| session::receipt::ArtifactEntry {
+            artifact_id: rec.artifact_id.clone(),
+            payload_type: rec.payload_type.clone(),
+            digest: Some(rec.digest.clone()),
+            signed_at: Some(rec.signed_at.clone()),
+            unchained: true,
+        })
+        .collect();
+    out.sort_by(|a, b| {
+        (a.signed_at.as_deref(), a.artifact_id.as_str())
+            .cmp(&(b.signed_at.as_deref(), b.artifact_id.as_str()))
+    });
+    out
+}
+
+/// Every sealed artifact's envelope and the public key that signed it, for
+/// the package to carry (audit 2026-09, AUD-31). A record that cannot be
+/// read, or a key that is not in this keystore (an artifact imported from
+/// another ship), is reported and skipped; the verifier will then fail that
+/// artifact's signature check, which is the honest outcome.
+fn collect_sealed_envelopes(
+    ctx: &ctx::Ctx,
+    receipt: &treeship_core::session::SessionReceipt,
+    printer: &Printer,
+) -> (Vec<(String, Vec<u8>)>, Vec<(String, String)>) {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    let mut envelopes = Vec::with_capacity(receipt.artifacts.len());
+    let mut keys: std::collections::BTreeMap<String, String> = Default::default();
+    let mut missing: Vec<String> = Vec::new();
+    for art in &receipt.artifacts {
+        let Ok(rec) = ctx.storage.read(&art.artifact_id) else {
+            missing.push(art.artifact_id.clone());
+            continue;
+        };
+        if let Ok(bytes) = rec.envelope.to_json() {
+            envelopes.push((art.artifact_id.clone(), bytes));
+        }
+        if !keys.contains_key(&rec.key_id) {
+            match ctx.keys.public_key(&rec.key_id) {
+                Ok(pk) => {
+                    keys.insert(
+                        rec.key_id.clone(),
+                        format!("ed25519:{}", URL_SAFE_NO_PAD.encode(pk)),
+                    );
+                }
+                Err(_) => missing.push(format!("key {}", rec.key_id)),
+            }
+        }
+    }
+    if !missing.is_empty() && printer.format != crate::printer::Format::Json {
+        printer.warn(
+            "some sealed artifacts cannot be signature-verified from this package",
+            &[("missing", &missing.join(", "))],
+        );
+    }
+    (envelopes, keys.into_iter().collect())
+}
+
 /// Signed artifacts whose parent is on the sealed chain but which are not on
 /// it themselves: forks the package will not carry. Only the index is read,
 /// so this is one directory listing, not a walk.
@@ -2124,6 +2232,7 @@ fn collect_artifact_entries(
                     payload_type: record.payload_type.clone(),
                     digest: Some(record.digest.clone()),
                     signed_at: Some(record.signed_at.clone()),
+                    unchained: false,
                 });
                 if cursor == root_id {
                     break;

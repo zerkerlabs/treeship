@@ -602,12 +602,14 @@ mod tests {
                 payload_type: "treeship.dev/v0/action".into(),
                 digest: None,
                 signed_at: None,
+                unchained: false,
             },
             ArtifactEntry {
                 artifact_id: "art_bbbb".into(),
                 payload_type: "treeship.dev/v0/action".into(),
                 digest: None,
                 signed_at: None,
+                unchained: false,
             },
         ];
         rec_full.merkle.leaf_count = 2;
@@ -664,12 +666,14 @@ mod tests {
                 payload_type: "test".into(),
                 digest: None,
                 signed_at: None,
+                unchained: false,
             },
             ArtifactEntry {
                 artifact_id: "art_b".into(),
                 payload_type: "test".into(),
                 digest: None,
                 signed_at: None,
+                unchained: false,
             },
         ];
         rec.merkle = MerkleSection {

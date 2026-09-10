@@ -18,8 +18,8 @@ use ed25519_dalek::{Signer, SigningKey};
 use serde_json::Value;
 
 use treeship_core::session::{
-    build_package_with_approvals, read_approvals_bundle, verify_package, verify_package_with_trust,
-    ApprovalsBundle, VerifyStatus,
+    build_package_with_approvals, read_approvals_bundle, verify_package_structural,
+    verify_package_with_trust, ApprovalsBundle, VerifyStatus,
 };
 use treeship_core::statements::{
     approval_use_record_digest, journal_checkpoint_record_digest, ApprovalUse, CheckpointKind,
@@ -164,6 +164,7 @@ fn make_minimal_receipt() -> treeship_core::session::SessionReceipt {
         payload_type: "action".into(),
         digest: None,
         signed_at: None,
+        unchained: false,
     }];
     ReceiptComposer::compose(&manifest, &events, artifacts)
 }
@@ -187,7 +188,7 @@ fn no_hub_checkpoint_no_row() {
     bundle.uses.push(make_use("use_a", "art_g", 1));
     let pkg = build_package_with_bundle(bundle);
 
-    let checks = verify_package(&pkg).unwrap();
+    let checks = verify_package_structural(&pkg).unwrap();
     let hub_rows: Vec<_> = checks
         .iter()
         .filter(|c| c.name == "replay-hub-org")
@@ -402,7 +403,7 @@ fn local_journal_kind_does_not_promote_hub_org() {
     bundle.checkpoints.push(cp);
 
     let pkg = build_package_with_bundle(bundle);
-    let checks = verify_package(&pkg).unwrap();
+    let checks = verify_package_structural(&pkg).unwrap();
     let hub = checks.iter().find(|c| c.name == "replay-hub-org");
     assert!(
         hub.is_none(),

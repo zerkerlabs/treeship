@@ -304,6 +304,13 @@ fn action_v1(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std:
     let field_refs: Vec<(&str, &str)> = fields.iter().map(|(k, v)| (*k, v.as_str())).collect();
     printer.success("action attested", &field_refs);
     printer.hint(&format!("treeship verify {}", result.artifact_id));
+    if args.parent_id.is_none() && crate::commands::session::load_session().is_some() {
+        // A session is open and this receipt does not link into it. It is
+        // still sealed at close, marked unchained (audit 2026-09, AUD-32).
+        printer.hint(
+            "not chained: pass --parent <previous id> so this receipt links into the session chain",
+        );
+    }
     printer.blank();
     Ok(result.artifact_id)
 }

@@ -1061,9 +1061,14 @@ pub fn verify(
     path: PathBuf,
     config: Option<&str>,
     strict: bool,
+    structural_only: bool,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut checks = verify_package(&path)?;
+    let mut checks = if structural_only {
+        treeship_core::session::verify_package_structural(&path)?
+    } else {
+        verify_package(&path)?
+    };
 
     // v0.9.9 PR 4: layer the local-journal replay level on top of the
     // package-local + included-checkpoint checks core::session::package
@@ -1166,6 +1171,7 @@ pub fn verify(
             // it, but the live emitter now uses
             // `approval-use-record-digest`.
             let approval_row = c.name.starts_with("replay-")
+                || c.name == "signer_trust"
                 || c.name == "approval-use-integrity"
                 || c.name == "approval-use-record-digest"
                 || c.name == "approval-use-nonce-binding"
@@ -1184,7 +1190,12 @@ pub fn verify(
     printer.section("package verification");
     printer.info(&format!("  package: {}", path.display()));
     if strict {
-        printer.dim_info("  --strict: approval-evidence warnings promoted to failures");
+        printer.dim_info(
+            "  --strict: approval-evidence and unpinned-signer warnings promoted to failures",
+        );
+    }
+    if structural_only {
+        printer.dim_info("  --structural: structure and approvals checked; signatures are NOT");
     }
     printer.blank();
 
@@ -1207,6 +1218,12 @@ pub fn verify(
         printer.blank();
         printer.warn("package verification failed", &[]);
         return Err("package verification failed".into());
+    } else if structural_only {
+        printer.blank();
+        printer.success(
+            "structural-pass: structure and approvals verified, signatures not checked",
+            &[],
+        );
     } else {
         printer.blank();
         printer.success("package verified", &[]);

@@ -1042,12 +1042,14 @@ mod tests {
                 payload_type: "action".into(),
                 digest: None,
                 signed_at: None,
+                unchained: false,
             },
             ArtifactEntry {
                 artifact_id: "art_002".into(),
                 payload_type: "action".into(),
                 digest: None,
                 signed_at: None,
+                unchained: false,
             },
         ];
         let r = ReceiptComposer::compose(&m, &events, artifacts);

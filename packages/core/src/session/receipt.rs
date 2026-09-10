@@ -301,6 +301,12 @@ pub struct ArtifactEntry {
     pub digest: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signed_at: Option<String>,
+    /// Signed during the session but never chained onto it (no `--parent`,
+    /// or a parent off the sealed path). Sealed and signed like every other
+    /// entry; its position relative to the chain is the signer's claim only.
+    /// Absent (false) for chained entries and for every pre-0.31.2 receipt.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unchained: bool,
 }
 
 /// Proofs section of the receipt.
@@ -1128,12 +1134,14 @@ mod tests {
                 payload_type: "action".into(),
                 digest: None,
                 signed_at: None,
+                unchained: false,
             },
             ArtifactEntry {
                 artifact_id: "art_002".into(),
                 payload_type: "action".into(),
                 digest: None,
                 signed_at: None,
+                unchained: false,
             },
         ];
 
@@ -1174,6 +1182,7 @@ mod tests {
             payload_type: "action".into(),
             digest: None,
             signed_at: None,
+            unchained: false,
         }];
         let receipt = ReceiptComposer::compose(&manifest, &events, artifacts);
         assert_eq!(
@@ -1202,6 +1211,7 @@ mod tests {
             payload_type: "action".into(),
             digest: None,
             signed_at: None,
+            unchained: false,
         }];
         let mut receipt = ReceiptComposer::compose(&manifest, &events, artifacts);
         receipt.schema_version = None; // mimic a legacy receipt
@@ -1236,6 +1246,7 @@ mod tests {
             payload_type: "action".into(),
             digest: None,
             signed_at: None,
+            unchained: false,
         }];
 
         let r1 = ReceiptComposer::compose(&manifest, &events, artifacts.clone());
