@@ -109,7 +109,7 @@ treeship package verify .treeship/sessions/ssn_42e740bd9eb238f6.treeship
 | `signature:<id>` | The envelope in `artifacts/<id>.json` verifies under a key in `keys.json`, its `art_` id re-derives from the signed bytes, and the receipt's digest column matches |
 | `chain_linkage` | Every chained artifact names the previous one as `parentId` inside the signature, in the order the receipt lists them |
 | `chain_completeness` | `WARN` naming sealed artifacts that were signed during the session without `--parent` (marked `unchained` in the receipt): verifiable on their own, their order is the signer's unsigned claim |
-| `signer_trust` | `PASS` when every signing key is a pinned trust root; otherwise `WARN` with the `treeship trust add` command for each key (`FAIL` under `--strict`) |
+| `signer_trust` | `PASS` when every signing key is a pinned trust root or one of this ship's own keys; otherwise `WARN` with the `treeship trust add` command for each key (`FAIL` under `--strict`) |
 | `leaf_count` | `merkle.leaf_count` matches the artifact count in the receipt |
 | `timeline_order` | Timeline entries are in deterministic `(timestamp, sequence_no, event_id)` order |
 

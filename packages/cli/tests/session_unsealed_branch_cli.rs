@@ -196,14 +196,26 @@ fn unchained_and_forked_artifacts_are_sealed_and_marked() {
     }
 
     // The package verifies its own signatures. The signer is this ship's key,
-    // which is not a pinned trust root on a fresh ship: a warning, not a fail.
+    // and this ship trusts its own keys: PASS here, a warning on a stranger's machine.
     let v = ws.json(&["package", "verify", &pkg]);
     assert_eq!(v["status"], "ok", "{v}");
     let (ok, stdout, _) = ws.run(&["package", "verify", &pkg]);
     assert!(ok);
     assert!(stdout.contains("PASS chain_linkage"), "{stdout}");
     assert!(stdout.contains("WARN chain_completeness"), "{stdout}");
-    assert!(stdout.contains("WARN signer_trust"), "{stdout}");
+    // The signer is this ship's own key: trusted here, a warning only on a
+    // stranger's machine. The release smoke on 0.31.2 caught the inverse.
+    assert!(stdout.contains("PASS signer_trust"), "{stdout}");
+    let report = ws.json(&["session", "report", "--no-upload"]);
+    assert_eq!(report["verification_status"], "warn", "{report}");
+    let kinds: Vec<&str> = report["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w["kind"].as_str().unwrap())
+        .collect();
+    assert!(!kinds.contains(&"signer_trust"), "{kinds:?}");
+    assert!(kinds.contains(&"chain_completeness"), "{kinds:?}");
     assert_eq!(
         stdout.matches("PASS signature:").count(),
         sealed.len(),
@@ -322,4 +334,26 @@ fn copy_dir(from: &PathBuf, to: &PathBuf) {
             std::fs::copy(e.path(), dest).unwrap();
         }
     }
+}
+
+#[test]
+fn a_fully_chained_session_reports_pass_on_its_own_ship() {
+    let ws = Ws::new();
+    ws.json(&[
+        "session",
+        "start",
+        "--name",
+        "clean",
+        "--actor",
+        "agent://t",
+    ]);
+    let root = ws.json(&["session", "status"])["root_artifact_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let a = ws.attest("act.A", Some(&root));
+    let _b = ws.attest("act.B", Some(&a));
+    ws.json(&["session", "close", "--summary", "clean"]);
+    let report = ws.json(&["session", "report", "--no-upload"]);
+    assert_eq!(report["verification_status"], "pass", "{report}");
 }

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **`signer_trust` trusts the ship's own keys.** On 0.31.2 the row warned on the producer's own machine that its own signing key was not a pinned trust root, and `session report` summarised every fresh session as `warn`; the release smoke caught it. `package verify` and `session report` now verify against the pinned roots plus this ship's keystore keys (as `session_host` roots). A stranger's machine still warns until they pin, which is the point.
+
 ## 0.31.2 (2026-09-10)
 
 - **`package verify` checks signatures (audit 2026-09 AUD-31, P1; advisory [TS-2026-002](docs/security/TS-2026-002.md)).** Through 0.31.1 the command verified the Merkle tree and nothing under it: a receipt whose sealed set was rewritten to an invented `art_` id, with the tree recomputed, verified with exit 0. A `.treeship` package now carries the signed DSSE envelope of every sealed artifact under `artifacts/` and the signing public keys in `keys.json`, and `package verify` verifies each envelope's Ed25519 signature against those keys, re-derives the content-addressed id and digest from the signed bytes (`signature:<id>`), checks that every chained artifact names the previous one as parent inside the signature (`chain_linkage`), and reports whether the signing keys are pinned trust roots (`signer_trust`, a warning with the exact `treeship trust add` command; a failure under `--strict`). A fabricated id, an edited byte, a reordered chain, or a missing key fails with a nonzero exit. Packages built before 0.31.2 carry no envelopes and fail at a new `envelopes` row; `--structural` reads their structure and approvals with a verdict that says signatures were not checked. Core: `verify_package_with_options`, `verify_package_structural`, `PackageKeys`.
