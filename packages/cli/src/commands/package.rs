@@ -1057,6 +1057,31 @@ fn print_decision_cards(
 // treeship package verify <path>
 // ---------------------------------------------------------------------------
 
+/// The operator's pinned trust roots plus this ship's own signing keys, as
+/// `session_host` roots. A package verified where it was produced must not
+/// warn that the producer has not pinned itself; the same package on a
+/// stranger's machine warns until they pin, which is the point.
+pub fn trust_with_own_keys(
+    ctx: &ctx::Ctx,
+) -> Result<treeship_core::trust::TrustRootStore, Box<dyn std::error::Error>> {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    use treeship_core::trust::{TrustRoot, TrustRootKind, TrustRootStore};
+    let mut trust = TrustRootStore::open_default_or_empty()?;
+    for key in ctx.keys.list()? {
+        if trust.roots().iter().any(|r| r.key_id == key.id) {
+            continue;
+        }
+        trust.add(TrustRoot {
+            key_id: key.id.clone(),
+            public_key: format!("ed25519:{}", URL_SAFE_NO_PAD.encode(&key.public_key)),
+            kind: TrustRootKind::SessionHost,
+            label: "this ship's own key".into(),
+            added_at: crate::commands::session::now_rfc3339(),
+        });
+    }
+    Ok(trust)
+}
+
 pub fn verify(
     path: PathBuf,
     config: Option<&str>,
@@ -1064,8 +1089,14 @@ pub fn verify(
     structural_only: bool,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let ctx_opened = ctx::open(config).ok();
     let mut checks = if structural_only {
         treeship_core::session::verify_package_structural(&path)?
+    } else if let Some(ctx) = ctx_opened.as_ref() {
+        // On the producer's own machine, its own signing keys are trusted by
+        // definition; only a stranger has to decide whether to pin them.
+        let trust = trust_with_own_keys(ctx)?;
+        treeship_core::session::verify_package_with_options(&path, &trust, false)?
     } else {
         verify_package(&path)?
     };
@@ -1076,7 +1107,7 @@ pub fn verify(
     // there's no Treeship workspace at all we skip the check rather
     // than failing -- offline / inbox verification of a bare package
     // must keep working.
-    if let Ok(ctx_opened) = ctx::open(config) {
+    if let Some(ctx_opened) = ctx_opened {
         let journal_dir = ctx_opened
             .config_path
             .parent()

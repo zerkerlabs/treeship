@@ -125,7 +125,7 @@ fn generate_session_id() -> String {
     format!("ssn_{}", hex::encode(buf))
 }
 
-fn now_rfc3339() -> String {
+pub(crate) fn now_rfc3339() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -2417,7 +2417,7 @@ pub fn report(
     // populate verification_status and warnings whether or not the
     // hub is reachable. The CLI reuses treeship_core's package verify
     // -- same checks the offline verifier runs.
-    let (verification_status, warnings) = local_verify_summary(&pkg_dir);
+    let (verification_status, warnings) = local_verify_summary(&pkg_dir, config);
 
     // 3. Resolve the active hub connection.
     //
@@ -2672,9 +2672,18 @@ fn compute_package_manifest_digest(pkg_dir: &Path) -> std::io::Result<String> {
 /// result into the agent-native (status, warnings) tuple. status is
 /// one of "pass" / "warn" / "fail"; warnings is the list of failed
 /// or warning row names + details.
-fn local_verify_summary(pkg_dir: &Path) -> (String, Vec<serde_json::Value>) {
-    use treeship_core::session::verify_package;
-    let checks = match verify_package(pkg_dir) {
+fn local_verify_summary(pkg_dir: &Path, config: Option<&str>) -> (String, Vec<serde_json::Value>) {
+    use treeship_core::session::{verify_package, verify_package_with_options};
+    // This ship's own keys are trusted here (see package::trust_with_own_keys);
+    // without a workspace, fall back to the pinned roots alone.
+    let verified = match ctx::open(config)
+        .ok()
+        .and_then(|c| super::package::trust_with_own_keys(&c).ok())
+    {
+        Some(trust) => verify_package_with_options(pkg_dir, &trust, false),
+        None => verify_package(pkg_dir),
+    };
+    let checks = match verified {
         Ok(c) => c,
         Err(_) => {
             return (
