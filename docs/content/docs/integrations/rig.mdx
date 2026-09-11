@@ -1,0 +1,57 @@
+---
+title: Rig
+description: Ed25519-signed Treeship receipts for every tool call a Rig agent makes, in-process, with no CLI subprocess. The rig-treeship crate.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Rig
+
+[Rig](https://crates.io/crates/rig-core) is a Rust framework for LLM agents. `rig-treeship` wraps any Rig `PortableTool` so that every call it makes leaves a signed, chained, offline-verifiable receipt. Both stacks are Rust, so this is a type-level integration: signing happens in-process with Ed25519 over DSSE envelopes through `treeship-core`, and the compiler checks the seam.
+
+The crate lives in the Treeship monorepo at `packages/rig` (it moved in with [#292](https://github.com/zerkerlabs/treeship/pull/292) in August 2026) and publishes to crates.io in lockstep with every Treeship release, so `rig-treeship` and `treeship-core` always share a version.
+
+```bash
+cargo add rig-treeship
+```
+
+## What it does
+
+```rust
+use std::sync::Arc;
+use rig_treeship::{AttestedExt, TreeshipLedger};
+
+let ledger = Arc::new(TreeshipLedger::open_default("agent://my-agent")?);
+let tool = MyTool.attested(ledger.clone());
+// register `tool` with your runtime exactly like the bare tool
+```
+
+Every call then:
+
+1. hashes the deserialized arguments (SHA-256, compact JSON),
+2. runs the inner tool,
+3. hashes the output, or records the failure as `outcome: "error"`,
+4. signs a `treeship/action/v1` statement carrying both hashes, chained to the previous receipt via `parentId`,
+5. returns the result only after the receipt is stored. An unattested action is treated as no action.
+
+The wrapper is transparent to the model: same name, description and JSON schema. It changes what the agent can prove, not what it can do.
+
+## Verifying
+
+```rust
+let head = ledger.head().unwrap();
+let verified = ledger.verify_chain(&head)?;   // walks parentId back to genesis
+println!("{} receipts verified", verified.length);
+```
+
+`verify_chain` re-derives every artifact id from its PAE bytes, checks each Ed25519 signature, and confirms the stored parent pointer matches the signed `parentId`. Receipts are standard Treeship artifacts on disk, so the CLI applies too: `treeship verify <id>`, and `treeship hub push <id>` for a public URL.
+
+<Callout type="info">
+Arguments and outputs are digested, never stored. A receipt proves which arguments produced which output under which key; it does not carry either.
+</Callout>
+
+## Where to go next
+
+- [`packages/rig`](https://github.com/zerkerlabs/treeship/tree/main/packages/rig): the crate, with `examples/attested_agent.rs` and an interop test against the CLI verifier
+- [rig-treeship on crates.io](https://crates.io/crates/rig-treeship)
+- [`treeship verify`](/docs/cli/verify)

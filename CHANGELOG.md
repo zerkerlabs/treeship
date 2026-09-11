@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **`scripts/coverage-audit.py`: what shipped versus what is documented.** Crosses merged PRs, changelog sections, docs integration pages, blog systems and the treeship.dev card data, per system and per release, and lists the PRs a release section does not reflect. It found Buzz, Rig, the SSRF guard, the hub hardening and the plugin's approval recording missing from the changelog; each now has a dated addendum in its section. Docs pages added for Rig and Grok Bot.
 - **`wrap` signs with the actor's own key.** `treeship wrap --actor agent://x` signed with the ship key even when the agent had a registered key pinned under AgentCert, so a key-bound agent's wrapped commands verified as `actor proof: asserted` while its `attest action` receipts were `proven (key-bound)` (QA on 0.31.1). `wrap` now resolves the signer the way `attest action` does.
 - **`session event --type agent.note`.** The MCP bridge and the harness skills have told agents to leave `agent.note` events since 0.10; the CLI refused them as unsupported. The type exists now, `treeship/session-event` `agent.note` with an optional `text` taken from `--meta` (`text` or `note`), and the timeline prints it as `note`.
 - **`signer_trust` trusts the ship's own keys.** On 0.31.2 the row warned on the producer's own machine that its own signing key was not a pinned trust root, and `session report` summarised every fresh session as `warn`; the release smoke caught it. `package verify` and `session report` now verify against the pinned roots plus this ship's keystore keys (as `session_host` roots). A stranger's machine still warns until they pin, which is the point.
@@ -315,6 +316,12 @@ default this release exists to make.
   its golden fixtures, and the `workflow.v1` predicate schema had existed only
   in a local stash since 2026-08-18. They are on main.
 
+### Addendum (2026-09-11)
+
+Recorded after the fact by `scripts/coverage-audit.py`: merged in this release's window, absent from the section above.
+
+- **The Claude Code plugin records the human's answer** (#347). `AskUserQuestion` fell through to the generic tool branch, so the moment an operator authorized an irreversible publish was recorded as a bare `agent.called_tool`. The question and the selected option are now in the timeline, redacted and capped; an approver is never invented.
+
 ## 0.25.3 (2026-08-31)
 
 **Upgrade if you use `@treeship/verify`, `@treeship/sdk`, or any npm package
@@ -548,6 +555,14 @@ release is the only way to fix it.**
   inclusion proofs, leaf count, timeline order. Signatures and issuer are not
   checked from that source; use the local artifact form for those.
 
+### Addendum (2026-09-11)
+
+Recorded after the fact by `scripts/coverage-audit.py`: merged in this release's window, absent from the section above.
+
+- **`rig-treeship` moved into the monorepo** as `packages/rig` and publishes from the release pipeline in lockstep with `treeship-core` (#292; a missing `anchors` field it exposed fixed in #296). Signed receipts for every Rig tool call, in-process, no subprocess. Docs: [Rig](https://docs.treeship.dev/integrations/rig).
+- **SDK receipt-URL fetches are guarded against SSRF** (audit P1-7, #294). `verify()` in the TypeScript SDK and the MCP bridge fetched any URL: no scheme restriction, no private-address check, no redirect limit, no body cap, no timeout. Now: https only, no embedded credentials, literal and resolved private/loopback/link-local addresses refused, redirects refused (a public URL that 302s to a private one bypassed every address check), body and time bounded. Shared vectors in `tests/vectors/ssrf-urls.json`, including the IPv4-mapped loopback form `new URL()` canonicalizes past a dotted-quad check.
+- **Hub: per-IP rate limiting, graceful shutdown, readiness** (audit items 19 and 49, #288). `httprate` keyed on client IP, 600/min globally and 60/min for the public reads; `/healthz` outside the budget. SIGTERM now drains for 20 s with readiness flipped false first; `/readyz` pings the database and is separate from `/healthz`.
+
 ## 0.24.0 (2026-08-10)
 
 **Trusted Rooms, end to end — plus three fixes worth upgrading for.**
@@ -613,6 +628,12 @@ release is the only way to fix it.**
   effect receipts, secrets and redaction, authority delta, wrapping real
   commands. The redaction page documents, with a measured table, which secret
   shapes the scrubber catches and which it misses.
+
+### Addendum (2026-09-11)
+
+Recorded after the fact by `scripts/coverage-audit.py`: merged in this release's window, absent from the section above.
+
+- **Trusted Rooms were built by the Buzz agents.** Fizz, Bumble and Honey on Buzz, Jack Dorsey's social platform, opened #266, #267 and #269, and their testing surfaced the false tampering alarm fixed in #268. See the [Buzz integration page](https://docs.treeship.dev/integrations/buzz).
 
 ## 0.23.0 (2026-08-05)
 
