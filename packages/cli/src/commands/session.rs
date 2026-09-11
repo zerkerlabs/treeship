@@ -1028,6 +1028,10 @@ pub fn watch(_config: Option<&str>, _printer: &Printer) -> Result<(), Box<dyn st
                         format!("{} {}ms", status, duration_ms.unwrap_or(0)),
                     )
                 }
+                EventType::AgentNote { text } => (
+                    "note".to_string(),
+                    trunc(text.as_deref().unwrap_or_default(), 60),
+                ),
                 EventType::AgentDecision {
                     model, provider, ..
                 } => {
@@ -1909,6 +1913,17 @@ pub fn event(
     let trace_id = generate_trace_id();
     let a_name = agent_name.unwrap_or("external");
 
+    // A note's text rides in --meta as `text` (or `note`); read it before the
+    // type match so the variant can carry it as a field, not only as meta.
+    let meta_text: Option<String> = meta_json
+        .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+        .and_then(|v| {
+            v.get("text")
+                .or_else(|| v.get("note"))
+                .and_then(|t| t.as_str())
+                .map(str::to_string)
+        });
+
     let et = match event_type {
         "agent.called_tool" => EventType::AgentCalledTool {
             tool_name: tool.unwrap_or("unknown").into(),
@@ -1980,8 +1995,15 @@ pub fn event(
             to_agent_instance_id: destination.unwrap_or("unknown").into(),
             artifacts: artifact_id.map(|id| vec![id.into()]).unwrap_or_default(),
         },
+        // The MCP bridge and the harness skills have told agents to leave
+        // `agent.note` events since 0.10; the CLI refused them as unsupported
+        // (QA on 0.31.1). The note's text rides in `--meta` as `text` (or
+        // `note`), which is how the bridge already passes free-form fields.
+        "agent.note" => EventType::AgentNote {
+            text: meta_text.clone(),
+        },
         other => {
-            return Err(format!("unsupported event type: {other}\n\n  supported: agent.called_tool, agent.wrote_file, agent.read_file, agent.connected_network, agent.completed_process, agent.decision, agent.handoff").into());
+            return Err(format!("unsupported event type: {other}\n\n  supported: agent.called_tool, agent.wrote_file, agent.read_file, agent.connected_network, agent.completed_process, agent.decision, agent.handoff, agent.note").into());
         }
     };
 

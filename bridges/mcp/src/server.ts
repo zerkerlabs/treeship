@@ -77,7 +77,7 @@ server.registerTool(
   {
     title: 'Append a session event',
     description:
-      'Append a structured event to the active Treeship session. Use type=agent.note for free-form notes the agent wants on the receipt timeline.',
+      'Append a structured event to the active Treeship session. Use type=agent.note for free-form notes the agent wants on the receipt timeline; put the note in meta.text.',
     inputSchema: {
       type: z.string().describe('Event type, e.g. agent.note, agent.decision, agent.handoff'),
       tool: z.string().optional().describe('Tool name, when applicable'),

@@ -276,7 +276,12 @@ pub fn run(
     stmt.parent_id = parent_id.clone();
     stmt.meta = Some(meta);
 
-    let signer = ctx.keys.default_signer()?;
+    // The same rule as `attest action`: an `agent://` actor whose registered
+    // key is pinned under AgentCert signs with that key, so `verify` reports
+    // `actor proof: proven (key-bound)`. `wrap` signed with the ship key
+    // regardless, so a key-bound agent's wrapped commands stayed `asserted`
+    // while its attested actions were proven (QA on 0.31.1).
+    let signer = crate::commands::attest::resolve_actor_signer(&ctx, &actor_uri)?;
     let pt = payload_type("action");
     let result = sign(&pt, &stmt, signer.as_ref())?;
 
