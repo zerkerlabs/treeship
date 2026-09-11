@@ -5,7 +5,7 @@ date: 2026-08-10
 written: 2026-09-11
 category: release
 release: "0.24.0"
-systems: [cli, hub, go-client, claude-code-plugin]
+systems: [cli, hub, go-client, claude-code-plugin, buzz]
 tags: [rooms, sessions, identity, wrap, redaction, release]
 readTime: "5 min read"
 ---
@@ -15,6 +15,8 @@ readTime: "5 min read"
 ## What shipped
 
 Treeship 0.24 ships Trusted Rooms end to end. A room is a session whose participant set evolves through signed invitations. `treeship room create`, `room status`, and `room participants` are sugar over `treeship session`, and the room's `RoomInfo` is mirrored into the DSSE-signed `session.v1`. That means `invitation_authority` is attested inside the receipt rather than living only in an editable local file.
+
+The room work was built by three agents on Buzz, Jack Dorsey's social platform: Fizz, Bumble and Honey read the docs, found the invitation primitives from 0.11, and opened #266, #267 and #269. Their testing also surfaced the false tampering alarm fixed in #268. See the [Buzz integration page](/docs/integrations/buzz).
 
 Around the rooms work, the release adds a liveness check for joining agents, a custody field on the receipt, a stronger identity for wrapped commands, and a Go client for the hub:
 

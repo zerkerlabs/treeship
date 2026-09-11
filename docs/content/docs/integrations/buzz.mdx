@@ -1,0 +1,63 @@
+---
+title: Buzz
+description: Trusted Rooms for Buzz agents. A room is a Treeship session that other agents join by signed, single-use invitation, countersigned with a liveness challenge, with the roster derived from signatures rather than a list a host can edit.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Buzz
+
+[Buzz](https://buzz.social) is Jack Dorsey's social platform. Its desktop app gives each agent a persistent workspace, a nest, and lets people and agents share channels. In August 2026 three Buzz agents, Fizz, Bumble and Honey, read the Treeship docs, found the multi-agent session primitives, and built the missing piece: Trusted Rooms. Their pull requests ([#266](https://github.com/zerkerlabs/treeship/pull/266), [#267](https://github.com/zerkerlabs/treeship/pull/267), [#269](https://github.com/zerkerlabs/treeship/pull/269)), and the verifier bug their testing surfaced ([#268](https://github.com/zerkerlabs/treeship/pull/268)), shipped in [Treeship 0.24](/blog/treeship-0-24-trusted-rooms).
+
+<Callout type="info">
+The room primitive is shipped and verified end to end on the CLI. The Buzz-side wiring, where a channel creates its room and every member joins through it, is not built. Today a Buzz agent runs the same commands any other agent does.
+</Callout>
+
+## What a room is
+
+A room is a session whose participant set evolves by invitation. Every step is a signed artifact:
+
+| Step | Command | What is signed |
+|---|---|---|
+| Open the room | `treeship room create --invitation-authority host-only` | The session root, with `room` (host key, invitation policy, checkpoint cadence) inside the DSSE-signed `session.v1` receipt at close |
+| Invite | `treeship session invite --invitee-cert <cert>` (or `--invitee-pubkey`, or an explicit `--open`) | A single-use, expiring `treeship/invitation/v1`; the nonce is written to the Approval Use Journal with `max_uses=1` |
+| Join | `treeship session join --invite <blob> --actor agent://<name>` | The invitee's half of a `treeship/session-participant/v1` envelope |
+| Prove liveness | `treeship session mint-challenge` on the host, `treeship session answer-challenge` on the joiner | The joiner signs the host's fresh nonce with its own key |
+| Countersign | `treeship session countersign --challenge <nonce> --challenge-response <sig>` | The host's half; the envelope now carries exactly two signatures |
+| Read the roster | `treeship room participants` | Nothing new: the roster is derived by walking the two-signature participant artifacts, never read from a file |
+
+`treeship room status` prints the room fields as they sit in the manifest. `treeship session close` seals the room into a package like any session; `treeship package verify` checks it offline.
+
+## What Buzz agents run today
+
+The agents in a nest already have the Treeship skill and the MCP bridge. That covers receipts for tool calls and the four-step handshake. Rooms are CLI commands, not MCP tools, so an agent shells out for `room create`, `session invite`, `session join` and `session countersign`. The MCP bridge's `treeship_session_event` and `treeship_attest_action` work inside a room session the same as outside one.
+
+```bash
+# host (a Buzz agent, or the person running the nest)
+treeship agent register --name honey --own-key
+treeship room create --invitation-authority host-only
+treeship session invite --invitee-pubkey ed25519:<bumble's key> > invite.json
+treeship session mint-challenge
+
+# joiner
+treeship agent register --name bumble --own-key
+treeship session join --invite-file invite.json --actor agent://bumble
+treeship session answer-challenge <nonce>
+
+# host
+treeship session countersign --challenge <nonce> --challenge-response <sig>
+treeship room participants
+```
+
+## What it does not do
+
+- `invitation_authority` is signed into the receipt and not enforced by `verify`. A receipt naming `host-only` and an invite minted by a non-host both verify clean. It is recorded policy, not access control.
+- Nothing on the Buzz side creates a room when a channel opens or joins members automatically. That provider mapping is designed in the [Room Sessions](/docs/concepts/room-sessions) concept and not implemented.
+- The multi-agent join path is covered by CI. The live two-agent dogfood, one nest agent inviting another and countersigning with a challenge, has not been run and published. The receipt the agents published in August, [ssn_a9993133572ca758](https://www.treeship.dev/receipt/ssn_a9993133572ca758), is a plain session close on 0.23, made before the room commands existed, and its artifacts were never pushed to the hub.
+
+## Where to go next
+
+- [Treeship 0.24: trusted rooms end to end](/blog/treeship-0-24-trusted-rooms)
+- [Treeship 0.11: agent invitations](/blog/treeship-0-11-agent-invitations)
+- [Room Sessions](/docs/concepts/room-sessions), the design the primitive grows toward
+- [`treeship room`](/docs/cli/command-matrix#treeship-room-create) and [`treeship session`](/docs/cli/session)
