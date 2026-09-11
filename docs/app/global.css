@@ -35,11 +35,12 @@
   --color-zk-text-secondary: #5f6561;
   --color-zk-hairline: #e4e4e0;
   --color-zk-hairline-strong: #d9d9d4;
-  --color-zk-accent: #6656fb;
-  --color-zk-accent-soft: rgba(102, 86, 251, 0.09);
-  --color-zk-success: #16866a;
+  --color-zk-brand: #00c805;
+  --color-zk-accent: #008503;
+  --color-zk-accent-soft: rgba(0, 200, 5, 0.1);
+  --color-zk-success: #008503;
   --color-zk-warning: #a86f00;
-  --color-zk-danger: #c33e4b;
+  --color-zk-danger: #c2410c;
   --color-zk-evidence: #161616;
   --color-zk-evidence-ink: #f0f0ee;
 
@@ -52,13 +53,13 @@
   --color-fd-card: #ffffff;
   --color-fd-card-foreground: #101010;
   --color-fd-border: #e4e4e0;
-  --color-fd-primary: #6656fb;
+  --color-fd-primary: #008503;
   --color-fd-primary-foreground: #ffffff;
   --color-fd-secondary: #efefec;
   --color-fd-secondary-foreground: #101010;
-  --color-fd-accent: rgba(102, 86, 251, 0.09);
+  --color-fd-accent: rgba(0, 200, 5, 0.1);
   --color-fd-accent-foreground: #101010;
-  --color-fd-ring: #6656fb;
+  --color-fd-ring: #00c805;
 
   --font-sans: 'Geist', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'Segoe UI', sans-serif;
   --font-mono: 'Geist Mono', 'SF Mono', ui-monospace, Menlo, monospace;
@@ -74,11 +75,11 @@
   --color-zk-text-secondary: #9aa09b;
   --color-zk-hairline: #2a2a27;
   --color-zk-hairline-strong: #363632;
-  --color-zk-accent: #8f83ff;
-  --color-zk-accent-soft: rgba(143, 131, 255, 0.14);
-  --color-zk-success: #4fc39c;
+  --color-zk-accent: #00c805;
+  --color-zk-accent-soft: rgba(0, 200, 5, 0.14);
+  --color-zk-success: #00c805;
   --color-zk-warning: #e0a94a;
-  --color-zk-danger: #e5717c;
+  --color-zk-danger: #ff6a3d;
   --color-zk-evidence: #0a0a0a;
   --color-zk-evidence-ink: #f0f0ee;
 
@@ -91,13 +92,13 @@
   --color-fd-card: #1c1c1c;
   --color-fd-card-foreground: #ececE8;
   --color-fd-border: #2a2a27;
-  --color-fd-primary: #8f83ff;
+  --color-fd-primary: #00c805;
   --color-fd-primary-foreground: #0a0a0a;
   --color-fd-secondary: #1c1c1c;
   --color-fd-secondary-foreground: #ececE8;
-  --color-fd-accent: rgba(143, 131, 255, 0.14);
+  --color-fd-accent: rgba(0, 200, 5, 0.14);
   --color-fd-accent-foreground: #ececE8;
-  --color-fd-ring: #8f83ff;
+  --color-fd-ring: #00c805;
 }
 
 html {
