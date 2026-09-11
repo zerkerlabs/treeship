@@ -201,6 +201,40 @@ fn read_manifest_at(path: &Path) -> Option<SessionManifest> {
     serde_json::from_str(&data).ok()
 }
 
+/// The session's chain head: the newest artifact in this workspace whose
+/// parent walk reaches the session root, or the root itself when nothing has
+/// chained onto it yet. `None` when there is no root to walk to.
+pub(crate) fn session_chain_head(ctx: &ctx::Ctx, root: Option<&str>) -> Option<String> {
+    let root = root?;
+    let index = ctx.storage.list();
+    let by_id: std::collections::HashMap<&str, Option<&str>> = index
+        .iter()
+        .map(|e| (e.id.as_str(), e.parent_id.as_deref()))
+        .collect();
+    let reaches_root = |start: &str| -> bool {
+        let mut cur = Some(start);
+        let mut hops = 0;
+        while let Some(id) = cur {
+            if id == root {
+                return true;
+            }
+            hops += 1;
+            if hops > 100_000 {
+                return false;
+            }
+            cur = by_id.get(id).copied().flatten();
+        }
+        false
+    };
+    // `list()` is newest first.
+    for e in &index {
+        if reaches_root(&e.id) {
+            return Some(e.id.clone());
+        }
+    }
+    Some(root.to_string())
+}
+
 fn resolve_last(storage_dir: &str) -> Option<String> {
     if let Ok(env_parent) = std::env::var("TREESHIP_PARENT") {
         if !env_parent.is_empty() {
@@ -1372,8 +1406,14 @@ pub fn close(
     );
     event_log.append(&mut close_evt)?;
 
-    // Create session-close action artifact
-    let parent_id = resolve_last(&ctx.config.storage_dir);
+    // Create session-close action artifact. Its parent is the session's
+    // chain head: the newest artifact that walks back to the session root.
+    // `.last` is whatever was signed most recently in this workspace, which
+    // an unrelated agent's receipt can be; chaining close onto that made a
+    // foreign action the session's chained step and the session's own root
+    // "unchained" (audit follow-up, P3).
+    let parent_id = session_chain_head(&ctx, manifest.root_artifact_id.as_deref())
+        .or_else(|| resolve_last(&ctx.config.storage_dir));
 
     let meta = serde_json::json!({
         "session_close": true,
@@ -1699,6 +1739,25 @@ pub fn close(
                     printer.info(&format!(
                         "  record:    {record_id}  (session.v1, class={class})"
                     ));
+                    // Seal the record beside the package: it signs the
+                    // digest of receipt.json, so `package verify` can tell a
+                    // rewritten sealed set from the one the producer closed
+                    // (audit follow-up AUD-34).
+                    match ctx
+                        .storage
+                        .read(&record_id)
+                        .map_err(|e| e.to_string())
+                        .and_then(|r| r.envelope.to_json().map_err(|e| e.to_string()))
+                        .and_then(|bytes| {
+                            std::fs::write(pkg_output.path.join(session::RECORD_FILE), bytes)
+                                .map_err(|e| e.to_string())
+                        }) {
+                        Ok(()) => {}
+                        Err(e) => printer.warn(
+                            &format!("close record not sealed into the package: {e}"),
+                            &[],
+                        ),
+                    }
                 }
                 Err(e) => {
                     printer.warn(&format!("session.v1 record not minted: {e}"), &[]);
@@ -2451,7 +2510,7 @@ pub fn report(
     // skip the hub entirely and return the agent-native shape with
     // null URL fields (the receipt is still verifiable locally).
     if no_upload {
-        return emit_report_output(
+        emit_report_output(
             format,
             None,
             None,
@@ -2465,7 +2524,8 @@ pub fn report(
             None,
             None,
             printer,
-        );
+        )?;
+        return report_exit(&verification_status);
     }
 
     let ctx = ctx::open(config)?;
@@ -2629,7 +2689,18 @@ pub fn report(
         None,
         Some((hub_name, agents, events)),
         printer,
-    )
+    )?;
+    report_exit(&verification_status)
+}
+
+/// A report whose own local verify failed must not exit 0: a script that
+/// branches on the exit code would publish a failing package as success
+/// (usability follow-up FR-7). `warn` stays 0; it is advisory by design.
+fn report_exit(verification_status: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if verification_status == "fail" {
+        return Err("local verification of the package failed; see warnings".into());
+    }
+    Ok(())
 }
 
 /// Derive share URLs from a hub-issued `receipt_url`. The convention:

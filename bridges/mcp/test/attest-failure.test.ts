@@ -38,3 +38,42 @@ describe('attest failure reporting', () => {
     await expect(attestAction({ actor: 'agent://t', action: 'mcp.tool.x.intent' })).rejects.toThrow();
   });
 });
+
+// The strict half has to hold on the path that runs: through
+// TreeshipMCPClient.callTool, where every catch used to swallow the throw
+// (audit follow-up, AUD-33 residual).
+describe('TREESHIP_STRICT through the client', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete process.env.TREESHIP_STRICT;
+    vi.doUnmock('../src/attest.js');
+  });
+
+  async function clientWithFailingIntent() {
+    vi.doMock('../src/attest.js', () => ({
+      attestAction: async () => {
+        throw new Error('STRICT_BOOM_INTENT');
+      },
+      attestReceipt: async () => undefined,
+      emitSessionEvent: async () => undefined,
+    }));
+    vi.resetModules();
+    const { TreeshipMCPClient } = await import('../src/client.js');
+    return new TreeshipMCPClient({ name: 't', version: '0' });
+  }
+
+  it('fails the tool call when the intent cannot be signed', async () => {
+    process.env.TREESHIP_STRICT = '1';
+    const client = await clientWithFailingIntent();
+    vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    await expect(client.callTool({ name: 'x', arguments: {} })).rejects.toThrow('STRICT_BOOM_INTENT');
+  });
+
+  it('proceeds without a receipt when not strict', async () => {
+    const client = await clientWithFailingIntent();
+    vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    // Not connected: the SDK client throws its own error, which is the
+    // proof the intent failure did not stop the call from being attempted.
+    await expect(client.callTool({ name: 'x', arguments: {} })).rejects.toThrow('Not connected');
+  });
+});

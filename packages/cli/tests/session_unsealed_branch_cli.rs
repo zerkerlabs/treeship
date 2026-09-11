@@ -93,8 +93,12 @@ impl Ws {
             "--action",
             action,
         ];
-        if let Some(p) = parent {
-            args.extend(["--parent", p]);
+        // Since the audit follow-up an action without --parent chains onto the
+        // session head; this suite is about the loose ones, so `None` here
+        // means --no-parent.
+        match parent {
+            Some(p) => args.extend(["--parent", p]),
+            None => args.push("--no-parent"),
         }
         let v = self.json(&args);
         v["id"]

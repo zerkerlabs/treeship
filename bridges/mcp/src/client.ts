@@ -106,7 +106,14 @@ export class TreeshipMCPClient extends Client {
     }
 
     // Attest INTENT before the call (awaited -- proof of what was about to happen)
-    const intentId = await this._attestIntent(params).catch(() => undefined);
+    // Under TREESHIP_STRICT=1 a signing failure fails the tool call instead
+    // of proceeding unrecorded (AUD-33). The throw from attest.ts has to
+    // reach the caller; every catch below used to swallow it.
+    const strict = process.env.TREESHIP_STRICT === '1';
+    const intentId = await this._attestIntent(params).catch((e) => {
+      if (strict) throw e;
+      return undefined;
+    });
 
     const startMs = Date.now();
     let result: any;
@@ -137,14 +144,23 @@ export class TreeshipMCPClient extends Client {
         } as ToolReceipt;
       }
 
-      this._attestReceipt(params, result, intentId, elapsedMs, error)
-        .then(id => {
-          if (result) {
-            result._treeship.receipt = id;
-          }
-          receipt.resolve(id);
-        })
-        .catch(() => receipt.resolve(undefined));
+      if (strict) {
+        // Awaited, so a receipt that cannot be signed fails the call.
+        const id = await this._attestReceipt(params, result, intentId, elapsedMs, error);
+        if (result) {
+          result._treeship.receipt = id;
+        }
+        receipt.resolve(id);
+      } else {
+        this._attestReceipt(params, result, intentId, elapsedMs, error)
+          .then(id => {
+            if (result) {
+              result._treeship.receipt = id;
+            }
+            receipt.resolve(id);
+          })
+          .catch(() => receipt.resolve(undefined));
+      }
     }
 
     return result;
@@ -234,13 +250,16 @@ export class TreeshipMCPClient extends Client {
           is_error: result?.isError ?? !!error,
           tool_input: __sanitizeToolInput(params.arguments),
         },
-      }).catch(() => {}); // best-effort, never block
+      }).catch((e) => {
+        if (process.env.TREESHIP_STRICT === '1') throw e;
+      }); // best-effort unless strict
 
       return receiptId;
     } catch (e) {
       process.stderr.write(
         `[treeship] attestReceipt failed for ${params.name}: ${(e as Error).message}\n`,
       );
+      if (process.env.TREESHIP_STRICT === '1') throw e;
       return undefined;
     }
   }

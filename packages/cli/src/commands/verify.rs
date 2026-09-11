@@ -937,6 +937,15 @@ fn compute_chain_linkage(chain: &[(String, Envelope)]) -> (bool, String) {
                     .or_else(|| {
                         v.get("subject")
                             .and_then(|s| s.get("artifactId").or_else(|| s.get("artifact_id")))
+                            // Only a Treeship artifact id is a chain edge. An
+                            // action whose subject is an external reference
+                            // (`ord_12345`) names a thing, not a parent, and
+                            // walking to it failed `verify last` with "not
+                            // found in local storage" (usability follow-up
+                            // FR-4).
+                            .filter(|id| {
+                                id.as_str().map(|x| x.starts_with("art_")).unwrap_or(false)
+                            })
                     })
                     // handoff/v1 carries no parentId either. `attest handoff`
                     // records `artifacts[0]` as the storage parent, and that

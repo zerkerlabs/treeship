@@ -97,6 +97,8 @@ pub struct ActionArgs {
     pub output_digest: Option<String>,
     pub content_uri: Option<String>,
     pub parent_id: Option<String>,
+    /// Do not chain onto the active session's head when no --parent is given.
+    pub no_parent: bool,
     pub approval_nonce: Option<String>,
     /// Set together with --approval-nonce: a retry with the same key
     /// collapses to the existing journal entry instead of allocating a
@@ -108,8 +110,26 @@ pub struct ActionArgs {
     pub config: Option<String>,
 }
 
-pub fn action(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std::error::Error>> {
+pub fn action(
+    mut args: ActionArgs,
+    printer: &Printer,
+) -> Result<String, Box<dyn std::error::Error>> {
     validate_v2_flags(&args)?;
+    // Inside an active session a receipt chains onto the session's head by
+    // default. Before this, an action attested without --parent was sealed
+    // as `unchained`, and since every documented quickstart omits --parent,
+    // `chain_completeness` warned on honest sessions and said nothing useful
+    // on dishonest ones (audit follow-up, P3). `--no-parent` keeps the old
+    // behaviour for a receipt that is deliberately not part of the chain.
+    if args.parent_id.is_none() && !args.no_parent {
+        if let Some(manifest) = crate::commands::session::load_session() {
+            let ctx = ctx::open(args.config.as_deref())?;
+            args.parent_id = crate::commands::session::session_chain_head(
+                &ctx,
+                manifest.root_artifact_id.as_deref(),
+            );
+        }
+    }
     if args.v2 {
         return action_v2(args, printer);
     }
@@ -305,10 +325,10 @@ fn action_v1(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std:
     printer.success("action attested", &field_refs);
     printer.hint(&format!("treeship verify {}", result.artifact_id));
     if args.parent_id.is_none() && crate::commands::session::load_session().is_some() {
-        // A session is open and this receipt does not link into it. It is
-        // still sealed at close, marked unchained (audit 2026-09, AUD-32).
+        // --no-parent inside a session: sealed at close, marked unchained
+        // (audit 2026-09, AUD-32).
         printer.hint(
-            "not chained: pass --parent <previous id> so this receipt links into the session chain",
+            "not chained (--no-parent): sealed at close as unchained, its order is your claim only",
         );
     }
     printer.blank();
