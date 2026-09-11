@@ -118,7 +118,7 @@ export async function GET(request: Request) {
           >
             {description}
           </div>
-          <div style={{ display: 'flex', fontSize: 24, color: '#6656fb' }}>
+          <div style={{ display: 'flex', fontSize: 24, color: '#008503' }}>
             docs.treeship.dev
           </div>
         </div>
