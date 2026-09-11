@@ -968,6 +968,7 @@ fn event_type_label(et: &super::event::EventType) -> String {
         AgentStartedProcess { .. } => "agent.started_process",
         AgentCompletedProcess { .. } => "agent.completed_process",
         AgentDecision { .. } => "agent.decision",
+        AgentNote { .. } => "agent.note",
     }
     .into()
 }
@@ -986,6 +987,7 @@ fn event_summary(et: &super::event::EventType) -> Option<String> {
         } => Some(format!(
             "{from_agent_instance_id} -> {to_agent_instance_id}"
         )),
+        AgentNote { text } => text.clone(),
         AgentCalledTool { tool_name, .. } => Some(format!("Called {tool_name}")),
         AgentReadFile { file_path, .. } => Some(format!("Read {file_path}")),
         AgentWroteFile { file_path, .. } => Some(format!("Wrote {file_path}")),

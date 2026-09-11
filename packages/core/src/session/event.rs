@@ -138,6 +138,16 @@ pub enum EventType {
     // amount into a signed receipt would make old receipts falsely
     // signed when pricing changes. Consumers (dashboards, billing tools)
     // calculate cost from model + tokens + their pricing config.
+    /// A free-form note the agent wants on the timeline: what it was trying
+    /// to do, what it decided not to do, why it stopped. Text only; it makes
+    /// no claim about a model, a tool or a file, and the verifier treats it
+    /// as the agent's own words.
+    #[serde(rename = "agent.note")]
+    AgentNote {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+    },
+
     #[serde(rename = "agent.decision")]
     AgentDecision {
         #[serde(skip_serializing_if = "Option::is_none")]
