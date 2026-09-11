@@ -1,0 +1,69 @@
+---
+title: "Treeship 0.9: verify a receipt anywhere it lands"
+description: "treeship verify takes a URL, a package, or an id and cross-checks against an Agent Certificate. The same checks ship as WASM for Node, Deno, edge runtimes, and browsers."
+date: 2026-04-20
+written: 2026-09-11
+category: release
+release: "0.9.2"
+systems: [cli, wasm-verifier, typescript-sdk, a2a, mcp]
+tags: [verifier, receipts, identity, release-engineering, release]
+readTime: "5 min read"
+---
+
+# Treeship 0.9: verify a receipt anywhere it lands
+
+## What shipped
+
+Treeship 0.9.0 through 0.9.2 made verification portable. `treeship verify` now accepts three target shapes: an HTTPS URL fetched as receipt JSON, a path to a local `.treeship` or `.agent` package, or a local artifact id. A new `--certificate` flag cross-verifies a receipt against an Agent Certificate. The Rust core then compiled to WebAssembly and published as `@treeship/core-wasm`, with a zero-dependency `@treeship/verify` package on top.
+
+0.9.0 shipped the CLI surface and schema fields on 18 April. 0.9.1 the same day was a partial publish, and 0.9.2 on 20 April realigned every package. More on that below.
+
+- Exit codes on `verify`: `0` success, `1` verification failed, `2` cross-verification failed, `3` network or filesystem error.
+- `schema_version` on Session Receipts and Agent Certificates. New documents emit `"1"`; a missing field is read as `"0"` and verified under existing rules.
+- `session.ship_id`, parsed from the manifest's `actor` URI when it starts with `ship://`.
+- `treeship_core::artifacts` with five DSSE-signed command schemas: `KillCommand`, `ApprovalDecision`, `MandateUpdate`, `BudgetUpdate`, `TerminateSession`.
+- `@treeship/core-wasm` at 167 KB gzipped, exporting `verify_receipt`, `verify_certificate`, and `cross_verify` alongside the envelope and Merkle primitives.
+- `@treeship/sdk` gains in-process `verifyReceipt`, `verifyCertificate`, and `crossVerify`; `@treeship/a2a` `verifyReceipt` now performs cryptographic verification.
+- Runtime support for Node.js 18+, Deno, browser bundlers, Vercel Edge, Cloudflare Workers, and AWS Lambda, with harnesses under `tests/runtime-acceptance/`.
+- A legacy fixture suite at `packages/core/tests/legacy_receipt_fixtures.rs` keeps 0.7.2 and 0.8.0 receipts verifying.
+
+## Why it matters
+
+Before 0.9, verifying a receipt meant having the CLI installed and the artifact in local storage. A dashboard, an edge function, or an agent deciding whether to accept a handoff had to shell out to a subprocess or settle for a structural summary. `@treeship/a2a` `verifyReceipt` was network-only before this release.
+
+Cross-verification answers a question nobody could ask before: did this session stay inside what the agent was allowed to do? A receipt lists the tools called. A certificate lists the tools authorized. `--certificate` checks the two against each other.
+
+## How it works
+
+```bash
+treeship verify https://<hub>/v1/receipt/<session_id>
+treeship verify .treeship/sessions/<id>.treeship
+treeship verify <artifact-id>
+treeship verify <receipt> --certificate <path-or-url>
+```
+
+The URL and path forms go through a new external path and produce the full checkmark-style output. A bare artifact id, including `last`, falls through to the original local-storage verify unchanged. Both runtimes share one implementation: `treeship_core::verify::verify_receipt_json_checks` recomputes the Merkle root, verifies inclusion proofs, checks the leaf count, timeline ordering, and chain linkage. The CLI and the WASM build produce the same result on the same input.
+
+Cross-verification is `cross_verify_receipt_and_certificate(receipt, certificate, now_rfc3339)`, returning a `CrossVerifyResult`. It rolls up three checks: the ship ids match, the certificate is valid at the supplied time, and every tool the session called is authorized. The result lists authorized, unauthorized, and never-called tools. The explicit `now` argument keeps it deterministic for tests and edge callers. `treeship_core::agent::verify_certificate` checks the certificate's Ed25519 signature against its embedded public key.
+
+In JavaScript, `@treeship/verify` depends only on `@treeship/core-wasm` and needs WebAssembly plus `fetch`. The WASM exports take JSON in and return JSON out, with an error shape on malformed input instead of a panic. Dependents pin `@treeship/core-wasm` to the exact release version, no caret, so the schema-rules parity cannot drift.
+
+## The 0.9.1 publish
+
+0.9.1 reached crates.io and PyPI cleanly, and the `treeship` wrapper and platform binaries reached npm. `@treeship/core-wasm` and `@treeship/verify` did not: new package names on the `@treeship` scope needed a one-time bootstrap publish, and the workflow's `continue-on-error` let the failure pass silently. The failure cascaded to `@treeship/sdk`, `@treeship/mcp`, and `@treeship/a2a`. The changelog is blunt: do not install 0.9.1 npm packages, and do not roll back to it.
+
+0.9.2 is byte-for-byte the same work with a different version string. The workflow now fails on any publish error, pre-flights every expected package on the scope, and polls each registry for the published version within 30 seconds.
+
+## What it does not do
+
+The command artifact schemas ship as primitives only; CLI surfaces that issue `KillCommand` or `TerminateSession` were deferred to 0.10.0, along with approval-loop hub endpoints, `--require-approval` on `wrap`, and the treeship.dev/verify drag-and-drop page. `schema_version` `"1"` and `"0"` select the same ruleset in 0.9; the field is informational until a future version moves it inside the signed payload. There is no subprocess fallback for the WASM path; a runtime without WebAssembly must use the legacy `verify(id)` form. Stateful operations, attest, session, dock, and agent register, still run through the subprocess. Edge deploys and cold-start measurements were code-complete but run out-of-band, and the planned adversarial review of the WASM surface was scheduled for before 0.10.0.
+
+## Where to go next
+
+- [`treeship verify`](/docs/cli/verify): every target shape and the exit codes.
+- [Cross-verification](/docs/concepts/cross-verification): receipt against certificate.
+- [`@treeship/verify`](/docs/sdk/verify) and [Edge runtime](/docs/guides/edge-runtime): running the checks outside the CLI.
+- [Schema](/docs/reference/schema): `schema_version` semantics and CLI-to-WASM parity.
+- [From subprocess to WASM](/blog/from-subprocess-to-wasm-eliminating-the-subprocess-attack-surface): why the migration mattered for security.
+
+*This entry was written on 11 September 2026 from the 0.9.0, 0.9.1 and 0.9.2 changelog and the code as released, and is filed under the release date.*

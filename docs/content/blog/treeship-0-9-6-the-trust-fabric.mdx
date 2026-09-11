@@ -1,0 +1,72 @@
+---
+title: "Treeship 0.9.6: the trust fabric"
+description: "Three-layer file capture, tool usage checked against the agent certificate, and scoped approvals. A receipt can now say whether the agent stayed inside its bounds."
+date: 2026-04-27
+written: 2026-09-11
+category: release
+release: "0.9.6"
+systems: [mcp, codex, claude-code-plugin]
+tags: [approvals, receipts, sessions, verifier, redaction, release]
+readTime: "5 min read"
+---
+
+# Treeship 0.9.6: the trust fabric
+
+## What shipped
+
+Treeship 0.9.6 lets a receipt answer a second question. 0.9.5 could prove a receipt was signed and unchanged. It could not say whether the agent stayed inside its bounds. A session could attest that the agent called Read 14 times while nobody checked whether Read was on its authorized tool list. And `files_written` could quietly omit anything that escaped the captured tool channel: a `sed -i` inside a Bash command, a build output, a manual edit.
+
+0.9.6 closes both holes with a capture, normalize, verify chain. Every file the agent touches is captured by at least one of three layers: the hook, the MCP bridge, or git reconciliation at session close. Every tool call is normalized through canonical aliases so the verifier can compare claimed authorization against actual usage. When capture itself was incomplete, the receipt now says so instead of truncating silently.
+
+The release also tightens approvals. A 0.9.5 approval carried only a nonce, so an approval for `deploy.production` could authorize `deploy.staging` and verify still printed `single-use enforced`. 0.9.6 adds an `ApprovalScope` that signs who, what, where, and how many times into the grant.
+
+Other additions:
+
+- `treeship attest approval` gains `--allowed-actor`, `--allowed-action`, `--allowed-subject`, `--max-uses`, and `--unscoped`; each `--allowed-*` flag is repeatable.
+- `treeship attest action --subject <URI>` aliases `--content-uri` so an action binds to the same subject the approval names.
+- MCP-routed `agent.called_tool` events promote into typed file and process events stamped `meta.source = "mcp"`.
+- The receipt's `tool_usage` block carries `declared` and `actual`, and the verifier diffs them through `TOOL_ALIASES`.
+- `proofs.event_log_skipped` records how many malformed event-log lines were skipped, instead of composing an empty session.
+- The Claude Code plugin emits an `agent.decision` event at session start carrying `meta.model`.
+- `treeship add codex` installs an MCP block in `~/.codex/config.toml`.
+- The MCP bridge sanitizer no longer passes `command` or `cmd` into receipts, so inline Bearer tokens and cloud credentials stay out of `meta.tool_input`.
+
+## Why it matters
+
+Before this release, the verifier confirmed a nonce matched and stopped there. The binding was real, but the same nonce could be replayed across unlimited actions and across different actions entirely. Meanwhile an agent that changed files through a shell command left no trace in `files_written`. An audit reader could confirm the signature and still not know what the agent did, or whether it was allowed to do it.
+
+Now the grant states its bounds, verify checks them statelessly, and the receipt commits every file change it can find before the Merkle root is sealed. A reader can answer "did this agent stay inside its bounds" with the same confidence they already had for "was this signature valid."
+
+## How it works
+
+```bash
+treeship attest approval --allowed-subject env://prod --allowed-action deploy.production --max-uses 1
+treeship attest action --subject env://prod
+treeship verify <path>
+```
+
+The first command mints a scoped grant. Without any `--allowed-*` flag or `--max-uses`, and without `--unscoped`, the CLI refuses to mint. Bearer approvals are opt-in now. The second command attests an action against the same subject. Verify then prints three separate rows instead of one: `approval binding` says the nonce matched a signed approval, and that is a cryptographic claim only. `approval scope` says actor, action, and subject matched the scope, or warns that the approval is unscoped and proves binding only. `replay check` always warns that the check is package-local and no global ledger was consulted.
+
+Scope checks run first-violation-wins: actor, then action, then subject, then the scope's own `valid_until`. A wrong-actor failure is never masked by a wrong-action one. If two actions in the same bundle claim the same nonce, the second is rejected as a package-local replay.
+
+On the capture side, the Claude Code hook calls `treeship session event` for every tool use and stamps `meta.source = "session-event-cli"`. The MCP bridge's generic `agent.called_tool` events are inspected at receipt composition, and a known tool name plus path becomes an `AgentReadFile`, `AgentWroteFile`, or `AgentExecutedCommand` event. At session close, git reconciliation runs `git diff HEAD --name-status`, `git diff <since>..HEAD --name-status`, and `git ls-files --others --exclude-standard`, dedupes against writes already captured, and appends synthetic `AgentWroteFile` events to `events.jsonl` before the root is sealed. Rename and copy entries record the destination path. Treeship's own bookkeeping under `.treeship/sessions/*` and similar paths is filtered out; user-authored files like `config.yaml` and `policy.yaml` are kept.
+
+Cross-verification builds `actual` only from events whose `meta.source` is `hook`, `mcp`, `shell-wrap`, `session-event-cli`, or absent. Events from `git-reconcile` and `daemon-atime` are Treeship's backstops, not the agent calling tools, so they never inflate `actual` against the certificate. Aliases map `read_file`, `write_file`, `bash`, and `web_fetch` to `Read`, `Write`, `Bash`, and `WebFetch`, so a Claude session is not flagged for every authorized call.
+
+## What it does not do
+
+- `--max-uses` is signed into the grant for future ledger enforcement. Verify reports replay posture honestly and does not claim global single-use.
+- The replay check is package-local. Two packages can each consume the same nonce and neither verifier will know.
+- Git reconciliation is fail-open. If the directory is not a git repo, git is missing, or a git command errors, the receipt is still produced without backstop events.
+- Nothing here enforces scope at runtime. Treeship records and verifies; it does not refuse to run an action.
+- No keystore format change and no SDK API breakage. `tool_usage` was already on 0.9.5 receipts; this release makes `actual` useful.
+
+## Where to go next
+
+- [Trust fabric](/docs/concepts/trust-fabric)
+- [Cross-verification](/docs/concepts/cross-verification)
+- [Approvals guide](/docs/guides/approvals)
+- [CLI: attest](/docs/cli/attest)
+- [Approval nonces and why a single field prevents an entire attack class](/blog/approval-nonces-and-why-a-single-field-prevents-an-entire-attack-class)
+
+*This entry was written on 11 September 2026 from the 0.9.6 changelog and the code as released, and is filed under the release date.*

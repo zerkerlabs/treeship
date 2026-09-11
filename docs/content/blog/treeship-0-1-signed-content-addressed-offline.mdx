@@ -1,0 +1,67 @@
+---
+title: "Treeship 0.1: signed, content-addressed, verifiable offline"
+description: "The first release put a DSSE signature on every agent action, named each artifact by its bytes, and let anyone check the result without a server."
+date: 2026-03-31
+written: 2026-09-11
+category: release
+release: "0.1.0"
+systems: [cli, hub, mcp, typescript-sdk, python-sdk]
+tags: [receipts, keystore, merkle, hub, dpop, release]
+readTime: "4 min read"
+---
+
+# Treeship 0.1: signed, content-addressed, verifiable offline
+
+## What shipped
+
+Treeship 0.1.0 is the founding release. It records what an agent did as a signed artifact, names that artifact by its own bytes, and lets a third party verify it with no network. Everything shipped since builds on those three decisions.
+
+The core is a Rust library. It signs DSSE envelopes with Ed25519 using `ed25519-dalek`, the NCC-audited implementation. It supports six statement types: `action`, `approval`, `handoff`, `endorsement`, `receipt`, and `decision`. Keys live in an encrypted keystore, AES-256-CTR with an HMAC, bound to the machine that created them. A rules engine reads YAML config and matches command patterns. A Merkle tree provides checkpoints, inclusion proofs, and offline verification. The core shipped with more than 120 tests.
+
+Around the core, the release added:
+
+- A CLI with more than 30 commands, including `init`, `wrap`, `attest`, `verify`, `session`, `approve`, `hub`, `merkle`, `ui`, and `otel`.
+- Rich `wrap` receipts that record the output digest, file changes, git state, and chain to the previous artifact automatically.
+- Shell hooks for automatic attestation, and seven official trust templates: `github-contributor`, `ci-cd`, `mcp-agent`, `claude-code`, `openclaw`, `hermes`, and `research`.
+- An interactive Ratatui TUI dashboard, a background daemon for file watching, and a `doctor` diagnostic with nine checks.
+- A Go hub with 12 API endpoints, device-flow authentication with DPoP, artifact push and pull with Rekor anchoring, and Merkle checkpoint storage.
+- SDKs on every registry: `@treeship/sdk` and `@treeship/mcp` on npm, `treeship-sdk` on PyPI, `treeship-core` and `treeship-cli` on crates.io, plus an npm binary wrapper.
+- treeship.dev with `/verify`, `/merkle`, `/connect`, `/hub/activate`, and `/open`, and a 67-page docs site.
+
+## Why it matters
+
+Before 0.1.0, the record of an agent's work was a log. A log can be edited after the fact, and nothing in it tells a reader who wrote it. A signed artifact changes both properties. The signature binds the statement to a key. The content-addressed id means the id changes if any byte changes.
+
+The third decision is the one that shaped the product. Verification runs offline. A Merkle inclusion proof and a public key are enough to check an artifact. The hub stores and serves proofs, but a reader does not need to trust the hub, or reach it, to check what they were handed.
+
+## How it works
+
+```bash
+treeship init
+treeship wrap -- <command>
+treeship attest
+treeship verify
+treeship merkle
+```
+
+`init` creates the ship identity and the encrypted keystore. The keystore is machine-bound, so a copied key file does not decrypt elsewhere. `wrap` runs a command and signs a receipt for it: the output digest, the files that changed, the git state at the time. Each receipt chains to the previous one without the user naming it.
+
+`attest` signs one of the six statement types directly. The signed bytes go through DSSE pre-authentication encoding, and the artifact id is derived from those PAE bytes. That is what content-addressed means here: the id is a function of exactly what was signed.
+
+`verify` checks the envelope signature against the key, recomputes the id from the bytes, and checks the Merkle inclusion proof against a checkpoint. `merkle` manages those checkpoints. A verifier needs the artifact, the proof, and the public key. It does not need the hub.
+
+The hub authenticates with a device flow and DPoP, so no session token is stored on disk. Pushed artifacts are anchored in Rekor. Security baseline in the same release: PID file locking, `0600` and `0700` file permissions, command sanitization that redacts secrets, untrusted config detection, and shell hooks pinned to absolute paths so PATH cannot be hijacked.
+
+## What it does not do
+
+0.1.0 has no session receipt and no `.treeship` package. A session in this release is a sequence of chained artifacts, not a sealed document with its own Merkle root; that arrived in 0.7.0. OpenTelemetry export is feature-flagged and off by default. Trust templates describe policy for the rules engine; they do not verify anything on their own. Verification proves that a signed statement is authentic and unmodified. It does not prove the statement is true, which is a limit every later release has had to state carefully.
+
+## Where to go next
+
+- [Artifacts](/docs/concepts/artifacts): what a signed artifact contains and how its id is derived.
+- [Merkle proofs](/docs/guides/merkle-proofs): checkpoints, inclusion proofs, and offline verification.
+- [`treeship attest`](/docs/cli/attest) and [`treeship verify`](/docs/cli/verify): CLI reference for the two core commands.
+- [Trust model](/docs/concepts/trust-model): what a signature proves and what it does not.
+- [DSSE, dead simple signing, explained](/blog/dsse-dead-simple-signing-explained): the envelope format under every artifact.
+
+*This entry was written on 11 September 2026 from the 0.1.0 changelog and the code as released, and is filed under the release date.*

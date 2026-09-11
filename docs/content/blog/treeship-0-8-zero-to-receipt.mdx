@@ -1,0 +1,68 @@
+---
+title: "Treeship 0.8: zero to receipt in under 90 seconds"
+description: "treeship add instruments the agent frameworks already on your machine, quickstart walks to a first receipt, and agents get an identity certificate."
+date: 2026-04-18
+written: 2026-09-11
+category: release
+release: "0.8.0"
+systems: [cli, claude-code, cursor, hermes, openclaw, mcp, hub]
+tags: [identity, sessions, receipts, hub, templates, release]
+readTime: "4 min read"
+---
+
+# Treeship 0.8: zero to receipt in under 90 seconds
+
+## What shipped
+
+Treeship 0.8.0 is about the first ten minutes. `treeship add` detects the agent frameworks installed on the machine, Claude Code, Cursor, Cline, Hermes, and OpenClaw, and instruments each one. `treeship quickstart` is a guided interactive setup that goes from nothing to a verified receipt in under 90 seconds. A one-line installer at treeship.dev/setup installs the CLI, initializes a project, and runs `treeship add`.
+
+The release also gave agents an identity of their own and gave operators a way to watch a session while it runs.
+
+- `treeship agent register` produces an Agent Identity Certificate as a `.agent` package with a `certificate.html`.
+- `treeship session status --watch` opens a live terminal TUI showing agents, events, security, and verification progress.
+- `treeship declare` creates `.treeship/declaration.json` with the tool authorization scope; receipts now show declared against actual usage and flag unauthorized calls.
+- `treeship session event` appends structured events, used by the MCP and A2A bridges.
+- `TREESHIP_PROVIDER` records provider attribution: `anthropic`, `openrouter`, or `bedrock`.
+- Integration packages for Claude Code, Hermes, and OpenClaw ship under `integrations/`, with skill files and MCP configs, plus a universal `TREESHIP.md` for any agent that reads markdown instructions.
+- `preview.html` verifies Merkle structure on its own through Web Crypto, and gained a three-panel narrative, agent cards, timeline grouping, retry detection, approval gates, and a print stylesheet.
+
+## Why it matters
+
+Before 0.8, setting up Treeship meant reading docs, editing framework config by hand, and knowing which commands to run in which order. Each framework had its own file to touch. A new user could install the CLI and still have no receipt an hour later.
+
+Now the CLI does the detection. Error messages tell the user which command fixes the problem. `treeship init` prints the Ship ID, the Key ID, and the next step. `treeship wrap` without an active session warns and says how to start one. `session close` opens `preview.html` in the browser on macOS and Linux, so the first receipt is something the user sees, not a file path.
+
+## How it works
+
+```bash
+treeship quickstart
+treeship add
+treeship agent register
+treeship declare
+treeship session status --watch
+treeship session close
+```
+
+`quickstart` runs the steps interactively. `add` looks for each supported framework and writes its integration: skill files and MCP config that point the agent at `@treeship/mcp`. The MCP bridge now emits session events, so every tool call appears in the receipt timeline, and a failed tool call is audited rather than vanishing from the trail.
+
+`agent register` signs a certificate for a named agent. The name is sanitized to alphanumeric characters, dashes, and underscores, which closed a path traversal found in review. The `.agent` package includes `certificate.html` so the certificate is readable without tooling.
+
+`declare` writes the authorization scope. When the session closes, the receipt compares the declared scope against the tools the session actually called. A call outside the scope is flagged in the receipt.
+
+`session status --watch` renders the live TUI. Every event field is sanitized before display, which closed a terminal escape injection, and string truncation is UTF-8 safe. A raw mode guard restores the terminal on every exit path.
+
+On the hub side, the device code now displays all 16 characters and the hub accepts an 8-character prefix for older clients. `device_code` is redacted from access logs and validated before any database lookup. The hub reads `DATABASE_PATH` for SQLite persistence, caps session id length, rate limits, and returns consistent JSON errors. Receipts are write-once with atomic first-write ownership and a 10 MB upload limit. The changelog counts more than 15 findings across four rounds of Codex adversarial review, all addressed.
+
+## What it does not do
+
+The declaration flags unauthorized tool calls in the receipt. It does not stop them. `TREESHIP_COST_USD` and the `cost_usd` field were removed: cost is a consumer concern for dashboards and billing tools, and receipts store verifiable token usage only. `preview.html` reports "Merkle structure verified", not "Verified", because it checks structure and nothing about the truth of each event. Framework detection covers the five frameworks named above; anything else gets `TREESHIP.md` and manual wiring.
+
+## Where to go next
+
+- [Quickstart](/docs/guides/quickstart) and [First run](/docs/guides/first-run): the guided path this release created.
+- [`treeship add`](/docs/cli/add): CLI reference for framework detection.
+- [Agent identity](/docs/concepts/agent-identity): what an Agent Identity Certificate asserts.
+- [`treeship session`](/docs/cli/session): `status --watch`, `event`, and `close`.
+- [Treeship 0.7: session receipts you can verify offline](/blog/treeship-0-7-session-receipts): the package this onboarding leads to.
+
+*This entry was written on 11 September 2026 from the 0.8.0 changelog and the code as released, and is filed under the release date.*

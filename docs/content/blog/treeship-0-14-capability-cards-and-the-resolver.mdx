@@ -1,0 +1,80 @@
+---
+title: "Treeship 0.14: capability cards and the agent resolver"
+description: "Agents get per-agent keys, signed capability cards, and a hub-backed resolver with a transparency log that your own machine re-verifies."
+date: 2026-06-25
+written: 2026-09-11
+category: release
+release: "0.14.0"
+systems: [wasm-verifier, hub, claude-code]
+tags: [capability-cards, identity, merkle, hub, revocation, release]
+readTime: "5 min read"
+---
+
+# Treeship 0.14: capability cards and the agent resolver
+
+## What shipped
+
+Two releases landed a day apart. 0.13.0 gave an agent a provable identity: a key of its own, a typed capability card, and a `verify` line that says whether the `actor` on a receipt is proven or merely asserted. 0.14.0 put that identity on the network. You publish the card to a hub, resolve it from anywhere, and audit the hub's log for omission. Every check runs again on your own machine.
+
+The rest of 0.13.0:
+
+- A predicate registry binds the registered kinds `memory.write.v1`, `memory.read.v1`, `boundary.v1`, `agent_card.v1`, and `agent_card_revocation.v1` to a JSON Schema checked before signing.
+- `treeship attest card` mints an `agent_card.v1` card, and `treeship verify-capability <card>` cross-checks it against the agent's captured action receipts.
+- `treeship revoke-capability <card> --reason …` mints an `agent_card_revocation.v1` that verifiers honor only from an authorized signer.
+- A WASM `verify_capability(card, actions, trust_roots)` export and `verifyCapability()` in `@treeship/verify` return the same verdict as the CLI.
+- `treeship resolve <agent>` builds the agent's bundle from local artifacts with a `captured`, `checked`, or `asserted` grade on every fact.
+
+The rest of 0.14.0:
+
+- `MerkleTree::consistency_proof(old_size)` and `verify_consistency(...)` in core prove that a later tree only appended to an earlier one.
+- Hub endpoints `GET /v1/agents?agent=<uri>` and `GET /v1/agents/log?agent=<uri>` serve raw signed envelopes, and metadata plus anchors, respectively.
+- `treeship audit --watch` re-audits on an `--interval`, default 30s, and keeps alerting on omission.
+- `treeship attest card --from-harness <path>` reads a Claude Code `settings.json` and stamps each capability `captured` with its `source`.
+- `verify-capability` and `resolve` grade each capability `captured`, `exercised`, or `declared-only` from a new optional `capability_provenance` field.
+
+## Why it matters
+
+Before 0.13.0 the `actor` on a receipt was a label. Anyone holding the ship key could write any name into it. Now `treeship agent register --own-key` mints a per-agent key, the ship certifies it as issuer, and the key is pinned under `AgentCert`. `attest action`, `attest card`, `attest decision`, and `attest handoff` sign with that key when the actor has one. `treeship verify` reports `actor proof: proven (key-bound) | asserted`.
+
+Before 0.14.0 a card only resolved on the machine that minted it. Now a counterparty fetches it from a hub, confirms it sits in a signed log, and detects when the hub leaves entries out. The hub performs no verification or authorization on these paths. It serves bytes, and the CLI or the WASM verifier decides.
+
+## How it works
+
+```bash
+treeship agent register --own-key
+treeship attest card --from-harness <path>
+treeship verify-capability <card>
+treeship publish <agent>
+treeship resolve <agent> --hub <url>
+treeship audit <agent> --hub <url>
+treeship revoke-capability <card> --reason <reason>
+```
+
+`register --own-key` creates the key and the `AgentCert` pin. `attest card --from-harness` builds the capability set from the `permissions.allow` list in a Claude Code `settings.json`, so the set comes from observed config rather than a hand-typed `--tools` string. Any `--tools` entries given alongside are merged as `declared`.
+
+`verify-capability` treats a card as key-bound only when its `keyid` is the envelope signer pinned under `AgentCert`. Otherwise it reports `self-asserted`. It then lists in-scope and out-of-scope actions, matched exactly or by `family.*` glob, checks an optional `evidence_anchor`, and reports the provenance breakdown.
+
+`publish` pushes the agent's current card and any revocations through the authenticated `hub push` path. `resolve --hub` fetches that bundle and re-verifies it against your own trust roots with an Ed25519 check. It reports `signature: verified | UNVERIFIED`, `key-bound`, the revocation status, and the captured-capability mix. When the card has been anchored, the hub includes its Merkle inclusion proof, and `resolve` reports `transparency: anchored & verified (checkpoint #N)` or `not anchored`.
+
+`audit --hub` pulls the agent's history, re-verifies each anchored entry's inclusion offline, and compares the observed entries against the card's committed `evidence_anchor`. A shortfall reports `OMISSION` with the committed and observed counts.
+
+A revocation is honored only when its signer is the card's own key or a `Ship` trust root, and then `verify-capability` reports `status: REVOKED`. An unauthorized revocation is ignored.
+
+## What it does not do
+
+- The cross-check proves consistency over captured evidence. It is never a completeness guarantee.
+- Over the network the `exercised` grade is local-only, because the resolved bundle carries no action receipts.
+- Cards without a `capability_provenance` block are treated as fully declared.
+- The consistency proof lives in core only at this point. `audit` does not yet use it to prove the log was append-only.
+- Agents without a per-agent key still sign with the ship key, so their receipts stay `asserted`.
+
+## Where to go next
+
+- [Capability cards](/docs/concepts/capability-cards)
+- [Agent resolution](/docs/concepts/agent-resolution)
+- [CLI: resolve](/docs/cli/resolve)
+- [CLI: audit](/docs/cli/audit)
+- [Predicate registry](/docs/reference/predicates)
+- [Proving what an agent can do](/blog/proving-what-an-agent-can-do)
+
+*This entry was written on 11 September 2026 from the 0.13.0 and 0.14.0 changelog and the code as released, and is filed under the release date.*
