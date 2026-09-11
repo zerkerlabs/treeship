@@ -39,11 +39,13 @@ Other additions across the two versions:
 ## How it works
 
 ```bash
-treeship journal list
-treeship journal inspect
+treeship approval uses <grant-id>
+treeship approval journal
 treeship package inspect <pkg>
 treeship verify <path> --strict
 ```
+
+At 0.9.9 the journal commands were `treeship journal list` and `treeship journal inspect`; they have since moved under `treeship approval`, which is what the block above shows.
 
 At attest time the CLI calls `journal::reserve_use`, which in 0.9.10 runs `check_replay` and derives `use_number` inside `with_lock`, stamping the number from the count observed at lock-acquire time.
 
