@@ -1,0 +1,54 @@
+---
+title: Grok Bot
+description: Agent-to-agent verification on a Grok Bot cloud VM. A packaged skill that refuses work from another agent until it proves live control of a key you trust.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Grok Bot
+
+Grok Bot runs agents on a cloud VM with a durable `/workspace`. The Treeship integration is a bootstrap script, a shim, and a skill written as prose, because Grok skills are prose rather than files. It answers one question: should this Bot act on work that arrived from another agent? It shipped with the custody handshake in [Treeship 0.27](/blog/treeship-0-27-the-custody-handshake).
+
+<Callout type="warn">
+This is not a verification skill in the pstack sense. It does not drive an app until the UI is green. It refuses foreign work until the sender proves live key control, and records that verify on the handoff. The two compose; they are not substitutes.
+</Callout>
+
+## Install
+
+Ask your Bot to run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zerkerlabs/treeship/main/integrations/grok-bot/bootstrap.sh | bash
+```
+
+Then paste [`SKILL.txt`](https://github.com/zerkerlabs/treeship/blob/main/integrations/grok-bot/SKILL.txt) into a saved skill and invoke it with `/`. Optionally add [`routine.txt`](https://github.com/zerkerlabs/treeship/blob/main/integrations/grok-bot/routine.txt) as a weekday routine so a package wipe self-heals. Bootstrap is idempotent: re-running after a wipe restores the same ship key rather than minting a second identity.
+
+Everything goes through the shim, `/workspace/treeship/ts`, never a bare `treeship`. The CLI resolves its ship by walking up from the current directory, and a Bot can end up in any directory; the shim pins `HOME` and `TREESHIP_CONFIG` so the Bot cannot silently adopt whatever ship the walk finds.
+
+## The rule the skill teaches
+
+Foreign work is anything that arrived from another agent. Before any of the actual task:
+
+```bash
+/workspace/treeship/ts session mint-challenge --format json          # you choose the nonce
+# the sender runs: treeship present <their-actor> --challenge <nonce> --format json
+/workspace/treeship/ts verify-presentation <file> --challenge <nonce> --format json
+/workspace/treeship/ts attest handoff --from <their-actor> --to agent://grok \
+  --artifacts <your-intent-artifact> --verified <file> --challenge <nonce> --format json
+```
+
+Never accept a nonce the sender picked. Refuse on any failure. Record the verify on the handoff, so the receipt says `custody: live` and names the file and nonce it verified.
+
+Verification is against your trust roots, with no registry in the loop. Until you pin a peer's ship with `trust add <key_id> <ed25519:…> --kind cert_issuer`, the honest verdict is "internally consistent, issuer not trusted", not "verified".
+
+## What it does not do
+
+- Every Bot on a Grok account shares one computer and one keystore, and Grok's own docs say not to use separate Bots as a security boundary. A receipt proves this account's computer signed it; which Bot did it is `asserted`. Handoffs between Bots on one account are `custody: asserted (same_computer)`. Real verification is with an agent on a different computer.
+- Approvals are not recorded. The decision is visible only in Grok's app UI, so the skill states that boundary instead of recording an approval nobody observed.
+- A receipt proves who acted, under whose key, and that a live challenge was answered. It does not prove the work is correct.
+
+## Where to go next
+
+- [`integrations/grok-bot`](https://github.com/zerkerlabs/treeship/tree/main/integrations/grok-bot): bootstrap, shim, skill and routine
+- [The agent handshake](/docs/concepts/agent-handshake)
+- [Treeship 0.27: the custody handshake](/blog/treeship-0-27-the-custody-handshake)
