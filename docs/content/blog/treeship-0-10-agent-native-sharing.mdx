@@ -20,7 +20,7 @@ Treeship 0.10.0 makes the receipt readable by things that are not browsers. A hu
 
 Other additions across the two versions:
 
-- `treeship session report --share --format json` returns the `treeship/share-result/v1` shape, and `--no-upload` computes digests and runs local verify without hub auth.
+- `treeship session report --share --format json` returns the `treeship/share-result/v1` shape (sharing is now the default, so the flag has since been folded away), and `--no-upload` computes digests and runs local verify without hub auth.
 - `/receipt/<sessionId>` on treeship.dev is server-rendered with OpenGraph and Twitter metadata; `/api/receipt/<id>/agent` returns the stable `treeship/receipt-agent/v1` contract; `/receipt/<id>/package` serves a `.tar.gz` in the `.treeship` layout.
 - `treeship setup --format json` returns a real `treeship/setup-result/v1` shape instead of `{}`.
 - Python `Treeship(bot_mode=True)` and `python -m treeship_sdk.bootstrap_cli --json` resolve a working CLI via env, PATH, cache, npm, then GitHub Release.
@@ -41,7 +41,7 @@ The Kimi dogfood failure that motivated 0.10.0 read: CLI missing from PATH, inst
 ```bash
 python -m treeship_sdk.bootstrap_cli --json
 treeship setup --yes --format json
-treeship session report --share --format json
+treeship session report --format json
 curl -L https://www.treeship.dev/receipt/<id>/package | tar xz
 treeship package verify ./<id>.treeship/
 treeship doctor --fix
