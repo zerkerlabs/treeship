@@ -4,6 +4,8 @@ description: "We've gotten very good at building agents and very bad at building
 date: 2026-07-01
 tags: ["agents", "infrastructure"]
 readTime: "6 min read"
+category: perspective
+systems: ["zerker-gateway"]
 ---
 
 A few months ago I was staring at a docker-compose file with six services in it, each one calling out to some agent or tool, each one with its own idea of how credentials should be passed in, and none of them logging anything useful when a call failed. I knew which agent had run, but I had no idea what it had actually done, how long it took, or whether the token I'd handed it was still good. That's the normal state of things right now. We've gotten very good at building agents and very bad at building the plumbing between them.

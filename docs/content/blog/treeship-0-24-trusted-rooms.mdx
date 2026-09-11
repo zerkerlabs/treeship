@@ -1,0 +1,68 @@
+---
+title: "Treeship 0.24: trusted rooms end to end"
+description: "A room is a session whose participant set grows by signed invitation. 0.24 signs the room into the receipt, derives the roster from evidence, and adds a liveness challenge on join."
+date: 2026-08-10
+written: 2026-09-11
+category: release
+release: "0.24.0"
+systems: [cli, hub, go-client, claude-code-plugin]
+tags: [rooms, sessions, identity, wrap, redaction, release]
+readTime: "5 min read"
+---
+
+# Treeship 0.24: trusted rooms end to end
+
+## What shipped
+
+Treeship 0.24 ships Trusted Rooms end to end. A room is a session whose participant set evolves through signed invitations. `treeship room create`, `room status`, and `room participants` are sugar over `treeship session`, and the room's `RoomInfo` is mirrored into the DSSE-signed `session.v1`. That means `invitation_authority` is attested inside the receipt rather than living only in an editable local file.
+
+Around the rooms work, the release adds a liveness check for joining agents, a custody field on the receipt, a stronger identity for wrapped commands, and a Go client for the hub:
+
+- `room participants` derives the roster from two-signature participant artifacts instead of reading a list from `session.json`.
+- Opt-in `--challenge` and `--challenge-response` on countersign prove the joining agent controls its key now, not whenever `join` ran.
+- `treeship session mint-challenge` mints 128 bits from `OsRng`, and weak nonces are refused at both ends.
+- `Custody` on the session receipt records when a service signed on an actor's behalf rather than the actor signing for itself.
+- `execution_identity` on wrapped commands records the resolved executable path, sha256, argv, cwd, uid/gid, and environment variable names only.
+- A public Go client for the hub ships as `pkg/dpop` and `pkg/hubclient`, tested against the real server verifier.
+- A generated `capability-map.json` records every reachable surface: 34 CLI commands, 22 routes, 109 wire types.
+- New concept pages cover what a receipt proves, logs versus receipts, effect receipts, secrets and redaction, authority delta, and wrapping real commands.
+
+Three fixes are worth the upgrade on their own. Every `receipt.v1` landing mid-chain reported `chain SIGNED LINKAGE BROKEN` against correctly-signed evidence. Keystores were not portable, because `storage_dir` and `keys_dir` were always absolute. And the Claude Code plugin monitor emitted a line on every counter change, well over a hundred per working session.
+
+## Why it matters
+
+Before 0.24, a multi-agent session had a roster, but the roster was a list in a local file. Anyone with write access could edit it, and it was silently incomplete whenever the best-effort append was skipped. A verifier reading it learned what the file said, not who had actually joined. Now the roster is derived from the signed evidence, and the room's invitation policy travels inside the signed receipt.
+
+The false tampering alarm mattered more than it looks. `mint_session_record` writes the parent as `subject.artifactId`, and the linkage check looked only for a top-level `parentId`. Measured on a real store, 4 of 4 receipts were affected. A false alarm on the one signal the product exists to give teaches operators to ignore it, so the check now reads the field the record actually carries.
+
+## How it works
+
+```bash
+treeship room create --invitation-authority host-only
+treeship room status
+treeship room participants
+treeship session mint-challenge
+treeship session countersign art_part_… --challenge <nonce> --challenge-response ./art_part_….challenge-response.json
+```
+
+`room create` starts a session and populates `SessionManifest.room`. `room status` prints session status plus the room fields, and errors if the active session is not a room. `room participants` walks the participant artifacts and lists only finalized, two-signature joins, in join order.
+
+The liveness challenge is opt-in. The host mints a nonce with `session mint-challenge`, the joining agent signs it with `session answer-challenge`, and the host passes both to `countersign`. Countersign refuses to finalize unless the answer verifies against the same nonce and the pending event's joining-agent key. Omitting both flags countersigns exactly as before. A guessable nonce can be pre-signed, so both ends refuse short or low-entropy values.
+
+`Custody` is deliberately a separate axis from `attestation_class`. One grades how evidence was captured; the other grades who held the key. Absent means self-custody, so existing receipts stay byte-identical. `execution_identity` exists because `git` is `git` only until `PATH` says otherwise; two receipts with identical argv and different digests are two different events.
+
+For keystores, relative `storage_dir` and `keys_dir` values now resolve against the config's own directory, and absolute paths are untouched. Moving `~/.treeship` aside produces a backup whose config points at itself.
+
+## What it does not do
+
+`invitation_authority` is carried and signed but not yet enforced. `verify` does not read it, so a receipt naming `host-only` and an invite minted by a non-host both verify clean. The changelog calls conformance checking the follow-up, and the 0.25.0 notes repeat the limit: fail-safe today because nothing trusts the field, but not access control. `room create` also accepts `--workflow-ref` and `--checkpoint-every`, and the CLI help marks both as carried on the manifest and not enforced yet. The redaction page documents, with a measured table, which secret shapes the scrubber catches and which it misses.
+
+## Where to go next
+
+- [Room sessions](/docs/concepts/room-sessions)
+- [session command reference](/docs/cli/session)
+- [Multi-agent sessions](/docs/concepts/multi-agent-sessions)
+- [Secrets and redaction](/docs/concepts/secrets-and-redaction)
+- [Wrapping commands](/docs/guides/wrapping-commands)
+
+*This entry was written on 11 September 2026 from the 0.24.0 changelog and the code as released, and is filed under the release date.*

@@ -1,0 +1,75 @@
+---
+title: "Treeship 0.11: agent invitations"
+description: "A second agent can join a session through a signed, single-use, expiring invitation that the host countersigns. Plus a local dashboard, a feature inventory, and new skills."
+date: 2026-05-28
+written: 2026-09-11
+category: release
+release: "0.11.0"
+systems: [robinhood, perplexity, kimi, claude-code-plugin, cli]
+tags: [rooms, sessions, trust-roots, templates, docs, release]
+readTime: "4 min read"
+---
+
+# Treeship 0.11: agent invitations
+
+## What shipped
+
+Treeship 0.11.0 ships phase 1 of agent invitations. A session host mints a signed, single-use, expiring grant. A second agent presents it, joins the session, and the host countersigns the join. The result is a participant record that both parties signed and that a verifier can check against a pinned host key.
+
+Two new canonical statement types carry this: `treeship/invitation/v1` and `treeship/session-participant/v1`. An invitation holds `session_ref`, the host's `issuer` pubkey, an `invitee_restriction`, `granted_capabilities.action_types`, `expires_at`, `max_uses`, and a random `nonce`. A participant envelope requires exactly two DSSE signatures, and either one alone is invalid.
+
+Other additions:
+
+- `treeship session invite <session_id>` mints the invitation and prints an armored bootstrap blob, or raw JSON with `--no-armor`.
+- `treeship session join --invite <blob>` or `--invite-file <path>`, with `--actor`, decodes and verifies the blob and emits a pending participant envelope.
+- `treeship session countersign <participant_artifact_id>` attaches the host signature and finalizes the record.
+- A `session_host` trust-root kind, registered with `treeship trust add ... --kind session_host`.
+- `treeship dashboard`, a localhost-only, read-only browser control plane over sealed `.treeship` packages with JSON endpoints.
+- A Robinhood Agentic Trading receipt template and integration docs.
+- `docs/feature-inventory.yml`, 29 entries with a status each, rendered as the Feature matrix docs page and linted by `scripts/check-feature-inventory.py`.
+- A Perplexity skill, a Kimi skill bundle, a `skills/README.md` index, and `integrations/agents.json` mirrored to `/.well-known/treeship-agents.json`.
+
+## Why it matters
+
+Since 0.9.8 the changelog had carried `treeship agent invite` and `join --invite` as a deferred item for remote attach. Until now a multi-agent session had no way to admit a second agent that the host had not started itself, and no signed record that the host had observed the join. A receipt could name multiple agents, but nothing bound the second agent's presence to a grant the host issued.
+
+Now the grant is a signed statement with an expiry and a nonce, the join consumes that nonce through the same Approval Use Journal that guards approvals, and the host's countersignature turns "I am joining" into "I observed this join." The `session_host` kind is separate from `ship` on purpose: a machine can trust a hub's checkpoints without trusting that hub to host rooms.
+
+## How it works
+
+```bash
+treeship trust add <key_id> ed25519:<pubkey> --kind session_host --yes
+treeship session invite <session_id> --invitee-pubkey <fingerprint>
+treeship session join --invite-file <path> --actor agent://guest
+treeship session countersign <participant_artifact_id>
+treeship dashboard
+```
+
+The host's key must be pinned under `session_host` first. Without the pin a self-signed forgery verifies cryptographically but is quarantined by trust-root enforcement.
+
+`session invite` signs against the keystore's default key, persists the invitation in the artifact store, and prints a `-----BEGIN TREESHIP INVITATION-----` blob. Restriction selection is explicit: exactly one of `--invitee-cert`, `--invitee-pubkey`, or `--open`. Open accepts any holder of the blob and is opt-in for that reason. The canonical signing string is a pipe-delimited line in the 0.10.4 shape, `"v1|invitation|{session_ref}|{issuer}|{restriction_digest}|{capabilities_digest}|{expires_at}|{max_uses}|{nonce_digest}"`, with variable-length fields folded into `sha256:<hex>` digests so the canonical stays single-line.
+
+`session join` decodes the blob, pins the issuer against `SessionHost` roots, verifies the envelope signature, checks expiry and restriction, then writes the nonce into the Approval Use Journal with `max_uses=1`. A second join with the same blob fails through the journal's existing `MaxUsesExceeded` path. The output is a single-signature envelope awaiting countersign.
+
+`session countersign` reads the pending envelope, confirms the running default key matches the invitation's issuer, signs the same canonical bytes, self-verifies, and overwrites the record with the two-signature envelope. `verify_participant_envelope` rejects `MissingHostCountersign`, `TooManySignatures`, any signature that fails, and any countersign whose key is not the invitation's issuer.
+
+`treeship dashboard` reads sealed packages on the local machine and shows trust status, instances, agent membership, receipt and report evidence, and review items, with JSON endpoints for status, treeships, sessions, agents, collaboration, and capabilities so scripts can use it too.
+
+## What it does not do
+
+- Phase 1 only. `max_uses` is always 1. Lifetime defaults to one hour and cannot exceed the 7-day protocol ceiling.
+- `TrustRootKind` gained a variant, which is breaking: third-party code with exhaustive matches must add the `SessionHost` arm. No existing roots are migrated; operators add session-host pins explicitly.
+- The dashboard is localhost-only and read-only. It does not require Hub and does not replace it.
+- The Robinhood template is receipt support only. Brokerage execution and policy-gateway enforcement stay outside this repo.
+- The feature inventory linter warns only; build-failing enforcement is a deliberate later step.
+
+## Where to go next
+
+- [Multi-agent sessions](/docs/concepts/multi-agent-sessions)
+- [Room sessions](/docs/concepts/room-sessions)
+- [CLI: session](/docs/cli/session)
+- [CLI: dashboard](/docs/cli/dashboard)
+- [Feature matrix](/docs/reference/feature-matrix)
+- [Robinhood Agentic Trading needs receipts](/blog/robinhood-agentic-trading-treeship)
+
+*This entry was written on 11 September 2026 from the 0.11.0 changelog and the code as released, and is filed under the release date.*

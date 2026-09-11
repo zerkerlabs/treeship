@@ -1,0 +1,70 @@
+---
+title: "Treeship 0.25: revocation, and the wasm saga"
+description: "Grant revocation works end to end and Linux arm64 binaries ship. It took four point releases to get a working verifier back onto npm, and the lesson is worth the telling."
+date: 2026-08-31
+written: 2026-09-11
+category: release
+release: "0.25.3"
+systems: [cli, hub, wasm-verifier, typescript-sdk, python-sdk, mcp]
+tags: [revocation, verifier, hub, keystore, release-engineering, release]
+readTime: "5 min read"
+---
+
+# Treeship 0.25: revocation, and the wasm saga
+
+## What shipped
+
+Treeship 0.25.0 makes grant revocation work end to end. `treeship grant revoke` mints a signed `grant_revocation.v1`. `verify` honors it locally and from a hub's published list. The hub publishes real revocations over an indexed lookup, and each entry carries `dock_id` and `rekor_index` so a client can check inclusion itself. `grant show --check-log` walks the dock's consistency chain and re-verifies every link with RFC 6962. Unknown stays a third state throughout, never a quiet pass.
+
+The same release closes the gap 0.23 left open: `verify` now gates on authority and reports what was granted but never used, so `authority_ok: true` can no longer mean "checked nothing". Alongside:
+
+- Linux arm64 binaries are built and executed on a native `ubuntu-24.04-arm` runner, so a broken target blocks merge.
+- `grant show` and `grant list` no longer put a clean checkmark on a revoked grant.
+- The MCP bridge digests error text before signing it into a receipt, with raw text behind an explicit opt-in.
+- `ship.session.event()` lands in the TypeScript SDK, and `treeship session event --format json` prints a document instead of nothing.
+- Hub `/v1/stats` labels agent counts as `claimed_total`, and the hub indexes on fields derived from the envelope.
+
+0.25.1 fixes two SDK entry points that were structurally unable to succeed: the Python SDK's `attest_approval` passed `expires_in` where the CLI takes `expires_at` and forwarded no scoping arguments, and `treeship wrap --format json` printed nothing parseable. It also adds eight docs-versus-CLI drift gates. 0.25.2 and 0.25.3 are the wasm story below.
+
+## Why it matters
+
+A signature stays valid forever. Revocation is what makes a grant stop counting, and until 0.25.0 nothing could withdraw one. Now a grantor can, and only a grantor can: a revocation anyone could mint would be a denial of service against every grant whose id appears in a published receipt. Actions signed before the revocation instant remain authorized; revoking withdraws authority without unmaking what was done under it.
+
+The hub's response states that absence is not evidence. A list can prove a grant was revoked, not that one was not, so `verify` reports unknown as its own state rather than passing when nobody looked.
+
+## How it works
+
+```bash
+treeship grant revoke grn_… --reason task-complete
+treeship grant show grn_… --check-log
+treeship verify last --require-authority
+```
+
+`grant revoke` writes the signed revocation receipt. `grant show --check-log` is opt-in because it costs two network round trips. `verify --require-authority` turns a failed mandate, an unverifiable one, or no mandate at all into a nonzero exit. The last case matters: requiring authority and finding none is not a pass.
+
+Now the saga. 0.25.0 was forced because `@treeship/core-wasm@0.24.0` could not be loaded in Node and npm does not allow republishing a version. The cause was a bundler-only build: `build-npm.sh` ran only `wasm-pack --target bundler`, which emits an import that needs a bundler to resolve. It survived because the one consumer anyone exercised was the website, which bundles the wasm. The fix was a dual-target build with an `exports` map routing Node to a nodejs build.
+
+That fixed the structural half. 0.25.0 and 0.25.1 still threw `WebAssembly.Table.grow(): failed to grow table by 4` on first use. The binary was miscompiled: the export `__wbindgen_externrefs` was bound to a table emitted with `min == max`, which cannot grow. Same rustc, wasm-bindgen and wasm-pack as a working local build; the difference was the host platform, invisible on a Mac and fatal from Linux CI.
+
+0.25.2 added the gate that should have existed all along. `build-npm.sh` now loads its own nodejs output and calls into it before packaging, and the release installs `@treeship/verify` from the registry after publishing and calls a verify function, because the wasm loads lazily and an import proves nothing. Every earlier check had run against an artifact CI had just built, and the post-publish smoke installed only the Rust CLI. The gate caught that the artifact still did not load, so 0.25.2 never reached npm.
+
+0.25.3 found the cause. `wasm-pack` runs `wasm-opt` on the package it just built whenever binaryen is on `PATH`. The release workflow installed binaryen from apt, which on Ubuntu noble is `108-1`, a 2022 build predating the `bulk-memory-opt` and `call-indirect-overlong` features the module declares. It lowered the externref table to a non-growable one. The `wasm-opt` pass is now disabled for `core-wasm`, so the published artifact is `wasm-bindgen`'s output and nothing else. CI and release install a checksummed binaryen 132 tarball, and `rust-toolchain.toml` pins `wasm32-unknown-unknown`.
+
+The lesson, stated plainly: pin every tool that rewrites the artifact, build in CI the way release builds, and test what the registry serves.
+
+## What it does not do
+
+- `invitation_authority` on a room is recorded and not enforced; `verify` does not read it.
+- A receipt fetched by URL is verified structurally only. Signatures and issuer are not checked from that source.
+- `grant show --check-log` proves the log was not rewritten, not that the revocation list is complete.
+- Keystore recovery advice was corrected in 0.25.2: receipts report `unknown key` until the old keystore is restored.
+
+## Where to go next
+
+- [grant command reference](/docs/cli/grant)
+- [Revocation feed](/docs/api/revoked)
+- [verify command reference](/docs/cli/verify)
+- [@treeship/verify](/docs/sdk/verify)
+- [Treeship 0.23: grants you can issue](/blog/treeship-0-23-grants-you-can-issue)
+
+*This entry was written on 11 September 2026 from the 0.25.0, 0.25.1, 0.25.2 and 0.25.3 changelog and the code as released, and is filed under the release date.*

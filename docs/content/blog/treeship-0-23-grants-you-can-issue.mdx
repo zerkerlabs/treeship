@@ -1,0 +1,67 @@
+---
+title: "Treeship 0.23: grants you can issue"
+description: "0.22 taught the verifier to judge delegation chains and effect finality. 0.23 gives the CLI the commands to mint grants and emit the action/v2 receipts those checks apply to."
+date: 2026-08-05
+written: 2026-09-11
+category: release
+release: "0.23.0"
+systems: [cli]
+tags: [approvals, effects, receipts, verifier, release-engineering, release]
+readTime: "5 min read"
+---
+
+# Treeship 0.23: grants you can issue
+
+## What shipped
+
+Treeship 0.22 and 0.23 shipped on the same day, and together they close one loop. 0.22 taught `treeship verify` to judge whether authority was legitimately delegated and whether an effect actually landed. 0.23 gave the CLI the commands to mint that authority and emit the receipts that carry it. Before 0.23, nothing on the command line could produce a receipt the new checks applied to.
+
+The headline is `treeship grant issue`, `grant list`, and `grant show`. They mint signed capability grants with content-derived ids, delegate a narrower grant with `--parent`, and re-check a grant off disk. Next to them, `treeship attest action --v2` emits a real action/v2 receipt that names the grant it ran under.
+
+The rest of the two releases:
+
+- 0.22: grant chain resolution derives chain order from the signed `parent_grant_id` links, so reordering is a no-op, truncation surfaces as a missing ancestor, and splicing as an unreachable extra.
+- 0.22: `treeship verify` gains an authority line (in scope, in window, not revoked) and a chain line reporting `holds`, `widened`, `unresolvable`, or `not_claimed`; `--format json` adds per-check `authority` and `delegation_chain` objects and a top-level `authority_ok`.
+- 0.22: `EffectFinality` (`NotAttempted`, `Initiated`, `Finalized`, `Failed`, `Indeterminate`) is a lifecycle axis kept separate from `EffectConfidence`.
+- 0.22: `Resolution { deadline, on_deadline }` and `check_resolution` bound an unresolved effect, and `Indefinite` is reported as its own outcome.
+- 0.23: `attest action --v2` takes `--grant` or `--grant-file`, the effect flags `--effect-confidence`, `--finality`, `--readback`, `--context-snapshot`, `--resolution-deadline` and `--on-deadline`, and runtime identity through `--provider` and `--model`.
+- 0.23: `treeship-core` publishes to crates.io again after a webfont embedded from outside the crate root broke `cargo publish` in 0.22.0; a script and a CI `cargo package` step now guard it.
+
+## Why it matters
+
+Treeship 0.21 made "the ack is not the act" something you can check: a receipt grades the evidence that an effect happened. Two questions sat behind that one. Was the authority the action ran under legitimately delegated? And did the change land, or only start?
+
+Before 0.22, a chain of grants was whatever order the carrier supplied, and a verifier had no way to notice a reordered, truncated, or spliced chain. A receipt could also be accurate in every field and false as a whole: a write accepted, acknowledged, assigned an id, served back on read, and never committed. Now a delegated action carries its ancestors inline and verifies offline, and the chain's shape is derived from signed links before attenuation is judged. An invalid chain that exists is one somebody will eventually be asked to trust, so refusing to create it is the fix.
+
+## How it works
+
+```bash
+treeship grant issue --scope 'payments.*' --audience acme --expiry 2027-12-31T23:59:59Z
+treeship grant issue --parent grn_… --scope payments.charge --audience acme --expiry 2027-06-30T00:00:00Z
+treeship attest action --v2 --actor agent://worker --action payments.charge --grant grn_… \
+  --effect-confidence not_verified --finality initiated
+treeship verify last --format json
+```
+
+The first line mints a root grant. Its id is `grn_` plus the first sixteen hex characters of `sha256(canonical)`, so a parent pointer is a hash commitment to one specific grant, not a name anyone could claim. The second line delegates a child. Issuing refuses a child that widens scope, outlives its parent, changes audience, exceeds `max_delegation`, or carries an expiry already in the past. `delegation_depth` is derived from the parent rather than accepted from the caller.
+
+The third line emits the action/v2 receipt. Ancestors are walked from `parent_grant_id` and carried inline in `mandate.chain`, so the delegated action still verifies with no fetch. The verifier then reports four objects: `authority`, `delegation_chain` with its `hops` and `outcome`, `resolution`, and `effect` with an `effective_finality`. A root grant leaves `mandate.chain` empty and the chain line reads `not_claimed`. A one-element chain has no adjacent pair to check, and reporting "attenuation holds" would name a check that never ran.
+
+On the effect axis, `verify_effect` caps an unbacked `Finalized` exactly as it already caps an unbacked `Verified`; those are the only two claims that assert something definite. `check_resolution` takes `now_unix` explicitly, so a replay gives the same answer as the first run. `grant show` re-derives the id and re-checks the signature off disk.
+
+## What it does not do
+
+- Revocation is still unchecked. The authority verdict is `unverified`, never `pass`, and names the layer it could not check. The hub endpoint is an unsigned, hardcoded-empty stub, and reading it would turn an honest "I don't know" into a false "not revoked" for every grant ever issued.
+- Capability grants ship as beta, not stable, for that reason.
+- A known wart is left on purpose: `EffectConfidence` serializes as `snake_case`, so a receipt carries `not_verified` while `--format json` reports `not-verified`.
+- Both new `Effect` fields are optional and skipped when absent, so existing v2 receipts keep byte-identical canonical bytes.
+
+## Where to go next
+
+- [grant command reference](/docs/cli/grant)
+- [attest command reference](/docs/cli/attest)
+- [verify command reference](/docs/cli/verify)
+- [Effect receipts](/docs/concepts/effect-receipts)
+- [The ack is not the act](/blog/the-ack-is-not-the-act), the 0.21 post this builds on
+
+*This entry was written on 11 September 2026 from the 0.22.0 and 0.23.0 changelog and the code as released, and is filed under the release date.*

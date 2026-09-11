@@ -1,0 +1,70 @@
+---
+title: "Treeship 0.15: bridges sign with their own keys"
+description: "The MCP and A2A bridges provision per-agent keys by default, A2A skills become cards, and audit proves a hub log was only appended to."
+date: 2026-06-26
+written: 2026-09-11
+category: release
+release: "0.15.0"
+systems: [mcp, a2a, hub]
+tags: [identity, capability-cards, merkle, keystore, hub, release]
+readTime: "4 min read"
+---
+
+# Treeship 0.15: bridges sign with their own keys
+
+## What shipped
+
+Receipts from the `@treeship/mcp` bridge now verify as `actor proof: proven (key-bound)` instead of `asserted`. On startup the bridge runs `agent register --own-key --quiet`, so the `attest action --actor <agent>` calls it already makes sign with the agent's own key. The `@treeship/a2a` middleware does the same on construction through `provisionAgentKey`, so its task and handoff receipts verify as `proven (key-bound)` too.
+
+The second headline is on the hub side. `treeship audit` now proves a hub's log was only appended to since you last looked, with a Merkle consistency proof you re-verify offline.
+
+Also in this release:
+
+- `treeship agent register --own-key` is idempotent, and `--quiet` skips the on-disk `.agent` package.
+- `treeship attest card --tools-json <path>` records an operator's declared tool list, each entry stamped `declared` with the file as its `source`.
+- `treeship attest card --from-a2a <AgentCard.json>` maps an A2A agent's published `AgentCard.skills` to `agent_card.v1` capabilities with a new `discovered` provenance grade.
+- `treeship audit` persists the highest verified checkpoint per `(hub, signer)` under `~/.treeship/merkle/witnessed/` and warns on a forking or regressing hub.
+- `treeship merkle publish` computes a consistency proof from the previous checkpoint to the current one, and the hub serves it at `GET /v1/merkle/consistency`.
+- The keystore canonicalizes its store path before deriving the machine key, so symlinked paths no longer fail with `MAC verification failed`.
+
+## Why it matters
+
+The identity stack from 0.13.0 required someone to run `agent register --own-key` by hand. Agents speaking MCP or A2A never did, so their receipts stayed `asserted`. This release wires the key provisioning into the protocol bridges, so the receipts real agents already produce become provable with no change to the attestation path.
+
+The audit side closes a different gap. Witnessing across runs catches a hub that contradicts itself, but it does not prove the later tree extends the earlier one. The consistency proof does. Without it, a hub could rewrite history between two audits that each looked clean on their own.
+
+The keystore fix matters to anyone on macOS. The machine key hashed the keystore path, so `/var` and `/private/var` derived two different keys for the same directory, and a valid keystore refused to open.
+
+## How it works
+
+```bash
+treeship agent register --own-key --quiet
+treeship attest card --tools-json <path>
+treeship attest card --from-a2a <AgentCard.json>
+treeship merkle publish
+treeship audit <agent> --hub <url>
+```
+
+Re-registering an agent that already has a per-agent key reuses that key. There is no key pile-up and no duplicate `AgentCert` pin, which is what makes the bridges safe to run the command on every startup. The bridges are best-effort: if `treeship` is missing or uninitialized, the bridge still runs, and receipts fall back to the shared key with a one-line note.
+
+`--tools-json` accepts a `["tool", ...]` array or `{ "tools": [...] }`. A capability already captured from a harness keeps the stronger `captured` grade. `--from-a2a` reads the agent's own descriptor and stamps each skill `discovered`, with the AgentCard `url` as `source`. Protocol-level `capabilities` such as streaming and push are excluded, since they describe transport rather than domain capability. `verify-capability` and `resolve` count `discovered` in its own bucket, so A2A skills are never mislabeled as operator-declared.
+
+The hub holds no Merkle tree of its own, so the append-only proof is generated on the publishing side. `merkle publish` builds the tree truncated to exactly the checkpoint size, cross-checks that root against the checkpoint's own root, computes the consistency proof, and POSTs it. `audit` fetches the chain and re-verifies every link with the shipped `verify_consistency` primitive. Four properties must hold: the chain starts at the witnessed checkpoint, every link's proof verifies, links are contiguous, and the chain ends at the current checkpoint. A passing audit reports `append-only VERIFIED`. A failing served chain warns of a possible history rewrite. The `consistency:` line separately reports monotonic growth, and two roots at the same `tree_size`, or a `tree_size` that went backwards, raise a warning.
+
+## What it does not do
+
+- Witnessing alone does not prove append-only. Only a verified consistency chain does.
+- The MCP bridge exposes Treeship's own meta-tools, not the agent's domain tools, so the bridge does not auto-capture capabilities. Operators declare them with `--tools-json`, and the grade says so.
+- `discovered` is weaker than receipt-backed `exercised`. It records what the agent says about itself.
+- The raw-path machine key is kept as a decrypt-only fallback, so older keystores still open, but this is a fallback, not a second identity.
+
+## Where to go next
+
+- [@treeship/mcp](/docs/integrations/mcp)
+- [@treeship/a2a](/docs/integrations/a2a)
+- [CLI: audit](/docs/cli/audit)
+- [CLI: attest](/docs/cli/attest)
+- [Merkle proofs](/docs/guides/merkle-proofs)
+- [The MCP bridge and agent attestation](/blog/mcp-bridge-agent-attestation)
+
+*This entry was written on 11 September 2026 from the 0.15.0 changelog and the code as released, and is filed under the release date.*

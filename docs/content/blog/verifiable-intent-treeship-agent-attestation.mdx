@@ -4,8 +4,12 @@ description: "Agent attestation in Verifiable Intent credentials: how Treeship p
 date: 2026-04-04
 tags: ["verifiable-intent", "commerce", "mastercard", "zk"]
 readTime: "6 min read"
+category: integration
+systems: ["verifiable-intent"]
 ---
 
+> **Update (2026-09-08, 0.31):** `treeship vi` shipped, an implementation of the Verifiable Intent v0.1 draft with interop against the reference SDK. The current account is [Treeship 0.31: Verifiable Intent, implemented](/blog/treeship-0-31-verifiable-intent); this post is the design-era one and stays for the record.
+>
 > **Update (2026-07):** The signed attestation, mandate binding, and scope cross-check described here ship today. Any reference to zero-knowledge proofs of policy or spend-limit compliance is the experimental ZK layer, which is excluded from release binaries and being rebuilt statement-first (the selective-disclosure presentation surface is designed, not yet shipped). See the [ZK verification spec](https://github.com/zerkerlabs/treeship/blob/main/docs/specs/private-verification.md).
 >
 > **Further update (2026-08-18, v0.24):** one half of that has since shipped.

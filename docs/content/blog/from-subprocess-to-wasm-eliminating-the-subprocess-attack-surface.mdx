@@ -4,6 +4,8 @@ description: "When your TypeScript SDK spawns a Rust binary, you've introduced a
 date: 2026-01-08
 tags: ["wasm", "security", "engineering"]
 readTime: "8 min read"
+category: engineering
+systems: ["typescript-sdk", "wasm-verifier"]
 ---
 
 When your TypeScript SDK spawns a Rust binary, you've introduced a $PATH dependency, a binary substitution attack surface, and an IPC channel. All three go away when you compile to WASM.

@@ -12,6 +12,179 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
 
 ## Unreleased
 
+- **`signer_trust` trusts the ship's own keys.** On 0.31.2 the row warned on the producer's own machine that its own signing key was not a pinned trust root, and `session report` summarised every fresh session as `warn`; the release smoke caught it. `package verify` and `session report` now verify against the pinned roots plus this ship's keystore keys (as `session_host` roots). A stranger's machine still warns until they pin, which is the point.
+
+## 0.31.2 (2026-09-10)
+
+- **`package verify` checks signatures (audit 2026-09 AUD-31, P1; advisory [TS-2026-002](docs/security/TS-2026-002.md)).** Through 0.31.1 the command verified the Merkle tree and nothing under it: a receipt whose sealed set was rewritten to an invented `art_` id, with the tree recomputed, verified with exit 0. A `.treeship` package now carries the signed DSSE envelope of every sealed artifact under `artifacts/` and the signing public keys in `keys.json`, and `package verify` verifies each envelope's Ed25519 signature against those keys, re-derives the content-addressed id and digest from the signed bytes (`signature:<id>`), checks that every chained artifact names the previous one as parent inside the signature (`chain_linkage`), and reports whether the signing keys are pinned trust roots (`signer_trust`, a warning with the exact `treeship trust add` command; a failure under `--strict`). A fabricated id, an edited byte, a reordered chain, or a missing key fails with a nonzero exit. Packages built before 0.31.2 carry no envelopes and fail at a new `envelopes` row; `--structural` reads their structure and approvals with a verdict that says signatures were not checked. Core: `verify_package_with_options`, `verify_package_structural`, `PackageKeys`.
+- **`session close` seals unchained artifacts (AUD-32, P1; QA TS-002b).** An `attest action` signed without `--parent`, or onto a parent off the sealed path, was absent from the package while `package verify` reported it clean; three such actions in one session left one in the receipt. Every artifact signed in the workspace during the session is now sealed, after the chain, and marked `unchained: true` in the receipt so a verifier can tell a linked step from a loose one; the close output lists them (`sealed_unchained` in JSON, a warning and hint in text) and `package verify` reports them as `chain_completeness`. `attest action` prints a hint when a session is active and no `--parent` was given.
+- **The MCP bridge reports signing failures (AUD-33, P2).** A failed `attest`, `session event` or `session start` inside the bridge was caught and dropped, so a tool call with no receipt looked like one that was never recorded. The bridge now writes `[treeship] <what> failed: <reason>` to stderr on every failure and, under `TREESHIP_STRICT=1`, fails the tool call instead of proceeding unrecorded.
+- **Docs: the Verifiable Intent page says which draft.** "Shipped in 0.31" is qualified as shipped against the v0.1 draft, the wording the CLI uses (QA TS-007). The commerce quickstarts start from `git clone` of the reference (QA TS-008).
+
+## 0.31.1 (2026-09-08)
+
+- **treeship-commerce: the order receipt no longer forks the chain (QA TS-002, P0).** `order_placed` signed the host's order onto the hand-off receipt. The checkout result, which also follows the hand-off, became a branch off the path the session seals, so it was signed, verifiable on its own, and absent from the package, while `package verify` reported a clean package. The order now chains onto the recorder's head and names the hand-off in `meta.handoff`; `attest_at_handoff` does the same. A test asserts every receipt a recorder writes is on the sealed chain.
+- **`session close` names unsealed branches (QA TS-002).** Signed artifacts whose parent is on the sealed chain but which are not on it themselves are listed in the close output (`unsealed_branches` in JSON, a warning in text) instead of vanishing silently.
+- **The demos run on a clean machine (QA TS-001, TS-004).** `demo` and `demo_merchant` construct the SDK with `bot_mode=True`, so the CLI is resolved (PATH, cache, then the matching release) rather than assumed; a missing workspace or CLI prints a one-line remedy instead of a traceback; a session a previous run left open is closed with a summary that says so, so a second run works.
+- **The SDK warns when the CLI is on another release line (QA TS-003).** Once per client, on the first call: `treeship --version` against the SDK's own version, a `RuntimeWarning` naming both and the upgrade command.
+- **Quickstarts use the project-local init (QA TS-006).** `treeship init --config .treeship/config.json` in every commerce quickstart. Bare `treeship init` refuses when a global workspace already exists and the current directory is not it (that guard predates 0.31; it was the first command in the quickstarts that was wrong).
+- **`bootstrap.py` docstring matches `bootstrap_cli` (QA TS-005):** the entry point prints the binary path, or the JSON result with `--json`.
+
+## 0.31.0 (2026-09-08)
+
+- **`treeship vi`: Verifiable Intent credentials, shipped.** An independent implementation of the Verifiable Intent v0.1 draft (verifiableintent.dev, Mastercard-maintained, Google co-developed) in `treeship-core::vi`, with a CLI: `vi keygen` mints the agent's P-256 key (sealed by the ship keystore) and prints the JWK a wallet binds under `cnf`; `vi check` asks whether a purchase fits a Layer 2 mandate; `vi attest` signs the Layer 3 pair (L3a for the payment network, L3b for the merchant) as key-bound SD-JWTs with `sd_hash` over recipient-specific L2 presentations and `transaction_id == checkout_hash`, refusing anything outside the mandate before signing; `vi verify` runs the reference verifier's checks plus the Treeship attestation and, with `--local`, the chain it names. The spec's optional `agent_attestation` claim carries a `treeship.receipt-chain.v1` value: a ship-signed statement, stored as an artifact chained onto the head, naming the session, chain head, Merkle checkpoint, approval use, mandate digest and transaction. Interop is tested both ways against the reference SDK in CI (`tests/vi-interop`): the reference's `verify_chain` and `check_constraints` accept what treeship signs and ignore the claim as the spec requires; treeship verifies what the reference issues; one edited byte fails on both. `packages/vi` (April 2026 types against a pre-v0.1 draft, never wired) is retired; the code lives in `packages/core/src/vi/`. The eight registered constraint types are checked with the reference checker's semantics. Not in scope: multi-pair L2 mandates, network-side cumulative budget and occurrence counting.
+
+- **treeship-commerce: the approval verdict next to the tool outcome.** `TreeshipApprovalMixin` now sets `treeship_last_approval` (`proven`, `unproven`, or `None`) on the executor after every apply, so a host can print or log what the intent receipt says about the grant beside what the tool did. `demo_merchant` uses it: the replay row reads `error, approval unproven` in the default run (the journal refused a second use before anything was signed; the mock backend then refused the apply as already applied) instead of a bare `error` that let the backend take credit for the journal's refusal. Under `--enforce` the row is unchanged, `blocked:approval`.
+- **Docs: verify a session package**, a page for the person handed a `.treeship` package (`/commerce/verify-a-package`): what each check proves and does not, the counterparty signature flow (`keys export` → `trust add` → `bundle import` → `verify`), and the limits (`anchoring: UNWITNESSED`, `actor proof: asserted`, `--require-authority` on receipts with no mandate). Shopping demo recording added to the integration page and the announcement post.
+
+## 0.30.0 (2026-09-07)
+
+**Upgrade if you build on Anthropic's commerce-agents reference.** The
+customer gets a receipt for exactly the cart that went to checkout, with
+the host's order chained onto it; the `treeship-commerce` Claude Code
+plugin wires every seam with one command; and the sealed package's own
+receipt page now shows the approvals it embeds instead of "No approval
+gates recorded".
+
+### Fixed
+
+- **The sealed package's preview page now shows the approvals it embeds.**
+  `preview.html` read approvals only from the chained artifacts, so a
+  session whose approval was minted, spent once, and exported under
+  `approvals/` (where `package verify` checks it as
+  `replay-local-journal`) rendered "No approval gates recorded". The
+  preview now carries an `approvals-data` block built from the same bundle
+  the verifier reads, and the Approval gates section lists each grant
+  (approver, description, scope, time) with its uses (`use 1/1`, the action
+  and subject that spent it, the consuming artifact). A grant envelope
+  that does not parse is listed by id as unparsed rather than dropped; a
+  use whose grant is not embedded says so. No bundle renders a JSON `null`,
+  never an empty block that would throw in the page's parser.
+
+### Added
+
+- **`treeship-commerce`: a receipt for exactly the cart that went to
+  checkout.** `receipted_backend(backend)` wraps a storefront backend so the
+  reference's `checkout_handoff(session, cart)` also signs a hand-off receipt
+  on the session chain: the cart's digest, item count, subtotal and currency,
+  and a digest of each hosted URL with its seller. The URL is never written;
+  the cart's lines are never written, and a holder of the checkout card can
+  recompute the digest from the card's own payload. `order_placed(receipts,
+  order_ref=, amount=, currency=)` is the host's half: a signed order receipt
+  chained onto the hand-off with the order reference digested. An order
+  without a hand-off says `handoff_recorded: false` instead of inventing a
+  parent. The wrapped backend finds the session's recorder by the reference's
+  own session tag. Seven tests; the shopping demo ends with the hand-off and
+  a chained mock order.
+
+- **`treeship-commerce` Claude Code plugin.** `claude plugin install
+  treeship-commerce@treeship` from the Treeship marketplace, mirroring the
+  reference's own `commerce-builder`: `/add-treeship-receipts [shopping |
+  merchant | both]` reads the project, wraps the executor on its runtime,
+  signs the merchant approval surface or the shopping checkout hand-off,
+  adds the verify step to CI, and writes to the project's decision record;
+  the `treeship-commerce-receipts` skill says what each receipt carries and
+  never carries, the approval scope and replay rule, and per-runtime
+  differences. The plugin runs no code of its own.
+
+## 0.29.0 (2026-09-07)
+
+**Upgrade if you run the merchant side of Anthropic's commerce-agents
+reference.** The operator's approval becomes a signed, scoped, single-use
+grant that the apply's receipt spends exactly once, on all three runtimes,
+with the reference console's loop unchanged. The Python SDK gains
+`attest_action(subject=)`, which scoped approvals need; `treeship-commerce`
+now requires `treeship-sdk>=0.29.0`.
+
+### Added
+
+- **`treeship-commerce`: signed single-use operator approvals on the merchant
+  `apply_change`.** The reference gates `apply_change` on an in-process set the
+  host fills from its y/N; the set leaves no record and cannot refuse a second
+  apply inside the same window. `MerchantApprovals.grant(change_id)` mints a
+  signed Approval Grant scoped to one actor, one action, and
+  `change://<change_id>` with `max_uses=1`; `approved(receipted(
+  MerchantToolExecutor), approvals)` signs the apply's intent receipt with the
+  grant's nonce, so the CLI reserves a use in the Approval Use Journal before
+  it signs. A replay finds the grant spent; a grant for another change is
+  refused by scope, because the action's subject is taken from the call's own
+  arguments and never from the grant. The receipt says `approval: "proven"` or
+  `"unproven"` with the CLI's reason. Recording only by default; `enforce=True`
+  holds an unproven apply in the reference's own held-outcome shape, and the
+  hold is itself a signed refusal. On an SDK without `subject` it warns once
+  and mints nothing. `approving(toolset, approvals)` wraps the Agent SDK
+  `MerchantToolset`'s `host_approve` / `host_clear` in place, so the reference
+  console's y/N loop mints and forgets grants unchanged. Merchant demo
+  `demo_merchant.py` (`--enforce` for the gating mode); twelve tests,
+  including the replay and wrong-change refusals and the merchant side on all
+  three runtimes through `executor_class`.
+
+- **`treeship-commerce`: arguments that are not JSON-native no longer break
+  the tool.** The reference's MCP server hands the executor parsed pydantic
+  models; the argument digest called `json.dumps` on them outside the guarded
+  path and the stage call died inside the recorder. The digest is now total
+  (pydantic v1/v2, dataclasses, sets, bytes, datetimes, Decimal, Enum, paths,
+  and a typed repr for anything else) and equal to the digest of the same
+  arguments as plain dicts, and nothing raised while describing a call can
+  reach the tool.
+
+- **Python SDK: `attest_action(..., subject=)`.** Sets the action's
+  `subject.uri`, the field an approval's `allowed_subjects` scope is matched
+  against. Without it a subject-scoped grant refused every action from the
+  SDK; the CLI has taken `--subject` since the scope check existed.
+
+## 0.28.0 (2026-09-07)
+
+**Upgrade if you build on Anthropic's commerce-agents reference, or use the
+Python SDK.** `treeship-commerce` is a new package, published to PyPI with
+this release, that gives every tool call in the reference a signed receipt
+on all three of its runtimes. The Python SDK gains `session_event()`.
+
+### Added
+
+- **`treeship-commerce`: signed receipts for every tool call in
+  anthropics/commerce-agents.** One method, `BaseToolExecutor.execute`, runs
+  every tool call on the Messages API, the Agent SDK, and Managed Agents;
+  `TreeshipExecutorMixin` overrides it with a signed intent receipt before
+  dispatch (tool, SHA-256 of the canonical arguments, session tag) and a
+  signed result receipt after (`ok` / `blocked` with the gate's name /
+  `error`, result digest, event types, timing), chained from the Treeship
+  session root. A call the provenance gate holds is a signed refusal, not a
+  gap. Never written: the arguments, the fenced result text, or the commerce
+  session id (only the reference's own twelve-hex tag). `receipted(cls,
+  recorder=...)` wires all three runtimes through their `executor_class`;
+  `attach()` refuses an executor that would record nothing. Recording never
+  breaks the tool: a write that fails is counted in `dropped`, a result whose
+  intent is missing says `intent_recorded: false`, and a client without
+  `session_event` (treeship-sdk 0.27.0) skips timeline events with one
+  warning. Fourteen tests on a real ship over the reference's retail mock,
+  including one per runtime; CI runs them against the reviewed commit of the
+  reference. Guide: docs `/commerce/commerce-agents`. (#360, #361)
+
+- **Python SDK: `Treeship.session_event(...)`.** Appends to the active
+  session's timeline; parity with `ship.session.event()` in the TypeScript
+  SDK. Option-like values are refused, integers are checked as integers, and
+  a CLI document without an `event_id` is an error, not an empty result.
+  (#360)
+
+- **`treeship-commerce` publishes to PyPI by trusted publishing** (OIDC, no
+  new token), in lockstep with the SDK; the release installs it back from the
+  registry and imports it before it is considered published. (#362)
+
+### Changed
+
+- `check-feature-inventory.py` matches a `pyproject.toml` name the way it
+  matched `package.json`, so an inventory entry can name a Python package
+  whose directory is not its name. (#360)
+
+### Documentation
+
+- Commerce: the Claude Commerce Agents guide (wiring for each runtime, a real
+  decoded intent and blocked result, verification, the trust boundary), the
+  overview leading with what ships, and the post "You can't have agentic
+  commerce without tamper-proof receipts". Every id in them is from a run
+  with the released CLI. (#361)
+
 ## 0.27.0 (2026-09-02)
 
 **Upgrade if you use `@treeship/a2a` or `@treeship/mcp`.** Foreign work is
@@ -73,6 +246,23 @@ default this release exists to make.
 ## 0.26.0 (2026-09-01)
 
 ### Added
+- **Pure workflow-conformance reducer.** `treeship-core` now validates the
+  minimal `workflow.v1` graph and compares it with already-verified node
+  observations. It reports path deviations, missing terminals, actor/tool
+  authority deviations, bounded-loop breaches, and `checked | captured |
+  asserted` provenance as separate axes. Undeclared graph cycles and empty
+  evidence fail closed. Seven golden reports pin the contract. `workflow.v1`
+  is now a registered predicate whose nested graph runs the same full validator
+  before the generic `attest receipt` path signs it. Real checkpoint ordering
+  can be checked with `verify_workflow_pre_existence`: trusted signatures, both
+  inclusion proofs, leaf position, and consistency must all pass.
+  `treeship session start --workflow-ref art_...` now validates a locally signed
+  declaration before writing any run state and binds the artifact ID inside the
+  signed `session.start` root action. The manifest and composed session receipt
+  mirror the reference, while `verify_first_run_workflow_binding` independently
+  checks the trusted root signature, content-derived run ID, action type, and
+  exact declaration reference. Automatic checkpoint composition, external
+  workflow-authority trust, and CLI conformance verification remain follow-ups.
 
 - **`treeship workflow verify`: one fail-closed path from a signed declaration
   to a conformance report.** The three verification pieces -- declaration
@@ -142,6 +332,14 @@ remained on the broken 0.25.1 while crates.io and PyPI moved to 0.25.2. This
 release fixes the underlying cause and brings every registry back in line.
 
 ### Fixed
+- **Workflow conformance now fails closed at five trust boundaries.** Session
+  close re-verifies the signed root instead of signing a mutable manifest's
+  substituted workflow reference; pre-existence proofs require one checkpoint
+  signing identity rather than composing unrelated trusted logs; loop action
+  budgets count verified action artifacts instead of tool labels; every
+  undeclared observed node produces a deviation, including a one-node run; and
+  schema-required `allowed_tools` can no longer deserialize as an omitted
+  default.
 
 - **`@treeship/core-wasm` was rewritten by whatever `wasm-opt` the build
   machine happened to have.** `wasm-pack` runs `wasm-opt` on the package it
@@ -169,6 +367,14 @@ release fixes the underlying cause and brings every registry back in line.
 - `rust-toolchain.toml` pins `wasm32-unknown-unknown`. This did not cause the
   failure above, but it was the other unpinned input feeding the same
   artifact.
+
+### Documentation
+- **Workflow conformance now has an executable design contract.** Added the
+  missing `docs/specs/workflow-declarations.md` referenced by commitments,
+  rooms, vision, and the v0.11 changelog. Seven golden reports pin valid runs,
+  undeclared edges, missing terminals, loop-cap breaches, asserted edge
+  evidence, declaration pre-existence, and out-of-scope tools before broader
+  CLI wiring.
 
 ## 0.25.2 (2026-08-30)
 
@@ -219,480 +425,6 @@ that verifies in Node.** Those packages could not verify anything at all in
   verifiable; they report `unknown key` until the old keystore is restored.
   All three corrected, and every command in the message is now executed
   verbatim in testing. (#338)
-
-## 0.25.1 (2026-08-21)
-
-**Upgrade if you use the Python SDK or `treeship wrap --format json`.** Two
-SDK entry points could not work at all — not misconfigured, structurally
-unable to succeed — which is the same shape as the bug that forced 0.25.0.
-
-### Fixed
-
-- **`attest_approval` in the Python SDK could not mint an approval.** It
-  forwarded none of the scoping arguments the CLI requires and passed
-  `expires_in` where the CLI takes `expires_at`, so every call that reached the
-  subprocess was rejected. The scoping arguments (`allowed_actions`,
-  `allowed_actors`, `allowed_subjects`, `max_uses`, `unscoped`) are now
-  forwarded, and an unscoped approval must say so explicitly rather than
-  becoming one by omission. (#331)
-- **`treeship wrap --format json` printed nothing parseable.** It emitted the
-  result through a path that returns early in JSON mode, and interleaved the
-  wrapped command's own stdout into the document, so callers got either an
-  empty string or invalid JSON. The result is now emitted as JSON and the child
-  process's stdout is routed to stderr, leaving stdout a single document. (#332)
-- **`treeship attest --expires 1h` signed a timestamp already in the past.**
-  `--expires` takes an absolute RFC 3339 time; a duration parsed to epoch zero
-  and was signed into the artifact, producing an approval born expired with a
-  valid signature. Durations are now refused with a message naming the expected
-  form. (#328)
-- **`treeship init` told a fresh directory it was "already initialized."** The
-  guard tested the resolved config path, which falls back to the global config,
-  so any directory on a machine with a global Treeship config was reported as
-  already set up. It now distinguishes a local workspace from the global
-  fallback. (#333)
-- **`treeship setup --help` promised a verdict the command does not produce.**
-  It documented promoting cards to `Verified`; the code deliberately sets
-  `Active`. (#330)
-- **`release.sh prepare` could not update the npm lockfiles it exists to
-  update.** `npm install --package-lock-only` resolves against the registry, so
-  it failed on the version being released, which is not published yet — the
-  step added to prevent v0.25.0's out-of-sync lockfiles could never run during
-  a release. Prepare now writes the declared range offline and
-  `release.sh refresh-lockfiles` fills in resolved entries after publish. The
-  sync check also covered only four hardcoded packages; it now discovers all
-  ten, which surfaced three runtime-acceptance lockfiles five releases behind.
-
-### Documentation
-
-- Documentation QA pass across 127 pages, plus eight gates that keep the docs
-  and the CLI from drifting apart: internal links, API routes, verify rows,
-  event types, predicates, command names, flags, and option tables. Four of the
-  fixes above were found by those gates. (#321)
-
-## 0.25.0 (2026-08-19)
-
-**Upgrade if you use any npm package. `@treeship/core-wasm@0.24.0` cannot be
-loaded in Node at all, and npm does not allow republishing a version — a new
-release is the only way to fix it.**
-
-### Fixed
-
-- **`@treeship/core-wasm` threw on import in Node.** `WebAssembly.Table.grow():
-  failed to grow table by 4`, reproduced from a clean install on Node 22.20.0
-  and 22.23.1. The module never finished loading, so every export was
-  unreachable — taking down `@treeship/verify` and every SDK method that calls
-  it. `build-npm.sh` ran only `wasm-pack --target bundler`, which emits an
-  import that needs a bundler to resolve. It survived a release because the one
-  consumer anyone exercised was the website, which vendors and bundles the wasm.
-  Now dual-target with an `exports` map routing Node to a nodejs build. (#320)
-- **`treeship session event --format json` exited 0 and printed nothing.** It
-  built the response and passed it to `printer.info`, which returns early in
-  JSON mode. Every SDK wrapper reading `event_id` got `undefined` from an empty
-  document, with a success exit code. (#311)
-- **`treeship present` panicked on a fresh onboard.** `range end index N out of
-  range` — checkpoints load from `~/.treeship/merkle` regardless of `--config`
-  while artifacts come from the scoped store, so the two could describe
-  different histories. Now a typed error naming both sizes. (#313)
-- **`grant show` and `grant list` put a clean checkmark on revoked grants.** A
-  signature stays valid forever; revocation is what makes a grant stop counting.
-  Both commands reported the signature and neither consulted the revocation
-  receipt the CLI had just written. (#314)
-- **`profile` and `history` reported 0 where the answer was "unknown".** An
-  empty result is not a zero. (#302)
-- **The MCP bridge recorded raw error text into signed receipts.** Everything
-  beside it was a digest; an error message routinely contains the thing that
-  failed. Now digested, with raw text behind an explicit opt-in. (#309)
-
-### Added
-
-- **Revocation works end to end.** `treeship grant revoke` mints a signed
-  `grant_revocation.v1`; `verify` honors it locally and from a hub's published
-  list; the hub publishes real revocations over an indexed lookup and states in
-  the response that absence is not evidence; each entry carries `dock_id` and
-  `rekor_index` so a client can check inclusion itself; and
-  `grant show --check-log` walks the dock's consistency chain and re-verifies
-  every link with RFC 6962. Unknown stays a third state throughout — never a
-  quiet pass. (#303, #305, #306, #314, #315, #316, #317)
-- **Linux arm64 binaries**, built *and executed* on a native `ubuntu-24.04-arm`
-  runner so a broken target blocks merge rather than failing on release day.
-  (#318)
-- **`verify` gates on authority** and reports what was granted but never used,
-  so `authority_ok: true` can no longer mean "checked nothing". (#297)
-- **`ship.session.event()` in the TypeScript SDK.** (#203, contributed by
-  @piyushpathakqa)
-
-### Changed
-
-- **Hub `/v1/stats` labels agent counts as claims.** They are derived from
-  `AgentGraph` nodes in uploaded receipts, which the hub does not
-  cryptographically verify. Artifact, dock and session counts are facts about
-  the hub's own state and are unaffected. `claimed_total` is the honest name;
-  the old keys remain for one release. (#308)
-- **The hub indexes on fields derived from the envelope**, never accepted from
-  the caller — so a resolver filters on content rather than an uploader's claim
-  about itself. (#307)
-
-### Known limitations
-
-- `invitation_authority` on a room is **recorded and not enforced**. `verify`
-  does not read it, so a receipt naming `host-only` and an invite minted by a
-  non-host both verify clean. Fail-safe today because nothing trusts the field,
-  but do not treat it as access control.
-- A receipt fetched by URL is verified **structurally only** — Merkle root,
-  inclusion proofs, leaf count, timeline order. Signatures and issuer are not
-  checked from that source; use the local artifact form for those.
-
-## 0.24.0 (2026-08-10)
-
-**Trusted Rooms, end to end — plus three fixes worth upgrading for.**
-
-### Fixed
-
-- **Legitimate receipts no longer report tampering.** Every `receipt.v1`
-  landing mid-chain reported `chain SIGNED LINKAGE BROKEN — possible
-  tampering` against correctly-signed evidence. `mint_session_record` writes
-  the parent as `subject.artifactId`; the linkage check looked only for a
-  top-level `parentId`. Measured on a real store: 4 of 4 receipts affected,
-  9 of 9 actions fine. A false tampering alarm is worse than a noisy check —
-  it teaches operators to ignore the one signal the product exists to give.
-- **Keystores are portable.** `storage_dir`/`keys_dir` were always absolute,
-  so `mv ~/.treeship ~/.treeship.bak` produced a "backup" whose config still
-  pointed at whatever replaced it. Relative paths now resolve against the
-  config's own directory. Absolute paths are untouched.
-- **The Claude Code plugin monitor stopped shouting.** It emitted a line
-  whenever any counter changed, and `events` ticks on essentially every tool
-  call — one working session produced well over a hundred notifications. Now
-  reports state transitions only: two lines for a full session.
-
-### Added
-
-- **`treeship room create` / `status` / `participants`.** Sugar over
-  `treeship session`; a room is a session whose participant set evolves via
-  invitations. `invitation_authority` is carried and signed but not yet
-  enforced — conformance checking is the follow-up.
-- **`room` rides inside the signed receipt.** `RoomInfo` on `SessionManifest`
-  and mirrored into the DSSE-signed `session.v1`, so `invitation_authority`
-  is attested rather than living only in an editable local file.
-- **The room roster is derived, not stored.** `room participants` walks
-  two-signature participant artifacts instead of reading a list from
-  `session.json` — which anyone with write access could edit, and which was
-  silently incomplete whenever the best-effort append was skipped.
-- **Liveness challenge on countersign.** Opt-in `--challenge` /
-  `--challenge-response` proves the joining agent controls its key *now*,
-  not whenever `join` ran. Omitting both countersigns exactly as before.
-- **`treeship session mint-challenge`.** 128 bits from `OsRng`, because the
-  challenge flag shipped without anything to produce a value and the help
-  text suggested a six-character example. Weak nonces are now refused at both
-  ends: a guessable nonce can be pre-signed, and the proof means nothing.
-- **`Custody` on the session receipt.** Records when a *service* signed on an
-  actor's behalf rather than the actor signing for itself. Deliberately a
-  separate axis from `attestation_class`, which grades how evidence was
-  captured; this grades who held the key. Absent means self-custody, so
-  existing receipts are byte-identical.
-- **`execution_identity` on wrapped commands.** Resolved executable path,
-  sha256, argv, cwd, uid/gid. `git` is `git` only until `PATH` says
-  otherwise; two receipts with identical argv and different digests are two
-  different events. Environment **names** only, never values.
-- **A public Go client for the Hub** (`pkg/dpop`, `pkg/hubclient`). DPoP proof
-  signing existed only in Rust, so a Go service had no path to the API.
-  Tested against the real server verifier, not a stub.
-- **The capability index now covers Hub endpoints and core types.** CI fails
-  when a live endpoint belongs to no feature entry, and a generated
-  `capability-map.json` records every reachable surface — 34 CLI commands,
-  22 routes, 109 wire types.
-
-### Documentation
-
-- New concept pages: what a receipt proves (and does not), logs vs receipts,
-  effect receipts, secrets and redaction, authority delta, wrapping real
-  commands. The redaction page documents, with a measured table, which secret
-  shapes the scrubber catches and which it misses.
-
-## Unreleased
-
-### Fixed
-- **Cyclic agent-parent events no longer overflow the stack during session close.**
-  `AgentGraph` depth calculation recursively followed untrusted
-  `parent_agent_instance_id` links and only cached a node after visiting its
-  parent. A self-parent or `A -> B -> A` cycle therefore recursed until the
-  process crashed while composing the receipt. Depth calculation is now
-  iterative, malformed cycles are recorded in `invalid_parent_cycles`, and
-  cyclic nodes retain depth 0 instead of being presented with a fabricated
-  hierarchy.
-- **Workflow conformance now fails closed at five trust boundaries.** Session
-  close re-verifies the signed root instead of signing a mutable manifest's
-  substituted workflow reference; pre-existence proofs require one checkpoint
-  signing identity rather than composing unrelated trusted logs; loop action
-  budgets count verified action artifacts instead of tool labels; every
-  undeclared observed node produces a deviation, including a one-node run; and
-  schema-required `allowed_tools` can no longer deserialize as an omitted
-  default.
-
-### Added
-- **Pure workflow-conformance reducer.** `treeship-core` now validates the
-  minimal `workflow.v1` graph and compares it with already-verified node
-  observations. It reports path deviations, missing terminals, actor/tool
-  authority deviations, bounded-loop breaches, and `checked | captured |
-  asserted` provenance as separate axes. Undeclared graph cycles and empty
-  evidence fail closed. Seven golden reports pin the contract. `workflow.v1`
-  is now a registered predicate whose nested graph runs the same full validator
-  before the generic `attest receipt` path signs it. Real checkpoint ordering
-  can be checked with `verify_workflow_pre_existence`: trusted signatures, both
-  inclusion proofs, leaf position, and consistency must all pass.
-  `treeship session start --workflow-ref art_...` now validates a locally signed
-  declaration before writing any run state and binds the artifact ID inside the
-  signed `session.start` root action. The manifest and composed session receipt
-  mirror the reference, while `verify_first_run_workflow_binding` independently
-  checks the trusted root signature, content-derived run ID, action type, and
-  exact declaration reference. Automatic checkpoint composition, external
-  workflow-authority trust, and CLI conformance verification remain follow-ups.
-- **`RoomInfo` on `SessionManifest`.** Optional `room` field (`room_id`,
-  `host_pubkey`, `invitation_authority`, `workflow_ref`, `checkpoint_cadence`,
-  `participants`) following the schema proposed in
-  `docs/specs/agent-invitations-rooms.md` Phase 2. Purely additive — absent on
-  ordinary sessions and on manifests written before this field existed. No CLI
-  surface yet (`treeship room create/status/participants` is the follow-up);
-  this lands the data model first so the wire format is settled.
-- **`treeship room create/status/participants`.** The CLI surface promised
-  above: `room create` is sugar over `session start` that also populates
-  `RoomInfo` (fresh `room_id`, host pubkey, `--invitation-authority
-  host-only|delegated|open`, `--delegate`, `--workflow-ref`,
-  `--checkpoint-every`); `room status` shows session status plus room fields
-  and errors clearly on a plain (non-room) session; `room participants` lists
-  the room's finalized (two-signature) joins by reading each participant
-  artifact. `treeship session invite/join/countersign` are unchanged except
-  that `countersign` now appends the finalized participant id to
-  `room.participants` when the active session is a room, which is the only
-  way `room participants` has real data to show. `invitation_authority`
-  remains informational-only in this PR — nothing gates any authority
-  decision on it yet. There is no `room close`: plain `treeship session
-  close` already works on a room since a room is just a session.
-
-### Documentation
-- **Workflow conformance now has an executable design contract.** Added the
-  missing `docs/specs/workflow-declarations.md` referenced by commitments,
-  rooms, vision, and the v0.11 changelog. Seven golden reports pin valid runs,
-  undeclared edges, missing terminals, loop-cap breaches, asserted edge
-  evidence, declaration pre-existence, and out-of-scope tools before broader
-  CLI wiring.
-
-## 0.23.0 (2026-08-05)
-
-The emission release. v0.21 and v0.22 built a verifier that could check
-mandates, delegation chains, effect finality, and resolution deadlines — and
-none of it was reachable, because nothing could mint a grant or emit an
-action/v2 receipt. Both halves now exist, so the loop closes:
-
-```
-treeship grant issue --scope 'payments.*' --audience acme --expiry 2027-12-31T23:59:59Z
-treeship grant issue --parent grn_… --scope payments.charge --audience acme --expiry 2027-06-30T00:00:00Z
-treeship attest action --v2 --actor agent://worker --action payments.charge --grant grn_… \
-  --effect-confidence not_verified --finality initiated
-treeship verify last --format json
-```
-
-```json
-"authority":        { "outcome": "unverified", "reasons": ["revocation could not be checked: …"] },
-"delegation_chain": { "hops": 2, "outcome": "holds" },
-"resolution":       { "outcome": "indefinite" },
-"effect":           { "effective_finality": "initiated" }
-```
-
-### Added
-- **`treeship grant issue` / `list` / `show`.** Mint a signed capability grant,
-  or delegate a narrower one with `--parent`. Ids are content-derived
-  (`grn_` + `hex(sha256(canonical))[..16]`), so a parent pointer is a hash
-  commitment to one specific grant rather than a reference to a name anyone
-  could claim. Grants are workspace-scoped, resolved from the active config the
-  same way the approval-use journal is.
-
-  Attenuation is enforced **at mint**, not only at verify: issuing refuses a
-  child that widens scope, outlives its parent, changes audience, or exceeds
-  `max_delegation`, and `delegation_depth` is derived from the parent rather
-  than accepted from the caller. A verifier catching an invalid chain later is
-  the backstop; refusing to create one is the fix, because an invalid chain
-  that exists is one somebody will eventually be asked to trust. Also refuses
-  an expiry already in the past — a grant that can never verify is never
-  minted deliberately.
-
-  `grant show` re-derives the id and re-checks the signature off disk rather
-  than trusting the file, and will open an unsound grant in order to report it
-  as unsound.
-
-- **`treeship attest action --v2`.** Emits a real action/v2 receipt carrying the
-  mandate from a grant (`--grant` or `--grant-file`), an optional effect block
-  (`--effect-confidence`, `--finality`, `--readback`, `--context-snapshot`,
-  `--resolution-deadline`, `--on-deadline`), and runtime identity. Ancestors are
-  walked from `parent_grant_id` and carried inline, so a delegated action still
-  verifies offline with no fetch.
-
-  A root grant leaves `mandate.chain` empty rather than carrying its lone leaf.
-  A one-element chain has no adjacent pair to check, so reporting it as
-  "attenuation holds" would name a check that never ran; `not_claimed` is the
-  honest answer.
-
-### Fixed
-- **`treeship-core` reaches crates.io again.** It did not publish in v0.22.0
-  while npm and PyPI did — `packages/core/src/session/package.rs` embedded a
-  webfont from `design/fonts/`, outside the crate root, and `cargo publish`
-  builds from a tarball containing only files under that root. The include
-  landed after v0.21.0, which is why the previous release was clean. Each crate
-  now vendors the font under its own `assets/fonts/`.
-
-  Two guards, because the version preflight could never have caught this —
-  every version was correct, the crate simply could not be built:
-  `scripts/check-vendored-fonts.py` flags a published crate embedding anything
-  from outside its root, and CI now runs `cargo package -p treeship-core`, the
-  same verify step publish does.
-
-### Notes
-- Revocation is still unchecked, so the authority axis reports `unverified`
-  rather than `pass` and names the layer it could not check. The hub endpoint
-  remains an unsigned, hardcoded-empty stub; reading it would convert an honest
-  "I don't know" into a false "not revoked" for every grant ever issued.
-- Capability grants ship as **beta**, not stable, for that reason.
-
-### Added
-- **`treeship attest action --v2`** — CLI emission of `treeship/action/v2`
-  receipts. Pass `--grant <id>` (workspace store) or `--grant-file <path>`,
-  optionally bind effect (`--effect-confidence`, `--finality`, `--readback`, …)
-  and runtime identity (`--provider`, `--model`, …). `treeship verify` then
-  surfaces authority / effect / runtime on a receipt the CLI itself produced —
-  the half that was verification-only through 0.22.
-
-## 0.22.0 (2026-08-05)
-
-The delegation-and-completion release. v0.21 answered *what was authorized* and
-*what happened*. This one answers the two questions sitting behind those: was
-the authority legitimately delegated, and did the change actually land?
-
-**CLI emission of action/v2 receipts still does not exist.** Everything below is
-verification-side and reachable today only from `treeship-core` and the SDKs; a
-CLI user cannot yet produce a receipt that exercises it. That is the whole of
-0.23.
-
-### Added
-- **Grant chain resolution.** `grant_id` is now content-derived
-  (`grn_` + `hex(sha256(canonical))[..16]`), mirroring `artifact_id`, so an id is
-  a fact rather than a claim. Grants carry a signed `parent_grant_id`, making a
-  parent pointer a hash commitment to one specific grant instead of a reference
-  to a name anyone could also assert. `Mandate.chain` carries ancestors inline
-  so a delegated action still verifies offline, and `resolve_grant_chain`
-  *derives* the order from those signed links rather than trusting the order the
-  carrier supplied — reordering becomes a no-op, truncation surfaces as a missing
-  ancestor, and splicing surfaces as an unreachable extra. Only then does
-  `verify_grant_chain` judge attenuation, on a chain whose shape is already
-  proven.
-- **Authority and delegation on `treeship verify`.** A new authority line reports
-  whether an action was in scope, in window, and not revoked, and a chain line
-  reports `holds` / `widened` / `unresolvable` / `not_claimed`. Both appear in
-  `--format json` as per-check `authority` and `delegation_chain` objects, plus a
-  top-level `authority_ok` a CI gate can test in one field. Without a revocation
-  resolver wired the authority verdict is `unverified`, never `pass`: claiming a
-  grant is live because nobody looked is the false pass this verifier exists to
-  refuse.
-- **`EffectFinality` — lifecycle, separate from evidence.**
-  `NotAttempted / Initiated / Finalized / Failed / Indeterminate`, orthogonal to
-  `EffectConfidence`. Collapsing the two lets a receipt be accurate in every
-  field and false as a composite: a write accepted, acknowledged, assigned an
-  id, served back on read, and never committed. `verify_effect` caps an unbacked
-  `Finalized` exactly as it already caps an unbacked `Verified` — those are the
-  only two claims that assert something definite, so the only two an actor can
-  inflate. `NotAttempted` with a bound `input_hash` is the "no authority moved"
-  receipt, making a timeout an explicit signed negative instead of silence.
-- **Resolution deadlines.** `Resolution { deadline, on_deadline }` and
-  `check_resolution` bound an unresolved effect. An effect that never resolves
-  emits nothing forever, which is worse than a timeout — a timeout at least
-  produces a countable transition. `Indefinite` is reported as its own outcome
-  rather than folded into "resolved", because unresolved-with-no-deadline is the
-  failure shape, not the safe default. `check_resolution` takes `now_unix`
-  explicitly; a verifier that reached for the system clock would give different
-  answers on replay.
-
-### Fixed
-- `ChainResolveError` and `GrantChainError` have real `Display` impls. The CLI
-  was formatting them with `{:?}`, so operators read
-  `AncestorMissing { parent_grant_id: "grn_..." }` — an internal representation,
-  not a diagnosis.
-- The AUD-19 seed test is hermetic. It relied on first-open minting a
-  co-located seed, but `read_or_create_machine_seed` falls back to
-  `~/.treeship/machine_seed` first — which exists on any machine that has run
-  `treeship init`. The test therefore failed for every developer who had
-  actually used the tool while passing on clean CI.
-- `docs-drift` is green again. Two stacked failures: the feature inventory
-  pointed at `packages/core/src/verify.rs`, gone since the module became a
-  directory, and `docs/specs/receipt-system.md` had no row in the specs index.
-  The first masked the second.
-
-### Notes
-- Both new `Effect` fields are optional and skipped when absent, so existing v2
-  receipts keep byte-identical canonical bytes.
-- Known wart, deliberately left: `EffectConfidence` serializes `snake_case`, so
-  a receipt carries `not_verified` while `--format json` reports
-  `not-verified`. Changing it breaks a field emitted since v0.21 and is a
-  decision to make on purpose, not as a side effect of adding a neighbouring
-  one. Documented on `effect_label`.
-- Revocation remains unresolvable by design. The hub endpoint is an unsigned,
-  hardcoded-empty stub; wiring a resolver to it would convert an honest
-  `Unverified` into a false `NotRevoked` for every grant ever issued.
-
-## 0.21.0 (2026-07-21)
-
-The accountability release. Treeship starts answering not just "was this signed?"
-but "what was it authorized to do, what did it actually touch, and how confident
-are we the effect really happened?", with the verdict separating *operational
-confidence* from *cryptographic validity*.
-
-### Added
-- **action/v2 receipt format (verification path).** An additive superset of
-  `action.v1`: the signed payload now carries a per-hop **`mandate`** (the authority
-  an action ran under, grantor, scope, audience, expiry, delegation depth,
-  revocation) and an **`effect`** block (what the action touched, input/output/
-  readback hashes, bytes moved, cost, side effects, context snapshot). Fully optional
-  and backward-compatible; existing v1 artifact IDs are unaffected. This release
-  ships the format, the core types, and verification; CLI emission of v2 receipts is
-  a follow-up.
-- **`effect_confidence`, the honest effect verdict ("the ack is not the act").** An
-  actor declares how confident it is that an action's real-world effect happened
-  (`verified` / `partial` / `ambiguous` / `unknown` / `not_verified`). `verify_effect`
-  reconciles that claim against independent, actor-unmintable evidence (an external
-  `readback`, or a witness a trusted authority vouches for): a `Verified` claim with
-  no such evidence is downgraded, never taken on faith, and the verdict separates
-  operational confidence from cryptographic validity. Honest lesser claims pass
-  through unchanged, the verifier blocks inflation, it does not erase an actor's own
-  hedging.
-- **Runtime identity on action/v2.** Optional `provider` / `model` /
-  `tool_schema_hash` / `system_prompt_hash`, bound into the signed statement, so a
-  verifier holding a pinned expectation can detect a swapped model, an altered tool
-  set, or a changed system prompt after the fact.
-- **Witness map on effects.** Independent corroborating observers per effect. A
-  witness lifts the confidence ceiling only once a `WitnessAuthority` confirms its
-  signature against a trusted, non-actor key observing the same post-state; the
-  default authority trusts nothing, so a bundled witness never inflates a verdict on
-  its own.
-- **Unified verifier in the browser and SDKs.** Resolution and presentation
-  verification moved into `treeship-core` and exposed via WASM + the TS/Python SDKs,
-  so browser and edge verification run the same logic as the CLI.
-- **Memory-provenance binding spine.** Quarantine-gated approvals (a high-privilege
-  action's grant is withheld if a memory-provenance check comes back dirty, and the
-  denial is itself signed), and signed **`blocked.v1`** refusal artifacts that make
-  negative space, what an agent was stopped from doing, and why, first-class
-  evidence.
-
-### Changed
-- **`treeship trust add --kind`** accepts the v0.19 split kinds `cert_issuer`,
-  `hub_org`, and `revoker` alongside the existing ones, closing the pin-exchange gap
-  where a counterparty following the documented flow hit a CLI error.
-- **`treeship verify`** surfaces the action/v2 effect verdict, a `runtime:` line and
-  an `effect:` line on the timeline, and the same verdict in `--json`, kept clearly
-  distinct from the signature check.
-
-### Docs
-- **Full docs truth-sync.** Every documented CLI command, Hub API route, and SDK
-  contract regenerated from code and rewritten to match what v0.20+ actually does,
-  plus CI drift gates (generated command matrix, feature inventory, docs routes) that
-  fail on any code-vs-docs divergence, so a docs lie now requires deliberately
-  overriding a failing check rather than simply forgetting.
 
 ## Older releases
 

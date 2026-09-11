@@ -4,6 +4,8 @@ description: "The approvalNonce field in Treeship's ActionStatement is doing a l
 date: 2025-10-07
 tags: ["security", "cryptography"]
 readTime: "7 min read"
+category: security
+systems: []
 ---
 
 Approval reuse is subtle. An agent gets permission to perform one action, and -- without cryptographic binding -- nothing stops that approval from being used again. The nonce is the fix, and it's six characters of schema design.

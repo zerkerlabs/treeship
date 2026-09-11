@@ -1,0 +1,66 @@
+---
+title: "Treeship 0.7: session receipts you can verify offline"
+description: "A closed session now becomes a .treeship package with a Merkle root, a static verifier page, a public hub URL, and A2A middleware."
+date: 2026-04-15
+written: 2026-09-11
+category: release
+release: "0.7.2"
+systems: [cli, hub, a2a, mcp, python-sdk]
+tags: [receipts, sessions, merkle, hub, handoffs, release]
+readTime: "5 min read"
+---
+
+# Treeship 0.7: session receipts you can verify offline
+
+## What shipped
+
+Treeship 0.7 introduced the Session Receipt. When a session closes, the CLI composes a deterministic receipt over everything the session recorded and writes it as a `.treeship` package under `.treeship/sessions/`. The package holds `receipt.json`, `merkle.json`, `render.json`, a per-artifact inclusion proof, and a static `preview.html`. The receipt carries a Merkle root over the session's artifacts.
+
+Three point releases built the surface out between 9 April and 15 April. 0.7.0 shipped the package, the hub endpoints, and the `@treeship/a2a` middleware. 0.7.1 fixed findings from a Codex adversarial review. 0.7.2 made `preview.html` a self-contained verifier and wired MCP tool calls into the session timeline.
+
+- `treeship package inspect` and `treeship package verify` read a package offline; no hub is required.
+- `treeship session report` uploads a closed receipt to the hub and prints its permanent public URL.
+- `treeship session event` appends structured events to the active session; the MCP bridge, A2A bridge, and SDKs use it.
+- `@treeship/mcp` emits an `agent.called_tool` event after each tool call, and failed tool calls are now audited.
+- `treeship declare` writes `.treeship/declaration.json` with `bounded_actions`, `forbidden`, and `escalation_required`.
+- `TREESHIP_MODEL`, `TREESHIP_TOKENS_IN`, `TREESHIP_TOKENS_OUT`, and `TREESHIP_COST_USD` capture model and token usage into the receipt when set before `treeship wrap`.
+- The daemon detects sensitive file reads by tracking atime, and emits `agent.read_file` with `capture_confidence: "inferred"`.
+- Python: `Treeship.session_report(session_id=None)` returns the receipt URL, agent count, and event count.
+
+## Why it matters
+
+Before 0.7, a session was a chain of individual artifacts. Handing that to someone meant handing them a set of files and a verification procedure. Now the unit of exchange is one package. It can be sent as an attachment, opened in a browser with no network, or fetched from a permanent URL.
+
+The failure this closed was the read gap. Prior releases could see writes but not reads, so an agent opening `.env`, a `.pem` file, or `.ssh/*` was invisible. The daemon now walks dotfiles at the project root and one level into `.aws`, `.ssh`, `.gnupg`, `.docker`, and `.kube`, and records a read event when atime advances on a file matching an `on: access` rule.
+
+## How it works
+
+```bash
+treeship session close
+treeship package verify .treeship/sessions/<id>.treeship
+treeship session report
+treeship hub open
+```
+
+`session close` composes Session Receipt v1. 0.7.1 changed it to delete `session.json` before composing, so a late daemon event cannot land in the log but miss the receipt. The Merkle root is the full 256-bit SHA-256 value; 0.7.0 stored a truncated 64-bit prefix, and the changelog says receipts from before 0.7.1 should be regenerated.
+
+`package verify` recomputes the Merkle root from the listed artifacts, verifies each inclusion proof, and checks timeline ordering. `preview.html` runs the same checks client-side through Web Crypto, with zero network calls, so a reader can open the file air-gapped. Its verdict language is deliberate: "Merkle structure verified", not "Verified". Empty states are grey "not captured", and green only appears for things the session measured.
+
+`session report` uploads with `PUT /v1/receipt/{session_id}`, DPoP-authenticated. The hub takes atomic first-write ownership, so a second dock cannot overwrite the `dock_id`, and receipts are write-once; a byte-identical replay is accepted for retry safety. `GET /v1/receipt/{session_id}` is public with no auth and serves the raw receipt JSON with an immutable cache header. `hub open` mints a short-lived share token bound to the dock and opens a browser URL that needs no private key on the client.
+
+For A2A, `TreeshipA2AMiddleware` hooks `onTaskReceived` for an awaited intent, `onTaskCompleted` for a chained receipt, `onHandoff`, and `decorateArtifact`. `verifyReceipt` and `verifyArtifact` run pre-delegation trust checks. The extension URI is `treeship.dev/extensions/attestation/v1`, and the package has zero runtime dependencies and never throws.
+
+## What it does not do
+
+`package verify` in 0.7 proves structure: the root recomputes, the proofs hold, the timeline is ordered. It does not check the Ed25519 signature on each artifact inside the package, and the package does not carry those envelopes. That gap stayed the design until 0.31.2. Sensitive file reads are inferred from atime, and the event says so in `capture_confidence`. The declaration compares declared against actual tool usage and flags unauthorized calls; it does not block them. Token and cost fields are only as honest as the environment variables the caller sets.
+
+## Where to go next
+
+- [Session receipts](/docs/concepts/session-receipts): what a receipt contains and what its root covers.
+- [`treeship session`](/docs/cli/session) and [`treeship package`](/docs/cli/package): CLI reference.
+- [Receipt format](/docs/reference/receipt-format): field-by-field reference.
+- [A2A integration](/docs/integrations/a2a): the middleware and AgentCard helpers.
+- [A2A and Treeship](/blog/a2a-treeship-the-trust-layer-for-agent-to-agent): the post that shipped with 0.7.0.
+- [Treeship 0.31.2: sealed packages now verify their signatures](/blog/treeship-0-31-2-sealed-packages-verify-signatures): the day `package verify` started checking signatures.
+
+*This entry was written on 11 September 2026 from the 0.7.0, 0.7.1 and 0.7.2 changelog and the code as released, and is filed under the release date.*

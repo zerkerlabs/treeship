@@ -3,6 +3,8 @@ import { notFound } from 'next/navigation';
 import defaultMdxComponents from 'fumadocs-ui/mdx';
 import Link from 'next/link';
 import { BlogChrome } from '../chrome';
+import { CategoryChip, SystemChip } from '@/components/blog-list';
+import { CATEGORIES, tagSlug, type Category } from '@/lib/taxonomy';
 
 export default async function BlogPost(props: {
   params: Promise<{ slug: string[] }>;
@@ -13,7 +15,15 @@ export default async function BlogPost(props: {
 
   const MDX = post.data.body;
   const tags: string[] = post.data.tags ?? [];
-  const kicker = [post.data.date, ...tags].filter(Boolean).join(' · ');
+  const systems: string[] = post.data.systems ?? [];
+  const category = post.data.category as Category;
+  const kicker = [
+    CATEGORIES[category].singular,
+    post.data.release ? `v${post.data.release}` : undefined,
+    post.data.date,
+  ]
+    .filter(Boolean)
+    .join(' · ');
   const image = `https://docs.treeship.dev/og?${new URLSearchParams({
     title: post.data.title,
     description: post.data.description ?? '',
@@ -26,7 +36,8 @@ export default async function BlogPost(props: {
     description: post.data.description ?? '',
     datePublished: post.data.date ? `${post.data.date}T00:00:00Z` : undefined,
     image,
-    keywords: tags.join(', ') || undefined,
+    keywords: [...tags, ...systems].join(', ') || undefined,
+    articleSection: CATEGORIES[category].label,
     mainEntityOfPage: `https://docs.treeship.dev${post.url}`,
     author: { '@type': 'Organization', name: 'Zerker Labs', url: 'https://zerkerlabs.com' },
     publisher: {
@@ -52,9 +63,27 @@ export default async function BlogPost(props: {
         {post.data.description && (
           <p className="doc-lede mb-2 max-w-[780px]">{post.data.description}</p>
         )}
-        <div className="doc-meta mb-10 flex flex-wrap gap-x-6 gap-y-2 border-b border-zk-hairline pb-4 pt-4">
-          {post.data.readTime && <span>{post.data.readTime}</span>}
-          <Link href="/blog" className="text-zk-text-secondary no-underline hover:text-zk-accent">
+        <div className="mb-10 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-zk-hairline pb-4 pt-4">
+          <CategoryChip category={category} />
+          {systems.map((id) => (
+            <SystemChip key={id} id={id} />
+          ))}
+          {tags.map((t) => (
+            <Link
+              key={t}
+              href={`/blog/tag/${tagSlug(t)}`}
+              className="doc-meta no-underline hover:text-zk-accent"
+            >
+              #{tagSlug(t)}
+            </Link>
+          ))}
+          {post.data.readTime && <span className="doc-meta">{post.data.readTime}</span>}
+          {post.data.written && (
+            <span className="doc-meta" title="A retrospective entry, filed under the date of the release it documents.">
+              written {post.data.written}
+            </span>
+          )}
+          <Link href="/blog" className="doc-meta ml-auto text-zk-text-secondary no-underline hover:text-zk-accent">
             All posts
           </Link>
         </div>
