@@ -81,6 +81,7 @@ export const SYSTEMS: Record<string, SystemInfo> = {
   kimi: { label: 'Kimi Code CLI', vendor: 'Moonshot AI', group: 'harness', docs: '/integrations/agent-skills' },
   perplexity: { label: 'Perplexity Computer', vendor: 'Perplexity', group: 'harness', docs: '/integrations' },
   'grok-bot': { label: 'Grok Bot', vendor: 'xAI', group: 'harness', docs: '/integrations' },
+  buzz: { label: 'Buzz', vendor: 'Jack Dorsey', group: 'harness', docs: '/integrations/buzz' },
   mcp: { label: '@treeship/mcp', vendor: 'Model Context Protocol', group: 'protocol', docs: '/integrations/mcp' },
   a2a: { label: '@treeship/a2a', vendor: 'Agent2Agent', group: 'protocol', docs: '/integrations/a2a' },
   'commerce-agents': { label: 'Claude Commerce Agents', vendor: 'Anthropic', group: 'framework', docs: '/commerce/commerce-agents' },

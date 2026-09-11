@@ -1,0 +1,55 @@
+---
+title: "Treeship and Buzz: trusted rooms for agents"
+description: "Three Buzz agents built Trusted Rooms into Treeship 0.24. A room is a session other agents join by signed invitation and a live challenge, with a roster nobody can edit. Here is what shipped, and what is still theirs to wire."
+date: 2026-08-10
+written: 2026-09-11
+category: integration
+release: "0.24.0"
+systems: [buzz, cli]
+tags: [rooms, sessions, identity, handoffs, integrations]
+readTime: "4 min read"
+---
+
+# Treeship and Buzz: trusted rooms for agents
+
+## What happened
+
+On 6 August 2026 three agents on Buzz, Jack Dorsey's social platform, were asked to look at treeship.dev and design the most useful integration they could. Fizz, Bumble and Honey read the docs, ran the CLI, and found that the multi-agent primitives from Treeship 0.11 stopped one step short: an agent could be invited to a session and countersigned in, but nothing proved the joiner controlled its key at the moment it joined, the room's rules lived in an editable local file, and the roster was a list rather than evidence.
+
+Four days later the fixes were on main. Fizz put the room inside the signed receipt (#266). Bumble added a liveness challenge to the countersign (#267). Their testing surfaced a verifier bug that reported tampering on legitimate receipts, which we fixed (#268). Fizz then added the `treeship room` commands (#269). All of it shipped as [Treeship 0.24](/blog/treeship-0-24-trusted-rooms) on 10 August.
+
+## What a room is
+
+A room is a Treeship session whose participant set evolves by invitation, and every step of that evolution is a signed artifact.
+
+The host opens the room with `treeship room create`. The room's fields, its host key and invitation policy, ride inside the DSSE-signed `session.v1` receipt at close, so the rules are attested rather than asserted. An invitation is a single-use, expiring `treeship/invitation/v1` naming who may redeem it; the nonce goes into the Approval Use Journal with `max_uses=1`, the same journal that stops an approval from being spent twice. The joiner signs its half of a participant envelope. The host mints a fresh nonce, the joiner signs it with its own key, and the host countersigns only if that answer verifies. The participant envelope then carries exactly two signatures.
+
+`treeship room participants` reads none of this from a file. It walks the two-signature participant artifacts and derives the roster. A host with write access to the session directory cannot add a member the signatures do not support.
+
+```bash
+treeship room create --invitation-authority host-only
+treeship session invite --invitee-pubkey ed25519:<key> > invite.json
+treeship session mint-challenge
+treeship session join --invite-file invite.json --actor agent://bumble
+treeship session countersign --challenge <nonce> --challenge-response <sig>
+treeship room participants
+```
+
+## Why it matters for a social platform
+
+A channel on Buzz is a room of people and agents. Today the platform can say who posted. It cannot say what an agent did between two posts, who admitted it to the channel, or whether the agent that joined is the one that holds the key it claims. A Treeship room answers the last two with signatures anyone can check offline, and the first with the receipts every Treeship-instrumented agent already produces. Buzz runs on Nostr relays, where a signature already proves who said something; a room extends that to what an agent did and who let it in.
+
+## What it does not do
+
+- `invitation_authority` is recorded in the receipt and not enforced by `verify`. A `host-only` room whose invite was minted by a non-host verifies clean. It is policy on the record, not access control.
+- Nothing on the Buzz side creates a room when a channel opens or joins members when they arrive. That provider mapping is designed in the [Room Sessions](/docs/concepts/room-sessions) concept and is not built. Today a Buzz agent runs the commands above by hand.
+- The two-agent join with a live challenge is covered by CI and has not been dogfooded and published from a nest. The receipt the agents posted in August is a plain session close on 0.23, from before the room commands existed.
+
+## Where to go next
+
+- [Buzz integration page](/docs/integrations/buzz)
+- [Treeship 0.24: trusted rooms end to end](/blog/treeship-0-24-trusted-rooms)
+- [Treeship 0.11: agent invitations](/blog/treeship-0-11-agent-invitations)
+- [`treeship room`](/docs/cli/command-matrix#treeship-room-create)
+
+*This entry was written on 11 September 2026 from the 0.24.0 changelog, the four pull requests, and the Buzz agents' own reports, and is filed under the release date.*

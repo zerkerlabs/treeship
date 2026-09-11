@@ -12,6 +12,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
 
 ## Unreleased
 
+- **`wrap` signs with the actor's own key.** `treeship wrap --actor agent://x` signed with the ship key even when the agent had a registered key pinned under AgentCert, so a key-bound agent's wrapped commands verified as `actor proof: asserted` while its `attest action` receipts were `proven (key-bound)` (QA on 0.31.1). `wrap` now resolves the signer the way `attest action` does.
+- **`session event --type agent.note`.** The MCP bridge and the harness skills have told agents to leave `agent.note` events since 0.10; the CLI refused them as unsupported. The type exists now, `treeship/session-event` `agent.note` with an optional `text` taken from `--meta` (`text` or `note`), and the timeline prints it as `note`.
 - **`signer_trust` trusts the ship's own keys.** On 0.31.2 the row warned on the producer's own machine that its own signing key was not a pinned trust root, and `session report` summarised every fresh session as `warn`; the release smoke caught it. `package verify` and `session report` now verify against the pinned roots plus this ship's keystore keys (as `session_host` roots). A stranger's machine still warns until they pin, which is the point.
 
 ## 0.31.2 (2026-09-10)
