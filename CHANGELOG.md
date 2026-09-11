@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.31.3 (2026-09-11)
 
 - **`scripts/coverage-audit.py`: what shipped versus what is documented.** Crosses merged PRs, changelog sections, docs integration pages, blog systems and the treeship.dev card data, per system and per release, and lists the PRs a release section does not reflect. It found Buzz, Rig, the SSRF guard, the hub hardening and the plugin's approval recording missing from the changelog; each now has a dated addendum in its section. Docs pages added for Rig and Grok Bot.
 - **`wrap` signs with the actor's own key.** `treeship wrap --actor agent://x` signed with the ship key even when the agent had a registered key pinned under AgentCert, so a key-bound agent's wrapped commands verified as `actor proof: asserted` while its `attest action` receipts were `proven (key-bound)` (QA on 0.31.1). `wrap` now resolves the signer the way `attest action` does.
