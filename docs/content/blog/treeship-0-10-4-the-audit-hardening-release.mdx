@@ -1,0 +1,74 @@
+---
+title: "Treeship 0.10.4: the audit hardening release"
+description: "A keystore that claimed AES-GCM but was not, verifiers that trusted embedded keys, and a Merkle downgrade path. 0.10.3 and 0.10.4 close the audit findings and publish TS-2026-001."
+date: 2026-05-17
+written: 2026-09-11
+category: security
+release: "0.10.4"
+systems: [python-sdk, wasm-verifier, typescript-sdk, hub, openclaw, codex]
+tags: [keystore, security-advisory, trust-roots, merkle, verifier, security]
+readTime: "5 min read"
+---
+
+# Treeship 0.10.4: the audit hardening release
+
+## What shipped
+
+A post-launch security audit of 0.10.2 found eleven P0 issues across the crypto, trust, and supply-chain surfaces. 0.10.3 closes every one. 0.10.4 closes the P1 follow-ups that surfaced while landing them. The pair makes the crypto and trust paths live up to what the protocol already claimed.
+
+The headline is the keystore. The code and docs said private keys were encrypted with AES-256-GCM. The implementation was a homemade SHA-256-CTR keystream with an HMAC-SHA-256 tag, and the keystream was degenerate: one SHA-256 output byte was reused for every plaintext byte via `block[i % 32]`. Advisory TS-2026-001 rates it High, CVSS 7.1, local only. An attacker with read and write access to `~/.treeship/keys/` could recover an Ed25519 private key with known plaintext, forge a key file, or swap in a controlled key. No field exploitation was observed. 0.10.3 replaces the construction with the RustCrypto `aes-gcm` crate.
+
+Other changes across the two versions:
+
+- `treeship trust` with `list`, `add`, and `remove` over `~/.treeship/trust_roots.json`; checkpoint, hub-org checkpoint, and agent-certificate verification now require a pinned root.
+- Merkle hashing uses RFC 9162 domain separation, and receipts carry `merkle_version: 2`.
+- Checkpoint canonical signing binds `merkle_version` in 0.10.3, then `canonical_version`, `algorithm`, and `zk_proof_digest` in 0.10.4's v3 format.
+- The verifier refuses zero-signature envelopes and `bundle::import` refuses unverified envelopes; the fake `chain_linkage = pass` row is gone.
+- The Python SDK verifies the CLI binary's SHA-256 before exec, matching the npm side from 0.10.1.
+- `Ed25519Signer` zeroizes its secret key on drop, and security-sensitive randomness uses `OsRng`.
+- TOCTOU windows in `Store::signer()` and `TrustRootStore::open()` are closed by opening once and fstat-checking the descriptor.
+- The OpenClaw plugin captures tool calls again under OpenClaw's `beforeToolCall` and `afterToolCall` hook API.
+- GitHub Actions are pinned to commit SHAs, and `contents: write` is scoped to the release job.
+
+## Why it matters
+
+Before 0.10.3, a checkpoint or agent certificate verified against whatever public key it embedded, so a self-signed forgery always passed. `replay-hub-org` warned on an untrusted signature and exited 0 unless you passed `--strict`. A 64-byte artifact id whose SHA-256 matched an internal node hash could forge an inclusion proof, and `verify_proof` dispatched on the attacker-controllable `proof.merkle_version`, which was the downgrade primitive. Under all of that sat a keystore whose "AEAD" guarantee never existed.
+
+After these releases, the verifier fails closed on an unpinned issuer, the version selector is bound into the signature, and the keys that sign receipts are protected by a real AEAD. Every wire-controllable field that participates in dispatch or display is bound into the canonical, which is the fix shape 0.10.4 applies to the long tail.
+
+## How it works
+
+```bash
+treeship trust add <key_id> <pubkey> --kind hub_checkpoint --yes
+treeship trust list
+treeship verify <path>
+treeship merkle verify
+```
+
+`treeship trust add` pins an issuer key under one of `hub_checkpoint`, `ship`, or `agent_cert`. It prints the key's 16-hex-character SHA-256 fingerprint and requires a y/N confirmation or `--yes`; a replacement shows both fingerprints so a swap is visible. The file is mode `0o600`. `verify_package` loads it automatically and emits a `trust-root` fail row if the file is malformed or too open, rather than falling back to an empty store. `TREESHIP_TRUST_ROOTS` overrides the path with a one-time stderr warning, because that variable is exactly the lever a CI attacker would pull.
+
+The new keystore entry is `[magic=0x54, version=0x02, nonce(12), ciphertext || tag(16)]`: a 96-bit random nonce per write and a 128-bit GCM tag. The AAD binds the framing prefix, the entry id, and the public key, so copying entry A's ciphertext into entry B's envelope fails the MAC. Migration is automatic on first decrypt, written atomically with an advisory lock, and retried if the write fails.
+
+For Merkle trees, leaves are prefixed `0x00` and internal nodes `0x01`. `MerkleTree::verify_proof` now takes `expected_version` from a signature-verified checkpoint or parent receipt section and rejects a proof that disagrees. Receipts without the field deserialize as version 1 and still verify. A v3 checkpoint signs `"v3|{canonical_version}|{merkle_version}|{algorithm_or_empty}|{zk_proof_digest_or_empty}|{index}|{root}|{tree_size}|{height}|{signer}|{signed_at}"`, and flipping `canonical_version` on the wire fails because the bytes re-canonicalize differently.
+
+The WASM exports `verify_certificate`, `cross_verify`, and `verify_merkle_proof` take a `trust_roots_json` argument, where an empty string fails closed. `@treeship/verify` exposes it as `trustRoots`.
+
+## What it does not do
+
+- No backport to 0.9.x. Users there upgrade to receive the keystore fix.
+- The `treeship-vi` sibling keystore is not migrated and stays on the prior construction until vi's own release. Plan to rotate vi-issued keys after that.
+- `treeship trust extract` is tracked separately and not shipped. Operators with existing hub artifacts extract the embedded key by hand from `hub_public_key`, `public_key`, or `signature.public_key`.
+- Third-party verifiers that reproduce the canonical string outside the Rust core must update for both v2 and v3.
+- v1 Merkle verification is scheduled for removal in 0.13.0.
+- The daemon's `update_checkpoint_with_proof` is broken by design under v3 and tracked as a 0.10.5 follow-up; it affects only operators with the opt-in `zk` feature.
+- `TREESHIP_ALLOW_INSECURE_KEY_PERMS=1` still bypasses permission checks, with a warning.
+
+## Where to go next
+
+- [CLI: trust](/docs/cli/trust)
+- [Trust model](/docs/concepts/trust-model)
+- [Security](/docs/concepts/security)
+- [Merkle proofs](/docs/guides/merkle-proofs)
+- [OpenClaw integration](/docs/integrations/openclaw)
+
+*This entry was written on 11 September 2026 from the 0.10.3 and 0.10.4 changelogs and the code as released, and is filed under the release date.*

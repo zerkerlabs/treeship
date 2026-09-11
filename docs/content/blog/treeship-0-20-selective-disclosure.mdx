@@ -1,0 +1,64 @@
+---
+title: "Treeship 0.20: selective disclosure"
+description: "An agent can present only the capabilities a verifier needs, and the unsound Groth16 path is quarantined in favor of a statement-first design."
+date: 2026-07-12
+written: 2026-09-11
+category: release
+release: "0.20.0"
+systems: []
+tags: [capability-cards, zk, identity, docs, release]
+readTime: "4 min read"
+---
+
+# Treeship 0.20: selective disclosure
+
+## What shipped
+
+An agent can now prove a subset of what it is authorized to do without revealing the rest. `treeship present --disclose <caps>` layers an SD-JWT-style disclosure over the existing DSSE signature. The verifier reconstructs the disclosed subset, checks it against the signed commitment, and learns nothing about the withheld entries. The card's signature still verifies.
+
+The second change is a correction. The experimental Groth16 zero-knowledge path was not sound to ship. It had no trusted-setup ceremony, and its proofs were not bound to the statement being proven, so a proof could be replayed or forged. That path is quarantined, the dead ZK code is deleted, and the docs no longer imply it was authoritative.
+
+Also in this release:
+
+- Core gains `disclose_capabilities` and `reconstruct_capabilities`, round-trip tested end to end.
+- The design formerly called `zk-verification` is renamed private verification, is statement-first, and names its two tiers concretely.
+- `treeship zk-setup` and `zk-tls-setup` scaffold the SRI-identified building blocks for that design.
+- A private-verification spec with the first-principles argument and citations, and a first-draft "cyberlogic" theory of Treeship's trust model.
+
+## Why it matters
+
+A capability card commits to an agent's full capability set. Until now, presenting the card meant presenting all of it. A payments counterparty had to see every unrelated tool an agent could call, and an agent working for several parties leaked its whole tool inventory to each of them. Now the holder chooses what each verifier sees, and the verifier still gets a signature it can check against its own trust roots.
+
+The ZK correction matters because a proof that is not bound to its statement is worse than no proof. It reads as verified while proving nothing about the claim in front of you. Shipping that under the Treeship name would have put an unsound check in the same trust ladder as the checks that hold. Quarantining it keeps the default trust path honest.
+
+## How it works
+
+```bash
+treeship present <agent> --disclose <caps>
+treeship verify-presentation <path>
+treeship zk-setup
+```
+
+`--disclose` takes the capability names to reveal. The presentation carries the disclosed entries in the open and the rest as commitments. On the verifying side, `reconstruct_capabilities` rebuilds the disclosed subset and checks it against the signed commitment. Three properties hold: the withheld set cannot be forged, it cannot be silently extended, and an omitted capability cannot be presented as disclosed. The verifier learns which capabilities were disclosed and that the card's signature covers the full commitment. It does not learn what was withheld.
+
+The private-verification design is statement-first. It starts from the statement a verifier needs proven and works back to the mechanism, rather than starting from a proof system and searching for a use. `zk-setup` and `zk-tls-setup` lay down the building blocks that design identifies, with subresource-integrity identification so what is fetched is what was reviewed.
+
+## What it does not do
+
+This is the release where the ZK story is stated plainly, so here is the plain version.
+
+- The `zk` feature remains pre-release and non-authoritative. Nothing in the default trust path depends on it.
+- `zk-setup` and `zk-tls-setup` are scaffolding. They do not produce a proof that a Treeship verifier treats as authoritative.
+- The quarantined Groth16 path is gone from the shipping surface, not repaired. There is no trusted-setup ceremony and no statement binding in any shipped ZK proof.
+- Selective disclosure is not zero-knowledge. It hides withheld entries behind commitments in a signed card. It is the SD-JWT shape, not a ZK proof.
+- Per the CLI's own help text, a disclosed presentation is an ephemeral re-sign and is not transparency-anchored, so it omits the Merkle staple.
+
+## Where to go next
+
+- [Capability cards](/docs/concepts/capability-cards)
+- [Zero-knowledge proofs](/docs/concepts/zero-knowledge)
+- [CLI: present / verify-presentation](/docs/cli/present)
+- [Treeship 0.18: onboard once, present anywhere](/blog/treeship-0-18-onboard-once-present-anywhere)
+- [Privacy in agent workflows: attestation without exposure](/blog/privacy-in-agent-workflows-attestation-without-exposure)
+
+*This entry was written on 11 September 2026 from the 0.20.0 changelog and the code as released, and is filed under the release date.*

@@ -1,0 +1,83 @@
+---
+title: "Treeship 0.18: onboard once, present anywhere"
+description: "Signed work history, certificate chains to the ship, offline presentations with a challenge handshake, and a checkpoint-pinned track record."
+date: 2026-07-07
+written: 2026-09-11
+category: release
+release: "0.18.0"
+systems: [hub, mcp, a2a, claude-code-plugin]
+tags: [identity, sessions, capability-cards, merkle, trust-roots, release]
+readTime: "5 min read"
+---
+
+# Treeship 0.18: onboard once, present anywhere
+
+## What shipped
+
+Four releases in two days completed the identity stack. An agent now goes from nothing to verifiable with `treeship onboard`, carries its own certificate chain to its ship, hands a counterparty a presentation that verifies fully offline, and answers a live challenge to prove it holds the key right now. Its closed sessions become signed work-history records, and its track record is pinned to a Merkle checkpoint so a mismatch is a provable lie.
+
+From 0.16.0:
+
+- `treeship session close` mints a `session.v1` receipt with headline, outcome, duration, `tools_exercised`, counts, a `receipt_digest`, and an attestation class of `self`, `runtime`, or `countersigned`.
+- `treeship keys export` prints a key's public half as `ed25519:<base64url>` together with the exact `treeship trust add` commands a counterparty runs.
+- Capability matching now handles mid-pattern globs like `Bash(git:*)` captured from a Claude Code `settings.json`.
+
+From 0.17.0:
+
+- `agent register --own-key` also mints a typed `agent_cert.v1` receipt, signed by the ship key, binding `agent://<name>` to its per-agent public key.
+- `treeship present` and `verify-presentation` carry the card, the cert chain, known revocations, and a Merkle staple, with `--max-staple-age` turning freshness into a `STALE` verdict.
+- `present --challenge <nonce>` and `verify-presentation --challenge` prove the bearer controls the key now.
+- `treeship onboard` composes register, `attest card`, and `--publish` in one idempotent pass.
+
+From 0.17.1 and 0.18.0:
+
+- `merkle publish` and `merkle proof` build the tree truncated to the checkpoint's `tree_size`, and `merkle proof` refuses an artifact newer than the checkpoint.
+- `resolve`, `audit`, `verify-capability`, and `verify-presentation` exit nonzero on a hostile verdict and emit one JSON verdict object under `--format json`.
+- `treeship profile` and `verify-profile` compute a checkpoint-pinned track record, with `--attest` signing it as a `profile.v1` claim.
+- `treeship history <agent>` projects the log to signed `session.v1` records, filterable with `--class self|runtime|countersigned`, `--since`, and `--limit`.
+
+## Why it matters
+
+Before 0.17.0 a counterparty had to pin every agent's leaf key by hand, and verification needed a registry in the loop. Now a counterparty pins one ship key and verifies every agent under it, the same shape as a TLS chain. A static presentation proves the record, and the challenge proves the bearer.
+
+Two bugs found by dogfooding made the fixes urgent. Registering a second agent in the same workspace silently overwrote the first agent's card, because the agent's name was not part of `derive_agent_id`. And every Merkle proof emitted after a checkpoint reconstructed the wrong root, so legitimate artifacts read `inclusion INVALID` to every auditor. Both are fixed and regression-tested.
+
+## How it works
+
+```bash
+treeship onboard <agent> --publish
+treeship keys export
+treeship present <agent>
+treeship verify-presentation <path> --max-staple-age 15m
+treeship present <agent> --challenge <nonce>
+treeship verify-presentation <path> --challenge <nonce>
+treeship profile <agent> --attest
+treeship verify-profile <path>
+treeship history <agent> --class countersigned
+```
+
+`onboard` runs `agent register --own-key`, `attest card` from `--from-harness`, `--tools-json`, `--from-a2a`, or `--tools`, and with `--publish` the full `publish`, `merkle checkpoint`, and `merkle publish` anchor. It ends by printing the trust bundle: the `trust add` commands for `agent_cert` and `hub_checkpoint`, plus the `resolve` and `audit` commands that verify the agent.
+
+`verify-presentation` walks the `agent_cert.v1` chain to a pinned ship root, with the pubkey always taken from your trust store and never from the wire. It enforces the validity window fail-closed, honors authorized revocations, re-checks the staple's checkpoint signature and inclusion proof, and reports the staple age as an explicit bound. In challenge mode the response is checked only against the subject key the card verification itself established. A replayed response, a response signed by a non-card key, or a tampered timestamp each reject with a specific reason.
+
+`verify-profile` rebuilds the log's first `tree_size` leaves at the pinned checkpoint, cross-checks the root against the pin, recomputes every field through the same aggregation path as `profile`, and compares. A match grades the profile `checked`. A mismatch names the differing field and exits nonzero. `history` re-verifies every `session.v1` envelope on your machine and re-proves each anchored entry's inclusion offline.
+
+## What it does not do
+
+- A static presentation is replayable. It proves the record, not the bearer. Only challenge mode proves live key control.
+- The `session.v1` record is best-effort. A record failure warns and never wedges `session close`, and the sealed package stays the source of truth.
+- `anchored` is not an attestation class the record carries. It is a later, derivable state.
+- History proves what was recorded, never everything that happened.
+- Keystore entries rewrapped under the hardware machine key in 0.16.0 are not decryptable by older binaries. Keep one CLI version per machine.
+- `keys export` in this range emits `--kind ship`. The kind was split three ways in 0.19.0.
+
+## Where to go next
+
+- [The agent handshake](/docs/concepts/agent-handshake)
+- [Agent identity](/docs/concepts/agent-identity)
+- [CLI: present / verify-presentation](/docs/cli/present)
+- [CLI: onboard](/docs/cli/onboard)
+- [CLI: profile / verify-profile](/docs/cli/profile)
+- [Treeship 0.19: the security-hardening release](/blog/treeship-0-19-the-security-hardening-release)
+
+*This entry was written on 11 September 2026 from the 0.16.0, 0.17.0, 0.17.1, and 0.18.0 changelog and the code as released, and is filed under the release date.*

@@ -1,0 +1,67 @@
+---
+title: "Treeship 0.31: Verifiable Intent credentials, shipped"
+description: "treeship vi implements the Verifiable Intent v0.1 draft, signs the Layer 3 pair with a Treeship receipt-chain attestation inside, and interoperates with the reference SDK both ways in CI."
+date: 2026-09-08
+written: 2026-09-11
+category: release
+release: "0.31.0"
+systems: [verifiable-intent, commerce-agents, python-sdk, cli]
+tags: [approvals, receipts, keystore, verifier, docs, release]
+readTime: "5 min read"
+---
+
+# Treeship 0.31: Verifiable Intent credentials, shipped
+
+## What shipped
+
+Treeship 0.31 ships `treeship vi`, an independent implementation of the Verifiable Intent v0.1 draft, the credential standard for agent commerce maintained by Mastercard and co-developed with Google. It lives in `treeship-core::vi` with a CLI on top, and it interoperates with the reference SDK in both directions, tested in CI. It is not endorsed by, and does not speak for, the standard's maintainers.
+
+The four commands cover the agent's side of the credential chain:
+
+- `vi keygen` mints the agent's P-256 key, sealed by the ship keystore, and prints the JWK a wallet binds under `cnf`.
+- `vi check` asks whether a purchase fits a Layer 2 mandate, without signing anything.
+- `vi attest` signs the Layer 3 pair, L3a for the payment network and L3b for the merchant, as key-bound SD-JWTs with `sd_hash` over recipient-specific L2 presentations and `transaction_id == checkout_hash`, refusing anything outside the mandate before signing.
+- `vi verify` runs the reference verifier's checks plus the Treeship attestation and, with `--local`, the chain it names.
+
+The spec's optional `agent_attestation` claim carries a `treeship.receipt-chain.v1` value: a ship-signed statement, stored as an artifact chained onto the head, naming the session, chain head, Merkle checkpoint, approval use, mandate digest and transaction. On the commerce side, `TreeshipApprovalMixin` sets `treeship_last_approval` to `proven`, `unproven`, or `None` on the executor after every apply, and a new docs page, `/commerce/verify-a-package`, walks the counterparty through `keys export`, `trust add`, `bundle import`, and `verify`.
+
+0.31.1 followed the same day with QA fixes for the commerce integration. `order_placed` no longer forks the chain off the hand-off receipt; the order chains onto the recorder's head and names the hand-off in `meta.handoff`. `session close` lists signed artifacts that branch off the sealed chain as `unsealed_branches`. The demos run on a clean machine, the Python SDK warns once when the CLI is on another release line, and the quickstarts start with `treeship init --config .treeship/config.json`.
+
+## Why it matters
+
+Verifiable Intent defines a three-layer chain from the user's mandate to the transaction. An issuer signs L1 for the user, the user's wallet signs L2 delegating bounded authority to one agent key, and in autonomous mode the agent signs the L3 pair. The chain proves the agent was authorized. It says nothing about what the agent did between receiving the mandate and handing the cart to checkout.
+
+That gap is where Treeship plugs in, using the field the spec already provides. Before 0.31 this was a design: the April post described it, and the `packages/vi` types from that era targeted a pre-v0.1 draft and were never wired. They are retired. The code lives in `packages/core/src/vi/`, proven against the reference implementation rather than against itself.
+
+## How it works
+
+```bash
+treeship vi keygen --label shopping-agent
+treeship vi check --mandate l2.sdjwt --merchant merchant-uuid-1 --item BAB86345 --amount 27999 --currency USD
+treeship vi attest --mandate l2.sdjwt --checkout-jwt checkout.jwt \
+  --merchant merchant-uuid-1 --item BAB86345 --amount 27999 --currency USD \
+  --aud-network https://www.mastercard.com --aud-merchant https://tennis-warehouse.com \
+  --iss https://agent.example.com --out ./vi-out
+treeship vi verify --mandate l2.sdjwt --l3a vi-out/l3a.sdjwt --l3b vi-out/l3b.sdjwt \
+  --l2-payment vi-out/l2-payment.sdjwt --l2-checkout vi-out/l2-checkout.sdjwt --local --require-attestation
+```
+
+`keygen` seals the private scalar with the keystore's machine key, the same AES-256-GCM construction that protects the Ed25519 keys, and never prints it. `check` runs the eight registered constraint types with the reference checker's semantics and exits 1 on a violation. `attest` checks the request against the mandate first; if it is outside, nothing is signed and nothing is written. Each L3 half is bound to the L2 by an `sd_hash` over exactly the part of the L2 that recipient is shown, and the halves are bound to each other by `transaction_id == checkout_hash`.
+
+The attestation is an ordinary receipt: a `treeship/action/v1` statement with action `vi.l3.attested`, signed with the ship's Ed25519 key, chained onto the previous head inside the signature via `parentId`, and it becomes the new head. Its signed fields are `session`, `chain_head`, `chain_length`, `checkpoint`, `approval_use`, `mandate_digest` and `transaction_id`. The claim embeds the envelope and the signing public key, so any Ed25519 library confirms the signature without Treeship. The L3 credential itself stays signed with the agent's P-256 key as the spec requires; Treeship adds evidence underneath it.
+
+`verify` runs the reference verifier's checks, then the attestation. A verifier that does not know the scheme ignores the claim, as the spec requires. The interop suite in `tests/vi-interop` asserts that the reference's `verify_chain` and `check_constraints` do exactly that, that Treeship verifies what the reference issues, and that one edited byte fails on both.
+
+## What it does not do
+
+This implements the v0.1 draft, which is not final; claim shapes may move when the standard does. Not in scope: multi-pair L2 mandates, network-side cumulative budget and occurrence counting, and immediate mode, which has no L3. `vi verify` does not decide whether the attestation's signing key is one you trust; it prints the key and pinning is yours. And the attestation proves the credential was minted at the end of a specific signed sequence, not that the sequence was wise.
+
+## Where to go next
+
+- [treeship vi reference](/docs/cli/vi)
+- [Verifiable Intent integration](/docs/integrations/verifiable-intent)
+- [Verify a session package](/docs/commerce/verify-a-package)
+- [commerce-agents integration](/docs/integrations/commerce-agents)
+- [Verifiable Intent: how Treeship becomes the agent's proof of work](/blog/verifiable-intent-treeship-agent-attestation), the design-era post this supersedes
+
+*This entry was written on 11 September 2026 from the 0.31.0 and 0.31.1 changelog and the code as released, and is filed under the release date.*

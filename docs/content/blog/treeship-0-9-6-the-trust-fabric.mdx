@@ -33,7 +33,7 @@ Other additions:
 
 ## Why it matters
 
-Before this release, the verifier confirmed a nonce matched and stopped there. The binding was real, but the same nonce could be replayed across unlimited actions and across different actions entirely. Meanwhile an agent that changed files through a shell command left no trace in `files_written`. An audit reader could confirm the signature and still not know what the agent did, or whether it was allowed to do it.
+Before this release, the verifier confirmed a nonce matched and stopped there. The same nonce could be replayed across unlimited actions, and across different actions entirely. Meanwhile an agent that changed files through a shell command left no trace in `files_written`. An audit reader could confirm the signature and still not know what the agent did, or whether it was allowed to do it.
 
 Now the grant states its bounds, verify checks them statelessly, and the receipt commits every file change it can find before the Merkle root is sealed. A reader can answer "did this agent stay inside its bounds" with the same confidence they already had for "was this signature valid."
 
@@ -47,9 +47,9 @@ treeship verify <path>
 
 The first command mints a scoped grant. Without any `--allowed-*` flag or `--max-uses`, and without `--unscoped`, the CLI refuses to mint. Bearer approvals are opt-in now. The second command attests an action against the same subject. Verify then prints three separate rows instead of one: `approval binding` says the nonce matched a signed approval, and that is a cryptographic claim only. `approval scope` says actor, action, and subject matched the scope, or warns that the approval is unscoped and proves binding only. `replay check` always warns that the check is package-local and no global ledger was consulted.
 
-Scope checks run first-violation-wins: actor, then action, then subject, then the scope's own `valid_until`. A wrong-actor failure is never masked by a wrong-action one. If two actions in the same bundle claim the same nonce, the second is rejected as a package-local replay.
+If two actions in the same bundle claim the same nonce, the second is rejected as a package-local replay.
 
-On the capture side, the Claude Code hook calls `treeship session event` for every tool use and stamps `meta.source = "session-event-cli"`. The MCP bridge's generic `agent.called_tool` events are inspected at receipt composition, and a known tool name plus path becomes an `AgentReadFile`, `AgentWroteFile`, or `AgentExecutedCommand` event. At session close, git reconciliation runs `git diff HEAD --name-status`, `git diff <since>..HEAD --name-status`, and `git ls-files --others --exclude-standard`, dedupes against writes already captured, and appends synthetic `AgentWroteFile` events to `events.jsonl` before the root is sealed. Rename and copy entries record the destination path. Treeship's own bookkeeping under `.treeship/sessions/*` and similar paths is filtered out; user-authored files like `config.yaml` and `policy.yaml` are kept.
+On the capture side, the Claude Code hook calls `treeship session event` for every tool use and stamps `meta.source = "session-event-cli"`. The MCP bridge's generic `agent.called_tool` events are inspected at receipt composition, and a known tool name plus path becomes an `AgentReadFile`, `AgentWroteFile`, or `AgentExecutedCommand` event. At session close, git reconciliation runs `git diff HEAD --name-status`, `git diff <since>..HEAD --name-status`, and `git ls-files --others --exclude-standard`, dedupes against writes already captured, and appends synthetic `AgentWroteFile` events to `events.jsonl` before the root is sealed.
 
 Cross-verification builds `actual` only from events whose `meta.source` is `hook`, `mcp`, `shell-wrap`, `session-event-cli`, or absent. Events from `git-reconcile` and `daemon-atime` are Treeship's backstops, not the agent calling tools, so they never inflate `actual` against the certificate. Aliases map `read_file`, `write_file`, `bash`, and `web_fetch` to `Read`, `Write`, `Bash`, and `WebFetch`, so a Claude session is not flagged for every authorized call.
 
@@ -59,7 +59,7 @@ Cross-verification builds `actual` only from events whose `meta.source` is `hook
 - The replay check is package-local. Two packages can each consume the same nonce and neither verifier will know.
 - Git reconciliation is fail-open. If the directory is not a git repo, git is missing, or a git command errors, the receipt is still produced without backstop events.
 - Nothing here enforces scope at runtime. Treeship records and verifies; it does not refuse to run an action.
-- No keystore format change and no SDK API breakage. `tool_usage` was already on 0.9.5 receipts; this release makes `actual` useful.
+- No keystore format change and no SDK API breakage.
 
 ## Where to go next
 

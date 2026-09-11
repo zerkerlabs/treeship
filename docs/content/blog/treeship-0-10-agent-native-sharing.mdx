@@ -1,0 +1,75 @@
+---
+title: "Treeship 0.10.1: agent-native sharing and a supply-chain floor"
+description: "An agent in a fresh sandbox can install Treeship, run a session, and return three working URLs. 0.10.1 hardens the binary, keystore, SDK, and MCP server underneath."
+date: 2026-05-01
+written: 2026-09-11
+category: release
+release: "0.10.1"
+systems: [hub, python-sdk, kimi, mcp, claude-code, codex, cursor]
+tags: [receipts, sessions, hub, keystore, release-engineering, release]
+readTime: "5 min read"
+---
+
+# Treeship 0.10.1: agent-native sharing and a supply-chain floor
+
+## What shipped
+
+Treeship 0.10.0 makes the receipt readable by things that are not browsers. A human can say "agent, set up Treeship and send me the receipt," and the agent comes back with `receipt_url`, `raw_json_url`, `package_download_url`, `receipt_digest`, `package_digest`, `verification_status`, and `warnings`. No clarifying question, no browser auth, no `sudo`, no `PATH` edits. Before this release, `curl /receipt/<id>` returned the literal text `Loading receipt...`, so AI agents, link unfurlers, and offline reviewers got nothing.
+
+0.10.1 hardens the floor under that loop: the binary that gets installed, the keystore that signs, the SDK that drives the CLI, and the MCP integration. The connective idea is that trust starts before the receipt is signed.
+
+Other additions across the two versions:
+
+- `treeship session report --share --format json` returns the `treeship/share-result/v1` shape, and `--no-upload` computes digests and runs local verify without hub auth.
+- `/receipt/<sessionId>` on treeship.dev is server-rendered with OpenGraph and Twitter metadata; `/api/receipt/<id>/agent` returns the stable `treeship/receipt-agent/v1` contract; `/receipt/<id>/package` serves a `.tar.gz` in the `.treeship` layout.
+- `treeship setup --format json` returns a real `treeship/setup-result/v1` shape instead of `{}`.
+- Python `Treeship(bot_mode=True)` and `python -m treeship_sdk.bootstrap_cli --json` resolve a working CLI via env, PATH, cache, npm, then GitHub Release.
+- `@treeship/mcp` ships a real stdio server, `bin: treeship-mcp`, exposing `treeship_session_status`, `treeship_session_event`, `treeship_attest_action`, `treeship_verify`, and `treeship_session_report`.
+- Signing refuses a private key file with group or world bits, and `treeship doctor --fix` repairs the keystore in place.
+- The npm `postinstall.js` verifies the binary's SHA-256 against `expected-checksum.txt` and fails closed.
+- The Linux x86_64 binary is a static musl build, gated by a distro smoke job before any publish step.
+- `treeship init --force` refuses to clobber the global keystore, and `attest action --format json` returns `{"status": "error", "error": ...}` envelopes instead of `{}`.
+
+## Why it matters
+
+The Kimi dogfood failure that motivated 0.10.0 read: CLI missing from PATH, install script timed out, agent had to ask a human. 0.10.0 is the first release where an agent with no PATH, no installed CLI, and no global state can bootstrap, set up, run a session, share the result, and hand back three URLs that all work.
+
+0.10.1 fixes what the review and multi-agent dogfooding found underneath. The 0.10.0 `@treeship/mcp` package was a client wrapper only and silently failed to boot when configured as a server. Every Python SDK user with `bot_mode=True` was still depending on PATH, because a free function hardcoded `"treeship"`. The Linux GNU build needed GLIBC 2.39 and failed on Debian 12, Ubuntu 22.04, RHEL 9, Amazon Linux 2023, and every Alpine. A receipt is only as trustworthy as the install path that delivered the binary.
+
+## How it works
+
+```bash
+python -m treeship_sdk.bootstrap_cli --json
+treeship setup --yes --format json
+treeship session report --share --format json
+curl -L https://www.treeship.dev/receipt/<id>/package | tar xz
+treeship package verify ./<id>.treeship/
+treeship doctor --fix
+```
+
+The bootstrap returns `treeship/bootstrap-result/v1` with `ok`, `binary`, `version`, and `source`. Setup returns detected agents and draft cards. The share command uploads, then derives `raw_json_url` and `package_download_url` from the hub-issued `receipt_url` origin, so all three point at one site. `package_digest` is a content-addressed manifest digest: SHA-256 over sorted `<relpath>:<sha256_hex>` lines, stable across tar and gzip nondeterminism. When hub auth is missing in JSON mode, the response carries `error` plus the local digests and verify result, with URL fields null, rather than a fabricated URL.
+
+The package endpoint returns `receipt.json`, `merkle.json`, `render.json`, per-artifact proofs, and the `approvals/` tree, with an `X-Package-Digest` header. A recipient extracts it and runs `treeship package verify` for the full offline path.
+
+On the supply-chain side, the expected hash ships inside the npm package and the binary ships on GitHub Releases, two independent trust roots. `postinstall.js` downloads to a `.partial` file, checks the hash, and renames atomically. A tampered binary fails the embedded hash; a tampered hash fails because the GitHub binary does not match. Missing checksum, malformed checksum, non-200 response, redirect chain over 5, and timeout all fail. In CI, a `smoke` job mounts the linux artifact into `debian:12`, `ubuntu:22.04`, `ubuntu:24.04`, and `alpine:3.20` and exercises install, `--version`, `init`, `attest action`, and `verify`; `release` and every publish job need it to pass.
+
+For keys, `Store::signer` checks the file mode before decrypting and returns `InsecureKeyPerms` on loose bits. `doctor --fix` sets the directory to 0700 and key files to 0600 and reports each change. `TREESHIP_ALLOW_INSECURE_KEY_PERMS=1` bypasses for sandboxed CI.
+
+## What it does not do
+
+- No new trust subsystem: no Hub server changes, no runtime enforcement, no issuer or registry identity.
+- The transparent MCP forwarder is roadmap. `@treeship/mcp` serves Treeship tools; it does not forward other tools.
+- `agent_cards`, `harnesses`, and `package_digest` in the `/agent` contract stay `null` until the hub serves them.
+- No Linux ARM64 binary and no native Windows binary. Windows users go through WSL.
+- No Sigstore or cosign signatures. Two-trust-root SHA-256 is the 0.10.x answer.
+- No `treeship-cli` on crates.io; distribution is npm plus GitHub Releases.
+
+## Where to go next
+
+- [CLI: session](/docs/cli/session)
+- [Python SDK](/docs/sdk/python)
+- [MCP integration](/docs/integrations/mcp)
+- [Install guide](/docs/guides/install)
+- [CLI: doctor](/docs/cli/doctor)
+
+*This entry was written on 11 September 2026 from the 0.10.0 and 0.10.1 changelogs and the code as released, and is filed under the release date.*

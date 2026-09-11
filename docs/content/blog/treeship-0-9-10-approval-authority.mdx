@@ -1,0 +1,72 @@
+---
+title: "Treeship 0.9.10: approval authority"
+description: "Grants define authority, uses prove consumption, an append-only journal enforces replay, and packages carry the evidence. The 0.9.10 patch closes the bypasses an adversarial review found."
+date: 2026-04-30
+written: 2026-09-11
+category: release
+release: "0.9.10"
+systems: [hub, codex, cli]
+tags: [approvals, verifier, receipts, hub, docs, release]
+readTime: "5 min read"
+---
+
+# Treeship 0.9.10: approval authority
+
+## What shipped
+
+Treeship 0.9.9 makes temporary authority a trust object of its own. A human approves an agent for a bounded action. The agent consumes that approval at attest time. An offline verifier replays the chain on any machine. Where a signed Hub checkpoint is embedded, the same verify run can attest to non-replay across machines. The framing every part shares: grants define authority, uses prove consumption, the journal enforces replay, packages carry evidence, checkpoints make evidence portable, Hub signatures extend evidence across machines.
+
+The headline mechanism is consume-before-action. When an action carries an approval grant, the attest path appends a `treeship/approval-use/v1` record to the local Approval Use Journal before the action runs. A crash mid-action can leave a recorded use without an artifact. It cannot leave an artifact without a recorded use.
+
+0.9.10 is a patch release. A targeted Codex adversarial review of 0.9.9 found four trust-bypass paths in the new approval-evidence surface, and 0.9.10 closes them. Verifiers on 0.9.9 should upgrade.
+
+Other additions across the two versions:
+
+- Schemas `treeship/approval-use/v1`, `treeship/approval-revocation/v1`, and `treeship/journal-checkpoint/v1`, each with a `previous_record_digest` chain link and a `record_digest`.
+- The journal at `<config>/journals/approval-use/`, where records are truth and the `by_grant` and `by_nonce` indexes are cache rebuilt on startup.
+- `treeship journal list` and `treeship journal inspect`, both read-only.
+- `approvals/uses/` and `approvals/checkpoints/` exported into the `.treeship` package.
+- An Approval Authority panel and Decision Cards v0 in `treeship package inspect`.
+- In 0.9.10, three new verify rows: `approval-use-action-binding`, `approval-use-nonce-binding`, and `approval-use-chain-continuity`; the old `approval-use-integrity` row is renamed `approval-use-record-digest`.
+- `docs/release-adversarial/README.md` makes the review cadence policy: trust-semantics releases get a targeted adversarial pass, bump-only releases do not.
+
+## Why it matters
+
+0.9.6 scoped approvals and checked scope statelessly, but a spent grant looked the same as a fresh one. The verifier could only catch a replay inside one package. With a journal, a second use of a `max_uses=1` grant is refused at attest time on the same workspace, and the use record travels with the package so a recipient can check it without the originating machine.
+
+0.9.10 matters because 0.9.9 overclaimed. Its `reserve_in_journal` ran the replay check outside the lock, so two parallel `treeship attest` calls against a `max_uses=1` grant could both pass and both write. The package never shipped action envelopes, so the verifier resolved uses by `(grant_id, nonce_digest)` alone and never checked that the action pointed at the use. Each use's `nonce_digest` was read verbatim and never compared to `nonce_digest(grant.nonce)`. And the `previous_record_digest` chain was never walked, so a consistently rewritten chain passed every per-record check.
+
+## How it works
+
+```bash
+treeship journal list
+treeship journal inspect
+treeship package inspect <pkg>
+treeship verify <path> --strict
+```
+
+At attest time the CLI calls `journal::reserve_use`, which in 0.9.10 runs `check_replay` and derives `use_number` inside `with_lock`, stamping the number from the count observed at lock-acquire time.
+
+At session close, every consuming action envelope is written to `pkg_dir/artifacts/<artifact_id>.json` and the uses and checkpoints are exported under `approvals/`. Verify then emits four replay rows. `replay-package-local` fails on duplicate uses inside the package. `replay-local-journal` passes when `use_number` stays within `max_uses` in the workspace journal, fails when it exceeds, and warns when no journal is present. `replay-included-checkpoint` recomputes each embedded checkpoint's `record_digest`. `replay-hub-org` passes only under a four-gate rule: at least one checkpoint declares `kind: hub-org`, every required Hub field is populated, the Ed25519 signature verifies against the embedded public key, and every embedded `use_id` appears in `covered_use_ids`. Anything short is a warning by default and a failure under `--strict`.
+
+The 0.9.10 rows sit beside those. `approval-use-action-binding` passes only when every consuming action's `meta.approval_use_id` resolves to a use in the bundle and the action's `approval_nonce` hashes to that use's `nonce_digest`. Before any field is trusted, the envelope's content address must equal the filename stem, so a forged unsigned action dropped into `artifacts/` is rejected. `approval-use-nonce-binding` recomputes `nonce_digest(grant.nonce)` from the signed grant and compares. `approval-use-chain-continuity` requires one genesis record, no forks, no cycles, and every record reachable from genesis.
+
+The honesty rule holds throughout: a row passes only when the matching evidence is present and verified, fails only when present and failed, and is absent when the package carries no such evidence. A 0.9.9 package under 0.9.10 reads `not asserted by package` on the action-binding row. Under `--strict` that fails, which is the intended upgrade signal.
+
+## What it does not do
+
+- The Hub server that signs checkpoints is out of scope. Until a Hub signs, `replay-hub-org` reads `not checked (no Hub checkpoint in package)` everywhere.
+- Trusted-key pinning is deferred. The signature verifies against the public key embedded in the checkpoint, so an attacker who controls a checkpoint can declare any key.
+- No runtime enforcement. Treeship records consumption; refusing to run a spent or out-of-scope action is the deferred AgentGate layer.
+- The revocation schema is wired, but the runtime revocation flow is deferred. Mobile and desktop approval apps are deferred.
+- Known follow-ups: duplicate `grant_id` entries silently last-wins in the nonce-binding map, and 3-cycle and self-loop chain shapes lack pinned tests.
+
+## Where to go next
+
+- [Approval authority](/docs/concepts/approval-authority)
+- [Approval use journal](/docs/concepts/approval-use-journal)
+- [Replay levels](/docs/guides/replay-levels)
+- [CLI: verify](/docs/cli/verify)
+- [Treeship 0.9.6: the trust fabric](/blog/treeship-0-9-6-the-trust-fabric)
+
+*This entry was written on 11 September 2026 from the 0.9.9 and 0.9.10 changelogs and the code as released, and is filed under the release date.*

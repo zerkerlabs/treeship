@@ -1,0 +1,68 @@
+---
+title: "Treeship 0.31.2: sealed packages now verify their signatures"
+description: "package verify checked the Merkle tree and nothing under it. It now verifies every artifact's Ed25519 envelope, session close seals unchained work, and the MCP bridge reports failures."
+date: 2026-09-10
+written: 2026-09-11
+category: security
+release: "0.31.2"
+systems: [cli, mcp, verifiable-intent, commerce-agents]
+tags: [verifier, receipts, sessions, security-advisory, trust-roots, security]
+readTime: "5 min read"
+---
+
+# Treeship 0.31.2: sealed packages now verify their signatures
+
+## What shipped
+
+Treeship 0.31.2 fixes three findings from an internal security review of 0.31.1, published as advisory TS-2026-002. The headline is AUD-31: through 0.31.1, `treeship package verify` checked that a `.treeship` package was internally consistent and stopped there. It never verified an artifact's Ed25519 signature and never required the envelope to exist. A receipt whose sealed set was rewritten to an invented `art_` id, with the tree recomputed to match, verified with exit 0 and a green verdict.
+
+A package now carries the signed DSSE envelope of every sealed artifact under `artifacts/` and the signing public keys in `keys.json`. `package verify` checks each envelope against those keys. A fabricated id, an edited byte, a reordered chain, a missing envelope, or an unknown key fails with a nonzero exit.
+
+- AUD-32: `session close` seals every artifact signed in the workspace during the session, not only those reachable along the parent chain, and marks loose ones `unchained: true`.
+- AUD-33: the MCP bridge writes `[treeship] <what> failed: <reason>` to stderr on every signing failure, and under `TREESHIP_STRICT=1` fails the tool call.
+- New verify rows: `signature:<id>`, `chain_linkage`, `signer_trust`, `envelopes`, and `chain_completeness`.
+- `--structural` reads a pre-0.31.2 package with a verdict that says signatures were not checked.
+- `attest action` prints a hint when a session is active and no `--parent` was given.
+- Core: `verify_package_with_options`, `verify_package_structural`, `PackageKeys`.
+- Docs: the Verifiable Intent page now says "shipped against the v0.1 draft".
+
+## Why it matters
+
+A `.treeship` package is the artifact Treeship tells a stranger to verify. The verifier guide had always said the package proved structure and a bundle proved signatures, and `treeship verify <id>` did perform real DSSE verification. But the package verdict line did not say so, and the format made a signature check impossible from the file alone. A green verdict on a package was a weaker claim than it looked.
+
+AUD-32 compounded it. An `attest action` signed without `--parent`, or onto a parent off the sealed path, was signed and stored but absent from the package, while `package verify` reported it clean. Three such actions in one session left one in the receipt. AUD-33 meant a tool call that was never recorded looked, to the caller, like one that was. The bridge caught the failure, returned `undefined`, and printed nothing unless `TREESHIP_DEBUG=1`.
+
+The advisory rates AUD-31 and AUD-32 high and AUD-33 medium. The fix shipped in the release after discovery, and no field exploitation was observed.
+
+## How it works
+
+```bash
+treeship package verify <package>.treeship
+treeship package verify <package>.treeship --strict
+treeship package verify <package>.treeship --structural
+treeship trust add <key_id> ed25519:<pk> --kind cert_issuer
+treeship attest action --parent <id>
+```
+
+For each sealed artifact, `package verify` verifies the envelope's Ed25519 signature against `keys.json`, then re-derives the content-addressed id and the digest column from the signed bytes. That is the `signature:<id>` row: the id in the receipt must equal the id computed from what was signed. `chain_linkage` checks that every chained artifact names the previous one as `parentId` inside the signature, so a reordered chain fails even if each envelope is valid. `envelopes` fails when a package carries no envelopes, which is every package built before 0.31.2.
+
+`signer_trust` reports whether the signing keys are pinned trust roots. Unpinned, it warns and prints the exact `treeship trust add` command; under `--strict` it fails. The package names its keys; it cannot vouch for them.
+
+`session close` now seals unchained artifacts after the chain and reports them as `sealed_unchained` in JSON, with a warning and a hint in text. `package verify` surfaces them as `chain_completeness`, so a verifier can tell a linked step from a loose one.
+
+If you accepted a package on a green verdict, re-run `package verify` with 0.31.2. A pre-0.31.2 package fails at `envelopes`; its artifacts can still be verified from a bundle or the hub with `treeship verify <id>` after pinning the producer's key. Ask producers to re-close sessions that matter. A scripted reproduction ships beside the advisory at `docs/security/audit-2026-09-repro.sh`.
+
+## What it does not do
+
+An unchained receipt is now sealed, but its order is the producer's unsigned claim, and `chain_completeness` says so. `signer_trust` is a warning until the verifier pins the key; the package cannot make that decision for them. `TREESHIP_STRICT=1` is opt-in; without it the bridge reports the failure and proceeds. `--structural` is the only way to read a package from before 0.31.2, and its verdict says signatures were not checked.
+
+One rough edge in 0.31.2 itself: the release smoke caught `signer_trust` warning on the producer's own machine that its own signing key was not a pinned root, and `session report` summarised every fresh session as `warn`. The fix, verifying against the pinned roots plus this ship's keystore keys as `session_host` roots, landed on main after the release and is unreleased as of this writing. A stranger's machine still warns until they pin, which is the point.
+
+## Where to go next
+
+- [Verify a package](/docs/commerce/verify-a-package): the verifier guide, including key pinning.
+- [`treeship package`](/docs/cli/package) and [`treeship trust`](/docs/cli/trust): CLI reference.
+- [MCP bridge](/docs/integrations/mcp): `TREESHIP_STRICT` and the bridge's failure reporting.
+- [Treeship 0.7: session receipts you can verify offline](/blog/treeship-0-7-session-receipts): where the package format began, and why it only proved structure.
+
+*This entry was written on 11 September 2026 from the 0.31.2 changelog and the code as released, and is filed under the release date.*

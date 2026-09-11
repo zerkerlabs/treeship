@@ -1,0 +1,75 @@
+---
+title: "Treeship 0.19: the security-hardening release"
+description: "Two adversarial audits, every confirmed finding in the default binary fixed with a regression test, and a receipt export any Ed25519 library can verify."
+date: 2026-07-11
+written: 2026-09-11
+category: security
+release: "0.19.1"
+systems: [wasm-verifier, hub, a2a, claude-code-plugin, kimi, lobster-cash]
+tags: [security-advisory, trust-roots, keystore, verifier, redaction, security]
+readTime: "5 min read"
+---
+
+# Treeship 0.19: the security-hardening release
+
+## What shipped
+
+Two independent AI-assisted adversarial audits ran against the codebase. Every confirmed finding that ships in the default binary is fixed in 0.19.0, each with a regression test that fails before the fix. The pattern both audits named was the same: a higher-level surface reported `verified`, `authentic`, or `pass` from attacker-controlled input without anchoring to a verified signature. That class is closed across the CLI, the WASM verifier, the hub, the SDKs, and the bridges.
+
+The one breaking change: the `ship` trust-root kind is split into `hub_org`, `cert_issuer`, and `revoker`. A single `--kind ship` pin used to grant three unrelated powers at once. No verifier honors `ship` any more, and `treeship trust add --kind ship` is rejected with guidance to the new kinds.
+
+The security fixes:
+
+- `treeship verify` on a fetched receipt, URL, or package reports `Structurally consistent` with `outcome: "structural-pass"` and `signatures_verified: false`, never `authentic`.
+- The hub DPoP signing key is sealed under the machine key with AES-256-GCM instead of sitting in `config.json` as plaintext hex.
+- WASM `verify_capability` builds a real verifier from pinned trust roots instead of trusting the unverified `signatures[0].keyid` label.
+- Keystore keys derive from a 32-byte OS-CSPRNG `machine_seed`, not from a guessable machine id, serial, or hostname.
+- Every core verifier uses `verify_strict`, and the chain walk cross-checks each child's signed `parentId`, exiting nonzero with `SIGNED LINKAGE BROKEN`.
+- A self-declared `attestation_class` can no longer launder a hand-signed `session.v1` into the `countersigned` bucket.
+- Hub proof and consistency publishes require the caller to own the artifact, checkpoint, or signer, and the hub gained request timeouts and a Rekor timeout.
+- The Claude Code and Kimi plugins redact env-assignment secrets, secret flags, and bearer tokens from captured commands before they reach a shareable receipt.
+
+Also added: `treeship match --exercised <glob>` and `GET /v1/agents/match`, `GET /v1/stats`, and a `treeship --help` that surfaces the core loop first, with `treeship help --all` listing the hidden extension commands.
+
+0.19.1 followed two days later with `treeship receipt export <id>`, a reference verifier at `scripts/verify-receipt.py`, and a receipt-format reference page.
+
+## Why it matters
+
+Pinning a hub for dedup used to also let that hub mint agent certificates and revoke your capabilities. Each verifier is now scoped to the one power it needs. Nothing published breaks, because the trust kind is a local verifier-side setting. A legacy `ship` pin stays parseable but inert until re-pinned.
+
+The `structural-pass` change is a matter of honesty. The fetched-receipt path ran only keyless, self-referential checks and then printed "Verified. This receipt is authentic." Any internally consistent forgery passed, and so did an empty receipt. It now says what it checked and what it did not. An empty receipt is a `fail`.
+
+0.19.1 closed a smaller gap with a long tail. A Treeship signature covers the DSSE PAE, not the payload JSON, and nothing exported those exact bytes. A counterparty verifying with a third-party Ed25519 library had to guess the construction and failed.
+
+## How it works
+
+```bash
+treeship trust add <key_id> <pubkey> --kind cert_issuer
+treeship match --hub <url> --exercised <glob>
+treeship receipt export <id> --format json | python3 scripts/verify-receipt.py
+```
+
+The migration is one `trust add` per power you intend to grant: `cert_issuer` for issuing agent certificates, `revoker` for revocations, `hub_org` for hub-org checkpoints. `keys export` now emits the new kinds.
+
+`match` asks the hub for candidates by `tools_exercised` in the signed `session.v1` records it holds. The client re-verifies every candidate on this machine and re-ranks by verified sessions. A record that does not verify shows as `unverified` rather than trusting the hub's own match.
+
+`receipt export` emits the exact `{message (the PAE), signature, public_key, algorithm}` triple in base64. The message is rebuilt from the same `payload_type` and `payload` the verifier sees, so what is exported is provably what the signature covers. The reference script performs an independent Ed25519 check offline and prints `VALID`. 0.19.1 also restored `verification_status: "pass"` for a clean session, since the always-on `receipt_body_binding` caveat had made `pass` unreachable, and pinned npm to 11.5.1 after the 0.19.0 publish failed on Node 24.
+
+## What it does not do
+
+- `receipt export` is for a receipt you produced, since the public key comes from the local keystore. A received receipt is still checked with `treeship verify`.
+- `structural-pass` is not a pass. It means the bytes are consistent with themselves, and signatures and issuer were not verified.
+- Provenance grades on a card that is not key-bound are marked `SELF-ASSERTED (not machine-verified)`.
+- `GET /v1/stats` reports counts only, never identifiers, and returns 500 on any query failure rather than partial zeros.
+- The `zk` feature received soundness fixes but remains pre-release and non-authoritative.
+
+## Where to go next
+
+- [Security](/docs/concepts/security)
+- [Trust model](/docs/concepts/trust-model)
+- [CLI: trust](/docs/cli/trust)
+- [CLI: receipt export](/docs/cli/receipt)
+- [Receipt format](/docs/reference/receipt-format)
+- [DSSE: dead simple signing explained](/blog/dsse-dead-simple-signing-explained)
+
+*This entry was written on 11 September 2026 from the 0.19.0 and 0.19.1 changelog and the code as released, and is filed under the release date.*

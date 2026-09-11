@@ -1,0 +1,64 @@
+---
+title: "Treeship 0.9: the official Claude Code plugin"
+description: "Two commands install a plugin whose hooks record every Claude Code session into a sealed receipt. TREESHIP.md tells the agent exactly what is captured."
+date: 2026-04-21
+written: 2026-09-11
+category: integration
+release: "0.9.4"
+systems: [claude-code, claude-code-plugin, mcp]
+tags: [sessions, docs, redaction, keystore, release]
+readTime: "5 min read"
+---
+
+# Treeship 0.9: the official Claude Code plugin
+
+## What shipped
+
+Treeship 0.9.3 and 0.9.4 gave Claude Code a plugin that records sessions without being asked. The plugin lives at `integrations/claude-code-plugin/`, mounts `@treeship/mcp` through `npx -y`, and wires three hooks: SessionStart, SessionEnd, and PostToolUse. The hooks are deterministic; no model prompt decides whether a session gets recorded. 0.9.4 added a marketplace so anyone can install it with two commands.
+
+0.9.3 also answered the trust question an agent asks before it will attach an MCP server. `treeship add` now drops a `TREESHIP.md` into the project root that says what is captured, what is not, and when data leaves the machine.
+
+- Three skills ship with the plugin: `treeship-session`, `treeship-verify`, and `treeship-report`, for the moments that need agent judgment.
+- `treeship session status --check` prints nothing and exits `0` if a session is active, `1` if not, so hook scripts can gate on it.
+- `treeship session event` is race-safe across processes through an advisory sidecar `.lock` file created mode `0o600`.
+- `.claude-plugin/marketplace.json` at the repo root turns the monorepo into a Zerker Labs plugin marketplace.
+- The keystore migration error now includes a diagnosis and a copy-pasteable recovery path.
+- The SessionStart hook reports failures back to Claude Code as `additionalContext` instead of exiting silently.
+
+## Why it matters
+
+Claude Code's built-in tools, Read, Write, Edit, Bash, Grep, and Glob, bypass MCP. Without a PostToolUse hook they never reach the receipt timeline. The plugin closes that gap so the record covers what the agent actually ran, not only the calls that went through the bridge.
+
+Two failures drove the point releases. Before 0.9.3, Claude Code would refuse to attach `@treeship/mcp` because nothing in context explained what it captured. And concurrent hook invocations each derived `sequence_no` from a stale snapshot of the event log, assigning duplicate sequence numbers and silently breaking Merkle chain ordering. 0.9.4 then fixed the SessionStart hook, which had redirected stderr to `/dev/null` and exited `0` on any error. A broken keystore meant no recording and no signal, which the changelog calls the worst possible failure mode.
+
+## How it works
+
+```bash
+claude plugin marketplace add zerkerlabs/treeship
+claude plugin install treeship@treeship
+treeship add
+treeship session status --check
+treeship package verify .treeship/sessions/<id>.treeship
+```
+
+The plugin installs to `~/.claude/plugins/cache/treeship/treeship/<version>/`. Each Claude Code session then fires the hooks: SessionStart opens a Treeship session, PostToolUse appends a `session event` per tool call, and SessionEnd closes it. Sealed receipts land in `.treeship/sessions/<id>.treeship`, and `treeship package verify` passes its integrity checks. The changelog records an end-to-end run on a fresh scratch project.
+
+`session event` takes an exclusive advisory lock, `flock(2)` on Unix and `LockFileEx` on Windows, in a 500 ms bounded retry loop before re-deriving `sequence_no` from the on-disk JSONL line count. After 500 ms of contention the append falls through with a stderr warning rather than freezing the agent. A regression test spawns 16 racing writers and asserts unique sequence numbers. 0.9.4 tightened the lock file's permissions through `fchmod` on the open descriptor, closing a TOCTOU between a metadata read and a path-based chmod.
+
+`TREESHIP.md` is embedded in the CLI binary at compile time, so the drop works offline and never fetches over the network. It is organized by attestation type and enumerates every field the bridge writes, each cross-referenced against `bridges/mcp/src/client.ts` and `attest.ts`. The bridge records the tool name, a SHA-256 digest of the arguments, a SHA-256 digest of the output, the exit code, and duration. It does not capture file contents, env values, or secrets. Data leaves the machine only on `treeship session report`, `hub push`, or `auto_push: true`. `treeship add` no longer edits CLAUDE.md or `.cursorrules` for trust purposes; one file carries the trust block for every agent.
+
+`post-tool-use.sh` parses the hook payload with `jq`, then `python3`, then `node`. The earlier regex pulled the wrong `tool_name` when `tool_input` itself contained that string.
+
+## What it does not do
+
+Hooks fail open. A missing CLI or a missing `.treeship/` directory makes the plugin a silent no-op, by design. `payload.error_message` carries the raw `Error.message` on thrown errors, so treat it like a logged stack trace if your tools can leak in error text. The `session event` append is O(N) in the on-disk event count; the changelog deferred a counter sidecar from 0.9.3 to 0.9.4 and then to 0.9.5. Platform support is macOS and Linux only, and `npm install -g treeship` now fails loudly on Windows; a native binary was planned for 0.10.0. Submission to Anthropic's official marketplace remains a separate track.
+
+## Where to go next
+
+- [Claude Code integration](/docs/integrations/claude-code): plugin install and hook behavior.
+- [MCP bridge](/docs/integrations/mcp): what `@treeship/mcp` records per tool call.
+- [`treeship add`](/docs/cli/add) and [`treeship session`](/docs/cli/session): CLI reference for `add`, `status --check`, and `event`.
+- [Secrets and redaction](/docs/concepts/secrets-and-redaction): what stays on the machine.
+- [MCP bridge agent attestation](/blog/mcp-bridge-agent-attestation): the bridge the plugin mounts.
+
+*This entry was written on 11 September 2026 from the 0.9.3 and 0.9.4 changelog and the code as released, and is filed under the release date.*

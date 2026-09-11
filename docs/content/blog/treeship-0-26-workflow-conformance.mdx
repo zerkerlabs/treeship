@@ -1,0 +1,69 @@
+---
+title: "Treeship 0.26: workflow conformance"
+description: "A signed workflow.v1 declaration can now be verified against what a session actually did. One fail-closed path runs from the declaration to a conformance report."
+date: 2026-09-01
+written: 2026-09-11
+category: release
+release: "0.26.0"
+systems: [cli]
+tags: [workflows, merkle, verifier, sessions, release]
+readTime: "5 min read"
+---
+
+# Treeship 0.26: workflow conformance
+
+## What shipped
+
+Treeship 0.26 lands workflow conformance. You declare a workflow as a signed `workflow.v1` artifact, bind it into a session at start, and afterwards ask whether the session did what the declaration said. `treeship workflow verify` is the one fail-closed path from the signed declaration to a conformance report, and it is the only place the pre-existence grade is decided.
+
+The pieces underneath it:
+
+- A pure conformance reducer in `treeship-core` reports path deviations, missing terminals, actor and tool authority deviations, bounded-loop breaches, and `checked | captured | asserted` provenance on separate axes.
+- `workflow.v1` is a registered predicate whose nested graph runs the full validator before the generic `attest receipt` path signs it.
+- `treeship session start --workflow-ref art_...` validates a locally signed declaration before writing any run state and binds its id inside the signed `session.start` root action.
+- `verify_workflow_pre_existence` checks real checkpoint ordering: trusted signatures, both inclusion proofs, leaf position, and consistency must all pass.
+- `verify_first_run_workflow_binding` independently checks the trusted root signature, the content-derived run id, the action type, and the exact declaration reference.
+- `derive_observed_run` builds the observation set from verified actions, so the attribution rule is code with tests against it.
+- `--strict` exits non-zero on any deviation, gap, or exceeded limit.
+- Seven golden reports pin the contract.
+
+One more item is a recovery rather than a feature. `workflow_conformance.rs`, its golden fixtures, and the `workflow.v1` schema had existed only in a local stash since 2026-08-18. They are on main.
+
+## Why it matters
+
+Before 0.26 the three verification pieces existed separately, and nothing composed them: the declaration's signature, the signed `session.start` that binds a run to it, and the Merkle evidence that the declaration pre-existed the run. Worse, `evaluate_workflow_conformance` read `pre_existence.grade` off its input, and its doc comment made not-lying an obligation on callers. An observation set that claimed `checked` with placeholder checkpoint ids got a `checked` report.
+
+The composed path discards whatever the input claims and replaces it with what the supplied evidence proves. A run with no `--proof` reports `asserted` no matter what its file says. Omitting the proof is allowed and costs the run its `checked` grade; it is not an error, because an unproven ordering claim is a weaker report rather than a malformed one.
+
+The other hole was attribution. `workflow verify --run` read a file somebody wrote, which meant the rule deciding which declared node an action belongs to lived outside the trust boundary entirely. That rule is now derived from verified actions.
+
+## How it works
+
+```bash
+treeship session start --workflow-ref art_…
+treeship workflow verify --workflow art_… --first-run art_… --run ./run.json --proof ./proof.json --strict
+```
+
+`session start --workflow-ref` refuses a declaration that does not validate, and the reference lands inside the signed root action. The manifest and the composed session receipt mirror it, but the verifier does not trust either; it reads the workflow reference and the first-run id from artifacts whose signatures it just checked, never from caller-supplied strings.
+
+`workflow verify` then composes the three checks and reports on separate axes. Path, authority, and loop findings never summarize one another, in text or in `--format json`. Undeclared graph cycles and empty evidence fail closed.
+
+Attribution is by admissibility, never by label. A node admits an action when its executor matches the signed actor, or a capability the verified mandate carried, and its `allowed_tools` covers the signed action label. Exactly one admitting node is the only case that earns `checked`, and a recorded node label is not consulted there at all. A runtime cannot relabel work the declaration already places. A label may only pick within an already admissible set, which caps that attempt at `captured`. A label naming a node that cannot admit the action is reported rather than used as a tiebreak.
+
+Two shortcuts would have reported a clean run for a dirty one, and both are now regression tests. Dropping an action no node's `allowed_tools` covers would hide an out-of-scope tool, so such an action stays attributed by executor match and the authority axis still reports it. Accepting a repeated action reference would let one action pay twice against a loop's `budget.max_actions`, which counts unique signed-action references, so duplicates are refused during derivation.
+
+`--strict` is off by default. The spec is explicit that there is no single workflow score, so the pass/fail policy belongs to the caller and the substrate reports the file.
+
+## What it does not do
+
+Automatic checkpoint composition and external workflow-authority trust remain follow-ups. Derivation leaves `pre_existence` asserted; only `verify_workflow_run` grades ordering, and only when a `--proof` is supplied. A run without one can never grade better than `asserted`. The five fail-closed fixes that landed in 0.25.3, the day before, apply here: session close re-verifies the signed root, pre-existence proofs require one checkpoint signing identity, and schema-required `allowed_tools` cannot deserialize as an omitted default.
+
+## Where to go next
+
+- [Workflows guide](/docs/guides/workflows)
+- [session command reference](/docs/cli/session)
+- [Predicate registry](/docs/reference/predicates)
+- [Merkle proofs](/docs/guides/merkle-proofs)
+- [Room sessions](/docs/concepts/room-sessions)
+
+*This entry was written on 11 September 2026 from the 0.26.0 changelog and the code as released, and is filed under the release date.*

@@ -1,0 +1,70 @@
+---
+title: "Treeship 0.27: the custody handshake"
+description: "Foreign work handed over A2A or MCP is refused until the other agent proves live key control, and the handoff receipt records that it did."
+date: 2026-09-02
+written: 2026-09-11
+category: release
+release: "0.27.0"
+systems: [cli, a2a, mcp, claude-code, claude-code-plugin, codex, cursor, hermes, openclaw, kimi, perplexity, grok-bot]
+tags: [handoffs, identity, verifier, sessions, release]
+readTime: "5 min read"
+---
+
+# Treeship 0.27: the custody handshake
+
+## What shipped
+
+Treeship 0.27 makes the bridges fail closed. Work that arrives from another agent over A2A or MCP is refused until the sender proves it controls its key right now, and the handoff receipt records that the check happened. Integrations that pass `fromAgent` to `onTaskReceived` without calling `admitTask` first now throw.
+
+The receipt side is `treeship attest handoff --verified <presentation> --challenge <nonce>`. It re-runs the core presentation verifier and, only on a clean live verdict, signs a `custody` block. `treeship verify` then grades the block as `custody: live` or `asserted`.
+
+The rest of the release:
+
+- `--close-loop <session_id>` signs the session's `receipt.json` digest into the handoff statement; a session the machine cannot find is refused.
+- `--custody-reason same_computer` records the shared-keystore case as what it is.
+- `@treeship/a2a` mints the receiver-signed `custody: live` handoff after `admitTask` passes and returns it as `handoffId`; the opt-out path never gets one.
+- `treeship_attest_handoff` in `@treeship/mcp` takes `verified` and `challenge`.
+- Every harness skill teaches the same four-step gate: the universal skill, the Hermes, OpenClaw, Kimi and Perplexity skills, the Claude Code, Codex and Cursor notes, a new `treeship-handshake` skill in the Claude Code plugin, and the Grok Bot skill.
+- `--format json` carries the grade as `checks[].custody.live`.
+- Every handoff the CLI could mint failed chain linkage; that is fixed.
+
+## Why it matters
+
+Until this release, A2A attested after the fact. A receipt URL in task metadata told you a receipt existed, and fetching a URL and calling it verified is structural at best. The actor string on a handoff was asserted until someone checked a card against a pinned issuer. The commands to do that check, `present --challenge` and `verify-presentation --challenge`, have existed since 0.17, but nothing refused to do the work when they failed.
+
+The agent-to-agent spec lays out five checks that must hold on this machine, against this ship's pins, before an inbound task runs: the issuer is pinned with `trust add --kind cert_issuer`, the presentation verifies, the challenge you minted was answered live, the staple is fresh, and the mandate names you as `--to`. Any failure means do not run. 0.27 wires those checks into the place where work is accepted, and makes the weak form visible: a handoff without a live verify is `asserted` custody, and `verify` says so.
+
+The chain-linkage bug hid in plain sight. `attest handoff` records `--artifacts[0]` as the storage parent, but handoff/v1 has no `parentId`, so `verify` reported "claims parent (none)" and `chain_linkage_ok: false` on correctly-signed evidence. The signed `artifacts` list is the edge, the same shape as receipt.v1's `subject.artifactId`, and the walk now reads it.
+
+## How it works
+
+```bash
+# receiver mints a nonce; sender answers it
+treeship present agent://sender --challenge <nonce>
+# receiver verifies, then records the verify in the handoff
+treeship attest handoff --from agent://sender --to agent://receiver --artifacts art_… \
+  --verified ./presentation.json --challenge <nonce> --close-loop <session_id>
+treeship verify last --format json
+```
+
+The `custody` block carries the sha256 of the exact presentation bytes, the nonce this ship minted, the card id, the verifier, and the time. A failing presentation refuses to mint rather than downgrading quietly. A presentation for one agent cannot certify a handoff `--from` another. `--verified` without `--challenge` is a parser error, and `--custody-reason` conflicts with `--verified`.
+
+`verify` grades the block itself rather than echoing it. `custody: live` appears only when the block carries the digest and the nonce a live check produces. A `live` without them, an unknown grade, and no block at all each print as `asserted` with the reason. Canonical bytes of every existing handoff are unchanged.
+
+`--close-loop` binds sealed-session evidence to the handoff, so a receiver can require a closed session as policy. Evidence never upgrades custody: a sealed session proves what the sender did, not who the sender is.
+
+In `@treeship/a2a`, `admitTask` runs the gate and the bridge then mints the handoff on the receiver's key. `handoff` envelopes are validated on parse. In `@treeship/mcp`, the same gate is one tool call with `verified` and `challenge`. Each harness skill states the four steps: mint the nonce, verify the presentation, refuse on any failure, record the verify.
+
+## What it does not do
+
+The handshake proves who is live, what card they hold, and that this ship chose to trust their issuer. It does not prove the sender's task result is true; ground truth of the work is still `wrap` and the session on each side. Grok Bot approvals, slice 3b of the A2A spec, are blocked: the decision is visible only in Grok's app UI, so the packaged skill states the boundary instead of recording an approval nobody observed. `--custody-reason same_computer` records a shared keystore honestly; it does not make that handoff `live`.
+
+## Where to go next
+
+- [The agent handshake](/docs/concepts/agent-handshake)
+- [Handoffs guide](/docs/guides/handoffs)
+- [attest command reference](/docs/cli/attest)
+- [@treeship/a2a](/docs/integrations/a2a) and [@treeship/mcp](/docs/integrations/mcp)
+- [A2A makes agents interoperable](/blog/a2a-treeship-the-trust-layer-for-agent-to-agent), the earlier post on the bridge
+
+*This entry was written on 11 September 2026 from the 0.27.0 changelog and the code as released, and is filed under the release date.*
