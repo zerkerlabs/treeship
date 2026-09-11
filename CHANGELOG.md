@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Release: the npm landing wait asks for the exact version and waits fifteen minutes.** `wait-for-npm-version.sh` compared the `latest` dist-tag, which npm's CDN updates minutes after the version itself, and gave up after five; on 0.31.4 it split the release across npm twice. It now asks whether `<pkg>@<version>` is installable, for up to 900 s.
+
 ## 0.31.4 (2026-09-11)
 
 - **The sealed set is under a signature (audit follow-up AUD-34, P1).** An artifact from another session, signed by the same key, could be dropped into a package as an `unchained` entry with the tree recomputed, and every per-artifact row stayed green, `--strict` included. `session close` now seals its `session.v1` record beside the package as `record.json`; that record signs the SHA-256 of `receipt.json` and the session id, so `package verify` gets a `receipt_binding` row that fails when the sealed set was rewritten after the producer closed it. A `session_window` row warns when a sealed artifact's signed timestamp falls outside the session's own window. Under `--strict`, `chain_completeness`, `receipt_binding` and `session_window` are failures. A package built before this release has no record and gets a warning. A producer who re-signs is outside what a signature can catch; that is what checkpoint anchoring is for.
