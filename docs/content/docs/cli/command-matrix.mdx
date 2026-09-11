@@ -113,7 +113,8 @@ treeship attest action [OPTIONS] --actor <URI> --action <LABEL>
 | `--output-digest <sha256:HEX>` | SHA-256 digest of the output produced |
 | `--content-uri <URI>` | URI to referenced content (for large/external payloads). Sets the action's subject.uri so it can be matched against an approval's --allowed-subject scope. Same role as the older --content-uri flag, named to read symmetrically with the --allowed-subject flag on `attest approval` |
 | `--subject <URI>` | Subject the action targets, as a URI. Alias for --content-uri. Provided so callers reading `treeship attest approval --allowed-subject env://prod` can naturally type `treeship attest action --subject env://prod` |
-| `--parent <ID>` | Parent artifact ID -- links this into a chain |
+| `--parent <ID>` | Parent artifact ID -- links this into a chain. Inside an active session the default is the session's chain head |
+| `--no-parent` | Do not chain onto the active session's head when --parent is absent; the receipt is sealed at close as unchained |
 | `--approval-nonce <NONCE>` | Must match the nonce on the approval authorising this action |
 | `--idempotency-key <KEY>` | Idempotency key for retry-safe approval consumption |
 | `--meta <'{"key":"val"}'>` | Extra metadata as a JSON object |
@@ -364,7 +365,7 @@ treeship session event [OPTIONS] --type <TYPE>
 
 | Option | Description |
 |---|---|
-| `--type <TYPE>` | Event type (e.g. agent.called_tool, agent.wrote_file, agent.read_file, agent.connected_network, agent.decision) |
+| `--type <TYPE>` | Event type: agent.called_tool, agent.wrote_file, agent.read_file, agent.connected_network, agent.completed_process, agent.decision (requires --model), agent.handoff, or agent.note (text in --meta) |
 | `--tool <NAME>` | Tool name (for agent.called_tool events) |
 | `--file <PATH>` | File path (for agent.wrote_file / agent.read_file events) |
 | `--destination <HOST>` | Network destination (for agent.connected_network events) |

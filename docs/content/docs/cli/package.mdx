@@ -92,7 +92,7 @@ treeship package verify .treeship/sessions/ssn_42e740bd9eb238f6.treeship
 
 | Option | Description |
 |--------|-------------|
-| `--strict` | Promote approval-evidence warnings and the unpinned-signer warning (`signer_trust`) to failures. |
+| `--strict` | Promote approval-evidence warnings, the unpinned-signer warning (`signer_trust`), and the sealed-set warnings (`chain_completeness`, `receipt_binding`, `session_window`) to failures. |
 | `--structural` | Check structure and approvals only; do not require or verify the envelopes. For packages built before 0.31.2, which carry no envelopes and otherwise fail at `envelopes`. The verdict line reads `structural-pass: structure and approvals verified, signatures not checked`, never `verified`. |
 | `--format json` | The same checks as a JSON array, for a script. |
 
@@ -110,6 +110,8 @@ treeship package verify .treeship/sessions/ssn_42e740bd9eb238f6.treeship
 | `chain_linkage` | Every chained artifact names the previous one as `parentId` inside the signature, in the order the receipt lists them |
 | `chain_completeness` | `WARN` naming sealed artifacts that were signed during the session without `--parent` (marked `unchained` in the receipt): verifiable on their own, their order is the signer's unsigned claim |
 | `signer_trust` | `PASS` when every signing key is a pinned trust root or one of this ship's own keys; otherwise `WARN` with the `treeship trust add` command for each key (`FAIL` under `--strict`) |
+| `receipt_binding` | The close record in `record.json` verifies under a key in `keys.json`, names this session, and its signed `receipt_digest` equals the SHA-256 of `receipt.json`. Rewriting the sealed set after close fails here even when every per-artifact row passes. `WARN` on a package built before 0.31.4 (`FAIL` under `--strict`) |
+| `session_window` | Every sealed artifact's signed timestamp falls inside the session's `started_at` to `ended_at` window, with two minutes of skew. `WARN` naming the artifacts outside it (`FAIL` under `--strict`) |
 | `leaf_count` | `merkle.leaf_count` matches the artifact count in the receipt |
 | `timeline_order` | Timeline entries are in deterministic `(timestamp, sequence_no, event_id)` order |
 
@@ -139,6 +141,8 @@ package verification
 ✓ package verified
 ```
 
+The last line is the verdict, and the word is chosen carefully: `package verified` only when every signature verifies under a key you have pinned (or this ship's own key); `signatures-pass` when every signature verifies but no signing key is pinned here, with `--strict` turning that into a failure; `structural-pass` under `--structural`; `package verification failed` otherwise. `--format json` returns one object: `status` (`ok`, `warning`, `error`), `verdict`, `message`, `passed`, `failed`, `warnings`, `signer_pinned`, and `checks`, an array of `{name, status, detail}` for every row above.
+
 Any FAIL exits nonzero and prints a warning summary. WARNs (for example, `signer_trust` on a key you have not pinned) are non-fatal. A package built before 0.31.2 fails at `envelopes` because there is nothing in it to check a signature against; run it with `--structural` to read its structure and approvals, and verify its artifacts from a bundle or the hub with [`treeship verify`](/docs/cli/verify).
 
 <Callout type="info">
@@ -156,6 +160,7 @@ A `.treeship` package is a directory containing:
 ├── render.json           Explorer render hints
 ├── preview.html          static preview you can open in a browser
 ├── keys.json             public keys the envelopes were signed with, by key id (0.31.2+)
+├── record.json           the signed session.v1 close record, over the digest of receipt.json (0.31.4+)
 ├── artifacts/            the signed DSSE envelope of every sealed artifact (0.31.2+)
 └── proofs/
     ├── art_xxx.proof.json

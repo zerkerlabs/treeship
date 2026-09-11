@@ -82,6 +82,8 @@ Since 0.31.2, the same command continues past the tree into the envelopes. From 
 | `chain_linkage` | Every chained artifact names the previous one as its parent, inside the signature, so the order the package presents is the order the signer committed to. Reorder two receipts and this fails. | The order of unchained artifacts. |
 | `chain_completeness` (`WARN` when it applies) | Names every sealed artifact that was signed during the session but never chained onto it: signed and verifiable on its own, but its place in the sequence is the signer's unsigned claim. | That the list is complete. An artifact signed into another workspace is not in this package at all. |
 | `signer_trust` | `PASS` when every signing key is a trust root you pinned (or, on the producer's own machine, one of its own keys). `WARN` otherwise, with the exact pin command for each key. `--strict` makes the warning a failure. | That the key belongs to the company or person named in the receipt. That is Step 2. |
+| `receipt_binding` | The producer's close record, sealed beside the package, signs the digest of `receipt.json` and the session id. If anyone added, removed or reordered a sealed artifact after the producer closed the session, this fails, even when every `signature:` row passes. | That the producer did not re-sign a rewritten set with their own key. That is what anchoring is for. |
+| `session_window` | Every sealed artifact was signed inside the session's own window. An artifact signed minutes after the session closed is the shape a spliced one has. | Wall-clock truth. The window is the signer's clock too. |
 
 The line to look for in a dispute is the inclusion line for the artifact in question. In the shopping demo that is `art_a58a450e…`, the result receipt of the add the provenance gate refused. Its presence in the tree means the refusal was part of the sealed record, not reconstructed after the fact.
 
@@ -101,7 +103,7 @@ When the session spent a human approval, the merchant demo's package adds six mo
 Together these say: one grant was issued, it was spent exactly once, the action that spent it is the one the signed use record names, and the use records form one unbroken chain. `treeship approval uses <grant-id>` prints the human-readable version: who spent it, on what subject, when, with the digest of the nonce (never the nonce). `--strict` turns missing approval evidence from a warning into a failure. `--format json` gives the same result to a script.
 
 <Callout type="warn">
-`package verify` checks that the signatures are valid for the keys the package names. It cannot decide whether those keys are the producer's; that is why `signer_trust` stays a warning until you pin them. Step 2 is not optional. On a package built before 0.31.2 the command fails at `envelopes`, and the signatures can only be checked the Step 2 way.
+`package verify` checks that the signatures are valid for the keys the package names. It cannot decide whether those keys are the producer's; that is why, until you pin them, the verdict reads `signatures-pass` and not `verified`, and `signer_trust` stays a warning. Step 2 is not optional. On a package built before 0.31.2 the command fails at `envelopes`, and the signatures can only be checked the Step 2 way.
 </Callout>
 
 ## Step 2. The signatures: pin the key, verify the chain

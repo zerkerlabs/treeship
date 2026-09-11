@@ -138,6 +138,10 @@ pub struct PackageKeys {
 }
 
 pub const KEYS_FILE: &str = "keys.json";
+/// The session's close record (`treeship/receipt/v1`, `session.v1`), signed
+/// over the digest of `receipt.json`, sealed beside the package since 0.31.4
+/// so the sealed set itself is under a signature (audit follow-up AUD-34).
+pub const RECORD_FILE: &str = "record.json";
 pub const PACKAGE_KEYS_SCHEMA: &str = "treeship/package-keys/v1";
 
 /// `approvals/index.json` -- top-level inventory of evidence in the
@@ -708,6 +712,8 @@ pub fn verify_package_with_options(
     // Signatures and chain linkage, from the package's own envelopes
     // (audit 2026-09, AUD-31 / AUD-32; QA TS-002b).
     verify_sealed_envelopes(pkg_dir, &receipt, trust, structural_only, &mut checks);
+    verify_receipt_binding(pkg_dir, &receipt, structural_only, &mut checks);
+    verify_session_window(pkg_dir, &receipt, &mut checks);
 
     // 6. Leaf count matches artifacts
     if receipt.merkle.leaf_count == receipt.artifacts.len() {
@@ -820,6 +826,219 @@ const SIGNER_KINDS: &[crate::trust::TrustRootKind] = &[
 fn read_package_keys(pkg_dir: &Path) -> Option<PackageKeys> {
     let raw = std::fs::read(pkg_dir.join(KEYS_FILE)).ok()?;
     serde_json::from_slice(&raw).ok()
+}
+
+/// Decode the keys the package names, by key id. Empty when `keys.json` is
+/// missing or unreadable; the callers report that themselves.
+fn package_verifying_keys(
+    pkg_dir: &Path,
+) -> std::collections::BTreeMap<String, ed25519_dalek::VerifyingKey> {
+    let mut keys = std::collections::BTreeMap::new();
+    if let Some(pk) = read_package_keys(pkg_dir) {
+        for (id, encoded) in pk.keys {
+            if let Ok(vk) = crate::trust::decode_ed25519_pubkey(&encoded) {
+                keys.insert(id, vk);
+            }
+        }
+    }
+    keys
+}
+
+/// The close record binds the sealed set: `session close` signs the SHA-256
+/// of `receipt.json` into a `session.v1` record after the package is built,
+/// and the package carries that envelope as `record.json`. Rewriting the
+/// artifact list and recomputing the tree leaves every per-artifact row green
+/// (the auditor's AUD-34 splice: an artifact from another session, same key,
+/// dropped into an `unchained` slot). This row catches it: the receipt's
+/// digest no longer matches what the producer signed at close. A package
+/// built before 0.31.4 carries no record and gets a WARN, FAIL under
+/// `--strict`; the producer's own key still says nothing about a producer
+/// who re-signs, which is what anchoring is for.
+fn verify_receipt_binding(
+    pkg_dir: &Path,
+    receipt: &SessionReceipt,
+    structural_only: bool,
+    checks: &mut Vec<VerifyCheck>,
+) {
+    use sha2::{Digest, Sha256};
+    let path = pkg_dir.join(RECORD_FILE);
+    let raw = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(_) => {
+            checks.push(VerifyCheck::warn(
+                "receipt_binding",
+                "the package carries no close record (built before 0.31.4), so the sealed set is not under a signature: an artifact could be added to the list and the tree recomputed without any per-artifact row failing",
+            ));
+            return;
+        }
+    };
+    if structural_only {
+        checks.push(VerifyCheck::warn(
+            "receipt_binding",
+            "close record present but not checked under --structural",
+        ));
+        return;
+    }
+    let envelope = match crate::attestation::Envelope::from_json(&raw) {
+        Ok(e) => e,
+        Err(e) => {
+            checks.push(VerifyCheck::fail(
+                "receipt_binding",
+                &format!("record.json does not parse as a DSSE envelope: {e}"),
+            ));
+            return;
+        }
+    };
+    let Some(sig) = envelope.signatures.first() else {
+        checks.push(VerifyCheck::fail(
+            "receipt_binding",
+            "record.json carries no signature",
+        ));
+        return;
+    };
+    let keys = package_verifying_keys(pkg_dir);
+    let Some(vk) = keys.get(&sig.keyid) else {
+        checks.push(VerifyCheck::fail(
+            "receipt_binding",
+            &format!(
+                "record.json is signed by {}, a key the package does not carry",
+                sig.keyid
+            ),
+        ));
+        return;
+    };
+    if let Err(e) = crate::attestation::verify_with_key(&envelope, &sig.keyid, *vk) {
+        checks.push(VerifyCheck::fail(
+            "receipt_binding",
+            &format!("record.json signature invalid for key {}: {e}", sig.keyid),
+        ));
+        return;
+    }
+    let payload: serde_json::Value = match envelope
+        .payload_bytes()
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+    {
+        Some(v) => v,
+        None => {
+            checks.push(VerifyCheck::fail(
+                "receipt_binding",
+                "record.json payload is not JSON",
+            ));
+            return;
+        }
+    };
+    let signed_digest = payload
+        .get("payload")
+        .and_then(|p| p.get("receipt_digest"))
+        .and_then(|d| d.as_str())
+        .unwrap_or("");
+    let signed_session = payload
+        .get("payload")
+        .and_then(|p| p.get("session_id"))
+        .and_then(|d| d.as_str())
+        .unwrap_or("");
+    let receipt_bytes = std::fs::read(pkg_dir.join(RECEIPT_FILE)).unwrap_or_default();
+    let actual = format!("sha256:{}", hex::encode(Sha256::digest(&receipt_bytes)));
+    if signed_session != receipt.session.id {
+        checks.push(VerifyCheck::fail(
+            "receipt_binding",
+            &format!(
+                "the close record names session {} but this receipt is {}",
+                signed_session, receipt.session.id
+            ),
+        ));
+    } else if signed_digest != actual {
+        checks.push(VerifyCheck::fail(
+            "receipt_binding",
+            &format!(
+                "the producer signed receipt digest {} at close but receipt.json now digests to {}: the sealed set was rewritten after it was signed",
+                signed_digest, actual
+            ),
+        ));
+    } else {
+        checks.push(VerifyCheck::pass(
+            "receipt_binding",
+            &format!(
+                "close record signed by {} binds receipt.json ({}) and names this session",
+                sig.keyid, actual
+            ),
+        ));
+    }
+}
+
+/// Every sealed artifact's signed timestamp should fall inside the session's
+/// own window. Clocks skew and a producer controls its own clock, so this is
+/// a warning that names the artifacts, not a proof; an artifact minutes after
+/// `ended_at` is the shape a spliced one has.
+fn verify_session_window(pkg_dir: &Path, receipt: &SessionReceipt, checks: &mut Vec<VerifyCheck>) {
+    use crate::statements::invitation::parse_rfc3339_to_unix;
+    const SKEW: u64 = 120;
+    let Some(started) = parse_rfc3339_to_unix(&receipt.session.started_at) else {
+        return;
+    };
+    let ended = receipt
+        .session
+        .ended_at
+        .as_deref()
+        .and_then(parse_rfc3339_to_unix);
+    let art_dir = pkg_dir.join(ARTIFACTS_DIR);
+    let mut outside: Vec<String> = Vec::new();
+    let mut seen = 0usize;
+    for entry in &receipt.artifacts {
+        let path = art_dir.join(format!("{}.json", sanitize_filename(&entry.artifact_id)));
+        let Ok(raw) = std::fs::read(&path) else {
+            continue;
+        };
+        let Ok(env) = crate::attestation::Envelope::from_json(&raw) else {
+            continue;
+        };
+        let Some(ts) = env
+            .payload_bytes()
+            .ok()
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+            .and_then(|v| {
+                v.get("timestamp")
+                    .and_then(|t| t.as_str())
+                    .map(str::to_string)
+            })
+        else {
+            continue;
+        };
+        let Some(t) = parse_rfc3339_to_unix(&ts) else {
+            continue;
+        };
+        seen += 1;
+        let before = t + SKEW < started;
+        let after = ended.map(|e| t > e + SKEW).unwrap_or(false);
+        if before || after {
+            outside.push(format!("{} ({})", entry.artifact_id, ts));
+        }
+    }
+    if seen == 0 {
+        return;
+    }
+    if outside.is_empty() {
+        checks.push(VerifyCheck::pass(
+            "session_window",
+            &format!("{seen} sealed artifact(s) were signed inside the session's window"),
+        ));
+    } else {
+        checks.push(VerifyCheck::warn(
+            "session_window",
+            &format!(
+                "{} sealed artifact(s) were signed outside the session's window ({} to {}): {}",
+                outside.len(),
+                receipt.session.started_at,
+                receipt
+                    .session
+                    .ended_at
+                    .clone()
+                    .unwrap_or_else(|| "open".into()),
+                outside.join(", ")
+            ),
+        ));
+    }
 }
 
 /// For every sealed artifact: the envelope is in the package, its id

@@ -65,6 +65,7 @@ on every surface. No synonyms (`valid`/`ok`/`passed` for the same state is a bug
 |---|---|---|---|---|
 | Full pass | `verified` | pass | `△` | yes |
 | Structural pass | `structural-pass` | pass | `△` | yes |
+| Signatures pass, signer unpinned | `signatures-pass` | warn | muted `△` | yes (0.31.4) |
 | Countersigned | `countersigned` | pass | `△` | yes |
 | Anchored | `anchored` | pass | `◇` | yes |
 | Key-bound actor | `proven (key-bound)` | pass | `△` | yes |

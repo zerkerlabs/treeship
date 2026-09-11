@@ -1203,6 +1203,12 @@ pub fn verify(
             // `approval-use-record-digest`.
             let approval_row = c.name.starts_with("replay-")
                 || c.name == "signer_trust"
+                // Audit follow-up AUD-34: under --strict a loose artifact, a
+                // package without its close record, or an artifact signed
+                // outside the session window is a failure, not a note.
+                || c.name == "chain_completeness"
+                || c.name == "receipt_binding"
+                || c.name == "session_window"
                 || c.name == "approval-use-integrity"
                 || c.name == "approval-use-record-digest"
                 || c.name == "approval-use-nonce-binding"
@@ -1245,20 +1251,71 @@ pub fn verify(
         pass_count, fail_count, warn_count,
     ));
 
-    if fail_count > 0 {
-        printer.blank();
-        printer.warn("package verification failed", &[]);
-        return Err("package verification failed".into());
+    // The verdict word. `verified` is reserved for a package whose every
+    // signature verifies under a key the verifier has pinned; when the keys
+    // are not pinned here the signatures still verify, and the word for that
+    // is `signatures-pass` (audit follow-up AUD-35: the previous line said
+    // "package verified" for an unknown signer, exit 0, and the JSON carried
+    // no rows at all).
+    let signer_unpinned = checks
+        .iter()
+        .any(|c| c.name == "signer_trust" && c.status == VerifyStatus::Warn);
+    let (verdict, status, message) = if fail_count > 0 {
+        ("failed", "error", "package verification failed")
     } else if structural_only {
-        printer.blank();
-        printer.success(
+        (
+            "structural-pass",
+            "warning",
             "structural-pass: structure and approvals verified, signatures not checked",
-            &[],
-        );
+        )
+    } else if signer_unpinned {
+        (
+            "signatures-pass",
+            "warning",
+            "signatures-pass: every signature verifies, but no signing key is pinned here; pin the producer's key for `verified`",
+        )
     } else {
-        printer.blank();
-        printer.success("package verified", &[]);
+        ("verified", "ok", "package verified")
+    };
+
+    if printer.format == crate::printer::Format::Json {
+        let rows: Vec<serde_json::Value> = checks
+            .iter()
+            .map(|c| {
+                serde_json::json!({
+                    "name": c.name,
+                    "status": match c.status {
+                        VerifyStatus::Pass => "pass",
+                        VerifyStatus::Warn => "warn",
+                        VerifyStatus::Fail => "fail",
+                    },
+                    "detail": c.detail,
+                })
+            })
+            .collect();
+        printer.json(&serde_json::json!({
+            "status": status,
+            "verdict": verdict,
+            "message": message,
+            "package": path.display().to_string(),
+            "passed": pass_count,
+            "failed": fail_count,
+            "warnings": warn_count,
+            "signer_pinned": !signer_unpinned,
+            "checks": rows,
+        }));
+        if fail_count > 0 {
+            return Err("package verification failed".into());
+        }
+        return Ok(());
     }
+
+    printer.blank();
+    if fail_count > 0 {
+        printer.warn(message, &[]);
+        return Err("package verification failed".into());
+    }
+    printer.success(message, &[]);
 
     printer.blank();
 

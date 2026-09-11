@@ -25,7 +25,8 @@ treeship attest action \
 |--------|-------------|
 | `--actor <uri>` | Who performed the action (required) |
 | `--action <label>` | What action occurred (required) |
-| `--parent <id>` | Parent artifact ID for chain linking |
+| `--parent <id>` | Parent artifact ID for chain linking. Inside an active session the default is the session's chain head |
+| `--no-parent` | Do not chain onto the session's head; the receipt is sealed at close as unchained |
 | `--approval-nonce <nonce>` | Nonce from an existing approval |
 | `--input-digest <sha256:hex>` | SHA-256 digest of the input consumed |
 | `--output-digest <sha256:hex>` | SHA-256 digest of the output produced |

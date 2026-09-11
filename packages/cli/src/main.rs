@@ -1252,8 +1252,9 @@ struct SessionReportArgs {
 
 #[derive(Args)]
 struct SessionEventArgs {
-    /// Event type (e.g. agent.called_tool, agent.wrote_file, agent.read_file,
-    /// agent.connected_network, agent.decision)
+    /// Event type: agent.called_tool, agent.wrote_file, agent.read_file,
+    /// agent.connected_network, agent.completed_process, agent.decision
+    /// (requires --model), agent.handoff, or agent.note (text in --meta)
     #[arg(long, value_name = "TYPE")]
     r#type: String,
 
@@ -1877,9 +1878,15 @@ struct AttestActionArgs {
     #[arg(long, value_name = "URI")]
     subject: Option<String>,
 
-    /// Parent artifact ID -- links this into a chain
+    /// Parent artifact ID -- links this into a chain. Inside an active
+    /// session the default is the session's chain head.
     #[arg(long, value_name = "ID")]
     parent: Option<String>,
+
+    /// Do not chain onto the active session's head when --parent is absent;
+    /// the receipt is sealed at close as unchained.
+    #[arg(long, conflicts_with = "parent")]
+    no_parent: bool,
 
     /// Must match the nonce on the approval authorising this action
     #[arg(long, value_name = "NONCE")]
@@ -3544,6 +3551,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 let subject_uri = a.subject.clone().or(a.content_uri.clone());
                 commands::attest::action(
                     commands::attest::ActionArgs {
+                        no_parent: a.no_parent,
                         actor: a.actor.clone(),
                         action: a.action.clone(),
                         v2: a.v2,
