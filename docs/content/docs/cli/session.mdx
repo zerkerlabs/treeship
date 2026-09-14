@@ -216,6 +216,10 @@ Example output:
 The receipt URL is permanent and public. No token, no expiry, no auth required to fetch it. A2A clients, dashboards, and offline verifiers can all `curl` it programmatically. See [`GET /v1/receipt/{session_id}`](/docs/api/receipt-get) for the API reference.
 </Callout>
 
+### Exit code
+
+`0` when the package's own local verify passed or warned and, if an upload was attempted, it succeeded. Nonzero when the local verify **failed** (`verification_status: fail`), on every path including `--no-upload` and no hub attached, and nonzero on an upload error. The JSON document is emitted either way; a script can branch on the exit code or on `verification_status` and `error`.
+
 ## What gets sealed in a receipt
 
 A Session Receipt v1 includes:

@@ -534,8 +534,11 @@ pub fn verify_presentation(
         StapleStatus::NoStaple => "none included".to_string(),
         StapleStatus::Unparseable => "unparseable staple".to_string(),
         StapleStatus::SignerNotTrusted => format!(
-            "checkpoint #{} signer not in your trust roots (or signature invalid) — pin it: treeship trust add <name> ed25519:{} --kind hub_checkpoint --yes",
+            "checkpoint #{} signer not in your trust roots (or signature invalid) — pin it: treeship trust add {} ed25519:{} --kind hub_checkpoint --yes",
             sv.checkpoint_index.unwrap_or(0),
+            // A real, stable name for the root, not a `<name>` placeholder
+            // the reader pastes literally (retest of 0.31.4, FR-5).
+            derived_root_name("hub", sv.checkpoint_public_key.as_deref().unwrap_or("")),
             sv.checkpoint_public_key.as_deref().unwrap_or("")
         ),
         StapleStatus::InclusionInvalid => format!(
@@ -713,10 +716,44 @@ pub fn verify_presentation(
         );
         printer.blank();
     }
+    // The second pin. The staple hint above names the checkpoint key; the
+    // card's own signature needs the issuing ship pinned as `cert_issuer`
+    // (or the agent key as `agent_cert`). The presentation carries the
+    // signer's key id but not the ship's public key, so the verifier can
+    // name exactly what to ask the producer for (retest of 0.31.4, FR-5).
+    if !sig_ok {
+        let cert_signer = pres
+            .get("certs")
+            .and_then(|v| v.as_array())
+            .and_then(|a| a.first())
+            .and_then(|c| c.get("envelope_json"))
+            .and_then(|v| v.as_str())
+            .and_then(|ej| serde_json::from_str::<Envelope>(ej).ok())
+            .and_then(|env| env.signatures.first().map(|s| s.keyid.clone()));
+        match cert_signer {
+            Some(kid) => printer.hint(&format!(
+                "signature: the card's certificate is signed by {kid}, which is not pinned here. Ask the producer for `treeship keys export` and run the `--kind cert_issuer` line it prints (it names {kid}); then re-run this command."
+            )),
+            None => printer.hint(
+                "signature: the card's signing key is not pinned here. Ask the producer for `treeship keys export` and run the `--kind cert_issuer` line it prints; then re-run this command.",
+            ),
+        }
+        printer.blank();
+    }
     if !ok {
         return Err(format!("presentation did not verify — status: {status}").into());
     }
     Ok(())
+}
+
+/// A stable, human-readable trust-root name derived from a public key, for
+/// the pin commands the verifier prints: `<prefix>_<first 8 hex of sha256>`.
+/// The trust store accepts any label; what matters is that the reader can
+/// paste the line as printed.
+fn derived_root_name(prefix: &str, public_key_b64: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let h = Sha256::digest(public_key_b64.as_bytes());
+    format!("{prefix}_{}", hex::encode(&h[..4]))
 }
 
 // The offline staple check this file used to hold (checkpoint signature
