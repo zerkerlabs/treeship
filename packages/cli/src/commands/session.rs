@@ -2539,7 +2539,7 @@ pub fn report(
             // hint that points the user at `hub attach` or local
             // verify.
             if format == "json" {
-                return emit_report_output(
+                emit_report_output(
                     format,
                     None,
                     None,
@@ -2550,10 +2550,11 @@ pub fn report(
                     package_digest.as_deref(),
                     &verification_status,
                     &warnings,
-                    Some("hub not attached -- run `treeship hub attach` to publish; receipt verifies locally"),
+                    Some("hub not attached -- run `treeship hub attach` to publish; see verification_status for the local verdict"),
                     None,
                     printer,
-                );
+                )?;
+                return finish_report(&verification_status, Some("hub not attached -- run `treeship hub attach` to publish; see verification_status for the local verdict"));
             }
             return Err(format!(
                 "{e}\n\n  \
@@ -2574,7 +2575,7 @@ pub fn report(
         Ok(s) => s,
         Err(e) => {
             if format == "json" {
-                return emit_report_output(
+                emit_report_output(
                     format,
                     None,
                     None,
@@ -2588,6 +2589,10 @@ pub fn report(
                     Some(&format!("hub connection '{hub_name}': {e}")),
                     None,
                     printer,
+                )?;
+                return finish_report(
+                    &verification_status,
+                    Some(&format!("hub connection '{hub_name}': {e}")),
                 );
             }
             return Err(format!(
@@ -2622,7 +2627,7 @@ pub fn report(
                 .unwrap_or("unknown error")
                 .to_string();
             if format == "json" {
-                return emit_report_output(
+                emit_report_output(
                     format,
                     None,
                     None,
@@ -2636,13 +2641,17 @@ pub fn report(
                     Some(&format!("hub returned {code}: {msg}")),
                     None,
                     printer,
+                )?;
+                return finish_report(
+                    &verification_status,
+                    Some(&format!("hub returned {code}: {msg}")),
                 );
             }
             return Err(format!("hub returned {code}: {msg}").into());
         }
         Err(e) => {
             if format == "json" {
-                return emit_report_output(
+                emit_report_output(
                     format,
                     None,
                     None,
@@ -2656,6 +2665,10 @@ pub fn report(
                     Some(&format!("failed to upload receipt: {e}")),
                     None,
                     printer,
+                )?;
+                return finish_report(
+                    &verification_status,
+                    Some(&format!("failed to upload receipt: {e}")),
                 );
             }
             return Err(format!("failed to upload receipt: {e}").into());
@@ -2701,6 +2714,22 @@ fn report_exit(verification_status: &str) -> Result<(), Box<dyn std::error::Erro
         return Err("local verification of the package failed; see warnings".into());
     }
     Ok(())
+}
+
+/// The JSON early returns (no hub attached, DPoP key unavailable, hub
+/// error) used to exit 0 with `error` set, and with `verification_status:
+/// fail` beside a message saying the receipt verifies locally (retest of
+/// 0.31.4, FR-7). The document is still emitted; the exit code now follows
+/// it: nonzero on a failed local verify, and nonzero on an upload error.
+fn finish_report(
+    verification_status: &str,
+    error: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    report_exit(verification_status)?;
+    match error {
+        Some(e) => Err(e.into()),
+        None => Ok(()),
+    }
 }
 
 /// Derive share URLs from a hub-issued `receipt_url`. The convention:

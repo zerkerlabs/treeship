@@ -322,7 +322,21 @@ fn own_actions_chain_by_default_and_foreign_receipts_stay_loose() {
         .as_str()
         .unwrap()
         .to_string();
-    let inside = ws.attest("inside", &[]);
+    // The session's own actor, no flags: chains onto the head.
+    let inside = ws.json(&[
+        "attest",
+        "action",
+        "--actor",
+        "agent://mine",
+        "--action",
+        "inside",
+    ])["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    // Another actor in the same workspace, no flags at all: the default
+    // parent is scoped to the session's actor, so this is sealed loose
+    // (retest of 0.31.4, P3).
     let foreign = ws.json(&[
         "attest",
         "action",
@@ -330,12 +344,22 @@ fn own_actions_chain_by_default_and_foreign_receipts_stay_loose() {
         "agent://someone-else",
         "--action",
         "foreign",
+    ])["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let loose = ws.json(&[
+        "attest",
+        "action",
+        "--actor",
+        "agent://mine",
+        "--action",
+        "loose",
         "--no-parent",
     ])["id"]
         .as_str()
         .unwrap()
         .to_string();
-    let loose = ws.attest("loose", &["--no-parent"]);
     let pkg = ws.close("mine");
     let receipt = ws.receipt(&pkg);
     let entries: Vec<(String, bool)> = receipt["artifacts"]
@@ -416,4 +440,16 @@ fn session_report_exits_nonzero_when_local_verify_fails() {
     let (ok, v) = ws.json_any(&["session", "report", "--no-upload"]);
     assert!(!ok, "a failed local verify must exit nonzero: {v}");
     assert_eq!(v["verification_status"], "fail", "{v}");
+    // The default path with no hub attached emits the same document with an
+    // `error` and used to exit 0 (retest of 0.31.4).
+    let (ok, v) = ws.json_any(&["session", "report"]);
+    assert!(!ok, "no hub and a failed verify must exit nonzero: {v}");
+    assert_eq!(v["verification_status"], "fail", "{v}");
+    assert!(
+        v["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("hub not attached"),
+        "{v}"
+    );
 }

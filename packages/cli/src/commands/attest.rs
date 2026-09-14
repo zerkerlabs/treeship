@@ -121,14 +121,30 @@ pub fn action(
     // `chain_completeness` warned on honest sessions and said nothing useful
     // on dishonest ones (audit follow-up, P3). `--no-parent` keeps the old
     // behaviour for a receipt that is deliberately not part of the chain.
+    //
+    // The default is scoped to the session's actor. Another agent attesting
+    // in the same workspace does not become the session's chained step by
+    // omission (retest of 0.31.4, P3); it passes --parent to join the chain
+    // on purpose, or is sealed loose.
+    let mut foreign_actor_in_session = false;
     if args.parent_id.is_none() && !args.no_parent {
         if let Some(manifest) = crate::commands::session::load_session() {
-            let ctx = ctx::open(args.config.as_deref())?;
-            args.parent_id = crate::commands::session::session_chain_head(
-                &ctx,
-                manifest.root_artifact_id.as_deref(),
-            );
+            if manifest.actor == args.actor {
+                let ctx = ctx::open(args.config.as_deref())?;
+                args.parent_id = crate::commands::session::session_chain_head(
+                    &ctx,
+                    manifest.root_artifact_id.as_deref(),
+                );
+            } else {
+                foreign_actor_in_session = true;
+            }
         }
+    }
+    if foreign_actor_in_session {
+        printer.hint(&format!(
+            "{} is not this session's actor, so this receipt is sealed loose; pass --parent <id> to chain it on purpose",
+            args.actor
+        ));
     }
     if args.v2 {
         return action_v2(args, printer);
@@ -1258,7 +1274,12 @@ pub fn receipt(args: ReceiptArgs, printer: &Printer) -> Result<(), Box<dyn std::
         payload_type: pt,
         key_id: signer.key_id().to_string(),
         signed_at: stmt.timestamp.clone(),
-        parent_id: args.subject_id.clone(),
+        // A subject is a storage parent only when it is a Treeship artifact.
+        // An external reference (`ord_12345`) names a thing the receipt is
+        // about, not a link in the chain; recording it as the parent made
+        // `verify last` walk to it and fail with "not found in local
+        // storage" (usability follow-up FR-4, the receipt half).
+        parent_id: args.subject_id.clone().filter(|id| id.starts_with("art_")),
         envelope: result.envelope,
         hub_url: None,
         anchors: Vec::new(),

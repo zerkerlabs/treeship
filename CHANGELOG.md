@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Retest of 0.31.4, the four items left open.** `attest receipt --subject <external ref>` no longer records the subject as a storage parent, and the chain walk stops at a parent that is not an artifact id, so `verify last` passes on a receipt about `ord_12345` (FR-4, the receipt half). `session report --format json` exits nonzero on a failed local verify on every path, including no hub attached, and nonzero on an upload error; the no-hub message no longer says the receipt verifies locally beside `verification_status: fail` (FR-7). `verify-presentation` prints a pin command with a real root name instead of `<name>`, and when the card's signature is unpinned it names the signing key id and the `keys export` line to ask the producer for (FR-5). The default `--parent` inside a session is scoped to the session's actor: another agent's receipt in the same workspace is sealed loose unless it passes `--parent` on purpose (P3).
 - **Release: the npm landing wait asks for the exact version and waits fifteen minutes.** `wait-for-npm-version.sh` compared the `latest` dist-tag, which npm's CDN updates minutes after the version itself, and gave up after five; on 0.31.4 it split the release across npm twice. It now asks whether `<pkg>@<version>` is installable, for up to 900 s.
 
 ## 0.31.4 (2026-09-11)

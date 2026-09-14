@@ -475,7 +475,13 @@ pub fn run(
                 break;
             }
             let rec = ctx.storage.read(&id);
-            walk_id = rec.ok().and_then(|r| r.parent_id.clone());
+            // Only an artifact id is a link. Older stores recorded an
+            // external subject (`ord_12345`) as a receipt's parent; walking
+            // to it can only fail (FR-4).
+            walk_id = rec
+                .ok()
+                .and_then(|r| r.parent_id.clone())
+                .filter(|p| p.starts_with("art_"));
             depth += 1;
         }
         chain_ids.reverse(); // root first
