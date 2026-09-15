@@ -74,6 +74,8 @@ The card networks and the platform companies are building the other half of the 
 
 We wrote about Mastercard's design in [an earlier post](/blog/verifiable-intent-treeship-agent-attestation). These are real and they are valuable. They answer "is this agent allowed to spend this money on this merchant," and the networks are the right party to answer it. Notice the shape they share: every one of them signs the moment of payment, stores the proof on the network's or the platform's own infrastructure, and says nothing about the merchant's back office, the refused cart add, or the price change an operator approved on a Tuesday afternoon.
 
+One note on how Treeship relates to these. Where it meets one of them, it is open source meeting an open specification: `treeship vi` is an independent implementation of the Verifiable Intent v0.1 draft, written from the published spec and tested against the reference SDK in both directions. None of this is endorsed by, coordinated with, or speaking for Mastercard, Visa, Google, OpenAI or Stripe. The draft was open, so we integrated with it, the same way we integrate with any open protocol.
+
 ---
 
 ## Logs are not receipts
