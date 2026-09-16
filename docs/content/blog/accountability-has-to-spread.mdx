@@ -1,6 +1,6 @@
 ---
 title: "Accountability has to spread"
-description: "The risk from autonomous agents is not behind one front door. Agents and their subagents already run on many machines across many organizations, so accountability cannot be something the frontier labs bolt on for us. It has to be local-first and portable, installed where the agent runs, and checkable by strangers."
+description: "The risk from autonomous agents does not sit inside the frontier labs. Agents and their subagents already run on many machines across many organizations, so accountability cannot be something the frontier labs bolt on for us. It has to be local-first and portable, installed where the agent runs, and checkable by strangers."
 date: 2026-09-15
 tags: ["trust", "agents", "trust-roots", "verification"]
 readTime: "6 min read"
@@ -10,7 +10,7 @@ systems: []
 
 # Accountability has to spread
 
-There is a comfortable story about agent risk. The dangerous capability lives in a handful of frontier labs, so the controls live there too: slow the research, gate the front door, and the rest of us are covered.
+There is a comfortable story about agent risk. The dangerous capability lives in a handful of frontier labs, so the controls live there too: slow the research, gate the APIs, and the rest of us are covered.
 
 The story is already out of date. Whatever the frontier does next, the agents doing work today are spread out. A coding agent runs on a laptop and spawns subagents. A shopping agent runs in a merchant's cloud and hands a cart to a payment network. An agent inside one company invites an agent from another company into a shared session. Open-weight models run on hardware nobody registers. The labs compete across borders, and no single government can call a halt that the others will honor.
 
@@ -26,7 +26,7 @@ Each of these is a question about what happened, who did it, and whether anyone 
 
 If accountability has to live wherever an agent runs, the primitive has to have a specific shape. This is the shape we have converged on, and the properties are not optional.
 
-**Local-first.** The record is produced on the machine doing the work, by the process doing the work, before anything leaves. There is no central service in the critical path, because a central service is a front door, and the whole point is that front doors do not cover the network.
+**Local-first.** The record is produced on the machine doing the work, by the process doing the work, before anything leaves. There is no central service in the critical path, because a central service only covers the agents that route through it, and most agents never will.
 
 **Signed, by a key the actor controls.** A receipt is a statement someone signed, not a line someone wrote. Ed25519 over a DSSE envelope is enough. The signature says which key stood behind the statement; the trust root you pin says whether you care about that key.
 
@@ -64,9 +64,9 @@ Every one of those runs a different model, on a different runtime, in a differen
 
 ## The bet
 
-The bet is simple. Autonomy is going to be granted to agents at the rate we can hold them accountable, and no more. If accountability stays at the front door, autonomy stays shallow, or it goes deep without accountability, which is the outcome everyone says they want to avoid.
+The bet is simple. Agents will only get as much autonomy as we can hold them accountable for. If accountability ships from a handful of labs and stops at their servers, autonomy stays shallow everywhere else, or it goes deep without accountability, which is the outcome everyone says they want to avoid.
 
-The alternative is a substrate that spreads the way the agents spread: installed locally, signed by the actor, chained, portable, and verifiable by anyone who holds the bytes and a public key. That is what we are building, and it is why the verifier is open, the format is documented, and nothing about it depends on asking us.
+The alternative is a substrate that spreads at the same tempo the agents do, to every person and every organization running one: installed locally, signed by the actor, chained, portable, and verifiable by anyone who holds the bytes and a public key. That is what we are building, and it is why the verifier is open, the format is documented, and nothing about it depends on asking us.
 
 Install it on one machine. Then install it on the next one.
 
