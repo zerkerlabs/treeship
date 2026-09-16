@@ -3,7 +3,7 @@ title: "Accountability has to spread"
 description: "The risk from autonomous agents does not sit inside the frontier labs. Agents and their subagents already run on many machines across many organizations, so accountability cannot be something the frontier labs bolt on for us. It has to be local-first and portable, installed where the agent runs, and checkable by strangers."
 date: 2026-09-15
 tags: ["trust", "agents", "trust-roots", "verification"]
-readTime: "6 min read"
+readTime: "8 min read"
 category: perspective
 systems: []
 ---
@@ -12,7 +12,7 @@ systems: []
 
 There is a comfortable story about agent risk. The dangerous capability lives in a handful of frontier labs, so the controls live there too: slow the research, gate the APIs, and the rest of us are covered.
 
-The story is already out of date. Whatever the frontier does next, the agents doing work today are spread out. A coding agent runs on a laptop and spawns subagents. A shopping agent runs in a merchant's cloud and hands a cart to a payment network. An agent inside one company invites an agent from another company into a shared session. Open-weight models run on hardware nobody registers. The labs compete across borders, and no single government can call a halt that the others will honor.
+The story is already out of date. Whatever the frontier does next, the agents doing work today are spread out across the open internet, in clusters and swarms that no one party operates. A coding agent runs on a laptop and spawns subagents. A shopping agent runs on a virtual machine in a merchant's cloud and hands a cart to a payment network. An agent at one company invites an agent from another into a shared session. Open-weight models run on hardware nobody registers, and every one of these can call, spawn, or delegate to any other. If something like superintelligence arrives, this is the substrate it arrives on: not one model behind one API, but a network of agents on machines that belong to everyone. The labs compete across borders, and no single government can call a halt that the others will honor.
 
 Slowing the frontier may still be worth doing. It does not touch this layer. If the only accountability we have is the accountability a lab chooses to build into its own product, then every agent that runs somewhere else runs with none.
 
@@ -55,6 +55,22 @@ It stops at the lab's boundary. The subagent running on a Rust framework on your
 It asks you to trust the platform. A platform's log is evidence to the extent you trust the platform's pipeline, storage and access controls. Across organizations, that trust is exactly what is missing. Cryptographic verification against your own roots does not need it. [The case for portable trust](/blog/the-case-for-portable-trust) makes that argument in full.
 
 It concentrates the very thing we are trying to spread. If accountability for all agent activity routes through a few companies, those companies become the choke point and the target. A layer that installs on each machine, and that each organization can pin roots for on its own terms, has no single point to capture.
+
+## How it spreads
+
+A layer that has to be adopted machine by machine has to spread on its own, from the first install outward. This is how Treeship does it, in the order it happens.
+
+**It starts on one machine.** `treeship init` creates a keystore and a ship key. From then on every session that machine's agents run opens with a signed root, every action chains onto the head of that session, and closing the session seals it with a signed Merkle root and writes the package. Where the harness exposes hooks, the plugin does this outside the model's context, so the record does not depend on the model choosing to keep it.
+
+**Then into everything the agent does.** Every tool call gets an intent receipt before it runs and a result receipt after. An approval is a signed grant spent once, and the journal that proves it was spent once is in the package. A refusal is a receipt that says what was refused and by which gate. Each receipt names its parent by content hash, so the chain is the order of events and a gap is detectable.
+
+**Then into the agents it spawns.** When an agent on that machine spawns another, the same hooks fire for the child. Its tool calls land in the same session's chain, tagged with the agent instance that made them, and the sealed receipt records the agent graph: which instance spawned which, at what depth, and who returned control to whom. An agent registered with its own key gets a certificate signed by the ship key, so a counterparty that pins the ship key once can verify every agent that ship ever certifies. A hand-off between two agents sharing one keystore is recorded as custody asserted, with the reason, because a challenge against yourself is not liveness.
+
+**Then across the hand-off to another machine.** This is where the accountability has to cross a boundary nobody owns. The receiving agent mints a fresh nonce. The sender answers it with a presentation signed by its own key. The receiver verifies that presentation offline against its own trust roots and only then admits the work, and the hand-off receipt records custody as live, bound to the presentation digest and the nonce. If the check fails, the refusal is signed too, so "refused the work" and "never received the work" are not the same silence. A room is the same handshake run for a group: a single-use signed invitation, a live challenge, a countersign, and a roster that is derived from signatures rather than kept in a file.
+
+**Then the package leaves.** The sealed session is a directory of files. It can be handed to a merchant, an auditor, a regulator, or the agent on the other side of the next hand-off, and any of them can run the verifier with no network and no account with us. The hub, when it is used at all, stores bytes and serves proofs. It never issues a verdict.
+
+**And it says where it stops.** What was not instrumented is not in the receipt, and the receipt says so. A process started outside the wrapper, a runtime with no hooks, a subagent that reached a tool through a path nothing signs: those are gaps, and the honest thing is to name the boundary rather than paper over it. Each install pushes the boundary outward by one machine.
 
 ## What it looks like when it is installed
 
