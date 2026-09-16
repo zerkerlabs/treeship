@@ -1,0 +1,75 @@
+---
+title: "Accountability has to spread"
+description: "The risk from autonomous agents is not behind one front door. Agents and their subagents already run on many machines across many organizations, so accountability cannot be something the frontier labs bolt on for us. It has to be local-first and portable, installed where the agent runs, and checkable by strangers."
+date: 2026-09-15
+tags: ["trust", "agents", "trust-roots", "verification"]
+readTime: "6 min read"
+category: perspective
+systems: []
+---
+
+# Accountability has to spread
+
+There is a comfortable story about agent risk. The dangerous capability lives in a handful of frontier labs, so the controls live there too: slow the research, gate the front door, and the rest of us are covered.
+
+The story is already out of date. Whatever the frontier does next, the agents doing work today are spread out. A coding agent runs on a laptop and spawns subagents. A shopping agent runs in a merchant's cloud and hands a cart to a payment network. An agent inside one company invites an agent from another company into a shared session. Open-weight models run on hardware nobody registers. The labs compete across borders, and no single government can call a halt that the others will honor.
+
+Slowing the frontier may still be worth doing. It does not touch this layer. If the only accountability we have is the accountability a lab chooses to build into its own product, then every agent that runs somewhere else runs with none.
+
+## The unit of risk is the network, not the model
+
+Nobody deploys a model. They deploy a system: a model, a harness, a set of tools, and increasingly other agents that the first one delegates to. The interesting failures happen between those parts. A subagent takes an action its parent never asked for. An approval granted once is spent twice. A hand-off arrives claiming to be from a partner's agent, and nothing proves it is. A payment is made and the only record of why is a log file owned by the party that made it.
+
+Each of these is a question about what happened, who did it, and whether anyone authorized it. Model evaluations do not answer those questions. Guardrails answer them for one vendor's runtime. Observability answers them for whoever owns the dashboard. None of that survives the boundary between two organizations, and the boundary is exactly where agents are now transacting.
+
+## What a spread-out accountability layer has to be
+
+If accountability has to live wherever an agent runs, the primitive has to have a specific shape. This is the shape we have converged on, and the properties are not optional.
+
+**Local-first.** The record is produced on the machine doing the work, by the process doing the work, before anything leaves. There is no central service in the critical path, because a central service is a front door, and the whole point is that front doors do not cover the network.
+
+**Signed, by a key the actor controls.** A receipt is a statement someone signed, not a line someone wrote. Ed25519 over a DSSE envelope is enough. The signature says which key stood behind the statement; the trust root you pin says whether you care about that key.
+
+**Chained.** Every receipt names its parent by content hash, so order is part of the evidence and a missing step is detectable. A session closes with a signed root over the whole tree. Remove a receipt and the root no longer matches. Insert one and its signature does not belong.
+
+**Content-addressed.** The identifier of a receipt is derived from its bytes, so the same receipt carries the same identity on every machine it reaches. Two parties can point at the same artifact without a registry to agree on a name.
+
+**Verifiable offline, by strangers.** The verifier needs the bytes, a public key, and no network. A merchant checks a customer's agent against the merchant's own trust roots. An auditor checks both. Nobody has to ask the producer, and nobody has to trust the vendor that ran the agent. The Treeship hub stores bytes and serves proofs; it never issues a verdict.
+
+**Portable.** The record is a file. It travels with the work, across runtimes and across companies, and it means the same thing at the destination as it did at the source.
+
+**Refusals and approvals are first-class.** An action that was blocked is a signed receipt saying it was blocked and by which gate. An approval is a signed grant that can be spent once, and the journal that proves it was spent once travels in the package. The interesting decisions are the ones that stopped something, and a log line is the wrong medium for them.
+
+**Hand-offs carry proof of key control.** When one agent hands work to another, the receiver mints a fresh nonce and the sender signs it. The hand-off records that the verify happened. Without that step, an agent-to-agent network is a chain of unverifiable claims about who sent what.
+
+**Honest about its boundary.** A receipt proves that a key signed a statement about an action and what the gate decided. It does not prove the answer was correct, and it does not on its own prove which human sits behind the key. A wrong action with a perfect receipt is still wrong. A primitive that claims more than this is a liability, because the claims are what an adversary will attack.
+
+Treeship is our implementation of that shape. The properties above are not aspirations; each corresponds to a check that `treeship package verify` runs on a sealed session, and the [trust model](/concepts/trust-model) spells out what each check can and cannot conclude.
+
+## Why the lab cannot do this for you
+
+A frontier lab can sign what its own model did on its own servers. That is worth having. It is also structurally the wrong place for the accountability layer, for three reasons.
+
+It stops at the lab's boundary. The subagent running on a Rust framework on your machine, the partner's agent joining your session, the open-weight model in a data center you will never see: none of those are inside any lab's attestation.
+
+It asks you to trust the platform. A platform's log is evidence to the extent you trust the platform's pipeline, storage and access controls. Across organizations, that trust is exactly what is missing. Cryptographic verification against your own roots does not need it. [The case for portable trust](/blog/the-case-for-portable-trust) makes that argument in full.
+
+It concentrates the very thing we are trying to spread. If accountability for all agent activity routes through a few companies, those companies become the choke point and the target. A layer that installs on each machine, and that each organization can pin roots for on its own terms, has no single point to capture.
+
+## What it looks like when it is installed
+
+None of this is hypothetical. A Rust agent built on Rig gets a signed receipt for every tool call, in process. Three agents on Buzz built [trusted rooms](/blog/treeship-and-buzz-trusted-rooms), where a joiner proves key control before the host countersigns it in. Grok Bot hosts the [custody handshake](/blog/treeship-0-27-the-custody-handshake) for agent-to-agent verification. A shopping agent on Anthropic's commerce blueprint produces [receipts for agentic commerce](/blog/receipts-for-agentic-commerce): the refused add in the signed tree, the merchant's approval spent once, the cart signed at checkout.
+
+Every one of those runs a different model, on a different runtime, in a different organization. The receipts are the same bytes, and any of them can be checked by any of the others.
+
+## The bet
+
+The bet is simple. Autonomy is going to be granted to agents at the rate we can hold them accountable, and no more. If accountability stays at the front door, autonomy stays shallow, or it goes deep without accountability, which is the outcome everyone says they want to avoid.
+
+The alternative is a substrate that spreads the way the agents spread: installed locally, signed by the actor, chained, portable, and verifiable by anyone who holds the bytes and a public key. That is what we are building, and it is why the verifier is open, the format is documented, and nothing about it depends on asking us.
+
+Install it on one machine. Then install it on the next one.
+
+```bash
+npm install -g treeship && treeship init
+```
