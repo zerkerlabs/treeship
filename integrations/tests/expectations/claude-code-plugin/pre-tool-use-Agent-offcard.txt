@@ -1,0 +1,2 @@
+session status --format json
+session event --type agent.note --agent-name claude-code --meta {"text": "off-card: Agent (agent.spawn) not in bounded tools for agent://claude-code"}

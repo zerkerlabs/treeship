@@ -6,7 +6,12 @@ fi
 case "$1" in
   session)
     case "$2" in
-      status) exit 0 ;;
+      status)
+        # The gate reads the session actor from JSON status.
+        case "$*" in
+          *"--format json"*) printf '{"active":true,"actor":"%s","session_id":"ssn_mock"}\n' "${MOCK_TREESHIP_ACTOR:-agent://claude-code}" ;;
+        esac
+        exit 0 ;;
       event|start|close|report) exit 0 ;;
     esac
     ;;

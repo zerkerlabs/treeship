@@ -1,0 +1,18 @@
+{
+  "agent_id": "agent_claude_code_fixture",
+  "agent_name": "claude-code",
+  "surface": "claude-code",
+  "connection_modes": ["native-hook"],
+  "coverage": "high",
+  "capabilities": {
+    "bounded_tools": ["file.read", "file.write", "shell.exec"],
+    "escalation_required": ["db.write", "mcp__postgres__*"],
+    "forbidden": ["net.fetch"]
+  },
+  "provenance": "registered",
+  "status": "verified",
+  "host": "local",
+  "workspace": "/mock",
+  "created_at": "2026-09-17T00:00:00Z",
+  "updated_at": "2026-09-17T00:00:00Z"
+}

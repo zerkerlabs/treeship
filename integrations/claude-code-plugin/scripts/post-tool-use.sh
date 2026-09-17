@@ -27,6 +27,10 @@
 
 set -e
 
+# Resolve our own directory before any cd so the shared helper is found
+# whether the hook is invoked by absolute path (Claude Code) or relative.
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+
 INPUT=$(cat 2>/dev/null || true)
 [ -z "$INPUT" ] && exit 0
 
@@ -112,7 +116,7 @@ TOOL_NAME=$(extract tool_name)
 # the payload. Tag those events with the subagent's instance name so the
 # receipt attributes them to the instance that made them, not to the parent.
 # shellcheck source=./agent-instance.sh
-. "$(dirname "$0")/agent-instance.sh"
+. "$SCRIPT_DIR/agent-instance.sh"
 AGENT_NAME=$(agent_instance "$INPUT")
 [ -z "$AGENT_NAME" ] && AGENT_NAME="claude-code"
 
