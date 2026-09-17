@@ -1,0 +1,89 @@
+---
+title: Receipts as evidence
+description: How a Treeship receipt and a sealed package map onto the questions a conformity assessment, a retention rule or a dispute asks. The binding between machine-checkable artifacts and the institutions that have to act on them.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Receipts as evidence
+
+A technical proof is only useful if an institution can act on it. Auditors, regulators, embedded evaluators and counterparties in a dispute do not ask "does the Ed25519 signature verify"; they ask who attested what, when, under whose authority, whether the record is complete, and whether it can be produced later unchanged. This page maps those questions onto what a Treeship receipt and a sealed `.treeship` package carry, so that a policy or legal reader can see which field answers which question, and where the answer stops.
+
+It is a mapping, not a legal opinion. Every row names the mechanism, and the last section names what the mechanism cannot say.
+
+## The questions a conformity assessment asks
+
+| Question | What answers it | Where it lives |
+|---|---|---|
+| Who made this statement? | The signing key, identified by `key_id`; a registered agent's key is bound to its `agent://` URI by a ship-signed `agent_cert.v1` | the DSSE envelope; the certificate chain |
+| On whose authority? | The pinned trust root the key chains to (`cert_issuer`, `session_host`, `hub_org`, `revoker` are separate powers) | the verifier's trust store, set by the checking party |
+| What exactly was stated? | The statement payload, with its type (`action`, `approval`, `handoff`, `receipt`, a registered predicate) | the signed bytes, PAE-encoded, so the signature covers them exactly |
+| When? | The signed timestamp, which proves only that the key asserted that time; an external anchor (hub checkpoint, later Rekor or OpenTimestamps) brackets it | `signed` in the payload; anchoring coverage in `verify` |
+| In what order, and is anything missing? | The parent hash inside each signature; the Merkle root at close; `chain_linkage`, `chain_completeness` and `session_window` rows in `package verify` | `parentId`, `merkle.json`, `record.json` |
+| Was a human in the loop? | A signed approval with a scope and a nonce, spent once, with the journal proving it was spent once | `approval` artifacts; the Approval Use Journal |
+| Was anything refused? | A `blocked.v1` receipt naming the gate and the reason | the sealed set, same as any action |
+| Who else was involved? | The agent graph: spawns, hand-offs with custody grade, returns; room rosters derived from countersignatures | `receipt.json` `agent_graph` and `participants` |
+
+## Identity, and its two grades
+
+A receipt carries an actor URI. That URI is a claim of two possible strengths, and a verifier prints which:
+
+- **`asserted`**: the artifact is signed by the ship's key and the URI is a label the operator chose. It proves the operator's machine recorded this; it does not prove which agent or person.
+- **`proven (key-bound)`**: the artifact is signed by a key that a ship-signed certificate binds to that URI. It proves the holder of that key made the statement.
+
+Neither grade proves which human sits behind a key. Binding a key to a person or an organisation is done out of band, when the checking party pins the root, and that pinning is itself the accountable act. A conformity scheme that needs "who" at the level of a legal person should require key-bound actors and record the pinning decision as part of its own process.
+
+## Retention
+
+A sealed package is a directory of files: `receipt.json`, `merkle.json`, `record.json`, `keys.json`, `proofs/`, and every signed envelope under `artifacts/`. It has no dependency on Treeship, the hub, or any service to be read later. A retention rule that says "keep the record for N years" is satisfied by keeping the directory and being able to produce the trust roots that were pinned at the time.
+
+Three properties matter to a records officer:
+
+- **Content addressing.** Every artifact id is derived from its signed bytes. A copy is the record, and two copies can be shown identical without a registry.
+- **Self-contained verification.** `treeship package verify <dir>` runs offline on the directory alone, years later, against whatever roots the checker pins. The verifier is open source and the format is documented, so the check does not depend on the vendor still existing.
+- **Redaction that leaves a trace.** Secrets are never in a receipt; digests are. Selective disclosure (`present --disclose`) re-signs a card with only the named capabilities opened. What is disclosed can be verified; what is withheld is visibly withheld, not silently absent.
+
+What retention does not get for free: a time anchor. A package kept for five years proves what a key asserted, not when. If "when" matters to the rule, the package should have been anchored while it was fresh, and the anchor kept beside it.
+
+## Disputes
+
+In a dispute both parties hold the same bytes and can run the same verifier. That changes what is arguable.
+
+| Not arguable, if the check passes | Still arguable |
+|---|---|
+| That this key signed this statement | Who controlled the key at the time |
+| That the statement was in the sealed set at close | Whether the set captured everything that happened (see coverage) |
+| That the artifacts are in this order | Whether the signed timestamps are true, absent an anchor |
+| That the approval was spent once | Whether the approver understood what they approved |
+| That the action was refused by this gate | Whether the gate's policy was the right policy |
+| That the recorded output has this digest | Whether the output was correct |
+
+A verifier's verdict vocabulary is narrow on purpose. `verified` means every signature chains to a pinned root and every structural check passed. `signatures-pass` means the signatures verify but the checker has not pinned the signer. `structural-pass` means the signatures were not checked. `failed` means a check failed. A report that says which of these applies is more useful in a dispute than one that says "verified" for all of them.
+
+## Coverage: the denominator
+
+Every record of conduct has a boundary, and the honest record names it. A session receipt describes what was instrumented. A process started outside the wrapper, a runtime with no hooks, or a tool reached through a path nothing signs is not in the receipt, and the [coverage levels](/docs/guides/coverage-levels) say which harness captures which signals. An assessment scheme should ask for the coverage level beside the receipt, so "we monitored this" has a denominator. A signed coverage receipt at close is the planned form of that statement.
+
+## Independence of the checker
+
+The design assumes the party checking does not trust the party that produced the record. That is why there is no registry in the verification path, why the hub stores bytes and serves proofs but never issues a verdict, and why the trust roots are pinned by the checker, per power, on the checker's own machine. An embedded evaluator, an auditor or a counterparty pins once and verifies everything that follows without asking the producer. The producer cannot revoke that ability after the fact, because the package is already in the checker's hands.
+
+<Callout type="info">
+For an evaluator or auditor, the operational sequence is: obtain the producer's public keys through a channel you trust, pin them under the powers you are willing to grant, take custody of the sealed packages, and run <code>package verify --strict</code>. Everything after that is offline and repeatable.
+</Callout>
+
+## What this does not establish
+
+- Correctness of any output. A wrong answer with a perfect receipt is still wrong.
+- The human behind a key. Key-to-person binding is an out-of-band, documented act.
+- Completeness beyond the capture boundary. Coverage says where the boundary is.
+- True time without an anchor. A signed timestamp is a claim by the signer.
+- Compliance with a rule the receipt does not encode. The receipt carries evidence; the rule and the judgement sit with the institution.
+
+## Related
+
+- [What receipts prove](/docs/concepts/what-receipts-prove)
+- [Trust model](/docs/concepts/trust-model)
+- [Verification reporting](/docs/guides/verification-reporting)
+- [Coverage levels](/docs/guides/coverage-levels)
+- [Secrets and redaction](/docs/concepts/secrets-and-redaction)
