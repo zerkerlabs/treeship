@@ -365,7 +365,7 @@ treeship session event [OPTIONS] --type <TYPE>
 
 | Option | Description |
 |---|---|
-| `--type <TYPE>` | Event type: agent.called_tool, agent.wrote_file, agent.read_file, agent.connected_network, agent.completed_process, agent.decision (requires --model), agent.handoff, or agent.note (text in --meta) |
+| `--type <TYPE>` | Event type: agent.called_tool, agent.wrote_file, agent.read_file, agent.connected_network, agent.completed_process, agent.decision (requires --model), agent.handoff, agent.note (text in --meta), agent.spawned (--agent-name is the child; parent in --meta as spawned_by), or agent.returned (returned_to in --meta or --destination) |
 | `--tool <NAME>` | Tool name (for agent.called_tool events) |
 | `--file <PATH>` | File path (for agent.wrote_file / agent.read_file events) |
 | `--destination <HOST>` | Network destination (for agent.connected_network events) |
