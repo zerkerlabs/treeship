@@ -10,7 +10,7 @@ Claude Code has three integration paths. The plugin is the recommended one — i
 
 ## Method 1: Official plugin (recommended)
 
-The Treeship Claude Code plugin ships every session as a portable, signed receipt with zero configuration. SessionStart / PostToolUse / SessionEnd hooks fire automatically; the bundled `@treeship/mcp` server captures any MCP-routed tool calls; built-in tools (Read, Write, Edit, Bash, Grep, Glob) are captured via the PostToolUse hook.
+The Treeship Claude Code plugin ships every session as a portable, signed receipt with zero configuration. SessionStart / PostToolUse / SubagentStart / SubagentStop / SessionEnd hooks fire automatically; the bundled `@treeship/mcp` server captures any MCP-routed tool calls; built-in tools (Read, Write, Edit, Bash, Grep, Glob) are captured via the PostToolUse hook.
 
 <Steps>
 <Step>
@@ -49,7 +49,7 @@ Updating: when a new plugin version ships, run `claude plugin marketplace update
 | Component | What it does |
 |---|---|
 | `.mcp.json` | Mounts `@treeship/mcp` via `npx -y` so MCP tool calls get signed receipts |
-| `hooks/hooks.json` | SessionStart (auto-start), SessionEnd (seal + report URL), PostToolUse (capture built-in tools) |
+| `hooks/hooks.json` | SessionStart (auto-start), SessionEnd (seal + report URL), PostToolUse (capture built-in tools, tagged with the subagent instance when a subagent made the call), SubagentStart / SubagentStop (`agent.spawned` and `agent.returned`, so the receipt's agent graph carries the spawn) |
 | `monitors/monitors.json` | Live receipt/event counter streamed into Claude's context |
 | `skills/treeship-session` | How to close with a real headline before SessionEnd auto-headlines |
 | `skills/treeship-verify` | How to verify a receipt URL someone shares with you |

@@ -1,0 +1,2 @@
+session status --check
+session event --type agent.spawned --agent-name Explore#7f3a9c2e --meta {"spawned_by":"claude-code","agent_type":"Explore","agent_id":"7f3a9c2e1b8d4e5f","hook":"SubagentStart"}

@@ -1066,6 +1066,22 @@ pub fn watch(_config: Option<&str>, _printer: &Printer) -> Result<(), Box<dyn st
                     "note".to_string(),
                     trunc(text.as_deref().unwrap_or_default(), 60),
                 ),
+                EventType::AgentSpawned {
+                    spawned_by_agent_instance_id,
+                    reason,
+                } => (
+                    "spawned".to_string(),
+                    match reason {
+                        Some(r) => format!("by {spawned_by_agent_instance_id}: {}", trunc(r, 50)),
+                        None => format!("by {spawned_by_agent_instance_id}"),
+                    },
+                ),
+                EventType::AgentReturned {
+                    returned_to_agent_instance_id,
+                } => (
+                    "returned".to_string(),
+                    format!("to {returned_to_agent_instance_id}"),
+                ),
                 EventType::AgentDecision {
                     model, provider, ..
                 } => {
@@ -1983,6 +1999,13 @@ pub fn event(
                 .map(str::to_string)
         });
 
+    // Any other string field an event type reads from `--meta`.
+    let meta_str = |key: &str| -> Option<String> {
+        meta_json
+            .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+            .and_then(|v| v.get(key).and_then(|t| t.as_str()).map(str::to_string))
+    };
+
     let et = match event_type {
         "agent.called_tool" => EventType::AgentCalledTool {
             tool_name: tool.unwrap_or("unknown").into(),
@@ -2061,8 +2084,26 @@ pub fn event(
         "agent.note" => EventType::AgentNote {
             text: meta_text.clone(),
         },
+        // A spawn is recorded from the child's side: `--agent-name` names the
+        // spawned instance, and the parent rides in `--meta` as `spawned_by`
+        // (falling back to the session actor). The receipt's agent graph
+        // turns it into a parent_child edge and counts it in
+        // `spawned_subagents`; until this arm existed the format had the edge
+        // and no producer wrote it.
+        "agent.spawned" => EventType::AgentSpawned {
+            spawned_by_agent_instance_id: meta_str("spawned_by")
+                .unwrap_or_else(|| manifest.actor.clone()),
+            reason: meta_str("reason").or_else(|| meta_text.clone()),
+        },
+        // The child hands control back: `returned_to` in `--meta`, else
+        // `--destination`, else the session actor.
+        "agent.returned" => EventType::AgentReturned {
+            returned_to_agent_instance_id: meta_str("returned_to")
+                .or_else(|| destination.map(str::to_string))
+                .unwrap_or_else(|| manifest.actor.clone()),
+        },
         other => {
-            return Err(format!("unsupported event type: {other}\n\n  supported: agent.called_tool, agent.wrote_file, agent.read_file, agent.connected_network, agent.completed_process, agent.decision, agent.handoff, agent.note").into());
+            return Err(format!("unsupported event type: {other}\n\n  supported: agent.called_tool, agent.wrote_file, agent.read_file, agent.connected_network, agent.completed_process, agent.decision, agent.handoff, agent.note, agent.spawned, agent.returned").into());
         }
     };
 
