@@ -3,12 +3,9 @@ import { blogSource } from '@/lib/blog';
 import {
   CATEGORIES,
   CATEGORY_ORDER,
-  SYSTEMS,
-  SYSTEM_GROUPS,
   systemInfo,
   tagSlug,
   type Category,
-  type SystemGroup,
 } from '@/lib/taxonomy';
 
 // One listing for the whole blog: the index and every category, system and
@@ -79,13 +76,6 @@ export function SystemChip({ id, active }: { id: string; active?: boolean }) {
 
 function FilterBar({ posts, filter }: { posts: Post[]; filter: Filter }) {
   const byCategory = count(posts, (p) => [p.data.category as Category]);
-  const bySystem = count(posts, (p) => (p.data.systems ?? []) as string[]);
-  const groups = new Map<SystemGroup, string[]>();
-  for (const id of Object.keys(SYSTEMS)) {
-    if (!bySystem.has(id)) continue;
-    const g = SYSTEMS[id].group;
-    groups.set(g, [...(groups.get(g) ?? []), id]);
-  }
   const noFilter = !filter.category && !filter.system && !filter.tag;
 
   return (
@@ -114,18 +104,6 @@ function FilterBar({ posts, filter }: { posts: Post[]; filter: Filter }) {
             {CATEGORIES[c].label}{' '}
             <span className="ml-1 font-mono text-[11px] opacity-60">{byCategory.get(c)}</span>
           </Link>
-        ))}
-      </div>
-      <div className="flex flex-col gap-3 border-t border-zk-hairline pt-5">
-        {[...groups.entries()].map(([g, ids]) => (
-          <div key={g} className="flex flex-wrap items-center gap-x-3 gap-y-2">
-            <span className="doc-meta w-full sm:w-[150px] sm:shrink-0">{SYSTEM_GROUPS[g]}</span>
-            <div className="flex flex-wrap gap-1.5">
-              {ids.map((id) => (
-                <SystemChip key={id} id={id} active={filter.system === id} />
-              ))}
-            </div>
-          </div>
         ))}
       </div>
     </nav>
