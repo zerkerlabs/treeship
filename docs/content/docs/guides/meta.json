@@ -15,6 +15,7 @@
     "handoffs",
     "workflows",
     "merkle-proofs",
+    "verification-reporting",
     "edge-runtime",
     "dogfood-checklist"
   ]
