@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://treeship.dev/schemas/verification.recompute.v1.json",
+  "title": "verification.recompute.v1",
+  "description": "A verifier's signed result of recomputing one packet against its verification.packet.v1 receipt: the method used and whether the recomputation matched. Carried as the payload of a Treeship receipt with kind=verification.recompute.v1, signed by the party that ran the recomputation, with --subject set to the packet receipt so the result chains onto the claim it checks.",
+  "type": "object",
+  "required": ["schema", "packet", "packet_id", "method", "verdict", "recomputed_at"],
+  "properties": {
+    "schema": {
+      "description": "Self-description, so a receipt cannot be read as a different predicate.",
+      "const": "verification.recompute.v1"
+    },
+    "packet": {
+      "description": "The art_ id of the verification.packet.v1 receipt this result checks. Must equal the receipt's subject.",
+      "type": "string"
+    },
+    "packet_id": {
+      "description": "The prover's packet_id, repeated from the packet receipt so a reader can match them without resolving the artifact.",
+      "type": "string"
+    },
+    "method": {
+      "description": "The recomputation scheme, e.g. bit_exact, difr, toploc. Free-form so new schemes need no registry change; the verifier's report defines the vocabulary.",
+      "type": "string"
+    },
+    "verdict": {
+      "description": "match: the recomputation agrees with the packet under the method. mismatch: it does not. inconclusive: the recomputation could not be completed or compared.",
+      "type": "string",
+      "enum": ["match", "mismatch", "inconclusive"]
+    },
+    "output_digest_recomputed": {
+      "description": "Digest of the output the verifier obtained, for a reader to compare with the packet's output_digest.",
+      "type": "string"
+    },
+    "distance": {
+      "description": "The method's distance between the packet output and the recomputed output, when the method is not bit-exact.",
+      "type": "number"
+    },
+    "threshold": {
+      "description": "The distance at or below which the method counts as a match.",
+      "type": "number"
+    },
+    "sample_seed": {
+      "description": "Seed or reference for the random selection that chose this packet for recomputation, so the sampling can be audited.",
+      "type": "string"
+    },
+    "recomputer_hardware": {
+      "description": "Identifier of the hardware the recomputation ran on.",
+      "type": "string"
+    },
+    "notes": {
+      "description": "Free text for the verifier, for example why a result is inconclusive.",
+      "type": "string"
+    },
+    "recomputed_at": {
+      "description": "RFC3339 time the recomputation completed.",
+      "type": "string"
+    }
+  }
+}

@@ -191,6 +191,58 @@ fields, `reason_class` and `refused_kind`; the rest (`approver`, `actor`,
 `irreversibility`, `quarantine_receipt`, `evidence_digest`, `reevaluate_when`)
 describe what was refused and under what authority.
 
+### `verification.packet.v1`
+
+A prover's signed record of one discrete workload packet: which model, over
+which input, produced which output, at which position in a stream. Signed by
+the party that ran the workload (`--system system://<prover>`). It records the
+packet so a recomputation can be checked against it later; it does not itself
+claim the packet is reproducible or correct. `sequence` and `prev_packet_id`
+let a verifier detect a dropped packet, not only a wrong one. See
+[Verification reporting](/docs/guides/verification-reporting).
+
+| Field | Type | Required |
+|---|---|---|
+| `schema` | const `verification.packet.v1` | yes |
+| `packet_id` | string | yes |
+| `stream_id` | string | yes |
+| `sequence` | integer | yes |
+| `model_digest` | string (`sha256:…`) | yes |
+| `input_digest` | string | yes |
+| `output_digest` | string | yes |
+| `produced_at` | string (RFC3339) | yes |
+| `prev_packet_id` | string or null | no |
+| `sampler_digest` | string | no |
+| `runtime_digest` | string | no |
+| `hardware_id` | string | no |
+| `token_count` | integer | no |
+| `reproducibility` | enum `bit_exact`, `bounded`, `none` | no |
+
+### `verification.recompute.v1`
+
+A verifier's signed result of recomputing one packet against its
+`verification.packet.v1` receipt. Signed by the party that ran the
+recomputation (`--system system://<verifier>`), with `--subject` set to the
+packet receipt's `art_` id so the result chains onto the claim it checks. A
+`verdict` outside `match`, `mismatch`, `inconclusive` is refused before
+signing. `method` is free-form (`bit_exact`, `difr`, `toploc`, …) so a new
+scheme needs no registry change.
+
+| Field | Type | Required |
+|---|---|---|
+| `schema` | const `verification.recompute.v1` | yes |
+| `packet` | string (`art_…` of the packet receipt) | yes |
+| `packet_id` | string | yes |
+| `method` | string | yes |
+| `verdict` | enum `match`, `mismatch`, `inconclusive` | yes |
+| `recomputed_at` | string (RFC3339) | yes |
+| `output_digest_recomputed` | string | no |
+| `distance` | number | no |
+| `threshold` | number | no |
+| `sample_seed` | string | no |
+| `recomputer_hardware` | string | no |
+| `notes` | string | no |
+
 ### `memory.quarantine-check.v1`
 
 Gates an approval on a memory-provider quarantine result. Required:

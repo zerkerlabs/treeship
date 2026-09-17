@@ -1,0 +1,115 @@
+---
+title: Verification reporting
+description: How a recomputation server's reports become signed, chained receipts that the other side verifies offline. The record layer for inference verification schemes, using verification.packet.v1 and verification.recompute.v1.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Verification reporting
+
+Inference verification schemes such as DiFR and TOPLOC work by cutting AI workloads into discrete packets, copying them to a recomputation server, and re-running a random sample to check the outputs. Two parties who do not trust each other then depend on what that server reports. Treeship makes those reports **signed, chained, and verifiable offline by the other side**, with no shared service in the loop.
+
+This page is the profile for doing that with two registered predicates. It does not cover the recomputation itself, and Treeship makes no claim about whether a workload is reproducible. It records what each party asserted, binds the assertions together, and lets anyone with the bytes and a public key check them.
+
+<Callout type="info">
+Treeship is the record layer here, not the verifier of inference. A `match` verdict is the recomputer's signed statement, checked by the recomputer's method. What Treeship proves is that this key signed that statement about that packet, in that order, and that nothing in the sealed set was altered or dropped afterwards.
+</Callout>
+
+## The two receipts
+
+| Receipt | Signed by | What it asserts |
+|---|---|---|
+| [`verification.packet.v1`](/docs/reference/predicates#verificationpacketv1) | the **prover** (the party that ran the workload) | this model, over this input, produced this output, at this position in this stream |
+| [`verification.recompute.v1`](/docs/reference/predicates#verificationrecomputev1) | the **verifier** (the party that ran the recomputation) | recomputing that packet under this method gave `match`, `mismatch` or `inconclusive` |
+
+The recompute receipt names the packet receipt as its `--subject`, so it chains onto the claim it checks. `treeship verify` on the result walks to the packet.
+
+## Prover side: one receipt per packet
+
+The prover attests each packet as it completes. Digests bind the model, the input and the output; `sequence` and `prev_packet_id` bind the packet's place in its stream.
+
+```bash
+treeship attest receipt \
+  --system system://prover-dc-1 \
+  --kind verification.packet.v1 \
+  --payload '{
+    "schema": "verification.packet.v1",
+    "packet_id": "pkt_000042",
+    "stream_id": "tap-7/req-9f2a",
+    "sequence": 42,
+    "prev_packet_id": "pkt_000041",
+    "model_digest": "sha256:aa11…",
+    "input_digest": "sha256:bb22…",
+    "output_digest": "sha256:cc33…",
+    "sampler_digest": "sha256:dd44…",
+    "runtime_digest": "sha256:ee55…",
+    "hardware_id": "iu-0317",
+    "reproducibility": "bit_exact",
+    "produced_at": "2026-09-17T15:00:00Z"
+  }'
+```
+
+Attest packets inside a `treeship session` and close it on a schedule (per hour, per shift, per inspection window). The sealed `.treeship` package then carries every packet receipt under a signed Merkle root, and `package verify` reports `chain_completeness`, `receipt_binding` and `session_window` for the set. A packet the prover left out is visible as a gap in `sequence`; a packet added after the close fails `receipt_binding`.
+
+## Verifier side: one receipt per recomputation
+
+The recomputation server attests each sampled packet's result, naming the packet receipt as the subject.
+
+```bash
+treeship attest receipt \
+  --system system://verifier-recompute-1 \
+  --kind verification.recompute.v1 \
+  --subject art_<packet receipt id> \
+  --payload '{
+    "schema": "verification.recompute.v1",
+    "packet": "art_<packet receipt id>",
+    "packet_id": "pkt_000042",
+    "method": "difr",
+    "verdict": "match",
+    "distance": 0.0012,
+    "threshold": 0.01,
+    "sample_seed": "seed-2026-09-17-a",
+    "recomputer_hardware": "rc-srv-04",
+    "recomputed_at": "2026-09-17T15:05:00Z"
+  }'
+```
+
+`verdict` is validated against `match`, `mismatch`, `inconclusive` before anything is signed. `sample_seed` records how this packet came to be selected, so the sampling itself can be audited later. The verifier seals its own sessions the same way the prover does.
+
+## What the other side checks
+
+Each party pins the other's signing key once:
+
+```bash
+treeship keys export                      # on the prover: prints the trust add lines
+treeship trust add --kind session_host …  # on the verifier's inspector machine
+```
+
+From then on, an inspector on either side runs, with no network:
+
+```bash
+treeship package verify prover-2026-09-17T15.treeship
+treeship package verify verifier-2026-09-17T15.treeship
+treeship verify art_<recompute receipt id>
+```
+
+| Question | What answers it |
+|---|---|
+| Did the prover really assert this packet? | `signature:<id>` under the prover's pinned key |
+| Did the verifier really report this result? | `signature:<id>` under the verifier's pinned key |
+| Is the result about *this* packet? | `packet` in the payload equals the receipt's subject; `verify` walks to it |
+| Was a packet dropped from the prover's stream? | a gap in `sequence` / `prev_packet_id` inside the sealed set |
+| Was the sealed set rewritten after close? | `receipt_binding` (the signed close record binds `receipt.json`) |
+| Was a report backdated into a window? | `session_window` |
+| Did anyone alter a byte? | `signature:<id>` and `merkle_root` fail |
+
+## What this does not prove
+
+- That the output is correct. A `match` is the recomputer's method agreeing with the prover's output; the method's soundness is the method's.
+- That the packet is reproducible. `reproducibility` is the prover's claim; the recompute receipt is what tests it.
+- That the recomputation server was not compromised. A signed report from a compromised server is a signed lie. Treeship makes the lie attributable and detectable on comparison, not impossible. Physical security of the server is a separate workstream.
+- Which human or organisation holds the key. Key ownership is established out of band when the keys are pinned.
+
+## Relation to the verification plan
+
+The AI Futures Project's [verification plan](https://ai-2040.com/supplements/verification-plan) grades the integrity of what a recomputation server reports back as unexplored. This profile is one answer to that item, and only that item. Network taps, reproducible inference stacks, recomputation algorithms, side channels and physical security are their own workstreams and are not addressed by Treeship.

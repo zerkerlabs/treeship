@@ -65,6 +65,14 @@ const REGISTRY: &[(&str, &str)] = &[
     ("agent_cert.v1", include_str!("schemas/agent_cert.v1.json")),
     ("profile.v1", include_str!("schemas/profile.v1.json")),
     ("workflow.v1", include_str!("schemas/workflow.v1.json")),
+    (
+        "verification.packet.v1",
+        include_str!("schemas/verification.packet.v1.json"),
+    ),
+    (
+        "verification.recompute.v1",
+        include_str!("schemas/verification.recompute.v1.json"),
+    ),
 ];
 
 /// Returns the raw JSON Schema text for a registered predicate suffix, if any.
@@ -896,5 +904,109 @@ mod tests {
             validate("agent_card_revocation.v1", Some(&rev)).unwrap_err(),
             PredicateError::MissingField { field, .. } if field == "card"
         ));
+    }
+
+    fn packet_payload() -> serde_json::Value {
+        json!({
+            "schema": "verification.packet.v1",
+            "packet_id": "pkt_000042",
+            "stream_id": "tap-7/req-9f2a",
+            "sequence": 42,
+            "prev_packet_id": "pkt_000041",
+            "model_digest": "sha256:aa11",
+            "input_digest": "sha256:bb22",
+            "output_digest": "sha256:cc33",
+            "reproducibility": "bit_exact",
+            "produced_at": "2026-09-17T15:00:00Z"
+        })
+    }
+
+    #[test]
+    fn verification_packet_valid_passes() {
+        assert!(validate("verification.packet.v1", Some(&packet_payload())).is_ok());
+    }
+
+    #[test]
+    fn verification_packet_missing_output_digest_fails_closed() {
+        let mut p = packet_payload();
+        p.as_object_mut().unwrap().remove("output_digest");
+        assert_eq!(
+            validate("verification.packet.v1", Some(&p)),
+            Err(PredicateError::MissingField {
+                suffix: "verification.packet.v1".into(),
+                field: "output_digest".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn verification_packet_stringly_typed_sequence_fails_closed() {
+        let mut p = packet_payload();
+        p["sequence"] = json!("42");
+        assert!(matches!(
+            validate("verification.packet.v1", Some(&p)),
+            Err(PredicateError::TypeMismatch { field, .. }) if field == "sequence"
+        ));
+    }
+
+    #[test]
+    fn verification_packet_out_of_vocabulary_reproducibility_fails_closed() {
+        let mut p = packet_payload();
+        p["reproducibility"] = json!("probably");
+        assert!(matches!(
+            validate("verification.packet.v1", Some(&p)),
+            Err(PredicateError::NotInEnum { field, .. }) if field == "reproducibility"
+        ));
+    }
+
+    #[test]
+    fn verification_packet_wrong_schema_const_fails_closed() {
+        let mut p = packet_payload();
+        p["schema"] = json!("verification.recompute.v1");
+        assert!(matches!(
+            validate("verification.packet.v1", Some(&p)),
+            Err(PredicateError::NotInEnum { field, .. }) if field == "schema"
+        ));
+    }
+
+    fn recompute_payload() -> serde_json::Value {
+        json!({
+            "schema": "verification.recompute.v1",
+            "packet": "art_0123456789abcdef0123456789abcdef",
+            "packet_id": "pkt_000042",
+            "method": "difr",
+            "verdict": "match",
+            "distance": 0.0012,
+            "threshold": 0.01,
+            "recomputed_at": "2026-09-17T15:05:00Z"
+        })
+    }
+
+    #[test]
+    fn verification_recompute_valid_passes() {
+        assert!(validate("verification.recompute.v1", Some(&recompute_payload())).is_ok());
+    }
+
+    #[test]
+    fn verification_recompute_out_of_vocabulary_verdict_fails_closed() {
+        let mut p = recompute_payload();
+        p["verdict"] = json!("mostly");
+        assert!(matches!(
+            validate("verification.recompute.v1", Some(&p)),
+            Err(PredicateError::NotInEnum { field, .. }) if field == "verdict"
+        ));
+    }
+
+    #[test]
+    fn verification_recompute_missing_packet_fails_closed() {
+        let mut p = recompute_payload();
+        p.as_object_mut().unwrap().remove("packet");
+        assert_eq!(
+            validate("verification.recompute.v1", Some(&p)),
+            Err(PredicateError::MissingField {
+                suffix: "verification.recompute.v1".into(),
+                field: "packet".into(),
+            })
+        );
     }
 }

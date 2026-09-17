@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://treeship.dev/schemas/verification.packet.v1.json",
+  "title": "verification.packet.v1",
+  "description": "A prover's signed record of one discrete workload packet: which model, over which input, produced which output, at which position in a stream. Carried as the payload of a Treeship receipt with kind=verification.packet.v1, signed by the party that ran the workload. It records the packet so a recomputation can be checked against it later; it does not itself claim the packet is reproducible or correct.",
+  "type": "object",
+  "required": ["schema", "packet_id", "stream_id", "sequence", "model_digest", "input_digest", "output_digest", "produced_at"],
+  "properties": {
+    "schema": {
+      "description": "Self-description, so a receipt cannot be read as a different predicate.",
+      "const": "verification.packet.v1"
+    },
+    "packet_id": {
+      "description": "Opaque identifier of the packet in the prover's system.",
+      "type": "string"
+    },
+    "stream_id": {
+      "description": "The stream (session, request, tap channel) this packet belongs to.",
+      "type": "string"
+    },
+    "sequence": {
+      "description": "Zero-based position of the packet within its stream. Together with prev_packet_id, lets a verifier detect a dropped packet, not only a wrong one.",
+      "type": "integer"
+    },
+    "prev_packet_id": {
+      "description": "packet_id of the previous packet in the stream, or null for the first.",
+      "type": ["string", "null"]
+    },
+    "model_digest": {
+      "description": "Digest binding the model weights, e.g. sha256:<hex>. The prover chooses the algorithm and names it in the value.",
+      "type": "string"
+    },
+    "input_digest": {
+      "description": "Digest of the packet's full input (tokens, or the bytes the tap captured), e.g. sha256:<hex>.",
+      "type": "string"
+    },
+    "output_digest": {
+      "description": "Digest of the packet's full output, e.g. sha256:<hex>.",
+      "type": "string"
+    },
+    "sampler_digest": {
+      "description": "Digest of the sampling and decoding parameters the packet ran under.",
+      "type": "string"
+    },
+    "runtime_digest": {
+      "description": "Digest identifying the software stack (kernels, framework, build) that produced the packet.",
+      "type": "string"
+    },
+    "hardware_id": {
+      "description": "Identifier of the accelerator or inference unit that ran the packet.",
+      "type": "string"
+    },
+    "token_count": {
+      "description": "Number of output tokens in the packet.",
+      "type": "integer"
+    },
+    "reproducibility": {
+      "description": "What the prover claims about re-running this packet: bit_exact (a re-run yields identical output), bounded (a re-run agrees within a stated tolerance), none (no claim). This is the prover's claim; the recompute receipt is what checks it.",
+      "type": "string",
+      "enum": ["bit_exact", "bounded", "none"]
+    },
+    "produced_at": {
+      "description": "RFC3339 time the packet completed on the prover's side.",
+      "type": "string"
+    }
+  }
+}
