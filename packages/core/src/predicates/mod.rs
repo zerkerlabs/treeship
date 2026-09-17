@@ -73,6 +73,7 @@ const REGISTRY: &[(&str, &str)] = &[
         "verification.recompute.v1",
         include_str!("schemas/verification.recompute.v1.json"),
     ),
+    ("evaluation.v1", include_str!("schemas/evaluation.v1.json")),
 ];
 
 /// Returns the raw JSON Schema text for a registered predicate suffix, if any.
@@ -1008,5 +1009,69 @@ mod tests {
                 field: "packet".into(),
             })
         );
+    }
+
+    fn evaluation_payload() -> serde_json::Value {
+        json!({
+            "schema": "evaluation.v1",
+            "subject_kind": "model",
+            "subject_digest": "sha256:aa11",
+            "suite_id": "sandbox-escape-v3",
+            "suite_digest": "sha256:bb22",
+            "result_digest": "sha256:cc33",
+            "verdict": "pass",
+            "score": 0.02,
+            "threshold": 0.05,
+            "capability": "sandbox-escape",
+            "evaluated_at": "2026-09-17T18:00:00Z"
+        })
+    }
+
+    #[test]
+    fn evaluation_valid_passes() {
+        assert!(validate("evaluation.v1", Some(&evaluation_payload())).is_ok());
+    }
+
+    #[test]
+    fn evaluation_out_of_vocabulary_verdict_fails_closed() {
+        let mut p = evaluation_payload();
+        p["verdict"] = json!("mostly");
+        assert!(matches!(
+            validate("evaluation.v1", Some(&p)),
+            Err(PredicateError::NotInEnum { field, .. }) if field == "verdict"
+        ));
+    }
+
+    #[test]
+    fn evaluation_out_of_vocabulary_subject_kind_fails_closed() {
+        let mut p = evaluation_payload();
+        p["subject_kind"] = json!("vibes");
+        assert!(matches!(
+            validate("evaluation.v1", Some(&p)),
+            Err(PredicateError::NotInEnum { field, .. }) if field == "subject_kind"
+        ));
+    }
+
+    #[test]
+    fn evaluation_missing_suite_digest_fails_closed() {
+        let mut p = evaluation_payload();
+        p.as_object_mut().unwrap().remove("suite_digest");
+        assert_eq!(
+            validate("evaluation.v1", Some(&p)),
+            Err(PredicateError::MissingField {
+                suffix: "evaluation.v1".into(),
+                field: "suite_digest".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn evaluation_stringly_typed_score_fails_closed() {
+        let mut p = evaluation_payload();
+        p["score"] = json!("0.02");
+        assert!(matches!(
+            validate("evaluation.v1", Some(&p)),
+            Err(PredicateError::TypeMismatch { field, .. }) if field == "score"
+        ));
     }
 }

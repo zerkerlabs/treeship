@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://treeship.dev/schemas/evaluation.v1.json",
+  "title": "evaluation.v1",
+  "description": "An evaluator's signed result of running a named evaluation suite against a subject: a model, an agent, a session or a sealed package. Carried as the payload of a Treeship receipt with kind=evaluation.v1, signed by the evaluator's key. It records what was evaluated, with which suite, and what the evaluator concluded; it does not itself make the evaluation sound. A grade signed by the subject's own key is self-asserted, never independent.",
+  "type": "object",
+  "required": ["schema", "subject_kind", "subject_digest", "suite_id", "suite_digest", "result_digest", "verdict", "evaluated_at"],
+  "properties": {
+    "schema": {
+      "description": "Self-description, so a receipt cannot be read as a different predicate.",
+      "const": "evaluation.v1"
+    },
+    "subject_kind": {
+      "description": "What was evaluated: model (weights), agent (an actor URI's behaviour), session (a recorded run), package (a sealed .treeship directory).",
+      "type": "string",
+      "enum": ["model", "agent", "session", "package"]
+    },
+    "subject_digest": {
+      "description": "Digest or id binding the subject: sha256:<hex> of the weights, an art_ or ssn_ id, or sha256 of receipt.json for a package.",
+      "type": "string"
+    },
+    "subject_actor": {
+      "description": "Actor URI of the evaluated agent, when the subject is an agent or its session. Lets a verifier detect a self-asserted grade: one signed by the same key that signs the subject's own receipts.",
+      "type": "string"
+    },
+    "suite_id": {
+      "description": "Name of the evaluation suite, e.g. sandbox-escape-v3, cyber-uplift-2026q3.",
+      "type": "string"
+    },
+    "suite_digest": {
+      "description": "Digest of the suite's definition (prompts, harness, scoring code), so two parties can agree they ran the same thing.",
+      "type": "string"
+    },
+    "environment_digest": {
+      "description": "Digest of the environment the suite ran in (container image, sandbox config).",
+      "type": "string"
+    },
+    "result_digest": {
+      "description": "Digest of the full result artifact (transcripts, per-item scores) held by the evaluator. The receipt commits to it without carrying it.",
+      "type": "string"
+    },
+    "verdict": {
+      "description": "pass: the subject met the suite's bar. fail: it did not. inconclusive: the run could not be completed or scored.",
+      "type": "string",
+      "enum": ["pass", "fail", "inconclusive"]
+    },
+    "score": {
+      "description": "The suite's headline score, in the suite's own units.",
+      "type": "number"
+    },
+    "threshold": {
+      "description": "The score at or beyond which the suite counts as pass.",
+      "type": "number"
+    },
+    "capability": {
+      "description": "The capability or property the suite measures, for a checkpoint scheme that pairs capability X with certification Y.",
+      "type": "string"
+    },
+    "coverage": {
+      "description": "art_ id of a coverage receipt describing what the evaluation harness could observe.",
+      "type": "string"
+    },
+    "notes": {
+      "description": "Free text from the evaluator, for example why a result is inconclusive.",
+      "type": "string"
+    },
+    "evaluated_at": {
+      "description": "RFC3339 time the evaluation completed.",
+      "type": "string"
+    }
+  }
+}

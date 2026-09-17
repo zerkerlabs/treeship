@@ -243,6 +243,44 @@ scheme needs no registry change.
 | `recomputer_hardware` | string | no |
 | `notes` | string | no |
 
+### `evaluation.v1`
+
+An evaluator's signed result of running a named suite against a subject: a
+model, an agent, a session or a sealed package. Signed by the evaluator's key
+(`--system system://<evaluator>`), with `--subject` set to the artifact it
+grades when the subject is a session or package, so the grade chains onto the
+thing graded and `verify` walks from one to the other. It records what was
+evaluated, with which suite (by digest, so two parties can agree they ran the
+same thing), and what the evaluator concluded; it does not make the
+evaluation sound. `verdict` and `subject_kind` are validated before signing.
+
+**The self-asserted rule.** A grade is only as independent as its signer. A
+receipt whose signing key is the same key that signs the subject's own
+receipts is a self-assessment, whatever `subject_actor` says. A checker should
+treat it as `self-asserted` and require the evaluator's key to be pinned under
+its own trust root before reading a `pass` as a certification. This is the
+receipt a capability-checkpoint scheme ("a model with capability X carries
+certification Y") needs, and the rule is what keeps the graded agent from
+grading itself.
+
+| Field | Type | Required |
+|---|---|---|
+| `schema` | const `evaluation.v1` | yes |
+| `subject_kind` | enum `model`, `agent`, `session`, `package` | yes |
+| `subject_digest` | string (`sha256:…`, `art_…`, `ssn_…`) | yes |
+| `suite_id` | string | yes |
+| `suite_digest` | string | yes |
+| `result_digest` | string | yes |
+| `verdict` | enum `pass`, `fail`, `inconclusive` | yes |
+| `evaluated_at` | string (RFC3339) | yes |
+| `subject_actor` | string (actor URI) | no |
+| `environment_digest` | string | no |
+| `score` | number | no |
+| `threshold` | number | no |
+| `capability` | string | no |
+| `coverage` | string (`art_…` of a coverage receipt) | no |
+| `notes` | string | no |
+
 ### `memory.quarantine-check.v1`
 
 Gates an approval on a memory-provider quarantine result. Required:

@@ -74,6 +74,22 @@
     - packages/cli/tests/verification_predicates_cli.rs
   notes: "Registers verification.packet.v1 (a prover's signed record of one workload packet: model, input and output digests, stream position) and verification.recompute.v1 (a verifier's signed match/mismatch/inconclusive result about that packet, chained onto it via --subject). The record layer for inference verification schemes such as DiFR and TOPLOC; Treeship does not perform the recomputation and makes no reproducibility claim of its own."
 
+- id: evaluation-receipts
+  name: Evaluation receipts
+  section: core
+  status: beta
+  cli:
+    - treeship attest receipt
+  packages:
+    - treeship-core
+    - treeship-cli
+  docs:
+    - docs/content/docs/reference/predicates.mdx
+  tests:
+    - packages/core/src/predicates/mod.rs
+    - packages/cli/tests/evaluation_predicate_cli.rs
+  notes: "Registers evaluation.v1: an evaluator's signed result of running a named suite (by digest) against a model, agent, session or package, with verdict pass/fail/inconclusive enforced before signing and the grade chained onto the graded artifact via --subject. The receipt a capability-checkpoint scheme needs; the self-asserted rule (a grade signed by the subject's own key is not independent) is documented for checkers and is the next verifier row."
+
 - id: action-v2-emission
   name: action/v2 receipt emission (CLI)
   section: core
