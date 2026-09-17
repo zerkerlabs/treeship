@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-## Unreleased
+## 0.31.5 (2026-09-17)
 
 - **The receipt's agent graph is written, not only defined.** `agent.spawned` and `agent.returned` existed in the event vocabulary and the graph builder, and no producer emitted them: a session with subagents sealed with `spawned_subagents: 0` and no `parent_child` edge. `session event` now takes both types (`--agent-name` is the child; the parent rides in `--meta` as `spawned_by`, the return target as `returned_to` or `--destination`), and the timeline prints them as `spawned` and `returned`. The Claude Code plugin adds `SubagentStart` and `SubagentStop` hooks that emit them, and its PostToolUse hook tags a subagent's tool calls with the subagent's instance name (`<agent_type>#<id>`) instead of the parent's, so the sealed receipt says which instance did what.
 - **Two predicates for inference verification: `verification.packet.v1` and `verification.recompute.v1`.** The AI Futures Project's verification plan asks for AI workloads to be cut into discrete packets that a recomputation server can spot-check, and lists the integrity of what that server reports back as unexplored. These predicates are the record layer for that scheme. A prover signs a packet receipt (model, input and output digests, stream position, an optional reproducibility claim); a verifier signs a recompute receipt about it with `--subject` set to the packet, so the result chains onto the claim it checks and `verify` walks from one to the other. `verdict` is `match`, `mismatch` or `inconclusive` and anything else is refused before signing; `method` is free-form so DiFR, TOPLOC or bit-exact schemes need no registry change. Treeship does not do the recomputation and claims nothing about reproducibility; it makes the reports signed, chained, and verifiable offline by the other side. Guide: [Verification reporting](docs/content/docs/guides/verification-reporting.mdx).
