@@ -11,9 +11,11 @@ release: "0.30.0"
 
 # Receipts for agentic commerce
 
+> **Updated 17 September 2026.** Re-checked against the blueprint repository, the Verifiable Intent v0.1 draft, Visa's Trusted Agent Protocol spec, AP2 v0.2.0 and ACP. The central claim stands; the payment-layer table, the AP2 wording and the note on card rails in the README are corrected below, and the EMVCo draft and the Know-Your-Agent collaboration from this month are added.
+
 Anthropic's Claude Commerce Agents blueprint tells an AI agent what it may do in a store. Visa, Mastercard and Google are deciding how an agent may pay. Nobody in that stack keeps a record a stranger can check. This is what each layer covers, where each one stops, and what a signed receipt adds.
 
-Everything about the blueprint below was checked against a fresh clone of [anthropics/commerce-agents](https://github.com/anthropics/commerce-agents) at commit `fd4d592` (31 August 2026), the only commit in the repository. Sources are at the end.
+Everything about the blueprint below was checked against a fresh clone of [anthropics/commerce-agents](https://github.com/anthropics/commerce-agents) at commit `fd4d592` (31 August 2026), still the only commit on `main` as of 17 September 2026 (35 open pull requests, none merged). Sources are at the end.
 
 ---
 
@@ -30,7 +32,7 @@ Each agent is defined once and runs on three of Anthropic's runtimes: the Messag
 |---|---|
 | Prompts, skills, tool contracts, and gates for two agents, written once and run on three runtimes | A hosted service. You run it, on your infrastructure, with your API key |
 | Guardrails enforced in code: fencing, provenance, caps, staging, host approval | A payment protocol, a product catalog, or an advertising layer. The launch coverage is explicit that none is included |
-| Interfaces your systems implement: `StorefrontBackend` (14 methods), `MerchantBackend` (18 methods) | An integration with any payment network. The repository never names Visa, Mastercard, Stripe or any card rail |
+| Interfaces your systems implement: `StorefrontBackend` (14 methods), `MerchantBackend` (18 methods) | An integration with any payment network. The code integrates no card rail; the README lists finance connectors (Stripe, Square, PayPal, QuickBooks) as integration targets, and Visa and Mastercard appear nowhere |
 | Four verticals, eight web apps, a plugin, 1,105 tests | Authentication, rate limits, fraud rules, or a record of what happened. The safety page lists these as "what a deployment owns" |
 
 **About Visa and Mastercard.** Press coverage paired the launch with both networks. Read closely, the relationship is distribution: "Accenture, Mastercard and Visa are working with Anthropic to bring the blueprint to their clients and merchant networks." There is no technical integration in the code. Shopify and Priceline are named as merchants already running customer-facing agents on Claude. The "carts 35% larger, 60% more likely to complete" figures are Anthropic's own reported numbers, not an independent benchmark.
@@ -63,13 +65,13 @@ The same page lists what it leaves to you: authentication, credentials, rate lim
 
 ## Where the payment layer ends
 
-The card networks and the platform companies are building the other half of the stack: how an agent proves it is allowed to pay. Four efforts matter in September 2026.
+The card networks and the platform companies are building the other half of the stack: how an agent proves it is allowed to pay. Four efforts matter in September 2026, and two more moved this month: EMVCo published a draft framework for agentic payments on 1 September (intent registration and retrieval by authorized payment participants, comments open to 30 September), and Visa, Mastercard and Ant International announced a Know-Your-Agent interoperability collaboration on 10 September. Both are about intent custody and agent identity. Neither is about a record of what the agent did.
 
 | Effort | What it signs | Who verifies | Where it stops | Status |
 |---|---|---|---|---|
 | Visa Trusted Agent Protocol | The agent's identity and stated intent on each HTTP request to the merchant, with signatures that are merchant- and purpose-specific and time-bound | The merchant, by fetching Visa's keys | Message authentication at the storefront edge. Not the agent's reasoning, not merchant-side operations, not non-payment actions | In development |
-| Mastercard Agent Pay | Agentic Tokens bound to one agent, one merchant scope, one spend policy; Verifiable Intent records the user's request as a signed Intent Artifact that each transaction references | The issuer, on Mastercard infrastructure | The payment leg. The intent artifact lives on the network and is checked against the transaction, not against the agent's earlier steps | Verifiable Intent in pilot since February 2026 |
-| Google AP2 | Intent, Cart, and Payment Mandates the user signs for the agent | Merchants and payment providers in the AP2 network | Authority to pay for a cart. Nothing about what the agent did to build it, nothing on the merchant's side of the counter | Open standard, 60+ partners |
+| Mastercard Agent Pay | Agentic Tokens bound to one agent, one merchant scope, one spend policy; Verifiable Intent records the user's request as a signed Intent Artifact that each transaction references | The merchant checks the checkout mandate; the payment network checks the payment mandate and keeps the audit trail; the issuer makes the final call | The payment leg. The intent artifact is checked against the transaction, not against the agent's earlier steps. The spec's own security model says v0.1 verifies that an agent operated within its constraints, not how it behaved | Verifiable Intent v0.1 draft dated 18 February 2026, announced 5 March, unchanged since April |
+| Google AP2 | Checkout and Payment Mandates the user signs for the agent, with a merchant-signed checkout receipt and a processor-signed payment receipt (v0.2.0, April 2026) | Merchants and payment providers in the AP2 network | Authority to pay for a cart, and a non-repudiable picture of the transaction. Nothing about what the agent did to build the cart, nothing on the merchant's side of the counter | Donated to the FIDO Alliance, April 2026 |
 | OpenAI + Stripe ACP | A checkout API and payment delegation between an agent platform and a merchant | The merchant's checkout | Checkout and order lifecycle. ChatGPT's Instant Checkout was retired in March 2026; the protocol continues | Spec dated 2026-04-17 |
 
 We wrote about Mastercard's design in [an earlier post](/blog/verifiable-intent-treeship-agent-attestation). These are real and they are valuable. They answer "is this agent allowed to spend this money on this merchant," and the networks are the right party to answer it. Notice the shape they share: every one of them signs the moment of payment, stores the proof on the network's or the platform's own infrastructure, and says nothing about the merchant's back office, the refused cart add, or the price change an operator approved on a Tuesday afternoon.
@@ -132,7 +134,7 @@ The same question from the reader's side: after a purchase, who holds signed evi
 | Step | Blueprint | Visa / Mastercard / AP2 | Treeship |
 |---|---|---|---|
 | The agent searched, compared, and was refused an invented product | No record by default | Out of scope | Signed, refusal included |
-| Exactly this cart went to checkout | A card on screen | AP2 cart mandate, held in the network | Cart digest, offline-verifiable |
+| Exactly this cart went to checkout | A card on screen | AP2 checkout mandate and receipt, held by the agent or the merchant | Cart digest, offline-verifiable |
 | The agent was allowed to pay this merchant this amount | Not the blueprint's job | Yes, this is their job | Not Treeship's job |
 | Money moved | No | Yes | No |
 | The order the store placed matches the cart the agent built | No link | Intent checked against the transaction, on the network | Order chained to the cart receipt |
@@ -180,5 +182,6 @@ Docs: [Claude Commerce Agents](/commerce/commerce-agents). Source: [`integration
 - [Digital Commerce 360](https://www.digitalcommerce360.com/2026/09/02/anthropic-debuts-claude-features-focused-on-agentic-commerce/amp/) and [MarkTechPost](https://www.marktechpost.com/2026/09/03/anthropic-released-claude-commerce-agents-an-apache-2-0-blueprint-for-shopping-and-merchant-agents-across-retail-travel-telecom-and-entertainment/) on the launch
 - [Anthropic webinar, Building Claude Commerce Agents](https://www.anthropic.com/webinars/building-claude-commerce-agents)
 - [Visa Developer, Trusted Agent Protocol overview](https://developer.visa.com/capabilities/trusted-agent-protocol/overview); [Visa press release, October 2025](https://investor.visa.com/news/news-details/2025/Visa-Introduces-Trusted-Agent-Protocol-An-Ecosystem-Led-Framework-for-AI-Commerce/default.aspx)
+- [Verifiable Intent specification, v0.1 draft](https://github.com/agent-intent/verifiable-intent) (`spec/README.md`, `security-model.md` §6.3, `credential-format.md`); [AP2 v0.2.0](https://github.com/google-agentic-commerce/AP2) (`specification.md`, Dispute Evidence); [EMVCo agentic payments framework draft, 1 September 2026](https://www.pymnts.com/); [Ant International, Visa and Mastercard Know-Your-Agent collaboration, 10 September 2026](https://www.ant-intl.com/)
 - [Mastercard Agent Pay](https://www.mastercard.com/global/en/business/artificial-intelligence/mastercard-agent-pay.html); [Stellagent on Agentic Tokens and Verifiable Intent](https://stellagent.ai/insights/mastercard-agent-pay-agentic-tokens)
 - [AP2 explained](https://eco.com/support/en/articles/15192002-ap2-protocol-explained-google-s-agentic-commerce-standard-2026); [ACP explained](https://eco.com/support/en/articles/14845478-acp-agentic-commerce-protocol-explained); [Applied Technology Index, 2026 comparative analysis](https://appliedtechnologyindex.com/research/2026-comparative-analysis-agentic-commerce-payment-protocols/)
