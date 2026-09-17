@@ -45,14 +45,14 @@ CATEGORIES: dict[str, tuple[str, str]] = {
     "commerce-agents": ("Frameworks", ""),
     "memory-proofs": ("Sibling products", "Other Zerker systems that emit or consume Treeship evidence."),
     "zerker-reason": ("Sibling products", ""),
-    "buzz": ("Partners and applied work", "Shipped elsewhere, verifiable here."),
-    "ninjatech": ("Partners and applied work", ""),
-    "lobster-cash": ("Partners and applied work", ""),
-    "robinhood-agentic-trading": ("Partners and applied work", ""),
-    "verifiable-intent": ("Partners and applied work", ""),
+    "buzz": ("Applied work", "Shipped elsewhere, verifiable here."),
+    "ninjatech": ("Applied work", ""),
+    "lobster-cash": ("Applied work", ""),
+    "robinhood-agentic-trading": ("Applied work", ""),
+    "verifiable-intent": ("Applied work", ""),
 }
 
-ORDER = ["Protocol bridges", "Skills", "Frameworks", "Sibling products", "Partners and applied work"]
+ORDER = ["Protocol bridges", "Skills", "Frameworks", "Sibling products", "Applied work"]
 
 FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---", re.S)
 

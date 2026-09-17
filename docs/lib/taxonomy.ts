@@ -60,7 +60,7 @@ export const SYSTEM_GROUPS: Record<SystemGroup, string> = {
   framework: 'Frameworks',
   standard: 'Standards',
   product: 'Zerker products',
-  partner: 'Partners',
+  partner: 'Applied work',
   surface: 'Treeship surfaces',
 };
 
