@@ -1,0 +1,2 @@
+session status --check
+session event --type agent.read_file --file /tmp/config.rs --agent-name Explore#7f3a9c2e

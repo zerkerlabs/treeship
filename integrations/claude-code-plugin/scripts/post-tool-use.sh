@@ -108,6 +108,14 @@ except Exception:
 TOOL_NAME=$(extract tool_name)
 [ -z "$TOOL_NAME" ] || [ "$TOOL_NAME" = "null" ] && TOOL_NAME="unknown"
 
+# Hooks fire for a subagent's tool calls too, with agent_id and agent_type in
+# the payload. Tag those events with the subagent's instance name so the
+# receipt attributes them to the instance that made them, not to the parent.
+# shellcheck source=./agent-instance.sh
+. "$(dirname "$0")/agent-instance.sh"
+AGENT_NAME=$(agent_instance "$INPUT")
+[ -z "$AGENT_NAME" ] && AGENT_NAME="claude-code"
+
 # ----------------------------------------------------------------------------
 # Helper: emit a generic agent.called_tool event. Used as the fall-through
 # for tools we don't have a specialized event type for, AND as the safety
@@ -117,7 +125,7 @@ emit_called_tool() {
   treeship session event \
     --type "agent.called_tool" \
     --tool "$TOOL_NAME" \
-    --agent-name "claude-code" \
+    --agent-name "$AGENT_NAME" \
     >/dev/null 2>&1 || true
 }
 
@@ -145,7 +153,7 @@ case "$TOOL_NAME" in
       treeship session event \
         --type "agent.read_file" \
         --file "$FILE" \
-        --agent-name "claude-code" \
+        --agent-name "$AGENT_NAME" \
         >/dev/null 2>&1 || emit_called_tool
     else
       emit_called_tool
@@ -157,7 +165,7 @@ case "$TOOL_NAME" in
       treeship session event \
         --type "agent.wrote_file" \
         --file "$FILE" \
-        --agent-name "claude-code" \
+        --agent-name "$AGENT_NAME" \
         >/dev/null 2>&1 || emit_called_tool
     else
       emit_called_tool
@@ -169,7 +177,7 @@ case "$TOOL_NAME" in
       treeship session event \
         --type "agent.wrote_file" \
         --file "$FILE" \
-        --agent-name "claude-code" \
+        --agent-name "$AGENT_NAME" \
         >/dev/null 2>&1 || emit_called_tool
     else
       emit_called_tool
@@ -192,7 +200,7 @@ case "$TOOL_NAME" in
       --type "agent.completed_process" \
       --tool "$PROC_NAME" \
       --exit-code "$EXIT_CODE" \
-      --agent-name "claude-code" \
+      --agent-name "$AGENT_NAME" \
       >/dev/null 2>&1 || emit_called_tool
     ;;
   WebFetch)
@@ -204,7 +212,7 @@ case "$TOOL_NAME" in
         treeship session event \
           --type "agent.connected_network" \
           --destination "$HOST" \
-          --agent-name "claude-code" \
+          --agent-name "$AGENT_NAME" \
           >/dev/null 2>&1 || emit_called_tool
       else
         emit_called_tool
@@ -243,7 +251,7 @@ print(json.dumps({'question': sys.argv[1], 'answer': sys.argv[2]}))
       treeship session event \
         --type "agent.called_tool" \
         --tool "$TOOL_NAME" \
-        --agent-name "claude-code" \
+        --agent-name "$AGENT_NAME" \
         --meta "$META" \
         >/dev/null 2>&1 || emit_called_tool
     else

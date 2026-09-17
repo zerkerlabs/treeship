@@ -51,6 +51,7 @@ The brief was: zero configuration, sessions start and close themselves, the URL 
 **Hooks (`hooks/hooks.json`).**
 - `SessionStart` — the natural entry point for "every Claude Code session is a receipt". Auto-creates a Treeship session if `.treeship/` exists. Idempotent: if a session is already active, exits cleanly.
 - `SessionEnd` — the natural exit point. Closes the session with a generic auto-headline, fetches the report URL, and pushes both into the agent's context via `additionalContext`. The user sees the URL without asking.
+- `SubagentStart` / `SubagentStop` — record a spawned subagent as `agent.spawned` and its return as `agent.returned`, so the sealed receipt's agent graph has the parent_child edge and `spawned_subagents` counts it. The subagent's own tool calls are tagged with its instance name (`<agent_type>#<id>`) by the PostToolUse hook, so a reader sees which instance did what.
 - `PostToolUse` — captures Claude Code's *built-in* tools. The MCP server can't see Read/Write/Edit/Bash because they don't go through MCP. This hook routes each built-in call into `treeship session event` so the receipt timeline is complete.
 
 **Monitor (`monitors/monitors.json`).** Per the docs, monitors stream live notifications into Claude's context — perfect for "the receipt is currently being built" signaling without polluting the chat. The monitor watches `session status` and only emits when counters change, so it stays quiet when nothing's happening.

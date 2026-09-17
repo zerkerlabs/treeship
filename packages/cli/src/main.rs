@@ -1254,7 +1254,9 @@ struct SessionReportArgs {
 struct SessionEventArgs {
     /// Event type: agent.called_tool, agent.wrote_file, agent.read_file,
     /// agent.connected_network, agent.completed_process, agent.decision
-    /// (requires --model), agent.handoff, or agent.note (text in --meta)
+    /// (requires --model), agent.handoff, agent.note (text in --meta),
+    /// agent.spawned (--agent-name is the child; parent in --meta as
+    /// spawned_by), or agent.returned (returned_to in --meta or --destination)
     #[arg(long, value_name = "TYPE")]
     r#type: String,
 
