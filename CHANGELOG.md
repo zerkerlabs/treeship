@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+## Unreleased
+
+- **The Claude Code plugin gates tool calls on the agent card.** A `PreToolUse` hook reads the session actor's registered card (`treeship agent register --tools/--forbidden/--escalation`), maps Read/Write/Bash/WebFetch/Agent and `mcp__server__tool` onto the card's capability names, and denies a forbidden tool with a signed `blocked.v1` receipt (`scope_violation`), asks the operator for an escalation tool, allows a bounded one, and records an off-card call as an `agent.note` unless `TREESHIP_GATE=enforce` turns it into a refusal. A refusal is an artifact sealed with the session, not a log line. No card means no policy, and the hook fails open on every error. Parity fixtures cover all four outcomes; the mock `treeship` now answers `session status --format json` and the runner seeds cards from `fixtures/<plugin>/agents/`.
 - **`evaluation.v1`: an evaluator's signed grade.** The pacing proposals that pair a capability checkpoint with a certification ("a model with capability X carries certification Y") need the certification to be a record a stranger can check. `evaluation.v1` is that record: what was evaluated (a model, agent, session or package, by digest), with which suite (by digest), in which environment, and what the evaluator concluded, with `verdict` in `pass`, `fail`, `inconclusive` enforced before signing. Attested with `--subject` on the graded artifact, it chains onto the thing it grades. The docs state the self-asserted rule: a grade signed by the subject's own key is not independent.
 ## 0.31.5 (2026-09-17)
 

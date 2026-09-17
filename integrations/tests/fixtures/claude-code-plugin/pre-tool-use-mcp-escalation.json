@@ -1,0 +1,1 @@
+{"hook_event_name":"PreToolUse","tool_name":"mcp__postgres__query","tool_input":{"sql":"select 1"},"tool_use_id":"toolu_3"}

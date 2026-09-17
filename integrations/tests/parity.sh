@@ -89,6 +89,13 @@ run_plugin() {
     echo "  no fixtures (skipping)"
     return
   fi
+  # Agent cards a gate hook reads: fixtures/<plugin>/agents/*.json are
+  # copied into the mock project's .treeship/agents/ before the run.
+  rm -rf "$WORKDIR/proj/.treeship/agents"
+  if [ -d "$FIX_DIR/agents" ]; then
+    mkdir -p "$WORKDIR/proj/.treeship/agents"
+    cp "$FIX_DIR"/agents/*.json "$WORKDIR/proj/.treeship/agents/" 2>/dev/null || true
+  fi
   for fixture in "$FIX_DIR"/*.json; do
     [ -f "$fixture" ] || continue
     basename=$(basename "$fixture" .json)

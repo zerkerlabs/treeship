@@ -11,6 +11,10 @@
 
 set -e
 
+# Resolve our own directory before any cd so the shared helper is found
+# whether the hook is invoked by absolute path (Claude Code) or relative.
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+
 INPUT=$(cat 2>/dev/null || true)
 [ -z "$INPUT" ] && exit 0
 command -v treeship >/dev/null 2>&1 || exit 0
@@ -23,7 +27,7 @@ fi
 treeship session status --check >/dev/null 2>&1 || exit 0
 
 # shellcheck source=./agent-instance.sh
-. "$(dirname "$0")/agent-instance.sh"
+. "$SCRIPT_DIR/agent-instance.sh"
 INSTANCE=$(agent_instance "$INPUT")
 [ -z "$INSTANCE" ] && exit 0
 AGENT_TYPE=$(json_field "$INPUT" agent_type)

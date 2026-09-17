@@ -49,9 +49,32 @@ Updating: when a new plugin version ships, run `claude plugin marketplace update
 | Component | What it does |
 |---|---|
 | `.mcp.json` | Mounts `@treeship/mcp` via `npx -y` so MCP tool calls get signed receipts |
-| `hooks/hooks.json` | SessionStart (auto-start), SessionEnd (seal + report URL), PostToolUse (capture built-in tools, tagged with the subagent instance when a subagent made the call), SubagentStart / SubagentStop (`agent.spawned` and `agent.returned`, so the receipt's agent graph carries the spawn) |
+| `hooks/hooks.json` | SessionStart (auto-start), SessionEnd (seal + report URL), PreToolUse (the gate: the session actor's registered agent card as a runtime boundary, see below), PostToolUse (capture built-in tools, tagged with the subagent instance when a subagent made the call), SubagentStart / SubagentStop (`agent.spawned` and `agent.returned`, so the receipt's agent graph carries the spawn) |
 | `monitors/monitors.json` | Live receipt/event counter streamed into Claude's context |
 | `skills/treeship-session` | How to close with a real headline before SessionEnd auto-headlines |
+
+### The gate (PreToolUse)
+
+Register the session's actor with a card and the plugin enforces it before each tool runs:
+
+```bash
+treeship agent register --name claude-code \
+  --tools file.read,file.write,shell.exec \
+  --escalation "mcp__postgres__*" \
+  --forbidden net.fetch
+```
+
+Claude Code tools map onto the card's vocabulary: Read, Grep and Glob are `file.read`; Write, Edit, MultiEdit and NotebookEdit are `file.write`; Bash is `shell.exec`; WebFetch and WebSearch are `net.fetch`; Agent and Task are `agent.spawn`; an MCP tool `mcp__server__tool` is `server.tool`. The card's patterns take one `*`, the same rule `verify-capability` uses.
+
+| Card says | The gate does |
+|---|---|
+| `forbidden` matches | denies, and signs a `blocked.v1` receipt (`scope_violation`) into the session |
+| `escalation_required` matches | asks the operator |
+| `bounded_tools` matches | allows |
+| none of the above | allows and leaves an `agent.note` ("off-card") in the timeline; with `TREESHIP_GATE=enforce` it denies and signs the refusal instead |
+| no card for the actor | allows everything, says nothing |
+
+A refusal is a signed artifact, sealed with the session like any action, so "the gate stopped it" is a claim a stranger can verify. The gate fails open on every error path: a broken Treeship never blocks a tool call by accident. It is a boundary on what the harness routes through hooks, not on what a process spawned outside them can do; the [coverage level](/docs/guides/coverage-levels) says where that boundary is.
 | `skills/treeship-verify` | How to verify a receipt URL someone shares with you |
 | `skills/treeship-report` | How to publish + share a session report URL |
 
