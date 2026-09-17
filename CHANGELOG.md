@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+
+- **`evaluation.v1`: an evaluator's signed grade.** The pacing proposals that pair a capability checkpoint with a certification ("a model with capability X carries certification Y") need the certification to be a record a stranger can check. `evaluation.v1` is that record: what was evaluated (a model, agent, session or package, by digest), with which suite (by digest), in which environment, and what the evaluator concluded, with `verdict` in `pass`, `fail`, `inconclusive` enforced before signing. Attested with `--subject` on the graded artifact, it chains onto the thing it grades. The docs state the self-asserted rule: a grade signed by the subject's own key is not independent.
 ## 0.31.5 (2026-09-17)
 
 - **The receipt's agent graph is written, not only defined.** `agent.spawned` and `agent.returned` existed in the event vocabulary and the graph builder, and no producer emitted them: a session with subagents sealed with `spawned_subagents: 0` and no `parent_child` edge. `session event` now takes both types (`--agent-name` is the child; the parent rides in `--meta` as `spawned_by`, the return target as `returned_to` or `--destination`), and the timeline prints them as `spawned` and `returned`. The Claude Code plugin adds `SubagentStart` and `SubagentStop` hooks that emit them, and its PostToolUse hook tags a subagent's tool calls with the subagent's instance name (`<agent_type>#<id>`) instead of the parent's, so the sealed receipt says which instance did what.
