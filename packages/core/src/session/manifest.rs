@@ -249,6 +249,13 @@ pub struct SessionManifest {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub authorized_tools: Vec<String>,
 
+    /// Network destinations declared for this session (from
+    /// declaration.json `network`): exact hosts or `*.suffix` patterns.
+    /// Empty means nothing was declared; the receipt then records
+    /// connections without judging them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub network_scope: Vec<String>,
+
     /// Git HEAD SHA captured at session start, when the project is a
     /// git repo. Used by session::close to compute committed-during-
     /// session changes via `git diff <sha>..HEAD` for the
@@ -286,6 +293,7 @@ impl SessionManifest {
             hosts: Vec::new(),
             tools: Vec::new(),
             authorized_tools: Vec::new(),
+            network_scope: Vec::new(),
             start_commit_sha: None,
             room: None,
         }
@@ -357,6 +365,7 @@ mod tests {
                 invocation_count: 42,
             }],
             authorized_tools: vec!["read_file".into(), "write_file".into()],
+            network_scope: Vec::new(),
             start_commit_sha: Some("abc1234567890abcdef1234567890abcdef12345".into()),
             room: Some(RoomInfo {
                 room_id: "room_001".into(),

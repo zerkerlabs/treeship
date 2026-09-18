@@ -629,6 +629,34 @@ pub fn verify_package_with_options(
         "timeline/side-effects/narrative are NOT signed in this package — only the artifacts and Merkle root are cryptographically bound. For an authenticated record of the session, verify the actor-signed session.v1 record (or the published report).",
     ));
 
+    // 3d. Network scope: when the session declared one, say whether every
+    // recorded destination fell inside it. No scope declared, no row: the
+    // connections stand in side_effects as recorded, unjudged.
+    if let Some(tu) = receipt.tool_usage.as_ref() {
+        if !tu.network_declared.is_empty() {
+            let total = receipt.side_effects.network_connections.len();
+            if tu.network_off_scope.is_empty() {
+                checks.push(VerifyCheck::pass(
+                    "network_scope",
+                    &format!(
+                        "{total} recorded connection(s), all within the declared scope [{}]",
+                        tu.network_declared.join(", ")
+                    ),
+                ));
+            } else {
+                checks.push(VerifyCheck::warn(
+                    "network_scope",
+                    &format!(
+                        "{} destination(s) outside the declared scope [{}]: {}",
+                        tu.network_off_scope.len(),
+                        tu.network_declared.join(", "),
+                        tu.network_off_scope.join(", ")
+                    ),
+                ));
+            }
+        }
+    }
+
     // 4. Merkle root re-computation
     if !receipt.artifacts.is_empty() {
         // Recompute under the receipt's declared merkle version so
