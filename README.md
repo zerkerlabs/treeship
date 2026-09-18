@@ -358,6 +358,16 @@ The current release is the latest tag on [GitHub Releases](https://github.com/ze
 - Transparent MCP forwarder mode · Anthropic plugin-directory listing · external time anchors (Rekor, OpenTimestamps) · an independent third-party security audit
 - Not planned: native Windows (use WSL) — [open an issue](https://github.com/zerkerlabs/treeship/issues) with a strong use case
 
+## Security history
+
+Treeship's verifier has had three advisories in four months, and they share a root cause: a surface reported a green verdict without a signature check anchored to a pinned key.
+
+- **v0.10.4**: the keystore did not encrypt as documented; verifiers trusted embedded keys; a Merkle downgrade path.
+- **v0.19**: higher-level surfaces reported "verified" from attacker-controlled input without anchoring to a checked signature. [Release post](https://docs.treeship.dev/blog/treeship-0-19-the-security-hardening-release).
+- **v0.31.2**: `package verify` never checked an artifact's Ed25519 signature, so a rewritten sealed set verified green. [TS-2026-002](docs/security/TS-2026-002.md), with a [repro script](docs/security/audit-2026-09-repro.sh). Fixed the same day; follow-ups in 0.31.3 and 0.31.4 bound the close record into the package.
+
+What is true now: every verdict-printing path verifies signatures against the verifier's own pinned roots, the release workflow replays the verify flow against the published packages before a tag goes live, and the vocabulary a verdict may use is gated in CI. What is not yet true: an independent third-party audit of the verify paths. It is on the open list above. Every audit so far was internal and AI-assisted; read the advisories with that in mind. The [threat model](docs/security/threat-model.md) states what the verifier can and cannot conclude.
+
 ## Documentation
 
 - Docs site: **<https://docs.treeship.dev>**
