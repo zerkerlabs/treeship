@@ -108,7 +108,7 @@ treeship revoke-capability <card-id>    # revoke a capability card
 # Portable receipts
 treeship receipt export <id>            # message/signature/key triple, verifiable by any Ed25519 lib
 
-# OpenTelemetry (requires --features otel)
+# OpenTelemetry (in the default build; set TREESHIP_OTEL_ENDPOINT)
 treeship otel test                      # verify OTLP connectivity
 treeship otel status                    # show OTel config
 treeship otel export <id>              # export artifact as span
