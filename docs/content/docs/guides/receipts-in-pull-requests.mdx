@@ -49,7 +49,7 @@ fix token refresh
 Treeship-Receipt: ssn_42e740bd9eb238f6 sha256:942e6b2bfcbe860223fbae57ee7d9b73400a278ccfb0f1d5ca865aec9ce9aba6
 ```
 
-`git interpret-trailers` and `git log --format=%(trailers:key=Treeship-Receipt)` both read it. The digest is `sha256(receipt.json)`, which is what `package verify` recomputes and what the close record signs, so a rewritten package and a stale trailer disagree in a way the check can see.
+Keep it in the commit's final block of trailers (next to `Signed-off-by` or `Co-Authored-By` lines, with no blank line between them), so `git interpret-trailers` and `git log --format=%(trailers:key=Treeship-Receipt)` read it. The check itself reads the line anywhere in the message. The digest is `sha256(receipt.json)`, which is what `package verify` recomputes and what the close record signs, so a rewritten package and a stale trailer disagree in a way the check can see.
 
 A commit can carry a trailer without the package being in the same pull request, and a package can be committed without a trailer. The check reports the pairing per package as `matches`, `MISMATCH` or `none`; only `MISMATCH` fails.
 
