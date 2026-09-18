@@ -1318,6 +1318,184 @@ pub(crate) fn session_record_payload(
 /// sign with the actor's own key when it has one (so registered agents get
 /// a key-bound work-history record), and chain it to the session-close
 /// artifact. Returns the record artifact id and its attestation class.
+/// Rank of a declared coverage level, for picking the highest among the
+/// harnesses attached to a workspace.
+fn coverage_rank(label: &str) -> u8 {
+    match label {
+        "high" => 4,
+        "medium" => 3,
+        "basic" => 2,
+        "backstop-only" => 1,
+        _ => 0,
+    }
+}
+
+/// The `coverage.v1` payload: what the attached harnesses declare they could
+/// capture, and what the sealed event log shows they did. Every number is
+/// counted from `events`; every declaration is copied from the harness state
+/// files, never inferred.
+fn coverage_payload(
+    manifest: &SessionManifest,
+    events: &[SessionEvent],
+    harness_states: &[crate::commands::harnesses::HarnessState],
+    event_log_skipped: usize,
+    closed_at: &str,
+) -> serde_json::Value {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let mut harnesses = Vec::new();
+    let mut declared_level = "none";
+    let mut gaps: Vec<String> = Vec::new();
+    for h in harness_states {
+        let status = h.status.label();
+        let coverage = h.coverage.label();
+        let modes: Vec<&str> = h
+            .active_connection_modes
+            .iter()
+            .map(|m| m.label())
+            .collect();
+        // Available means "proposed and declined", disabled means off:
+        // neither counts toward what this workspace could capture.
+        if status != "available"
+            && status != "disabled"
+            && coverage_rank(coverage) > coverage_rank(declared_level)
+        {
+            declared_level = coverage;
+        }
+        for g in &h.known_gaps {
+            if !gaps.contains(g) {
+                gaps.push(g.clone());
+            }
+        }
+        let mut entry = serde_json::json!({
+            "harness_id": h.harness_id,
+            "status": status,
+            "coverage": coverage,
+            "connection_modes": modes,
+            "known_gaps": h.known_gaps,
+        });
+        if let Some(ref at) = h.last_verified_at {
+            entry["last_verified_at"] = serde_json::Value::String(at.clone());
+        }
+        harnesses.push(entry);
+    }
+
+    let mut event_types: BTreeMap<String, u64> = BTreeMap::new();
+    let mut hosts: BTreeSet<String> = BTreeSet::new();
+    let mut instances: BTreeSet<String> = BTreeSet::new();
+    let mut first: Option<&str> = None;
+    let mut last: Option<&str> = None;
+    for e in events {
+        let name = serde_json::to_value(&e.event_type)
+            .ok()
+            .and_then(|v| {
+                v.get("type")
+                    .and_then(|t| t.as_str())
+                    .map(|t| t.to_string())
+            })
+            .unwrap_or_else(|| "unknown".into());
+        *event_types.entry(name).or_insert(0) += 1;
+        hosts.insert(e.host_id.clone());
+        instances.insert(e.agent_instance_id.clone());
+        let ts = e.timestamp.as_str();
+        match first {
+            Some(f) if ts >= f => {}
+            _ => first = Some(ts),
+        }
+        match last {
+            Some(l) if ts <= l => {}
+            _ => last = Some(ts),
+        }
+    }
+
+    let captured_activity = event_types
+        .keys()
+        .any(|k| k != "session.started" && k != "session.closed");
+    if !captured_activity {
+        gaps.push(
+            "no tool, file, process or network events were captured; the receipt records only the session boundaries"
+                .into(),
+        );
+    }
+    if declared_level == "none" {
+        gaps.push(
+            "no harness state in this workspace; nothing declares what could have been captured"
+                .into(),
+        );
+    }
+    if event_log_skipped > 0 {
+        gaps.push(format!(
+            "{event_log_skipped} malformed event-log line(s) were skipped; the log is known to be incomplete"
+        ));
+    }
+
+    let mut observed = serde_json::json!({
+        "events": events.len(),
+        "event_types": event_types,
+        "hosts": hosts,
+        "agent_instances": instances.len(),
+        "event_log_skipped": event_log_skipped,
+    });
+    if let Some(f) = first {
+        observed["first_event_at"] = serde_json::Value::String(f.to_string());
+    }
+    if let Some(l) = last {
+        observed["last_event_at"] = serde_json::Value::String(l.to_string());
+    }
+
+    serde_json::json!({
+        "schema": "coverage.v1",
+        "session_id": manifest.session_id,
+        "actor": manifest.actor,
+        "declared_level": declared_level,
+        "harnesses": harnesses,
+        "observed": observed,
+        "gaps": gaps,
+        "closed_at": closed_at,
+    })
+}
+
+/// Sign the coverage statement as a `coverage.v1` receipt chained onto the
+/// close artifact, so it is sealed inside the package's Merkle tree and
+/// `package verify` can report it. Signed by the actor's own key when the
+/// actor has one, like the close record.
+fn mint_coverage_receipt(
+    ctx: &ctx::Ctx,
+    actor: &str,
+    close_artifact_id: &str,
+    payload: serde_json::Value,
+) -> Result<String, Box<dyn std::error::Error>> {
+    treeship_core::predicates::validate("coverage.v1", Some(&payload))
+        .map_err(|e| format!("predicate validation failed: {e}"))?;
+
+    let mut stmt = ReceiptStatement::new("system://treeship-session", "coverage.v1");
+    stmt.parent_id = Some(close_artifact_id.to_string());
+    stmt.subject = Some(SubjectRef {
+        artifact_id: Some(close_artifact_id.to_string()),
+        ..Default::default()
+    });
+    stmt.payload = Some(payload);
+
+    let signer = crate::commands::attest::resolve_actor_signer(ctx, actor)?;
+    let pt = payload_type("receipt");
+    let result = sign(&pt, &stmt, signer.as_ref())?;
+
+    ctx.storage.write(&Record {
+        artifact_id: result.artifact_id.clone(),
+        digest: result.digest.clone(),
+        payload_type: pt,
+        key_id: signer.key_id().to_string(),
+        signed_at: stmt.timestamp.clone(),
+        parent_id: Some(close_artifact_id.to_string()),
+        envelope: result.envelope,
+        hub_url: None,
+        anchors: Vec::new(),
+    })?;
+    write_last(&ctx.config.storage_dir, &result.artifact_id);
+
+    Ok(result.artifact_id)
+}
+
 fn mint_session_record(
     ctx: &ctx::Ctx,
     actor: &str,
@@ -1594,6 +1772,40 @@ pub fn close(
         }
     }
 
+    // ── Coverage receipt (coverage.v1) ──────────────────────────────
+    // "We monitored this" needs a denominator. Before the chain is
+    // collected, sign what the attached harnesses declare they could
+    // capture and what the event log shows they did, chained onto the
+    // close artifact so it is sealed in the Merkle tree with everything
+    // else. Best-effort: a failure warns and never wedges the close.
+    let harness_states = crate::commands::harnesses::list_states(
+        &crate::commands::harnesses::harnesses_dir_for(&ctx.config_path),
+    )
+    .unwrap_or_default();
+    let coverage = coverage_payload(
+        &manifest,
+        &events,
+        &harness_states,
+        event_log_skipped,
+        &now_rfc3339(),
+    );
+    let coverage_declared_level = coverage["declared_level"]
+        .as_str()
+        .unwrap_or("none")
+        .to_string();
+    let coverage_harness_ids: Vec<String> = harness_states
+        .iter()
+        .map(|h| h.harness_id.clone())
+        .collect();
+    let coverage_artifact_id =
+        match mint_coverage_receipt(&ctx, &manifest.actor, &result.artifact_id, coverage) {
+            Ok(id) => Some(id),
+            Err(e) => {
+                printer.warn(&format!("coverage receipt not minted: {e}"), &[]);
+                None
+            }
+        };
+
     // Build artifact entries from the chain
     let mut artifact_entries: Vec<session::receipt::ArtifactEntry> =
         collect_artifact_entries(&ctx, &manifest);
@@ -1826,6 +2038,8 @@ pub fn close(
             "receipts": artifact_count,
             "events": event_log.event_count(),
             "package": sealed_pkg_path.as_ref().map(|path| path.display().to_string()),
+            "coverage_artifact_id": coverage_artifact_id,
+            "coverage_declared_level": coverage_declared_level,
             "unsealed_branches": unsealed_branches,
             "sealed_unchained": sealed_unchained,
         }));
@@ -1836,6 +2050,16 @@ pub fn close(
         printer.info(&format!("  duration: {}", elapsed_str));
         printer.info(&format!("  receipts: {}", artifact_count));
         printer.info(&format!("  events:   {}", event_log.event_count()));
+        if let Some(ref id) = coverage_artifact_id {
+            let via = if coverage_harness_ids.is_empty() {
+                "no harness state".to_string()
+            } else {
+                coverage_harness_ids.join(", ")
+            };
+            printer.info(&format!(
+                "  coverage: declared {coverage_declared_level} ({via})  {id}"
+            ));
+        }
         printer.blank();
     }
 

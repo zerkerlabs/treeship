@@ -629,6 +629,13 @@ pub fn verify_package_with_options(
         "timeline/side-effects/narrative are NOT signed in this package — only the artifacts and Merkle root are cryptographically bound. For an authenticated record of the session, verify the actor-signed session.v1 record (or the published report).",
     ));
 
+    // 3c. Coverage: does the sealed set say what the harness could observe?
+    // A `coverage.v1` receipt minted at close carries the declared capture
+    // level, the connection modes and the counted events; without it a
+    // reader has no denominator for the timeline. Reported, never a fail:
+    // packages sealed before 0.31.6 carry none.
+    checks.push(coverage_check(pkg_dir, &receipt));
+
     // 4. Merkle root re-computation
     if !receipt.artifacts.is_empty() {
         // Recompute under the receipt's declared merkle version so
@@ -2113,6 +2120,91 @@ pub fn render_preview_html_with_approvals(
         .replacen("__RECEIPT_JSON__", &safe_json, 1)
         .replacen("__APPROVALS_JSON__", &safe_approvals, 1)
         .replace("__FONT_FRAUNCES__", &fraunces_data_uri())
+}
+
+/// Find the `coverage.v1` receipt among the sealed envelopes and summarise
+/// it; warn when the package carries none.
+fn coverage_check(pkg_dir: &Path, receipt: &SessionReceipt) -> VerifyCheck {
+    let art_dir = pkg_dir.join(ARTIFACTS_DIR);
+    for entry in &receipt.artifacts {
+        let path = art_dir.join(format!("{}.json", sanitize_filename(&entry.artifact_id)));
+        let Ok(raw) = std::fs::read(&path) else {
+            continue;
+        };
+        let Ok(env) = crate::attestation::Envelope::from_json(&raw) else {
+            continue;
+        };
+        let Some(stmt) = env
+            .payload_bytes()
+            .ok()
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        else {
+            continue;
+        };
+        if stmt.get("kind").and_then(|k| k.as_str()) != Some("coverage.v1") {
+            continue;
+        }
+        let Some(p) = stmt.get("payload") else {
+            continue;
+        };
+        let level = p
+            .get("declared_level")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?");
+        let harnesses: Vec<String> = p
+            .get("harnesses")
+            .and_then(|h| h.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .map(|h| {
+                        let id = h.get("harness_id").and_then(|v| v.as_str()).unwrap_or("?");
+                        let modes: Vec<&str> = h
+                            .get("connection_modes")
+                            .and_then(|m| m.as_array())
+                            .map(|m| m.iter().filter_map(|x| x.as_str()).collect())
+                            .unwrap_or_default();
+                        if modes.is_empty() {
+                            id.to_string()
+                        } else {
+                            format!("{id} via {}", modes.join("+"))
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let events = p
+            .get("observed")
+            .and_then(|o| o.get("events"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let types = p
+            .get("observed")
+            .and_then(|o| o.get("event_types"))
+            .and_then(|t| t.as_object())
+            .map(|m| m.len())
+            .unwrap_or(0);
+        let gaps = p
+            .get("gaps")
+            .and_then(|g| g.as_array())
+            .map(|g| g.len())
+            .unwrap_or(0);
+        let via = if harnesses.is_empty() {
+            "no harness state".to_string()
+        } else {
+            harnesses.join(", ")
+        };
+        return VerifyCheck::pass(
+            "coverage",
+            &format!(
+                "{}: declared {level} ({via}); {events} events observed across {types} types; {gaps} stated gap(s). A declared level is the harness's potential, not proof of what happened outside it",
+                entry.artifact_id
+            ),
+        );
+    }
+    VerifyCheck::warn(
+        "coverage",
+        "no coverage receipt in the sealed set: the package does not say what the harness could observe (sealed before 0.31.6, or minted without one)",
+    )
 }
 
 #[cfg(test)]

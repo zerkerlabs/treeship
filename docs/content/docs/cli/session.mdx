@@ -142,7 +142,8 @@ On close, Treeship:
 3. Composes a canonical [Session Receipt v1](/docs/concepts/session-receipts) from the events, the artifact chain, and the agent graph.
 4. Builds a [`.treeship` package](/docs/concepts/session-receipts#package-format) under `.treeship/sessions/<session_id>.treeship/` with `receipt.json`, `merkle.json`, `render.json`, per-artifact inclusion proofs, and a static `preview.html`.
 5. Signs a `session.close` chain artifact as before.
-6. Prints the package path, the canonical receipt digest, and the Merkle root.
+6. Mints a [`coverage.v1`](/docs/reference/predicates#coveragev1) receipt chained onto it: what the attached harnesses declare they could capture and what the event log shows they did. It is sealed in the package with everything else and reported by `package verify` as the `coverage` row.
+7. Prints the package path, the canonical receipt digest, and the Merkle root.
 
 Close is guarded by a lock so only one close or abandon operation can mutate session state at a time. Git reconciliation is also bounded: if the untracked-file scan exceeds the cap, Treeship skips per-file untracked events, records the truncation in the receipt proofs section, and `treeship package verify` reports a `reconcile_completeness` warning.
 
@@ -158,8 +159,9 @@ Example output:
 ✓ session closed
   id:       ssn_42e740bd9eb238f6
   duration: 6m
-  receipts: 2
+  receipts: 3
   events:   2
+  coverage: declared high (claude-code)  art_9c1d2e3f4a5b6c7d
 ```
 
 After close, run [`treeship package verify`](/docs/cli/package) against the package path to confirm the receipt is locally verifiable.
