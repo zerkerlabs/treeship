@@ -9,6 +9,7 @@
 [![PyPI](https://img.shields.io/pypi/v/treeship-sdk.svg)](https://pypi.org/project/treeship-sdk/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![CI](https://github.com/zerkerlabs/treeship/actions/workflows/ci.yml/badge.svg)](https://github.com/zerkerlabs/treeship/actions/workflows/ci.yml)
+[![receipts](https://github.com/zerkerlabs/treeship/actions/workflows/receipts.yml/badge.svg)](https://github.com/zerkerlabs/treeship/actions/workflows/receipts.yml)
 
 Treeship is an open-source trust layer that records agent actions as signed artifacts,
 binds them to per-agent keys and capability cards, and lets **each verifier apply its
@@ -165,6 +166,8 @@ Two honesty notes:
 
 - The public receipt page's in-browser verdict is **structural** (Merkle consistency), not issuer-authenticated. Full signature verification against your trust roots happens locally: `treeship verify <artifact-id>`.
 - The Claude Code plugin's SessionEnd hook publishes **only when you opt in** with `TREESHIP_AUTO_PUBLISH=1`. Without it the session is sealed locally and nothing leaves the machine, whether or not a hub is attached. Publish when you choose to with `treeship session report`.
+
+To put the receipt in the pull request instead of on a hub, close with `treeship session close --receipt-dir receipts`, paste the printed `Treeship-Receipt:` trailer on the commit, and run the [`verify-receipts` action](.github/actions/verify-receipts/action.yml) on pull requests: it verifies every committed package under keys the repository pins and fails on anything but `verified`. This repository runs it on itself. Guide: [Receipts in pull requests](https://docs.treeship.dev/docs/guides/receipts-in-pull-requests).
 
 The Hub stores immutable bytes, serves lookup indices and proofs, and enforces write auth ([DPoP](https://docs.treeship.dev/docs/api/overview)) — it never supplies trust verdicts. Server-side verification was deliberately retired (the endpoint returns `410 Gone`): a verifier you don't run yourself is not a verifier.
 

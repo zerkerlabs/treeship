@@ -43,6 +43,7 @@ pub fn run(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::e
             Some("auto-closed by quickstart".into()),
             None,
             None,
+            None,
             config,
             printer,
         );
@@ -86,6 +87,7 @@ pub fn run(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::e
     super::session::close(
         Some(format!("Quickstart: ran '{}'", cmd)),
         Some("First Treeship receipt".into()),
+        None,
         None,
         config,
         printer,
