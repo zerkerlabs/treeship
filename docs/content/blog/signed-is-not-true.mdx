@@ -1,0 +1,57 @@
+---
+title: "Signed is not true"
+description: "The sharpest attack on a receipt is that a signature proves nothing about the world. It is correct. Here is exactly what a Treeship receipt proves, what it does not, and the three mechanisms that turn a signed report into something you can grade."
+date: 2026-09-18
+tags: ["receipts", "trust", "verification", "identity"]
+readTime: "6 min read"
+category: perspective
+systems: []
+---
+
+# Signed is not true
+
+Someone will make this argument about Treeship, in a diligence call or a comment thread, and they will be right: a signature proves who signed and that the bytes have not changed. It proves nothing about whether the thing signed is true. An agent that signs its own report card has proven that it holds a key.
+
+We agree, and we would rather write it up ourselves than have it written up for us. Here is the claim a receipt makes, the claims it does not, and what we built so that "signed" is not where the story ends.
+
+## What a receipt proves
+
+A Treeship receipt is a narrow instrument, and the narrowness is what makes it hold.
+
+- **The bytes have not changed since signing.** The artifact id is derived from the signed bytes. Edit one character and verification fails.
+- **A specific key signed it.** Ed25519 over a DSSE envelope. Not "someone at this company"; that key, those bytes.
+- **Its place in the chain.** Each receipt names its parent inside the signed payload. Remove, reorder or splice, and everything after it fails.
+- **Its inclusion in a checkpoint**, when one exists. A Merkle inclusion proof shows the artifact was in the log when the checkpoint was published, so it cannot be back-dated into anchored history.
+- **Which input produced which output**, as hashes you can recompute.
+- **Which binary ran, and under whose mandate**, for wrapped commands and v2 actions.
+- **All of it offline.** The artifact and a public key. If our servers vanish, every receipt still verifies.
+
+## What it does not prove
+
+- **That the recorded claim is true.** If a tool returns "deployed" when nothing deployed, the receipt records that lie, signed and tamper-evident and wrong. What you get is non-repudiation, not ground truth.
+- **That the actor is who the name says.** `agent://researcher` is a string the signer chose.
+- **That the timestamp is accurate.** The same key that signs the action signs the time.
+- **That nothing else happened.** A chain proves what it contains was not altered. It cannot prove work did not happen outside it. A chain that only records successes is weaker than it looks.
+- **That the judgement was good.** Receipts record what occurred and who authorised it. Wisdom is not attestable.
+
+## Three mechanisms that close the gap
+
+Stating the limit is table stakes. The product is what sits on the other side of it.
+
+**Custody grades on hand-offs.** When one agent hands work to another, the receiving side mints a fresh nonce and the sender must answer it with its own key, right now. A hand-off that passed that check records `custody: live`. One that did not records `custody: asserted`, with the reason. The word is inside the signed statement, and a verifier refuses to upgrade an asserted hand-off to live no matter what the payload claims. The homepage demo shows the asserted case on purpose.
+
+**Actor proof.** By default every receipt in a workspace is signed by the workspace key, and the actor name is a label. Register the agent with its own key, certified by the workspace, and the receipt's signer is that key: the verifier prints `actor proof: proven (key-bound)` instead of `asserted`. Same receipt format, a different grade, and the grade is what a reader is meant to read.
+
+**Capability provenance.** An agent's capability card can declare tools. Declaring proves nothing. The verifier cross-checks the card against the session's signed action receipts and grades each capability `exercised` (backed by receipts), `captured` (wired in the harness config), `discovered` (from the agent's own published descriptor) or `declared-only`. A capability the agent claims and never used is visibly weaker than one it used ten times. This is the self-reporting problem attacked from the other side: the agent does not get to grade itself.
+
+## The pattern
+
+Each mechanism does the same thing. It takes a claim that a signature alone would leave as an assertion, adds a check that the signer cannot perform on its own behalf, and writes the result of that check into the signed record as a grade rather than a boolean. `live` versus `asserted`. `proven` versus `asserted`. `exercised` versus `declared-only`.
+
+A grade is honest in a way a checkmark is not. It tells the reader which question was answered and which was left open. And it means the answer to "signed is not true" is not a rebuttal. It is: correct, and here is the field that says how far past signed this particular record got.
+
+## Why we state it this way
+
+A verification tool that oversells becomes a liability precisely when it matters. If "verified" is read as "correct", then the first time a signed receipt records something false, the whole apparatus loses credibility, and the people who relied on it were misled by us, not by the agent. Narrow claims that always hold beat broad claims that usually do.
+
+The reference page is [What a receipt proves](/docs/concepts/what-receipts-prove). The mechanisms are in [the agent handshake](/docs/concepts/agent-handshake), [agent identity](/docs/concepts/agent-identity) and [capability cards](/docs/concepts/capability-cards).
