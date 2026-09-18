@@ -85,6 +85,11 @@ pub struct CardCapabilities {
     /// drive future hard-block hooks; v0.9.8 only records, does not enforce.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub forbidden: Vec<String>,
+    /// Network destinations the agent may reach: exact hosts or `*.suffix`
+    /// patterns. Empty means no network scope is declared. The Claude Code
+    /// gate refuses a WebFetch to a host outside a non-empty list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub network: Vec<String>,
 }
 
 /// Provenance of a card -- where the data behind it came from. Helps later

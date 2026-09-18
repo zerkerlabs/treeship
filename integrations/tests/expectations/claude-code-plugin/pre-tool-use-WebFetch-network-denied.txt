@@ -1,0 +1,2 @@
+session status --format json
+attest receipt --system system://treeship-gate --kind blocked.v1 --payload {"reason_class": "scope_violation", "refused_kind": "action", "actor": "agent://netscope", "description": "gate refused WebFetch (net.fetch) for agent://netscope: host evil.example.com is outside the agent card's network scope"}

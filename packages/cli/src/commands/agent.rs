@@ -167,6 +167,7 @@ pub fn register(
     description: Option<String>,
     forbidden: Vec<String>,
     escalation: Vec<String>,
+    network: Vec<String>,
     own_key: bool,
     quiet: bool,
     config: Option<&str>,
@@ -241,6 +242,7 @@ pub fn register(
         bounded_actions: tools.clone(),
         forbidden,
         escalation_required: escalation,
+        network,
     };
 
     // Sign: canonical JSON of identity + capabilities + declaration
@@ -407,6 +409,7 @@ pub fn register(
             bounded_tools: tools.clone(),
             escalation_required: declaration.escalation_required.clone(),
             forbidden: declaration.forbidden.clone(),
+            network: declaration.network.clone(),
         },
         provenance: CardProvenance::Registered,
         status: CardStatus::NeedsReview,
