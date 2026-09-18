@@ -243,7 +243,7 @@ curl -fsSL treeship.dev/setup | sh
 npm install -g treeship
 ```
 
-macOS arm64/x64 and Linux x86_64 (any distro, glibc or musl, single statically linked binary) are supported. Linux ARM64 is not yet shipped. Windows: use WSL. Full matrix: [install guide](https://docs.treeship.dev/guides/install#supported-platforms).
+macOS arm64/x64, Linux x86_64 and Linux ARM64 (any distro, glibc or musl, single statically linked binary) are supported. Windows: use WSL. Full matrix: [install guide](https://docs.treeship.dev/guides/install#supported-platforms).
 
 ### Claude Code plugin
 
@@ -335,7 +335,7 @@ Treeship builds on existing primitives rather than inventing cryptography:
 
 ## Status and roadmap
 
-Current release: **v0.24.0**. The [`CHANGELOG.md`](./CHANGELOG.md) is the source of truth for what each release shipped; the living roadmap is [`docs/specs/vision.md`](./docs/specs/vision.md).
+The current release is the latest tag on [GitHub Releases](https://github.com/zerkerlabs/treeship/releases) (0.31.5 at the time of writing). The [`CHANGELOG.md`](./CHANGELOG.md) is the source of truth for what each release shipped; the living roadmap is [`docs/specs/vision.md`](./docs/specs/vision.md).
 
 **Shipped**
 - Signed artifacts, hash chains, Merkle inclusion + consistency proofs, signed checkpoints
@@ -347,12 +347,15 @@ Current release: **v0.24.0**. The [`CHANGELOG.md`](./CHANGELOG.md) is the source
 - Split trust-root powers (v0.19); DPoP hub auth and device-flow login
 - **Selective capability disclosure** — present a verifier only the capabilities it needs
 - MCP + A2A bridges, Claude Code plugin, TypeScript/Python SDKs, WASM verifier on Node/Deno/browser/edge
+- Sealed session packages verified signature-first (`package verify`, v0.31.2+), with the close record bound into the package (v0.31.4)
+- Workload packet and recomputation receipts, evaluation receipts, the agent graph written from spawn events, a Claude Code gate and a kill switch (v0.31.5+)
+- Linux ARM64 binary (aarch64 musl), built and smoke-tested in the release workflow
 
 **Experimental, explicitly non-authoritative**
 - Zero-knowledge proofs: the prior Groth16 path was found unsound and is **quarantined**; a statement-first private-verification design supersedes it. Nothing in the default trust path depends on ZK. [Honest status](https://docs.treeship.dev/docs/concepts/zero-knowledge).
 
 **Open**
-- Linux ARM64 binary · transparent MCP forwarder mode · Anthropic plugin-directory listing
+- Transparent MCP forwarder mode · Anthropic plugin-directory listing · external time anchors (Rekor, OpenTimestamps) · an independent third-party security audit
 - Not planned: native Windows (use WSL) — [open an issue](https://github.com/zerkerlabs/treeship/issues) with a strong use case
 
 ## Documentation
