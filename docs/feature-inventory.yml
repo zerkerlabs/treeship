@@ -613,7 +613,13 @@
     - treeship otel export
   docs:
     - docs/content/docs/cli/otel.mdx
-  notes: "Behind `--features otel` build flag. Exports artifacts as OTel spans. No dedicated test file at the CLI layer yet."
+  tests:
+    - packages/cli/tests/otel_cli.rs
+  notes: >
+    In the default build since 0.31.6 (`--no-default-features` removes it).
+    Exports artifacts as OTLP/HTTP JSON spans when TREESHIP_OTEL_ENDPOINT is
+    set; five-second timeout, never fails the caller. CLI test:
+    packages/cli/tests/otel_cli.rs.
 
 - id: mcp-server
   name: MCP stdio server (@treeship/mcp)
