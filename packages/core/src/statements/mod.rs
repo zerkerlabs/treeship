@@ -563,6 +563,15 @@ pub struct ReceiptStatement {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meta: Option<serde_json::Value>,
+
+    /// The artifact this receipt chains onto, inside the signature. A
+    /// receipt minted mid-chain (a halt, a lift, a gate refusal) that carried
+    /// its parent only in storage metadata verified as "claims parent (none)"
+    /// when walked through, and failed `chain_linkage` in a sealed package.
+    /// Omitted when absent, so every receipt signed before this field existed
+    /// keeps its exact bytes and id.
+    #[serde(rename = "parentId", skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
 }
 
 /// A reference to one artifact within a bundle.
@@ -744,6 +753,7 @@ impl ReceiptStatement {
             payload_digest: None,
             policy_ref: None,
             meta: None,
+            parent_id: None,
         }
     }
 }

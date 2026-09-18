@@ -113,3 +113,13 @@ Read top-to-bottom: `potential` is the harness's design, `verified` is your work
 - [Agent Harnesses](/docs/concepts/harnesses)
 - [Agent Cards](/docs/concepts/agent-cards)
 - Integration-specific coverage details: [Claude Code](/docs/integrations/claude-code), [Cursor](/docs/integrations/cursor), [Codex](/docs/integrations/codex), [NinjaTech](/docs/integrations/ninjatech)
+
+## The coverage receipt
+
+Since 0.31.6 every `treeship session close` mints a [`coverage.v1`](/docs/reference/predicates#coveragev1) receipt and seals it in the package, chained onto the close artifact. It carries both rows above and one more:
+
+- **declared**: each harness state in the workspace, with its status, potential level, connection modes (`native-hook`, `mcp`, `skill`, `shell-wrap`, `git-reconcile`) and the known gaps frozen at install time. `declared_level` is the highest potential among them, or `none`.
+- **observed**: the count of events that reached the log, by type, plus hosts, agent instances, and the number of malformed log lines skipped.
+- **gaps**: plain statements of what the record does not cover, from the harness manifests and from the counts (a session with only `session.started` and `session.closed` says so).
+
+`package verify` prints it as the `coverage` row and warns when a package has none. A reader of a session report gets the denominator with the numerator: not "the agent made 12 tool calls" but "a high-coverage harness attached over native hooks recorded 12 tool calls, and here is what it could not see". The receipt is the producer's own statement about its instrumentation; it does not prove that nothing happened outside it.
