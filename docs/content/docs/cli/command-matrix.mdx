@@ -635,6 +635,23 @@ treeship resolve [OPTIONS] <AGENT>
 |---|---|
 | `--hub <URL>` | Resolve from a Hub over the network instead of the local store. The returned bundle is re-verified client-side against your trust roots |
 
+## `treeship halt`
+
+The kill switch: stop an actor (or every actor) with a signed halt.v1 receipt that the harness gate and the strict MCP bridge obey, refusing every tool call as a signed blocked.v1. --lift ends it with a second signed receipt. Reaches what the hooks route; not a process started outside them
+
+```
+treeship halt [OPTIONS] <ACTOR>
+```
+
+| Argument | Description |
+|---|---|
+| `<ACTOR>` | Actor URI (agent://…), `*` for every actor, or `list` |
+
+| Option | Description |
+|---|---|
+| `--lift` | Lift the halt on this actor instead of imposing one |
+| `--reason <REASON>` | Why, in your words. Goes into the signed receipt |
+
 ## `treeship status`
 
 Show ship state: keys, recent artifacts, hub status

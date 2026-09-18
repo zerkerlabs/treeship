@@ -281,6 +281,32 @@ grading itself.
 | `coverage` | string (`art_…` of a coverage receipt) | no |
 | `notes` | string | no |
 
+### `halt.v1`
+
+The kill switch, as a record. An operator's signed order that an actor (or
+`*`, every actor in the workspace) must stop, or that a previous halt is
+lifted. Minted by `treeship halt <actor>` and `treeship halt --lift <actor>`,
+signed by the workspace's own key, chained onto the active session so the
+sealed package shows when the switch was thrown, by whom, and when it was
+lifted. While a halt stands, the harness gate refuses every tool call for
+that actor and signs each refusal as `blocked.v1` with
+`reason_class: operator_revocation`. A marker without a matching signed
+artifact from this workspace is reported as ignored by `halt list` and not
+honoured by the gate.
+
+What it reaches: every tool call the harness routes through hooks. What it
+does not: a process an agent started outside them. See
+[the Claude Code gate](/docs/integrations/claude-code#the-gate-pretooluse).
+
+| Field | Type | Required |
+|---|---|---|
+| `schema` | const `halt.v1` | yes |
+| `action` | enum `halt`, `lift` | yes |
+| `actor` | string (actor URI or `*`) | yes |
+| `issued_at` | string (RFC3339) | yes |
+| `reason` | string | no |
+| `halt` | string (`art_…` of the halt a lift ends) | no |
+
 ### `memory.quarantine-check.v1`
 
 Gates an approval on a memory-provider quarantine result. Required:

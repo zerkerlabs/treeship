@@ -74,6 +74,7 @@ const REGISTRY: &[(&str, &str)] = &[
         include_str!("schemas/verification.recompute.v1.json"),
     ),
     ("evaluation.v1", include_str!("schemas/evaluation.v1.json")),
+    ("halt.v1", include_str!("schemas/halt.v1.json")),
 ];
 
 /// Returns the raw JSON Schema text for a registered predicate suffix, if any.
@@ -1073,5 +1074,34 @@ mod tests {
             validate("evaluation.v1", Some(&p)),
             Err(PredicateError::TypeMismatch { field, .. }) if field == "score"
         ));
+    }
+
+    #[test]
+    fn halt_valid_passes() {
+        let p = json!({"schema":"halt.v1","action":"halt","actor":"agent://claude-code","reason":"off-task network calls","issued_at":"2026-09-18T10:00:00Z"});
+        assert!(validate("halt.v1", Some(&p)).is_ok());
+        let l = json!({"schema":"halt.v1","action":"lift","actor":"agent://claude-code","halt":"art_0123","issued_at":"2026-09-18T11:00:00Z"});
+        assert!(validate("halt.v1", Some(&l)).is_ok());
+    }
+
+    #[test]
+    fn halt_out_of_vocabulary_action_fails_closed() {
+        let p = json!({"schema":"halt.v1","action":"pause","actor":"agent://x","issued_at":"2026-09-18T10:00:00Z"});
+        assert!(matches!(
+            validate("halt.v1", Some(&p)),
+            Err(PredicateError::NotInEnum { field, .. }) if field == "action"
+        ));
+    }
+
+    #[test]
+    fn halt_missing_actor_fails_closed() {
+        let p = json!({"schema":"halt.v1","action":"halt","issued_at":"2026-09-18T10:00:00Z"});
+        assert_eq!(
+            validate("halt.v1", Some(&p)),
+            Err(PredicateError::MissingField {
+                suffix: "halt.v1".into(),
+                field: "actor".into()
+            })
+        );
     }
 }
