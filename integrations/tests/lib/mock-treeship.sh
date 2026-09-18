@@ -4,6 +4,15 @@ if [ -n "${MOCK_TREESHIP_LOG:-}" ]; then
   printf '%s\n' "$*" >> "$MOCK_TREESHIP_LOG"
 fi
 case "$1" in
+  halt)
+    # The gate asks for active halts; the fixture supplies them.
+    case "$*" in
+      *"list --format json"*)
+        h="${MOCK_TREESHIP_HALTS:-}"
+        [ -z "$h" ] && h='{"halts":[]}'
+        printf '%s\n' "$h" ;;
+    esac
+    exit 0 ;;
   session)
     case "$2" in
       status)

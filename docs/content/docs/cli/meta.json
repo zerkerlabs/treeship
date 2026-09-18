@@ -17,6 +17,7 @@
     "keys",
     "trust",
     "grant",
+    "halt",
     "agents",
     "harness",
     "wrap",

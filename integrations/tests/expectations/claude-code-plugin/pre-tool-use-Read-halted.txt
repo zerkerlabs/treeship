@@ -1,0 +1,3 @@
+session status --format json
+halt list --format json
+attest receipt --system system://treeship-gate --kind blocked.v1 --payload {"reason_class": "operator_revocation", "refused_kind": "action", "actor": "agent://claude-code", "description": "halted: Read refused for agent://claude-code under halt art_halt0001", "evidence_digest": "art_halt0001"}
