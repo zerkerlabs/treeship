@@ -16,6 +16,7 @@
     "workflows",
     "merkle-proofs",
     "verification-reporting",
+    "evaluator-kit",
     "edge-runtime",
     "dogfood-checklist"
   ]

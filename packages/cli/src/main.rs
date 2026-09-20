@@ -2047,6 +2047,17 @@ struct AttestReceiptArgs {
     /// Digest of the external payload, for example sha256:<hex>
     #[arg(long, value_name = "DIGEST")]
     payload_digest: Option<String>,
+
+    /// Parent artifact ID for chain linking. Inside an active session whose
+    /// actor is this --system, the default is the session's chain head;
+    /// otherwise the default is --subject when it is an artifact id
+    #[arg(long = "parent", value_name = "ID")]
+    parent_id: Option<String>,
+
+    /// Do not chain onto the session's head; the receipt is sealed at close
+    /// as unchained
+    #[arg(long, default_value_t = false)]
+    no_parent: bool,
 }
 
 #[derive(Args)]
@@ -3628,6 +3639,8 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                     payload: a.payload.clone(),
                     payload_file: a.payload_file.clone(),
                     payload_digest: a.payload_digest.clone(),
+                    parent_id: a.parent_id.clone(),
+                    no_parent: a.no_parent,
                     config: cli.config.clone(),
                 },
                 printer,

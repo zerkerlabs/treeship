@@ -179,6 +179,8 @@ treeship attest receipt [OPTIONS] --system <URI> --kind <KIND>
 | `--payload <'{"key":"val"}'>` | Receipt payload as a JSON object |
 | `--payload-file <PATH>` | Read receipt payload JSON from a file |
 | `--payload-digest <DIGEST>` | Digest of the external payload, for example sha256:&lt;hex&gt; |
+| `--parent <ID>` | Parent artifact ID for chain linking. Inside an active session whose actor is this --system, the default is the session's chain head; otherwise the default is --subject when it is an artifact id |
+| `--no-parent` | Do not chain onto the session's head; the receipt is sealed at close as unchained |
 
 ### `treeship attest card`
 
