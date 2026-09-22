@@ -1,0 +1,16 @@
+{
+  "artifact_id": "art_e5a35d01bda00e3918f68458ce996e94",
+  "leaf_index": 0,
+  "proof": {
+    "leaf_index": 0,
+    "leaf_hash": "ce93b36e8ea48dbeac49a4acda41c1a6126083ca1f70688d985e4452ceace975",
+    "path": [
+      {
+        "direction": "Right",
+        "hash": "f9bb2762beff30a7cf2c2495fc026be340daa1a41b1b9a57970443e00688b1b8"
+      }
+    ],
+    "algorithm": "sha256-rfc9162",
+    "merkle_version": 2
+  }
+}

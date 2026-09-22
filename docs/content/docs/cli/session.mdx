@@ -127,6 +127,7 @@ Close the active session, compose the Session Receipt, and write a `.treeship` p
 ```bash
 treeship session close
 treeship session close --summary "fixed JWT expiry bug"
+treeship session close --summary "fixed JWT expiry bug" --receipt-dir receipts
 ```
 
 ### Options
@@ -134,6 +135,10 @@ treeship session close --summary "fixed JWT expiry bug"
 | Option | Description |
 |--------|-------------|
 | `--summary <text>` | Plain-text summary of what the session accomplished |
+| `--headline <text>` | One-line headline for the receipt |
+| `--review <text>` | What should be reviewed before trusting the output |
+| `--receipt-dir <dir>` | Copy the sealed `.treeship` package into `<dir>/<session_id>.treeship` (created if missing). `.treeship/` is usually gitignored; this puts the package somewhere it can be committed next to the change it accounts for. See [Receipts in pull requests](/docs/guides/receipts-in-pull-requests). |
+| `--format <text\|json>` | Output format. JSON adds `receipt_digest`, `commit_trailer` and `receipt_copy`. |
 
 On close, Treeship:
 
@@ -160,7 +165,10 @@ Example output:
   duration: 6m
   receipts: 2
   events:   2
+  trailer:  Treeship-Receipt: ssn_42e740bd9eb238f6 sha256:942e6b2bfcbe860223fbae57ee7d9b73400a278ccfb0f1d5ca865aec9ce9aba6
 ```
+
+The `trailer:` line is a git commit trailer. Paste it as the last line of the commit that carries the change the session produced, and a verifier can pair the commit with the sealed package: the digest is `sha256(receipt.json)`, the same value `package verify` recomputes. With `--receipt-dir`, close also prints `copied:` with the path of the committed copy.
 
 After close, run [`treeship package verify`](/docs/cli/package) against the package path to confirm the receipt is locally verifiable.
 

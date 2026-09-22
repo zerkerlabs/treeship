@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "roots": [
+    {
+      "key_id": "key_55f4eee6d27c642a",
+      "public_key": "ed25519:1u86H7eMro4pBMgt3xWc--vClkgYiaFTsDjej5AOlXk",
+      "kind": "session_host",
+      "label": "Revaz, home workspace ship key (produces receipts for zerkerlabs/treeship)",
+      "added_at": "2026-09-18T00:00:00Z"
+    }
+  ]
+}
