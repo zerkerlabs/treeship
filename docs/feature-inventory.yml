@@ -193,6 +193,31 @@
     - packages/cli/tests/evaluation_predicate_cli.rs
   notes: "Registers evaluation.v1: an evaluator's signed result of running a named suite (by digest) against a model, agent, session or package, with verdict pass/fail/inconclusive enforced before signing and the grade chained onto the graded artifact via --subject. The receipt a capability-checkpoint scheme needs; the self-asserted rule (a grade signed by the subject's own key is not independent) is documented for checkers and is the next verifier row."
 
+- id: judgement-receipts
+  name: Judgement receipts (judgement.v1)
+  section: core
+  status: beta
+  cli:
+    - treeship attest receipt
+    - treeship package verify
+  packages:
+    - treeship-core
+    - treeship-cli
+  docs:
+    - docs/content/docs/reference/predicates.mdx
+    - docs/content/docs/cli/package.mdx
+  tests:
+    - packages/core/src/predicates/mod.rs
+    - packages/cli/tests/judgement_receipt_cli.rs
+  notes: >
+    Registers judgement.v1: any judge's typed answer (noul/choice/score with
+    probabilities and confidence), the model and version, digests of state and
+    questions, the threshold applied and who set it, and the outcome
+    (acted/escalated/refused/ignored), chained onto the gated action via
+    --subject. Nested vocabulary is enforced before signing by the now
+    recursive predicate validator. `package verify` reports sealed judgements
+    as the `judgements` row and flags any acted on below its own threshold.
+
 - id: halt
   name: Kill switch (halt.v1)
   section: core

@@ -1928,25 +1928,20 @@ mod custody_wiring_tests {
     /// without saying delegated to WHOM is worse than omitting it, because it
     /// tells a reader the actor did not sign while withholding who did.
     ///
-    /// Core's validator does NOT catch this: it is documented as "a small,
-    /// dependency-free structural check" over TOP-LEVEL required fields and
-    /// does not recurse into nested objects. The `required` list inside the
-    /// custody schema is therefore documentation for consumers running a full
-    /// JSON Schema validator, not something core enforces.
-    ///
-    /// What actually holds the invariant is the Rust type: `signer` and
-    /// `on_behalf_of` are `String`, not `Option<String>`, so a `Custody`
-    /// cannot be constructed without them. This test pins that, and pins the
-    /// validator's limit so nobody assumes a guarantee that is not there.
+    /// Core's validator walks the whole tree since 0.31.6, so the `required`
+    /// list inside the custody schema is enforced before signing: a custody
+    /// block without a `signer` is refused with a dotted field path. The Rust
+    /// type still holds the invariant one layer down (`signer` and
+    /// `on_behalf_of` are `String`, not `Option<String>`), so a `Custody`
+    /// cannot be constructed without them either. This test pins both.
     #[test]
-    fn custody_requires_a_signer_by_type_not_by_validator() {
+    fn custody_requires_a_signer_by_type_and_by_validator() {
         // The type will not let you omit it.
         let c = Custody::delegated("svc://gateway-rooms", "agent://fizz");
         assert!(!c.signer.is_empty());
         assert!(!c.on_behalf_of.is_empty());
 
-        // And core's validator, by design, does not police nested shape --
-        // asserting otherwise would encode a guarantee we do not offer.
+        // And the validator refuses a hand-built custody with no signer.
         let payload = serde_json::json!({
             "session_id": "ssn_bad",
             "actor": "agent://fizz",
@@ -1957,10 +1952,11 @@ mod custody_wiring_tests {
             "receipt_digest": format!("sha256:{}", "c".repeat(64)),
             "custody": { "mode": "delegated", "on_behalf_of": "agent://fizz" }
         });
+        let err = crate::predicates::validate("session.v1", Some(&payload))
+            .expect_err("a custody block without a signer must be refused before signing");
         assert!(
-            crate::predicates::validate("session.v1", Some(&payload)).is_ok(),
-            "core validates top-level fields only; if this starts failing the \
-             validator gained nested checking and the doc comment above is stale"
+            err.to_string().contains("custody.signer"),
+            "the refusal names the nested field: {err}"
         );
     }
 
