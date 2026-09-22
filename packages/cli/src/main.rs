@@ -539,6 +539,20 @@ enum Command {
     #[command(subcommand)]
     Grant(GrantCommand),
 
+    /// The kill switch: stop an actor (or every actor) with a signed
+    /// halt.v1 receipt that the harness gate and the strict MCP bridge
+    /// obey, refusing every tool call as a signed blocked.v1. --lift ends
+    /// it with a second signed receipt. Reaches what the hooks route;
+    /// not a process started outside them.
+    ///
+    /// Examples:
+    ///   treeship halt agent://claude-code --reason "off-task network calls"
+    ///   treeship halt '*'
+    ///   treeship halt --lift agent://claude-code
+    ///   treeship halt list
+    #[command(display_order = 9)]
+    Halt(HaltArgs),
+
     /// Background daemon for automatic file watching
     ///
     /// The daemon watches your project for file changes and automatically
@@ -1351,6 +1365,12 @@ struct SessionCloseArgs {
     /// What should be reviewed before trusting the output
     #[arg(long, value_name = "TEXT")]
     review: Option<String>,
+
+    /// Copy the sealed .treeship package into DIR (created if missing), so it
+    /// can be committed next to the change it accounts for and checked by
+    /// the verify-receipts GitHub Action
+    #[arg(long, value_name = "DIR")]
+    receipt_dir: Option<std::path::PathBuf>,
 }
 
 // --- package ---------------------------------------------------------------
@@ -2329,6 +2349,20 @@ struct VerifyCapabilityArgs {
 }
 
 #[derive(Args)]
+struct HaltArgs {
+    /// Actor URI (agent://…), `*` for every actor, or `list`.
+    actor: String,
+
+    /// Lift the halt on this actor instead of imposing one.
+    #[arg(long)]
+    lift: bool,
+
+    /// Why, in your words. Goes into the signed receipt.
+    #[arg(long, value_name = "REASON")]
+    reason: Option<String>,
+}
+
+#[derive(Args)]
 struct RevokeCapabilityArgs {
     /// Artifact id of the agent_card.v1 receipt to revoke.
     card_id: String,
@@ -3137,6 +3171,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 a.summary.clone(),
                 a.headline.clone(),
                 a.review.clone(),
+                a.receipt_dir.clone(),
                 cli.config.as_deref(),
                 printer,
             ),
@@ -3717,6 +3752,26 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 commands::receipt::export(&a.id, cli.config.as_deref(), printer)
             }
         },
+
+        Command::Halt(a) => {
+            if a.actor == "list" && !a.lift {
+                commands::halt::list(cli.config.as_deref(), printer)
+            } else if a.lift {
+                commands::halt::lift(
+                    &a.actor,
+                    a.reason.as_deref(),
+                    cli.config.as_deref(),
+                    printer,
+                )
+            } else {
+                commands::halt::halt(
+                    &a.actor,
+                    a.reason.as_deref(),
+                    cli.config.as_deref(),
+                    printer,
+                )
+            }
+        }
 
         Command::RevokeCapability(a) => commands::capability::revoke_capability(
             &a.card_id,

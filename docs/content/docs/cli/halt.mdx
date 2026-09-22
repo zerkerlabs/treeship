@@ -1,0 +1,71 @@
+---
+title: halt
+description: The kill switch. Stop an actor, or every actor, with a signed halt.v1 receipt that the harness gate obeys; lift it with a second signed receipt. Both are sealed into the session.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`treeship halt` is the kill switch. It signs a `halt.v1` receipt naming an actor (or `*`, every actor in the workspace), chains it onto the active session, and writes a marker that the enforcement points read. While the halt stands, the Claude Code plugin's PreToolUse gate refuses every tool call for that actor, before any card rule, and signs each refusal as a `blocked.v1` receipt with `reason_class: operator_revocation`. Lifting it signs a second receipt and clears the marker. A verifier reading the sealed package sees when the switch was thrown, by whom, and when it was lifted.
+
+```bash
+treeship halt agent://claude-code --reason "off-task network calls"
+treeship halt '*' --reason "incident 2026-09-18"
+treeship halt list
+treeship halt --lift agent://claude-code
+```
+
+## What it reaches, and what it does not
+
+A halt stops what the harness routes through hooks: every tool call the Claude Code plugin sees, and under `TREESHIP_STRICT=1`, calls through the MCP bridge. It does not reach a process an agent started outside those paths, a runtime with no hooks, or another machine. The [coverage level](/docs/guides/coverage-levels) says where that boundary is for each harness. A halt is an order the instrumented surface obeys, not a guarantee about the uninstrumented one.
+
+## Halting
+
+```
+✓ actor halted
+  actor:      agent://claude-code
+  halt:       art_9c1e…
+  issued_at:  2026-09-18T16:29:15Z
+  reason:     off-task network calls
+   → every tool call the harness routes through hooks is now refused and signed as blocked.v1
+   → treeship halt --lift agent://claude-code   to lift it
+```
+
+The actor must be a URI (`agent://…`, `human://…`) or `*`. A second halt on an actor already halted is refused until the first is lifted, so there is one halt to point at. When a session is active, the halt chains onto its head, inside the signature, so the sealed package shows it in order with the actions it stopped.
+
+## Lifting
+
+```
+✓ halt lifted
+  actor:  agent://claude-code
+  lift:   art_2b7a…
+  halt:   art_9c1e…
+  issued_at: 2026-09-18T16:41:02Z
+```
+
+The lift names the halt it ends in its signed payload and chains onto the session like the halt did.
+
+## Listing
+
+```bash
+treeship halt list
+treeship halt list --format json
+```
+
+Each row shows the actor, the halt artifact, when it was issued, the reason, and whether it is **honoured**. A marker is honoured only when it names an artifact in this workspace's store signed by this workspace's key. A marker written by hand, or pointing at an artifact from elsewhere, is listed as ignored and the gate does not act on it.
+
+<Callout title="Who can halt">
+Only the workspace's own key signs a halt, the same rule as revoking a grant: an order anyone could mint would be a denial of service against every actor whose name they know. The trust domain is same-user local access, which is the harness's trust domain too.
+</Callout>
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `--lift` | Lift the halt on this actor instead of imposing one |
+| `--reason <REASON>` | Why, in your words. Goes into the signed receipt |
+
+## See also
+
+- [`halt.v1`](/docs/reference/predicates#haltv1), the predicate
+- [The Claude Code gate](/docs/integrations/claude-code#the-gate-pretooluse), where a halt is enforced
+- [`blocked.v1`](/docs/reference/predicates#blockedv1), what each refusal is signed as

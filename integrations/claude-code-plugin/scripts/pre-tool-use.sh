@@ -47,6 +47,35 @@ TOOL_NAME=$(json_field "$INPUT" tool_name)
 [ -z "$TOOL_NAME" ] || [ "$TOOL_NAME" = "null" ] && exit 0
 ACTOR=$(json_field "$STATUS" actor)
 [ -z "$ACTOR" ] && exit 0
+
+# The kill switch comes first. `treeship halt <actor>` (or `*`) leaves a
+# signed halt.v1 in the workspace; while it stands, every tool call is
+# refused and the refusal is signed. Checked before the card, before the
+# enforce flag, before anything else.
+HALTS=$(treeship halt list --format json 2>/dev/null)
+if [ -n "$HALTS" ]; then
+  HALT_ID=$(python3 - "$HALTS" "$ACTOR" <<'PY' 2>/dev/null
+import json, sys
+try:
+    rows = json.loads(sys.argv[1]).get("halts", [])
+except Exception:
+    rows = []
+for r in rows:
+    if r.get("honoured") and r.get("actor") in (sys.argv[2], "*"):
+        print(r.get("halt", "")); break
+PY
+)
+  if [ -n "$HALT_ID" ]; then
+    DESC=$(printf 'halted: %s refused for %s under halt %s' "$TOOL_NAME" "$ACTOR" "$HALT_ID" | cut -c1-300)
+    PAYLOAD=$(python3 -c '
+import json, sys
+print(json.dumps({"reason_class": "operator_revocation", "refused_kind": "action", "actor": sys.argv[1], "description": sys.argv[2], "evidence_digest": sys.argv[3]}))
+' "$ACTOR" "$DESC" "$HALT_ID" 2>/dev/null)
+    [ -n "$PAYLOAD" ] && treeship attest receipt       --system "system://treeship-gate"       --kind "blocked.v1"       --payload "$PAYLOAD"       >/dev/null 2>&1 || true
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Treeship halt: %s is halted (%s). Every tool call is refused until an operator runs treeship halt --lift. The refusal is a signed blocked.v1 receipt."}}\n' "$ACTOR" "$HALT_ID"
+    exit 0
+  fi
+fi
 AGENT_NAME=${ACTOR#agent://}
 AGENT_NAME=${AGENT_NAME#human://}
 
