@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/treeship/hub/internal/db"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/db"
 )
 
 const rekorURL = "https://rekor.sigstore.dev/api/v1/log/entries"

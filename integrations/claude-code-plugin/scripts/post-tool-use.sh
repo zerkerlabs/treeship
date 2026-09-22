@@ -189,6 +189,10 @@ case "$TOOL_NAME" in
     ;;
   Bash)
     CMD=$(extract tool_input.command)
+    # Claude Code prefixes most commands with `cd "<cwd>" && `; on a long
+    # path the 120-character cut kept only the cd and lost the command
+    # (film findings 2026-09-22). Drop that prefix before cutting.
+    CMD=$(printf '%s' "$CMD" | sed -E "s/^cd (\"[^\"]*\"|'[^']*'|[^[:space:]]+) && //")
     # Redact secrets BEFORE truncating (AUD-26), then trim to a sensible
     # process_name. This string can end up in a published, no-auth receipt.
     PROC_NAME=$(redact_secrets "${CMD:-bash}" | cut -c1-120)

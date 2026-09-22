@@ -3360,13 +3360,7 @@ fn collect_approval_evidence(
 
     // Resolve the workspace journal directory; same precedence rule as
     // attest.rs uses (config_path.parent / journals / approval-use).
-    let journal_dir = ctx
-        .config_path
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."))
-        .join("journals")
-        .join("approval-use");
-    let journal = Journal::new(&journal_dir);
+    let journal = Journal::new(ctx.journal_dir());
 
     // Walk the chain: every action artifact may carry an
     // approval_nonce, and PR 3 stamps approval_use_id into the

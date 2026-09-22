@@ -13,8 +13,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/treeship/hub/internal/db"
-	"github.com/treeship/hub/internal/dpop"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/db"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/dpop"
 )
 
 // ResolveReader returns the dock_id the caller is authorized to read for.

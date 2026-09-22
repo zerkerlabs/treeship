@@ -1207,6 +1207,7 @@ pub struct ReceiptArgs {
     pub payload_digest: Option<String>,
     pub parent_id: Option<String>,
     pub no_parent: bool,
+    pub chain: bool,
     pub config: Option<String>,
 }
 
@@ -1227,7 +1228,7 @@ pub fn receipt(args: ReceiptArgs, printer: &Printer) -> Result<(), Box<dyn std::
     let mut foreign_system_in_session = false;
     if parent_id.is_none() && !args.no_parent {
         if let Some(manifest) = crate::commands::session::load_session() {
-            if manifest.actor == args.system {
+            if manifest.actor == args.system || args.chain {
                 parent_id = crate::commands::session::session_chain_head(
                     &ctx,
                     manifest.root_artifact_id.as_deref(),
@@ -2022,11 +2023,7 @@ fn resolve_parent(ctx: &ctx::Ctx, explicit: Option<String>) -> Option<String> {
 /// Resolve the journal directory for the active workspace -- pairs with
 /// the same config_path the cards / harnesses stores use.
 fn journal_dir_for(ctx: &ctx::Ctx) -> std::path::PathBuf {
-    ctx.config_path
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."))
-        .join("journals")
-        .join("approval-use")
+    ctx.journal_dir()
 }
 
 /// Look up a grant's artifact_id by its raw nonce. Mirrors what

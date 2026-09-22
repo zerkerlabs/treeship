@@ -308,6 +308,14 @@ jobs:
       - name: Plugin hook parity suite
         run: sh integrations/tests/parity.sh
 
+      # The gate with the real CLI and the real hook scripts: card rules
+      # survive the bridge's re-register, the session starts as the agent,
+      # a forbidden Bash is denied with a chained blocked.v1, and the
+      # package verifies under --strict. The parity suite alone passed while
+      # none of that held in a real install (film findings 2026-09-22).
+      - name: Claude Code gate end to end
+        run: bash integrations/tests/gate-e2e.sh "$PWD/target/debug/treeship"
+
       # The evaluator kit: three parties on one runner, each with its own
       # keystore. Exits nonzero if any promise the guide makes stops holding.
       - name: Evaluator kit worked example
