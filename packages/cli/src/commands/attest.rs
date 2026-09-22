@@ -108,6 +108,48 @@ pub struct ActionArgs {
     pub meta: Option<String>,
     pub out: Option<String>,
     pub config: Option<String>,
+    /// `--retry-of <art_id>`: this action retries that one.
+    pub retry_of: Option<String>,
+    /// `--attempt N`, 1-based; defaults to 2 when only `--retry-of` is given.
+    pub attempt: Option<u32>,
+    /// `--retry-cause`: timeout | error | rate_limited | operator | unknown.
+    pub retry_cause: Option<String>,
+    /// `--backoff-ms`: milliseconds waited before this attempt.
+    pub backoff_ms: Option<u64>,
+}
+
+/// Build the signed retry block from the flags, or refuse a half-specified
+/// one. `--retry-of` is the switch; the rest describe it.
+fn build_retry(
+    args: &ActionArgs,
+) -> Result<Option<treeship_core::statements::Retry>, Box<dyn std::error::Error>> {
+    use treeship_core::statements::{Retry, RetryCause};
+    let Some(of) = args.retry_of.as_deref() else {
+        if args.attempt.is_some() || args.retry_cause.is_some() || args.backoff_ms.is_some() {
+            return Err("--attempt, --retry-cause and --backoff-ms describe a retry; pass --retry-of <artifact id> as well".into());
+        }
+        return Ok(None);
+    };
+    if !of.starts_with("art_") {
+        return Err(format!("--retry-of must be an artifact id (art_…), got {of}").into());
+    }
+    let attempt = args.attempt.unwrap_or(2);
+    if attempt < 2 {
+        return Err("--attempt must be 2 or more: the first attempt is not a retry".into());
+    }
+    let cause = match args.retry_cause.as_deref() {
+        None => RetryCause::Unknown,
+        Some(c) => RetryCause::parse(c).ok_or_else(|| {
+            format!("--retry-cause must be one of timeout, error, rate_limited, operator, unknown; got {c}")
+        })?,
+    };
+    Ok(Some(Retry {
+        of: of.to_string(),
+        attempt,
+        cause,
+        backoff_ms: args.backoff_ms,
+        idempotency_key: args.idempotency_key.clone(),
+    }))
 }
 
 pub fn action(
@@ -212,6 +254,8 @@ fn action_v1(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std:
     stmt.subject = subject;
     stmt.parent_id = args.parent_id.clone();
     stmt.approval_nonce = args.approval_nonce.clone();
+    stmt.retry = build_retry(&args)?;
+    stmt.idempotency_key = args.idempotency_key.clone();
 
     // ----------------------------------------------------------------------
     // Consume-before-action (v0.9.9 PR 3)
@@ -426,6 +470,8 @@ fn action_v2(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std:
     stmt.effect = build_effect(&args)?;
     stmt.runtime = build_runtime(&args);
     stmt.meta = meta;
+    stmt.retry = build_retry(&args)?;
+    stmt.idempotency_key = args.idempotency_key.clone();
 
     let signer = resolve_actor_signer(&ctx, &args.actor)?;
 

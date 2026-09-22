@@ -137,6 +137,29 @@
     plus plain-language gaps. `package verify` reports it as the `coverage`
     row and warns when absent. A declared level is a potential, never proof.
 
+- id: retry-chain
+  name: Retries as a signed chain (attest action --retry-of, verify row retries)
+  section: core
+  status: beta
+  cli:
+    - treeship attest action --retry-of
+    - treeship package verify
+  packages:
+    - treeship-core
+    - treeship-cli
+  docs:
+    - docs/content/docs/cli/attest.mdx
+    - docs/content/docs/cli/package.mdx
+  tests:
+    - packages/cli/tests/retry_chain_cli.rs
+  notes: >
+    A signed `retry` block on action.v1 and action.v2 (of, attempt, cause
+    from a closed vocabulary, backoff_ms, idempotency_key), omitted from the
+    bytes when absent. `package verify` walks each chain and reports the
+    `retries` row: consistency of action, actor, attempt numbering and key,
+    and whether two attempts each report a distinct effect. Proves the
+    recorded sequence and reasons; does not replay.
+
 - id: verification-predicates
   name: Workload packet and recomputation receipts
   section: core

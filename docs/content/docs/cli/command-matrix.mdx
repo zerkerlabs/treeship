@@ -117,6 +117,10 @@ treeship attest action [OPTIONS] --actor <URI> --action <LABEL>
 | `--no-parent` | Do not chain onto the active session's head when --parent is absent; the receipt is sealed at close as unchained |
 | `--approval-nonce <NONCE>` | Must match the nonce on the approval authorising this action |
 | `--idempotency-key <KEY>` | Idempotency key for retry-safe approval consumption |
+| `--retry-of <ID>` | This action retries the attempt with this artifact id. Signed into the statement with --attempt, --retry-cause and --backoff-ms, so a verifier can tell a recovery from a duplicate (see `package verify` row `retries`) |
+| `--attempt <N>` | 1-based attempt number of this action in its retry chain (default 2) |
+| `--retry-cause <CAUSE>` | Why the previous attempt was not accepted: timeout, error, rate_limited, operator, unknown |
+| `--backoff-ms <MS>` | Milliseconds waited before this attempt |
 | `--meta <'{"key":"val"}'>` | Extra metadata as a JSON object |
 | `--out <PATH>` | Write the raw DSSE envelope to a file (- for stdout) |
 

@@ -549,6 +549,14 @@ pub struct ActionStatementV2 {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meta: Option<serde_json::Value>,
+
+    /// Set when this action retries an earlier one. See [`super::Retry`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry: Option<super::Retry>,
+
+    /// The idempotency key the caller sent with this attempt, signed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
 }
 
 fn subject_is_empty(s: &SubjectRef) -> bool {
@@ -570,6 +578,8 @@ impl ActionStatementV2 {
             effect: None,
             runtime: None,
             meta: None,
+            retry: None,
+            idempotency_key: None,
         }
     }
 }

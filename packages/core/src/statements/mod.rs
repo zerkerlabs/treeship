@@ -165,6 +165,66 @@ impl ApprovalScope {
 
 /// Records that an actor performed an action.
 ///
+/// Why an action is a retry of an earlier one, signed into the statement.
+///
+/// Without this, attempt two of a flaky call is a sibling of attempt one
+/// and a verifier cannot tell "recovering from a timeout" from "did the
+/// same thing twice". `of` names the attempt being retried, `attempt` is
+/// the 1-based position in the chain, `cause` is a closed vocabulary, and
+/// `idempotency_key` is what the caller sent so a verifier can check it was
+/// the same across attempts. Omitted from the signed bytes when absent, so
+/// every action signed before this field existed keeps its exact id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Retry {
+    /// Artifact id of the attempt this one retries (`art_…`).
+    pub of: String,
+    /// 1-based attempt number; the first attempt is 1 and carries no `retry`.
+    pub attempt: u32,
+    /// Why the previous attempt was not accepted: `timeout`, `error`,
+    /// `rate_limited`, `operator`, `unknown`.
+    pub cause: RetryCause,
+    /// Milliseconds waited before this attempt, when a backoff fired.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backoff_ms: Option<u64>,
+    /// The idempotency key the caller sent with this attempt, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
+}
+
+/// Closed vocabulary for `Retry::cause`. Out-of-vocabulary values fail to
+/// deserialize, so a receipt cannot carry a cause the verifier does not name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RetryCause {
+    Timeout,
+    Error,
+    RateLimited,
+    Operator,
+    Unknown,
+}
+
+impl RetryCause {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "timeout" => Some(Self::Timeout),
+            "error" => Some(Self::Error),
+            "rate_limited" | "rate-limited" => Some(Self::RateLimited),
+            "operator" => Some(Self::Operator),
+            "unknown" => Some(Self::Unknown),
+            _ => None,
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Timeout => "timeout",
+            Self::Error => "error",
+            Self::RateLimited => "rate_limited",
+            Self::Operator => "operator",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
 /// This is the most common statement type — every tool call, API request,
 /// file write, or agent operation produces one.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -200,6 +260,20 @@ pub struct ActionStatement {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meta: Option<serde_json::Value>,
+
+    /// Set when this action retries an earlier one. See [`Retry`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry: Option<Retry>,
+
+    /// The idempotency key the caller sent with this attempt, signed, so a
+    /// later retry can be checked against it (`package verify` row
+    /// `retries`). Omitted when absent.
+    #[serde(
+        rename = "idempotencyKey",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub idempotency_key: Option<String>,
 }
 
 /// Records that an approver authorised an intent or action.
@@ -697,6 +771,8 @@ impl ActionStatement {
             approval_nonce: None,
             policy_ref: None,
             meta: None,
+            retry: None,
+            idempotency_key: None,
         }
     }
 }
