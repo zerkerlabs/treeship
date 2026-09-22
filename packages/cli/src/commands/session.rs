@@ -597,6 +597,7 @@ pub fn start(
     manifest.root_artifact_id = Some(result.artifact_id.clone());
     manifest.workflow_ref = workflow_ref.clone();
     manifest.authorized_tools = super::declare::read_authorized_tools();
+    manifest.network_scope = super::declare::read_network_scope();
 
     // Capture the git HEAD SHA at session start so close-time
     // reconciliation can compute committed-during-session changes.

@@ -76,6 +76,7 @@ The result has four orthogonal checks:
 - `ship_id_match` — the receipt is signed by the same ship the cert was issued to
 - `within_validity_window` — the session ran while the cert was still valid
 - `unauthorized_calls` — count of tool calls outside `bounded_actions` (must be zero)
+- `network_off_scope` — recorded destinations outside the declaration's `network` list, when one was declared (must be empty)
 - `never_called` — declared tools the agent didn't end up using (informational; useful for tightening the next cert)
 
 The agent card surfaces this binding visually as a "✓ no unauthorized calls" badge alongside each recent receipt.

@@ -1205,11 +1205,46 @@ pub struct ReceiptArgs {
     pub payload: Option<String>,
     pub payload_file: Option<String>,
     pub payload_digest: Option<String>,
+    pub parent_id: Option<String>,
+    pub no_parent: bool,
     pub config: Option<String>,
 }
 
 pub fn receipt(args: ReceiptArgs, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(args.config.as_deref())?;
+
+    // Chain rule, the same one `attest action` follows (audit follow-up P3):
+    // inside an active session a receipt minted by the session's own actor
+    // chains onto the session's head by default, so it is sealed as a
+    // linked step and `chain_completeness` holds. Before this, every
+    // `attest receipt` inside a session was sealed loose, and an evaluator's
+    // grade minted in its own grading session failed strict verification on
+    // a stranger's machine. `--parent` chains on purpose; `--no-parent`
+    // keeps a receipt off the chain; a receipt whose --system is not the
+    // session's actor is sealed loose with a hint. Outside a session the
+    // parent is the subject when the subject is an artifact.
+    let mut parent_id = args.parent_id.clone();
+    let mut foreign_system_in_session = false;
+    if parent_id.is_none() && !args.no_parent {
+        if let Some(manifest) = crate::commands::session::load_session() {
+            if manifest.actor == args.system {
+                parent_id = crate::commands::session::session_chain_head(
+                    &ctx,
+                    manifest.root_artifact_id.as_deref(),
+                );
+            } else {
+                foreign_system_in_session = true;
+            }
+        }
+    }
+    if parent_id.is_none() && !args.no_parent {
+        // A subject is a chain parent only when it is a Treeship artifact.
+        // An external reference (`ord_12345`) names a thing the receipt is
+        // about, not a link in the chain; recording it as the parent made
+        // `verify last` walk to it and fail with "not found in local
+        // storage" (usability follow-up FR-4, the receipt half).
+        parent_id = args.subject_id.clone().filter(|id| id.starts_with("art_"));
+    }
 
     let payload_text = match (&args.payload, &args.payload_file) {
         (Some(payload), None) => Some(payload.clone()),
@@ -1257,6 +1292,9 @@ pub fn receipt(args: ReceiptArgs, printer: &Printer) -> Result<(), Box<dyn std::
     let mut stmt = ReceiptStatement::new(&args.system, &args.kind);
     stmt.payload = payload_val;
     stmt.payload_digest = args.payload_digest.clone();
+    // The parent is signed, so a sealed package's `chain_linkage` row can
+    // check it; omitted from the bytes when there is none.
+    stmt.parent_id = parent_id.clone();
     if let Some(id) = &args.subject_id {
         stmt.subject = Some(SubjectRef {
             artifact_id: Some(id.clone()),
@@ -1274,18 +1312,19 @@ pub fn receipt(args: ReceiptArgs, printer: &Printer) -> Result<(), Box<dyn std::
         payload_type: pt,
         key_id: signer.key_id().to_string(),
         signed_at: stmt.timestamp.clone(),
-        // A subject is a storage parent only when it is a Treeship artifact.
-        // An external reference (`ord_12345`) names a thing the receipt is
-        // about, not a link in the chain; recording it as the parent made
-        // `verify last` walk to it and fail with "not found in local
-        // storage" (usability follow-up FR-4, the receipt half).
-        parent_id: args.subject_id.clone().filter(|id| id.starts_with("art_")),
+        parent_id: parent_id.clone(),
         envelope: result.envelope,
         hub_url: None,
         anchors: Vec::new(),
     })?;
     write_last(&ctx.config.storage_dir, &result.artifact_id);
 
+    if foreign_system_in_session {
+        printer.hint(&format!(
+            "{} is not this session's actor, so this receipt is sealed loose; pass --parent <id> to chain it on purpose",
+            args.system
+        ));
+    }
     printer.success(
         "receipt attested",
         &[
@@ -1327,6 +1366,8 @@ pub struct CardArgs {
     /// `captured`. Protocol-level `capabilities` (streaming, ...) are not the
     /// agent's domain capabilities and are excluded.
     pub from_a2a: Option<String>,
+    /// Network destinations the agent may reach (exact hosts or `*.suffix`).
+    pub network: Vec<String>,
     pub config: Option<String>,
 }
 
@@ -1608,6 +1649,9 @@ pub fn card(args: CardArgs, printer: &Printer) -> Result<(), Box<dyn std::error:
     capabilities.insert("tools".into(), serde_json::json!(all_tools));
     if !args.models.is_empty() {
         capabilities.insert("models".into(), serde_json::json!(args.models));
+    }
+    if !args.network.is_empty() {
+        capabilities.insert("network".into(), serde_json::json!(args.network));
     }
 
     let mut card = serde_json::Map::new();

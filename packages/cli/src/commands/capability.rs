@@ -55,6 +55,20 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
         })
         .unwrap_or_default();
 
+    // Network scope is declared on the card and judged where the evidence
+    // is: the sealed session receipt (`tool_usage.network_off_scope`) and
+    // `package verify`'s `network_scope` row. Reported here as declared.
+    let network: Vec<String> = card
+        .get("capabilities")
+        .and_then(|c| c.get("network"))
+        .and_then(|t| t.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|t| t.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+
     // --- Binding strength: key-bound vs self-asserted ----------------------
     // Key-bound requires the card's OWN key to have produced a VALID signature
     // (re-verified here against pinned trust roots, never read from the
@@ -243,6 +257,14 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
     };
     let in_scope_str = in_scope.to_string();
     let oos_str = violations.len().to_string();
+    let network_str = if network.is_empty() {
+        "(none declared)".to_string()
+    } else {
+        format!(
+            "{} (judged per session: tool_usage.network_off_scope)",
+            network.join(", ")
+        )
+    };
 
     // A hostile verdict must be machine-visible: nonzero exit and, in JSON
     // mode, one structured object carrying the full verdict (printer.info /
@@ -258,6 +280,7 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
             "agent": card_agent,
             "key_bound": key_bound,
             "declared_tools": tools,
+            "declared_network": network,
             "provenance": provenance_str,
             "in_scope": in_scope,
             "out_of_scope": violations.len(),
@@ -281,6 +304,7 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
             ("agent", card_agent),
             ("key-bound", key_bound_str),
             ("declared tools", &tools_str),
+            ("declared network", &network_str),
             ("provenance", &provenance_str),
             ("in-scope actions", &in_scope_str),
             ("out-of-scope", &oos_str),
