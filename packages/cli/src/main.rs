@@ -2056,8 +2056,14 @@ struct AttestReceiptArgs {
 
     /// Do not chain onto the session's head; the receipt is sealed at close
     /// as unchained
-    #[arg(long, default_value_t = false)]
+    #[arg(long, default_value_t = false, conflicts_with = "chain")]
     no_parent: bool,
+
+    /// Chain onto the active session's head even when --system is not the
+    /// session's actor. For a trusted component that records inside the
+    /// agent's session, such as the gate's blocked.v1 refusals
+    #[arg(long, default_value_t = false)]
+    chain: bool,
 }
 
 #[derive(Args)]
@@ -3641,6 +3647,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                     payload_digest: a.payload_digest.clone(),
                     parent_id: a.parent_id.clone(),
                     no_parent: a.no_parent,
+                    chain: a.chain,
                     config: cli.config.clone(),
                 },
                 printer,

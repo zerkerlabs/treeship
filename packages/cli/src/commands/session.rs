@@ -1318,6 +1318,48 @@ pub(crate) fn session_record_payload(
 /// sign with the actor's own key when it has one (so registered agents get
 /// a key-bound work-history record), and chain it to the session-close
 /// artifact. Returns the record artifact id and its attestation class.
+/// Make sure `keys.json` in a sealed package names `key_id`, so a verifier
+/// on another machine can check every signature the package carries. The
+/// public half comes from this ship's keystore; `keys.json` is a lookup aid
+/// outside the Merkle tree, so adding to it changes no digest.
+fn ensure_package_key(
+    ctx: &ctx::Ctx,
+    pkg_dir: &std::path::Path,
+    key_id: &str,
+) -> Result<(), String> {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    let path = pkg_dir.join(session::package::KEYS_FILE);
+    let mut keys: serde_json::Value = match std::fs::read(&path) {
+        Ok(raw) => serde_json::from_slice(&raw).map_err(|e| e.to_string())?,
+        Err(_) => serde_json::json!({
+            "schema": session::package::PACKAGE_KEYS_SCHEMA,
+            "keys": {}
+        }),
+    };
+    let present = keys.get("keys").and_then(|k| k.get(key_id)).is_some();
+    if present {
+        return Ok(());
+    }
+    let pk = ctx
+        .keys
+        .public_key(key_id)
+        .map_err(|e| format!("public key for {key_id}: {e}"))?;
+    let encoded = format!("ed25519:{}", URL_SAFE_NO_PAD.encode(pk));
+    match keys.get_mut("keys").and_then(|k| k.as_object_mut()) {
+        Some(map) => {
+            map.insert(key_id.to_string(), serde_json::Value::String(encoded));
+        }
+        None => {
+            keys["keys"] = serde_json::json!({ key_id: encoded });
+        }
+    }
+    std::fs::write(
+        &path,
+        serde_json::to_vec_pretty(&keys).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())
+}
+
 fn mint_session_record(
     ctx: &ctx::Ctx,
     actor: &str,
@@ -1763,10 +1805,17 @@ pub fn close(
                         .storage
                         .read(&record_id)
                         .map_err(|e| e.to_string())
-                        .and_then(|r| r.envelope.to_json().map_err(|e| e.to_string()))
-                        .and_then(|bytes| {
+                        .and_then(|r| {
+                            let bytes = r.envelope.to_json().map_err(|e| e.to_string())?;
                             std::fs::write(pkg_output.path.join(session::RECORD_FILE), bytes)
-                                .map_err(|e| e.to_string())
+                                .map_err(|e| e.to_string())?;
+                            // The record is signed with the actor's own key
+                            // when it has one, and keys.json was written
+                            // before the record existed. A package that
+                            // names every signer except the one on
+                            // record.json fails `receipt_binding` on any
+                            // machine but this one, so add the key now.
+                            ensure_package_key(&ctx, &pkg_output.path, &r.key_id)
                         }) {
                         Ok(()) => {}
                         Err(e) => printer.warn(
@@ -3020,13 +3069,7 @@ fn collect_approval_evidence(
 
     // Resolve the workspace journal directory; same precedence rule as
     // attest.rs uses (config_path.parent / journals / approval-use).
-    let journal_dir = ctx
-        .config_path
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."))
-        .join("journals")
-        .join("approval-use");
-    let journal = Journal::new(&journal_dir);
+    let journal = Journal::new(ctx.journal_dir());
 
     // Walk the chain: every action artifact may carry an
     // approval_nonce, and PR 3 stamps approval_use_id into the

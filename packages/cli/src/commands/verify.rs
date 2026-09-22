@@ -454,7 +454,16 @@ pub fn run(
     let verifier = crate::commands::verifier::from_local_and_trust(&ctx.keys, &trust)?
         .ok_or("no local or trusted verification keys are configured")?;
 
-    // Resolve starting artifact.
+    // Resolve starting artifact. A unique prefix (the shape the CLI's own
+    // hints print) resolves to the full id; an ambiguous one is refused
+    // with the candidates, never guessed.
+    let target_full = ctx.storage.resolve_id(target).map_err(|e| match e {
+        treeship_core::storage::StorageError::AmbiguousPrefix { .. } => e.to_string(),
+        _ => format!(
+            "artifact not found locally: {target}\n  Run 'treeship hub pull {target}' to fetch from Hub"
+        ),
+    })?;
+    let target = target_full.as_str();
     let _root_record = ctx.storage.read(target)
         .map_err(|_| format!("artifact not found locally: {target}\n  Run 'treeship hub pull {target}' to fetch from Hub"))?;
 
@@ -515,7 +524,7 @@ pub fn run(
 
     // Nonce binding: for each action with approval_nonce, find the matching
     // approval and verify the binding is valid.
-    let nonce_checks = verify_nonce_bindings(&chain_envelopes, &ctx.storage, &ctx.config_path);
+    let nonce_checks = verify_nonce_bindings(&chain_envelopes, &ctx.storage, &ctx.journal_dir());
     checks.extend(nonce_checks);
 
     // Signed chain-linkage: the walk followed unsigned storage metadata, so
@@ -860,8 +869,7 @@ pub fn run(
 
         printer.blank();
         printer.hint(&format!(
-            "treeship verify {} --full  for chain timeline",
-            &target[..16.min(target.len())]
+            "treeship verify {target} --full  for chain timeline"
         ));
     } else {
         printer.failure(
@@ -1910,19 +1918,14 @@ fn verify_session_participant(
 fn verify_nonce_bindings(
     chain: &[(String, Envelope)],
     storage: &Store,
-    config_path: &std::path::Path,
+    journal_dir: &std::path::Path,
 ) -> Vec<ArtifactCheck> {
     let mut checks = Vec::new();
-    // Resolve the workspace's local Approval Use Journal once. Empty
-    // when no journal exists; check_replay returns NotPerformed in
-    // that case and the printer falls back to the v0.9.6
+    // The workspace's local Approval Use Journal (beside the keystore, see
+    // ctx::journal_dir_for). Empty when no journal exists; check_replay
+    // returns NotPerformed in that case and the printer falls back to the
     // "package-local only" message.
-    let journal_dir = config_path
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."))
-        .join("journals")
-        .join("approval-use");
-    let journal = treeship_core::journal::Journal::new(&journal_dir);
+    let journal = treeship_core::journal::Journal::new(journal_dir);
 
     // Index approvals from the chain by nonce for O(1) lookup.
     let mut approvals_by_nonce: HashMap<String, ApprovalStatement> = HashMap::new();
@@ -2071,7 +2074,11 @@ fn verify_nonce_bindings(
                 // which simply means no journal-level evidence
                 // exists -- the printer falls back to the warning.
                 if let Ok(Some((_use_rec, replay))) = treeship_core::journal::find_use_for_action(
-                    &journal, &grant_id, &nonce_dig, max_uses,
+                    &journal,
+                    &grant_id,
+                    &nonce_dig,
+                    max_uses,
+                    Some(id.as_str()),
                 ) {
                     let outcome = match replay.passed {
                         Some(false) => Outcome::Fail,

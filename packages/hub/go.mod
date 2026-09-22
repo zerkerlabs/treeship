@@ -1,4 +1,4 @@
-module github.com/treeship/hub
+module github.com/zerkerlabs/treeship/packages/hub
 
 go 1.23.0
 

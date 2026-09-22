@@ -23,7 +23,7 @@ When `treeship verify` or `treeship package verify` runs against a package that 
 | Level | What it proves | What it doesn't | Available in |
 |---|---|---|---|
 | `package-local` | No duplicate use *inside this package* | Says nothing about uses on this machine outside the package, or on other machines | Always |
-| `local-journal` | The recorded use is within `max_uses` per the **workspace's local journal** | Says nothing about other machines | Verifier has Treeship workspace |
+| `local-journal` | The recorded use is within `max_uses` per the **ship's local journal**, and the use record names this action | Says nothing about other machines. The journal lives beside the keystore, so every config that shares a ship (a project stub extending the global config) shares it; a workspace with its own keys has its own | Verifier has Treeship workspace |
 | `included-checkpoint` | An embedded `JournalCheckpoint`'s record_digest verifies offline | Doesn't bind to your workspace journal; only proves the checkpoint records weren't tampered after sealing | Package carries checkpoints |
 | `hub-org` | A signed Hub checkpoint validates global single-use across machines | — | **Available since v0.9.9 (consumer side).** Verifies an embedded Hub-signed `JournalCheckpoint` and its coverage. The Hub server itself is out of scope for v0.9.9. |
 

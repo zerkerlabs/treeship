@@ -74,6 +74,8 @@ Claude Code tools map onto the card's vocabulary: Read, Grep and Glob are `file.
 | none of the above | allows and leaves an `agent.note` ("off-card") in the timeline; with `TREESHIP_GATE=enforce` it denies and signs the refusal instead |
 | no card for the actor | allows everything, says nothing |
 
+The session's actor is what the gate looks a card up by. The plugin starts sessions as `agent://claude-code` (override with `TREESHIP_ACTOR`), the same actor the bridge signs as; a session started by hand under another actor has no card and the gate says nothing. The model recorded on the receipt comes from `TREESHIP_MODEL` or `~/.claude/settings.json` at session start, not from the running session, so the two can differ if the model is switched mid-session.
+
 A refusal is a signed artifact, sealed with the session like any action, so "the gate stopped it" is a claim a stranger can verify. The gate fails open on every error path: a broken Treeship never blocks a tool call by accident. It is a boundary on what the harness routes through hooks, not on what a process spawned outside them can do; the [coverage level](/docs/guides/coverage-levels) says where that boundary is.
 | `skills/treeship-verify` | How to verify a receipt URL someone shares with you |
 | `skills/treeship-report` | How to publish + share a session report URL |
@@ -124,6 +126,8 @@ If you don't want hooks but want MCP tool calls captured:
 ```
 
 Restart Claude Code after adding the config. This catches MCP-routed tool calls (e.g. `brave_search`, `notion`) but not Claude Code's built-in tools (Read, Write, Edit, Bash) — those bypass MCP entirely. For full coverage, use Method 1.
+
+Start the session as the same actor the bridge signs as (`treeship session start --actor agent://claude-code`, which the plugin's SessionStart hook does by default, or `TREESHIP_ACTOR` for another name). The bridge's intents and results then chain onto the session; under another actor they are sealed loose and `package verify` reports them under `chain_completeness`.
 
 ## Live monitoring
 

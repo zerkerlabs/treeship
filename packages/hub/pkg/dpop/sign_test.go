@@ -21,9 +21,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/treeship/hub/internal/db"
-	serverdpop "github.com/treeship/hub/internal/dpop"
-	"github.com/treeship/hub/pkg/dpop"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/db"
+	serverdpop "github.com/zerkerlabs/treeship/packages/hub/internal/dpop"
+	"github.com/zerkerlabs/treeship/packages/hub/pkg/dpop"
 )
 
 // registerDock mints a keypair, registers it as a ship, and returns a client

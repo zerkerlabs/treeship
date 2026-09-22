@@ -13,7 +13,7 @@ Treeship exposes several verification commands and APIs, and they deliberately d
 |---|---|---|---|
 | `treeship verify <artifact-id>` | Ed25519 signatures, content-address re-derivation, parent chain, approval nonce binding | Local keys + pinned roots | `pass`, with `actor proof: proven (key-bound)` or `asserted` |
 | `treeship verify <URL>` / `<package path>` | Structure only: Merkle root recomputation, inclusion proofs, leaf count, timeline order | None — no issuer trust, no signatures | `structural-pass` (never `pass`); `signatures_verified: false` |
-| `treeship package verify` | Package/artifact integrity: determinism, Merkle root, inclusion, plus approval-evidence replay rows | Local keys + pinned roots | Pass with an explicit `receipt_body_binding` warning — narrative is unsigned |
+| `treeship package verify` | Package/artifact integrity: determinism, Merkle root, inclusion, plus approval-evidence replay rows | Local keys + pinned roots | `verified`, with `receipt_body_binding` saying whether the close record binds the narrative (it does since 0.31.4) |
 | `treeship verify-capability` | Card + action envelope signatures, in/out-of-scope cross-check | Pinned `agent_cert` roots | `verified` (key-bound); `self-asserted` without a pin |
 | `treeship verify-presentation` | Card, certificate chain, revocations, Merkle staple, optional live challenge — fully offline | **Your** pinned roots (`agent_cert` leaf or `cert_issuer` chain, `hub_checkpoint` staple, `revoker`) | `verified (key-bound, anchored, live)` |
 | `treeship verify-profile` | Envelope signature + field-by-field recomputation from the log at the pinned checkpoint | Local keys + pinned roots | `checked` (a mismatch is a provable lie) |

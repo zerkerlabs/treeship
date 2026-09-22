@@ -181,6 +181,7 @@ treeship attest receipt [OPTIONS] --system <URI> --kind <KIND>
 | `--payload-digest <DIGEST>` | Digest of the external payload, for example sha256:&lt;hex&gt; |
 | `--parent <ID>` | Parent artifact ID for chain linking. Inside an active session whose actor is this --system, the default is the session's chain head; otherwise the default is --subject when it is an artifact id |
 | `--no-parent` | Do not chain onto the session's head; the receipt is sealed at close as unchained |
+| `--chain` | Chain onto the active session's head even when --system is not the session's actor. For a trusted component that records inside the agent's session, such as the gate's blocked.v1 refusals |
 
 ### `treeship attest card`
 

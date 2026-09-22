@@ -13,8 +13,8 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/treeship/hub/internal/auth"
-	"github.com/treeship/hub/internal/db"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/auth"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/db"
 )
 
 type Handlers struct {

@@ -109,7 +109,8 @@ treeship package verify .treeship/sessions/ssn_42e740bd9eb238f6.treeship
 | `signature:<id>` | The envelope in `artifacts/<id>.json` verifies under a key in `keys.json`, its `art_` id re-derives from the signed bytes, and the receipt's digest column matches |
 | `chain_linkage` | Every chained artifact names the previous one as `parentId` inside the signature, in the order the receipt lists them |
 | `chain_completeness` | `WARN` naming sealed artifacts that were signed during the session without `--parent` (marked `unchained` in the receipt): verifiable on their own, their order is the signer's unsigned claim |
-| `signer_trust` | `PASS` when every signing key is a pinned trust root or one of this ship's own keys; otherwise `WARN` with the `treeship trust add` command for each key (`FAIL` under `--strict`) |
+| `signer_trust` | `PASS` when every signing key is a pinned trust root or one of this ship's own keys, and the detail says which ("this ship's own" on the producer's machine is not a third party's decision); otherwise `WARN` with the `treeship trust add … --yes` command for each key, ready to paste in a script (`FAIL` under `--strict`) |
+| `receipt_body_binding` | `PASS` when the close record in `record.json` binds `receipt.json`: the timeline, side effects, tool usage and narrative are then under the producer's signature, and editing any of them fails `receipt_binding`. They remain the producer's own account of the session; the artifacts are the evidence. `WARN` on a package with no close record (built before 0.31.4) |
 | `receipt_binding` | The close record in `record.json` verifies under a key in `keys.json`, names this session, and its signed `receipt_digest` equals the SHA-256 of `receipt.json`. Rewriting the sealed set after close fails here even when every per-artifact row passes. `WARN` on a package built before 0.31.4 (`FAIL` under `--strict`) |
 | `session_window` | Every sealed artifact's signed timestamp falls inside the session's `started_at` to `ended_at` window, with two minutes of skew. `WARN` naming the artifacts outside it (`FAIL` under `--strict`) |
 | `leaf_count` | `merkle.leaf_count` matches the artifact count in the receipt |
@@ -124,7 +125,7 @@ package verification
   PASS receipt.json -- Parses as valid Session Receipt
   PASS type -- Correct receipt type
   PASS determinism -- receipt.json round-trips identically (structural, NOT a signature)
-  WARN receipt_body_binding -- timeline/side-effects/narrative are NOT signed in this package — only the artifacts and Merkle root are cryptographically bound. ...
+  PASS receipt_body_binding -- timeline/side-effects/narrative are bound: the close record (record.json) signs the digest of the whole receipt.json ...
   PASS merkle_root -- Merkle root matches recomputed value
   PASS inclusion:art_7f536ce61435c17afd16c3af6484d4eb -- Inclusion proof valid
   ... (one line per artifact)
@@ -132,7 +133,7 @@ package verification
   ... (one line per artifact)
   PASS chain_linkage -- 4 chained artifacts each name the previous one as parent, inside the signature
   WARN chain_completeness -- 1 sealed artifact(s) were signed during the session but never chained onto it (art_cd9bf1738355ae7d9ee10125cdf24359); signed and sealed, but their order relative to the chain is the signer's claim only
-  WARN signer_trust -- signature(s) verify for the key(s) the package names, but 1 of them are not pinned trust roots here: key_ba973a7083d45f8d. Pin what you have decided to trust: treeship trust add key_ba973a7083d45f8d ed25519:tyFBDCyMLbUV2NtlPaBaTiZvktwXxxOcI2j7ME9GSrw --kind cert_issuer
+  WARN signer_trust -- signature(s) verify for the key(s) the package names, but 1 of them are not pinned trust roots here: key_ba973a7083d45f8d. Pin what you have decided to trust: treeship trust add key_ba973a7083d45f8d ed25519:tyFBDCyMLbUV2NtlPaBaTiZvktwXxxOcI2j7ME9GSrw --kind cert_issuer --yes
   PASS leaf_count -- Leaf count matches artifact count
   PASS timeline_order -- Timeline is correctly ordered
 

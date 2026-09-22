@@ -109,10 +109,13 @@ emit_deny() {
 import json, sys
 print(json.dumps({"reason_class": "scope_violation", "refused_kind": "action", "actor": sys.argv[1], "description": sys.argv[2]}))
 ' "$ACTOR" "$DESC" 2>/dev/null)
+  # --chain: the refusal is a step of the agent's session, sealed in order
+  # with what it refused, so the package still verifies under --strict.
   [ -n "$PAYLOAD" ] && treeship attest receipt \
     --system "system://treeship-gate" \
     --kind "blocked.v1" \
     --payload "$PAYLOAD" \
+    --chain \
     >/dev/null 2>&1 || true
   printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Treeship gate: %s is %s for %s. The refusal is a signed blocked.v1 receipt in this session."}}\n' "$CAP" "$reason" "$ACTOR"
 }
