@@ -14,8 +14,10 @@ name = "treeship"
 path = "src/main.rs"
 
 [features]
-default = []
-otel = []  # No extra deps -- uses ureq + serde_json already available
+default = ["otel"]
+# In the default build since 0.31.6. No extra deps: ureq + serde_json. Build
+# with --no-default-features to leave it out; `treeship otel` then says so.
+otel = []
 zk = ["treeship-zk-circom", "treeship-zk-risc0"]  # Circom + RISC Zero ZK proofs
 zk-bonsai = ["treeship-zk-risc0/zk-bonsai"]  # RISC Zero Bonsai hosted proving
 
