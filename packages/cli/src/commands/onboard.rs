@@ -73,6 +73,7 @@ pub fn onboard(args: OnboardArgs, printer: &Printer) -> Result<(), Box<dyn std::
         args.description.clone(),
         Vec::new(),
         Vec::new(),
+        Vec::new(),
         true, // --own-key
         true, // --quiet (no .agent dir dropped into cwd)
         args.config.as_deref(),
@@ -97,6 +98,7 @@ pub fn onboard(args: OnboardArgs, printer: &Printer) -> Result<(), Box<dyn std::
             from_harness: args.from_harness.clone(),
             tools_json: args.tools_json.clone(),
             from_a2a: args.from_a2a.clone(),
+            network: Vec::new(),
             config: args.config.clone(),
         },
         printer,

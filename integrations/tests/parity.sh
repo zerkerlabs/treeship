@@ -56,12 +56,17 @@ run_test() {
   LOG="$WORKDIR/calls-$basename.log"
   : > "$LOG"
 
+  # A fixture may ship a sidecar <name>.env with MOCK_* variables (e.g. an
+  # active halt) that the mock treeship reads.
+  ENVFILE="${fixture%.json}.env"
+  if [ -f "$ENVFILE" ]; then set -a; . "$ENVFILE"; set +a; fi
   PATH="$MOCK_BIN_DIR:$PATH" \
   MOCK_TREESHIP_LOG="$LOG" \
   TREESHIP_PROJECT_ROOT="$WORKDIR/proj" \
   HOME="$WORKDIR" \
   sh "$script_path" < "$fixture" > "$WORKDIR/stdout-$basename" 2>&1 || true
 
+  unset MOCK_TREESHIP_HALTS MOCK_TREESHIP_ACTOR
   if diff -u "$expected" "$LOG" > "$WORKDIR/diff-$basename" 2>&1; then
     echo "  PASS  $basename"
     PASS=$((PASS + 1))

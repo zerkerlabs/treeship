@@ -1367,6 +1367,8 @@ pub struct CardArgs {
     /// `captured`. Protocol-level `capabilities` (streaming, ...) are not the
     /// agent's domain capabilities and are excluded.
     pub from_a2a: Option<String>,
+    /// Network destinations the agent may reach (exact hosts or `*.suffix`).
+    pub network: Vec<String>,
     pub config: Option<String>,
 }
 
@@ -1648,6 +1650,9 @@ pub fn card(args: CardArgs, printer: &Printer) -> Result<(), Box<dyn std::error:
     capabilities.insert("tools".into(), serde_json::json!(all_tools));
     if !args.models.is_empty() {
         capabilities.insert("models".into(), serde_json::json!(args.models));
+    }
+    if !args.network.is_empty() {
+        capabilities.insert("network".into(), serde_json::json!(args.network));
     }
 
     let mut card = serde_json::Map::new();

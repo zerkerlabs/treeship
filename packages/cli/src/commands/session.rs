@@ -597,6 +597,7 @@ pub fn start(
     manifest.root_artifact_id = Some(result.artifact_id.clone());
     manifest.workflow_ref = workflow_ref.clone();
     manifest.authorized_tools = super::declare::read_authorized_tools();
+    manifest.network_scope = super::declare::read_network_scope();
 
     // Capture the git HEAD SHA at session start so close-time
     // reconciliation can compute committed-during-session changes.
@@ -1318,46 +1319,186 @@ pub(crate) fn session_record_payload(
 /// sign with the actor's own key when it has one (so registered agents get
 /// a key-bound work-history record), and chain it to the session-close
 /// artifact. Returns the record artifact id and its attestation class.
-/// Make sure `keys.json` in a sealed package names `key_id`, so a verifier
-/// on another machine can check every signature the package carries. The
-/// public half comes from this ship's keystore; `keys.json` is a lookup aid
-/// outside the Merkle tree, so adding to it changes no digest.
-fn ensure_package_key(
+/// Rank of a declared coverage level, for picking the highest among the
+/// harnesses attached to a workspace.
+fn coverage_rank(label: &str) -> u8 {
+    match label {
+        "high" => 4,
+        "medium" => 3,
+        "basic" => 2,
+        "backstop-only" => 1,
+        _ => 0,
+    }
+}
+
+/// The `coverage.v1` payload: what the attached harnesses declare they could
+/// capture, and what the sealed event log shows they did. Every number is
+/// counted from `events`; every declaration is copied from the harness state
+/// files, never inferred.
+fn coverage_payload(
+    manifest: &SessionManifest,
+    events: &[SessionEvent],
+    harness_states: &[crate::commands::harnesses::HarnessState],
+    event_log_skipped: usize,
+    closed_at: &str,
+) -> serde_json::Value {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let mut harnesses = Vec::new();
+    let mut declared_level = "none";
+    let mut gaps: Vec<String> = Vec::new();
+    for h in harness_states {
+        let status = h.status.label();
+        let coverage = h.coverage.label();
+        let modes: Vec<&str> = h
+            .active_connection_modes
+            .iter()
+            .map(|m| m.label())
+            .collect();
+        // Available means "proposed and declined", disabled means off:
+        // neither counts toward what this workspace could capture.
+        if status != "available"
+            && status != "disabled"
+            && coverage_rank(coverage) > coverage_rank(declared_level)
+        {
+            declared_level = coverage;
+        }
+        for g in &h.known_gaps {
+            if !gaps.contains(g) {
+                gaps.push(g.clone());
+            }
+        }
+        let mut entry = serde_json::json!({
+            "harness_id": h.harness_id,
+            "status": status,
+            "coverage": coverage,
+            "connection_modes": modes,
+            "known_gaps": h.known_gaps,
+        });
+        if let Some(ref at) = h.last_verified_at {
+            entry["last_verified_at"] = serde_json::Value::String(at.clone());
+        }
+        harnesses.push(entry);
+    }
+
+    let mut event_types: BTreeMap<String, u64> = BTreeMap::new();
+    let mut hosts: BTreeSet<String> = BTreeSet::new();
+    let mut instances: BTreeSet<String> = BTreeSet::new();
+    let mut first: Option<&str> = None;
+    let mut last: Option<&str> = None;
+    for e in events {
+        let name = serde_json::to_value(&e.event_type)
+            .ok()
+            .and_then(|v| {
+                v.get("type")
+                    .and_then(|t| t.as_str())
+                    .map(|t| t.to_string())
+            })
+            .unwrap_or_else(|| "unknown".into());
+        *event_types.entry(name).or_insert(0) += 1;
+        hosts.insert(e.host_id.clone());
+        instances.insert(e.agent_instance_id.clone());
+        let ts = e.timestamp.as_str();
+        match first {
+            Some(f) if ts >= f => {}
+            _ => first = Some(ts),
+        }
+        match last {
+            Some(l) if ts <= l => {}
+            _ => last = Some(ts),
+        }
+    }
+
+    let captured_activity = event_types
+        .keys()
+        .any(|k| k != "session.started" && k != "session.closed");
+    if !captured_activity {
+        gaps.push(
+            "no tool, file, process or network events were captured; the receipt records only the session boundaries"
+                .into(),
+        );
+    }
+    if declared_level == "none" {
+        gaps.push(
+            "no harness state in this workspace; nothing declares what could have been captured"
+                .into(),
+        );
+    }
+    if event_log_skipped > 0 {
+        gaps.push(format!(
+            "{event_log_skipped} malformed event-log line(s) were skipped; the log is known to be incomplete"
+        ));
+    }
+
+    let mut observed = serde_json::json!({
+        "events": events.len(),
+        "event_types": event_types,
+        "hosts": hosts,
+        "agent_instances": instances.len(),
+        "event_log_skipped": event_log_skipped,
+    });
+    if let Some(f) = first {
+        observed["first_event_at"] = serde_json::Value::String(f.to_string());
+    }
+    if let Some(l) = last {
+        observed["last_event_at"] = serde_json::Value::String(l.to_string());
+    }
+
+    serde_json::json!({
+        "schema": "coverage.v1",
+        "session_id": manifest.session_id,
+        "actor": manifest.actor,
+        "declared_level": declared_level,
+        "harnesses": harnesses,
+        "observed": observed,
+        "gaps": gaps,
+        "closed_at": closed_at,
+    })
+}
+
+/// Sign the coverage statement as a `coverage.v1` receipt chained onto the
+/// close artifact, so it is sealed inside the package's Merkle tree and
+/// `package verify` can report it. Signed by the ship's key: coverage is the
+/// session host's statement about its own instrumentation, and a stranger
+/// who pinned the ship key as `session_host` verifies it with nothing more.
+/// (Signed with the agent's own key it needed a second pin, and the
+/// evaluator-kit hand-off failed `signer_trust` on the public's machine.)
+fn mint_coverage_receipt(
     ctx: &ctx::Ctx,
-    pkg_dir: &std::path::Path,
-    key_id: &str,
-) -> Result<(), String> {
-    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-    let path = pkg_dir.join(session::package::KEYS_FILE);
-    let mut keys: serde_json::Value = match std::fs::read(&path) {
-        Ok(raw) => serde_json::from_slice(&raw).map_err(|e| e.to_string())?,
-        Err(_) => serde_json::json!({
-            "schema": session::package::PACKAGE_KEYS_SCHEMA,
-            "keys": {}
-        }),
-    };
-    let present = keys.get("keys").and_then(|k| k.get(key_id)).is_some();
-    if present {
-        return Ok(());
-    }
-    let pk = ctx
-        .keys
-        .public_key(key_id)
-        .map_err(|e| format!("public key for {key_id}: {e}"))?;
-    let encoded = format!("ed25519:{}", URL_SAFE_NO_PAD.encode(pk));
-    match keys.get_mut("keys").and_then(|k| k.as_object_mut()) {
-        Some(map) => {
-            map.insert(key_id.to_string(), serde_json::Value::String(encoded));
-        }
-        None => {
-            keys["keys"] = serde_json::json!({ key_id: encoded });
-        }
-    }
-    std::fs::write(
-        &path,
-        serde_json::to_vec_pretty(&keys).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())
+    actor: &str,
+    close_artifact_id: &str,
+    payload: serde_json::Value,
+) -> Result<String, Box<dyn std::error::Error>> {
+    treeship_core::predicates::validate("coverage.v1", Some(&payload))
+        .map_err(|e| format!("predicate validation failed: {e}"))?;
+
+    let mut stmt = ReceiptStatement::new("system://treeship-session", "coverage.v1");
+    stmt.parent_id = Some(close_artifact_id.to_string());
+    stmt.subject = Some(SubjectRef {
+        artifact_id: Some(close_artifact_id.to_string()),
+        ..Default::default()
+    });
+    stmt.payload = Some(payload);
+
+    let _ = actor; // the statement names the actor; the ship signs it
+    let signer = ctx.keys.default_signer()?;
+    let pt = payload_type("receipt");
+    let result = sign(&pt, &stmt, signer.as_ref())?;
+
+    ctx.storage.write(&Record {
+        artifact_id: result.artifact_id.clone(),
+        digest: result.digest.clone(),
+        payload_type: pt,
+        key_id: signer.key_id().to_string(),
+        signed_at: stmt.timestamp.clone(),
+        parent_id: Some(close_artifact_id.to_string()),
+        envelope: result.envelope,
+        hub_url: None,
+        anchors: Vec::new(),
+    })?;
+    write_last(&ctx.config.storage_dir, &result.artifact_id);
+
+    Ok(result.artifact_id)
 }
 
 fn mint_session_record(
@@ -1402,10 +1543,71 @@ fn mint_session_record(
     Ok((result.artifact_id, class))
 }
 
+/// Make sure `keys.json` in a sealed package names `key_id`, so a verifier
+/// on another machine can check every signature the package carries. The
+/// public half comes from this ship's keystore; `keys.json` is a lookup aid
+/// outside the Merkle tree, so adding to it changes no digest.
+fn ensure_package_key(
+    ctx: &ctx::Ctx,
+    pkg_dir: &std::path::Path,
+    key_id: &str,
+) -> Result<(), String> {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    let path = pkg_dir.join(session::package::KEYS_FILE);
+    let mut keys: serde_json::Value = match std::fs::read(&path) {
+        Ok(raw) => serde_json::from_slice(&raw).map_err(|e| e.to_string())?,
+        Err(_) => serde_json::json!({
+            "schema": session::package::PACKAGE_KEYS_SCHEMA,
+            "keys": {}
+        }),
+    };
+    let present = keys.get("keys").and_then(|k| k.get(key_id)).is_some();
+    if present {
+        return Ok(());
+    }
+    let pk = ctx
+        .keys
+        .public_key(key_id)
+        .map_err(|e| format!("public key for {key_id}: {e}"))?;
+    let encoded = format!("ed25519:{}", URL_SAFE_NO_PAD.encode(pk));
+    match keys.get_mut("keys").and_then(|k| k.as_object_mut()) {
+        Some(map) => {
+            map.insert(key_id.to_string(), serde_json::Value::String(encoded));
+        }
+        None => {
+            keys["keys"] = serde_json::json!({ key_id: encoded });
+        }
+    }
+    std::fs::write(
+        &path,
+        serde_json::to_vec_pretty(&keys).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// Recursive directory copy used by `session close --receipt-dir`. Files
+/// are copied byte for byte so the receipt digest is unchanged; nothing
+/// is followed through symlinks.
+fn copy_dir_all(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let dest = to.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_all(&entry.path(), &dest)?;
+        } else if ty.is_file() {
+            std::fs::copy(entry.path(), &dest)?;
+        }
+    }
+    Ok(())
+}
+
 pub fn close(
     summary: Option<String>,
     headline: Option<String>,
     review: Option<String>,
+    receipt_dir: Option<std::path::PathBuf>,
     config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -1636,6 +1838,40 @@ pub fn close(
         }
     }
 
+    // ── Coverage receipt (coverage.v1) ──────────────────────────────
+    // "We monitored this" needs a denominator. Before the chain is
+    // collected, sign what the attached harnesses declare they could
+    // capture and what the event log shows they did, chained onto the
+    // close artifact so it is sealed in the Merkle tree with everything
+    // else. Best-effort: a failure warns and never wedges the close.
+    let harness_states = crate::commands::harnesses::list_states(
+        &crate::commands::harnesses::harnesses_dir_for(&ctx.config_path),
+    )
+    .unwrap_or_default();
+    let coverage = coverage_payload(
+        &manifest,
+        &events,
+        &harness_states,
+        event_log_skipped,
+        &now_rfc3339(),
+    );
+    let coverage_declared_level = coverage["declared_level"]
+        .as_str()
+        .unwrap_or("none")
+        .to_string();
+    let coverage_harness_ids: Vec<String> = harness_states
+        .iter()
+        .map(|h| h.harness_id.clone())
+        .collect();
+    let coverage_artifact_id =
+        match mint_coverage_receipt(&ctx, &manifest.actor, &result.artifact_id, coverage) {
+            Ok(id) => Some(id),
+            Err(e) => {
+                printer.warn(&format!("coverage receipt not minted: {e}"), &[]);
+                None
+            }
+        };
+
     // Build artifact entries from the chain
     let mut artifact_entries: Vec<session::receipt::ArtifactEntry> =
         collect_artifact_entries(&ctx, &manifest);
@@ -1734,6 +1970,7 @@ pub fn close(
     let pkg_dir = ts_dir.join("sessions");
     std::fs::create_dir_all(&pkg_dir)?;
     let mut sealed_pkg_path: Option<std::path::PathBuf> = None;
+    let mut sealed_receipt_digest: Option<String> = None;
 
     // v0.9.9 PR 4: gather approval evidence to embed alongside the
     // receipt. Walks the chain for actions whose meta carries an
@@ -1770,6 +2007,7 @@ pub fn close(
             printer.info(&format!("  files:     {}", pkg_output.file_count));
 
             sealed_pkg_path = Some(pkg_output.path.clone());
+            sealed_receipt_digest = Some(pkg_output.receipt_digest.clone());
 
             // ── Work-history record (session.v1) ────────────────────
             // docs/specs/work-history.md slice 1: the sealed session
@@ -1852,6 +2090,38 @@ pub fn close(
         }
     }
 
+    // ── Commit trailer + receipt copy ───────────────────────────────
+    // The trailer binds a commit to the sealed package by the digest of
+    // receipt.json, which is what `package verify` and the verify-receipts
+    // GitHub Action recompute. `--receipt-dir` copies the package out of
+    // the (usually gitignored) workspace so it can be committed next to
+    // the change. Copying after the record is sealed matters: record.json
+    // is written into the package above, and the copy must carry it.
+    let commit_trailer = match (&sealed_receipt_digest, &manifest.session_id) {
+        (Some(digest), sid) => Some(format!("Treeship-Receipt: {sid} {digest}")),
+        _ => None,
+    };
+    let mut receipt_copy: Option<std::path::PathBuf> = None;
+    if let Some(dir) = receipt_dir.as_ref() {
+        match sealed_pkg_path.as_ref() {
+            Some(pkg) => {
+                let name = pkg
+                    .file_name()
+                    .map(|n| n.to_os_string())
+                    .unwrap_or_else(|| std::ffi::OsString::from("session.treeship"));
+                let dest = dir.join(name);
+                match copy_dir_all(pkg, &dest) {
+                    Ok(()) => receipt_copy = Some(dest),
+                    Err(e) => printer.warn(
+                        &format!("receipt not copied to {}: {e}", dir.display()),
+                        &[],
+                    ),
+                }
+            }
+            None => printer.warn("no sealed package to copy; --receipt-dir ignored", &[]),
+        }
+    }
+
     // ── OTel export (best-effort, never fails the close) ────────────
     #[cfg(feature = "otel")]
     {
@@ -1875,6 +2145,11 @@ pub fn close(
             "receipts": artifact_count,
             "events": event_log.event_count(),
             "package": sealed_pkg_path.as_ref().map(|path| path.display().to_string()),
+            "coverage_artifact_id": coverage_artifact_id,
+            "coverage_declared_level": coverage_declared_level,
+            "receipt_digest": sealed_receipt_digest,
+            "commit_trailer": commit_trailer,
+            "receipt_copy": receipt_copy.as_ref().map(|path| path.display().to_string()),
             "unsealed_branches": unsealed_branches,
             "sealed_unchained": sealed_unchained,
         }));
@@ -1885,6 +2160,22 @@ pub fn close(
         printer.info(&format!("  duration: {}", elapsed_str));
         printer.info(&format!("  receipts: {}", artifact_count));
         printer.info(&format!("  events:   {}", event_log.event_count()));
+        if let Some(ref id) = coverage_artifact_id {
+            let via = if coverage_harness_ids.is_empty() {
+                "no harness state".to_string()
+            } else {
+                coverage_harness_ids.join(", ")
+            };
+            printer.info(&format!(
+                "  coverage: declared {coverage_declared_level} ({via})  {id}"
+            ));
+        }
+        if let Some(ref copy) = receipt_copy {
+            printer.info(&format!("  copied:   {}", copy.display()));
+        }
+        if let Some(ref trailer) = commit_trailer {
+            printer.info(&format!("  trailer:  {trailer}"));
+        }
         printer.blank();
     }
 

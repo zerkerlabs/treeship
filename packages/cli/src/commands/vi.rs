@@ -674,6 +674,30 @@ pub fn verify(v: &VerifyArgs<'_>, config: Option<&str>, printer: &Printer) -> Cm
                 detail: "no attestation to check locally".into(),
             }),
             Some(att) => {
+                // Verdict invariant: a local record proves nothing by existing.
+                // Every artifact this check leans on is re-verified: its
+                // signature under a key this machine trusts (a pinned root or
+                // its own keys) and its id re-derived from the signed bytes.
+                // (Caught by the verdict-invariant suite: a flipped byte in the
+                // stored attestation still reported PASS.)
+                let trust = treeship_core::trust::TrustRootStore::open_default_or_empty()?;
+                let local_verifier =
+                    crate::commands::verifier::from_local_and_trust(&ctx.keys, &trust)?;
+                let verified = |rec: &Record| -> Result<(), String> {
+                    let v = local_verifier
+                        .as_ref()
+                        .ok_or_else(|| "no verification keys available".to_string())?;
+                    let r = v
+                        .verify_any(&rec.envelope)
+                        .map_err(|e| format!("no valid signature ({e})"))?;
+                    if r.artifact_id != rec.artifact_id {
+                        return Err(format!(
+                            "signed bytes derive {} not {}",
+                            r.artifact_id, rec.artifact_id
+                        ));
+                    }
+                    Ok(())
+                };
                 let head_ok = ctx.storage.read(&att.chain_head).is_ok();
                 report.checks.push(vi::Check {
                     name: "local_chain_head".into(),
@@ -683,6 +707,21 @@ pub fn verify(v: &VerifyArgs<'_>, config: Option<&str>, printer: &Printer) -> Cm
                 if head_ok {
                     match walk_chain(&ctx, &att.chain_head, None, att.chain_length as usize) {
                         Ok(chain) => {
+                            let mut bad = Vec::new();
+                            for rec in &chain {
+                                if let Err(e) = verified(rec) {
+                                    bad.push(format!("{}: {e}", rec.artifact_id));
+                                }
+                            }
+                            report.checks.push(vi::Check {
+                                name: "local_chain_signatures".into(),
+                                pass: bad.is_empty(),
+                                detail: if bad.is_empty() {
+                                    format!("{} chained artifacts verify under this machine's keys, ids re-derived from the signed bytes", chain.len())
+                                } else {
+                                    bad.join("; ")
+                                },
+                            });
                             let ids: Vec<String> =
                                 chain.iter().map(|r| r.artifact_id.clone()).collect();
                             let root = merkle_root(&ids);
@@ -695,11 +734,18 @@ pub fn verify(v: &VerifyArgs<'_>, config: Option<&str>, printer: &Printer) -> Cm
                         }),
                     }
                 }
-                let art_ok = ctx.storage.read(&att.artifact_id).is_ok();
+                let art = ctx.storage.read(&att.artifact_id);
+                let (art_ok, art_detail) = match art {
+                    Ok(rec) => match verified(&rec) {
+                        Ok(()) => (true, format!("{} verified: signature under a trusted key, id re-derived from the signed bytes", att.artifact_id)),
+                        Err(e) => (false, format!("{}: {e}", att.artifact_id)),
+                    },
+                    Err(_) => (false, format!("{} not in local storage", att.artifact_id)),
+                };
                 report.checks.push(vi::Check {
                     name: "local_attestation_artifact".into(),
                     pass: art_ok,
-                    detail: format!("{} in local storage", att.artifact_id),
+                    detail: art_detail,
                 });
                 if let Some(d) = &att.approval_use {
                     report.checks.push(vi::Check {

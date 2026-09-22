@@ -14,6 +14,7 @@ pub mod declare;
 pub mod discovery;
 pub mod doctor;
 pub mod grant;
+pub mod halt;
 pub mod harness;
 pub mod harnesses;
 pub mod history;

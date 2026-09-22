@@ -17,6 +17,7 @@
     "merkle-proofs",
     "verification-reporting",
     "evaluator-kit",
+    "receipts-in-pull-requests",
     "edge-runtime",
     "dogfood-checklist"
   ]

@@ -1,0 +1,542 @@
+{
+  "type": "treeship/session-receipt/v1",
+  "schema_version": "1",
+  "session": {
+    "id": "ssn_aab97aefa1f8a48c",
+    "name": "pr-check dogfood",
+    "mode": "auto_workspace",
+    "started_at": "2026-09-18T19:27:39Z",
+    "ended_at": "2026-09-18T19:27:39Z",
+    "status": "completed",
+    "duration_ms": 144,
+    "narrative": {
+      "headline": "PR check dogfood receipt",
+      "summary": "Built the verify-receipts GitHub Action, the receipts workflow and session close --receipt-dir. The first package this check verified failed on a fresh machine because keys.json did not name the record signer; fixed in the same change. This package is the second.",
+      "review": "The action script, the trailer format, and the keys.json fix for record.json signers."
+    },
+    "total_tokens_in": 0,
+    "total_tokens_out": 0
+  },
+  "participants": {
+    "root_agent_instance_id": "claude-code",
+    "total_agents": 3,
+    "spawned_subagents": 0,
+    "handoffs": 0,
+    "max_depth": 0,
+    "hosts": 1,
+    "tool_runtimes": 0
+  },
+  "hosts": [
+    {
+      "host_id": "host_MacBook-Pro-12_local"
+    }
+  ],
+  "tools": [
+    {
+      "tool_id": "Bash",
+      "tool_name": "Bash",
+      "invocation_count": 1
+    },
+    {
+      "tool_id": "Write",
+      "tool_name": "Write",
+      "invocation_count": 2
+    }
+  ],
+  "agent_graph": {
+    "nodes": [
+      {
+        "agent_id": "agent://claude-code",
+        "agent_instance_id": "claude-code",
+        "agent_name": "claude-code",
+        "agent_role": "agent",
+        "host_id": "host_MacBook-Pro-12_local",
+        "depth": 0,
+        "tool_calls": 3,
+        "tokens_in": 0,
+        "tokens_out": 0
+      },
+      {
+        "agent_id": "system://git-reconcile",
+        "agent_instance_id": "git-reconcile",
+        "agent_name": "git-reconcile",
+        "agent_role": "reconciler",
+        "host_id": "host_MacBook-Pro-12_local",
+        "depth": 0,
+        "tool_calls": 15,
+        "tokens_in": 0,
+        "tokens_out": 0
+      },
+      {
+        "agent_id": "agent://claude-code",
+        "agent_instance_id": "operator",
+        "agent_name": "treeship-cli",
+        "agent_role": "operator",
+        "host_id": "host_MacBook-Pro-12_local",
+        "depth": 0,
+        "tool_calls": 0,
+        "tokens_in": 0,
+        "tokens_out": 0
+      }
+    ],
+    "edges": []
+  },
+  "timeline": [
+    {
+      "sequence_no": 0,
+      "timestamp": "2026-09-18T19:27:39Z",
+      "event_id": "evt_520541ff82fd1879",
+      "event_type": "session.started",
+      "agent_instance_id": "operator",
+      "agent_name": "treeship-cli",
+      "host_id": "host_MacBook-Pro-12_local",
+      "summary": "Session started"
+    },
+    {
+      "sequence_no": 1,
+      "timestamp": "2026-09-18T19:27:39Z",
+      "event_id": "evt_b66eef16333310be",
+      "event_type": "agent.called_tool",
+      "agent_instance_id": "claude-code",
+      "agent_name": "claude-code",
+      "host_id": "host_MacBook-Pro-12_local",
+      "summary": "Called Write"
+    },
+    {
+      "sequence_no": 2,
+      "timestamp": "2026-09-18T19:27:39Z",
+      "event_id": "evt_0eb499c31e5d660c",
+      "event_type": "agent.called_tool",
+      "agent_instance_id": "claude-code",
+      "agent_name": "claude-code",
+      "host_id": "host_MacBook-Pro-12_local",
+      "summary": "Called Write"
+    },
+    {
+      "sequence_no": 3,
+      "timestamp": "2026-09-18T19:27:39Z",
+      "event_id": "evt_236c43fc2a9a24ff",
+      "event_type": "agent.called_tool",
+      "agent_instance_id": "claude-code",
+      "agent_name": "claude-code",
+      "host_id": "host_MacBook-Pro-12_local",
+      "summary": "Called Bash"
+    },
+    {
+      "sequence_no": 4,
+      "timestamp": "2026-09-18T19:27:39Z",
+      "event_id": "evt_031d4c88b07fec82",
+      "event_type": "session.closed",
+      "agent_instance_id": "operator",
+      "agent_name": "treeship-cli",
+      "host_id": "host_MacBook-Pro-12_local",
+      "summary": "Built the verify-receipts GitHub Action, the receipts workflow and session close --receipt-dir. The first package this check verified failed on a fresh machine because keys.json did not name the record signer; fixed in the same change. This package is the second."
+    },
+    {
+      "sequence_no": 5,
+      "timestamp": "2026-09-18T19:27:39Z",
+      "event_id": "evt_3aeec0a9d9a26e3d",
+      "event_type": "agent.wrote_file",
+      "agent_instance_id": "git-reconcile",
+      "agent_name": "git-reconcile",
+      "host_id": "host_MacBook-Pro-12_local",
+      "summary": "Wrote .github/actions/verify-receipts/action.yml"
+    },
+    {
+      "sequence_no": 6,
+      "timestamp": "2026-09-18T19:27:39Z",
+      "event_id": "evt_42d17392a0268b9a",
+      "event_type": "agent.wrote_file",
+      "agent_instance_id": "git-reconcile",
+      "agent_name": "git-reconcile",
+      "host_id": "host_MacBook-Pro-12_local",
+      "summary": "Wrote .github/actions/verify-receipts/verify-receipts.sh"
+    },
+    {
+      "sequence_no": 7,
+      "timestamp": "2026-09-18T19:27:39Z",
+      "event_id": "evt_d79c106b169e1468",
+      "event_type": "agent.wrote_file",
+      "agent_instance_id": "git-reconcile",
+      "agent_name": "git-reconcile",
+      "host_id": "host_MacBook-Pro-12_local",
+      "summary": "Wrote .github/workflows/receipts.yml"
+    },
+    {
+      "sequence_no": 8,
+      "timestamp": "2026-09-18T19:27:39Z",
+      "event_id": "evt_14dc68d7c4a49243",
+      "event_type": "agent.wrote_file",
+      "agent_instance_id": "git-reconcile",
+      "agent_name": "git-reconcile",
+      "host_id": "host_MacBook-Pro-12_local",
+      "summary": "Wrote CHANGELOG.md"
+    },
+    {
+      "sequence_no": 9,
+      "timestamp": "2026-09-18T19:27:39Z",
+      "event_id": "evt_d46f5e1b75568ab3",
+      "event_type": "agent.wrote_file",
+      "agent_instance_id": "git-reconcile",
+      "agent_name": "git-reconcile",
+      "host_id": "host_MacBook-Pro-12_local",
+      "summary": "Wrote README.md"
+    },
+    {
+      "sequence_no": 10,
+      "timestamp": "2026-09-18T19:27:39Z",
+      "event_id": "evt_af9e625774b1647b",
+      "event_type": "agent.wrote_file",
+      "agent_instance_id": "git-reconcile",
+      "agent_name": "git-reconcile",
+      "host_id": "host_MacBook-Pro-12_local",
+      "summary": "Wrote docs/content/docs/cli/command-matrix.mdx"
+    },
+    {
+      "sequence_no": 11,
+      "timestamp": "2026-09-18T19:27:39Z",
+      "event_id": "evt_4c3306f2ef387f23",
+      "event_type": "agent.wrote_file",
+      "agent_instance_id": "git-reconcile",
+      "agent_name": "git-reconcile",
+      "host_id": "host_MacBook-Pro-12_local",
+      "summary": "Wrote docs/content/docs/cli/session.mdx"
+    },
+    {
+      "sequence_no": 12,
+      "timestamp": "2026-09-18T19:27:39Z",
+      "event_id": "evt_82df7d8c9a5bef39",
+      "event_type": "agent.wrote_file",
+      "agent_instance_id": "git-reconcile",
+      "agent_name": "git-reconcile",
+      "host_id": "host_MacBook-Pro-12_local",
+      "summary": "Wrote docs/content/docs/guides/meta.json"
+    },
+    {
+      "sequence_no": 13,
+      "timestamp": "2026-09-18T19:27:39Z",
+      "event_id": "evt_7cdc7796453720eb",
+      "event_type": "agent.wrote_file",
+      "agent_instance_id": "git-reconcile",
+      "agent_name": "git-reconcile",
+      "host_id": "host_MacBook-Pro-12_local",
+      "summary": "Wrote docs/content/docs/guides/receipts-in-pull-requests.mdx"
+    },
+    {
+      "sequence_no": 14,
+      "timestamp": "2026-09-18T19:27:39Z",
+      "event_id": "evt_8697c7533620d5bb",
+      "event_type": "agent.wrote_file",
+      "agent_instance_id": "git-reconcile",
+      "agent_name": "git-reconcile",
+      "host_id": "host_MacBook-Pro-12_local",
+      "summary": "Wrote docs/feature-inventory.yml"
+    },
+    {
+      "sequence_no": 15,
+      "timestamp": "2026-09-18T19:27:39Z",
+      "event_id": "evt_658123f8734184ea",
+      "event_type": "agent.wrote_file",
+      "agent_instance_id": "git-reconcile",
+      "agent_name": "git-reconcile",
+      "host_id": "host_MacBook-Pro-12_local",
+      "summary": "Wrote packages/cli/src/commands/quickstart.rs"
+    },
+    {
+      "sequence_no": 16,
+      "timestamp": "2026-09-18T19:27:39Z",
+      "event_id": "evt_8f2fdf567f14f7b4",
+      "event_type": "agent.wrote_file",
+      "agent_instance_id": "git-reconcile",
+      "agent_name": "git-reconcile",
+      "host_id": "host_MacBook-Pro-12_local",
+      "summary": "Wrote packages/cli/src/commands/session.rs"
+    },
+    {
+      "sequence_no": 17,
+      "timestamp": "2026-09-18T19:27:39Z",
+      "event_id": "evt_04f6c27eb2889bb6",
+      "event_type": "agent.wrote_file",
+      "agent_instance_id": "git-reconcile",
+      "agent_name": "git-reconcile",
+      "host_id": "host_MacBook-Pro-12_local",
+      "summary": "Wrote packages/cli/src/main.rs"
+    },
+    {
+      "sequence_no": 18,
+      "timestamp": "2026-09-18T19:27:39Z",
+      "event_id": "evt_b44b941b69779184",
+      "event_type": "agent.wrote_file",
+      "agent_instance_id": "git-reconcile",
+      "agent_name": "git-reconcile",
+      "host_id": "host_MacBook-Pro-12_local",
+      "summary": "Wrote packages/cli/tests/session_close_receipt_dir_cli.rs"
+    },
+    {
+      "sequence_no": 19,
+      "timestamp": "2026-09-18T19:27:39Z",
+      "event_id": "evt_e0558368d4227a30",
+      "event_type": "agent.wrote_file",
+      "agent_instance_id": "git-reconcile",
+      "agent_name": "git-reconcile",
+      "host_id": "host_MacBook-Pro-12_local",
+      "summary": "Wrote receipts/trust_roots.json"
+    }
+  ],
+  "side_effects": {
+    "files_read": [],
+    "files_written": [
+      {
+        "file_path": ".github/actions/verify-receipts/action.yml",
+        "agent_instance_id": "git-reconcile",
+        "timestamp": "2026-09-18T19:27:39Z",
+        "operation": "untracked",
+        "source": "git-reconcile"
+      },
+      {
+        "file_path": ".github/actions/verify-receipts/verify-receipts.sh",
+        "agent_instance_id": "git-reconcile",
+        "timestamp": "2026-09-18T19:27:39Z",
+        "operation": "untracked",
+        "source": "git-reconcile"
+      },
+      {
+        "file_path": ".github/workflows/receipts.yml",
+        "agent_instance_id": "git-reconcile",
+        "timestamp": "2026-09-18T19:27:39Z",
+        "operation": "untracked",
+        "source": "git-reconcile"
+      },
+      {
+        "file_path": "CHANGELOG.md",
+        "agent_instance_id": "git-reconcile",
+        "timestamp": "2026-09-18T19:27:39Z",
+        "operation": "modified",
+        "additions": 1,
+        "deletions": 2,
+        "source": "git-reconcile"
+      },
+      {
+        "file_path": "README.md",
+        "agent_instance_id": "git-reconcile",
+        "timestamp": "2026-09-18T19:27:39Z",
+        "operation": "modified",
+        "additions": 3,
+        "deletions": 0,
+        "source": "git-reconcile"
+      },
+      {
+        "file_path": "docs/content/docs/cli/command-matrix.mdx",
+        "agent_instance_id": "git-reconcile",
+        "timestamp": "2026-09-18T19:27:39Z",
+        "operation": "modified",
+        "additions": 1,
+        "deletions": 0,
+        "source": "git-reconcile"
+      },
+      {
+        "file_path": "docs/content/docs/cli/session.mdx",
+        "agent_instance_id": "git-reconcile",
+        "timestamp": "2026-09-18T19:27:39Z",
+        "operation": "modified",
+        "additions": 8,
+        "deletions": 0,
+        "source": "git-reconcile"
+      },
+      {
+        "file_path": "docs/content/docs/guides/meta.json",
+        "agent_instance_id": "git-reconcile",
+        "timestamp": "2026-09-18T19:27:39Z",
+        "operation": "modified",
+        "additions": 1,
+        "deletions": 0,
+        "source": "git-reconcile"
+      },
+      {
+        "file_path": "docs/content/docs/guides/receipts-in-pull-requests.mdx",
+        "agent_instance_id": "git-reconcile",
+        "timestamp": "2026-09-18T19:27:39Z",
+        "operation": "untracked",
+        "source": "git-reconcile"
+      },
+      {
+        "file_path": "docs/feature-inventory.yml",
+        "agent_instance_id": "git-reconcile",
+        "timestamp": "2026-09-18T19:27:39Z",
+        "operation": "modified",
+        "additions": 23,
+        "deletions": 0,
+        "source": "git-reconcile"
+      },
+      {
+        "file_path": "packages/cli/src/commands/quickstart.rs",
+        "agent_instance_id": "git-reconcile",
+        "timestamp": "2026-09-18T19:27:39Z",
+        "operation": "modified",
+        "additions": 2,
+        "deletions": 0,
+        "source": "git-reconcile"
+      },
+      {
+        "file_path": "packages/cli/src/commands/session.rs",
+        "agent_instance_id": "git-reconcile",
+        "timestamp": "2026-09-18T19:27:39Z",
+        "operation": "modified",
+        "additions": 114,
+        "deletions": 3,
+        "source": "git-reconcile"
+      },
+      {
+        "file_path": "packages/cli/src/main.rs",
+        "agent_instance_id": "git-reconcile",
+        "timestamp": "2026-09-18T19:27:39Z",
+        "operation": "modified",
+        "additions": 7,
+        "deletions": 0,
+        "source": "git-reconcile"
+      },
+      {
+        "file_path": "packages/cli/tests/session_close_receipt_dir_cli.rs",
+        "agent_instance_id": "git-reconcile",
+        "timestamp": "2026-09-18T19:27:39Z",
+        "operation": "untracked",
+        "source": "git-reconcile"
+      },
+      {
+        "file_path": "receipts/trust_roots.json",
+        "agent_instance_id": "git-reconcile",
+        "timestamp": "2026-09-18T19:27:39Z",
+        "operation": "untracked",
+        "source": "git-reconcile"
+      }
+    ],
+    "ports_opened": [],
+    "network_connections": [],
+    "processes": [],
+    "tool_invocations": [
+      {
+        "tool_name": "Write",
+        "agent_instance_id": "claude-code",
+        "timestamp": "2026-09-18T19:27:39Z"
+      },
+      {
+        "tool_name": "Write",
+        "agent_instance_id": "claude-code",
+        "timestamp": "2026-09-18T19:27:39Z"
+      },
+      {
+        "tool_name": "Bash",
+        "agent_instance_id": "claude-code",
+        "timestamp": "2026-09-18T19:27:39Z"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "artifact_id": "art_e5a35d01bda00e3918f68458ce996e94",
+      "payload_type": "application/vnd.treeship.action.v1+json",
+      "digest": "sha256:e5a35d01bda00e3918f68458ce996e9418bce47eac34e2d69dc9308a32307c06",
+      "signed_at": "2026-09-18T19:27:39Z"
+    },
+    {
+      "artifact_id": "art_4c8419cbbc748c24693ed8fea1f12a24",
+      "payload_type": "application/vnd.treeship.action.v1+json",
+      "digest": "sha256:4c8419cbbc748c24693ed8fea1f12a24572807a9bc3598f8b553429ec90bcb1a",
+      "signed_at": "2026-09-18T19:27:39Z"
+    }
+  ],
+  "proofs": {
+    "signature_count": 2,
+    "signatures_valid": false,
+    "merkle_root_valid": true,
+    "inclusion_proofs_count": 2,
+    "zk_proofs_present": false
+  },
+  "merkle": {
+    "leaf_count": 2,
+    "root": "mroot_75e0f4024d4a3c2388dd21a71ebadca246b4f7fecf5596b4468e2093bc6bac09",
+    "inclusion_proofs": [
+      {
+        "artifact_id": "art_e5a35d01bda00e3918f68458ce996e94",
+        "leaf_index": 0,
+        "proof": {
+          "leaf_index": 0,
+          "leaf_hash": "ce93b36e8ea48dbeac49a4acda41c1a6126083ca1f70688d985e4452ceace975",
+          "path": [
+            {
+              "direction": "Right",
+              "hash": "f9bb2762beff30a7cf2c2495fc026be340daa1a41b1b9a57970443e00688b1b8"
+            }
+          ],
+          "algorithm": "sha256-rfc9162",
+          "merkle_version": 2
+        }
+      },
+      {
+        "artifact_id": "art_4c8419cbbc748c24693ed8fea1f12a24",
+        "leaf_index": 1,
+        "proof": {
+          "leaf_index": 1,
+          "leaf_hash": "f9bb2762beff30a7cf2c2495fc026be340daa1a41b1b9a57970443e00688b1b8",
+          "path": [
+            {
+              "direction": "Left",
+              "hash": "ce93b36e8ea48dbeac49a4acda41c1a6126083ca1f70688d985e4452ceace975"
+            }
+          ],
+          "algorithm": "sha256-rfc9162",
+          "merkle_version": 2
+        }
+      }
+    ],
+    "merkle_version": 2
+  },
+  "render": {
+    "title": "pr-check dogfood",
+    "sections": [
+      {
+        "id": "summary",
+        "label": "Session Summary",
+        "visible": true
+      },
+      {
+        "id": "participants",
+        "label": "Participant Strip",
+        "visible": true
+      },
+      {
+        "id": "agent_graph",
+        "label": "Delegation & Collaboration Graph",
+        "visible": true
+      },
+      {
+        "id": "timeline",
+        "label": "Mission Timeline",
+        "visible": true
+      },
+      {
+        "id": "side_effects",
+        "label": "Side-Effect Ledger",
+        "visible": true
+      },
+      {
+        "id": "proofs",
+        "label": "Proofs Panel",
+        "visible": true
+      }
+    ],
+    "generate_preview": true
+  },
+  "tool_usage": {
+    "actual": [
+      {
+        "tool_name": "Bash",
+        "count": 1
+      },
+      {
+        "tool_name": "Write",
+        "count": 2
+      }
+    ]
+  }
+}
