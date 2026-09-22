@@ -76,6 +76,7 @@ const REGISTRY: &[(&str, &str)] = &[
     ("evaluation.v1", include_str!("schemas/evaluation.v1.json")),
     ("coverage.v1", include_str!("schemas/coverage.v1.json")),
     ("halt.v1", include_str!("schemas/halt.v1.json")),
+    ("judgement.v1", include_str!("schemas/judgement.v1.json")),
 ];
 
 /// Returns the raw JSON Schema text for a registered predicate suffix, if any.
@@ -183,61 +184,14 @@ pub fn validate(suffix: &str, payload: Option<&Value>) -> Result<(), PredicateEr
             suffix: suffix.to_string(),
         })?;
 
-    if let Some(required) = schema.get("required").and_then(Value::as_array) {
-        for entry in required {
-            if let Some(name) = entry.as_str() {
-                if !map.contains_key(name) {
-                    return Err(PredicateError::MissingField {
-                        suffix: suffix.to_string(),
-                        field: name.to_string(),
-                    });
-                }
-            }
-        }
-    }
-
-    if let Some(props) = schema.get("properties").and_then(Value::as_object) {
-        for (field, subschema) in props {
-            let Some(actual) = map.get(field) else {
-                continue; // optional-and-absent; `required` already enforced presence
-            };
-
-            // Primitive type, when declared.
-            if let Some(type_decl) = subschema.get("type") {
-                if !type_matches(actual, type_decl) {
-                    return Err(PredicateError::TypeMismatch {
-                        suffix: suffix.to_string(),
-                        field: field.to_string(),
-                        expected: type_decl.to_string(),
-                    });
-                }
-            }
-
-            // AUD-06: enforce `enum` and `const`, independently of whether a
-            // `type` is also declared. Before this, a field with a declared
-            // enum (e.g. session.v1 `attestation_class`) passed on type alone,
-            // so an out-of-vocabulary value slipped through. A missing type is
-            // no longer a free pass either.
-            if let Some(allowed) = subschema.get("enum").and_then(Value::as_array) {
-                if !allowed.iter().any(|a| a == actual) {
-                    return Err(PredicateError::NotInEnum {
-                        suffix: suffix.to_string(),
-                        field: field.to_string(),
-                        allowed: Value::Array(allowed.clone()).to_string(),
-                    });
-                }
-            }
-            if let Some(constant) = subschema.get("const") {
-                if actual != constant {
-                    return Err(PredicateError::NotInEnum {
-                        suffix: suffix.to_string(),
-                        field: field.to_string(),
-                        allowed: constant.to_string(),
-                    });
-                }
-            }
-        }
-    }
+    // The schema walk is recursive: `required`, `type`, `enum`, `const`,
+    // numeric bounds and string patterns are enforced at every depth, and
+    // `items` applies to each array element. Before 0.31.6 only the top
+    // level was checked, so a nested `required` (agent_card.v1's
+    // capability_provenance grade, boundary.v1's digests) or a nested enum
+    // (judgement.v1's outcome vocabulary inside `judge` and `question`) was a
+    // documented contract nothing enforced before signing.
+    walk_object(suffix, "", &schema, map)?;
 
     // workflow.v1 carries nested control semantics that the dependency-free
     // top-level schema walk above cannot enforce. Run the same typed validator
@@ -263,6 +217,191 @@ pub fn validate(suffix: &str, payload: Option<&Value>) -> Result<(), PredicateEr
     }
 
     Ok(())
+}
+
+/// Recursive structural validation of `map` against `schema`. `path` is the
+/// dotted field path for error messages ("" at the top level).
+fn walk_object(
+    suffix: &str,
+    path: &str,
+    schema: &Value,
+    map: &serde_json::Map<String, Value>,
+) -> Result<(), PredicateError> {
+    let at = |field: &str| -> String {
+        if path.is_empty() {
+            field.to_string()
+        } else {
+            format!("{path}.{field}")
+        }
+    };
+    if let Some(required) = schema.get("required").and_then(Value::as_array) {
+        for entry in required {
+            if let Some(name) = entry.as_str() {
+                if !map.contains_key(name) {
+                    return Err(PredicateError::MissingField {
+                        suffix: suffix.to_string(),
+                        field: at(name),
+                    });
+                }
+            }
+        }
+    }
+    if let Some(props) = schema.get("properties").and_then(Value::as_object) {
+        for (field, subschema) in props {
+            let Some(actual) = map.get(field) else {
+                continue; // optional-and-absent; `required` already enforced presence
+            };
+            walk_value(suffix, &at(field), subschema, actual)?;
+        }
+    }
+    if let Some(extra) = schema.get("additionalProperties") {
+        if extra.is_object() {
+            if let Some(declared) = schema.get("properties").and_then(Value::as_object) {
+                for (field, actual) in map {
+                    if !declared.contains_key(field) {
+                        walk_value(suffix, &at(field), extra, actual)?;
+                    }
+                }
+            } else {
+                for (field, actual) in map {
+                    walk_value(suffix, &at(field), extra, actual)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// One value against one subschema: type, enum/const, numeric bounds,
+/// string pattern, then recursion into objects and array items.
+fn walk_value(
+    suffix: &str,
+    path: &str,
+    subschema: &Value,
+    actual: &Value,
+) -> Result<(), PredicateError> {
+    if let Some(type_decl) = subschema.get("type") {
+        if !type_matches(actual, type_decl) {
+            return Err(PredicateError::TypeMismatch {
+                suffix: suffix.to_string(),
+                field: path.to_string(),
+                expected: type_decl.to_string(),
+            });
+        }
+    }
+    // AUD-06: enforce `enum` and `const`, independently of whether a
+    // `type` is also declared, so an out-of-vocabulary value never passes on
+    // type alone.
+    if let Some(allowed) = subschema.get("enum").and_then(Value::as_array) {
+        if !allowed.iter().any(|a| a == actual) {
+            return Err(PredicateError::NotInEnum {
+                suffix: suffix.to_string(),
+                field: path.to_string(),
+                allowed: Value::Array(allowed.clone()).to_string(),
+            });
+        }
+    }
+    if let Some(constant) = subschema.get("const") {
+        if actual != constant {
+            return Err(PredicateError::NotInEnum {
+                suffix: suffix.to_string(),
+                field: path.to_string(),
+                allowed: constant.to_string(),
+            });
+        }
+    }
+    if let Some(n) = actual.as_f64() {
+        if let Some(min) = subschema.get("minimum").and_then(Value::as_f64) {
+            if n < min {
+                return Err(PredicateError::InvalidPayload {
+                    suffix: suffix.to_string(),
+                    detail: format!("{path} is {n}, below the minimum {min}"),
+                });
+            }
+        }
+        if let Some(max) = subschema.get("maximum").and_then(Value::as_f64) {
+            if n > max {
+                return Err(PredicateError::InvalidPayload {
+                    suffix: suffix.to_string(),
+                    detail: format!("{path} is {n}, above the maximum {max}"),
+                });
+            }
+        }
+    }
+    if let (Some(s), Some(pat)) = (
+        actual.as_str(),
+        subschema.get("pattern").and_then(Value::as_str),
+    ) {
+        if !pattern_matches(pat, s) {
+            return Err(PredicateError::InvalidPayload {
+                suffix: suffix.to_string(),
+                detail: format!("{path} does not match {pat}"),
+            });
+        }
+    }
+    match actual {
+        Value::Object(inner) => walk_object(suffix, path, subschema, inner)?,
+        Value::Array(items) => {
+            if let Some(item_schema) = subschema.get("items") {
+                for (i, item) in items.iter().enumerate() {
+                    walk_value(suffix, &format!("{path}[{i}]"), item_schema, item)?;
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// The one pattern shape the registered schemas use, without a regex
+/// dependency: `^<literal>[<class>]{<n>}$` (a digest such as
+/// `^sha256:[0-9a-f]{64}$`). Any other pattern is not enforced structurally;
+/// the canonical schema is the full contract.
+fn pattern_matches(pat: &str, s: &str) -> bool {
+    let Some(body) = pat.strip_prefix('^').and_then(|p| p.strip_suffix('$')) else {
+        return true;
+    };
+    let Some(open) = body.find('[') else {
+        return true;
+    };
+    let literal = &body[..open];
+    let Some(close) = body[open..].find(']') else {
+        return true;
+    };
+    let class = &body[open + 1..open + close];
+    let rest = &body[open + close + 1..];
+    let Some(count) = rest
+        .strip_prefix('{')
+        .and_then(|r| r.strip_suffix('}'))
+        .and_then(|n| n.parse::<usize>().ok())
+    else {
+        return true;
+    };
+    let Some(tail) = s.strip_prefix(literal) else {
+        return false;
+    };
+    if tail.chars().count() != count {
+        return false;
+    }
+    let in_class = |c: char| -> bool {
+        let cs: Vec<char> = class.chars().collect();
+        let mut i = 0;
+        while i < cs.len() {
+            if i + 2 < cs.len() && cs[i + 1] == '-' {
+                if c >= cs[i] && c <= cs[i + 2] {
+                    return true;
+                }
+                i += 3;
+            } else {
+                if c == cs[i] {
+                    return true;
+                }
+                i += 1;
+            }
+        }
+        false
+    };
+    tail.chars().all(in_class)
 }
 
 /// Does `value` satisfy a JSON Schema `type` declaration (a string, or an array
@@ -341,7 +480,12 @@ mod tests {
             .remove("allowed_tools");
         let error = validate("workflow.v1", Some(&missing_allowed_tools))
             .expect_err("schema-required nested fields must be refused before signing");
-        assert!(matches!(error, PredicateError::InvalidPayload { .. }));
+        // The recursive schema walk refuses it first (nodes[0].allowed_tools);
+        // the typed validator would too. Either is a refusal before signing.
+        assert!(matches!(
+            error,
+            PredicateError::InvalidPayload { .. } | PredicateError::MissingField { .. }
+        ));
         assert!(error.to_string().contains("allowed_tools"));
 
         let mut unbounded_cycle = valid;
@@ -429,11 +573,11 @@ mod tests {
         );
     }
 
-    #[test]
-    fn reason_authorization_valid_shape_passes() {
-        // Hand-authored from the public zerker.reason.authorization.v1 schema.
-        // This is a structural predicate test, not a cryptographic test vector.
-        let payload = json!({
+    /// Hand-authored from the public zerker.reason.authorization.v1 schema,
+    /// complete down to every nested `required` field, since the validator
+    /// walks the whole tree. A structural fixture, not a cryptographic vector.
+    fn reason_authorization_payload() -> Value {
+        json!({
             "schema": "zerker.reason.authorization.v1",
             "status": "authorized",
             "request_digest": format!("sha256:{}", "1".repeat(64)),
@@ -450,23 +594,55 @@ mod tests {
             },
             "reasoning": {
                 "schema": "zerker.reason.result.v2",
-                "status": "proved"
+                "status": "proved",
+                "query": {"predicate": "authorized", "arguments": ["action_deploy_140"]},
+                "program_digest": format!("sha256:{}", "4".repeat(64)),
+                "ontology": {},
+                "authority": {"classes": ["human-authorized"], "default_admit": ["human-authorized"]},
+                "proof": {"root": "authorized(action_deploy_140)"},
+                "disproof": null,
+                "conflict": null,
+                "missing": [],
+                "assumptions": [],
+                "metrics": {"facts": 3, "rules": 1}
             },
             "issues": []
-        });
-        assert!(validate("reason.authorization.v1", Some(&payload)).is_ok());
+        })
+    }
+
+    #[test]
+    fn reason_authorization_valid_shape_passes() {
+        assert!(validate(
+            "reason.authorization.v1",
+            Some(&reason_authorization_payload())
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn reason_authorization_nested_required_is_enforced() {
+        // Before the validator walked the tree, an action with no id passed.
+        let mut p = reason_authorization_payload();
+        p["action"].as_object_mut().unwrap().remove("id");
+        assert_eq!(
+            validate("reason.authorization.v1", Some(&p)),
+            Err(PredicateError::MissingField {
+                suffix: "reason.authorization.v1".into(),
+                field: "action.id".into()
+            })
+        );
+        let mut p = reason_authorization_payload();
+        p["reasoning"]["status"] = json!("vibes");
+        assert!(matches!(
+            validate("reason.authorization.v1", Some(&p)),
+            Err(PredicateError::NotInEnum { field, .. }) if field == "reasoning.status"
+        ));
     }
 
     #[test]
     fn reason_authorization_missing_request_digest_fails_closed() {
-        let payload = json!({
-            "schema": "zerker.reason.authorization.v1",
-            "status": "authorized",
-            "mission": {},
-            "action": {},
-            "reasoning": {},
-            "issues": []
-        });
+        let mut payload = reason_authorization_payload();
+        payload.as_object_mut().unwrap().remove("request_digest");
         let err = validate("reason.authorization.v1", Some(&payload)).unwrap_err();
         assert_eq!(
             err,
@@ -479,18 +655,11 @@ mod tests {
 
     #[test]
     fn reason_authorization_out_of_vocabulary_status_fails_closed() {
-        let payload = json!({
-            "schema": "zerker.reason.authorization.v1",
-            "status": "probably_safe",
-            "request_digest": format!("sha256:{}", "1".repeat(64)),
-            "mission": {},
-            "action": {},
-            "reasoning": {},
-            "issues": []
-        });
+        let mut payload = reason_authorization_payload();
+        payload["status"] = json!("probably_safe");
         let err = validate("reason.authorization.v1", Some(&payload)).unwrap_err();
         assert!(
-            matches!(err, PredicateError::NotInEnum { ref field, .. } if field == "status"),
+            matches!(&err, PredicateError::NotInEnum { field, .. } if field == "status"),
             "expected NotInEnum on status, got {err:?}"
         );
     }
@@ -1161,5 +1330,54 @@ mod tests {
                 field: "actor".into()
             })
         );
+    }
+    fn judgement_payload() -> serde_json::Value {
+        json!({
+            "schema": "judgement.v1",
+            "judge": {"model": "jev-1.13.0", "provider": "typesafe", "kind": "decision-model", "replayable": false},
+            "state_digest": format!("sha256:{}", "ab".repeat(32)),
+            "questions_digest": format!("sha256:{}", "cd".repeat(32)),
+            "question": {"key": "destructive", "type": "noul",
+                         "instructions": "Does this command delete or overwrite files outside the workspace?"},
+            "answer": {"noul": 0.93},
+            "threshold": {"value": 0.85, "applies_to": "noul", "set_by": "card:agent://claude-code"},
+            "outcome": "refused",
+            "effect": "deny",
+            "latency_ms": 140,
+            "judged_at": "2026-09-22T20:00:00Z"
+        })
+    }
+
+    #[test]
+    fn judgement_valid_passes() {
+        assert!(validate("judgement.v1", Some(&judgement_payload())).is_ok());
+    }
+
+    #[test]
+    fn judgement_rejects_unknown_outcome() {
+        let mut p = judgement_payload();
+        p["outcome"] = json!("shrugged");
+        assert!(validate("judgement.v1", Some(&p)).is_err());
+    }
+
+    #[test]
+    fn judgement_rejects_unknown_question_type() {
+        let mut p = judgement_payload();
+        p["question"]["type"] = json!("essay");
+        assert!(validate("judgement.v1", Some(&p)).is_err());
+    }
+
+    #[test]
+    fn judgement_requires_judge_model() {
+        let mut p = judgement_payload();
+        p["judge"] = json!({"provider": "typesafe"});
+        assert!(validate("judgement.v1", Some(&p)).is_err());
+    }
+
+    #[test]
+    fn judgement_rejects_probability_out_of_range() {
+        let mut p = judgement_payload();
+        p["answer"]["noul"] = json!(1.4);
+        assert!(validate("judgement.v1", Some(&p)).is_err());
     }
 }
