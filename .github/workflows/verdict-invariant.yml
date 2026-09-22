@@ -1,0 +1,30 @@
+name: verdict-invariant
+
+# The one rule every verdict-printing command must obey:
+#
+#   No green verdict is reachable without signature verification against a
+#   key the verifier trusts.
+#
+# Three advisories in four months (v0.10.4, v0.19, v0.31.2) shared one root
+# cause: a surface said "verified" without a signature check anchored to a
+# pinned key. This workflow runs the matrix that closes the class:
+# packages/cli/tests/verdict_invariant_cli.rs, eight commands against the
+# mutations that produced false greens, each on its own copy of a real
+# workspace. It has its own workflow so it has its own badge.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  invariant:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+      - name: No green verdict without a verified signature
+        run: cargo test -p treeship-cli --test verdict_invariant_cli -- --test-threads=1

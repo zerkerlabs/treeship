@@ -76,6 +76,34 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
     // signature naming a victim's AgentCert key alongside a second signature by
     // a locally-held key) AND that key pinned under AgentCert.
     let trust = TrustRootStore::open_default_or_empty()?;
+    // Verdict invariant: no green verdict without a signature verified
+    // against a key this machine trusts (a pinned root or one of its own
+    // keys). A card whose envelope carries no signature, or none that
+    // verifies, is not "self-asserted"; it is unsigned, and this command
+    // must fail rather than print a check mark for it. (Caught by the
+    // verdict-invariant suite: `verify-capability` on a card with its
+    // signatures stripped exited 0 and printed "✓ capability card".)
+    if record.envelope.signatures.is_empty() {
+        return Err(format!(
+            "{card_id} carries no signature at all; refusing to report a verdict for an unsigned card"
+        )
+        .into());
+    }
+    let local_verifier = crate::commands::verifier::from_local_and_trust(&ctx.keys, &trust)?
+        .ok_or(
+            "no verification keys are available: this machine has no local keys and no trust roots",
+        )?;
+    let signed = local_verifier.verify_any(&record.envelope).map_err(|e| {
+        format!("{card_id}: no valid signature from any key this machine trusts ({e})")
+    })?;
+    if signed.artifact_id != card_id {
+        return Err(format!(
+            "{card_id}: the signed bytes derive a different id ({}); the stored record does not match its signature",
+            signed.artifact_id
+        )
+        .into());
+    }
+
     let verifier = treeship_core::verify::resolution::verifier_from_trust(&trust);
     let card_verified_keys: Vec<String> = verifier
         .verify_any(&record.envelope)

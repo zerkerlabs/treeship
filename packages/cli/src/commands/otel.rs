@@ -1,7 +1,7 @@
 //! CLI commands for `treeship otel {test|status|export|enable|disable}`.
 //!
-//! When compiled without the `otel` feature, all commands print a message
-//! directing the user to rebuild with `--features otel`.
+//! The `otel` feature is in the default build. A binary built with
+//! `--no-default-features` prints a message saying so from every command.
 
 use crate::printer::Printer;
 
@@ -139,8 +139,11 @@ pub fn disable(printer: &Printer) {
 #[cfg(not(feature = "otel"))]
 pub fn not_available(printer: &Printer) {
     printer.blank();
-    printer.warn("otel export not available in this build", &[]);
+    printer.warn(
+        "otel export is not compiled into this binary (built with --no-default-features)",
+        &[],
+    );
     printer.blank();
-    printer.hint("rebuild with: cargo install treeship-cli --features otel");
+    printer.hint("the published binaries include it: npm install -g treeship, or cargo build -p treeship-cli with default features");
     printer.blank();
 }

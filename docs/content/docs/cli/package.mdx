@@ -113,6 +113,7 @@ treeship package verify .treeship/sessions/ssn_42e740bd9eb238f6.treeship
 | `receipt_binding` | The close record in `record.json` verifies under a key in `keys.json`, names this session, and its signed `receipt_digest` equals the SHA-256 of `receipt.json`. Rewriting the sealed set after close fails here even when every per-artifact row passes. `WARN` on a package built before 0.31.4 (`FAIL` under `--strict`) |
 | `session_window` | Every sealed artifact's signed timestamp falls inside the session's `started_at` to `ended_at` window, with two minutes of skew. `WARN` naming the artifacts outside it (`FAIL` under `--strict`) |
 | `network_scope` | Only when the session declared a network scope (`treeship declare --network`): `PASS` with the count of recorded connections when every destination matched a declared pattern, `WARN` naming the destinations outside it. No scope declared, no row: the connections stand in `side_effects.network_connections` unjudged. Not promoted by `--strict` |
+| `coverage` | `PASS` naming the sealed `coverage.v1` receipt with its declared level, the harnesses and connection modes, and the observed event count; `WARN` when the package carries none (sealed before 0.31.6). A declared level is the harness's potential, not proof of what happened outside it. Never promoted by `--strict` |
 | `leaf_count` | `merkle.leaf_count` matches the artifact count in the receipt |
 | `timeline_order` | Timeline entries are in deterministic `(timestamp, sequence_no, event_id)` order |
 
@@ -126,6 +127,7 @@ package verification
   PASS type -- Correct receipt type
   PASS determinism -- receipt.json round-trips identically (structural, NOT a signature)
   WARN receipt_body_binding -- timeline/side-effects/narrative are NOT signed in this package — only the artifacts and Merkle root are cryptographically bound. ...
+  PASS coverage -- art_9c1d2e3f4a5b6c7d: declared high (claude-code via native-hook+mcp+git-reconcile); 14 events observed across 4 types; 1 stated gap(s). ...
   PASS merkle_root -- Merkle root matches recomputed value
   PASS inclusion:art_7f536ce61435c17afd16c3af6484d4eb -- Inclusion proof valid
   ... (one line per artifact)
