@@ -8,6 +8,15 @@ use treeship_core::storage::Record;
 
 use super::config::OtelConfig;
 
+/// Upper bound on one export request. `wrap` and `session close` call the
+/// exporter after the receipt is sealed; a collector that is down or slow
+/// must cost seconds, not hang the close.
+const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+fn agent() -> ureq::Agent {
+    ureq::AgentBuilder::new().timeout(REQUEST_TIMEOUT).build()
+}
+
 /// Export a single artifact as an OTLP span over HTTP.
 /// Best-effort: errors are returned but should never fail the caller's operation.
 pub fn export_artifact(config: &OtelConfig, record: &Record) -> Result<(), String> {
@@ -18,7 +27,7 @@ pub fn export_artifact(config: &OtelConfig, record: &Record) -> Result<(), Strin
     let span_json = build_otlp_payload(config, record)?;
 
     let url = format!("{}/v1/traces", config.endpoint.trim_end_matches('/'));
-    let mut req = ureq::post(&url).set("Content-Type", "application/json");
+    let mut req = agent().post(&url).set("Content-Type", "application/json");
 
     if let Some(ref auth) = config.auth_header {
         req = req.set("Authorization", auth);
@@ -62,7 +71,7 @@ pub fn send_test_span(config: &OtelConfig) -> Result<(), String> {
     });
 
     let url = format!("{}/v1/traces", config.endpoint.trim_end_matches('/'));
-    let mut req = ureq::post(&url).set("Content-Type", "application/json");
+    let mut req = agent().post(&url).set("Content-Type", "application/json");
 
     if let Some(ref auth) = config.auth_header {
         req = req.set("Authorization", auth);
@@ -95,7 +104,7 @@ fn build_otlp_payload(config: &OtelConfig, record: &Record) -> Result<String, St
         .to_string();
 
     // Timestamps
-    let start_ns = rfc3339_to_unix_nano(&record.signed_at).unwrap_or_else(|| now_unix_nano());
+    let start_ns = rfc3339_to_unix_nano(&record.signed_at).unwrap_or_else(now_unix_nano);
 
     let elapsed_ns = statement
         .get("meta")

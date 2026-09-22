@@ -794,6 +794,7 @@ pub fn find_use_for_action(
     grant_id: &str,
     nonce_digest: &str,
     max_uses_hint: Option<u32>,
+    action_artifact_id: Option<&str>,
 ) -> Result<Option<(ApprovalUse, ReplayCheck)>, JournalError> {
     if !j.exists() {
         return Ok(None);
@@ -803,13 +804,18 @@ pub fn find_use_for_action(
         return Ok(None);
     }
     let raw = fs::read_to_string(&index_path)?;
-    // The action under verification corresponds to the most recent use
-    // record sharing the same (grant_id, nonce_digest) -- callers can
-    // also disambiguate by `approval_use_id` from action.meta, which
-    // PR 4 wires in. For PR 3, returning the most recent matching use
-    // is sufficient and matches what verify can derive without that
-    // metadata link.
+    // The use record for the action under verification is the one that
+    // names it: consume-time backfills `action_artifact_id` onto the
+    // record once the action is signed. Matching on (grant_id,
+    // nonce_digest) alone let a second directory's journal, holding its own
+    // `use 1/1` for the same grant, vouch for an action it never recorded
+    // (film findings 2026-09-22, #11). Records without an action id
+    // (written before the backfill existed, or whose backfill failed) fall
+    // back to the most recent match, as before.
+    let mut named_this: Option<ApprovalUse> = None;
     let mut latest: Option<ApprovalUse> = None;
+    let mut named_other = false;
+    let mut any_unnamed = false;
     for line in raw.lines() {
         let idx: u64 = match line.trim().parse() {
             Ok(n) => n,
@@ -817,11 +823,42 @@ pub fn find_use_for_action(
         };
         if let Some(rec) = load_use_record(j, idx)? {
             if rec.grant_id == grant_id {
+                match (action_artifact_id, rec.action_artifact_id.as_deref()) {
+                    (Some(want), Some(have)) if want == have => named_this = Some(rec.clone()),
+                    (Some(_), Some(_)) => named_other = true,
+                    _ => any_unnamed = true,
+                }
                 latest = Some(rec);
             }
         }
     }
-    let Some(rec) = latest else { return Ok(None) };
+    let rec = match (named_this, latest) {
+        (Some(rec), _) => rec,
+        (None, Some(rec)) if named_other && !any_unnamed => {
+            // Every record for this grant and nonce names a different
+            // action. This action's consumption is not in this journal, so
+            // the journal cannot say its use was within max_uses.
+            let m = max_uses_hint.or(rec.max_uses);
+            let details = format!(
+                "local Approval Use Journal has no use record for this action; use {}{} of this grant and nonce was recorded for {}",
+                rec.use_number,
+                m.map(|m| format!("/{m}")).unwrap_or_default(),
+                rec.action_artifact_id.as_deref().unwrap_or("another action")
+            );
+            return Ok(Some((
+                rec.clone(),
+                ReplayCheck {
+                    level: ReplayCheckLevel::LocalJournal,
+                    use_number: Some(rec.use_number),
+                    max_uses: m,
+                    passed: Some(false),
+                    details: Some(details),
+                },
+            )));
+        }
+        (None, Some(rec)) => rec,
+        (None, None) => return Ok(None),
+    };
 
     let stored_max = rec.max_uses;
     let max_uses = max_uses_hint.or(stored_max);

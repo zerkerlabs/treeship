@@ -158,6 +158,15 @@ pub enum ConfigError {
     Json(serde_json::Error),
     NotFound(PathBuf),
     NoHome,
+    /// A project stub whose `extends:` target no longer exists. Config
+    /// discovery walks up from the cwd, so one leftover stub under a shared
+    /// parent (a temp dir) made every command there fail, `init` saying the
+    /// directory was initialized and `session start` saying it was not,
+    /// each pointing at the other (film findings 2026-09-22, #10).
+    DanglingExtends {
+        stub: PathBuf,
+        target: PathBuf,
+    },
 }
 
 impl std::fmt::Display for ConfigError {
@@ -169,6 +178,14 @@ impl std::fmt::Display for ConfigError {
                 f,
                 "treeship not initialized at {} -- run 'treeship init'",
                 p.display()
+            ),
+            Self::DanglingExtends { stub, target } => write!(
+                f,
+                "{} extends {}, which does not exist. It is a leftover project stub: remove it (rm {}) or run `treeship init --force --config {}` to make that directory a workspace of its own",
+                stub.display(),
+                target.display(),
+                stub.display(),
+                stub.display()
             ),
             Self::NoHome => write!(f, "cannot determine home directory"),
         }
@@ -379,6 +396,12 @@ fn load_with_depth(
             )))
         })?;
         let parent_path = resolve_extends(path, extends_path);
+        if !parent_path.exists() {
+            return Err(ConfigError::DanglingExtends {
+                stub: path.to_path_buf(),
+                target: parent_path,
+            });
+        }
         let mut cfg = load_with_depth(&parent_path, depth + 1, visited)?;
         apply_overrides(&mut cfg, &raw);
 
@@ -767,6 +790,27 @@ mod tests {
         assert_eq!(cfg.ship_id, "ship_parent_xyz");
 
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn extends_to_a_missing_target_names_the_stub() {
+        let dir = tempfile::tempdir().unwrap();
+        let gone = dir
+            .path()
+            .join("gone")
+            .join(".treeship")
+            .join("config.json");
+        let stub = write_stub(dir.path(), &gone);
+        match load(&stub) {
+            Err(ConfigError::DanglingExtends { stub: s, target }) => {
+                assert_eq!(s, stub);
+                assert_eq!(target, gone);
+            }
+            other => panic!("expected DanglingExtends, got {other:?}"),
+        }
+        let msg = load(&stub).unwrap_err().to_string();
+        assert!(msg.contains("leftover project stub"), "{msg}");
+        assert!(msg.contains(&stub.display().to_string()), "{msg}");
     }
 
     #[test]

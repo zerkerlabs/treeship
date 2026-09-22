@@ -256,10 +256,12 @@ pub fn run(
                 ),
             ));
         }
-        Err(_) => {
+        Err(e) => {
+            // The error names the stub and its missing target when a
+            // leftover `extends:` is the cause; "no config found" hid that.
             checks.push(Check::fail(
                 "treeship not initialized",
-                "no config found",
+                &e.to_string(),
                 "treeship init",
             ));
         }

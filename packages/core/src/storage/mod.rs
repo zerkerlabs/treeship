@@ -87,6 +87,11 @@ pub enum StorageError {
     /// one containing `../` used to resolve to a path outside the store.
     InvalidId(String),
     NotFound(ArtifactId),
+    /// A prefix matched more than one stored artifact.
+    AmbiguousPrefix {
+        prefix: String,
+        candidates: Vec<ArtifactId>,
+    },
 }
 
 impl std::fmt::Display for StorageError {
@@ -95,6 +100,12 @@ impl std::fmt::Display for StorageError {
             Self::Io(e) => write!(f, "storage io: {}", e),
             Self::Json(e) => write!(f, "storage json: {}", e),
             Self::EmptyId => write!(f, "artifact_id must not be empty"),
+            Self::AmbiguousPrefix { prefix, candidates } => write!(
+                f,
+                "{prefix} is ambiguous: {} artifacts start with it ({}); give more of the id",
+                candidates.len(),
+                candidates.join(", ")
+            ),
             Self::InvalidId(e) => write!(f, "storage: {}", e),
             Self::NotFound(id) => write!(f, "artifact not found: {}", id),
         }
@@ -170,6 +181,38 @@ impl Store {
         }
         let bytes = fs::read(&path)?;
         Ok(serde_json::from_slice(&bytes)?)
+    }
+
+    /// Resolve a full id, or a unique prefix of one, to the stored id. The
+    /// CLI's own hints used to print a 16-character id that nothing accepted
+    /// (film findings 2026-09-22, #5). A prefix is `art_` plus at least eight
+    /// hex characters; anything shorter, malformed, or matching more than
+    /// one artifact is refused rather than guessed.
+    pub fn resolve_id(&self, id_or_prefix: &str) -> Result<ArtifactId, StorageError> {
+        if self.exists(id_or_prefix) {
+            return Ok(id_or_prefix.to_string());
+        }
+        let p = id_or_prefix.trim();
+        let hex = p.strip_prefix("art_").unwrap_or("");
+        if hex.len() < 8 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(StorageError::NotFound(id_or_prefix.to_string()));
+        }
+        let idx = self.index.read().unwrap();
+        let mut candidates: Vec<ArtifactId> = idx
+            .entries
+            .iter()
+            .filter(|e| e.id.starts_with(p))
+            .map(|e| e.id.clone())
+            .collect();
+        candidates.dedup();
+        match candidates.len() {
+            0 => Err(StorageError::NotFound(id_or_prefix.to_string())),
+            1 => Ok(candidates.remove(0)),
+            _ => Err(StorageError::AmbiguousPrefix {
+                prefix: p.to_string(),
+                candidates,
+            }),
+        }
     }
 
     /// Returns true if an artifact with this ID is stored locally.

@@ -1,0 +1,134 @@
+---
+title: Receipts in pull requests
+description: Commit the sealed session package next to the change it accounts for, bind the commit to it with a Treeship-Receipt trailer, and let a GitHub Action verify every package in the pull request against keys the repository pins.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Receipts in pull requests
+
+A coding agent's session receipt is most useful at the moment someone decides whether to merge what the agent did. This guide puts the sealed package in the pull request, ties it to the commit, and has CI verify it under keys the repository itself pins. Nothing in the loop contacts Zerker Labs.
+
+Three parts:
+
+1. **`session close --receipt-dir`** copies the sealed `.treeship` package out of the workspace into a directory you commit.
+2. **The `Treeship-Receipt` commit trailer** binds a commit to the package by the digest of `receipt.json`.
+3. **The `verify-receipts` GitHub Action** runs `treeship package verify --strict` on every package in the pull request against the repository's pinned trust roots, cross-checks the trailers, and fails on any package that is not `verified`.
+
+<Callout type="info">
+The check reports what it did. A pull request with no packages gets a summary that says zero packages were verified and a workflow warning, not a bare green. Set `require: true` once receipts are mandatory in a repository and the same situation fails the check.
+</Callout>
+
+## 1. Close with a receipt directory
+
+`.treeship/` is gitignored in most repositories, so the sealed package would never reach the pull request on its own. Ask close to copy it somewhere it can be committed:
+
+```bash
+treeship session close --summary "fix token refresh" --receipt-dir receipts
+```
+
+```
+✓ session closed
+  id:       ssn_42e740bd9eb238f6
+  duration: 6m
+  receipts: 2
+  events:   2
+  copied:   receipts/ssn_42e740bd9eb238f6.treeship
+  trailer:  Treeship-Receipt: ssn_42e740bd9eb238f6 sha256:942e6b2b…9aba6
+```
+
+The copy is the full sealed set: `receipt.json`, `merkle.json`, `record.json`, `keys.json`, the inclusion proofs and the per-artifact envelopes. The digest is unchanged by the copy. `--format json` returns the same values as `receipt_copy`, `receipt_digest` and `commit_trailer`.
+
+## 2. Put the trailer on the commit
+
+Paste the `trailer:` line as the last line of the commit message for the change the session produced:
+
+```
+fix token refresh
+
+Treeship-Receipt: ssn_42e740bd9eb238f6 sha256:942e6b2bfcbe860223fbae57ee7d9b73400a278ccfb0f1d5ca865aec9ce9aba6
+```
+
+Keep it in the commit's final block of trailers (next to `Signed-off-by` or `Co-Authored-By` lines, with no blank line between them), so `git interpret-trailers` and `git log --format=%(trailers:key=Treeship-Receipt)` read it. The check itself reads the line anywhere in the message. The digest is `sha256(receipt.json)`, which is what `package verify` recomputes and what the close record signs, so a rewritten package and a stale trailer disagree in a way the check can see.
+
+A commit can carry a trailer without the package being in the same pull request, and a package can be committed without a trailer. The check reports the pairing per package as `matches`, `MISMATCH` or `none`; only `MISMATCH` fails.
+
+## 3. Pin the producing key
+
+The action verifies against a trust roots file committed in the repository. Export the public key of the ship that closes sessions:
+
+```bash
+treeship keys export --format json
+```
+
+and commit it as `receipts/trust_roots.json`:
+
+```json
+{
+  "version": 1,
+  "roots": [
+    {
+      "key_id": "key_55f4eee6d27c642a",
+      "public_key": "ed25519:1u86H7eMro4pBMgt3xWc--vClkgYiaFTsDjej5AOlXk",
+      "kind": "session_host",
+      "label": "the machine that closes sessions for this repository",
+      "added_at": "2026-09-18T00:00:00Z"
+    }
+  ]
+}
+```
+
+One root per machine that produces receipts for the repository. A package signed by a key that is not in this file fails `signer_trust` under `--strict`, which is the point: the repository, not the runner and not a hub, decides whose receipts count.
+
+## 4. Add the workflow
+
+```yaml
+name: receipts
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  receipts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: zerkerlabs/treeship/.github/actions/verify-receipts@main
+        with:
+          packages: "receipts/**/*.treeship"
+          trust-roots: "receipts/trust_roots.json"
+          treeship-version: "0.31.5"
+```
+
+`fetch-depth: 0` is needed so the action can read the trailers on every commit between the base and the head. Pin the action to a tag or a commit once you depend on it.
+
+### Inputs
+
+| Input | Default | Meaning |
+|---|---|---|
+| **packages** | `receipts/**/*.treeship` | Glob for sealed packages in the checkout |
+| **trust-roots** | `receipts/trust_roots.json` | The pinned roots the verifier uses |
+| **treeship-version** | `0.31.5` | The npm version of `treeship` to install |
+| **require** | `false` | Fail when the pull request carries no packages |
+| **base-ref** | pull request base | Where trailer reading starts |
+
+### What the check does
+
+For each package: `treeship package verify <pkg> --strict --format json` in a fresh `HOME` with only the pinned roots, then `sha256sum receipt.json` compared against the trailer for that session id. The step summary is one row per package with the verdict, whether the signer is pinned, the passed and failed check counts, and the trailer pairing. The job fails on any verdict other than `verified`, on any trailer mismatch, and, with `require: true`, on zero packages.
+
+## What this proves, and what it does not
+
+A green check means: every package in the pull request was sealed by a key this repository pins, its Merkle root and every inclusion proof recompute, the close record signs the same `receipt.json` the pull request carries, and any trailer that names a package names the right bytes.
+
+It does not mean the work was good, that the agent did what the receipt describes and nothing else, or that the diff in the pull request is the diff the session produced. The receipt records what the hooks saw; [coverage levels](/docs/guides/coverage-levels) say how much that was. Binding the receipt to the diff itself is a separate step and not part of this check.
+
+## Dogfood
+
+The Treeship repository runs this workflow on itself. `receipts/trust_roots.json` pins the ship key of the machine that closes sessions for the repository, and `receipts/` carries the sealed package from the session that built the action. The run's step summary is the check's own receipt: one row, `verified`, signer pinned.
+
+The first package committed here failed. It verified on the machine that produced it and failed `receipt_binding` everywhere else, because the close record was signed by the agent's own key and `keys.json` had been written before that key was used. A verifier that is not the producer is the only kind that finds this. The fix shipped in the same change, and the second package is the one in the repository.

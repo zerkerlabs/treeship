@@ -539,6 +539,20 @@ enum Command {
     #[command(subcommand)]
     Grant(GrantCommand),
 
+    /// The kill switch: stop an actor (or every actor) with a signed
+    /// halt.v1 receipt that the harness gate and the strict MCP bridge
+    /// obey, refusing every tool call as a signed blocked.v1. --lift ends
+    /// it with a second signed receipt. Reaches what the hooks route;
+    /// not a process started outside them.
+    ///
+    /// Examples:
+    ///   treeship halt agent://claude-code --reason "off-task network calls"
+    ///   treeship halt '*'
+    ///   treeship halt --lift agent://claude-code
+    ///   treeship halt list
+    #[command(display_order = 9)]
+    Halt(HaltArgs),
+
     /// Background daemon for automatic file watching
     ///
     /// The daemon watches your project for file changes and automatically
@@ -1351,6 +1365,12 @@ struct SessionCloseArgs {
     /// What should be reviewed before trusting the output
     #[arg(long, value_name = "TEXT")]
     review: Option<String>,
+
+    /// Copy the sealed .treeship package into DIR (created if missing), so it
+    /// can be committed next to the change it accounts for and checked by
+    /// the verify-receipts GitHub Action
+    #[arg(long, value_name = "DIR")]
+    receipt_dir: Option<std::path::PathBuf>,
 }
 
 // --- package ---------------------------------------------------------------
@@ -1609,6 +1629,13 @@ struct AgentRegisterArgs {
     #[arg(long, value_name = "ACTIONS", value_delimiter = ',')]
     escalation: Vec<String>,
 
+    /// Comma-separated network destinations the agent may reach: exact hosts
+    /// (api.example.com) or suffix patterns (*.example.com). Signed into the
+    /// certificate and written on the card; the Claude Code gate refuses a
+    /// WebFetch to any other host with a signed blocked.v1 receipt
+    #[arg(long, value_name = "HOSTS", value_delimiter = ',')]
+    network: Vec<String>,
+
     /// Mint a dedicated per-agent signing key and pin it under AgentCert,
     /// instead of certifying the shared ship key. Makes the agent's actor
     /// provable once it signs with that key (see verify-capability).
@@ -1638,6 +1665,13 @@ struct DeclareArgs {
     /// Comma-separated list of tools requiring escalation/approval
     #[arg(long, value_name = "TOOLS", value_delimiter = ',')]
     escalation: Vec<String>,
+
+    /// Comma-separated network destinations the agent may reach: exact hosts
+    /// (api.example.com) or suffix patterns (*.example.com). Connections to
+    /// any other host are listed in the sealed receipt's
+    /// tool_usage.network_off_scope and reported by `package verify`
+    #[arg(long, value_name = "HOSTS", value_delimiter = ',')]
+    network: Vec<String>,
 
     /// ISO-8601 timestamp when this declaration expires
     #[arg(long, value_name = "TIMESTAMP")]
@@ -2047,6 +2081,23 @@ struct AttestReceiptArgs {
     /// Digest of the external payload, for example sha256:<hex>
     #[arg(long, value_name = "DIGEST")]
     payload_digest: Option<String>,
+
+    /// Parent artifact ID for chain linking. Inside an active session whose
+    /// actor is this --system, the default is the session's chain head;
+    /// otherwise the default is --subject when it is an artifact id
+    #[arg(long = "parent", value_name = "ID")]
+    parent_id: Option<String>,
+
+    /// Do not chain onto the session's head; the receipt is sealed at close
+    /// as unchained
+    #[arg(long, default_value_t = false, conflicts_with = "chain")]
+    no_parent: bool,
+
+    /// Chain onto the active session's head even when --system is not the
+    /// session's actor. For a trusted component that records inside the
+    /// agent's session, such as the gate's blocked.v1 refusals
+    #[arg(long, default_value_t = false)]
+    chain: bool,
 }
 
 #[derive(Args)]
@@ -2099,6 +2150,11 @@ struct AttestCardArgs {
     /// ...) are excluded -- they are transport, not domain capabilities.
     #[arg(long = "from-a2a", value_name = "PATH")]
     from_a2a: Option<String>,
+
+    /// Comma-separated network destinations the agent may reach: exact hosts
+    /// or *.suffix patterns. Recorded on the card as capabilities.network
+    #[arg(long, value_name = "HOSTS", value_delimiter = ',')]
+    network: Vec<String>,
 }
 
 #[derive(Args)]
@@ -2326,6 +2382,20 @@ struct VerifyArgs {
 struct VerifyCapabilityArgs {
     /// Artifact id of the agent_card.v1 receipt to check.
     card_id: String,
+}
+
+#[derive(Args)]
+struct HaltArgs {
+    /// Actor URI (agent://…), `*` for every actor, or `list`.
+    actor: String,
+
+    /// Lift the halt on this actor instead of imposing one.
+    #[arg(long)]
+    lift: bool,
+
+    /// Why, in your words. Goes into the signed receipt.
+    #[arg(long, value_name = "REASON")]
+    reason: Option<String>,
 }
 
 #[derive(Args)]
@@ -3137,6 +3207,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 a.summary.clone(),
                 a.headline.clone(),
                 a.review.clone(),
+                a.receipt_dir.clone(),
                 cli.config.as_deref(),
                 printer,
             ),
@@ -3280,6 +3351,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                     a.tools.clone(),
                     a.forbidden.clone(),
                     a.escalation.clone(),
+                    a.network.clone(),
                     a.valid_until.clone(),
                     printer,
                 )
@@ -3295,6 +3367,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 a.description.clone(),
                 a.forbidden.clone(),
                 a.escalation.clone(),
+                a.network.clone(),
                 a.own_key,
                 a.quiet,
                 cli.config.as_deref(),
@@ -3628,6 +3701,9 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                     payload: a.payload.clone(),
                     payload_file: a.payload_file.clone(),
                     payload_digest: a.payload_digest.clone(),
+                    parent_id: a.parent_id.clone(),
+                    no_parent: a.no_parent,
+                    chain: a.chain,
                     config: cli.config.clone(),
                 },
                 printer,
@@ -3644,6 +3720,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                     from_harness: a.from_harness.clone(),
                     tools_json: a.tools_json.clone(),
                     from_a2a: a.from_a2a.clone(),
+                    network: a.network.clone(),
                     config: cli.config.clone(),
                 },
                 printer,
@@ -3717,6 +3794,26 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 commands::receipt::export(&a.id, cli.config.as_deref(), printer)
             }
         },
+
+        Command::Halt(a) => {
+            if a.actor == "list" && !a.lift {
+                commands::halt::list(cli.config.as_deref(), printer)
+            } else if a.lift {
+                commands::halt::lift(
+                    &a.actor,
+                    a.reason.as_deref(),
+                    cli.config.as_deref(),
+                    printer,
+                )
+            } else {
+                commands::halt::halt(
+                    &a.actor,
+                    a.reason.as_deref(),
+                    cli.config.as_deref(),
+                    printer,
+                )
+            }
+        }
 
         Command::RevokeCapability(a) => commands::capability::revoke_capability(
             &a.card_id,

@@ -55,6 +55,20 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
         })
         .unwrap_or_default();
 
+    // Network scope is declared on the card and judged where the evidence
+    // is: the sealed session receipt (`tool_usage.network_off_scope`) and
+    // `package verify`'s `network_scope` row. Reported here as declared.
+    let network: Vec<String> = card
+        .get("capabilities")
+        .and_then(|c| c.get("network"))
+        .and_then(|t| t.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|t| t.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+
     // --- Binding strength: key-bound vs self-asserted ----------------------
     // Key-bound requires the card's OWN key to have produced a VALID signature
     // (re-verified here against pinned trust roots, never read from the
@@ -62,6 +76,34 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
     // signature naming a victim's AgentCert key alongside a second signature by
     // a locally-held key) AND that key pinned under AgentCert.
     let trust = TrustRootStore::open_default_or_empty()?;
+    // Verdict invariant: no green verdict without a signature verified
+    // against a key this machine trusts (a pinned root or one of its own
+    // keys). A card whose envelope carries no signature, or none that
+    // verifies, is not "self-asserted"; it is unsigned, and this command
+    // must fail rather than print a check mark for it. (Caught by the
+    // verdict-invariant suite: `verify-capability` on a card with its
+    // signatures stripped exited 0 and printed "✓ capability card".)
+    if record.envelope.signatures.is_empty() {
+        return Err(format!(
+            "{card_id} carries no signature at all; refusing to report a verdict for an unsigned card"
+        )
+        .into());
+    }
+    let local_verifier = crate::commands::verifier::from_local_and_trust(&ctx.keys, &trust)?
+        .ok_or(
+            "no verification keys are available: this machine has no local keys and no trust roots",
+        )?;
+    let signed = local_verifier.verify_any(&record.envelope).map_err(|e| {
+        format!("{card_id}: no valid signature from any key this machine trusts ({e})")
+    })?;
+    if signed.artifact_id != card_id {
+        return Err(format!(
+            "{card_id}: the signed bytes derive a different id ({}); the stored record does not match its signature",
+            signed.artifact_id
+        )
+        .into());
+    }
+
     let verifier = treeship_core::verify::resolution::verifier_from_trust(&trust);
     let card_verified_keys: Vec<String> = verifier
         .verify_any(&record.envelope)
@@ -215,6 +257,14 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
     };
     let in_scope_str = in_scope.to_string();
     let oos_str = violations.len().to_string();
+    let network_str = if network.is_empty() {
+        "(none declared)".to_string()
+    } else {
+        format!(
+            "{} (judged per session: tool_usage.network_off_scope)",
+            network.join(", ")
+        )
+    };
 
     // A hostile verdict must be machine-visible: nonzero exit and, in JSON
     // mode, one structured object carrying the full verdict (printer.info /
@@ -230,6 +280,7 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
             "agent": card_agent,
             "key_bound": key_bound,
             "declared_tools": tools,
+            "declared_network": network,
             "provenance": provenance_str,
             "in_scope": in_scope,
             "out_of_scope": violations.len(),
@@ -253,6 +304,7 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
             ("agent", card_agent),
             ("key-bound", key_bound_str),
             ("declared tools", &tools_str),
+            ("declared network", &network_str),
             ("provenance", &provenance_str),
             ("in-scope actions", &in_scope_str),
             ("out-of-scope", &oos_str),

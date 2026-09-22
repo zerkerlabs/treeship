@@ -89,8 +89,8 @@ This runs offline with zero network calls. A healthy package looks like this:
 ```
   PASS receipt.json -- Parses as valid Session Receipt
   PASS determinism -- receipt.json round-trips identically
-  WARN receipt_body_binding -- timeline/side-effects/narrative are NOT signed in
-       this package -- only the artifacts and Merkle root are cryptographically bound
+  PASS receipt_body_binding -- timeline/side-effects/narrative are bound: the close
+       record (record.json) signs the digest of the whole receipt.json
   PASS merkle_root -- Merkle root matches recomputed value
   PASS inclusion:art_... -- Inclusion proof valid
   PASS leaf_count -- Leaf count matches artifact count
@@ -102,12 +102,7 @@ This runs offline with zero network calls. A healthy package looks like this:
 ```
 
 <Callout type="info">
-The `receipt_body_binding` warning is expected on a local package, not a
-failure. A `.treeship` package cryptographically binds the artifacts and the
-Merkle root; the human-readable timeline, side effects, and narrative around
-them are not themselves signed. For an authenticated record of the whole
-session, verify the actor-signed `session.v1` record or the published report.
-What matters is **0 failed**.
+`receipt_body_binding` passes because `session close` signs the digest of the whole `receipt.json` into the close record (`record.json`): editing the timeline, the side effects or the narrative fails `receipt_binding`. They are still the producer's own account of the session, composed from its event log and signed by its key; the artifacts are the evidence a stranger checks signature by signature. A package built before 0.31.4 carries no close record and gets a `WARN` here instead.
 </Callout>
 </Step>
 <Step>

@@ -288,8 +288,10 @@ jobs:
       - name: CLI option tables match --help
         run: cd docs && python3 scripts/check-cli-option-tables.py ../target/debug/treeship content
 
-      - name: Build CLI with OTel
-        run: cargo build -p treeship-cli --features otel
+      # OTel is in the default build; keep the opt-out path compiling so a
+      # `--no-default-features` build never rots.
+      - name: Build CLI without OTel (--no-default-features)
+        run: cargo build -p treeship-cli --no-default-features
 
       # Smoke acceptance: end-to-end session round-trip exercises the full
       # capture-normalize-verify chain. Catches release-breaking regressions
@@ -305,6 +307,19 @@ jobs:
       # on push. Self-contained: mock binary, no cargo build needed.
       - name: Plugin hook parity suite
         run: sh integrations/tests/parity.sh
+
+      # The gate with the real CLI and the real hook scripts: card rules
+      # survive the bridge's re-register, the session starts as the agent,
+      # a forbidden Bash is denied with a chained blocked.v1, and the
+      # package verifies under --strict. The parity suite alone passed while
+      # none of that held in a real install (film findings 2026-09-22).
+      - name: Claude Code gate end to end
+        run: bash integrations/tests/gate-e2e.sh "$PWD/target/debug/treeship"
+
+      # The evaluator kit: three parties on one runner, each with its own
+      # keystore. Exits nonzero if any promise the guide makes stops holding.
+      - name: Evaluator kit worked example
+        run: examples/evaluator-kit/run.sh "$PWD/target/debug/treeship"
 
   clippy:
     name: Clippy (-D warnings)
