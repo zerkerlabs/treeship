@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/treeship/hub/internal/db"
-	"github.com/treeship/hub/internal/dpop"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/db"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/dpop"
 )
 
 // workspaceSessionTTL is how long a minted share token stays valid.

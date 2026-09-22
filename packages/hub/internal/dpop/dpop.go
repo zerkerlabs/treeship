@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/treeship/hub/internal/db"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/db"
 )
 
 const maxClockSkew = 60 // seconds

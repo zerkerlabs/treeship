@@ -96,7 +96,7 @@ All three are automatic. The signed artifacts are Merkle-proven. The session eve
 | Duration | `Date.now()` delta | `AUTO` |
 | Exit code | `isError` flag | `AUTO` |
 | Error message | `error.message` | `AUTO` -- only on failure |
-| Actor URI | `TREESHIP_ACTOR` env or default | `AUTO` |
+| Actor URI | `TREESHIP_ACTOR` env or default; start the session as the same actor so the bridge's receipts chain onto it | `AUTO` |
 | Model | Not captured by MCP bridge | `NOT YET CAPTURED` -- set `TREESHIP_MODEL` env var with `treeship wrap` |
 | Token counts | Not captured by MCP bridge | `NOT YET CAPTURED` -- set `TREESHIP_TOKENS_IN`/`OUT` env vars |
 | Provider | Not captured by MCP bridge | `NOT YET CAPTURED` -- set `TREESHIP_PROVIDER` env var |
@@ -115,7 +115,7 @@ All three are automatic. The signed artifacts are Merkle-proven. The session eve
 | Variable | Effect |
 |----------|--------|
 | `TREESHIP_DISABLE=1` | Full passthrough, zero attestation |
-| `TREESHIP_ACTOR` | Override default actor URI |
+| `TREESHIP_ACTOR` | Override default actor URI. Start the session with the same `--actor`: a receipt by the session's actor chains onto the session, one by another actor is sealed loose and `package verify` warns under `chain_completeness` |
 | `TREESHIP_APPROVAL_NONCE` | Bind all calls to an approval |
 | `TREESHIP_DEBUG=1` | Log attestation failures to stderr |
 | `TREESHIP_MODEL` | Model name for cost tracking (via `treeship wrap`) |

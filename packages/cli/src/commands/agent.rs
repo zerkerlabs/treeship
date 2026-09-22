@@ -167,12 +167,42 @@ pub fn register(
     description: Option<String>,
     forbidden: Vec<String>,
     escalation: Vec<String>,
+    network: Vec<String>,
     own_key: bool,
     quiet: bool,
     config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
+
+    // Registering again with no rule flags keeps the rules the card has.
+    // The MCP bridge runs `agent register --own-key --quiet` on every start
+    // to provision a key; it used to rewrite the card with empty
+    // capabilities, so the Claude Code gate had no policy the moment a
+    // session began (film findings 2026-09-22, gate report cause 1).
+    let (tools, forbidden, escalation) =
+        if tools.is_empty() && forbidden.is_empty() && escalation.is_empty() {
+            let agents_dir = cards::agents_dir_for(&ctx.config_path);
+            let workspace = ctx
+                .config_path
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .to_path_buf();
+            let host = cards::local_hostname();
+            let (surface, _, _) = surface_from_name(name);
+            let agent_id = cards::derive_agent_id(name, surface, &host, &workspace);
+            match cards::load(&agents_dir, &agent_id) {
+                Ok(existing) => (
+                    existing.capabilities.bounded_tools,
+                    existing.capabilities.forbidden,
+                    existing.capabilities.escalation_required,
+                ),
+                Err(_) => (tools, forbidden, escalation),
+            }
+        } else {
+            (tools, forbidden, escalation)
+        };
+
     // The ship's default key is the issuer: it signs the certificate.
     let signer = ctx.keys.default_signer()?;
 
@@ -241,6 +271,7 @@ pub fn register(
         bounded_actions: tools.clone(),
         forbidden,
         escalation_required: escalation,
+        network,
     };
 
     // Sign: canonical JSON of identity + capabilities + declaration
@@ -407,6 +438,7 @@ pub fn register(
             bounded_tools: tools.clone(),
             escalation_required: declaration.escalation_required.clone(),
             forbidden: declaration.forbidden.clone(),
+            network: declaration.network.clone(),
         },
         provenance: CardProvenance::Registered,
         status: CardStatus::NeedsReview,

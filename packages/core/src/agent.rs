@@ -55,6 +55,12 @@ pub struct AgentDeclaration {
     pub forbidden: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub escalation_required: Vec<String>,
+    /// Network destinations the agent may reach: exact hosts or `*.suffix`
+    /// patterns. Empty means no network scope is declared, not "no network".
+    /// Omitted from the canonical bytes when empty, so every certificate
+    /// signed before this field existed keeps its exact signature.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub network: Vec<String>,
 }
 
 /// The complete Agent Certificate -- identity + capabilities + declaration
@@ -261,6 +267,7 @@ mod tests {
                 bounded_actions: vec!["Bash".into()],
                 forbidden: vec![],
                 escalation_required: vec![],
+                network: Vec::new(),
             },
             signature: CertificateSignature {
                 algorithm: "ed25519".into(),
@@ -339,6 +346,7 @@ mod tests {
             bounded_actions: vec!["Bash".into()],
             forbidden: vec![],
             escalation_required: vec![],
+            network: Vec::new(),
         };
         let payload = serde_json::json!({
             "identity": identity, "capabilities": capabilities, "declaration": declaration,
@@ -393,6 +401,7 @@ mod tests {
             bounded_actions: vec!["Bash".into()],
             forbidden: vec![],
             escalation_required: vec![],
+            network: Vec::new(),
         };
         let payload = serde_json::json!({
             "identity": identity, "capabilities": capabilities, "declaration": declaration,
@@ -482,6 +491,7 @@ mod tests {
             bounded_actions: vec!["Bash".into()],
             forbidden: vec![],
             escalation_required: vec![],
+            network: Vec::new(),
         };
         let payload = serde_json::json!({
             "identity": identity, "capabilities": capabilities, "declaration": declaration,
@@ -545,6 +555,7 @@ mod tests {
             bounded_actions: vec!["Bash".into()],
             forbidden: vec![],
             escalation_required: vec![],
+            network: Vec::new(),
         };
         let payload = serde_json::json!({
             "identity": identity, "capabilities": capabilities, "declaration": declaration,

@@ -42,7 +42,7 @@ From the shopping demo's package, verbatim, with the twelve per-artifact inclusi
   PASS receipt.json -- Parses as valid Session Receipt
   PASS type -- Correct receipt type
   PASS determinism -- receipt.json round-trips identically (structural, NOT a signature)
-  WARN receipt_body_binding -- timeline/side-effects/narrative are NOT signed in this package — only the artifacts and Merkle root are cryptographically bound. ...
+  PASS receipt_body_binding -- timeline/side-effects/narrative are bound: the close record (record.json) signs the digest of the whole receipt.json ...
   PASS merkle_root -- Merkle root matches recomputed value
   PASS inclusion:art_a58a450ef62841c91d85fe27cca7d987 -- Inclusion proof valid
   ... (one line per artifact)
@@ -60,7 +60,7 @@ What each line establishes:
 |---|---|---|
 | `receipt.json`, `type` | The file is a well-formed session receipt of the expected type. | Anything about its truth. |
 | `determinism` | The receipt re-serializes to the same bytes, so a digest of it is meaningful. | It is explicitly not a signature check. |
-| `receipt_body_binding` (always `WARN` on an unpublished package) | Nothing. It is a reminder: the headline, the narrative, the timeline summaries and the side-effect lists are the producer's prose and are **not** under any signature. | Do not quote the narrative as evidence. Quote artifacts. |
+| `receipt_body_binding` | The headline, narrative, timeline summaries and side-effect lists are under the producer's signature: the close record signs the digest of the whole `receipt.json`, so an edit fails `receipt_binding`. | That any of it is true. It is the producer's own account, signed by the producer. Quote artifacts as evidence, not the narrative. `WARN` on a package with no close record (before 0.31.4). |
 | `merkle_root` | The root written in the receipt is the root of the tree over exactly the artifact ids listed. Ids are content-addressed, so an id names one exact set of signed bytes. | That those bytes are ones you have seen. The `digest` column beside each id is informational and is not itself recomputed by this step; the id is what the tree binds. |
 | `inclusion:<id>` | That artifact's digest was a leaf of the tree when the session was sealed. Nothing was added or removed since. | What the artifact says. |
 | `leaf_count`, `timeline_order` | The count and the ordering are internally consistent. | Wall-clock time. The timestamps are the signer's own clock. |
@@ -181,7 +181,7 @@ This is the section to keep open during a dispute.
 3. **Not who.** `actor proof: asserted`, as above. A key, not a name, until a certificate or hub attachment binds it.
 4. **Not when.** `anchoring: UNWITNESSED`, as above. A signed timestamp is a signed claim.
 5. **Not completeness.** A chain proves what was recorded, never everything that happened. A tool call that was never receipted leaves no trace, except that the shipped wrapper counts drops and the demos print a warning when any receipt was not written. Ask the producer for that count. Ask whether recording was on for the whole session. Gaps in parent links show up as a failed walk; calls that were never attempted to be recorded do not.
-6. **Not the story.** Everything under `receipt_body_binding`: headline, narrative, timeline summaries. Prose, unsigned.
+6. **Not the story.** Everything under `receipt_body_binding`: headline, narrative, timeline summaries. The producer signed them, so they cannot be edited unnoticed, but they are the producer's prose, not evidence.
 7. **Not that the approval gate held.** In the merchant demo the replay attempt shows `error` in the default run and `blocked:approval` under `--enforce`. In both, the Approval Use Journal refused a second use of the grant before anything was signed, and `replay-local-journal … use 1/1` says so. What differs is whether the wrapper also stopped the tool. Read the journal line, not the status word.
 
 ## A checklist for the file

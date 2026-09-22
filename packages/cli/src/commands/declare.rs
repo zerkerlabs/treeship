@@ -1,7 +1,8 @@
 //! Declaration management: create and inspect `.treeship/declaration.json`.
 //!
 //! A declaration defines the authorized scope for agent work in this project:
-//! which tools are allowed, which are forbidden, and which require escalation.
+//! which tools are allowed, which are forbidden, which require escalation,
+//! and which network destinations may be reached.
 
 use std::path::PathBuf;
 
@@ -29,6 +30,7 @@ pub fn create(
     bounded_actions: Vec<String>,
     forbidden: Vec<String>,
     escalation_required: Vec<String>,
+    network: Vec<String>,
     valid_until: Option<String>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -47,6 +49,7 @@ pub fn create(
         "bounded_actions": bounded_actions,
         "forbidden": forbidden,
         "escalation_required": escalation_required,
+        "network": network,
         "valid_until": valid_until,
         "created_at": created_at,
     });
@@ -63,6 +66,9 @@ pub fn create(
         "  escalation: {} tools",
         escalation_required.len()
     ));
+    if !network.is_empty() {
+        printer.info(&format!("  network:    {}", network.join(", ")));
+    }
     if let Some(ref v) = valid_until {
         printer.info(&format!("  valid until: {}", v));
     }
@@ -115,6 +121,14 @@ pub fn show(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
             ));
         }
     }
+    if let Some(net) = decl.get("network").and_then(|v| v.as_array()) {
+        if !net.is_empty() {
+            printer.info(&format!(
+                "  network:    {:?}",
+                net.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>()
+            ));
+        }
+    }
     if let Some(v) = decl.get("valid_until").and_then(|v| v.as_str()) {
         printer.info(&format!("  valid until: {}", v));
     }
@@ -149,6 +163,28 @@ pub fn read_authorized_tools() -> Vec<String> {
         .map(|arr| {
             arr.iter()
                 .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Read the declared network scope (exact hosts or `*.suffix` patterns)
+/// from the declaration if it exists. Empty when nothing was declared.
+pub fn read_network_scope() -> Vec<String> {
+    let Some(path) = declaration_path() else {
+        return Vec::new();
+    };
+    let Ok(data) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    let Ok(decl) = serde_json::from_str::<serde_json::Value>(&data) else {
+        return Vec::new();
+    };
+    decl.get("network")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
                 .collect()
         })
         .unwrap_or_default()

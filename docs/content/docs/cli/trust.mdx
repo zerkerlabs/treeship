@@ -35,8 +35,8 @@ The deprecated `ship` kind is rejected with guidance — it used to grant three 
 
 Legacy `ship` entries in an existing file still parse but are inert until re-pinned.
 
-<Callout type="warn">
-**v0.20.0 flag gap:** the released binary's `trust add --kind` flag only accepts `hub_checkpoint`, `agent_cert`, `session_host` (and the rejected `ship`) — it does not yet accept `cert_issuer`, `hub_org`, or `revoker`, even though the verifiers honor those kinds and `keys export` prints them. The fix has landed and ships in the next release; until then, pin those kinds by adding the entry to `~/.treeship/trust_roots.json` directly (same JSON shape `trust list` shows).
+<Callout type="info" title="Scope">
+Trust roots are machine-wide: `~/.treeship/trust_roots.json` (or `TREESHIP_TRUST_ROOTS`) is consulted by every workspace on the machine, project-local ones included. Pinning a key inside one project trusts it in every other project you verify from here. The Approval Use Journal, by contrast, follows the keystore: one journal per ship. A project workspace with its own keys under its own `.treeship/` has its own journal; a project stub that extends the global config shares the global one.
 </Callout>
 
 ## Adding a pin

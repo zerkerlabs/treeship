@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://treeship.dev/schemas/coverage.v1.json",
+  "title": "coverage.v1",
+  "description": "What the harness could observe during a session, and what it actually recorded. Minted by `treeship session close` and sealed in the session's chain, so 'we monitored this' carries a denominator: the declared capture level and connection modes of every harness attached to the workspace, the known gaps frozen at install time, and the count of events by type that reached the log. It is the producer's own statement about its instrumentation; it is not proof that nothing happened outside it.",
+  "type": "object",
+  "required": ["schema", "session_id", "actor", "declared_level", "harnesses", "observed", "closed_at"],
+  "properties": {
+    "schema": {
+      "description": "Self-description, so a receipt cannot be read as a different predicate.",
+      "const": "coverage.v1"
+    },
+    "session_id": {
+      "description": "The session this coverage statement is about.",
+      "type": "string"
+    },
+    "actor": {
+      "description": "Actor URI of the session's agent.",
+      "type": "string"
+    },
+    "declared_level": {
+      "description": "The highest potential capture level among the harnesses attached to the workspace (from their manifests), or none when no harness state exists. A potential: what the attached harness could capture if working as designed, never a claim about what it did capture. Read it with `observed`.",
+      "type": "string",
+      "enum": ["high", "medium", "basic", "backstop-only", "none"]
+    },
+    "harnesses": {
+      "description": "Every harness state in the workspace at close, as declared: id, status, potential coverage, connection modes, and the known gaps frozen at install time.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["harness_id", "status", "coverage", "connection_modes"],
+        "properties": {
+          "harness_id": { "type": "string" },
+          "status": {
+            "type": "string",
+            "enum": ["detected", "available", "instrumented", "verified", "drifted", "degraded", "disabled"]
+          },
+          "coverage": {
+            "type": "string",
+            "enum": ["high", "medium", "basic", "backstop-only"]
+          },
+          "connection_modes": {
+            "description": "How the harness reaches Treeship: native-hook, mcp, skill, shell-wrap, git-reconcile.",
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "known_gaps": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "last_verified_at": { "type": "string" }
+        }
+      }
+    },
+    "observed": {
+      "description": "What actually reached the event log, counted from the sealed events. The denominator for any claim about this session.",
+      "type": "object",
+      "required": ["events", "event_types"],
+      "properties": {
+        "events": {
+          "description": "Total events sealed with the session, session boundaries included.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "event_types": {
+          "description": "Count per event type, e.g. {\"agent.called_tool\": 12, \"agent.wrote_file\": 3}.",
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        },
+        "hosts": {
+          "description": "Host ids that emitted events.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "agent_instances": {
+          "description": "Distinct agent instances that emitted events.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "first_event_at": { "type": "string" },
+        "last_event_at": { "type": "string" },
+        "event_log_skipped": {
+          "description": "Malformed event-log lines the reader skipped. Non-zero means the log is known to be incomplete.",
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "gaps": {
+      "description": "Plain statements of what this record does not cover: the harnesses' known gaps plus what the observed counts show was never captured.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "closed_at": {
+      "description": "RFC3339 timestamp of the close that minted this receipt.",
+      "type": "string"
+    }
+  }
+}

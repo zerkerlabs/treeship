@@ -21,8 +21,8 @@ treeship attest approval \
 
 # Returns:
 # ✓ approval attested
-#   id:    art_approval_abc123
-#   nonce: nce_7f8e9d0a1b2c3d4e
+#   id:    art_7f8e9d0a1b2c3d4e5f6a7b8c9d0e1f2a
+#   nonce: 32d2676d40a35fa3af7fc801a2de20a6
 #   scope: actors=["agent://payments"], actions=["stripe.charge.create"], max_uses=1
 ```
 
@@ -33,7 +33,7 @@ The nonce is the binding token. Pass it to your agent.
 treeship attest action \
   --actor agent://payments \
   --action stripe.charge.create \
-  --approval-nonce nce_7f8e9d0a1b2c3d4e \
+  --approval-nonce 32d2676d40a35fa3af7fc801a2de20a6 \
   --meta '{"amount":450,"vendor":"acme-corp"}'
 ```
 
@@ -53,12 +53,8 @@ Treeship's verify pass enforces three independent properties and reports each se
 ⚠  replay check     package-local only -- no global ledger consulted
 ```
 
-<Callout type="warn" title="Replay posture as of v0.9.6">
-Stateless verifiers cannot detect replay across artifacts they never saw. The current implementation observes replay **only within a single verified package** -- if the same nonce appears on two actions in one package, the second fails. A `--max-uses` value is signed into the grant for future enforcement, but no global ledger is consulted yet.
-
-**Roadmap:**
-- **v0.10:** local Approval Use Journal (append-only, hash-chained, with signed Merkle checkpoints) for device/workspace replay enforcement.
-- **v0.11+:** Hub/org checkpoints for distributed single-use across machines and teams.
+<Callout type="info" title="Replay posture">
+`--max-uses` is enforced when the grant is consumed. `treeship attest action --approval-nonce` reserves a use in the workspace's [Approval Use Journal](/docs/concepts/approval-use-journal) before anything is signed (`approval use reserved: use_… (use 1/1)`), and a use past the limit is refused (`would exceed max_uses (1/1)`). `treeship verify` reports the journal's answer as `✓ replay check  local Approval Use Journal passed, use 1/1`. The journal lives beside the keystore, so every config that shares a ship shares its journal; a project stub that extends the global config cannot spend a grant a second time. It cannot speak for another machine: that is the `hub-org` level, with a Hub-signed checkpoint. The four levels are on the [replay levels](/docs/guides/replay-levels) page.
 </Callout>
 
 ## Approval flags
@@ -70,7 +66,7 @@ Stateless verifiers cannot detect replay across artifacts they never saw. The cu
 | `--allowed-actor <uri>` | No, repeatable | Actor URIs permitted to consume this approval |
 | `--allowed-action <label>` | No, repeatable | Action labels permitted under this approval |
 | `--allowed-subject <uri>` | No, repeatable | Subject URIs permitted as the action's target |
-| `--max-uses <n>` | No | Signed into the grant for future ledger enforcement |
+| `--max-uses <n>` | No | Signed into the grant and enforced at consume time by the workspace's Approval Use Journal |
 | `--unscoped` | No | Required to mint a bearer approval (no scope axes set). Without it the CLI refuses, since unscoped approvals authorize any actor / action / subject |
 | `--expires <timestamp>` | No | RFC 3339 expiry time |
 | `--subject <id>` | No | Artifact ID being approved (the subject of the approval itself) |

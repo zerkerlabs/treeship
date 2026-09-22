@@ -299,12 +299,7 @@ fn parse_restriction(args: &InviteArgs) -> Result<InviteeRestriction, String> {
 }
 
 fn journal_dir_for_ctx(c: &ctx::Ctx) -> PathBuf {
-    c.config_path
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("journals")
-        .join("approval-use")
+    c.journal_dir()
 }
 
 fn load_session_id_from_manifest() -> Option<String> {

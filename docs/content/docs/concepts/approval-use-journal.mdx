@@ -27,7 +27,9 @@ The **Approval Use Journal** is a per-workspace append-only JSON store that reco
     journal.lock               # fs2 exclusive lock for appends
 ```
 
-The directory follows the same precedence rule as Agent Cards and Harness state from v0.9.8: project-local `<workspace>/.treeship/journals/approval-use/` first, falling back to the global config's location.
+The directory lives beside the keystore: `<dir of keys/>/journals/approval-use/`. A workspace with its own keys under its own `.treeship/` has its own journal; a project stub (`{"extends": "~/.treeship/config.json", "project": true}`) shares the global ship, key, grants and artifact store, so it shares the global journal too. Before 0.31.6 the journal followed the resolved config file instead, which let one `--max-uses 1` grant be spent once per stub directory on the same machine; a journal found at that old location is moved to the keystore's once.
+
+At verify time the use record must name the action being verified (`action_artifact_id`, stamped when the action is signed). A journal that holds a use for the same grant and nonce but for a different action reports that the action's consumption is not in this journal, rather than passing it on the pair alone.
 
 ## Records are truth, indexes are cache
 

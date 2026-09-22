@@ -1,2 +1,3 @@
 session status --format json
-attest receipt --system system://treeship-gate --kind blocked.v1 --payload {"reason_class": "scope_violation", "refused_kind": "action", "actor": "agent://claude-code", "description": "gate refused WebFetch (net.fetch) for agent://claude-code: forbidden by the agent card"}
+halt list --format json
+attest receipt --system system://treeship-gate --kind blocked.v1 --payload {"reason_class": "scope_violation", "refused_kind": "action", "actor": "agent://claude-code", "description": "gate refused WebFetch (net.fetch) for agent://claude-code: forbidden by the agent card"} --chain

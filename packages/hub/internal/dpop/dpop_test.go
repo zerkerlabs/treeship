@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/treeship/hub/internal/db"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/db"
 )
 
 // The DPoP verifier is the hub's entire authentication boundary — every

@@ -1,0 +1,19 @@
+{
+  "agent_id": "agent_netscope_fixture",
+  "agent_name": "netscope",
+  "surface": "claude-code",
+  "connection_modes": ["native-hook"],
+  "coverage": "high",
+  "capabilities": {
+    "bounded_tools": ["file.read", "net.fetch"],
+    "escalation_required": [],
+    "forbidden": [],
+    "network": ["api.example.com", "*.internal.net"]
+  },
+  "provenance": "registered",
+  "status": "verified",
+  "host": "local",
+  "workspace": "/mock",
+  "created_at": "2026-09-18T00:00:00Z",
+  "updated_at": "2026-09-18T00:00:00Z"
+}
