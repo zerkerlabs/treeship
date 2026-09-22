@@ -52,7 +52,7 @@ ACTOR=$(json_field "$STATUS" actor)
 # signed halt.v1 in the workspace; while it stands, every tool call is
 # refused and the refusal is signed. Checked before the card, before the
 # enforce flag, before anything else.
-HALTS=$(treeship halt list --format json 2>/dev/null)
+HALTS=$(treeship halt list --format json 2>/dev/null || true)
 if [ -n "$HALTS" ]; then
   HALT_ID=$(python3 - "$HALTS" "$ACTOR" <<'PY' 2>/dev/null
 import json, sys

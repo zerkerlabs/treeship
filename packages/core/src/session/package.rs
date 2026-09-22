@@ -9,6 +9,7 @@
 //! - `proofs/`        -- inclusion proofs and zk proofs
 //! - `preview.html`   -- static preview (optional)
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::statements::ApprovalStatement;
@@ -635,6 +636,13 @@ pub fn verify_package_with_options(
     // reader has no denominator for the timeline. Reported, never a fail:
     // packages sealed before 0.31.6 carry none.
     checks.push(coverage_check(pkg_dir, &receipt));
+
+    // 3e. Judgements: model answers the producer acted on. Reported only
+    // when the sealed set carries any; flags one acted on below its own
+    // declared bar, or with no bar at all. The row does not re-run a judge.
+    if let Some(row) = judgements_check(pkg_dir, &receipt) {
+        checks.push(row);
+    }
 
     // 4. Merkle root re-computation
     if !receipt.artifacts.is_empty() {
@@ -2205,6 +2213,96 @@ fn coverage_check(pkg_dir: &Path, receipt: &SessionReceipt) -> VerifyCheck {
         "coverage",
         "no coverage receipt in the sealed set: the package does not say what the harness could observe (sealed before 0.31.6, or minted without one)",
     )
+}
+
+/// Summarise the `judgement.v1` receipts in the sealed set: how many, which
+/// judges, and whether any was acted on below its own threshold. `None`
+/// when the package carries no judgement.
+fn judgements_check(pkg_dir: &Path, receipt: &SessionReceipt) -> Option<VerifyCheck> {
+    let art_dir = pkg_dir.join(ARTIFACTS_DIR);
+    let mut total = 0usize;
+    let mut judges: BTreeSet<String> = BTreeSet::new();
+    let mut flagged: Vec<String> = Vec::new();
+    for entry in &receipt.artifacts {
+        let path = art_dir.join(format!("{}.json", sanitize_filename(&entry.artifact_id)));
+        let Ok(raw) = std::fs::read(&path) else {
+            continue;
+        };
+        let Ok(env) = crate::attestation::Envelope::from_json(&raw) else {
+            continue;
+        };
+        let Some(stmt) = env
+            .payload_bytes()
+            .ok()
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        else {
+            continue;
+        };
+        if stmt.get("kind").and_then(|k| k.as_str()) != Some("judgement.v1") {
+            continue;
+        }
+        let Some(p) = stmt.get("payload") else {
+            continue;
+        };
+        total += 1;
+        if let Some(m) = p.get("judge").and_then(|j| j.get("model")).and_then(|v| v.as_str()) {
+            judges.insert(m.to_string());
+        }
+        let outcome = p.get("outcome").and_then(|v| v.as_str()).unwrap_or("");
+        if outcome != "acted" {
+            continue;
+        }
+        let threshold = p.get("threshold").and_then(|t| t.get("value")).and_then(|v| v.as_f64());
+        let applies_to = p
+            .get("threshold")
+            .and_then(|t| t.get("applies_to"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("confidence");
+        let answer = p.get("answer");
+        let measured = match applies_to {
+            "noul" => answer.and_then(|a| a.get("noul")).and_then(|v| v.as_f64()),
+            _ => answer
+                .and_then(|a| a.get("confidence"))
+                .and_then(|v| v.as_f64())
+                .or_else(|| answer.and_then(|a| a.get("noul")).and_then(|v| v.as_f64())),
+        };
+        match (threshold, measured) {
+            (None, _) => flagged.push(format!(
+                "{} acted with no threshold declared",
+                entry.artifact_id
+            )),
+            (Some(t), Some(m)) if m < t => flagged.push(format!(
+                "{} acted at {applies_to} {m:.3} below its threshold {t:.3}",
+                entry.artifact_id
+            )),
+            (Some(t), None) => flagged.push(format!(
+                "{} acted against a threshold of {t:.3} on {applies_to} but the answer carries no {applies_to}",
+                entry.artifact_id
+            )),
+            _ => {}
+        }
+    }
+    if total == 0 {
+        return None;
+    }
+    let who = judges.into_iter().collect::<Vec<_>>().join(", ");
+    if flagged.is_empty() {
+        Some(VerifyCheck::pass(
+            "judgements",
+            &format!(
+                "{total} judgement(s) by {who}; every one acted on met its declared threshold. The row reads the caller's record; it does not re-run a judge"
+            ),
+        ))
+    } else {
+        Some(VerifyCheck::warn(
+            "judgements",
+            &format!(
+                "{total} judgement(s) by {who}; {} acted on outside its own bar: {}",
+                flagged.len(),
+                flagged.join("; ")
+            ),
+        ))
+    }
 }
 
 #[cfg(test)]

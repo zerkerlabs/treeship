@@ -337,6 +337,46 @@ does not: a process an agent started outside them. See
 | `reason` | string | no |
 | `halt` | string (`art_…` of the halt a lift ends) | no |
 
+### `judgement.v1`
+
+A model's typed judgement, as the caller received it, and what the caller did
+with it. Any judge: a decision model such as Jev, an LLM prompted to judge, a
+classifier, or a deterministic rules engine. Signed by the party that asked
+and acted, with `--subject` set to the action it gated so the judgement
+chains onto the thing it decided. It carries the model and version, digests
+of the state and the questions (committed to, not published), the one
+question by key and type, the typed answer with its full probability
+distribution and confidence, the threshold the caller held the answer to and
+who set that threshold, and the outcome: `acted`, `escalated`, `refused` or
+`ignored`. `question.type`, `outcome` and `judge.kind` are validated before
+signing, and every probability is checked to lie in 0 to 1.
+
+What it proves and what it does not. It is the caller's attestation of what
+the judge returned and what was done about it, under which bar. A judge that
+cannot be replayed (`replayable: false`, which is every sampled model)
+cannot be re-run by a verifier, so the receipt does not prove the judge said
+exactly this; it proves the caller committed to it before acting. It never
+proves the judgement was right. A rules engine that is replayable is the one
+kind of judge whose answer a verifier can reproduce from the same state.
+`package verify` reports sealed judgements as the `judgements` row and flags
+any that was acted on below its own threshold.
+
+| Field | Type | Required |
+|---|---|---|
+| `schema` | const `judgement.v1` | yes |
+| `judge` | object `{model, provider, kind: decision-model|llm|classifier|rules, replayable}` | yes (`model`) |
+| `state_digest` | string (`sha256:<hex>`) | no |
+| `questions_digest` | string (`sha256:<hex>`) | no |
+| `question` | object `{key, type: noul|choice|score, instructions, options[]}` | yes (`key`, `type`) |
+| `answer` | object `{noul, choice, score, probabilities{}, confidence}` | yes |
+| `threshold` | object `{value, applies_to: confidence|noul, set_by}` | no |
+| `outcome` | enum `acted`, `escalated`, `refused`, `ignored` | yes |
+| `effect` | string (`allow`, `warn`, `deny`, `ask`) | no |
+| `latency_ms` | integer | no |
+| `usage` | object `{input_tokens, output_tokens}` | no |
+| `judged_at` | string (RFC3339) | yes |
+| `notes` | string | no |
+
 ### `memory.quarantine-check.v1`
 
 Gates an approval on a memory-provider quarantine result. Required:
