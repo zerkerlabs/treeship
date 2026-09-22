@@ -57,6 +57,30 @@
     - packages/core/src/predicates/mod.rs
   notes: "Registers reason.authorization.v1 as a typed receipt payload for complete Zerker Reason action-authorization certificates. Treeship verifies schema, signature, and chain; semantic replay remains a separate reason verify-authorization step. The generic receipt command does not invoke Reason automatically."
 
+- id: evaluator-kit
+  name: Evaluator kit (guide + worked example)
+  section: sessions
+  status: stable
+  cli:
+    - treeship attest receipt --parent
+    - treeship attest receipt --no-parent
+    - treeship package verify
+  packages:
+    - treeship-cli
+  docs:
+    - docs/content/docs/guides/evaluator-kit.mdx
+    - docs/content/docs/cli/attest.mdx
+  tests:
+    - examples/evaluator-kit/run.sh
+    - packages/cli/tests/attest_receipt_chain_cli.rs
+  notes: >
+    The operational profile for an outside evaluator: what the lab seals,
+    whose keys get pinned (session_host only), strict verify before any
+    grade, an evaluation.v1 grade by digest minted inside the evaluator's
+    own session, and what gets published. examples/evaluator-kit/run.sh
+    plays lab, evaluator and public with separate keystores and runs in CI.
+    `attest receipt` now chains onto the session's head when --system is
+    the session's actor, the same rule as `attest action`.
 - id: network-scope
   name: Network scope (declaration, card, gate, receipt judgement)
   section: sessions

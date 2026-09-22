@@ -308,6 +308,11 @@ jobs:
       - name: Plugin hook parity suite
         run: sh integrations/tests/parity.sh
 
+      # The evaluator kit: three parties on one runner, each with its own
+      # keystore. Exits nonzero if any promise the guide makes stops holding.
+      - name: Evaluator kit worked example
+        run: examples/evaluator-kit/run.sh "$PWD/target/debug/treeship"
+
   clippy:
     name: Clippy (-D warnings)
     runs-on: ubuntu-latest

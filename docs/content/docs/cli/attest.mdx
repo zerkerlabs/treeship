@@ -255,5 +255,9 @@ treeship attest receipt \
 | `--payload <json>` | Receipt payload as a JSON object |
 | `--payload-file <path>` | Read receipt payload JSON from a file |
 | `--payload-digest <digest>` | Digest of the external payload, for example `sha256:<hex>` |
+| `--parent <id>` | Parent artifact ID for chain linking. Inside an active session whose actor is this `--system`, the default is the session's chain head; otherwise the default is `--subject` when it is an artifact id |
+| `--no-parent` | Do not chain onto the session's head; the receipt is sealed at close as unchained |
+
+A receipt minted inside a session by the session's own actor (`session start --actor system://evaluator` then `attest receipt --system system://evaluator`) is a linked step of that session, the same rule `attest action` follows. A receipt whose `--system` is another party is sealed loose with a hint, and joins the chain only with an explicit `--parent`.
 </Tab>
 </Tabs>
