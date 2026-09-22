@@ -18,9 +18,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/treeship/hub/internal/db"
-	serverdpop "github.com/treeship/hub/internal/dpop"
-	"github.com/treeship/hub/pkg/hubclient"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/db"
+	serverdpop "github.com/zerkerlabs/treeship/packages/hub/internal/dpop"
+	"github.com/zerkerlabs/treeship/packages/hub/pkg/hubclient"
 )
 
 func openTestDB(t *testing.T) *sql.DB {

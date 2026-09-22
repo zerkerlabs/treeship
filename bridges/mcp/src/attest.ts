@@ -12,7 +12,10 @@ const exec = promisify(execFile);
  */
 function reportFailure(what: string, err: unknown): void {
   const e = err as { stderr?: string; message?: string } | undefined;
-  const detail = (e?.stderr ?? e?.message ?? String(err)).toString().trim().split('\n')[0];
+  // `||`, not `??`: a spawn failure (ENOENT, no CLI on PATH) has stderr ''
+  // and the reason in message; `??` kept the empty string and printed
+  // "failed: " with nothing after it (film findings 2026-09-22, #3).
+  const detail = (e?.stderr || e?.message || String(err)).toString().trim().split('\n')[0];
   process.stderr.write(`[treeship] ${what} failed: ${detail}\n`);
   if (process.env.TREESHIP_STRICT === '1') {
     throw err instanceof Error ? err : new Error(`${what} failed: ${detail}`);

@@ -238,7 +238,7 @@ rand          = "0.8"
 ### 6.1 packages/hub/ -- Go HTTP server
 
 **Language:** Go
-**Module:** `github.com/treeship/hub`
+**Module:** `github.com/zerkerlabs/treeship/packages/hub`
 **Dependencies:** `github.com/go-chi/chi/v5 v5.0.12`, `modernc.org/sqlite v1.29.5`
 
 **SQLite file:** `/var/lib/treeship/hub.db` --chmod 600, owned by process user.

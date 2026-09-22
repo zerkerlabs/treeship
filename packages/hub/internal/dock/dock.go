@@ -10,7 +10,7 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/treeship/hub/internal/db"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/db"
 )
 
 // isValidDeviceCode accepts both the full 16-char code and the legacy

@@ -229,9 +229,12 @@ fn parse_numstat_line(line: &str) -> Option<(String, Option<u32>, Option<u32>)> 
 /// noisy and misleading: it was Treeship's own bookkeeping, not the
 /// agent's work.
 ///
-/// User-authored Treeship files (config.yaml, declaration.json, agent
-/// cards, policy) DO get surfaced -- those are the operator's own
-/// changes that an audit reader cares about.
+/// User-authored Treeship files (declaration.json, agent cards, policy) DO
+/// get surfaced -- those are the operator's own changes that an audit
+/// reader cares about. The files `treeship init` and `session close` write
+/// themselves (config.json, config.yaml, the close lock) are not: every
+/// first receipt a new user made listed them as if the agent had written
+/// them (film findings 2026-09-22, #9).
 fn is_treeship_runtime_artifact(path: &str) -> bool {
     // Strip leading "./" if present so both forms compare cleanly.
     let p = path.strip_prefix("./").unwrap_or(path);
@@ -241,10 +244,19 @@ fn is_treeship_runtime_artifact(path: &str) -> bool {
     // Within .treeship/, exclude generated runtime state.
     p == ".treeship/session.closing"
         || p == ".treeship/session.json"
+        || p == ".treeship/session.close.lock"
+        || p == ".treeship/config.json"
+        || p == ".treeship/config.yaml"
+        || p == ".treeship/machine_seed"
         || p.starts_with(".treeship/sessions/")
         || p.starts_with(".treeship/artifacts/")
         || p.starts_with(".treeship/tmp/")
         || p.starts_with(".treeship/proof_queue/")
+        || p.starts_with(".treeship/keys/")
+        || p.starts_with(".treeship/journals/")
+        || p.starts_with(".treeship/harnesses/")
+        || p.starts_with(".treeship/merkle/")
+        || p.starts_with(".treeship/halts/")
 }
 
 /// Collect every file change in `repo_dir` worth surfacing in a
@@ -553,6 +565,21 @@ mod tests {
             ".treeship/proof_queue/pending.json"
         ));
 
+        // Written by `treeship init` / `session close`, not by the agent.
+        assert!(is_treeship_runtime_artifact(".treeship/config.json"));
+        assert!(is_treeship_runtime_artifact(".treeship/config.yaml"));
+        assert!(is_treeship_runtime_artifact(".treeship/session.close.lock"));
+        assert!(is_treeship_runtime_artifact(".treeship/machine_seed"));
+        assert!(is_treeship_runtime_artifact(".treeship/keys/key_x.json"));
+        assert!(is_treeship_runtime_artifact(
+            ".treeship/journals/approval-use/records/1.json"
+        ));
+        // Operator-authored policy still surfaces.
+        assert!(!is_treeship_runtime_artifact(".treeship/declaration.json"));
+        assert!(!is_treeship_runtime_artifact(
+            ".treeship/agents/agent_x.json"
+        ));
+
         // "./"-prefixed forms (some git output emits these).
         assert!(is_treeship_runtime_artifact("./.treeship/session.closing"));
         assert!(is_treeship_runtime_artifact(
@@ -562,10 +589,13 @@ mod tests {
 
     #[test]
     fn runtime_artifact_filter_preserves_user_authored_files() {
-        // User-authored Treeship config / policy / cards: these ARE the
-        // operator's own changes and must show up in the receipt.
-        assert!(!is_treeship_runtime_artifact(".treeship/config.yaml"));
-        assert!(!is_treeship_runtime_artifact(".treeship/config.json"));
+        // User-authored Treeship policy / cards: these ARE the operator's
+        // own changes and must show up in the receipt. config.json and
+        // config.yaml are not: `treeship init` writes both, and every first
+        // receipt listed them as the agent's work (film findings
+        // 2026-09-22, #9).
+        assert!(is_treeship_runtime_artifact(".treeship/config.yaml"));
+        assert!(is_treeship_runtime_artifact(".treeship/config.json"));
         assert!(!is_treeship_runtime_artifact(".treeship/declaration.json"));
         assert!(!is_treeship_runtime_artifact(".treeship/policy.yaml"));
         assert!(!is_treeship_runtime_artifact(

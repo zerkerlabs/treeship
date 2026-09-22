@@ -142,6 +142,11 @@ pub const KEYS_FILE: &str = "keys.json";
 /// over the digest of `receipt.json`, sealed beside the package since 0.31.4
 /// so the sealed set itself is under a signature (audit follow-up AUD-34).
 pub const RECORD_FILE: &str = "record.json";
+
+/// Label the CLI gives this ship's own keys when it adds them as
+/// `session_host` roots for a local verify, so `signer_trust` can say
+/// "this ship's own key" instead of "pinned".
+pub const OWN_KEY_LABEL: &str = "this ship's own key";
 pub const PACKAGE_KEYS_SCHEMA: &str = "treeship/package-keys/v1";
 
 /// `approvals/index.json` -- top-level inventory of evidence in the
@@ -618,16 +623,49 @@ pub fn verify_package_with_options(
         ));
     }
 
-    // 3b. Honest scope of what this package authenticates. The receipt body
-    // (timeline / side_effects / tool_usage / narrative) is derived from the
-    // unsigned event log and carries no signature in the package, so a reader
-    // must not mistake a green package for an authenticated ledger of what
-    // the agent did. Only the artifacts + Merkle root are cryptographically
-    // bound.
-    checks.push(VerifyCheck::warn(
-        "receipt_body_binding",
-        "timeline/side-effects/narrative are NOT signed in this package — only the artifacts and Merkle root are cryptographically bound. For an authenticated record of the session, verify the actor-signed session.v1 record (or the published report).",
-    ));
+    // 3b. Scope of what this package authenticates for the receipt body
+    // (timeline / side_effects / tool_usage / narrative). It is composed from
+    // the event log, not signed per entry. Since 0.31.4 the close record in
+    // record.json signs the digest of the whole receipt.json, so editing any
+    // of it fails `receipt_binding`; the row below reports that, or the
+    // absence of it. It used to warn unconditionally, next to a PASS that
+    // said the opposite (film findings 2026-09-22, gate report).
+    // Pushed after the record binding check runs, see 3c.
+
+    // 3c. Coverage: does the sealed set say what the harness could observe?
+    // A `coverage.v1` receipt minted at close carries the declared capture
+    // level, the connection modes and the counted events; without it a
+    // reader has no denominator for the timeline. Reported, never a fail:
+    // packages sealed before 0.31.6 carry none.
+    checks.push(coverage_check(pkg_dir, &receipt));
+
+    // 3d. Network scope: when the session declared one, say whether every
+    // recorded destination fell inside it. No scope declared, no row: the
+    // connections stand in side_effects as recorded, unjudged.
+    if let Some(tu) = receipt.tool_usage.as_ref() {
+        if !tu.network_declared.is_empty() {
+            let total = receipt.side_effects.network_connections.len();
+            if tu.network_off_scope.is_empty() {
+                checks.push(VerifyCheck::pass(
+                    "network_scope",
+                    &format!(
+                        "{total} recorded connection(s), all within the declared scope [{}]",
+                        tu.network_declared.join(", ")
+                    ),
+                ));
+            } else {
+                checks.push(VerifyCheck::warn(
+                    "network_scope",
+                    &format!(
+                        "{} destination(s) outside the declared scope [{}]: {}",
+                        tu.network_off_scope.len(),
+                        tu.network_declared.join(", "),
+                        tu.network_off_scope.join(", ")
+                    ),
+                ));
+            }
+        }
+    }
 
     // 3c. Coverage: does the sealed set say what the harness could observe?
     // A `coverage.v1` receipt minted at close carries the declared capture
@@ -747,7 +785,18 @@ pub fn verify_package_with_options(
     // Signatures and chain linkage, from the package's own envelopes
     // (audit 2026-09, AUD-31 / AUD-32; QA TS-002b).
     verify_sealed_envelopes(pkg_dir, &receipt, trust, structural_only, &mut checks);
-    verify_receipt_binding(pkg_dir, &receipt, structural_only, &mut checks);
+    let body_bound = verify_receipt_binding(pkg_dir, &receipt, structural_only, &mut checks);
+    if body_bound {
+        checks.push(VerifyCheck::pass(
+            "receipt_body_binding",
+            "timeline/side-effects/narrative are bound: the close record (record.json) signs the digest of the whole receipt.json, so editing any of them fails receipt_binding. They remain the producer's own account of the session, composed from its event log and signed by its key; the artifacts are the evidence",
+        ));
+    } else {
+        checks.push(VerifyCheck::warn(
+            "receipt_body_binding",
+            "timeline/side-effects/narrative are NOT signed in this package — only the artifacts and Merkle root are cryptographically bound. For an authenticated record of the session, verify the actor-signed session.v1 record (or the published report).",
+        ));
+    }
     verify_session_window(pkg_dir, &receipt, &mut checks);
 
     // 6. Leaf count matches artifacts
@@ -894,7 +943,7 @@ fn verify_receipt_binding(
     receipt: &SessionReceipt,
     structural_only: bool,
     checks: &mut Vec<VerifyCheck>,
-) {
+) -> bool {
     use sha2::{Digest, Sha256};
     let path = pkg_dir.join(RECORD_FILE);
     let raw = match std::fs::read(&path) {
@@ -904,7 +953,7 @@ fn verify_receipt_binding(
                 "receipt_binding",
                 "the package carries no close record (built before 0.31.4), so the sealed set is not under a signature: an artifact could be added to the list and the tree recomputed without any per-artifact row failing",
             ));
-            return;
+            return false;
         }
     };
     if structural_only {
@@ -912,7 +961,7 @@ fn verify_receipt_binding(
             "receipt_binding",
             "close record present but not checked under --structural",
         ));
-        return;
+        return false;
     }
     let envelope = match crate::attestation::Envelope::from_json(&raw) {
         Ok(e) => e,
@@ -921,7 +970,7 @@ fn verify_receipt_binding(
                 "receipt_binding",
                 &format!("record.json does not parse as a DSSE envelope: {e}"),
             ));
-            return;
+            return false;
         }
     };
     let Some(sig) = envelope.signatures.first() else {
@@ -929,7 +978,7 @@ fn verify_receipt_binding(
             "receipt_binding",
             "record.json carries no signature",
         ));
-        return;
+        return false;
     };
     let keys = package_verifying_keys(pkg_dir);
     let Some(vk) = keys.get(&sig.keyid) else {
@@ -940,14 +989,14 @@ fn verify_receipt_binding(
                 sig.keyid
             ),
         ));
-        return;
+        return false;
     };
     if let Err(e) = crate::attestation::verify_with_key(&envelope, &sig.keyid, *vk) {
         checks.push(VerifyCheck::fail(
             "receipt_binding",
             &format!("record.json signature invalid for key {}: {e}", sig.keyid),
         ));
-        return;
+        return false;
     }
     let payload: serde_json::Value = match envelope
         .payload_bytes()
@@ -960,7 +1009,7 @@ fn verify_receipt_binding(
                 "receipt_binding",
                 "record.json payload is not JSON",
             ));
-            return;
+            return false;
         }
     };
     let signed_digest = payload
@@ -999,7 +1048,9 @@ fn verify_receipt_binding(
                 sig.keyid, actual
             ),
         ));
+        return true;
     }
+    false
 }
 
 /// Every sealed artifact's signed timestamp should fall inside the session's
@@ -1281,20 +1332,49 @@ fn verify_sealed_envelopes(
             .cloned()
             .collect();
         if unpinned.is_empty() {
-            checks.push(VerifyCheck::pass(
-                "signer_trust",
-                &format!(
+            // The CLI adds this ship's own keys as roots so a package
+            // verifies where it was produced; say so, because "pinned"
+            // reads as a third party's decision and this is not one.
+            let own: Vec<&str> = signers
+                .iter()
+                .filter(|k| {
+                    trust
+                        .roots()
+                        .iter()
+                        .any(|r| &r.key_id == *k && r.label == OWN_KEY_LABEL)
+                })
+                .map(|k| k.as_str())
+                .collect();
+            let detail = if own.len() == signers.len() {
+                format!(
+                    "all {} signing key(s) are this ship's own ({}); a stranger pins them before this row passes on their machine",
+                    signers.len(),
+                    own.join(", ")
+                )
+            } else if own.is_empty() {
+                format!(
                     "all {} signing key(s) are pinned trust roots",
                     signers.len()
-                ),
-            ));
+                )
+            } else {
+                format!(
+                    "{} signing key(s): {} pinned trust root(s), {} this ship's own ({})",
+                    signers.len(),
+                    signers.len() - own.len(),
+                    own.len(),
+                    own.join(", ")
+                )
+            };
+            checks.push(VerifyCheck::pass("signer_trust", &detail));
         } else {
             let pins: Vec<String> = unpinned
                 .iter()
                 .map(|k| {
                     let vk = keys.get(k).expect("key");
+                    // `--yes`: the printed command is what gets pasted, and
+                    // without it trust add refuses to run non-interactively.
                     format!(
-                        "treeship trust add {k} {} --kind cert_issuer",
+                        "treeship trust add {k} {} --kind cert_issuer --yes",
                         crate::trust::encode_ed25519_pubkey(vk)
                     )
                 })

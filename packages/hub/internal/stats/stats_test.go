@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/treeship/hub/internal/db"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/db"
 )
 
 func openTestDB(t *testing.T) *sql.DB {

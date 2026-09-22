@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/treeship/hub/internal/auth"
-	"github.com/treeship/hub/internal/contentaddress"
-	"github.com/treeship/hub/internal/db"
-	"github.com/treeship/hub/internal/dpop"
-	"github.com/treeship/hub/internal/rekor"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/auth"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/contentaddress"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/db"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/dpop"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/rekor"
 )
 
 type Handlers struct {

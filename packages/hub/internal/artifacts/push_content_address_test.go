@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/treeship/hub/internal/contentaddress"
-	"github.com/treeship/hub/internal/db"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/contentaddress"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/db"
 )
 
 // These exercise the storage-layer consequences of the audit's P0-2 directly.
