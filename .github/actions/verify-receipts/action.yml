@@ -1,0 +1,43 @@
+name: Treeship receipts
+description: >
+  Verify every sealed Treeship session package in a pull request against
+  the repository's pinned trust roots, in strict mode, and cross-check the
+  Treeship-Receipt trailers in the PR's commits against the packages. One
+  verdict per package; the job fails on any package that is not verified.
+author: Zerker Labs
+branding:
+  icon: check-square
+  color: green
+
+inputs:
+  packages:
+    description: Glob for sealed packages committed in the repository (directories ending in .treeship).
+    default: "receipts/**/*.treeship"
+  trust-roots:
+    description: Path to the pinned trust roots JSON the verifier uses. Commit the producing ship's public key here under kind session_host.
+    default: "receipts/trust_roots.json"
+  treeship-version:
+    description: The treeship npm version to install. Pin it.
+    default: "0.31.5"
+  require:
+    description: Fail when the pull request carries no packages at all. Off by default; a repository decides when receipts become mandatory.
+    default: "false"
+  base-ref:
+    description: Base ref for reading commit trailers. Defaults to the pull request base.
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Install treeship
+      shell: bash
+      run: npm install -g "treeship@${{ inputs.treeship-version }}" >/dev/null 2>&1 && treeship --version
+    - name: Verify receipts
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+        TRUST_ROOTS: ${{ inputs.trust-roots }}
+        REQUIRE: ${{ inputs.require }}
+        BASE_REF: ${{ inputs.base-ref != '' && inputs.base-ref || github.event.pull_request.base.sha || '' }}
+        HEAD_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+      run: bash "${{ github.action_path }}/verify-receipts.sh"

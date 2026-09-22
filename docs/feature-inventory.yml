@@ -151,6 +151,29 @@
     - packages/core/src/session/mod.rs
   notes: "Session start/close/report flow; report uploads to hub and returns a shareable URL."
 
+- id: receipts-in-pull-requests
+  name: Receipts in pull requests (close --receipt-dir, commit trailer, verify-receipts action)
+  section: sessions
+  status: stable
+  cli:
+    - treeship session close --receipt-dir
+  packages:
+    - treeship-cli
+  docs:
+    - docs/content/docs/guides/receipts-in-pull-requests.mdx
+    - docs/content/docs/cli/session.mdx
+  tests:
+    - packages/cli/tests/session_close_receipt_dir_cli.rs
+    - .github/workflows/receipts.yml
+  notes: >
+    `session close --receipt-dir <DIR>` copies the sealed package out of the
+    gitignored workspace and prints a `Treeship-Receipt: <session_id>
+    sha256:<digest of receipt.json>` commit trailer. The composite action at
+    .github/actions/verify-receipts runs `package verify --strict` on every
+    package in a pull request against a committed trust roots file, checks
+    the trailers, and fails on anything but `verified`. Zero packages is
+    reported as zero, never as green, unless `require: true` makes it a fail.
+
 - id: packages
   name: Session packages (.treeship bundles)
   section: core

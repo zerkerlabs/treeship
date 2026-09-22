@@ -1365,6 +1365,12 @@ struct SessionCloseArgs {
     /// What should be reviewed before trusting the output
     #[arg(long, value_name = "TEXT")]
     review: Option<String>,
+
+    /// Copy the sealed .treeship package into DIR (created if missing), so it
+    /// can be committed next to the change it accounts for and checked by
+    /// the verify-receipts GitHub Action
+    #[arg(long, value_name = "DIR")]
+    receipt_dir: Option<std::path::PathBuf>,
 }
 
 // --- package ---------------------------------------------------------------
@@ -3165,6 +3171,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 a.summary.clone(),
                 a.headline.clone(),
                 a.review.clone(),
+                a.receipt_dir.clone(),
                 cli.config.as_deref(),
                 printer,
             ),
