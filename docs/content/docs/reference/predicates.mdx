@@ -364,12 +364,12 @@ any that was acted on below its own threshold.
 | Field | Type | Required |
 |---|---|---|
 | `schema` | const `judgement.v1` | yes |
-| `judge` | object `{model, provider, kind: decision-model|llm|classifier|rules, replayable}` | yes (`model`) |
+| `judge` | object `{model, provider, kind, replayable}` with `kind` one of `decision-model`, `llm`, `classifier`, `rules` | yes (`model`) |
 | `state_digest` | string (`sha256:<hex>`) | no |
 | `questions_digest` | string (`sha256:<hex>`) | no |
-| `question` | object `{key, type: noul|choice|score, instructions, options[]}` | yes (`key`, `type`) |
+| `question` | object `{key, type, instructions, options[]}` with `type` one of `noul`, `choice`, `score` | yes (`key`, `type`) |
 | `answer` | object `{noul, choice, score, probabilities{}, confidence}` | yes |
-| `threshold` | object `{value, applies_to: confidence|noul, set_by}` | no |
+| `threshold` | object `{value, applies_to, set_by}` with `applies_to` `confidence` or `noul` | no |
 | `outcome` | enum `acted`, `escalated`, `refused`, `ignored` | yes |
 | `effect` | string (`allow`, `warn`, `deny`, `ask`) | no |
 | `latency_ms` | integer | no |

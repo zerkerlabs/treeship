@@ -90,18 +90,42 @@ fn judgement(noul: f64, threshold: Option<f64>, outcome: &str) -> String {
 
 fn attest_judgement(ws: &Ws, payload: &str, subject: &str) -> (bool, String) {
     ws.run(&[
-        "attest", "receipt", "--system", "agent://claude-code", "--kind", "judgement.v1",
-        "--subject", subject, "--payload", payload, "--format", "json",
+        "attest",
+        "receipt",
+        "--system",
+        "agent://claude-code",
+        "--kind",
+        "judgement.v1",
+        "--subject",
+        subject,
+        "--payload",
+        payload,
+        "--format",
+        "json",
     ])
 }
 
 #[test]
 fn judgement_chains_onto_the_gated_action_and_verify_reports_it() {
     let ws = Ws::new();
-    let (ok, out) = ws.run(&["session", "start", "--name", "s", "--actor", "agent://claude-code"]);
+    let (ok, out) = ws.run(&[
+        "session",
+        "start",
+        "--name",
+        "s",
+        "--actor",
+        "agent://claude-code",
+    ]);
     assert!(ok, "{out}");
     let (ok, out) = ws.run(&[
-        "attest", "action", "--actor", "agent://claude-code", "--action", "shell.exec", "--format", "json",
+        "attest",
+        "action",
+        "--actor",
+        "agent://claude-code",
+        "--action",
+        "shell.exec",
+        "--format",
+        "json",
     ]);
     assert!(ok, "{out}");
     let action = first_json(&out)["id"].as_str().unwrap().to_string();
@@ -117,7 +141,10 @@ fn judgement_chains_onto_the_gated_action_and_verify_reports_it() {
 
     let (ok, out) = ws.run(&["verify", &j1, "--full"]);
     assert!(ok, "{out}");
-    assert!(out.contains(&action[..16]), "judgement walks to the action: {out}");
+    assert!(
+        out.contains(&action[..16]),
+        "judgement walks to the action: {out}"
+    );
 
     let (ok, out) = ws.run(&["session", "close", "--format", "json"]);
     assert!(ok, "{out}");
@@ -150,7 +177,11 @@ fn a_package_without_judgements_has_no_row() {
     let (ok, out) = ws.run(&["package", "verify", &pkg, "--format", "json"]);
     assert!(ok, "{out}");
     let v = first_json(&out);
-    assert!(v["checks"].as_array().unwrap().iter().all(|c| c["name"] != "judgements"));
+    assert!(v["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|c| c["name"] != "judgements"));
 }
 
 #[test]
@@ -159,15 +190,30 @@ fn nested_vocabulary_is_refused_before_signing() {
     let bad = judgement(0.9, Some(0.8), "acted").replace("\"type\":\"noul\"", "\"type\":\"essay\"");
     assert!(bad.contains("essay"));
     let (ok, out) = ws.run(&[
-        "attest", "receipt", "--system", "agent://claude-code", "--kind", "judgement.v1",
-        "--payload", &bad,
+        "attest",
+        "receipt",
+        "--system",
+        "agent://claude-code",
+        "--kind",
+        "judgement.v1",
+        "--payload",
+        &bad,
     ]);
     assert!(!ok, "{out}");
-    assert!(out.contains("question.type"), "dotted path in the error: {out}");
+    assert!(
+        out.contains("question.type"),
+        "dotted path in the error: {out}"
+    );
     let bad = judgement(1.7, Some(0.8), "acted");
     let (ok, out) = ws.run(&[
-        "attest", "receipt", "--system", "agent://claude-code", "--kind", "judgement.v1",
-        "--payload", &bad,
+        "attest",
+        "receipt",
+        "--system",
+        "agent://claude-code",
+        "--kind",
+        "judgement.v1",
+        "--payload",
+        &bad,
     ]);
     assert!(!ok, "{out}");
     assert!(out.contains("answer.noul"), "{out}");

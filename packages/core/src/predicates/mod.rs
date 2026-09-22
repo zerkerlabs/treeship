@@ -328,7 +328,10 @@ fn walk_value(
             }
         }
     }
-    if let (Some(s), Some(pat)) = (actual.as_str(), subschema.get("pattern").and_then(Value::as_str)) {
+    if let (Some(s), Some(pat)) = (
+        actual.as_str(),
+        subschema.get("pattern").and_then(Value::as_str),
+    ) {
         if !pattern_matches(pat, s) {
             return Err(PredicateError::InvalidPayload {
                 suffix: suffix.to_string(),
@@ -609,7 +612,11 @@ mod tests {
 
     #[test]
     fn reason_authorization_valid_shape_passes() {
-        assert!(validate("reason.authorization.v1", Some(&reason_authorization_payload())).is_ok());
+        assert!(validate(
+            "reason.authorization.v1",
+            Some(&reason_authorization_payload())
+        )
+        .is_ok());
     }
 
     #[test]

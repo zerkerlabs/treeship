@@ -2273,14 +2273,21 @@ fn judgements_check(pkg_dir: &Path, receipt: &SessionReceipt) -> Option<VerifyCh
             continue;
         };
         total += 1;
-        if let Some(m) = p.get("judge").and_then(|j| j.get("model")).and_then(|v| v.as_str()) {
+        if let Some(m) = p
+            .get("judge")
+            .and_then(|j| j.get("model"))
+            .and_then(|v| v.as_str())
+        {
             judges.insert(m.to_string());
         }
         let outcome = p.get("outcome").and_then(|v| v.as_str()).unwrap_or("");
         if outcome != "acted" {
             continue;
         }
-        let threshold = p.get("threshold").and_then(|t| t.get("value")).and_then(|v| v.as_f64());
+        let threshold = p
+            .get("threshold")
+            .and_then(|t| t.get("value"))
+            .and_then(|v| v.as_f64());
         let applies_to = p
             .get("threshold")
             .and_then(|t| t.get("applies_to"))
