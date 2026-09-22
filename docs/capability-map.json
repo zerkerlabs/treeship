@@ -3,7 +3,7 @@
   "counts": {
     "cli_commands": 37,
     "hub_routes": 22,
-    "wire_types": 151
+    "wire_types": 153
   },
   "cli_commands": [
     "add",
@@ -755,6 +755,16 @@
       "name": "ResolutionVerdict",
       "kind": "struct",
       "source": "packages/core/src/verify/resolution.rs"
+    },
+    {
+      "name": "Retry",
+      "kind": "struct",
+      "source": "packages/core/src/statements/mod.rs"
+    },
+    {
+      "name": "RetryCause",
+      "kind": "enum",
+      "source": "packages/core/src/statements/mod.rs"
     },
     {
       "name": "Revocation",

@@ -28,6 +28,10 @@ treeship attest action \
 | `--parent <id>` | Parent artifact ID for chain linking. Inside an active session, when `--actor` is the session's actor, the default is the session's chain head; another actor's receipt is sealed loose unless it passes `--parent` |
 | `--no-parent` | Do not chain onto the session's head; the receipt is sealed at close as unchained |
 | `--approval-nonce <nonce>` | Nonce from an existing approval |
+| `--retry-of <id>` | This action retries the attempt with that artifact id. Signed into the statement, so a verifier can tell a recovery from a duplicate |
+| `--attempt <n>` | 1-based position in the retry chain (default 2). Requires `--retry-of` |
+| `--retry-cause <cause>` | Why the previous attempt was not accepted: `timeout`, `error`, `rate_limited`, `operator`, `unknown`. Requires `--retry-of` |
+| `--backoff-ms <ms>` | Milliseconds waited before this attempt. Requires `--retry-of` |
 | `--input-digest <sha256:hex>` | SHA-256 digest of the input consumed |
 | `--output-digest <sha256:hex>` | SHA-256 digest of the output produced |
 | `--content-uri <uri>` | URI to referenced content |
@@ -47,6 +51,18 @@ treeship attest action \
   --input-digest sha256:e3b0c44298fc1c149afb4c8996fb924 \
   --content-uri ehr://patient/94821/note/2026-03-26
 ```
+### Retries
+
+A trace that cannot explain a retry is not observability. When an action is a second attempt, say so inside the signature:
+
+```bash
+treeship attest action --actor agent://ops --action tickets.create \
+  --retry-of art_… --attempt 2 --retry-cause timeout --backoff-ms 800 \
+  --idempotency-key tkt-42 --output-digest sha256:…
+```
+
+The `retry` block carries the attempt being retried, the attempt number, a cause from a closed vocabulary, the backoff that fired, and the idempotency key sent. `package verify` reports every chain as the `retries` row: same action and actor, attempts counting up, the same key on both sides when both carry one, and no two attempts that each report a distinct effect. An agent that occasionally duplicates a ticket and one that correctly recovers from a flaky dependency are then two different rows, not one story. What it does not do is replay the run; it proves the recorded sequence and the recorded reasons.
+
 </Tab>
 <Tab value="decision">
 ## treeship attest decision

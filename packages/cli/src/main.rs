@@ -1941,6 +1941,26 @@ struct AttestActionArgs {
     #[arg(long, value_name = "KEY")]
     idempotency_key: Option<String>,
 
+    /// This action retries the attempt with this artifact id. Signed into
+    /// the statement with --attempt, --retry-cause and --backoff-ms, so a
+    /// verifier can tell a recovery from a duplicate (see `package verify`
+    /// row `retries`)
+    #[arg(long = "retry-of", value_name = "ID")]
+    retry_of: Option<String>,
+
+    /// 1-based attempt number of this action in its retry chain (default 2)
+    #[arg(long, value_name = "N", requires = "retry_of")]
+    attempt: Option<u32>,
+
+    /// Why the previous attempt was not accepted: timeout, error,
+    /// rate_limited, operator, unknown
+    #[arg(long = "retry-cause", value_name = "CAUSE", requires = "retry_of")]
+    retry_cause: Option<String>,
+
+    /// Milliseconds waited before this attempt
+    #[arg(long = "backoff-ms", value_name = "MS", requires = "retry_of")]
+    backoff_ms: Option<u64>,
+
     /// Extra metadata as a JSON object
     #[arg(long, value_name = r#"'{"key":"val"}'"#)]
     meta: Option<String>,
@@ -3652,6 +3672,10 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                         parent_id: a.parent.clone(),
                         approval_nonce: a.approval_nonce.clone(),
                         idempotency_key: a.idempotency_key.clone(),
+                        retry_of: a.retry_of.clone(),
+                        attempt: a.attempt,
+                        retry_cause: a.retry_cause.clone(),
+                        backoff_ms: a.backoff_ms,
                         meta: a.meta.clone(),
                         out: a.out.clone(),
                         config: cli.config.clone(),

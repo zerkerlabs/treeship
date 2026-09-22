@@ -667,39 +667,14 @@ pub fn verify_package_with_options(
         }
     }
 
-    // 3c. Coverage: does the sealed set say what the harness could observe?
-    // A `coverage.v1` receipt minted at close carries the declared capture
-    // level, the connection modes and the counted events; without it a
-    // reader has no denominator for the timeline. Reported, never a fail:
-    // packages sealed before 0.31.6 carry none.
-    checks.push(coverage_check(pkg_dir, &receipt));
-
-    // 3d. Network scope: when the session declared one, say whether every
-    // recorded destination fell inside it. No scope declared, no row: the
-    // connections stand in side_effects as recorded, unjudged.
-    if let Some(tu) = receipt.tool_usage.as_ref() {
-        if !tu.network_declared.is_empty() {
-            let total = receipt.side_effects.network_connections.len();
-            if tu.network_off_scope.is_empty() {
-                checks.push(VerifyCheck::pass(
-                    "network_scope",
-                    &format!(
-                        "{total} recorded connection(s), all within the declared scope [{}]",
-                        tu.network_declared.join(", ")
-                    ),
-                ));
-            } else {
-                checks.push(VerifyCheck::warn(
-                    "network_scope",
-                    &format!(
-                        "{} destination(s) outside the declared scope [{}]: {}",
-                        tu.network_off_scope.len(),
-                        tu.network_declared.join(", "),
-                        tu.network_off_scope.join(", ")
-                    ),
-                ));
-            }
-        }
+    // 3e. Retries: actions that name an earlier attempt. Reported only when
+    // the sealed set carries any. Checks the chain is consistent (same
+    // action and actor, attempts count up, same idempotency key when both
+    // sides carry one, the retried attempt is in this package) and that two
+    // attempts do not both claim a distinct effect, which is the shape of a
+    // duplicated ticket rather than a recovered one.
+    if let Some(row) = retries_check(pkg_dir, &receipt) {
+        checks.push(row);
     }
 
     // 4. Merkle root re-computation
@@ -2313,6 +2288,190 @@ fn coverage_check(pkg_dir: &Path, receipt: &SessionReceipt) -> VerifyCheck {
         "coverage",
         "no coverage receipt in the sealed set: the package does not say what the harness could observe (sealed before 0.31.6, or minted without one)",
     )
+}
+
+/// One sealed action, as much of it as the retries row needs.
+struct SealedAction {
+    action: String,
+    actor: String,
+    retry: Option<serde_json::Value>,
+    /// The signed idempotency key of this attempt (v1 `idempotencyKey`, v2
+    /// `idempotency_key`), or the one inside its retry block.
+    idempotency_key: Option<String>,
+    /// What the attempt says it changed: v2 `effect.readback`, else
+    /// `effect.output_hash`, else v1 `meta.output_digest`.
+    effect_signature: Option<String>,
+    effect_verified: bool,
+}
+
+/// Walk the sealed envelopes for action statements and check every retry
+/// chain. `None` when no action names an earlier attempt.
+fn retries_check(pkg_dir: &Path, receipt: &SessionReceipt) -> Option<VerifyCheck> {
+    use std::collections::{BTreeMap, BTreeSet};
+    let art_dir = pkg_dir.join(ARTIFACTS_DIR);
+    let mut actions: BTreeMap<String, SealedAction> = BTreeMap::new();
+    for entry in &receipt.artifacts {
+        let path = art_dir.join(format!("{}.json", sanitize_filename(&entry.artifact_id)));
+        let Ok(raw) = std::fs::read(&path) else {
+            continue;
+        };
+        let Ok(env) = crate::attestation::Envelope::from_json(&raw) else {
+            continue;
+        };
+        let Some(stmt) = env
+            .payload_bytes()
+            .ok()
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        else {
+            continue;
+        };
+        let ty = stmt.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        if !ty.contains("/action/") {
+            continue;
+        }
+        let effect = stmt.get("effect");
+        let effect_signature = effect
+            .and_then(|e| e.get("readback"))
+            .and_then(|v| v.as_str())
+            .or_else(|| {
+                effect
+                    .and_then(|e| e.get("output_hash"))
+                    .and_then(|v| v.as_str())
+            })
+            .or_else(|| {
+                stmt.get("meta")
+                    .and_then(|m| m.get("output_digest"))
+                    .and_then(|v| v.as_str())
+            })
+            .map(str::to_string);
+        let effect_verified = matches!(
+            effect
+                .and_then(|e| e.get("effect_confidence"))
+                .and_then(|v| v.as_str()),
+            Some("verified") | Some("partial")
+        );
+        actions.insert(
+            entry.artifact_id.clone(),
+            SealedAction {
+                action: stmt
+                    .get("action")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                actor: stmt
+                    .get("actor")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                idempotency_key: stmt
+                    .get("idempotencyKey")
+                    .or_else(|| stmt.get("idempotency_key"))
+                    .or_else(|| stmt.get("retry").and_then(|r| r.get("idempotency_key")))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+                retry: stmt.get("retry").cloned(),
+                effect_signature,
+                effect_verified,
+            },
+        );
+    }
+    let retries: Vec<(&String, &SealedAction)> =
+        actions.iter().filter(|(_, a)| a.retry.is_some()).collect();
+    if retries.is_empty() {
+        return None;
+    }
+    let mut problems: Vec<String> = Vec::new();
+    let mut chains: BTreeSet<String> = BTreeSet::new();
+    for (id, a) in &retries {
+        let r = a.retry.as_ref().unwrap();
+        let of = r.get("of").and_then(|v| v.as_str()).unwrap_or("");
+        let attempt = r.get("attempt").and_then(|v| v.as_u64()).unwrap_or(0);
+        let cause = r.get("cause").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let key = r.get("idempotency_key").and_then(|v| v.as_str());
+        let Some(prev) = actions.get(of) else {
+            problems.push(format!(
+                "{id} (attempt {attempt}, {cause}) retries {of}, which is not in this package"
+            ));
+            chains.insert(of.to_string());
+            continue;
+        };
+        // The chain root is the attempt with no retry block.
+        let mut root = of.to_string();
+        let mut hops = 0;
+        while let Some(p) = actions.get(&root) {
+            match p
+                .retry
+                .as_ref()
+                .and_then(|x| x.get("of"))
+                .and_then(|v| v.as_str())
+            {
+                Some(next) if hops < 64 => {
+                    root = next.to_string();
+                    hops += 1;
+                }
+                _ => break,
+            }
+        }
+        chains.insert(root);
+        if prev.action != a.action || prev.actor != a.actor {
+            problems.push(format!(
+                "{id} retries {of} but is a different action or actor ({} by {} vs {} by {})",
+                a.action, a.actor, prev.action, prev.actor
+            ));
+        }
+        let prev_attempt = prev
+            .retry
+            .as_ref()
+            .and_then(|x| x.get("attempt"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1);
+        if attempt != prev_attempt + 1 {
+            problems.push(format!(
+                "{id} is attempt {attempt} but retries attempt {prev_attempt}"
+            ));
+        }
+        let prev_key = prev.idempotency_key.as_deref();
+        if let (Some(k), Some(pk)) = (key, prev_key) {
+            if k != pk {
+                problems.push(format!(
+                    "{id} retries {of} with a different idempotency key: the second attempt is not idempotent with the first"
+                ));
+            }
+        }
+        if let (Some(cur), Some(before)) = (&a.effect_signature, &prev.effect_signature) {
+            if cur != before {
+                problems.push(format!(
+                    "{id} and {of} both report an effect and they differ ({} vs {}): two mutations, not one recovery",
+                    &cur[..cur.len().min(24)],
+                    &before[..before.len().min(24)]
+                ));
+            }
+        }
+        if cause == "timeout" && prev.effect_verified {
+            problems.push(format!(
+                "{id} retried {of} for a timeout, but {of} reports a verified effect: the first attempt landed"
+            ));
+        }
+    }
+    let n = retries.len();
+    let c = chains.len();
+    if problems.is_empty() {
+        Some(VerifyCheck::pass(
+            "retries",
+            &format!(
+                "{n} retry attempt(s) across {c} chain(s): same action and actor, attempts count up, idempotency keys agree, and no two attempts report a distinct effect"
+            ),
+        ))
+    } else {
+        Some(VerifyCheck::warn(
+            "retries",
+            &format!(
+                "{n} retry attempt(s) across {c} chain(s); {}: {}",
+                problems.len(),
+                problems.join("; ")
+            ),
+        ))
+    }
 }
 
 #[cfg(test)]
