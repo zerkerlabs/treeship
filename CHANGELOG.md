@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.31.6 (2026-09-23)
 
 - **Fix: `package verify` printed the `coverage` and `network_scope` rows twice.** A stack merge duplicated the block that pushes them; every package verified on 0.31.6 main showed each row two times. One copy now.
 - **Retries as a signed chain.** A trace that cannot explain a retry is not observability: attempt two of a flaky call used to be a sibling of attempt one, and a verifier could not tell "recovering from a timeout" from "did the same thing twice". `attest action --retry-of <id> --attempt N --retry-cause <timeout|error|rate_limited|operator|unknown> --backoff-ms <ms>` signs a `retry` block into the statement (v1 and v2), with the idempotency key sent, so the reason is under the signature and older receipts keep their bytes. `package verify` gains a `retries` row that walks every chain: same action and actor, attempts counting up, the same key on both sides, the retried attempt present in the package, and no two attempts that each report a distinct effect; a chain that fails any of those is named. It proves the recorded sequence and reasons; it does not replay the run.
