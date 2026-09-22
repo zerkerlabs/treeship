@@ -170,6 +170,8 @@ Two honesty notes:
 
 To put the receipt in the pull request instead of on a hub, close with `treeship session close --receipt-dir receipts`, paste the printed `Treeship-Receipt:` trailer on the commit, and run the [`verify-receipts` action](.github/actions/verify-receipts/action.yml) on pull requests: it verifies every committed package under keys the repository pins and fails on anything but `verified`. This repository runs it on itself. Guide: [Receipts in pull requests](https://docs.treeship.dev/docs/guides/receipts-in-pull-requests).
 
+Treeship sends no telemetry. Nothing phones home: not on install, not on first run, not weekly. Adoption is measured from signals the project already owns (hub activity, repository traffic, release and registry downloads) by [`scripts/adoption-report.py`](scripts/adoption-report.py), each number printed with what it counts and what inflates it.
+
 The Hub stores immutable bytes, serves lookup indices and proofs, and enforces write auth ([DPoP](https://docs.treeship.dev/docs/api/overview)) — it never supplies trust verdicts. Server-side verification was deliberately retired (the endpoint returns `410 Gone`): a verifier you don't run yourself is not a verifier.
 
 ## What Treeship proves — and what it cannot
