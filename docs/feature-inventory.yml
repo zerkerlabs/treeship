@@ -89,12 +89,6 @@
     - treeship declare --network
     - treeship agent register --network
     - treeship attest card --network
-- id: coverage-receipt
-  name: Coverage receipt (coverage.v1 at session close)
-  section: sessions
-  status: stable
-  cli:
-    - treeship session close
     - treeship package verify
   packages:
     - treeship-core
@@ -117,6 +111,18 @@
     Claude Code gate denies a WebFetch to a host outside a card's list with
     a signed blocked.v1. Bash egress is not inspected (wave 3, egress
     accounting).
+
+- id: coverage-receipt
+  name: Coverage receipt (coverage.v1 at session close)
+  section: sessions
+  status: stable
+  cli:
+    - treeship session close
+    - treeship package verify
+  packages:
+    - treeship-core
+    - treeship-cli
+  docs:
     - docs/content/docs/reference/predicates.mdx
     - docs/content/docs/guides/coverage-levels.mdx
     - docs/content/docs/cli/session.mdx
