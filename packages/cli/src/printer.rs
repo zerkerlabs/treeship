@@ -30,6 +30,12 @@ impl Printer {
         }
     }
 
+    /// True when output is `--format json`; callers that print a document
+    /// use it to emit JSON instead of the text layout.
+    pub fn is_json(&self) -> bool {
+        self.format == Format::Json
+    }
+
     /// ✓ green success header + aligned key:value fields
     pub fn success(&self, msg: &str, fields: &[(&str, &str)]) {
         if self.quiet {

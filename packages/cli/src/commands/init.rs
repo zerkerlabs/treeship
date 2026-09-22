@@ -168,6 +168,7 @@ pub fn run(
         }
 
         printer.blank();
+        crate::telemetry::notice(printer);
         return Ok(());
     }
 
@@ -184,6 +185,7 @@ pub fn run(
         printer.hint("treeship add               instrument your AI agents");
         printer.hint("treeship session start     begin recording a session");
         printer.blank();
+        crate::telemetry::notice(printer);
         return Ok(());
     }
 
@@ -283,6 +285,7 @@ pub fn run(
     }
 
     printer.blank();
+    crate::telemetry::notice(printer);
     printer.hint("treeship log --follow  to watch receipts");
     printer.hint("treeship status  to check your Treeship");
     printer.blank();

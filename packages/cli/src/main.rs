@@ -5,6 +5,7 @@ mod execution_identity;
 mod otel;
 mod printer;
 mod redact;
+mod telemetry;
 mod templates;
 mod tui;
 
@@ -642,6 +643,18 @@ enum Command {
     ///   treeship otel export art_abc123
     #[command(subcommand, hide = true)]
     Otel(OtelCommand),
+
+    /// Anonymous usage telemetry: what is sent, and the off switch
+    ///
+    /// One ping on first run and at most one a week: a random install id,
+    /// CLI version, OS, arch, harness. Nothing else. Off with
+    /// `treeship telemetry disable`, DO_NOT_TRACK=1 or TREESHIP_NO_TELEMETRY=1.
+    ///
+    /// Examples:
+    ///   treeship telemetry status
+    ///   treeship telemetry disable
+    #[command(subcommand, display_order = 60)]
+    Telemetry(TelemetryCommand),
 
     /// List available trust templates
     ///
@@ -2939,6 +2952,22 @@ struct MerkleVerifyArgs {
 // --- otel -------------------------------------------------------------------
 
 #[derive(Subcommand)]
+enum TelemetryCommand {
+    /// Show whether telemetry is on, and the exact payload it sends
+    ///
+    /// Examples:
+    ///   treeship telemetry status
+    ///   treeship telemetry status --format json
+    Status,
+
+    /// Turn telemetry on for this machine
+    Enable,
+
+    /// Turn telemetry off for this machine (persisted in ~/.treeship/telemetry.json)
+    Disable,
+}
+
+#[derive(Subcommand)]
 enum OtelCommand {
     /// Test OTel connectivity -- sends a single test span
     ///
@@ -3010,6 +3039,13 @@ fn main() {
     let format = Format::from_str(&cli.format);
     let printer = Printer::new(format, cli.quiet, cli.no_color);
 
+    // One anonymous ping on first run, at most weekly after; see telemetry.rs
+    // for the whole payload and every off switch. Never for the command that
+    // controls it, and never able to fail the command that follows.
+    if !matches!(cli.command, Command::Telemetry(_)) {
+        telemetry::tick();
+    }
+
     if let Err(e) = dispatch(&cli, &printer) {
         printer.failure(&e.to_string(), &[]);
         std::process::exit(exit_code(&e.to_string()));
@@ -3044,6 +3080,15 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             },
             printer,
         ),
+
+        Command::Telemetry(sub) => {
+            match sub {
+                TelemetryCommand::Status => telemetry::status(printer),
+                TelemetryCommand::Enable => telemetry::enable(printer)?,
+                TelemetryCommand::Disable => telemetry::disable(printer)?,
+            }
+            Ok(())
+        }
 
         Command::Otel(sub) => {
             #[cfg(feature = "otel")]
