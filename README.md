@@ -7,6 +7,7 @@
 [![Crates.io](https://img.shields.io/crates/v/treeship-core.svg)](https://crates.io/crates/treeship-core)
 [![npm](https://img.shields.io/npm/v/treeship.svg)](https://www.npmjs.com/package/treeship)
 [![PyPI](https://img.shields.io/pypi/v/treeship-sdk.svg)](https://pypi.org/project/treeship-sdk/)
+[![verdict invariant](https://github.com/zerkerlabs/treeship/actions/workflows/verdict-invariant.yml/badge.svg)](https://github.com/zerkerlabs/treeship/actions/workflows/verdict-invariant.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![CI](https://github.com/zerkerlabs/treeship/actions/workflows/ci.yml/badge.svg)](https://github.com/zerkerlabs/treeship/actions/workflows/ci.yml)
 [![receipts](https://github.com/zerkerlabs/treeship/actions/workflows/receipts.yml/badge.svg)](https://github.com/zerkerlabs/treeship/actions/workflows/receipts.yml)
