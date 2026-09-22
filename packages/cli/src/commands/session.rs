@@ -1458,8 +1458,11 @@ fn coverage_payload(
 
 /// Sign the coverage statement as a `coverage.v1` receipt chained onto the
 /// close artifact, so it is sealed inside the package's Merkle tree and
-/// `package verify` can report it. Signed by the actor's own key when the
-/// actor has one, like the close record.
+/// `package verify` can report it. Signed by the ship's key: coverage is the
+/// session host's statement about its own instrumentation, and a stranger
+/// who pinned the ship key as `session_host` verifies it with nothing more.
+/// (Signed with the agent's own key it needed a second pin, and the
+/// evaluator-kit hand-off failed `signer_trust` on the public's machine.)
 fn mint_coverage_receipt(
     ctx: &ctx::Ctx,
     actor: &str,
@@ -1477,7 +1480,8 @@ fn mint_coverage_receipt(
     });
     stmt.payload = Some(payload);
 
-    let signer = crate::commands::attest::resolve_actor_signer(ctx, actor)?;
+    let _ = actor; // the statement names the actor; the ship signs it
+    let signer = ctx.keys.default_signer()?;
     let pt = payload_type("receipt");
     let result = sign(&pt, &stmt, signer.as_ref())?;
 
