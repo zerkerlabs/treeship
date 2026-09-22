@@ -1629,6 +1629,13 @@ struct AgentRegisterArgs {
     #[arg(long, value_name = "ACTIONS", value_delimiter = ',')]
     escalation: Vec<String>,
 
+    /// Comma-separated network destinations the agent may reach: exact hosts
+    /// (api.example.com) or suffix patterns (*.example.com). Signed into the
+    /// certificate and written on the card; the Claude Code gate refuses a
+    /// WebFetch to any other host with a signed blocked.v1 receipt
+    #[arg(long, value_name = "HOSTS", value_delimiter = ',')]
+    network: Vec<String>,
+
     /// Mint a dedicated per-agent signing key and pin it under AgentCert,
     /// instead of certifying the shared ship key. Makes the agent's actor
     /// provable once it signs with that key (see verify-capability).
@@ -1658,6 +1665,13 @@ struct DeclareArgs {
     /// Comma-separated list of tools requiring escalation/approval
     #[arg(long, value_name = "TOOLS", value_delimiter = ',')]
     escalation: Vec<String>,
+
+    /// Comma-separated network destinations the agent may reach: exact hosts
+    /// (api.example.com) or suffix patterns (*.example.com). Connections to
+    /// any other host are listed in the sealed receipt's
+    /// tool_usage.network_off_scope and reported by `package verify`
+    #[arg(long, value_name = "HOSTS", value_delimiter = ',')]
+    network: Vec<String>,
 
     /// ISO-8601 timestamp when this declaration expires
     #[arg(long, value_name = "TIMESTAMP")]
@@ -2119,6 +2133,11 @@ struct AttestCardArgs {
     /// ...) are excluded -- they are transport, not domain capabilities.
     #[arg(long = "from-a2a", value_name = "PATH")]
     from_a2a: Option<String>,
+
+    /// Comma-separated network destinations the agent may reach: exact hosts
+    /// or *.suffix patterns. Recorded on the card as capabilities.network
+    #[arg(long, value_name = "HOSTS", value_delimiter = ',')]
+    network: Vec<String>,
 }
 
 #[derive(Args)]
@@ -3315,6 +3334,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                     a.tools.clone(),
                     a.forbidden.clone(),
                     a.escalation.clone(),
+                    a.network.clone(),
                     a.valid_until.clone(),
                     printer,
                 )
@@ -3330,6 +3350,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 a.description.clone(),
                 a.forbidden.clone(),
                 a.escalation.clone(),
+                a.network.clone(),
                 a.own_key,
                 a.quiet,
                 cli.config.as_deref(),
@@ -3679,6 +3700,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                     from_harness: a.from_harness.clone(),
                     tools_json: a.tools_json.clone(),
                     from_a2a: a.from_a2a.clone(),
+                    network: a.network.clone(),
                     config: cli.config.clone(),
                 },
                 printer,

@@ -59,9 +59,9 @@ Register the session's actor with a card and the plugin enforces it before each 
 
 ```bash
 treeship agent register --name claude-code \
-  --tools file.read,file.write,shell.exec \
+  --tools file.read,file.write,shell.exec,net.fetch \
   --escalation "mcp__postgres__*" \
-  --forbidden net.fetch
+  --network api.example.com,*.internal.net
 ```
 
 Claude Code tools map onto the card's vocabulary: Read, Grep and Glob are `file.read`; Write, Edit, MultiEdit and NotebookEdit are `file.write`; Bash is `shell.exec`; WebFetch and WebSearch are `net.fetch`; Agent and Task are `agent.spawn`; an MCP tool `mcp__server__tool` is `server.tool`. The card's patterns take one `*`, the same rule `verify-capability` uses.
@@ -70,11 +70,15 @@ Claude Code tools map onto the card's vocabulary: Read, Grep and Glob are `file.
 |---|---|
 | a halt stands for the actor (`treeship halt <actor>` or `*`) | denies every tool call, signs each refusal as `blocked.v1` (`operator_revocation`), before any other rule |
 | `forbidden` matches | denies, and signs a `blocked.v1` receipt (`scope_violation`) into the session |
+| `network` is declared and a `WebFetch` host is outside it | denies, and signs a `blocked.v1` receipt naming the host. A host inside the list is allowed. `network` takes exact hosts or `*.suffix` patterns (`*.example.com` also matches `example.com`); an empty list means no network scope, not "no network" |
 | `escalation_required` matches | asks the operator |
 | `bounded_tools` matches | allows |
 | none of the above | allows and leaves an `agent.note` ("off-card") in the timeline; with `TREESHIP_GATE=enforce` it denies and signs the refusal instead |
 | no card for the actor | allows everything, says nothing |
 
+The network scope reaches what the harness routes through `WebFetch`. A `curl` inside `Bash` is a shell command to the gate, judged as `shell.exec`; its destination is not inspected here. The sealed receipt still records every `agent.connected_network` event and judges it against the declared scope (see [network scope in the receipt](/docs/concepts/agent-identity#network-scope)).
+
+A refusal is a signed artifact, sealed with the session like any action, so "the gate stopped it" is a claim a stranger can verify. The gate fails open on every error path: a broken Treeship never blocks a tool call by accident. It is a boundary on what the harness routes through hooks, not on what a process spawned outside them can do; the [coverage level](/docs/guides/coverage-levels) says where that boundary is.
 The kill switch is `treeship halt agent://claude-code --reason "…"`; `treeship halt --lift agent://claude-code` ends it, and both are signed receipts on the session chain. A refusal is a signed artifact, sealed with the session like any action, so "the gate stopped it" is a claim a stranger can verify. The gate fails open on every error path: a broken Treeship never blocks a tool call by accident. It is a boundary on what the harness routes through hooks, not on what a process spawned outside them can do; the [coverage level](/docs/guides/coverage-levels) says where that boundary is.
 | `skills/treeship-verify` | How to verify a receipt URL someone shares with you |
 | `skills/treeship-report` | How to publish + share a session report URL |

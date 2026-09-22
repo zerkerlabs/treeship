@@ -33,6 +33,8 @@ treeship attest card \
 
 This builds the `agent_card.v1` payload from typed flags, validates it against the [registered predicate](/docs/reference/predicates#agent_cardv1), signs it, and reports whether the card is key-bound at mint time. The card's `keyid` defaults to the signing key.
 
+`--network api.example.com,*.internal.net` adds a network scope to the card as `capabilities.network`: the hosts the agent may reach, exact or by `*.suffix`. `verify-capability` reports it as `declared network`. The judgement happens where the evidence is: a session started with the same scope in its [declaration](/docs/concepts/agent-identity#network-scope) seals every recorded destination against it, and `package verify` reports the result as the `network_scope` row.
+
 ## Key binding and per-actor signing
 
 A card is only as strong as the key behind it. By default every action in a workspace is signed by the single ship key, so a card's `keyid` is the shared key and the card is `self-asserted`. **Per-actor signing** makes the binding real:

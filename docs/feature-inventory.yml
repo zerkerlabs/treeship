@@ -57,6 +57,37 @@
     - packages/core/src/predicates/mod.rs
   notes: "Registers reason.authorization.v1 as a typed receipt payload for complete Zerker Reason action-authorization certificates. Treeship verifies schema, signature, and chain; semantic replay remains a separate reason verify-authorization step. The generic receipt command does not invoke Reason automatically."
 
+- id: network-scope
+  name: Network scope (declaration, card, gate, receipt judgement)
+  section: sessions
+  status: stable
+  cli:
+    - treeship declare --network
+    - treeship agent register --network
+    - treeship attest card --network
+    - treeship package verify
+  packages:
+    - treeship-core
+    - treeship-cli
+  docs:
+    - docs/content/docs/concepts/agent-identity.mdx
+    - docs/content/docs/integrations/claude-code.mdx
+    - docs/content/docs/concepts/capability-cards.mdx
+    - docs/content/docs/cli/package.mdx
+  tests:
+    - packages/core/src/session/receipt.rs
+    - packages/cli/tests/network_scope_cli.rs
+    - integrations/tests/parity.sh
+  notes: >
+    A host allow-list (exact or *.suffix) on the declaration, the agent
+    certificate and card, and the agent_card.v1 receipt. session start
+    copies it into the manifest; the sealed receipt records
+    tool_usage.network_declared and network_off_scope; package verify
+    reports the `network_scope` row (PASS/WARN, only when declared). The
+    Claude Code gate denies a WebFetch to a host outside a card's list with
+    a signed blocked.v1. Bash egress is not inspected (wave 3, egress
+    accounting).
+
 - id: coverage-receipt
   name: Coverage receipt (coverage.v1 at session close)
   section: sessions
