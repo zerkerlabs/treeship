@@ -5,6 +5,9 @@ if [ -n "${MOCK_TREESHIP_LOG:-}" ]; then
 fi
 case "$1" in
   halt)
+    # An older CLI has no `halt` subcommand: it prints usage and exits 2.
+    # The gate must fail open on that, never block a tool call.
+    [ -n "${MOCK_TREESHIP_NO_HALT:-}" ] && { echo "error: unrecognized subcommand 'halt'" >&2; exit 2; }
     # The gate asks for active halts; the fixture supplies them.
     case "$*" in
       *"list --format json"*)
