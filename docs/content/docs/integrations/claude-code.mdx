@@ -68,13 +68,14 @@ Claude Code tools map onto the card's vocabulary: Read, Grep and Glob are `file.
 
 | Card says | The gate does |
 |---|---|
+| a halt stands for the actor (`treeship halt <actor>` or `*`) | denies every tool call, signs each refusal as `blocked.v1` (`operator_revocation`), before any other rule |
 | `forbidden` matches | denies, and signs a `blocked.v1` receipt (`scope_violation`) into the session |
 | `escalation_required` matches | asks the operator |
 | `bounded_tools` matches | allows |
 | none of the above | allows and leaves an `agent.note` ("off-card") in the timeline; with `TREESHIP_GATE=enforce` it denies and signs the refusal instead |
 | no card for the actor | allows everything, says nothing |
 
-A refusal is a signed artifact, sealed with the session like any action, so "the gate stopped it" is a claim a stranger can verify. The gate fails open on every error path: a broken Treeship never blocks a tool call by accident. It is a boundary on what the harness routes through hooks, not on what a process spawned outside them can do; the [coverage level](/docs/guides/coverage-levels) says where that boundary is.
+The kill switch is `treeship halt agent://claude-code --reason "…"`; `treeship halt --lift agent://claude-code` ends it, and both are signed receipts on the session chain. A refusal is a signed artifact, sealed with the session like any action, so "the gate stopped it" is a claim a stranger can verify. The gate fails open on every error path: a broken Treeship never blocks a tool call by accident. It is a boundary on what the harness routes through hooks, not on what a process spawned outside them can do; the [coverage level](/docs/guides/coverage-levels) says where that boundary is.
 | `skills/treeship-verify` | How to verify a receipt URL someone shares with you |
 | `skills/treeship-report` | How to publish + share a session report URL |
 

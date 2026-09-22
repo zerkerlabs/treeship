@@ -1,1 +1,2 @@
 session status --format json
+halt list --format json
