@@ -294,8 +294,9 @@ the attached harnesses, or `none` when the workspace has no harness state. It
 is a potential, never a claim that the harness captured anything; `observed`
 is the claim, and `gaps` says in plain words what the record does not cover.
 
-Signed by the actor's own key when the actor has one, so it is the
-producer's statement about its own instrumentation. An evaluator's
+Signed by the ship's key: it is the session host's statement about its own
+instrumentation, and a verifier who pinned the ship key as `session_host`
+checks it with nothing more. An evaluator's
 [`evaluation.v1`](#evaluationv1) can point at it through its `coverage`
 field. `package verify` reports it as the `coverage` row and warns when a
 package carries none.
