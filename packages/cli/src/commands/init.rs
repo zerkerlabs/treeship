@@ -99,6 +99,14 @@ pub fn run(
     }
 
     if config_path.exists() && !force {
+        // A stub whose parent is gone is not "initialized"; say what it is
+        // and how to get out, instead of pointing the user at a file that
+        // then points them back here.
+        if let Err(e @ crate::config::ConfigError::DanglingExtends { .. }) =
+            crate::config::load(&config_path)
+        {
+            return Err(e.to_string().into());
+        }
         return Err(format!(
             "already initialized at {}\n\n  Use --force to regenerate, or --config <path> for a different location.",
             config_path.display()

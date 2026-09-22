@@ -393,6 +393,7 @@ mod tests {
                 bounded_actions: tools.iter().map(|s| (*s).into()).collect(),
                 forbidden: vec![],
                 escalation_required: vec![],
+                network: Vec::new(),
             },
             signature: CertificateSignature {
                 algorithm: "ed25519".into(),
@@ -418,6 +419,8 @@ mod tests {
                     })
                     .collect(),
                 unauthorized: vec![],
+                network_declared: Vec::new(),
+                network_off_scope: Vec::new(),
             })
         };
         SessionReceipt {

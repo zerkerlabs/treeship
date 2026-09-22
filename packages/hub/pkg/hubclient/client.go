@@ -31,7 +31,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/treeship/hub/pkg/dpop"
+	"github.com/zerkerlabs/treeship/packages/hub/pkg/dpop"
 )
 
 // DefaultEndpoint is the hosted Hub.

@@ -29,7 +29,7 @@ Treeship produces evidence: every **captured** action becomes a signed, timestam
 
 ## The 60-second local demo
 
-No account, no server — and none of the commands below touch the network. (The CLI sends one anonymous usage ping on first run and at most weekly after: a random id, version, OS, arch, harness, nothing else. `treeship telemetry disable` or `DO_NOT_TRACK=1` turns it off; [details](https://docs.treeship.dev/docs/about/telemetry).) Every output block below is real, captured from v0.24.
+No account, no server. Nothing about your work leaves the machine: the only network call any command below makes is one anonymous usage ping on first run and at most weekly after (a random id, version, OS, arch, harness, nothing else), off with `treeship telemetry disable` or `DO_NOT_TRACK=1`; [details](https://docs.treeship.dev/docs/about/telemetry). Every output block below is real, captured from v0.24.
 
 ```bash
 npm install -g treeship

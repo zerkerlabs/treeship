@@ -1,7 +1,7 @@
 //! Anonymous usage telemetry. Opt-out, minimal, and honest about itself.
 //!
-//! Treeship is local-first: `init`, `attest` and `verify` never touch the
-//! network. That makes the project blind to its own adoption, so the CLI
+//! Treeship is local-first: `init`, `attest` and `verify` never send the
+//! user's work anywhere, and the ping below is the one network call they make. That makes the project blind to its own adoption, so the CLI
 //! sends one small ping to the hub the first time it runs on a machine and at
 //! most one more per week after that. Both carry the same seven fields and
 //! nothing else:

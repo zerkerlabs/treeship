@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/treeship/hub/internal/db"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/db"
 )
 
 // newTestHandlers spins up an isolated SQLite-backed Handlers for one test.

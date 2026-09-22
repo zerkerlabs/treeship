@@ -6,7 +6,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/treeship/hub/internal/db"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/db"
 )
 
 type Handlers struct {

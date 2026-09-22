@@ -18,6 +18,8 @@ Three functions. Each accepts a parsed object, a JSON string, or a URL.
 
 Runs the JSON-level checks a Treeship Session Receipt carries: Merkle root recomputation, inclusion proof verification, leaf-count parity, timeline ordering.
 
+What it does not check, by design: the Merkle leaves are artifact ids, so the `digest` column beside each id is not recomputed against anything here. Rewriting an artifact's `digest` in the JSON still yields `structural-pass`; the id is what the tree binds, and only `treeship package verify` on the sealed package, with the envelope bytes, checks the digest against the signed bytes. The outcome name says `structural` for this reason.
+
 ```typescript
 import { verifyReceipt } from '@treeship/verify';
 

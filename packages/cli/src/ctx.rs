@@ -47,6 +47,47 @@ impl From<treeship_core::storage::StorageError> for CtxError {
     }
 }
 
+impl Ctx {
+    /// Where the Approval Use Journal lives for this workspace: beside the
+    /// keystore, not beside the config file that was resolved. See
+    /// [`journal_dir_for`].
+    pub fn journal_dir(&self) -> PathBuf {
+        journal_dir_for(&self.config, &self.config_path)
+    }
+}
+
+/// The Approval Use Journal follows the keystore. A project stub
+/// (`{"extends": <global config>, "project": true}`) shares the global ship,
+/// its key, its grants and its artifact store, so it must share the journal
+/// too: with one journal per stub, a `--max-uses 1` grant could be spent once
+/// from every directory on the same machine that resolved to a different
+/// config, and each use verified clean as `use 1/1` (film findings
+/// 2026-09-22, #11). A workspace with its own keystore under its own
+/// `.treeship/` is unchanged, because there the two locations coincide.
+///
+/// A journal written at the old location beside a stub is moved once, so
+/// uses recorded before this rule keep counting against the grant.
+pub fn journal_dir_for(cfg: &Config, config_path: &std::path::Path) -> PathBuf {
+    let beside_config = config_path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("journals")
+        .join("approval-use");
+    let owner = match std::path::Path::new(&cfg.keys_dir).parent() {
+        Some(p) => p.to_path_buf(),
+        None => return beside_config,
+    };
+    let primary = owner.join("journals").join("approval-use");
+    if primary != beside_config && beside_config.is_dir() && !primary.is_dir() {
+        if let Some(parent) = primary.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::rename(&beside_config, &primary);
+    }
+    primary
+}
+
 pub fn open(config_path_override: Option<&str>) -> Result<Ctx, CtxError> {
     let (config_path, config_source) = match config_path_override {
         Some(p) => (PathBuf::from(p), ConfigSource::Explicit),

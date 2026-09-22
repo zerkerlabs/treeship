@@ -17,7 +17,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/treeship/hub/internal/db"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/db"
 )
 
 // receiptPayloadType is the MIME type of treeship receipt envelopes.

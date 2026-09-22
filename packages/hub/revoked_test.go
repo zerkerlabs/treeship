@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/treeship/hub/internal/contentaddress"
-	"github.com/treeship/hub/internal/db"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/contentaddress"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/db"
 )
 
 // The endpoint this replaces returned a hardcoded empty list carrying a fresh

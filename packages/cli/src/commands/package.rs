@@ -627,8 +627,15 @@ fn print_approval_authority_panel(
                 let max_uses = grant
                     .and_then(|g| g.scope.as_ref())
                     .and_then(|s| s.max_actions);
-                match treeship_core::journal::find_use_for_action(j, grant_id, &nonce_dig, max_uses)
-                {
+                match treeship_core::journal::find_use_for_action(
+                    j,
+                    grant_id,
+                    &nonce_dig,
+                    max_uses,
+                    // The inspect panel summarises a grant, not one action:
+                    // the latest use record answers "within max_uses".
+                    uses.first().and_then(|u| u.action_artifact_id.as_deref()),
+                ) {
                     Ok(Some((_rec, replay))) => {
                         let mark = match replay.passed {
                             Some(false) => "✗",
@@ -1075,7 +1082,7 @@ pub fn trust_with_own_keys(
             key_id: key.id.clone(),
             public_key: format!("ed25519:{}", URL_SAFE_NO_PAD.encode(&key.public_key)),
             kind: TrustRootKind::SessionHost,
-            label: "this ship's own key".into(),
+            label: treeship_core::session::package::OWN_KEY_LABEL.into(),
             added_at: crate::commands::session::now_rfc3339(),
         });
     }
@@ -1108,13 +1115,7 @@ pub fn verify(
     // than failing -- offline / inbox verification of a bare package
     // must keep working.
     if let Some(ctx_opened) = ctx_opened {
-        let journal_dir = ctx_opened
-            .config_path
-            .parent()
-            .unwrap_or_else(|| std::path::Path::new("."))
-            .join("journals")
-            .join("approval-use");
-        let journal = treeship_core::journal::Journal::new(&journal_dir);
+        let journal = treeship_core::journal::Journal::new(ctx_opened.journal_dir());
         let bundle = treeship_core::session::read_approvals_bundle(&path).unwrap_or_default();
         if !bundle.uses.is_empty() {
             if !journal.exists() {
@@ -1131,6 +1132,7 @@ pub fn verify(
                         &u.grant_id,
                         &u.nonce_digest,
                         u.max_uses,
+                        u.action_artifact_id.as_deref(),
                     ) {
                         Ok(Some((_rec, replay))) => {
                             if matches!(replay.passed, Some(false)) {

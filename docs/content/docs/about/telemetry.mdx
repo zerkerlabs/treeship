@@ -5,7 +5,7 @@ description: What the Treeship CLI sends, when, why, how to see it, and how to t
 
 # Telemetry
 
-Treeship is local-first. `init`, `attest`, `wrap`, `verify` and `session` never touch the network, and receipts leave your machine only when you publish them. That also made the project blind to its own adoption: registry download counts are mirror and CI traffic, and the hub only sees the machines that choose to attach a dock.
+Treeship is local-first. `init`, `attest`, `wrap`, `verify` and `session` never send your work anywhere, and receipts leave your machine only when you publish them; the one network call they make is the ping this page describes. That also made the project blind to its own adoption: registry download counts are mirror and CI traffic, and the hub only sees the machines that choose to attach a dock.
 
 So the CLI sends one small, anonymous ping. This page is the complete description of it.
 

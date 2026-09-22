@@ -1,0 +1,168 @@
+---
+title: Evaluator kit
+description: "The operational profile for an outside evaluator: which sessions the lab seals, whose keys get pinned under which power, what is verified before a grade is written, what the grade says, and what gets published. With a worked example that runs end to end on one machine."
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Evaluator kit
+
+Pacing proposals pair a capability checkpoint with a certification: a model or agent at capability X carries certification Y from an evaluator. For that to mean anything to a third party, three things have to hold. The evaluator must have graded the bytes the lab actually produced, not a copy the lab could have edited. The grade must be the evaluator's own signed statement, not the lab's. And a stranger must be able to check both without asking either party.
+
+This page is the sequence that gets there with what Treeship ships today. It is written for the evaluator, with the lab's steps included because the evaluator has to tell the lab what to produce.
+
+<Callout type="info">
+Treeship is the record layer. It makes the lab's session, the evaluator's grade, and the link between them signed, sealed and verifiable offline. It does not make the evaluation sound: `pass` is the evaluator's method agreeing with the evaluator's bar. The [worked example](#the-worked-example) at the end runs every step below and exits nonzero if any promise on this page stops holding.
+</Callout>
+
+## The three parties
+
+| Party | Produces | Pins |
+|---|---|---|
+| **Lab** | one sealed `.treeship` package per evaluated run, plus its ship's public key | nothing (it is the subject) |
+| **Evaluator** | a sealed package of its own containing the `evaluation.v1` grade, plus its public key | the lab's key, as `session_host` |
+| **Public** (an auditor, a regulator, anyone) | verdicts | both keys, as `session_host` |
+
+Each party is its own Treeship workspace with its own keystore. Nothing is shared but public keys and sealed packages.
+
+## 1. What the lab seals
+
+Every run the evaluator will grade is one session, closed with the package copied out of the workspace:
+
+```bash
+treeship session start --name eval-run-2026-09-20 --actor agent://subject
+# ... the agent runs the suite under whatever harness captures it ...
+treeship session close --summary "suite run"
+treeship keys export
+```
+
+Close prints the package path under `.treeship/sessions/`. Copy that directory out for the hand-off; with the receipts-in-pull-requests work (0.31.6) `session close --receipt-dir ./handoff` does the copy and prints a commit trailer.
+
+The sealed package carries the signed action receipts, the Merkle root over them, the close record that binds `receipt.json`, and since 0.31.6 a [coverage receipt](/docs/guides/coverage-levels#the-coverage-receipt) that says what the harness was in a position to capture. If the run declared a [network scope](/docs/concepts/agent-identity#network-scope), the receipt also says which destinations fell outside it.
+
+What the lab hands over: the package directory and the one line `keys export` prints. Over any channel; the evaluator's pins make the channel irrelevant to the verdict.
+
+<Callout type="warn">
+Coverage is the lab's own statement about its instrumentation. An evaluator reads `declared_level` as "what the harness could see", not "what happened". A session with `declared none` and two events is a valid package that proves almost nothing, and the coverage row says so.
+</Callout>
+
+## 2. What the evaluator pins
+
+The evaluator pins the lab's ship key once, under the one power a session producer needs:
+
+```bash
+treeship trust add key_<lab> ed25519:<lab public key> --kind session_host --label "lab ship key" --yes
+```
+
+Get the key through a channel you trust: a signed email, a call, a key published on a page you already trust. Key-to-organisation binding is an out-of-band act and Treeship does not pretend otherwise. Pin nothing else. In particular do not pin the lab's key as `cert_issuer` or `revoker`; an evaluator grants a subject no power over certificates or revocations.
+
+## 3. What is verified before a grade is written
+
+```bash
+treeship package verify ./handoff/ssn_….treeship --strict --format json
+```
+
+Grade nothing that does not come back `verified`. Under `--strict` every sealed-set row is a failure, not a warning: an unpinned signer, a rewritten receipt, an artifact signed outside the session window, a chain with a loose step. Rows to read, not just count:
+
+| Row | What the evaluator learns |
+|---|---|
+| `signer_trust` | the package was sealed by the key you pinned, not a look-alike |
+| `receipt_binding` | `receipt.json` is byte-identical to what the lab's close record signed |
+| `coverage` | the declared capture level, the harnesses and connection modes, the observed event count and the stated gaps |
+| `network_scope` | only when the run declared one: whether every recorded destination fell inside it |
+| `chain_completeness` | every receipt is a linked step; a loose one is the signer's unsigned claim about order |
+
+Then take the digest the grade will name:
+
+```bash
+sha256sum ./handoff/ssn_….treeship/receipt.json
+```
+
+This is the same value `receipt_binding` checked, so the grade is about the bytes that verified, and only those.
+
+## 4. What the grade says
+
+The grade is an [`evaluation.v1`](/docs/reference/predicates#evaluationv1) receipt, minted inside the evaluator's own session so it is sealed and chained like any other step:
+
+```bash
+treeship session start --name grading-ssn_… --actor system://evaluator-example
+treeship attest receipt \
+  --system system://evaluator-example \
+  --kind evaluation.v1 \
+  --payload '{
+    "schema": "evaluation.v1",
+    "subject_kind": "package",
+    "subject_digest": "sha256:<digest of receipt.json>",
+    "subject_actor": "agent://subject",
+    "suite_id": "sandbox-escape-v3",
+    "suite_digest": "sha256:…",
+    "environment_digest": "sha256:…",
+    "result_digest": "sha256:…",
+    "verdict": "pass",
+    "score": 0.02,
+    "threshold": 0.05,
+    "capability": "sandbox-escape",
+    "coverage": "art_<the coverage receipt in the lab package>",
+    "evaluated_at": "2026-09-20T12:00:00Z"
+  }'
+treeship session close --summary "graded ssn_…"
+treeship keys export
+```
+
+Field by field: `subject_digest` binds the grade to the package by the digest that verified. `suite_digest` and `environment_digest` let a second evaluator agree it was the same suite in the same sandbox. `result_digest` commits to the full transcript and per-item scores the evaluator keeps, without publishing them. `coverage` points at the lab's coverage receipt, so a reader of the grade finds the denominator. `verdict` is validated against `pass`, `fail`, `inconclusive` before signing.
+
+The `--system` is the session's actor, so the receipt chains onto the evaluator's session by default and the evaluator's package passes `chain_completeness`. A grade signed by the subject's own key is self-asserted whatever the payload says; the worked example checks the signing key against the pinned evaluator key for exactly this reason.
+
+## 5. What gets published
+
+Publish the two packages and the two public keys. Nothing else is needed for anyone to reach the same verdicts:
+
+```bash
+treeship trust add key_<lab> … --kind session_host --yes
+treeship trust add key_<evaluator> … --kind session_host --yes
+treeship package verify lab/ssn_….treeship --strict
+treeship package verify evaluator/ssn_….treeship --strict
+```
+
+The grade is `artifacts/<grade id>.json` in the evaluator's package: a signed envelope whose payload names the lab package by digest. A reader recomputes the digest of the lab's `receipt.json`, compares, and checks the signature key against the evaluator's pinned key. The [worked example](#the-worked-example) does all four steps as a third party with a fresh keystore.
+
+Do not publish a grade about a package you do not also publish. A digest without the bytes is a claim nobody can check.
+
+## What this does not prove
+
+- That the evaluation was sound, or that the suite measures the capability it names. Those are the suite's claims.
+- That the lab ran nothing else. The coverage receipt says where the capture boundary was; outside it is outside the record.
+- Which organisation holds either key. Pinning is where that binding is made, out of band.
+- That the grade was written at `evaluated_at`. A signed timestamp is the signer's claim until an external anchor brackets it.
+
+## The worked example
+
+[`examples/evaluator-kit/run.sh`](https://github.com/zerkerlabs/treeship/blob/main/examples/evaluator-kit/run.sh) plays all three parties on one machine, each in its own `HOME` and workspace, and exits nonzero with the failed check named if any promise above stops holding. It runs in CI against every change to Treeship.
+
+```bash
+git clone https://github.com/zerkerlabs/treeship && cd treeship
+cargo build -p treeship-cli
+examples/evaluator-kit/run.sh "$PWD/target/debug/treeship"
+```
+
+```
+== lab: run the agent under a session and seal it
+   ok   sealed ssn_91fd9b9fb361503f -> …/lab/ws/.treeship/sessions/ssn_91fd9b9fb361503f.treeship
+   ok   lab key key_077692ea354de0e1
+
+== evaluator: pin the lab's key, verify strictly, grade, seal
+   ok   lab package: verified, strict, under the evaluator's own pins
+   ok   signer_trust: pass
+   ok   a tampered copy fails (receipt_binding), so the grade below is about the bytes that verified
+   ok   grade art_ed13745c7cf431c0d5991efd2332edfb (evaluation.v1, verdict pass) about sha256:5872caee…
+   ok   evaluator sealed its grading session -> …/handoff/evaluator/ssn_38cc43bb1aa80f46.treeship
+
+== public: pin both keys, verify both packages, check the grade points at the package
+   ok   ssn_91fd9b9fb361503f.treeship: verified, strict
+   ok   ssn_38cc43bb1aa80f46.treeship: verified, strict
+   ok   grade names the lab package by digest (sha256:5872caee…), verdict pass, signed by the evaluator's key, not the subject's
+
+evaluator kit: every check holds
+```
+
+The first time this script ran it failed at the public's strict verify of the evaluator's package: a receipt minted with `attest receipt` inside a session was sealed as a loose step, so the grade did not pass `chain_completeness` on a stranger's machine. `attest receipt` now follows the same chain rule as `attest action`. The kit exists to find exactly that kind of gap before an evaluator does.

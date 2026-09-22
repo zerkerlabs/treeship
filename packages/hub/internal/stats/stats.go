@@ -25,7 +25,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/treeship/hub/internal/telemetry"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/telemetry"
 )
 
 type Handlers struct {

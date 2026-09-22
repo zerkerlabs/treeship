@@ -211,6 +211,37 @@ pub struct ToolUsage {
     /// Tools called that were NOT in the declared list.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unauthorized: Vec<String>,
+    /// Network destinations declared for the session (from declaration.json
+    /// `network`): exact hosts or `*.suffix` patterns. Absent when none was
+    /// declared.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub network_declared: Vec<String>,
+    /// Destinations the session connected to that match none of the declared
+    /// patterns. Only computed when a scope was declared; absent otherwise.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub network_off_scope: Vec<String>,
+}
+
+/// Does `host` fall inside a declared network scope? A pattern is an exact
+/// host (`api.example.com`), a suffix wildcard (`*.example.com`, which also
+/// matches `example.com` itself), or `*` for any host. Case-insensitive; a
+/// trailing dot on the host is ignored. Shared by the receipt composer and
+/// the package verifier so both judge the same way.
+pub fn host_in_scope(host: &str, scope: &[String]) -> bool {
+    let h = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    if h.is_empty() {
+        return false;
+    }
+    scope.iter().any(|pat| {
+        let p = pat.trim().to_ascii_lowercase();
+        if p == "*" {
+            true
+        } else if let Some(suffix) = p.strip_prefix("*.") {
+            h == suffix || h.ends_with(&format!(".{suffix}"))
+        } else {
+            h == p
+        }
+    })
 }
 
 /// A single tool's usage count.
@@ -533,7 +564,11 @@ impl ReceiptComposer {
         };
 
         // Derive tool usage from side effects + manifest authorized_tools
-        let tool_usage = derive_tool_usage(&side_effects, &manifest.authorized_tools);
+        let tool_usage = derive_tool_usage(
+            &side_effects,
+            &manifest.authorized_tools,
+            &manifest.network_scope,
+        );
 
         SessionReceipt {
             type_: RECEIPT_TYPE.into(),
@@ -837,7 +872,11 @@ fn count_attributed<'a, F>(
     }
 }
 
-fn derive_tool_usage(side_effects: &SideEffects, authorized_tools: &[String]) -> Option<ToolUsage> {
+fn derive_tool_usage(
+    side_effects: &SideEffects,
+    authorized_tools: &[String],
+    network_scope: &[String],
+) -> Option<ToolUsage> {
     use std::collections::BTreeMap;
 
     let total_specialized = side_effects.files_read.len()
@@ -848,6 +887,7 @@ fn derive_tool_usage(side_effects: &SideEffects, authorized_tools: &[String]) ->
     if side_effects.tool_invocations.is_empty()
         && total_specialized == 0
         && authorized_tools.is_empty()
+        && network_scope.is_empty()
     {
         return None;
     }
@@ -917,10 +957,30 @@ fn derive_tool_usage(side_effects: &SideEffects, authorized_tools: &[String]) ->
             .collect()
     };
 
+    // Network scope: every destination the session connected to, judged
+    // against the declared patterns. No scope declared means no judgement,
+    // never "all clear": the fields stay absent and the connections stand
+    // in side_effects as recorded.
+    let network_off_scope: Vec<String> = if network_scope.is_empty() {
+        Vec::new()
+    } else {
+        let mut off: Vec<String> = side_effects
+            .network_connections
+            .iter()
+            .map(|c| c.destination.clone())
+            .filter(|d| !host_in_scope(d, network_scope))
+            .collect();
+        off.sort();
+        off.dedup();
+        off
+    };
+
     Some(ToolUsage {
         declared: authorized_tools.to_vec(),
         actual,
         unauthorized,
+        network_declared: network_scope.to_vec(),
+        network_off_scope,
     })
 }
 
@@ -1436,6 +1496,93 @@ mod tests {
             tu.unauthorized.iter().any(|t| t == "web_fetch"),
             "web_fetch must be flagged as unauthorized when cert omits it; got unauthorized={:?}",
             tu.unauthorized,
+        );
+    }
+
+    fn manifest_with_network(scope: Vec<&str>) -> SessionManifest {
+        let mut m = make_manifest();
+        m.network_scope = scope.into_iter().map(String::from).collect();
+        m
+    }
+
+    fn net(seq: u64, host: &str) -> SessionEvent {
+        mk(
+            seq,
+            "agent",
+            EventType::AgentConnectedNetwork {
+                destination: host.into(),
+                port: Some(443),
+            },
+        )
+    }
+
+    #[test]
+    fn host_in_scope_matches_exact_wildcard_and_any() {
+        let scope = vec!["api.example.com".to_string(), "*.internal.net".to_string()];
+        assert!(host_in_scope("api.example.com", &scope));
+        assert!(host_in_scope("API.Example.com.", &scope));
+        assert!(host_in_scope("internal.net", &scope));
+        assert!(host_in_scope("db.internal.net", &scope));
+        assert!(!host_in_scope("evil.example.com", &scope));
+        assert!(!host_in_scope("notinternal.net", &scope));
+        assert!(!host_in_scope("", &scope));
+        assert!(host_in_scope("anything.at.all", &["*".to_string()]));
+        assert!(!host_in_scope("anything.at.all", &[]));
+    }
+
+    #[test]
+    fn declared_network_scope_flags_off_scope_destinations() {
+        let manifest = manifest_with_network(vec!["api.example.com", "*.internal.net"]);
+        let events = vec![
+            mk(0, "root", EventType::SessionStarted),
+            net(1, "api.example.com"),
+            net(2, "db.internal.net"),
+            net(3, "evil.example.com"),
+            net(4, "evil.example.com"),
+            mk(
+                5,
+                "root",
+                EventType::SessionClosed {
+                    summary: None,
+                    duration_ms: Some(1000),
+                },
+            ),
+        ];
+        let receipt = ReceiptComposer::compose(&manifest, &events, vec![]);
+        let tu = receipt.tool_usage.expect("tool_usage must be populated");
+        assert_eq!(
+            tu.network_declared,
+            vec!["api.example.com".to_string(), "*.internal.net".to_string()]
+        );
+        assert_eq!(tu.network_off_scope, vec!["evil.example.com".to_string()]);
+    }
+
+    #[test]
+    fn no_network_scope_means_no_judgement() {
+        let manifest = make_manifest();
+        let events = vec![
+            mk(0, "root", EventType::SessionStarted),
+            net(1, "evil.example.com"),
+            mk(
+                2,
+                "root",
+                EventType::SessionClosed {
+                    summary: None,
+                    duration_ms: Some(1000),
+                },
+            ),
+        ];
+        let receipt = ReceiptComposer::compose(&manifest, &events, vec![]);
+        let tu = receipt.tool_usage.expect("tool_usage must be populated");
+        assert!(tu.network_declared.is_empty());
+        assert!(
+            tu.network_off_scope.is_empty(),
+            "nothing declared, nothing judged"
+        );
+        assert_eq!(
+            receipt.side_effects.network_connections.len(),
+            1,
+            "but the connection is recorded"
         );
     }
 

@@ -37,7 +37,13 @@ SESSION_NAME="${PROJECT}-claude-code-${TIMESTAMP}"
 # fails. The most common failure is a legacy keystore that can't decrypt
 # under the current machine-key derivation; v0.9.4+ emits an actionable
 # recovery message on stderr that we want Claude to see rather than swallow.
-SESSION_START_ERR=$(treeship session start --name "$SESSION_NAME" 2>&1 >/dev/null) || SESSION_START_FAILED=1
+# The session's actor is the agent, the same actor the bridge signs as
+# (.mcp.json sets TREESHIP_ACTOR=agent://claude-code) and the name the
+# gate looks a card up by. Without --actor the CLI defaulted to
+# ship://<ship_id>, no card ever matched, and the gate never fired in a
+# real install (film findings 2026-09-22, gate report cause 2).
+ACTOR="${TREESHIP_ACTOR:-agent://claude-code}"
+SESSION_START_ERR=$(treeship session start --name "$SESSION_NAME" --actor "$ACTOR" 2>&1 >/dev/null) || SESSION_START_FAILED=1
 
 if [ -z "${SESSION_START_FAILED:-}" ]; then
   # Emit one agent.decision event so the receipt records WHICH model
