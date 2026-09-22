@@ -249,7 +249,7 @@ curl -fsSL treeship.dev/setup | sh
 npm install -g treeship
 ```
 
-macOS arm64/x64 and Linux x86_64 (any distro, glibc or musl, single statically linked binary) are supported. Linux ARM64 is not yet shipped. Windows: use WSL. Full matrix: [install guide](https://docs.treeship.dev/guides/install#supported-platforms).
+macOS arm64/x64, Linux x86_64 and Linux ARM64 (any distro, glibc or musl, single statically linked binary) are supported. Windows: use WSL. Full matrix: [install guide](https://docs.treeship.dev/guides/install#supported-platforms).
 
 ### Claude Code plugin
 
@@ -341,7 +341,7 @@ Treeship builds on existing primitives rather than inventing cryptography:
 
 ## Status and roadmap
 
-Current release: **v0.24.0**. The [`CHANGELOG.md`](./CHANGELOG.md) is the source of truth for what each release shipped; the living roadmap is [`docs/specs/vision.md`](./docs/specs/vision.md).
+The current release is the latest tag on [GitHub Releases](https://github.com/zerkerlabs/treeship/releases) (0.31.5 at the time of writing). The [`CHANGELOG.md`](./CHANGELOG.md) is the source of truth for what each release shipped; the living roadmap is [`docs/specs/vision.md`](./docs/specs/vision.md).
 
 **Shipped**
 - Signed artifacts, hash chains, Merkle inclusion + consistency proofs, signed checkpoints
@@ -353,13 +353,26 @@ Current release: **v0.24.0**. The [`CHANGELOG.md`](./CHANGELOG.md) is the source
 - Split trust-root powers (v0.19); DPoP hub auth and device-flow login
 - **Selective capability disclosure** — present a verifier only the capabilities it needs
 - MCP + A2A bridges, Claude Code plugin, TypeScript/Python SDKs, WASM verifier on Node/Deno/browser/edge
+- Sealed session packages verified signature-first (`package verify`, v0.31.2+), with the close record bound into the package (v0.31.4)
+- Workload packet and recomputation receipts, evaluation receipts, the agent graph written from spawn events, a Claude Code gate and a kill switch (v0.31.5+)
+- Linux ARM64 binary (aarch64 musl), built and smoke-tested in the release workflow
 
 **Experimental, explicitly non-authoritative**
 - Zero-knowledge proofs: the prior Groth16 path was found unsound and is **quarantined**; a statement-first private-verification design supersedes it. Nothing in the default trust path depends on ZK. [Honest status](https://docs.treeship.dev/docs/concepts/zero-knowledge).
 
 **Open**
-- Linux ARM64 binary · transparent MCP forwarder mode · Anthropic plugin-directory listing
+- Transparent MCP forwarder mode · Anthropic plugin-directory listing · external time anchors (Rekor, OpenTimestamps) · an independent third-party security audit
 - Not planned: native Windows (use WSL) — [open an issue](https://github.com/zerkerlabs/treeship/issues) with a strong use case
+
+## Security history
+
+Treeship's verifier has had three advisories in four months, and they share a root cause: a surface reported a green verdict without a signature check anchored to a pinned key.
+
+- **v0.10.4**: the keystore did not encrypt as documented; verifiers trusted embedded keys; a Merkle downgrade path.
+- **v0.19**: higher-level surfaces reported "verified" from attacker-controlled input without anchoring to a checked signature. [Release post](https://docs.treeship.dev/blog/treeship-0-19-the-security-hardening-release).
+- **v0.31.2**: `package verify` never checked an artifact's Ed25519 signature, so a rewritten sealed set verified green. [TS-2026-002](docs/security/TS-2026-002.md), with a [repro script](docs/security/audit-2026-09-repro.sh). Fixed the same day; follow-ups in 0.31.3 and 0.31.4 bound the close record into the package.
+
+What is true now: every verdict-printing path verifies signatures against the verifier's own pinned roots, the release workflow replays the verify flow against the published packages before a tag goes live, and the vocabulary a verdict may use is gated in CI. What is not yet true: an independent third-party audit of the verify paths. It is on the open list above. Every audit so far was internal and AI-assisted; read the advisories with that in mind. The [threat model](docs/security/threat-model.md) states what the verifier can and cannot conclude.
 
 ## Documentation
 
