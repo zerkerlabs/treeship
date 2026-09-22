@@ -74,6 +74,7 @@ const REGISTRY: &[(&str, &str)] = &[
         include_str!("schemas/verification.recompute.v1.json"),
     ),
     ("evaluation.v1", include_str!("schemas/evaluation.v1.json")),
+    ("coverage.v1", include_str!("schemas/coverage.v1.json")),
     ("halt.v1", include_str!("schemas/halt.v1.json")),
 ];
 
@@ -1074,6 +1075,63 @@ mod tests {
             validate("evaluation.v1", Some(&p)),
             Err(PredicateError::TypeMismatch { field, .. }) if field == "score"
         ));
+    }
+    fn coverage_payload() -> serde_json::Value {
+        json!({
+            "schema": "coverage.v1",
+            "session_id": "ssn_0011223344556677",
+            "actor": "agent://claude-code",
+            "declared_level": "high",
+            "harnesses": [{
+                "harness_id": "claude-code",
+                "status": "instrumented",
+                "coverage": "high",
+                "connection_modes": ["native-hook", "mcp", "git-reconcile"],
+                "known_gaps": ["Built-in tools the user invokes outside hooks rely on git-reconcile."]
+            }],
+            "observed": {
+                "events": 14,
+                "event_types": {"session.started": 1, "agent.called_tool": 12, "session.closed": 1},
+                "hosts": ["host_aa"],
+                "agent_instances": 1,
+                "event_log_skipped": 0
+            },
+            "gaps": ["Built-in tools the user invokes outside hooks rely on git-reconcile."],
+            "closed_at": "2026-09-18T20:00:00Z"
+        })
+    }
+
+    #[test]
+    fn coverage_valid_passes() {
+        assert!(validate("coverage.v1", Some(&coverage_payload())).is_ok());
+    }
+
+    #[test]
+    fn coverage_requires_observed() {
+        let mut p = coverage_payload();
+        p.as_object_mut().unwrap().remove("observed");
+        assert_eq!(
+            validate("coverage.v1", Some(&p)),
+            Err(PredicateError::MissingField {
+                suffix: "coverage.v1".into(),
+                field: "observed".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn coverage_rejects_unknown_level() {
+        let mut p = coverage_payload();
+        p["declared_level"] = json!("total");
+        assert!(validate("coverage.v1", Some(&p)).is_err());
+    }
+
+    #[test]
+    fn coverage_none_level_with_no_harnesses_is_valid() {
+        let mut p = coverage_payload();
+        p["declared_level"] = json!("none");
+        p["harnesses"] = json!([]);
+        assert!(validate("coverage.v1", Some(&p)).is_ok());
     }
 
     #[test]

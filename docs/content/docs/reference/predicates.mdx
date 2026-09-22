@@ -278,9 +278,39 @@ grading itself.
 | `score` | number | no |
 | `threshold` | number | no |
 | `capability` | string | no |
-| `coverage` | string (`art_…` of a coverage receipt) | no |
+| `coverage` | string (`art_…` of a `coverage.v1` receipt) | no |
 | `notes` | string | no |
 
+### `coverage.v1`
+
+The denominator for "we monitored this". `treeship session close` mints one
+per session, chained onto the close artifact and sealed in the package, so a
+reader of the timeline knows what the harness was in a position to see. Two
+halves, kept apart on purpose: **declared** copies each attached harness's
+state file (status, potential coverage level, connection modes, the known
+gaps frozen at install time), and **observed** counts what actually reached
+the event log, by type. `declared_level` is the highest potential level among
+the attached harnesses, or `none` when the workspace has no harness state. It
+is a potential, never a claim that the harness captured anything; `observed`
+is the claim, and `gaps` says in plain words what the record does not cover.
+
+Signed by the ship's key: it is the session host's statement about its own
+instrumentation, and a verifier who pinned the ship key as `session_host`
+checks it with nothing more. An evaluator's
+[`evaluation.v1`](#evaluationv1) can point at it through its `coverage`
+field. `package verify` reports it as the `coverage` row and warns when a
+package carries none.
+
+| Field | Type | Required |
+|---|---|---|
+| `schema` | const `coverage.v1` | yes |
+| `session_id` | string | yes |
+| `actor` | string (actor URI) | yes |
+| `declared_level` | enum `high`, `medium`, `basic`, `backstop-only`, `none` | yes |
+| `harnesses` | array of `{harness_id, status, coverage, connection_modes[], known_gaps[], last_verified_at}` | yes |
+| `observed` | object `{events, event_types{type: count}, hosts[], agent_instances, first_event_at, last_event_at, event_log_skipped}` | yes |
+| `gaps` | array of strings | no |
+| `closed_at` | string (RFC3339) | yes |
 ### `halt.v1`
 
 The kill switch, as a record. An operator's signed order that an actor (or
