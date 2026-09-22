@@ -66,7 +66,7 @@ run_test() {
   HOME="$WORKDIR" \
   sh "$script_path" < "$fixture" > "$WORKDIR/stdout-$basename" 2>&1 || true
 
-  unset MOCK_TREESHIP_HALTS MOCK_TREESHIP_ACTOR
+  unset MOCK_TREESHIP_HALTS MOCK_TREESHIP_ACTOR MOCK_TREESHIP_NO_HALT
   if diff -u "$expected" "$LOG" > "$WORKDIR/diff-$basename" 2>&1; then
     echo "  PASS  $basename"
     PASS=$((PASS + 1))
