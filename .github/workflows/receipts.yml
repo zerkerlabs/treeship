@@ -1,0 +1,28 @@
+name: receipts
+
+# Dogfood: every pull request to this repository runs the verify-receipts
+# action against the sealed packages committed under receipts/, with the
+# ship key pinned in receipts/trust_roots.json. The summary says how many
+# packages were verified; zero is reported as zero, never as a green.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  receipts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+      - uses: ./.github/actions/verify-receipts
+        with:
+          packages: "receipts/**/*.treeship"
+          trust-roots: "receipts/trust_roots.json"
+          treeship-version: "0.31.5"

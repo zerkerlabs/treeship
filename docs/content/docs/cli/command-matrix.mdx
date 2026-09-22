@@ -202,6 +202,7 @@ treeship attest card [OPTIONS] --agent <URI>
 | `--from-harness <PATH>` | Capture the tool set from a harness config (e.g. a Claude Code settings.json). Its `permissions.allow` entries are stamped `captured` in capability_provenance -- read from real config, not declared |
 | `--tools-json <PATH>` | Declare the tool set from an explicit operator-supplied JSON file (a JSON array of tool strings, or `&#123; "tools": [...] &#125;`). The runtime companion to --from-harness: entries are stamped `declared` with the file as their source -- an operator's claim, honestly labeled, never presented as captured/discovered |
 | `--from-a2a <PATH>` | Map an A2A `AgentCard` JSON file's `skills` to capabilities, stamped `discovered` with the AgentCard's `url` as their source (the agent's own published descriptor). Protocol-level `capabilities` (streaming, ...) are excluded -- they are transport, not domain capabilities |
+| `--network <HOSTS>` | Comma-separated network destinations the agent may reach: exact hosts or *.suffix patterns. Recorded on the card as capabilities.network |
 
 ### `treeship attest decision`
 
@@ -332,6 +333,7 @@ treeship session close [OPTIONS]
 | `--summary <TEXT>` | Summary of what was accomplished |
 | `--headline <TEXT>` | One-line headline for the receipt (e.g. "Verifier refactor completed.") |
 | `--review <TEXT>` | What should be reviewed before trusting the output |
+| `--receipt-dir <DIR>` | Copy the sealed .treeship package into DIR (created if missing), so it can be committed next to the change it accounts for and checked by the verify-receipts GitHub Action |
 
 ### `treeship session abandon`
 
@@ -636,6 +638,23 @@ treeship resolve [OPTIONS] <AGENT>
 | Option | Description |
 |---|---|
 | `--hub <URL>` | Resolve from a Hub over the network instead of the local store. The returned bundle is re-verified client-side against your trust roots |
+
+## `treeship halt`
+
+The kill switch: stop an actor (or every actor) with a signed halt.v1 receipt that the harness gate and the strict MCP bridge obey, refusing every tool call as a signed blocked.v1. --lift ends it with a second signed receipt. Reaches what the hooks route; not a process started outside them
+
+```
+treeship halt [OPTIONS] <ACTOR>
+```
+
+| Argument | Description |
+|---|---|
+| `<ACTOR>` | Actor URI (agent://…), `*` for every actor, or `list` |
+
+| Option | Description |
+|---|---|
+| `--lift` | Lift the halt on this actor instead of imposing one |
+| `--reason <REASON>` | Why, in your words. Goes into the signed receipt |
 
 ## `treeship status`
 

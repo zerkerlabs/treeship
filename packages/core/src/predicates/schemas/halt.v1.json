@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://treeship.dev/schemas/halt.v1.json",
+  "title": "halt.v1",
+  "description": "The kill switch, as a record. An operator's signed order that an actor (or every actor in a workspace) must stop, or that a previous halt is lifted. Carried as the payload of a Treeship receipt with kind=halt.v1, signed by the workspace's own key, and sealed into the session like any other artifact, so a verifier can see when the switch was thrown, by whom, and when it was lifted. Enforcement points that read it (the harness gate, the MCP bridge under strict mode) refuse every tool call for a halted actor and sign each refusal as blocked.v1 with reason_class operator_revocation. A halt stops what the harness routes through hooks; it cannot reach a process an agent started outside them.",
+  "type": "object",
+  "required": ["schema", "action", "actor", "issued_at"],
+  "properties": {
+    "schema": {
+      "description": "Schema identifier. Must be exactly this value.",
+      "const": "halt.v1"
+    },
+    "action": {
+      "description": "halt: stop the actor. lift: end a previous halt.",
+      "type": "string",
+      "enum": ["halt", "lift"]
+    },
+    "actor": {
+      "description": "The actor URI this order applies to, or * for every actor in the workspace.",
+      "type": "string"
+    },
+    "reason": {
+      "description": "Why, in the operator's words.",
+      "type": "string"
+    },
+    "halt": {
+      "description": "For a lift: the art_ id of the halt receipt being lifted.",
+      "type": "string"
+    },
+    "issued_at": {
+      "description": "RFC 3339 instant the order was signed. A tool call at or after a halt's instant is refused; one signed strictly before it is unaffected.",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

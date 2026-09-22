@@ -1106,6 +1106,7 @@ mod tests {
             bounded_actions: vec!["Bash".into()],
             forbidden: vec![],
             escalation_required: vec![],
+            network: vec![],
         };
         let payload = serde_json::json!({
             "identity": identity, "capabilities": capabilities, "declaration": declaration,

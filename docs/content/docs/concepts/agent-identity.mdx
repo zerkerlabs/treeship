@@ -173,6 +173,13 @@ Three sources, in order of trust:
 
 The two-axis gate (agent declaration AND project declaration) lets the same agent operate under different policies in different projects without re-issuing certs.
 
+
+### Network scope
+
+`treeship declare --network api.example.com,*.internal.net` adds a host allow-list to the declaration. A pattern is an exact host or `*.suffix` (`*.example.com` also matches `example.com`); `*` alone means any host. `session start` copies the list into the manifest, and the sealed receipt's `tool_usage` carries it as `network_declared` next to `network_off_scope`, the recorded destinations that matched no pattern. `package verify` reports the judgement as the `network_scope` row: `PASS` when every recorded connection was inside the scope, `WARN` naming the ones outside.
+
+No scope declared means no judgement, never a silent all-clear: the fields stay absent and every connection still stands in `side_effects.network_connections`. The record covers what the harness captured as `agent.connected_network` (a `WebFetch` through the Claude Code plugin, an explicit `session event`); a connection a subprocess made on its own is outside it, as the [coverage receipt](/docs/guides/coverage-levels#the-coverage-receipt) says. The same list on an agent card (`agent register --network`) is what the Claude Code gate enforces before the fetch happens.
+
 ## What an agent's URL looks like
 
 Once a certificate is published to a Hub, anyone can view it at:
