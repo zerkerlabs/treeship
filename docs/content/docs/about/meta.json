@@ -1,4 +1,8 @@
 {
   "title": "About",
-  "pages": ["changelog", "publishing"]
+  "pages": [
+    "changelog",
+    "publishing",
+    "telemetry"
+  ]
 }

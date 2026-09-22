@@ -1,0 +1,45 @@
+---
+title: telemetry
+description: See exactly what the anonymous usage ping sends, and turn it off or on for this machine.
+---
+
+`treeship telemetry` controls the CLI's anonymous usage ping. The full description of what is sent, when, and what the hub does with it is on the [Telemetry](/docs/about/telemetry) page; this page is the command.
+
+## `treeship telemetry status`
+
+Shows whether telemetry is on for this process, why it is off if it is, the endpoint, the state file, the install id, when a ping was last sent, and the whole payload the CLI would send from this machine.
+
+```
+telemetry
+  enabled:   yes
+  endpoint:  https://api.treeship.dev/v1/telemetry
+  state:     /Users/you/.treeship/telemetry.json
+  install:   ins_9f2c1a4be0d34c7f8a1b2c3d4e5f6071
+  last sent: 1789700000 (unix)
+
+  payload (the whole thing):
+  {"schema":"treeship.telemetry.v1","install_id":"ins_9f2c…","event":"heartbeat","cli_version":"0.32.0","os":"macos","arch":"aarch64","harness":"claude-code"}
+
+   → treeship telemetry disable | enable
+```
+
+`--format json` prints the same as one object with `enabled`, `disabled_reason`, `endpoint`, `state_file`, `install_id`, `last_sent_at` and `payload`.
+
+## `treeship telemetry disable`
+
+Writes `"enabled": false` to `~/.treeship/telemetry.json`. Persistent; nothing is sent from this machine again until `enable`.
+
+## `treeship telemetry enable`
+
+Removes the persisted off switch. The environment switches still win: if `DO_NOT_TRACK`, `TREESHIP_NO_TELEMETRY` or `CI` is set, `enable` says so and nothing is sent.
+
+## Environment
+
+| Variable | Effect |
+|---|---|
+| `DO_NOT_TRACK=1` | Off. The cross-tool convention. |
+| `TREESHIP_NO_TELEMETRY=1` | Off. |
+| `CI` (any value) | Off. CI runners are not users. |
+| `TREESHIP_TELEMETRY_ENDPOINT` | Where to post, for self-hosted hubs. Required for a debug build to send at all. |
+
+None of the commands on this page make a network call themselves. The ping is sent, when due, by whatever other command runs next.

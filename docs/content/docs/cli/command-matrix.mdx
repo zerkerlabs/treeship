@@ -1255,6 +1255,38 @@ treeship doctor [OPTIONS]
 |---|---|
 | `--fix` | Repair insecure permissions on the keystore directory and files |
 
+## `treeship telemetry`
+
+Anonymous usage telemetry: what is sent, and the off switch
+
+```
+treeship telemetry [OPTIONS] <COMMAND>
+```
+
+### `treeship telemetry status`
+
+Show whether telemetry is on, and the exact payload it sends
+
+```
+treeship telemetry status [OPTIONS]
+```
+
+### `treeship telemetry enable`
+
+Turn telemetry on for this machine
+
+```
+treeship telemetry enable [OPTIONS]
+```
+
+### `treeship telemetry disable`
+
+Turn telemetry off for this machine (persisted in ~/.treeship/telemetry.json)
+
+```
+treeship telemetry disable [OPTIONS]
+```
+
 ## `treeship version`
 
 Print version and build info

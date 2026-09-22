@@ -37,6 +37,7 @@
     "dashboard",
     "ui",
     "otel",
+    "telemetry",
     "merkle"
   ]
 }

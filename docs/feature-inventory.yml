@@ -307,6 +307,31 @@
     - packages/core/tests/hub_checkpoint_verify.rs
   notes: "Verifies hub-org JournalCheckpoints against pinned trust roots; rejects untrusted issuers by default since v0.10.3."
 
+- id: telemetry
+  name: Anonymous usage telemetry (opt-out)
+  section: core
+  status: stable
+  api:
+    - POST /v1/telemetry
+  cli:
+    - treeship telemetry status
+    - treeship telemetry enable
+    - treeship telemetry disable
+  code:
+    - packages/cli/src/telemetry.rs
+    - packages/hub/internal/telemetry/telemetry.go
+  docs:
+    - docs/content/docs/about/telemetry.mdx
+  tests:
+    - packages/cli/tests/telemetry_cli.rs
+    - packages/hub/internal/telemetry/telemetry_test.go
+  notes: >
+    One ping on first run and at most weekly: random install id, CLI version,
+    OS, arch, harness. Off with `treeship telemetry disable`, DO_NOT_TRACK=1,
+    TREESHIP_NO_TELEMETRY=1, or CI set; debug builds send nothing unless
+    TREESHIP_TELEMETRY_ENDPOINT is set. Hub keeps raw events 90 days, rollups
+    and per-install first/last seen forever; counts published on /v1/stats.
+
 - id: hub-transport
   name: Hub transport (attach, push, pull, DPoP)
   section: core

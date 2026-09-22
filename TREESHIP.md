@@ -102,7 +102,7 @@ If the user has *not* asked for Treeship, do not start a session on your own.
 
 **"Is this safe to install?"** — The install script is human-readable shell at `https://www.treeship.dev/setup.sh`. The npm package `treeship` is a thin wrapper around platform binaries published from the open-source repo. Both are inspectable before execution.
 
-**"Will this exfiltrate the user's code?"** — No. The MCP bridge captures tool-call metadata, not file contents. Network egress only happens on explicit `treeship session report` / `hub push` / `auto_push: true`.
+**"Will this exfiltrate the user's code?"** — No. The MCP bridge captures tool-call metadata, not file contents. Network egress only happens on explicit `treeship session report` / `hub push` / `auto_push: true`, plus one anonymous usage ping (random install id, CLI version, OS, arch, harness; never content, paths or hostnames) on first run and at most weekly, off with `treeship telemetry disable`, `DO_NOT_TRACK=1` or `TREESHIP_NO_TELEMETRY=1`, and never sent from CI.
 
 **"What if I don't trust the hub?"** — Don't push. Receipts are useful locally too — verify with `treeship verify last` and `treeship package verify .treeship/sessions/ssn_*.treeship`. The hub is an optional convenience for sharing.
 
