@@ -1538,10 +1538,71 @@ fn mint_session_record(
     Ok((result.artifact_id, class))
 }
 
+/// Make sure `keys.json` in a sealed package names `key_id`, so a verifier
+/// on another machine can check every signature the package carries. The
+/// public half comes from this ship's keystore; `keys.json` is a lookup aid
+/// outside the Merkle tree, so adding to it changes no digest.
+fn ensure_package_key(
+    ctx: &ctx::Ctx,
+    pkg_dir: &std::path::Path,
+    key_id: &str,
+) -> Result<(), String> {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    let path = pkg_dir.join(session::package::KEYS_FILE);
+    let mut keys: serde_json::Value = match std::fs::read(&path) {
+        Ok(raw) => serde_json::from_slice(&raw).map_err(|e| e.to_string())?,
+        Err(_) => serde_json::json!({
+            "schema": session::package::PACKAGE_KEYS_SCHEMA,
+            "keys": {}
+        }),
+    };
+    let present = keys.get("keys").and_then(|k| k.get(key_id)).is_some();
+    if present {
+        return Ok(());
+    }
+    let pk = ctx
+        .keys
+        .public_key(key_id)
+        .map_err(|e| format!("public key for {key_id}: {e}"))?;
+    let encoded = format!("ed25519:{}", URL_SAFE_NO_PAD.encode(pk));
+    match keys.get_mut("keys").and_then(|k| k.as_object_mut()) {
+        Some(map) => {
+            map.insert(key_id.to_string(), serde_json::Value::String(encoded));
+        }
+        None => {
+            keys["keys"] = serde_json::json!({ key_id: encoded });
+        }
+    }
+    std::fs::write(
+        &path,
+        serde_json::to_vec_pretty(&keys).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// Recursive directory copy used by `session close --receipt-dir`. Files
+/// are copied byte for byte so the receipt digest is unchanged; nothing
+/// is followed through symlinks.
+fn copy_dir_all(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let dest = to.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_all(&entry.path(), &dest)?;
+        } else if ty.is_file() {
+            std::fs::copy(entry.path(), &dest)?;
+        }
+    }
+    Ok(())
+}
+
 pub fn close(
     summary: Option<String>,
     headline: Option<String>,
     review: Option<String>,
+    receipt_dir: Option<std::path::PathBuf>,
     config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -1904,6 +1965,7 @@ pub fn close(
     let pkg_dir = ts_dir.join("sessions");
     std::fs::create_dir_all(&pkg_dir)?;
     let mut sealed_pkg_path: Option<std::path::PathBuf> = None;
+    let mut sealed_receipt_digest: Option<String> = None;
 
     // v0.9.9 PR 4: gather approval evidence to embed alongside the
     // receipt. Walks the chain for actions whose meta carries an
@@ -1940,6 +2002,7 @@ pub fn close(
             printer.info(&format!("  files:     {}", pkg_output.file_count));
 
             sealed_pkg_path = Some(pkg_output.path.clone());
+            sealed_receipt_digest = Some(pkg_output.receipt_digest.clone());
 
             // ── Work-history record (session.v1) ────────────────────
             // docs/specs/work-history.md slice 1: the sealed session
@@ -1975,10 +2038,17 @@ pub fn close(
                         .storage
                         .read(&record_id)
                         .map_err(|e| e.to_string())
-                        .and_then(|r| r.envelope.to_json().map_err(|e| e.to_string()))
-                        .and_then(|bytes| {
+                        .and_then(|r| {
+                            let bytes = r.envelope.to_json().map_err(|e| e.to_string())?;
                             std::fs::write(pkg_output.path.join(session::RECORD_FILE), bytes)
-                                .map_err(|e| e.to_string())
+                                .map_err(|e| e.to_string())?;
+                            // The record is signed with the actor's own key
+                            // when it has one, and keys.json was written
+                            // before the record existed. A package that
+                            // names every signer except the one on
+                            // record.json fails `receipt_binding` on any
+                            // machine but this one, so add the key now.
+                            ensure_package_key(&ctx, &pkg_output.path, &r.key_id)
                         }) {
                         Ok(()) => {}
                         Err(e) => printer.warn(
@@ -2015,6 +2085,38 @@ pub fn close(
         }
     }
 
+    // ── Commit trailer + receipt copy ───────────────────────────────
+    // The trailer binds a commit to the sealed package by the digest of
+    // receipt.json, which is what `package verify` and the verify-receipts
+    // GitHub Action recompute. `--receipt-dir` copies the package out of
+    // the (usually gitignored) workspace so it can be committed next to
+    // the change. Copying after the record is sealed matters: record.json
+    // is written into the package above, and the copy must carry it.
+    let commit_trailer = match (&sealed_receipt_digest, &manifest.session_id) {
+        (Some(digest), sid) => Some(format!("Treeship-Receipt: {sid} {digest}")),
+        _ => None,
+    };
+    let mut receipt_copy: Option<std::path::PathBuf> = None;
+    if let Some(dir) = receipt_dir.as_ref() {
+        match sealed_pkg_path.as_ref() {
+            Some(pkg) => {
+                let name = pkg
+                    .file_name()
+                    .map(|n| n.to_os_string())
+                    .unwrap_or_else(|| std::ffi::OsString::from("session.treeship"));
+                let dest = dir.join(name);
+                match copy_dir_all(pkg, &dest) {
+                    Ok(()) => receipt_copy = Some(dest),
+                    Err(e) => printer.warn(
+                        &format!("receipt not copied to {}: {e}", dir.display()),
+                        &[],
+                    ),
+                }
+            }
+            None => printer.warn("no sealed package to copy; --receipt-dir ignored", &[]),
+        }
+    }
+
     // ── OTel export (best-effort, never fails the close) ────────────
     #[cfg(feature = "otel")]
     {
@@ -2040,6 +2142,9 @@ pub fn close(
             "package": sealed_pkg_path.as_ref().map(|path| path.display().to_string()),
             "coverage_artifact_id": coverage_artifact_id,
             "coverage_declared_level": coverage_declared_level,
+            "receipt_digest": sealed_receipt_digest,
+            "commit_trailer": commit_trailer,
+            "receipt_copy": receipt_copy.as_ref().map(|path| path.display().to_string()),
             "unsealed_branches": unsealed_branches,
             "sealed_unchained": sealed_unchained,
         }));
@@ -2059,6 +2164,12 @@ pub fn close(
             printer.info(&format!(
                 "  coverage: declared {coverage_declared_level} ({via})  {id}"
             ));
+        }
+        if let Some(ref copy) = receipt_copy {
+            printer.info(&format!("  copied:   {}", copy.display()));
+        }
+        if let Some(ref trailer) = commit_trailer {
+            printer.info(&format!("  trailer:  {trailer}"));
         }
         printer.blank();
     }

@@ -1,0 +1,36 @@
+{
+  "title": "pr-check dogfood",
+  "sections": [
+    {
+      "id": "summary",
+      "label": "Session Summary",
+      "visible": true
+    },
+    {
+      "id": "participants",
+      "label": "Participant Strip",
+      "visible": true
+    },
+    {
+      "id": "agent_graph",
+      "label": "Delegation & Collaboration Graph",
+      "visible": true
+    },
+    {
+      "id": "timeline",
+      "label": "Mission Timeline",
+      "visible": true
+    },
+    {
+      "id": "side_effects",
+      "label": "Side-Effect Ledger",
+      "visible": true
+    },
+    {
+      "id": "proofs",
+      "label": "Proofs Panel",
+      "visible": true
+    }
+  ],
+  "generate_preview": true
+}

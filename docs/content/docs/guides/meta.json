@@ -16,6 +16,7 @@
     "workflows",
     "merkle-proofs",
     "verification-reporting",
+    "receipts-in-pull-requests",
     "edge-runtime",
     "dogfood-checklist"
   ]

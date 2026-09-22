@@ -115,6 +115,23 @@
     - packages/cli/tests/evaluation_predicate_cli.rs
   notes: "Registers evaluation.v1: an evaluator's signed result of running a named suite (by digest) against a model, agent, session or package, with verdict pass/fail/inconclusive enforced before signing and the grade chained onto the graded artifact via --subject. The receipt a capability-checkpoint scheme needs; the self-asserted rule (a grade signed by the subject's own key is not independent) is documented for checkers and is the next verifier row."
 
+- id: halt
+  name: Kill switch (halt.v1)
+  section: core
+  status: beta
+  cli:
+    - treeship halt
+  packages:
+    - treeship-core
+    - treeship-cli
+  docs:
+    - docs/content/docs/reference/predicates.mdx
+    - docs/content/docs/integrations/claude-code.mdx
+  tests:
+    - packages/core/src/predicates/mod.rs
+    - packages/cli/tests/halt_cli.rs
+  notes: "treeship halt <actor|*> signs a halt.v1 receipt chained onto the session and writes a marker; the Claude Code plugin's PreToolUse gate refuses every tool call for a halted actor and signs each refusal as blocked.v1 (operator_revocation); --lift signs the lift and clears the marker. A marker with no signed artifact from this workspace is ignored. Reaches what the hooks route, not a process started outside them."
+
 - id: action-v2-emission
   name: action/v2 receipt emission (CLI)
   section: core
@@ -158,6 +175,29 @@
   tests:
     - packages/core/src/session/mod.rs
   notes: "Session start/close/report flow; report uploads to hub and returns a shareable URL."
+
+- id: receipts-in-pull-requests
+  name: Receipts in pull requests (close --receipt-dir, commit trailer, verify-receipts action)
+  section: sessions
+  status: stable
+  cli:
+    - treeship session close --receipt-dir
+  packages:
+    - treeship-cli
+  docs:
+    - docs/content/docs/guides/receipts-in-pull-requests.mdx
+    - docs/content/docs/cli/session.mdx
+  tests:
+    - packages/cli/tests/session_close_receipt_dir_cli.rs
+    - .github/workflows/receipts.yml
+  notes: >
+    `session close --receipt-dir <DIR>` copies the sealed package out of the
+    gitignored workspace and prints a `Treeship-Receipt: <session_id>
+    sha256:<digest of receipt.json>` commit trailer. The composite action at
+    .github/actions/verify-receipts runs `package verify --strict` on every
+    package in a pull request against a committed trust roots file, checks
+    the trailers, and fails on anything but `verified`. Zero packages is
+    reported as zero, never as green, unless `require: true` makes it a fail.
 
 - id: packages
   name: Session packages (.treeship bundles)
@@ -638,7 +678,13 @@
     - treeship otel export
   docs:
     - docs/content/docs/cli/otel.mdx
-  notes: "Behind `--features otel` build flag. Exports artifacts as OTel spans. No dedicated test file at the CLI layer yet."
+  tests:
+    - packages/cli/tests/otel_cli.rs
+  notes: >
+    In the default build since 0.31.6 (`--no-default-features` removes it).
+    Exports artifacts as OTLP/HTTP JSON spans when TREESHIP_OTEL_ENDPOINT is
+    set; five-second timeout, never fails the caller. CLI test:
+    packages/cli/tests/otel_cli.rs.
 
 - id: mcp-server
   name: MCP stdio server (@treeship/mcp)

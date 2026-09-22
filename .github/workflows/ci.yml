@@ -288,8 +288,10 @@ jobs:
       - name: CLI option tables match --help
         run: cd docs && python3 scripts/check-cli-option-tables.py ../target/debug/treeship content
 
-      - name: Build CLI with OTel
-        run: cargo build -p treeship-cli --features otel
+      # OTel is in the default build; keep the opt-out path compiling so a
+      # `--no-default-features` build never rots.
+      - name: Build CLI without OTel (--no-default-features)
+        run: cargo build -p treeship-cli --no-default-features
 
       # Smoke acceptance: end-to-end session round-trip exercises the full
       # capture-normalize-verify chain. Catches release-breaking regressions

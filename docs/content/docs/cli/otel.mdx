@@ -7,29 +7,21 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 Treeship can export every artifact as an OpenTelemetry (OTLP) span, letting you visualize agent workflows in any observability tool that speaks OTLP.
 
-## Feature flag
+## In the default build
 
-OpenTelemetry support is behind a compile-time feature flag to keep the default binary lean. The default `treeship` binary distributed via `npm install -g treeship` and `curl -fsSL treeship.dev/install | sh` does NOT include OTel; you have to build the binary yourself with the flag enabled.
+OpenTelemetry export is part of the standard `treeship` binary since 0.31.6: the one `npm install -g treeship` and `curl -fsSL treeship.dev/install | sh` fetch, and a plain `cargo build -p treeship-cli`. Nothing is exported until `TREESHIP_OTEL_ENDPOINT` is set, so a machine without that variable behaves exactly as before.
 
-```bash
-git clone https://github.com/zerkerlabs/treeship && cd treeship
-cargo build --release --bin treeship --features otel
-# the OTel-enabled binary is at ./target/release/treeship
-```
-
-Without the feature flag, all `treeship otel` commands print a rebuild hint:
+A binary built with `cargo build -p treeship-cli --no-default-features` leaves it out, and every `treeship otel` command then says so:
 
 ```
-OpenTelemetry support is not compiled in.
-Rebuild from source with: cargo build --release --bin treeship --features otel
+otel export is not compiled into this binary (built with --no-default-features)
 ```
 
 <Callout type="warn">
 Do NOT use `cargo install treeship-cli` from crates.io. It does not install an old
 version -- it fails: all seven published versions are yanked, so crates.io reports
 `max_version: 0.0.0` and cargo answers *could not find `treeship-cli` in registry*.
-(This previously said "orphaned at v0.4.0", which implied you would get 0.4.0. The
-newest yanked version is 0.5.0, and none of them are installable.) The CLI ships exclusively via the npm wrapper (`npm install -g treeship`) and the `treeship.dev/install` script, which fetch a prebuilt platform binary. To get a Rust toolchain build, clone the repo and `cargo build` as above.
+The CLI ships exclusively via the npm wrapper (`npm install -g treeship`) and the `treeship.dev/install` script, which fetch a prebuilt platform binary. To get a Rust toolchain build, clone the repo and `cargo build -p treeship-cli`.
 </Callout>
 
 ## Commands
@@ -43,9 +35,12 @@ treeship otel test
 ```
 
 ```
-→ sending test span to http://localhost:4318...
-[pass] span accepted
-→ treeship otel status
+  sending test span...
+
+✓ connected
+  endpoint: http://localhost:4318
+  service:  treeship
+  sent 1 test span
 ```
 
 ### treeship otel status
@@ -57,13 +52,14 @@ treeship otel status
 ```
 
 ```
-OTel export:   enabled
-Endpoint:      http://localhost:4318
-Service name:  treeship
-Auth:          (none)
-Spans sent:    42
-Last export:   2026-03-31T14:20:03Z
+otel
+  endpoint:  http://localhost:4318
+  service:   treeship
+  enabled:   true
+  auth:      none
 ```
+
+With `TREESHIP_OTEL_ENDPOINT` unset it prints `otel not configured` and the export line to set.
 
 ### treeship otel export \<id\>
 
@@ -74,61 +70,61 @@ treeship otel export art_f8e2a1b3c4d5e6f7
 ```
 
 ```
-→ exported art_f8e2a1b3c4d5e6f7 as span
-  trace_id:  4bf92f3577b34da6a3ce929d0e0e4736
-  span_id:   00f067aa0ba902b7
-→ treeship otel status
+✓ exported
+  artifact: art_f8e2a1b3c4d5e6f7
+  endpoint: http://localhost:4318
 ```
 
-### treeship otel enable
+The span's `traceId` is derived from the artifact id, so the same artifact always lands in the same trace.
 
-Enable automatic span export. When enabled, `treeship wrap` and `treeship session close` automatically export spans.
+### treeship otel enable / disable
+
+Export is controlled by environment variables, not by stored state. These two commands print the variables to set; they change nothing on disk.
 
 ```bash
 treeship otel enable
-```
-
-### treeship otel disable
-
-Disable automatic span export.
-
-```bash
 treeship otel disable
 ```
 
 ## Auto-export behavior
 
-When OTel export is enabled:
+When `TREESHIP_OTEL_ENDPOINT` is set and `TREESHIP_OTEL_ENABLED` is not `0` or `false`:
 
-- `treeship wrap -- <cmd>` exports a span after the command finishes
-- `treeship session close` exports spans for all artifacts in the session
-- Each span includes all artifact fields as span attributes
+- `treeship wrap -- <cmd>` exports one span for the action receipt after the command finishes.
+- `treeship session close` exports one span for the `session.close` artifact. The per-action receipts inside the session are not re-exported at close; `wrap` already exported its own, and any artifact can be sent with `treeship otel export <id>`.
+
+Export is best-effort with a five-second timeout per request. A collector that is down or slow never fails `wrap` or `session close`; the receipt is sealed first, the export is attempted afterwards, and a failure is printed as a dim note.
 
 ## Environment variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `TREESHIP_OTEL_ENDPOINT` | OTLP HTTP endpoint (must support `/v1/traces`) | `http://localhost:4318` |
-| `TREESHIP_OTEL_AUTH` | Bearer token for authenticated endpoints | (none) |
-| `TREESHIP_OTEL_SERVICE` | Service name attached to all spans | `treeship` |
-| `TREESHIP_OTEL_ENABLED` | Set to `1` to enable, `0` to disable | `0` |
+| `TREESHIP_OTEL_ENDPOINT` | OTLP/HTTP endpoint; spans go to `<endpoint>/v1/traces` | unset, which means no export |
+| `TREESHIP_OTEL_AUTH` | Full `Authorization` header value, for example `Bearer …` | (none) |
+| `TREESHIP_OTEL_SERVICE` | `service.name` resource attribute | `treeship` |
+| `TREESHIP_OTEL_ENABLED` | `0` or `false` disables export without unsetting the endpoint | enabled |
 
 ## Span attributes
 
-Every exported span includes these attributes:
+The span name is the receipt's `action` (or its predicate type when there is no action). `traceId` is derived from the artifact id; `spanId` is random per export. The start time is the receipt's `signed_at`, and the end time adds `meta.elapsedMs` when the receipt carries it.
 
-| Attribute | Example |
-|-----------|---------|
-| `treeship.artifact_id` | `art_f8e2a1b3c4d5e6f7` |
-| `treeship.actor` | `agent://ci-runner` |
-| `treeship.type` | `treeship/action/v1` |
-| `treeship.action` | `npm test` |
-| `treeship.exit_code` | `0` |
-| `treeship.elapsed_ms` | `3204` |
-| `treeship.output_digest` | `sha256:a1b2c3d4...` |
-| `treeship.parent_id` | `art_c4d5e6f7a1b2c3d4` |
-| `treeship.verify_url` | `https://treeship.dev/verify/art_f8e2a1b3c4d5e6f7` |
-| `treeship.session_id` | `sess_20260331_142000` |
+| Attribute | When | Example |
+|-----------|------|---------|
+| `treeship.artifact_id` | always | `art_f8e2a1b3c4d5e6f7` |
+| `treeship.type` | always | `treeship/action/v1` |
+| `treeship.signed` | always | `true` |
+| `treeship.key_id` | always | `key_945abaa2ecb76f56` |
+| `treeship.actor` | the statement names an actor | `agent://ci-runner` |
+| `treeship.parent_id` | the receipt has a parent | `art_c4d5e6f7a1b2c3d4` |
+| `treeship.verify_url` | the artifact was pushed to a hub | `https://hub.treeship.dev/a/art_…` |
+| `treeship.exit_code` | `wrap` receipts | `0` |
+| `treeship.output_digest` | `wrap` receipts | `sha256:a1b2c3d4…` |
+| `treeship.files_modified` | `wrap` receipts with a git diff | `3` |
+| `treeship.git_before` / `treeship.git_after` | `wrap` receipts inside a git repo | `4bf92f35…` |
+| `treeship.session_id` | the receipt was minted inside a session | `ssn_42e740bd9eb238f6` |
+| `treeship.approval_nonce` | the action consumed a signed approval | `nonce_…` |
+
+The resource carries `service.name` from `TREESHIP_OTEL_SERVICE`.
 
 ## Compatible backends
 
