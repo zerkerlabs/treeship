@@ -28,6 +28,7 @@ import (
 	"github.com/treeship/hub/internal/receipts"
 	"github.com/treeship/hub/internal/ship"
 	"github.com/treeship/hub/internal/stats"
+	"github.com/treeship/hub/internal/telemetry"
 	"github.com/treeship/hub/internal/verify"
 )
 
@@ -65,6 +66,14 @@ func main() {
 	shipHandlers := &ship.Handlers{DB: database}
 	agentHandlers := &agents.Handlers{DB: database}
 	statsHandlers := &stats.Handlers{DB: database}
+	telemetryHandlers := &telemetry.Handlers{DB: database}
+
+	// Roll up yesterday and today and purge raw telemetry events past
+	// retention, now and daily. Stopped with the server so a purge is
+	// never cut off mid-transaction by process exit.
+	maintenanceStop := make(chan struct{})
+	defer close(maintenanceStop)
+	telemetry.StartMaintenance(database, 24*time.Hour, maintenanceStop)
 
 	r := chi.NewRouter()
 
@@ -166,6 +175,18 @@ func main() {
 
 		// Public adoption metrics: counts only, never identifiers. Cached 5 min.
 		pub.Get("/v1/stats", statsHandlers.Stats)
+	})
+
+	// Anonymous CLI usage pings. Public and unauthenticated by nature (the
+	// point is to count machines with no dock), so it gets the tightest
+	// per-IP budget on the router: a CLI sends one ping a week.
+	r.Group(func(tel chi.Router) {
+		tel.Use(httprate.Limit(
+			20, time.Minute,
+			httprate.WithKeyFuncs(httprate.KeyByRealIP),
+			httprate.WithLimitHandler(rateLimited),
+		))
+		tel.Post("/v1/telemetry", telemetryHandlers.Ingest)
 	})
 
 	// Well-known revocation list.

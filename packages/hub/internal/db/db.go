@@ -145,6 +145,44 @@ CREATE TABLE IF NOT EXISTS ship_agents (
   PRIMARY KEY (dock_id, agent_id)
 );
 CREATE INDEX IF NOT EXISTS idx_ship_agents_dock_id ON ship_agents(dock_id);
+
+-- Anonymous CLI telemetry (internal/telemetry). One row per random install
+-- id, kept forever; one row per accepted ping, purged after 90 days; one
+-- row per UTC day of rolled-up counts, kept forever. No IPs, no user
+-- agents, no keys, no dock ids: nothing here links to a person or a ship.
+CREATE TABLE IF NOT EXISTS telemetry_installs (
+  install_id  TEXT PRIMARY KEY,
+  first_seen  INTEGER NOT NULL,
+  last_seen   INTEGER NOT NULL,
+  cli_version TEXT NOT NULL,
+  os          TEXT NOT NULL,
+  arch        TEXT NOT NULL,
+  harness     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_telemetry_installs_first_seen ON telemetry_installs(first_seen);
+CREATE INDEX IF NOT EXISTS idx_telemetry_installs_last_seen ON telemetry_installs(last_seen);
+
+CREATE TABLE IF NOT EXISTS telemetry_events (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  install_id  TEXT NOT NULL,
+  event       TEXT NOT NULL,
+  cli_version TEXT NOT NULL,
+  os          TEXT NOT NULL,
+  arch        TEXT NOT NULL,
+  harness     TEXT NOT NULL,
+  received_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_telemetry_events_received_at ON telemetry_events(received_at);
+
+CREATE TABLE IF NOT EXISTS telemetry_daily (
+  day             TEXT PRIMARY KEY,
+  new_installs    INTEGER NOT NULL,
+  active_installs INTEGER NOT NULL,
+  by_version      TEXT NOT NULL,
+  by_harness      TEXT NOT NULL,
+  by_os           TEXT NOT NULL,
+  computed_at     INTEGER NOT NULL
+);
 `
 
 // derivedIndexes must run AFTER migrate(), never inside schema.

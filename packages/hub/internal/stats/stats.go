@@ -24,6 +24,8 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/treeship/hub/internal/telemetry"
 )
 
 type Handlers struct {
@@ -78,11 +80,15 @@ type agentStats struct {
 }
 
 type response struct {
-	Artifacts   artifactStats `json:"artifacts"`
-	Docks       dockStats     `json:"docks"`
-	Sessions    sessionStats  `json:"sessions"`
-	Agents      agentStats    `json:"agents"`
-	GeneratedAt string        `json:"generated_at"`
+	Artifacts artifactStats `json:"artifacts"`
+	Docks     dockStats     `json:"docks"`
+	Sessions  sessionStats  `json:"sessions"`
+	Agents    agentStats    `json:"agents"`
+	// Installs is the one block that counts machines that never attach a
+	// dock: the CLI's anonymous opt-out ping. Its own basis string says what
+	// it is and is not. See internal/telemetry.
+	Installs    telemetry.Summary `json:"installs"`
+	GeneratedAt string            `json:"generated_at"`
 }
 
 // Stats handles GET /v1/stats.
@@ -126,6 +132,15 @@ func (h *Handlers) Stats(w http.ResponseWriter, r *http.Request) {
 		"session receipts, which the hub does not cryptographically verify. An " +
 		"authenticated dock can inflate this. Artifact, dock and session counts are " +
 		"facts about the hub's own state and are not affected."
+
+	installs, err := telemetry.Summarize(h.DB, time.Now())
+	if err != nil {
+		log.Printf("stats: installs: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		http.Error(w, `{"error":"stats unavailable"}`, http.StatusInternalServerError)
+		return
+	}
+	resp.Installs = installs
 
 	resp.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
 
