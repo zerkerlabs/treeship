@@ -944,11 +944,11 @@ treeship trust add [OPTIONS] --kind <KIND> <KEY_ID> <PUBLIC_KEY>
 | Argument | Description |
 |---|---|
 | `<KEY_ID>` | Identifier for this root. Matches the existing key_id format but human-readable labels are accepted |
-| `<PUBLIC_KEY>` | Ed25519 public key. Either `ed25519:&lt;base64url&gt;` or bare base64url |
+| `<PUBLIC_KEY>` | Ed25519 public key, `ed25519:&lt;base64url&gt;` or bare base64url. For `--kind transparency_log`, an ECDSA P-256 Rekor log key as `ecdsa-p256:&lt;base64url DER&gt;` or `@&lt;path to PEM&gt;` |
 
 | Option | Description |
 |---|---|
-| `--kind <KIND>` | What this root is allowed to verify [possible values: hub_checkpoint, hub_org, cert_issuer, revoker, agent_cert, session_host, ship] |
+| `--kind <KIND>` | What this root is allowed to verify [possible values: hub_checkpoint, hub_org, cert_issuer, revoker, agent_cert, session_host, transparency_log, ship] |
 | `--label <LABEL>` | Optional human-readable label. Shown by `treeship trust list` |
 | `--yes` | Skip the interactive confirmation prompt. Required for non-interactive use (CI, scripts, JSON output mode) |
 

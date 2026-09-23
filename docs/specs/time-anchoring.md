@@ -1,8 +1,8 @@
 # Time Anchoring: proving *when*, not just *what*
 
-**Status:** draft, not implemented
+**Status:** partly implemented. Slice 2 (coverage in the verdict) shipped in 0.30.x. Slice 3 for Rekor (a verified anchor is a witness, nothing else is) shipped with TS-2026-003. Slices 1, 4 and 5 are not built.
 **Pairs with:** [transparency-log](./transparency-log.md) (omission detection), [merkle-consistency](./merkle-consistency.md), the `Witness` trait in `statements/action_v2.rs`
-**Last updated:** 2026-08-13
+**Last updated:** 2026-09-24
 
 ## The shift
 
@@ -160,7 +160,7 @@ single boolean that a caller could read as "time is proven."
 |---|---|
 | **`Witness` + `WitnessAuthority`** (`statements/action_v2.rs`) | Already models external corroboration, already requires `observer != actor`, already fails closed via `NoWitnessAuthority`. No implementation exists. A time anchor is a witness whose observation is "I saw this digest at T". |
 | **Merkle checkpoints** (`v0.10.3+`) | The thing to anchor. Anchoring a checkpoint root covers every receipt beneath it. |
-| **Rekor anchoring** (Hub, `internal/rekor`) | Already wired on push, best-effort. Needs its result surfaced in verification rather than stored and ignored. |
+| **Rekor anchoring** (Hub, `internal/rekor`) | Works as of TS-2026-003 (before it, every submission was rejected). The full log entry is stored on the record and verified offline by `verify::rekor`; `verify::anchoring::witnessed_anchors` counts nothing else. |
 | **`checkpoint_cadence`** ([trusted-rooms](./trusted-rooms.md)) | Cadence is specified — for rooms only. Ordinary sessions have none. |
 | **Transparency log** ([transparency-log](./transparency-log.md)) | The discoverability half. Omission detection lives there, not here. |
 
@@ -218,6 +218,29 @@ number nobody can see yet.
 It is also the slice that prevents the marketing claim from getting ahead of
 the implementation again — once coverage is in the verdict, "you always know
 what your agent did" is falsifiable against our own output.
+
+## What slice 3 settled (TS-2026-003)
+
+- **A witness time is the witness's signed time.** For Rekor v1 that is
+  `integratedTime`, covered by the signed entry timestamp. `observed_at`
+  on a local record is our own clock in a file the operator controls. It
+  is kept for display and never counts.
+- **A proof must be bound to the artifact.** The entry is a `dsse` entry
+  whose payload hash is the SHA-256 of this artifact's payload, and it
+  lists one of this artifact's own signatures with a key that verifies it
+  over PAE. Otherwise a real entry for other bytes could be stapled on.
+- **The exact bytes Rekor records.** `spec.payloadHash` is SHA-256 of the
+  decoded payload (not the PAE, not the envelope JSON). `spec.signatures`
+  carries each kept signature as padded standard base64 and its key as
+  base64 of a PEM SubjectPublicKeyInfo. A second verifier needs exactly this.
+- **Claimed times are signed times.** Coverage reads each statement's
+  signed `timestamp`, not `Record.signed_at`.
+- **The time source is named.** The verified anchor carries
+  `time_source: rekor-v1-integrated-time` and the label of the log key
+  that vouched for it, so the Rekor v2 move to RFC 3161 tokens stays
+  visible.
+- **Logs are trust roots.** Sigstore's public-good key is built in; any
+  pinned `transparency_log` root replaces it.
 
 ## Open questions
 

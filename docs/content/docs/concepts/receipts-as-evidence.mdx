@@ -18,7 +18,7 @@ It is a mapping, not a legal opinion. Every row names the mechanism, and the las
 | Who made this statement? | The signing key, identified by `key_id`; a registered agent's key is bound to its `agent://` URI by a ship-signed `agent_cert.v1` | the DSSE envelope; the certificate chain |
 | On whose authority? | The pinned trust root the key chains to (`cert_issuer`, `session_host`, `hub_org`, `revoker` are separate powers) | the verifier's trust store, set by the checking party |
 | What exactly was stated? | The statement payload, with its type (`action`, `approval`, `handoff`, `receipt`, a registered predicate) | the signed bytes, PAE-encoded, so the signature covers them exactly |
-| When? | The signed timestamp, which proves only that the key asserted that time; an external anchor (hub checkpoint, later Rekor or OpenTimestamps) brackets it | `signed` in the payload; anchoring coverage in `verify` |
+| When? | The signed timestamp, which proves only that the key asserted that time; an external anchor brackets it: a Rekor entry, counted only when its stapled proof verifies offline (TS-2026-003); OpenTimestamps later | `signed` in the payload; anchoring coverage in `verify` |
 | In what order, and is anything missing? | The parent hash inside each signature; the Merkle root at close; `chain_linkage`, `chain_completeness` and `session_window` rows in `package verify` | `parentId`, `merkle.json`, `record.json` |
 | Was a human in the loop? | A signed approval with a scope and a nonce, spent once, with the journal proving it was spent once | `approval` artifacts; the Approval Use Journal |
 | Was anything refused? | A `blocked.v1` receipt naming the gate and the reason | the sealed set, same as any action |

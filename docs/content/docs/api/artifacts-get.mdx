@@ -40,7 +40,8 @@ No authentication required. All artifacts on Hub are publicly readable.
 | `signed_at` | integer | Unix timestamp of when the artifact was signed |
 | `parent_id` | string or null | Parent artifact ID |
 | `hub_url` | string | Public verification URL |
-| `rekor_index` | integer or null | Sigstore Rekor log index |
+| `rekor_index` | integer or null | Sigstore Rekor global log index |
+| `rekor` | object or absent | The anchoring outcome, in the same shape as the push response. Absent for artifacts pushed before outcomes were recorded |
 | `hub_id` | string | The hub connection that pushed this artifact |
 
 ## Errors

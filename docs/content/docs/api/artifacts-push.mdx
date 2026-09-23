@@ -49,15 +49,37 @@ See the [Hub API overview](/docs/api/overview) for full DPoP details.
 {
   "artifact_id": "art_f7e6d5c4b3a2f7e6",
   "hub_url": "https://treeship.dev/verify/art_f7e6d5c4b3a2f7e6",
-  "rekor_index": 12345
+  "rekor_index": 12345,
+  "rekor": {
+    "status": "anchored",
+    "log_index": 12345,
+    "entry": {
+      "uuid": "108e9186e8c5677a...",
+      "body": "eyJhcGlWZXJzaW9uIjoiMC4wLjEiLCJraW5kIjoiZHNzZSIs...",
+      "integratedTime": 1790201063,
+      "logID": "c0d23d6ad406973f9559f3ba2d1ca01f84147d8ffc5b8445c224f98b9591801d",
+      "logIndex": 12345,
+      "verification": {
+        "signedEntryTimestamp": "MEUCIBP8TCRCq86h...",
+        "inclusionProof": { "logIndex": 2804570999, "treeSize": 2804571155, "rootHash": "bb9c9abc...", "hashes": ["..."], "checkpoint": "rekor.sigstore.dev - ..." }
+      }
+    }
+  }
 }
+```
+
+A push whose anchoring did not succeed still returns `200`, with the reason:
+
+```json
+{ "rekor": { "status": "skipped", "reason": "no signature on this artifact was made by the dock's registered ship key (agent-key-only artifacts are not anchored per artifact)" } }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `artifact_id` | string | Echoed artifact ID |
 | `hub_url` | string | Public verification URL |
-| `rekor_index` | integer or null | Sigstore Rekor log index (null if anchoring was skipped or failed) |
+| `rekor_index` | integer or null | Sigstore Rekor global log index. Kept for older clients; read `rekor` instead |
+| `rekor` | object | `status` (`anchored`, `failed`, `skipped`), `reason` when not anchored, `log_index`, and `entry`: the full Rekor log entry, which the CLI stores and `treeship verify` checks offline |
 
 ## Errors
 
@@ -69,7 +91,11 @@ See the [Hub API overview](/docs/api/overview) for full DPoP details.
 
 ## Rekor anchoring
 
-Hub automatically anchors each pushed artifact to [Sigstore Rekor](https://rekor.sigstore.dev). This creates a permanent, publicly auditable record in the transparency log. If Rekor is unavailable, the push succeeds but `rekor_index` returns null.
+The hub submits each pushed artifact to [Sigstore Rekor](https://rekor.sigstore.dev) as a `dsse` entry, keeping only signatures made by the dock's registered ship key. Rekor verifies those signatures and records the payload's SHA-256, the signatures and the key. It does not record the payload.
+
+The hub does not ask you to trust it about the result. It returns Rekor's own entry, and `treeship verify` checks the signed entry timestamp, the inclusion proof, the signed checkpoint, and that the entry is for this artifact, all offline. A Rekor outage never fails the push: `rekor.status` is `failed` with the reason. Pushing the same artifact again retries anchoring when it has no entry yet.
+
+Before TS-2026-003 every submission was rejected and the failure was hidden; no artifact pushed before the fix is anchored until it is pushed again.
 
 ## Example
 

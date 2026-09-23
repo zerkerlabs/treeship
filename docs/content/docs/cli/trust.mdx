@@ -25,6 +25,7 @@ treeship trust remove <key-id> [--yes]
 | `hub_org` | Accept this hub's org-wide single-use approval checkpoints |
 | `revoker` | Honor capability revocations this ship key signs |
 | `session_host` | Honor multi-agent room invitations this host key mints |
+| `transparency_log` | Accept this Rekor log's signed entry timestamps and checkpoints as witnessed time. ECDSA P-256, given as `@rekor.pub` or `ecdsa-p256:<base64url DER>`. Sigstore's public-good log is built in; any pin of this kind replaces it |
 
 The deprecated `ship` kind is rejected with guidance — it used to grant three unrelated powers at once:
 

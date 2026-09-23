@@ -59,7 +59,7 @@ Treeship is a portable trust layer for AI agent workflows. Every action, approva
 
 1. **ZK TLS (TLSNotary)** -- fully specced, feature-flagged, TLSNotary still alpha
 2. **`treeship attach claude/cursor`** -- agent process detection (the official Claude Code plugin at `integrations/claude-code-plugin/` covers Claude Code via PostToolUse hooks; standalone process attach for Cursor/Cline is still planned)
-3. **Hub Merkle Rekor anchoring** -- wired and best-effort: `rekor.Anchor` runs on push and a failure does not fail the push, so an artifact may have no `rekor_index`. Treat it as supplemental until end-to-end tests confirm it.
+3. **Checkpoint anchoring** -- per-artifact Rekor anchoring works as of TS-2026-003 (it never did before: every submission was rejected and the failure was swallowed). Checkpoint roots are not anchored yet, local-only sessions get nothing, and an anchor proves existence by push time, not creation time. RFC 3161 timestamps are not implemented.
 4. **Certificate pinning to `api.treeship.dev`** -- hub writes are DPoP-authenticated (RFC 9449), which binds the request to a dock keypair, but the TLS connection itself is trusted on the system root store. A machine with a hostile root CA sees a hub it should not trust.
 5. **Selective disclosure of receipt fields** -- receipts are all-or-nothing today; `present --disclose` narrows a capability card, not a session receipt's contents.
 
@@ -304,8 +304,10 @@ POST /v1/artifacts  [DPoP authenticated]
   Verify DPoP (see DPoP section below)
   Insert into artifacts
   hub_url = "https://treeship.dev/verify/" + artifact_id
-  Anchor to Rekor (best-effort, don't fail push if Rekor is down)
-  Return: { "artifact_id": "...", "hub_url": "...", "rekor_index": 1234 }
+  Anchor to Rekor (a Rekor outage never fails the push, and the outcome is always returned)
+  Return: { "artifact_id": "...", "hub_url": "...", "rekor_index": 1234,
+            "rekor": { "status": "anchored|failed|skipped", "reason": "...", "log_index": 1234,
+                       "entry": { full Rekor log entry with inclusion proof and SET } } }
 
 GET /v1/artifacts/:id
   Return artifact record as JSON. 404 if not found.
@@ -357,26 +359,28 @@ GET /.well-known/treeship/revoked.json
 Clean up dpop_jtis WHERE seen_at < now-300 on each request.
 ```
 
-**Rekor anchoring:**
+**Rekor anchoring** (`internal/rekor`, TS-2026-003):
 ```
 POST https://rekor.sigstore.dev/api/v1/log/entries
 Body:
 {
-  "kind": "hashedrekord",
+  "kind": "dsse",
   "apiVersion": "0.0.1",
   "spec": {
-    "data": {
-      "hash": { "algorithm": "sha256", "value": "{digest without sha256: prefix}" }
-    },
-    "signature": {
-      "content": "{first sig from envelope_json}",
-      "publicKey": { "content": "{ship_public_key base64}" }
+    "proposedContent": {
+      "envelope":  "{the envelope, payload and sigs as PADDED STANDARD base64,
+                     only signatures that verify under the ship key}",
+      "verifiers": ["{base64(PEM of the ship key's SubjectPublicKeyInfo)}"]
     }
   }
 }
-On success: store logIndex in artifacts.rekor_index
-On failure: log error, continue --Rekor is best-effort
+On 201: store status=anchored, logIndex, and the full entry (rekor_entry)
+On 409: fetch the existing entry from Location and store that
+Otherwise: store status=failed or skipped with the reason; never silent
 ```
+Not `hashedrekord`: it verifies Ed25519 only pre-hashed (Ed25519ph), and
+Treeship signs plain Ed25519 over PAE. Rekor records the payload's SHA-256,
+the signature and the key; the payload itself is not published.
 
 **main.go:** chi router, all routes wired, DB init on startup, listen on :8080 (PORT env var), log every request.
 
@@ -425,12 +429,15 @@ Default endpoint: https://api.treeship.dev
    Headers: Authorization: DPoP {dock_id}
             DPoP: {proof_jwt}
    Body: { artifact_id, payload_type, envelope_json, digest, signed_at, parent_id }
-4. Parse response: { hub_url, rekor_index }
+4. Parse response: { hub_url, rekor }
 5. Update local record with hub_url (storage.set_hub_url)
-6. Print:
+6. Verify rekor.entry offline against the trusted transparency logs, then
+   store it as the anchor's `proof` (or the failure and its reason)
+7. Print:
      ✓ pushed
        url:    {hub_url}
-       rekor:  rekor.sigstore.dev #{rekor_index}
+       rekor:  anchored #{log_index} at {integrated time} (proof verified, {log})
+               | failed: {reason} | skipped: {reason}
        → treeship open {hub_url}
 ```
 
@@ -486,10 +493,15 @@ curl http://localhost:8080/v1/verify/art_xxxxx
 - Every API request carries a fresh DPoP proof JWT signed by dock key
 - Stolen `config.json` is useless without the encrypted dock private key
 
-### Rekor anchoring --default ON
-- Every `treeship hub push` anchors to Rekor automatically
-- The anchor receipt is stored as `treeship/receipt/v1` locally
-- Hub cannot retroactively modify anchored chains
+### Rekor anchoring
+- Every `treeship hub push` asks the hub to anchor the artifact in Rekor. The
+  full log entry comes back and is stored on the local record as the anchor's
+  `proof`. There is no separate anchor receipt.
+- A witness time counts only if that proof verifies offline against a trusted
+  `transparency_log` key (Sigstore's public-good key is built in). A time
+  written into a local record never counts (TS-2026-003).
+- The hub cannot forge an anchor: the proof is Rekor's signature, checked by
+  the verifier. It can withhold one.
 
 ### SQLite security
 - File at `/var/lib/treeship/hub.db`
