@@ -2,7 +2,6 @@ package artifacts
 
 import (
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log"
@@ -19,6 +18,48 @@ import (
 
 type Handlers struct {
 	DB *sql.DB
+	// Rekor is the transparency log client. Nil disables anchoring (tests,
+	// air-gapped deployments); every push then reports rekor as skipped.
+	Rekor *rekor.Client
+}
+
+// rekorView is the anchoring outcome as returned to clients. `rekor_index`
+// stays at the top level for older CLIs; newer ones read this object.
+func rekorView(status, reason, entry *string, index *int64) map[string]any {
+	if status == nil {
+		return nil
+	}
+	v := map[string]any{"status": *status}
+	if reason != nil && *reason != "" {
+		v["reason"] = *reason
+	}
+	if index != nil {
+		v["log_index"] = *index
+	}
+	if entry != nil && *entry != "" {
+		v["entry"] = json.RawMessage(*entry)
+	}
+	return v
+}
+
+// anchor runs one anchoring attempt and records the outcome, whatever it is.
+func (h *Handlers) anchor(r *http.Request, artifactID, envelopeJSON, dockID string) rekor.Result {
+	var res rekor.Result
+	if h.Rekor == nil {
+		res = rekor.Result{Status: rekor.StatusSkipped, Reason: "this hub has Rekor anchoring disabled"}
+	} else {
+		var shipPubKey []byte
+		row := h.DB.QueryRow(`SELECT ship_public_key FROM ships WHERE dock_id = ?`, dockID)
+		if err := row.Scan(&shipPubKey); err != nil || len(shipPubKey) == 0 {
+			res = rekor.Result{Status: rekor.StatusSkipped, Reason: "dock has no registered ship key"}
+		} else {
+			res = h.Rekor.Anchor(r.Context(), envelopeJSON, shipPubKey)
+		}
+	}
+	if err := db.SetRekorResult(h.DB, artifactID, res.Status, res.Reason, res.LogIndex, res.Entry); err != nil {
+		log.Printf("rekor: failed to store outcome for %s: %v", artifactID, err)
+	}
+	return res
 }
 
 type pushRequest struct {
@@ -182,39 +223,41 @@ func (h *Handlers) Push(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		// Same bytes: idempotent success. Skip re-anchoring -- the existing
-		// artifact already has whatever rekor_index it earned, and a second
-		// anchor would overwrite it for no gain.
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		// Same bytes: idempotent success. An artifact that already holds a
+		// Rekor entry keeps it -- a second anchor would replace a proof for no
+		// gain. One that never got anchored (every push before TS-2026-003
+		// was fixed, or a transient Rekor failure) is retried, so re-pushing
+		// is how an operator backfills.
+		resp := map[string]any{
 			"artifact_id": existing.ArtifactID,
 			"hub_url":     existing.HubURL,
-			"rekor_index": existing.RekorIndex,
 			"duplicate":   true,
-		})
+		}
+		if existing.RekorEntry != nil && *existing.RekorEntry != "" {
+			resp["rekor_index"] = existing.RekorIndex
+			resp["rekor"] = rekorView(existing.RekorStatus, existing.RekorReason, existing.RekorEntry, existing.RekorIndex)
+		} else {
+			res := h.anchor(r, existing.ArtifactID, existing.EnvelopeJSON, dockID)
+			resp["rekor_index"] = res.LogIndex
+			resp["rekor"] = res
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
 		return
 	}
 
-	// Rekor anchoring (best-effort).
-	// Look up ship_public_key for this dock.
-	var shipPubKeyHex string
-	row := h.DB.QueryRow(`SELECT ship_public_key FROM ships WHERE dock_id = ?`, dockID)
-	var shipPubKey []byte
-	if err := row.Scan(&shipPubKey); err == nil {
-		shipPubKeyHex = hex.EncodeToString(shipPubKey)
-	}
-
-	var rekorIndex *int64
-	if shipPubKeyHex != "" {
-		rekorIndex = rekor.Anchor(h.DB, req.ArtifactID, req.Digest, req.EnvelopeJSON, shipPubKeyHex)
-	}
+	// Rekor anchoring. Best-effort in that a Rekor outage never fails the
+	// push -- but never silent: the outcome is stored and returned, so a
+	// failed anchor is visible as failed rather than as a missing field.
+	res := h.anchor(r, req.ArtifactID, req.EnvelopeJSON, dockID)
 
 	resp := map[string]interface{}{
 		"artifact_id": req.ArtifactID,
 		"hub_url":     hubURL,
+		"rekor":       res,
 	}
-	if rekorIndex != nil {
-		resp["rekor_index"] = *rekorIndex
+	if res.LogIndex != nil {
+		resp["rekor_index"] = *res.LogIndex
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -322,6 +365,9 @@ func (h *Handlers) Pull(w http.ResponseWriter, r *http.Request) {
 		"hub_url":       artifact.HubURL,
 		"rekor_index":   artifact.RekorIndex,
 		"dock_id":       artifact.DockID,
+	}
+	if v := rekorView(artifact.RekorStatus, artifact.RekorReason, artifact.RekorEntry, artifact.RekorIndex); v != nil {
+		resp["rekor"] = v
 	}
 
 	if artifact.DockID != nil {
