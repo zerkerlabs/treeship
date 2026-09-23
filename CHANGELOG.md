@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.31.8 (2026-09-24)
 
 - **An invalid mandate fails `verify` by default.** An action whose own mandate did not authorize it (out of scope, expired, wrong holder, revoked) verified as `outcome: pass, failed: 0`, exit 0, with `authority_ok: false` two fields down; only `--require-authority` changed the exit code, and even then the JSON said pass. Now the top line is `AUTHORITY INVALID`, JSON reports `outcome: fail` with the verdicts counted in `failed` and named in `authority_failed`, and the exit code is 1 with no flag. `--require-authority` remains the stricter mode (no mandate, or an uncheckable layer, also fails). (Retest 0.31.7, finding 30.)
 - **A signed lift outlives a restored marker.** Restoring a saved halt marker file after `halt --lift` re-armed the halt: the gate read the marker and never looked for the lift. `halt list`, the gate's source, now treats a marker as an order only when no signed lift names its halt; a marker outliving its lift is reported `lifted_by: <the lift>`, not honoured, and removed. (T20.)
