@@ -359,7 +359,7 @@ exactly this; it proves the caller committed to it before acting. It never
 proves the judgement was right. A rules engine that is replayable is the one
 kind of judge whose answer a verifier can reproduce from the same state.
 `package verify` reports sealed judgements as the `judgements` row and flags
-any that was acted on below its own threshold. [`treeship judge`](/docs/cli/judge)
+any that was acted on against its own bar (a yes answer allowed, a no answer refused, or no bar declared). [`treeship judge`](/docs/cli/judge)
 mints these: the built-in rules judge, or any judge behind `--judge-url`.
 
 | Field | Type | Required |
