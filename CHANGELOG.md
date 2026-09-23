@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.31.7 (2026-09-23)
 
 - **The `judgements` row reads a yes/no answer both ways.** It flagged every judgement "acted at noul 0.000 below its threshold", which is the rules judge answering no to "unsafe?" and the caller proceeding: exactly what the bar asked for. The row now flags an effect that contradicts the side of the threshold the answer fell on (a yes allowed, a no refused) or a judgement with no bar; a confidence-based judgement is checked as before.
 
