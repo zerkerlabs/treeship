@@ -82,16 +82,7 @@ func (h *Handlers) PublishCheckpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cp := &db.MerkleCheckpoint{
-		RootHex:      req.Root,
-		TreeSize:     req.TreeSize,
-		Height:       req.Height,
-		SignedAt:     req.SignedAt,
-		SignerKeyID:  req.Signer,
-		SignatureB64: req.Signature,
-		PublicKeyB64: req.PublicKey,
-		RekorIndex:   req.RekorIndex,
-	}
+	cp := checkpointRecord(&req)
 
 	id, err := db.InsertCheckpoint(h.DB, cp, dockID)
 	if err != nil {
@@ -412,3 +403,23 @@ type checkpointError string
 
 func (e checkpointError) Error() string { return string(e) }
 func errCheckpoint(msg string) error    { return checkpointError(msg) }
+
+// checkpointRecord builds the stored row from a verified request.
+//
+// TS-2026-003: RekorIndex is never the caller's value. It used to be stored
+// and served back verbatim, so any dock could attach an arbitrary "Rekor
+// index" to its checkpoint and have the hub repeat it as if it were an
+// anchor. Nothing anchors checkpoints yet; until the hub does so itself, and
+// keeps the proof, the answer is null.
+func checkpointRecord(req *checkpointRequest) *db.MerkleCheckpoint {
+	return &db.MerkleCheckpoint{
+		RootHex:      req.Root,
+		TreeSize:     req.TreeSize,
+		Height:       req.Height,
+		SignedAt:     req.SignedAt,
+		SignerKeyID:  req.Signer,
+		SignatureB64: req.Signature,
+		PublicKeyB64: req.PublicKey,
+		RekorIndex:   nil,
+	}
+}
