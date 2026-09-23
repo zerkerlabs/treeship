@@ -45,5 +45,5 @@ __all__ = [
     "receipted_backend",
     "text_digest",
 ]
-__version__ = "0.31.6"
+__version__ = "0.31.7"
 from .vi import attest_at_handoff, vi_check, vi_verify  # noqa: E402
