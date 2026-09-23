@@ -8,6 +8,7 @@ import type {
 import type { RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import type { ClientOptions } from '@modelcontextprotocol/sdk/client/index.js';
 import { attestAction, attestReceipt, emitSessionEvent } from './attest.js';
+import { checkHalt, TreeshipHaltedError } from './halt.js';
 import { hashPayload } from './utils.js';
 import type { ToolReceipt } from './types.js';
 
@@ -89,6 +90,11 @@ export function __sanitizeToolInput(
 export class TreeshipMCPClient extends Client {
   private _actor: string;
   private _disabled: boolean;
+  private static _haltWarned = false;
+  /** Test hook: forget that the halt-check warning was printed. */
+  static __resetHaltWarning(): void {
+    TreeshipMCPClient._haltWarned = false;
+  }
 
   constructor(clientInfo: Implementation, options?: ClientOptions) {
     super(clientInfo, options);
@@ -105,11 +111,46 @@ export class TreeshipMCPClient extends Client {
       return super.callTool(params, resultSchema, options);
     }
 
+    const strict = process.env.TREESHIP_STRICT === '1';
+
+    // The kill switch comes first: before the intent, before the call. A
+    // standing halt on this actor (or `*`) refuses the call and signs the
+    // refusal, the same `blocked.v1` the Claude Code gate mints. A check
+    // that cannot run (no CLI, a CLI without `halt`) fails open by default,
+    // as the plugin does, and is said once on stderr; under
+    // TREESHIP_STRICT=1 it refuses, because "the check did not run" and
+    // "the check passed" must not look the same to a strict caller.
+    const halt = await checkHalt(this._actor);
+    if (halt.halted) {
+      const description = `halted: ${params.name} refused for ${this._actor} under halt ${halt.halt}`.slice(0, 300);
+      const blocked = await attestReceipt({
+        system: 'system://treeship-gate',
+        kind: 'blocked.v1',
+        chain: true,
+        payload: {
+          reason_class: 'operator_revocation',
+          refused_kind: 'action',
+          actor: this._actor,
+          description,
+          evidence_digest: halt.halt,
+        },
+      }).catch(() => undefined);
+      throw new TreeshipHaltedError(this._actor, halt.halt, params.name, blocked);
+    }
+    if (!halt.checked) {
+      if (strict) {
+        throw new Error(`[treeship] halt check could not run (${halt.reason}); refusing ${params.name} under TREESHIP_STRICT=1`);
+      }
+      if (!TreeshipMCPClient._haltWarned) {
+        TreeshipMCPClient._haltWarned = true;
+        process.stderr.write(`[treeship] halt check could not run (${halt.reason}); tool calls proceed unchecked\n`);
+      }
+    }
+
     // Attest INTENT before the call (awaited -- proof of what was about to happen)
     // Under TREESHIP_STRICT=1 a signing failure fails the tool call instead
     // of proceeding unrecorded (AUD-33). The throw from attest.ts has to
     // reach the caller; every catch below used to swallow it.
-    const strict = process.env.TREESHIP_STRICT === '1';
     const intentId = await this._attestIntent(params).catch((e) => {
       if (strict) throw e;
       return undefined;

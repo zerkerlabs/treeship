@@ -16,7 +16,7 @@ treeship halt --lift agent://claude-code
 
 ## What it reaches, and what it does not
 
-A halt stops what the harness routes through hooks: every tool call the Claude Code plugin sees, and under `TREESHIP_STRICT=1`, calls through the MCP bridge. It does not reach a process an agent started outside those paths, a runtime with no hooks, or another machine. The [coverage level](/docs/guides/coverage-levels) says where that boundary is for each harness. A halt is an order the instrumented surface obeys, not a guarantee about the uninstrumented one.
+A halt stops what the instrumented surface routes through Treeship: every tool call the Claude Code plugin sees, every `callTool` through the MCP bridge, and every task the A2A middleware admits or receives. Each of those asks `treeship halt list` before the call and, under a standing halt, refuses and signs a `blocked.v1`. A check that cannot run (no CLI on the PATH, a CLI older than 0.31.6) fails open and says so once on stderr; under `TREESHIP_STRICT=1` the bridges refuse instead. A halt does not reach a process an agent started outside those paths, a runtime with no hooks, or another machine. The [coverage level](/docs/guides/coverage-levels) says where that boundary is for each harness. A halt is an order the instrumented surface obeys, not a guarantee about the uninstrumented one.
 
 ## Halting
 

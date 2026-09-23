@@ -258,10 +258,14 @@
   docs:
     - docs/content/docs/reference/predicates.mdx
     - docs/content/docs/integrations/claude-code.mdx
+    - docs/content/docs/integrations/mcp.mdx
+    - docs/content/docs/integrations/a2a.mdx
   tests:
     - packages/core/src/predicates/mod.rs
     - packages/cli/tests/halt_cli.rs
-  notes: "treeship halt <actor|*> signs a halt.v1 receipt chained onto the session and writes a marker; the Claude Code plugin's PreToolUse gate refuses every tool call for a halted actor and signs each refusal as blocked.v1 (operator_revocation); --lift signs the lift and clears the marker. A marker with no signed artifact from this workspace is ignored. Reaches what the hooks route, not a process started outside them."
+    - bridges/mcp/test/halt.test.ts
+    - bridges/a2a/test/halt.test.ts
+  notes: "treeship halt <actor|*> signs a halt.v1 receipt chained onto the session and writes a marker; the Claude Code plugin's PreToolUse gate, the MCP bridge's callTool, and the A2A middleware's admitTask/onTaskReceived each refuse for a halted actor and sign the refusal as blocked.v1 (operator_revocation) chained onto the session; --lift signs the lift and clears the marker. A marker with no signed artifact from this workspace is ignored. A check that cannot run fails open (refuses under TREESHIP_STRICT=1). Reaches what those surfaces route, not a process started outside them."
 
 - id: action-v2-emission
   name: action/v2 receipt emission (CLI)
