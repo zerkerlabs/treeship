@@ -120,4 +120,9 @@ The Claude Code plugin's gate asks the judge when `TREESHIP_JUDGE=1` (rules) or 
 | `--bound <AMOUNT>` | The amount bound for `amount_above_bound` |
 | `--subject <ART_ID>` | The action this judgement is about |
 | `--attest` | Sign each answer as `judgement.v1` |
+| `--enforce` | Exit 2 on `deny` and 3 on `ask`, for shell gates |
 | `--format json` | Machine output: `effect`, `outcome`, `decided_by`, `answers`, `receipts`, digests |
+
+## Exit code
+
+By default the exit code says whether the judge answered, not what it answered: `0` for any decision, non-zero only when the judge could not run or gave a malformed answer. The decision is in the output (`effect`, `decided_by`), which is what the gate reads. That is deliberate, and different from `verify`, where a failed mandate fails the command: a judgement is a query the caller acts on, a verification is a verdict. A shell gate that wants the decision in the exit code passes `--enforce`.

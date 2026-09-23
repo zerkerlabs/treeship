@@ -1258,6 +1258,22 @@ pub struct ReceiptArgs {
 }
 
 pub fn receipt(args: ReceiptArgs, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
+    // `--kind list`: the registered predicates, from the registry itself,
+    // so the help text cannot drift from what is validated (retest
+    // 0.31.7, finding 32).
+    if args.kind == "list" {
+        let kinds = treeship_core::predicates::registered_suffixes();
+        if printer.format == crate::printer::Format::Json {
+            printer.json(&serde_json::json!({ "registered_predicates": kinds }));
+        } else {
+            printer.info("registered predicates (validated against their schema before signing; the payload's `schema` must match):");
+            for k in &kinds {
+                printer.info(&format!("  {k}"));
+            }
+            printer.info("any other --kind signs the payload as given, untyped.");
+        }
+        return Ok(());
+    }
     let ctx = ctx::open(args.config.as_deref())?;
 
     // Chain rule, the same one `attest action` follows (audit follow-up P3):
@@ -1329,6 +1345,27 @@ pub fn receipt(args: ReceiptArgs, printer: &Printer) -> Result<(), Box<dyn std::
         .into());
     }
 
+    // A payload that names a registered predicate as its own `schema` is
+    // validated against that predicate, whatever --kind says. Before this
+    // the validator dispatched on the flag alone, so `--kind confirmation`
+    // signed an `evaluation.v1` payload with a verdict outside its
+    // vocabulary, and the artifact carried the schema name as if it had
+    // been checked (retest 0.31.7, finding 31). The two must agree.
+    if let Some(declared) = payload_val
+        .as_ref()
+        .and_then(|p| p.get("schema"))
+        .and_then(|s| s.as_str())
+    {
+        if treeship_core::predicates::schema_json(declared).is_some() && declared != args.kind {
+            return Err(format!(
+                "payload declares schema {declared:?} but --kind is {:?}. A registered \
+                 predicate is validated by the schema the payload names; pass --kind {declared} \
+                 (or drop the schema field to sign an untyped {} receipt)",
+                args.kind, args.kind
+            )
+            .into());
+        }
+    }
     // Typed-predicate validation: if `kind` is a registered predicate, the
     // payload must conform to its schema before we sign. Unregistered kinds
     // attest sign-on-submit, exactly as before (backward compatible). This

@@ -98,13 +98,18 @@ pub fn import(args: ImportArgs, printer: &Printer) -> Result<(), Box<dyn std::er
             if keyids.is_empty() {
                 format!("{e}")
             } else {
-                let kind = if keyids.iter().any(|k| k.starts_with("key_agent_")) { "agent_cert" } else { "cert_issuer" };
+                // The file does not say whether the key is the ship's or an
+                // agent's own, so the hint gives both pins and says which is
+                // which; guessing from the id shape suggested cert_issuer for
+                // an agent key while the parenthetical said agent_cert (retest
+                // 0.31.7, N2).
                 format!(
                     "{which} is signed by {}, which is not a pinned trust root on this machine.\n  \
-                     Ask the producer for the line `treeship keys export` prints for that key and run it here:\n    \
-                     treeship trust add {} ed25519:<their public key> --kind {kind} --yes\n  \
-                     (an agent-signed envelope needs the agent's own key pinned under agent_cert; the ship's under cert_issuer)",
+                     Ask the producer which key that is and for the line `treeship keys export` prints for it, then run it here:\n    \
+                     treeship trust add {} ed25519:<their public key> --kind agent_cert --yes    # if it is an agent's own key\n    \
+                     treeship trust add {} ed25519:<their public key> --kind cert_issuer --yes   # if it is the ship key",
                     keyids.join(", "),
+                    keyids[0],
                     keyids[0]
                 )
             }

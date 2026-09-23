@@ -61,20 +61,71 @@ fn read_marker(dir: &Path, actor: &str) -> Option<Marker> {
     serde_json::from_str(&raw).ok()
 }
 
+/// The signed lift for `halt_id`, if this workspace's key signed one. A
+/// marker names a halt; the lift is the artifact that ends it. Whoever can
+/// restore a saved marker file cannot re-arm a halt the ship has lifted,
+/// because the lift is in the store and the marker is not an order on its
+/// own (retest 0.31.7, T20).
+pub fn lift_for(ctx: &ctx::Ctx, halt_id: &str, own_key: &str) -> Option<String> {
+    let receipt_pt = payload_type("receipt");
+    for entry in ctx.storage.list_by_type(&receipt_pt) {
+        let Ok(rec) = ctx.storage.read(&entry.id) else {
+            continue;
+        };
+        if rec.key_id != own_key {
+            continue;
+        }
+        let Ok(stmt) = rec.envelope.unmarshal_statement::<ReceiptStatement>() else {
+            continue;
+        };
+        if stmt.kind != "halt.v1" {
+            continue;
+        }
+        let Some(p) = stmt.payload.as_ref() else {
+            continue;
+        };
+        if p.get("action").and_then(|v| v.as_str()) == Some("lift")
+            && p.get("halt").and_then(|v| v.as_str()) == Some(halt_id)
+        {
+            return Some(entry.id.clone());
+        }
+    }
+    None
+}
+
+/// Whether a marker is an order this workspace honours: it names a halt in
+/// this store, signed by this workspace's key, with no signed lift for it.
+/// Returns the lift id when one exists, so the caller can say why not.
+fn marker_status(ctx: &ctx::Ctx, m: &Marker, own_key: &str) -> Result<(), Option<String>> {
+    let signed_here = ctx
+        .storage
+        .read(&m.halt)
+        .map(|r| r.key_id == own_key)
+        .unwrap_or(false);
+    if !signed_here {
+        return Err(None);
+    }
+    match lift_for(ctx, &m.halt, own_key) {
+        Some(lift) => Err(Some(lift)),
+        None => Ok(()),
+    }
+}
+
 /// Active halt for `actor`, honouring a workspace-wide halt too. The marker
-/// must name an artifact in this store, signed by this workspace's key.
+/// must name an artifact in this store, signed by this workspace's key, and
+/// no signed lift may exist for it. A stale marker for a lifted halt is
+/// removed on sight.
 pub fn active_halt(ctx: &ctx::Ctx, actor: &str) -> Option<Marker> {
     let dir = halts_dir_for(&ctx.config_path);
     let own_key = ctx.keys.default_signer().ok()?.key_id().to_string();
     for who in [actor, ALL] {
         if let Some(m) = read_marker(&dir, who) {
-            let honoured = ctx
-                .storage
-                .read(&m.halt)
-                .map(|r| r.key_id == own_key)
-                .unwrap_or(false);
-            if honoured {
-                return Some(m);
+            match marker_status(ctx, &m, &own_key) {
+                Ok(()) => return Some(m),
+                Err(Some(_lift)) => {
+                    let _ = std::fs::remove_file(dir.join(marker_name(who)));
+                }
+                Err(None) => {}
             }
         }
     }
@@ -203,7 +254,7 @@ pub fn lift(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
     let dir = halts_dir_for(&ctx.config_path);
-    let Some(m) = read_marker(&dir, actor) else {
+    let Some(m) = active_halt(&ctx, actor).filter(|m| m.actor == actor) else {
         return Err(format!("{actor} is not halted\n  run: treeship halt list").into());
     };
     let parent = session_parent(&ctx);
@@ -241,14 +292,19 @@ pub fn list(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::
             let Ok(m) = serde_json::from_str::<Marker>(&raw) else {
                 continue;
             };
-            let honoured = ctx
-                .storage
-                .read(&m.halt)
-                .map(|r| r.key_id == own_key)
-                .unwrap_or(false);
+            let (honoured, lifted_by) = match marker_status(&ctx, &m, &own_key) {
+                Ok(()) => (true, None),
+                Err(lift) => (false, lift),
+            };
+            if let Some(lift) = &lifted_by {
+                // The marker outlived its halt (restored from a backup, or
+                // copied in): the signed lift is the order that stands.
+                let _ = std::fs::remove_file(e.path());
+                let _ = lift;
+            }
             rows.push(serde_json::json!({
                 "actor": m.actor, "halt": m.halt, "issued_at": m.issued_at,
-                "reason": m.reason, "honoured": honoured,
+                "reason": m.reason, "honoured": honoured, "lifted_by": lifted_by,
             }));
         }
     }

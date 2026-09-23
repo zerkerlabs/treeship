@@ -159,6 +159,10 @@ struct Manifest {
 /// Enclave / TPM 2.0).
 pub struct Store {
     dir: PathBuf,
+    /// The canonical path the primary key was derived under. Recorded in
+    /// `keystore.origin` once an entry decrypts here, so a workspace moved
+    /// or restored elsewhere can still open it (see `open`).
+    canonical_dir: PathBuf,
     machine_key: [u8; 32],
     /// Decrypt-only fallback machine keys, tried in order when the primary
     /// fails. These cover every wrapping an existing keystore may carry:
@@ -225,6 +229,20 @@ impl Store {
         // the entry under the primary (see `signer`), so the fallbacks are
         // a migration path, not a permanent second key.
         let mut fallback_machine_keys: Vec<[u8; 32]> = Vec::new();
+        // The path the store was last opened under. The primary key binds
+        // the store's path, so a workspace copied or restored to another
+        // directory (a fresh container, a different CI checkout, a restored
+        // backup) could verify but never sign again: valid receipts, no way
+        // to close the interrupted session (retest 0.31.7, N1). The seed
+        // travels with the workspace; only the path changed. `keystore.origin`
+        // records the previous path, and TREESHIP_KEYSTORE_ORIGIN names it
+        // for a store written before the file existed. A decrypt under the
+        // origin path rewraps the entry under the current one.
+        for origin in origin_paths(&dir, &canonical) {
+            if let Ok(k) = derive_seed_primary_key(&origin) {
+                fallback_machine_keys.push(k);
+            }
+        }
         // The former PRIMARY: hardware-stable key (machine-id / serial).
         if let Some(k) = stable_hardware_key(&canonical) {
             fallback_machine_keys.push(k);
@@ -265,10 +283,30 @@ impl Store {
 
         Ok(Self {
             dir,
+            canonical_dir: canonical,
             machine_key,
             fallback_machine_keys,
             cache: Arc::new(RwLock::new(HashMap::new())),
         })
+    }
+
+    /// Record the path this store decrypts under, so a later move can be
+    /// recovered. Written only after an entry actually decrypted here.
+    fn record_origin(&self) {
+        let path = self.dir.join(ORIGIN_FILE);
+        let current = self.canonical_dir.to_string_lossy().to_string();
+        if fs::read_to_string(&path)
+            .map(|s| s.trim() == current)
+            .unwrap_or(false)
+        {
+            return;
+        }
+        let _ = fs::write(&path, format!("{current}\n"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
+        }
     }
 
     /// Generates a new Ed25519 keypair, encrypts and stores it.
@@ -629,19 +667,28 @@ impl Store {
         // must NOT block signing for the current call, since the
         // in-memory secret is already valid. The next decrypt on a
         // fresh process will retry.
+        let mut wrapped_under_primary = !used_fallback && !was_legacy;
         if was_legacy || used_fallback {
-            if let Err(e) = self.migrate_entry_to_primary(&entry, &secret_arr) {
-                // Surface the failure as a tracing-style stderr note
-                // rather than an error -- the user's signing flow is
-                // unaffected, and we'd rather them know about it than
-                // wedge the call.
-                eprintln!(
-                    "treeship: keystore entry {} could not be rewrapped \
-                     under the current machine key ({}); will retry next \
-                     load",
-                    entry.id, e
-                );
+            match self.migrate_entry_to_primary(&entry, &secret_arr) {
+                Ok(()) => wrapped_under_primary = true,
+                Err(e) => {
+                    // Surface the failure as a tracing-style stderr note
+                    // rather than an error -- the user's signing flow is
+                    // unaffected, and we'd rather them know about it than
+                    // wedge the call.
+                    eprintln!(
+                        "treeship: keystore entry {} could not be rewrapped \
+                         under the current machine key ({}); will retry next \
+                         load",
+                        entry.id, e
+                    );
+                }
             }
+        }
+        if wrapped_under_primary {
+            // The entry decrypts under this path now: remember it, so a
+            // later move can be recovered from here.
+            self.record_origin();
         }
 
         let signer = Ed25519Signer::from_bytes(&entry.id, &secret_arr)
@@ -796,9 +843,14 @@ impl Store {
         } else {
             "the keystore cannot be decrypted under any known machine-key \
              derivation (hardware id, current hostname, mDNS LocalHostName, \
-             raw path). Usual causes: the key file was copied from a \
-             different machine, the username changed, or the file was \
-             corrupted."
+             raw path, recorded origin path). Usual causes: the key file was \
+             copied from a different machine, the workspace was moved or \
+             restored to a different directory, the username changed, or \
+             the file was corrupted. The primary key binds the store's path: \
+             if this workspace used to live somewhere else on this machine, \
+             run the command once with TREESHIP_KEYSTORE_ORIGIN=<its previous \
+             absolute path>; the keys rewrap under the current path and the \
+             variable is not needed again."
         };
 
         // Name the keystore that actually failed, not the default one.
@@ -1597,6 +1649,40 @@ extern "C" {
 /// hostname / machine-id could recompute it. Now the secret seed is required.
 /// Two hosts with identical machine-id / hostname / user but different seeds
 /// cannot decrypt each other's keystore.
+/// The file, inside the keys dir, that records the canonical path the store
+/// last decrypted under.
+const ORIGIN_FILE: &str = "keystore.origin";
+
+/// Previous paths this store may have been wrapped under: the recorded
+/// origin file, then `TREESHIP_KEYSTORE_ORIGIN`. Only paths that differ
+/// from the current canonical one; each is canonicalized when it still
+/// exists (a restored backup's old path usually does not, and the string
+/// as recorded is what was hashed).
+fn origin_paths(dir: &Path, canonical: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut push = |raw: String| {
+        let raw = raw.trim().to_string();
+        if raw.is_empty() {
+            return;
+        }
+        let p = PathBuf::from(&raw);
+        let p = fs::canonicalize(&p).unwrap_or(p);
+        if p != canonical && !out.contains(&p) {
+            out.push(p);
+        }
+    };
+    if let Ok(s) = fs::read_to_string(dir.join(ORIGIN_FILE)) {
+        push(s);
+    }
+    if let Ok(s) = std::env::var("TREESHIP_KEYSTORE_ORIGIN") {
+        // The variable names the workspace or its keys dir; both derive.
+        push(s.clone());
+        push(format!("{}/keys", s.trim().trim_end_matches('/')));
+        push(format!("{}/.treeship/keys", s.trim().trim_end_matches('/')));
+    }
+    out
+}
+
 fn derive_seed_primary_key(store_dir: &Path) -> Result<[u8; 32], KeyError> {
     let seed = read_or_create_machine_seed(store_dir)?;
     let mut h = Sha256::new();

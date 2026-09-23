@@ -146,7 +146,7 @@ Read every line, because three of them are limits:
 
 One more flag is worth knowing. `--require-authority` fails unless the receipt carries a mandate that was checked and passed. On the shopping demo it fails with `AUTHORITY NOT ESTABLISHED: this receipt carries no action/v2 mandate`, and the message adds: *absence of a claim is not a passing check.* Commerce receipts as shipped prove what the agent did and what the gates decided; they do not carry a delegation credential. That is the seam [Verifiable Intent](/integrations/verifiable-intent) is designed to fill.
 
-`treeship verify <id> --full` draws the chain as a timeline. `--format json` returns every check by artifact id, `outcome`, `passed`, `failed`, `chain_linkage_ok`, `authority_ok` and `authority_checked`, for a script.
+`treeship verify <id> --full` draws the chain as a timeline. `--format json` returns every check by artifact id, `outcome`, `passed`, `failed`, `authority_failed`, `chain_linkage_ok`, `authority_ok` and `authority_checked`, for a script. An action its mandate does not authorize is a failed verification without any flag: `outcome` is `fail`, `failed` counts it, and the exit code is 1.
 
 If the session was published, skip the bundle: `treeship verify https://treeship.dev/receipt/<id>` fetches the envelopes from the hub and runs the same checks on your machine. The hub stores bytes; it never issues the verdict.
 

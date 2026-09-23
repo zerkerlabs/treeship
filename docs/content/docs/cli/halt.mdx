@@ -42,7 +42,7 @@ The actor must be a URI (`agent://…`, `human://…`) or `*`. A second halt on 
   issued_at: 2026-09-18T16:41:02Z
 ```
 
-The lift names the halt it ends in its signed payload and chains onto the session like the halt did.
+The lift names the halt it ends in its signed payload and chains onto the session like the halt did. The lift is the order that stands: a marker file restored from a backup, or copied in, for a halt this workspace has lifted is listed as `lifted_by: <the lift>`, not honoured, and removed on sight. Whoever can write to the halts directory cannot re-arm a halt the ship signed away.
 
 ## Listing
 
@@ -51,7 +51,7 @@ treeship halt list
 treeship halt list --format json
 ```
 
-Each row shows the actor, the halt artifact, when it was issued, the reason, and whether it is **honoured**. A marker is honoured only when it names an artifact in this workspace's store signed by this workspace's key. A marker written by hand, or pointing at an artifact from elsewhere, is listed as ignored and the gate does not act on it.
+Each row shows the actor, the halt artifact, when it was issued, the reason, and whether it is **honoured**. A marker is honoured only when it names an artifact in this workspace's store signed by this workspace's key and no signed lift exists for it. A marker written by hand, pointing at an artifact from elsewhere, or outliving its lift is listed as not honoured (with `lifted_by` when a lift exists) and the gate does not act on it.
 
 <Callout title="Who can halt">
 Only the workspace's own key signs a halt, the same rule as revoking a grant: an order anyone could mint would be a denial of service against every actor whose name they know. The trust domain is same-user local access, which is the harness's trust domain too.

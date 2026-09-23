@@ -175,13 +175,29 @@ pub fn issue(args: IssueArgs, printer: &Printer) -> Result<(), Box<dyn std::erro
     if args.scope.is_empty() {
         return Err("at least one --scope is required\n  example: --scope payments.charge".into());
     }
-    if parse_rfc3339_to_unix(&args.expiry).is_none() {
-        return Err(format!(
-            "--expiry must be RFC 3339: {}\n  example: --expiry 2026-12-31T23:59:59Z",
-            args.expiry
-        )
-        .into());
-    }
+    // `--expiry` takes an RFC 3339 instant or a duration from now (30d, 12h,
+    // 45m). The help text carried a fixed date that fell into the past and
+    // refused when pasted (retest 0.31.7, finding 33); a duration cannot rot.
+    let expiry = match parse_rfc3339_to_unix(&args.expiry) {
+        Some(_) => args.expiry.clone(),
+        None => match parse_expiry_duration(&args.expiry) {
+            Some(secs) => treeship_core::statements::unix_to_rfc3339(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0)
+                    + secs,
+            ),
+            None => {
+                return Err(format!(
+                    "--expiry must be RFC 3339 or a duration from now: {}\n  examples: --expiry 30d, --expiry 12h, --expiry 2027-12-31T23:59:59Z",
+                    args.expiry
+                )
+                .into())
+            }
+        },
+    };
+    let args = IssueArgs { expiry, ..args };
 
     let ctx = ctx::open(args.config.as_deref())?;
     let signer = ctx.keys.default_signer()?;
@@ -721,6 +737,27 @@ pub fn revoke(
          this only once they have the revocation receipt; publish it with `treeship publish`.",
     );
     Ok(())
+}
+
+/// A duration from now: `<n>` seconds, or `<n>s`, `<n>m`, `<n>h`, `<n>d`.
+fn parse_expiry_duration(raw: &str) -> Option<u64> {
+    let s = raw.trim();
+    let (digits, mult) = if let Some(d) = s.strip_suffix('d') {
+        (d, 86_400u64)
+    } else if let Some(d) = s.strip_suffix('h') {
+        (d, 3_600u64)
+    } else if let Some(d) = s.strip_suffix('m') {
+        (d, 60u64)
+    } else if let Some(d) = s.strip_suffix('s') {
+        (d, 1u64)
+    } else {
+        (s, 1u64)
+    };
+    let n: u64 = digits.parse().ok()?;
+    if n == 0 {
+        return None;
+    }
+    Some(n.saturating_mul(mult))
 }
 
 #[cfg(test)]

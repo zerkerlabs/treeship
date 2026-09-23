@@ -23,7 +23,7 @@ treeship bundle create --artifacts art_a1b2,art_c3d4 --tag v1.0
 
 ## treeship bundle export
 
-Export a bundle to a portable .treeship file.
+Export a bundle to a portable .treeship file. The id is the bundle `bundle create` minted, not one of the artifacts inside it; exporting an action or receipt id is refused with `is application/vnd.treeship.action.v1+json, not a bundle`.
 
 ```bash
 treeship bundle export art_f7e6d5c4 --out chain.treeship

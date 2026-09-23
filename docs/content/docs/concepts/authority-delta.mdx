@@ -28,7 +28,9 @@ could not check" produces a number that means nothing: a zero could be a clean
 session or a session where the verifier gave up. Two counters, two questions.
 
 `authority_ok: true` with `unverified > 0` means **nothing was caught**, not
-that nothing is wrong.
+that nothing is wrong. A violation is a failed verification: `treeship verify`
+reports `outcome: fail`, counts it in `failed` and `authority_failed`, and exits
+1 by default, flag or no flag.
 
 ## Per action
 

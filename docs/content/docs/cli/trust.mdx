@@ -36,7 +36,7 @@ The deprecated `ship` kind is rejected with guidance — it used to grant three 
 Legacy `ship` entries in an existing file still parse but are inert until re-pinned.
 
 <Callout type="info" title="Scope">
-Trust roots are machine-wide: `~/.treeship/trust_roots.json` (or `TREESHIP_TRUST_ROOTS`) is consulted by every workspace on the machine, project-local ones included. Pinning a key inside one project trusts it in every other project you verify from here. The Approval Use Journal, by contrast, follows the keystore: one journal per ship. A project workspace with its own keys under its own `.treeship/` has its own journal; a project stub that extends the global config shares the global one.
+Trust roots are machine-wide: `~/.treeship/trust_roots.json` (or `TREESHIP_TRUST_ROOTS`) is consulted by every workspace on the machine, project-local ones included, and `trust add` writes there whatever `--config` or `TREESHIP_CONFIG` says (its output names the path). Testing several ships on one machine therefore needs a separate `HOME` or `TREESHIP_TRUST_ROOTS` per ship, or a pin from one take silently satisfies the next. Pinning a key inside one project trusts it in every other project you verify from here. The Approval Use Journal, by contrast, follows the keystore: one journal per ship. A project workspace with its own keys under its own `.treeship/` has its own journal; a project stub that extends the global config shares the global one.
 </Callout>
 
 ## Adding a pin

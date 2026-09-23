@@ -532,8 +532,9 @@ enum Command {
     /// keep the same audience.
     ///
     /// Examples:
-    ///   treeship grant issue --scope payments.charge --audience acme --expiry 2026-12-31T23:59:59Z
-    ///   treeship grant issue --parent grn_a1b2c3d4e5f60718 --scope payments.charge.small --audience acme --expiry 2026-06-30T00:00:00Z
+    ///   treeship grant issue --scope payments.charge --audience acme --expiry 30d
+    ///   treeship grant issue --parent grn_a1b2c3d4e5f60718 --scope payments.charge.small --audience acme --expiry 12h
+    ///   treeship grant issue --scope payments.charge --audience acme --expiry 2027-12-31T23:59:59Z
     ///   treeship grant list
     ///   treeship grant show grn_a1b2c3d4e5f60718
     #[command(subcommand)]
@@ -2100,7 +2101,16 @@ struct AttestReceiptArgs {
     #[arg(long, required = true, value_name = "URI")]
     system: String,
 
-    /// Receipt kind: confirmation | timestamp | inclusion | webhook
+    /// Receipt kind. Free-form kinds (confirmation, timestamp, inclusion,
+    /// webhook, …) sign as given. A registered predicate is validated against
+    /// its schema before signing and must match the payload's own `schema`:
+    /// memory.write.v1, memory.read.v1, memory.quarantine-check.v1,
+    /// blocked.v1, reason.authorization.v1, boundary.v1, agent_card.v1,
+    /// agent_card_revocation.v1, grant_revocation.v1, session.v1,
+    /// agent_cert.v1, profile.v1, workflow.v1, verification.packet.v1,
+    /// verification.recompute.v1, evaluation.v1, coverage.v1, halt.v1,
+    /// judgement.v1.
+    /// `--kind list` prints the current registry.
     #[arg(long, required = true, value_name = "KIND")]
     kind: String,
 
@@ -2481,6 +2491,12 @@ struct JudgeArgs {
     /// Sign each answer and its decision as a judgement.v1 receipt.
     #[arg(long)]
     attest: bool,
+
+    /// Exit 2 on deny and 3 on ask, for shell gates. Off by default: the
+    /// decision is in the output and the exit code says only whether the
+    /// judge answered.
+    #[arg(long)]
+    enforce: bool,
 }
 
 #[derive(Args)]
@@ -3897,6 +3913,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 bound: a.bound,
                 subject: a.subject.clone(),
                 attest: a.attest,
+                enforce: a.enforce,
                 config: cli.config.clone(),
             },
             printer,
