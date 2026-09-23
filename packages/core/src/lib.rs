@@ -5,6 +5,7 @@ pub mod bundle;
 pub mod capability;
 pub mod disclosure;
 pub mod journal;
+pub mod judge;
 pub mod keys;
 pub mod merkle;
 pub mod predicates;

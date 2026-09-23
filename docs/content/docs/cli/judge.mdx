@@ -1,0 +1,112 @@
+---
+title: judge
+description: "The judge slot. State plus typed questions in, typed answers out, held to a threshold and signed as judgement.v1. The built-in judge is deterministic rules; --judge-url sends the same request to any judge that speaks the contract."
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`treeship judge` asks a judge typed questions about a tool call and signs what came back and what was done about it. The contract is the same three primitives for every judge: a `noul` (a yes/no probability), a `choice` from a fixed set, a `score` on an ordered rubric. A decision model, an LLM prompted to judge, a classifier and a rules engine all fit it, so one receipt shape, [`judgement.v1`](/docs/reference/predicates#judgementv1), covers all of them.
+
+```bash
+treeship judge --tool Bash --input '{"command":"rm -rf /"}'
+treeship judge --tool WebFetch --input '{"url":"https://x.example/"}' --attest --subject art_…
+treeship judge --tool mcp__pay__charge --input '{"amount":250}' --bound 100
+treeship judge --tool Bash --input @call.json --judge-url https://judge.internal/v1/judge --threshold 0.9
+```
+
+## The built-in judge: rules
+
+No model is in the decision path unless you put one there. The default judge is `treeship-rules/<version>`: deterministic pattern rules over the call, each answered with probability 1 or 0, confidence 1. Because it is deterministic it is **replayable**: a verifier holding the receipt's state can re-run it and get the receipt's answer, which no sampled model can offer.
+
+| Question | Answers yes when |
+|---|---|
+| `path_outside_workspace` | a path-like field (`file_path`, `path`, `notebook_path`, `paths`, `target`, `destination`, …) resolves outside the workspace root, lexically: `..`, absolute paths elsewhere, anything under `~` |
+| `shell_destructive` | the command removes a broad target with `-r`/`-f` (`/`, `~`, `*`, `..`, a path outside the workspace), or writes disks, makes filesystems, hard-resets or force-pushes git, drops tables or databases |
+| `shell_exfiltrates` | the command uploads with `curl` or `wget`, copies to a remote with `scp`, `rsync` or `sftp`, opens `nc` to a port, or pipes a secret-looking file (`.env`, `id_rsa`, `credentials`, `.aws/`, …) into a network tool |
+| `network_off_scope` | a `url` field or a URL inside the command names a host outside the [declared network scope](/docs/concepts/agent-identity#network-scope); with no scope declared the answer is 0 |
+| `amount_above_bound` | an amount-like field (`amount`, `total`, `price`, `value`, `cost`, …) exceeds `--bound`; with no bound the answer is 0 |
+| `unsafe` | any of the above |
+
+The rules judge does not guess: a question it has no rule for is an error, not a low-confidence answer.
+
+```
+judge:      treeship-rules/0.31.6 (rules, replayable)
+tool:       Bash (shell.exec)
+threshold:  0.5 (set by default)
+
+  amount_above_bound         0.00  acted (allow)
+  network_off_scope          0.00  acted (allow)
+  path_outside_workspace     0.00  acted (allow)
+  shell_destructive          1.00  refused (deny)
+  shell_exfiltrates          0.00  acted (allow)
+  unsafe                     1.00  refused (deny)
+
+⚠ refused: shell_destructive, unsafe
+```
+
+## Holding an answer to the bar
+
+`--threshold` (default `0.5`) is the bar. A `noul` at or above it refuses the call (`deny`, outcome `refused`); below it the call proceeds (`allow`, `acted`). A `choice` whose option is one of `allow`, `warn`, `deny`, `ask` is taken as that effect when its confidence meets the bar and escalated to `ask` when it does not. Any other choice, and every `score`, is recorded with outcome `ignored`: the caller has no rule that turns it into an effect, and the receipt says so instead of inventing one. Across several questions the strongest effect wins (`deny` over `ask` over `warn` over `allow`) and `decided_by` names the questions that carried it. `--set-by` records who set the bar (a policy id, a card, an operator).
+
+## Signing the judgement
+
+`--attest` signs one `judgement.v1` receipt per question, by `system://treeship-judge` with the ship key: the judge's model, kind and replayability, digests of the state and the questions, the question and its typed answer, the threshold and who set it, the outcome and effect. Inside a session the receipts chain onto its head in order, so the sealed package shows them beside the call they decided and `package verify` reports them in the `judgements` row, flagging any acted on below its own bar. `--subject <art_…>` names the action the judgement is about. `verify last` after `--attest` is the newest judgement.
+
+<Callout type="info">
+What the receipt proves: that this judge returned this typed answer to this question about this state, and that the caller held it to this bar and did this. For the rules judge a verifier can re-run the rules and check the answer. For a sampled judge (`replayable: false`) the receipt proves what the caller committed to before acting, not that the judge would say it again, and never that the judgement was right.
+</Callout>
+
+## Any judge: the HTTP contract
+
+`--judge-url` sends the request to an HTTP judge and holds its answer to the same checks. The judge is anything that speaks this contract: a decision model such as Jev behind a small adapter, an LLM judge, a classifier, a rules service of your own.
+
+Request, `POST` as JSON:
+
+```json
+{
+  "state": { "tool": "Bash", "capability": "shell.exec", "input": { "command": "rm -rf /" },
+             "workspace_root": "/work/proj", "network_scope": ["api.example.com"], "amount_bound": 100 },
+  "questions": {
+    "unsafe": { "type": "noul", "instructions": "Any of the above." },
+    "verdict": { "type": "choice", "instructions": "allow or deny", "options": ["allow", "deny"] }
+  }
+}
+```
+
+Response, `200` with JSON:
+
+```json
+{
+  "judge": { "model": "jev-1.13.0", "provider": "typesafe", "kind": "decision-model", "replayable": false },
+  "answers": {
+    "unsafe":  { "noul": 0.97, "probabilities": { "yes": 0.97, "no": 0.03 }, "confidence": 0.97 },
+    "verdict": { "choice": "deny", "probabilities": { "allow": 0.1, "deny": 0.9 }, "confidence": 0.9 }
+  },
+  "latency_ms": 41
+}
+```
+
+Every question must be answered with the value its type calls for (`noul` for a noul, `choice` among the options for a choice, `score` for a score); every probability and confidence must lie in 0 to 1. An answer that fails those checks is an error, not an allow. A non-2xx status, a timeout (10 seconds) or a body that is not an answer is `judge unavailable`, also an error: the caller decides what an unavailable judge means, and the gate's answer is to fail open and say so in the timeline.
+
+`--question <key>` asks a subset by key (an outside judge may be asked keys the rules do not know; they are sent as `noul` questions). `--questions-file <file>` sends typed questions of your own, `{key: {type, instructions, options}}`.
+
+## In the gate
+
+The Claude Code plugin's gate asks the judge when `TREESHIP_JUDGE=1` (rules) or `TREESHIP_JUDGE=<url>` is set, after the card has allowed the call and never instead of it. A `deny` refuses the call and signs a `blocked.v1` with `reason_class: policy_threshold_exceeded` naming the judge and the questions; an `ask` asks the operator; the answers are signed either way. `TREESHIP_JUDGE_THRESHOLD` and `TREESHIP_JUDGE_BOUND` set the bar and the amount bound. See [Claude Code](/docs/integrations/claude-code#the-gate).
+
+## Options
+
+| Option | Description |
+|---|---|
+| `--tool <NAME>` | The harness's tool name (required) |
+| `--capability <CAP>` | The card's name for it, recorded in the state |
+| `--input <JSON>` | The tool's input, or `@<file>` |
+| `--question <KEY>` | Ask this question (repeatable); default: every rules question |
+| `--questions-file <FILE>` | Typed questions of your own |
+| `--judge-url <URL>` | An HTTP judge instead of the built-in rules |
+| `--threshold <0..1>` | The bar (default 0.5) |
+| `--set-by <WHO>` | Who set the bar, into the receipt |
+| `--bound <AMOUNT>` | The amount bound for `amount_above_bound` |
+| `--subject <ART_ID>` | The action this judgement is about |
+| `--attest` | Sign each answer as `judgement.v1` |
+| `--format json` | Machine output: `effect`, `outcome`, `decided_by`, `answers`, `receipts`, digests |

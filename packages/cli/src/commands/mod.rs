@@ -23,6 +23,7 @@ pub mod hub;
 pub mod init;
 pub mod install;
 pub mod invitation;
+pub mod judge;
 pub mod keys;
 pub mod log;
 #[path = "match.rs"]

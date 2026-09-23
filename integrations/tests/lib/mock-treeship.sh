@@ -16,6 +16,14 @@ case "$1" in
         printf '%s\n' "$h" ;;
     esac
     exit 0 ;;
+  judge)
+    # The gate's opt-in judge; the fixture supplies the answer. An older CLI
+    # has no `judge`: usage and exit 2, and the gate must fail open.
+    [ -n "${MOCK_TREESHIP_NO_JUDGE:-}" ] && { echo "error: unrecognized subcommand 'judge'" >&2; exit 2; }
+    j="${MOCK_TREESHIP_JUDGE:-}"
+    [ -z "$j" ] && j='{"status":"ok","effect":"allow","outcome":"acted","decided_by":[],"judge":{"model":"treeship-rules/mock"}}'
+    printf '%s\n' "$j"
+    exit 0 ;;
   session)
     case "$2" in
       status)

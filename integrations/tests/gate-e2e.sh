@@ -103,6 +103,41 @@ OUT=$(printf '%s' '{"hook_event_name":"PreToolUse","tool_name":"Read","tool_inpu
 [ -z "$OUT" ] || fail "allowed call produced output: $OUT"
 ok "no decision emitted"
 
+echo "== the opt-in judge refuses a write outside the workspace, signed twice"
+OUT=$(printf '%s' '{"hook_event_name":"PreToolUse","tool_name":"Write","tool_input":{"file_path":"/etc/cron.d/x","content":"*"},"tool_use_id":"t3"}' | TREESHIP_JUDGE=1 sh "$PLUGIN/scripts/pre-tool-use.sh")
+printf '%s' "$OUT" | grep -q '"permissionDecision":"deny"' || fail "judge did not deny: $OUT"
+printf '%s' "$OUT" | grep -q 'refused by judge treeship-rules' || fail "denial does not name the judge: $OUT"
+JUDGED=$(python3 - <<'PY'
+import json,base64,glob
+found={"judgement":[], "blocked":[]}
+for f in glob.glob(".treeship/artifacts/*.json"):
+    if f.endswith("index.json"): continue
+    try: rec=json.load(open(f))
+    except Exception: continue
+    pl=(rec.get("envelope") or {}).get("payload","")
+    try: stmt=json.loads(base64.urlsafe_b64decode(pl+"="*(-len(pl)%4)))
+    except Exception: continue
+    p=stmt.get("payload") or {}
+    if stmt.get("kind")=="judgement.v1":
+        found["judgement"].append((p.get("question",{}).get("key"), p.get("outcome"), p.get("judge",{}).get("replayable"), "parentId" in stmt))
+    if stmt.get("kind")=="blocked.v1" and p.get("reason_class")=="policy_threshold_exceeded":
+        found["blocked"].append(("parentId" in stmt))
+print(json.dumps(found))
+PY
+)
+python3 -c 'import json,sys; f=json.loads(sys.argv[1])
+j=f["judgement"]; assert j, "no judgement.v1 sealed"
+assert any(k=="path_outside_workspace" and o=="refused" for k,o,_,_ in j), j
+assert all(r is True for _,_,r,_ in j), "rules judge must be replayable: %r" % j
+assert all(c for _,_,_,c in j), "judgement not chained: %r" % j
+assert f["blocked"] and all(f["blocked"]), "no chained blocked.v1 with policy_threshold_exceeded"' "$JUDGED" || fail "judge receipts missing or unchained"
+ok "judgement.v1 (refused, replayable) and blocked.v1 (policy_threshold_exceeded), both chained"
+
+echo "== the judge lets an in-workspace Read through, and still signs its answer"
+OUT=$(printf '%s' '{"hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"README.md"},"tool_use_id":"t4"}' | TREESHIP_JUDGE=1 sh "$PLUGIN/scripts/pre-tool-use.sh")
+[ -z "$OUT" ] || fail "judged Read produced output: $OUT"
+ok "no decision emitted"
+
 echo "== the sealed package verifies under --strict, refusal included"
 CLOSE=$(treeship session close --summary "gate e2e" --format json)
 PKG=$(printf '%s' "$CLOSE" | jsonget package)
@@ -113,5 +148,11 @@ raw=sys.stdin.read(); i=raw.find("{"); d=json.loads(raw[i:]) if i>=0 else {}
 for c in d.get("checks",[]):
     if c.get("status")!="pass": print("   ",c.get("status"),c.get("name"),":",c.get("detail","")[:160])' >&2; fail "package is $VERDICT under --strict"; }
 ok "verified"
+printf '%s' "$V" | python3 -c 'import json,sys
+raw=sys.stdin.read(); i=raw.find("{"); d=json.loads(raw[i:]) if i>=0 else {}
+rows={c["name"]:c for c in d.get("checks",[])}
+assert "judgements" in rows, "no judgements row"
+assert "treeship-rules" in rows["judgements"].get("detail",""), rows["judgements"]' || fail "judgements row missing or not naming the rules judge"
+ok "judgements row names treeship-rules"
 
 printf '\ngate e2e: every check holds\n'

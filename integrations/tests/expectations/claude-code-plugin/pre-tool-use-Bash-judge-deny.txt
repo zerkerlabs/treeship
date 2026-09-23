@@ -1,0 +1,4 @@
+session status --format json
+halt list --format json
+judge --tool Bash --capability shell.exec --input {"command": "rm -rf /"} --attest --format json
+attest receipt --system system://treeship-gate --kind blocked.v1 --payload {"reason_class": "policy_threshold_exceeded", "refused_kind": "action", "actor": "agent://claude-code", "description": "gate refused Bash (shell.exec) for agent://claude-code: refused by judge treeship-rules/mock on shell_destructive,unsafe"} --chain

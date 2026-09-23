@@ -553,6 +553,24 @@ enum Command {
     #[command(display_order = 9)]
     Halt(HaltArgs),
 
+    /// The judge slot: ask a judge typed questions about a tool call
+    ///
+    /// State plus typed questions in, typed answers out, held to a
+    /// threshold. The built-in judge is deterministic rules (paths outside
+    /// the workspace, destructive or exfiltrating shell commands, hosts
+    /// outside the declared network scope, amounts above a bound), answered
+    /// with probability 1 or 0 and replayable by a verifier. --judge-url
+    /// sends the same request to any HTTP judge that speaks the contract.
+    /// --attest signs each answer and the decision as a judgement.v1 receipt.
+    ///
+    /// Examples:
+    ///   treeship judge --tool Bash --input '{"command":"rm -rf /"}'
+    ///   treeship judge --tool WebFetch --input '{"url":"https://x.example"}' --attest --subject art_…
+    ///   treeship judge --tool mcp__pay__charge --input '{"amount":250}' --bound 100
+    ///   treeship judge --tool Bash --input @call.json --judge-url https://judge.internal/v1/judge
+    #[command(display_order = 9)]
+    Judge(JudgeArgs),
+
     /// Background daemon for automatic file watching
     ///
     /// The daemon watches your project for file changes and automatically
@@ -2419,6 +2437,53 @@ struct HaltArgs {
 }
 
 #[derive(Args)]
+struct JudgeArgs {
+    /// The harness's tool name (Bash, WebFetch, Read, mcp__server__tool).
+    #[arg(long, value_name = "NAME")]
+    tool: String,
+
+    /// The capability name the card uses for it (shell.exec, net.fetch).
+    #[arg(long, value_name = "CAP")]
+    capability: Option<String>,
+
+    /// The tool's input as JSON, or @<file>.
+    #[arg(long, value_name = "JSON")]
+    input: Option<String>,
+
+    /// Question keys to ask (repeatable). Default: every rules question.
+    #[arg(long = "question", value_name = "KEY")]
+    questions: Vec<String>,
+
+    /// A JSON file of typed questions {key: {type, instructions, options}}.
+    #[arg(long, value_name = "FILE")]
+    questions_file: Option<String>,
+
+    /// Send the request to an HTTP judge instead of the built-in rules.
+    #[arg(long, value_name = "URL")]
+    judge_url: Option<String>,
+
+    /// The bar a yes/no answer (or a choice's confidence) is held to.
+    #[arg(long, default_value = "0.5", value_name = "0..1")]
+    threshold: f64,
+
+    /// Who set the bar (a policy id, a card, an operator). Goes into the receipt.
+    #[arg(long, value_name = "WHO")]
+    set_by: Option<String>,
+
+    /// An amount bound for the amount_above_bound rule.
+    #[arg(long, value_name = "AMOUNT")]
+    bound: Option<f64>,
+
+    /// The action this judgement is about; chains the receipt onto it.
+    #[arg(long, value_name = "ART_ID")]
+    subject: Option<String>,
+
+    /// Sign each answer and its decision as a judgement.v1 receipt.
+    #[arg(long)]
+    attest: bool,
+}
+
+#[derive(Args)]
 struct RevokeCapabilityArgs {
     /// Artifact id of the agent_card.v1 receipt to revoke.
     card_id: String,
@@ -3819,6 +3884,23 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             }
         },
 
+        Command::Judge(a) => commands::judge::judge(
+            commands::judge::JudgeArgs {
+                tool: a.tool.clone(),
+                capability: a.capability.clone(),
+                input: a.input.clone(),
+                questions: a.questions.clone(),
+                questions_file: a.questions_file.clone(),
+                judge_url: a.judge_url.clone(),
+                threshold: a.threshold,
+                set_by: a.set_by.clone(),
+                bound: a.bound,
+                subject: a.subject.clone(),
+                attest: a.attest,
+                config: cli.config.clone(),
+            },
+            printer,
+        ),
         Command::Halt(a) => {
             if a.actor == "list" && !a.lift {
                 commands::halt::list(cli.config.as_deref(), printer)

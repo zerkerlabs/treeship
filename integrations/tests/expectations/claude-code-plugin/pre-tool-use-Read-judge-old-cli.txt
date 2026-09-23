@@ -1,0 +1,4 @@
+session status --format json
+halt list --format json
+judge --tool Read --capability file.read --input {"file_path": "README.md"} --attest --format json
+session event --type agent.note --agent-name claude-code --meta {"text": "judge unavailable for Read (file.read); call proceeded unjudged"}
