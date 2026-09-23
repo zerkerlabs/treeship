@@ -110,6 +110,10 @@ All three are automatic. The signed artifacts are Merkle-proven. The session eve
 | Cursor MCP | Documented + same client | `treeship add cursor` writes `~/.cursor/mcp.json`; see [`integrations/cursor/`](../../integrations/cursor/) — run a quick E2E when upgrading the bridge |
 | Hermes | Not yet tested | Hermes transport compatibility to be confirmed |
 
+## Kill switch
+
+`treeship halt <actor>` (or `*`) stops the bridge: every `callTool` asks `treeship halt list` first and, under a standing halt this ship signed, refuses before the server sees the call, signs the refusal as `blocked.v1` on the session, and throws `TreeshipHaltedError` (with `halt`, `blocked`, and the lift command in the message). A check that cannot run fails open, said once on stderr; `TREESHIP_STRICT=1` makes it refuse. `treeship halt --lift <actor>` ends it.
+
 ## Environment variables
 
 | Variable | Effect |
@@ -118,6 +122,7 @@ All three are automatic. The signed artifacts are Merkle-proven. The session eve
 | `TREESHIP_ACTOR` | Override default actor URI. Start the session with the same `--actor`: a receipt by the session's actor chains onto the session, one by another actor is sealed loose and `package verify` warns under `chain_completeness` |
 | `TREESHIP_APPROVAL_NONCE` | Bind all calls to an approval |
 | `TREESHIP_DEBUG=1` | Log attestation failures to stderr |
+| `TREESHIP_STRICT=1` | A signing failure fails the tool call; a halt check that cannot run refuses it |
 | `TREESHIP_MODEL` | Model name for cost tracking (via `treeship wrap`) |
 | `TREESHIP_TOKENS_IN` | Input token count (via `treeship wrap`) |
 | `TREESHIP_TOKENS_OUT` | Output token count (via `treeship wrap`) |

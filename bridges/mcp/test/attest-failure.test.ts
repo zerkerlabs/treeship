@@ -47,6 +47,7 @@ describe('TREESHIP_STRICT through the client', () => {
     vi.restoreAllMocks();
     delete process.env.TREESHIP_STRICT;
     vi.doUnmock('../src/attest.js');
+    vi.doUnmock('../src/halt.js');
   });
 
   async function clientWithFailingIntent() {
@@ -57,6 +58,12 @@ describe('TREESHIP_STRICT through the client', () => {
       attestReceipt: async () => undefined,
       emitSessionEvent: async () => undefined,
     }));
+    // The kill switch runs before the intent; this test is about the
+    // intent, so the halt check answers "checked, not halted".
+    vi.doMock('../src/halt.js', async () => {
+      const real = await vi.importActual<typeof import('../src/halt.js')>('../src/halt.js');
+      return { ...real, checkHalt: async () => ({ halted: false, checked: true }) };
+    });
     vi.resetModules();
     const { TreeshipMCPClient } = await import('../src/client.js');
     return new TreeshipMCPClient({ name: 't', version: '0' });

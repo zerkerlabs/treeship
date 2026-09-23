@@ -20,4 +20,6 @@ export interface AttestReceiptParams {
   kind: string;
   subject?: string;
   payload?: Record<string, unknown>;
+  /** Chain onto the active session even though `system` is not its actor (`--chain`). */
+  chain?: boolean;
 }

@@ -168,7 +168,7 @@ const presentationPath = resolveSenderPath(inboxDir, task.metadata.presentation_
 
 // 3. Decide, BEFORE running anything.
 const gate = await treeship.admitTask({ taskId, presentationPath, maxStapleAge: '1h' });
-if (!gate.allowed) return refuse(gate.refusal, gate.message); // no_presentation | no_challenge | challenge_failed | untrusted_issuer | revoked | stale | verification_failed | gate_unavailable
+if (!gate.allowed) return refuse(gate.refusal, gate.message); // halted | no_presentation | no_challenge | challenge_failed | untrusted_issuer | revoked | stale | verification_failed | gate_unavailable
 
 // 4. Now the intent, and -- because the gate verified -- a receiver-signed
 //    handoff recording custody: live, bound to the presentation digest and
@@ -179,6 +179,12 @@ await treeship.onTaskReceived({ taskId, fromAgent: task.from, skill });
 Refusals are signed too (`a2a.gate.refused` names the failing step), so "refused the work" and "never received the work" are not the same silence. The opt-out `TREESHIP_A2A_UNVERIFIED=1` executes but signs `a2a.gate.skipped`; a skipped gate never gets a live handoff.
 
 `onTaskCompleted` returns `handoffId` when the gate verified, and `decorateArtifact` stamps it as `treeship_handoff_id`. `treeship verify <handoffId>` prints `custody: live -- card …, verified by <this actor>`; a handoff recorded any other way prints `custody: asserted` with the reason.
+
+## Kill switch
+
+`treeship halt <actor>` (or `*`) stops this middleware. `admitTask` asks `treeship halt list` before it looks at the presentation and, while a halt this ship signed stands against the middleware's actor, refuses with `halted`; `onTaskReceived` asks again, so a local task with no `fromAgent` is stopped too, and throws `TreeshipHaltedError`. Each refusal is signed as a `blocked.v1` receipt (`reason_class: operator_revocation`, naming the halt) chained onto the session, the same receipt the Claude Code gate mints. `treeship halt --lift <actor>` ends it.
+
+A check that cannot run (no CLI on the PATH, a CLI older than 0.31.6) fails open, said once on stderr; under `TREESHIP_STRICT=1` it refuses. `TREESHIP_DISABLE=1` skips the check with everything else.
 
 ## Record a handoff
 
@@ -200,10 +206,12 @@ This is the same artifact `treeship attest handoff` produces from the CLI, it ap
 | `TREESHIP_DISABLE=1` | Skips all attestation. Hooks return undefined. |
 | `TREESHIP_SESSION_ID` | Inherited from `treeship session start`; auto-included in payloads. |
 | `TREESHIP_DEBUG=1` | Logs attestation failures to stderr. |
+| `TREESHIP_STRICT=1` | A halt check that cannot run refuses the task instead of proceeding unchecked. |
+| `TREESHIP_A2A_UNVERIFIED=1` | Runs foreign work whose gate would have refused, and signs `a2a.gate.skipped`. Never skips a halt. |
 
 ## Design rules
 
-- Treeship errors **never** fail the underlying A2A handler.
+- Treeship errors **never** fail the underlying A2A handler. The two exceptions are decisions, not errors: the inbound gate and the kill switch.
 - Intent attestation is awaited so the proof exists before the agent runs.
 - The middleware has zero runtime dependencies and is framework-agnostic.
 - Handoffs and AgentCard extensions are opt-in but on by default.

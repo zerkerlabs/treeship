@@ -8,6 +8,10 @@ export { TreeshipMCPClient as Client } from './client.js';
 // Export Treeship-specific types
 export type { ToolReceipt, AttestParams } from './types.js';
 
+// The kill switch. `callTool` throws this while `treeship halt <actor>` stands.
+export { TreeshipHaltedError, checkHalt } from './halt.js';
+export type { HaltCheck } from './halt.js';
+
 // WASM-backed verification helpers (v0.9.1+). Use these when an MCP
 // consumer also needs to verify remote Treeship receipts or certificates
 // without installing a second SDK. The heavy work (Ed25519, Merkle)

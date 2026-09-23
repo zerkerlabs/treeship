@@ -7,6 +7,7 @@ import {
   provisionAgentKey,
 } from './attest.js';
 import { gateInbound, mintChallenge } from './gate.js';
+import { checkHalt, TreeshipHaltedError } from './halt.js';
 import type { GateResultLike } from './gate.js';
 import { hashPayload, stableStringify } from './utils.js';
 import type {
@@ -95,6 +96,48 @@ export class TreeshipA2AMiddleware {
   }
 
   /**
+   * The kill switch. Returns the error to raise when `treeship halt` stands
+   * against this actor (or `*`), after signing the refusal as `blocked.v1`
+   * chained onto the session, the same receipt the Claude Code gate mints.
+   * A check that cannot run fails open, said once on stderr; under
+   * TREESHIP_STRICT=1 it refuses instead.
+   */
+  private async refuseIfHalted(what: string): Promise<TreeshipHaltedError | undefined> {
+    const halt = await checkHalt(this.actor);
+    if (halt.halted) {
+      const description = `halted: ${what} refused for ${this.actor} under halt ${halt.halt}`.slice(0, 300);
+      const blocked = await attestReceipt({
+        system: 'system://treeship-gate',
+        kind: 'blocked.v1',
+        chain: true,
+        payload: {
+          reason_class: 'operator_revocation',
+          refused_kind: 'action',
+          actor: this.actor,
+          description,
+          evidence_digest: halt.halt,
+        },
+      });
+      return new TreeshipHaltedError(this.actor, halt.halt, what, blocked);
+    }
+    if (!halt.checked) {
+      if (process.env.TREESHIP_STRICT === '1') {
+        return new TreeshipHaltedError(this.actor, '(unchecked)', `${what}: halt check could not run (${halt.reason}) under TREESHIP_STRICT=1`);
+      }
+      if (!TreeshipA2AMiddleware.haltWarned) {
+        TreeshipA2AMiddleware.haltWarned = true;
+        process.stderr.write(`[treeship] halt check could not run (${halt.reason}); tasks proceed unchecked\n`);
+      }
+    }
+    return undefined;
+  }
+  private static haltWarned = false;
+  /** Test hook: forget that the halt-check warning was printed. */
+  static __resetHaltWarning(): void {
+    TreeshipA2AMiddleware.haltWarned = false;
+  }
+
+  /**
    * Mint the challenge nonce this ship will require for one inbound task.
    *
    * Hand the returned nonce to the calling agent; it must produce a
@@ -117,6 +160,17 @@ export class TreeshipA2AMiddleware {
    * break it. A gate that could not run refuses.
    */
   async admitTask(ctx: AdmitTaskContext): Promise<GateResultLike> {
+    // The kill switch comes first, before the presentation is even looked
+    // at. A standing halt refuses the work and signs the refusal.
+    const halted = await this.refuseIfHalted(`a2a task ${ctx.taskId}`);
+    if (halted) {
+      this.challenges.delete(ctx.taskId);
+      return {
+        allowed: false,
+        refusal: 'halted',
+        message: halted.message,
+      };
+    }
     const result = await gateInbound({
       presentationPath: ctx.presentationPath,
       challenge: this.challenges.get(ctx.taskId),
@@ -171,6 +225,10 @@ export class TreeshipA2AMiddleware {
    * receipt can chain back to it. Awaited — proof of what was about to happen.
    */
   async onTaskReceived(ctx: TaskReceivedContext): Promise<string | undefined> {
+    // The kill switch, again: `admitTask` runs only for foreign work, and a
+    // halt must stop local tasks too.
+    const halted = await this.refuseIfHalted(`a2a task ${ctx.taskId}`);
+    if (halted) throw halted;
     // Foreign work that was never gated must not slip through as `not_gated`.
     // An integration that forgets to call `admitTask` would otherwise get
     // exactly today's behaviour, which is the failure this whole path exists

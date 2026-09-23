@@ -8,6 +8,11 @@
 
 export { TreeshipA2AMiddleware, ForeignWorkNotGatedError } from './middleware.js';
 
+// The kill switch. `admitTask` refuses with `halted` and `onTaskReceived`
+// throws this while `treeship halt <actor>` stands.
+export { TreeshipHaltedError, checkHalt } from './halt.js';
+export type { HaltCheck } from './halt.js';
+
 export {
   buildAgentCard,
   hasTreeshipExtension,

@@ -134,6 +134,10 @@ await treeship.onHandoff({
 
 This is the same artifact `treeship attest handoff` produces from the CLI, it appears in the parent session's receipt as a delegation boundary.
 
+## Kill switch
+
+`treeship halt <actor>` (or `*`) stops the middleware: `admitTask` refuses with `halted` before it reads the presentation, and `onTaskReceived` throws `TreeshipHaltedError`, so local tasks stop too. Each refusal is signed as `blocked.v1` on the session. A check that cannot run fails open, said once on stderr; `TREESHIP_STRICT=1` makes it refuse. `TREESHIP_A2A_UNVERIFIED=1` never skips a halt. `treeship halt --lift <actor>` ends it.
+
 ## Environment variables
 
 | Variable | Effect |

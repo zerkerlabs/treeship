@@ -174,7 +174,7 @@ Rules:
 - Sender answers with `treeship present <actor> --challenge <nonce> --format json` and writes the presentation file.
 - Receiver runs `gateInbound({ presentationPath, challenge: nonce })` **before** any domain work.
 - Replay of `present` against a new nonce → `challenge_failed`. Same nonce reused → refuse.
-- Missing presentation → `no_presentation`. Missing/short nonce → `no_challenge`. CLI missing → `gate_unavailable` (refuse, do not skip).
+- Missing presentation → `no_presentation`. Missing/short nonce → `no_challenge`. CLI missing → `gate_unavailable` (refuse, do not skip). `treeship halt` standing against the receiver's actor → `halted`, checked before the presentation, signed as `blocked.v1`; the opt-out below never skips it.
 - Opt-out: `TREESHIP_A2A_UNVERIFIED=1` only. Execute and set `accept.body.unverified = true` plus the would-be refusal. Silent skip is a bug.
 
 ### 3.2 When work is "foreign"

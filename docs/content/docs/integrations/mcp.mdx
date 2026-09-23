@@ -76,6 +76,25 @@ interface ToolReceipt {
 | `TREESHIP_ACTOR` | Override the default actor URI (default: `agent://mcp-{clientName}`) |
 | `TREESHIP_APPROVAL_NONCE` | Attach an approval nonce to intent attestations |
 | `TREESHIP_DEBUG=1` | Log all attestation activity to stderr |
+| `TREESHIP_STRICT=1` | A signing failure fails the tool call, and a halt check that cannot run refuses it |
+
+## Kill switch
+
+`treeship halt <actor>` (or `*`) stops this bridge. Before every `callTool`, the client asks `treeship halt list`; while a halt this ship signed stands against the bridge's actor, the call is refused before the server sees it. The refusal is signed as a `blocked.v1` receipt (`reason_class: operator_revocation`, naming the halt) chained onto the session, the same receipt the Claude Code gate mints, and `callTool` throws `TreeshipHaltedError` with the halt id and the lift command. `treeship halt --lift <actor>` ends it.
+
+```ts
+import { Client, TreeshipHaltedError } from '@treeship/mcp';
+
+try {
+  await client.callTool({ name: 'search', arguments: { q: 'x' } });
+} catch (e) {
+  if (e instanceof TreeshipHaltedError) {
+    // e.halt is the halt.v1 id; e.blocked the signed refusal, when minted
+  }
+}
+```
+
+A check that cannot run (no CLI on the PATH, a CLI older than 0.31.6) fails open, once said on stderr, so a missing Treeship never blocks a tool call by accident; under `TREESHIP_STRICT=1` it refuses, because a strict caller must not mistake "the check did not run" for "the check passed". `TREESHIP_DISABLE=1` skips the check with everything else.
 
 ## Actor naming
 
