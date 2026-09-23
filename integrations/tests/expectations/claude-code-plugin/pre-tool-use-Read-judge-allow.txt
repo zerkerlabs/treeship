@@ -1,0 +1,3 @@
+session status --format json
+halt list --format json
+judge --tool Read --capability file.read --input {"file_path": "README.md"} --attest --format json

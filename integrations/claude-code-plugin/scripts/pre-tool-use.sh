@@ -74,7 +74,9 @@ PY
 import json, sys
 print(json.dumps({"reason_class": "operator_revocation", "refused_kind": "action", "actor": sys.argv[1], "description": sys.argv[2], "evidence_digest": sys.argv[3]}))
 ' "$ACTOR" "$DESC" "$HALT_ID" 2>/dev/null)
-    [ -n "$PAYLOAD" ] && treeship attest receipt       --system "system://treeship-gate"       --kind "blocked.v1"       --payload "$PAYLOAD"       >/dev/null 2>&1 || true
+    # --chain: the refusal is a step of the agent's session, sealed in order
+    # with what it refused, so the package still verifies under --strict.
+    [ -n "$PAYLOAD" ] && treeship attest receipt       --system "system://treeship-gate"       --kind "blocked.v1"       --payload "$PAYLOAD"       --chain       >/dev/null 2>&1 || true
     printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Treeship halt: %s is halted (%s). Every tool call is refused until an operator runs treeship halt --lift. The refusal is a signed blocked.v1 receipt."}}\n' "$ACTOR" "$HALT_ID"
     exit 0
   fi
@@ -169,11 +171,14 @@ DECISION=$(decide)
 
 emit_deny() {
   reason="$1"
+  # blocked.v1 reason class: scope_violation for a card rule (the default),
+  # policy_threshold_exceeded for a judge's answer over its threshold.
+  reason_class="${2:-scope_violation}"
   DESC=$(printf 'gate refused %s (%s) for %s: %s' "$TOOL_NAME" "$CAP" "$ACTOR" "$reason" | cut -c1-300)
   PAYLOAD=$(python3 -c '
 import json, sys
-print(json.dumps({"reason_class": "scope_violation", "refused_kind": "action", "actor": sys.argv[1], "description": sys.argv[2]}))
-' "$ACTOR" "$DESC" 2>/dev/null)
+print(json.dumps({"reason_class": sys.argv[3], "refused_kind": "action", "actor": sys.argv[1], "description": sys.argv[2]}))
+' "$ACTOR" "$DESC" "$reason_class" 2>/dev/null)
   # --chain: the refusal is a step of the agent's session, sealed in order
   # with what it refused, so the package still verifies under --strict.
   [ -n "$PAYLOAD" ] && treeship attest receipt \
@@ -184,6 +189,60 @@ print(json.dumps({"reason_class": "scope_violation", "refused_kind": "action", "
     >/dev/null 2>&1 || true
   printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Treeship gate: %s is %s for %s. The refusal is a signed blocked.v1 receipt in this session."}}\n' "$CAP" "$reason" "$ACTOR"
 }
+
+# The judge slot, opt-in. TREESHIP_JUDGE=1 asks the built-in rules judge
+# (paths outside the workspace, destructive or exfiltrating shell commands,
+# hosts outside the declared network scope, amounts above a bound);
+# TREESHIP_JUDGE=<url> sends the same typed questions to an HTTP judge. Each
+# answer is signed as judgement.v1 on the session; an answer over its
+# threshold refuses the call, signed as blocked.v1 (policy_threshold_exceeded).
+# Runs after the card has allowed the call, never instead of it. A judge that
+# cannot answer fails open, like every other error path here, and leaves a
+# note in the timeline.
+judge_effect() {
+  TOOL_INPUT=$(printf '%s' "$INPUT" | python3 -c 'import json,sys
+try:
+    d = json.load(sys.stdin); ti = d.get("tool_input")
+    print(json.dumps(ti if isinstance(ti, dict) else {}))
+except Exception:
+    print("{}")' 2>/dev/null || printf '{}')
+  set -- --tool "$TOOL_NAME" --capability "$CAP" --input "$TOOL_INPUT" --attest --format json
+  case "$TREESHIP_JUDGE" in
+    http://*|https://*) set -- "$@" --judge-url "$TREESHIP_JUDGE" ;;
+  esac
+  [ -n "${TREESHIP_JUDGE_THRESHOLD:-}" ] && set -- "$@" --threshold "$TREESHIP_JUDGE_THRESHOLD"
+  [ -n "${TREESHIP_JUDGE_BOUND:-}" ] && set -- "$@" --bound "$TREESHIP_JUDGE_BOUND"
+  treeship judge "$@" 2>/dev/null | python3 -c 'import json,sys
+raw=sys.stdin.read(); i=raw.find("{")
+try:
+    d=json.loads(raw[i:]) if i>=0 else {}
+    e=d.get("effect") or ""
+    by=",".join(d.get("decided_by") or [])
+    print("%s %s %s" % (e, d.get("judge",{}).get("model",""), by))
+except Exception:
+    print("")' 2>/dev/null
+}
+if [ -n "${TREESHIP_JUDGE:-}" ] && [ "$TREESHIP_JUDGE" != "0" ]; then
+  case "$DECISION" in
+    nocard|allow|deny-scope)
+      JUDGED=$(judge_effect)
+      J_EFFECT=${JUDGED%% *}
+      J_REST=${JUDGED#* }
+      J_MODEL=${J_REST%% *}
+      J_BY=${J_REST#* }
+      case "$J_EFFECT" in
+        deny)
+          emit_deny "refused by judge $J_MODEL on $J_BY" policy_threshold_exceeded; exit 0 ;;
+        ask)
+          printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"Treeship judge %s escalated %s for %s (%s)."}}\n' "$J_MODEL" "$CAP" "$ACTOR" "$J_BY"
+          exit 0 ;;
+        allow|warn) ;;
+        *)
+          NOTE=$(python3 -c 'import json,sys; print(json.dumps({"text": "judge unavailable for %s (%s); call proceeded unjudged" % (sys.argv[1], sys.argv[2])}))' "$TOOL_NAME" "$CAP" 2>/dev/null)
+          [ -n "$NOTE" ] && treeship session event --type agent.note --agent-name "$(agent_instance "$INPUT")" --meta "$NOTE" >/dev/null 2>&1 || true ;;
+      esac ;;
+  esac
+fi
 
 case "$DECISION" in
   nocard|allow) exit 0 ;;

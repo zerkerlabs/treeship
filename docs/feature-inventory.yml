@@ -218,6 +218,34 @@
     recursive predicate validator. `package verify` reports sealed judgements
     as the `judgements` row and flags any acted on below its own threshold.
 
+- id: judge
+  name: Judge slot (treeship judge)
+  section: core
+  status: beta
+  cli:
+    - treeship judge
+  packages:
+    - treeship-core
+    - treeship-cli
+  docs:
+    - docs/content/docs/cli/judge.mdx
+    - docs/content/docs/integrations/claude-code.mdx
+    - docs/content/docs/reference/predicates.mdx
+  tests:
+    - packages/core/src/judge/mod.rs
+    - packages/cli/tests/judge_cli.rs
+    - integrations/tests/gate-e2e.sh
+  notes: >
+    State plus typed questions (noul/choice/score) in, typed answers out, held
+    to a threshold and signed as judgement.v1 chained onto the session. The
+    built-in judge is deterministic rules (path outside workspace, destructive
+    or exfiltrating shell, host off the declared network scope, amount above a
+    bound) answering 1/0, replayable by a verifier; --judge-url sends the same
+    request to any HTTP judge speaking the contract and holds its answer to
+    the same checks. The Claude Code gate opts in with TREESHIP_JUDGE=1|<url>,
+    after the card, denying over-threshold answers as blocked.v1
+    (policy_threshold_exceeded) and failing open when the judge cannot answer.
+
 - id: halt
   name: Kill switch (halt.v1)
   section: core

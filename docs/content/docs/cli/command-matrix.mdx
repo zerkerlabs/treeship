@@ -661,6 +661,28 @@ treeship halt [OPTIONS] <ACTOR>
 | `--lift` | Lift the halt on this actor instead of imposing one |
 | `--reason <REASON>` | Why, in your words. Goes into the signed receipt |
 
+## `treeship judge`
+
+The judge slot: ask a judge typed questions about a tool call
+
+```
+treeship judge [OPTIONS] --tool <NAME>
+```
+
+| Option | Description |
+|---|---|
+| `--tool <NAME>` | The harness's tool name (Bash, WebFetch, Read, mcp__server__tool) |
+| `--capability <CAP>` | The capability name the card uses for it (shell.exec, net.fetch) |
+| `--input <JSON>` | The tool's input as JSON, or @&lt;file&gt; |
+| `--question <KEY>` | Question keys to ask (repeatable). Default: every rules question |
+| `--questions-file <FILE>` | A JSON file of typed questions &#123;key: &#123;type, instructions, options&#125;&#125; |
+| `--judge-url <URL>` | Send the request to an HTTP judge instead of the built-in rules |
+| `--threshold <0..1>` | The bar a yes/no answer (or a choice's confidence) is held to [default: 0.5] |
+| `--set-by <WHO>` | Who set the bar (a policy id, a card, an operator). Goes into the receipt |
+| `--bound <AMOUNT>` | An amount bound for the amount_above_bound rule |
+| `--subject <ART_ID>` | The action this judgement is about; chains the receipt onto it |
+| `--attest` | Sign each answer and its decision as a judgement.v1 receipt |
+
 ## `treeship status`
 
 Show ship state: keys, recent artifacts, hub status
