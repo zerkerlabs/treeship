@@ -245,6 +245,10 @@ pub fn add(
             ("fingerprint", &fingerprint),
             ("public_key", &canonical_pk),
             ("path", &path.display().to_string()),
+            (
+                "scope",
+                "machine-wide: every workspace on this machine, whatever --config says",
+            ),
         ],
     );
     Ok(())

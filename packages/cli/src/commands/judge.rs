@@ -46,7 +46,20 @@ pub struct JudgeArgs {
     pub bound: Option<f64>,
     pub subject: Option<String>,
     pub attest: bool,
+    /// Exit 2 on `deny` and 3 on `ask`, so a shell gate can read the decision
+    /// from the exit code. Off by default: the command is a query, and its
+    /// decision is in the output.
+    pub enforce: bool,
     pub config: Option<String>,
+}
+
+/// The exit code `--enforce` maps an effect to; `None` means exit 0.
+fn enforce_exit(effect: Option<&str>) -> Option<i32> {
+    match effect {
+        Some("deny") => Some(2),
+        Some("ask") => Some(3),
+        _ => None,
+    }
 }
 
 /// One HTTP judge that speaks the contract: `POST` the request, read the
@@ -341,6 +354,11 @@ pub fn judge(args: JudgeArgs, printer: &Printer) -> Result<(), Box<dyn std::erro
             "receipts": receipts,
             "reason_facts": reason_facts,
         }));
+        if args.enforce {
+            if let Some(code) = enforce_exit(overall.effect.as_deref()) {
+                std::process::exit(code);
+            }
+        }
         return Ok(());
     }
 
@@ -411,6 +429,11 @@ pub fn judge(args: JudgeArgs, printer: &Printer) -> Result<(), Box<dyn std::erro
         ));
     } else if !args.attest {
         printer.hint("add --attest to sign each answer as a judgement.v1 receipt (--subject <art_…> chains it onto the action)");
+    }
+    if args.enforce {
+        if let Some(code) = enforce_exit(overall.effect.as_deref()) {
+            std::process::exit(code);
+        }
     }
     Ok(())
 }

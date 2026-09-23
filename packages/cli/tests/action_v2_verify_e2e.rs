@@ -422,3 +422,81 @@ fn a_receipt_signed_by_the_named_grantee_clears_the_holder_layer() {
         "the holder layer must be clear: {j}"
     );
 }
+
+// ── retest 0.31.7, finding 30: the authority verdict reaches the top line ──
+
+#[test]
+fn an_out_of_scope_action_fails_verification_by_default() {
+    // Byte-identical on 0.31.6 and 0.31.7: `outcome: pass, failed: 0`,
+    // exit 0, with `authority_ok: false` two fields down. A script reading
+    // `.outcome` or `.failed` was wrong either way. An action whose own
+    // mandate does not authorize it is a failed verification.
+    let ws = Workspace::new();
+    let id = ws.plant_v2(&action(vec!["payments.refund"], "admin.deleteUser"));
+
+    let out = ws
+        .cmd()
+        .args(["verify", &id, "--format", "json"])
+        .output()
+        .unwrap();
+    let j: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(j["outcome"], "fail", "{j}");
+    assert_eq!(j["failed"], 1, "{j}");
+    assert_eq!(j["authority_failed"], 1, "{j}");
+    assert_eq!(j["authority_ok"], false, "{j}");
+    assert_eq!(
+        j["checks"][0]["outcome"], "pass",
+        "the signature itself is fine: {j}"
+    );
+    assert!(
+        !out.status.success(),
+        "an invalid mandate must fail the exit code without any flag"
+    );
+
+    // Text mode says why, and exits the same way.
+    let out = ws.cmd().args(["verify", &id]).output().unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(text.contains("AUTHORITY INVALID"), "{text}");
+    assert!(text.contains("not in mandate scope"), "{text}");
+    assert!(!out.status.success());
+
+    // An in-scope action still passes by default (its revocation layer is
+    // unverified, which is not a violation).
+    let ok_id = ws.plant_v2(&action(vec!["payments.charge"], "payments.charge"));
+    let out = ws
+        .cmd()
+        .args(["verify", &ok_id, "--format", "json"])
+        .output()
+        .unwrap();
+    let j: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(j["outcome"], "pass", "{j}");
+    assert_eq!(j["authority_failed"], 0, "{j}");
+    assert!(out.status.success());
+}
+
+// ── retest 0.31.7, finding 34: the reason is not cut mid-word ──
+
+#[test]
+fn a_long_authority_reason_wraps_instead_of_being_cut() {
+    let ws = Workspace::new();
+    let id = ws.plant_v2(&action(vec!["payments.refund"], "admin.deleteUser"));
+    let out = ws.cmd().args(["verify", &id, "--full"]).output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(text.contains("authority: INVALID"), "{text}");
+    // The whole reason is on the page, across box lines if need be.
+    let flat: String = text
+        .lines()
+        .map(|l| l.trim_matches(|c| c == '\u{2502}' || c == ' '))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let flat = flat.replace("  ", " ");
+    assert!(
+        flat.contains("is not in mandate scope"),
+        "the reason must survive the frame: {text}"
+    );
+    assert!(!text.contains("is not i \u{2502}"), "cut mid-word: {text}");
+}

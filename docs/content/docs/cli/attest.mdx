@@ -266,7 +266,7 @@ treeship attest receipt \
 | Option | Description |
 |--------|-------------|
 | `--system <uri>` | System that produced the receipt (required) |
-| `--kind <type>` | Receipt kind: confirmation, timestamp, inclusion, webhook (required) |
+| `--kind <type>` | Receipt kind (required). Free-form kinds (`confirmation`, `timestamp`, `inclusion`, `webhook`, …) sign as given. A registered predicate (`--kind list` prints them: `evaluation.v1`, `judgement.v1`, `coverage.v1`, `halt.v1`, `blocked.v1`, …) is validated against its schema before signing, and a payload whose own `schema` field names a registered predicate must be signed under that kind: `--kind confirmation` with a `schema: evaluation.v1` payload is refused, so a typed payload cannot skip its vocabulary by changing the flag |
 | `--subject <id>` | Subject artifact ID |
 | `--payload <json>` | Receipt payload as a JSON object |
 | `--payload-file <path>` | Read receipt payload JSON from a file |

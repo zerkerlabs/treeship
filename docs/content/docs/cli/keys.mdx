@@ -40,6 +40,10 @@ The ship key exports **four** pin lines, one per power, and a counterparty shoul
 
 The private key never leaves the store. `--format json` for scripts.
 
+## Moving a workspace
+
+The keystore is bound to the machine's seed and to its own path. Copy or restore a workspace to a different directory (a fresh container, another CI checkout, a restored backup) and the first command that signs there decrypts under the path the store recorded in `keys/keystore.origin`, rewraps the keys under the new path, and moves on; nothing to do. Verification of already-signed artifacts never depended on the path. A store written before the origin file existed (any 0.31.7 or earlier workspace that has not signed since) fails with `MAC verification failed`; run the command once with `TREESHIP_KEYSTORE_ORIGIN=<the workspace's previous absolute path>` and the same rewrap happens. Without either, an interrupted session in a restored workspace could verify but never close.
+
 ## keys list / keys rotate
 
 `list` shows every signing key with fingerprint, default marker, and rotation lifecycle. `rotate` mints a successor, stamps the predecessor with a grace-period `valid_until`, and (by default) promotes the successor to default signer.

@@ -12,7 +12,7 @@ Grants live at `<config-dir>/grants/<grant-id>.json` — workspace-scoped, so a 
 ## Subcommands
 
 ```bash
-treeship grant issue --scope <scope> --audience <aud> --expiry <rfc3339> [--parent <grant-id>]
+treeship grant issue --scope <scope> --audience <aud> --expiry <rfc3339 | 30d | 12h> [--parent <grant-id>]
 treeship grant list
 treeship grant show <grant-id>
 ```
@@ -63,6 +63,8 @@ A delegated grant may only **narrow** authority, and `issue` refuses to mint one
 | changes audience | `--audience other` when the parent is for `acme` |
 | exceeds `max_delegation` | the parent capped how deep delegation may go |
 | has an expiry already in the past | it could never verify, so minting it is never deliberate |
+
+`--expiry` takes an RFC 3339 instant or a duration from now (`30d`, `12h`, `45m`, `90s`), which cannot fall into the past the way a fixed example date did.
 
 Narrowing is fine: `--scope payments.refund` is admitted by `payments.*`, and so is `--scope payments.charge`. Each refusal exits `1`.
 

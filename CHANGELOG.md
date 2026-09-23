@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **An invalid mandate fails `verify` by default.** An action whose own mandate did not authorize it (out of scope, expired, wrong holder, revoked) verified as `outcome: pass, failed: 0`, exit 0, with `authority_ok: false` two fields down; only `--require-authority` changed the exit code, and even then the JSON said pass. Now the top line is `AUTHORITY INVALID`, JSON reports `outcome: fail` with the verdicts counted in `failed` and named in `authority_failed`, and the exit code is 1 with no flag. `--require-authority` remains the stricter mode (no mandate, or an uncheckable layer, also fails). (Retest 0.31.7, finding 30.)
+- **A signed lift outlives a restored marker.** Restoring a saved halt marker file after `halt --lift` re-armed the halt: the gate read the marker and never looked for the lift. `halt list`, the gate's source, now treats a marker as an order only when no signed lift names its halt; a marker outliving its lift is reported `lifted_by: <the lift>`, not honoured, and removed. (T20.)
+- **The payload's own `schema` must be the kind.** `attest receipt --kind confirmation` signed an `evaluation.v1` payload with a verdict outside its vocabulary, because validation dispatched on the flag alone. A payload naming a registered predicate as its `schema` is now refused under any other kind. `--kind list` prints the registry, and `--help` names every registered predicate (a test keeps the two in step). (31, 32.)
+- **`grant issue --expiry` takes a duration** (`30d`, `12h`, `45m`), and the help examples use one; the fixed example date had fallen into the past and refused when pasted. (33.)
+- **`verify --full` wraps a long authority reason** across box lines instead of cutting it mid-word at the frame. (34.)
+- **A workspace moved to another path can still sign.** The keystore's primary key binds the store's path, so a workspace restored elsewhere (a fresh container, another CI checkout, a backup) could verify but never sign, and an interrupted session there could never be closed. The store now records the canonical path it decrypts under in `keys/keystore.origin`; opened at a new path, it decrypts under the recorded one and rewraps. For a store with no origin file, `TREESHIP_KEYSTORE_ORIGIN=<previous path>` once does the same, and the MAC error says so. (N1.)
+- **`bundle import` names both pins** for an unpinned signer and says which applies to an agent's own key and which to the ship key, instead of guessing one from the id. (N2.) `trust add` prints that its store is machine-wide, whatever `--config` says, and the trust page says how to isolate ships when testing.
+- **`treeship judge --enforce`** exits 2 on `deny` and 3 on `ask`, for shell gates; without it the exit code says only whether the judge answered, and the judge page says why that is the default.
+
 ## 0.31.7 (2026-09-23)
 
 - **The `judgements` row reads a yes/no answer both ways.** It flagged every judgement "acted at noul 0.000 below its threshold", which is the rules judge answering no to "unsafe?" and the caller proceeding: exactly what the bar asked for. The row now flags an effect that contradicts the side of the threshold the answer fell on (a yes allowed, a no refused) or a judgement with no bar; a confidence-based judgement is checked as before.

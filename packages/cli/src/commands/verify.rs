@@ -613,15 +613,25 @@ pub fn run(
             .iter()
             .filter_map(|(_, env)| v2_mandate_summary(env, Some(&verifier), &revocation))
             .collect();
-        let authority_ok = !summaries
+        let authority_failed = summaries
             .iter()
-            .any(|m| matches!(m, MandateSummary::Fail(_)));
+            .filter(|m| matches!(m, MandateSummary::Fail(_)))
+            .count();
+        let authority_ok = authority_failed == 0;
         let authority_unverified = summaries
             .iter()
             .filter(|m| matches!(m, MandateSummary::Unverified(_)))
             .count();
         let authority_checked = summaries.len();
-
+        // An action whose own mandate does not authorize it is a failed
+        // verification, not a passing one with a footnote. Before this the
+        // top line said `pass`/`failed: 0` while `authority_ok` said false,
+        // and the exit code was 0 unless --require-authority was passed; a
+        // script reading `.outcome` or `.failed` was wrong either way
+        // (retest 0.31.7, finding 30). `--require-authority` stays the
+        // stricter mode: it also fails when nothing was checked or a layer
+        // could not be checked.
+        let failed = failed + authority_failed;
         let out: Vec<_> = checks
             .iter()
             .map(|c| {
@@ -652,6 +662,10 @@ pub fn run(
         printer.json(&serde_json::json!({
             "outcome": if failed == 0 && linkage_ok { "pass" } else { "fail" },
             "total": total, "passed": passed, "failed": failed,
+            // How many of `failed` are mandate verdicts (out of scope,
+            // expired, wrong holder, revoked) rather than signature or
+            // structure failures.
+            "authority_failed": authority_failed,
             "chain_linkage_ok": linkage_ok,
             "chain_linkage_detail": if linkage_ok { serde_json::Value::Null } else { serde_json::json!(linkage_detail) },
             "authority_ok": authority_ok,
@@ -783,6 +797,30 @@ pub fn run(
                 // doing more.
                 let use_ = chain_authority_use(&chain_envelopes);
                 printer.dim_info(&format!("  capability: {}", use_.summary()));
+            }
+            if !ok {
+                // The same policy as the JSON path: an invalid mandate fails
+                // the verification, flag or no flag (finding 30).
+                let reasons: Vec<String> = summaries
+                    .iter()
+                    .filter_map(|m| match m {
+                        MandateSummary::Fail(r) => Some(r.join("; ")),
+                        _ => None,
+                    })
+                    .collect();
+                printer.blank();
+                printer.failure(
+                    "AUTHORITY INVALID",
+                    &[
+                        ("reason", &reasons.join(" | ")),
+                        (
+                            "meaning",
+                            "the signatures are valid; the action's own mandate does not authorize it",
+                        ),
+                    ],
+                );
+                printer.blank();
+                std::process::exit(1);
             }
             if let Some(reason) = authority_gate_failure(require_authority, checked, unverified, ok)
             {
@@ -1510,14 +1548,43 @@ fn print_step_card(step: &StepInfo, printer: &Printer) {
 }
 
 fn print_box_line(content: &str, printer: &Printer) {
-    // Left border + content + right border, padded to BOX_WIDTH
+    // Left border + content + right border, padded to BOX_WIDTH. Content
+    // longer than the frame wraps onto continuation lines at a word
+    // boundary; it used to be cut at the frame mid-word with no ellipsis,
+    // so an authority reason read `is not i` (retest 0.31.7, finding 34).
     let inner_width = BOX_WIDTH - 4; // account for "  | " and " |"
-    let padded = if content.len() < inner_width {
-        format!("{}{}", content, " ".repeat(inner_width - content.len()))
-    } else {
-        content[..inner_width].to_string()
-    };
-    printer.info(&format!("  \u{2502}  {} \u{2502}", padded));
+    let mut first = true;
+    let mut rest: &str = content;
+    loop {
+        let indent = if first { "" } else { "    " };
+        let room = inner_width.saturating_sub(indent.len());
+        let chars: Vec<char> = rest.chars().collect();
+        let (line, remainder) = if chars.len() <= room {
+            (rest.to_string(), "")
+        } else {
+            // Break at the last space inside the room, else hard at the room.
+            let head: String = chars[..room].iter().collect();
+            let cut = head.rfind(' ').filter(|&i| i > 0).unwrap_or(head.len());
+            let byte_cut = rest
+                .char_indices()
+                .nth(head[..cut].chars().count())
+                .map(|(i, _)| i)
+                .unwrap_or(rest.len());
+            (
+                rest[..byte_cut].trim_end().to_string(),
+                rest[byte_cut..].trim_start(),
+            )
+        };
+        let text = format!("{indent}{line}");
+        let width = text.chars().count();
+        let padded = format!("{}{}", text, " ".repeat(inner_width.saturating_sub(width)));
+        printer.info(&format!("  \u{2502}  {} \u{2502}", padded));
+        if remainder.is_empty() {
+            break;
+        }
+        rest = remainder;
+        first = false;
+    }
 }
 
 fn determine_connector(
