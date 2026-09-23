@@ -25,6 +25,9 @@ pub mod workflow_conformance;
 /// its check). Same reason: one code path across CLI, WASM, and SDKs.
 pub mod presentation;
 
+/// Offline verification of a stapled Rekor entry (TS-2026-003).
+pub mod rekor;
+
 /// Session-join challenge canonical (the live-liveness gate `session
 /// countersign --challenge` uses). Same shape as `presentation`, scoped to
 /// proving the joining agent is live at countersign time, not just at join
