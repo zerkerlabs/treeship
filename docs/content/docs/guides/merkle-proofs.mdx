@@ -94,22 +94,36 @@ If the action's actor / action / subject falls outside the signed scope, verific
 
 ## Rekor anchoring
 
-When attached to the Hub, receipts are optionally anchored to Sigstore's Rekor transparency log. This provides a public, immutable timestamp: proof the receipt existed before a certain time.
+When you push to the Hub, the Hub submits the artifact to Sigstore's Rekor transparency log and returns Rekor's own log entry. The CLI checks that entry and stores it on the local record.
 
-Rekor anchoring adds a property that local hash chaining cannot provide on its own: third-party proof of time. A local chain proves ordering (A before B before C). A Rekor entry proves "A existed before 2026-03-28T14:30:00Z" according to a public log that Treeship does not control.
+Rekor adds what a local chain cannot: third-party proof of time. A local chain proves order (A before B before C). A Rekor entry proves that A existed by the time Rekor recorded it, according to a public log that Treeship does not run.
 
-```bash
-treeship verify last --full
+`treeship verify` counts an anchor only if its entry verifies offline:
+
+- the entry comes from a trusted log (Sigstore's public-good key is built in; `treeship trust add <label> @rekor.pub --kind transparency_log` pins another),
+- Rekor's signed entry timestamp verifies,
+- the inclusion proof leads to a checkpoint signed by the same log,
+- and the entry is for this artifact: its payload hash and one of its signatures match.
+
+The anchor's time is Rekor's signed `integratedTime`. A time written into a local record never counts (TS-2026-003).
+
+```
+✓ verified  (1 artifact . chain intact)
+  anchoring: no timeline to anchor
+  anchors:   1 verified
 ```
 
-Output with Rekor anchoring:
+With `--format json` the same result is under `anchoring`:
 
+```json
+{
+  "coverage": { "coverage": "none", "anchor_count": 1, "mechanisms": ["rekor"], "claimed_span_seconds": 0, "unwitnessed_span_seconds": 0 },
+  "tally": { "verified": 1, "claimed_unverified": 0, "failed_attempts": 0, "rejected": [] },
+  "gate": null
+}
 ```
-Chain integrity .............. PASS
-Signature verification ....... PASS (3/3 artifacts)
-Nonce binding ................ PASS
-Rekor anchor ................. PASS (entry 24658012, 2026-03-28T14:30:00Z)
-```
+
+An anchor recorded without a proof, including every anchor recorded before TS-2026-003, reports as `claimed but unverified` and does not count toward `--max-unwitnessed`.
 
 ## Merkle checkpoints
 
@@ -181,7 +195,6 @@ Output with Merkle verification:
 Chain integrity .............. PASS
 Signature verification ....... PASS (3/3 artifacts)
 Nonce binding ................ PASS
-Rekor anchor ................. PASS (entry 24658012, 2026-03-28T14:30:00Z)
 Merkle checkpoint ............ PASS (tree_size=4096, root=sha256:7e3a...)
 ```
 
@@ -195,5 +208,5 @@ When you run `treeship verify last --full`, these are the checks:
 | Content-addressed IDs | No artifact has been tampered with |
 | DSSE signatures | Each artifact was signed by the claimed key |
 | Nonce binding | Each action was authorized by a specific approval |
-| Rekor anchor | The chain existed before a public timestamp |
+| Rekor anchor (`anchoring` line) | The artifact existed by the time a public log recorded it, when the stapled entry verifies |
 | Merkle checkpoint | The artifact was included in a signed tree at a specific point in time |

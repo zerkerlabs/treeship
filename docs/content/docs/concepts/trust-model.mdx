@@ -57,6 +57,7 @@ Verification never trusts a key because an artifact carried it — you **pin** t
 | `hub_org` | Accept this hub's org-wide single-use approval checkpoints |
 | `revoker` | Honor capability revocations this ship key signs |
 | `session_host` | Honor multi-agent room invitations this host key mints |
+| `transparency_log` | Accept this Rekor log's signed entry timestamps and checkpoints as witnessed time. ECDSA P-256, given as `@rekor.pub` or `ecdsa-p256:<base64url DER>`. Sigstore's public-good log is built in; any pin of this kind replaces it |
 
 The old single `ship` kind bundled three of these powers into one pin and is deprecated — no verifier honors it, and `trust add --kind ship` is rejected. Certificate verification is fail-closed: with no pinned root, the verdict is a deliberate failure, never a fallback to the certificate's embedded key.
 

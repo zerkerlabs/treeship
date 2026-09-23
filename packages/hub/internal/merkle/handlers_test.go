@@ -73,3 +73,15 @@ func TestVerifyCheckpointSignature(t *testing.T) {
 		t.Fatal("malformed public_key must be rejected")
 	}
 }
+
+// TS-2026-003: a caller-supplied rekor_index must never reach storage.
+func TestCheckpointRecordIgnoresCallerRekorIndex(t *testing.T) {
+	claimed := int64(12345)
+	cp := checkpointRecord(&checkpointRequest{Root: "sha256:ab", TreeSize: 1, RekorIndex: &claimed})
+	if cp.RekorIndex != nil {
+		t.Fatalf("stored caller-supplied rekor_index %d", *cp.RekorIndex)
+	}
+	if cp.RootHex != "sha256:ab" || cp.TreeSize != 1 {
+		t.Fatal("other fields must still be carried")
+	}
+}

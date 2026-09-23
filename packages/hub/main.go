@@ -26,6 +26,7 @@ import (
 	"github.com/zerkerlabs/treeship/packages/hub/internal/dock"
 	"github.com/zerkerlabs/treeship/packages/hub/internal/merkle"
 	"github.com/zerkerlabs/treeship/packages/hub/internal/receipts"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/rekor"
 	"github.com/zerkerlabs/treeship/packages/hub/internal/ship"
 	"github.com/zerkerlabs/treeship/packages/hub/internal/stats"
 	"github.com/zerkerlabs/treeship/packages/hub/internal/verify"
@@ -58,7 +59,7 @@ func main() {
 	}
 
 	dockHandlers := &dock.Handlers{DB: database}
-	artifactHandlers := &artifacts.Handlers{DB: database}
+	artifactHandlers := &artifacts.Handlers{DB: database, Rekor: rekorClient()}
 	verifyHandlers := &verify.Handlers{DB: database}
 	merkleHandlers := &merkle.Handlers{DB: database}
 	receiptHandlers := &receipts.Handlers{DB: database}
@@ -493,4 +494,20 @@ func receiptKindAndPayload(envelopeJSON string) (string, map[string]any, bool) {
 		return "", nil, false
 	}
 	return stmt.Kind, stmt.Payload, true
+}
+
+// rekorClient configures transparency-log anchoring. TREESHIP_REKOR_URL
+// points the hub at a private Rekor instance; "off" disables anchoring, in
+// which case every push reports rekor as skipped rather than pretending.
+func rekorClient() *rekor.Client {
+	c := rekor.NewDefault()
+	switch u := strings.TrimSpace(os.Getenv("TREESHIP_REKOR_URL")); u {
+	case "":
+	case "off":
+		log.Printf("rekor: anchoring disabled by TREESHIP_REKOR_URL=off")
+		return nil
+	default:
+		c.BaseURL = strings.TrimRight(u, "/")
+	}
+	return c
 }

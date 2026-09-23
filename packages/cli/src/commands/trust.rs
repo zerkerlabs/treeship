@@ -103,7 +103,7 @@ pub fn add(
     let kind = TrustRootKind::parse(kind).ok_or_else(|| {
         format!(
             "unknown trust root kind '{kind}'. Expected one of: \
-             hub_checkpoint, hub_org, cert_issuer, revoker, agent_cert, session_host",
+             hub_checkpoint, hub_org, cert_issuer, revoker, agent_cert, session_host, transparency_log",
         )
     })?;
 
@@ -123,9 +123,17 @@ pub fn add(
 
     // Accept both `ed25519:<b64>` and bare base64url for ergonomics.
     // Normalize on write so the on-disk file is always prefixed.
-    let parsed =
-        decode_ed25519_pubkey(public_key).map_err(|m| format!("invalid public key: {m}"))?;
-    let canonical_pk = encode_ed25519_pubkey(&parsed);
+    //
+    // transparency_log roots are ECDSA P-256 (Rekor's key type) and are
+    // given as `ecdsa-p256:<base64url DER>` or `@<path to PEM>`, which is the
+    // form `curl <rekor>/api/v1/log/publicKey` produces.
+    let canonical_pk = if kind == TrustRootKind::TransparencyLog {
+        canonical_transparency_log_key(public_key)?
+    } else {
+        let parsed =
+            decode_ed25519_pubkey(public_key).map_err(|m| format!("invalid public key: {m}"))?;
+        encode_ed25519_pubkey(&parsed)
+    };
     let fingerprint = pubkey_fingerprint(&canonical_pk);
 
     if key_id.trim().is_empty() {
@@ -369,6 +377,23 @@ pub fn remove(
 /// Short fingerprint for a canonical `ed25519:<b64>` pubkey: first 16 hex
 /// chars of SHA-256 over the encoded form. Long enough to be unique in
 /// practice, short enough to read out loud.
+/// Normalize a transparency-log key to `ecdsa-p256:<base64url DER>`.
+fn canonical_transparency_log_key(input: &str) -> Result<String, Box<dyn std::error::Error>> {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    let key = if let Some(path) = input.strip_prefix('@') {
+        let pem = std::fs::read_to_string(path)
+            .map_err(|e| format!("cannot read PEM file {path}: {e}"))?;
+        treeship_core::verify::rekor::RekorLogKey::from_pem("pin", &pem)
+    } else {
+        treeship_core::trust::decode_transparency_log_key(input, "pin")
+    }
+    .map_err(|m| format!("invalid transparency log key: {m}"))?;
+    Ok(format!(
+        "ecdsa-p256:{}",
+        URL_SAFE_NO_PAD.encode(key.spki_der())
+    ))
+}
+
 fn pubkey_fingerprint(canonical_pk: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(canonical_pk.as_bytes());

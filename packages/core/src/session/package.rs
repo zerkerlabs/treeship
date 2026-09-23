@@ -58,6 +58,10 @@ const RECEIPT_FILE: &str = "receipt.json";
 const MERKLE_FILE: &str = "merkle.json";
 const RENDER_FILE: &str = "render.json";
 const ARTIFACTS_DIR: &str = "artifacts";
+/// `anchors/<artifact_id>.json`: the witness proofs for a sealed artifact, a
+/// JSON array of `RecordAnchor` that each carry a `proof` (TS-2026-003).
+/// Absent in packages whose artifacts were never anchored.
+pub const ANCHORS_DIR: &str = "anchors";
 const PROOFS_DIR: &str = "proofs";
 const PREVIEW_FILE: &str = "preview.html";
 
@@ -128,6 +132,13 @@ pub struct ApprovalsBundle {
     /// checks each signature against the key the package names, then
     /// separately reports whether that key is one it has pinned.
     pub signer_keys: Vec<(String, String)>,
+    /// Witness proofs for sealed artifacts, `(artifact_id, anchors)`, written
+    /// to `anchors/<id>.json` (TS-2026-003). Only anchors that carry a proof
+    /// belong here: a local claim without one proves nothing to a reader.
+    /// The proofs are unsigned by the package on purpose; each one verifies
+    /// on its own against the reader's trusted logs and binds to its
+    /// artifact, so the package vouching for it would add nothing.
+    pub sealed_anchors: Vec<(String, Vec<crate::storage::RecordAnchor>)>,
 }
 
 /// `keys.json` at the package root.
@@ -268,6 +279,30 @@ pub fn build_package_with_approvals(
                     std::fs::write(path, envelope_bytes)?;
                     file_count += 1;
                 }
+            }
+        }
+        let proofs: Vec<_> = b
+            .sealed_anchors
+            .iter()
+            .map(|(id, anchors)| {
+                let with_proof: Vec<_> = anchors
+                    .iter()
+                    .filter(|a| a.proof.is_some())
+                    .cloned()
+                    .collect();
+                (id, with_proof)
+            })
+            .filter(|(_, a)| !a.is_empty())
+            .collect();
+        if !proofs.is_empty() {
+            std::fs::create_dir_all(pkg_dir.join(ANCHORS_DIR))?;
+            for (artifact_id, anchors) in proofs {
+                let safe = sanitize_filename(artifact_id);
+                std::fs::write(
+                    pkg_dir.join(ANCHORS_DIR).join(format!("{safe}.json")),
+                    serde_json::to_vec_pretty(&anchors)?,
+                )?;
+                file_count += 1;
             }
         }
         if !b.signer_keys.is_empty() {
@@ -768,6 +803,7 @@ pub fn verify_package_with_options(
     // Signatures and chain linkage, from the package's own envelopes
     // (audit 2026-09, AUD-31 / AUD-32; QA TS-002b).
     verify_sealed_envelopes(pkg_dir, &receipt, trust, structural_only, &mut checks);
+    verify_stapled_anchors(pkg_dir, &receipt, trust, &mut checks);
     let body_bound = verify_receipt_binding(pkg_dir, &receipt, structural_only, &mut checks);
     if body_bound {
         checks.push(VerifyCheck::pass(
@@ -1120,6 +1156,144 @@ fn verify_session_window(pkg_dir: &Path, receipt: &SessionReceipt, checks: &mut 
 /// FAIL, or a WARN under `structural_only`: structure without signatures is
 /// not verification, and a forged sealed set is indistinguishable from an
 /// honest legacy one from the package's bytes alone.
+/// The `anchoring` row: every stapled Rekor proof is checked offline against
+/// the reader's trusted logs and bound to its sealed artifact (TS-2026-003).
+///
+/// No row at all when the package carries no `anchors/` directory, which is
+/// every package built before this existed and every session never pushed:
+/// absence changes no existing verdict. When proofs are present:
+/// * a proof that fails, or is for another artifact, is a failure -- the
+///   package is presenting a witness that does not hold;
+/// * a proof from a log this reader has not pinned is a warning naming it;
+/// * otherwise a pass that says how many sealed artifacts are witnessed and
+///   over what span of Rekor time.
+fn verify_stapled_anchors(
+    pkg_dir: &Path,
+    receipt: &SessionReceipt,
+    trust: &crate::trust::TrustRootStore,
+    checks: &mut Vec<VerifyCheck>,
+) {
+    use crate::verify::rekor::{verify_rekor_entry, RekorVerifyError};
+
+    let dir = pkg_dir.join(ANCHORS_DIR);
+    if !dir.is_dir() {
+        return;
+    }
+    let logs = crate::trust::transparency_logs(trust);
+    let art_dir = pkg_dir.join(ARTIFACTS_DIR);
+    let sealed: std::collections::BTreeSet<&str> = receipt
+        .artifacts
+        .iter()
+        .map(|a| a.artifact_id.as_str())
+        .collect();
+
+    let mut verified: Vec<i64> = Vec::new();
+    let mut witnessed_artifacts = 0usize;
+    let mut bad: Vec<String> = Vec::new();
+    let mut untrusted_logs: std::collections::BTreeSet<String> = Default::default();
+    let mut unsealed: Vec<String> = Vec::new();
+
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        checks.push(VerifyCheck::fail(
+            "anchoring",
+            "anchors/ exists but cannot be read",
+        ));
+        return;
+    };
+    let mut files: Vec<_> = entries.filter_map(|e| e.ok()).map(|e| e.path()).collect();
+    files.sort();
+    for path in files {
+        let Some(id) = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        if !sealed.contains(id.as_str()) {
+            unsealed.push(id);
+            continue;
+        }
+        let parsed = std::fs::read(&path)
+            .ok()
+            .and_then(|b| serde_json::from_slice::<Vec<crate::storage::RecordAnchor>>(&b).ok());
+        let Some(anchors) = parsed else {
+            bad.push(format!("{id}: anchors file is not a list of anchors"));
+            continue;
+        };
+        let env = std::fs::read(art_dir.join(format!("{}.json", sanitize_filename(&id))))
+            .ok()
+            .and_then(|b| crate::attestation::Envelope::from_json(&b).ok());
+        let Some(env) = env else {
+            bad.push(format!(
+                "{id}: no signed envelope in the package to bind the proof to"
+            ));
+            continue;
+        };
+        let mut any = false;
+        for a in anchors.iter().filter(|a| a.mechanism == "rekor") {
+            let Some(proof) = &a.proof else { continue };
+            match verify_rekor_entry(proof, &env, &logs) {
+                Ok(v) => {
+                    verified.push(v.integrated_time);
+                    any = true;
+                }
+                Err(RekorVerifyError::UnknownLog(log_id)) => {
+                    untrusted_logs.insert(log_id);
+                }
+                Err(e) => bad.push(format!("{id}: {e}")),
+            }
+        }
+        if any {
+            witnessed_artifacts += 1;
+        }
+    }
+
+    if !bad.is_empty() {
+        checks.push(VerifyCheck::fail(
+            "anchoring",
+            &format!(
+                "{} stapled proof(s) do not hold: {}",
+                bad.len(),
+                bad.join("; ")
+            ),
+        ));
+        return;
+    }
+    if !untrusted_logs.is_empty() {
+        checks.push(VerifyCheck::warn(
+            "anchoring",
+            &format!(
+                "proofs come from a transparency log this machine does not trust (logID {}); pin it with `treeship trust add <label> @<log key>.pem --kind transparency_log` if you mean to",
+                untrusted_logs.into_iter().collect::<Vec<_>>().join(", ")
+            ),
+        ));
+        return;
+    }
+    if verified.is_empty() {
+        checks.push(VerifyCheck::warn(
+            "anchoring",
+            "anchors/ is present but carries no Rekor proof",
+        ));
+        return;
+    }
+    let first = verified.iter().min().copied().unwrap_or_default();
+    let last = verified.iter().max().copied().unwrap_or_default();
+    let mut detail = format!(
+        "{witnessed_artifacts} of {} sealed artifact(s) carry a Rekor entry that verifies offline (Rekor time {} to {}); the rest rest on the signer's clock",
+        sealed.len(),
+        crate::statements::unix_to_rfc3339(first.max(0) as u64),
+        crate::statements::unix_to_rfc3339(last.max(0) as u64),
+    );
+    if !unsealed.is_empty() {
+        detail.push_str(&format!(
+            "; ignored proofs for artifacts not in the sealed set: {}",
+            unsealed.join(", ")
+        ));
+    }
+    checks.push(VerifyCheck::pass("anchoring", &detail));
+}
+
 fn verify_sealed_envelopes(
     pkg_dir: &Path,
     receipt: &SessionReceipt,

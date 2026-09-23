@@ -541,6 +541,12 @@ pub fn run(
     let passed = checks.iter().filter(|c| c.outcome == Outcome::Pass).count();
     let failed = total - passed;
 
+    // Anchoring is computed once and gated identically in every output mode.
+    // Before TS-2026-003 the --max-unwitnessed gate ran only in the default
+    // text path: JSON (what CI consumes) and --full ignored it and exited 0.
+    let (coverage, anchor_tally) = compute_chain_coverage(&ctx, &chain_ids, &trust);
+    let anchoring_gate = anchoring_gate_failure(max_unwitnessed_secs, &coverage);
+
     if printer.format == crate::printer::Format::Json {
         // Effect verdicts are keyed by artifact id so the signature-focused
         // `checks` list can carry the operational-confidence verdict alongside
@@ -685,6 +691,20 @@ pub fn run(
             "authority_gate": authority_gate_failure(
                 require_authority, authority_checked, authority_unverified, authority_ok,
             ),
+            // Witnessed time. `coverage` counts only anchors whose proof
+            // verified offline; `tally` says what else was recorded and why it
+            // did not count. `gate` is null when no --max-unwitnessed policy
+            // was requested, and otherwise always says whether it passed, so
+            // "not checked" never reads the same as "checked and fine".
+            "anchoring": {
+                "coverage": coverage,
+                "tally": anchor_tally,
+                "gate": max_unwitnessed_secs.map(|limit| serde_json::json!({
+                    "max_unwitnessed_seconds": limit,
+                    "passed": anchoring_gate.is_none(),
+                    "detail": anchoring_gate,
+                })),
+            },
             "checks": out,
         }));
         let authority_gate = authority_gate_failure(
@@ -693,7 +713,7 @@ pub fn run(
             authority_unverified,
             authority_ok,
         );
-        if failed > 0 || !linkage_ok || authority_gate.is_some() {
+        if failed > 0 || !linkage_ok || authority_gate.is_some() || anchoring_gate.is_some() {
             std::process::exit(1);
         }
         return Ok(());
@@ -712,7 +732,14 @@ pub fn run(
             &linkage_detail,
             &revocation,
         );
-        if failed > 0 || !chain_ok {
+        printer.dim_info(&format!("  anchoring: {}", coverage.summary()));
+        if let Some(note) = anchor_tally_note(&anchor_tally) {
+            printer.dim_info(&format!("  anchors:   {note}"));
+        }
+        if let Some(why) = &anchoring_gate {
+            printer.failure("UNWITNESSED WORK EXCEEDS POLICY", &[("detail", why)]);
+        }
+        if failed > 0 || !chain_ok || anchoring_gate.is_some() {
             std::process::exit(1);
         }
         return Ok(());
@@ -742,11 +769,16 @@ pub fn run(
         // wrong is staying silent: a reader has no other way to tell a
         // continuously witnessed timeline from an entirely self-asserted one,
         // and the receipts look identical either way.
-        let coverage = compute_chain_coverage(&ctx, &chain_ids);
         printer.dim_info(&format!("  anchoring: {}", coverage.summary()));
+        if let Some(note) = anchor_tally_note(&anchor_tally) {
+            printer.dim_info(&format!("  anchors:   {note}"));
+        }
+        for why in &anchor_tally.rejected {
+            printer.warn("anchor proof rejected", &[("reason", why)]);
+        }
 
         if let Some(limit) = max_unwitnessed_secs {
-            if !coverage.within(limit) {
+            if anchoring_gate.is_some() {
                 printer.blank();
                 printer.failure(
                     "UNWITNESSED WORK EXCEEDS POLICY",
@@ -3194,40 +3226,98 @@ fn human_secs(s: i64) -> String {
 /// Gather the claimed timeline and its witnesses across a verified chain.
 ///
 /// Claimed times come from each artifact's `signed_at` -- the signer's own
-/// assertion, which is exactly what anchoring exists to constrain. Anchors
-/// come from `Record.anchors`, written when a push was acknowledged.
+/// assertion, which is exactly what anchoring exists to constrain. Witness
+/// times come only from anchors whose proof verifies offline against the
+/// trusted transparency logs (TS-2026-003); every other recorded anchor is
+/// tallied as an unverified claim and does not count.
 ///
-/// An artifact whose `signed_at` will not parse is skipped rather than
+/// An artifact without a parseable signed timestamp is skipped rather than
 /// defaulted: inventing a timestamp for it would shrink or stretch the
-/// computed span with a value nobody asserted.
+/// computed span with a value nobody signed.
 fn compute_chain_coverage(
     ctx: &ctx::Ctx,
     chain_ids: &[String],
-) -> treeship_core::verify::anchoring::AnchorCoverage {
-    use treeship_core::statements::parse_rfc3339_to_unix;
-    use treeship_core::verify::anchoring::{Anchor, AnchorCoverage};
+    trust: &TrustRootStore,
+) -> (
+    treeship_core::verify::anchoring::AnchorCoverage,
+    treeship_core::verify::anchoring::AnchorTally,
+) {
+    use treeship_core::verify::anchoring::{witnessed_anchors, AnchorCoverage, AnchorTally};
+
+    let logs = treeship_core::trust::transparency_logs(trust);
 
     let mut event_times: Vec<i64> = Vec::new();
-    let mut anchors: Vec<Anchor> = Vec::new();
+    let mut anchors = Vec::new();
+    let mut tally = AnchorTally::default();
 
     for id in chain_ids {
         let Ok(record) = ctx.storage.read(id) else {
             continue;
         };
-        if let Some(t) = parse_rfc3339_to_unix(&record.signed_at) {
-            event_times.push(t as i64);
+        // The claimed time is the statement's own signed `timestamp`, never
+        // `record.signed_at`: that is an unsigned copy in a file the operator
+        // controls, and compressing it shrank the claimed span until any
+        // --max-unwitnessed policy passed with no anchors at all.
+        if let Some(t) = signed_statement_time(&record.envelope) {
+            event_times.push(t);
         }
-        for a in &record.anchors {
-            if let Some(t) = parse_rfc3339_to_unix(&a.observed_at) {
-                anchors.push(Anchor {
-                    at: t as i64,
-                    mechanism: a.mechanism.clone(),
-                });
-            }
-        }
+        anchors.extend(witnessed_anchors(
+            &record.anchors,
+            &record.envelope,
+            &logs,
+            &mut tally,
+        ));
     }
 
-    AnchorCoverage::compute(&event_times, &anchors)
+    (AnchorCoverage::compute(&event_times, &anchors), tally)
+}
+
+/// The `timestamp` inside a statement's signed payload, as Unix seconds.
+/// `None` when the statement type carries no timestamp or it does not parse;
+/// such an artifact contributes no claimed time rather than an invented one.
+fn signed_statement_time(env: &treeship_core::attestation::Envelope) -> Option<i64> {
+    let bytes = env.payload_bytes().ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let ts = v.get("timestamp")?.as_str()?;
+    treeship_core::statements::parse_rfc3339_to_unix(ts).map(|t| t as i64)
+}
+
+/// One line saying which recorded anchors did not count, and why. Empty when
+/// there is nothing to say.
+fn anchor_tally_note(t: &treeship_core::verify::anchoring::AnchorTally) -> Option<String> {
+    let mut parts = Vec::new();
+    if t.verified > 0 {
+        parts.push(format!("{} verified", t.verified));
+    }
+    if t.claimed_unverified > 0 {
+        parts.push(format!(
+            "{} claimed but unverified (local record only, not counted)",
+            t.claimed_unverified
+        ));
+    }
+    if t.failed_attempts > 0 {
+        parts.push(format!("{} anchoring attempt(s) failed", t.failed_attempts));
+    }
+    if !t.rejected.is_empty() {
+        parts.push(format!("{} proof(s) REJECTED", t.rejected.len()));
+    }
+    (!parts.is_empty()).then(|| parts.join(", "))
+}
+
+/// The --max-unwitnessed gate, shared by every output mode. Returns the
+/// failure message when the policy is violated.
+fn anchoring_gate_failure(
+    limit: Option<i64>,
+    coverage: &treeship_core::verify::anchoring::AnchorCoverage,
+) -> Option<String> {
+    let limit = limit?;
+    (!coverage.within(limit)).then(|| {
+        format!(
+            "longest unwitnessed span {} exceeds the allowed {}",
+            human_secs(coverage.unwitnessed_span_seconds),
+            human_secs(limit)
+        )
+    })
 }
 
 #[cfg(test)]

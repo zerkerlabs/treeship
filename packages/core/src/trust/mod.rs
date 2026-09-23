@@ -115,6 +115,16 @@ pub enum TrustRootKind {
     /// machine can trust hub-org checkpoints without implicitly
     /// trusting that hub to host multi-agent rooms.
     SessionHost,
+    /// A transparency log (Rekor v1) whose signed entry timestamps and
+    /// checkpoints a verifier accepts as witnessed time (TS-2026-003).
+    ///
+    /// Unlike every other kind this is an ECDSA P-256 key, encoded
+    /// `ecdsa-p256:<base64url-no-pad DER SubjectPublicKeyInfo>`. Pinning any
+    /// root of this kind REPLACES the built-in Sigstore public-good log key
+    /// rather than adding to it, so an operator running a private Rekor can
+    /// stop trusting the public one. Matched by log ID (SHA-256 of the DER),
+    /// not by `key_id`.
+    TransparencyLog,
 }
 
 impl TrustRootKind {
@@ -127,6 +137,7 @@ impl TrustRootKind {
             Self::Revoker => "revoker",
             Self::AgentCert => "agent_cert",
             Self::SessionHost => "session_host",
+            Self::TransparencyLog => "transparency_log",
         }
     }
 
@@ -139,6 +150,7 @@ impl TrustRootKind {
             "revoker" => Some(Self::Revoker),
             "agent_cert" => Some(Self::AgentCert),
             "session_host" => Some(Self::SessionHost),
+            "transparency_log" => Some(Self::TransparencyLog),
             _ => None,
         }
     }
@@ -346,7 +358,12 @@ impl TrustRootStore {
         // Validate every embedded public key parses now -- catch a
         // malformed key at load time rather than at verify time.
         for root in &file.roots {
-            decode_ed25519_pubkey(&root.public_key).map_err(|msg| TrustRootError::Malformed {
+            let checked = if root.kind == TrustRootKind::TransparencyLog {
+                decode_transparency_log_key(&root.public_key, &root.key_id).map(|_| ())
+            } else {
+                decode_ed25519_pubkey(&root.public_key).map(|_| ())
+            };
+            checked.map_err(|msg| TrustRootError::Malformed {
                 path: path.to_path_buf(),
                 msg: format!("root {}: {msg}", root.key_id),
             })?;
@@ -467,6 +484,48 @@ pub fn decode_ed25519_pubkey(s: &str) -> Result<VerifyingKey, String> {
         .try_into()
         .map_err(|_| format!("expected 32-byte public key, got {} bytes", bytes.len()))?;
     VerifyingKey::from_bytes(&arr).map_err(|e| format!("not a valid Ed25519 public key: {e}"))
+}
+
+/// Decode an `ecdsa-p256:<base64url DER SPKI>` transparency-log key.
+pub fn decode_transparency_log_key(
+    s: &str,
+    label: &str,
+) -> Result<crate::verify::rekor::RekorLogKey, String> {
+    let b64 = s
+        .strip_prefix("ecdsa-p256:")
+        .ok_or("transparency_log keys must be written ecdsa-p256:<base64url DER>")?;
+    let der = URL_SAFE_NO_PAD
+        .decode(b64)
+        .map_err(|e| format!("base64url decode failed: {e}"))?;
+    crate::verify::rekor::RekorLogKey::from_der(label, &der)
+}
+
+/// The transparency logs a verifier trusts: every pinned `transparency_log`
+/// root, or, when none is pinned, the built-in Sigstore public-good log.
+///
+/// A pinned root that fails to decode is skipped, never widened to "trust
+/// anything"; `open` already rejects such files, so this only matters for a
+/// store built in memory.
+pub fn transparency_logs(store: &TrustRootStore) -> Vec<crate::verify::rekor::RekorLogKey> {
+    let pinned: Vec<_> = store
+        .roots()
+        .iter()
+        .filter(|r| r.kind == TrustRootKind::TransparencyLog)
+        .collect();
+    if pinned.is_empty() {
+        return vec![crate::verify::rekor::RekorLogKey::sigstore_public_good()];
+    }
+    pinned
+        .into_iter()
+        .filter_map(|r| {
+            let label = if r.label.is_empty() {
+                format!("{} (pinned)", r.key_id)
+            } else {
+                format!("{} (pinned)", r.label)
+            };
+            decode_transparency_log_key(&r.public_key, &label).ok()
+        })
+        .collect()
 }
 
 /// Encode a `VerifyingKey` into the canonical `ed25519:<base64url>` form.
@@ -786,5 +845,69 @@ mod tests {
         let bare = URL_SAFE_NO_PAD.encode(pk.to_bytes());
         let decoded = decode_ed25519_pubkey(&bare).unwrap();
         assert_eq!(decoded.to_bytes(), pk.to_bytes());
+    }
+
+    fn p256_root(key_id: &str, der: &[u8]) -> TrustRoot {
+        TrustRoot {
+            key_id: key_id.into(),
+            public_key: format!("ecdsa-p256:{}", URL_SAFE_NO_PAD.encode(der)),
+            kind: TrustRootKind::TransparencyLog,
+            label: String::new(),
+            added_at: String::new(),
+        }
+    }
+
+    fn public_good_der() -> Vec<u8> {
+        let pem = crate::verify::rekor::SIGSTORE_PUBLIC_GOOD_REKOR_PEM;
+        let b64: String = pem.lines().filter(|l| !l.starts_with("-----")).collect();
+        base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .unwrap()
+    }
+
+    #[test]
+    fn no_pinned_log_means_built_in_public_good_only() {
+        let logs = transparency_logs(&TrustRootStore::empty());
+        assert_eq!(logs.len(), 1);
+        assert_eq!(
+            logs[0].log_id,
+            "c0d23d6ad406973f9559f3ba2d1ca01f84147d8ffc5b8445c224f98b9591801d"
+        );
+    }
+
+    /// Pinning a private log must drop the public one, or an operator could
+    /// never stop trusting it.
+    #[test]
+    fn pinned_log_replaces_built_in() {
+        // Staging Rekor's key, from https://rekor.sigstage.dev/api/v1/log/publicKey.
+        let staging = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEDODRU688UYGuy54mNUlaEBiQdTE9nYLr0lg6RXowI/QV/RE1azBn4Eg5/2uTOMbhB1/gfcHzijzFi9Tk+g1Prg==";
+        let der = base64::engine::general_purpose::STANDARD
+            .decode(staging)
+            .unwrap();
+        let store = TrustRootStore::with_roots(vec![p256_root("staging", &der)]);
+        let logs = transparency_logs(&store);
+        assert_eq!(logs.len(), 1);
+        assert_ne!(
+            logs[0].log_id,
+            crate::verify::rekor::RekorLogKey::sigstore_public_good().log_id
+        );
+    }
+
+    #[test]
+    fn open_accepts_transparency_log_root_and_rejects_ed25519_shaped_one() {
+        let dir = tmp_dir("tlog");
+        let path = dir.join("trust_roots.json");
+        let good = TrustRootStore::with_roots(vec![p256_root("rekor", &public_good_der())]);
+        good.save(&path).unwrap();
+        assert_eq!(TrustRootStore::open(&path).unwrap().len(), 1);
+
+        let sk = SigningKey::from_bytes(&[3u8; 32]);
+        let mut wrong = p256_root("rekor", &[]);
+        wrong.public_key = encode_ed25519_pubkey(&sk.verifying_key());
+        TrustRootStore::with_roots(vec![wrong]).save(&path).unwrap();
+        assert!(matches!(
+            TrustRootStore::open(&path),
+            Err(TrustRootError::Malformed { .. })
+        ));
     }
 }

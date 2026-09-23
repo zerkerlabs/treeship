@@ -66,7 +66,7 @@ Requires DPoP authentication. The CLI publishes a locally-signed checkpoint to H
 | `signer` | string | Yes | Key ID of the signer |
 | `signature` | string | Yes | Base64url-encoded Ed25519 signature of the canonical form |
 | `public_key` | string | Yes | Base64url-encoded public key bytes |
-| `rekor_index` | integer or null | No | Rekor transparency log index, if anchored |
+| `rekor_index` | integer or null | No | Ignored. The hub used to store this caller-supplied value and serve it back as if it were an anchor (TS-2026-003). Checkpoints are not anchored yet |
 | `index` | integer | No | Checkpoint sequence number |
 
 ### Publish response
@@ -108,7 +108,7 @@ Both GET endpoints return the same format -- the `MerkleCheckpoint` object store
 | `signer` | string | Key ID of the signer |
 | `signature` | string | Base64url-encoded Ed25519 signature over the canonical form |
 | `public_key` | string | Base64url-encoded public key bytes |
-| `rekor_index` | integer or null | Rekor transparency log index (null if not anchored) |
+| `rekor_index` | null | Always null until the hub anchors checkpoints itself |
 | `hub_id` | string or null | Hub connection that published this checkpoint |
 
 ## How checkpoints work

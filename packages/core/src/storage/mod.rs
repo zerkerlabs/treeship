@@ -45,19 +45,36 @@ pub struct RecordAnchor {
     pub mechanism: String,
     /// RFC 3339, from the *local* clock at the moment the witness responded.
     ///
-    /// Honest caveat, and the reason this is not the end of the story: this
-    /// is still our own clock. It records when we observed the witness, not
-    /// when the witness says it saw us. It is trustworthy against an actor
-    /// who fabricates a timeline afterwards -- you cannot obtain a Hub or
-    /// Rekor response for bytes you have not written yet -- and not
-    /// trustworthy against one who sets the system clock and anchors in real
-    /// time. Closing that needs the witness's own signed time, which is
-    /// `time-anchoring.md` slices 3-5.
+    /// This is our own clock, written into a file the operator controls, so
+    /// it is a claim and never evidence. Treating it as witnessed time was
+    /// TS-2026-003: editing it satisfied `--max-unwitnessed-secs`. Witnessed
+    /// time comes only from a verified `proof` (Rekor's signed
+    /// `integratedTime`). Kept for display and for spotting clock skew.
     pub observed_at: String,
     /// Witness-side identifier where one exists: a Rekor log index, a Hub
     /// artifact URL. Lets a verifier go and check independently.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reference: Option<String>,
+    /// Outcome of the attempt: "anchored", "failed" or "skipped". `None` on
+    /// anchors written before outcomes were recorded, which were only ever
+    /// written on apparent success.
+    ///
+    /// A failure is recorded rather than omitted so that "no anchor" never
+    /// has to be read as either "never pushed" or "pushed and rejected"
+    /// (TS-2026-003: every Rekor submission was rejected and nothing said so).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// Why a failed or skipped attempt did not anchor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// The witness's own proof, verbatim: for Rekor, the full log entry with
+    /// its signed entry timestamp, inclusion proof and signed checkpoint.
+    ///
+    /// This is the only part of an anchor a verifier trusts. `observed_at`
+    /// and `reference` are local claims and never count as witnessed time on
+    /// their own; see `verify::rekor`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof: Option<serde_json::Value>,
 }
 
 /// A lightweight index entry — stored in index.json for fast listing

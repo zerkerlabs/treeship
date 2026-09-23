@@ -187,7 +187,23 @@ paths:
                 properties:
                   artifact_id:  { type: string }
                   hub_url:      { type: string, example: "https://treeship.dev/verify/art_f7e6d5c4b3a2f7e6" }
-                  rekor_index:  { type: integer, nullable: true }
+                  rekor_index:  { type: integer, nullable: true, description: "Global Rekor log index. Kept for older clients; read rekor" }
+                  rekor:
+                    type: object
+                    description: >
+                      The anchoring outcome (TS-2026-003). Never absent on this
+                      hub version: a failed or skipped attempt says why.
+                    properties:
+                      status:    { type: string, enum: [anchored, failed, skipped] }
+                      reason:    { type: string, description: "Set when not anchored" }
+                      log_index: { type: integer }
+                      entry:
+                        type: object
+                        description: >
+                          The Rekor log entry exactly as Rekor returned it, plus
+                          its uuid: body, integratedTime, logID, logIndex, and
+                          verification (signedEntryTimestamp, inclusionProof
+                          with the signed checkpoint). Verify it offline.
 
   /v1/artifacts/{id}:
     get:
@@ -285,7 +301,7 @@ paths:
                 signer:       { type: string, description: "Key ID of the signer" }
                 signature:    { type: string, description: "Base64url-encoded Ed25519 signature" }
                 public_key:   { type: string, description: "Base64url-encoded Ed25519 public key" }
-                rekor_index:  { type: integer, nullable: true, description: "Rekor transparency log index, if anchored" }
+                rekor_index:  { type: integer, nullable: true, description: "Ignored (TS-2026-003). Checkpoints are not anchored yet" }
                 index:        { type: integer, description: "Checkpoint sequence number" }
       responses:
         '200':

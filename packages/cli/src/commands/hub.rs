@@ -17,7 +17,34 @@ use crate::{
 /// Result of a successful push to Hub.
 pub struct PushResult {
     pub hub_url: String,
-    pub rekor_index: Option<u64>,
+    /// What happened with Rekor, stated plainly. Before TS-2026-003 a failed
+    /// anchor printed "pending"; it had in fact been rejected.
+    pub rekor: RekorOutcome,
+}
+
+/// The Rekor outcome of one push, as the CLI understood it.
+pub enum RekorOutcome {
+    /// Anchored, and the returned proof verified here against a trusted log.
+    Verified {
+        log_index: i64,
+        integrated_time: i64,
+        log_label: String,
+    },
+    /// The hub says anchored, but the proof did not verify here. Stored, and
+    /// `verify` will reject it the same way.
+    ProofInvalid {
+        log_index: Option<u64>,
+        error: String,
+    },
+    /// Rekor rejected the entry, or the hub could not reach it.
+    Failed(String),
+    /// Nothing was submitted, with the hub's reason.
+    Skipped(String),
+    /// An older hub returned a bare log index with no proof. Recorded as a
+    /// claim; it is never counted as witnessed time.
+    IndexOnly(u64),
+    /// The hub said nothing about Rekor at all.
+    NotReported,
 }
 
 // ---------------------------------------------------------------------------
@@ -782,18 +809,12 @@ fn push_artifact_to_hub(
         ctx.storage.set_hub_url(id, &hub_url)?;
     }
 
-    // 5. Record the witnesses, with the time we observed them.
+    // 5. Record the witnesses.
     //
-    // `hub_url` alone says *that* this was pushed, never *when* -- and when is
-    // the whole value of an anchor. A receipt's own timestamp is the signer's
-    // claim about itself; this is a record that somebody else saw these bytes,
-    // which is what makes a timeline expensive to fabricate afterwards. Until
-    // this existed there was no local data from which anchoring coverage could
-    // be computed at all.
-    //
-    // Hub and Rekor are recorded separately because they fail differently: a
-    // Hub anchor requires trusting the Hub, a Rekor entry is independently
-    // checkable in a public log. Collapsing them would throw that away.
+    // `observed_at` is our own clock and is kept for display only. What a
+    // verifier trusts is the Rekor proof, verified offline against a pinned
+    // log key (TS-2026-003). A failed or skipped attempt is recorded too, so
+    // "no anchor" never has to be guessed at.
     let observed_at = now_rfc3339();
     if !hub_url.is_empty() {
         ctx.storage.add_anchor(
@@ -802,31 +823,121 @@ fn push_artifact_to_hub(
                 mechanism: "hub".to_string(),
                 observed_at: observed_at.clone(),
                 reference: Some(hub_url.clone()),
+                status: Some("anchored".into()),
+                reason: None,
+                proof: None,
             },
         )?;
     }
-    if let Some(idx) = rekor_index {
+
+    let rekor = interpret_rekor(&resp, rekor_index, &record.envelope);
+    let (status, reason, proof, reference) = match &rekor {
+        RekorOutcome::Verified { log_index, .. } => (
+            Some("anchored"),
+            None,
+            resp["rekor"]["entry"].clone().into(),
+            Some(log_index.to_string()),
+        ),
+        RekorOutcome::ProofInvalid { log_index, error } => (
+            Some("anchored"),
+            Some(format!("proof did not verify when received: {error}")),
+            resp["rekor"]["entry"].clone().into(),
+            log_index.map(|i| i.to_string()),
+        ),
+        RekorOutcome::Failed(r) => (Some("failed"), Some(r.clone()), None, None),
+        RekorOutcome::Skipped(r) => (Some("skipped"), Some(r.clone()), None, None),
+        RekorOutcome::IndexOnly(i) => (None, None, None, Some(i.to_string())),
+        RekorOutcome::NotReported => (None, None, None, None),
+    };
+    if !matches!(rekor, RekorOutcome::NotReported) {
         ctx.storage.add_anchor(
             id,
             treeship_core::storage::RecordAnchor {
                 mechanism: "rekor".to_string(),
                 observed_at,
-                reference: Some(idx.to_string()),
+                reference,
+                status: status.map(str::to_string),
+                reason,
+                proof: proof.filter(|p: &serde_json::Value| !p.is_null()),
             },
         )?;
     }
 
-    Ok(PushResult {
-        hub_url,
-        rekor_index,
-    })
+    Ok(PushResult { hub_url, rekor })
+}
+
+/// Read the hub's Rekor outcome and, when it carries a proof, verify that
+/// proof here before believing it.
+fn interpret_rekor(
+    resp: &serde_json::Value,
+    rekor_index: Option<u64>,
+    envelope: &treeship_core::attestation::Envelope,
+) -> RekorOutcome {
+    let Some(r) = resp.get("rekor").filter(|v| v.is_object()) else {
+        return match rekor_index {
+            Some(i) => RekorOutcome::IndexOnly(i),
+            None => RekorOutcome::NotReported,
+        };
+    };
+    let reason = r["reason"]
+        .as_str()
+        .unwrap_or("no reason given")
+        .to_string();
+    match r["status"].as_str() {
+        Some("anchored") => {
+            let entry = &r["entry"];
+            if entry.is_null() {
+                return RekorOutcome::ProofInvalid {
+                    log_index: rekor_index,
+                    error: "the hub reported anchored but returned no entry".into(),
+                };
+            }
+            let trust = match treeship_core::trust::TrustRootStore::open_default_or_empty() {
+                Ok(t) => t,
+                Err(e) => {
+                    return RekorOutcome::ProofInvalid {
+                        log_index: rekor_index,
+                        error: format!("cannot check the proof: trust store unreadable: {e}"),
+                    }
+                }
+            };
+            let logs = treeship_core::trust::transparency_logs(&trust);
+            match treeship_core::verify::rekor::verify_rekor_entry(entry, envelope, &logs) {
+                Ok(v) => RekorOutcome::Verified {
+                    log_index: v.log_index,
+                    integrated_time: v.integrated_time,
+                    log_label: v.log_label,
+                },
+                Err(e) => RekorOutcome::ProofInvalid {
+                    log_index: rekor_index,
+                    error: e.to_string(),
+                },
+            }
+        }
+        Some("failed") => RekorOutcome::Failed(reason),
+        Some("skipped") => RekorOutcome::Skipped(reason),
+        other => RekorOutcome::Failed(format!("hub returned unknown rekor status {other:?}")),
+    }
 }
 
 /// Print push result for a given hub connection.
 fn print_push_result(printer: &Printer, hub_name: &str, result: &PushResult) {
-    let rekor_str = match result.rekor_index {
-        Some(idx) => format!("rekor.sigstore.dev #{}", idx),
-        None => "pending".into(),
+    let rekor_str = match &result.rekor {
+        RekorOutcome::Verified {
+            log_index,
+            integrated_time,
+            log_label,
+        } => format!(
+            "anchored #{log_index} at {} (proof verified, {log_label})",
+            treeship_core::statements::unix_to_rfc3339((*integrated_time).max(0) as u64)
+        ),
+        RekorOutcome::ProofInvalid { error, .. } => format!("PROOF DID NOT VERIFY: {error}"),
+        RekorOutcome::Failed(r) => format!("failed: {r}"),
+        RekorOutcome::Skipped(r) => format!("skipped: {r}"),
+        RekorOutcome::IndexOnly(i) => {
+            format!("index #{i} reported without a proof (older hub); not counted as witnessed")
+        }
+        RekorOutcome::NotReported => "not reported by this hub".into(),
     };
 
     printer.success(

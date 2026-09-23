@@ -94,6 +94,15 @@ pub struct ExportFile {
 
     /// All artifact envelopes referenced by the bundle, in chain order.
     pub artifacts: Vec<Envelope>,
+
+    /// Witness proofs, keyed by artifact id (TS-2026-003). Only anchors that
+    /// carry a proof are exported. Unsigned by the bundle on purpose: each
+    /// proof verifies on its own against the importer's trusted logs and is
+    /// bound to its artifact, and `verify` ignores one that is not. Absent
+    /// in older exports, and ignored by older importers, so the format
+    /// version is unchanged.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub anchors: std::collections::BTreeMap<String, Vec<crate::storage::RecordAnchor>>,
 }
 
 const EXPORT_VERSION: &str = "treeship-export/v1";
@@ -189,12 +198,22 @@ pub fn export(bundle_id: &str, out_path: &Path, storage: &Store) -> Result<(), B
         .unmarshal_statement()
         .map_err(|e| BundleError::InvalidBundle(format!("cannot decode bundle: {e}")))?;
 
-    // Collect all referenced artifact envelopes.
+    // Collect all referenced artifact envelopes, and the witness proofs
+    // that travel with them.
     let mut artifact_envelopes = Vec::with_capacity(stmt.artifacts.len());
+    let mut anchors = std::collections::BTreeMap::new();
     for art_ref in &stmt.artifacts {
         let rec = storage
             .read(&art_ref.id)
             .map_err(|_| BundleError::ArtifactNotFound(art_ref.id.clone()))?;
+        let proofs: Vec<_> = rec
+            .anchors
+            .into_iter()
+            .filter(|a| a.proof.is_some())
+            .collect();
+        if !proofs.is_empty() {
+            anchors.insert(rec.artifact_id.clone(), proofs);
+        }
         artifact_envelopes.push(rec.envelope);
     }
 
@@ -202,6 +221,7 @@ pub fn export(bundle_id: &str, out_path: &Path, storage: &Store) -> Result<(), B
         version: EXPORT_VERSION.into(),
         bundle: bundle_rec.envelope,
         artifacts: artifact_envelopes,
+        anchors,
     };
 
     let json = serde_json::to_vec_pretty(&export)?;
@@ -260,7 +280,22 @@ pub fn import(
     // All signatures check out: now write, attributing each record to the key
     // that actually verified (AUD-13), not to signatures.first().
     for (env, vk) in export.artifacts.iter().zip(artifact_verified_keys.iter()) {
-        let record = record_from_envelope(env, vk.as_deref())?;
+        let mut record = record_from_envelope(env, vk.as_deref())?;
+        // Keep whatever this store already recorded for the artifact, then
+        // add carried proofs it does not have. A proof is re-verified by
+        // `verify` against this machine's trusted logs, so storing one
+        // grants it nothing; dropping local anchors on re-import would lose
+        // evidence for no reason.
+        if let Ok(existing) = storage.read(&record.artifact_id) {
+            record.anchors = existing.anchors;
+        }
+        if let Some(proofs) = export.anchors.get(&record.artifact_id) {
+            for p in proofs.iter().filter(|a| a.proof.is_some()) {
+                if !record.anchors.iter().any(|a| a.proof == p.proof) {
+                    record.anchors.push(p.clone());
+                }
+            }
+        }
         storage.write(&record)?;
     }
 
@@ -490,6 +525,77 @@ mod tests {
         rm(dir2);
     }
 
+    /// TS-2026-003: witness proofs travel with a bundle; bare local claims
+    /// do not; and importing into a store that already knows the artifact
+    /// keeps what it had.
+    #[test]
+    fn anchor_proofs_travel_and_merge_on_import() {
+        use crate::storage::RecordAnchor;
+        let (store, dir) = tmp_store();
+        let signer = Ed25519Signer::generate("key_test").unwrap();
+        let verifier = crate::attestation::Verifier::from_signer(&signer);
+        let a1 = sign_and_store(
+            &store,
+            &signer,
+            &payload_type("action"),
+            &ActionStatement::new("agent://a", "tool.call"),
+        );
+        let anchor = |mech: &str, proof: Option<serde_json::Value>| RecordAnchor {
+            mechanism: mech.into(),
+            observed_at: "2026-09-24T00:00:00Z".into(),
+            reference: None,
+            status: Some("anchored".into()),
+            reason: None,
+            proof,
+        };
+        store.add_anchor(&a1, anchor("hub", None)).unwrap();
+        store
+            .add_anchor(
+                &a1,
+                anchor("rekor", Some(serde_json::json!({"logIndex": 1}))),
+            )
+            .unwrap();
+        let bundle = create(&[&a1], None, None, &store, &signer).unwrap();
+        let path = dir.join("b.treeship");
+        export(&bundle.artifact_id, &path, &store).unwrap();
+
+        let ef: ExportFile = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(
+            ef.anchors[&a1].len(),
+            1,
+            "only the proof-bearing anchor is exported"
+        );
+        assert_eq!(ef.anchors[&a1][0].mechanism, "rekor");
+
+        let (store2, dir2) = tmp_store();
+        let local = sign_and_store(
+            &store2,
+            &signer,
+            &payload_type("action"),
+            &ActionStatement::new("agent://a", "tool.call"),
+        );
+        assert_eq!(local, a1, "same bytes, same id");
+        store2
+            .add_anchor(
+                &a1,
+                anchor("rekor", Some(serde_json::json!({"logIndex": 2}))),
+            )
+            .unwrap();
+        import(&path, &store2, &verifier).unwrap();
+        let rec = store2.read(&a1).unwrap();
+        assert_eq!(
+            rec.anchors.len(),
+            2,
+            "local proof kept, carried proof added"
+        );
+
+        // Importing again adds nothing new.
+        import(&path, &store2, &verifier).unwrap();
+        assert_eq!(store2.read(&a1).unwrap().anchors.len(), 2);
+        rm(dir);
+        rm(dir2);
+    }
+
     #[test]
     fn export_non_bundle_fails() {
         let (store, dir) = tmp_store();
@@ -520,6 +626,7 @@ mod tests {
                 signatures: vec![],
             },
             artifacts: vec![],
+            anchors: Default::default(),
         };
         let path = dir.join("bad.treeship");
         std::fs::write(&path, serde_json::to_vec(&bad).unwrap()).unwrap();

@@ -239,6 +239,15 @@ func migrate(db *sql.DB) error {
 		// not treat it as "does not match".
 		`ALTER TABLE artifacts ADD COLUMN kind TEXT`,
 		`ALTER TABLE artifacts ADD COLUMN actor TEXT`,
+		// TS-2026-003: the Rekor outcome, stored whole. rekor_index alone
+		// said nothing about failures and carried no proof, so a verifier had
+		// nothing to check. rekor_status is anchored|failed|skipped (NULL for
+		// rows pushed before this column existed); rekor_entry is the full
+		// Rekor log entry including its inclusion proof and signed entry
+		// timestamp.
+		`ALTER TABLE artifacts ADD COLUMN rekor_status TEXT`,
+		`ALTER TABLE artifacts ADD COLUMN rekor_reason TEXT`,
+		`ALTER TABLE artifacts ADD COLUMN rekor_entry TEXT`,
 	}
 	for _, stmt := range addColumns {
 		if _, err := db.Exec(stmt); err != nil {
@@ -448,6 +457,10 @@ type Artifact struct {
 	// Derived at ingestion from the envelope, not accepted from the caller.
 	Kind  *string `json:"kind"`
 	Actor *string `json:"actor"`
+	// Rekor outcome (TS-2026-003). Nil on rows pushed before it was recorded.
+	RekorStatus *string `json:"rekor_status"`
+	RekorReason *string `json:"rekor_reason"`
+	RekorEntry  *string `json:"rekor_entry"`
 }
 
 // InsertArtifact stores an artifact, idempotently on artifact_id.
@@ -488,12 +501,14 @@ func InsertArtifact(db *sql.DB, a *Artifact) (inserted bool, err error) {
 
 func GetArtifact(db *sql.DB, artifactID string) (*Artifact, error) {
 	row := db.QueryRow(
-		`SELECT artifact_id, payload_type, envelope_json, digest, signed_at, parent_id, hub_url, rekor_index, dock_id
+		`SELECT artifact_id, payload_type, envelope_json, digest, signed_at, parent_id, hub_url, rekor_index, dock_id,
+		        rekor_status, rekor_reason, rekor_entry
 		 FROM artifacts WHERE artifact_id = ?`,
 		artifactID,
 	)
 	a := &Artifact{}
-	if err := row.Scan(&a.ArtifactID, &a.PayloadType, &a.EnvelopeJSON, &a.Digest, &a.SignedAt, &a.ParentID, &a.HubURL, &a.RekorIndex, &a.DockID); err != nil {
+	if err := row.Scan(&a.ArtifactID, &a.PayloadType, &a.EnvelopeJSON, &a.Digest, &a.SignedAt, &a.ParentID, &a.HubURL, &a.RekorIndex, &a.DockID,
+		&a.RekorStatus, &a.RekorReason, &a.RekorEntry); err != nil {
 		return nil, err
 	}
 	return a, nil
@@ -648,6 +663,25 @@ func ListArtifactsByPayloadType(db *sql.DB, payloadType string) ([]Artifact, err
 
 func SetRekorIndex(db *sql.DB, artifactID string, logIndex int64) error {
 	_, err := db.Exec(`UPDATE artifacts SET rekor_index = ? WHERE artifact_id = ?`, logIndex, artifactID)
+	return err
+}
+
+// SetRekorResult records the outcome of an anchoring attempt, success or not.
+// A failure is stored too: "no anchor" must be distinguishable from "anchoring
+// was attempted and rejected", or the absence reads as "never pushed".
+func SetRekorResult(db *sql.DB, artifactID, status, reason string, logIndex *int64, entry []byte) error {
+	var entryArg any
+	if len(entry) > 0 {
+		entryArg = string(entry)
+	}
+	var reasonArg any
+	if reason != "" {
+		reasonArg = reason
+	}
+	_, err := db.Exec(
+		`UPDATE artifacts SET rekor_status = ?, rekor_reason = ?, rekor_entry = ?, rekor_index = ? WHERE artifact_id = ?`,
+		status, reasonArg, entryArg, logIndex, artifactID,
+	)
 	return err
 }
 

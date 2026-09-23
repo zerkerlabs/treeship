@@ -1983,6 +1983,22 @@ pub fn close(
     let (sealed_envelopes, signer_keys) = collect_sealed_envelopes(&ctx, &receipt, printer);
     approvals.sealed_envelopes = sealed_envelopes;
     approvals.signer_keys = signer_keys;
+    // Witness proofs travel with the package so a counterparty can check
+    // them (TS-2026-003). Before this, anchors stayed in the local store and
+    // a package said nothing about time beyond the signer's own clock.
+    approvals.sealed_anchors = receipt
+        .artifacts
+        .iter()
+        .filter_map(|a| {
+            let rec = ctx.storage.read(&a.artifact_id).ok()?;
+            let proofs: Vec<_> = rec
+                .anchors
+                .into_iter()
+                .filter(|x| x.proof.is_some())
+                .collect();
+            (!proofs.is_empty()).then(|| (a.artifact_id.clone(), proofs))
+        })
+        .collect();
 
     match build_package_with_approvals(&receipt, &pkg_dir, Some(&approvals)) {
         Ok(pkg_output) => {

@@ -1,0 +1,44 @@
+{
+ "entry": {
+  "body": "eyJhcGlWZXJzaW9uIjoiMC4wLjEiLCJraW5kIjoiZHNzZSIsInNwZWMiOnsiZW52ZWxvcGVIYXNoIjp7ImFsZ29yaXRobSI6InNoYTI1NiIsInZhbHVlIjoiYjg1NGI3ODBiNjZmZDk5YWU2MmQ4ZWFkY2QxMjNmMmM2NzMzMWEyYjg3NTc3YmQxNjE2ZGU3NzYzNDYxY2UwNSJ9LCJwYXlsb2FkSGFzaCI6eyJhbGdvcml0aG0iOiJzaGEyNTYiLCJ2YWx1ZSI6ImQ1ZTdkNmY0YjY3NjE3NmE4YWMxYjM4OWJjOTZjNGQ0ZGJhNDI1ZTZiMzA1MmNhMjBmMDVkNWIxMDI0MGIwMGEifSwic2lnbmF0dXJlcyI6W3sic2lnbmF0dXJlIjoiQ095Q3owMlpLVlRNa0FyV2FGZXFNYWtEWlBiNXArWlRldlNBU0R6K0d1VlRtbS9zNi9nMkwycmgyYzZhcEVUdlZtZHNiYVZUV3M5SHRCNmN5TDlUQmc9PSIsInZlcmlmaWVyIjoiTFMwdExTMUNSVWRKVGlCUVZVSk1TVU1nUzBWWkxTMHRMUzBLVFVOdmQwSlJXVVJMTWxaM1FYbEZRWGQ0ZVU5SFptbDNWbFYyU1VOTGRqbFhkbFZqVlZWNU4xcG5ObEpIV1hocWFTdE9UMngzZHpKS1pFRTlDaTB0TFMwdFJVNUVJRkJWUWt4SlF5QkxSVmt0TFMwdExRbz0ifV19fQ==",
+  "integratedTime": 1790201328,
+  "logID": "d32f30a3c32d639c2b762205a21c7bb07788e68283a4ae6f42118723a1bea496",
+  "logIndex": 56144446,
+  "uuid": "71d46696179fcd5d16e8b9353eb9b11bce6f0abf0a0525392b82b3540777b27bb64ec4762f1c63d8",
+  "verification": {
+   "inclusionProof": {
+    "checkpoint": "rekor.sigstage.dev - 8202293616175992157\n24462035\nltQpCw+X8Ta7iZ7q0RhjoJMFDov6ZbMeZObzKNxNERU=\n\n\u2014 rekor.sigstage.dev 0y8wozBFAiAW7YrsmPvSF0jizOvlJYe6rG0H9BCrPPFlKnX5waXsjAIhAJoYV6oQdPlkgn45BHEelpRhd/mYdfMMLrOxxeiI7YX2\n",
+    "hashes": [
+     "ee35ada683b616fe037f66c4b54f78cdd184d947fa940684c14b8cafea388e52",
+     "87036199ee91f98dc9db4963c8db94ecc05d964676447aaafa17d532dfd185db",
+     "7c30e3e9a55fc2e34b3e8ffe746c6ae739f0623fcbc0b09a1ea18a00dce54a44",
+     "04fd8f0aeeae47065005be6f457849d08a64e7003cf0a0f30f01cdfd91be24f4",
+     "b93b3e3e0e04d4dc0515e1411646097baac63d4b7bdea6028dec8cda234222c9",
+     "af39ec2b2ecae07c960b70862cd51cce6cd5ffe6233cedf8dc933d52ef60abdd",
+     "66b4b1434b6a3e04519a510c4e037ed7a1d4e4eb64a164fda21ffdf7e2507582",
+     "51210fc878bfdc4b9ffd73e7968d55ddd2c54800b97aa16bc378fff49e73b671",
+     "8d33b7fc5319f726b14247b6a15040c411b6d06a2e39fad34c03652a0cb966d2",
+     "f512d5880b5ac710dbea25d88a466024a8b2e48f71aa0868a9b781b85d2a63af",
+     "fe9703726b541702161a2f993102c5f32484d5f557da461ed275203ee74f759d",
+     "06b8d8b18be8eb97530d628ef1a634b3ef566961e555d66e384cec0472c77bc5"
+    ],
+    "logIndex": 24462034,
+    "rootHash": "96d4290b0f97f136bb899eead11863a093050e8bfa65b31e64e6f328dc4d1115",
+    "treeSize": 24462035
+   },
+   "signedEntryTimestamp": "MEQCIFZAInwWcVUo2U+JuiABYSqvK0cXcel3kfQxCadFpwG9AiBQ9TvsKNADs8yoWbenGVUzkmqnoGw4+f1avb3KbZXIjQ=="
+  }
+ },
+ "envelope": {
+  "payload": "eyJ0eXBlIjoidHJlZXNoaXAvdGVzdC92MSIsIm5vbmNlIjoiMjAyNi0wOS0yNFQwMDowODo0OC4zNzQzNzQrMDI6MDAifQ",
+  "payloadType": "application/vnd.treeship.test+json",
+  "signatures": [
+   {
+    "keyid": "key_a",
+    "sig": "COyCz02ZKVTMkArWaFeqMakDZPb5p-ZTevSASDz-GuVTmm_s6_g2L2rh2c6apETvVmdsbaVTWs9HtB6cyL9TBg"
+   }
+  ]
+ },
+ "public_key": "wxyOGfiwVUvICKv9WvUcUUy7Zg6RGYxji+NOlww2JdA=",
+ "_note": "Captured from rekor.sigstage.dev by packages/hub/internal/rekor TestLiveStaging (throwaway key). Staging log key is in verify/rekor.rs tests."
+}
