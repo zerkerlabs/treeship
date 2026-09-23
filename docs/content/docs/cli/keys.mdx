@@ -3,6 +3,8 @@ title: keys
 description: List, export, and rotate signing keys. keys export prints the pinnable public key and the exact trust add command a counterparty runs.
 ---
 
+import { Callout } from 'fumadocs-ui/components/callout';
+
 ## Usage
 
 ```bash
@@ -25,15 +27,23 @@ treeship keys export
   subject:  ship default
   pubkey:   ed25519:050j2M0Q…
 
-  a counterparty pins it with:
-    treeship trust add key_b4be… ed25519:050j2M0Q… --kind cert_issuer --yes
-    treeship trust add key_b4be… ed25519:050j2M0Q… --kind hub_checkpoint --yes
+  a counterparty pins it with (each line grants one power; hand over only the ones you mean):
+    treeship trust add key_b4be… ed25519:050j2M0Q… --kind cert_issuer --yes     # verify the agent certificates this ship issues
+    treeship trust add key_b4be… ed25519:050j2M0Q… --kind revoker --yes         # honour this ship's capability revocations: it can revoke cards on their machine
+    treeship trust add key_b4be… ed25519:050j2M0Q… --kind hub_org --yes         # accept this ship's hub-org single-use checkpoints
+    treeship trust add key_b4be… ed25519:050j2M0Q… --kind hub_checkpoint --yes  # verify this ship's Merkle checkpoints (the transparency anchor)
 ```
 
-The ship key exports **two** pin lines because a remote verifier needs both roles: `ship` verifies certificate chains and authorized revocations; `hub_checkpoint` verifies Merkle checkpoints (the transparency anchor). A per-agent key (`--agent agent://deployer`) exports one `agent_cert` line, though with the certificate chain published, counterparties rarely need per-agent pins at all — pinning the ship suffices. See [The Agent Handshake](/docs/concepts/agent-handshake).
+The ship key exports **four** pin lines, one per power, and a counterparty should run only the ones they mean to grant. `cert_issuer` verifies the certificate chain behind this ship's agents; `revoker` lets this ship revoke capability cards on the counterparty's machine, which is a power to hand over deliberately, not by copy-paste; `hub_org` accepts single-use checkpoints from this ship's hub org; `hub_checkpoint` verifies Merkle checkpoints (the transparency anchor). A per-agent key (`--agent agent://deployer`) exports one `agent_cert` line.
+
+**Which pins a counterparty needs, today.** Resolving an agent and verifying its card walks the certificate chain, so the `cert_issuer` pin covers every agent this ship certifies. Importing and verifying an agent's signed artifacts (`bundle import`, `verify`) checks each envelope's signer directly, so the agent's own `agent_cert` pin is needed as well. `onboard` prints both. A ship key rotation invalidates the `cert_issuer` pin until the counterparty re-pins the successor; the `agent_cert` pin survives it.
 
 The private key never leaves the store. `--format json` for scripts.
 
 ## keys list / keys rotate
 
 `list` shows every signing key with fingerprint, default marker, and rotation lifecycle. `rotate` mints a successor, stamps the predecessor with a grace-period `valid_until`, and (by default) promotes the successor to default signer.
+
+<Callout type="warn">
+**Rotation is local.** The grace window applies to this keystore only. Nothing is minted that a counterparty could verify, nothing travels in a bundle or a presentation, and a pinned trust root has no expiry. Counterparties keep trusting the predecessor until they remove its pin, and cannot verify the successor until they pin it. `rotate` prints the two things to send them: the `keys export` lines for the successor, and `treeship trust remove <predecessor>`. If the predecessor was compromised, treat every counterparty as trusting it until you hear back.
+</Callout>

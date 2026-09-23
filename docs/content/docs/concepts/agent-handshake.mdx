@@ -76,8 +76,9 @@ A presentation file is **replayable**. Anyone who obtains it can show it around,
 For that, challenge the bearer:
 
 ```bash
-# verifier: mint a fresh nonce
-NONCE=$(openssl rand -hex 16)
+# verifier: mint a fresh nonce (session mint-challenge records issued_at, so the
+# window can be checked; openssl rand -hex 16 works too)
+NONCE=$(treeship session mint-challenge --format json | jq -r .nonce)
 
 # agent: answer it — signs the nonce with its own key
 treeship present agent://deployer --challenge $NONCE

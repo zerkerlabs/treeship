@@ -100,12 +100,17 @@ impl std::fmt::Display for StorageError {
             Self::Io(e) => write!(f, "storage io: {}", e),
             Self::Json(e) => write!(f, "storage json: {}", e),
             Self::EmptyId => write!(f, "artifact_id must not be empty"),
-            Self::AmbiguousPrefix { prefix, candidates } => write!(
-                f,
-                "{prefix} is ambiguous: {} artifacts start with it ({}); give more of the id",
-                candidates.len(),
-                candidates.join(", ")
-            ),
+            Self::AmbiguousPrefix { prefix, candidates } => {
+                let shown: Vec<&str> = candidates.iter().take(10).map(|s| s.as_str()).collect();
+                let more = candidates.len().saturating_sub(shown.len());
+                write!(
+                    f,
+                    "{prefix} is ambiguous: {} artifacts start with it. Give more of the id. Candidates: {}{}",
+                    candidates.len(),
+                    shown.join(", "),
+                    if more > 0 { format!(", and {more} more") } else { String::new() }
+                )
+            }
             Self::InvalidId(e) => write!(f, "storage: {}", e),
             Self::NotFound(id) => write!(f, "artifact not found: {}", id),
         }
@@ -194,7 +199,7 @@ impl Store {
         }
         let p = id_or_prefix.trim();
         let hex = p.strip_prefix("art_").unwrap_or("");
-        if hex.len() < 8 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        if hex.is_empty() || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
             return Err(StorageError::NotFound(id_or_prefix.to_string()));
         }
         let idx = self.index.read().unwrap();

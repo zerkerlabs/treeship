@@ -57,6 +57,18 @@ assert c[0].get("key_id"), "own key not recorded"
 PY
 ok "forbidden and bounded rules kept, own key recorded"
 
+echo "== onboard writes the tools onto the record the gate reads (T1)"
+treeship onboard onboarded --tools file.read,file.write >/dev/null
+python3 - <<'PY' || fail "onboard left the card record without bounded_tools: the gate would refuse every call"
+import json,glob
+cards=[json.load(open(f)) for f in glob.glob(".treeship/agents/*.json")]
+c=[c for c in cards if c.get("agent_name")=="onboarded"]
+assert c, "no card"
+caps=c[0].get("capabilities") or {}
+assert "file.read" in caps.get("bounded_tools",[]), caps
+PY
+ok "onboarded agent has its tools on the record"
+
 echo "== session-start.sh starts the session as the agent"
 echo '{}' | sh "$PLUGIN/scripts/session-start.sh" >/dev/null
 ACTOR=$(treeship session status --format json | jsonget actor)

@@ -1241,7 +1241,10 @@ pub fn mint_challenge(
     );
     printer.blank();
     printer.hint(&format!(
-        "give the nonce to the joining agent:\n  \
+        "to verify an agent from outside (the handshake), give it the nonce:\n  \
+         treeship present agent://<name> --challenge {nonce}      # the agent, on its machine\n  \
+         treeship verify-presentation <file> --challenge {nonce}  # you, offline, against your pins\n\n\
+         inside a shared room, give the nonce to the joining agent:\n  \
          treeship session answer-challenge <participant_id> --challenge {nonce}\n\n\
          then countersign, passing issued_at so the challenge window is recorded:\n  \
          treeship session countersign <participant_id> \\\n    \

@@ -88,6 +88,10 @@ new Client({ name: 'my-agent', version: '1.0' }, { capabilities: {} });
 
 Override it with the `TREESHIP_ACTOR` environment variable when you need a specific identity.
 
+<Callout type="info">
+**Chaining into a session.** The bridge's intent and receipt artifacts chain onto the open session only when the session's actor is the bridge's actor. Start the session as the same identity (`treeship session start --actor agent://mcp-my-agent`, or set `TREESHIP_ACTOR` to the session's actor). When they differ, the artifacts are signed and sealed but not chained, and `package verify` reports a `chain_completeness` warning naming them. That warning is expected in that configuration and means what it says: the order of those artifacts relative to the chain is the signer's claim only.
+</Callout>
+
 ## Approval flow
 
 To attest that a human approved a tool call before it happened, set the `TREESHIP_APPROVAL_NONCE` environment variable. The nonce is included in the intent attestation and links back to the approval artifact.

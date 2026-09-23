@@ -29,7 +29,7 @@ Export a bundle to a portable .treeship file.
 treeship bundle export art_f7e6d5c4 --out chain.treeship
 ```
 
-The bundle contains every artifact in the chain, all signatures, and the public key. It is self-verifying.
+The export carries the signed bundle envelope and every artifact's DSSE envelope, with their signatures. It carries **no public keys**: the importer verifies each envelope against the trust roots pinned on their machine, never against a key the file supplied. Before importing, the recipient pins the producer's keys with the lines `treeship keys export` prints.
 
 ## treeship bundle import
 
@@ -44,18 +44,30 @@ treeship bundle import chain.treeship
   chain integrity: verified
 ```
 
+Every envelope must verify against a pinned trust root, or the import is refused and names the key:
+
+```
+✗ envelope 2 is signed by key_agent_9c1e…, which is not a pinned trust root on this machine.
+  Ask the producer for the line `treeship keys export` prints for that key and run it here:
+    treeship trust add key_agent_9c1e… ed25519:<their public key> --kind agent_cert --yes
+```
+
+An agent-signed envelope needs the agent's own key pinned under `agent_cert`; a ship-signed one needs the ship's key under `cert_issuer`.
+
 ## Bundle format
 
-A `.treeship` file is a signed, self-contained archive:
+A `.treeship` export is one JSON document:
 
+```json
+{
+  "version": 1,
+  "bundle":    { "payloadType": "…/bundle", "payload": "…", "signatures": [{ "keyid": "key_…", "sig": "…" }] },
+  "artifacts": [ { "payloadType": "…", "payload": "…", "signatures": [ … ] }, … ]
+}
 ```
-bundle.treeship
-├── manifest.json      # Artifact list, chain order, metadata
-├── artifacts/         # All DSSE envelopes
-├── public_key.pem     # Ship's public key
-└── signature          # Ed25519 signature over manifest
-```
+
+`bundle` is the signed bundle envelope (artifact list, chain order, metadata); `artifacts` are the DSSE envelopes it names, in order. There is no public key in the file.
 
 <Callout type="info">
-Bundles verify offline. No network, no Hub, no Treeship installation required beyond the verifier binary or WASM module.
+Bundles verify offline against the keys you pinned. No network, no Hub, and no key material is taken from the file itself.
 </Callout>

@@ -95,10 +95,18 @@ pub fn export(
         ],
     );
     printer.blank();
-    printer.info("  a counterparty pins it with:");
+    printer.info("  a counterparty pins it with (each line grants one power; hand over only the ones you mean):");
     for k in kinds {
+        let note = match *k {
+            "cert_issuer" => "  # verify the agent certificates this ship issues",
+            "revoker" => "  # honour this ship's capability revocations: it can revoke cards on their machine",
+            "hub_org" => "  # accept this ship's hub-org single-use checkpoints",
+            "hub_checkpoint" => "  # verify this ship's Merkle checkpoints (the transparency anchor)",
+            "agent_cert" => "  # this agent's own signed artifacts verify and import",
+            _ => "",
+        };
         printer.info(&format!(
-            "    treeship trust add {resolved_id} {pinnable} --kind {k} --yes"
+            "    treeship trust add {resolved_id} {pinnable} --kind {k} --yes{note}"
         ));
     }
     printer.blank();
@@ -195,5 +203,19 @@ pub fn rotate(
     } else {
         printer.info("  default:      unchanged (use 'treeship keys list' to confirm)");
     }
+    // Rotation is local. Nothing is minted, nothing travels in a bundle or
+    // a presentation, and a counterparty's pin has no expiry: they keep
+    // trusting the predecessor and cannot verify the successor until they
+    // re-pin (TASKS-0.31.6 T2, T3). Say it, and say what to send.
+    printer.blank();
+    printer.warn(
+        "rotation is local to this keystore",
+        &[
+            ("counterparties", "keep trusting the predecessor until they remove its pin, and cannot verify the successor until they pin it"),
+            ("send them", &format!("treeship keys export {}   (the trust add lines it prints)", result.successor.id)),
+            ("and ask them to run", &format!("treeship trust remove {}", result.predecessor.id)),
+        ],
+    );
+    printer.hint("if the predecessor was compromised, treat every counterparty as trusting it until you hear back: the grace window above applies only here");
     Ok(())
 }

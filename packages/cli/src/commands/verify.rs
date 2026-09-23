@@ -794,6 +794,7 @@ pub fn run(
         }
 
         // Show info about the target artifact.
+        let mut handoff_absent: Vec<String> = Vec::new();
         if let Some((_id, env)) = chain_envelopes.last() {
             let mut fields: Vec<(&str, String)> = Vec::new();
             fields.push(("target", short_id(target)));
@@ -832,6 +833,35 @@ pub fn run(
             } else if let Ok(handoff) = env.unmarshal_statement::<HandoffStatement>() {
                 fields.push(("actor", format!("{} -> {}", handoff.from, handoff.to)));
                 fields.push(proof(&handoff.from));
+                // The work the handoff names: present in this store, or not.
+                // A handoff envelope verifies on its own; before this, a
+                // receiver holding only the handoff saw all green with the
+                // payload absent (TASKS-0.31.6 T5). Absent evidence is
+                // reported as absent, the rule the replay rows follow.
+                let (present, absent): (Vec<&String>, Vec<&String>) = handoff
+                    .artifacts
+                    .iter()
+                    .partition(|id| ctx.storage.exists(id));
+                let summary = if absent.is_empty() {
+                    format!(
+                        "{} named, all present in this store",
+                        handoff.artifacts.len()
+                    )
+                } else {
+                    format!(
+                        "{} named, {} present, {} NOT in this store: {}",
+                        handoff.artifacts.len(),
+                        present.len(),
+                        absent.len(),
+                        absent
+                            .iter()
+                            .map(|s| s.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                };
+                fields.push(("artifacts", summary));
+                handoff_absent = absent.into_iter().cloned().collect();
                 // Custody is graded by the verifier, never echoed from the
                 // block: a `live` without its evidence prints as asserted.
                 fields.push((
@@ -863,6 +893,16 @@ pub fn run(
                 for (k, v) in &fields {
                     let pad = " ".repeat(max_key - k.len());
                     printer.info(&format!("  {k}:{pad}   {v}"));
+                }
+                if !handoff_absent.is_empty() {
+                    printer.warn(
+                        "the handoff names work this store does not hold",
+                        &[
+                            ("verified", "the handoff envelope only: who handed what ids to whom"),
+                            ("not verified", "the work itself; nothing above says those artifacts exist or check out"),
+                            ("to get them", "have the sender export a bundle that includes the artifacts (treeship bundle export), then import it here"),
+                        ],
+                    );
                 }
             }
         }
