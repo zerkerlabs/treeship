@@ -281,6 +281,38 @@ pub fn judge(args: JudgeArgs, printer: &Printer) -> Result<(), Box<dyn std::erro
     }
 
     if printer.format == crate::printer::Format::Json {
+        // The same answers as Reason premises under the `model-judged`
+        // authority class: id = the signed receipt when there is one, the
+        // predicate names the question, the arguments are the subject and
+        // the typed answer. A program admits them per predicate; see
+        // Reason's AUTHORITY.md, "Model-judged evidence".
+        let subject = args.subject.clone().unwrap_or_else(|| args.tool.clone());
+        let reason_facts: Vec<Value> = request
+            .questions
+            .iter()
+            .enumerate()
+            .filter_map(|(i, (k, q))| {
+                let a = &response.answers[k];
+                let answer = match q.kind {
+                    QuestionType::Noul => {
+                        if a.noul.unwrap_or(0.0) >= args.threshold {
+                            "yes".to_string()
+                        } else {
+                            "no".to_string()
+                        }
+                    }
+                    QuestionType::Choice => a.choice.clone()?,
+                    QuestionType::Score => return None,
+                };
+                Some(serde_json::json!({
+                    "id": receipts.get(i).cloned().unwrap_or_else(|| format!("judgement:{k}")),
+                    "predicate": format!("judged_{k}"),
+                    "arguments": [subject, answer],
+                    "authority": "model-judged",
+                    "observed_at": judged_at,
+                }))
+            })
+            .collect();
         let answers: serde_json::Map<String, Value> = request
             .questions
             .keys()
@@ -307,6 +339,7 @@ pub fn judge(args: JudgeArgs, printer: &Printer) -> Result<(), Box<dyn std::erro
             "state_digest": state_digest,
             "questions_digest": questions_digest,
             "receipts": receipts,
+            "reason_facts": reason_facts,
         }));
         return Ok(());
     }
