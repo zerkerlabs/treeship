@@ -209,6 +209,62 @@ fn human(secs: i64) -> String {
     }
 }
 
+/// How the anchors on a set of records were judged. Travels with the
+/// coverage so a reader can see why a timeline counts as unwitnessed.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AnchorTally {
+    /// Anchors whose witness proof verified offline. Only these count.
+    pub verified: usize,
+    /// Anchors that carry only local claims (a hub URL, a bare Rekor index,
+    /// a time from our own clock). Recorded, never counted as witnessed.
+    pub claimed_unverified: usize,
+    /// Anchoring attempts recorded as failed or skipped.
+    pub failed_attempts: usize,
+    /// Anchors that carried a proof which did not verify, with the reason.
+    /// A non-empty list means a record was edited, a proof was stapled onto
+    /// the wrong artifact, or the log is not trusted here.
+    pub rejected: Vec<String>,
+}
+
+/// Turn an artifact's recorded anchors into witnessed [`Anchor`]s.
+///
+/// This is the TS-2026-003 fix. The old code took `observed_at` -- a time
+/// the pushing machine wrote into a file it controls -- as the witness time,
+/// so editing a record satisfied `--max-unwitnessed-secs`. Now an anchor
+/// counts only if it carries a Rekor proof that verifies offline against
+/// `logs` and is bound to `envelope`; its time is Rekor's signed
+/// `integratedTime`. Everything else is tallied and ignored.
+pub fn witnessed_anchors(
+    recorded: &[crate::storage::RecordAnchor],
+    envelope: &crate::attestation::Envelope,
+    logs: &[crate::verify::rekor::RekorLogKey],
+    tally: &mut AnchorTally,
+) -> Vec<Anchor> {
+    let mut out = Vec::new();
+    for a in recorded {
+        if matches!(a.status.as_deref(), Some("failed") | Some("skipped")) {
+            tally.failed_attempts += 1;
+            continue;
+        }
+        match (a.mechanism.as_str(), &a.proof) {
+            ("rekor", Some(proof)) => {
+                match crate::verify::rekor::verify_rekor_entry(proof, envelope, logs) {
+                    Ok(v) => {
+                        tally.verified += 1;
+                        out.push(Anchor {
+                            at: v.integrated_time,
+                            mechanism: "rekor".into(),
+                        });
+                    }
+                    Err(e) => tally.rejected.push(e.to_string()),
+                }
+            }
+            _ => tally.claimed_unverified += 1,
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -330,5 +386,102 @@ mod tests {
         assert_eq!(c.claimed_span_seconds, 0);
         assert_eq!(c.unwitnessed_span_seconds, 0);
         assert!(c.within(0));
+    }
+
+    /// The TS-2026-003 attack: a record whose "rekor" anchor carries only a
+    /// locally written time. It must not count, however convenient the time.
+    #[test]
+    fn locally_written_anchor_time_is_never_witnessed() {
+        use crate::storage::RecordAnchor;
+        let env: crate::attestation::Envelope = serde_json::from_value(serde_json::json!({
+            "payload": "e30", "payloadType": "t", "signatures": []
+        }))
+        .unwrap();
+        let forged = RecordAnchor {
+            mechanism: "rekor".into(),
+            observed_at: "2026-09-01T10:30:00Z".into(),
+            reference: Some("123".into()),
+            status: None,
+            reason: None,
+            proof: None,
+        };
+        let hub = RecordAnchor {
+            mechanism: "hub".into(),
+            ..forged.clone()
+        };
+        let mut tally = AnchorTally::default();
+        let got = witnessed_anchors(
+            &[forged, hub],
+            &env,
+            &[crate::verify::rekor::RekorLogKey::sigstore_public_good()],
+            &mut tally,
+        );
+        assert!(got.is_empty());
+        assert_eq!(tally.claimed_unverified, 2);
+        assert_eq!(tally.verified, 0);
+    }
+
+    /// A stapled proof that does not verify is reported, not silently
+    /// dropped and not counted.
+    #[test]
+    fn invalid_proof_is_rejected_with_a_reason() {
+        use crate::storage::RecordAnchor;
+        let env: crate::attestation::Envelope = serde_json::from_value(serde_json::json!({
+            "payload": "e30", "payloadType": "t", "signatures": []
+        }))
+        .unwrap();
+        let a = RecordAnchor {
+            mechanism: "rekor".into(),
+            observed_at: String::new(),
+            reference: None,
+            status: Some("anchored".into()),
+            reason: None,
+            proof: Some(serde_json::json!({"body": "x"})),
+        };
+        let mut tally = AnchorTally::default();
+        assert!(witnessed_anchors(&[a], &env, &[], &mut tally).is_empty());
+        assert_eq!(tally.rejected.len(), 1);
+    }
+
+    #[test]
+    fn failed_attempts_are_counted_separately() {
+        use crate::storage::RecordAnchor;
+        let env: crate::attestation::Envelope = serde_json::from_value(serde_json::json!({
+            "payload": "e30", "payloadType": "t", "signatures": []
+        }))
+        .unwrap();
+        let a = RecordAnchor {
+            mechanism: "rekor".into(),
+            observed_at: String::new(),
+            reference: None,
+            status: Some("failed".into()),
+            reason: Some("rekor rejected the entry".into()),
+            proof: None,
+        };
+        let mut tally = AnchorTally::default();
+        assert!(witnessed_anchors(&[a], &env, &[], &mut tally).is_empty());
+        assert_eq!(tally.failed_attempts, 1);
+        assert_eq!(tally.claimed_unverified, 0);
+    }
+
+    /// A record carrying a genuine Rekor proof counts, at Rekor's time --
+    /// not at the `observed_at` written beside it, which here is a year off.
+    #[test]
+    fn verified_proof_counts_at_rekor_time_not_local_time() {
+        use crate::storage::RecordAnchor;
+        let (env, entry, log) = crate::verify::rekor::staging_fixture_for_tests();
+        let a = RecordAnchor {
+            mechanism: "rekor".into(),
+            observed_at: "2025-01-01T00:00:00Z".into(),
+            reference: None,
+            status: Some("anchored".into()),
+            reason: None,
+            proof: Some(entry.clone()),
+        };
+        let mut tally = AnchorTally::default();
+        let got = witnessed_anchors(&[a], &env, &[log], &mut tally);
+        assert_eq!(tally.verified, 1);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].at, entry["integratedTime"].as_i64().unwrap());
     }
 }

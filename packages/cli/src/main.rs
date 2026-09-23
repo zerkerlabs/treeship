@@ -2400,9 +2400,11 @@ struct VerifyArgs {
     ///
     /// A receipt's timestamp is the signer's own clock, signed with the
     /// signer's own key, so it proves what was claimed and not when it
-    /// happened. An anchor -- a Hub checkpoint or Rekor entry -- is somebody
-    /// else's record that the bytes existed by then, and cannot be obtained
-    /// retroactively. This bounds how long the timeline goes unwitnessed.
+    /// happened. An anchor is somebody else's record that the bytes existed
+    /// by then, and cannot be obtained retroactively. Only a Rekor entry that
+    /// verifies offline against a trusted log counts, at Rekor's signed time;
+    /// anything written into a local record does not. Applies in every output
+    /// mode, including --format json and --full.
     ///
     /// Without this flag, coverage is reported and never gates: unanchored
     /// work is normal (offline machines, network failures) and is not by
@@ -2892,7 +2894,9 @@ struct TrustAddArgs {
     /// human-readable labels are accepted.
     key_id: String,
 
-    /// Ed25519 public key. Either `ed25519:<base64url>` or bare base64url.
+    /// Ed25519 public key, `ed25519:<base64url>` or bare base64url. For
+    /// `--kind transparency_log`, an ECDSA P-256 Rekor log key as
+    /// `ecdsa-p256:<base64url DER>` or `@<path to PEM>`.
     public_key: String,
 
     /// What this root is allowed to verify.
@@ -2903,7 +2907,7 @@ struct TrustAddArgs {
     /// the handler supports them. `ship` is kept in the accepted set only so it
     /// reaches the handler's helpful deprecation message rather than a generic
     /// clap error.
-    #[arg(long, value_parser = ["hub_checkpoint", "hub_org", "cert_issuer", "revoker", "agent_cert", "session_host", "ship"])]
+    #[arg(long, value_parser = ["hub_checkpoint", "hub_org", "cert_issuer", "revoker", "agent_cert", "session_host", "transparency_log", "ship"])]
     kind: String,
 
     /// Optional human-readable label. Shown by `treeship trust list`.
