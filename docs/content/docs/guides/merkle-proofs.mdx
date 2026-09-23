@@ -50,7 +50,7 @@ The signing key is Ed25519. Verification requires only the public key and the en
 treeship verify last --full
 ```
 
-The verify page at treeship.dev performs the same verification client-side via WASM. The same Rust code that signs artifacts in the CLI verifies them in the browser.
+The receipt page at treeship.dev runs the same structural checks client-side via WASM, from the same Rust code. From a receipt JSON alone that is the Merkle root, the inclusion proofs, the leaf count and the timeline; envelope signatures and the issuer are not verified, because the receipt does not carry the signed bytes. `treeship package verify` on the sealed package is the check that does.
 
 ## Approval nonce binding + scope
 

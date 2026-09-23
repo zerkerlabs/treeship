@@ -179,7 +179,7 @@ async function onDropFile(file: File) {
 }
 ```
 
-Any modern bundler (Vite, webpack, esbuild, Rollup, Next.js, Parcel) handles the bundler-target WASM import from `@treeship/core-wasm` without extra config. For the one-liner `treeship.dev/verify` drag-and-drop page (shipping in v0.10.0), the page imports `@treeship/verify` directly and does all verification client-side with zero network calls beyond fetching any URL the user pastes.
+Any modern bundler (Vite, webpack, esbuild, Rollup, Next.js, Parcel) handles the bundler-target WASM import from `@treeship/core-wasm` without extra config. For the one-liner `treeship.dev/verify` drag-and-drop page (shipping in v0.10.0), the page imports `@treeship/verify` directly and runs client-side with zero network calls beyond fetching any URL the user pastes. What it verifies from a pasted receipt is structural (`structural-pass`): signatures and the issuer are not checked from a receipt alone.
 
 ## Verifying the result matches the CLI
 
