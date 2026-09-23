@@ -90,6 +90,17 @@ Every question must be answered with the value its type calls for (`noul` for a 
 
 `--question <key>` asks a subset by key (an outside judge may be asked keys the rules do not know; they are sent as `noul` questions). `--questions-file <file>` sends typed questions of your own, `{key: {type, instructions, options}}`.
 
+## Into Reason
+
+`--format json` also prints `reason_facts`: the same answers as [Zerker Reason](https://github.com/zerkerlabs/reason) premises under the `model-judged` authority class, one per question, with the signed receipt as the fact id when `--attest` ran.
+
+```json
+{ "id": "art_1f3c…", "predicate": "judged_unsafe", "arguments": ["art_action…", "no"],
+  "authority": "model-judged", "observed_at": "2026-09-23T12:00:00Z" }
+```
+
+A Reason program admits `model-judged` per predicate; the convention is to admit it for `judged_*` predicates only and to let a judge's answer deny but never stand in for a human approval or a tool report. See Reason's `docs/AUTHORITY.md`, "Model-judged evidence".
+
 ## In the gate
 
 The Claude Code plugin's gate asks the judge when `TREESHIP_JUDGE=1` (rules) or `TREESHIP_JUDGE=<url>` is set, after the card has allowed the call and never instead of it. A `deny` refuses the call and signs a `blocked.v1` with `reason_class: policy_threshold_exceeded` naming the judge and the questions; an `ask` asks the operator; the answers are signed either way. `TREESHIP_JUDGE_THRESHOLD` and `TREESHIP_JUDGE_BOUND` set the bar and the amount bound. See [Claude Code](/docs/integrations/claude-code#the-gate).

@@ -74,19 +74,44 @@ impl Ws {
     }
 }
 
-/// One-shot HTTP judge: answers every POST with `body`.
+/// One-shot HTTP judge: reads the whole request (headers and the
+/// Content-Length body), then answers with `body`. Answering before the
+/// request is fully read made the client see a closed connection.
 fn serve_once(body: &'static str, status: &'static str) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     std::thread::spawn(move || {
         if let Ok((mut stream, _)) = listener.accept() {
-            let mut buf = [0u8; 65536];
-            let _ = stream.read(&mut buf);
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                let n = match stream.read(&mut chunk) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => n,
+                };
+                buf.extend_from_slice(&chunk[..n]);
+                let text = String::from_utf8_lossy(&buf);
+                if let Some(end) = text.find("\r\n\r\n") {
+                    let head = &text[..end];
+                    let len = head
+                        .lines()
+                        .find_map(|l| {
+                            l.to_ascii_lowercase()
+                                .strip_prefix("content-length:")
+                                .map(|v| v.trim().parse::<usize>().unwrap_or(0))
+                        })
+                        .unwrap_or(0);
+                    if buf.len() >= end + 4 + len {
+                        break;
+                    }
+                }
+            }
             let _ = write!(
                 stream,
                 "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
             );
+            let _ = stream.flush();
         }
     });
     format!("http://{addr}/judge")
@@ -220,6 +245,20 @@ fn judgements_chain_onto_the_session_and_package_verify_reports_them() {
         .map(|r| r.as_str().unwrap().to_string())
         .collect();
     assert_eq!(receipts.len(), 2, "one judgement per question: {v}");
+    // The same answers as Reason premises, ids being the signed receipts.
+    let facts = v["reason_facts"].as_array().unwrap();
+    assert_eq!(facts.len(), 2, "{v}");
+    let unsafe_fact = facts
+        .iter()
+        .find(|f| f["predicate"] == "judged_unsafe")
+        .expect("judged_unsafe fact");
+    assert_eq!(unsafe_fact["authority"], "model-judged");
+    assert_eq!(unsafe_fact["arguments"][0], action_id);
+    assert_eq!(unsafe_fact["arguments"][1], "yes");
+    assert!(
+        receipts.contains(&unsafe_fact["id"].as_str().unwrap().to_string()),
+        "{v}"
+    );
     for r in &receipts {
         let out = ws.ok(&["verify", r]);
         assert!(out.contains("chain intact"), "{out}");
