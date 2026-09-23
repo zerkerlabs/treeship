@@ -1138,6 +1138,58 @@ treeship match [OPTIONS] --hub <URL> --exercised <GLOB>
 | `--class <CLASS>` | Only sessions with this attestation class (self \| runtime \| countersigned) |
 | `--min-sessions <N>` | Minimum matching sessions a candidate must have [default: 1] |
 
+## `treeship agents`
+
+Manage the local Agent Card store
+
+```
+treeship agents [OPTIONS] <COMMAND>
+```
+
+### `treeship agents list`
+
+List every Agent Card in the workspace's card store
+
+```
+treeship agents list [OPTIONS]
+```
+
+### `treeship agents review`
+
+Show full details of one Agent Card by id
+
+```
+treeship agents review [OPTIONS] <AGENT_ID>
+```
+
+| Argument | Description |
+|---|---|
+| `<AGENT_ID>` | -- |
+
+### `treeship agents approve`
+
+Promote a Draft or NeedsReview card to Active
+
+```
+treeship agents approve [OPTIONS] <AGENT_ID>
+```
+
+| Argument | Description |
+|---|---|
+| `<AGENT_ID>` | -- |
+
+### `treeship agents remove`
+
+Delete an Agent Card from the store. Idempotent
+
+```
+treeship agents remove [OPTIONS] <AGENT_ID>
+```
+
+| Argument | Description |
+|---|---|
+| `<AGENT_ID>` | -- |
+
 ## `treeship setup`
 
 Guided first-run setup -- detect agents, draft cards, instrument, smoke verify

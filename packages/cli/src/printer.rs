@@ -1,5 +1,23 @@
 use std::io::{self, IsTerminal};
 
+/// Write a line to stdout, ignoring a closed pipe. `println!` panics on
+/// EPIPE, so `treeship onboard | head -1` died with exit 101 after the agent
+/// was registered and before its card was minted (TASKS-0.31.6 T19). With the
+/// error ignored the command runs to completion; the reader that went away
+/// simply stops seeing output.
+macro_rules! out {
+    ($($arg:tt)*) => {{
+        use std::io::Write;
+        let _ = writeln!(std::io::stdout(), $($arg)*);
+    }};
+}
+macro_rules! err {
+    ($($arg:tt)*) => {{
+        use std::io::Write;
+        let _ = writeln!(std::io::stderr(), $($arg)*);
+    }};
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub enum Format {
     Text,
@@ -39,7 +57,7 @@ impl Printer {
             self.print_json_with_status("ok", Some(msg), fields);
             return;
         }
-        println!("{}", self.green(&format!("✓ {msg}")));
+        out!("{}", self.green(&format!("✓ {msg}")));
         self.print_fields(fields);
     }
 
@@ -59,12 +77,12 @@ impl Printer {
             // fail-shaped object from a success-shaped object on the
             // same stream. Keep stdout clean for happy-path callers.
             let body = self.json_envelope("error", Some(msg), fields);
-            eprintln!("{body}");
+            err!("{body}");
             return;
         }
-        eprintln!("{}", self.red(&format!("✗ {msg}")));
+        err!("{}", self.red(&format!("✗ {msg}")));
         for (k, v) in fields {
-            eprintln!("  {k}: {v}");
+            err!("  {k}: {v}");
         }
     }
 
@@ -77,7 +95,7 @@ impl Printer {
             self.print_json_with_status("warning", Some(msg), fields);
             return;
         }
-        println!("{}", self.yellow(&format!("⚠ {msg}")));
+        out!("{}", self.yellow(&format!("⚠ {msg}")));
         self.print_fields(fields);
     }
 
@@ -87,7 +105,7 @@ impl Printer {
         if self.quiet || self.format == Format::Json {
             return;
         }
-        println!("{}", self.dim(&format!("   → {msg}")));
+        out!("{}", self.dim(&format!("   → {msg}")));
     }
 
     /// Blank breathing room
@@ -95,7 +113,7 @@ impl Printer {
         if self.quiet || self.format == Format::Json {
             return;
         }
-        println!();
+        out!();
     }
 
     /// Plain info line
@@ -103,7 +121,7 @@ impl Printer {
         if self.quiet || self.format == Format::Json {
             return;
         }
-        println!("{msg}");
+        out!("{msg}");
     }
 
     /// Dim secondary info
@@ -111,7 +129,7 @@ impl Printer {
         if self.quiet || self.format == Format::Json {
             return;
         }
-        println!("{}", self.dim(msg));
+        out!("{}", self.dim(msg));
     }
 
     /// Bold section header (for status-style multi-part output)
@@ -119,14 +137,14 @@ impl Printer {
         if self.quiet || self.format == Format::Json {
             return;
         }
-        println!("{}", self.bold(title));
+        out!("{}", self.bold(title));
     }
 
     /// Print any serialisable value as indented JSON
     pub fn json<T: serde::Serialize>(&self, v: &T) {
         match serde_json::to_string_pretty(v) {
-            Ok(s) => println!("{s}"),
-            Err(e) => eprintln!("json error: {e}"),
+            Ok(s) => out!("{s}"),
+            Err(e) => err!("json error: {e}"),
         }
     }
 
@@ -139,12 +157,12 @@ impl Printer {
         let max = fields.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
         for (k, v) in fields {
             let pad = " ".repeat(max - k.len());
-            println!("  {}  {}", self.dim(&format!("{k}:{pad}")), v);
+            out!("  {}  {}", self.dim(&format!("{k}:{pad}")), v);
         }
     }
 
     fn print_json_with_status(&self, status: &str, message: Option<&str>, fields: &[(&str, &str)]) {
-        println!("{}", self.json_envelope(status, message, fields));
+        out!("{}", self.json_envelope(status, message, fields));
     }
 
     /// Build the JSON envelope used for success / warning / error in

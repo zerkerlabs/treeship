@@ -442,7 +442,7 @@ enum Command {
     ///   treeship agents review <id>   # show full card details
     ///   treeship agents approve <id>  # promote to active
     ///   treeship agents remove <id>   # delete the card
-    #[command(subcommand, hide = true)]
+    #[command(subcommand)]
     Agents(AgentsCommand),
 
     /// Guided first-run setup -- detect agents, draft cards, instrument, smoke verify

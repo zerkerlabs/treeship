@@ -121,7 +121,7 @@ treeship attest card --agent agent://trader --from-a2a ./agentcard.json
 treeship revoke-capability art_<agent_card_id> --reason key-rotation
 ```
 
-This mints a signed `agent_card_revocation.v1` receipt. verify-capability honors a revocation **only when its signer is authorized**: the card's own key (self-revocation) or a `Ship` trust root (issuer revocation). An unauthorized revocation, signed by any other key, is ignored. When an authorized revocation is present the card's status becomes `REVOKED` and a "do not honor" warning is shown. A stranger cannot revoke your card.
+This mints a signed `agent_card_revocation.v1` receipt. verify-capability honors a revocation **only when its signer is authorized**: the card's own key (self-revocation) or a key pinned on the verifying machine under `--kind revoker`. The output names which: `self-revoked (the card's own key)` or `pinned revoker key_… (a key this machine pinned under --kind revoker)`. A pinned revoker is not necessarily the card's issuer; it is whichever ship the verifier chose to grant that power, which is why `keys export` prints the `revoker` pin as a separate line to hand over deliberately. An unauthorized revocation, signed by any other key, is ignored. When an authorized revocation is present the card's status becomes `REVOKED` and a "do not honor" warning is shown. A stranger cannot revoke your card.
 
 ## Verifying in the browser
 

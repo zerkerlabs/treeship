@@ -526,10 +526,28 @@ pub(crate) fn find_revocation(
                 .and_then(|v| v.as_str())
                 .unwrap_or("(no reason given)")
                 .to_string();
+            // Name what the signer actually is. A pinned revoker is not
+            // necessarily the issuer of this card: any ship pinned under
+            // `revoker` on this machine can revoke it, and "issuer" said
+            // something false about where the revocation came from
+            // (TASKS-0.31.6 T16).
             let who = if self_revoke {
-                "self-revoked".to_string()
+                "self-revoked (the card's own key)".to_string()
             } else {
-                "issuer (ship) revoked".to_string()
+                let by: Vec<&str> = verified
+                    .iter()
+                    .filter(|rk| {
+                        trust
+                            .roots()
+                            .iter()
+                            .any(|r| &r.key_id == *rk && r.kind == TrustRootKind::Revoker)
+                    })
+                    .map(|k| k.as_str())
+                    .collect();
+                format!(
+                    "pinned revoker {} (a key this machine pinned under --kind revoker)",
+                    by.join(", ")
+                )
             };
             return Some((reason, who));
         }
@@ -542,13 +560,83 @@ pub(crate) fn find_revocation(
 /// actor proven vs asserted. False for non-agent actors, unregistered agents,
 /// a signer that isn't the registered key, or an unpinned key.
 pub fn actor_proven(ctx: &crate::ctx::Ctx, actor: &str, signer_keyid: &str) -> bool {
-    let agents_dir = crate::commands::cards::agents_dir_for(&ctx.config_path);
-    let Some(registered) = crate::commands::cards::registered_key_for_actor(&agents_dir, actor)
-    else {
+    let Ok(trust) = TrustRootStore::open_default_or_empty() else {
         return false;
     };
-    registered == signer_keyid
-        && TrustRootStore::open_default_or_empty()
-            .map(|t| is_key_bound(signer_keyid, signer_keyid, &t))
-            .unwrap_or(false)
+    // Producer's machine: the local registry binds actor to key, and the
+    // key is pinned under AgentCert.
+    let agents_dir = crate::commands::cards::agents_dir_for(&ctx.config_path);
+    if let Some(registered) = crate::commands::cards::registered_key_for_actor(&agents_dir, actor) {
+        if registered == signer_keyid && is_key_bound(signer_keyid, signer_keyid, &trust) {
+            return true;
+        }
+    }
+    // Anyone else's machine: the signed `agent_cert.v1`, if it travelled with
+    // the bundle, binds the actor to the key. It counts only when the cert is
+    // signed by a key pinned here under `cert_issuer` (or the signer key
+    // itself is pinned under `agent_cert`), and is inside its validity
+    // window. Before this, a recipient holding the cert and the pins still
+    // saw `asserted` (TASKS-0.31.6 T4).
+    actor_proven_by_cert(ctx, actor, signer_keyid, &trust)
+}
+
+/// A signed `agent_cert.v1` in local storage that binds `actor` to
+/// `signer_keyid`, verified against the pinned issuer, in its window.
+fn actor_proven_by_cert(
+    ctx: &crate::ctx::Ctx,
+    actor: &str,
+    signer_keyid: &str,
+    trust: &TrustRootStore,
+) -> bool {
+    use treeship_core::attestation::Verifier;
+    use treeship_core::trust::decode_ed25519_pubkey;
+    let now = crate::commands::session::now_rfc3339();
+    let receipt_pt = payload_type("receipt");
+    for entry in ctx.storage.list_by_type(&receipt_pt) {
+        let Ok(rec) = ctx.storage.read(&entry.id) else {
+            continue;
+        };
+        let Ok(stmt) = rec.envelope.unmarshal_statement::<ReceiptStatement>() else {
+            continue;
+        };
+        if stmt.kind != "agent_cert.v1" {
+            continue;
+        }
+        let Some(p) = stmt.payload else { continue };
+        if p.get("agent").and_then(|v| v.as_str()) != Some(actor)
+            || p.get("subject_key_id").and_then(|v| v.as_str()) != Some(signer_keyid)
+        {
+            continue;
+        }
+        // The cert must be signed by a pinned issuer, with the pinned key.
+        let Some(cert_signer) = rec.envelope.signatures.first().map(|s| s.keyid.clone()) else {
+            continue;
+        };
+        let Some(root) = trust.roots().iter().find(|r| {
+            r.key_id == cert_signer
+                && (r.kind == TrustRootKind::CertIssuer
+                    || (r.kind == TrustRootKind::AgentCert && r.key_id == signer_keyid))
+        }) else {
+            continue;
+        };
+        let Ok(vk) = decode_ed25519_pubkey(&root.public_key) else {
+            continue;
+        };
+        let mut v = Verifier::new(std::collections::HashMap::new());
+        v.add_key(cert_signer.clone(), vk);
+        if v.verify_any(&rec.envelope).is_err() {
+            continue;
+        }
+        let (Some(issued), Some(until)) = (
+            p.get("issued_at").and_then(|x| x.as_str()),
+            p.get("valid_until").and_then(|x| x.as_str()),
+        ) else {
+            continue;
+        };
+        if now.as_str() < issued || now.as_str() > until {
+            continue;
+        }
+        return true;
+    }
+    false
 }

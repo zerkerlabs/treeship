@@ -35,7 +35,9 @@ Owner (human)
             +-- Answers presentation challenges (never the ship key)
 ```
 
-The owner holds the private keys, encrypted at rest. Keys never leave the local machine unless explicitly exported (and `keys export` prints only the public half). There is no key escrow or recovery service. Keys rotate gracefully: a rotation mints a successor and stamps the predecessor with a validity end, so verifiers can walk the chain.
+The owner holds the private keys, encrypted at rest. Keys never leave the local machine unless explicitly exported (and `keys export` prints only the public half). There is no key escrow or recovery service.
+
+**Rotation is local.** `keys rotate` mints a successor in this keystore and stamps the predecessor with a grace-period end, and that is all it does. Nothing is minted that a counterparty could verify, nothing travels in a bundle or a presentation, and a pinned trust root has no expiry field. A counterparty who pinned the predecessor keeps trusting it until they remove the pin, and cannot verify anything the successor signs until they pin it. Re-pinning is a manual, out-of-band step: send them the lines `keys export` prints for the successor, and ask them to `trust remove` the predecessor. If the predecessor was compromised, assume every counterparty trusts it until you hear back. There is no succession artifact yet; see [keys](/docs/cli/keys#keys-list--keys-rotate).
 
 Unregistered actors are identified by URIs like `human://alice` or `agent://coder`, and their artifacts are signed by the ship key — the verifier grades that `actor proof: asserted` (the URI is a label, the ship vouches for the trust domain). A registered agent (`treeship onboard`) signs with its own key, certificate-bound to its URI, and grades `proven (key-bound)`.
 

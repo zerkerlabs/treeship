@@ -238,25 +238,13 @@ fn parse_numstat_line(line: &str) -> Option<(String, Option<u32>, Option<u32>)> 
 fn is_treeship_runtime_artifact(path: &str) -> bool {
     // Strip leading "./" if present so both forms compare cleanly.
     let p = path.strip_prefix("./").unwrap_or(path);
-    if !p.starts_with(".treeship/") && p != ".treeship" {
-        return false;
-    }
-    // Within .treeship/, exclude generated runtime state.
-    p == ".treeship/session.closing"
-        || p == ".treeship/session.json"
-        || p == ".treeship/session.close.lock"
-        || p == ".treeship/config.json"
-        || p == ".treeship/config.yaml"
-        || p == ".treeship/machine_seed"
-        || p.starts_with(".treeship/sessions/")
-        || p.starts_with(".treeship/artifacts/")
-        || p.starts_with(".treeship/tmp/")
-        || p.starts_with(".treeship/proof_queue/")
-        || p.starts_with(".treeship/keys/")
-        || p.starts_with(".treeship/journals/")
-        || p.starts_with(".treeship/harnesses/")
-        || p.starts_with(".treeship/merkle/")
-        || p.starts_with(".treeship/halts/")
+    // Everything under the project's own `.treeship/` is written by the CLI
+    // (init, close, onboard, register, declare, the journal, the keystore) or
+    // by a hook, never by the agent's work. It used to keep a list of runtime
+    // files and surface the rest; every release added a file to the list and
+    // the receipt kept naming Treeship's bookkeeping as the agent's writes
+    // (film findings #9, TASKS-0.31.6 T11). Skip the directory whole.
+    p == ".treeship" || p.starts_with(".treeship/")
 }
 
 /// Collect every file change in `repo_dir` worth surfacing in a
@@ -574,9 +562,10 @@ mod tests {
         assert!(is_treeship_runtime_artifact(
             ".treeship/journals/approval-use/records/1.json"
         ));
-        // Operator-authored policy still surfaces.
-        assert!(!is_treeship_runtime_artifact(".treeship/declaration.json"));
-        assert!(!is_treeship_runtime_artifact(
+        // The declaration and card records are written by the CLI too, and
+        // are skipped with the rest of the directory (TASKS-0.31.6 T11).
+        assert!(is_treeship_runtime_artifact(".treeship/declaration.json"));
+        assert!(is_treeship_runtime_artifact(
             ".treeship/agents/agent_x.json"
         ));
 
@@ -588,28 +577,22 @@ mod tests {
     }
 
     #[test]
-    fn runtime_artifact_filter_preserves_user_authored_files() {
-        // User-authored Treeship policy / cards: these ARE the operator's
-        // own changes and must show up in the receipt. config.json and
-        // config.yaml are not: `treeship init` writes both, and every first
-        // receipt listed them as the agent's work (film findings
-        // 2026-09-22, #9).
+    fn runtime_artifact_filter_skips_the_whole_treeship_dir() {
+        // Written by the CLI or a hook, never by the agent's work: cards,
+        // declarations, policy, config. A receipt that listed them said the
+        // agent wrote Treeship's own bookkeeping.
         assert!(is_treeship_runtime_artifact(".treeship/config.yaml"));
         assert!(is_treeship_runtime_artifact(".treeship/config.json"));
-        assert!(!is_treeship_runtime_artifact(".treeship/declaration.json"));
-        assert!(!is_treeship_runtime_artifact(".treeship/policy.yaml"));
-        assert!(!is_treeship_runtime_artifact(
-            ".treeship/agents/coder.agent"
-        ));
-        assert!(!is_treeship_runtime_artifact(
+        assert!(is_treeship_runtime_artifact(".treeship/declaration.json"));
+        assert!(is_treeship_runtime_artifact(".treeship/policy.yaml"));
+        assert!(is_treeship_runtime_artifact(".treeship/agents/coder.agent"));
+        assert!(is_treeship_runtime_artifact(
             ".treeship/agents/reviewer.json"
         ));
-
-        // Anything outside .treeship/ is never filtered.
+        // The agent's own files are not.
         assert!(!is_treeship_runtime_artifact("src/main.rs"));
-        assert!(!is_treeship_runtime_artifact("README.md"));
-        assert!(!is_treeship_runtime_artifact("treeship-notes.md"));
-        assert!(!is_treeship_runtime_artifact(".treeshiprc"));
+        assert!(!is_treeship_runtime_artifact(".treeshipx/notes.md"));
+        assert!(!is_treeship_runtime_artifact("docs/.treeship-notes.md"));
     }
 
     #[test]
@@ -656,13 +639,15 @@ mod tests {
 
         // User-authored content: present.
         assert!(paths.contains(&"src.rs"), "user file missing: {paths:?}");
+        // Nothing under .treeship/ is the agent's write, the card record and
+        // the declaration included.
         assert!(
-            paths.contains(&".treeship/agents/coder.agent"),
-            "agent card missing: {paths:?}"
+            !paths.contains(&".treeship/agents/coder.agent"),
+            "card record surfaced as the agent's write: {paths:?}"
         );
         assert!(
-            paths.contains(&".treeship/declaration.json"),
-            "declaration missing: {paths:?}"
+            !paths.contains(&".treeship/declaration.json"),
+            "declaration surfaced as the agent's write: {paths:?}"
         );
 
         // Runtime artifacts: excluded.

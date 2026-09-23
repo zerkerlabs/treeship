@@ -37,8 +37,17 @@ The receiver can verify the handoff before acting:
 
 ```bash
 treeship verify art_handoff_xyz
-# ✓ verified -- chain intact, 2 artifacts transferred
 ```
+
+```
+✓ verified
+  target:     art_handoff_xyz
+  actor:      agent://researcher -> agent://executor
+  actor proof: asserted (ship key)
+  artifacts:  2 named, all present in this store
+```
+
+`verify` checks the handoff envelope, then reports whether the artifacts it names are in this store. The handoff verifies on its own: a receiver holding only the handoff sees the envelope pass and the named work reported as absent, with a warning that nothing above vouches for the work itself.
 
 ## Cross-Treeship handoff (cross-org)
 
@@ -59,16 +68,24 @@ treeship hub push art_handoff_xyz
 ```bash
 # Company B -- verify before acting
 treeship hub pull art_handoff_xyz
-# Pin Company A's issuer key once, then verify against your own trust store.
+# Pin Company A's key once, then verify against your own trust store.
 # There is no --trusted-key flag: trust roots are pinned, not passed per call.
-treeship trust add company-a ed25519:<company-a-pubkey> --kind cert_issuer
+# The first argument is the KEY ID Company A's `treeship keys export` printed
+# (key_<16 hex>), not a label: pins are matched against the signature's key id.
+treeship trust add key_<company-a key id> ed25519:<company-a-pubkey> --kind cert_issuer --label company-a --yes
 treeship verify art_handoff_xyz
-
-# ✓ verified
-#   from:      agent://company-a/researcher
-#   artifacts: 1 transferred
-#   chain:     intact
 ```
+
+```
+✓ verified
+  target:     art_handoff_xyz
+  actor:      agent://company-a/researcher -> agent://company-b/legal-review
+  actor proof: asserted (ship key)
+  artifacts:  1 named, 1 NOT in this store: art_output_123
+⚠ the handoff names work this store does not hold
+```
+
+The handoff verifies; the work it names is not here. `hub pull` the named artifacts too, or ask Company A for a bundle that includes them (`treeship bundle export`), then import it and verify again.
 
 <Callout type="info">
 No shared infrastructure required. The signature is the trust. Company B does not need to trust the Hub or any third party -- only the public key of Company A.

@@ -67,7 +67,7 @@ pub fn onboard(args: OnboardArgs, printer: &Printer) -> Result<(), Box<dyn std::
     ));
     crate::commands::agent::register(
         &name,
-        Vec::new(),
+        args.tools.clone(),
         args.models.first().cloned(),
         365,
         args.description.clone(),
@@ -82,7 +82,6 @@ pub fn onboard(args: OnboardArgs, printer: &Printer) -> Result<(), Box<dyn std::
     let agents_dir = crate::commands::cards::agents_dir_for(&ctx.config_path);
     let key_id = crate::commands::cards::registered_key_for_actor(&agents_dir, &actor)
         .ok_or("registration did not yield a per-agent key (registered without --own-key?)")?;
-    printer.info(&format!("      key: {key_id} (pinned under AgentCert)"));
 
     // ── 2/4 capability card ────────────────────────────────────────────────
     printer.info("[2/4] capability card");
@@ -103,7 +102,28 @@ pub fn onboard(args: OnboardArgs, printer: &Printer) -> Result<(), Box<dyn std::
         },
         printer,
     )?;
+    // Re-open: the storage index was read when `ctx` opened, before the
+    // certificate and the card were minted by the sub-commands (each opens
+    // its own ctx). A stale index made `card:` print "(see above)".
+    let ctx = ctx::open(args.config.as_deref())?;
     let card_id = latest_card_for(&ctx, &actor, &key_id);
+    // The gate reads the local card record, not the signed card. Copy the
+    // signed card's full capability set (declared, captured from a harness,
+    // discovered from an A2A card) onto the record's bounded tools, so an
+    // agent onboarded the documented way has its rules at runtime. Before
+    // this the record was left at `capabilities: {}` and every tool call was
+    // off-card (TASKS-0.31.6 T1).
+    if let Some(id) = card_id.as_deref() {
+        match sync_card_rules(&ctx, &actor, id) {
+            Ok(n) => printer.info(&format!(
+                "      rules: {n} tool(s) written to the card record the gate reads"
+            )),
+            Err(e) => printer.warn(
+                &format!("card record not updated with the signed card's tools: {e}"),
+                &[],
+            ),
+        }
+    }
 
     // ── 3/4 publish + anchor (opt-in) ──────────────────────────────────────
     let mut hub_endpoint: Option<String> = None;
@@ -144,7 +164,8 @@ pub fn onboard(args: OnboardArgs, printer: &Printer) -> Result<(), Box<dyn std::
 
     printer.info("[4/4] trust bundle — hand these to a counterparty:");
     printer.blank();
-    printer.info("    # trust this ship to certify its agents (the CA pin):");
+    printer.info("    # trust this ship to certify its agents (the CA pin). Verifies this ship's");
+    printer.info("    # certificates and, through them, its agents' cards on resolve:");
     printer.info(&format!(
         "    treeship trust add {ship_key} {ship_pub} --kind cert_issuer --yes"
     ));
@@ -157,9 +178,12 @@ pub fn onboard(args: OnboardArgs, printer: &Printer) -> Result<(), Box<dyn std::
     }
     printer.blank();
     printer.info(&format!(
-        "    # narrower alternative — trust ONLY {actor}, not everything this"
+        "    # and this agent's own key. Needed today for {actor}'s signed artifacts to"
     ));
-    printer.info("    # ship certifies. Needs a fresh pin per agent and breaks on rotation:");
+    printer.info("    # import and verify: bundle import checks each envelope's signer directly.");
+    printer
+        .info("    # A ship key rotation invalidates the CA pin above until re-pinned; this pin");
+    printer.info("    # survives it. One per agent:");
     printer.info(&format!(
         "    treeship trust add {key_id} {agent_pub} --kind agent_cert --yes"
     ));
@@ -181,6 +205,40 @@ pub fn onboard(args: OnboardArgs, printer: &Printer) -> Result<(), Box<dyn std::
     }
     printer.blank();
     Ok(())
+}
+
+/// Copy the signed card's `capabilities.tools` onto the local card record's
+/// `bounded_tools`, keeping any forbidden/escalation/network rules the record
+/// already carries. Returns the number of tools written.
+fn sync_card_rules(
+    ctx: &ctx::Ctx,
+    actor: &str,
+    card_id: &str,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let rec = ctx.storage.read(card_id)?;
+    let stmt: ReceiptStatement = rec.envelope.unmarshal_statement()?;
+    let tools: Vec<String> = stmt
+        .payload
+        .as_ref()
+        .and_then(|p| p.get("capabilities"))
+        .and_then(|c| c.get("tools"))
+        .and_then(|t| t.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|t| t.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    let agents_dir = crate::commands::cards::agents_dir_for(&ctx.config_path);
+    let name = actor.trim_start_matches("agent://");
+    let mut cards = crate::commands::cards::list(&agents_dir)?;
+    let Some(card) = cards.iter_mut().find(|c| c.agent_name == name) else {
+        return Err(format!("no local card record for {actor}").into());
+    };
+    card.capabilities.bounded_tools = tools.clone();
+    card.updated_at = crate::commands::session::now_rfc3339();
+    crate::commands::cards::save(&agents_dir, card)?;
+    Ok(tools.len())
 }
 
 /// The `ed25519:<base64url>` pinnable form of a key's public half.

@@ -131,6 +131,25 @@ pub fn add(
     if key_id.trim().is_empty() {
         return Err("key_id must not be empty".into());
     }
+    // Signatures match a pin by key id. For the kinds that verify DSSE
+    // signatures the id must be the one the producer's `keys export` prints
+    // (`key_<16 hex>` or `key_agent_<16 hex>`); a label here is a pin that
+    // never matches anything and looks pinned (TASKS-0.31.6 T6). Hub kinds
+    // keep free-form ids, and so does `session_host`, which is matched by
+    // public-key bytes.
+    let signer_kind = matches!(
+        kind,
+        TrustRootKind::CertIssuer | TrustRootKind::Revoker | TrustRootKind::AgentCert
+    );
+    if signer_kind && !looks_like_key_id(key_id) {
+        return Err(format!(
+            "{key_id:?} is not a key id. Pins for --kind {} are matched against the signature's key id, \
+             so this pin would never match anything. Use the id the producer's `treeship keys export` \
+             prints (key_<16 hex> or key_agent_<16 hex>); pass a label with --label",
+            kind.as_str()
+        )
+        .into());
+    }
 
     let path = TrustRootStore::default_path();
     let mut store = match TrustRootStore::open(&path) {
@@ -370,4 +389,12 @@ fn now_rfc3339() -> String {
         .unwrap_or_default()
         .as_secs();
     treeship_core::statements::unix_to_rfc3339(secs)
+}
+
+/// `key_<16 hex>` or `key_agent_<16 hex>`: the shapes the keystore mints.
+fn looks_like_key_id(s: &str) -> bool {
+    let hex = s
+        .strip_prefix("key_agent_")
+        .or_else(|| s.strip_prefix("key_"));
+    matches!(hex, Some(h) if h.len() == 16 && h.chars().all(|c| c.is_ascii_hexdigit()))
 }

@@ -88,7 +88,29 @@ pub fn import(args: ImportArgs, printer: &Printer) -> Result<(), Box<dyn std::er
         .map_err(|e| format!("build verifier: {e}"))?
         .ok_or(bundle::BundleError::NoTrustRoot)?;
 
-    let bundle_id = bundle::import(&path, &ctx.storage, &verifier).map_err(|e| format!("{e}"))?;
+    let bundle_id = bundle::import(&path, &ctx.storage, &verifier).map_err(|e| match &e {
+        bundle::BundleError::UnverifiedEnvelope { index, .. } => {
+            // Name the key the envelope is signed by and the exact fix. The
+            // export carries no public keys, so the producer supplies the
+            // pin line (`treeship keys export`) (TASKS-0.31.6 T7).
+            let keyids = signer_keyids(&path, *index);
+            let which = if *index == 0 { "the bundle envelope".to_string() } else { format!("envelope {index}") };
+            if keyids.is_empty() {
+                format!("{e}")
+            } else {
+                let kind = if keyids.iter().any(|k| k.starts_with("key_agent_")) { "agent_cert" } else { "cert_issuer" };
+                format!(
+                    "{which} is signed by {}, which is not a pinned trust root on this machine.\n  \
+                     Ask the producer for the line `treeship keys export` prints for that key and run it here:\n    \
+                     treeship trust add {} ed25519:<their public key> --kind {kind} --yes\n  \
+                     (an agent-signed envelope needs the agent's own key pinned under agent_cert; the ship's under cert_issuer)",
+                    keyids.join(", "),
+                    keyids[0]
+                )
+            }
+        }
+        _ => format!("{e}"),
+    })?;
 
     printer.success(
         "bundle imported",
@@ -97,6 +119,30 @@ pub fn import(args: ImportArgs, printer: &Printer) -> Result<(), Box<dyn std::er
     printer.hint(&format!("treeship verify {}", bundle_id));
     printer.blank();
     Ok(())
+}
+
+/// The key ids on the signatures of one envelope in an export file, by the
+/// same index `BundleError::UnverifiedEnvelope` reports (0 = bundle).
+fn signer_keyids(path: &std::path::Path, index: usize) -> Vec<String> {
+    let Ok(bytes) = std::fs::read(path) else {
+        return Vec::new();
+    };
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return Vec::new();
+    };
+    let env = if index == 0 {
+        v.get("bundle")
+    } else {
+        v.get("artifacts").and_then(|a| a.get(index - 1))
+    };
+    env.and_then(|e| e.get("signatures"))
+        .and_then(|s| s.as_array())
+        .map(|sigs| {
+            sigs.iter()
+                .filter_map(|s| s.get("keyid").and_then(|k| k.as_str()).map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
