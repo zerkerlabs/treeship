@@ -119,6 +119,7 @@ export async function attestReceipt(params: AttestReceiptParams): Promise<string
   if (params.payload && Object.keys(params.payload).length > 0) {
     args.push('--payload', JSON.stringify(params.payload));
   }
+  if (params.chain) args.push('--chain');
 
   try {
     const { stdout } = await exec('treeship', args, { timeout: 5000 });

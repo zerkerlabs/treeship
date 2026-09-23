@@ -27,7 +27,9 @@ export type GateRefusal =
   | 'revoked'
   | 'stale'
   | 'verification_failed'
-  | 'gate_unavailable';
+  | 'gate_unavailable'
+  /** `treeship halt` stands against this ship's actor (or `*`). */
+  | 'halted';
 
 export type GateResult =
   | { allowed: true; unverified?: false; verdict: string }

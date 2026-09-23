@@ -39,6 +39,7 @@ const REFUSALS = [
   'stale',
   'verification_failed',
   'gate_unavailable',
+  'halted',
 ] as const;
 type RefusalLiteral = (typeof REFUSALS)[number];
 // If GateRefusal gains or loses a member, one of these two lines stops compiling.
