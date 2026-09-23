@@ -2540,11 +2540,44 @@ fn judgements_check(pkg_dir: &Path, receipt: &SessionReceipt) -> Option<VerifyCh
                 .and_then(|v| v.as_f64())
                 .or_else(|| answer.and_then(|a| a.get("noul")).and_then(|v| v.as_f64())),
         };
+        // What "acted" means depends on the question. On a confidence, the
+        // caller acted on the answer, so the confidence must have met the
+        // bar. On a yes/no probability the bar cuts both ways: at or above
+        // it the answer is "yes" and the caller's effect should be the
+        // refusing one (deny or ask); below it the answer is "no" and the
+        // effect should be allow or warn. A judgement is outside its bar
+        // when the effect contradicts the side of the threshold the answer
+        // fell on. A rules judge answering 0.0 to "unsafe?" and the caller
+        // proceeding is exactly what the bar asked for, not a violation.
+        let effect = p.get("effect").and_then(|v| v.as_str());
         match (threshold, measured) {
             (None, _) => flagged.push(format!(
                 "{} acted with no threshold declared",
                 entry.artifact_id
             )),
+            (Some(t), Some(m)) if applies_to == "noul" => {
+                let yes = m >= t;
+                let refusing = matches!(effect, Some("deny") | Some("ask"));
+                let allowing = matches!(effect, Some("allow") | Some("warn"));
+                if yes && allowing {
+                    flagged.push(format!(
+                        "{} acted to {} at noul {m:.3}, at or above its threshold {t:.3} (the answer was yes)",
+                        entry.artifact_id,
+                        effect.unwrap_or("")
+                    ));
+                } else if !yes && refusing {
+                    flagged.push(format!(
+                        "{} acted to {} at noul {m:.3}, below its threshold {t:.3} (the answer was no)",
+                        entry.artifact_id,
+                        effect.unwrap_or("")
+                    ));
+                } else if effect.is_none() && !yes {
+                    flagged.push(format!(
+                        "{} acted at noul {m:.3} below its threshold {t:.3} with no effect recorded",
+                        entry.artifact_id
+                    ));
+                }
+            }
             (Some(t), Some(m)) if m < t => flagged.push(format!(
                 "{} acted at {applies_to} {m:.3} below its threshold {t:.3}",
                 entry.artifact_id

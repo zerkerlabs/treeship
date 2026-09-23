@@ -134,10 +134,16 @@ fn judgement_chains_onto_the_gated_action_and_verify_reports_it() {
     let (ok, out) = attest_judgement(&ws, &judgement(0.93, Some(0.85), "refused"), &action);
     assert!(ok, "{out}");
     let j1 = first_json(&out)["id"].as_str().unwrap().to_string();
-    // Acted at 0.40 against a 0.85 bar: outside its bar.
-    let (ok, out) = attest_judgement(&ws, &judgement(0.40, Some(0.85), "acted"), &action);
+    // Allowed at 0.93 against a 0.85 bar: the answer was yes and the caller
+    // proceeded anyway. Outside its bar.
+    let (ok, out) = attest_judgement(&ws, &judgement(0.93, Some(0.85), "acted"), &action);
     assert!(ok, "{out}");
     let j2 = first_json(&out)["id"].as_str().unwrap().to_string();
+    // Allowed at 0.40 against a 0.85 bar: the answer was no and the caller
+    // proceeded. That is what the bar asked for, not a violation.
+    let (ok, out) = attest_judgement(&ws, &judgement(0.40, Some(0.85), "acted"), &action);
+    assert!(ok, "{out}");
+    let j3 = first_json(&out)["id"].as_str().unwrap().to_string();
 
     let (ok, out) = ws.run(&["verify", &j1, "--full"]);
     assert!(ok, "{out}");
@@ -161,9 +167,18 @@ fn judgement_chains_onto_the_gated_action_and_verify_reports_it() {
         .expect("judgements row");
     assert_eq!(row["status"], "warn", "{row}");
     let d = row["detail"].as_str().unwrap();
-    assert!(d.contains("2 judgement(s) by jev-1.13.0"), "{d}");
-    assert!(d.contains(&j2) && d.contains("below its threshold"), "{d}");
+    assert!(d.contains("3 judgement(s) by jev-1.13.0"), "{d}");
+    assert!(
+        d.contains(&j2)
+            && d.contains("at or above its threshold")
+            && d.contains("the answer was yes"),
+        "{d}"
+    );
     assert!(!d.contains(&j1), "the in-bar refusal is not flagged: {d}");
+    assert!(
+        !d.contains(&j3),
+        "proceeding on a no is inside the bar: {d}"
+    );
 }
 
 #[test]
