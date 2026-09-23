@@ -3,7 +3,7 @@
   "counts": {
     "cli_commands": 39,
     "hub_routes": 22,
-    "wire_types": 161
+    "wire_types": 163
   },
   "cli_commands": [
     "add",
@@ -240,6 +240,11 @@
     },
     {
       "name": "AnchorCoverage",
+      "kind": "struct",
+      "source": "packages/core/src/verify/anchoring.rs"
+    },
+    {
+      "name": "AnchorTally",
       "kind": "struct",
       "source": "packages/core/src/verify/anchoring.rs"
     },
@@ -937,6 +942,11 @@
       "name": "TrustRootKind",
       "kind": "enum",
       "source": "packages/core/src/trust/mod.rs"
+    },
+    {
+      "name": "VerifiedRekorAnchor",
+      "kind": "struct",
+      "source": "packages/core/src/verify/rekor.rs"
     },
     {
       "name": "Witness",

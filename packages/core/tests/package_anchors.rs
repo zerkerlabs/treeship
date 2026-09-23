@@ -25,7 +25,10 @@ const STAGING_KEY_B64: &str = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEDODRU688UYGuy
 fn staging() -> (Envelope, serde_json::Value) {
     let f: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/rekor/staging-dsse.json")).unwrap();
-    (serde_json::from_value(f["envelope"].clone()).unwrap(), f["entry"].clone())
+    (
+        serde_json::from_value(f["envelope"].clone()).unwrap(),
+        f["entry"].clone(),
+    )
 }
 
 fn public_good_entry() -> serde_json::Value {
@@ -141,7 +144,10 @@ fn edited_proof_time_fails() {
     entry["integratedTime"] = serde_json::json!(t - 86_400);
     let (pkg, _) = build(tmp.path(), vec![anchor(entry)]);
     let checks = verify_package_with_options(&pkg, &trust_staging(), false).unwrap();
-    assert_eq!(row(&checks).expect("anchoring row").status, VerifyStatus::Fail);
+    assert_eq!(
+        row(&checks).expect("anchoring row").status,
+        VerifyStatus::Fail
+    );
 }
 
 /// A package with no proofs gets no row: every existing verdict, including
