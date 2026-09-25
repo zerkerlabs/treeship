@@ -124,10 +124,6 @@ const SKIP: &[(&str, &str)] = &[
     ),
     ("bundle export", "file round-trip"),
     ("bundle import", "file round-trip"),
-    (
-        "checkpoint",
-        "merkle.rs is Lane A's until W1-5 merges; JSON root truncation is a known follow-up",
-    ),
     ("daemon start", "spawns a long-running process (W1-11)"),
     ("daemon status", "W1-11"),
     ("daemon stop", "W1-11"),
@@ -152,13 +148,11 @@ const SKIP: &[(&str, &str)] = &[
     ("install", "edits shell rc files"),
     ("uninstall", "edits shell rc files"),
     ("match", "needs a hub"),
-    ("merkle proof", "merkle.rs is Lane A's until W1-5 merges"),
-    ("merkle publish", "needs a hub; merkle.rs is Lane A's"),
+    ("merkle publish", "needs a hub"),
     (
-        "merkle status",
-        "merkle.rs is Lane A's until W1-5 merges; known 0-byte JSON, follow-up",
+        "merkle verify",
+        "needs a proof file and a pinned signer; covered in merkle tests",
     ),
-    ("merkle verify", "merkle.rs is Lane A's until W1-5 merges"),
     ("onboard", "signing path with optional hub publish"),
     ("otel disable", "prints shell guidance only"),
     ("otel enable", "prints shell guidance only"),
@@ -290,6 +284,9 @@ fn every_json_capable_command_emits_json() {
     check("version", &["version"]);
     // Everything else that answers locally.
     check("status", &["status"]);
+    check("merkle status", &["merkle", "status"]);
+    check("checkpoint", &["checkpoint"]);
+    check("merkle proof", &["merkle", "proof", &first_id]);
     check("keys list", &["keys", "list"]);
     check("keys export", &["keys", "export"]);
     check("trust list", &["trust", "list"]);
