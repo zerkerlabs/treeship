@@ -15,21 +15,12 @@ pip install treeship-sdk
 The Python SDK shells out to the `treeship` CLI binary. The CLI must be installed and initialized (`treeship init`) before using the SDK.
 </Callout>
 
-<Callout type="warn">
-**Verified against CLI 0.24.0 on 2026-08-18. Two methods do not currently
-work**, because the CLI surface moved and the wrapper did not follow:
-
-- `attest_approval()` always fails — it sends no scope flag, and the CLI now
-  refuses `approval has no scope (no --allowed-actor / --allowed-action /
-  --allowed-subject / --max-uses)`.
-- `wrap()` always fails — `treeship wrap` has no JSON output mode, so the
-  wrapper cannot parse an artifact id out of it
-  (`treeship wrap --actor returned invalid JSON`).
-
-Everything else on this page was executed end to end and works:
-`attest_action`, `attest_decision`, `attest_handoff`, `verify`, and
-`session_report` (with a hub attached). For approvals and wrapping, shell out
-to the CLI directly until the wrapper catches up.
+<Callout type="info">
+Verified against CLI 0.31.9. `attest_approval()` sends a scope
+(`allowed_actions`/`allowed_actors`/`allowed_subjects`/`max_uses`, or
+`unscoped=True`) and `wrap()` uses `--format json` to parse the artifact id —
+both work end to end today. See each method's section below for the current
+signature.
 </Callout>
 
 ## Constructing a client
@@ -103,23 +94,6 @@ Returns `ActionResult(artifact_id)`.
 
 Create a signed approval receipt with a binding nonce.
 
-<Callout type="warn">
-**Currently broken against CLI 0.24.** The wrapper sends no scope flag, and the
-CLI refuses a scopeless approval outright. Until this is fixed, mint approvals
-through the CLI:
-
-```bash
-treeship attest approval --approver human://alice \
-  --allowed-actor agent://checkout \
-  --allowed-action stripe.charge.create \
-  --max-uses 1 --expires 2026-12-31T23:59:59Z --format json
-```
-</Callout>
-
-Despite the name, `expires_in` is passed straight through to `--expires`, so it
-must be an **RFC 3339 timestamp**, not a duration. A value like `"1h"` is stored
-verbatim and compares as already expired.
-
 Replay is enforced by the local Approval Use Journal, which reserves a use
 before the action is signed — a reused nonce is refused at attest time, on this
 device or workspace. Distributed single-use across machines is still open.
@@ -171,20 +145,14 @@ Returns `PushResult(hub_url, rekor_index)`.
 
 ### `wrap(command, actor=None, *, timeout=None)`
 
-Wrap a shell command with a signed receipt. `command` accepts a string or a
-sequence of arguments.
+Wrap a shell command with a signed receipt. `command` accepts a string
+(split with `shlex`) or a sequence of arguments (preferred -- exact argv,
+no quoting ambiguity).
 
-<Callout type="warn">
-**Currently broken against CLI 0.24.** `treeship wrap` has no JSON output mode —
-it streams the wrapped command's own stdout and prints a human-readable summary
-— so the wrapper cannot parse an artifact id back out and raises
-`TreeshipError: treeship wrap --actor returned invalid JSON`. This fails for
-every command, including silent ones. Call the CLI directly:
-
-```bash
-treeship wrap --actor agent://ci --action test.run -- npm test
-```
-</Callout>
+The wrapper calls `treeship wrap --format json` under the hood: in JSON mode
+the CLI moves the wrapped command's own stdout onto stderr (still captured
+into the receipt's output digest) so that stdout carries exactly one JSON
+document -- the artifact id -- for the wrapper to parse.
 
 Returns `ActionResult(artifact_id)`.
 
@@ -216,8 +184,8 @@ The returned `receipt_url` is permanent and public. Share it freely; no token, n
 
 <Callout type="warn">
 `session_report()` requires an attached hub. Without one the CLI returns
-`receipt_url: null` alongside `hub not attached -- run \`treeship hub attach\` to
-publish; receipt verifies locally`, and the wrapper raises `TreeshipError:
+`receipt_url: null` alongside ``hub not attached -- run `treeship hub attach` to
+publish; receipt verifies locally``, and the wrapper raises `TreeshipError:
 session report JSON missing receipt_url`. Run
 `treeship hub attach --endpoint https://api.treeship.dev` first. The receipt still verifies offline without a
 hub — publishing is what needs one.

@@ -1,5 +1,14 @@
 # Treeship Platform Overview
 
+> **Historical snapshot, not current documentation.** This file describes
+> Treeship as of the version and date below and has not been kept in sync
+> since. The current release is far ahead of it (see
+> [CHANGELOG.md](./CHANGELOG.md)); several claims here about routes,
+> versions and the encryption construction are stale or wrong. For current
+> documentation use [docs.treeship.dev](https://docs.treeship.dev),
+> [AGENTS.md](./AGENTS.md), [SECURITY.md](./SECURITY.md) and
+> [ONBOARDING.md](./ONBOARDING.md). Kept for historical reference only.
+
 > Portable trust receipts for agent workflows.
 > Cryptographic proof of what your agents did, when, and under whose authority.
 
@@ -431,7 +440,7 @@ Receipt attestation is **async/fire-and-forget**. It does not block tool call re
 | `POST` | `/v1/artifacts` | DPoP | Push a signed artifact |
 | `GET` | `/v1/artifacts/:id` | None | Retrieve an artifact |
 | `GET` | `/v1/workspace/:hubId` | DPoP | List workspace artifacts |
-| `GET` | `/v1/verify/:id` | None | Server-side verification |
+| `GET` | `/v1/verify/:id` | None | Retired -- returns `410`. No server-side verdict; verify locally against your own trust roots. |
 | `POST` | `/v1/merkle/checkpoint` | DPoP | Publish Merkle checkpoint |
 | `POST` | `/v1/merkle/proof` | DPoP | Publish inclusion proof |
 | `GET` | `/v1/merkle/checkpoint/latest` | None | Latest checkpoint |

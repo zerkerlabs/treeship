@@ -44,6 +44,9 @@ use serde::{Deserialize, Serialize};
 // a key they control. The warning shows up in stderr at every load
 // (once, deduplicated) so it lands in CI logs.
 static WARN_TRUST_PATH_OVERRIDE_ONCE: Once = Once::new();
+// The permission check it backs is unix-only; on other targets the
+// bypass has nothing to bypass and the warning would be dead code.
+#[cfg(unix)]
 static WARN_INSECURE_PERMS_ONCE: Once = Once::new();
 
 fn warn_trust_path_override_if_set() {
@@ -57,6 +60,7 @@ fn warn_trust_path_override_if_set() {
     }
 }
 
+#[cfg(unix)]
 fn warn_insecure_perms_if_bypassed() {
     if std::env::var_os("TREESHIP_ALLOW_INSECURE_KEY_PERMS")
         .map(|v| v == "1")

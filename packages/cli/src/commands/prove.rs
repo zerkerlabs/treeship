@@ -8,6 +8,10 @@
 
 use crate::printer::Printer;
 
+// Only the zk build opens a workspace; the stubs below never do, and an
+// unconditional import would be an unused-import warning there.
+#[cfg(feature = "zk")]
+use crate::ctx;
 #[cfg(feature = "zk")]
 use treeship_zk_circom::{CircomProver, ZkProof};
 
@@ -254,82 +258,6 @@ pub fn verify_proof(proof_file: &str, printer: &Printer) -> Result<(), Box<dyn s
     }
     printer.blank();
 
-    Ok(())
-}
-
-/// Show ZK status (which features are available).
-pub fn zk_status(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
-    printer.blank();
-    printer.info("ZK proof status:");
-    printer.blank();
-
-    #[cfg(feature = "zk")]
-    {
-        printer.info(&format!("  {} Circom (groth16)", printer.green("+")));
-        printer.info("    circuits: policy-checker, input-output-binding, prompt-template");
-
-        // Check if snarkjs is available
-        let snarkjs_available = std::process::Command::new("snarkjs")
-            .arg("--version")
-            .output()
-            .is_ok();
-
-        if snarkjs_available {
-            printer.info(&format!("  {} snarkjs available", printer.green("+")));
-        } else {
-            printer.warn("snarkjs not found", &[]);
-            printer.hint("npm install -g snarkjs");
-        }
-
-        // Check if circom is available
-        let circom_available = std::process::Command::new("circom")
-            .arg("--version")
-            .output()
-            .is_ok();
-
-        if circom_available {
-            printer.info(&format!(
-                "  {} circom compiler available",
-                printer.green("+")
-            ));
-        } else {
-            printer.dim_info("  - circom compiler not found (not needed for proving, only for circuit development)");
-        }
-
-        // Show verification key hashes for transparency
-        printer.blank();
-        printer.info("  verification key hashes (sha256):");
-        for (name, vk_content) in [
-            (
-                "policy-checker",
-                include_bytes!("../../../zk-circom/zkeys/pc_vk.json").as_slice(),
-            ),
-            (
-                "input-output-binding",
-                include_bytes!("../../../zk-circom/zkeys/iob_vk.json").as_slice(),
-            ),
-            (
-                "prompt-template",
-                include_bytes!("../../../zk-circom/zkeys/pt_vk.json").as_slice(),
-            ),
-        ] {
-            use sha2::{Digest, Sha256};
-            let hash = hex::encode(Sha256::digest(vk_content));
-            printer.info(&format!("    {} {}", name, &hash[..16]));
-        }
-
-        // RISC Zero status
-        printer.blank();
-        printer.dim_info("  RISC Zero: coming in v0.6.0 (guest compiled, prover not yet wired)");
-    }
-
-    #[cfg(not(feature = "zk"))]
-    {
-        printer.dim_info("  ZK features not enabled in this build");
-        printer.hint("rebuild with: cargo build -p treeship-cli --features zk");
-    }
-
-    printer.blank();
     Ok(())
 }
 

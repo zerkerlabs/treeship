@@ -9,8 +9,8 @@ Treeship artifacts provide a tamper-evident audit trail that supports regulatory
 
 ## What Treeship provides
 
-- **Immutable records.** Signed artifacts cannot be modified after creation. Tampering changes the content-addressed ID and breaks verification.
-- **Approval chains.** Nonce-bound approvals prove that specific humans authorized specific actions.
+- **Tamper-evident records.** Editing a signed artifact's *signed payload* changes its content-addressed ID and breaks verification. This is not immutability: unsigned wrapper/index fields can still change without affecting the ID, and the key holder can always sign a new artifact -- a receipt proves what was signed, not that nothing could have been re-signed.
+- **Approval chains.** Nonce-bound approvals record which approver URI authorized which action. `--approver human://alice` is a URI signed with the ship's key; it proves a human identity only when that approver has their own pinned signing key and signs with it themselves, not merely by being named.
 - **Verifiable handoffs.** When work moves between agents or organizations, the handoff is recorded with a signed artifact.
 - **Independent verification.** Auditors verify artifacts locally without trusting the organization that created them.
 

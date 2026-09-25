@@ -65,10 +65,15 @@ The content-addressed id is derived from the PAE bytes, never stored inside the
 statement:
 
 ```
-artifact_id = "art_" + hex( sha256(PAE_bytes) )[..16]
+artifact_id = "art_" + hex( sha256(PAE_bytes)[..16] )
 ```
 
-Same content always yields the same id.
+Take the first 16 bytes (128 bits) of the 32-byte SHA-256 digest, *then*
+hex-encode -- not the other way around. `hex(digest)[..16]` truncates the
+*hex string* to 16 characters (8 bytes of entropy, and the wrong id
+entirely); `hex(digest[..16])` truncates the *digest* to 16 bytes first,
+giving the correct 32-character hex id. Same content always yields the same
+id.
 
 ## Verifying a receipt (any language)
 

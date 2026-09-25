@@ -15,6 +15,7 @@ import (
 
 	"github.com/zerkerlabs/treeship/packages/hub/internal/auth"
 	"github.com/zerkerlabs/treeship/packages/hub/internal/db"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/publicurl"
 )
 
 type Handlers struct {
@@ -122,7 +123,7 @@ func (h *Handlers) ListSessions(w http.ResponseWriter, r *http.Request) {
 			ActionCount: s.ActionCount,
 		}
 		if s.ReceiptJSON != nil && *s.ReceiptJSON != "" {
-			entry.ReceiptURL = "https://treeship.dev/receipt/" + s.SessionID
+			entry.ReceiptURL = publicurl.Receipt(s.SessionID)
 		}
 		out = append(out, entry)
 	}

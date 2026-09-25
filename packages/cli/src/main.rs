@@ -723,6 +723,11 @@ enum Command {
     #[command(hide = true)]
     ZkTlsSetup,
 
+    /// The command tree as JSON, for the contract test. Not a stable
+    /// interface.
+    #[command(name = "__dump-cli", hide = true)]
+    DumpCli,
+
     /// Print version and build info
     Version,
 }
@@ -3204,14 +3209,38 @@ fn main() {
     }
 }
 
+/// The command tree as data, for `tests/json_contract.rs` and anything
+/// else that must cover every command rather than the ones a hand-written
+/// list remembers. Hidden commands are included and marked.
+fn dump_command(cmd: &clap::Command) -> serde_json::Value {
+    let args: Vec<String> = cmd
+        .get_arguments()
+        .filter(|a| !a.is_global_set())
+        .map(|a| a.get_id().to_string())
+        .collect();
+    let subcommands: Vec<serde_json::Value> = cmd
+        .get_subcommands()
+        .filter(|c| c.get_name() != "help")
+        .map(dump_command)
+        .collect();
+    serde_json::json!({
+        "name": cmd.get_name(),
+        "hidden": cmd.is_hide_set(),
+        "args": args,
+        "subcommands": subcommands,
+    })
+}
+
 /// Print top-level help with every subcommand visible, including the
 /// extension and experimental commands hidden from default `--help`.
 fn print_help_all() {
     use clap::CommandFactory;
     let mut cmd = Cli::command();
+    // Test-only commands (`__dump-cli`) stay hidden even here.
     let names: Vec<String> = cmd
         .get_subcommands()
         .map(|c| c.get_name().to_string())
+        .filter(|n| !n.starts_with("__"))
         .collect();
     for name in names {
         cmd = cmd.mut_subcommand(name, |sc| sc.hide(false));
@@ -3286,7 +3315,20 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
         Command::ZkTlsSetup => commands::zk::tls_notary_setup(printer),
 
         Command::Version => {
-            println!("treeship {} (rust)", env!("CARGO_PKG_VERSION"));
+            if printer.format == Format::Json {
+                printer.json(&serde_json::json!({
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "implementation": "rust",
+                }));
+            } else {
+                println!("treeship {} (rust)", env!("CARGO_PKG_VERSION"));
+            }
+            Ok(())
+        }
+
+        Command::DumpCli => {
+            use clap::CommandFactory;
+            printer.json(&dump_command(&Cli::command()));
             Ok(())
         }
 

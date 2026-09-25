@@ -3077,10 +3077,14 @@ pub fn report(
         }
     };
 
-    let receipt_url = resp_json["receipt_url"]
-        .as_str()
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| format!("https://www.treeship.dev/receipt/{resolved_id}"));
+    // The receipt is where we just put it: a hub that returns no URL, or a
+    // self-hosted hub that still answers with a treeship.dev address, gets
+    // its own API URL (see hub::share_url).
+    let receipt_url = super::hub::share_url(
+        &hub_entry.endpoint,
+        resp_json["receipt_url"].as_str(),
+        &format!("/v1/receipt/{resolved_id}"),
+    );
     let agents = resp_json["agents"].as_u64().unwrap_or(0);
     let events = resp_json["events"].as_u64().unwrap_or(0);
 
@@ -3094,8 +3098,8 @@ pub fn report(
         format,
         Some(&receipt_url),
         Some(&raw_json_url),
-        Some(&paper_preview_url),
-        Some(&package_download_url),
+        paper_preview_url.as_deref(),
+        package_download_url.as_deref(),
         &resolved_id,
         &receipt_digest,
         package_digest.as_deref(),
@@ -3143,18 +3147,26 @@ fn finish_report(
 ///   /receipt/<id>/package     (downloadable .treeship.tar.gz)
 ///
 /// Stripping `/receipt/<id>` from the receipt_url gives us the origin;
-/// we attach the canonical paths from there. Falls back to
-/// www.treeship.dev when the receipt_url's origin can't be parsed.
-fn derive_share_urls(receipt_url: &str, session_id: &str) -> (String, String, String) {
-    // Find "/receipt/" in the URL and split there.
-    let origin = match receipt_url.find("/receipt/") {
-        Some(idx) => &receipt_url[..idx],
-        None => "https://www.treeship.dev",
+/// we attach the canonical paths from there. A receipt_url that is the
+/// hub's own API path (`/v1/receipt/<id>`, what a self-hosted hub returns)
+/// has no page site behind it: the raw JSON is that URL itself and there
+/// is no preview or package page, so those are `None` rather than a
+/// treeship.dev address that holds nothing.
+fn derive_share_urls(
+    receipt_url: &str,
+    session_id: &str,
+) -> (String, Option<String>, Option<String>) {
+    if receipt_url.contains("/v1/receipt/") {
+        return (receipt_url.to_string(), None, None);
+    }
+    let Some(idx) = receipt_url.find("/receipt/") else {
+        return (receipt_url.to_string(), None, None);
     };
+    let origin = &receipt_url[..idx];
     let raw = format!("{origin}/api/receipt/{session_id}");
     let preview = format!("{origin}/receipt/{session_id}/preview");
     let pkg = format!("{origin}/receipt/{session_id}/package");
-    (raw, preview, pkg)
+    (raw, Some(preview), Some(pkg))
 }
 
 /// Compute a content-addressed manifest digest for a package
@@ -3555,6 +3567,37 @@ mod verify_summary_tests {
             VerifyCheck::fail("merkle_root", "root mismatch"),
         ];
         assert_eq!(summarize_verify_checks(&checks).0, "fail");
+    }
+}
+
+#[cfg(test)]
+mod share_url_tests {
+    use super::derive_share_urls;
+
+    /// A self-hosted hub returns its own API URL as the receipt URL; the
+    /// share lines must not invent treeship.dev pages for it (CLI-12).
+    #[test]
+    fn a_self_hosted_hub_gets_no_invented_pages() {
+        let (raw, preview, pkg) =
+            derive_share_urls("http://localhost:18089/v1/receipt/ssn_abc", "ssn_abc");
+        assert_eq!(raw, "http://localhost:18089/v1/receipt/ssn_abc");
+        assert_eq!(preview, None);
+        assert_eq!(pkg, None);
+    }
+
+    #[test]
+    fn the_public_site_keeps_its_pages() {
+        let (raw, preview, pkg) =
+            derive_share_urls("https://treeship.dev/receipt/ssn_abc", "ssn_abc");
+        assert_eq!(raw, "https://treeship.dev/api/receipt/ssn_abc");
+        assert_eq!(
+            preview.as_deref(),
+            Some("https://treeship.dev/receipt/ssn_abc/preview")
+        );
+        assert_eq!(
+            pkg.as_deref(),
+            Some("https://treeship.dev/receipt/ssn_abc/package")
+        );
     }
 }
 
