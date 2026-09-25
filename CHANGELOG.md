@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.31.9 (2026-09-25)
 
 - **A lifted halt stays lifted, whatever local file is rolled back.** The 0.31.8 fix read the store through `index.json`, an unsigned cache in the same directory as the halt marker; restoring both re-armed a halt while its signed lift sat on disk. The lookup now scans the record files and honours a halt, or a lift, only when its envelope verifies under the workspace key; the record's unsigned `key_id` is not consulted. `halt list` says which reason applies (`lifted by art_…`, or not signed here) instead of "no signed artifact" for both. (Retest 0.31.8, T20.)
 - **`verify --full` fails what `verify` fails.** Full mode never received the invalid-mandate fix: it opened with a green chain line, closed with three green summary rows, and exited 0 on an artifact the default mode exits 1 on. The summary now carries an `authority` row, the `AUTHORITY INVALID` banner follows it, `--require-authority` is honoured, and every failure exits 1 in every mode. (Retest 0.31.8.)
