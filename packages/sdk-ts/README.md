@@ -19,7 +19,7 @@ curl -fsSL https://www.treeship.dev/setup | sh
 npm install -g treeship
 ```
 
-macOS and Linux only at v0.9.4. Windows users: install via WSL.
+macOS and Linux only -- no native Windows binary yet. Windows users: install via WSL.
 
 ## Usage
 
