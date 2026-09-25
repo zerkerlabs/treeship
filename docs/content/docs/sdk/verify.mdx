@@ -179,7 +179,7 @@ All four functions accept four target forms:
 |------|---------|----------|
 | Parsed object | `{ type: 'treeship/...', ... }` | Serialized with `JSON.stringify`, handed to WASM |
 | JSON string | `'{"type":"treeship/..."}'` | Handed to WASM directly |
-| URL string | `'https://treeship.dev/receipt/ssn_abc'` | Fetched with global `fetch`, `/receipt/` remapped to `/v1/receipt/` |
+| URL string | `'https://treeship.dev/receipt/ssn_abc'` | Fetched with global `fetch`; `/receipt/<id>` maps to `/v1/receipt/<id>`, an API URL (`/v1/receipt/<id>`) is fetched as written, anything that names no receipt throws |
 | `URL` object | `new URL('https://...')` | Same as URL string |
 
 ## What this package is NOT

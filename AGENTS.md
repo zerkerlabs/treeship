@@ -313,10 +313,12 @@ GET /v1/artifacts/:id
   Return artifact record as JSON. 404 if not found.
 
 GET /v1/verify/:id
-  Look up artifact, 404 if not found
-  Run subprocess: treeship verify {id} --format json
-  Return the JSON output directly
-  If treeship binary not found: { "outcome": "error", "message": "verifier unavailable" }
+  Retired. Returns 410 with { "outcome": "retired", ... } on purpose: a
+  subprocess with no access to the caller's trust roots produced a verdict
+  representing the server's policy, not the verifier's, and it returned
+  outcome:error for valid artifacts in production. The hub is transport and
+  index only; verify locally against your own pinned roots (`treeship
+  verify`, `package verify`, or `@treeship/verify` in-process).
 
 GET /v1/workspace
   List artifacts for the authenticated dock. DPoP required.
@@ -479,8 +481,8 @@ curl -X POST http://localhost:8080/v1/dock/authorize \
 treeship attest action --actor agent://test --action tool.call
 treeship hub push art_xxxxx
 
-# Should return passing ChainResult:
-curl http://localhost:8080/v1/verify/art_xxxxx
+# /v1/verify is retired (410) -- verify locally instead:
+treeship verify art_xxxxx
 ```
 
 ---
