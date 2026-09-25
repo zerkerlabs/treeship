@@ -4,6 +4,7 @@
 # verdict must say "not pinned" with its own exit code, not "invalid"; after
 # pinning, the proof verifies.
 # xfail: W1-5 merkle verify reports an unpinned checkpoint signer as an invalid signature
+# xfail-match: checkpoint signature invalid
 . "$(dirname "$0")/lib.sh"
 
 ts init --name flow >/dev/null 2>&1 || fail "init"

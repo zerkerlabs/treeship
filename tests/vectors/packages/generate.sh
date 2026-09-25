@@ -56,6 +56,8 @@ if [ -n "$LEGACY" ]; then
   ship "$S" "$LEGACY" attest action --actor agent://vector --action read >/dev/null
   ship "$S" "$LEGACY" session close --headline legacy --summary vector >/dev/null
   freeze "$(ls -d "$S"/w/.treeship/sessions/*.treeship "$S"/.treeship/sessions/*.treeship 2>/dev/null | head -1)" honest/legacy-0.24
+else
+  echo "no 0.24.0 binary given: honest/legacy-0.24 left as committed" >&2
 fi
 
 # --- tampered/*: each one edit away from honest/basic ------------------------

@@ -4,6 +4,7 @@
 # The two-signature participant envelope verifies on its own and inside the
 # sealed package.
 # xfail: W1-3 package verify checks DSSE bytes, the participant signed canonical bytes
+# xfail-match: signature:art_[0-9a-f]+ -- invalid signature
 . "$(dirname "$0")/lib.sh"
 
 ts init --name host >/dev/null 2>&1 || fail "init"

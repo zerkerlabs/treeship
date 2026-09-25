@@ -39,7 +39,7 @@ expect_pass() {
   local out rc
   out="$("$@" 2>&1)"; rc=$?
   if [ $rc -ne 0 ]; then
-    printf '%s\n' "$out" | tail -20 >&2
+    printf '%s\n' "$out" >&2
     fail "expected exit 0, got $rc: $*"
   fi
 }
@@ -49,7 +49,7 @@ expect_fail() {
   local out rc
   out="$("$@" 2>&1)"; rc=$?
   if [ $rc -eq 0 ]; then
-    printf '%s\n' "$out" | tail -20 >&2
+    printf '%s\n' "$out" >&2
     fail "expected a nonzero exit, got 0: $*"
   fi
 }
@@ -60,7 +60,7 @@ expect_output() {
   local out
   out="$("$@" 2>&1)"
   if ! printf '%s\n' "$out" | grep -Eq -- "$re"; then
-    printf '%s\n' "$out" | tail -20 >&2
+    printf '%s\n' "$out" >&2
     fail "output did not match /$re/: $*"
   fi
 }

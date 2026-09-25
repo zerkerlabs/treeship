@@ -288,6 +288,22 @@ jobs:
       - name: CLI option tables match --help
         run: cd docs && python3 scripts/check-cli-option-tables.py ../target/debug/treeship content
 
+      # T1 (audit 2026-09-25): every documented workflow runs end to end and
+      # must verify. Runs before the no-OTel build below, which overwrites
+      # target/debug/treeship; the gates test the default binary users get.
+      # A flow still broken on main carries `# xfail: <task>` and
+      # `# xfail-match: <how it fails>`;
+      # it stays green while broken and fails the run once it passes, so the
+      # fixing PR removes the marker.
+      - name: Honest-flow conformance suite (T1)
+        run: bash tests/flows/run.sh target/debug/treeship
+
+      # T2: frozen honest and tampered packages, each with the verdict every
+      # verifier must give it. The receipt-only column runs in `cargo test`
+      # above (packages/core/tests/package_vectors.rs).
+      - name: Adversarial package vectors (T2)
+        run: bash tests/vectors/packages/run.sh target/debug/treeship
+
       # OTel is in the default build; keep the opt-out path compiling so a
       # `--no-default-features` build never rots.
       - name: Build CLI without OTel (--no-default-features)
@@ -299,19 +315,6 @@ jobs:
       # document the broader v0.9.6 trust-fabric invariants pending port.
       - name: Trust-fabric acceptance suite
         run: bash tests/acceptance/trust-fabric.sh
-
-      # T1 (audit 2026-09-25): every documented workflow runs end to end and
-      # must verify. A flow still broken on main carries `# xfail: <task>`;
-      # it stays green while broken and fails the run once it passes, so the
-      # fixing PR removes the marker.
-      - name: Honest-flow conformance suite (T1)
-        run: bash tests/flows/run.sh target/debug/treeship
-
-      # T2: frozen honest and tampered packages, each with the verdict every
-      # verifier must give it. The receipt-only column runs in `cargo test`
-      # above (packages/core/tests/package_vectors.rs).
-      - name: Adversarial package vectors (T2)
-        run: bash tests/vectors/packages/run.sh target/debug/treeship
 
       # Plugin hook parity: runs each plugin's PostToolUse/PreToolUse hooks
       # against fixtures with a mock treeship and diffs the recorded events.

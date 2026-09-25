@@ -18,9 +18,11 @@
 # "verified" or "signatures-pass" in any mode, and a verdict of "failed"
 # always exits nonzero (anything else exits 0).
 #
-# A column known to be wrong on main is listed under "xfail" with the task
-# that fixes it. It reports XFAIL while wrong and XPASS (a failure) once
-# right, so the fixing PR has to remove the entry.
+# A column known to be wrong on main is listed under "xfail" as
+# {"task": <fix-plan id>, "got": <the wrong verdict main gives today>}. It
+# reports XFAIL only while the verdict is exactly that wrong one: a different
+# wrong verdict (a regression to "verified", "no-json" from a crash) fails,
+# and the right verdict fails as XPASS, so the fixing PR removes the entry.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -78,7 +80,7 @@ for name, exp in sorted(expected.items()):
         if mode == "cli_strict":
             for kid, pub in keys.items():
                 subprocess.run([bin_, "trust", "add", kid, pub, "--kind", "cert_issuer", "--yes"],
-                               env=env, cwd=home, capture_output=True)
+                           env=env, cwd=home, capture_output=True, check=True)
         got, rc = verdict(env, home, args, pkg)
         problems = []
         if got != exp[mode]:
@@ -89,11 +91,15 @@ for name, exp in sorted(expected.items()):
             problems.append(f"tampered vector accepted as {got}")
         label = f"{name} [{mode}]"
         if mode in xf:
-            if problems:
-                xfails += 1; print(f"XFAIL  {label}: {'; '.join(problems)}  ({xf[mode]})")
-            else:
-                broken.append(f"{label}: XPASS -- now correct; remove xfail.{mode} ({xf[mode]}) from expected.json")
+            task, pinned = xf[mode]["task"], xf[mode]["got"]
+            if not problems:
+                broken.append(f"{label}: XPASS -- now correct; remove xfail.{mode} ({task}) from expected.json")
                 print(f"XPASS  {label}")
+            elif got == pinned and (got == "failed") == (rc != 0):
+                xfails += 1; print(f"XFAIL  {label}: {got}, expected {exp[mode]}  ({task})")
+            else:
+                broken.append(f"{label}: {'; '.join(problems)} -- not the known-wrong {pinned} of {task}")
+                print(f"FAIL   {label}: {'; '.join(problems)} (xfail pins {pinned})")
         elif problems:
             broken.append(f"{label}: {'; '.join(problems)}"); print(f"FAIL   {label}: {'; '.join(problems)}")
         else:

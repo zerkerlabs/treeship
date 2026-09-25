@@ -1,5 +1,5 @@
 {
-  "_about": "T2 package vectors. Each entry is a frozen .treeship package under this directory and the verdict each verifier must give it. cli* columns are the `verdict` field of `treeship package verify --format json` (run.sh); receipt_only is the core-wasm verify_receipt outcome, which @treeship/verify's verifyReceipt returns (packages/core/tests/package_vectors.rs). xfail maps a column to the fix-plan task that makes it right; remove the entry in that task's PR. Every new advisory adds a vector.",
+  "_about": "T2 package vectors. Each entry is a frozen .treeship package under this directory and the verdict each verifier must give it. cli* columns are the `verdict` field of `treeship package verify --format json` (run.sh); receipt_only is the core-wasm verify_receipt outcome, which @treeship/verify's verifyReceipt returns (packages/core/tests/package_vectors.rs). xfail maps a column to {task, got}: the fix-plan task that makes it right and the exact wrong verdict main gives today; remove the entry in that task's PR. Every new advisory adds a vector.",
   "vectors": {
     "honest/basic": {
       "cli": "signatures-pass",
@@ -12,9 +12,12 @@
       "cli_strict": "verified",
       "cli_structural": "structural-pass",
       "receipt_only": "structural-pass",
-      "_note": "under --strict on a second ship two rows fail: chain_completeness (approval statements carry no parent, so the approval is never chained) and replay-local-journal (a stranger has no Approval Use Journal, and --strict promotes that). Raised with the coordinator as a new finding; no fix-plan task yet",
+      "_note": "CLI-18: under --strict on a second ship two rows fail: chain_completeness (approval statements carry no parent, so the approval is never chained) and replay-local-journal (a stranger has no Approval Use Journal, and --strict promotes that)",
       "xfail": {
-        "cli_strict": "unassigned: approval unchained + strict needs a local journal"
+        "cli_strict": {
+          "task": "W1-13",
+          "got": "failed"
+        }
       }
     },
     "honest/legacy-0.24": {
@@ -31,7 +34,10 @@
       "cli_structural": "structural-pass",
       "receipt_only": "structural-pass",
       "xfail": {
-        "cli": "W1-4"
+        "cli": {
+          "task": "W1-4",
+          "got": "signatures-pass"
+        }
       }
     },
     "tampered/drop-record-json+rename": {
@@ -41,7 +47,10 @@
       "cli_structural": "structural-pass",
       "receipt_only": "structural-pass",
       "xfail": {
-        "cli": "W1-4"
+        "cli": {
+          "task": "W1-4",
+          "got": "signatures-pass"
+        }
       }
     },
     "tampered/rename-session": {
