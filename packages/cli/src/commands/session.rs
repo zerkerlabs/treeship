@@ -3206,18 +3206,10 @@ fn compute_package_manifest_digest(pkg_dir: &Path) -> std::io::Result<String> {
 /// one of "pass" / "warn" / "fail"; warnings is the list of failed
 /// or warning row names + details.
 fn local_verify_summary(pkg_dir: &Path, config: Option<&str>) -> (String, Vec<serde_json::Value>) {
-    use treeship_core::session::{verify_package, verify_package_with_options};
-    // This ship's own keys are trusted here (see package::trust_with_own_keys);
-    // without a workspace, fall back to the pinned roots alone.
-    let verified = match ctx::open(config)
-        .ok()
-        .and_then(|c| super::package::trust_with_own_keys(&c).ok())
-    {
-        Some(trust) => verify_package_with_options(pkg_dir, &trust, false),
-        None => verify_package(pkg_dir),
-    };
-    let checks = match verified {
-        Ok(c) => c,
+    // The same verifier, trust and verdict as `package verify`
+    // (package::default_verdict): this ship's own keys and the pinned roots.
+    let checks = match super::package::default_verdict(pkg_dir, config) {
+        Ok((c, _)) => c,
         Err(_) => {
             return (
                 "fail".into(),

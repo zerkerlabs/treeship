@@ -104,6 +104,13 @@
       "receipt_only": "structural-pass",
       "pin_keys_from": "honest/basic"
     },
+    "tampered/lone-attacker-close": {
+      "_note": "a2 (embargoed, round-2 review): as E4 with the attacker key unpinned and nothing pinned; round 1 rated it signatures-pass",
+      "cli": "failed",
+      "cli_strict": "failed",
+      "cli_structural": "structural-pass",
+      "receipt_only": "structural-pass"
+    },
     "tampered/narrative-edit": {
       "cli": "failed",
       "cli_strict": "failed",
@@ -111,6 +118,13 @@
       "receipt_only": "structural-pass"
     },
     "tampered/rename-session": {
+      "cli": "failed",
+      "cli_strict": "failed",
+      "cli_structural": "structural-pass",
+      "receipt_only": "structural-pass"
+    },
+    "tampered/second-close-by-pinned-key": {
+      "_note": "E4 (embargoed, round-2 review): a key the reader pins (cli_strict pins every key in keys.json) appends its own chained session.close for this session and signs a record naming it; round 1 rated it verified",
       "cli": "failed",
       "cli_strict": "failed",
       "cli_structural": "structural-pass",

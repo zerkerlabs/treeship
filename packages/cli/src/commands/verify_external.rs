@@ -19,7 +19,7 @@
 use std::path::{Path, PathBuf};
 
 use treeship_core::agent::{verify_certificate, AgentCertificate};
-use treeship_core::session::{read_package, verify_package, SessionReceipt, VerifyStatus};
+use treeship_core::session::{read_package, PackageVerdict, SessionReceipt, VerifyStatus};
 use treeship_core::verify::{
     cross_verify_receipt_and_certificate, verify_receipt_json_checks, CertificateStatus,
     CrossVerifyResult, ShipIdStatus,
@@ -95,7 +95,8 @@ pub fn run(target: &str, certificate: Option<&str>, printer: &Printer) -> Extern
             // verify_package does the full bag of checks (determinism + Merkle
             // + inclusion proofs + timeline order); we then surface them as
             // structured steps.
-            let checks = match verify_package(path) {
+            // The same verifier, trust and verdict as `package verify`.
+            let checks = match super::package::default_verdict(path, None).map(|(c, _)| c) {
                 Ok(c) => c,
                 Err(e) => {
                     printer.failure(
@@ -137,7 +138,8 @@ pub fn run(target: &str, certificate: Option<&str>, printer: &Printer) -> Extern
 
     // Combine. URL mode uses json_checks; package mode uses package_checks
     // (which is a superset). Pick the bigger one.
-    let checks = if package_checks.is_empty() {
+    let is_package = !package_checks.is_empty();
+    let checks = if !is_package {
         json_checks
     } else {
         // A package's verdict needs rows that passed, not only none that
@@ -166,6 +168,10 @@ pub fn run(target: &str, certificate: Option<&str>, printer: &Printer) -> Extern
         }
     };
 
+    // A package's word is package verify's word: this path ran the same
+    // signature, binding and trust checks.
+    let pkg_verdict = is_package.then(|| treeship_core::session::package_verdict(&checks, false));
+
     // JSON output mode short-circuits the rest.
     if printer.format == Format::Json {
         return emit_json(
@@ -175,6 +181,7 @@ pub fn run(target: &str, certificate: Option<&str>, printer: &Printer) -> Extern
             &receipt,
             &checks,
             certificate,
+            pkg_verdict.as_ref(),
         );
     }
 
@@ -198,7 +205,17 @@ pub fn run(target: &str, certificate: Option<&str>, printer: &Printer) -> Extern
         ExternalExit::VerifyFailed
     };
 
-    if receipt_ok && has_content {
+    if let Some(PackageVerdict::Failed(reason)) = &pkg_verdict {
+        printer.blank();
+        printer.failure(
+            "package verification failed",
+            &[
+                ("reason", reason),
+                ("detail", "run `treeship package verify` for every row"),
+            ],
+        );
+        overall = ExternalExit::VerifyFailed;
+    } else if receipt_ok && has_content {
         printer.blank();
         printer.info(&printer.green("Structurally consistent."));
         printer.warn(
@@ -566,8 +583,10 @@ fn emit_json(
     receipt: &SessionReceipt,
     checks: &[treeship_core::session::VerifyCheck],
     certificate: Option<&str>,
+    pkg_verdict: Option<&PackageVerdict>,
 ) -> ExternalExit {
-    let receipt_failed = checks.iter().any(|c| c.status == VerifyStatus::Fail);
+    let receipt_failed = checks.iter().any(|c| c.status == VerifyStatus::Fail)
+        || matches!(pkg_verdict, Some(PackageVerdict::Failed(_)));
     // AUD-01: an internally-consistent receipt with no artifacts proves
     // nothing; treat it as a failure rather than a pass.
     let empty_receipt = receipt.artifacts.is_empty();
@@ -588,6 +607,9 @@ fn emit_json(
     // signature or consults the trust store, so the strongest honest claim
     // is "structural-pass" (internally consistent, issuer unverified). A
     // failed check is "fail"; an empty receipt is "fail" (nothing to prove).
+    // A package that `package verify` fails is `failed` here too. One that
+    // passes keeps this surface's documented word, structural-pass
+    // (docs/cli/verify); `package verify` gives the full verdict.
     let outcome = structural_outcome(receipt_failed, empty_receipt);
     let mut out = serde_json::json!({
         "target": target,

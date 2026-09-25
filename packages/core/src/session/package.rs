@@ -1204,6 +1204,37 @@ fn verify_receipt_binding(
                 .into(),
         );
     };
+    // Exactly one close for this session, chained, and signed by the key
+    // that signed the chain's root session.start (whose place is bound by the
+    // producer's next artifact signing it as parent). Otherwise a key the
+    // reader pinned could append its own close for this session and name it.
+    let session_id_of = |c: &SealedClose| {
+        c.statement
+            .get("meta")
+            .and_then(|m| m.get("session_id"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+    };
+    let session_closes: Vec<&SealedClose> = sealed
+        .closes
+        .iter()
+        .filter(|c| session_id_of(c).as_deref() == Some(receipt.session.id.as_str()))
+        .collect();
+    if session_closes.len() > 1 {
+        return fail(
+            checks,
+            format!(
+                "the package seals {} session.close actions for session {}: {}",
+                session_closes.len(),
+                receipt.session.id,
+                session_closes
+                    .iter()
+                    .map(|c| c.id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        );
+    }
     let Some(close) = sealed.closes.iter().find(|c| c.id == subject) else {
         return fail(
             checks,
@@ -1221,6 +1252,39 @@ fn verify_receipt_binding(
             format!(
                 "the session.close {subject} the record names does not close session {}",
                 receipt.session.id
+            ),
+        );
+    }
+    if !close.chained {
+        return fail(
+            checks,
+            format!("session.close {subject} is sealed unchained; the close must be on the session's chain"),
+        );
+    }
+    let root_id = receipt
+        .artifacts
+        .iter()
+        .find(|a| !a.unchained)
+        .map(|a| a.artifact_id.as_str());
+    let root = root_id
+        .and_then(|r| sealed.starts.iter().find(|s| s.id == r))
+        .filter(|s| session_id_of(s).as_deref() == Some(receipt.session.id.as_str()));
+    let Some(root) = root else {
+        return fail(
+            checks,
+            format!(
+                "the chain's first artifact ({}) is not a verified session.start for session {}",
+                root_id.unwrap_or("none"),
+                receipt.session.id
+            ),
+        );
+    };
+    if root.keyid != close.keyid {
+        return fail(
+            checks,
+            format!(
+                "session.close {subject} is signed by {}, but the session.start that roots the chain ({}) is signed by {}: the close is not the producer's",
+                close.keyid, root.id, root.keyid
             ),
         );
     }
@@ -1614,13 +1678,18 @@ fn push_signer_trust(
 #[derive(Default)]
 struct SealedSet {
     signers: std::collections::BTreeSet<String>,
+    /// Verified `session.close` actions.
     closes: Vec<SealedClose>,
+    /// Verified `session.start` actions.
+    starts: Vec<SealedClose>,
 }
 
-/// A sealed `session.close` action whose signature, id and digest verified.
+/// A sealed `session.start` / `session.close` action whose signature, id and
+/// digest verified.
 struct SealedClose {
     id: String,
     keyid: String,
+    chained: bool,
     statement: serde_json::Value,
 }
 
@@ -1680,6 +1749,7 @@ fn verify_sealed_envelopes(
     let mut parents: Vec<(String, Option<SignedParent>)> = Vec::new();
     let mut signers: BTreeSet<String> = BTreeSet::new();
     let mut closes: Vec<SealedClose> = Vec::new();
+    let mut starts: Vec<SealedClose> = Vec::new();
     for entry in &receipt.artifacts {
         let id = &entry.artifact_id;
         let name = format!("signature:{id}");
@@ -1750,15 +1820,20 @@ fn verify_sealed_envelopes(
                             .payload_bytes()
                             .ok()
                             .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
-                            .filter(|v| {
-                                v.get("action").and_then(|a| a.as_str()) == Some("session.close")
-                            })
                         {
-                            closes.push(SealedClose {
+                            let action =
+                                v.get("action").and_then(|a| a.as_str()).map(str::to_string);
+                            let sealed = SealedClose {
                                 id: id.clone(),
                                 keyid: sig.keyid.clone(),
+                                chained: !entry.unchained,
                                 statement: v,
-                            });
+                            };
+                            match action.as_deref() {
+                                Some("session.close") => closes.push(sealed),
+                                Some("session.start") => starts.push(sealed),
+                                _ => {}
+                            }
                         }
                     }
                     checks.push(VerifyCheck::pass(&name, &format!("Ed25519 signature by {} verifies; id and digest re-derived from the signed bytes", sig.keyid)));
@@ -1837,7 +1912,11 @@ fn verify_sealed_envelopes(
         checks.push(VerifyCheck::warn("chain_completeness", &format!("{} sealed artifact(s) were signed during the session but never chained onto it ({}); signed and sealed, but their order relative to the chain is the signer's claim only", unchained.len(), unchained.join(", "))));
     }
 
-    SealedSet { signers, closes }
+    SealedSet {
+        signers,
+        closes,
+        starts,
+    }
 }
 
 fn finish_package_checks(

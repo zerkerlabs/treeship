@@ -1089,6 +1089,32 @@ pub fn trust_with_own_keys(
     Ok(trust)
 }
 
+/// Verify a package the way `package verify` does by default (no --strict,
+/// no --structural): this ship's own keys and the pinned roots are trusted.
+/// Every other surface that shows a package verdict -- `treeship verify
+/// <package>`, the dashboard, `session report` -- goes through this, so the
+/// four never disagree about a package.
+pub fn default_verdict(
+    path: &Path,
+    config: Option<&str>,
+) -> Result<
+    (
+        Vec<treeship_core::session::VerifyCheck>,
+        treeship_core::session::PackageVerdict,
+    ),
+    Box<dyn std::error::Error>,
+> {
+    let checks = match ctx::open(config)
+        .ok()
+        .and_then(|c| trust_with_own_keys(&c).ok())
+    {
+        Some(trust) => treeship_core::session::verify_package_with_options(path, &trust, false)?,
+        None => verify_package(path)?,
+    };
+    let verdict = treeship_core::session::package_verdict(&checks, false);
+    Ok((checks, verdict))
+}
+
 pub fn verify(
     path: PathBuf,
     config: Option<&str>,

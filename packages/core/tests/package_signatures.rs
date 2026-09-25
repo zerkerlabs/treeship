@@ -36,6 +36,20 @@ fn sign_action(signer: &Ed25519Signer, action: &str, parent: Option<&str>) -> Si
     }
 }
 
+/// The `session.start` action `session start` signs: it names the session,
+/// and roots the chain.
+fn sign_start(signer: &Ed25519Signer) -> Signed {
+    let mut stmt = ActionStatement::new("agent://t", "session.start");
+    stmt.meta = Some(serde_json::json!({"session_start": true, "session_id": "ssn_sigtest"}));
+    let r = sign(&payload_type("action"), &stmt, signer).unwrap();
+    Signed {
+        id: r.artifact_id.clone(),
+        digest: r.digest.clone(),
+        envelope: r.envelope.to_json().unwrap(),
+        signed_at: stmt.timestamp.clone(),
+    }
+}
+
 /// The `session.close` action `session close` signs: chained, naming the
 /// session, and naming the record key when an agent's own key will sign
 /// the record.
@@ -92,7 +106,7 @@ fn build_with(
     record_key: Option<&Ed25519Signer>,
     extra: Option<&Ed25519Signer>,
 ) -> (PathBuf, Vec<Signed>) {
-    let root = sign_action(signer, "session.start", None);
+    let root = sign_start(signer);
     let a = sign_action(signer, "step.a", Some(&root.id));
     let b = sign_action(signer, "step.b", Some(&a.id));
     let loose = sign_action(signer, "step.loose", None);
@@ -698,4 +712,130 @@ fn an_artifact_by_an_unvouched_key_in_a_trusted_package_fails() {
         find(&checks, "signer_trust").unwrap().status,
         VerifyStatus::Warn
     );
+}
+
+/// A package from exactly these artifacts (chained unless flagged), with
+/// keys.json naming `keys`, sealed with a record by `recorder` whose subject
+/// is `close`.
+fn pack(
+    dir: &Path,
+    arts: &[(&Signed, bool)],
+    keys: &[&Ed25519Signer],
+    recorder: &Ed25519Signer,
+    close: &str,
+) -> PathBuf {
+    use sha2::{Digest, Sha256};
+    use treeship_core::statements::{ReceiptStatement, SubjectRef};
+    let entries: Vec<ArtifactEntry> = arts.iter().map(|(s, u)| entry(s, *u)).collect();
+    let events: Vec<SessionEvent> = vec![];
+    let receipt = ReceiptComposer::compose(&manifest(), &events, entries);
+    let bundle = ApprovalsBundle {
+        sealed_envelopes: arts
+            .iter()
+            .map(|(s, _)| (s.id.clone(), s.envelope.clone()))
+            .collect(),
+        signer_keys: keys
+            .iter()
+            .map(|k| {
+                (
+                    k.key_id().to_string(),
+                    format!("ed25519:{}", URL_SAFE_NO_PAD.encode(k.public_key_bytes())),
+                )
+            })
+            .collect(),
+        ..ApprovalsBundle::default()
+    };
+    let pkg = build_package_with_approvals(&receipt, dir, Some(&bundle))
+        .unwrap()
+        .path;
+    let mut stmt = ReceiptStatement::new("system://treeship-session", "session.v1");
+    stmt.subject = Some(SubjectRef {
+        artifact_id: Some(close.to_string()),
+        ..Default::default()
+    });
+    stmt.payload = Some(serde_json::json!({
+        "receipt_digest": format!("sha256:{}", hex::encode(Sha256::digest(std::fs::read(pkg.join("receipt.json")).unwrap()))),
+        "session_id": "ssn_sigtest",
+    }));
+    let r = sign(&payload_type("receipt"), &stmt, recorder).unwrap();
+    std::fs::write(pkg.join("record.json"), r.envelope.to_json().unwrap()).unwrap();
+    pkg
+}
+
+fn binding_status(pkg: &Path, trust: &TrustRootStore) -> (VerifyStatus, String) {
+    let checks = verify_package_with_options(pkg, trust, false).unwrap();
+    let row = find(&checks, "receipt_binding").unwrap();
+    (row.status.clone(), row.detail.clone())
+}
+
+#[test]
+fn a_second_close_appended_by_a_pinned_key_fails() {
+    // E4: M, pinned by the reader, appends its own session.close for this
+    // session (chained after the producer's close) and signs a record
+    // naming it.
+    let tmp = tempfile::tempdir().unwrap();
+    let producer = Ed25519Signer::generate("key_producer").unwrap();
+    let m = Ed25519Signer::generate("key_mallory").unwrap();
+    let start = sign_start(&producer);
+    let a = sign_action(&producer, "step.a", Some(&start.id));
+    let close = sign_close(&producer, &a.id, None);
+    let m_close = sign_close(&m, &close.id, None);
+    let pkg = pack(
+        tmp.path(),
+        &[
+            (&start, false),
+            (&a, false),
+            (&close, false),
+            (&m_close, false),
+        ],
+        &[&producer, &m],
+        &m,
+        &m_close.id,
+    );
+    let (status, detail) = binding_status(&pkg, &pinned_all(&[&producer, &m]));
+    assert_eq!(status, VerifyStatus::Fail, "{detail}");
+    assert!(detail.contains("2 session.close"), "{detail}");
+}
+
+#[test]
+fn a_lone_close_by_a_key_other_than_the_start_signer_fails() {
+    // E4 variant: the producer's close is dropped and M's close takes its
+    // place on the chain. One close, chained -- but not the start's signer.
+    let tmp = tempfile::tempdir().unwrap();
+    let producer = Ed25519Signer::generate("key_producer").unwrap();
+    let m = Ed25519Signer::generate("key_mallory").unwrap();
+    let start = sign_start(&producer);
+    let a = sign_action(&producer, "step.a", Some(&start.id));
+    let m_close = sign_close(&m, &a.id, None);
+    let pkg = pack(
+        tmp.path(),
+        &[(&start, false), (&a, false), (&m_close, false)],
+        &[&producer, &m],
+        &m,
+        &m_close.id,
+    );
+    for trust in [pinned_all(&[&producer, &m]), TrustRootStore::empty()] {
+        let (status, detail) = binding_status(&pkg, &trust);
+        assert_eq!(status, VerifyStatus::Fail, "{detail}");
+        assert!(detail.contains("not the producer's"), "{detail}");
+    }
+}
+
+#[test]
+fn an_unchained_close_fails() {
+    let tmp = tempfile::tempdir().unwrap();
+    let producer = Ed25519Signer::generate("key_producer").unwrap();
+    let start = sign_start(&producer);
+    let a = sign_action(&producer, "step.a", Some(&start.id));
+    let close = sign_close(&producer, &a.id, None);
+    let pkg = pack(
+        tmp.path(),
+        &[(&start, false), (&a, false), (&close, true)],
+        &[&producer],
+        &producer,
+        &close.id,
+    );
+    let (status, detail) = binding_status(&pkg, &pinned_all(&[&producer]));
+    assert_eq!(status, VerifyStatus::Fail, "{detail}");
+    assert!(detail.contains("unchained"), "{detail}");
 }
