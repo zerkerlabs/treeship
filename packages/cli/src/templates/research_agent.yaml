@@ -9,7 +9,6 @@ audience: [developer, researcher]
 session:
   actor: agent://researcher
   auto_start: true
-  auto_push: true
 
 attest:
   commands:
@@ -26,7 +25,6 @@ capture:
   model_metadata: true
 
 hub:
-  auto_push: true
   push_on: [session_close]
 
 onboarding: |
