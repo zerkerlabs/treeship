@@ -34,6 +34,10 @@ pub enum ExternalExit {
     VerifyFailed,
     CrossVerifyFailed,
     IoError,
+    /// The target was refused before any request was made (not a receipt
+    /// URL). A usage error, not a network error: a retry loop keyed on 3
+    /// must not spin on it.
+    Refused,
 }
 
 impl ExternalExit {
@@ -43,6 +47,7 @@ impl ExternalExit {
             Self::VerifyFailed => 1,
             Self::CrossVerifyFailed => 2,
             Self::IoError => 3,
+            Self::Refused => 4,
         }
     }
 }
@@ -79,6 +84,10 @@ pub fn run(target: &str, certificate: Option<&str>, printer: &Printer) -> Extern
     let (receipt, package_checks, source_label, exit_for_load) = match target_kind {
         TargetKind::Url => match fetch_receipt_url(target) {
             Ok(receipt) => (Some(receipt), Vec::new(), format!("URL {target}"), None),
+            Err(LoadError::Refused(msg)) => {
+                printer.failure("not a receipt URL", &[("target", target), ("reason", &msg)]);
+                return ExternalExit::Refused;
+            }
             Err(LoadError::Io(msg)) => {
                 printer.failure(
                     "could not fetch receipt",
@@ -235,6 +244,13 @@ pub fn run(target: &str, certificate: Option<&str>, printer: &Printer) -> Extern
 
         let cert = match load_certificate(cert_target) {
             Ok(c) => c,
+            Err(LoadError::Refused(msg)) => {
+                printer.failure(
+                    "not a certificate URL",
+                    &[("certificate", cert_target), ("reason", &msg)],
+                );
+                return ExternalExit::Refused;
+            }
             Err(LoadError::Io(msg)) => {
                 printer.failure(
                     "could not load certificate",
@@ -405,12 +421,81 @@ fn classify_target(target: &str) -> TargetKind {
 enum LoadError {
     Io(String),
     Parse(String),
+    /// Refused before any request: the target names no receipt.
+    Refused(String),
 }
 
-/// Fetch a receipt JSON from a URL. Maps `/receipt/` to `/v1/receipt/` so the
-/// human-readable mirror works alongside the JSON API path.
+/// The JSON API URL for a receipt URL a person pasted.
+///
+/// `/receipt/<id>` (the human page) becomes `/v1/receipt/<id>`; `/v1/receipt/<id>`
+/// and the site's `/api/receipt/<id>` mirror are already the API and are kept.
+/// The host is never rewritten, a trailing slash is dropped, the query string
+/// is kept and the fragment dropped. Anything else is refused rather than
+/// fetched. Through 0.31.9 this was a blind `replacen("/receipt/", …)`, which
+/// turned the documented `https://api.treeship.dev/v1/receipt/<id>` into
+/// `/v1/v1/receipt/<id>` and a 404. The rule is shared with verify-js through
+/// `tests/vectors/receipt-urls.json`.
+pub fn receipt_api_url(raw: &str) -> Result<String, String> {
+    let refuse = || {
+        format!(
+            "not a receipt URL: {raw} (expected …/receipt/<session id> or …/v1/receipt/<session id>)"
+        )
+    };
+    let Some((scheme, after_scheme)) = raw.split_once("://") else {
+        return Err(refuse());
+    };
+    let scheme = scheme.to_ascii_lowercase();
+    if scheme != "http" && scheme != "https" {
+        return Err(refuse());
+    }
+    let (host, path_and_query) = match after_scheme.find('/') {
+        Some(i) => (&after_scheme[..i], &after_scheme[i..]),
+        None => (after_scheme, ""),
+    };
+    // Userinfo (`treeship.dev@evil.example`) reads as one host and fetches
+    // another; a pasted receipt link never carries it.
+    if host.is_empty() || host.contains('@') {
+        return Err(refuse());
+    }
+    let path_and_query = path_and_query.split('#').next().unwrap_or("");
+    let (path, query) = match path_and_query.split_once('?') {
+        Some((p, q)) => (p, Some(q)),
+        None => (path_and_query, None),
+    };
+    let path = path.trim_end_matches('/');
+
+    // The id is whatever follows the receipt segment: exactly one path
+    // segment of id characters, so `..`, `%2F` and friends never reach the
+    // request.
+    let id_after = |marker: &str| -> Option<(usize, &str)> {
+        let i = path.find(marker)?;
+        let id = &path[i + marker.len()..];
+        (!id.is_empty()
+            && id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-'))
+        .then_some((i, id))
+    };
+
+    let api_path = if id_after("/v1/receipt/").is_some() || id_after("/api/receipt/").is_some() {
+        path.to_string()
+    } else if let Some((i, id)) = id_after("/receipt/") {
+        format!("{}/v1/receipt/{id}", &path[..i])
+    } else {
+        return Err(refuse());
+    };
+
+    let mut out = format!("{scheme}://{host}{api_path}");
+    if let Some(q) = query {
+        out.push('?');
+        out.push_str(q);
+    }
+    Ok(out)
+}
+
+/// Fetch a receipt JSON from a URL (see `receipt_api_url` for the mapping).
 fn fetch_receipt_url(url: &str) -> Result<SessionReceipt, LoadError> {
-    let api_url = url.replacen("/receipt/", "/v1/receipt/", 1);
+    let api_url = receipt_api_url(url).map_err(LoadError::Refused)?;
     let resp = ureq::get(&api_url)
         .set("Accept", "application/json")
         .timeout(std::time::Duration::from_secs(15))
@@ -747,6 +832,31 @@ fn now_rfc3339_utc() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The shared vectors verify-js runs too (tests/vectors/receipt-urls.json).
+    #[test]
+    fn receipt_url_vectors_shared_with_verify_js() {
+        let raw = include_str!("../../../../tests/vectors/receipt-urls.json");
+        let doc: serde_json::Value = serde_json::from_str(raw).unwrap();
+        let cases = doc["cases"].as_array().unwrap();
+        assert!(cases.len() >= 15);
+        let mut wrong = Vec::new();
+        for case in cases {
+            let name = case["name"].as_str().unwrap();
+            let input = case["input"].as_str().unwrap();
+            let got = receipt_api_url(input);
+            match (case["expect"].as_str(), got) {
+                (Some(want), Ok(ref got)) if got == want => {}
+                (None, Err(_)) => {}
+                (want, got) => wrong.push(format!("{name}: {input} -> {got:?}, expected {want:?}")),
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "receipt URL rule drifted:\n{}",
+            wrong.join("\n")
+        );
+    }
 
     #[test]
     fn classify_url() {
