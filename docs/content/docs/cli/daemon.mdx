@@ -44,6 +44,10 @@ Check whether the daemon is running.
 treeship daemon status
 ```
 
+## Checkpoint cadence
+
+Opt-in. With `checkpoint.every` set in `.treeship/config.yaml` (for example `6h`), the daemon seals a checkpoint and publishes it to the attached hub whenever the newest local checkpoint is older than the interval, and logs each publish. Without the setting nothing is sealed or published on a schedule; without a running daemon the setting does nothing, and `treeship doctor` says so. See [`treeship checkpoint`](/cli/merkle#on-a-schedule).
+
 ## File write attestation
 
 The default mode. When a file whose path matches a rule with `on: write` or `on: change` has its mtime advance, the daemon creates a signed attestation automatically.

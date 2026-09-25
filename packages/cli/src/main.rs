@@ -610,8 +610,14 @@ enum Command {
     ///
     /// Examples:
     ///   treeship checkpoint
+    ///   treeship checkpoint --publish
     #[command(hide = true)]
-    Checkpoint,
+    Checkpoint {
+        /// Publish the sealed checkpoint to the attached hub in the same
+        /// command; a failed push exits nonzero
+        #[arg(long, default_value_t = false)]
+        publish: bool,
+    },
 
     /// Merkle tree operations
     ///
@@ -4152,7 +4158,9 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             }
         },
 
-        Command::Checkpoint => commands::merkle::checkpoint(cli.config.as_deref(), printer),
+        Command::Checkpoint { publish } => {
+            commands::merkle::checkpoint_with(cli.config.as_deref(), *publish, printer)
+        }
 
         Command::Merkle(sub) => match sub {
             MerkleCommand::Proof(a) => {

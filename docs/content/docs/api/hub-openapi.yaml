@@ -357,7 +357,12 @@ paths:
   /v1/merkle/checkpoint/latest:
     get:
       summary: Fetch the latest Merkle checkpoint
-      description: Returns the most recent checkpoint. Optionally filter by hub_id query parameter.
+      description: >-
+        Returns the most recent checkpoint, plus `age_seconds`, computed at
+        read time from its `signed_at`, so a monitor has one number to alert
+        on. The checkpoint is signed by the ship that published it; the hub
+        stores and verifies it and signs nothing (it is not a witness).
+        Optionally filter by hub_id query parameter.
       operationId: getLatestCheckpoint
       security: []
       parameters:
@@ -383,6 +388,7 @@ paths:
                   signature_b64:  { type: string }
                   public_key_b64: { type: string }
                   rekor_index: { type: integer, nullable: true }
+                  age_seconds: { type: integer, nullable: true, description: "Seconds since signed_at, computed at read time; null when signed_at does not parse" }
         '404':
           description: No checkpoints found
 
@@ -948,3 +954,61 @@ paths:
                 type: object
                 properties:
                   status: { type: string, enum: [draining, database unavailable] }
+
+  /health:
+    get:
+      summary: Liveness probe (alias of /healthz)
+      operationId: health
+      security: []
+      responses:
+        '200':
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ok] }
+
+  /v1/version:
+    get:
+      summary: Which build is this hub
+      description: >-
+        Version, commit and build time from the build, plus the Go runtime.
+        Unset values read "dev" or "unknown" rather than a guess. Never
+        cached. `/version` is an alias.
+      operationId: version
+      security: []
+      responses:
+        '200':
+          description: Build info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  service:  { type: string, enum: [treeship-hub] }
+                  version:  { type: string }
+                  commit:   { type: string }
+                  built_at: { type: string }
+                  go:       { type: string }
+                  dirty:    { type: boolean }
+
+  /version:
+    get:
+      summary: Which build is this hub (alias of /v1/version)
+      operationId: versionAlias
+      security: []
+      responses:
+        '200':
+          description: Build info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  service:  { type: string }
+                  version:  { type: string }
+                  commit:   { type: string }
+                  built_at: { type: string }
+                  go:       { type: string }

@@ -6,6 +6,7 @@ pub mod approve;
 pub mod attest;
 pub mod audit;
 pub mod bundle;
+pub mod cadence;
 pub mod capability;
 pub mod cards;
 pub mod daemon;

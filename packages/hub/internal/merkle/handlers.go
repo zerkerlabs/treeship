@@ -229,7 +229,33 @@ func (h *Handlers) GetLatestCheckpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, cp)
+	// age_seconds is computed at read time, so a monitor has one number to
+	// alert on ("latest checkpoint older than N days") without parsing
+	// signed_at itself. The checkpoint is the publishing ship's signed
+	// assertion; the hub stores it and signs nothing.
+	writeJSON(w, http.StatusOK, latestCheckpointResponse{
+		MerkleCheckpoint: cp,
+		AgeSeconds:       ageSeconds(cp.SignedAt, time.Now()),
+	})
+}
+
+type latestCheckpointResponse struct {
+	*db.MerkleCheckpoint
+	AgeSeconds *int64 `json:"age_seconds"`
+}
+
+// ageSeconds is now minus the checkpoint's own RFC 3339 signed_at, floored
+// at zero; nil when signed_at does not parse.
+func ageSeconds(signedAt string, now time.Time) *int64 {
+	t, err := time.Parse(time.RFC3339, signedAt)
+	if err != nil {
+		return nil
+	}
+	age := int64(now.Sub(t).Seconds())
+	if age < 0 {
+		age = 0
+	}
+	return &age
 }
 
 // --- POST /v1/merkle/consistency [DPoP authenticated] ---
