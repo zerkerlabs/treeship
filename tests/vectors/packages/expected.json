@@ -118,8 +118,22 @@
       "cli_structural": "failed",
       "receipt_only": "structural-pass"
     },
+    "tampered/room-double-redemption": {
+      "_note": "#483 review: one single-use invitation, two participants, both countersigned by the host through the CLI (the second joiner's pending envelope copied into the host store). The second participant row fails: redeemed 2 times, max_uses 1",
+      "cli": "failed",
+      "cli_strict": "failed",
+      "cli_structural": "failed",
+      "receipt_only": "structural-pass"
+    },
     "tampered/room-invitation-dropped": {
       "_note": "honest/room-countersigned with the invitation envelope removed: the participant fails, it never falls back to the generic signature check",
+      "cli": "failed",
+      "cli_strict": "failed",
+      "cli_structural": "failed",
+      "receipt_only": "structural-pass"
+    },
+    "tampered/room-participant-sealed-twice": {
+      "_note": "#483 review: honest/room-countersigned with its participant listed twice and the tree recomputed; the duplicate row fails (and receipt_binding, since the record no longer binds the receipt)",
       "cli": "failed",
       "cli_strict": "failed",
       "cli_structural": "failed",

@@ -234,4 +234,62 @@ if want tampered/room-invitation-dropped; then
   done
 fi
 
+# CLI-3 (#483 review): one single-use invitation, two participants, both
+# countersigned by the host. The second joiner's pending envelope reaches
+# the host's store, and countersign accepts it because the invitation was
+# already consumed once (the producer-side gap W1-3b closes).
+if want tampered/room-double-redemption; then
+  S="$WORK/room2"; S2="$WORK/room2-joiner"
+  ship "$S" "$BIN" init --name vectors >/dev/null
+  ship "$S2" "$BIN" init --name joiner2 >/dev/null
+  ship "$S" "$BIN" session start --name room --actor agent://host >/dev/null
+  ship "$S" "$BIN" session invite --open --expires 10m >"$S/inv.txt" 2>/dev/null
+  HP=$(ship "$S" "$BIN" session join --invite-file "$S/inv.txt" --actor agent://j 2>&1 \
+    | sed -n 's/.*trust add <key_id> \(ed25519:[^ ]*\).*/\1/p' | head -1 || true)
+  [ -n "$HP" ]
+  ship "$S" "$BIN" trust add room_host "$HP" --kind session_host --yes >/dev/null
+  ship "$S2" "$BIN" trust add room_host "$HP" --kind session_host --yes >/dev/null
+  P1=$(ship "$S" "$BIN" --format json session join --invite-file "$S/inv.txt" --actor agent://j | id_of participant_id)
+  P2=$(ship "$S2" "$BIN" --format json session join --invite-file "$S/inv.txt" --actor agent://k | id_of participant_id)
+  cp "$S2/.treeship/artifacts/$P2.json" "$S/.treeship/artifacts/"
+  ship "$S" "$BIN" session countersign "$P1" >/dev/null
+  ship "$S" "$BIN" session countersign "$P2" >/dev/null
+  ship "$S" "$BIN" session close --headline room --summary vector --receipt-dir "$S/r" >/dev/null
+  freeze "$(ls -d "$S"/r/*.treeship)" tampered/room-double-redemption
+fi
+
+# The sealed participant is listed twice, with the tree recomputed (the
+# close record no longer binds it, so this also fails receipt_binding; the
+# unit test isolates the duplicate-id row).
+if want tampered/room-participant-sealed-twice; then
+  T=$(tamper room-participant-sealed-twice honest/room-countersigned)
+  python3 - "$T" <<'PY'
+import hashlib, json, sys
+d = sys.argv[1]; r = json.load(open(f"{d}/receipt.json"))
+dup = next(a for a in r["artifacts"] if "session-participant" in a["payload_type"])
+r["artifacts"].append(dict(dup))
+leaf = lambda i: hashlib.sha256(b"\x00" + i.encode()).digest()
+node = lambda a, b: hashlib.sha256(b"\x01" + a + b).digest()
+leaves = [leaf(a["artifact_id"]) for a in r["artifacts"]]
+def proof(i):
+    lvl, path = leaves[:], []
+    while len(lvl) > 1:
+        if i % 2 == 0 and i + 1 < len(lvl): path.append({"direction": "Right", "hash": lvl[i + 1].hex()})
+        elif i % 2 == 1: path.append({"direction": "Left", "hash": lvl[i - 1].hex()})
+        lvl = [node(lvl[j], lvl[j + 1]) if j + 1 < len(lvl) else lvl[j] for j in range(0, len(lvl), 2)]
+        i //= 2
+    return path, lvl[0]
+_, root = proof(0)
+r["merkle"]["root"] = "mroot_" + root.hex(); r["merkle"]["leaf_count"] = len(leaves)
+tmpl = r["merkle"]["inclusion_proofs"][0]; out = []
+for i, a in enumerate(r["artifacts"]):
+    p = json.loads(json.dumps(tmpl)); p["artifact_id"] = a["artifact_id"]
+    path, _ = proof(i); p["proof"]["path"] = path; p["proof"]["leaf_index"] = i
+    p["leaf_index"] = i; p["proof"]["leaf_hash"] = leaves[i].hex()
+    out.append(p)
+r["merkle"]["inclusion_proofs"] = out
+open(f"{d}/receipt.json", "w").write(json.dumps(r, indent=2))
+PY
+fi
+
 echo "vectors written to $OUT"

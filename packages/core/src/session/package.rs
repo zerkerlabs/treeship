@@ -1305,7 +1305,8 @@ fn verify_sealed_participant(
     entry: &ArtifactEntry,
     envelope: &crate::attestation::Envelope,
     keys: &std::collections::BTreeMap<String, ed25519_dalek::VerifyingKey>,
-) -> Result<(String, String), String> {
+) -> Result<SealedParticipant, String> {
+    use crate::statements::invitation::InvitationStatement;
     use crate::statements::session_participant::{
         verify_participant_artifact, SessionParticipantStatement,
     };
@@ -1351,12 +1352,27 @@ fn verify_sealed_participant(
             ));
         }
     }
-    Ok((
-        inv_keyid.clone(),
-        format!(
+    let max_uses = invitation
+        .unmarshal_statement::<InvitationStatement>()
+        .map_err(|e| format!("invitation {inv_id} payload invalid: {e}"))?
+        .max_uses;
+    Ok(SealedParticipant {
+        detail: format!(
             "joining agent and host countersign verify over the participant's canonical bytes; the host key {inv_keyid} issued sealed invitation {inv_id}; id re-derived from the pending envelope"
         ),
-    ))
+        host_keyid: inv_keyid,
+        invitation_ref: inv_id.clone(),
+        max_uses,
+    })
+}
+
+/// A sealed participant that verified: who countersigned it, which
+/// invitation it redeems, and how many redemptions that invitation allows.
+struct SealedParticipant {
+    host_keyid: String,
+    invitation_ref: String,
+    max_uses: u32,
+    detail: String,
 }
 
 fn verify_sealed_envelopes(
@@ -1414,9 +1430,21 @@ fn verify_sealed_envelopes(
     let mut parents: Vec<(String, Option<SignedParent>)> = Vec::new();
     let mut signers: BTreeSet<String> = BTreeSet::new();
     let mut ok_count = 0usize;
+    // Each sealed id once: the same artifact sealed twice would otherwise
+    // pass twice (and, for a participant, count as two joins).
+    let mut seen_ids: BTreeSet<&str> = BTreeSet::new();
+    // Passing participant rows per invitation: (max_uses, row indices).
+    let mut redemptions: BTreeMap<String, (u32, Vec<usize>)> = BTreeMap::new();
     for entry in &receipt.artifacts {
         let id = &entry.artifact_id;
         let name = format!("signature:{id}");
+        if !seen_ids.insert(id.as_str()) {
+            checks.push(VerifyCheck::fail(
+                &name,
+                "sealed more than once in this package",
+            ));
+            continue;
+        }
         let path = art_dir.join(format!("{}.json", sanitize_filename(id)));
         let raw = match std::fs::read(&path) {
             Ok(b) => b,
@@ -1447,10 +1475,14 @@ fn verify_sealed_envelopes(
         // to the generic check below.
         if envelope.payload_type == crate::statements::payload_type("session-participant") {
             match verify_sealed_participant(&art_dir, receipt, entry, &envelope, &keys) {
-                Ok((host_keyid, detail)) => {
+                Ok(p) => {
                     ok_count += 1;
-                    signers.insert(host_keyid);
-                    checks.push(VerifyCheck::pass(&name, &detail));
+                    signers.insert(p.host_keyid);
+                    let slot = redemptions
+                        .entry(p.invitation_ref)
+                        .or_insert((p.max_uses, Vec::new()));
+                    slot.1.push(checks.len());
+                    checks.push(VerifyCheck::pass(&name, &p.detail));
                 }
                 Err(detail) => checks.push(VerifyCheck::fail(&name, &detail)),
             }
@@ -1511,6 +1543,22 @@ fn verify_sealed_envelopes(
             .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
             .map(|v| signed_parent(&v));
         parents.push((id.clone(), parent));
+    }
+
+    // An invitation is redeemed at most `max_uses` times (1 for every
+    // invitation minted today). The producer's countersign gate is one
+    // defense; this is the verifier's: extra redemptions fail, in order.
+    for (inv, (max_uses, rows)) in &redemptions {
+        if rows.len() > *max_uses as usize {
+            for &i in rows.iter().skip(*max_uses as usize) {
+                let detail = format!(
+                    "invitation {inv} redeemed {} times in this package, max_uses {max_uses}",
+                    rows.len()
+                );
+                ok_count -= 1;
+                checks[i] = VerifyCheck::fail(&checks[i].name.clone(), &detail);
+            }
+        }
     }
 
     // Chain linkage: each chained entry's signed parentId is the previous
