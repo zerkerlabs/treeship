@@ -195,6 +195,8 @@ struct Case {
 
 /// A closed port: nothing listens on TCP 1 (tcpmux) on a developer machine
 /// or a CI runner, so a connection is refused at once.
+// Only the otel cases use it; a --no-default-features build has none.
+#[cfg(feature = "otel")]
 const DEAD_COLLECTOR: &str = "http://127.0.0.1:1";
 
 const CASES: &[Case] = &[
