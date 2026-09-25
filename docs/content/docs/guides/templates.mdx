@@ -91,7 +91,7 @@ session:
   actor: agent://my-agent
   auto_start: true
   auto_checkpoint: false
-  auto_push: false
+  auto_push: false # not implemented; parsed but has no effect
 
 attest:
   commands:
@@ -123,7 +123,7 @@ approvals:
     - label: deploy
 
 hub:
-  auto_push: true
+  auto_push: false # not implemented; parsed but has no effect — push explicitly with `hub push` or `session report`
   push_on: [session_close]
   endpoint: https://api.treeship.dev
 
@@ -198,7 +198,7 @@ The full template YAML schema accepted by the CLI:
 | `actor` | string | `agent://default` | Default actor URI for all artifacts |
 | `auto_start` | bool | false | Start session when matching activity begins |
 | `auto_checkpoint` | bool | false | Automatically create Merkle checkpoints |
-| `auto_push` | bool | false | Push to Hub after session closes |
+| `auto_push` | bool | false | **Not implemented.** Parsed but has no effect; push explicitly with `hub push` or `session report` |
 
 ### attest.commands[]
 
@@ -239,7 +239,7 @@ The full template YAML schema accepted by the CLI:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `auto_push` | bool | false | Push artifacts to Hub automatically |
+| `auto_push` | bool | false | **Not implemented.** Parsed but has no effect; push explicitly with `hub push` or `session report` |
 | `push_on` | string[] | [] | When to push: `session_close`, `approval_required`, `git_push` |
 | `endpoint` | string | none | Custom Hub endpoint URL |
 

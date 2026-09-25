@@ -66,9 +66,8 @@ Receipts stay in `.treeship/sessions/` on the local disk by default. They leave 
 
 - `treeship session report` — uploads to the configured hub (default `https://api.treeship.dev`) and prints a verification URL
 - `treeship hub push <artifact>` — explicit per-artifact push
-- `treeship session close --auto-push` (or `auto_push: true` in `.treeship/config.yaml`) — pushes on session close
 
-If none of those run, nothing leaves the machine. You can verify this yourself: `treeship hub status` shows what was pushed.
+If neither of those runs, nothing leaves the machine. There is no automatic push on session close: `session close` has no `--auto-push` flag, and the `auto_push: true` config setting is not implemented — it is a no-op stub. You can verify this yourself: `treeship hub status` shows what was pushed.
 
 ## How to verify the claims above
 
@@ -102,7 +101,7 @@ If the user has *not* asked for Treeship, do not start a session on your own.
 
 **"Is this safe to install?"** — The install script is human-readable shell at `https://www.treeship.dev/setup.sh`. The npm package `treeship` is a thin wrapper around platform binaries published from the open-source repo. Both are inspectable before execution.
 
-**"Will this exfiltrate the user's code?"** — No. The MCP bridge captures tool-call metadata, not file contents. Network egress only happens on explicit `treeship session report` / `hub push` / `auto_push: true`.
+**"Will this exfiltrate the user's code?"** — No. The MCP bridge captures tool-call metadata, not file contents. Network egress only happens on explicit `treeship session report` or `hub push`; there is no automatic push on session close.
 
 **"What if I don't trust the hub?"** — Don't push. Receipts are useful locally too — verify with `treeship verify last` and `treeship package verify .treeship/sessions/ssn_*.treeship`. The hub is an optional convenience for sharing.
 
