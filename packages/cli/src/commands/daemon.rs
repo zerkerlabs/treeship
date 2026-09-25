@@ -32,11 +32,17 @@ struct FileTimes {
 /// Acquire an exclusive lock on the PID file. Returns the open file handle
 /// which must be held for the lifetime of the daemon process. The lock is
 /// automatically released when the process exits or crashes.
+///
+/// The file is opened without truncation and locked before anything is
+/// written: two `daemon start`s racing used to both truncate the file,
+/// so the loser wiped the winner's pid and left a live daemon nobody
+/// could stop. The pid is written through the locked handle.
 fn acquire_pid_lock(pid_path: &Path) -> Result<std::fs::File, Box<dyn std::error::Error>> {
     let file = std::fs::OpenOptions::new()
+        .read(true)
         .write(true)
         .create(true)
-        .truncate(true)
+        .truncate(false)
         .open(pid_path)?;
 
     #[cfg(unix)]
@@ -53,6 +59,35 @@ fn acquire_pid_lock(pid_path: &Path) -> Result<std::fs::File, Box<dyn std::error
     set_restrictive_permissions(pid_path);
 
     Ok(file)
+}
+
+/// Write "<pid> <start epoch>" through the locked handle.
+fn write_pid(file: &mut std::fs::File, pid: u32, start_epoch: u64) -> std::io::Result<()> {
+    file.set_len(0)?;
+    file.write_all(format!("{pid} {start_epoch}").as_bytes())?;
+    file.sync_all()
+}
+
+/// Is a daemon holding the pid-file lock right now? Decided by trying the
+/// lock, not by `kill -0` on a pid that may have been reused since.
+#[cfg(unix)]
+fn pid_file_locked(pid_path: &Path) -> bool {
+    use std::os::unix::io::AsRawFd;
+    let Ok(file) = std::fs::OpenOptions::new().read(true).open(pid_path) else {
+        return false;
+    };
+    // A shared lock is refused while the daemon holds its exclusive one.
+    let ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) };
+    ret != 0
+}
+
+#[cfg(not(unix))]
+fn pid_file_locked(pid_path: &Path) -> bool {
+    std::fs::read_to_string(pid_path)
+        .ok()
+        .and_then(|t| parse_pid_line(&t))
+        .map(process_alive)
+        .unwrap_or(false)
 }
 
 /// Set file permissions to 0600 (owner read/write only) on Unix.
@@ -118,10 +153,11 @@ fn parse_pid_line(txt: &str) -> Option<u32> {
 }
 
 /// What the pid file says, for `status` and `stop`: nothing, a live
-/// daemon, a dead one (stale file), or a file that does not parse.
+/// daemon (the lock is held; the pid is what the file says, if it parses),
+/// a dead one (stale file), or a file that does not parse.
 enum PidFile {
     Absent,
-    Live(u32),
+    Live(Option<u32>),
     Stale(u32),
     Unreadable,
 }
@@ -131,20 +167,15 @@ fn pid_file_state(ts: &Path) -> PidFile {
     if !p.exists() {
         return PidFile::Absent;
     }
-    match std::fs::read_to_string(&p)
+    let pid = std::fs::read_to_string(&p)
         .ok()
-        .and_then(|t| parse_pid_line(&t))
-    {
-        Some(pid) if process_alive(pid) => PidFile::Live(pid),
+        .and_then(|t| parse_pid_line(&t));
+    if pid_file_locked(&p) {
+        return PidFile::Live(pid);
+    }
+    match pid {
         Some(pid) => PidFile::Stale(pid),
         None => PidFile::Unreadable,
-    }
-}
-
-fn is_running(ts: &Path) -> bool {
-    match read_pid(ts) {
-        None => false,
-        Some(pid) => process_alive(pid),
     }
 }
 
@@ -583,9 +614,12 @@ pub fn start(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ts = ts_dir().ok_or("no .treeship directory found -- run treeship init first")?;
 
-    if is_running(&ts) {
-        let pid = read_pid(&ts).unwrap_or(0);
-        return Err(format!("daemon already running (pid {})", pid).into());
+    if let PidFile::Live(pid) = pid_file_state(&ts) {
+        return Err(match pid {
+            Some(pid) => format!("daemon already running (pid {pid})"),
+            None => "daemon already running (pid file locked)".to_string(),
+        }
+        .into());
     }
 
     let config_yaml = config_yaml_path(&ts);
@@ -626,13 +660,12 @@ pub fn start(
     // Open context (loads keys + storage)
     let ctx = ctx::open(config)?;
 
-    // Acquire exclusive lock on PID file before writing
+    // Lock first, then write through the locked handle; the handle lives
+    // as long as the daemon.
     let pid = std::process::id();
     let start_epoch = epoch_secs();
-    let _pid_lock = acquire_pid_lock(&pid_path(&ts))?;
-
-    // Write PID + start epoch to the locked file
-    std::fs::write(pid_path(&ts), format!("{} {}", pid, start_epoch))?;
+    let mut pid_lock = acquire_pid_lock(&pid_path(&ts))?;
+    write_pid(&mut pid_lock, pid, start_epoch)?;
 
     daemon_log(&ts, &format!("daemon started (pid {})", pid));
 
@@ -779,20 +812,35 @@ fn spawn_background(
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        // Its own process group: closing this terminal does not take it
-        // down, and `stop` still reaches it through the pid file.
-        cmd.process_group(0);
+        // A new session: no controlling terminal, so closing this one does
+        // not take the daemon down. `stop` reaches it through the pid file.
+        unsafe {
+            cmd.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
     }
     let mut child = cmd.spawn()?;
 
-    // The child writes the pid file after its own checks; wait for it, and
-    // notice if the child exits first (config error, lock held).
+    // The child locks and writes the pid file after its own checks; wait
+    // for that, and notice if the child exits first (config error, lock
+    // held by another daemon).
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     loop {
-        if let Some(pid) = read_pid(ts).filter(|p| process_alive(*p)) {
-            return Ok(pid);
+        // The pid file must name OUR child: two starts racing both see a
+        // live daemon, and only the one whose child holds the lock won.
+        if let PidFile::Live(Some(pid)) = pid_file_state(ts) {
+            if pid == child.id() {
+                return Ok(pid);
+            }
         }
         if let Some(status) = child.try_wait()? {
+            if let PidFile::Live(Some(pid)) = pid_file_state(ts) {
+                return Err(format!("daemon already running (pid {pid})").into());
+            }
             return Err(format!(
                 "daemon exited before writing its pid file ({status}); see {}",
                 log_path(ts).display()
@@ -838,18 +886,22 @@ pub fn stop(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     // Remove PID file -- the daemon loop will notice and exit
     let _ = std::fs::remove_file(pid_path(&ts));
 
-    daemon_log(&ts, &format!("stop requested for pid {}", pid));
+    let pid_label = pid
+        .map(|p| p.to_string())
+        .unwrap_or_else(|| "unknown".into());
+    daemon_log(&ts, &format!("stop requested for pid {pid_label}"));
 
-    // On unix, also send SIGTERM as a courtesy
+    // On unix, also send SIGTERM as a courtesy. Only to the pid the locked
+    // file named: the lock proves that pid is the daemon, not a reused one.
     #[cfg(unix)]
-    {
+    if let Some(pid) = pid {
         unsafe {
             libc::kill(pid as libc::pid_t, libc::SIGTERM);
         }
     }
 
     printer.blank();
-    printer.success("daemon stopped", &[("pid", &pid.to_string())]);
+    printer.success("daemon stopped", &[("pid", &pid_label)]);
     printer.blank();
 
     Ok(())
@@ -921,6 +973,9 @@ pub fn status(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     printer.section("daemon");
 
     if let PidFile::Live(pid) = state {
+        let pid = pid
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| "unknown".into());
         let uptime_str = match read_start_time(&ts) {
             Some(start) => {
                 let now = epoch_secs();

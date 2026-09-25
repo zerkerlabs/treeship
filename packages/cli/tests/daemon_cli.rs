@@ -141,3 +141,65 @@ fn a_stale_pid_file_is_reported_and_removed_but_an_unreadable_one_is_kept() {
         "status deleted a pid file it could not read"
     );
 }
+
+/// Two starts at once: exactly one daemon, and it can be stopped. Before
+/// the lock-then-write fix, the loser truncated the winner's pid file, so
+/// `status` said stopped and `stop` could not reach a live daemon.
+#[cfg(unix)]
+#[test]
+fn two_concurrent_starts_leave_one_stoppable_daemon() {
+    let ship = Ship::init();
+    let pid_file = ship.work.path().join(".treeship/daemon.pid");
+
+    let outs: Vec<Output> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..2)
+            .map(|_| scope.spawn(|| ship.run(&["daemon", "start"])))
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+    let ok = outs.iter().filter(|o| o.status.success()).count();
+    assert_eq!(
+        ok,
+        1,
+        "exactly one start must win; got {ok}:\n{}",
+        outs.iter()
+            .map(|o| format!(
+                "exit {:?}: {}{}",
+                o.status.code(),
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr)
+            ))
+            .collect::<Vec<_>>()
+            .join("\n---\n")
+    );
+
+    let s = ship.status();
+    assert_eq!(s["running"], true, "{s}");
+    let pid = s["pid"]
+        .as_u64()
+        .expect("the winner's pid, not a wiped file");
+    assert!(alive(pid), "daemon {pid} is not alive");
+    let raw = std::fs::read_to_string(&pid_file).unwrap();
+    assert_eq!(
+        raw.split_whitespace()
+            .next()
+            .unwrap()
+            .parse::<u64>()
+            .unwrap(),
+        pid,
+        "pid file was wiped or rewritten by the loser: {raw:?}"
+    );
+
+    let out = ship.run(&["daemon", "stop"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while alive(pid) && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(!alive(pid), "daemon {pid} still alive after stop");
+    assert_eq!(ship.status()["running"], false);
+}
