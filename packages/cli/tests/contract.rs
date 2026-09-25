@@ -314,6 +314,101 @@ const CASES: &[Case] = &[
         env: &[],
         expect: EXIT_ERROR,
     },
+    // --- input validation (CLI-14 / W4-1): refused as usage errors ---------
+    Case {
+        name: "--format xml",
+        args: &["status", "--format", "xml"],
+        env: &[],
+        expect: EXIT_USAGE_COMMAND,
+    },
+    Case {
+        name: "attest decision --confidence 7.5",
+        args: &[
+            "attest",
+            "decision",
+            "--actor",
+            "agent://a",
+            "--confidence",
+            "7.5",
+        ],
+        env: &[],
+        expect: EXIT_USAGE_COMMAND,
+    },
+    Case {
+        name: "attest endorsement --kind bogus",
+        args: &[
+            "attest",
+            "endorsement",
+            "--endorser",
+            "human://a",
+            "--subject",
+            "art_0000000000000000",
+            "--kind",
+            "bogus",
+        ],
+        env: &[],
+        expect: EXIT_USAGE_COMMAND,
+    },
+    Case {
+        name: "attest action --input-digest abc",
+        args: &[
+            "attest",
+            "action",
+            "--actor",
+            "agent://a",
+            "--action",
+            "x",
+            "--input-digest",
+            "abc",
+        ],
+        env: &[],
+        expect: EXIT_USAGE_COMMAND,
+    },
+    Case {
+        name: "attest action --actor \"\"",
+        args: &["attest", "action", "--actor", "", "--action", "x"],
+        env: &[],
+        expect: EXIT_USAGE_COMMAND,
+    },
+    Case {
+        name: "declare --valid-until notatime",
+        args: &[
+            "declare",
+            "--tools",
+            "read_file",
+            "--valid-until",
+            "notatime",
+        ],
+        env: &[],
+        expect: EXIT_USAGE_COMMAND,
+    },
+    Case {
+        name: "history --class bogus",
+        args: &["history", "bot", "--class", "bogus"],
+        env: &[],
+        expect: EXIT_USAGE_COMMAND,
+    },
+    Case {
+        name: "history --since yesterday",
+        args: &["history", "bot", "--since", "yesterday"],
+        env: &[],
+        expect: EXIT_USAGE_COMMAND,
+    },
+    Case {
+        name: "attest handoff of an artifact that does not exist",
+        args: &[
+            "attest",
+            "handoff",
+            "--from",
+            "agent://a",
+            "--to",
+            "agent://b",
+            "--artifacts",
+            "art_0000000000000000",
+        ],
+        env: &[],
+        expect: EXIT_USAGE_COMMAND,
+    },
     // --- codes that must not drift -----------------------------------------
     Case {
         name: "verify an artifact that does not exist",
@@ -442,6 +537,23 @@ fn every_failure_exits_with_its_documented_code() {
             &[("TREESHIP_OTEL_ENDPOINT", DEAD_COLLECTOR)],
             EXIT_ERROR,
         );
+    }
+    // session event --meta needs an open session; attest refuses the same
+    // input, and so must this.
+    {
+        let out = ship.run(&["session", "start", "--name", "contract"]);
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        check(
+            "session event --meta '{bad'",
+            &["session", "event", "--type", "note", "--meta", "{bad"],
+            &[],
+            EXIT_USAGE_COMMAND,
+        );
+        let _ = ship.run(&["session", "abandon"]);
     }
     assert!(
         wrong.is_empty(),
