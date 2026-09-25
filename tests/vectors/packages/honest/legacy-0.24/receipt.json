@@ -1,0 +1,176 @@
+{
+  "type": "treeship/session-receipt/v1",
+  "schema_version": "1",
+  "session": {
+    "id": "ssn_f270674043d48bdc",
+    "name": "legacy",
+    "mode": "auto_workspace",
+    "started_at": "2026-09-25T19:41:14Z",
+    "ended_at": "2026-09-25T19:41:14Z",
+    "status": "completed",
+    "duration_ms": 211,
+    "narrative": {
+      "headline": "legacy",
+      "summary": "vector"
+    },
+    "total_tokens_in": 0,
+    "total_tokens_out": 0
+  },
+  "participants": {
+    "root_agent_instance_id": "operator",
+    "total_agents": 1,
+    "spawned_subagents": 0,
+    "handoffs": 0,
+    "max_depth": 0,
+    "hosts": 1,
+    "tool_runtimes": 0
+  },
+  "hosts": [
+    {
+      "host_id": "host_MacBook-Pro-12_local"
+    }
+  ],
+  "tools": [],
+  "agent_graph": {
+    "nodes": [
+      {
+        "agent_id": "agent://vector",
+        "agent_instance_id": "operator",
+        "agent_name": "treeship-cli",
+        "agent_role": "operator",
+        "host_id": "host_MacBook-Pro-12_local",
+        "depth": 0,
+        "tool_calls": 0,
+        "tokens_in": 0,
+        "tokens_out": 0
+      }
+    ],
+    "edges": []
+  },
+  "timeline": [
+    {
+      "sequence_no": 0,
+      "timestamp": "2026-09-25T19:41:14Z",
+      "event_id": "evt_1c9fa461d425d334",
+      "event_type": "session.started",
+      "agent_instance_id": "operator",
+      "agent_name": "treeship-cli",
+      "host_id": "host_MacBook-Pro-12_local",
+      "summary": "Session started"
+    },
+    {
+      "sequence_no": 1,
+      "timestamp": "2026-09-25T19:41:14Z",
+      "event_id": "evt_d887deb96c1c7e3c",
+      "event_type": "session.closed",
+      "agent_instance_id": "operator",
+      "agent_name": "treeship-cli",
+      "host_id": "host_MacBook-Pro-12_local",
+      "summary": "vector"
+    }
+  ],
+  "side_effects": {
+    "files_read": [],
+    "files_written": [],
+    "ports_opened": [],
+    "network_connections": [],
+    "processes": [],
+    "tool_invocations": []
+  },
+  "artifacts": [
+    {
+      "artifact_id": "art_21b6ecf86e6763b73ac5f76baf1cbdf4",
+      "payload_type": "application/vnd.treeship.action.v1+json",
+      "digest": "sha256:21b6ecf86e6763b73ac5f76baf1cbdf4e96d23d87a211e84ae7234dab3fa6815",
+      "signed_at": "2026-09-25T19:41:14Z"
+    },
+    {
+      "artifact_id": "art_6b3ebfabf466ed19d68974a3cd25f3ab",
+      "payload_type": "application/vnd.treeship.action.v1+json",
+      "digest": "sha256:6b3ebfabf466ed19d68974a3cd25f3ab64d7a657562b8d96ff5bb4bb9eae411f",
+      "signed_at": "2026-09-25T19:41:14Z"
+    }
+  ],
+  "proofs": {
+    "signature_count": 2,
+    "signatures_valid": false,
+    "merkle_root_valid": true,
+    "inclusion_proofs_count": 2,
+    "zk_proofs_present": false
+  },
+  "merkle": {
+    "leaf_count": 2,
+    "root": "mroot_07d88c191e174d28c15be83ad792067c51a9d117dee5c9575de28c3b32e03474",
+    "inclusion_proofs": [
+      {
+        "artifact_id": "art_21b6ecf86e6763b73ac5f76baf1cbdf4",
+        "leaf_index": 0,
+        "proof": {
+          "leaf_index": 0,
+          "leaf_hash": "dbfcc564e934d973a966aea5f03e2a3371820957d676b3007f6627e3c40acebc",
+          "path": [
+            {
+              "direction": "Right",
+              "hash": "87c4625b7d75eb80918793636d3c87051e949d2925ec5003c4b6f2fd5d8c5060"
+            }
+          ],
+          "algorithm": "sha256-rfc9162",
+          "merkle_version": 2
+        }
+      },
+      {
+        "artifact_id": "art_6b3ebfabf466ed19d68974a3cd25f3ab",
+        "leaf_index": 1,
+        "proof": {
+          "leaf_index": 1,
+          "leaf_hash": "87c4625b7d75eb80918793636d3c87051e949d2925ec5003c4b6f2fd5d8c5060",
+          "path": [
+            {
+              "direction": "Left",
+              "hash": "dbfcc564e934d973a966aea5f03e2a3371820957d676b3007f6627e3c40acebc"
+            }
+          ],
+          "algorithm": "sha256-rfc9162",
+          "merkle_version": 2
+        }
+      }
+    ],
+    "merkle_version": 2
+  },
+  "render": {
+    "title": "legacy",
+    "sections": [
+      {
+        "id": "summary",
+        "label": "Session Summary",
+        "visible": true
+      },
+      {
+        "id": "participants",
+        "label": "Participant Strip",
+        "visible": true
+      },
+      {
+        "id": "agent_graph",
+        "label": "Delegation & Collaboration Graph",
+        "visible": true
+      },
+      {
+        "id": "timeline",
+        "label": "Mission Timeline",
+        "visible": true
+      },
+      {
+        "id": "side_effects",
+        "label": "Side-Effect Ledger",
+        "visible": true
+      },
+      {
+        "id": "proofs",
+        "label": "Proofs Panel",
+        "visible": true
+      }
+    ],
+    "generate_preview": true
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "leaf_count": 2,
+  "root": "mroot_07d88c191e174d28c15be83ad792067c51a9d117dee5c9575de28c3b32e03474",
+  "inclusion_proofs": [
+    {
+      "artifact_id": "art_21b6ecf86e6763b73ac5f76baf1cbdf4",
+      "leaf_index": 0,
+      "proof": {
+        "leaf_index": 0,
+        "leaf_hash": "dbfcc564e934d973a966aea5f03e2a3371820957d676b3007f6627e3c40acebc",
+        "path": [
+          {
+            "direction": "Right",
+            "hash": "87c4625b7d75eb80918793636d3c87051e949d2925ec5003c4b6f2fd5d8c5060"
+          }
+        ],
+        "algorithm": "sha256-rfc9162",
+        "merkle_version": 2
+      }
+    },
+    {
+      "artifact_id": "art_6b3ebfabf466ed19d68974a3cd25f3ab",
+      "leaf_index": 1,
+      "proof": {
+        "leaf_index": 1,
+        "leaf_hash": "87c4625b7d75eb80918793636d3c87051e949d2925ec5003c4b6f2fd5d8c5060",
+        "path": [
+          {
+            "direction": "Left",
+            "hash": "dbfcc564e934d973a966aea5f03e2a3371820957d676b3007f6627e3c40acebc"
+          }
+        ],
+        "algorithm": "sha256-rfc9162",
+        "merkle_version": 2
+      }
+    }
+  ],
+  "merkle_version": 2
+}
