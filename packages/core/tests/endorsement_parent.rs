@@ -221,6 +221,28 @@ fn signed_parent_reads_the_edge_each_statement_signs() {
         signed_parent(&json!({"type": "treeship/action/v1"})),
         SignedParent::None
     );
+    // A present key decides: a null or non-string parent names nothing and
+    // never falls through to the legacy path or the subject edge (#474, F1).
+    for bad in [json!(null), json!(7), json!({"id": "art_p"})] {
+        assert_eq!(
+            signed_parent(&json!({"type": "treeship/endorsement/v1",
+                "subject": {"artifactId": "art_s"}, "parentId": bad})),
+            SignedParent::None,
+            "endorsement parentId {bad}"
+        );
+        assert_eq!(
+            signed_parent(&json!({"type": "treeship/receipt/v1",
+                "subject": {"artifactId": "art_s"}, "parent_id": bad})),
+            SignedParent::None,
+            "receipt parent_id {bad}"
+        );
+        assert_eq!(
+            signed_parent(&json!({"type": "treeship/session-participant/v1",
+                "invitation_ref": bad})),
+            SignedParent::None,
+            "participant invitation_ref {bad}"
+        );
+    }
 }
 
 #[test]

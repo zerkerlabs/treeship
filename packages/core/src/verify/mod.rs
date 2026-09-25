@@ -228,17 +228,19 @@ pub fn signed_parent(statement: &serde_json::Value) -> SignedParent {
         v.and_then(|p| p.as_str())
             .map(|p| SignedParent::Named(p.to_string()))
     };
-    if let Some(p) = named(
-        statement
-            .get("parentId")
-            .or_else(|| statement.get("parent_id")),
-    ) {
-        return p;
+    // A present key decides, whatever its value: `"parentId": null` (or a
+    // number) names no parent and fails, rather than falling through to the
+    // legacy or subject edges below (#474 review, F1).
+    if let Some(v) = statement
+        .get("parentId")
+        .or_else(|| statement.get("parent_id"))
+    {
+        return named(Some(v)).unwrap_or(SignedParent::None);
     }
     // session-participant/v1 names its signed edge after the protocol object
     // it extends: the invitation.
-    if let Some(p) = named(statement.get("invitation_ref")) {
-        return p;
+    if let Some(v) = statement.get("invitation_ref") {
+        return named(Some(v)).unwrap_or(SignedParent::None);
     }
     if statement.get("type").and_then(|t| t.as_str()) == Some(crate::statements::TYPE_ENDORSEMENT) {
         return SignedParent::LegacyEndorsement;
