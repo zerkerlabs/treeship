@@ -41,6 +41,19 @@
       "cli_structural": "structural-pass",
       "receipt_only": "structural-pass"
     },
+    "honest/room-countersigned": {
+      "_note": "CLI-3: invite, join, host-minted challenge, countersign, close on one ship. Under --strict chain_completeness fails: the invitation and the participant are sealed unchained, the same shape as W1-13's approval",
+      "cli": "signatures-pass",
+      "cli_strict": "verified",
+      "cli_structural": "structural-pass",
+      "receipt_only": "structural-pass",
+      "xfail": {
+        "cli_strict": {
+          "task": "W1-13",
+          "got": "failed"
+        }
+      }
+    },
     "tampered/artifact-payload-edit": {
       "cli": "failed",
       "cli_strict": "failed",
@@ -96,6 +109,20 @@
       "cli": "failed",
       "cli_strict": "failed",
       "cli_structural": "structural-pass",
+      "receipt_only": "structural-pass"
+    },
+    "tampered/room-countersign-stripped": {
+      "_note": "honest/room-countersigned with the host countersign removed from the sealed participant",
+      "cli": "failed",
+      "cli_strict": "failed",
+      "cli_structural": "failed",
+      "receipt_only": "structural-pass"
+    },
+    "tampered/room-invitation-dropped": {
+      "_note": "honest/room-countersigned with the invitation envelope removed: the participant fails, it never falls back to the generic signature check",
+      "cli": "failed",
+      "cli_strict": "failed",
+      "cli_structural": "failed",
       "receipt_only": "structural-pass"
     },
     "tampered/swap-package-key": {

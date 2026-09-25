@@ -1295,6 +1295,70 @@ fn verify_stapled_anchors(
     checks.push(VerifyCheck::pass("anchoring", &detail));
 }
 
+/// A sealed participant, verified against the invitation it redeems (CLI-3).
+/// The invitation must be sealed in this same package and signed by a key the
+/// package carries; that key must be the invitation's issuer. Returns the
+/// issuer's key id (for the signer-trust row) and the PASS detail.
+fn verify_sealed_participant(
+    art_dir: &Path,
+    receipt: &SessionReceipt,
+    entry: &ArtifactEntry,
+    envelope: &crate::attestation::Envelope,
+    keys: &std::collections::BTreeMap<String, ed25519_dalek::VerifyingKey>,
+) -> Result<(String, String), String> {
+    use crate::statements::session_participant::{
+        verify_participant_artifact, SessionParticipantStatement,
+    };
+    let stmt: SessionParticipantStatement = envelope
+        .unmarshal_statement()
+        .map_err(|e| format!("participant payload invalid: {e}"))?;
+    let inv_id = &stmt.invitation_ref;
+    if !receipt.artifacts.iter().any(|a| &a.artifact_id == inv_id) {
+        return Err(format!(
+            "participant redeems invitation {inv_id}, which is not sealed in this package"
+        ));
+    }
+    let raw = std::fs::read(art_dir.join(format!("{}.json", sanitize_filename(inv_id)))).map_err(
+        |_| format!("invitation {inv_id} is sealed but its envelope is not in the package"),
+    )?;
+    let invitation = crate::attestation::Envelope::from_json(&raw)
+        .map_err(|e| format!("invitation {inv_id} envelope does not parse: {e}"))?;
+    let inv_keyid = invitation
+        .signatures
+        .first()
+        .map(|s| s.keyid.clone())
+        .ok_or_else(|| format!("invitation {inv_id} carries no signature"))?;
+    let inv_key = keys.get(&inv_keyid).ok_or_else(|| {
+        format!("invitation {inv_id} is signed by {inv_keyid}, a key the package does not carry")
+    })?;
+    verify_participant_artifact(
+        envelope,
+        &entry.artifact_id,
+        &invitation,
+        *inv_key,
+        &receipt.session.id,
+    )
+    .map_err(|e| e.to_string())?;
+    if let Some(listed) = entry.digest.as_deref() {
+        use sha2::{Digest, Sha256};
+        let bytes = envelope
+            .to_json()
+            .map_err(|e| format!("participant envelope encoding failed: {e}"))?;
+        let actual = format!("sha256:{}", hex::encode(Sha256::digest(bytes)));
+        if listed != actual {
+            return Err(format!(
+                "receipt lists digest {listed} but the countersigned envelope digests to {actual}"
+            ));
+        }
+    }
+    Ok((
+        inv_keyid.clone(),
+        format!(
+            "joining agent and host countersign verify over the participant's canonical bytes; the host key {inv_keyid} issued sealed invitation {inv_id}; id re-derived from the pending envelope"
+        ),
+    ))
+}
+
 fn verify_sealed_envelopes(
     pkg_dir: &Path,
     receipt: &SessionReceipt,
@@ -1376,6 +1440,23 @@ fn verify_sealed_envelopes(
                 continue;
             }
         };
+        // A participant carries the joining agent's and the host's
+        // signatures over its canonical bytes, not a DSSE PAE signature, so
+        // it is checked against its sealed invitation instead (CLI-3). An
+        // absent or failing invitation fails the row; it never falls back
+        // to the generic check below.
+        if envelope.payload_type == crate::statements::payload_type("session-participant") {
+            match verify_sealed_participant(&art_dir, receipt, entry, &envelope, &keys) {
+                Ok((host_keyid, detail)) => {
+                    ok_count += 1;
+                    signers.insert(host_keyid);
+                    checks.push(VerifyCheck::pass(&name, &detail));
+                }
+                Err(detail) => checks.push(VerifyCheck::fail(&name, &detail)),
+            }
+            parents.push((id.clone(), None));
+            continue;
+        }
         let Some(sig) = envelope.signatures.first() else {
             checks.push(VerifyCheck::fail(&name, "envelope carries no signature"));
             parents.push((id.clone(), None));

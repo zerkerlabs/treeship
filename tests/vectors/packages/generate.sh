@@ -93,6 +93,28 @@ if want honest/legacy-endorsement-0.31.9; then
   fi
 fi
 
+# --- honest/room-countersigned: CLI-3, invite -> join -> challenge -> countersign
+if want honest/room-countersigned; then
+  S="$WORK/room"
+  ship "$S" "$BIN" init --name vectors >/dev/null
+  ship "$S" "$BIN" session start --name room --actor agent://host >/dev/null
+  ship "$S" "$BIN" session invite --open --expires 10m >"$S/inv.txt" 2>/dev/null
+  HP=$(ship "$S" "$BIN" session join --invite-file "$S/inv.txt" --actor agent://j 2>&1 \
+    | sed -n 's/.*trust add <key_id> \(ed25519:[^ ]*\).*/\1/p' | head -1 || true)
+  # (that first join is refused -- the host key is not pinned yet -- and
+  # prints the key to pin)
+  [ -n "$HP" ]
+  ship "$S" "$BIN" trust add room_host "$HP" --kind session_host --yes >/dev/null
+  PID=$(ship "$S" "$BIN" --format json session join --invite-file "$S/inv.txt" --actor agent://j | id_of participant_id)
+  MC=$(ship "$S" "$BIN" --format json session mint-challenge)
+  N=$(printf '%s' "$MC" | id_of nonce); IAT=$(printf '%s' "$MC" | id_of issued_at)
+  ship "$S" "$BIN" session answer-challenge "$PID" --challenge "$N" --actor agent://j --out "$S/resp.json" >/dev/null
+  ship "$S" "$BIN" session countersign "$PID" --challenge "$N" --challenge-issued-at "$IAT" \
+    --challenge-response "$S/resp.json" >/dev/null
+  ship "$S" "$BIN" session close --headline room --summary vector --receipt-dir "$S/r" >/dev/null
+  freeze "$(ls -d "$S"/r/*.treeship)" honest/room-countersigned
+fi
+
 # --- honest/legacy-0.24: a real package from before envelopes (0.31.2) ------
 if want honest/legacy-0.24; then
   if [ -n "$LEGACY" ]; then
@@ -186,6 +208,29 @@ if want tampered/endorsement-parent-edited; then
     if grep -q 'vnd.treeship.endorsement' "$f"; then
       edit_payload "$f" 'body["parentId"] = body["subject"]["artifactId"]'
     fi
+  done
+fi
+
+# CLI-3: the host countersign is stripped from the sealed participant.
+if want tampered/room-countersign-stripped; then
+  T=$(tamper room-countersign-stripped honest/room-countersigned)
+  for f in "$T"/artifacts/*.json; do
+    if grep -q 'vnd.treeship.session-participant' "$f"; then
+      python3 - "$f" <<'PY'
+import json, sys
+f = sys.argv[1]; env = json.load(open(f))
+env["signatures"] = env["signatures"][:1]
+json.dump(env, open(f, "w"))
+PY
+    fi
+  done
+fi
+
+# CLI-3: the invitation the participant redeems is removed from the package.
+if want tampered/room-invitation-dropped; then
+  T=$(tamper room-invitation-dropped honest/room-countersigned)
+  for f in "$T"/artifacts/*.json; do
+    if grep -q 'vnd.treeship.invitation' "$f"; then rm "$f"; fi
   done
 fi
 
