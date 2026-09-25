@@ -75,7 +75,7 @@ def main():
 
     if args.push:
         print("\nPushing to Hub...")
-        push_result = ts.dock_push(artifact_ids[-1])
+        push_result = ts.hub_push(artifact_ids[-1])
         print(f"  → {push_result.hub_url}")
 
     # Output summary
