@@ -43,7 +43,7 @@ approval = ts.attest_approval(
     allowed_actions=["payments.charge"],   # a scope is required
     max_uses=1,
 )
-print(approval.nonce)  # binding token; replay enforcement is package-local in v0.9.6
+print(approval.nonce)  # binding token; replay enforcement is package-local (no distributed single-use across machines yet)
 
 # Attest with approval binding
 ts.attest_action(

@@ -47,7 +47,7 @@ curl -fsSL https://raw.githubusercontent.com/zerkerlabs/treeship/main/skills/tre
 ## What the Skill Teaches Your Agent
 
 - **Every Treeship CLI command** — `wrap`, `verify`, `session report`, `approve`, `hub push`, plus the v0.9.x setup/harness/agents surface for first-run orchestration.
-- **The Python and TypeScript SDK shapes** — `Treeship().attest_action()`, `Ship.attestAction()`, full result types and exceptions.
+- **The Python and TypeScript SDK shapes** — `Treeship().attest_action()`, `ship().attest.action()`, full result types and exceptions.
 - **The MCP bridge wiring** — exact `claude mcp add`, `kimi mcp add`, `cursor mcp.json` snippets the agent can paste back to a user who asks "how do I attach Treeship to my agent?".
 - **Approval-gated workflows** — the create-approval / consume-with-nonce / verify-with-replay-checks pattern, with realistic examples (deployment, payment authorization, scoped tool grants).
 - **Chained workflows** — multi-agent handoffs linked by `parent_id`, the chain walk that `treeship verify` runs, what passes vs. fails.

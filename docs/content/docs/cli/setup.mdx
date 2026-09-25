@@ -115,15 +115,28 @@ If setup fails partway, the smoke session leaves nothing behind (isolated tmpdir
 treeship setup --yes --format json
 ```
 
-Today (v0.9.10), `setup --format json` returns an empty JSON object on completion (`{}`) — the orchestration result lives in the human-readable text output. The structured agent-mode shape that surfaces detected/instrumented/smoke/cards/harnesses counts is part of the **Agent-Native Bootstrap** roadmap and lands in a later v0.10.x release. Until then, if an AI agent needs to inspect what setup produced, it should call the per-component commands afterward:
+`setup --format json` returns a structured payload an agent can branch on directly:
+
+```json
+{
+  "schema": "...",
+  "ship_id": "...",
+  "config_path": "...",
+  "detected": [{ "surface": "...", "display_name": "...", "confidence": "...", "recommended_harness_id": "..." }],
+  "cards": { "...": "..." },
+  "instrumented": ["..."],
+  "smoke": { "...": "..." },
+  "next_steps": ["..."],
+  "error": null
+}
+```
+
+`error` is set (and the rest partial) if setup stops early, e.g. because the workspace isn't initialized. To inspect the same information through other commands:
 
 ```bash
 treeship add --discover --format json   # what's on the machine
 treeship harness list --format json     # which harnesses are wired
-# (treeship agents list --format json   # — currently {}; see /cli/agents)
 ```
-
-`treeship harness list --format json` already returns a rich, stable shape today and is the most useful agent-readable touchpoint until `setup`'s shape stabilizes.
 
 ## See also
 
