@@ -1,0 +1,143 @@
+# Treeship security and cryptography claims registry.
+#
+# SOURCE OF TRUTH for what Treeship's docs are allowed to claim about
+# security-sensitive properties: the keystore, transparency/anchoring, ZK
+# proofs, and what a signed receipt does and does not prove. Every claim
+# about one of these areas gets an id, a status, and a proof link, so a
+# claim can be checked against the code instead of trusted by tone.
+#
+# A linter at scripts/check-claims.py validates:
+#   - every `proof` path exists on disk (or is a bare git ref like a PR/issue
+#     for a claim with no single code location)
+#   - a fixed, small set of security-sensitive doc files (`scanned_files`
+#     below) contain none of the banned phrases, UNLESS the phrase appears
+#     only to explicitly disclaim it (see each entry's `not` list, which
+#     names the banned phrases that entry's own accurate wording uses in a
+#     negating sense -- "not machine-bound" is fine, "machine-bound" bare is
+#     not)
+#   - SECURITY.md's supported-versions table names the current CHANGELOG minor
+#
+# Status taxonomy:
+#   shipped    the claim describes what ships today; proof is a code path
+#   next       implemented but not in the latest tagged release
+#   designed   a documented direction, not implemented (design sketch)
+#   retired    a claim that used to be true and no longer is (kept for history)
+#
+# Banned phrases (require a claims.yml id backing any use): passphrase,
+# machine-bound, tamper-proof, immutable, anchored, witnessed, air-gapped.
+# These are banned only within `scanned_files` below -- unrelated, accurate
+# uses elsewhere (an HTTP Cache-Control: immutable header, a workflow spec's
+# actually-immutable declared graph) are not security claims about the
+# keystore or the verifier and are out of scope for this registry.
+
+scanned_files:
+  - SECURITY.md
+  - AGENTS.md
+  - docs/security/threat-model.md
+  - docs/content/docs/concepts/security.mdx
+  - docs/content/docs/concepts/trust-model.mdx
+  - docs/content/docs/cli/init.mdx
+  - docs/content/docs/concepts/zero-knowledge.mdx
+  - docs/content/docs/concepts/room-sessions.mdx
+  - docs/content/docs/commerce/compliance.mdx
+  - packages/core-wasm/README.md
+  - packages/zk-circom/README.md
+
+claims:
+  - id: keystore-at-rest
+    status: shipped
+    says: >
+      AES-256-GCM encrypted keystore, under a key derived from a secret
+      32-byte seed file (machine_seed) stored alongside the keystore.
+      A non-secret machine identifier is mixed in only as a binding salt,
+      not as the primary key. There is no passphrase; nothing the user
+      types or remembers protects the keystore.
+    proof: packages/core/src/keys/mod.rs
+    not: ["passphrase", "machine-bound"]
+    notes: >
+      Copying .treeship/ (keys + machine_seed) is sufficient to decrypt and
+      sign elsewhere. Losing machine_seed makes the keystore unrecoverable.
+      The machine-id salt (hostname / /etc/machine-id) is a decrypt-only
+      migration fallback for pre-AUD-19 keystores, never the primary key.
+
+  - id: keystore-cipher-history
+    status: retired
+    says: >
+      Prior to v0.10.3, the keystore was documented as AES-256-GCM but
+      actually shipped a broken SHA-256-CTR + HMAC construction
+      (TS-2026-001). That specific historical claim is quoted, not
+      repeated, in the advisory record.
+    proof: docs/security/TS-2026-001.md
+    not: []
+    notes: "Historical incident record only -- not a claim about the current build."
+
+  - id: rekor-artifact-anchoring
+    status: shipped
+    says: >
+      Per-artifact anchoring: a pushed artifact gets a dsse entry in
+      Sigstore's public transparency log. `verify` counts an anchor as
+      witnessed only if the stapled entry verifies offline (signed entry
+      timestamp, RFC 6962 inclusion proof, signed checkpoint) against a
+      trusted log key -- the built-in Sigstore key, or an operator-pinned
+      `transparency_log` root.
+    proof: packages/core/src/verify/rekor.rs
+    not: ["anchored", "witnessed"]
+    notes: >
+      Opt-in and coverage-dependent: only pushed artifacts are covered, an
+      agent-key-only artifact is skipped, and it can be disabled. Anchors
+      recorded before this shipped carry no proof and report as claimed but
+      unverified.
+
+  - id: checkpoint-not-witnessed
+    status: shipped
+    says: >
+      A Hub Merkle checkpoint is signed only by the publisher's own key.
+      The hub verifies checkpoint signatures but never signs or
+      countersigns one itself, and discards any caller-supplied Rekor
+      index rather than serving it back. A checkpoint alone is not an
+      externally witnessed record -- it is the publisher's own signed
+      assertion, one level up from an individual artifact's signature.
+    proof: packages/hub/internal/merkle/handlers.go
+    not: ["anchored", "witnessed"]
+    notes: "Distinct from rekor-artifact-anchoring, which is a real external witness for individual pushed artifacts."
+
+  - id: checkpoint-root-anchoring
+    status: designed
+    says: >
+      Anchoring a room or workspace's checkpoint root itself (not just
+      individual pushed artifacts) to an external log, RFC 3161, or
+      OpenTimestamps is a documented design direction, not implemented.
+    proof: docs/feature-inventory.yml
+    not: ["anchored", "witnessed"]
+
+  - id: zk-groth16-quarantined
+    status: retired
+    says: >
+      The Circom/Groth16 proving path (policy-checker, input-output-binding,
+      prompt-template circuits) is quarantined: its proving keys were
+      generated locally with no real multi-party ceremony, making the
+      circuits forgeable by construction. `prove`/`verify-proof` fail
+      closed. The published `@treeship/core-wasm` build does not enable
+      the `zk` feature, so there is no browser-side Groth16 check today.
+    proof: packages/zk-circom/README.md
+    not: ["air-gapped"]
+    notes: "The circuits are retained as design references for the statement-first rebuild (RISC Zero), not as a sound proving path."
+
+  - id: receipt-tamper-evidence
+    status: shipped
+    says: >
+      A signed artifact is tamper-evident, not tamper-proof or immutable:
+      editing the signed payload changes the content-addressed artifact id
+      and breaks the signature. Fields outside the signed payload can
+      still change, and the key holder can always sign a new artifact.
+      An approver URI in a signed approval records who was named as
+      approving, not cryptographic proof that a specific human approved,
+      unless that approver signs with their own separately pinned key.
+    proof: packages/core/src/attestation/id.rs
+    not: ["tamper-proof", "immutable"]
+
+status_check:
+  file: SECURITY.md
+  # SECURITY.md's Supported versions table must name this minor (matched
+  # loosely: "0.<minor>.x" against CHANGELOG.md's latest `## <version>` line).
+  match: "supported-versions-minor"

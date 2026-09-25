@@ -12,7 +12,16 @@ This package contains three Circom circuits that generate zero-knowledge proofs 
 | `input-output-binding` | Proves input/output artifact hashes are correctly linked |
 | `prompt-template` | Proves a prompt matches a registered template without exposing the prompt |
 
-All circuits use **Groth16** proofs. Trusted setup ceremony artifacts are included in `setup/`.
+All circuits use **Groth16** proofs.
+
+**Quarantined.** This path's proving keys, under `zkeys/`, were generated
+locally with no real multi-party ceremony -- there is no `setup/` directory
+of ceremony contributions, because no ceremony took place. That makes the
+circuits forgeable by construction, and `treeship prove`/`verify-proof` fail
+closed rather than trust them. See
+[the ZK verification spec](https://github.com/zerkerlabs/treeship/blob/main/docs/specs/private-verification.md)
+for the rebuild. The circuits here are retained as design references, not as
+a sound proving path.
 
 ## Installation
 
