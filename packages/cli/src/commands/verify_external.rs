@@ -407,10 +407,69 @@ enum LoadError {
     Parse(String),
 }
 
-/// Fetch a receipt JSON from a URL. Maps `/receipt/` to `/v1/receipt/` so the
-/// human-readable mirror works alongside the JSON API path.
+/// The JSON API URL for a receipt URL a person pasted.
+///
+/// `/receipt/<id>` (the human page) becomes `/v1/receipt/<id>`; `/v1/receipt/<id>`
+/// and the site's `/api/receipt/<id>` mirror are already the API and are kept.
+/// The host is never rewritten, a trailing slash is dropped, the query string
+/// is kept and the fragment dropped. Anything else is refused rather than
+/// fetched. Through 0.31.9 this was a blind `replacen("/receipt/", …)`, which
+/// turned the documented `https://api.treeship.dev/v1/receipt/<id>` into
+/// `/v1/v1/receipt/<id>` and a 404. The rule is shared with verify-js through
+/// `tests/vectors/receipt-urls.json`.
+pub fn receipt_api_url(raw: &str) -> Result<String, String> {
+    let refuse = || {
+        format!(
+            "not a receipt URL: {raw} (expected …/receipt/<session id> or …/v1/receipt/<session id>)"
+        )
+    };
+    let Some((scheme, after_scheme)) = raw.split_once("://") else {
+        return Err(refuse());
+    };
+    if scheme != "http" && scheme != "https" {
+        return Err(refuse());
+    }
+    let (host, path_and_query) = match after_scheme.find('/') {
+        Some(i) => (&after_scheme[..i], &after_scheme[i..]),
+        None => (after_scheme, ""),
+    };
+    if host.is_empty() {
+        return Err(refuse());
+    }
+    let path_and_query = path_and_query.split('#').next().unwrap_or("");
+    let (path, query) = match path_and_query.split_once('?') {
+        Some((p, q)) => (p, Some(q)),
+        None => (path_and_query, None),
+    };
+    let path = path.trim_end_matches('/');
+
+    // The id is whatever follows the receipt segment; it must be exactly one
+    // path segment.
+    let id_after = |marker: &str| -> Option<(usize, &str)> {
+        let i = path.find(marker)?;
+        let id = &path[i + marker.len()..];
+        (!id.is_empty() && !id.contains('/')).then_some((i, id))
+    };
+
+    let api_path = if id_after("/v1/receipt/").is_some() || id_after("/api/receipt/").is_some() {
+        path.to_string()
+    } else if let Some((i, id)) = id_after("/receipt/") {
+        format!("{}/v1/receipt/{id}", &path[..i])
+    } else {
+        return Err(refuse());
+    };
+
+    let mut out = format!("{scheme}://{host}{api_path}");
+    if let Some(q) = query {
+        out.push('?');
+        out.push_str(q);
+    }
+    Ok(out)
+}
+
+/// Fetch a receipt JSON from a URL (see `receipt_api_url` for the mapping).
 fn fetch_receipt_url(url: &str) -> Result<SessionReceipt, LoadError> {
-    let api_url = url.replacen("/receipt/", "/v1/receipt/", 1);
+    let api_url = receipt_api_url(url).map_err(LoadError::Io)?;
     let resp = ureq::get(&api_url)
         .set("Accept", "application/json")
         .timeout(std::time::Duration::from_secs(15))
@@ -747,6 +806,31 @@ fn now_rfc3339_utc() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The shared vectors verify-js runs too (tests/vectors/receipt-urls.json).
+    #[test]
+    fn receipt_url_vectors_shared_with_verify_js() {
+        let raw = include_str!("../../../../tests/vectors/receipt-urls.json");
+        let doc: serde_json::Value = serde_json::from_str(raw).unwrap();
+        let cases = doc["cases"].as_array().unwrap();
+        assert!(cases.len() >= 15);
+        let mut wrong = Vec::new();
+        for case in cases {
+            let name = case["name"].as_str().unwrap();
+            let input = case["input"].as_str().unwrap();
+            let got = receipt_api_url(input);
+            match (case["expect"].as_str(), got) {
+                (Some(want), Ok(ref got)) if got == want => {}
+                (None, Err(_)) => {}
+                (want, got) => wrong.push(format!("{name}: {input} -> {got:?}, expected {want:?}")),
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "receipt URL rule drifted:\n{}",
+            wrong.join("\n")
+        );
+    }
 
     #[test]
     fn classify_url() {
