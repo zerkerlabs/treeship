@@ -1,0 +1,68 @@
+---
+title: "Ten steps, one receipt"
+description: "TypeSafe's founder published a ten-step blueprint for building a control system around an LLM with Jev as the decision layer. Step ten is the decision receipt. Here is what Treeship signs at each of the ten, and the two fields we were missing until this week."
+date: 2026-09-25
+tags: ["judge", "receipts", "jev", "gate", "reason"]
+readTime: "8 min read"
+category: perspective
+systems: ["typesafe-jev", "cli", "claude-code-plugin", "zerker-reason"]
+---
+
+# Ten steps, one receipt
+
+Diogo Almeida, TypeSafe's founder, published a twelve-page guide on using Jev with an LLM, and a widely shared breakdown of it condensed the method to ten steps. Read together they are the best description we have seen of the control system around a prompt: split generation from decision from enforcement, hand the judge a compact state instead of a conversation, ask atomic typed questions, put the judge before and after the LLM, route by confidence, batch, and record every decision.
+
+Step ten is the receipt. The guide asks for the state version, the question, the probabilities, the selected route, the model, the latency, the outcome and the human override. The breakdown adds the contract version and the full distribution, and gives a sample record for shadow mode with a `production_answer` and a `human_label`.
+
+We built the judge slot over the last two weeks, so we held `judgement.v1` up against the list. Seven of the eight fields were there. Two things were not, and one of them we would have built wrong if we had done it the obvious way. Here is the map, step by step, and the two additions.
+
+## Steps one to three: who decides what
+
+The guide's split is the LLM generates, Jev makes bounded semantic decisions, and deterministic code keeps authority. Treeship does not sit in any of those three boxes. It sits under them: every decision, whoever makes it, leaves a signed record the other two can check.
+
+That said, the split is the line we hold in our own products. [Reason](/integrations/zerker-reason) is the deterministic authority: a judge's answer enters as a `model-judged` premise that a program admits only for the predicates it names, so Jev can deny an action but never stand in for a human approval. And the first judge in our slot is not a model at all. `treeship-rules` is deterministic pattern rules, replayable by a verifier, so no model is in the decision path unless the operator puts one there.
+
+The three primitives, `noul`, `choice` and `score`, are the three the [judge contract](/cli/judge#any-judge-the-http-contract) speaks. Jev fits behind [a small adapter](/integrations/typesafe-jev).
+
+## Steps four and nine: atomic questions, batched
+
+Replace one giant evaluation prompt with separate typed decisions, and ask the independent ones over one shared state. `treeship judge` takes a file of typed questions and signs one `judgement.v1` per question. The receipts share a `state_digest` and a `questions_digest`, so a reader can see they were one call over one snapshot, and each one names its own question by key and type.
+
+The guide's warning that the key name helps your code and the instructions help the model is worth repeating: the receipt carries the instructions in the clear for exactly that reason.
+
+## Steps five and seven: before the LLM, after the LLM
+
+Before: select the route, the tools, the provider. A `choice` whose options are route names is a routing judgement, and `effect` carries the route chosen. After: does the result answer the request, use enough evidence, stay in scope. A `noul` or a `score`, same receipt.
+
+The gate is the "after the LLM, before the tool" case. The Claude Code plugin asks the judge once the agent's card has allowed a call, and never instead of it. An answer over the bar denies with a signed `blocked.v1`; `ask` asks the operator.
+
+## Step eight: route by confidence
+
+The guide is emphatic that a confidence score must never become permission, and that thresholds belong to the action class. The receipt records the `threshold` the caller held the answer to and who set it, and `package verify` flags any judgement acted on against its own bar. The threshold is the caller's, per action; the judge only answers.
+
+## Step ten, part one: the fields that were there
+
+State version: `state_digest`, a hash of the canonical state, which is stronger than a label because it is content-addressed. Question: `question` and `questions_digest`. Probabilities: the full distribution and the confidence. Route: `answer.choice` for the judge's pick, `effect` for what the caller did. Model: `judge.model` with provider, kind and, our addition, `replayable`. Latency and tokens. Outcome: `acted`, `escalated`, `refused`, `ignored`.
+
+## Step ten, part two: the two that were missing
+
+**The contract version.** The breakdown's sample record leads with `decision_contract: "ticket-router@3"`, and its argument is right: a semantic decision is production logic, and the question, options and threshold should be versioned separately from the application so a change is reviewable and reversible like a code change. `judgement.v1` now carries `contract: {id, version}`, set with `treeship judge --contract ticket-router@3`. The digest proves which questions were asked; the contract says which version of the design they belong to.
+
+**The human override.** This is the one we would have built wrong. The obvious fix is a `human_override` field on the receipt. But the receipt is signed by the machine that asked the judge, and a machine writing "a human overrode this" into its own record is the self-report a receipt exists to replace. We wrote a whole post called [Signed is not true](/blog/signed-is-not-true) about that.
+
+So the human's decision is its own artifact. `treeship judge --resolve <judgement> --by human://alice --decision allow --reason "reviewed the diff"` signs a `judgement.resolution.v1` under the decider's name, with the judgement as its subject, chained onto the session, and it records what it `overrides` when it contradicts the judge. `package verify` pairs resolutions with escalations: `1 escalated, 1 resolved (allow by human://alice)`, or `1 OPEN with no signed resolution`, which is a warning. An escalated judgement is an open question until someone answers it under their own name.
+
+Shadow mode, the breakdown's step three of rollout, falls out of the same shapes: run the judge with outcome `ignored`, and a later resolution is the `human_label`.
+
+## What we still do not do
+
+We do not replay a sampled judge. TypeSafe's own notes on jev-1.13 say answers move with phrasing and negation, so a verifier cannot re-run Jev to check a receipt. The receipt proves what the caller committed to before acting, under which bar, and it carries `replayable: false` in the signed bytes so nobody mistakes it for a replayable check. The rules judge is the exception, and that is why it is first.
+
+And we do not grade the decision. The guide's step four of rollout, plotting accuracy against confidence, needs labels. The receipts are the log that makes that plot honest: the distribution, the threshold, the outcome, and the human label, each signed by the party that produced it.
+
+## Where to go next
+
+- [`treeship judge`](/cli/judge): the contract, the rules judge, the resolution
+- [TypeSafe Jev](/integrations/typesafe-jev): the adapter, routing before the LLM
+- [`judgement.v1`](/reference/predicates#judgementv1) and [`judgement.resolution.v1`](/reference/predicates#judgementresolutionv1)
+- [Any judge, one receipt](/blog/any-judge-one-receipt): how the slot was built

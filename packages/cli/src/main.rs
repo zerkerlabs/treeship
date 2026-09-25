@@ -2109,7 +2109,7 @@ struct AttestReceiptArgs {
     /// agent_card_revocation.v1, grant_revocation.v1, session.v1,
     /// agent_cert.v1, profile.v1, workflow.v1, verification.packet.v1,
     /// verification.recompute.v1, evaluation.v1, coverage.v1, halt.v1,
-    /// judgement.v1.
+    /// judgement.v1, judgement.resolution.v1.
     /// `--kind list` prints the current registry.
     #[arg(long, required = true, value_name = "KIND")]
     kind: String,
@@ -2451,8 +2451,9 @@ struct HaltArgs {
 #[derive(Args)]
 struct JudgeArgs {
     /// The harness's tool name (Bash, WebFetch, Read, mcp__server__tool).
-    #[arg(long, value_name = "NAME")]
-    tool: String,
+    /// Required, except with --resolve.
+    #[arg(long, value_name = "NAME", required_unless_present = "resolve")]
+    tool: Option<String>,
 
     /// The capability name the card uses for it (shell.exec, net.fetch).
     #[arg(long, value_name = "CAP")]
@@ -2499,6 +2500,38 @@ struct JudgeArgs {
     /// judge answered.
     #[arg(long)]
     enforce: bool,
+
+    /// The decision contract this judgement runs under, as id@version
+    /// (ticket-router@3): the versioned definition of state, question,
+    /// options and threshold. Recorded in every receipt.
+    #[arg(long, value_name = "ID@VERSION")]
+    contract: Option<String>,
+
+    /// Resolve an escalated or refused judgement instead of judging: the
+    /// human label, signed as a judgement.resolution.v1 receipt under
+    /// --by's URI, chained onto the session and naming the judgement.
+    ///
+    /// Examples:
+    ///   treeship judge --resolve art_… --by human://alice --decision allow --reason "reviewed"
+    ///   treeship judge --resolve art_… --by human://alice --decision route --route fact_check
+    #[arg(long, value_name = "ART_ID", conflicts_with_all = ["tool", "input", "judge_url", "attest"])]
+    resolve: Option<String>,
+
+    /// Who decided: human://alice, or an agent:// for a stronger judge.
+    #[arg(long, value_name = "URI", requires = "resolve")]
+    by: Option<String>,
+
+    /// allow | deny | route
+    #[arg(long, value_name = "DECISION", requires = "resolve")]
+    decision: Option<String>,
+
+    /// For --decision route: the route chosen.
+    #[arg(long, value_name = "NAME", requires = "resolve")]
+    route: Option<String>,
+
+    /// Why, in the decider's words.
+    #[arg(long, value_name = "TEXT", requires = "resolve")]
+    reason: Option<String>,
 }
 
 #[derive(Args)]
@@ -3927,6 +3960,12 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 subject: a.subject.clone(),
                 attest: a.attest,
                 enforce: a.enforce,
+                contract: a.contract.clone(),
+                resolve: a.resolve.clone(),
+                by: a.by.clone(),
+                decision: a.decision.clone(),
+                route: a.route.clone(),
+                reason: a.reason.clone(),
                 config: cli.config.clone(),
             },
             printer,

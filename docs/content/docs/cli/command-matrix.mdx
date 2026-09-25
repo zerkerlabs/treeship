@@ -178,7 +178,7 @@ treeship attest receipt [OPTIONS] --kind <KIND>
 | Option | Description |
 |---|---|
 | `--system <URI>` | System URI -- who produced this receipt (required, except for --kind list) |
-| `--kind <KIND>` | Receipt kind. Free-form kinds (confirmation, timestamp, inclusion, webhook, …) sign as given. A registered predicate is validated against its schema before signing and must match the payload's own `schema`: memory.write.v1, memory.read.v1, memory.quarantine-check.v1, blocked.v1, reason.authorization.v1, boundary.v1, agent_card.v1, agent_card_revocation.v1, grant_revocation.v1, session.v1, agent_cert.v1, profile.v1, workflow.v1, verification.packet.v1, verification.recompute.v1, evaluation.v1, coverage.v1, halt.v1, judgement.v1. `--kind list` prints the current registry |
+| `--kind <KIND>` | Receipt kind. Free-form kinds (confirmation, timestamp, inclusion, webhook, …) sign as given. A registered predicate is validated against its schema before signing and must match the payload's own `schema`: memory.write.v1, memory.read.v1, memory.quarantine-check.v1, blocked.v1, reason.authorization.v1, boundary.v1, agent_card.v1, agent_card_revocation.v1, grant_revocation.v1, session.v1, agent_cert.v1, profile.v1, workflow.v1, verification.packet.v1, verification.recompute.v1, evaluation.v1, coverage.v1, halt.v1, judgement.v1, judgement.resolution.v1. `--kind list` prints the current registry |
 | `--subject <ID>` | Subject artifact ID |
 | `--payload <'{"key":"val"}'>` | Receipt payload as a JSON object |
 | `--payload-file <PATH>` | Read receipt payload JSON from a file |
@@ -666,12 +666,12 @@ treeship halt [OPTIONS] <ACTOR>
 The judge slot: ask a judge typed questions about a tool call
 
 ```
-treeship judge [OPTIONS] --tool <NAME>
+treeship judge [OPTIONS]
 ```
 
 | Option | Description |
 |---|---|
-| `--tool <NAME>` | The harness's tool name (Bash, WebFetch, Read, mcp__server__tool) |
+| `--tool <NAME>` | The harness's tool name (Bash, WebFetch, Read, mcp__server__tool). Required, except with --resolve |
 | `--capability <CAP>` | The capability name the card uses for it (shell.exec, net.fetch) |
 | `--input <JSON>` | The tool's input as JSON, or @&lt;file&gt; |
 | `--question <KEY>` | Question keys to ask (repeatable). Default: every rules question |
@@ -683,6 +683,12 @@ treeship judge [OPTIONS] --tool <NAME>
 | `--subject <ART_ID>` | The action this judgement is about; chains the receipt onto it |
 | `--attest` | Sign each answer and its decision as a judgement.v1 receipt |
 | `--enforce` | Exit 2 on deny and 3 on ask, for shell gates. Off by default: the decision is in the output and the exit code says only whether the judge answered |
+| `--contract <ID@VERSION>` | The decision contract this judgement runs under, as id@version (ticket-router@3): the versioned definition of state, question, options and threshold. Recorded in every receipt |
+| `--resolve <ART_ID>` | Resolve an escalated or refused judgement instead of judging: the human label, signed as a judgement.resolution.v1 receipt under --by's URI, chained onto the session and naming the judgement |
+| `--by <URI>` | Who decided: human://alice, or an agent:// for a stronger judge |
+| `--decision <DECISION>` | allow \| deny \| route |
+| `--route <NAME>` | For --decision route: the route chosen |
+| `--reason <TEXT>` | Why, in the decider's words |
 
 ## `treeship status`
 

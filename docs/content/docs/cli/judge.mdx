@@ -90,6 +90,27 @@ Every question must be answered with the value its type calls for (`noul` for a 
 
 `--question <key>` asks a subset by key (an outside judge may be asked keys the rules do not know; they are sent as `noul` questions). `--questions-file <file>` sends typed questions of your own, `{key: {type, instructions, options}}`.
 
+## The decision contract
+
+`--contract ticket-router@3` records, in every receipt, the versioned decision contract the judgement ran under: the definition of state fields, question, options or rubric, threshold and allowed action, versioned separately from the application so a change to the question is reviewable and reversible like a code change. The receipt carries `contract: {id, version}` beside `questions_digest`; the digest proves which questions were asked, the contract says which version of the design they belong to.
+
+## Escalation and the human's decision
+
+An answer that sends the call to a person is outcome `escalated`, and the judgement stays an open question until a person answers it. The answer is its own signed artifact, not a field the machine fills in:
+
+```bash
+treeship judge --resolve art_9c1e… --by human://alice --decision allow --reason "reviewed the diff"
+treeship judge --resolve art_9c1e… --by human://alice --decision route --route fact_check
+```
+
+That signs a `judgement.resolution.v1` receipt under the decider's URI, with the judgement as its subject, chained onto the session. `decision` is `allow`, `deny` or `route` (with `--route`); when it contradicts what the judge's answer led to, the receipt records what it `overrides`. A refused judgement can be resolved the same way, which is how a human allows what the judge refused.
+
+`package verify` reads the pair back in the `judgements` row: `1 escalated, 1 resolved (art_… allow by human://alice)`, or `1 OPEN with no signed resolution in this package`, which is a warning. An override of a non-escalated judgement is named too. A resolution signed in a later session resolves the escalation for a verifier holding both packages; in its own package it is a resolution the row does not need to match.
+
+<Callout type="info">
+Why a separate artifact: a machine writing "a human overrode this" into its own record is the self-report a receipt exists to replace. The resolution is a claim the decider made, under the decider's name, that verifies on its own. The Claude Code gate's `ask` reaches the operator through the harness prompt, which leaves no resolution; a harness that can call the CLI after the operator answers records one.
+</Callout>
+
 ## Into Reason
 
 `--format json` also prints `reason_facts`: the same answers as [Zerker Reason](https://github.com/zerkerlabs/reason) premises under the `model-judged` authority class, one per question, with the signed receipt as the fact id when `--attest` ran.
@@ -120,7 +141,12 @@ The Claude Code plugin's gate asks the judge when `TREESHIP_JUDGE=1` (rules) or 
 | `--bound <AMOUNT>` | The amount bound for `amount_above_bound` |
 | `--subject <ART_ID>` | The action this judgement is about |
 | `--attest` | Sign each answer as `judgement.v1` |
+| `--contract <ID@VERSION>` | The decision contract the judgement runs under, into every receipt |
 | `--enforce` | Exit 2 on `deny` and 3 on `ask`, for shell gates |
+| `--resolve <ART_ID>` | Resolve a judgement instead of judging; needs `--by` and `--decision` |
+| `--by <URI>` | Who decided (`human://alice`, or an `agent://` for a stronger judge) |
+| `--decision <allow|deny|route>` | The decision; `route` takes `--route <name>` |
+| `--reason <TEXT>` | Why, in the decider's words |
 | `--format json` | Machine output: `effect`, `outcome`, `decided_by`, `answers`, `receipts`, digests |
 
 ## Exit code

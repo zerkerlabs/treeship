@@ -366,6 +366,7 @@ mints these: the built-in rules judge, or any judge behind `--judge-url`.
 |---|---|---|
 | `schema` | const `judgement.v1` | yes |
 | `judge` | object `{model, provider, kind, replayable}` with `kind` one of `decision-model`, `llm`, `classifier`, `rules` | yes (`model`) |
+| `contract` | object `{id, version}`: the versioned decision contract the judgement ran under | no |
 | `state_digest` | string (`sha256:<hex>`) | no |
 | `questions_digest` | string (`sha256:<hex>`) | no |
 | `question` | object `{key, type, instructions, options[]}` with `type` one of `noul`, `choice`, `score` | yes (`key`, `type`) |
@@ -377,6 +378,29 @@ mints these: the built-in rules judge, or any judge behind `--judge-url`.
 | `usage` | object `{input_tokens, output_tokens}` | no |
 | `judged_at` | string (RFC3339) | yes |
 | `notes` | string | no |
+
+### `judgement.resolution.v1`
+
+A person's decision (or a stronger judge's) on a judgement that was escalated
+or refused: the human label, as its own signed artifact. Minted by
+[`treeship judge --resolve`](/docs/cli/judge#escalation-and-the-humans-decision)
+under the decider's URI (`human://alice`), with the judgement as the receipt's
+subject, and chained onto the session. `decision` is a closed vocabulary
+(`allow`, `deny`, `route`); `overrides` names the judgement's effect this
+decision replaces, when they differ. `package verify` pairs resolutions with
+escalated judgements in the `judgements` row and reports an escalation with no
+resolution in the package as open.
+
+| Field | Type | Required |
+|---|---|---|
+| `schema` | const `judgement.resolution.v1` | yes |
+| `judgement` | string (`art_…` of the judgement) | yes |
+| `by` | string (decider URI) | yes |
+| `decision` | enum `allow`, `deny`, `route` | yes |
+| `route` | string (for `route`) | no |
+| `overrides` | string (the judgement's effect this replaces) | no |
+| `reason` | string | no |
+| `resolved_at` | string (RFC3339) | yes |
 
 ### `memory.quarantine-check.v1`
 

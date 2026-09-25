@@ -36,6 +36,24 @@ treeship judge --tool Bash --input '{"command":"rm -rf /"}' \
 
 The Claude Code gate takes the same URL: `TREESHIP_JUDGE=http://127.0.0.1:8787` asks Jev after the card has allowed a call, denies on an answer over the bar with a signed `blocked.v1`, and fails open with a note when the adapter cannot answer. See [the gate](/integrations/claude-code#the-gate).
 
+## Before the LLM: routing
+
+The same slot works where TypeSafe's own guidance puts Jev first: choosing the route before an expensive generative call. A `choice` whose options are route names is a routing judgement; `effect` carries the chosen route, and `--contract` names the versioned decision contract it ran under, so a change to the menu is a reviewable change:
+
+```bash
+treeship judge --tool route --input '{"goal":"cited briefing","sources":7,"draft":true}' \
+  --judge-url http://127.0.0.1:8787 \
+  --questions-file route.json --threshold 0.7 \
+  --contract briefing-router@3 --attest
+```
+
+```json
+{ "next_worker": { "type": "choice", "instructions": "Which available worker should act next?",
+                   "options": ["research", "write", "fact_check", "review"] } }
+```
+
+A choice below the bar is `escalated`, and stays an open question in the package until a person resolves it with `treeship judge --resolve … --by human://alice --decision route --route fact_check`, their own signed artifact.
+
 ## What the receipt says
 
 ```
