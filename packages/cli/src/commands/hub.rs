@@ -801,7 +801,15 @@ fn push_artifact_to_hub(
         .send_json(&body)?
         .into_json()?;
 
-    let hub_url = resp["hub_url"].as_str().unwrap_or("").to_string();
+    // A hub that returns no URL: the artifact is where we just put it.
+    let hub_url = match resp["hub_url"].as_str() {
+        Some(u) if !u.is_empty() => u.to_string(),
+        _ => format!(
+            "{}/v1/artifacts/{}",
+            entry.endpoint.trim_end_matches('/'),
+            record.artifact_id
+        ),
+    };
     let rekor_index = resp["rekor_index"].as_u64();
 
     // 4. Update local record with hub_url
@@ -948,9 +956,6 @@ fn print_push_result(printer: &Printer, hub_name: &str, result: &PushResult) {
             ("rekor", &rekor_str),
         ],
     );
-    if !result.hub_url.is_empty() {
-        printer.hint(&format!("treeship open {}", result.hub_url));
-    }
     printer.blank();
 }
 

@@ -13,6 +13,7 @@ import (
 	"github.com/zerkerlabs/treeship/packages/hub/internal/contentaddress"
 	"github.com/zerkerlabs/treeship/packages/hub/internal/db"
 	"github.com/zerkerlabs/treeship/packages/hub/internal/dpop"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/publicurl"
 	"github.com/zerkerlabs/treeship/packages/hub/internal/rekor"
 )
 
@@ -165,7 +166,7 @@ func (h *Handlers) Push(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hubURL := "https://treeship.dev/verify/" + derived.ArtifactID
+	hubURL := publicurl.Artifact(r, derived.ArtifactID)
 
 	// Indexed fields come from the envelope, not the request. See
 	// contentaddress.DeriveIndexable: an index built from caller-supplied
