@@ -421,7 +421,7 @@ fn now_rfc3339() -> String {
 }
 
 /// `key_<16 hex>` or `key_agent_<16 hex>`: the shapes the keystore mints.
-fn looks_like_key_id(s: &str) -> bool {
+pub(crate) fn looks_like_key_id(s: &str) -> bool {
     let hex = s
         .strip_prefix("key_agent_")
         .or_else(|| s.strip_prefix("key_"));

