@@ -1,0 +1,110 @@
+---
+title: Try to break a receipt
+description: Two minutes, five commands. Sign something, change one character, and watch verification fail.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+The fastest way to see what a receipt is: make one, tamper with it, and check
+it again. Everything runs on your machine. No account, and no network after
+the install.
+
+<Callout type="info">
+Needs Node.js and npm. macOS or Linux; Windows via WSL.
+</Callout>
+
+<Steps>
+<Step>
+### Install and initialize
+
+```bash
+npm install -g treeship && treeship init
+```
+
+`init` generates an Ed25519 keypair, the ship key. The private key stays on
+this machine.
+</Step>
+
+<Step>
+### Sign something
+
+```bash
+treeship wrap -- echo hello
+```
+
+The command runs as normal, then Treeship seals a signed receipt for it. The
+`no active session` warning is expected: this receipt stands on its own.
+</Step>
+
+<Step>
+### Verify it
+
+```bash
+treeship verify last
+```
+
+```text
+✓ verified  (1 artifact . chain intact)
+```
+</Step>
+
+<Step>
+### Break it
+
+Open the receipt in any editor. It is the `art_….json` file in:
+
+```bash
+ls ~/.treeship/artifacts/
+```
+
+Find the long `"payload"` value under `"envelope"`. That is the signed record
+of what ran: the command, its exit code and output hash, the time and the actor. Change any
+single character inside it, or inside `"sig"`, and save the file.
+
+<Callout type="info">
+The fields at the top of the file (`signed_at`, `key_id`, `digest`,
+`artifact_id`) are a local index for listing receipts. Verification ignores
+them and reads only the signed envelope, so editing them changes nothing that
+is checked: `verify` still passes and still shows the signed time, not the
+edited one.
+</Callout>
+</Step>
+
+<Step>
+### Verify again
+
+```bash
+treeship verify last
+```
+
+```text
+✗ verification failed
+  outcome: fail
+  passed: 0
+  failed: 1
+  …
+       reason: invalid signature for key: key_…
+```
+
+The command exits `1`, so a script or CI job can gate on it.
+</Step>
+</Steps>
+
+## What just happened
+
+A receipt is an Ed25519 signature over the exact bytes of its signed payload,
+and its id is derived from those same bytes. Change one of them and the
+signature no longer matches. Nothing was asked of a server: the check ran on
+your machine, against a public key.
+
+## Take it further
+
+- Check a receipt with no Treeship code at all. `treeship receipt export <id> --format json`
+  prints the signed message, the signature and the public key for any Ed25519
+  library.
+- Tampering matters most on someone else's machine. [Verify a session
+  package](/docs/commerce/verify-a-package) walks through checking a package
+  you were handed.
+- Know the limits before you rely on it: [What a receipt
+  proves](/docs/concepts/what-receipts-prove).

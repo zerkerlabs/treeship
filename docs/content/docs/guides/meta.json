@@ -3,6 +3,7 @@
   "pages": [
     "introduction",
     "quickstart",
+    "try-to-break-it",
     "install",
     "first-run",
     "wrapping-commands",
