@@ -41,4 +41,4 @@ onboarding: |
     treeship session close --summary "what you found"
 
   Share the provenance chain:
-    treeship share last
+    treeship session report

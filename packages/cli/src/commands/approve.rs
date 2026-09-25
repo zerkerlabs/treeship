@@ -355,7 +355,10 @@ pub fn approve(
     printer.info(&format!("  command:  {}", pa.command));
     printer.info(&format!("  nonce:    {}  (binding token)", nonce));
     printer.blank();
-    printer.dim_info("  The command will now proceed.");
+    printer.dim_info(
+        "  Recorded. A shell hook cannot hold a command back, so if it did not run, run it again:",
+    );
+    printer.dim_info(&format!("    {}", pa.command));
     printer.blank();
 
     Ok(())

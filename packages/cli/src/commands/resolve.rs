@@ -230,25 +230,28 @@ pub fn resolve(
         }
         return Ok(());
     }
-    printer.success(
-        "agent resolved",
-        &[
-            ("agent", agent),
-            ("key", &key_str),
-            ("key provenance", key_grade),
-            ("current card", &card_id),
-            ("declared tools", &tools_str),
-            ("capabilities", &cap_grade),
-            ("capability mix", &provenance_str),
-            ("behavior", &behavior_str),
-            ("status", status),
-        ],
-    );
-    if let Some((reason, who)) = &revocation {
-        printer.warn(
-            "card REVOKED — do not honor",
-            &[("by", who), ("reason", reason)],
-        );
+    let fields = [
+        ("agent", agent),
+        ("key", key_str.as_str()),
+        ("key provenance", key_grade),
+        ("current card", card_id.as_str()),
+        ("declared tools", tools_str.as_str()),
+        ("capabilities", cap_grade.as_str()),
+        ("capability mix", provenance_str.as_str()),
+        ("behavior", behavior_str.as_str()),
+        ("status", status),
+    ];
+    // The headline is the verdict, never a green line above a red one.
+    match &revocation {
+        Some((reason, who)) => {
+            printer.warn("agent resolved: card REVOKED — do not honor", &fields);
+            printer.warn(
+                "revoked",
+                &[("by", who.as_str()), ("reason", reason.as_str())],
+            );
+        }
+        None if hostile => printer.warn("agent resolved: NOT OK", &fields),
+        None => printer.success("agent resolved", &fields),
     }
     printer.blank();
     printer.hint(
@@ -486,25 +489,27 @@ fn resolve_remote(hub: &str, agent: &str, trust: &TrustRootStore, printer: &Prin
         return Ok(());
     }
 
-    printer.success(
-        "agent resolved (remote)",
-        &[
-            ("agent", agent),
-            ("hub", base),
-            ("current card", &card_id),
-            ("signature", sig_str),
-            ("key-bound", key_bound_str),
-            ("declared tools", &tools_str),
-            ("capability mix", &mix_str),
-            ("transparency", &transparency_str),
-            ("status", status),
-        ],
-    );
-    if let Some(reason) = &revocation {
-        printer.warn(
-            "card REVOKED — do not honor",
-            &[("reason", reason.as_str())],
-        );
+    let fields = [
+        ("agent", agent),
+        ("hub", base),
+        ("current card", card_id.as_str()),
+        ("signature", sig_str),
+        ("key-bound", key_bound_str),
+        ("declared tools", tools_str.as_str()),
+        ("capability mix", mix_str.as_str()),
+        ("transparency", transparency_str.as_str()),
+        ("status", status),
+    ];
+    match &revocation {
+        Some(reason) => {
+            printer.warn(
+                "agent resolved (remote): card REVOKED — do not honor",
+                &fields,
+            );
+            printer.warn("revoked", &[("reason", reason.as_str())]);
+        }
+        None if hostile => printer.warn("agent resolved (remote): NOT OK", &fields),
+        None => printer.success("agent resolved (remote)", &fields),
     }
     printer.blank();
     printer.hint(

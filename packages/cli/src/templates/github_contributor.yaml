@@ -51,7 +51,7 @@ onboarding: |
     git push    -> push receipt linked to preceding tests
 
   Add to your PR description:
-    treeship share last
+    treeship session report
     -> https://treeship.dev/verify/art_xxx
 
   Proves: tests ran before commit, lockfile clean, signed by your key.

@@ -455,6 +455,19 @@ fn action_v2(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std:
         .unwrap_or_else(|| "hub://local/revocations".into());
     let mandate = mandate_from_grant(&leaf, chain, &revocation_path);
 
+    // The receipt records the violation either way; the person signing it
+    // should not learn that from `verify` later.
+    if !treeship_core::statements::action_v2::action_in_scope(&args.action, &leaf.scope) {
+        printer.warn(
+            "this action is outside the grant's scope",
+            &[
+                ("action", args.action.as_str()),
+                ("scope", &leaf.scope.join(", ")),
+            ],
+        );
+        printer.hint("the receipt will be signed as it is; `treeship verify` will report AUTHORITY INVALID for it");
+    }
+
     let mut stmt = ActionStatementV2::new(&args.actor, &args.action, mandate);
     stmt.audience = Some(
         args.audience

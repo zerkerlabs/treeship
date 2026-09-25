@@ -948,9 +948,6 @@ fn print_push_result(printer: &Printer, hub_name: &str, result: &PushResult) {
             ("rekor", &rekor_str),
         ],
     );
-    if !result.hub_url.is_empty() {
-        printer.hint(&format!("treeship open {}", result.hub_url));
-    }
     printer.blank();
 }
 

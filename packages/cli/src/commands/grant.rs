@@ -635,6 +635,33 @@ fn format_rfc3339(secs: u64) -> String {
 /// revocation instant against the action's `signed_at`, so actions signed
 /// before this moment stay authorized. Withdrawing authority and unmaking the
 /// past are different operations, and only the first is available.
+/// The id of a grant_revocation.v1 receipt this store already holds for
+/// `grant_id`, if any.
+fn existing_revocation(ctx: &ctx::Ctx, grant_id: &str) -> Option<String> {
+    let pt = treeship_core::statements::payload_type("receipt");
+    for entry in ctx.storage.list_by_type(&pt) {
+        let Ok(rec) = ctx.storage.read(&entry.id) else {
+            continue;
+        };
+        let Ok(stmt) = rec.envelope.unmarshal_statement::<ReceiptStatement>() else {
+            continue;
+        };
+        if stmt.kind != "grant_revocation.v1" {
+            continue;
+        }
+        let same = stmt
+            .payload
+            .as_ref()
+            .and_then(|p| p.get("grant_id"))
+            .and_then(|v| v.as_str())
+            == Some(grant_id);
+        if same {
+            return Some(entry.id.clone());
+        }
+    }
+    None
+}
+
 pub fn revoke(
     id: &str,
     reason: Option<&str>,
@@ -675,6 +702,13 @@ pub fn revoke(
              A revocation signed by anyone else is ignored by verifiers, so minting one \
              here would tell you the grant was withdrawn when it was not.",
             grant.grantor, signer_pub
+        )
+        .into());
+    }
+
+    if let Some(existing) = existing_revocation(&ctx, &grant.grant_id) {
+        return Err(format!(
+            "grant {id} is already revoked by {existing}; a second revocation receipt would add nothing"
         )
         .into());
     }

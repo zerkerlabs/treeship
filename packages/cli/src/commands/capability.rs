@@ -31,7 +31,10 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
 
     // --- Load and parse the card ------------------------------------------
     let record = ctx.storage.read(card_id)?;
-    let card_stmt: ReceiptStatement = record.envelope.unmarshal_statement()?;
+    let card_stmt: ReceiptStatement = record
+        .envelope
+        .unmarshal_statement()
+        .map_err(|e| format!("{card_id} is not a capability card (agent_card.v1 receipt): {e}"))?;
     if card_stmt.kind != "agent_card.v1" {
         return Err(format!(
             "{card_id} is kind `{}`, not an agent_card.v1 receipt",
@@ -297,25 +300,29 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
         }
         return Ok(());
     }
-    printer.success(
-        "capability card",
-        &[
-            ("card", card_id),
-            ("agent", card_agent),
-            ("key-bound", key_bound_str),
-            ("declared tools", &tools_str),
-            ("declared network", &network_str),
-            ("provenance", &provenance_str),
-            ("in-scope actions", &in_scope_str),
-            ("out-of-scope", &oos_str),
-            ("status", status),
-        ],
-    );
-    if let Some((reason, who)) = &revocation {
-        printer.warn(
-            "capability card REVOKED — do not honor",
-            &[("by", who), ("reason", reason)],
-        );
+    let fields = [
+        ("card", card_id),
+        ("agent", card_agent),
+        ("key-bound", key_bound_str),
+        ("declared tools", &tools_str),
+        ("declared network", &network_str),
+        ("provenance", &provenance_str),
+        ("in-scope actions", &in_scope_str),
+        ("out-of-scope", &oos_str),
+        ("status", status),
+    ];
+    // The headline is the verdict. A revoked card used to open with a
+    // green "✓ capability card" and say REVOKED two lines down.
+    match &revocation {
+        Some((reason, who)) => {
+            printer.warn("capability card REVOKED — do not honor", &fields);
+            printer.warn(
+                "revoked",
+                &[("by", who.as_str()), ("reason", reason.as_str())],
+            );
+        }
+        None if hostile => printer.warn("capability card: NOT OK", &fields),
+        None => printer.success("capability card", &fields),
     }
     if let Some(note) = &anchor_note {
         printer.hint(note);
@@ -363,7 +370,10 @@ pub fn revoke_capability(
 
     // Read the card so the revocation records its keyid + actor.
     let record = ctx.storage.read(card_id)?;
-    let card_stmt: ReceiptStatement = record.envelope.unmarshal_statement()?;
+    let card_stmt: ReceiptStatement = record
+        .envelope
+        .unmarshal_statement()
+        .map_err(|e| format!("{card_id} is not a capability card (agent_card.v1 receipt): {e}"))?;
     if card_stmt.kind != "agent_card.v1" {
         return Err(format!(
             "{card_id} is kind `{}`, not an agent_card.v1 receipt",
