@@ -9,7 +9,6 @@ audience: [developer, devops]
 session:
   actor: agent://ci
   auto_start: true
-  auto_push: true
 
 attest:
   commands:
@@ -50,7 +49,6 @@ approvals:
     - label: deploy
 
 hub:
-  auto_push: true
   push_on: [session_close, approval_required]
 
 onboarding: |

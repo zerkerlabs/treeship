@@ -9,7 +9,6 @@ audience: [developer, team-lead]
 session:
   actor: agent://claude-code
   auto_start: true
-  auto_push: true
 
 attest:
   commands:
@@ -34,7 +33,6 @@ capture:
   environment: true
 
 hub:
-  auto_push: true
   push_on: [session_close]
 
 onboarding: |

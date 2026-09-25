@@ -8,6 +8,25 @@ use crate::templates;
 // ---------------------------------------------------------------------------
 
 pub fn list(printer: &Printer) {
+    if printer.format == crate::printer::Format::Json {
+        let templates: Vec<serde_json::Value> = templates::by_category()
+            .into_iter()
+            .flat_map(|(category, tmpls)| {
+                tmpls.into_iter().map(move |t| {
+                    serde_json::json!({
+                        "name": t.name,
+                        "description": t.description,
+                        "category": category,
+                    })
+                })
+            })
+            .collect();
+        printer.json(&serde_json::json!({
+            "count": templates.len(),
+            "templates": templates,
+        }));
+        return;
+    }
     printer.blank();
     printer.section("OFFICIAL TEMPLATES");
     printer.blank();
@@ -39,6 +58,18 @@ pub fn preview(name: &str, printer: &Printer) -> Result<(), Box<dyn std::error::
     let tmpl = resolve_template(name)?;
     let parsed: TemplateYaml = serde_yaml::from_str(tmpl.yaml)
         .map_err(|e| format!("failed to parse template YAML: {e}"))?;
+
+    if printer.format == crate::printer::Format::Json {
+        let as_json: serde_json::Value = serde_yaml::from_str(tmpl.yaml)
+            .map_err(|e| format!("failed to parse template YAML: {e}"))?;
+        printer.json(&serde_json::json!({
+            "name": tmpl.name,
+            "description": tmpl.description,
+            "category": tmpl.category,
+            "template": as_json,
+        }));
+        return Ok(());
+    }
 
     printer.blank();
     printer.section(&format!("Template: {}", parsed.name));
@@ -307,7 +338,7 @@ pub fn save(name: Option<String>, printer: &Printer) -> Result<(), Box<dyn std::
             let _ = io::stdin().read_line(&mut line);
             let trimmed = line.trim().to_string();
             if trimmed.is_empty() {
-                return Err("template name is required".into());
+                return Err(crate::exit::usage("template name is required"));
             }
             trimmed
         }

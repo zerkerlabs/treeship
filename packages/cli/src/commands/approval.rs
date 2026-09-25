@@ -33,6 +33,28 @@ fn journal_dir_for(config_path: &Path) -> PathBuf {
         .join("approval-use")
 }
 
+/// A grant id nobody has heard of is an error, not "unbounded, within
+/// max_uses". The grant counts as known when this workspace holds its
+/// grant file (`grants/<id>.json`), the artifact store holds it, or the
+/// journal has recorded a use of it (a grant issued on another ship and
+/// consumed here is known only to the journal). Through 0.31.9
+/// `approval status art_nope` reported a healthy grant and exited 0.
+fn require_known_grant(
+    ctx: &ctx::Ctx,
+    grant_id: &str,
+    recorded_uses: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let grants_dir = crate::commands::grant::grants_dir_for(&ctx.config_path);
+    let on_disk = crate::commands::grant::grant_path(&grants_dir, grant_id).exists();
+    if recorded_uses == 0 && !on_disk && !ctx.storage.exists(grant_id) {
+        return Err(format!(
+            "grant {grant_id} is not in this workspace's store and has no recorded uses in its Approval Use Journal"
+        )
+        .into());
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // uses
 // ---------------------------------------------------------------------------
@@ -49,6 +71,7 @@ pub fn uses(
     let ctx = ctx::open(config)?;
     let j = Journal::new(journal_dir_for(&ctx.config_path));
     let uses = journal::list_uses_for_grant(&j, grant_id)?;
+    require_known_grant(&ctx, grant_id, uses.len())?;
 
     match format {
         Format::Json => {
@@ -116,6 +139,7 @@ pub fn status(
     let ctx = ctx::open(config)?;
     let j = Journal::new(journal_dir_for(&ctx.config_path));
     let uses = journal::list_uses_for_grant(&j, grant_id)?;
+    require_known_grant(&ctx, grant_id, uses.len())?;
 
     let count = uses.len() as u32;
     let max_uses = uses.iter().filter_map(|u| u.max_uses).next_back();

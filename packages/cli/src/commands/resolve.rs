@@ -88,12 +88,13 @@ pub fn resolve(
     }
 
     let Some((card_id, card, card_signer, _)) = current else {
-        printer.warn("no capability card", &[("agent", agent)]);
+        // An agent with no card cannot be resolved. Say so on the exit
+        // code: a script doing `treeship resolve $agent && deploy` must
+        // not deploy on a typo. (Exited 0 through 0.31.9.)
         printer.hint(
             "this agent has no agent_card.v1 in the local store; mint one with `treeship attest card`.",
         );
-        printer.blank();
-        return Ok(());
+        return Err(format!("no capability card for {agent}").into());
     };
 
     let card_keyid = card.get("keyid").and_then(|v| v.as_str()).unwrap_or("");
@@ -274,10 +275,8 @@ fn resolve_remote(hub: &str, agent: &str, trust: &TrustRootStore, printer: &Prin
         .map_err(|e| format!("hub returned invalid JSON: {e}"))?;
 
     let Some(card_entry) = bundle.get("current_card").filter(|v| !v.is_null()) else {
-        printer.warn("no capability card", &[("agent", agent), ("hub", base)]);
         printer.hint("the hub holds no agent_card.v1 for this agent.");
-        printer.blank();
-        return Ok(());
+        return Err(format!("no capability card for {agent} on hub {base}").into());
     };
     let card_id = card_entry
         .get("artifact_id")

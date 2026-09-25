@@ -54,7 +54,20 @@ pub fn test_connection(
 
 #[cfg(feature = "otel")]
 pub fn status(printer: &Printer) {
-    match crate::otel::config::OtelConfig::from_env() {
+    let cfg = crate::otel::config::OtelConfig::from_env();
+    if printer.format == crate::printer::Format::Json {
+        // `auth` says whether a header is set; the header is a credential
+        // and stays out of a status dump.
+        printer.json(&serde_json::json!({
+            "configured": cfg.is_some(),
+            "enabled": cfg.as_ref().map(|c| c.enabled).unwrap_or(false),
+            "endpoint": cfg.as_ref().map(|c| c.endpoint.as_str()),
+            "service": cfg.as_ref().map(|c| c.service_name.as_str()),
+            "auth": cfg.as_ref().map(|c| c.auth_header.is_some()).unwrap_or(false),
+        }));
+        return;
+    }
+    match cfg {
         Some(cfg) => {
             printer.blank();
             printer.section("otel");
@@ -100,9 +113,11 @@ pub fn export_artifact(
             printer.blank();
         }
         Err(e) => {
-            printer.blank();
-            printer.failure("export failed", &[("artifact", id), ("error", &e)]);
-            printer.blank();
+            // A failed export is a failure: the caller asked for the span
+            // to reach the collector and it did not. Returning the error
+            // makes the exit code say so (it printed "✗ export failed"
+            // and exited 0 through 0.31.9).
+            return Err(format!("export failed: artifact {id}: {e}").into());
         }
     }
 
@@ -137,13 +152,10 @@ pub fn disable(printer: &Printer) {
 // ---------------------------------------------------------------------------
 
 #[cfg(not(feature = "otel"))]
-pub fn not_available(printer: &Printer) {
-    printer.blank();
-    printer.warn(
-        "otel export is not compiled into this binary (built with --no-default-features)",
-        &[],
-    );
+pub fn not_available(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     printer.blank();
     printer.hint("the published binaries include it: npm install -g treeship, or cargo build -p treeship-cli with default features");
-    printer.blank();
+    Err(crate::exit::not_in_build(
+        "otel export is not compiled into this build (built with --no-default-features)",
+    ))
 }

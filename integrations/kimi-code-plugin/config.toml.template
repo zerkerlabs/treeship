@@ -1,9 +1,10 @@
 # Treeship Kimi Code CLI plugin -- hook registrations
 #
-# Append (or merge) this block into ~/.kimi/config.toml. The TREESHIP_PLUGIN_ROOT
-# placeholder is replaced by `treeship integrations install kimi-code` with the
-# absolute path where the scripts were copied (default:
-# ~/.treeship/integrations/kimi-code-plugin/scripts).
+# There is no automated installer yet (`treeship add kimi-code` is pending,
+# and there is no `treeship integrations install` command). Copy this
+# directory's scripts/ somewhere stable yourself, replace the
+# TREESHIP_PLUGIN_ROOT placeholder below with that absolute path, and append
+# (or merge) the result into ~/.kimi/config.toml.
 #
 # After merging, restart Kimi Code so it reloads the TOML config.
 #
