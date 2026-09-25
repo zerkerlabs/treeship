@@ -189,4 +189,39 @@ if want tampered/endorsement-parent-edited; then
   done
 fi
 
+# CLI-4: a cross-session splice. One ship closes session 1, then signs, in
+# session 2, an action and a handoff that name session 1's last chained
+# artifact as parent. Each is appended to session 1's package with the tree
+# recomputed (splice.py). With record.json deleted this verified by default
+# before W1-4; with it kept, receipt_binding catches it.
+if want tampered/splice-action || want tampered/splice-handoff || want tampered/splice-action-record-kept; then
+  S="$WORK/splice"
+  ship "$S" "$BIN" init --name vectors >/dev/null
+  ship "$S" "$BIN" session start --name first --actor agent://vector >/dev/null
+  ship "$S" "$BIN" attest action --actor agent://vector --action read >/dev/null
+  ship "$S" "$BIN" session close --headline first --summary vector --receipt-dir "$S/r" >/dev/null
+  P1="$(ls -d "$S"/r/*.treeship)"
+  LAST=$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print([a["artifact_id"] for a in r["artifacts"] if not a.get("unchained")][-1])' "$P1/receipt.json")
+  ship "$S" "$BIN" session start --name second --actor agent://vector >/dev/null
+  ACT=$(ship "$S" "$BIN" --format json attest action --actor agent://vector --action wire.transfer --parent "$LAST" | id_of id)
+  HOF=$(ship "$S" "$BIN" --format json attest handoff --from agent://vector --to agent://mallory --artifacts "$LAST" | id_of id)
+  envelope_of() { # envelope_of <artifact-id>: the signed envelope from the ship's store
+    python3 -c 'import json,sys; json.dump(json.load(open(sys.argv[1]))["envelope"], open(sys.argv[2], "w"))' \
+      "$S/.treeship/artifacts/$1.json" "$S/$1.json"
+    printf '%s\n' "$S/$1.json"
+  }
+  if want tampered/splice-action; then
+    python3 "$OUT/splice.py" "$P1" "$OUT/tampered/splice-action" "$(envelope_of "$ACT")" 0 0 >/dev/null
+    rm -f "$OUT/tampered/splice-action/preview.html"
+  fi
+  if want tampered/splice-handoff; then
+    python3 "$OUT/splice.py" "$P1" "$OUT/tampered/splice-handoff" "$(envelope_of "$HOF")" 0 0 >/dev/null
+    rm -f "$OUT/tampered/splice-handoff/preview.html"
+  fi
+  if want tampered/splice-action-record-kept; then
+    python3 "$OUT/splice.py" "$P1" "$OUT/tampered/splice-action-record-kept" "$(envelope_of "$ACT")" 1 0 >/dev/null
+    rm -f "$OUT/tampered/splice-action-record-kept/preview.html"
+  fi
+fi
+
 echo "vectors written to $OUT"

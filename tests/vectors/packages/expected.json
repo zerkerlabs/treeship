@@ -58,26 +58,14 @@
       "cli": "failed",
       "cli_strict": "failed",
       "cli_structural": "structural-pass",
-      "receipt_only": "structural-pass",
-      "xfail": {
-        "cli": {
-          "task": "W1-4",
-          "got": "signatures-pass"
-        }
-      }
+      "receipt_only": "structural-pass"
     },
     "tampered/drop-record-json+rename": {
       "_note": "CLI-4: close record deleted, then session.name edited",
       "cli": "failed",
       "cli_strict": "failed",
       "cli_structural": "structural-pass",
-      "receipt_only": "structural-pass",
-      "xfail": {
-        "cli": {
-          "task": "W1-4",
-          "got": "signatures-pass"
-        }
-      }
+      "receipt_only": "structural-pass"
     },
     "tampered/endorsement-parent-edited": {
       "_note": "honest/endorse-non-latest with the endorsement's signed parentId pointed at its subject: a present parentId never falls back to the legacy path",
@@ -93,6 +81,27 @@
       "receipt_only": "structural-pass"
     },
     "tampered/rename-session": {
+      "cli": "failed",
+      "cli_strict": "failed",
+      "cli_structural": "structural-pass",
+      "receipt_only": "structural-pass"
+    },
+    "tampered/splice-action": {
+      "_note": "CLI-4 (#474 security review): session 2's action, signed by the same key with parentId = session 1's last chained artifact, appended to session 1's package with the tree recomputed and record.json deleted. 0.31.9 rates it verified",
+      "cli": "failed",
+      "cli_strict": "failed",
+      "cli_structural": "structural-pass",
+      "receipt_only": "structural-pass"
+    },
+    "tampered/splice-action-record-kept": {
+      "_note": "as splice-action with record.json kept: receipt_binding fails because the sealed set no longer digests to what the close record signed",
+      "cli": "failed",
+      "cli_strict": "failed",
+      "cli_structural": "structural-pass",
+      "receipt_only": "structural-pass"
+    },
+    "tampered/splice-handoff": {
+      "_note": "as splice-action, with a handoff whose artifacts[0] names session 1's last chained artifact",
       "cli": "failed",
       "cli_strict": "failed",
       "cli_structural": "structural-pass",
