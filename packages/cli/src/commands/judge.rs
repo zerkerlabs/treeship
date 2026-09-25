@@ -13,6 +13,7 @@
 //! state gets the receipt's answer.
 
 use std::collections::BTreeMap;
+use std::io::Read;
 use std::path::Path;
 
 use serde_json::Value;
@@ -28,6 +29,7 @@ use treeship_core::{
 };
 
 use crate::{ctx, printer::Printer};
+use treeship_core::judge::digest_bytes;
 
 pub const SYSTEM: &str = "system://treeship-judge";
 
@@ -53,6 +55,8 @@ pub struct JudgeArgs {
     pub enforce: bool,
     /// `id@version` of the decision contract the judgement ran under.
     pub contract: Option<String>,
+    /// Write the canonical state the receipt's `state_digest` commits to.
+    pub state_out: Option<String>,
     /// Resolve an escalated or refused judgement instead of judging: the
     /// art_ id of the judgement.v1 receipt.
     pub resolve: Option<String>,
@@ -257,12 +261,29 @@ impl Judge for HttpJudge {
                     .map_err(|e| JudgeError::Unavailable(e.to_string()))?,
             )
             .map_err(|e| JudgeError::Unavailable(e.to_string()))?;
-        let mut parsed: JudgeResponse = resp
-            .into_json()
+        // The judge's own id for this answer, from the header if it sets
+        // one; the body may carry it too.
+        let header_id = [
+            "x-typesafe-request-id",
+            "x-request-id",
+            "x-judge-request-id",
+        ]
+        .iter()
+        .find_map(|h| resp.header(h).map(str::to_string));
+        let mut raw = Vec::new();
+        resp.into_reader()
+            .read_to_end(&mut raw)
+            .map_err(|e| JudgeError::Unavailable(e.to_string()))?;
+        let mut parsed: JudgeResponse = serde_json::from_slice(&raw)
             .map_err(|e| JudgeError::BadAnswer(format!("response is not a judge answer: {e}")))?;
         if parsed.latency_ms.is_none() {
             parsed.latency_ms = Some(started.elapsed().as_millis() as u64);
         }
+        if parsed.request_id.is_none() {
+            parsed.request_id = header_id;
+        }
+        // Committed to as received: the exact bytes, before any parsing.
+        parsed.response_digest = Some(digest_bytes(&raw));
         Ok(parsed)
     }
 }
@@ -382,6 +403,13 @@ pub fn judge(args: JudgeArgs, printer: &Printer) -> Result<(), Box<dyn std::erro
     check_answers(&request, &response)?;
 
     let state_digest = digest(&request.state);
+    if let Some(path) = &args.state_out {
+        // The receipt carries only the digest; the caller holds the state.
+        // This is the file a verifier needs to re-run the rules judge, or
+        // to check that an outside judge was shown what the receipt says.
+        std::fs::write(path, treeship_core::judge::canonical_bytes(&request.state))
+            .map_err(|e| format!("could not write --state-out {path}: {e}"))?;
+    }
     let questions_digest = questions_digest(&request.questions);
     let set_by = args.set_by.clone().unwrap_or_else(|| "default".to_string());
     let judged_at = crate::commands::session::now_rfc3339();
@@ -445,6 +473,12 @@ pub fn judge(args: JudgeArgs, printer: &Printer) -> Result<(), Box<dyn std::erro
                 &judged_at,
             );
             let mut payload = payload;
+            if let Some(d) = &response.response_digest {
+                payload["response_digest"] = Value::String(d.clone());
+            }
+            if let Some(rid) = &response.request_id {
+                payload["judge"]["request_id"] = Value::String(rid.clone());
+            }
             if let Some((cid, cver)) = &contract {
                 let mut c = serde_json::json!({ "id": cid });
                 if let Some(v) = cver {
@@ -544,6 +578,9 @@ pub fn judge(args: JudgeArgs, printer: &Printer) -> Result<(), Box<dyn std::erro
             "receipts": receipts,
             "reason_facts": reason_facts,
             "contract": contract.as_ref().map(|(id, v)| serde_json::json!({ "id": id, "version": v })),
+            "response_digest": response.response_digest,
+            "request_id": response.request_id,
+            "state_out": args.state_out,
         }));
         if args.enforce {
             if let Some(code) = enforce_exit(overall.effect.as_deref()) {

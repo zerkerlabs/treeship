@@ -66,7 +66,7 @@ threshold:  0.5 (set by default)
   verdict                    deny   refused (deny)
 ```
 
-Each question is one `judgement.v1`: `judge.model` is the version Jev reported (`jev-1.13.0`; the adapter pins the model rather than sending `jev-latest`, so the receipt names a version), `judge.provider` is `typesafe`, `judge.kind` is `decision-model`, and `judge.replayable` is `false`. The answer is carried as Jev returned it: the `noul` probability (with `yes`/`no` probabilities derived from it), the `choice` with its probability map and confidence, the `score` with its level probabilities and confidence. Digests of the state and the questions are committed to; the state itself stays with the caller.
+Each question is one `judgement.v1`: `judge.model` is the version Jev reported (`jev-1.13.0`; the adapter pins the model rather than sending `jev-latest`, so the receipt names a version), `judge.provider` is `typesafe`, `judge.kind` is `decision-model`, and `judge.replayable` is `false`. The answer is carried as Jev returned it: the `noul` probability (with `yes`/`no` probabilities derived from it), the `choice` with its probability map and confidence, the `score` with its level probabilities and confidence. Digests of the state and the questions are committed to; the state itself stays with the caller (`--state-out` writes it). `response_digest` is the hash of the exact bytes the adapter returned, and `judge.request_id` is Jev's `x-typesafe-request-id` for the call, which the adapter passes through: the receipt is the caller's claim, and those two fields tie it to one response TypeSafe could be asked about.
 
 ## What it proves, and what it does not
 

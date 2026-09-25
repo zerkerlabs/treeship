@@ -365,10 +365,11 @@ mints these: the built-in rules judge, or any judge behind `--judge-url`.
 | Field | Type | Required |
 |---|---|---|
 | `schema` | const `judgement.v1` | yes |
-| `judge` | object `{model, provider, kind, replayable}` with `kind` one of `decision-model`, `llm`, `classifier`, `rules` | yes (`model`) |
+| `judge` | object `{model, provider, kind, replayable, request_id}` with `kind` one of `decision-model`, `llm`, `classifier`, `rules`; `request_id` is the judge's own id for the answer when it gives one | yes (`model`) |
 | `contract` | object `{id, version}`: the versioned decision contract the judgement ran under | no |
 | `state_digest` | string (`sha256:<hex>`) | no |
 | `questions_digest` | string (`sha256:<hex>`) | no |
+| `response_digest` | string (`sha256:<hex>` of the raw response bytes the judge returned, as received by the caller) | no |
 | `question` | object `{key, type, instructions, options[]}` with `type` one of `noul`, `choice`, `score` | yes (`key`, `type`) |
 | `answer` | object `{noul, choice, score, probabilities{}, confidence}` | yes |
 | `threshold` | object `{value, applies_to, set_by}` with `applies_to` `confidence` or `noul` | no |

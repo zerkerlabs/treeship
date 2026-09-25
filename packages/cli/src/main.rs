@@ -2507,6 +2507,12 @@ struct JudgeArgs {
     #[arg(long, value_name = "ID@VERSION")]
     contract: Option<String>,
 
+    /// Write the canonical state the receipt's state_digest commits to, so a
+    /// verifier can re-run the rules judge or check what an outside judge
+    /// was shown. The receipt itself carries only the digest.
+    #[arg(long, value_name = "FILE")]
+    state_out: Option<String>,
+
     /// Resolve an escalated or refused judgement instead of judging: the
     /// human label, signed as a judgement.resolution.v1 receipt under
     /// --by's URI, chained onto the session and naming the judgement.
@@ -3961,6 +3967,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 attest: a.attest,
                 enforce: a.enforce,
                 contract: a.contract.clone(),
+                state_out: a.state_out.clone(),
                 resolve: a.resolve.clone(),
                 by: a.by.clone(),
                 decision: a.decision.clone(),

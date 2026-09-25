@@ -45,6 +45,10 @@
         "replayable": {
           "description": "True only when the same inputs are guaranteed to return the same answer, so a verifier could re-run the judge. Rules engines are; sampled models are not.",
           "type": "boolean"
+        },
+        "request_id": {
+          "description": "The judge's own id for this answer, when it returns one (Jev's x-typesafe-request-id header). A pointer a judge that keeps its responses can be asked about.",
+          "type": "string"
         }
       }
     },
@@ -71,6 +75,11 @@
     },
     "questions_digest": {
       "description": "sha256:<hex> of the full questions object sent, so the instructions and criteria are committed to without being published.",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "response_digest": {
+      "description": "sha256:<hex> of the raw response bytes the judge returned, computed by the caller as received. The receipt is the caller's claim; this commits it to the exact bytes, so a fabricated answer must come with a body that hashes to it. Judge co-signing is the next step; it is not this field.",
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
     },

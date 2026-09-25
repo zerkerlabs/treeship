@@ -72,9 +72,11 @@ OUT=$(t judge --tool Bash --input '{"command":"rm -rf /"}' --judge-url "http://1
 [ "$(printf '%s' "$OUT" | jsonget answers.unsafe.noul)" = "0.96" ] || fail "noul not mapped: $OUT"
 [ "$(printf '%s' "$OUT" | jsonget answers.verdict.choice)" = "deny" ] || fail "choice not mapped: $OUT"
 case "$(printf '%s' "$OUT" | jsonget answers.risk.score)" in 2|2.0) ;; *) fail "score not mapped: $OUT" ;; esac
+[ "$(printf '%s' "$OUT" | jsonget request_id)" = "req_mock_1" ] || fail "Jev's request id not passed through: $OUT"
+[ -n "$(printf '%s' "$OUT" | jsonget response_digest)" ] || fail "no response digest: $OUT"
 N=$(printf '%s' "$OUT" | jsonget receipts | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
 [ "$N" = "3" ] || fail "expected 3 judgement receipts, got $N"
-ok "deny on rm -rf /: noul 0.96, verdict deny, risk high; 3 judgement.v1 signed"
+ok "deny on rm -rf /: noul 0.96, verdict deny, risk high; 3 judgement.v1 signed; request id and response digest carried"
 
 OUT=$(t judge --tool Bash --input '{"command":"ls -la"}' --judge-url "http://127.0.0.1:$ADAPTER_PORT" \
       --questions-file "$ROOT/q.json" --threshold 0.5 --attest --format json)

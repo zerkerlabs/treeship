@@ -12,6 +12,63 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
 
 ## Unreleased
 
+- **The human's decision on a judgement is its own signed artifact.** An escalated judgement used to go quiet: nothing recorded who decided, what, or when. `treeship judge --resolve <judgement> --by human://alice --decision allow|deny|route` signs a `judgement.resolution.v1` receipt under the decider's URI, with the judgement as its subject, chained onto the session, recording what it `overrides` when it contradicts the judge. `package verify`'s `judgements` row pairs resolutions with escalations and reports an escalation with no resolution in the package as open (a warning), and names any judge decision a resolution overrode. A machine field saying "a human overrode this" would be the self-report a receipt exists to replace; a receipt under the decider's name is a claim the decider made.
+- **The receipt commits to the judge's exact answer.** A judgement is signed by the caller, so on its own it is the caller's claim about what the judge said. `judgement.v1` now carries `response_digest`, the hash of the raw response bytes as received, and `judge.request_id`, the judge's own id for the answer when it gives one (the Jev adapter passes `x-typesafe-request-id` through); a fabricated answer has to come with a body that hashes to the digest, and a judge that keeps its responses can be asked about the id. Judge co-signing is the next step and the docs say so. `--state-out` writes the canonical state the receipt's `state_digest` commits to, for a verifier who re-runs the rules judge or checks what an outside judge was shown.
+- **`TREESHIP_JUDGE_STRICT=1`** makes the Claude Code gate escalate a call the judge could not answer to the operator instead of letting it proceed with a note; the judge page says why the default fails open (the card already allowed the call) and why `treeship judge` itself never does.
+- **`judgement.v1` carries the decision contract.** `treeship judge --contract ticket-router@3` records `contract: {id, version}` in every receipt: the versioned definition of state, question, options and threshold, separate from the application's version, so a change to the question is reviewable like a code change.
+- **Jev in the judge slot.** `examples/judge-adapters/jev` puts TypeSafe's Jev behind the judge contract: a dependency-free adapter that speaks the contract on one side and `POST /v1/systemone` on the other, pins the model version so the receipt names one, and marks every answer `replayable: false`. Tested in CI against a mock of TypeSafe's documented request and response shapes (all three primitives mapped, an unavailable judge as an error, the `judgements` row naming the model). An independent implementation against the published API, not run against the live service. New integration page, systems registry row, and the post "Any judge, one receipt".
+
+## 0.31.9 (2026-09-25)
+
+- **A lifted halt stays lifted, whatever local file is rolled back.** The 0.31.8 fix read the store through `index.json`, an unsigned cache in the same directory as the halt marker; restoring both re-armed a halt while its signed lift sat on disk. The lookup now scans the record files and honours a halt, or a lift, only when its envelope verifies under the workspace key; the record's unsigned `key_id` is not consulted. `halt list` says which reason applies (`lifted by art_…`, or not signed here) instead of "no signed artifact" for both. (Retest 0.31.8, T20.)
+- **`verify --full` fails what `verify` fails.** Full mode never received the invalid-mandate fix: it opened with a green chain line, closed with three green summary rows, and exited 0 on an artifact the default mode exits 1 on. The summary now carries an `authority` row, the `AUTHORITY INVALID` banner follows it, `--require-authority` is honoured, and every failure exits 1 in every mode. (Retest 0.31.8.)
+- **`attest receipt --kind list` stands alone**, without `--system`.
+
+- **Security: Rekor anchoring works, and only a verified anchor counts (TS-2026-003).** The hub's Rekor submissions had never succeeded. Treeship signatures are unpadded base64url, which Rekor rejects, and the `hashedrekord` type cannot verify plain Ed25519 anyway. The failure was swallowed and the CLI printed `rekor: pending`. The hub now submits a `dsse` entry, which Sigstore's staging log accepts, and returns `rekor.status` (`anchored`, `failed`, `skipped`) with a reason and the full log entry. Re-pushing an unanchored artifact retries it. Separately, `verify --max-unwitnessed` took witness times from `Record.anchors[].observed_at` and claimed times from `Record.signed_at`. Both are unsigned values in files the operator controls, so an edited record passed any policy. It also ran only in text output: `--format json` and `--full` ignored it and exited 0. Now an anchor counts only if its Rekor entry verifies offline: signed entry timestamp, RFC 6962 inclusion proof, signed checkpoint, and binding to this artifact's payload and signature. Its time is Rekor's `integratedTime`. Claimed times come from each statement's signed `timestamp`. The gate runs in every output mode. JSON gains `anchoring` (`coverage`, a `tally` of verified, claimed-unverified, failed and rejected anchors, and `gate`). Existing anchors carry no proof and now report as claimed but unverified.
+- **Packages and bundles carry their Rekor proofs.** `session close` writes each sealed artifact's proofs to `anchors/<id>.json`, and `package verify` adds an `anchoring` row: it passes with the Rekor time span, fails when a stapled proof does not hold or is for another artifact, and warns on a log you have not pinned. A package without proofs has no row, so existing verdicts are unchanged. `bundle export` includes proofs under `anchors`, and `bundle import` merges them with the local store's instead of replacing its anchors.
+- **`transparency_log` trust roots.** The Sigstore public-good Rekor key is built in. `trust add <label> @rekor.pub --kind transparency_log` pins another log, such as a private Rekor, and replaces the built-in key rather than adding to it. This is a new trust kind: a `trust_roots.json` containing one will not load in 0.31.8 or earlier.
+- **The hub no longer stores a checkpoint's caller-supplied `rekor_index`.** It was saved and served back verbatim, so any dock could attach an arbitrary index to its checkpoint. It is null until the hub anchors checkpoints itself.
+
+## 0.31.8 (2026-09-24)
+
+- **An invalid mandate fails `verify` by default.** An action whose own mandate did not authorize it (out of scope, expired, wrong holder, revoked) verified as `outcome: pass, failed: 0`, exit 0, with `authority_ok: false` two fields down; only `--require-authority` changed the exit code, and even then the JSON said pass. Now the top line is `AUTHORITY INVALID`, JSON reports `outcome: fail` with the verdicts counted in `failed` and named in `authority_failed`, and the exit code is 1 with no flag. `--require-authority` remains the stricter mode (no mandate, or an uncheckable layer, also fails). (Retest 0.31.7, finding 30.)
+- **A signed lift outlives a restored marker.** Restoring a saved halt marker file after `halt --lift` re-armed the halt: the gate read the marker and never looked for the lift. `halt list`, the gate's source, now treats a marker as an order only when no signed lift names its halt; a marker outliving its lift is reported `lifted_by: <the lift>`, not honoured, and removed. (T20.)
+- **The payload's own `schema` must be the kind.** `attest receipt --kind confirmation` signed an `evaluation.v1` payload with a verdict outside its vocabulary, because validation dispatched on the flag alone. A payload naming a registered predicate as its `schema` is now refused under any other kind. `--kind list` prints the registry, and `--help` names every registered predicate (a test keeps the two in step). (31, 32.)
+- **`grant issue --expiry` takes a duration** (`30d`, `12h`, `45m`), and the help examples use one; the fixed example date had fallen into the past and refused when pasted. (33.)
+- **`verify --full` wraps a long authority reason** across box lines instead of cutting it mid-word at the frame. (34.)
+- **A workspace moved to another path can still sign.** The keystore's primary key binds the store's path, so a workspace restored elsewhere (a fresh container, another CI checkout, a backup) could verify but never sign, and an interrupted session there could never be closed. The store now records the canonical path it decrypts under in `keys/keystore.origin`; opened at a new path, it decrypts under the recorded one and rewraps. For a store with no origin file, `TREESHIP_KEYSTORE_ORIGIN=<previous path>` once does the same, and the MAC error says so. (N1.)
+- **`bundle import` names both pins** for an unpinned signer and says which applies to an agent's own key and which to the ship key, instead of guessing one from the id. (N2.) `trust add` prints that its store is machine-wide, whatever `--config` says, and the trust page says how to isolate ships when testing.
+- **`treeship judge --enforce`** exits 2 on `deny` and 3 on `ask`, for shell gates; without it the exit code says only whether the judge answered, and the judge page says why that is the default.
+
+## 0.31.7 (2026-09-23)
+
+- **The `judgements` row reads a yes/no answer both ways.** It flagged every judgement "acted at noul 0.000 below its threshold", which is the rules judge answering no to "unsafe?" and the caller proceeding: exactly what the bar asked for. The row now flags an effect that contradicts the side of the threshold the answer fell on (a yes allowed, a no refused) or a judgement with no bar; a confidence-based judgement is checked as before.
+
+- **`treeship judge --format json` prints `reason_facts`:** the same answers as Zerker Reason premises under the `model-judged` authority class, one per question, with the signed receipt as the fact id. Reason's side (the class convention, the example program and its tests) landed in zerkerlabs/reason#21.
+- **The judge slot, with a deterministic first judge.** `treeship judge` asks a judge typed questions about a tool call (`noul`, `choice`, `score`), holds the answers to a threshold, and with `--attest` signs each as a `judgement.v1` chained onto the session. The built-in judge is `treeship-rules`: pattern rules over the call (a path outside the workspace, a shell command that destroys or exfiltrates, a host outside the declared network scope, an amount above a bound) answered with probability 1 or 0 and replayable by a verifier, so no model is in the decision path unless the operator points at one. `--judge-url` sends the same request to any HTTP judge that speaks the contract (a decision model, an LLM judge, a classifier) and holds its answer to the same checks: every question answered in its type, every probability in range, an unavailable judge an error and never an allow. The Claude Code gate opts in with `TREESHIP_JUDGE=1` or `TREESHIP_JUDGE=<url>`, after the card and never instead of it: an answer over the bar denies with a `blocked.v1` (`policy_threshold_exceeded`) naming the judge and the questions, `ask` asks the operator, and a judge that cannot answer fails open with a note in the timeline. The gate's halt refusals now chain onto the session too.
+- **The kill switch reaches the bridges.** `treeship halt` stopped the Claude Code plugin and nothing else; an agent on the MCP bridge or behind the A2A middleware kept working while the halt stood, and the halt page claimed otherwise for strict mode. The MCP client now asks `treeship halt list` before every `callTool` and, under a halt this ship signed against its actor (or `*`), refuses before the server sees the call and throws `TreeshipHaltedError`. The A2A middleware refuses in `admitTask` (`halted`, before the presentation is read) and in `onTaskReceived` (local tasks too). Every refusal is signed as the same `blocked.v1` the plugin mints, chained onto the session with `--chain`. A check that cannot run fails open and is said once on stderr, as the plugin does; under `TREESHIP_STRICT=1` the bridges refuse instead. `TREESHIP_A2A_UNVERIFIED=1` never skips a halt.
+- **The gate reads the card `onboard` writes.** `treeship onboard --tools …` minted a signed card carrying the tools and left the local card record, the file the Claude Code gate actually reads, at empty capabilities, so an agent onboarded the documented way had every tool call refused as off-card. `onboard` now passes the tools to registration and copies the signed card's full tool set (declared, captured from a harness, discovered from an A2A card) onto the record. The gate end-to-end test covers the onboard path.
+- **A recipient reaches `proven (key-bound)`.** Actor proof consulted only the local agent registry, so on any other machine an agent's action graded `asserted` however many pins the verifier held. `verify` now also walks the signed `agent_cert.v1` in the store: a certificate that binds the actor to the signing key, signed by a key pinned under `cert_issuer`, inside its validity window, proves the binding. Without the certificate the grade stays `asserted`, and the docs say which pins a counterparty needs today: `cert_issuer` for resolve, plus the agent's `agent_cert` for import.
+- **Rotation is local, and says so.** `keys rotate` mints a successor in this keystore and nothing else: no succession artifact travels, and a pin has no expiry, so counterparties keep trusting the predecessor and cannot verify the successor until they re-pin. The command now prints that, with the export lines to send and the `trust remove` to ask for; the trust-model and keys pages no longer claim verifiers can walk a rotation chain.
+- **A handoff reports the work it names.** `verify` on a handoff prints how many named artifacts are present in this store and lists the ones that are not, with a warning that the handoff envelope verifies on its own and vouches for nothing it does not carry. The handoffs guide shows the real output and the real `trust add` (a key id, not a label).
+- **`trust add` refuses a label where a key id is matched.** Pins for `cert_issuer`, `revoker`, `agent_cert` and `session_host` are matched against the signature's key id; a pin under a label never matched anything and looked pinned. Those kinds now require `key_<16 hex>` or `key_agent_<16 hex>`; `--label` carries the name. Hub kinds keep free-form ids.
+- **`bundle import` names the key and the fix.** An unverified envelope now says which key signed it, the exact `trust add` line to run (from the producer's `keys export`), and which kind an agent-signed versus ship-signed envelope needs. The bundle page describes the real export (signed envelopes, no public key in the file).
+- **Every power `keys export` prints is explained.** The ship key exports four pin lines; each now carries a comment saying what it grants, and `revoker` is called out as the power to revoke cards on the counterparty's machine, handed over deliberately. `onboard` explains why both the ship pin and the agent pin are needed today, and which survives a rotation.
+- **A revocation names its signer.** `verify-capability` said `issuer (ship) revoked` for any pinned revoker; it now says `self-revoked (the card's own key)` or `pinned revoker key_… (a key this machine pinned under --kind revoker)`, and the capability-cards page uses the real kind.
+- **An ambiguous artifact prefix is reported at any length.** `art_c` naming twelve artifacts now says so and lists candidates (first ten) instead of `not found`.
+- **Git reconcile skips `.treeship/` whole.** Every file under the project's Treeship directory is written by the CLI or a hook, never by the agent's work; the receipt named `declaration.json` and card records as the agent's writes. The runtime-artifact list is gone.
+- **`session mint-challenge` prints the outside-verifier pair** (`present --challenge` and `verify-presentation --challenge`) alongside the room-join commands, and the handshake page mints its nonce with the CLI.
+- **`treeship agents` is visible in `--help`** and the generated command matrix.
+- **The MCP bridge page says when its artifacts chain.** Intent and receipt artifacts chain onto the session only when the session's actor is the bridge's; otherwise a `chain_completeness` warning is expected and means what it says.
+- **A closed stdout no longer aborts a command.** `treeship onboard | head -1` died with a panic after registering the agent and before minting its card. Output writes now ignore a closed pipe; every step runs and the exit code is the command's own.
+
+## 0.31.6 (2026-09-23)
+
+- **Fix: `package verify` printed the `coverage` and `network_scope` rows twice.** A stack merge duplicated the block that pushes them; every package verified on 0.31.6 main showed each row two times. One copy now.
+- **Retries as a signed chain.** A trace that cannot explain a retry is not observability: attempt two of a flaky call used to be a sibling of attempt one, and a verifier could not tell "recovering from a timeout" from "did the same thing twice". `attest action --retry-of <id> --attempt N --retry-cause <timeout|error|rate_limited|operator|unknown> --backoff-ms <ms>` signs a `retry` block into the statement (v1 and v2), with the idempotency key sent, so the reason is under the signature and older receipts keep their bytes. `package verify` gains a `retries` row that walks every chain: same action and actor, attempts counting up, the same key on both sides, the retried attempt present in the package, and no two attempts that each report a distinct effect; a chain that fails any of those is named. It proves the recorded sequence and reasons; it does not replay the run.
+- **`judgement.v1`: any judge's answer, as a receipt.** Fast decision models (TypeSafe's Jev), LLM judges, classifiers and rules engines all sit between an agent and an action now, and none of them leaves a record a stranger can check. `judgement.v1` is that record: the model and version, digests of the state and the questions, the one question by key and type (`noul`, `choice`, `score`), the typed answer with its probabilities and confidence, the threshold the caller held it to and who set it, and the outcome (`acted`, `escalated`, `refused`, `ignored`), chained onto the gated action with `--subject`. `package verify` gains a `judgements` row that counts sealed judgements, names the judges, and warns on any acted on below its own threshold or with no threshold declared. The receipt is the caller's attestation, not a replay: a sampled judge cannot be re-run, and the docs say so.
+- **The predicate validator is recursive.** `required`, `type`, `enum`, `const`, numeric `minimum`/`maximum` and digest `pattern`s are now enforced at every depth and across array items, not only at the top level. Nested contracts that were documented but never checked before signing (`agent_card.v1` provenance grades, `boundary.v1` digests, `judgement.v1`'s inner vocabularies) now fail closed. Error paths are dotted (`judge.model`, `answer.noul`).
+- **No telemetry, stated, and an adoption report that needs none.** A proposal to add an anonymous opt-out install ping was closed without merging: Treeship's claim is that nothing phones home, and a ping contradicts the thing it sells. The README now says so in one line. `scripts/adoption-report.py` answers "how many people use it" from signals the project already owns: unique repository visitors, stars, release asset downloads per tag, npm, PyPI and crates.io downloads, and the hub's public stats (docks attached and active, sessions reported, artifacts), each printed with its basis, and `--snapshot` appends a dated record so the trend can be read.
 - **Fourteen findings from filming the integrations, and the gate that never fired.** Real runs of the documented flows on 0.31.5 from npm, written up by the film crew on 2026-09-22.
   - **Approval single-use held per config, not per ship (high).** The Approval Use Journal followed the resolved config file, so a project stub (`extends` the global config) got its own journal while sharing the global key, grants and store: one `--max-uses 1` grant could be spent once from every such directory on the same machine, each use verifying `1/1`. The journal now lives beside the keystore, one per ship; a journal at the old location is moved once. At verify time the use record must name the action being verified, so a journal holding the same grant and nonce for a different action reports that this action's use is not recorded instead of passing it. The replay-levels and journal pages say the real scope.
   - **The Claude Code gate never fired in a real install.** Two causes. `agent register` without rule flags rewrote the card with empty capabilities, and the MCP bridge runs exactly that on every start; it now keeps the rules the card has. The SessionStart hook started sessions as `ship://…`, so no card ever matched; it now starts them as `agent://claude-code` (`TREESHIP_ACTOR` overrides), the actor the bridge signs as. The gate's `blocked.v1` refusals chain onto the session (`attest receipt --chain`) so a package with a refusal in it verifies under `--strict`. A new end-to-end test runs the real CLI through the real hook scripts in CI; the mock-based parity suite passed while none of this held.
@@ -26,6 +83,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
   - **Docs:** the approvals guide no longer describes the local journal as a v0.10 roadmap item (it ships and is enforced at consume time), nonce and id examples have the real shapes, the `trust add --kind cert_issuer` workaround callout from 0.20 is gone, and the trust page states which state is machine-wide (trust roots) and which follows the ship (the journal). `@treeship/verify` says that `verifyReceipt` does not tie an artifact's digest to its id.
 - **The evaluator kit.** A guide for an outside evaluator, written as the sequence it runs: what the lab seals and hands over, which key to pin under which power (`session_host`, nothing more), what `package verify --strict` must say before a grade is written, an `evaluation.v1` grade that names the package by the digest that verified and points at its coverage receipt, and what to publish so a third party reaches the same verdicts with nothing but bytes and two public keys. `examples/evaluator-kit/run.sh` plays lab, evaluator and public on one machine with separate keystores, checks every promise the guide makes (including that a tampered copy fails and that the grade is not signed by the subject's key), and runs in CI. Guide: [Evaluator kit](docs/content/docs/guides/evaluator-kit.mdx).
 - **Fix: `attest receipt` inside a session was always sealed loose.** `attest action` chains onto the session's head by default when the actor is the session's actor (0.31.4); `attest receipt` never did, so a receipt minted in the minter's own session (an evaluator's grade in its grading session, a verifier's recompute report) failed `chain_completeness` under `--strict` on any other machine. Found by the evaluator kit's first run. `attest receipt` now follows the same rule: chained by default when `--system` is the session's actor, sealed loose with a hint when it is not, `--parent <id>` to chain on purpose, `--no-parent` to stay off the chain, and outside a session the parent is the subject when it is an artifact. The parent is signed into the statement.
+- **The evaluator kit.** A guide for an outside evaluator, written as the sequence it runs: what the lab seals and hands over, which key to pin under which power (`session_host`, nothing more), what `package verify --strict` must say before a grade is written, an `evaluation.v1` grade that names the package by the digest that verified and points at its coverage receipt, and what to publish so a third party reaches the same verdicts with nothing but bytes and two public keys. `examples/evaluator-kit/run.sh` plays lab, evaluator and public on one machine with separate keystores, checks every promise the guide makes (including that a tampered copy fails and that the grade is not signed by the subject's key), and runs in CI. Guide: [Evaluator kit](docs/content/docs/guides/evaluator-kit.mdx).
+- **Fix: `attest receipt` inside a session was always sealed loose.** `attest action` chains onto the session's head by default when the actor is the session's actor (0.31.4); `attest receipt` never did, so a receipt minted in the minter's own session (an evaluator's grade in its grading session, a verifier's recompute report) failed `chain_completeness` under `--strict` on any other machine. Found by the evaluator kit's first run. `attest receipt` now follows the same rule: chained by default when `--system` is the session's actor, sealed loose with a hint when it is not, `--parent <id>` to chain on purpose, `--no-parent` to stay off the chain, and outside a session the parent is the subject when it is an artifact. The parent is signed into the statement.
+- **Fix: the Claude Code gate blocked every tool call on a CLI without `halt`.** The gate runs `treeship halt list` first and the script uses `set -e`, so on a 0.31.5 binary from npm (no `halt` subcommand yet) the hook died with a nonzero exit and Claude Code treated every tool call as a hook error. Found on a developer machine the moment the new gate script landed next to the published CLI. The halt check now fails open like every other error path in the gate, and a parity fixture runs the gate against a mock that has no `halt` and expects the call to be allowed.
 - **Network scope: a host allow-list an agent is held to.** `treeship declare --network api.example.com,*.internal.net` puts a network scope in the declaration (exact hosts or `*.suffix`; `*.example.com` also matches `example.com`), `session start` copies it into the manifest, and the sealed receipt's `tool_usage` now carries `network_declared` and `network_off_scope`, the recorded destinations that matched no pattern. `package verify` gains a `network_scope` row: `PASS` with the connection count when every destination was inside the scope, `WARN` naming the ones outside; no scope declared, no row, and the connections stand in `side_effects` unjudged. `agent register --network` signs the same list into the certificate and writes it on the card; `attest card --network` records it as `capabilities.network` and `verify-capability` reports it as `declared network`. The Claude Code gate refuses a `WebFetch` to a host outside a card's list with a signed `blocked.v1` naming the host, and allows a host inside it; a `curl` inside `Bash` is still `shell.exec` to the gate. Parity fixtures cover both. The same `host_in_scope` rule is shared by the composer and the verifier.
 - **`coverage.v1`: every session close now seals a coverage receipt.** "We monitored this" carried no denominator: a sealed timeline said what the harness recorded and nothing about what it was in a position to see. `session close` now mints a `coverage.v1` receipt chained onto the close artifact and sealed in the package. Declared: each harness state in the workspace with its status, potential coverage level, connection modes and the known gaps frozen at install time, summarised as `declared_level` (or `none`). Observed: the count of sealed events by type, hosts, agent instances and skipped log lines. Gaps: plain statements, including "only the session boundaries were captured" when no activity event exists. `package verify` gains a `coverage` row that names the receipt, the declared level and the observed count, and warns on packages that carry none; `--strict` never promotes it. Close prints a `coverage:` line and JSON adds `coverage_artifact_id` and `coverage_declared_level`. A declared level is the harness's potential and the receipt is the producer's own statement about its instrumentation; it does not prove that nothing happened outside it.
 - **`coverage.v1`: every session close now seals a coverage receipt.** "We monitored this" carried no denominator: a sealed timeline said what the harness recorded and nothing about what it was in a position to see. `session close` now mints a `coverage.v1` receipt chained onto the close artifact and sealed in the package. Declared: each harness state in the workspace with its status, potential coverage level, connection modes and the known gaps frozen at install time, summarised as `declared_level` (or `none`). Observed: the count of sealed events by type, hosts, agent instances and skipped log lines. Gaps: plain statements, including "only the session boundaries were captured" when no activity event exists. `package verify` gains a `coverage` row that names the receipt, the declared level and the observed count, and warns on packages that carry none; `--strict` never promotes it. Close prints a `coverage:` line and JSON adds `coverage_artifact_id` and `coverage_declared_level`. A declared level is the harness's potential and the receipt is the ship's own statement about its instrumentation, signed by the ship key; it does not prove that nothing happened outside it.
@@ -81,212 +141,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
 
 - **treeship-commerce: the approval verdict next to the tool outcome.** `TreeshipApprovalMixin` now sets `treeship_last_approval` (`proven`, `unproven`, or `None`) on the executor after every apply, so a host can print or log what the intent receipt says about the grant beside what the tool did. `demo_merchant` uses it: the replay row reads `error, approval unproven` in the default run (the journal refused a second use before anything was signed; the mock backend then refused the apply as already applied) instead of a bare `error` that let the backend take credit for the journal's refusal. Under `--enforce` the row is unchanged, `blocked:approval`.
 - **Docs: verify a session package**, a page for the person handed a `.treeship` package (`/commerce/verify-a-package`): what each check proves and does not, the counterparty signature flow (`keys export` → `trust add` → `bundle import` → `verify`), and the limits (`anchoring: UNWITNESSED`, `actor proof: asserted`, `--require-authority` on receipts with no mandate). Shopping demo recording added to the integration page and the announcement post.
-
-## 0.30.0 (2026-09-07)
-
-**Upgrade if you build on Anthropic's commerce-agents reference.** The
-customer gets a receipt for exactly the cart that went to checkout, with
-the host's order chained onto it; the `treeship-commerce` Claude Code
-plugin wires every seam with one command; and the sealed package's own
-receipt page now shows the approvals it embeds instead of "No approval
-gates recorded".
-
-### Fixed
-
-- **The sealed package's preview page now shows the approvals it embeds.**
-  `preview.html` read approvals only from the chained artifacts, so a
-  session whose approval was minted, spent once, and exported under
-  `approvals/` (where `package verify` checks it as
-  `replay-local-journal`) rendered "No approval gates recorded". The
-  preview now carries an `approvals-data` block built from the same bundle
-  the verifier reads, and the Approval gates section lists each grant
-  (approver, description, scope, time) with its uses (`use 1/1`, the action
-  and subject that spent it, the consuming artifact). A grant envelope
-  that does not parse is listed by id as unparsed rather than dropped; a
-  use whose grant is not embedded says so. No bundle renders a JSON `null`,
-  never an empty block that would throw in the page's parser.
-
-### Added
-
-- **`treeship-commerce`: a receipt for exactly the cart that went to
-  checkout.** `receipted_backend(backend)` wraps a storefront backend so the
-  reference's `checkout_handoff(session, cart)` also signs a hand-off receipt
-  on the session chain: the cart's digest, item count, subtotal and currency,
-  and a digest of each hosted URL with its seller. The URL is never written;
-  the cart's lines are never written, and a holder of the checkout card can
-  recompute the digest from the card's own payload. `order_placed(receipts,
-  order_ref=, amount=, currency=)` is the host's half: a signed order receipt
-  chained onto the hand-off with the order reference digested. An order
-  without a hand-off says `handoff_recorded: false` instead of inventing a
-  parent. The wrapped backend finds the session's recorder by the reference's
-  own session tag. Seven tests; the shopping demo ends with the hand-off and
-  a chained mock order.
-
-- **`treeship-commerce` Claude Code plugin.** `claude plugin install
-  treeship-commerce@treeship` from the Treeship marketplace, mirroring the
-  reference's own `commerce-builder`: `/add-treeship-receipts [shopping |
-  merchant | both]` reads the project, wraps the executor on its runtime,
-  signs the merchant approval surface or the shopping checkout hand-off,
-  adds the verify step to CI, and writes to the project's decision record;
-  the `treeship-commerce-receipts` skill says what each receipt carries and
-  never carries, the approval scope and replay rule, and per-runtime
-  differences. The plugin runs no code of its own.
-
-## 0.29.0 (2026-09-07)
-
-**Upgrade if you run the merchant side of Anthropic's commerce-agents
-reference.** The operator's approval becomes a signed, scoped, single-use
-grant that the apply's receipt spends exactly once, on all three runtimes,
-with the reference console's loop unchanged. The Python SDK gains
-`attest_action(subject=)`, which scoped approvals need; `treeship-commerce`
-now requires `treeship-sdk>=0.29.0`.
-
-### Added
-
-- **`treeship-commerce`: signed single-use operator approvals on the merchant
-  `apply_change`.** The reference gates `apply_change` on an in-process set the
-  host fills from its y/N; the set leaves no record and cannot refuse a second
-  apply inside the same window. `MerchantApprovals.grant(change_id)` mints a
-  signed Approval Grant scoped to one actor, one action, and
-  `change://<change_id>` with `max_uses=1`; `approved(receipted(
-  MerchantToolExecutor), approvals)` signs the apply's intent receipt with the
-  grant's nonce, so the CLI reserves a use in the Approval Use Journal before
-  it signs. A replay finds the grant spent; a grant for another change is
-  refused by scope, because the action's subject is taken from the call's own
-  arguments and never from the grant. The receipt says `approval: "proven"` or
-  `"unproven"` with the CLI's reason. Recording only by default; `enforce=True`
-  holds an unproven apply in the reference's own held-outcome shape, and the
-  hold is itself a signed refusal. On an SDK without `subject` it warns once
-  and mints nothing. `approving(toolset, approvals)` wraps the Agent SDK
-  `MerchantToolset`'s `host_approve` / `host_clear` in place, so the reference
-  console's y/N loop mints and forgets grants unchanged. Merchant demo
-  `demo_merchant.py` (`--enforce` for the gating mode); twelve tests,
-  including the replay and wrong-change refusals and the merchant side on all
-  three runtimes through `executor_class`.
-
-- **`treeship-commerce`: arguments that are not JSON-native no longer break
-  the tool.** The reference's MCP server hands the executor parsed pydantic
-  models; the argument digest called `json.dumps` on them outside the guarded
-  path and the stage call died inside the recorder. The digest is now total
-  (pydantic v1/v2, dataclasses, sets, bytes, datetimes, Decimal, Enum, paths,
-  and a typed repr for anything else) and equal to the digest of the same
-  arguments as plain dicts, and nothing raised while describing a call can
-  reach the tool.
-
-- **Python SDK: `attest_action(..., subject=)`.** Sets the action's
-  `subject.uri`, the field an approval's `allowed_subjects` scope is matched
-  against. Without it a subject-scoped grant refused every action from the
-  SDK; the CLI has taken `--subject` since the scope check existed.
-
-## 0.28.0 (2026-09-07)
-
-**Upgrade if you build on Anthropic's commerce-agents reference, or use the
-Python SDK.** `treeship-commerce` is a new package, published to PyPI with
-this release, that gives every tool call in the reference a signed receipt
-on all three of its runtimes. The Python SDK gains `session_event()`.
-
-### Added
-
-- **`treeship-commerce`: signed receipts for every tool call in
-  anthropics/commerce-agents.** One method, `BaseToolExecutor.execute`, runs
-  every tool call on the Messages API, the Agent SDK, and Managed Agents;
-  `TreeshipExecutorMixin` overrides it with a signed intent receipt before
-  dispatch (tool, SHA-256 of the canonical arguments, session tag) and a
-  signed result receipt after (`ok` / `blocked` with the gate's name /
-  `error`, result digest, event types, timing), chained from the Treeship
-  session root. A call the provenance gate holds is a signed refusal, not a
-  gap. Never written: the arguments, the fenced result text, or the commerce
-  session id (only the reference's own twelve-hex tag). `receipted(cls,
-  recorder=...)` wires all three runtimes through their `executor_class`;
-  `attach()` refuses an executor that would record nothing. Recording never
-  breaks the tool: a write that fails is counted in `dropped`, a result whose
-  intent is missing says `intent_recorded: false`, and a client without
-  `session_event` (treeship-sdk 0.27.0) skips timeline events with one
-  warning. Fourteen tests on a real ship over the reference's retail mock,
-  including one per runtime; CI runs them against the reviewed commit of the
-  reference. Guide: docs `/commerce/commerce-agents`. (#360, #361)
-
-- **Python SDK: `Treeship.session_event(...)`.** Appends to the active
-  session's timeline; parity with `ship.session.event()` in the TypeScript
-  SDK. Option-like values are refused, integers are checked as integers, and
-  a CLI document without an `event_id` is an error, not an empty result.
-  (#360)
-
-- **`treeship-commerce` publishes to PyPI by trusted publishing** (OIDC, no
-  new token), in lockstep with the SDK; the release installs it back from the
-  registry and imports it before it is considered published. (#362)
-
-### Changed
-
-- `check-feature-inventory.py` matches a `pyproject.toml` name the way it
-  matched `package.json`, so an inventory entry can name a Python package
-  whose directory is not its name. (#360)
-
-### Documentation
-
-- Commerce: the Claude Commerce Agents guide (wiring for each runtime, a real
-  decoded intent and blocked result, verification, the trust boundary), the
-  overview leading with what ships, and the post "You can't have agentic
-  commerce without tamper-proof receipts". Every id in them is from a run
-  with the released CLI. (#361)
-
-## 0.27.0 (2026-09-02)
-
-**Upgrade if you use `@treeship/a2a` or `@treeship/mcp`.** Foreign work is
-now refused until the other agent proves live key control, and the receipt
-records that it did. Integrations that pass `fromAgent` to `onTaskReceived`
-without calling `admitTask` first will throw; that is the fail-closed
-default this release exists to make.
-
-### Added
-
-- **A handoff records how custody was established, and `verify` grades it.**
-  `treeship attest handoff --verified <presentation> --challenge <nonce>`
-  re-runs the core presentation verifier and, only on a clean live verdict,
-  signs a `custody` block: the sha256 of the exact presentation bytes, the
-  nonce this ship minted, the card id, the verifier, and the time. A failing
-  presentation refuses to mint rather than downgrading quietly; a
-  presentation for one agent cannot certify a handoff `--from` another;
-  `--verified` without `--challenge` is a parser error. `--custody-reason
-  same_computer` records the shared-keystore case as what it is.
-
-  `verify` grades the block itself rather than echoing it: `custody: live`
-  only when the block carries the digest and the nonce a live check produces;
-  a `live` without them, an unknown grade, and no block at all all print as
-  `asserted` with the reason. `--format json` carries the same grade as
-  `checks[].custody.live`. Canonical bytes of every existing handoff are
-  unchanged.
-
-- **`--close-loop <session_id>` binds sealed-session evidence to a handoff.**
-  The session's `receipt.json` digest is signed into the statement; a session
-  the machine cannot find is refused. Evidence never upgrades custody.
-
-- **The A2A gate records what it verified.** After `admitTask` passes,
-  `@treeship/a2a` mints the receiver-signed `custody: live` handoff and
-  returns it as `handoffId`; the opt-out path never gets one. `handoff`
-  envelopes are validated on parse. `treeship_attest_handoff` in
-  `@treeship/mcp` takes `verified` + `challenge`.
-
-- **Every harness skill teaches the gate.** The universal skill, the Hermes,
-  OpenClaw, Kimi and Perplexity skills, the Claude Code / Codex / Cursor
-  integration notes, a new `treeship-handshake` skill in the Claude Code
-  plugin, and the Grok Bot skill all carry the same four steps: mint the
-  nonce, verify the presentation, refuse on any failure, record the verify.
-
-### Fixed
-
-- **Every handoff the CLI can mint failed chain linkage.** `attest handoff`
-  records `--artifacts[0]` as the storage parent, but handoff/v1 has no
-  `parentId`, so `verify` reported "claims parent (none)" and
-  `chain_linkage_ok: false` on correctly-signed evidence. The signed
-  `artifacts` list is the edge, the same shape as receipt.v1's
-  `subject.artifactId`; the walk now reads it.
-
-### Blocked
-
-- Grok Bot approvals (slice 3b of the A2A spec): the decision is visible
-  only in Grok's app UI, so the packaged skill states the boundary instead of
-  recording an approval nobody observed.
 
 ## Older releases
 

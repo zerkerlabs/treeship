@@ -684,6 +684,7 @@ treeship judge [OPTIONS]
 | `--attest` | Sign each answer and its decision as a judgement.v1 receipt |
 | `--enforce` | Exit 2 on deny and 3 on ask, for shell gates. Off by default: the decision is in the output and the exit code says only whether the judge answered |
 | `--contract <ID@VERSION>` | The decision contract this judgement runs under, as id@version (ticket-router@3): the versioned definition of state, question, options and threshold. Recorded in every receipt |
+| `--state-out <FILE>` | Write the canonical state the receipt's state_digest commits to, so a verifier can re-run the rules judge or check what an outside judge was shown. The receipt itself carries only the digest |
 | `--resolve <ART_ID>` | Resolve an escalated or refused judgement instead of judging: the human label, signed as a judgement.resolution.v1 receipt under --by's URI, chained onto the session and naming the judgement |
 | `--by <URI>` | Who decided: human://alice, or an agent:// for a stronger judge |
 | `--decision <DECISION>` | allow \| deny \| route |
