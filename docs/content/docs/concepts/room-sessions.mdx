@@ -193,14 +193,26 @@ Missing evidence is part of the report, not a hidden failure mode. If a provider
 
 ## Merkle and anchoring strategy
 
+<Callout type="warn">
+**Design sketch, not built.** No checkpoint-root anchoring exists anywhere
+today: the hub does not sign or countersign checkpoints, and there is no
+OpenTimestamps or Bitcoin anchoring code in this repo. What *is* shipped
+(0.31.9, TS-2026-003) is per-artifact Rekor anchoring -- a pushed artifact's
+own dsse entry in Sigstore's transparency log, verified offline -- which is
+a different, narrower thing than anchoring a room's checkpoint root. Read
+this section as "the design would work this way," not "this is what
+`treeship room` does."
+</Callout>
+
 Room Sessions use checkpoint-first anchoring.
 
 1. Events and artifacts are captured locally.
 2. Closing the room builds event and artifact Merkle trees.
 3. The room report stores roots, leaf counts, and inclusion proofs.
 4. A room checkpoint is signed.
-5. Hub or a local worker can anchor the checkpoint to OpenTimestamps, Bitcoin, or a transparency log.
+5. Hub or a local worker will be able to anchor the checkpoint to OpenTimestamps, Bitcoin, or a transparency log.
 
+{/* claims:checkpoint-root-anchoring */}
 High-value evidence can also be anchored directly. Direct anchoring should be reserved for evidence that needs its own timestamp independent of the room checkpoint.
 
 OpenTimestamps lifecycle states:
@@ -313,6 +325,7 @@ Privacy mode belongs in the signed report. A verifier should distinguish "not ca
 
 The HTML report should:
 
+{/* claims:checkpoint-root-anchoring */}
 - show the room verdict before the narrative
 - keep participant identities visible on every event
 - distinguish live, closed, anchored, missing, and redacted states
