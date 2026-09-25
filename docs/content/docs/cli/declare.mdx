@@ -1,0 +1,50 @@
+---
+title: declare
+description: Declare the authorized tool scope and network scope for this project.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+<Callout type="info">
+**Hidden from `--help`.** `declare` is implemented, tested, and shipped
+(the `network-scope` feature is `stable`) -- hidden from top-level `--help`
+as a UX choice, not because it's incomplete.
+</Callout>
+
+Creates `.treeship/declaration.json` listing which tools agents are
+authorized to use, which are forbidden, which need escalation, and which
+network destinations are in scope. The session receipt compares declared
+scope against actual tool usage and flags anything outside it.
+
+## Usage
+
+```bash
+treeship declare --tools read_file,write_file,bash
+treeship declare --tools read_file --forbidden deploy,rm
+treeship declare --network api.example.com,*.internal.example.com
+treeship declare --show
+```
+
+| Option | Description |
+|---|---|
+| `--tools <TOOLS>` | Comma-separated list of authorized tool names |
+| `--forbidden <TOOLS>` | Comma-separated list of forbidden tool names |
+| `--escalation <TOOLS>` | Comma-separated list of tools requiring escalation/approval |
+| `--network <HOSTS>` | Comma-separated network destinations the agent may reach: exact hosts (`api.example.com`) or suffix patterns (`*.example.com`). Connections to any other host are listed in the sealed receipt's `tool_usage.network_off_scope` and reported by `package verify`'s `network_scope` row |
+| `--valid-until <TIMESTAMP>` | ISO-8601 timestamp when this declaration expires |
+| `--show` | Show the current declaration instead of creating one |
+
+`--show` and every other flag are mutually usable in the same invocation
+only in the sense that `--show` short-circuits to a read: pass it alone to
+print the current declaration without writing a new one.
+
+## What gets recorded
+
+`session start` copies the declaration into the session manifest. The
+sealed receipt records `tool_usage.network_declared` and
+`tool_usage.network_off_scope`; `package verify` reports a `network_scope`
+row (`PASS`/`WARN`, only when a declaration is present). The Claude Code
+gate denies a tool call outside a card's declared scope with a signed
+`blocked.v1`. Bash egress itself is not inspected -- `--network` scope is
+enforced at the tool-call boundary Treeship instruments, not by sniffing
+the process's actual network traffic.
