@@ -8,7 +8,7 @@ allowed-tools: Bash
 
 The **receipt** is the cryptographic artifact that lives in `.treeship/sessions/` after `treeship session close`. The **session report** is the human-readable page at `treeship.dev/receipt/<id>` that someone else can open in a browser. Publishing the report uploads the receipt to the Treeship hub and returns the URL.
 
-This is the only step that sends data off the user's machine. Until they ask for a report (or have set `auto_push: true` in `.treeship/config.yaml`), every receipt stays local. The receipt is theirs -- publishing is opt-in, per session.
+This is the only step that sends data off the user's machine. Until they ask for a report, every receipt stays local -- there is no automatic push on session close (`auto_push: true` is accepted in `.treeship/config.yaml` but not implemented). The receipt is theirs -- publishing is opt-in, per session.
 
 ## The publish flow
 

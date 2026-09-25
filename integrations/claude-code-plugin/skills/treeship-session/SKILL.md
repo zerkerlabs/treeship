@@ -46,8 +46,7 @@ The review note tells whoever opens the report what to look at first. Risks, edg
 ## What stays local vs. what gets published
 
 - `treeship session close` seals the receipt locally. Nothing leaves the machine.
-- `treeship session report` is the only command that uploads. It produces the shareable URL.
-- The user may have configured `auto_push: true` in `.treeship/config.yaml`, in which case `session close` itself publishes. Don't assume either way -- run `report` explicitly when the user wants a URL.
+- `treeship session report` is the only command that uploads. It produces the shareable URL. Always run it explicitly when the user wants a URL -- there is no automatic push on session close (`auto_push: true` is accepted in config but not implemented).
 
 ## When NOT to close
 

@@ -59,7 +59,7 @@ What's **not** captured by the MCP/plugin path: raw argument values, raw output 
 ## Where data lives
 
 - Receipts stay in `.treeship/sessions/<id>.treeship` on your machine
-- They leave on `treeship session report`, `treeship hub push`, with `auto_push: true` configured — or automatically at session end if you use the Claude Code plugin with a hub attached (the SessionEnd hook runs `session report`)
+- They leave on `treeship session report` or `treeship hub push`, run explicitly. There is no automatic push on session close (`auto_push: true` is accepted in config but not implemented). The Claude Code plugin's SessionEnd hook seals the session locally either way, and only calls `session report` for you if you've set `TREESHIP_AUTO_PUBLISH=1`
 - Verification (`treeship verify`, `treeship package verify`) runs entirely offline and doesn't phone home. Package verification authenticates the artifacts and Merkle root; the receipt's narrative fields are not signed, and the verifier says so explicitly
 
 ## Documentation

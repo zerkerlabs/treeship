@@ -40,9 +40,8 @@ Only when one of these is run explicitly:
 
 - `treeship session report`
 - `treeship hub push <artifact>`
-- `treeship session close` with `auto_push: true` configured
 
-Otherwise receipts stay in `.treeship/sessions/`.
+Otherwise receipts stay in `.treeship/sessions/`. There is no automatic push on session close: the `auto_push` config setting is not implemented.
 
 ## Before starting any task
 
