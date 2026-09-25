@@ -88,6 +88,26 @@ pub fn inspect(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let receipt = read_package(&path)?;
 
+    if printer.format == crate::printer::Format::Json {
+        // The receipt as the package carries it, plus the side-effect
+        // tally the text view prints. Panels that need workspace state
+        // (cards, harness coverage, approvals) are not in this view.
+        let summary = receipt.side_effects.summary();
+        printer.json(&serde_json::json!({
+            "path": path,
+            "receipt": receipt,
+            "side_effects_summary": {
+                "files_read": summary.files_read,
+                "files_written": summary.files_written,
+                "tool_invocations": summary.tool_invocations,
+                "processes": summary.processes,
+                "ports_opened": summary.ports_opened,
+                "network_connections": summary.network_connections,
+            },
+        }));
+        return Ok(());
+    }
+
     let session = &receipt.session;
     let p = &receipt.participants;
     let se = &receipt.side_effects;

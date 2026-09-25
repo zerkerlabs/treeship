@@ -38,9 +38,11 @@ We will acknowledge your report within 48 hours and aim to release a fix within 
 
 Full detail: [`docs/security/threat-model.md`](docs/security/threat-model.md) (canonical, in-repo). Rendered at [docs.treeship.dev/concepts/security](https://docs.treeship.dev/concepts/security).
 
+<!-- claims:keystore-at-rest -->
+<!-- claims:rekor-artifact-anchoring -->
 Key properties:
-- Ed25519 signatures via ed25519-dalek (NCC Group audited)
-- AES-256-GCM encrypted keystore, machine-bound (see [TS-2026-001](docs/security/TS-2026-001.md) for migration from prior construction)
+- Ed25519 signatures via ed25519-dalek
+- AES-256-GCM encrypted keystore, under a key derived from a secret seed file stored alongside it -- not machine-bound, and not passphrase-protected. Losing the seed file makes the keystore unrecoverable (see [TS-2026-001](docs/security/TS-2026-001.md) for migration from prior construction)
 - `.treeship` packages carry every sealed artifact's signed envelope and the signing keys; `package verify` checks the signatures, not only the tree (see [TS-2026-002](docs/security/TS-2026-002.md) for packages built before 0.31.2)
 - Rekor anchors count as witnessed time only when the stapled log entry verifies offline against a pinned transparency-log key; local anchor records never do (see [TS-2026-003](docs/security/TS-2026-003.md))
 - Content-addressed artifact IDs derived from PAE bytes
@@ -53,7 +55,7 @@ The trust boundary is the machine. Root access breaks all guarantees. **Hub "dev
 
 ## Trust roots (issuer pinning)
 
-Three verification paths used to trust whichever public key was embedded inside the artifact they verified -- Merkle checkpoints, hub-org `JournalCheckpoint`s, and Agent Certificates. An attacker who minted their own keypair could self-sign any of these and verification returned success. Starting in v0.10.3, each of these surfaces requires the embedded pubkey to be present in the operator's local trust root store at `~/.treeship/trust_roots.json` (mode `0o600`, JSON schema v1). Configure via `treeship trust add <key_id> <pubkey> --kind <hub_checkpoint|ship|agent_cert>`. Fresh installs have no roots configured; verification fails closed until roots are pinned out-of-band.
+Three verification paths used to trust whichever public key was embedded inside the artifact they verified -- Merkle checkpoints, hub-org `JournalCheckpoint`s, and Agent Certificates. An attacker who minted their own keypair could self-sign any of these and verification returned success. Starting in v0.10.3, each of these surfaces requires the embedded pubkey to be present in the operator's local trust root store at `~/.treeship/trust_roots.json` (mode `0o600`, JSON schema v1). Configure via `treeship trust add <key_id> <pubkey> --kind <hub_checkpoint|hub_org|cert_issuer|revoker|agent_cert|session_host|transparency_log>` (the `ship` kind is deprecated and rejected). Fresh installs have no roots configured except the built-in Sigstore public-good `transparency_log` key; verification fails closed for every other kind until roots are pinned out-of-band.
 
 ## Known limitations
 

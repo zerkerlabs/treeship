@@ -299,7 +299,10 @@ def main() -> int:
               "quickstart", "init", "verify", "attest", "bundle", "keys", "trust", "hub",
               "merkle", "session", "package", "declare", "agent", "agents", "setup",
               "harness", "approval", "daemon", "checkpoint", "otel", "prove",
-              "prove-chain", "verify-proof", "zk-setup", "zk-tls-setup"}
+              "prove-chain", "verify-proof", "zk-setup", "zk-tls-setup",
+              # `treeship __dump-cli`: the command tree as JSON for the
+              # contract tests. Hidden, not an interface.
+              "dump-cli"}
     # Anything in `top` we don't already cover via cli_in_inventory AND isn't ignored is drift.
     drift = sorted(top - cli_in_inventory - ignore)
     for d in drift:

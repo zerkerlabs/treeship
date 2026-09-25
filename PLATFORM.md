@@ -1,5 +1,14 @@
 # Treeship Platform Overview
 
+> **Historical snapshot, not current documentation.** This file describes
+> Treeship as of the version and date below and has not been kept in sync
+> since. The current release is far ahead of it (see
+> [CHANGELOG.md](./CHANGELOG.md)); several claims here about routes,
+> versions and the encryption construction are stale or wrong. For current
+> documentation use [docs.treeship.dev](https://docs.treeship.dev),
+> [AGENTS.md](./AGENTS.md), [SECURITY.md](./SECURITY.md) and
+> [ONBOARDING.md](./ONBOARDING.md). Kept for historical reference only.
+
 > Portable trust receipts for agent workflows.
 > Cryptographic proof of what your agents did, when, and under whose authority.
 

@@ -184,8 +184,8 @@ The returned `receipt_url` is permanent and public. Share it freely; no token, n
 
 <Callout type="warn">
 `session_report()` requires an attached hub. Without one the CLI returns
-`receipt_url: null` alongside `hub not attached -- run \`treeship hub attach\` to
-publish; receipt verifies locally`, and the wrapper raises `TreeshipError:
+`receipt_url: null` alongside ``hub not attached -- run `treeship hub attach` to
+publish; receipt verifies locally``, and the wrapper raises `TreeshipError:
 session report JSON missing receipt_url`. Run
 `treeship hub attach --endpoint https://api.treeship.dev` first. The receipt still verifies offline without a
 hub — publishing is what needs one.

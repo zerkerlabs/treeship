@@ -128,8 +128,11 @@ Treeship does not implement its own elliptic-curve code anywhere; all
 signing and verification call into `ed25519-dalek`.
 
 Public keys are 32 bytes, private keys are 32 bytes (seed form), and
-signatures are 64 bytes. Key IDs are the form `key_<hex>` where the
-hex is the first 16 bytes of `sha256(public_key_bytes)`.
+signatures are 64 bytes. Key IDs are `key_` + 8 random bytes from the OS
+CSPRNG, hex-encoded -- a label, not derived from the public key. A `keyid`
+in an envelope is a hint for which key to try; it is not itself
+authenticated, so a verifier resolves the actual Ed25519 public key out of
+band and never trusts a `keyid` string as identity.
 
 ### PAE (DSSE pre-authentication encoding)
 
@@ -195,12 +198,22 @@ with a degenerate keystream. That advisory is **[TS-2026-001](./TS-2026-001.md)*
 and migration to the real AEAD is automatic on first signing operation
 after upgrade.
 
-The keystore is encrypted with a machine-bound key derived from
-`hostname + username` on macOS or `/etc/machine-id` on Linux. The
-machine-key derivation is not a secret — it is a defense-in-depth
-binding so an exfiltrated keystore cannot be decrypted on a different
-machine without also exfiltrating the machine identifier. Filesystem
-permissions (`0o600`) remain the primary access control.
+<!-- claims:keystore-at-rest -->
+The keystore is encrypted with a key derived primarily from a secret
+32-byte seed (`machine_seed`, from the OS CSPRNG) stored in a file
+alongside the keystore, mode `0o600`, refused if it is not a regular
+file owned by the current user. `hostname + username` (macOS) or
+`/etc/machine-id` (Linux) is mixed in only as a non-secret binding
+salt, and only as a decrypt-only migration fallback for keystores
+created before the seed-primary construction (AUD-19) — it is not the
+primary key and never was, on any current keystore. Because the
+secret lives in a file next to the ciphertext, copying `.treeship/`
+(keys plus `machine_seed`) is sufficient to decrypt and sign
+elsewhere; this is **not** a machine-bound scheme. It protects against
+a leaked key file alone, not against copying the directory or root
+access, and losing `machine_seed` makes the keystore unrecoverable —
+back it up with the keys, not separately. Filesystem permissions
+(`0o600`) remain the primary access control on both files.
 
 ### Constant-time primitives
 
@@ -216,8 +229,9 @@ keystore path.
 
 A **receipt** is one signed envelope describing one event in a session.
 Receipts have a stable artifact ID derived from the SHA-256 of the PAE
-bytes, encoded as `art_<base32>`. Two receipts with byte-identical PAE
-have the same ID; any change to the payload changes the ID.
+bytes: `art_` + the first 16 bytes of the digest, hex-encoded (32 hex
+characters). Two receipts with byte-identical PAE have the same ID; any
+change to the payload changes the ID.
 
 A **session receipt** is a special receipt that seals a session. It
 references every artifact in the session timeline by ID, captures the
@@ -372,11 +386,16 @@ the three self-signed verification boundaries:
   its `agent://...` URI to a public key, the certificate's issuer must
   be pinned.
 
-Without pinned trust roots, verification fails closed. There is no
-default trust root that Treeship ships with — bootstrapping is an
-explicit step (`treeship trust add <pubkey> --kind merkle-checkpoint`).
-The file is mode `0o600` with the same `TREESHIP_ALLOW_INSECURE_KEY_PERMS=1`
-override semantics as the keystore.
+Without pinned trust roots, verification fails closed for `hub_checkpoint`,
+`hub_org`, `cert_issuer`, `revoker`, `agent_cert` and `session_host` roots —
+bootstrapping one is an explicit step:
+`treeship trust add <key_id> <pubkey> --kind <kind>` (key id first, then the
+public key). The one exception is `transparency_log`: Sigstore's public-good
+Rekor log key is built in, so per-artifact Rekor anchors verify against it
+without any pinning step, unless a `transparency_log` root is pinned to
+replace it (for a private Rekor instance). The trust root file is mode
+`0o600` with the same `TREESHIP_ALLOW_INSECURE_KEY_PERMS=1` override
+semantics as the keystore.
 
 > **Status:** The `TrustRootStore` module is implemented and tested
 > (`packages/core/src/trust/mod.rs`, 11 unit tests covering roundtrip,
@@ -546,6 +565,9 @@ explicitly so that users do not assume defenses that do not exist.
   receipts past the lifetime of the hub or the user's local store.
   Long-term archival is on the research backlog but not implemented.
 
+<!-- claims:rekor-artifact-anchoring -->
+<!-- claims:checkpoint-not-witnessed -->
+<!-- claims:checkpoint-root-anchoring -->
 - **Timestamps are self-asserted.** A receipt's `timestamp` comes from
   `SystemTime::now()` on the signing machine and is signed with that
   machine's own key. So a receipt proves *"this key asserted this"*, not
@@ -553,20 +575,39 @@ explicitly so that users do not assume defenses that do not exist.
   nothing about first-party fabrication, and an actor holding its own key
   and controlling its own clock can emit a chain claiming any timeline.
 
+  <!-- claims:rekor-artifact-anchoring -->
+  <!-- claims:checkpoint-not-witnessed -->
   Two frauds follow, and they need different answers. **Inflation**
   (making work look older or longer than it was) requires backdating, and
-  is defeated by an external anchor -- a Hub checkpoint, Rekor, or
-  OpenTimestamps -- because those cannot be obtained retroactively.
-  **Omission** (presenting a shorter chain and discarding the rest) is not
-  defeated by anchoring at all: the shortened chain is honestly signed and
+  is defeated by an external anchor that cannot be obtained retroactively.
+  Of the candidates, only per-artifact **Rekor anchoring** (TS-2026-003)
+  is a real external witness today: the hub submits each pushed artifact
+  as a dsse entry to Sigstore's transparency log, and `verify` checks the
+  stapled entry offline (signed entry timestamp, RFC 6962 inclusion proof,
+  signed checkpoint) before counting its time as witnessed. A **hub
+  checkpoint alone is not** an external witness -- the hub signs nothing
+  and never countersigns; a checkpoint is single-signed by the publisher's
+  own key, so it proves only that the publisher itself asserted a tree
+  state, the same self-assertion problem one level up. **OpenTimestamps is
+  not implemented** anywhere in this repo. **Omission** (presenting a
+  shorter chain and discarding the rest) is not defeated by anchoring at
+  all: the shortened chain is honestly signed and, for its own artifacts,
   honestly anchored. Detecting omission needs anchors that are
   *discoverable by identity*, which is the transparency log's property,
   not an anchor's.
 
-  Neither is on by default today: `--push` is opt-in, checkpoint cadence is
-  specified for rooms only, and verification does not report anchoring
-  coverage. So a verifier currently has no way to tell a continuously
-  witnessed session from one whose timeline is entirely self-asserted.
+  <!-- claims:rekor-artifact-anchoring -->
+  Rekor anchoring is opt-in and coverage-dependent: it only covers
+  artifacts that get pushed (`hub push` / `--push`), an artifact signed
+  only by an agent key (not the ship key) is skipped, and it can be
+  disabled by the operator. `verify` reports coverage in an `anchoring`
+  block (`--format json` carries `coverage`, a tally of verified /
+  claimed-unverified / failed / rejected anchors, and the
+  `--max-unwitnessed` gate result); text and `--full` output show the same
+  gate. A chain with no pushed, Rekor-verified artifacts reports
+  `UNWITNESSED` rather than silently passing -- so a verifier *can* now
+  tell a witnessed session from a self-asserted one, but only for the
+  artifacts an operator chose to push, and only since this fix.
 
   This is a real limitation, not a nuance. Any claim that Treeship shows
   "what an agent actually did" is, on the time axis, currently a claim
@@ -597,7 +638,7 @@ explicitly so that users do not assume defenses that do not exist.
 | Hub proof-of-possession          | DPoP                    | RFC 9449                         | Per-request signature with the dock keypair. No long-lived bearer tokens.      |
 | Merkle tree (`v0.10.3`+)         | SHA-256 RFC 9162        | In-tree, `packages/core/src/merkle/tree.rs` | Domain-separated `0x00` leaves, `0x01` interior nodes.                         |
 | Approval nonce                   | 16-byte OS CSPRNG       | `rand::rngs::OsRng`              | Single-use; consumed on first matched action.                                  |
-| Content addressing               | SHA-256 of PAE bytes    | In-tree                          | Artifact IDs encode as `art_<base32>` from the first 16 bytes of the digest.   |
+| Content addressing               | SHA-256 of PAE bytes    | In-tree                          | Artifact IDs are `art_` + hex(first 16 bytes of the digest) -- 32 hex characters, not base32.   |
 
 All cryptographic operations route through these crates. Treeship does
 not implement its own elliptic-curve, AEAD, or hash code.

@@ -58,6 +58,7 @@ The test suites you should run depend on what you touched:
 | `packages/sdk-ts/` | `cd packages/sdk-ts && npm install && npm run build && npm test` |
 | `packages/sdk-python/` | `cd packages/sdk-python && python3 -m pip install -e . && python3 -c "import treeship_sdk"` |
 | Anything that affects the CLI verify path, the receipt format, or either SDK | `./tests/cross-sdk/run.sh` -- this is the contract test the matrix in CI runs |
+| `docs/feature-inventory.yml` | `python3 scripts/check-feature-inventory.py --strict`, then `cd docs && npm run sync:feature-matrix` and commit the regenerated `docs/content/docs/reference/feature-matrix.mdx` -- `docs-drift` fails the PR if the generated page and the YAML disagree |
 
 `./tests/cross-sdk/run.sh` builds an isolated keystore, generates signed artifacts, runs the TS and Python SDKs against the same corpus, and fails if their `(outcome, chain)` outputs disagree on any vector. CI runs it across `{ubuntu, macos} × {Node 20, 22} × {Python 3.11, 3.12}`. If you broke the SDK contract, this is where it'll show up.
 

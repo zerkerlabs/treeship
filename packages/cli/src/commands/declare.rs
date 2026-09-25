@@ -34,6 +34,10 @@ pub fn create(
     valid_until: Option<String>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let valid_until = valid_until
+        .as_deref()
+        .map(|v| crate::validate::rfc3339("--valid-until", v))
+        .transpose()?;
     let path =
         declaration_path().ok_or("no .treeship directory found -- run treeship init first")?;
 
@@ -80,6 +84,21 @@ pub fn create(
 /// Show the current declaration.
 pub fn show(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     let path = declaration_path().ok_or("no .treeship directory found")?;
+
+    if printer.format == crate::printer::Format::Json {
+        let declaration = if path.exists() {
+            let data = std::fs::read_to_string(&path)?;
+            Some(serde_json::from_str::<serde_json::Value>(&data)?)
+        } else {
+            None
+        };
+        printer.json(&serde_json::json!({
+            "found": declaration.is_some(),
+            "path": path,
+            "declaration": declaration,
+        }));
+        return Ok(());
+    }
 
     if !path.exists() {
         printer.blank();
