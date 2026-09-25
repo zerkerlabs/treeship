@@ -100,13 +100,45 @@ fn config_yaml_path(ts: &Path) -> PathBuf {
 // Running check
 // ---------------------------------------------------------------------------
 
+/// The pid file holds "<pid> <start epoch>". Through 0.31.9 this parsed
+/// the whole line as one number, so every read failed, `status` called a
+/// running daemon "stopped", deleted the file, and the daemon (which
+/// exits when its pid file disappears) died of a status check.
 fn read_pid(ts: &Path) -> Option<u32> {
     let p = pid_path(ts);
     if !p.exists() {
         return None;
     }
     let txt = std::fs::read_to_string(&p).ok()?;
-    txt.trim().parse::<u32>().ok()
+    parse_pid_line(&txt)
+}
+
+fn parse_pid_line(txt: &str) -> Option<u32> {
+    txt.split_whitespace().next()?.parse::<u32>().ok()
+}
+
+/// What the pid file says, for `status` and `stop`: nothing, a live
+/// daemon, a dead one (stale file), or a file that does not parse.
+enum PidFile {
+    Absent,
+    Live(u32),
+    Stale(u32),
+    Unreadable,
+}
+
+fn pid_file_state(ts: &Path) -> PidFile {
+    let p = pid_path(ts);
+    if !p.exists() {
+        return PidFile::Absent;
+    }
+    match std::fs::read_to_string(&p)
+        .ok()
+        .and_then(|t| parse_pid_line(&t))
+    {
+        Some(pid) if process_alive(pid) => PidFile::Live(pid),
+        Some(pid) => PidFile::Stale(pid),
+        None => PidFile::Unreadable,
+    }
 }
 
 fn is_running(ts: &Path) -> bool {
@@ -570,6 +602,27 @@ pub fn start(
     // Validate config.yaml is parseable before starting
     let _project = ProjectConfig::load(&config_yaml)?;
 
+    // Background by default: re-run this binary with --foreground, detached
+    // from this terminal, its output in daemon.log, and report the pid the
+    // child wrote. Through 0.31.9 the daemon ran in the foreground whatever
+    // the flag said and printed "tip: run with &".
+    if !foreground {
+        let pid = spawn_background(&ts, config, no_push)?;
+        printer.blank();
+        printer.success(
+            "daemon started",
+            &[
+                ("pid", &pid.to_string()),
+                ("log", &log_path(&ts).display().to_string()),
+            ],
+        );
+        if no_push {
+            printer.dim_info("  auto-push disabled (--no-push)");
+        }
+        printer.blank();
+        return Ok(());
+    }
+
     // Open context (loads keys + storage)
     let ctx = ctx::open(config)?;
 
@@ -593,11 +646,6 @@ pub fn start(
         printer.dim_info("  auto-push disabled (--no-push)");
     }
     printer.blank();
-
-    if !foreground {
-        printer.dim_info("  tip: run with & to background: treeship daemon start &");
-        printer.blank();
-    }
 
     // Determine project root (parent of .treeship)
     let root = ts.parent().unwrap_or(Path::new(".")).to_path_buf();
@@ -705,12 +753,83 @@ pub fn start(
 // daemon stop
 // ---------------------------------------------------------------------------
 
+/// Start the daemon as a detached child (`daemon start --foreground` on
+/// this same binary) and return its pid once it has written the pid file.
+fn spawn_background(
+    ts: &Path,
+    config: Option<&str>,
+    no_push: bool,
+) -> Result<u32, Box<dyn std::error::Error>> {
+    let exe = std::env::current_exe()?;
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path(ts))?;
+    let mut cmd = std::process::Command::new(exe);
+    cmd.arg("daemon").arg("start").arg("--foreground");
+    if no_push {
+        cmd.arg("--no-push");
+    }
+    if let Some(c) = config {
+        cmd.arg("--config").arg(c);
+    }
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::from(log.try_clone()?))
+        .stderr(std::process::Stdio::from(log));
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // Its own process group: closing this terminal does not take it
+        // down, and `stop` still reaches it through the pid file.
+        cmd.process_group(0);
+    }
+    let mut child = cmd.spawn()?;
+
+    // The child writes the pid file after its own checks; wait for it, and
+    // notice if the child exits first (config error, lock held).
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(pid) = read_pid(ts).filter(|p| process_alive(*p)) {
+            return Ok(pid);
+        }
+        if let Some(status) = child.try_wait()? {
+            return Err(format!(
+                "daemon exited before writing its pid file ({status}); see {}",
+                log_path(ts).display()
+            )
+            .into());
+        }
+        if std::time::Instant::now() > deadline {
+            return Err(format!(
+                "daemon did not write its pid file within 5s; see {}",
+                log_path(ts).display()
+            )
+            .into());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 pub fn stop(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     let ts = ts_dir().ok_or("no .treeship directory found")?;
 
-    let pid = match read_pid(&ts) {
-        Some(p) => p,
-        None => {
+    let pid = match pid_file_state(&ts) {
+        PidFile::Live(p) => p,
+        PidFile::Stale(p) => {
+            let _ = std::fs::remove_file(pid_path(&ts));
+            printer.dim_info(&format!(
+                "  daemon is not running (stale pid file for {p} removed)"
+            ));
+            return Ok(());
+        }
+        PidFile::Unreadable => {
+            return Err(format!(
+                "daemon.pid does not parse; if no daemon is running, remove {}",
+                pid_path(&ts).display()
+            )
+            .into());
+        }
+        PidFile::Absent => {
             printer.dim_info("  daemon is not running");
             return Ok(());
         }
@@ -757,26 +876,42 @@ pub fn status(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     // `status` matches Lane D's hub::status convention (enum string),
     // and `running` is a boolean alias so callers can branch on a
     // single field without parsing the string.
+    // A pid file is removed only when it names a process that is gone.
+    // A file that does not parse is reported, never deleted: deleting it
+    // is what stops a daemon that wrote it in a format this build does
+    // not read (0.31.9 full test, CLI-8).
+    let state = pid_file_state(&ts);
+    if let PidFile::Stale(_) = state {
+        let _ = std::fs::remove_file(pid_path(&ts));
+    }
+
     if printer.format == crate::printer::Format::Json {
-        let body = if is_running(&ts) {
-            let pid = read_pid(&ts).unwrap_or(0);
-            let uptime_secs = read_start_time(&ts).map(|start| epoch_secs().saturating_sub(start));
-            serde_json::json!({
-                "status":      "running",
-                "running":     true,
-                "pid":         pid,
-                "uptime_secs": uptime_secs,
-            })
-        } else {
-            // Clean up stale PID file even in JSON mode -- the side
-            // effect is unrelated to the output channel.
-            if pid_path(&ts).exists() {
-                let _ = std::fs::remove_file(pid_path(&ts));
+        let body = match state {
+            PidFile::Live(pid) => {
+                let uptime_secs =
+                    read_start_time(&ts).map(|start| epoch_secs().saturating_sub(start));
+                serde_json::json!({
+                    "status":      "running",
+                    "running":     true,
+                    "pid":         pid,
+                    "uptime_secs": uptime_secs,
+                })
             }
-            serde_json::json!({
+            PidFile::Stale(pid) => serde_json::json!({
                 "status":  "stopped",
                 "running": false,
-            })
+                "stale_pid_removed": pid,
+            }),
+            PidFile::Unreadable => serde_json::json!({
+                "status":  "unknown",
+                "running": false,
+                "pid_file": pid_path(&ts),
+                "error": "daemon.pid does not parse",
+            }),
+            PidFile::Absent => serde_json::json!({
+                "status":  "stopped",
+                "running": false,
+            }),
         };
         printer.json(&body);
         return Ok(());
@@ -785,8 +920,7 @@ pub fn status(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     printer.blank();
     printer.section("daemon");
 
-    if is_running(&ts) {
-        let pid = read_pid(&ts).unwrap_or(0);
+    if let PidFile::Live(pid) = state {
         let uptime_str = match read_start_time(&ts) {
             Some(start) => {
                 let now = epoch_secs();
@@ -801,13 +935,28 @@ pub fn status(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
             uptime_str,
         ));
     } else {
-        // Clean up stale PID file if process is dead
-        if pid_path(&ts).exists() {
-            let _ = std::fs::remove_file(pid_path(&ts));
+        match state {
+            PidFile::Unreadable => {
+                printer.warn(
+                    "daemon.pid does not parse",
+                    &[("file", &pid_path(&ts).display().to_string())],
+                );
+                printer.hint(
+                    "if no daemon is running, remove the file; otherwise stop it with its pid",
+                );
+            }
+            PidFile::Stale(pid) => {
+                printer.info(&format!("  {} stopped", printer.dim("○")));
+                printer.dim_info(&format!("  stale pid file for {pid} removed"));
+                printer.blank();
+                printer.hint("treeship daemon start");
+            }
+            _ => {
+                printer.info(&format!("  {} stopped", printer.dim("○")));
+                printer.blank();
+                printer.hint("treeship daemon start");
+            }
         }
-        printer.info(&format!("  {} stopped", printer.dim("○")));
-        printer.blank();
-        printer.hint("treeship daemon start");
     }
 
     printer.blank();
