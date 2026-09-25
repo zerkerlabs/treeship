@@ -41,7 +41,7 @@ Restart Claude Code after adding the MCP server.
 ## Prerequisites
 
 ```bash
-curl -fsSL treeship.dev/install | sh
+curl -fsSL https://www.treeship.dev/install | sh
 treeship init
 ```
 

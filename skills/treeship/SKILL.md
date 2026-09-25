@@ -11,7 +11,7 @@ Local-first. Cryptographically verifiable. Works offline. Ed25519 signatures. SH
 
 ```bash
 # Install Treeship
-curl -fsSL treeship.dev/setup | sh
+curl -fsSL https://www.treeship.dev/setup | sh
 
 # Core loop
 treeship wrap -- npm test        # sign what happened
@@ -33,10 +33,10 @@ treeship hub push last           # share verify URL
 
 ```bash
 # One-liner (setup + init + instrument)
-curl -fsSL treeship.dev/setup | sh
+curl -fsSL https://www.treeship.dev/setup | sh
 
 # Step by step
-curl -fsSL treeship.dev/install | sh
+curl -fsSL https://www.treeship.dev/install | sh
 treeship init
 treeship setup
 

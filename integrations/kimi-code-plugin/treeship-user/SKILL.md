@@ -51,12 +51,12 @@ Every entity that performs work is identified by a URI:
 
 **One-liner (setup + init + instrument):**
 ```bash
-curl -fsSL treeship.dev/setup | sh
+curl -fsSL https://www.treeship.dev/setup | sh
 ```
 
 **Step by step:**
 ```bash
-curl -fsSL treeship.dev/install | sh   # install CLI
+curl -fsSL https://www.treeship.dev/install | sh   # install CLI
 treeship init                           # generate Ed25519 keypair
 treeship add                            # auto-instrument agents (optional)
 ```

@@ -8,13 +8,13 @@
 
 ## Quick Install (recommended)
 
-The Treeship setup script auto-detects OpenClaw and installs this skill:
+The Treeship setup script auto-detects OpenClaw and, once you confirm, installs this skill:
 
 ```bash
-curl -fsSL treeship.dev/setup | sh
+curl -fsSL https://www.treeship.dev/setup | sh
 ```
 
-This installs the CLI, runs `treeship init`, and copies `treeship.skill` to `~/.openclaw/skills/treeship/`.
+This installs the CLI, runs `treeship init`, and asks before copying `treeship.skill` to `~/.openclaw/skills/treeship/`. With no interactive terminal, that step is skipped unless `TREESHIP_SETUP_YES=1` is set.
 
 ## Manual Install
 
@@ -22,7 +22,7 @@ If you prefer to install manually:
 
 ```bash
 # Install Treeship CLI
-curl -fsSL treeship.dev/setup | sh
+curl -fsSL https://www.treeship.dev/setup | sh
 
 # Copy skill to OpenClaw skills directory
 cp -r treeship.skill ~/.openclaw/skills/

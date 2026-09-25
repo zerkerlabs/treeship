@@ -21,7 +21,7 @@ function warnOnce(context: string, err: unknown): void {
       process.stderr.write(
         '[treeship/a2a] treeship CLI not found on PATH. ' +
           'A2A attestation is disabled until you install it:\n' +
-          '  curl -fsSL treeship.dev/install | sh   # recommended\n' +
+          '  curl -fsSL https://www.treeship.dev/install | sh   # recommended\n' +
           '  npm install -g treeship                # alternative\n' +
           '  treeship init\n' +
           'Set TREESHIP_DISABLE=1 to silence this warning if running without attestation is intentional.\n',

@@ -7,7 +7,7 @@ Cursor does not ship Treeship-specific hooks the way the [Claude Code plugin](..
 From a project with `treeship init` already run:
 
 ```bash
-curl -fsSL treeship.dev/install | sh
+curl -fsSL https://www.treeship.dev/install | sh
 treeship init
 treeship add cursor
 # or: treeship add   # configures every detected agent, including Cursor

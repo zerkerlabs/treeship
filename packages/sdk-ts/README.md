@@ -11,8 +11,9 @@ npm install @treeship/sdk
 Requires the `treeship` CLI binary in PATH. Install with:
 
 ```bash
-# One-liner: installs CLI, runs treeship init, instruments any detected agents
-curl -fsSL treeship.dev/setup | sh
+# One-liner: installs CLI, runs treeship init, then asks before instrumenting
+# any detected agents (no tty: skipped unless TREESHIP_SETUP_YES=1)
+curl -fsSL https://www.treeship.dev/setup | sh
 
 # Or via npm
 npm install -g treeship

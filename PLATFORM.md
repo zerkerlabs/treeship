@@ -134,14 +134,16 @@ The unscoped `treeship` wrapper is owned by `zerker1` with org access granted.
 ### Install
 
 ```bash
-# Option 1: One-liner (recommended -- installs CLI + runs init + instruments any AI agents detected)
-curl -fsSL treeship.dev/setup | sh
+# Option 1: One-liner (recommended -- installs CLI + runs init, then asks
+# before instrumenting any AI agents detected; no tty: skipped unless
+# TREESHIP_SETUP_YES=1)
+curl -fsSL https://www.treeship.dev/setup | sh
 
 # Option 2: npm wrapper (binary only)
 npm install -g treeship
 
 # Option 3: Shell script (binary only, like option 2 but explicit)
-curl -fsSL treeship.dev/install | sh
+curl -fsSL https://www.treeship.dev/install | sh
 ```
 
 The `treeship-cli` cargo install path is no longer available; that crate is orphaned at v0.4.0. The CLI ships exclusively via the npm wrapper / shell installers above (which fetch a prebuilt platform binary, no Rust toolchain required).
@@ -538,7 +540,7 @@ Platform packages:
 - `@treeship/cli-linux-arm64` -- Linux arm64
 - `@treeship/cli-linux-x64` -- Linux x86_64
 
-If the binary download fails, postinstall prints a fallback message pointing the user to the shell installer (`curl -fsSL treeship.dev/install | sh`) or the one-liner setup (`curl -fsSL treeship.dev/setup | sh`). The `cargo install treeship-cli` fallback is no longer offered (that crate is orphaned at v0.4.0).
+If the binary download fails, postinstall prints a fallback message pointing the user to the shell installer (`curl -fsSL https://www.treeship.dev/install | sh`) or the one-liner setup (`curl -fsSL https://www.treeship.dev/setup | sh`). The `cargo install treeship-cli` fallback is no longer offered (that crate is orphaned at v0.4.0).
 
 ---
 

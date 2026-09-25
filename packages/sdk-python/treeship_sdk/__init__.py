@@ -11,7 +11,7 @@ Usage:
     result = ts.attest_action(actor="agent://my-agent", action="tool.call")
     print(result.artifact_id)
 
-Requires the treeship CLI: curl -fsSL treeship.dev/install | sh
+Requires the treeship CLI: curl -fsSL https://www.treeship.dev/install | sh
 """
 
 from treeship_sdk.bootstrap import (

@@ -241,9 +241,10 @@ There is no single universal "verify" — different surfaces check different thi
 ### CLI
 
 ```bash
-# One-liner: installs the CLI, runs treeship init, instruments detected agents
-# (Claude Code, Codex, Kimi Code, Cursor, Hermes, OpenClaw)
-curl -fsSL treeship.dev/setup | sh
+# One-liner: installs the CLI, runs treeship init, then asks before
+# instrumenting detected agents (Claude Code, Codex, Kimi Code, Cursor,
+# Hermes, OpenClaw). No tty: skipped unless TREESHIP_SETUP_YES=1.
+curl -fsSL https://www.treeship.dev/setup | sh
 
 # Or via npm (inspectable, signed package, no shell pipe)
 npm install -g treeship
