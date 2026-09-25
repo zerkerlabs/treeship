@@ -15,6 +15,7 @@ use treeship_core::{
     },
     storage::Store,
     trust::TrustRootStore,
+    verify::{signed_parent, SignedParent},
 };
 
 use crate::{ctx, printer::Printer};
@@ -535,6 +536,16 @@ pub fn run(
     } else {
         compute_chain_linkage(&chain_envelopes)
     };
+    let unsigned_edges = if no_chain {
+        Vec::new()
+    } else {
+        legacy_endorsement_edges(&chain_envelopes)
+    };
+    let unsigned_note = format!(
+        "{} endorsement(s) made by 0.31.9 or earlier sign no parent; their place in the chain comes from local storage, not a signature: {}",
+        unsigned_edges.len(),
+        unsigned_edges.join(", ")
+    );
 
     // Print results.
     let total = checks.len();
@@ -694,6 +705,8 @@ pub fn run(
             "authority_failed": authority_failed,
             "chain_linkage_ok": linkage_ok,
             "chain_linkage_detail": if linkage_ok { serde_json::Value::Null } else { serde_json::json!(linkage_detail) },
+            // Edges accepted without a signed parent (legacy endorsements).
+            "chain_linkage_unsigned": unsigned_edges,
             "authority_ok": authority_ok,
             // How many v2 mandates were judged, and how many of those could not
             // be fully checked. `authority_ok: true` with
@@ -774,6 +787,12 @@ pub fn run(
             &revocation,
             &summaries,
         );
+        if !unsigned_edges.is_empty() {
+            printer.warn(
+                "chain linkage partly unsigned",
+                &[("detail", &unsigned_note)],
+            );
+        }
         printer.dim_info(&format!("  anchoring: {}", coverage.summary()));
         if let Some(note) = anchor_tally_note(&anchor_tally) {
             printer.dim_info(&format!("  anchors:   {note}"));
@@ -825,6 +844,12 @@ pub fn run(
         );
         printer.blank();
         std::process::exit(1);
+    }
+    if !unsigned_edges.is_empty() {
+        printer.warn(
+            "chain linkage partly unsigned",
+            &[("detail", &unsigned_note)],
+        );
     }
     if failed == 0 {
         let header = format!(
@@ -1110,67 +1135,48 @@ fn compute_chain_linkage(chain: &[(String, Envelope)]) -> (bool, String) {
     for pair in chain.windows(2) {
         let (parent_id, _) = &pair[0];
         let (child_id, child_env) = &pair[1];
-        let signed_parent = child_env
+        // Which signed field is an edge is decided in core, shared with the
+        // package verifier (treeship_core::verify::signed_parent).
+        let signed = child_env
             .unmarshal_statement::<serde_json::Value>()
             .ok()
-            .and_then(|v| {
-                v.get("parentId")
-                    .or_else(|| v.get("parent_id"))
-                    // session-participant/v1 names the signed edge after the
-                    // protocol object it extends. Treat that invitation ref as
-                    // its parent instead of trusting unsigned storage metadata.
-                    .or_else(|| v.get("invitation_ref"))
-                    // receipt.v1 (the session record minted by
-                    // `mint_session_record`) carries no top-level parentId. It
-                    // names the session-close artifact it seals as its signed
-                    // `subject.artifactId`, and storage records that same id as
-                    // the parent. That IS a signed edge -- it is inside the
-                    // DSSE payload -- so reading it here is not a relaxation:
-                    // a mismatch still fails below. Before this, every receipt
-                    // landing mid-chain reported "possible tampering" on
-                    // correctly-signed evidence.
-                    .or_else(|| {
-                        v.get("subject")
-                            .and_then(|s| s.get("artifactId").or_else(|| s.get("artifact_id")))
-                            // Only a Treeship artifact id is a chain edge. An
-                            // action whose subject is an external reference
-                            // (`ord_12345`) names a thing, not a parent, and
-                            // walking to it failed `verify last` with "not
-                            // found in local storage" (usability follow-up
-                            // FR-4).
-                            .filter(|id| {
-                                id.as_str().map(|x| x.starts_with("art_")).unwrap_or(false)
-                            })
-                    })
-                    // handoff/v1 carries no parentId either. `attest handoff`
-                    // records `artifacts[0]` as the storage parent, and that
-                    // list is inside the signed payload, so the first entry
-                    // is the signed edge. Before this, every handoff that
-                    // named the work it transferred -- which is every handoff
-                    // the CLI can mint, `--artifacts` is required -- verified
-                    // as "claims parent (none)" and failed chain linkage on
-                    // correctly-signed evidence.
-                    .or_else(|| {
-                        v.get("artifacts")
-                            .and_then(|a| a.as_array())
-                            .and_then(|a| a.first())
-                    })
-                    .and_then(|p| p.as_str())
-                    .map(str::to_string)
-            });
-        if signed_parent.as_deref() != Some(parent_id.as_str()) {
+            .map(|v| signed_parent(&v))
+            .unwrap_or(SignedParent::None);
+        let named = match signed {
+            SignedParent::Named(p) => Some(p),
+            // Accepted here and reported by `legacy_endorsement_edges`.
+            SignedParent::LegacyEndorsement => continue,
+            SignedParent::None => None,
+        };
+        if named.as_deref() != Some(parent_id.as_str()) {
             return (
                 false,
                 format!(
                     "{} claims parent {}, walked from {}",
                     &child_id[..child_id.len().min(16)],
-                    signed_parent.as_deref().unwrap_or("(none)"),
+                    named.as_deref().unwrap_or("(none)"),
                     &parent_id[..parent_id.len().min(16)]
                 ),
             );
         }
     }
     (true, String::new())
+}
+
+/// Chain edges into an endorsement made by 0.31.9 or earlier, which signs no
+/// parent. `compute_chain_linkage` accepts them so old chains keep verifying
+/// (CLI-1); the caller must say they rest on storage, not a signature.
+fn legacy_endorsement_edges(chain: &[(String, Envelope)]) -> Vec<String> {
+    chain
+        .iter()
+        .skip(1)
+        .filter(|(_, env)| {
+            env.unmarshal_statement::<serde_json::Value>()
+                .ok()
+                .is_some_and(|v| signed_parent(&v) == SignedParent::LegacyEndorsement)
+        })
+        .map(|(id, _)| id.clone())
+        .collect()
 }
 
 fn print_full_timeline(
@@ -2568,6 +2574,72 @@ mod tests {
         sign("application/vnd.treeship.receipt.v1+json", &stmt, &signer)
             .unwrap()
             .envelope
+    }
+
+    fn signed_endorsement(subject: &str, parent: Option<&str>) -> Envelope {
+        use treeship_core::attestation::{sign, Ed25519Signer};
+        use treeship_core::statements::EndorsementStatement;
+
+        let mut stmt = EndorsementStatement::new("human://r", "review");
+        stmt.subject = SubjectRef {
+            artifact_id: Some(subject.to_string()),
+            ..Default::default()
+        };
+        stmt.parent_id = parent.map(str::to_string);
+        let signer = Ed25519Signer::generate("key_endorse_test").unwrap();
+        sign(
+            "application/vnd.treeship.endorsement.v1+json",
+            &stmt,
+            &signer,
+        )
+        .unwrap()
+        .envelope
+    }
+
+    #[test]
+    fn endorsement_of_an_older_artifact_links_through_its_signed_parent() {
+        // CLI-1: A <- X <- E(subject A). The signed parentId is X.
+        let chain = vec![
+            ("art_x".to_string(), signed_receipt(None)),
+            (
+                "art_e".to_string(),
+                signed_endorsement("art_a", Some("art_x")),
+            ),
+        ];
+        let (ok, detail) = compute_chain_linkage(&chain);
+        assert!(ok, "{detail}");
+        assert!(legacy_endorsement_edges(&chain).is_empty());
+    }
+
+    #[test]
+    fn endorsement_with_a_wrong_signed_parent_breaks() {
+        let chain = vec![
+            ("art_x".to_string(), signed_receipt(None)),
+            (
+                "art_e".to_string(),
+                signed_endorsement("art_a", Some("art_a")),
+            ),
+        ];
+        let (ok, detail) = compute_chain_linkage(&chain);
+        assert!(
+            !ok,
+            "a present parentId must be checked, not treated as legacy"
+        );
+        assert!(detail.contains("art_a"), "detail: {detail}");
+        assert!(legacy_endorsement_edges(&chain).is_empty());
+    }
+
+    #[test]
+    fn endorsement_with_no_signed_parent_is_accepted_and_reported() {
+        // 0.31.9 shape: no parentId. Linkage accepts it, and the edge is
+        // listed so the caller can say it rests on storage.
+        let chain = vec![
+            ("art_x".to_string(), signed_receipt(None)),
+            ("art_e".to_string(), signed_endorsement("art_a", None)),
+        ];
+        let (ok, detail) = compute_chain_linkage(&chain);
+        assert!(ok, "{detail}");
+        assert_eq!(legacy_endorsement_edges(&chain), vec!["art_e".to_string()]);
     }
 
     #[test]

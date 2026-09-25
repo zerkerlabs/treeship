@@ -2,8 +2,6 @@
 # CLI-1: endorse an artifact that is not the most recent one, then chain an
 # action onto the endorsement. The endorsement, its child, and the session
 # package that seals them all verify.
-# xfail: W1-1 the endorsement's parent link is not the one the verifier checks
-# xfail-match: SIGNED LINKAGE BROKEN
 . "$(dirname "$0")/lib.sh"
 
 ts init --name flow >/dev/null 2>&1 || fail "init"

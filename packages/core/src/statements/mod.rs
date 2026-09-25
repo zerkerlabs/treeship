@@ -589,6 +589,18 @@ pub struct EndorsementStatement {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meta: Option<serde_json::Value>,
+
+    /// The artifact this endorsement chains onto, inside the signature.
+    ///
+    /// `subject` names what is endorsed; this names where the endorsement
+    /// sits in the chain. They differ whenever the subject is not the most
+    /// recent artifact. Before 0.31.10 only storage recorded the parent, and
+    /// the verifier, having no signed parent to check, fell back to the
+    /// subject and reported every such chain as tampered (audit 2026-09-25,
+    /// CLI-1). Omitted when there is no parent, so an endorsement signed
+    /// without one keeps its exact bytes.
+    #[serde(rename = "parentId", skip_serializing_if = "Option::is_none", default)]
+    pub parent_id: Option<String>,
 }
 
 impl EndorsementStatement {
@@ -603,6 +615,7 @@ impl EndorsementStatement {
             expires_at: None,
             policy_ref: None,
             meta: None,
+            parent_id: None,
         }
     }
 }
