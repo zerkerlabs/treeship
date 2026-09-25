@@ -88,6 +88,22 @@ fn build(dir: &Path, signer: &Ed25519Signer) -> (PathBuf, Vec<Signed>) {
     (out.path, arts)
 }
 
+/// What `session close` does after building the package: sign a
+/// `session.v1` record over the SHA-256 of receipt.json and the session id,
+/// and write it as record.json (0.31.4+).
+fn seal_record(pkg: &Path, signer: &Ed25519Signer) {
+    use sha2::{Digest, Sha256};
+    use treeship_core::statements::ReceiptStatement;
+    let receipt = std::fs::read(pkg.join("receipt.json")).unwrap();
+    let mut stmt = ReceiptStatement::new("system://treeship-session", "session.v1");
+    stmt.payload = Some(serde_json::json!({
+        "receipt_digest": format!("sha256:{}", hex::encode(Sha256::digest(&receipt))),
+        "session_id": "ssn_sigtest",
+    }));
+    let r = sign(&payload_type("receipt"), &stmt, signer).unwrap();
+    std::fs::write(pkg.join("record.json"), r.envelope.to_json().unwrap()).unwrap();
+}
+
 fn find<'a>(checks: &'a [VerifyCheck], name: &str) -> Option<&'a VerifyCheck> {
     checks.iter().find(|c| c.name == name)
 }
@@ -105,6 +121,7 @@ fn a_genuine_package_verifies_every_signature_and_the_chain() {
     let tmp = tempfile::tempdir().unwrap();
     let signer = Ed25519Signer::generate("key_t").unwrap();
     let (pkg, arts) = build(tmp.path(), &signer);
+    seal_record(&pkg, &signer);
     assert!(pkg.join("keys.json").exists());
     for a in &arts {
         assert!(pkg
@@ -299,4 +316,39 @@ fn a_package_without_envelopes_fails_unless_structural_only() {
         VerifyStatus::Warn
     );
     assert!(fails(&checks).is_empty(), "{:?}", fails(&checks));
+}
+
+#[test]
+fn a_package_with_envelopes_but_no_close_record_fails_by_default() {
+    // CLI-4: 0.31.2 and 0.31.3 wrote this shape, and so does deleting
+    // record.json from any later package; nothing signed tells them apart.
+    let tmp = tempfile::tempdir().unwrap();
+    let signer = Ed25519Signer::generate("key_t").unwrap();
+    let (pkg, _) = build(tmp.path(), &signer);
+    assert!(!pkg.join("record.json").exists());
+    let checks = verify_package_with_options(&pkg, &TrustRootStore::empty(), false).unwrap();
+    let row = find(&checks, "receipt_binding").unwrap();
+    assert_eq!(row.status, VerifyStatus::Fail, "{}", row.detail);
+    assert!(
+        row.detail.contains("--structural") && row.detail.contains("not under a signature"),
+        "{}",
+        row.detail
+    );
+    // Reading it as structure is the reader's explicit choice, and a warning.
+    let checks = verify_package_structural_with(&pkg);
+    assert_eq!(
+        find(&checks, "receipt_binding").unwrap().status,
+        VerifyStatus::Warn
+    );
+    // The same package with its record verifies.
+    seal_record(&pkg, &signer);
+    let checks = verify_package_with_options(&pkg, &TrustRootStore::empty(), false).unwrap();
+    assert_eq!(
+        find(&checks, "receipt_binding").unwrap().status,
+        VerifyStatus::Pass
+    );
+}
+
+fn verify_package_structural_with(pkg: &Path) -> Vec<VerifyCheck> {
+    verify_package_with_options(pkg, &TrustRootStore::empty(), true).unwrap()
 }

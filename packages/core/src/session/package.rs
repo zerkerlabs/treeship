@@ -955,9 +955,11 @@ fn package_verifying_keys(
 /// (the auditor's AUD-34 splice: an artifact from another session, same key,
 /// dropped into an `unchained` slot). This row catches it: the receipt's
 /// digest no longer matches what the producer signed at close. A package
-/// built before 0.31.4 carries no record and gets a WARN, FAIL under
-/// `--strict`; the producer's own key still says nothing about a producer
-/// who re-signs, which is what anchoring is for.
+/// that carries envelopes but no record FAILs: it is either from 0.31.2 or
+/// 0.31.3, or its record was removed, and nothing signed says which (CLI-4).
+/// Under `--structural`, and for packages with no envelopes, it is a WARN.
+/// The producer's own key still says nothing about a producer who re-signs,
+/// which is what anchoring is for.
 fn verify_receipt_binding(
     pkg_dir: &Path,
     receipt: &SessionReceipt,
@@ -969,10 +971,31 @@ fn verify_receipt_binding(
     let raw = match std::fs::read(&path) {
         Ok(b) => b,
         Err(_) => {
-            checks.push(VerifyCheck::warn(
-                "receipt_binding",
-                "the package carries no close record (built before 0.31.4), so the sealed set is not under a signature: an artifact could be added to the list and the tree recomputed without any per-artifact row failing",
-            ));
+            // Nothing in a package says, under a signature, which release
+            // built it, so "built before 0.31.4" cannot be told apart from
+            // "record.json deleted" (CLI-4): deleting it, then splicing in
+            // another session's artifacts or editing the receipt, passed by
+            // default. A package that carries envelopes (0.31.2 and later)
+            // without a record therefore fails; only 0.31.2 and 0.31.3 wrote
+            // that shape. Reading one as structure is the reader's explicit
+            // choice (--structural, verdict structural-pass). A package with
+            // no envelopes at all (before 0.31.2) already fails on the
+            // `envelopes` row, so this row only warns.
+            let carries_envelopes = receipt.artifacts.iter().any(|a| {
+                pkg_dir
+                    .join(ARTIFACTS_DIR)
+                    .join(format!("{}.json", sanitize_filename(&a.artifact_id)))
+                    .exists()
+            });
+            let detail = "the package carries no close record, so the sealed set is not under a signature: an artifact could be added to the list, or the receipt edited, and the tree recomputed without any per-artifact row failing. Either it was built by 0.31.2 or 0.31.3, or record.json was removed; the bytes cannot say which";
+            if carries_envelopes && !structural_only {
+                checks.push(VerifyCheck::fail(
+                    "receipt_binding",
+                    &format!("{detail}. For a package you know 0.31.2 or 0.31.3 built, --structural reports what can still be checked (verdict structural-pass)"),
+                ));
+            } else {
+                checks.push(VerifyCheck::warn("receipt_binding", detail));
+            }
             return false;
         }
     };
