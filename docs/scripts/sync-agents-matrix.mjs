@@ -74,7 +74,7 @@ ${matrix}
 ## Run it from anywhere
 
 \`\`\`bash
-curl -fsSL treeship.dev/setup | sh
+curl -fsSL https://www.treeship.dev/setup | sh
 treeship init
 treeship add       # detects and instruments every supported agent on this machine
 \`\`\`

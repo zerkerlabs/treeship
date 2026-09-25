@@ -36,7 +36,7 @@ The plugin requires the `treeship` CLI binary on your PATH and a `.treeship/` di
 
 - **Sessions start automatically.** The first message in any project with a `.treeship/` directory triggers a SessionStart hook that opens a Treeship session named after the project + timestamp. You don't run `treeship session start` yourself.
 - **Every tool call is captured.** MCP tool calls flow through the bundled Treeship MCP server (`@treeship/mcp`); built-in Claude Code tools (Read, Write, Edit, Bash, Grep, Glob, etc.) flow through a PostToolUse hook. Combined: full timeline.
-- **Sessions seal automatically.** When the Claude Code session ends, a SessionEnd hook closes the session and surfaces the shareable session report URL back into the conversation. You don't have to ask.
+- **Sessions seal automatically.** When the Claude Code session ends, a SessionEnd hook closes the session locally. Publishing stays opt-in: set `TREESHIP_AUTO_PUBLISH=1` to have the hook also run `session report` and surface the shareable URL; otherwise it reminds you that `treeship session report` publishes when you want a link.
 - **Live status while you work.** A background monitor streams the receipt counter (`receipts=N events=M`) into Claude's context every few seconds, so the agent knows the receipt is being built.
 - **Human answers are recorded, not just counted.** When Claude asks you something through `AskUserQuestion` -- often the moment you authorize something irreversible -- the hook records the question and the option you chose. Previously this was stored as a bare tool name, so the most consequential moment in a session was the one the receipt said least about.
 
@@ -44,13 +44,13 @@ The plugin requires the `treeship` CLI binary on your PATH and a `.treeship/` di
 
 ## Design rationale
 
-The brief was: zero configuration, sessions start and close themselves, the URL appears at the end without being asked for, the plugin feels native. Here's how each primitive maps to that goal.
+The brief was: zero configuration, sessions start and close themselves, publishing stays opt-in, the plugin feels native. Here's how each primitive maps to that goal.
 
 **MCP server (`.mcp.json`).** Mounts `@treeship/mcp` so any *MCP-routed* tool call gets a signed receipt automatically. We use `npx -y` so users don't need to pre-install the bridge — first run pulls it from the npm registry. `${CLAUDE_PLUGIN_DATA}` could host a vendored copy if we later want offline-install support; for now we trust npm.
 
 **Hooks (`hooks/hooks.json`).**
 - `SessionStart` — the natural entry point for "every Claude Code session is a receipt". Auto-creates a Treeship session if `.treeship/` exists. Idempotent: if a session is already active, exits cleanly.
-- `SessionEnd` — the natural exit point. Closes the session with a generic auto-headline, fetches the report URL, and pushes both into the agent's context via `additionalContext`. The user sees the URL without asking.
+- `SessionEnd` — the natural exit point. Closes the session with a generic auto-headline and pushes an `additionalContext` note into the agent's context. It only fetches and shows a report URL when `TREESHIP_AUTO_PUBLISH=1|true` is set; otherwise the note points at `treeship session report` for a manual publish.
 - `PreToolUse` — the gate, and the kill switch. `treeship halt <actor>` (or `*`) leaves a signed `halt.v1` in the workspace; while it stands the hook denies every tool call for that actor and signs each refusal as `blocked.v1`; `treeship halt --lift <actor>` ends it with a second signed receipt. Then the card: If the session actor has a registered agent card (`treeship agent register --name claude-code --tools ... --forbidden ... --escalation ...`), the hook maps the tool about to run onto the card's vocabulary and denies a forbidden tool with a signed `blocked.v1` receipt, asks the operator for an escalation tool, and allows a bounded tool. An off-card tool is allowed with an `agent.note` in the timeline, or denied under `TREESHIP_GATE=enforce`. No card, no policy. Fails open. Then, opt-in, the judge: `TREESHIP_JUDGE=1` asks the built-in rules judge (paths outside the workspace, destructive or exfiltrating shell commands, hosts outside the declared scope, amounts above `TREESHIP_JUDGE_BOUND`) and `TREESHIP_JUDGE=<url>` any judge that speaks the `treeship judge` contract; every answer is signed as `judgement.v1`, an answer over `TREESHIP_JUDGE_THRESHOLD` denies with a signed `blocked.v1` (`policy_threshold_exceeded`), and a judge that cannot answer fails open with a note.
 - `SubagentStart` / `SubagentStop` — record a spawned subagent as `agent.spawned` and its return as `agent.returned`, so the sealed receipt's agent graph has the parent_child edge and `spawned_subagents` counts it. The subagent's own tool calls are tagged with its instance name (`<agent_type>#<id>`) by the PostToolUse hook, so a reader sees which instance did what.
 - `PostToolUse` — captures Claude Code's *built-in* tools. The MCP server can't see Read/Write/Edit/Bash because they don't go through MCP. This hook routes each built-in call into `treeship session event` so the receipt timeline is complete.
@@ -157,7 +157,7 @@ Receipts produced while the plugin was active stay on disk in `.treeship/session
 
 **The plugin loaded but no session starts.** The plugin auto-starts only when `.treeship/` exists in the project root. Run `treeship init` once. Hooks are silent on missing `.treeship/` by design — adding noise would break Claude Code in unrelated projects.
 
-**The plugin loaded but `treeship` isn't on PATH.** Same silent skip. Install the CLI: `curl -fsSL treeship.dev/install | sh` or `npm install -g treeship`. The plugin will pick it up on the next session.
+**The plugin loaded but `treeship` isn't on PATH.** Same silent skip. Install the CLI: `curl -fsSL https://www.treeship.dev/install | sh` or `npm install -g treeship`. The plugin will pick it up on the next session.
 
 **The session report URL doesn't appear at end of session.** Check `treeship hub status` — the report step needs a configured hub. If the hub isn't reachable, the SessionEnd hook still seals the receipt locally and prints a fallback message pointing to `treeship session report` for a manual retry.
 

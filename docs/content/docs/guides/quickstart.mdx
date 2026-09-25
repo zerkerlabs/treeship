@@ -13,10 +13,10 @@ No account, email, or API key required. Everything runs locally.
 ## One-liner setup
 
 ```bash
-curl -fsSL treeship.dev/setup | sh
+curl -fsSL https://www.treeship.dev/setup | sh
 ```
 
-This installs the CLI, initializes your ship, and instruments any detected agent frameworks (Claude Code, Cursor, Hermes, OpenClaw).
+This installs the CLI, initializes your ship, then asks before instrumenting any detected agent frameworks (Claude Code, Cursor, Hermes, OpenClaw). With no interactive terminal, instrumentation is skipped unless `TREESHIP_SETUP_YES=1` is set.
 
 ## Or step by step
 
@@ -25,7 +25,7 @@ This installs the CLI, initializes your ship, and instruments any detected agent
 ### Install
 
 ```bash
-curl -fsSL treeship.dev/install | sh
+curl -fsSL https://www.treeship.dev/install | sh
 ```
 </Step>
 <Step>

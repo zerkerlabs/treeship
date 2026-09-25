@@ -9,7 +9,7 @@ Treeship can export every artifact as an OpenTelemetry (OTLP) span, letting you 
 
 ## In the default build
 
-OpenTelemetry export is part of the standard `treeship` binary since 0.31.6: the one `npm install -g treeship` and `curl -fsSL treeship.dev/install | sh` fetch, and a plain `cargo build -p treeship-cli`. Nothing is exported until `TREESHIP_OTEL_ENDPOINT` is set, so a machine without that variable behaves exactly as before.
+OpenTelemetry export is part of the standard `treeship` binary since 0.31.6: the one `npm install -g treeship` and `curl -fsSL https://www.treeship.dev/install | sh` fetch, and a plain `cargo build -p treeship-cli`. Nothing is exported until `TREESHIP_OTEL_ENDPOINT` is set, so a machine without that variable behaves exactly as before.
 
 A binary built with `cargo build -p treeship-cli --no-default-features` leaves it out, and every `treeship otel` command then says so:
 

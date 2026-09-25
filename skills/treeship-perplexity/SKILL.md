@@ -73,8 +73,9 @@ Always use `api_credentials=["github"]` in bash tool calls when using `gh`.
 ## Installation
 
 ```bash
-# One-liner: installs CLI, runs treeship init, instruments detected agents
-curl -fsSL treeship.dev/setup | sh
+# One-liner: installs CLI, runs treeship init, then asks before instrumenting
+# detected agents (no tty: skipped unless TREESHIP_SETUP_YES=1)
+curl -fsSL https://www.treeship.dev/setup | sh
 
 # Via npm (no shell pipe)
 npm install -g treeship

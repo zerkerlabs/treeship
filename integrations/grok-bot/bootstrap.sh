@@ -33,7 +33,7 @@ if [ ! -x "$TS_BIN/treeship" ]; then
     ln -sf "$(command -v treeship)" "$TS_BIN/treeship"
   else
     echo "installing treeship..."
-    curl -fsSL treeship.dev/install | sh >/dev/null
+    curl -fsSL https://www.treeship.dev/install | sh >/dev/null
     command -v treeship >/dev/null 2>&1 || { echo "install failed: treeship not on PATH" >&2; exit 1; }
     ln -sf "$(command -v treeship)" "$TS_BIN/treeship"
   fi

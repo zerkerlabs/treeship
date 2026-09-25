@@ -11,8 +11,9 @@ npm install @treeship/mcp
 Requires the `treeship` CLI binary in PATH. Pick whichever install path you trust:
 
 ```bash
-# One-liner (installs CLI, runs init, instruments detected agents):
-curl -fsSL treeship.dev/setup | sh
+# One-liner (installs CLI, runs init, asks before instrumenting detected
+# agents; no tty: skipped unless TREESHIP_SETUP_YES=1):
+curl -fsSL https://www.treeship.dev/setup | sh
 
 # Or read it first, then install via npm (no shell pipe):
 curl -fsSL https://www.treeship.dev/setup.sh   # inspect

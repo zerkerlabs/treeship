@@ -24,7 +24,7 @@ Generate signed, verifiable session receipts for every OpenClaw task. Each recei
 
 One-liner (macOS/Linux):
 ```bash
-curl -fsSL treeship.dev/setup | sh
+curl -fsSL https://www.treeship.dev/setup | sh
 ```
 
 Or via npm (inspectable, signed package):
