@@ -488,6 +488,14 @@ fn apply_overrides(cfg: &mut Config, raw: &serde_json::Value) {
 }
 
 pub fn save(cfg: &Config, path: &Path) -> Result<(), ConfigError> {
+    // `path` may be a project stub (`{"extends": ..., "project": true}`).
+    // The loaded config came from the file it extends; writing it back at
+    // the stub's path replaced the stub with a flattened copy whose
+    // relative store paths then pointed into the project, and the ship's
+    // next attest failed with "no default key". The write goes where the
+    // config was read from.
+    let path = save_target(path)?;
+    let path = path.as_path();
     let dir = path.parent().unwrap_or(path);
     fs::create_dir_all(dir)?;
     #[cfg(unix)]
@@ -509,13 +517,46 @@ pub fn save(cfg: &Config, path: &Path) -> Result<(), ConfigError> {
         }
         None => serde_json::to_vec_pretty(cfg)?,
     };
-    fs::write(path, &json)?;
+    // Atomic: a crash mid-write leaves the previous config, never a
+    // truncated one.
+    let tmp = path.with_extension(format!("json.tmp-{}", std::process::id()));
+    fs::write(&tmp, &json)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600))?;
+    }
+    if let Err(e) = fs::rename(&tmp, path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(e.into());
     }
     Ok(())
+}
+
+/// Follow `extends` stubs from `path` to the config that actually holds
+/// the fields, bounded like the loader is.
+fn save_target(path: &Path) -> Result<PathBuf, ConfigError> {
+    let mut current = path.to_path_buf();
+    for _ in 0..EXTENDS_MAX_DEPTH {
+        let Ok(bytes) = fs::read(&current) else {
+            return Ok(current);
+        };
+        let Ok(raw) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+            return Ok(current);
+        };
+        let Some(extends) = raw.get("extends").and_then(|v| v.as_str()) else {
+            return Ok(current);
+        };
+        let parent = resolve_extends(&current, extends);
+        if !parent.exists() {
+            return Err(ConfigError::DanglingExtends {
+                stub: current,
+                target: parent,
+            });
+        }
+        current = parent;
+    }
+    Ok(current)
 }
 
 /// Migrate v0.1/v0.2 flat `hub` config to v0.4 `hub_connections` map.

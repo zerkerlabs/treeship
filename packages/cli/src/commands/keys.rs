@@ -166,21 +166,22 @@ pub fn rotate(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
     let grace = std::time::Duration::from_secs(grace_hours.saturating_mul(3600));
+
+    // One rotation at a time. Two `keys rotate` racing both rotated the
+    // same predecessor and minted two successors for it; the lock makes
+    // the second one rotate whatever the first left as default.
+    let _lock = rotation_lock(&ctx.config.keys_dir)?;
     let result = ctx.keys.rotate(key_id, grace, set_default)?;
 
-    // The keystore's default moved; config.json names the default too, and
-    // `hub attach`, `prove` and the dashboard read it from there. Through
-    // 0.31.9 it kept the predecessor, so a hub attached after a rotation
-    // was bound to a key that stopped being valid when the grace window
-    // closed (0.31.9 full test, CLI-9).
-    let config_updated = if set_default && ctx.config.default_key_id != result.successor.id {
-        let mut cfg = ctx.config.clone();
-        cfg.default_key_id = result.successor.id.clone();
-        crate::config::save(&cfg, &ctx.config_path)?;
-        true
-    } else {
-        false
-    };
+    // The keystore manifest is the one source of truth for the default
+    // signer: attest, hub attach, prove and the dashboard all read it from
+    // there. config.json's `default_key_id` is what `init` wrote and is
+    // not consulted, so nothing here writes config.json. (Through 0.31.9
+    // the readers disagreed: the keystore promoted the successor while
+    // hub attach read the predecessor from config.json; a first fix wrote
+    // config.json, which flattened a project stub onto itself and broke
+    // the ship. 0.31.9 full test, CLI-9.)
+    let default_now = ctx.keys.default_key_id()?;
 
     if printer.format == crate::printer::Format::Json {
         printer.json(&serde_json::json!({
@@ -195,8 +196,7 @@ pub fn rotate(
                 "is_default":  result.successor.is_default,
             },
             "grace_period_until": result.grace_period_until,
-            "config_default_key_id": if set_default { &result.successor.id } else { &ctx.config.default_key_id },
-            "config_updated": config_updated,
+            "default_key_id": default_now,
         }));
         return Ok(());
     }
@@ -216,9 +216,6 @@ pub fn rotate(
     ));
     if set_default {
         printer.info("  default:      successor is now the default signer");
-        if config_updated {
-            printer.info("  config:       default_key_id now names the successor");
-        }
     } else {
         printer.info("  default:      unchanged (use 'treeship keys list' to confirm)");
     }
@@ -237,4 +234,26 @@ pub fn rotate(
     );
     printer.hint("if the predecessor was compromised, treat every counterparty as trusting it until you hear back: the grace window above applies only here");
     Ok(())
+}
+
+/// An exclusive lock held for the duration of a rotation. The keystore
+/// lives under `keys_dir`; the lock file sits beside it.
+fn rotation_lock(keys_dir: &str) -> Result<std::fs::File, Box<dyn std::error::Error>> {
+    let path = std::path::Path::new(keys_dir).join(".rotate.lock");
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+        // Blocking: the second rotation waits for the first, then rotates
+        // whatever the first left as default.
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+    }
+    Ok(file)
 }

@@ -198,7 +198,10 @@ pub fn attach(
     }
 
     // 5. POST authorize with keys
-    let ship_public_key = ctx.keys.public_key(&ctx.config.default_key_id)?;
+    // The keystore manifest is the source of truth for the default signer
+    // (a rotation moves it there; config.json's copy is what init wrote).
+    let ship_key_id = ctx.keys.default_key_id()?;
+    let ship_public_key = ctx.keys.public_key(&ship_key_id)?;
     let ship_public_hex = hex::encode(&ship_public_key);
 
     let authorize_url = format!("{}/v1/dock/authorize", endpoint);
@@ -233,7 +236,7 @@ pub fn attach(
         hub_name.to_string(),
         HubConnection {
             hub_id: final_hub_id.clone(),
-            key_id: ctx.config.default_key_id.clone(),
+            key_id: ship_key_id.clone(),
             endpoint: endpoint.clone(),
             created_at,
             last_push: None,

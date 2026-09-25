@@ -83,7 +83,10 @@ impl App {
                 .map(|(_, e)| e.endpoint.clone())
                 .unwrap_or_else(|| "treeship.dev".into()),
             ship_id: ctx.config.ship_id.clone(),
-            key_id: ctx.config.default_key_id.clone(),
+            key_id: ctx
+                .keys
+                .default_key_id()
+                .unwrap_or_else(|_| ctx.config.default_key_id.clone()),
             pending: Vec::new(),
             pending_selected: 0,
             should_quit: false,

@@ -46,7 +46,7 @@ The keystore is bound to the machine's seed and to its own path. Copy or restore
 
 ## keys list / keys rotate
 
-`list` shows every signing key with fingerprint, default marker, and rotation lifecycle. `rotate` mints a successor, stamps the predecessor with a grace-period `valid_until`, and (by default) promotes the successor to default signer in the keystore and in `config.json`'s `default_key_id`, which `hub attach` reads. `--no-default` leaves both on the predecessor.
+`list` shows every signing key with fingerprint, default marker, and rotation lifecycle. `rotate` mints a successor, stamps the predecessor with a grace-period `valid_until`, and (by default) promotes the successor to default signer in the keystore manifest, which is what `attest`, `hub attach`, `prove` and the dashboard read; `config.json`'s `default_key_id` is what `init` wrote and is not consulted. Rotations are serialised, so two at once form one chain. `--no-default` leaves the default on the predecessor.
 
 <Callout type="warn">
 **Rotation is local.** The grace window applies to this keystore only. Nothing is minted that a counterparty could verify, nothing travels in a bundle or a presentation, and a pinned trust root has no expiry. Counterparties keep trusting the predecessor until they remove its pin, and cannot verify the successor until they pin it. `rotate` prints the two things to send them: the `keys export` lines for the successor, and `treeship trust remove <predecessor>`. If the predecessor was compromised, treat every counterparty as trusting it until you hear back.
