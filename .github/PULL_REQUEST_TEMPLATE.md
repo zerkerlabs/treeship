@@ -37,4 +37,4 @@ For changes to keys/, attestation/, event_log/, hub/: be more specific.
 - [ ] Lib tests pass (`cargo test -p treeship-core`)
 - [ ] Cross-SDK contract tests pass (`./tests/cross-sdk/run.sh`) — required if you touched SDKs, CLI verify, or the receipt format
 - [ ] `cargo fmt` + `cargo clippy --all-targets` clean (no new warnings)
-- [ ] CHANGELOG.md updated under the next-release heading (or noted "no user-visible change")
+- [ ] Added a `changelog.d/<task-or-topic>.md` fragment (see changelog.d/README.md; do not edit CHANGELOG.md directly), or noted "no user-visible change"
