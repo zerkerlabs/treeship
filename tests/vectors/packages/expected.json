@@ -1,0 +1,78 @@
+{
+  "_about": "T2 package vectors. Each entry is a frozen .treeship package under this directory and the verdict each verifier must give it. cli* columns are the `verdict` field of `treeship package verify --format json` (run.sh); receipt_only is the core-wasm verify_receipt outcome, which @treeship/verify's verifyReceipt returns (packages/core/tests/package_vectors.rs). xfail maps a column to the fix-plan task that makes it right; remove the entry in that task's PR. Every new advisory adds a vector.",
+  "vectors": {
+    "honest/basic": {
+      "cli": "signatures-pass",
+      "cli_strict": "verified",
+      "cli_structural": "structural-pass",
+      "receipt_only": "structural-pass"
+    },
+    "honest/approval": {
+      "cli": "signatures-pass",
+      "cli_strict": "verified",
+      "cli_structural": "structural-pass",
+      "receipt_only": "structural-pass",
+      "_note": "under --strict on a second ship two rows fail: chain_completeness (approval statements carry no parent, so the approval is never chained) and replay-local-journal (a stranger has no Approval Use Journal, and --strict promotes that). Raised with the coordinator as a new finding; no fix-plan task yet",
+      "xfail": {
+        "cli_strict": "unassigned: approval unchained + strict needs a local journal"
+      }
+    },
+    "honest/legacy-0.24": {
+      "_note": "built by 0.24.0, before packages carried envelopes (0.31.2): default and strict fail by design, --structural is the documented path",
+      "cli": "failed",
+      "cli_strict": "failed",
+      "cli_structural": "structural-pass",
+      "receipt_only": "structural-pass"
+    },
+    "tampered/drop-record-json": {
+      "_note": "CLI-4: the signed close record is deleted; the package still carries envelopes and a coverage receipt, so it cannot be pre-0.31.4",
+      "cli": "failed",
+      "cli_strict": "failed",
+      "cli_structural": "structural-pass",
+      "receipt_only": "structural-pass",
+      "xfail": {
+        "cli": "W1-4"
+      }
+    },
+    "tampered/drop-record-json+rename": {
+      "_note": "CLI-4: close record deleted, then session.name edited",
+      "cli": "failed",
+      "cli_strict": "failed",
+      "cli_structural": "structural-pass",
+      "receipt_only": "structural-pass",
+      "xfail": {
+        "cli": "W1-4"
+      }
+    },
+    "tampered/rename-session": {
+      "cli": "failed",
+      "cli_strict": "failed",
+      "cli_structural": "structural-pass",
+      "receipt_only": "structural-pass"
+    },
+    "tampered/narrative-edit": {
+      "cli": "failed",
+      "cli_strict": "failed",
+      "cli_structural": "structural-pass",
+      "receipt_only": "structural-pass"
+    },
+    "tampered/artifact-payload-edit": {
+      "cli": "failed",
+      "cli_strict": "failed",
+      "cli_structural": "failed",
+      "receipt_only": "structural-pass"
+    },
+    "tampered/drop-artifact-envelope": {
+      "cli": "failed",
+      "cli_strict": "failed",
+      "cli_structural": "failed",
+      "receipt_only": "structural-pass"
+    },
+    "tampered/swap-package-key": {
+      "cli": "failed",
+      "cli_strict": "failed",
+      "cli_structural": "failed",
+      "receipt_only": "structural-pass"
+    }
+  }
+}
