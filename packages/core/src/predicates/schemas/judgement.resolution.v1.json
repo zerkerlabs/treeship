@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://treeship.dev/schemas/judgement.resolution.v1.json",
+  "title": "judgement.resolution.v1",
+  "description": "A person's (or a stronger judge's) decision on a judgement that was escalated or refused: the human label, as its own signed artifact rather than a field a machine fills in. Carried as the payload of a Treeship receipt whose system is the decider's URI (human://alice), with the judgement as its subject, and sealed into the session like any other artifact. A judgement that says `escalated` and has no resolution in the package is an open question, and `package verify` reports it as one.",
+  "type": "object",
+  "required": ["schema", "judgement", "by", "decision", "resolved_at"],
+  "properties": {
+    "schema": {
+      "description": "Schema identifier. Must be exactly this value.",
+      "const": "judgement.resolution.v1"
+    },
+    "judgement": {
+      "description": "The art_ id of the judgement.v1 receipt this resolves.",
+      "type": "string",
+      "pattern": "^art_[0-9a-f]{32}$"
+    },
+    "by": {
+      "description": "Who decided: a human:// URI for a person, an agent:// URI for a stronger judge. The receipt's system carries the same value.",
+      "type": "string"
+    },
+    "decision": {
+      "description": "allow: the action proceeds. deny: it does not. route: the decider chose a route (named in `route`) for a routing judgement.",
+      "type": "string",
+      "enum": ["allow", "deny", "route"]
+    },
+    "route": {
+      "description": "For decision route: the route or option chosen, in the caller's vocabulary.",
+      "type": "string"
+    },
+    "overrides": {
+      "description": "The judgement's own effect that this decision replaces, when it differs (a human allowing what the judge refused, or refusing what it allowed).",
+      "type": "string"
+    },
+    "reason": {
+      "description": "Why, in the decider's words.",
+      "type": "string"
+    },
+    "resolved_at": {
+      "description": "RFC 3339 instant of the decision.",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

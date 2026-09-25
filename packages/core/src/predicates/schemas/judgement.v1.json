@@ -4,7 +4,14 @@
   "title": "judgement.v1",
   "description": "A model's typed judgement, as the caller received it, and what the caller did with it. Any judge: a decision model such as Jev, an LLM used as a judge, a classifier, a deterministic rule engine. The receipt is signed by the party that asked and acted, chained onto the action it gated with --subject, and carries the model and version, digests of the state and the questions, the typed answer with its probabilities and confidence, the threshold the caller held it to and who set that threshold, and the outcome. It is the caller's attestation of what the judge returned and what was done about it; it does not prove the judgement was right, and, since most judges cannot be replayed, it cannot prove the judge returned exactly this.",
   "type": "object",
-  "required": ["schema", "judge", "question", "answer", "outcome", "judged_at"],
+  "required": [
+    "schema",
+    "judge",
+    "question",
+    "answer",
+    "outcome",
+    "judged_at"
+  ],
   "properties": {
     "schema": {
       "description": "Self-description, so a receipt cannot be read as a different predicate.",
@@ -13,7 +20,9 @@
     "judge": {
       "description": "Which judge answered.",
       "type": "object",
-      "required": ["model"],
+      "required": [
+        "model"
+      ],
       "properties": {
         "model": {
           "description": "Model or engine id as the judge reported it, e.g. jev-1.13.0, claude-sonnet-5, treeship-rules.",
@@ -26,13 +35,38 @@
         "kind": {
           "description": "decision-model: a non-generative typed-answer model; llm: a generative model prompted to judge; classifier: a fixed-label model; rules: deterministic code, replayable from the same inputs.",
           "type": "string",
-          "enum": ["decision-model", "llm", "classifier", "rules"]
+          "enum": [
+            "decision-model",
+            "llm",
+            "classifier",
+            "rules"
+          ]
         },
         "replayable": {
           "description": "True only when the same inputs are guaranteed to return the same answer, so a verifier could re-run the judge. Rules engines are; sampled models are not.",
           "type": "boolean"
+        },
+        "request_id": {
+          "description": "The judge's own id for this answer, when it returns one (Jev's x-typesafe-request-id header). A pointer a judge that keeps its responses can be asked about.",
+          "type": "string"
         }
       }
+    },
+    "contract": {
+      "description": "The decision contract this judgement ran under: the versioned definition of state fields, question, options or rubric, threshold and allowed action. `router@3` is id `router`, version `3`. Versioned separately from the application, so a change to the question is reviewable and reversible like a code change.",
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
     },
     "state_digest": {
       "description": "sha256:<hex> of the state the judge was shown, canonicalised by the caller. The state itself stays with the caller.",
@@ -44,22 +78,40 @@
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
     },
+    "response_digest": {
+      "description": "sha256:<hex> of the raw response bytes the judge returned, computed by the caller as received. The receipt is the caller's claim; this commits it to the exact bytes, so a fabricated answer must come with a body that hashes to it. Judge co-signing is the next step; it is not this field.",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
     "question": {
       "description": "The one question this receipt is about, by key and type, with its instructions in the clear so a reader knows what was asked.",
       "type": "object",
-      "required": ["key", "type"],
+      "required": [
+        "key",
+        "type"
+      ],
       "properties": {
-        "key": { "type": "string" },
+        "key": {
+          "type": "string"
+        },
         "type": {
           "description": "noul: a yes/no probability. choice: one option from a fixed set. score: a level on an ordered rubric.",
           "type": "string",
-          "enum": ["noul", "choice", "score"]
+          "enum": [
+            "noul",
+            "choice",
+            "score"
+          ]
         },
-        "instructions": { "type": "string" },
+        "instructions": {
+          "type": "string"
+        },
         "options": {
           "description": "For choice and score: the option or level names, in order.",
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       }
     },
@@ -67,13 +119,25 @@
       "description": "The typed answer exactly as returned.",
       "type": "object",
       "properties": {
-        "noul": { "type": "number", "minimum": 0, "maximum": 1 },
-        "choice": { "type": "string" },
-        "score": { "type": "number" },
+        "noul": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "choice": {
+          "type": "string"
+        },
+        "score": {
+          "type": "number"
+        },
         "probabilities": {
           "description": "The full distribution over options or levels, when the judge returns one.",
           "type": "object",
-          "additionalProperties": { "type": "number", "minimum": 0, "maximum": 1 }
+          "additionalProperties": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
         },
         "confidence": {
           "description": "The judge's own confidence statistic, 0 to 1, when it returns one. For a noul the probability is the confidence.",
@@ -86,13 +150,22 @@
     "threshold": {
       "description": "The bar the caller held the answer to before acting on it.",
       "type": "object",
-      "required": ["value"],
+      "required": [
+        "value"
+      ],
       "properties": {
-        "value": { "type": "number", "minimum": 0, "maximum": 1 },
+        "value": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
         "applies_to": {
           "description": "Which number the threshold was compared with: confidence (choice, score) or noul (yes/no probability).",
           "type": "string",
-          "enum": ["confidence", "noul"]
+          "enum": [
+            "confidence",
+            "noul"
+          ]
         },
         "set_by": {
           "description": "Who set the bar: a policy reference, a card, an operator, or the caller's default.",
@@ -103,24 +176,40 @@
     "outcome": {
       "description": "acted: the caller did what the answer indicated. escalated: the answer or its confidence sent the call to a human or a stronger judge. refused: the caller stopped the action on the answer. ignored: the answer was recorded and not used, for example below threshold with a deterministic rule deciding instead.",
       "type": "string",
-      "enum": ["acted", "escalated", "refused", "ignored"]
+      "enum": [
+        "acted",
+        "escalated",
+        "refused",
+        "ignored"
+      ]
     },
     "effect": {
       "description": "What the outcome meant for the gated action, in the caller's vocabulary: allow, warn, deny, ask.",
       "type": "string"
     },
-    "latency_ms": { "type": "integer", "minimum": 0 },
+    "latency_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
     "usage": {
       "type": "object",
       "properties": {
-        "input_tokens": { "type": "integer", "minimum": 0 },
-        "output_tokens": { "type": "integer", "minimum": 0 }
+        "input_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "output_tokens": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "judged_at": {
       "description": "RFC3339 timestamp of the judge's answer, as the caller recorded it.",
       "type": "string"
     },
-    "notes": { "type": "string" }
+    "notes": {
+      "type": "string"
+    }
   }
 }

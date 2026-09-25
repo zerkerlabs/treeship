@@ -77,6 +77,10 @@ const REGISTRY: &[(&str, &str)] = &[
     ("coverage.v1", include_str!("schemas/coverage.v1.json")),
     ("halt.v1", include_str!("schemas/halt.v1.json")),
     ("judgement.v1", include_str!("schemas/judgement.v1.json")),
+    (
+        "judgement.resolution.v1",
+        include_str!("schemas/judgement.resolution.v1.json"),
+    ),
 ];
 
 /// Returns the raw JSON Schema text for a registered predicate suffix, if any.
@@ -1351,6 +1355,46 @@ mod tests {
     #[test]
     fn judgement_valid_passes() {
         assert!(validate("judgement.v1", Some(&judgement_payload())).is_ok());
+    }
+
+    #[test]
+    fn judgement_accepts_a_contract_and_rejects_a_malformed_one() {
+        let mut p = judgement_payload();
+        p["contract"] = json!({"id": "ticket-router", "version": "3"});
+        assert!(validate("judgement.v1", Some(&p)).is_ok());
+        p["contract"] = json!({"version": "3"});
+        assert!(
+            validate("judgement.v1", Some(&p)).is_err(),
+            "id is required"
+        );
+        p["contract"] = json!({"id": 3});
+        assert!(
+            validate("judgement.v1", Some(&p)).is_err(),
+            "id is a string"
+        );
+    }
+
+    #[test]
+    fn judgement_resolution_is_a_closed_vocabulary() {
+        let ok = json!({
+            "schema": "judgement.resolution.v1",
+            "judgement": format!("art_{}", "ab".repeat(16)),
+            "by": "human://alice",
+            "decision": "allow",
+            "overrides": "deny",
+            "reason": "reviewed the diff",
+            "resolved_at": "2026-09-25T12:00:00Z"
+        });
+        assert!(validate("judgement.resolution.v1", Some(&ok)).is_ok());
+        let mut bad = ok.clone();
+        bad["decision"] = json!("maybe");
+        assert!(validate("judgement.resolution.v1", Some(&bad)).is_err());
+        let mut bad = ok.clone();
+        bad["judgement"] = json!("not-an-id");
+        assert!(validate("judgement.resolution.v1", Some(&bad)).is_err());
+        let mut bad = ok.clone();
+        bad.as_object_mut().unwrap().remove("by");
+        assert!(validate("judgement.resolution.v1", Some(&bad)).is_err());
     }
 
     #[test]

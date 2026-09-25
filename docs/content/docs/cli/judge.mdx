@@ -53,8 +53,12 @@ threshold:  0.5 (set by default)
 `--attest` signs one `judgement.v1` receipt per question, by `system://treeship-judge` with the ship key: the judge's model, kind and replayability, digests of the state and the questions, the question and its typed answer, the threshold and who set it, the outcome and effect. Inside a session the receipts chain onto its head in order, so the sealed package shows them beside the call they decided and `package verify` reports them in the `judgements` row, flagging any acted on below its own bar. `--subject <art_…>` names the action the judgement is about. `verify last` after `--attest` is the newest judgement.
 
 <Callout type="info">
-What the receipt proves: that this judge returned this typed answer to this question about this state, and that the caller held it to this bar and did this. For the rules judge a verifier can re-run the rules and check the answer. For a sampled judge (`replayable: false`) the receipt proves what the caller committed to before acting, not that the judge would say it again, and never that the judgement was right.
+What the receipt proves: that the caller committed to this typed answer to this question about this state, held it to this bar, and did this. The receipt is signed by the caller, not by the judge, so on its own it is the caller's claim about what the judge said. Two fields narrow that: `response_digest` is the hash of the exact bytes the judge returned, computed as received, so a fabricated answer has to come with a body that hashes to it; and `judge.request_id` is the judge's own id for the answer when it gives one (Jev's `x-typesafe-request-id`), which a judge that keeps its responses can be asked about. A judge signing its own answer is the next step; it is not this receipt. For the rules judge a verifier can re-run the rules on the state and check the answer. For a sampled judge (`replayable: false`) nothing can be re-run, and the receipt never proves the judgement was right.
 </Callout>
+
+## Who holds the state
+
+The receipt commits to the state by digest and does not carry it: the state can hold a command line, a file path, or a payment, and the caller decides who sees it. `--state-out <file>` writes the canonical state the digest was computed over. A verifier given that file checks it hashes to `state_digest`, re-runs the rules judge on it for a rules receipt, or reads what an outside judge was shown. Without the file, the digest still binds the receipt to one state; it just cannot say which.
 
 ## Any judge: the HTTP contract
 
@@ -90,6 +94,27 @@ Every question must be answered with the value its type calls for (`noul` for a 
 
 `--question <key>` asks a subset by key (an outside judge may be asked keys the rules do not know; they are sent as `noul` questions). `--questions-file <file>` sends typed questions of your own, `{key: {type, instructions, options}}`.
 
+## The decision contract
+
+`--contract ticket-router@3` records, in every receipt, the versioned decision contract the judgement ran under: the definition of state fields, question, options or rubric, threshold and allowed action, versioned separately from the application so a change to the question is reviewable and reversible like a code change. The receipt carries `contract: {id, version}` beside `questions_digest`; the digest proves which questions were asked, the contract says which version of the design they belong to.
+
+## Escalation and the human's decision
+
+An answer that sends the call to a person is outcome `escalated`, and the judgement stays an open question until a person answers it. The answer is its own signed artifact, not a field the machine fills in:
+
+```bash
+treeship judge --resolve art_9c1e… --by human://alice --decision allow --reason "reviewed the diff"
+treeship judge --resolve art_9c1e… --by human://alice --decision route --route fact_check
+```
+
+That signs a `judgement.resolution.v1` receipt under the decider's URI, with the judgement as its subject, chained onto the session. `decision` is `allow`, `deny` or `route` (with `--route`); when it contradicts what the judge's answer led to, the receipt records what it `overrides`. A refused judgement can be resolved the same way, which is how a human allows what the judge refused.
+
+`package verify` reads the pair back in the `judgements` row: `1 escalated, 1 resolved (art_… allow by human://alice)`, or `1 OPEN with no signed resolution in this package`, which is a warning. An override of a non-escalated judgement is named too. A resolution signed in a later session resolves the escalation for a verifier holding both packages; in its own package it is a resolution the row does not need to match.
+
+<Callout type="info">
+Why a separate artifact: a machine writing "a human overrode this" into its own record is the self-report a receipt exists to replace. The resolution is a claim the decider made, under the decider's name, that verifies on its own. The Claude Code gate's `ask` reaches the operator through the harness prompt, which leaves no resolution; a harness that can call the CLI after the operator answers records one.
+</Callout>
+
 ## Into Reason
 
 `--format json` also prints `reason_facts`: the same answers as [Zerker Reason](https://github.com/zerkerlabs/reason) premises under the `model-judged` authority class, one per question, with the signed receipt as the fact id when `--attest` ran.
@@ -104,6 +129,8 @@ A Reason program admits `model-judged` per predicate; the convention is to admit
 ## In the gate
 
 The Claude Code plugin's gate asks the judge when `TREESHIP_JUDGE=1` (rules) or `TREESHIP_JUDGE=<url>` is set, after the card has allowed the call and never instead of it. A `deny` refuses the call and signs a `blocked.v1` with `reason_class: policy_threshold_exceeded` naming the judge and the questions; an `ask` asks the operator; the answers are signed either way. `TREESHIP_JUDGE_THRESHOLD` and `TREESHIP_JUDGE_BOUND` set the bar and the amount bound. See [Claude Code](/docs/integrations/claude-code#the-gate).
+
+Two different rules apply to a judge that cannot answer, and both are deliberate. To `treeship judge` it is an error, never an allow: the command's one job is the judgement, and no judgement is a failure. To the gate, by default, it is a note: the agent's card already allowed the call before the judge was asked, the judge is a second layer on top of that decision, and the gate's standing rule is that a broken Treeship never blocks a tool call by accident. The timeline records that the call went unjudged. `TREESHIP_JUDGE_STRICT=1` changes the gate's answer: an unanswered call is escalated to the operator, so nothing runs unjudged in a session that asked for a judge.
 
 ## Options
 
@@ -120,8 +147,14 @@ The Claude Code plugin's gate asks the judge when `TREESHIP_JUDGE=1` (rules) or 
 | `--bound <AMOUNT>` | The amount bound for `amount_above_bound` |
 | `--subject <ART_ID>` | The action this judgement is about |
 | `--attest` | Sign each answer as `judgement.v1` |
+| `--contract <ID@VERSION>` | The decision contract the judgement runs under, into every receipt |
+| `--state-out <FILE>` | Write the canonical state the receipt's `state_digest` commits to |
 | `--enforce` | Exit 2 on `deny` and 3 on `ask`, for shell gates |
-| `--format json` | Machine output: `effect`, `outcome`, `decided_by`, `answers`, `receipts`, digests |
+| `--resolve <ART_ID>` | Resolve a judgement instead of judging; needs `--by` and `--decision` |
+| `--by <URI>` | Who decided (`human://alice`, or an `agent://` for a stronger judge) |
+| `--decision <DECISION>` | `allow`, `deny` or `route`; `route` takes `--route <name>` |
+| `--reason <TEXT>` | Why, in the decider's words |
+| `--format json` | Machine output: `effect`, `outcome`, `decided_by`, `answers`, `receipts`, `response_digest`, `request_id`, digests |
 
 ## Exit code
 

@@ -194,7 +194,7 @@
   notes: "Registers evaluation.v1: an evaluator's signed result of running a named suite (by digest) against a model, agent, session or package, with verdict pass/fail/inconclusive enforced before signing and the grade chained onto the graded artifact via --subject. The receipt a capability-checkpoint scheme needs; the self-asserted rule (a grade signed by the subject's own key is not independent) is documented for checkers and is the next verifier row."
 
 - id: judgement-receipts
-  name: Judgement receipts (judgement.v1)
+  name: Judgement receipts (judgement.v1, judgement.resolution.v1)
   section: core
   status: beta
   cli:
@@ -206,17 +206,25 @@
   docs:
     - docs/content/docs/reference/predicates.mdx
     - docs/content/docs/cli/package.mdx
+    - docs/content/docs/cli/judge.mdx
   tests:
     - packages/core/src/predicates/mod.rs
     - packages/cli/tests/judgement_receipt_cli.rs
+    - packages/cli/tests/judge_cli.rs
   notes: >
     Registers judgement.v1: any judge's typed answer (noul/choice/score with
-    probabilities and confidence), the model and version, digests of state and
-    questions, the threshold applied and who set it, and the outcome
+    probabilities and confidence), the model and version, the decision
+    contract (id@version) it ran under, digests of state and questions, the
+    threshold applied and who set it, and the outcome
     (acted/escalated/refused/ignored), chained onto the gated action via
-    --subject. Nested vocabulary is enforced before signing by the now
-    recursive predicate validator. `package verify` reports sealed judgements
-    as the `judgements` row and flags any acted on against its own bar (a yes answer allowed, a no answer refused, or no bar declared).
+    --subject. Nested vocabulary is enforced before signing by the recursive
+    predicate validator. judgement.resolution.v1 is the human label: a
+    person's (or stronger judge's) decision on an escalated or refused
+    judgement, signed under the decider's URI with the judgement as subject
+    (`treeship judge --resolve`), recording what it overrides. `package verify`
+    reports sealed judgements as the `judgements` row, flags any acted on
+    against its own bar, pairs resolutions with escalations, and reports an
+    escalation with no signed resolution in the package as open.
 
 - id: judge
   name: Judge slot (treeship judge)

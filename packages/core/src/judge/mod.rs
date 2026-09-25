@@ -103,6 +103,23 @@ pub struct JudgeResponse {
     pub answers: BTreeMap<String, Answer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latency_ms: Option<u64>,
+    /// The judge's own id for this answer, when it gives one (Jev's
+    /// `x-typesafe-request-id`): a pointer the judge could attest to later.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+    /// `sha256:<hex>` of the raw response bytes as received, set by the
+    /// client, never by the judge. The receipt is signed by the caller, so a
+    /// caller could fabricate an answer; committing to the exact bytes the
+    /// judge returned means the fabrication has to include a body that
+    /// hashes to this, and a judge that keeps its responses (by request id)
+    /// can be asked whether it ever said so.
+    #[serde(skip)]
+    pub response_digest: Option<String>,
+}
+
+/// `sha256:<hex>` of raw bytes.
+pub fn digest_bytes(bytes: &[u8]) -> String {
+    format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
 }
 
 #[derive(Debug)]
@@ -350,11 +367,17 @@ impl Judge for RulesJudge {
                 },
             );
         }
-        Ok(JudgeResponse {
+        let mut resp = JudgeResponse {
             judge: Self::info(),
             answers,
             latency_ms: Some(0),
-        })
+            request_id: None,
+            response_digest: None,
+        };
+        // The rules judge has no wire body; its canonical answer is the
+        // response, and a verifier re-running the rules gets the same bytes.
+        resp.response_digest = Some(digest(&serde_json::to_value(&resp).unwrap_or(Value::Null)));
+        Ok(resp)
     }
 }
 
@@ -1199,6 +1222,8 @@ mod tests {
             judge: RulesJudge::info(),
             answers: BTreeMap::new(),
             latency_ms: None,
+            request_id: None,
+            response_digest: None,
         };
         assert!(check_answers(&req, &bad).is_err());
         let mut answers = BTreeMap::new();
@@ -1215,6 +1240,8 @@ mod tests {
             judge: RulesJudge::info(),
             answers,
             latency_ms: None,
+            request_id: None,
+            response_digest: None,
         };
         assert!(check_answers(&req, &bad).is_err());
     }

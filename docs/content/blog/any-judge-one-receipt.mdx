@@ -12,20 +12,24 @@ systems: ["typesafe-jev", "cli", "claude-code-plugin", "zerker-reason"]
 
 A new kind of model is moving into the path between an agent and its next action. It does not generate text. You give it a state and a typed question, and it answers in milliseconds with a probability, a choice from a list, or a level on a rubric. TypeSafe calls theirs Jev and the category System One. Others use a classifier, a small LLM prompted to judge, or a rules engine. The pattern is the same: something looks at what the agent is about to do and says yes, no, or how sure it is, and the agent acts on that.
 
-None of it leaves a record. The judge answers, the caller acts, and afterwards nobody can show what was asked, what came back, what bar it was held to, or that the caller looked at all. If you have read our earlier posts you know what we think of that: an action with no receipt is a claim.
+None of it leaves a record. The judge answers, the caller acts, and afterwards nobody can show what was asked, what came back, what bar it was held to, or that the caller looked at all. Picture the reader who needs to: an insurer settling a claim, an auditor, or the counterparty whose system the agent touched, asking whether a destructive command was screened before it ran. If you have read our earlier posts you know what we think of that: an action with no receipt is a claim.
 
 Over 0.31.6 to 0.31.9 we built the judge slot. Here is what shipped, what it proves, and where Jev fits.
 
 ## The contract
 
-A judge, to Treeship, is anything that takes state plus typed questions and returns typed answers. Three question types, the same three Jev uses: a `noul` is a yes/no probability, a `choice` is one option from a fixed set, a `score` is a level on an ordered rubric. Each answer carries the typed value, the probability distribution when the judge has one, and the judge's own confidence.
+A judge, to Treeship, is anything that takes state plus typed questions and returns typed answers. Three question types, the same three Jev uses. A `noul` (TypeSafe's word) is the probability that a statement is true: 0.96 to "is this call destructive?" means almost certainly yes. A `choice` is one option from a fixed set. A `score` is a level on an ordered rubric. Each answer carries the typed value, the probability distribution when the judge has one, and the judge's own confidence.
 
 ```bash
 treeship judge --tool Bash --input '{"command":"rm -rf /"}' \
-  --judge-url https://judge.internal/v1/judge --threshold 0.9 --attest
+  --question shell_destructive --threshold 0.5 --attest
 ```
 
-`treeship judge` sends that request to whatever is at the URL, holds every answer to the same checks (each question answered in its type, every probability in range), holds the answers to a threshold, and signs each one as a `judgement.v1` receipt chained onto the session. A judge that cannot answer is an error, not an allow. The [judge page](/cli/judge) has the contract in full.
+```
+  shell_destructive          1.00   refused (deny)
+```
+
+Read that line as the receipt does: the question was "is the shell command one that destroys data?", the answer was a probability of 1.00, the bar was 0.5, and because the answer met the bar the outcome was `refused` with effect `deny`. Below the bar the same call is `acted` with effect `allow`. The bar cuts both ways on a yes/no question, and we got that wrong once ourselves; more on that below. With `--judge-url` the same command sends the request to whatever is at the URL and holds every answer to the same checks: each question answered in its type, every probability in range, and a judge that cannot answer is an error, not an allow. The [judge page](/cli/judge) has the contract in full.
 
 ## The judge we own
 
@@ -35,13 +39,17 @@ We started there on purpose. A rules judge is replayable: a verifier holding the
 
 ## The receipt
 
-Every answer becomes one `judgement.v1`, signed by the caller, with the judge's model and kind, whether it is replayable, digests of the state and the questions (committed to, not published), the question by key and type, the typed answer, the threshold and who set it, and the outcome: `acted`, `escalated`, `refused`, `ignored`.
+Every answer becomes one `judgement.v1`, signed by the caller, with the judge's model and kind, whether it is replayable, digests of the state and the questions (committed to, not published), the question by key and type, the typed answer, the threshold and who set it, and the outcome: `acted`, `escalated`, `refused`, `ignored`. That last one deserves its own line, because it answers the question the post opened with. `ignored` records that the caller received an answer and did not use it; the answer is in the receipt anyway. Whether the caller looked is no longer a matter of trust.
+
+Now the objection a security reader will raise first, and should. The receipt is signed by the caller, not by the judge. Nothing in a signature by the caller stops the caller from writing down a "no" the judge never gave and acting on it. So a `judgement.v1` on its own is the caller's claim about what the judge said, held to the same standard as every other receipt: it proves what the caller committed to before acting, under which bar, and it can be checked against everything else in the chain. Two fields narrow the gap. `response_digest` is the hash of the exact bytes the judge returned, computed as they arrived, so a fabricated answer has to come with a body that hashes to it. And `judge.request_id` is the judge's own id for the answer when it gives one, which a judge that keeps its responses can be asked about. The step after that is the judge signing its answer, and that is not this receipt. We would rather say so than let the signature imply it.
+
+The state itself stays with the caller. The receipt carries its digest, because a state can hold a command line, a path, or a payment, and the caller decides who sees it. `--state-out` writes the canonical bytes the digest was computed over; a verifier given that file can check the hash and, for the rules judge, re-run the rules on it.
 
 `package verify` reads them back in a `judgements` row: how many, by which judges, and whether any was acted on against its own bar. On 0.31.7 that row flagged the wrong thing. A rules judge answering no to "unsafe?" and the caller proceeding is what the bar asked for, and the row called it a violation. The publish smoke for the release caught it and 0.31.7 shipped with the fix: a yes/no bar cuts both ways, and the row now flags an effect that contradicts the side the answer fell on.
 
 ## Where it plugs in
 
-The Claude Code gate asks the judge when `TREESHIP_JUDGE` is set: `1` for the rules judge, a URL for anything else. It runs after the agent's card has allowed a call and never instead of it. An answer over the bar denies with a signed `blocked.v1`; `ask` asks the operator; a judge that cannot answer fails open with a note in the timeline. The Gateway's classifier webhook speaks the same contract now, so one judge serves both.
+The Claude Code gate asks the judge when `TREESHIP_JUDGE` is set: `1` for the rules judge, a URL for anything else. It runs after the agent's card has allowed a call and never instead of it. An answer over the bar denies with a signed `blocked.v1`; `ask` asks the operator. A judge that cannot answer is handled differently here than in the command, and the difference is deliberate. To `treeship judge`, no answer is an error, because the judgement is the command's only job. To the gate, the card has already allowed the call, the judge is a second layer on top of that decision, and the gate's standing rule is that a broken Treeship never blocks a tool call by accident; so by default the call proceeds and the timeline says it went unjudged. `TREESHIP_JUDGE_STRICT=1` sends an unanswered call to the operator instead. The Gateway's classifier webhook speaks the same contract now, so one judge serves both.
 
 The answers also travel into Reason. `treeship judge --format json` prints them as Reason premises under a `model-judged` authority class, one per question, with the signed receipt as the fact id. A Reason program admits that class only for the predicates it names, so a judge can deny an action but can never stand in for a human approval or a tool report. That boundary is the whole point of having authority classes.
 
@@ -53,7 +61,7 @@ Two things to be plain about. This is an independent implementation against Type
 
 ## What we did not build
 
-We did not build a Jev of our own, and we did not make the CLI depend on anyone's API key. The public line is the title: any judge, one receipt. Jev is one row in the compatibility table, tested the way we test Mastercard's reference implementation, with a mock and with the claims scoped to what ran.
+We did not build a Jev of our own, and we did not make the CLI depend on anyone's API key. The public line is the title: any judge, one receipt. Jev is one row in the compatibility table, with the claims scoped to what ran, the same way our [Verifiable Intent](/integrations/verifiable-intent) work is an independent implementation against a published draft rather than a relationship with its maintainers.
 
 ## Where to go next
 

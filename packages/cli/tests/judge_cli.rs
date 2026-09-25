@@ -369,3 +369,313 @@ fn an_http_judge_is_held_to_the_same_contract() {
     assert!(!ok);
     assert!(out.contains("judge unavailable"), "{out}");
 }
+
+// ── the human label: a resolution chained onto an escalated judgement ──
+
+#[test]
+fn an_escalated_judgement_is_open_until_a_signed_resolution_names_it() {
+    let ws = Ws::new();
+    ws.ok(&["session", "start", "--actor", "agent://claude-code"]);
+    let action = ws.json(&[
+        "attest",
+        "action",
+        "--actor",
+        "agent://claude-code",
+        "--action",
+        "deploy",
+    ]);
+    let action_id = action["id"].as_str().unwrap().to_string();
+
+    // A choice answered below the bar escalates; the judgement carries the
+    // contract it ran under.
+    let qf = ws.root.join("q.json");
+    std::fs::write(&qf, r#"{"verdict":{"type":"choice","instructions":"allow or deny","options":["allow","deny"]}}"#).unwrap();
+    let url = serve_once(
+        r#"{"judge":{"model":"mock-judge","kind":"llm","replayable":false},"answers":{"verdict":{"choice":"deny","confidence":0.4}}}"#,
+        "200 OK",
+    );
+    let v = ws.json(&[
+        "judge",
+        "--tool",
+        "Bash",
+        "--input",
+        r#"{"command":"deploy"}"#,
+        "--judge-url",
+        &url,
+        "--questions-file",
+        qf.to_str().unwrap(),
+        "--threshold",
+        "0.8",
+        "--contract",
+        "deploy-gate@2",
+        "--attest",
+        "--subject",
+        &action_id,
+    ]);
+    assert_eq!(v["outcome"], "escalated", "{v}");
+    assert_eq!(v["contract"]["id"], "deploy-gate", "{v}");
+    assert_eq!(v["contract"]["version"], "2", "{v}");
+    let judgement = v["receipts"][0].as_str().unwrap().to_string();
+
+    // Open: the package says so.
+    let close = ws.json(&["session", "close", "--summary", "escalated"]);
+    let pkg = close["package"].as_str().unwrap().to_string();
+    let (_, out) = ws.run(&["package", "verify", &pkg, "--strict", "--format", "json"]);
+    let pv: Value = serde_json::Deserializer::from_str(&out)
+        .into_iter::<Value>()
+        .filter_map(Result::ok)
+        .last()
+        .unwrap();
+    let row = pv["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "judgements")
+        .expect("row")
+        .clone();
+    assert_eq!(
+        row["status"], "warn",
+        "an open escalation is a warning: {row}"
+    );
+    assert!(
+        row["detail"]
+            .as_str()
+            .unwrap()
+            .contains("1 escalated, 0 resolved, 1 OPEN"),
+        "{row}"
+    );
+
+    // The human decides, in a new session, as their own signed artifact.
+    ws.ok(&["session", "start", "--actor", "agent://claude-code"]);
+    let (ok, out) = ws.run(&["judge", "--resolve", &judgement, "--decision", "allow"]);
+    assert!(!ok && out.contains("--by <URI> is required"), "{out}");
+    let (ok, out) = ws.run(&[
+        "judge",
+        "--resolve",
+        &judgement,
+        "--by",
+        "human://alice",
+        "--decision",
+        "maybe",
+    ]);
+    assert!(!ok && out.contains("use allow, deny or route"), "{out}");
+    let r = ws.json(&[
+        "judge",
+        "--resolve",
+        &judgement,
+        "--by",
+        "human://alice",
+        "--decision",
+        "allow",
+        "--reason",
+        "reviewed the diff",
+    ]);
+    assert_eq!(r["by"], "human://alice", "{r}");
+    assert_eq!(
+        r["overrides"], true,
+        "allow against an ask is an override: {r}"
+    );
+    let resolution = r["resolution"].as_str().unwrap().to_string();
+    let text = ws.ok(&["verify", &resolution]);
+    assert!(text.contains("human://alice"), "{text}");
+
+    // The receipt's own vocabulary: the judgement is the subject, the
+    // decider is the system.
+    let rec: Value = serde_json::from_slice(
+        &std::fs::read(
+            ws.root
+                .join(format!(".treeship/artifacts/{resolution}.json")),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    let stmt: Value = serde_json::from_slice(
+        &STANDARD
+            .decode(rec["envelope"]["payload"].as_str().unwrap())
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(stmt["kind"], "judgement.resolution.v1", "{stmt}");
+    assert_eq!(stmt["payload"]["judgement"], judgement, "{stmt}");
+    assert_eq!(stmt["payload"]["overrides"], "ask", "{stmt}");
+
+    // A resolution in a later package still resolves the escalation only if
+    // the verifier holds both; in this package it is a resolution with no
+    // judgement, which the row ignores.
+    let close = ws.json(&["session", "close", "--summary", "resolved"]);
+    let pkg2 = close["package"].as_str().unwrap().to_string();
+    let v2 = ws.json(&["package", "verify", &pkg2, "--strict"]);
+    assert_eq!(v2["verdict"], "verified", "{v2}");
+}
+
+#[test]
+fn a_resolution_in_the_same_session_closes_the_escalation() {
+    let ws = Ws::new();
+    ws.ok(&["session", "start", "--actor", "agent://claude-code"]);
+    let qf = ws.root.join("q.json");
+    std::fs::write(&qf, r#"{"verdict":{"type":"choice","instructions":"allow or deny","options":["allow","deny"]}}"#).unwrap();
+    let url = serve_once(
+        r#"{"judge":{"model":"mock-judge"},"answers":{"verdict":{"choice":"deny","confidence":0.4}}}"#,
+        "200 OK",
+    );
+    let v = ws.json(&[
+        "judge",
+        "--tool",
+        "Bash",
+        "--input",
+        "{}",
+        "--judge-url",
+        &url,
+        "--questions-file",
+        qf.to_str().unwrap(),
+        "--threshold",
+        "0.8",
+        "--attest",
+    ]);
+    let judgement = v["receipts"][0].as_str().unwrap().to_string();
+    ws.json(&[
+        "judge",
+        "--resolve",
+        &judgement,
+        "--by",
+        "human://bob",
+        "--decision",
+        "deny",
+        "--reason",
+        "not today",
+    ]);
+    let close = ws.json(&["session", "close", "--summary", "resolved in session"]);
+    let pkg = close["package"].as_str().unwrap().to_string();
+    let pv = ws.json(&["package", "verify", &pkg, "--strict"]);
+    assert_eq!(pv["verdict"], "verified", "{pv}");
+    let row = pv["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "judgements")
+        .expect("row")
+        .clone();
+    assert_eq!(row["status"], "pass", "{row}");
+    let d = row["detail"].as_str().unwrap();
+    assert!(d.contains("1 escalated, 1 resolved"), "{d}");
+    assert!(d.contains("deny by human://bob"), "{d}");
+    assert!(!d.contains("OPEN"), "{d}");
+}
+
+// ── the receipt commits to the judge's exact answer, and the state can be kept ──
+
+#[test]
+fn the_receipt_carries_the_response_digest_the_request_id_and_the_state_file() {
+    let ws = Ws::new();
+    // Rules judge: a canonical response, digested; the state written out
+    // hashes to the receipt's state_digest.
+    let state = ws.root.join("state.json");
+    let v = ws.json(&[
+        "judge",
+        "--tool",
+        "Bash",
+        "--input",
+        r#"{"command":"rm -rf /"}"#,
+        "--question",
+        "unsafe",
+        "--state-out",
+        state.to_str().unwrap(),
+    ]);
+    let rd = v["response_digest"]
+        .as_str()
+        .expect("rules judge digests its answer");
+    assert!(rd.starts_with("sha256:") && rd.len() == 71, "{v}");
+    let bytes = std::fs::read(&state).unwrap();
+    use sha2::{Digest, Sha256};
+    let got = format!("sha256:{}", hex::encode(Sha256::digest(&bytes)));
+    assert_eq!(
+        v["state_digest"], got,
+        "the written state is what the digest commits to: {v}"
+    );
+    let st: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(st["tool"], "Bash", "{st}");
+
+    // HTTP judge: the digest is of the raw body, and the request id comes
+    // from the header when the body does not carry one.
+    let body = r#"{"judge":{"model":"m"},"answers":{"risky":{"noul":0.2}}}"#;
+    let url = serve_once_with_header(body, "200 OK", "x-typesafe-request-id: req_abc123");
+    let v = ws.json(&[
+        "judge",
+        "--tool",
+        "Bash",
+        "--input",
+        "{}",
+        "--judge-url",
+        &url,
+        "--question",
+        "risky",
+        "--attest",
+    ]);
+    let want = format!("sha256:{}", hex::encode(Sha256::digest(body.as_bytes())));
+    assert_eq!(v["response_digest"], want, "{v}");
+    assert_eq!(v["request_id"], "req_abc123", "{v}");
+    // And both are in the signed receipt.
+    let id = v["receipts"][0].as_str().unwrap();
+    let rec: Value = serde_json::from_slice(
+        &std::fs::read(ws.root.join(format!(".treeship/artifacts/{id}.json"))).unwrap(),
+    )
+    .unwrap();
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    let stmt: Value = serde_json::from_slice(
+        &STANDARD
+            .decode(rec["envelope"]["payload"].as_str().unwrap())
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(stmt["payload"]["response_digest"], want, "{stmt}");
+    assert_eq!(
+        stmt["payload"]["judge"]["request_id"], "req_abc123",
+        "{stmt}"
+    );
+}
+
+/// Like `serve_once`, with one extra response header.
+fn serve_once_with_header(
+    body: &'static str,
+    status: &'static str,
+    header: &'static str,
+) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                let n = match stream.read(&mut chunk) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => n,
+                };
+                buf.extend_from_slice(&chunk[..n]);
+                let text = String::from_utf8_lossy(&buf);
+                if let Some(end) = text.find("\r\n\r\n") {
+                    let head = &text[..end];
+                    let len = head
+                        .lines()
+                        .find_map(|l| {
+                            l.to_ascii_lowercase()
+                                .strip_prefix("content-length:")
+                                .map(|v| v.trim().parse::<usize>().unwrap_or(0))
+                        })
+                        .unwrap_or(0);
+                    if buf.len() >= end + 4 + len {
+                        break;
+                    }
+                }
+            }
+            let _ = write!(
+                stream,
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\n{header}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.flush();
+        }
+    });
+    format!("http://{addr}/judge")
+}

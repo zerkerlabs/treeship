@@ -2664,6 +2664,45 @@ fn judgements_check(pkg_dir: &Path, receipt: &SessionReceipt) -> Option<VerifyCh
     let mut total = 0usize;
     let mut judges: BTreeSet<String> = BTreeSet::new();
     let mut flagged: Vec<String> = Vec::new();
+    // Escalations are open questions until a signed resolution names them.
+    let mut escalated: Vec<String> = Vec::new();
+    let mut effects: std::collections::BTreeMap<String, String> = Default::default();
+    // judgement id -> (by, decision, overrides the judge?)
+    let mut resolutions: std::collections::BTreeMap<String, (String, String, bool)> =
+        Default::default();
+    for entry in &receipt.artifacts {
+        let path = art_dir.join(format!("{}.json", sanitize_filename(&entry.artifact_id)));
+        let Ok(raw) = std::fs::read(&path) else {
+            continue;
+        };
+        let Ok(env) = crate::attestation::Envelope::from_json(&raw) else {
+            continue;
+        };
+        let Some(stmt) = env
+            .payload_bytes()
+            .ok()
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        else {
+            continue;
+        };
+        if stmt.get("kind").and_then(|k| k.as_str()) != Some("judgement.resolution.v1") {
+            continue;
+        }
+        let Some(p) = stmt.get("payload") else {
+            continue;
+        };
+        let (Some(j), Some(by), Some(d)) = (
+            p.get("judgement").and_then(|v| v.as_str()),
+            p.get("by").and_then(|v| v.as_str()),
+            p.get("decision").and_then(|v| v.as_str()),
+        ) else {
+            continue;
+        };
+        resolutions.insert(
+            j.to_string(),
+            (by.to_string(), d.to_string(), p.get("overrides").is_some()),
+        );
+    }
     for entry in &receipt.artifacts {
         let path = art_dir.join(format!("{}.json", sanitize_filename(&entry.artifact_id)));
         let Ok(raw) = std::fs::read(&path) else {
@@ -2694,6 +2733,12 @@ fn judgements_check(pkg_dir: &Path, receipt: &SessionReceipt) -> Option<VerifyCh
             judges.insert(m.to_string());
         }
         let outcome = p.get("outcome").and_then(|v| v.as_str()).unwrap_or("");
+        if let Some(e) = p.get("effect").and_then(|v| v.as_str()) {
+            effects.insert(entry.artifact_id.clone(), e.to_string());
+        }
+        if outcome == "escalated" {
+            escalated.push(entry.artifact_id.clone());
+        }
         if outcome != "acted" {
             continue;
         }
@@ -2767,18 +2812,85 @@ fn judgements_check(pkg_dir: &Path, receipt: &SessionReceipt) -> Option<VerifyCh
         return None;
     }
     let who = judges.into_iter().collect::<Vec<_>>().join(", ");
-    if flagged.is_empty() {
+    // Escalations: resolved by whom, or still open. A human's decision is a
+    // separate signed artifact, so "the human overrode this" is a claim the
+    // human made, not a field the machine filled in.
+    let resolved: Vec<String> = escalated
+        .iter()
+        .filter_map(|j| {
+            resolutions.get(j).map(|(by, d, o)| {
+                format!(
+                    "{j} {d} by {by}{}",
+                    if *o { " (overriding the judge)" } else { "" }
+                )
+            })
+        })
+        .collect();
+    let open: Vec<&String> = escalated
+        .iter()
+        .filter(|j| !resolutions.contains_key(*j))
+        .collect();
+    let overrides: Vec<String> = resolutions
+        .iter()
+        .filter(|(j, (_, _, o))| *o && !escalated.contains(j))
+        .map(|(j, (by, d, _))| {
+            format!(
+                "{j} ({}) {d} by {by}",
+                effects.get(j).cloned().unwrap_or_default()
+            )
+        })
+        .collect();
+    let mut tail = String::new();
+    if !escalated.is_empty() {
+        tail.push_str(&format!(
+            "; {} escalated, {} resolved{}{}",
+            escalated.len(),
+            resolved.len(),
+            if resolved.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", resolved.join(", "))
+            },
+            if open.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    ", {} OPEN with no signed resolution in this package: {}",
+                    open.len(),
+                    open.iter()
+                        .map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            },
+        ));
+    }
+    if !overrides.is_empty() {
+        tail.push_str(&format!(
+            "; {} judge decision(s) overridden by a signed resolution: {}",
+            overrides.len(),
+            overrides.join(", ")
+        ));
+    }
+    if flagged.is_empty() && open.is_empty() {
         Some(VerifyCheck::pass(
             "judgements",
             &format!(
-                "{total} judgement(s) by {who}; every one acted on met its declared threshold. The row reads the caller's record; it does not re-run a judge"
+                "{total} judgement(s) by {who}; every one acted on met its declared threshold{tail}. The row reads the caller's record; it does not re-run a judge"
+            ),
+        ))
+    } else if flagged.is_empty() {
+        Some(VerifyCheck::warn(
+            "judgements",
+            &format!(
+                "{total} judgement(s) by {who}; every one acted on met its declared threshold{tail}"
             ),
         ))
     } else {
         Some(VerifyCheck::warn(
             "judgements",
             &format!(
-                "{total} judgement(s) by {who}; {} acted on outside its own bar: {}",
+                "{total} judgement(s) by {who}; {} acted on outside its own bar: {}{tail}",
                 flagged.len(),
                 flagged.join("; ")
             ),

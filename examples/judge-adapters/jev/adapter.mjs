@@ -68,7 +68,7 @@ export function toJev(state, questions) {
 
 /** Jev answers -> judge-contract answers. Nothing is invented: a field Jev
  * did not return is left out, and the CLI's own checks decide. */
-export function fromJev(body, questions, latencyMs) {
+export function fromJev(body, questions, latencyMs, requestId) {
   const answers = {};
   for (const [key, a] of Object.entries(body.answers || {})) {
     const q = questions[key] || {};
@@ -108,6 +108,8 @@ export function fromJev(body, questions, latencyMs) {
     answers,
     latency_ms: latencyMs,
     usage: body.usage,
+    // Jev's id for this answer, so the receipt can point at it.
+    request_id: requestId,
   };
 }
 
@@ -121,6 +123,7 @@ async function judge(req) {
     signal: AbortSignal.timeout(8000),
   });
   const text = await res.text();
+  const requestId = res.headers.get('x-typesafe-request-id') || undefined;
   if (!res.ok) {
     // Say what Jev said, minus nothing that could be a key. The CLI reports
     // any non-2xx from here as `judge unavailable`, which is the honest
@@ -129,7 +132,7 @@ async function judge(req) {
     err.status = res.status === 429 || res.status === 529 ? 503 : 502;
     throw err;
   }
-  return fromJev(JSON.parse(text), req.questions || {}, Date.now() - started);
+  return fromJev(JSON.parse(text), req.questions || {}, Date.now() - started, requestId);
 }
 
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop())) {
@@ -142,7 +145,9 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop()
     for await (const chunk of rq) raw += chunk;
     try {
       const out = await judge(JSON.parse(raw));
-      rs.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(out));
+      const headers = { 'content-type': 'application/json' };
+      if (out.request_id) headers['x-typesafe-request-id'] = out.request_id;
+      rs.writeHead(200, headers).end(JSON.stringify(out));
     } catch (e) {
       rs.writeHead(e.status || 500, { 'content-type': 'application/json' })
         .end(JSON.stringify({ error: String(e.message || e) }));

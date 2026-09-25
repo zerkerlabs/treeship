@@ -238,6 +238,18 @@ if [ -n "${TREESHIP_JUDGE:-}" ] && [ "$TREESHIP_JUDGE" != "0" ]; then
           exit 0 ;;
         allow|warn) ;;
         *)
+          # The judge could not answer. The card already allowed this call,
+          # so by default the judge's absence does not undo that: the call
+          # proceeds and the timeline says it went unjudged. With
+          # TREESHIP_JUDGE_STRICT=1 an unanswered call is escalated to the
+          # operator instead, so nothing runs unjudged in a session that
+          # asked for a judge.
+          if [ "${TREESHIP_JUDGE_STRICT:-}" = "1" ]; then
+            NOTE=$(python3 -c 'import json,sys; print(json.dumps({"text": "judge unavailable for %s (%s); escalated to the operator (TREESHIP_JUDGE_STRICT)" % (sys.argv[1], sys.argv[2])}))' "$TOOL_NAME" "$CAP" 2>/dev/null)
+            [ -n "$NOTE" ] && treeship session event --type agent.note --agent-name "$(agent_instance "$INPUT")" --meta "$NOTE" >/dev/null 2>&1 || true
+            printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"Treeship judge could not answer for %s (%s); TREESHIP_JUDGE_STRICT=1 escalates it to you instead of proceeding unjudged."}}\n' "$CAP" "$ACTOR"
+            exit 0
+          fi
           NOTE=$(python3 -c 'import json,sys; print(json.dumps({"text": "judge unavailable for %s (%s); call proceeded unjudged" % (sys.argv[1], sys.argv[2])}))' "$TOOL_NAME" "$CAP" 2>/dev/null)
           [ -n "$NOTE" ] && treeship session event --type agent.note --agent-name "$(agent_instance "$INPUT")" --meta "$NOTE" >/dev/null 2>&1 || true ;;
       esac ;;
