@@ -17,6 +17,8 @@ treeship daemon start --foreground
 treeship daemon start --no-push
 ```
 
+Without `--foreground` the daemon runs as a detached process and the command returns once it has written `.treeship/daemon.pid` (`<pid> <start epoch>`); its output goes to `.treeship/daemon.log`. `--foreground` keeps it attached to the terminal.
+
 ### Options
 
 | Option | Description |

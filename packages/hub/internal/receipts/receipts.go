@@ -22,6 +22,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/zerkerlabs/treeship/packages/hub/internal/db"
 	"github.com/zerkerlabs/treeship/packages/hub/internal/dpop"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/publicurl"
 )
 
 type Handlers struct {
@@ -185,7 +186,7 @@ func (h *Handlers) PutReceipt(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	receiptURL := "https://treeship.dev/receipt/" + pathSessionID
+	receiptURL := publicurl.Receipt(pathSessionID)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{

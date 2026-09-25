@@ -54,7 +54,20 @@ pub fn test_connection(
 
 #[cfg(feature = "otel")]
 pub fn status(printer: &Printer) {
-    match crate::otel::config::OtelConfig::from_env() {
+    let cfg = crate::otel::config::OtelConfig::from_env();
+    if printer.format == crate::printer::Format::Json {
+        // `auth` says whether a header is set; the header is a credential
+        // and stays out of a status dump.
+        printer.json(&serde_json::json!({
+            "configured": cfg.is_some(),
+            "enabled": cfg.as_ref().map(|c| c.enabled).unwrap_or(false),
+            "endpoint": cfg.as_ref().map(|c| c.endpoint.as_str()),
+            "service": cfg.as_ref().map(|c| c.service_name.as_str()),
+            "auth": cfg.as_ref().map(|c| c.auth_header.is_some()).unwrap_or(false),
+        }));
+        return;
+    }
+    match cfg {
         Some(cfg) => {
             printer.blank();
             printer.section("otel");

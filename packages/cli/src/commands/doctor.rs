@@ -16,6 +16,17 @@ enum CheckStatus {
     Info,
 }
 
+impl CheckStatus {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pass => "pass",
+            Self::Fail => "fail",
+            Self::Warn => "warn",
+            Self::Info => "info",
+        }
+    }
+}
+
 struct Check {
     status: CheckStatus,
     label: String,
@@ -443,10 +454,15 @@ pub fn run(
         if config_yaml.exists() {
             if let Ok(project) = ProjectConfig::load(&config_yaml) {
                 if let Some(ref hub) = project.hub {
+                    // `auto_push` is a stub: the daemon logs "not implemented"
+                    // and nothing is pushed. Reporting it as enabled told
+                    // people their receipts were leaving the machine when they
+                    // were not (0.31.9 full test, DOC-1).
                     if hub.auto_push {
-                        checks.push(Check::info(
-                            "auto-push enabled",
-                            "artifacts pushed to Hub automatically",
+                        checks.push(Check::warn(
+                            "auto-push",
+                            "set in config.yaml, but not implemented: nothing is pushed automatically",
+                            "remove auto_push from config.yaml; push with `treeship hub push` or `treeship session report`",
                         ));
                     }
                 }
@@ -509,6 +525,32 @@ pub fn run(
         ));
     } else {
         checks.push(Check::info("no active session", ""));
+    }
+
+    // JSON: the same checks, as data. Every printer call above is a no-op
+    // in this mode, so without this branch `--format json doctor` wrote
+    // nothing at all (0.31.9 full test, CLI-10).
+    if printer.format == crate::printer::Format::Json {
+        let count = |want: &str| checks.iter().filter(|c| c.status.as_str() == want).count();
+        let suggestions: Vec<&str> = checks
+            .iter()
+            .filter(|c| matches!(c.status, CheckStatus::Fail | CheckStatus::Warn))
+            .filter_map(|c| c.suggestion.as_deref())
+            .collect();
+        printer.json(&serde_json::json!({
+            "status": if count("fail") == 0 { "ok" } else { "issues" },
+            "passed": count("pass"),
+            "issues": count("fail"),
+            "warnings": count("warn"),
+            "checks": checks.iter().map(|c| serde_json::json!({
+                "status": c.status.as_str(),
+                "label": c.label,
+                "detail": c.detail,
+                "suggestion": c.suggestion,
+            })).collect::<Vec<_>>(),
+            "suggestions": suggestions,
+        }));
+        return Ok(());
     }
 
     // Print all checks

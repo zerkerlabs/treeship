@@ -81,6 +81,21 @@ pub fn create(
 pub fn show(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     let path = declaration_path().ok_or("no .treeship directory found")?;
 
+    if printer.format == crate::printer::Format::Json {
+        let declaration = if path.exists() {
+            let data = std::fs::read_to_string(&path)?;
+            Some(serde_json::from_str::<serde_json::Value>(&data)?)
+        } else {
+            None
+        };
+        printer.json(&serde_json::json!({
+            "found": declaration.is_some(),
+            "path": path,
+            "declaration": declaration,
+        }));
+        return Ok(());
+    }
+
     if !path.exists() {
         printer.blank();
         printer.dim_info("  no declaration found");
