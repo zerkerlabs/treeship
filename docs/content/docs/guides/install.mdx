@@ -116,14 +116,12 @@ does not contradict the rule above. The fallback needs a Rust toolchain and
 takes minutes rather than seconds, which is exactly why it is a fallback and not
 the documented path.
 
-The v0.24.0 release publishes `treeship-darwin-aarch64`,
-`treeship-darwin-x86_64`, and `treeship-linux-x86_64`. Linux arm64 is built and
-smoke-executed in CI on a native arm runner, and `@treeship/cli-linux-arm64` is
-wired into the wrapper's `optionalDependencies` — but that landed *after* v0.24.0
-was cut, so the currently published artifacts do not include it. On Linux arm64
-today both `curl | sh` and `npm install -g treeship` fall through to a cargo
-build; expect a multi-minute install and a Rust toolchain requirement until
-v0.25.0.
+The current release publishes four binaries: `treeship-darwin-aarch64`,
+`treeship-darwin-x86_64`, `treeship-linux-x86_64` and `treeship-linux-aarch64`.
+Linux arm64 has shipped since v0.25.1 -- `@treeship/cli-linux-arm64` is a real
+`optionalDependencies` entry the npm wrapper resolves, not a cargo-build
+fallback. Both `curl | sh` and `npm install -g treeship` install the prebuilt
+binary directly on all four platforms today.
 
 ## Sandbox / agent-friendly install
 

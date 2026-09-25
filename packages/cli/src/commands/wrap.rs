@@ -39,9 +39,9 @@ pub fn run(
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if args.is_empty() {
-        return Err(
-            "no command given\n\n  usage: treeship wrap [flags] -- <command> [args...]".into(),
-        );
+        return Err(crate::exit::usage(
+            "no command given\n\n  usage: treeship wrap [flags] -- <command> [args...]",
+        ));
     }
 
     let ctx = ctx::open(config)?;

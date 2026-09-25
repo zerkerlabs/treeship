@@ -235,7 +235,7 @@ treeship keys list               # List signing keys
 | POST | /v1/artifacts | DPoP | Push artifact |
 | GET | /v1/artifacts/:id | Public | Pull artifact |
 | GET | /v1/workspace/:dockId | Public | List dock's artifacts |
-| GET | /v1/verify/:id | Public | Verify artifact |
+| GET | /v1/verify/:id | Public | Retired -- returns `410`. Verify locally; there is no server-side verdict. |
 | POST | /v1/merkle/checkpoint | DPoP | Publish checkpoint |
 | GET | /v1/merkle/checkpoint/:id | Public | Get checkpoint |
 | POST | /v1/merkle/proof | DPoP | Publish proof |

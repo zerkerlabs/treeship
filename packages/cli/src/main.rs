@@ -2,6 +2,7 @@ mod commands;
 mod config;
 mod ctx;
 mod execution_identity;
+mod exit;
 mod otel;
 mod printer;
 mod redact;
@@ -3192,7 +3193,8 @@ fn main() {
 
     if let Err(e) = dispatch(&cli, &printer) {
         printer.failure(&e.to_string(), &[]);
-        std::process::exit(exit_code(&e.to_string()));
+        // The code comes from the error's type (exit.rs), never its words.
+        std::process::exit(exit::code_for(e.as_ref()));
     }
 }
 
@@ -3243,7 +3245,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             #[cfg(not(feature = "otel"))]
             {
                 let _ = sub; // suppress unused warning
-                commands::otel::not_available(printer);
+                commands::otel::not_available(printer)?;
             }
             Ok(())
         }
@@ -3848,9 +3850,9 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                         (Some(s), _) => s.clone(),
                         (None, "list") => String::new(),
                         (None, _) => {
-                            return Err(
-                                "--system <URI> is required: who produced this receipt".into()
-                            )
+                            return Err(exit::usage(
+                                "--system <URI> is required: who produced this receipt",
+                            ))
                         }
                     },
                     kind: a.kind.clone(),
@@ -4120,22 +4122,14 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 } else if a.args.len() == 1 {
                     (None, a.args[0].as_str())
                 } else {
-                    return Err("usage: treeship merkle verify [root] <proof.json>".into());
+                    return Err(exit::usage(
+                        "usage: treeship merkle verify [root] <proof.json>",
+                    ));
                 };
                 commands::merkle::verify(root, path, printer)
             }
             MerkleCommand::Status => commands::merkle::status(cli.config.as_deref(), printer),
             MerkleCommand::Publish => commands::merkle::publish(cli.config.as_deref(), printer),
         },
-    }
-}
-
-fn exit_code(msg: &str) -> i32 {
-    if msg.contains("not initialized") || msg.contains("treeship init") {
-        3
-    } else if msg.contains("required") || msg.contains("no command given") {
-        4
-    } else {
-        1
     }
 }

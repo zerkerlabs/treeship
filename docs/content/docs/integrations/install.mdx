@@ -21,9 +21,9 @@ This page is generated from [`integrations/agents.json`](https://github.com/zerk
 | Agent | Skill | MCP | Plugin (hook-based) | Plugin status |
 |---|---|---|---|---|
 | **Claude Code** | `treeship add claude-code` | `treeship add claude-code` | `claude plugin marketplace add zerkerlabs/treeship && claude plugin install treeship@treeship` | 🟢 shipped |
-| **OpenClaw** | `treeship add openclaw` | `treeship add openclaw` | `openclaw plugins install @treeship/openclaw-plugin` | 🟢 shipped |
+| **OpenClaw** | `treeship add openclaw` | `treeship add openclaw` | `cd integrations/openclaw-plugin && npm install && npm run build && openclaw plugins install --local ./` | 🟡 candidate |
 | **Codex CLI** | `treeship add codex` | `treeship add codex` | `npx skills add zerkerlabs/treeship --skill treeship-dev --agent codex -g -y` | 🟡 candidate |
-| **Kimi Code CLI** | `npx skills add zerkerlabs/treeship --skill treeship --agent kimi-cli -g -y` | `kimi mcp add --transport stdio treeship --env TREESHIP_ACTOR=agent://kimi-code -- npx -y @treeship/mcp` | `treeship integrations install kimi-code` | 🟡 candidate |
+| **Kimi Code CLI** | `npx skills add zerkerlabs/treeship --skill treeship --agent kimi-cli -g -y` | `kimi mcp add --transport stdio treeship --env TREESHIP_ACTOR=agent://kimi-code -- npx -y @treeship/mcp` | `see integrations/kimi-code-plugin/config.toml.template (no automated installer yet)` | 🟡 candidate |
 | **Cursor** | `treeship add cursor` | `treeship add cursor` | — | ⚪ unavailable |
 | **Hermes** | `treeship add hermes` | `see integrations/hermes/README.md (yaml config with TREESHIP_ACTOR=agent://hermes)` | — | ⚪ unavailable |
 
