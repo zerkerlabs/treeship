@@ -2097,9 +2097,9 @@ struct AttestHandoffArgs {
 
 #[derive(Args)]
 struct AttestReceiptArgs {
-    /// System URI -- who produced this receipt
-    #[arg(long, required = true, value_name = "URI")]
-    system: String,
+    /// System URI -- who produced this receipt (required, except for --kind list)
+    #[arg(long, value_name = "URI")]
+    system: Option<String>,
 
     /// Receipt kind. Free-form kinds (confirmation, timestamp, inclusion,
     /// webhook, …) sign as given. A registered predicate is validated against
@@ -3804,7 +3804,16 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             ),
             AttestCommand::Receipt(a) => commands::attest::receipt(
                 commands::attest::ReceiptArgs {
-                    system: a.system.clone(),
+                    // `--kind list` prints the registry and needs no producer.
+                    system: match (&a.system, a.kind.as_str()) {
+                        (Some(s), _) => s.clone(),
+                        (None, "list") => String::new(),
+                        (None, _) => {
+                            return Err(
+                                "--system <URI> is required: who produced this receipt".into()
+                            )
+                        }
+                    },
                     kind: a.kind.clone(),
                     subject_id: a.subject.clone(),
                     payload: a.payload.clone(),

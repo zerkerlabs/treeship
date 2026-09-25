@@ -111,6 +111,90 @@ fn a_restored_marker_cannot_re_arm_a_lifted_halt() {
     assert_eq!(list["halts"][0]["honoured"], true, "{list}");
 }
 
+#[test]
+fn rolling_back_the_index_with_the_marker_does_not_re_arm_a_lifted_halt() {
+    // Retest 0.31.8: the lift lookup read index.json, an unsigned cache in
+    // the same directory as the marker. Restoring both re-armed the halt
+    // while the signed lift sat on disk. The lookup now scans the record
+    // files and verifies each under the ship key.
+    let ws = Ws::new();
+    ws.ok(&["halt", "agent://victim", "--reason", "test"]);
+    let marker = ws.root.join(".treeship/halts/agent___victim.json");
+    let index = ws.root.join(".treeship/artifacts/index.json");
+    let saved_marker = std::fs::read(&marker).unwrap();
+    let saved_index = std::fs::read(&index).unwrap();
+    let lift = ws.json(&["halt", "--lift", "agent://victim"]);
+    let lift_id = lift["lift"].as_str().unwrap().to_string();
+
+    std::fs::write(&marker, &saved_marker).unwrap();
+    std::fs::write(&index, &saved_index).unwrap();
+    let list = ws.json(&["halt", "list"]);
+    let rows = list["halts"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{list}");
+    assert_eq!(
+        rows[0]["honoured"], false,
+        "the lift on disk stands: {list}"
+    );
+    assert_eq!(rows[0]["lifted_by"], lift_id, "{list}");
+
+    // The text form says which reason applies, and names the lift.
+    std::fs::write(&marker, &saved_marker).unwrap();
+    std::fs::write(&index, &saved_index).unwrap();
+    let text = ws.ok(&["halt", "list"]);
+    assert!(
+        text.contains(&format!("IGNORED: lifted by {lift_id}")),
+        "{text}"
+    );
+
+    // A halt record whose unsigned key_id claims the ship but whose
+    // envelope was signed by someone else is not an order either.
+    let other = Ws::new();
+    let forged = other.json(&["halt", "agent://victim", "--reason", "forged"]);
+    let forged_id = forged["halt"].as_str().unwrap().to_string();
+    let own_key = ws.json(&["keys", "list"])["keys"][0]["id"]
+        .as_str()
+        .map(str::to_string)
+        .unwrap_or_default();
+    let mut rec: Value = serde_json::from_slice(
+        &std::fs::read(
+            other
+                .root
+                .join(format!(".treeship/artifacts/{forged_id}.json")),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    if !own_key.is_empty() {
+        rec["key_id"] = Value::String(own_key);
+    }
+    std::fs::write(
+        ws.root
+            .join(format!(".treeship/artifacts/{forged_id}.json")),
+        serde_json::to_vec(&rec).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        &marker,
+        serde_json::to_vec(&serde_json::json!({
+            "actor": "agent://victim", "halt": forged_id, "issued_at": "2026-09-24T09:00:00Z",
+            "reason": "forged", "key_id": rec["key_id"]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let list = ws.json(&["halt", "list"]);
+    assert_eq!(
+        list["halts"][0]["honoured"], false,
+        "a foreign signature is not an order: {list}"
+    );
+    assert!(list["halts"][0]["lifted_by"].is_null(), "{list}");
+    let text = ws.ok(&["halt", "list"]);
+    assert!(
+        text.contains("not on disk as a halt.v1 signed by this workspace's key"),
+        "{text}"
+    );
+}
+
 // ── 31 ──────────────────────────────────────────────────────────────────
 
 #[test]
@@ -162,7 +246,17 @@ fn a_payload_that_names_a_registered_schema_is_validated_as_that_schema() {
 #[test]
 fn kind_list_and_help_name_every_registered_predicate() {
     let ws = Ws::new();
-    let listed = ws.json(&["attest", "receipt", "--system", "x", "--kind", "list"]);
+    // `--kind list` stands alone: no --system (retest 0.31.8 nit).
+    let listed = ws.json(&["attest", "receipt", "--kind", "list"]);
+    let out = ws.fails(&[
+        "attest",
+        "receipt",
+        "--kind",
+        "confirmation",
+        "--payload",
+        "{}",
+    ]);
+    assert!(out.contains("--system <URI> is required"), "{out}");
     let listed: Vec<String> = listed["registered_predicates"]
         .as_array()
         .unwrap()

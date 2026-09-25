@@ -500,3 +500,44 @@ fn a_long_authority_reason_wraps_instead_of_being_cut() {
     );
     assert!(!text.contains("is not i \u{2502}"), "cut mid-word: {text}");
 }
+
+// ── retest 0.31.8: `--full` fails the artifact `verify` fails ──
+
+#[test]
+fn full_mode_fails_an_invalid_mandate_and_shows_an_authority_row() {
+    let ws = Workspace::new();
+    let bad = ws.plant_v2(&action(vec!["payments.refund"], "admin.deleteUser"));
+    let good = ws.plant_v2(&action(vec!["payments.charge"], "payments.charge"));
+
+    let out = ws.cmd().args(["verify", &bad, "--full"]).output().unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(
+        text.contains("authority       1 of 1 mandate(s) INVALID"),
+        "{text}"
+    );
+    assert!(text.contains("AUTHORITY INVALID"), "{text}");
+
+    // One ladder: the stricter flag is still exit 1, not a third value.
+    let out = ws
+        .cmd()
+        .args(["verify", &bad, "--full", "--require-authority"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+
+    // The in-scope action passes in full mode, with the row saying what
+    // could not be checked.
+    let out = ws.cmd().args(["verify", &good, "--full"]).output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("authority       1 mandate(s) judged, 1 unverified"),
+        "{text}"
+    );
+    // A v1 chain with no mandate has no authority row at all.
+}

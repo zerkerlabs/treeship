@@ -14,6 +14,7 @@
 
 use std::path::{Path, PathBuf};
 
+use treeship_core::attestation::Verifier;
 use treeship_core::statements::{payload_type, ReceiptStatement};
 use treeship_core::storage::Record;
 
@@ -61,52 +62,81 @@ fn read_marker(dir: &Path, actor: &str) -> Option<Marker> {
     serde_json::from_str(&raw).ok()
 }
 
+/// A verifier holding only this workspace's own key. A halt or a lift
+/// counts only when its envelope verifies under it; the record's `key_id`
+/// field is unsigned metadata and is not consulted.
+fn own_key_verifier(ctx: &ctx::Ctx, own_key: &str) -> Option<Verifier> {
+    let bytes = ctx.keys.public_key(own_key).ok()?;
+    let arr: [u8; 32] = bytes.as_slice().try_into().ok()?;
+    let vk = ed25519_dalek::VerifyingKey::from_bytes(&arr).ok()?;
+    let mut v = Verifier::new(std::collections::HashMap::new());
+    v.add_key(own_key.to_string(), vk);
+    Some(v)
+}
+
+/// A `halt.v1` statement from a record file, only when the envelope
+/// verifies under this workspace's key.
+fn own_halt_statement(ctx: &ctx::Ctx, verifier: &Verifier, id: &str) -> Option<ReceiptStatement> {
+    let rec = ctx.storage.read(id).ok()?;
+    verifier.verify_any(&rec.envelope).ok()?;
+    let stmt = rec
+        .envelope
+        .unmarshal_statement::<ReceiptStatement>()
+        .ok()?;
+    (stmt.kind == "halt.v1").then_some(stmt)
+}
+
 /// The signed lift for `halt_id`, if this workspace's key signed one. A
 /// marker names a halt; the lift is the artifact that ends it. Whoever can
 /// restore a saved marker file cannot re-arm a halt the ship has lifted,
 /// because the lift is in the store and the marker is not an order on its
-/// own (retest 0.31.7, T20).
+/// own (retest 0.31.7, T20). The store is read from disk, not through
+/// `index.json`: rolling that unsigned cache back alongside the marker
+/// re-armed the halt while the lift sat on disk the whole time (retest
+/// 0.31.8). Only an envelope that verifies under the ship key counts.
 pub fn lift_for(ctx: &ctx::Ctx, halt_id: &str, own_key: &str) -> Option<String> {
-    let receipt_pt = payload_type("receipt");
-    for entry in ctx.storage.list_by_type(&receipt_pt) {
-        let Ok(rec) = ctx.storage.read(&entry.id) else {
+    let verifier = own_key_verifier(ctx, own_key)?;
+    for id in ctx.storage.scan_ids() {
+        let Some(stmt) = own_halt_statement(ctx, &verifier, &id) else {
             continue;
         };
-        if rec.key_id != own_key {
-            continue;
-        }
-        let Ok(stmt) = rec.envelope.unmarshal_statement::<ReceiptStatement>() else {
-            continue;
-        };
-        if stmt.kind != "halt.v1" {
-            continue;
-        }
         let Some(p) = stmt.payload.as_ref() else {
             continue;
         };
         if p.get("action").and_then(|v| v.as_str()) == Some("lift")
             && p.get("halt").and_then(|v| v.as_str()) == Some(halt_id)
         {
-            return Some(entry.id.clone());
+            return Some(id);
         }
     }
     None
 }
 
-/// Whether a marker is an order this workspace honours: it names a halt in
-/// this store, signed by this workspace's key, with no signed lift for it.
-/// Returns the lift id when one exists, so the caller can say why not.
-fn marker_status(ctx: &ctx::Ctx, m: &Marker, own_key: &str) -> Result<(), Option<String>> {
-    let signed_here = ctx
-        .storage
-        .read(&m.halt)
-        .map(|r| r.key_id == own_key)
+/// Why a marker is not an order.
+pub enum MarkerRejected {
+    /// The halt it names is not on disk, is not a halt, or does not verify
+    /// under this workspace's key.
+    NotSignedHere,
+    /// A signed lift ends it.
+    LiftedBy(String),
+}
+
+/// Whether a marker is an order this workspace honours: it names a halt on
+/// disk that verifies under this workspace's key, and no signed lift names
+/// that halt.
+fn marker_status(ctx: &ctx::Ctx, m: &Marker, own_key: &str) -> Result<(), MarkerRejected> {
+    let Some(verifier) = own_key_verifier(ctx, own_key) else {
+        return Err(MarkerRejected::NotSignedHere);
+    };
+    let is_halt = own_halt_statement(ctx, &verifier, &m.halt)
+        .and_then(|s| s.payload)
+        .map(|p| p.get("action").and_then(|v| v.as_str()) == Some("halt"))
         .unwrap_or(false);
-    if !signed_here {
-        return Err(None);
+    if !is_halt {
+        return Err(MarkerRejected::NotSignedHere);
     }
     match lift_for(ctx, &m.halt, own_key) {
-        Some(lift) => Err(Some(lift)),
+        Some(lift) => Err(MarkerRejected::LiftedBy(lift)),
         None => Ok(()),
     }
 }
@@ -122,10 +152,10 @@ pub fn active_halt(ctx: &ctx::Ctx, actor: &str) -> Option<Marker> {
         if let Some(m) = read_marker(&dir, who) {
             match marker_status(ctx, &m, &own_key) {
                 Ok(()) => return Some(m),
-                Err(Some(_lift)) => {
+                Err(MarkerRejected::LiftedBy(_)) => {
                     let _ = std::fs::remove_file(dir.join(marker_name(who)));
                 }
-                Err(None) => {}
+                Err(MarkerRejected::NotSignedHere) => {}
             }
         }
     }
@@ -294,13 +324,13 @@ pub fn list(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::
             };
             let (honoured, lifted_by) = match marker_status(&ctx, &m, &own_key) {
                 Ok(()) => (true, None),
-                Err(lift) => (false, lift),
+                Err(MarkerRejected::LiftedBy(lift)) => (false, Some(lift)),
+                Err(MarkerRejected::NotSignedHere) => (false, None),
             };
-            if let Some(lift) = &lifted_by {
+            if lifted_by.is_some() {
                 // The marker outlived its halt (restored from a backup, or
                 // copied in): the signed lift is the order that stands.
                 let _ = std::fs::remove_file(e.path());
-                let _ = lift;
             }
             rows.push(serde_json::json!({
                 "actor": m.actor, "halt": m.halt, "issued_at": m.issued_at,
@@ -318,10 +348,16 @@ pub fn list(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::
         return Ok(());
     }
     for r in &rows {
+        // Say which of the two reasons applies: "not signed here" sent a
+        // reader to check an artifact that was on disk and verified fine,
+        // when the marker had in fact been lifted (retest 0.31.8).
         let tag = if r["honoured"].as_bool().unwrap_or(false) {
-            ""
+            String::new()
+        } else if let Some(lift) = r["lifted_by"].as_str() {
+            format!("  (IGNORED: lifted by {lift}; the signed lift stands)")
         } else {
-            "  (IGNORED: no signed artifact from this workspace)"
+            "  (IGNORED: its halt is not on disk as a halt.v1 signed by this workspace's key)"
+                .to_string()
         };
         printer.info(&format!(
             "{}  halted {}  {}  {}{}",
