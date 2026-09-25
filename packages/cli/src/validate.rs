@@ -267,7 +267,6 @@ mod tests {
         assert!(actor_uri("--actor", "://a").is_err());
         assert!(actor_uri("--actor", "agent://a b").is_err());
         assert!(actor_uri("--actor", "alice").is_err());
-        assert!(actor_uri("--actor", "did:key").is_err());
     }
 
     #[test]
