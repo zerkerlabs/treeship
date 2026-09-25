@@ -1,0 +1,89 @@
+---
+title: hook
+description: Shell hook handler invoked by shell config, not by users directly.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+<Callout type="info">
+**Hidden from `--help`.** `hook` is implemented, tested, and shipped in every
+release; it just isn't meant to be typed by a person. `treeship install`
+writes calls to it into your shell config, and your shell calls it on every
+command. It stays out of `--help` so it doesn't show up as something to run
+directly.
+</Callout>
+
+`treeship hook pre` and `treeship hook post` are what `treeship install`'s
+shell integration actually calls. Each matches the command that just ran (or
+is about to run) against the project's `attest.commands[]` rules
+(`.treeship/config.yaml`, the same rules a [template](/docs/guides/templates)
+sets up) and, on a match, signs an action receipt without you typing
+`treeship wrap`.
+
+## How your shell calls it
+
+`treeship install` appends a snippet like this to `~/.zshrc` / `~/.bashrc` /
+`~/.config/fish/config.fish`:
+
+```sh
+# zsh
+treeship_preexec() {
+  treeship hook pre "$1" 2>/dev/null
+}
+add-zsh-hook preexec treeship_preexec
+
+treeship_precmd() {
+  treeship hook post "$?" 2>/dev/null
+}
+add-zsh-hook precmd treeship_precmd
+```
+
+bash uses a `DEBUG` trap plus `PROMPT_COMMAND`; fish uses `--on-event
+fish_preexec` / `fish_postexec`. All three call the same two subcommands.
+
+## treeship hook pre
+
+```
+treeship hook pre <COMMAND>
+```
+
+| Argument | Description |
+|---|---|
+| `<COMMAND>` | The command about to run |
+
+Looks up the project config (walking up from the current directory for a
+`.treeship/config.yaml` next to a `.treeship/config.json` -- both must be
+present, so a cloned repo's `config.yaml` alone is never trusted). If no
+project config is found, or no `attest.commands[]` pattern matches, it exits
+silently and does nothing.
+
+On a match:
+- If the matched rule sets `require_approval: true` and the command hasn't
+  already been approved (`treeship approve`), it prints the pending-approval
+  hint and **exits 1**, which most shells surface as a blocked command.
+- Otherwise it redacts secrets from the command line and writes a
+  `.pending_hook` state file for `hook post` to pick up.
+
+## treeship hook post
+
+```
+treeship hook post <EXIT_CODE> [COMMAND]
+```
+
+| Argument | Description |
+|---|---|
+| `<EXIT_CODE>` | Exit code of the completed command |
+| `[COMMAND]` | The command that ran (optional; not used by the shell snippets above, which read it from the `pre` state instead) |
+
+Reads `.pending_hook` (written by `pre`), and does nothing if it isn't there
+-- meaning `pre` didn't match a rule for this command. Deletes the state
+file immediately so a crash doesn't leave stale state, then signs the action
+receipt (elapsed time, exit code, the matched label) and writes `.last`.
+
+## Failure mode
+
+Both subcommands fail open: no project config, no matching rule, or any
+internal error, and the shell command you actually ran proceeds unaffected
+(`2>/dev/null` on the shell side hides hook errors from your terminal too).
+Nothing about `hook` blocks your shell except the explicit `require_approval`
+exit-1 case above.
