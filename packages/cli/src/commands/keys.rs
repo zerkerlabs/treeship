@@ -168,6 +168,20 @@ pub fn rotate(
     let grace = std::time::Duration::from_secs(grace_hours.saturating_mul(3600));
     let result = ctx.keys.rotate(key_id, grace, set_default)?;
 
+    // The keystore's default moved; config.json names the default too, and
+    // `hub attach`, `prove` and the dashboard read it from there. Through
+    // 0.31.9 it kept the predecessor, so a hub attached after a rotation
+    // was bound to a key that stopped being valid when the grace window
+    // closed (0.31.9 full test, CLI-9).
+    let config_updated = if set_default && ctx.config.default_key_id != result.successor.id {
+        let mut cfg = ctx.config.clone();
+        cfg.default_key_id = result.successor.id.clone();
+        crate::config::save(&cfg, &ctx.config_path)?;
+        true
+    } else {
+        false
+    };
+
     if printer.format == crate::printer::Format::Json {
         printer.json(&serde_json::json!({
             "predecessor": {
@@ -181,6 +195,8 @@ pub fn rotate(
                 "is_default":  result.successor.is_default,
             },
             "grace_period_until": result.grace_period_until,
+            "config_default_key_id": if set_default { &result.successor.id } else { &ctx.config.default_key_id },
+            "config_updated": config_updated,
         }));
         return Ok(());
     }
@@ -200,6 +216,9 @@ pub fn rotate(
     ));
     if set_default {
         printer.info("  default:      successor is now the default signer");
+        if config_updated {
+            printer.info("  config:       default_key_id now names the successor");
+        }
     } else {
         printer.info("  default:      unchanged (use 'treeship keys list' to confirm)");
     }

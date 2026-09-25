@@ -223,7 +223,9 @@ pub fn attach(
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let created_at = format!("{}Z", now);
+    // RFC 3339, like every other timestamp in the config. This was
+    // `"<epoch>Z"` through 0.31.9.
+    let created_at = treeship_core::statements::unix_to_rfc3339(now);
 
     // 7. Save to config
     let mut cfg = ctx.config.clone();
@@ -1146,7 +1148,7 @@ mod tests {
             hub_id: hub_id.to_string(),
             key_id: String::new(),
             endpoint: "https://hub.example".to_string(),
-            created_at: "0Z".to_string(),
+            created_at: "1970-01-01T00:00:00Z".to_string(),
             last_push: None,
             hub_public_key: None,
             hub_secret_key: secret,
