@@ -780,13 +780,33 @@ pub fn publish(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn st
 
     if let Some(first_id) = first_published_id {
         printer.hint(&format!(
-            "treeship.dev/merkle?id={}  (any artifact is now verifiable via Hub)",
-            first_id
+            "{}  (any artifact is now verifiable via Hub)",
+            proof_share_url(endpoint, first_id)
         ));
     }
     printer.blank();
 
     Ok(())
+}
+
+/// Where the proof just published can be read. The hub serves it at
+/// `<endpoint>/v1/merkle/<artifact>`; only the hosted hub (`api.treeship.dev`)
+/// has the treeship.dev page. The URL comes from the attached endpoint, never
+/// from a default, so a self-hosted hub's proofs are not advertised on
+/// treeship.dev (W1-9, CLI-12).
+fn proof_share_url(endpoint: &str, artifact_id: &str) -> String {
+    let base = endpoint.trim_end_matches('/');
+    let host = base
+        .split_once("://")
+        .map_or(base, |(_, rest)| rest)
+        .split(['/', ':'])
+        .next()
+        .unwrap_or("");
+    if host.eq_ignore_ascii_case("api.treeship.dev") {
+        format!("https://treeship.dev/merkle?id={artifact_id}")
+    } else {
+        format!("{base}/v1/merkle/{artifact_id}")
+    }
 }
 
 /// Load the checkpoint immediately before `index` (i.e. `index - 1`), if it
@@ -930,7 +950,36 @@ fn build_dpop_jwt(
 
 #[cfg(test)]
 mod publish_tests {
-    use super::is_missing_hub_artifact;
+    use super::{is_missing_hub_artifact, proof_share_url};
+
+    #[test]
+    fn proof_share_url_follows_the_attached_hub() {
+        // Only the hosted hub has the treeship.dev page.
+        for hosted in [
+            "https://api.treeship.dev",
+            "https://API.treeship.dev/",
+            "https://api.treeship.dev:443",
+        ] {
+            assert_eq!(
+                proof_share_url(hosted, "art_1"),
+                "https://treeship.dev/merkle?id=art_1"
+            );
+        }
+        // A self-hosted hub serves its own proofs at /v1/merkle/<id>.
+        assert_eq!(
+            proof_share_url("https://hub.example.com/", "art_1"),
+            "https://hub.example.com/v1/merkle/art_1"
+        );
+        assert_eq!(
+            proof_share_url("http://127.0.0.1:8080", "art_1"),
+            "http://127.0.0.1:8080/v1/merkle/art_1"
+        );
+        // A look-alike host is not the hosted hub.
+        assert_eq!(
+            proof_share_url("https://api.treeship.dev.evil.example", "art_1"),
+            "https://api.treeship.dev.evil.example/v1/merkle/art_1"
+        );
+    }
 
     #[test]
     fn only_missing_artifact_404_is_skippable() {
