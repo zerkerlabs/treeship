@@ -386,10 +386,17 @@ jobs:
         include:
           - name: cli --no-default-features
             run: cargo check -p treeship-cli --no-default-features --all-targets
+          # RISC0_SKIP_BUILD=1: risc0-build would compile the zkVM guest with
+          # the Risc Zero Rust toolchain (`rzup install rust`), which the
+          # runner does not have. A check does not need the guest ELF; the
+          # host-side code, which is where the ctx-import class of bug lives,
+          # is still type-checked with warnings denied.
           - name: cli --features zk
             run: cargo check -p treeship-cli --features zk --all-targets
+            skip_guest: "1"
           - name: cli --features zk-bonsai
             run: cargo check -p treeship-cli --features zk-bonsai --all-targets
+            skip_guest: "1"
           - name: core-wasm wasm32-unknown-unknown
             run: cargo check -p treeship-core-wasm --target wasm32-unknown-unknown
             targets: wasm32-unknown-unknown
@@ -405,6 +412,7 @@ jobs:
         run: ${{ matrix.run }}
         env:
           RUSTFLAGS: -D warnings
+          RISC0_SKIP_BUILD: ${{ matrix.skip_guest }}
 
   clippy:
     name: Clippy (-D warnings)
