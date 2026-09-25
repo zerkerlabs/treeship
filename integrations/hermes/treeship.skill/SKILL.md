@@ -94,9 +94,15 @@ After changing Hermes MCP config, start a fresh Hermes session or run `/reload-m
 
 4. **Use approvals for sensitive actions**
    ```bash
-   treeship approve --approver human://<slack-or-github-id> --description "Approve deploy to production"
-   treeship wrap --approval-nonce <nonce> --actor agent://hermes -- <deploy-command>
+   treeship attest approval --approver human://<slack-or-github-id> \
+     --description "Approve deploy to production" --max-uses 1
+   # note the printed nonce, then consume it (wrap has no --approval-nonce flag):
+   treeship attest action --actor agent://hermes --action deploy.production \
+     --approval-nonce <nonce>
    ```
+   `treeship approve [N]` / `deny [N]` act on a *pending* approval request by
+   index -- they don't create one. To mint an approval, use `attest approval`
+   as above.
    Completion criterion: the receipt links the sensitive action to a human approval artifact.
 
 5. **Record handoffs and collaboration**
@@ -104,7 +110,7 @@ After changing Hermes MCP config, start a fresh Hermes session or run `/reload-m
    treeship attest handoff \
      --from agent://hermes \
      --to agent://claude-code \
-     --task "continue implementation" \
+     --artifacts art_a1b2c3d4 \
      --format json
    ```
    Completion criterion: multi-agent transitions are explicit rather than hidden in chat text.
@@ -124,7 +130,7 @@ After changing Hermes MCP config, start a fresh Hermes session or run `/reload-m
 | MCP tool call intent/result | `@treeship/mcp` | Automatic when tools route through MCP. |
 | Shell command boundary | `treeship wrap -- ...` | Captures command boundary and exit status; avoid raw secrets in args. |
 | File changes | MCP event when routed, otherwise git reconcile/session report | Do not paste file contents into metadata. |
-| Human approval | `treeship approve` + `--approval-nonce` | Use stable human URIs such as `human://slack/T123/U456`. |
+| Human approval | `treeship attest approval` (mint) + `attest action --approval-nonce` (consume) | Use stable human URIs such as `human://slack/T123/U456`. |
 | Agent handoff | `treeship attest handoff` or `treeship session event` | Use `agent://hermes`, `agent://claude-code`, etc. |
 | Model/provider/cost | Session metadata/event | Only include values the user is comfortable sharing. |
 | Final deliverable | `treeship session report` | Produces a portable report and optional Hub URL. |

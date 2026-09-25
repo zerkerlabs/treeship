@@ -147,7 +147,11 @@ treeship doctor                         # run 9 health checks
 
 | Code | Meaning |
 |------|---------|
-| 0 | Success / chain verified clean |
-| 1 | Error / chain verification failed |
-| 3 | Not initialized -- run `treeship init` first |
-| 4 | Usage error |
+| 0 | Success. For a verifier, the verdict is pass |
+| 1 | Error, or the verdict is fail. The default for anything that went wrong |
+| 2 | The argument parser rejected the call (unknown command, missing argument). Also `judge --enforce` when the judge said deny, and `verify --certificate` when the receipt and certificate do not agree (cross-verification failed) |
+| 3 | Not initialized: run `treeship init` first. Also `judge --enforce` when the judge said ask, and `verify <url>` when the fetch failed (a network error) |
+| 4 | The command itself refused the call as written (a missing value such as `wrap` with no command, `grant issue` with no `--scope`, an impossible combination) |
+| 5 | Not compiled into this build: `prove`, `prove-chain` and `verify-proof` without `--features zk`; `otel` without the `otel` feature |
+
+Every failure exits nonzero. A command that cannot do what was asked never exits 0 with a warning. The code comes from the error's type, not from words in its message. The contract test in `packages/cli/tests/contract.rs` pins each row.
