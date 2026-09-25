@@ -51,7 +51,7 @@ treeship halt list
 treeship halt list --format json
 ```
 
-Each row shows the actor, the halt artifact, when it was issued, the reason, and whether it is **honoured**. A marker is honoured only when it names an artifact in this workspace's store signed by this workspace's key and no signed lift exists for it. A marker written by hand, pointing at an artifact from elsewhere, or outliving its lift is listed as not honoured (with `lifted_by` when a lift exists) and the gate does not act on it.
+Each row shows the actor, the halt artifact, when it was issued, the reason, and whether it is **honoured**. A marker is honoured only when it names a `halt.v1` record on disk whose envelope verifies under this workspace's key, and no lift that verifies under that key names the halt. The check reads the record files, not the `index.json` cache, and checks signatures, not the records' unsigned `key_id` field: rolling back the index alongside the marker, or dropping in a record signed by another ship, changes nothing. A marker that fails is listed with the reason (`lifted by art_…`, or not signed by this workspace) and the gate does not act on it; a marker outliving its lift is removed.
 
 <Callout title="Who can halt">
 Only the workspace's own key signs a halt, the same rule as revoking a grant: an order anyone could mint would be a denial of service against every actor whose name they know. The trust domain is same-user local access, which is the harness's trust domain too.

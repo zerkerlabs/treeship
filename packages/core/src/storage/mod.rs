@@ -244,6 +244,29 @@ impl Store {
         self.artifact_path(id).is_ok_and(|p| p.exists())
     }
 
+    /// Every artifact id with a record file on disk, whatever the index
+    /// says. `index.json` is an unsigned cache the operator can roll back;
+    /// a check that must not be defeated by editing one local file reads
+    /// the directory instead and verifies what it finds.
+    pub fn scan_ids(&self) -> Vec<ArtifactId> {
+        let mut out = Vec::new();
+        let Ok(entries) = fs::read_dir(&self.dir) else {
+            return out;
+        };
+        for e in entries.flatten() {
+            let name = e.file_name();
+            let Some(name) = name.to_str() else { continue };
+            let Some(stem) = name.strip_suffix(".json") else {
+                continue;
+            };
+            if parse_artifact_id(stem).is_ok() {
+                out.push(stem.to_string());
+            }
+        }
+        out.sort();
+        out
+    }
+
     /// Lists index entries, most recent first.
     pub fn list(&self) -> Vec<IndexEntry> {
         let idx = self.index.read().unwrap();

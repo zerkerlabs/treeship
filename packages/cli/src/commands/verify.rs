@@ -721,6 +721,27 @@ pub fn run(
 
     // --- Full chain timeline display ---
     if full {
+        // The same authority policy as the short and JSON paths. `--full`
+        // is the mode a human reaches for to see everything, and it was
+        // the one mode where an invalid mandate reached neither the
+        // summary nor the exit code (retest 0.31.8).
+        let summaries: Vec<MandateSummary> = chain_envelopes
+            .iter()
+            .filter_map(|(_, env)| v2_mandate_summary(env, Some(&verifier), &revocation))
+            .collect();
+        let authority_checked = summaries.len();
+        let authority_unverified = summaries
+            .iter()
+            .filter(|m| matches!(m, MandateSummary::Unverified(_)))
+            .count();
+        let authority_reasons: Vec<String> = summaries
+            .iter()
+            .filter_map(|m| match m {
+                MandateSummary::Fail(r) => Some(r.join("; ")),
+                _ => None,
+            })
+            .collect();
+        let authority_ok = authority_reasons.is_empty();
         let chain_ok = print_full_timeline(
             &chain_envelopes,
             &checks,
@@ -731,6 +752,7 @@ pub fn run(
             linkage_ok,
             &linkage_detail,
             &revocation,
+            &summaries,
         );
         printer.dim_info(&format!("  anchoring: {}", coverage.summary()));
         if let Some(note) = anchor_tally_note(&anchor_tally) {
@@ -739,7 +761,36 @@ pub fn run(
         if let Some(why) = &anchoring_gate {
             printer.failure("UNWITNESSED WORK EXCEEDS POLICY", &[("detail", why)]);
         }
-        if failed > 0 || !chain_ok || anchoring_gate.is_some() {
+        if !authority_ok {
+            printer.blank();
+            printer.failure(
+                "AUTHORITY INVALID",
+                &[
+                    ("reason", &authority_reasons.join(" | ")),
+                    (
+                        "meaning",
+                        "the signatures are valid; the action's own mandate does not authorize it",
+                    ),
+                ],
+            );
+        }
+        let authority_gate = authority_gate_failure(
+            require_authority,
+            authority_checked,
+            authority_unverified,
+            authority_ok,
+        );
+        if let Some(reason) = &authority_gate {
+            printer.blank();
+            printer.failure("AUTHORITY NOT ESTABLISHED", &[("reason", reason)]);
+        }
+        // One ladder: every failure here exits 1, as the other modes do.
+        if failed > 0
+            || !chain_ok
+            || anchoring_gate.is_some()
+            || !authority_ok
+            || authority_gate.is_some()
+        {
             std::process::exit(1);
         }
         return Ok(());
@@ -1116,6 +1167,8 @@ fn print_full_timeline(
     // resolved Unknown even when the caller had a working resolver in scope
     // two hundred lines up.
     revocation: &dyn RevocationSource,
+    // The mandate verdicts, so the summary carries an authority row.
+    mandates: &[MandateSummary],
 ) -> bool {
     // Returns whether the CHAIN is intact (no gaps + signed linkage). The
     // caller must exit nonzero when this is false, even if every individual
@@ -1226,6 +1279,36 @@ fn print_full_timeline(
         ))
     };
     printer.info(&format!("  {chain_status}"));
+
+    // Authority (action/v2 mandates). Absent when the chain carries none;
+    // the row must not read as a pass for a chain nobody checked.
+    if !mandates.is_empty() {
+        let failed_n = mandates
+            .iter()
+            .filter(|m| matches!(m, MandateSummary::Fail(_)))
+            .count();
+        let unverified_n = mandates
+            .iter()
+            .filter(|m| matches!(m, MandateSummary::Unverified(_)))
+            .count();
+        let row = if failed_n > 0 {
+            printer.red(&format!(
+                "\u{2717}  authority       {failed_n} of {} mandate(s) INVALID (see the step above)",
+                mandates.len()
+            ))
+        } else if unverified_n > 0 {
+            printer.dim(&format!(
+                "?  authority       {} mandate(s) judged, {unverified_n} unverified (a layer could not be checked)",
+                mandates.len()
+            ))
+        } else {
+            printer.green(&format!(
+                "\u{2713}  authority       {} mandate(s) in scope, in window, not revoked",
+                mandates.len()
+            ))
+        };
+        printer.info(&format!("  {row}"));
+    }
 
     // Approval binding + scope + replay reporting.
     //

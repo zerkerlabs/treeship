@@ -33,7 +33,7 @@ treeship verify <url-or-path-or-artifact-id> [OPTIONS]
 
 ## Exit codes
 
-An action whose own mandate does not authorize it (out of scope, expired, wrong holder, revoked) **fails verification by default**: the top line reads `AUTHORITY INVALID`, `--format json` reports `outcome: "fail"` with the mandate verdicts counted in `failed` and named in `authority_failed`, and the exit code is 1. No flag is needed for that. `--require-authority` is the stricter mode: it also fails when the receipt carries no mandate at all, or when a layer (typically revocation) could not be checked, because absence of a claim is not a passing check.
+An action whose own mandate does not authorize it (out of scope, expired, wrong holder, revoked) **fails verification by default**: the top line reads `AUTHORITY INVALID`, `--format json` reports `outcome: "fail"` with the mandate verdicts counted in `failed` and named in `authority_failed`, and the exit code is 1. No flag is needed for that, and it holds in every output mode: the short output, `--format json`, and `--full`, whose verification summary carries an `authority` row. `--require-authority` is the stricter mode: it also fails when the receipt carries no mandate at all, or when a layer (typically revocation) could not be checked, because absence of a claim is not a passing check. Every failure exits 1; there is one ladder.
 
 
 | Code | Meaning |

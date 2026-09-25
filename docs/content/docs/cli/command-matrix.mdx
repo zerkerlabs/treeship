@@ -172,12 +172,12 @@ treeship attest handoff [OPTIONS] --from <URI> --to <URI> --artifacts <IDS>
 Record an external system receipt (webhook, timestamp, confirmation)
 
 ```
-treeship attest receipt [OPTIONS] --system <URI> --kind <KIND>
+treeship attest receipt [OPTIONS] --kind <KIND>
 ```
 
 | Option | Description |
 |---|---|
-| `--system <URI>` | System URI -- who produced this receipt |
+| `--system <URI>` | System URI -- who produced this receipt (required, except for --kind list) |
 | `--kind <KIND>` | Receipt kind. Free-form kinds (confirmation, timestamp, inclusion, webhook, …) sign as given. A registered predicate is validated against its schema before signing and must match the payload's own `schema`: memory.write.v1, memory.read.v1, memory.quarantine-check.v1, blocked.v1, reason.authorization.v1, boundary.v1, agent_card.v1, agent_card_revocation.v1, grant_revocation.v1, session.v1, agent_cert.v1, profile.v1, workflow.v1, verification.packet.v1, verification.recompute.v1, evaluation.v1, coverage.v1, halt.v1, judgement.v1. `--kind list` prints the current registry |
 | `--subject <ID>` | Subject artifact ID |
 | `--payload <'{"key":"val"}'>` | Receipt payload as a JSON object |
