@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Jev in the judge slot.** `examples/judge-adapters/jev` puts TypeSafe's Jev behind the judge contract: a dependency-free adapter that speaks the contract on one side and `POST /v1/systemone` on the other, pins the model version so the receipt names one, and marks every answer `replayable: false`. Tested in CI against a mock of TypeSafe's documented request and response shapes (all three primitives mapped, an unavailable judge as an error, the `judgements` row naming the model). An independent implementation against the published API, not run against the live service. New integration page, systems registry row, and the post "Any judge, one receipt".
+
 ## 0.31.9 (2026-09-25)
 
 - **A lifted halt stays lifted, whatever local file is rolled back.** The 0.31.8 fix read the store through `index.json`, an unsigned cache in the same directory as the halt marker; restoring both re-armed a halt while its signed lift sat on disk. The lookup now scans the record files and honours a halt, or a lift, only when its envelope verifies under the workspace key; the record's unsigned `key_id` is not consulted. `halt list` says which reason applies (`lifted by art_…`, or not signed here) instead of "no signed artifact" for both. (Retest 0.31.8, T20.)

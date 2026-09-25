@@ -88,6 +88,7 @@ export const SYSTEMS: Record<string, SystemInfo> = {
   langchain: { label: 'LangChain', group: 'framework', docs: '/integrations/langchain' },
   rig: { label: 'Rig', group: 'framework', docs: 'https://github.com/zerkerlabs/rig-treeship' },
   'verifiable-intent': { label: 'Verifiable Intent', vendor: 'Mastercard', group: 'standard', docs: '/integrations/verifiable-intent' },
+  'typesafe-jev': { label: 'TypeSafe Jev', vendor: 'TypeSafe', group: 'framework', docs: '/integrations/typesafe-jev' },
   'zerker-reason': { label: 'Zerker Reason', vendor: 'Zerker Labs', group: 'product', docs: '/integrations/zerker-reason' },
   'zerker-gateway': { label: 'Zerker Gateway', vendor: 'Zerker Labs', group: 'product', docs: 'https://docs.zerker.ai' },
   'memory-providers': { label: 'Memory providers', group: 'product', docs: '/integrations/memory-proofs' },

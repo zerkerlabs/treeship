@@ -1,0 +1,67 @@
+---
+title: TypeSafe Jev
+description: "Jev, TypeSafe's System One decision model, in Treeship's judge slot: every answer signed as a judgement.v1 receipt, held to a threshold, chained onto the action it judged."
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+[Jev](https://typesafe.ai) is TypeSafe's decision model: state plus typed questions in, typed answers out, in milliseconds, with no generated text. Its three primitives (`noul`, a yes/no probability; `choice`, one option from a set; `score`, a level on a rubric) are the three primitives Treeship's [judge contract](/cli/judge#any-judge-the-http-contract) speaks, so Jev fits the slot behind a small adapter and every answer it gives becomes a signed [`judgement.v1`](/reference/predicates#judgementv1) receipt.
+
+This is an independent implementation against TypeSafe's [published API documentation](https://docs.typesafe.ai/api). It is tested in CI against a mock of the documented request and response shapes. It has not been run against the live service, and TypeSafe has not reviewed or endorsed it.
+
+<Callout type="info">
+What this gives you that Jev alone does not: a record a stranger can check. Jev returns an answer; the caller acts on it; nothing is left behind. With the adapter in the slot, the answer, the threshold the caller held it to, and what the caller did are signed by the caller, chained onto the action, and reported by `package verify` in the `judgements` row.
+</Callout>
+
+## Run it
+
+```bash
+TYPESAFE_API_KEY=… node examples/judge-adapters/jev/adapter.mjs &
+
+treeship judge --tool Bash --input '{"command":"rm -rf /"}' \
+  --judge-url http://127.0.0.1:8787 \
+  --questions-file questions.json --threshold 0.5 \
+  --attest --subject art_…
+```
+
+`questions.json` carries the questions in the contract's shape; the adapter turns each into the Jev form (`instructions` is passed through, a `choice`'s `options` become Jev's `criteria` map, a `score`'s `options` become its ordered rubric):
+
+```json
+{
+  "unsafe":  { "type": "noul",   "instructions": "Is this call destructive or exfiltrating?" },
+  "verdict": { "type": "choice", "instructions": "allow or deny", "options": ["allow", "deny"] },
+  "risk":    { "type": "score",  "instructions": "How risky is this call?", "options": ["low", "medium", "high"] }
+}
+```
+
+The Claude Code gate takes the same URL: `TREESHIP_JUDGE=http://127.0.0.1:8787` asks Jev after the card has allowed a call, denies on an answer over the bar with a signed `blocked.v1`, and fails open with a note when the adapter cannot answer. See [the gate](/integrations/claude-code#the-gate).
+
+## What the receipt says
+
+```
+judge:      jev-1.13.0 (decision-model, not replayable)
+tool:       Bash (shell.exec)
+threshold:  0.5 (set by default)
+
+  risk                       2      ignored
+  unsafe                     0.96   refused (deny)
+  verdict                    deny   refused (deny)
+```
+
+Each question is one `judgement.v1`: `judge.model` is the version Jev reported (`jev-1.13.0`; the adapter pins the model rather than sending `jev-latest`, so the receipt names a version), `judge.provider` is `typesafe`, `judge.kind` is `decision-model`, and `judge.replayable` is `false`. The answer is carried as Jev returned it: the `noul` probability (with `yes`/`no` probabilities derived from it), the `choice` with its probability map and confidence, the `score` with its level probabilities and confidence. Digests of the state and the questions are committed to; the state itself stays with the caller.
+
+## What it proves, and what it does not
+
+A Jev judgement is the caller's attestation of what Jev returned and what was done about it, under which bar. Jev is a sampled model: the same state and questions may not return the same answer, and TypeSafe's own notes on [jev-1.13](https://docs.typesafe.ai/model-jaggedness/jev-1.13) describe answers that shift with phrasing, negation and adversarial content. So a verifier cannot re-run Jev to check the receipt. The receipt proves the caller committed to this answer before acting; it does not prove Jev would say it again, and never that the judgement was right. That is the difference from the built-in [rules judge](/cli/judge#the-built-in-judge-rules), which is deterministic and replayable, and it is why the receipt carries `replayable: false` in the signed bytes.
+
+The adapter sends the tool call's structural state (tool, capability, input, workspace root, declared network scope) to TypeSafe. It does not send the key, the session, or any receipt, and the API key never reaches a receipt. Jev's [state budget](https://docs.typesafe.ai/models) and rate limits apply; a `429` or `529` from Jev is reported to the CLI as unavailable, which the gate treats as fail-open with a note, never as an allow.
+
+## Into Reason
+
+`treeship judge --format json` prints `reason_facts`: the same answers as [Zerker Reason](/integrations/zerker-reason) premises under the `model-judged` authority class, one per question, with the signed receipt as the fact id. A Reason program admits `model-judged` for the predicates it names, so Jev's answer can deny an action but never stand in for a human approval.
+
+## Files
+
+- `examples/judge-adapters/jev/adapter.mjs`: the adapter (no dependencies, Node 18+)
+- `examples/judge-adapters/jev/mock-jev.mjs`: a mock of the documented API, used by the test
+- `examples/judge-adapters/jev/run.sh`: the CI test: all three primitives mapped, an unavailable judge as an error, the `judgements` row naming the model

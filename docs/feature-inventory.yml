@@ -230,11 +230,13 @@
   docs:
     - docs/content/docs/cli/judge.mdx
     - docs/content/docs/integrations/claude-code.mdx
+    - docs/content/docs/integrations/typesafe-jev.mdx
     - docs/content/docs/reference/predicates.mdx
   tests:
     - packages/core/src/judge/mod.rs
     - packages/cli/tests/judge_cli.rs
     - integrations/tests/gate-e2e.sh
+    - examples/judge-adapters/jev/run.sh
   notes: >
     State plus typed questions (noul/choice/score) in, typed answers out, held
     to a threshold and signed as judgement.v1 chained onto the session. The
