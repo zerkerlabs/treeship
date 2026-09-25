@@ -506,7 +506,14 @@ fn session_row(pkg_dir: &Path, treeship_id: &str, treeship_name: &str) -> Option
         .iter()
         .filter(|c| c.status == VerifyStatus::Fail)
         .count();
-    let verdict = if fail > 0 {
+    // A row that passed decides `verified`, never the absence of a failure
+    // (treeship_core::session::package_verdict): an empty package, or one
+    // with no close record, is not verified.
+    let positive = !matches!(
+        treeship_core::session::package_verdict(&checks, false),
+        treeship_core::session::PackageVerdict::Failed(_)
+    );
+    let verdict = if fail > 0 || !positive {
         "failed"
     } else if warn > 0 {
         "verified-with-warnings"

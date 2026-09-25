@@ -3250,6 +3250,19 @@ fn summarize_verify_checks(
             }
         }
     }
+    // `pass` needs rows that passed (treeship_core::session::package_verdict),
+    // not merely none that failed: an empty package, or one with no close
+    // record, is not a verified session.
+    if let treeship_core::session::PackageVerdict::Failed(reason) =
+        treeship_core::session::package_verdict(checks, false)
+    {
+        if !any_fail {
+            warnings.push(serde_json::json!({
+                "kind": "verdict", "headline": reason, "status": "fail",
+            }));
+        }
+        any_fail = true;
+    }
     let has_actionable_warn = warnings.iter().any(|w| {
         w.get("kind")
             .and_then(|k| k.as_str())
@@ -3517,13 +3530,24 @@ mod verify_summary_tests {
     // scope caveat as a WARN check, but its top-line verification_status must
     // still be "pass" — otherwise "pass" is unreachable for every session
     // (0.19.0 shipped it as "warn", which the publish smoke test caught).
+    /// The rows a verified package cannot do without: a signature that
+    /// verified, the close record binding receipt.json, and a trust row.
+    fn verified_rows() -> Vec<VerifyCheck> {
+        vec![
+            VerifyCheck::pass("signature:art_a", "ok"),
+            VerifyCheck::pass("receipt_binding", "ok"),
+            VerifyCheck::pass("signer_trust", "ok"),
+        ]
+    }
+
     #[test]
     fn informational_caveat_alone_stays_pass() {
-        let checks = vec![
+        let mut checks = verified_rows();
+        checks.extend([
             VerifyCheck::pass("merkle_root", "ok"),
             VerifyCheck::pass("determinism", "ok"),
             VerifyCheck::warn("receipt_body_binding", "narrative not signature-bound"),
-        ];
+        ]);
         let (status, warnings) = summarize_verify_checks(&checks);
         assert_eq!(
             status, "pass",
@@ -3535,11 +3559,12 @@ mod verify_summary_tests {
 
     #[test]
     fn actionable_warn_downgrades_to_warn() {
-        let checks = vec![
+        let mut checks = verified_rows();
+        checks.extend([
             VerifyCheck::pass("merkle_root", "ok"),
             VerifyCheck::warn("receipt_body_binding", "caveat"),
             VerifyCheck::warn("reconcile_degraded", "git backstop disabled mid-session"),
-        ];
+        ]);
         assert_eq!(summarize_verify_checks(&checks).0, "warn");
     }
 
@@ -3550,6 +3575,19 @@ mod verify_summary_tests {
             VerifyCheck::fail("merkle_root", "root mismatch"),
         ];
         assert_eq!(summarize_verify_checks(&checks).0, "fail");
+    }
+
+    #[test]
+    fn nothing_failed_is_not_the_same_as_verified() {
+        // No signature, no close record, no trust row: nothing FAILed, and
+        // this used to read "pass".
+        let checks = vec![
+            VerifyCheck::pass("merkle_root", "ok"),
+            VerifyCheck::warn("receipt_body_binding", "caveat"),
+        ];
+        let (status, warnings) = summarize_verify_checks(&checks);
+        assert_eq!(status, "fail");
+        assert!(warnings.iter().any(|w| w["kind"] == "verdict"));
     }
 }
 

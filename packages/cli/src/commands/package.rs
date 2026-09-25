@@ -1262,25 +1262,32 @@ pub fn verify(
     // is `signatures-pass` (audit follow-up AUD-35: the previous line said
     // "package verified" for an unknown signer, exit 0, and the JSON carried
     // no rows at all).
-    let signer_unpinned = checks
+    //
+    // The word comes from treeship_core::session::package_verdict, which
+    // needs rows that PASSED (a signature, receipt_binding, a signer_trust
+    // row), not merely no row that failed: an empty package used to read
+    // `verified` because nothing had failed.
+    let signer_unpinned = !checks
         .iter()
-        .any(|c| c.name == "signer_trust" && c.status == VerifyStatus::Warn);
-    let (verdict, status, message) = if fail_count > 0 {
-        ("failed", "error", "package verification failed")
-    } else if structural_only {
-        (
+        .any(|c| c.name == "signer_trust" && c.status == VerifyStatus::Pass);
+    let pv = treeship_core::session::package_verdict(&checks, structural_only);
+    let failed_message;
+    let (verdict, status, message) = match &pv {
+        treeship_core::session::PackageVerdict::Failed(reason) => {
+            failed_message = format!("package verification failed ({reason})");
+            ("failed", "error", failed_message.as_str())
+        }
+        treeship_core::session::PackageVerdict::StructuralPass => (
             "structural-pass",
             "warning",
             "structural-pass: structure and approvals verified, signatures not checked",
-        )
-    } else if signer_unpinned {
-        (
+        ),
+        treeship_core::session::PackageVerdict::SignaturesPass => (
             "signatures-pass",
             "warning",
             "signatures-pass: every signature verifies, but no signing key is pinned here; pin the producer's key for `verified`",
-        )
-    } else {
-        ("verified", "ok", "package verified")
+        ),
+        treeship_core::session::PackageVerdict::Verified => ("verified", "ok", "package verified"),
     };
 
     if printer.format == crate::printer::Format::Json {
@@ -1309,14 +1316,14 @@ pub fn verify(
             "signer_pinned": !signer_unpinned,
             "checks": rows,
         }));
-        if fail_count > 0 {
+        if verdict == "failed" {
             return Err("package verification failed".into());
         }
         return Ok(());
     }
 
     printer.blank();
-    if fail_count > 0 {
+    if verdict == "failed" {
         printer.warn(message, &[]);
         return Err("package verification failed".into());
     }
