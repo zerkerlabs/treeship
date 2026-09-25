@@ -100,14 +100,14 @@ fn resolve(
     let by = args
         .by
         .as_deref()
-        .ok_or("--by <URI> is required: who decided (human://alice)")?;
+        .ok_or_else(|| crate::exit::usage("--by <URI> is required: who decided (human://alice)"))?;
     if !by.contains("://") {
         return Err(format!("--by must be a URI such as human://{by}").into());
     }
     let decision = args
         .decision
         .as_deref()
-        .ok_or("--decision is required: allow, deny or route")?;
+        .ok_or_else(|| crate::exit::usage("--decision is required: allow, deny or route"))?;
     if !matches!(decision, "allow" | "deny" | "route") {
         return Err(format!("--decision {decision:?}: use allow, deny or route").into());
     }
@@ -328,10 +328,9 @@ pub fn judge(args: JudgeArgs, printer: &Printer) -> Result<(), Box<dyn std::erro
     if let Some(id) = args.resolve.clone() {
         return resolve(&ctx, &args, &id, printer);
     }
-    let tool = args
-        .tool
-        .clone()
-        .ok_or("--tool <NAME> is required (or --resolve <judgement id> to resolve one)")?;
+    let tool = args.tool.clone().ok_or_else(|| {
+        crate::exit::usage("--tool <NAME> is required (or --resolve <judgement id> to resolve one)")
+    })?;
     let contract = args.contract.as_deref().map(parse_contract).transpose()?;
 
     let input = match &args.input {
