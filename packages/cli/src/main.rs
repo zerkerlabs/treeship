@@ -8,6 +8,7 @@ mod printer;
 mod redact;
 mod templates;
 mod tui;
+mod validate;
 
 use clap::{Args, Parser, Subcommand};
 use printer::{Format, Printer};
@@ -1765,7 +1766,7 @@ enum AttestCommand {
     /// Examples:
     ///   treeship attest action --actor agent://researcher --action tool.call
     ///   treeship attest action --actor agent://checkout --action stripe.charge.create \
-    ///     --input-digest sha256:abc123 --output-digest sha256:def456 \
+    ///     --input-digest sha256:<64 hex> --output-digest sha256:<64 hex> \
     ///     --parent art_a1b2c3d4 --approval-nonce abc123xyz
     ///   treeship attest action --v2 --actor agent://checkout --action payments.charge \
     ///     --grant grn_a1b2c3d4e5f60718 --effect-confidence not_verified
@@ -3193,6 +3194,11 @@ fn main() {
 
     let cli = Cli::parse();
 
+    // `--format xml` used to run as text and exit 0.
+    if let Err(e) = validate::output_format(&cli.format) {
+        Printer::new(Format::Text, false, cli.no_color).failure(&e.to_string(), &[]);
+        std::process::exit(exit::code_for(e.as_ref()));
+    }
     let format = Format::from_str(&cli.format);
     let printer = Printer::new(format, cli.quiet, cli.no_color);
 

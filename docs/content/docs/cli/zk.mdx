@@ -1,0 +1,100 @@
+---
+title: prove / verify-proof / zk-setup
+description: The zero-knowledge command surface -- hidden, feature-gated, and quarantined pending the statement-first rebuild.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+<Callout type="warn">
+**Hidden from `--help`, and not in release binaries.** `prove`,
+`prove-chain` and `verify-proof` are compiled only with `cargo build
+--features zk`; release binaries ship without that feature (see
+[zero-knowledge proofs](/docs/concepts/zero-knowledge) for what that means
+for the underlying Circom/Groth16 path, which is quarantined). Without the
+feature, these three exit **5** ("not compiled into this build") rather than
+doing anything -- a script checking the exit code will not mistake this for
+a passed or failed proof. `zk-setup` and `zk-tls-setup` are not
+feature-gated: they run in every build and just report status/print
+instructions, including "ZK features not enabled in this build" when the
+`zk` feature is off.
+</Callout>
+
+## treeship prove
+
+Generate a zero-knowledge proof for an artifact using a Circom circuit.
+
+```bash
+treeship prove --circuit policy-checker --artifact art_xxx --policy ./policy.json
+treeship prove --circuit input-output-binding --artifact art_xxx
+```
+
+| Option | Description |
+|---|---|
+| `--circuit <CIRCUIT>` | `policy-checker`, `input-output-binding`, or `prompt-template` |
+| `--artifact <ARTIFACT>` | Artifact ID to prove, or `last` for the most recent |
+| `--policy <PATH>` | Policy file (JSON array of allowed actions) -- required for `policy-checker` |
+
+Requires the `zk` build feature and `snarkjs` on `PATH`. Without the
+feature: exits 5, "ZK features are not compiled into this build", with a
+hint to rebuild with `--features zk`.
+
+## treeship prove-chain
+
+Prove an entire session chain with RISC Zero -- the transparent,
+no-trusted-setup path; see [zero-knowledge proofs](/docs/concepts/zero-knowledge)
+for how it compares to the quarantined Circom/Groth16 path.
+
+```bash
+treeship prove-chain ssn_abc123
+```
+
+| Argument | Description |
+|---|---|
+| `<SESSION_ID>` | Session ID to prove |
+
+Same not-in-build behavior as `prove` without the `zk` feature.
+
+## treeship verify-proof
+
+Verify a `.zkproof` file produced by `prove`.
+
+```bash
+treeship verify-proof art_xxx.policy-checker.zkproof
+```
+
+| Argument | Description |
+|---|---|
+| `<FILE>` | Path to the `.zkproof` file |
+
+Same not-in-build behavior as `prove` without the `zk` feature.
+
+## treeship zk-setup
+
+Show ZK configuration: circuit verifying-key hashes, whether `snarkjs` is on
+`PATH`, RISC Zero guest/prover status, and TLSNotary configuration. Runs in
+every build; with the `zk` feature off it reports that plainly instead of
+the circuit details.
+
+```bash
+treeship zk-setup
+```
+
+## treeship zk-tls-setup
+
+Print instructions for running your own TLSNotary notary instead of PSE's
+public one (`notary.pse.dev:7047`), and how to point Treeship at it
+(`TREESHIP_NOTARY` env var, or `zk_tls.notary` in `.treeship/config.yaml`).
+Not feature-gated -- runs the same in every build. TLSNotary itself is not
+implemented; this only prints setup instructions for a notary you'd run
+yourself.
+
+```bash
+treeship zk-tls-setup
+```
+
+<Callout type="info">
+`zk-setup`'s own hint text currently says `treeship zk-tls notary setup`,
+which is not a real command -- the command is `treeship zk-tls-setup`
+(no `notary`/`setup` subcommands). Tracked as a misleading-output fix; use
+the command shown on this page.
+</Callout>
