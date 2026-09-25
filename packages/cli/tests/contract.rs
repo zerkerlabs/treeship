@@ -181,6 +181,7 @@ fn every_command_answers_help() {
 const EXIT_ERROR: i32 = 1;
 const EXIT_USAGE_CLAP: i32 = 2;
 const EXIT_NOT_INITIALIZED: i32 = 3;
+const EXIT_USAGE_COMMAND: i32 = 4;
 const EXIT_NOT_IN_BUILD: i32 = 5;
 
 struct Case {
@@ -220,13 +221,44 @@ const CASES: &[Case] = &[
         env: &[],
         expect: EXIT_ERROR,
     },
-    #[cfg(feature = "otel")]
     Case {
-        name: "otel export to a collector that refuses the connection",
-        args: &["otel", "export", "last"],
-        env: &[("TREESHIP_OTEL_ENDPOINT", DEAD_COLLECTOR)],
+        // The agent's name contains "required", and "treeship init" could
+        // appear in any hint. The code must come from the error's type, not
+        // from words in its message (exit 4 through the first review of
+        // this change).
+        name: "resolve an agent whose name contains a code-picking word",
+        args: &["resolve", "agent://required-bot"],
+        env: &[],
         expect: EXIT_ERROR,
     },
+    Case {
+        name: "wrap with no command",
+        args: &["wrap"],
+        env: &[],
+        expect: EXIT_USAGE_CLAP,
+    },
+    Case {
+        name: "grant issue with no scope",
+        args: &[
+            "grant",
+            "issue",
+            "--audience",
+            "agent://x",
+            "--expiry",
+            "30d",
+        ],
+        env: &[],
+        expect: EXIT_USAGE_CLAP,
+    },
+    Case {
+        // A usage error the command itself raises, past the parser.
+        name: "judge --resolve without --by",
+        args: &["judge", "--resolve", "art_0000000000000000"],
+        env: &[],
+        expect: EXIT_USAGE_COMMAND,
+    },
+    // (The dead-collector otel case needs a real artifact id; it is built in
+    // the test body.)
     #[cfg(feature = "otel")]
     Case {
         name: "otel export of an artifact that does not exist",
@@ -369,19 +401,47 @@ fn every_failure_exits_with_its_documented_code() {
     );
 
     let mut wrong = Vec::new();
-    for case in CASES {
-        let out = ship.run_env(case.args, case.env);
+    let mut check = |name: &str, args: &[&str], env: &[(&str, &str)], expect: i32| {
+        let out = ship.run_env(args, env);
         let got = code(&out);
-        if got != case.expect {
+        if got != expect {
             wrong.push(format!(
-                "{}: `treeship {}` exited {got}, expected {}\n  stdout: {}\n  stderr: {}",
-                case.name,
-                case.args.join(" "),
-                case.expect,
+                "{name}: `treeship {}` exited {got}, expected {expect}\n  stdout: {}\n  stderr: {}",
+                args.join(" "),
                 String::from_utf8_lossy(&out.stdout).trim(),
                 String::from_utf8_lossy(&out.stderr).trim(),
             ));
         }
+    };
+    for case in CASES {
+        check(case.name, case.args, case.env, case.expect);
+    }
+    // otel export reaches the collector only with a real artifact id, so the
+    // dead-collector case (0.31.9 printed "export failed" and exited 0) is
+    // built here from the artifact attested above.
+    #[cfg(feature = "otel")]
+    {
+        let out = ship.run(&[
+            "attest",
+            "action",
+            "--actor",
+            "agent://c",
+            "--action",
+            "otel",
+            "--format",
+            "json",
+        ]);
+        let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        let id = v["id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("no artifact id in attest JSON: {v}"))
+            .to_string();
+        check(
+            "otel export to a collector that refuses the connection",
+            &["otel", "export", &id],
+            &[("TREESHIP_OTEL_ENDPOINT", DEAD_COLLECTOR)],
+            EXIT_ERROR,
+        );
     }
     assert!(
         wrong.is_empty(),

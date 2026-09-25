@@ -142,5 +142,7 @@ pub fn disable(printer: &Printer) {
 pub fn not_available(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     printer.blank();
     printer.hint("the published binaries include it: npm install -g treeship, or cargo build -p treeship-cli with default features");
-    Err("otel export is not compiled into this build (built with --no-default-features)".into())
+    Err(crate::exit::not_in_build(
+        "otel export is not compiled into this build (built with --no-default-features)",
+    ))
 }

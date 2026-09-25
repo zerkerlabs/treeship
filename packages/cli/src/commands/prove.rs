@@ -341,7 +341,7 @@ pub fn zk_status(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
 fn zk_not_in_build(printer: &Printer) -> Box<dyn std::error::Error> {
     printer.blank();
     printer.hint("rebuild with: cargo build -p treeship-cli --features zk");
-    "ZK features are not compiled into this build".into()
+    crate::exit::not_in_build("ZK features are not compiled into this build")
 }
 
 /// Stub for non-zk builds

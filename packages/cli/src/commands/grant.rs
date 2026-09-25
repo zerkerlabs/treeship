@@ -173,7 +173,9 @@ fn scope_covered(needle: &str, haystack: &[String]) -> bool {
 /// existing one.
 pub fn issue(args: IssueArgs, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     if args.scope.is_empty() {
-        return Err("at least one --scope is required\n  example: --scope payments.charge".into());
+        return Err(crate::exit::usage(
+            "at least one --scope is required\n  example: --scope payments.charge",
+        ));
     }
     // `--expiry` takes an RFC 3339 instant or a duration from now (30d, 12h,
     // 45m). The help text carried a fixed date that fell into the past and
