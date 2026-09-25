@@ -59,11 +59,15 @@ pub fn actor_uri(flag: &str, s: &str) -> Fallible {
 /// is written one way everywhere it is compared.
 pub fn sha256_digest(flag: &str, s: &str) -> Fallible {
     let hex = s.strip_prefix("sha256:").unwrap_or("");
-    if hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+    if hex.len() == 64
+        && hex
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
         Ok(())
     } else {
         Err(exit::usage(format!(
-            "{flag} must be sha256:<64 hex characters> (lowercase `sha256:` prefix; a bare hex digest or SHA256: is not accepted), not {s:?}"
+            "{flag} must be sha256:<64 lowercase hex characters> (a bare hex digest, SHA256:, or uppercase hex is not accepted), not {s:?}"
         )))
     }
 }
@@ -134,7 +138,7 @@ fn parse_rfc3339(s: &str) -> Option<u64> {
     let hh: i64 = parts.next()?.parse().ok()?;
     let mm: i64 = parts.next()?.parse().ok()?;
     let ss: i64 = parts.next()?.parse().ok()?;
-    if parts.next().is_some() || hh > 23 || mm > 59 || ss > 60 {
+    if parts.next().is_some() || hh > 23 || mm > 59 || ss > 59 {
         return None;
     }
     let secs = days_from_civil(y, m, d) * 86_400 + hh * 3600 + mm * 60 + ss - offset_secs;
@@ -147,7 +151,22 @@ fn parse_date(s: &str) -> Option<(i64, i64, i64)> {
     let y: i64 = parts.next()?.parse().ok()?;
     let m: i64 = parts.next()?.parse().ok()?;
     let d: i64 = parts.next()?.parse().ok()?;
-    if parts.next().is_some() || !(1..=12).contains(&m) || !(1..=31).contains(&d) || y < 1970 {
+    if parts.next().is_some() || !(1..=12).contains(&m) || y < 1970 {
+        return None;
+    }
+    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let days_in_month = match m {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        _ => {
+            if leap {
+                29
+            } else {
+                28
+            }
+        }
+    };
+    if !(1..=days_in_month).contains(&d) {
         return None;
     }
     Some((y, m, d))
@@ -324,6 +343,18 @@ mod tests {
         assert!(rfc3339("--x", "2027-01-31").is_err());
         assert!(rfc3339("--x", "2027-13-01T00:00:00Z").is_err());
         assert!(rfc3339("--x", "2027-01-31T25:00:00Z").is_err());
+    }
+
+    #[test]
+    fn calendar_and_seconds_are_checked() {
+        assert!(rfc3339("--x", "2027-02-31T00:00:00Z").is_err());
+        assert!(rfc3339("--x", "2027-04-31T00:00:00Z").is_err());
+        assert!(rfc3339("--x", "2027-02-29T00:00:00Z").is_err());
+        assert!(rfc3339("--x", "2028-02-29T00:00:00Z").is_ok());
+        assert!(rfc3339("--x", "2100-02-29T00:00:00Z").is_err());
+        assert!(rfc3339("--x", "2000-02-29T00:00:00Z").is_ok());
+        assert!(rfc3339("--x", "2027-01-31T23:59:60Z").is_err());
+        assert!(sha256_digest("--d", &format!("sha256:{}", "AB".repeat(32))).is_err());
     }
 
     #[test]
