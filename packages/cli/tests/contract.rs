@@ -182,6 +182,8 @@ const EXIT_ERROR: i32 = 1;
 const EXIT_USAGE_CLAP: i32 = 2;
 const EXIT_NOT_INITIALIZED: i32 = 3;
 const EXIT_USAGE_COMMAND: i32 = 4;
+// Only the feature-gated rows use it; a build with every feature on has none.
+#[allow(dead_code)]
 const EXIT_NOT_IN_BUILD: i32 = 5;
 
 struct Case {
