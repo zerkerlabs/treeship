@@ -723,3 +723,41 @@ fn read_back_round_trips_action_envelopes() {
     assert_eq!(read_back.action_envelopes[0].0, art_id);
     assert_eq!(read_back.action_envelopes[0].1, env);
 }
+
+/// A coverage receipt or a grant is not a consuming action. Since 0.31.2 a
+/// package carries every sealed envelope under artifacts/, and the row
+/// failed the merchant demo's package on exactly those ("not an
+/// ActionStatement", QA on 0.31.9). Non-action envelopes are not subject
+/// to this row.
+#[test]
+fn non_action_envelopes_are_not_subject_to_the_binding_row() {
+    let nonce = "raw_nonce_alpha";
+    let (g_id, g_env) = fake_grant_envelope(nonce);
+    let (art_id, env) = fake_action_envelope(nonce, Some("use_real"));
+    let mut bundle = ApprovalsBundle::default();
+    bundle.grants.push((g_id.clone(), g_env.clone()));
+    bundle
+        .uses
+        .push(make_use_with_nonce("use_real", &g_id, nonce));
+    bundle.action_envelopes.push((art_id.clone(), env));
+    // The grant's envelope rides along under artifacts/, as every sealed
+    // artifact does now. Its payload type is not an action.
+    bundle.action_envelopes.push((g_id.clone(), g_env));
+
+    let pkg = build(bundle, &[art_id.as_str()]);
+    let checks = verify_package_structural(&pkg).unwrap();
+    let row = find_check(&checks, "approval-use-action-binding")
+        .expect("approval-use-action-binding row required");
+    assert_eq!(row.status, VerifyStatus::Pass, "got: {row:?}");
+    assert!(
+        row.detail.contains("1 consuming action(s) bind cleanly"),
+        "{}",
+        row.detail
+    );
+    assert!(
+        row.detail
+            .contains("1 non-action envelope(s) not subject to this row"),
+        "{}",
+        row.detail
+    );
+}

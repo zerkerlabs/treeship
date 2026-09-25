@@ -541,3 +541,57 @@ fn full_mode_fails_an_invalid_mandate_and_shows_an_authority_row() {
     );
     // A v1 chain with no mandate has no authority row at all.
 }
+
+// ── every gate reaches the JSON top line ──
+
+#[test]
+fn a_failed_require_authority_gate_is_a_failed_outcome_in_json() {
+    // A v1 receipt carries no mandate; under --require-authority that is a
+    // refusal, and the JSON must say so at the top, not only in the exit
+    // code and a nested field.
+    let ws = Workspace::new();
+    let out = ws
+        .cmd()
+        .args([
+            "attest",
+            "action",
+            "--actor",
+            "agent://legacy",
+            "--action",
+            "tool.call",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let out = ws
+        .cmd()
+        .args(["verify", "last", "--require-authority", "--format", "json"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let j: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(j["outcome"], "fail", "{j}");
+    assert_eq!(
+        j["failed_gates"],
+        serde_json::json!(["require_authority"]),
+        "{j}"
+    );
+    assert!(
+        j["authority_gate"]
+            .as_str()
+            .unwrap()
+            .contains("no action/v2 mandate"),
+        "{j}"
+    );
+
+    // No policy asked for: a clean pass, with no gates listed.
+    let out = ws
+        .cmd()
+        .args(["verify", "last", "--format", "json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let j: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(j["outcome"], "pass", "{j}");
+    assert_eq!(j["failed_gates"], serde_json::json!([]), "{j}");
+}

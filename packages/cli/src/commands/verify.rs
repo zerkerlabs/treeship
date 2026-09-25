@@ -665,8 +665,28 @@ pub fn run(
                 obj
             })
             .collect();
+        // Every gate reaches the top line. A policy the caller asked for
+        // (--require-authority, --max-unwitnessed) that fails is a failed
+        // verification, and `outcome` says so; before this the exit code was
+        // 1 while the JSON read `pass`, the same split finding 30 closed for
+        // mandates. `gates` names which policy failed.
+        let authority_gate_now = authority_gate_failure(
+            require_authority,
+            authority_checked,
+            authority_unverified,
+            authority_ok,
+        );
+        let mut failed_gates: Vec<&str> = Vec::new();
+        if authority_gate_now.is_some() {
+            failed_gates.push("require_authority");
+        }
+        if anchoring_gate.is_some() {
+            failed_gates.push("max_unwitnessed");
+        }
+        let outcome_pass = failed == 0 && linkage_ok && failed_gates.is_empty();
         printer.json(&serde_json::json!({
-            "outcome": if failed == 0 && linkage_ok { "pass" } else { "fail" },
+            "outcome": if outcome_pass { "pass" } else { "fail" },
+            "failed_gates": failed_gates,
             "total": total, "passed": passed, "failed": failed,
             // How many of `failed` are mandate verdicts (out of scope,
             // expired, wrong holder, revoked) rather than signature or

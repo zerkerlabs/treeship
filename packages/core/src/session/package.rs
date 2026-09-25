@@ -1859,6 +1859,8 @@ pub(crate) fn add_approval_evidence_checks(
                 bundle.uses.iter().map(|u| u.use_id.as_str()).collect();
             let mut violations: Vec<String> = Vec::new();
             let mut bound_count = 0usize;
+            let mut not_actions = 0usize;
+            let action_v1 = crate::statements::payload_type("action");
             for (artifact_id, env_bytes) in &bundle.action_envelopes {
                 let env = match Envelope::from_json(env_bytes) {
                     Ok(e) => e,
@@ -1867,6 +1869,18 @@ pub(crate) fn add_approval_evidence_checks(
                         continue;
                     }
                 };
+                // Since 0.31.2 a package carries every sealed envelope under
+                // artifacts/, not only the consuming actions this row was
+                // written for. A grant, a coverage receipt or a judgement is
+                // not an action and cannot consume an approval; it is not
+                // subject to this row and was wrongly failed as "not an
+                // ActionStatement" (QA on 0.31.9: the merchant package failed
+                // on its grant and its coverage receipt). Only v1 action
+                // envelopes are checked; the count of the rest is reported.
+                if env.payload_type != action_v1 {
+                    not_actions += 1;
+                    continue;
+                }
                 // Content-addressing gate: derive the artifact_id
                 // from the envelope's PAE bytes and require it to
                 // match the filename stem the package shipped this
@@ -1934,7 +1948,12 @@ pub(crate) fn add_approval_evidence_checks(
                 checks.push(VerifyCheck::pass(
                     "approval-use-action-binding",
                     &format!(
-                        "{bound_count} consuming action(s) bind cleanly to content-addressed envelope(s)",
+                        "{bound_count} consuming action(s) bind cleanly to content-addressed envelope(s){}",
+                        if not_actions > 0 {
+                            format!("; {not_actions} non-action envelope(s) not subject to this row")
+                        } else {
+                            String::new()
+                        }
                     ),
                 ));
             } else {

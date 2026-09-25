@@ -152,6 +152,17 @@ fn forged_local_anchor_times_fail_the_gate_in_json_mode() {
         "gate verdict missing: {v}"
     );
     assert_eq!(v["anchoring"]["gate"]["max_unwitnessed_seconds"], 3600);
+    // The gate reaches the top line: a script reading only `outcome` must
+    // not get a green (QA on 0.31.9: exit 1 with `outcome: pass`).
+    assert_eq!(v["outcome"], "fail", "{v}");
+    assert!(
+        v["failed_gates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|g| g == "max_unwitnessed"),
+        "{v}"
+    );
 }
 
 #[test]
