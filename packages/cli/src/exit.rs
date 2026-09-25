@@ -18,6 +18,9 @@ pub const NOT_INITIALIZED: i32 = 3;
 pub const USAGE: i32 = 4;
 /// The command exists but its implementation is not compiled into this
 /// binary (`prove` without `--features zk`, `otel` without `otel`).
+// Only the feature-gated stubs raise it, so a build with every feature
+// on has no caller; the code is still part of the contract.
+#[allow(dead_code)]
 pub const NOT_IN_BUILD: i32 = 5;
 
 /// An error that names its exit code.
@@ -48,6 +51,7 @@ pub fn usage(message: impl Into<String>) -> Box<dyn std::error::Error> {
 }
 
 /// The feature is not compiled into this binary (exit 5).
+#[allow(dead_code)]
 pub fn not_in_build(message: impl Into<String>) -> Box<dyn std::error::Error> {
     boxed(NOT_IN_BUILD, message)
 }
