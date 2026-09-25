@@ -17,7 +17,7 @@ Detects which AI agent frameworks are installed on this machine and instruments 
 
 Surfaces detected:
 
-- **Claude Code** — adds `@treeship/mcp` as an MCP server in `~/Library/Application Support/Claude/...`
+- **Claude Code** — installs the official Treeship plugin (`claude plugin marketplace add zerkerlabs/treeship` then `claude plugin install treeship@treeship`) through the `claude` CLI when it is on PATH and you say yes (or `--all`); otherwise it prints those two commands. The plugin carries the hooks and the MCP server, so no config file of yours is edited. Versions before 0.31.10 wrote `~/.claude/mcp.json`, a file Claude Code does not read; `add` removes that entry if it is exactly the one it wrote.
 - **Cursor** — same MCP path, in Cursor's MCP config
 - **Cline** — same MCP path
 - **Codex** — adds an MCP entry in `~/.codex/config.toml`
@@ -68,7 +68,9 @@ treeship add --discover --format json
 
 instrument all 3? (y/N) y
 
-✓ claude-code: added @treeship/mcp to ~/Library/Application Support/Claude/claude_desktop_config.json
+$ claude plugin marketplace add zerkerlabs/treeship
+$ claude plugin install treeship@treeship
+✓ Claude Code plugin installed
 ✓ cursor:      added @treeship/mcp to ~/.cursor/mcp.json
 ✓ hermes:      wrote ~/.openclaw/skills/treeship.md
 
