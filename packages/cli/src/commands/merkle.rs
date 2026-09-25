@@ -5,7 +5,9 @@ use ed25519_dalek::{Signer, SigningKey};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 use std::time::{SystemTime, UNIX_EPOCH};
-use treeship_core::merkle::{ArtifactSummary, Checkpoint, MerkleTree, ProofFile};
+use treeship_core::merkle::{
+    ArtifactSummary, Checkpoint, CheckpointVerifyOutcome, MerkleTree, ProofFile,
+};
 
 use crate::{ctx, printer::Printer};
 
@@ -368,7 +370,17 @@ pub fn verify(
             format!("trust-root: {e}").into()
         },
     )?;
-    let sig_valid = proof_file.checkpoint.verify(&trust);
+    // `verify_detailed` keeps apart what `verify` collapses to `false`: a
+    // signature that does not hold, and a valid signature from a signer this
+    // machine has not pinned. The second is a trust decision, not tampering,
+    // and it is exactly what a ship's own fresh checkpoint looks like before
+    // its key is pinned as `hub_checkpoint` (CLI-5).
+    let outcome = proof_file.checkpoint.verify_detailed(&trust);
+    let sig_valid = outcome == CheckpointVerifyOutcome::Valid;
+    let unpinned_key = match &outcome {
+        CheckpointVerifyOutcome::SignerNotPinned { public_key } => Some(public_key.clone()),
+        _ => None,
+    };
 
     // 2. Verify inclusion proof. The trusted merkle_version is the one
     // bound into the checkpoint signature, NOT the one in the proof
@@ -487,16 +499,54 @@ pub fn verify(
             proof_file.checkpoint.signed_at
         ));
         printer.info("  It cannot have been inserted or backdated after this time.");
+    } else if let (Some(public_key), true, true) = (&unpinned_key, proof_valid, root_matches) {
+        // Everything holds except the trust decision. The key comes from the
+        // checkpoint itself, so the pin line is not a copy-paste that trusts
+        // it blindly: no `--yes`, and the reader confirms the key elsewhere.
+        let key_id = &proof_file.checkpoint.signer;
+        let pin = format!("treeship trust add {key_id} ed25519:{public_key} --kind hub_checkpoint");
+        let detail = format!(
+            "checkpoint signer {key_id} is not pinned here. Confirm this key out of band (from the hub operator or a source you trust), then: {pin}"
+        );
+        if printer.format == crate::printer::Format::Json {
+            printer.json(&serde_json::json!({
+                "outcome": "not_pinned",
+                "artifact": proof_file.artifact_id,
+                "key_id": key_id,
+                "public_key": public_key,
+                "inclusion_proof": "valid",
+                "detail": detail,
+            }));
+        } else {
+            printer.failure(
+                "checkpoint signer not pinned",
+                &[
+                    ("artifact", &proof_file.artifact_id),
+                    ("signature", "valid"),
+                    ("inclusion", "valid"),
+                    ("detail", &detail),
+                ],
+            );
+        }
+        return Err(crate::exit::not_pinned(format!(
+            "checkpoint signer {key_id} not pinned"
+        )));
     } else {
         let mut reasons = Vec::new();
-        if !sig_valid {
-            reasons.push("checkpoint signature invalid");
+        match &outcome {
+            CheckpointVerifyOutcome::Valid => {}
+            CheckpointVerifyOutcome::SignerNotPinned { .. } => {
+                reasons.push("checkpoint signer not pinned".to_string())
+            }
+            CheckpointVerifyOutcome::Invalid { reason } => {
+                reasons.push(format!("checkpoint signature invalid ({reason})"))
+            }
         }
         if !proof_valid {
-            reasons.push("inclusion proof invalid");
+            reasons.push("inclusion proof invalid".to_string());
         }
         if !root_matches {
-            reasons.push("root hash does not match expected");
+            reasons.push("root hash does not match expected".to_string());
         }
         printer.failure(
             "verification failed",
