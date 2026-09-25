@@ -2035,6 +2035,7 @@ pub fn endorsement(
     stmt.expires_at = args.expires.clone();
     stmt.policy_ref = args.policy_ref.clone();
     stmt.meta = meta;
+    stmt.parent_id = parent.clone();
 
     let signer = ctx.keys.default_signer()?;
     let pt = payload_type("endorsement");

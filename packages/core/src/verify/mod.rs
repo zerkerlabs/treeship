@@ -196,6 +196,79 @@ fn finish_with_leaf_count_and_timeline(
     checks
 }
 
+/// The chain parent a signed statement names, read from inside the DSSE
+/// payload. Chain walks follow storage's `parent_id`, which is unsigned and
+/// editable; a verifier compares each walked edge to this.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SignedParent {
+    /// The statement signs this artifact id as its parent.
+    Named(String),
+    /// An endorsement with no signed `parentId`: every endorsement made by
+    /// 0.31.9 or earlier. Its `subject` is what it endorses, not where it
+    /// sits, so no signed edge exists. A verifier may accept the storage
+    /// edge for compatibility, but must say so, and `--strict` fails it.
+    LegacyEndorsement,
+    /// The statement names no parent.
+    None,
+}
+
+/// Read the signed parent out of a decoded statement. One function for the
+/// artifact verifier (`treeship verify`) and the package verifier, so they
+/// cannot disagree about which field is an edge.
+///
+/// In order: `parentId` (or `parent_id`); a session participant's
+/// `invitation_ref`; for an endorsement without `parentId`,
+/// [`SignedParent::LegacyEndorsement`]; a `treeship/receipt` style
+/// `subject.artifactId` when it is an `art_` id; a handoff's first
+/// `artifacts` entry. A `parentId` that is present always wins, so an
+/// endorsement whose signed parent was edited fails as a mismatch and never
+/// falls back to the legacy path.
+pub fn signed_parent(statement: &serde_json::Value) -> SignedParent {
+    let named = |v: Option<&serde_json::Value>| {
+        v.and_then(|p| p.as_str())
+            .map(|p| SignedParent::Named(p.to_string()))
+    };
+    // A present key decides, whatever its value: `"parentId": null` (or a
+    // number) names no parent and fails, rather than falling through to the
+    // legacy or subject edges below (#474 review, F1).
+    if let Some(v) = statement
+        .get("parentId")
+        .or_else(|| statement.get("parent_id"))
+    {
+        return named(Some(v)).unwrap_or(SignedParent::None);
+    }
+    // session-participant/v1 names its signed edge after the protocol object
+    // it extends: the invitation.
+    if let Some(v) = statement.get("invitation_ref") {
+        return named(Some(v)).unwrap_or(SignedParent::None);
+    }
+    if statement.get("type").and_then(|t| t.as_str()) == Some(crate::statements::TYPE_ENDORSEMENT) {
+        return SignedParent::LegacyEndorsement;
+    }
+    // receipt.v1 names the artifact it seals as its signed subject, and
+    // storage records that same id as the parent. Only a Treeship artifact id
+    // is an edge; an external reference (`ord_12345`) names a thing.
+    if let Some(p) = named(
+        statement
+            .get("subject")
+            .and_then(|s| s.get("artifactId").or_else(|| s.get("artifact_id")))
+            .filter(|id| id.as_str().is_some_and(|x| x.starts_with("art_"))),
+    ) {
+        return p;
+    }
+    // handoff/v1: `attest handoff` records `artifacts[0]` as the storage
+    // parent, and that list is inside the signed payload.
+    if let Some(p) = named(
+        statement
+            .get("artifacts")
+            .and_then(|a| a.as_array())
+            .and_then(|a| a.first()),
+    ) {
+        return p;
+    }
+    SignedParent::None
+}
+
 /// Convenience: true iff every check in the list is Pass or Warn.
 pub fn checks_ok(checks: &[VerifyCheck]) -> bool {
     checks.iter().all(|c| c.status != VerifyStatus::Fail)
