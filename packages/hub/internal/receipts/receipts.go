@@ -186,7 +186,7 @@ func (h *Handlers) PutReceipt(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	receiptURL := publicurl.Receipt(r, pathSessionID)
+	receiptURL := publicurl.Receipt(pathSessionID)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{

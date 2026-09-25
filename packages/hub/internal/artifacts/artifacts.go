@@ -166,7 +166,7 @@ func (h *Handlers) Push(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hubURL := publicurl.Artifact(r, derived.ArtifactID)
+	hubURL := publicurl.Artifact(derived.ArtifactID)
 
 	// Indexed fields come from the envelope, not the request. See
 	// contentaddress.DeriveIndexable: an index built from caller-supplied

@@ -7,19 +7,20 @@
 // where it never was (0.31.9 full test, CLI-12). The rule now, in order:
 //
 //  1. TREESHIP_PUBLIC_URL, when set: the base of the site that renders
-//     pages for this hub's data. A self-hoster with a site sets it.
-//  2. Otherwise, when the request reached a treeship.dev host (checked on
-//     X-Forwarded-Host first, because the public hub sits behind a proxy,
-//     then Host): today's pages on https://treeship.dev. Production needs
-//     no configuration and keeps its behaviour.
-//  3. Otherwise this hub has no page site, so the honest URL is the hub's
-//     own API URL for the object, built from the request's origin. That
-//     URL works: `treeship verify <origin>/v1/receipt/<id>` fetches it.
+//     pages for this hub's data (https://treeship.dev for the public hub).
+//  2. TREESHIP_HUB_PUBLIC_URL, when set: this hub's own public origin. A
+//     self-hosted hub with no page site returns its own API URLs
+//     (<origin>/v1/receipt/<id>, <origin>/v1/artifacts/<id>), which
+//     `treeship verify <url>` accepts.
+//  3. Otherwise today's pages on https://treeship.dev. Production needs no
+//     configuration and keeps its behaviour.
+//
+// Nothing here reads Host or X-Forwarded-Host. These URLs are stored with
+// the artifact and served to every later reader, so a request header must
+// not be able to choose them.
 package publicurl
 
 import (
-	"net"
-	"net/http"
 	"os"
 	"strings"
 )
@@ -27,74 +28,44 @@ import (
 // EnvPublicURL names the site that renders pages for this hub's data.
 const EnvPublicURL = "TREESHIP_PUBLIC_URL"
 
+// EnvHubPublicURL names this hub's own public origin, for a hub with no
+// page site.
+const EnvHubPublicURL = "TREESHIP_HUB_PUBLIC_URL"
+
 const treeshipPages = "https://treeship.dev"
 
 // Artifact is the URL returned as `hub_url` for a pushed artifact.
-func Artifact(r *http.Request, artifactID string) string {
-	if base := PageBase(r); base != "" {
+func Artifact(artifactID string) string {
+	if base := pageBase(); base != "" {
 		return base + "/verify/" + artifactID
 	}
-	return Origin(r) + "/v1/artifacts/" + artifactID
+	return hubOrigin() + "/v1/artifacts/" + artifactID
 }
 
 // Receipt is the URL returned as `receipt_url` for an uploaded receipt.
-func Receipt(r *http.Request, sessionID string) string {
-	if base := PageBase(r); base != "" {
+func Receipt(sessionID string) string {
+	if base := pageBase(); base != "" {
 		return base + "/receipt/" + sessionID
 	}
-	return Origin(r) + "/v1/receipt/" + sessionID
+	return hubOrigin() + "/v1/receipt/" + sessionID
 }
 
-// PageBase is the base URL of the site that renders pages for this hub's
-// data, or "" when there is none.
-func PageBase(r *http.Request) string {
-	if v := strings.TrimSpace(os.Getenv(EnvPublicURL)); v != "" {
-		return strings.TrimRight(v, "/")
+// pageBase is the base of the site that renders pages for this hub's data,
+// or "" when the hub is configured to answer with its own API URLs.
+func pageBase() string {
+	if v := env(EnvPublicURL); v != "" {
+		return v
 	}
-	if isTreeshipHost(effectiveHost(r)) {
-		return treeshipPages
+	if env(EnvHubPublicURL) != "" {
+		return ""
 	}
-	return ""
+	return treeshipPages
 }
 
-// Origin is scheme://host as the client addressed this hub, honouring the
-// proxy headers Railway and similar front doors set.
-func Origin(r *http.Request) string {
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	if p := firstForwarded(r.Header.Get("X-Forwarded-Proto")); p != "" {
-		scheme = p
-	}
-	host := firstForwarded(r.Header.Get("X-Forwarded-Host"))
-	if host == "" {
-		host = r.Host
-	}
-	return scheme + "://" + host
+func hubOrigin() string {
+	return env(EnvHubPublicURL)
 }
 
-// effectiveHost is the host the client addressed, without a port.
-func effectiveHost(r *http.Request) string {
-	host := firstForwarded(r.Header.Get("X-Forwarded-Host"))
-	if host == "" {
-		host = r.Host
-	}
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		return strings.ToLower(h)
-	}
-	return strings.ToLower(host)
-}
-
-func isTreeshipHost(host string) bool {
-	return host == "treeship.dev" || strings.HasSuffix(host, ".treeship.dev")
-}
-
-// A forwarding header may carry a comma-separated chain; the first entry
-// is the one the client used.
-func firstForwarded(v string) string {
-	if i := strings.IndexByte(v, ','); i >= 0 {
-		v = v[:i]
-	}
-	return strings.TrimSpace(v)
+func env(name string) string {
+	return strings.TrimRight(strings.TrimSpace(os.Getenv(name)), "/")
 }

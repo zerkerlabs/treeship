@@ -123,7 +123,7 @@ func (h *Handlers) ListSessions(w http.ResponseWriter, r *http.Request) {
 			ActionCount: s.ActionCount,
 		}
 		if s.ReceiptJSON != nil && *s.ReceiptJSON != "" {
-			entry.ReceiptURL = publicurl.Receipt(r, s.SessionID)
+			entry.ReceiptURL = publicurl.Receipt(s.SessionID)
 		}
 		out = append(out, entry)
 	}

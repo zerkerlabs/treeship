@@ -175,3 +175,33 @@ fn push_derives_the_url_from_the_attached_hub_when_the_hub_returns_none() {
     let req = seen.recv().unwrap();
     assert!(req.starts_with("POST /v1/artifacts "), "{req}");
 }
+
+#[test]
+fn push_corrects_a_self_hosted_hub_that_still_answers_with_treeship_dev() {
+    let ship = Ship::init();
+    let out = ship.run(&[
+        "attest",
+        "action",
+        "--actor",
+        "agent://a",
+        "--action",
+        "x",
+        "--format",
+        "json",
+    ]);
+    assert!(out.status.success());
+    let attested: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let id = attested["id"].as_str().unwrap().to_string();
+
+    // An unconfigured 0.31.9-era hub: hard-coded treeship.dev in its reply.
+    let (endpoint, _seen) = serve_once(|_| {
+        format!(r#"{{"artifact_id":"{id}","hub_url":"https://treeship.dev/verify/{id}"}}"#)
+    });
+    ship.attach_fake_hub(&endpoint);
+    let v = push_json(&ship);
+    assert_eq!(
+        v["url"].as_str(),
+        Some(format!("{endpoint}/v1/artifacts/{id}").as_str()),
+        "{v}"
+    );
+}

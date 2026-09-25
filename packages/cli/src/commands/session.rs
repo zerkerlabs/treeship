@@ -3072,18 +3072,14 @@ pub fn report(
         }
     };
 
-    // A hub that returns no URL: the receipt is where we just put it, so
-    // the URL is the hub's own, never treeship.dev (which only holds what
-    // was pushed to the public hub).
-    let receipt_url = resp_json["receipt_url"]
-        .as_str()
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| {
-            format!(
-                "{}/v1/receipt/{resolved_id}",
-                hub_entry.endpoint.trim_end_matches('/')
-            )
-        });
+    // The receipt is where we just put it: a hub that returns no URL, or a
+    // self-hosted hub that still answers with a treeship.dev address, gets
+    // its own API URL (see hub::share_url).
+    let receipt_url = super::hub::share_url(
+        &hub_entry.endpoint,
+        resp_json["receipt_url"].as_str(),
+        &format!("/v1/receipt/{resolved_id}"),
+    );
     let agents = resp_json["agents"].as_u64().unwrap_or(0);
     let events = resp_json["events"].as_u64().unwrap_or(0);
 
