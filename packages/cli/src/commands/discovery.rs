@@ -422,7 +422,7 @@ fn detect_ninja_dev(agents: &mut Vec<DiscoveredAgent>, env: &Env, home: &Path) {
         },
         evidence,
         note: Some(
-            "Local NinjaTech IDE surface. For remote SuperNinja VMs, use `treeship agent invite`."
+            "Local NinjaTech IDE surface. Remote SuperNinja VMs cannot be attached yet."
                 .to_string(),
         ),
     });
@@ -441,7 +441,7 @@ fn hint_superninja(agents: &mut Vec<DiscoveredAgent>) {
         coverage:         CoverageLevel::Basic,
         confidence:       Confidence::Low,
         evidence:         Vec::new(),
-        note:             Some("SuperNinja runs on a remote VM and is not auto-discoverable locally. Use `treeship agent invite --kind ninjatech-superninja` to attach.".to_string()),
+        note:             Some("SuperNinja runs on a remote VM and is not auto-discoverable locally. Attaching it is not available yet.".to_string()),
     });
 }
 
@@ -466,7 +466,7 @@ fn detect_generic_mcp(agents: &mut Vec<DiscoveredAgent>, home: &Path) {
         coverage:         CoverageLevel::Medium,
         confidence:       Confidence::Low,
         evidence,
-        note:             Some("Generic MCP client config detected. Use `treeship agent add --kind generic-mcp` to register.".to_string()),
+        note:             Some("Generic MCP client config detected. Point it at the `@treeship/mcp` server (see `treeship add`).".to_string()),
     });
 }
 

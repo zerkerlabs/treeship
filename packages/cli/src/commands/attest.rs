@@ -1199,7 +1199,7 @@ pub fn handoff(args: HandoffArgs, printer: &Printer) -> Result<(), Box<dyn std::
             let Some(pkg) = crate::commands::session::find_package_for_session(session_id) else {
                 return Err(format!(
                     "no sealed session package for {session_id} under this workspace's .treeship/sessions/; \
-                     close it first (treeship session close) or check the id (treeship session list)"
+                     close it first (treeship session close) or check the id (treeship session status)"
                 )
                 .into());
             };

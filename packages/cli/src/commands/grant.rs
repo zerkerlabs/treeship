@@ -608,33 +608,6 @@ fn format_rfc3339(secs: u64) -> String {
     format!("{y:04}-{m:02}-{d:02}T{h:02}:{mi:02}:{s:02}Z")
 }
 
-/// Withdraw a grant by minting a signed `grant_revocation.v1` receipt.
-///
-/// # Why a receipt and not a flag on the grant
-///
-/// A grant is content-addressed: its id is derived from its bytes. Editing it
-/// to add `revoked: true` would change the id, so every mandate naming the old
-/// id would stop resolving -- the grant would not be revoked, it would vanish,
-/// and receipts already signed under it would become unverifiable rather than
-/// correctly-authorized-then-withdrawn.
-///
-/// So revocation is a separate artifact that points at the grant, exactly as
-/// capability-card revocation already works.
-///
-/// # Who may revoke
-///
-/// Only the grantor. The receipt is signed with the ship's default key and
-/// records the grantor it claims to be; `LocalRevocationSource` honors it only
-/// when those match. A revocation anyone could mint is a denial of service
-/// against every grant whose id they know, and grant ids appear in published
-/// receipts.
-///
-/// # What revocation does not do
-///
-/// It does not invalidate what already happened. `verify_mandate` compares the
-/// revocation instant against the action's `signed_at`, so actions signed
-/// before this moment stay authorized. Withdrawing authority and unmaking the
-/// past are different operations, and only the first is available.
 /// The id of a grant_revocation.v1 receipt this store already holds for
 /// `grant_id`, if any.
 fn existing_revocation(ctx: &ctx::Ctx, grant_id: &str) -> Option<String> {
@@ -662,6 +635,33 @@ fn existing_revocation(ctx: &ctx::Ctx, grant_id: &str) -> Option<String> {
     None
 }
 
+/// Withdraw a grant by minting a signed `grant_revocation.v1` receipt.
+///
+/// # Why a receipt and not a flag on the grant
+///
+/// A grant is content-addressed: its id is derived from its bytes. Editing it
+/// to add `revoked: true` would change the id, so every mandate naming the old
+/// id would stop resolving -- the grant would not be revoked, it would vanish,
+/// and receipts already signed under it would become unverifiable rather than
+/// correctly-authorized-then-withdrawn.
+///
+/// So revocation is a separate artifact that points at the grant, exactly as
+/// capability-card revocation already works.
+///
+/// # Who may revoke
+///
+/// Only the grantor. The receipt is signed with the ship's default key and
+/// records the grantor it claims to be; `LocalRevocationSource` honors it only
+/// when those match. A revocation anyone could mint is a denial of service
+/// against every grant whose id they know, and grant ids appear in published
+/// receipts.
+///
+/// # What revocation does not do
+///
+/// It does not invalidate what already happened. `verify_mandate` compares the
+/// revocation instant against the action's `signed_at`, so actions signed
+/// before this moment stay authorized. Withdrawing authority and unmaking the
+/// past are different operations, and only the first is available.
 pub fn revoke(
     id: &str,
     reason: Option<&str>,

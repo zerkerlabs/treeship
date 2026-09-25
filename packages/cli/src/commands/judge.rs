@@ -86,11 +86,6 @@ fn parse_contract(raw: &str) -> Result<(String, Option<String>), String> {
     }
 }
 
-/// `treeship judge --resolve <judgement> --by human://alice --decision allow`:
-/// the human label, as its own signed artifact chained onto the session and
-/// naming the judgement it resolves. A field a machine fills in would be the
-/// self-report Treeship argues against; a receipt signed under the decider's
-/// URI is a claim the decider made.
 /// The resolution this store already holds for a judgement: its id, who
 /// decided, and what.
 fn existing_resolution(ctx: &ctx::Ctx, judgement_id: &str) -> Option<(String, String, String)> {
@@ -126,6 +121,11 @@ fn existing_resolution(ctx: &ctx::Ctx, judgement_id: &str) -> Option<(String, St
     None
 }
 
+/// `treeship judge --resolve <judgement> --by human://alice --decision allow`:
+/// the human label, as its own signed artifact chained onto the session and
+/// naming the judgement it resolves. A field a machine fills in would be the
+/// self-report Treeship argues against; a receipt signed under the decider's
+/// URI is a claim the decider made.
 fn resolve(
     ctx: &ctx::Ctx,
     args: &JudgeArgs,

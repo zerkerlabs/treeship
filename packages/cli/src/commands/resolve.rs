@@ -244,13 +244,13 @@ pub fn resolve(
     // The headline is the verdict, never a green line above a red one.
     match &revocation {
         Some((reason, who)) => {
-            printer.warn("agent resolved: card REVOKED — do not honor", &fields);
-            printer.warn(
+            printer.failure("agent resolved: card REVOKED — do not honor", &fields);
+            printer.failure(
                 "revoked",
                 &[("by", who.as_str()), ("reason", reason.as_str())],
             );
         }
-        None if hostile => printer.warn("agent resolved: NOT OK", &fields),
+        None if hostile => printer.failure("agent resolved: NOT OK", &fields),
         None => printer.success("agent resolved", &fields),
     }
     printer.blank();
@@ -502,13 +502,13 @@ fn resolve_remote(hub: &str, agent: &str, trust: &TrustRootStore, printer: &Prin
     ];
     match &revocation {
         Some(reason) => {
-            printer.warn(
+            printer.failure(
                 "agent resolved (remote): card REVOKED — do not honor",
                 &fields,
             );
-            printer.warn("revoked", &[("reason", reason.as_str())]);
+            printer.failure("revoked", &[("reason", reason.as_str())]);
         }
-        None if hostile => printer.warn("agent resolved (remote): NOT OK", &fields),
+        None if hostile => printer.failure("agent resolved (remote): NOT OK", &fields),
         None => printer.success("agent resolved (remote)", &fields),
     }
     printer.blank();
