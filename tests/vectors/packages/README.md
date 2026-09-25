@@ -40,14 +40,18 @@ input the verifiers have to handle in the field:
 |---|---|---|
 | `honest/basic`, `honest/approval`, `tampered/*` | treeship 0.31.9 debug build | zerkerlabs/treeship `df93fa09` (main, 2026-09-25) |
 | `honest/legacy-0.24` | treeship 0.24.0 release build | a local 0.24.0 build; packages before 0.31.2 carry no envelopes |
+| `honest/endorse-non-latest`, `tampered/endorsement-parent-edited` | treeship 0.31.9 + W1-1 debug build | branch `fix/W1-1` (endorsements sign `parentId`) |
+| `honest/legacy-endorsement-0.31.9` | treeship 0.31.9 release binary (installed CLI) | the published 0.31.9 release; its endorsement signs no parent |
 
 Each vector is signed by a throwaway key generated in a temp `HOME` by
 `generate.sh`. The keys were discarded; nothing here is a production key.
 Regenerating is not byte-identical: keys and timestamps are fresh each run,
 so regenerate only to add or change a vector and review the whole diff.
-`honest/legacy-0.24` is only rebuilt when a 0.24.0 binary is passed as the
-second argument (build tag `v0.24.0` with `cargo build --release -p
-treeship-cli`); without one, `generate.sh` leaves the committed vector alone.
+`honest/legacy-0.24` is only rebuilt when a 0.24.0 binary is given as
+`LEGACY_024_BIN` (build tag `v0.24.0` with `cargo build --release -p
+treeship-cli`), and `honest/legacy-endorsement-0.31.9` only when
+`RELEASE_0319_BIN` names a 0.31.9 binary; without them `generate.sh` leaves
+the committed vectors alone. Pass vector names to rebuild only those.
 `preview.html` is removed from every vector (optional, ~150 KB, unread by any
 verifier).
 

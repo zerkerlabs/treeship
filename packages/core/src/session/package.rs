@@ -13,6 +13,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::statements::ApprovalStatement;
+use crate::verify::{signed_parent, SignedParent};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -1345,7 +1346,8 @@ fn verify_sealed_envelopes(
         )),
     }
 
-    let mut parents: Vec<(String, Option<String>)> = Vec::new();
+    // None: the payload could not be read at all.
+    let mut parents: Vec<(String, Option<SignedParent>)> = Vec::new();
     let mut signers: BTreeSet<String> = BTreeSet::new();
     let mut ok_count = 0usize;
     for entry in &receipt.artifacts {
@@ -1426,11 +1428,7 @@ fn verify_sealed_envelopes(
             .payload_bytes()
             .ok()
             .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
-            .and_then(|v| {
-                v.get("parentId")
-                    .and_then(|p| p.as_str())
-                    .map(str::to_string)
-            });
+            .map(|v| signed_parent(&v));
         parents.push((id.clone(), parent));
     }
 
@@ -1444,28 +1442,44 @@ fn verify_sealed_envelopes(
         .filter(|(_, a)| !a.unchained)
         .collect();
     let mut broken: Vec<String> = Vec::new();
+    let mut legacy: Vec<&str> = Vec::new();
     for w in chained.windows(2) {
-        let (i_prev, prev) = w[0];
-        let (i_cur, cur) = w[1];
-        let _ = (i_prev, i_cur);
-        let signed_parent = parents
+        let (_, prev) = w[0];
+        let (_, cur) = w[1];
+        let parent = parents
             .iter()
             .find(|(id, _)| *id == cur.artifact_id)
             .and_then(|(_, p)| p.clone());
-        match signed_parent {
-            Some(p) if p == prev.artifact_id => {}
-            Some(p) => broken.push(format!(
+        match parent {
+            Some(SignedParent::Named(p)) if p == prev.artifact_id => {}
+            Some(SignedParent::Named(p)) => broken.push(format!(
                 "{} names parent {} but follows {}",
                 cur.artifact_id, p, prev.artifact_id
             )),
-            None => broken.push(format!("{} has no readable parentId", cur.artifact_id)),
+            // An endorsement from 0.31.9 or earlier signs no parent. Its
+            // place in the chain is the producer's storage claim: accepted
+            // with a warning, which --strict promotes (CLI-1).
+            Some(SignedParent::LegacyEndorsement) => legacy.push(cur.artifact_id.as_str()),
+            Some(SignedParent::None) | None => {
+                broken.push(format!("{} has no readable parentId", cur.artifact_id))
+            }
         }
     }
     if chained.len() >= 2 {
-        if broken.is_empty() {
-            checks.push(VerifyCheck::pass("chain_linkage", &format!("{} chained artifacts each name the previous one as parent, inside the signature", chained.len())));
-        } else {
+        if !broken.is_empty() {
             checks.push(VerifyCheck::fail("chain_linkage", &broken.join("; ")));
+        } else if !legacy.is_empty() {
+            checks.push(VerifyCheck::warn(
+                "chain_linkage",
+                &format!(
+                    "{} chained artifacts; every signed parent matches, but {} endorsement(s) made by 0.31.9 or earlier sign no parent, so their place in the chain is the producer's claim only: {}",
+                    chained.len(),
+                    legacy.len(),
+                    legacy.join(", ")
+                ),
+            ));
+        } else {
+            checks.push(VerifyCheck::pass("chain_linkage", &format!("{} chained artifacts each name the previous one as parent, inside the signature", chained.len())));
         }
     }
     let unchained: Vec<&str> = receipt

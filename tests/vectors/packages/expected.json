@@ -1,12 +1,6 @@
 {
   "_about": "T2 package vectors. Each entry is a frozen .treeship package under this directory and the verdict each verifier must give it. cli* columns are the `verdict` field of `treeship package verify --format json` (run.sh); receipt_only is the core-wasm verify_receipt outcome, which @treeship/verify's verifyReceipt returns (packages/core/tests/package_vectors.rs). xfail maps a column to {task, got}: the fix-plan task that makes it right and the exact wrong verdict main gives today; remove the entry in that task's PR. Every new advisory adds a vector.",
   "vectors": {
-    "honest/basic": {
-      "cli": "signatures-pass",
-      "cli_strict": "verified",
-      "cli_structural": "structural-pass",
-      "receipt_only": "structural-pass"
-    },
     "honest/approval": {
       "cli": "signatures-pass",
       "cli_strict": "verified",
@@ -20,11 +14,43 @@
         }
       }
     },
+    "honest/basic": {
+      "cli": "signatures-pass",
+      "cli_strict": "verified",
+      "cli_structural": "structural-pass",
+      "receipt_only": "structural-pass"
+    },
+    "honest/endorse-non-latest": {
+      "_note": "CLI-1: an endorsement of an older artifact, with an action chained onto it; the endorsement signs its parentId (0.31.10+)",
+      "cli": "signatures-pass",
+      "cli_strict": "verified",
+      "cli_structural": "structural-pass",
+      "receipt_only": "structural-pass"
+    },
     "honest/legacy-0.24": {
       "_note": "built by 0.24.0, before packages carried envelopes (0.31.2): default and strict fail by design, --structural is the documented path",
       "cli": "failed",
       "cli_strict": "failed",
       "cli_structural": "structural-pass",
+      "receipt_only": "structural-pass"
+    },
+    "honest/legacy-endorsement-0.31.9": {
+      "_note": "the same flow written by treeship 0.31.9, whose endorsements sign no parent: chain_linkage warns (compatibility path), --strict promotes it to a failure",
+      "cli": "signatures-pass",
+      "cli_strict": "failed",
+      "cli_structural": "structural-pass",
+      "receipt_only": "structural-pass"
+    },
+    "tampered/artifact-payload-edit": {
+      "cli": "failed",
+      "cli_strict": "failed",
+      "cli_structural": "failed",
+      "receipt_only": "structural-pass"
+    },
+    "tampered/drop-artifact-envelope": {
+      "cli": "failed",
+      "cli_strict": "failed",
+      "cli_structural": "failed",
       "receipt_only": "structural-pass"
     },
     "tampered/drop-record-json": {
@@ -53,10 +79,11 @@
         }
       }
     },
-    "tampered/rename-session": {
+    "tampered/endorsement-parent-edited": {
+      "_note": "honest/endorse-non-latest with the endorsement's signed parentId pointed at its subject: a present parentId never falls back to the legacy path",
       "cli": "failed",
       "cli_strict": "failed",
-      "cli_structural": "structural-pass",
+      "cli_structural": "failed",
       "receipt_only": "structural-pass"
     },
     "tampered/narrative-edit": {
@@ -65,16 +92,10 @@
       "cli_structural": "structural-pass",
       "receipt_only": "structural-pass"
     },
-    "tampered/artifact-payload-edit": {
+    "tampered/rename-session": {
       "cli": "failed",
       "cli_strict": "failed",
-      "cli_structural": "failed",
-      "receipt_only": "structural-pass"
-    },
-    "tampered/drop-artifact-envelope": {
-      "cli": "failed",
-      "cli_strict": "failed",
-      "cli_structural": "failed",
+      "cli_structural": "structural-pass",
       "receipt_only": "structural-pass"
     },
     "tampered/swap-package-key": {
