@@ -839,3 +839,127 @@ fn an_unchained_close_fails() {
     assert_eq!(status, VerifyStatus::Fail, "{detail}");
     assert!(detail.contains("unchained"), "{detail}");
 }
+
+fn sign_approval(approver: &Ed25519Signer) -> Signed {
+    let stmt =
+        treeship_core::statements::ApprovalStatement::new("human://reviewer", "0011223344556677");
+    let r = sign(&payload_type("approval"), &stmt, approver).unwrap();
+    Signed {
+        id: r.artifact_id.clone(),
+        digest: r.digest.clone(),
+        envelope: r.envelope.to_json().unwrap(),
+        signed_at: stmt.timestamp.clone(),
+    }
+}
+
+/// start <- a <- close by the producer, plus an unchained approval by
+/// `approver`, sealed with the producer's record.
+fn pack_with_approval(dir: &Path, producer: &Ed25519Signer, approver: &Ed25519Signer) -> PathBuf {
+    let start = sign_start(producer);
+    let a = sign_action(producer, "deploy", Some(&start.id));
+    let close = sign_close(producer, &a.id, None);
+    let appr = sign_approval(approver);
+    let pkg = pack(
+        dir,
+        &[(&start, false), (&a, false), (&appr, true), (&close, false)],
+        &[producer, approver],
+        producer,
+        &close.id,
+    );
+    // pack() lists every entry as an action; the approval's entry names its
+    // own payload type, as session close writes it.
+    let mut receipt: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(pkg.join("receipt.json")).unwrap()).unwrap();
+    for e in receipt["artifacts"].as_array_mut().unwrap() {
+        if e["artifact_id"] == appr.id.as_str() {
+            e["payload_type"] = payload_type("approval").into();
+        }
+    }
+    std::fs::write(
+        pkg.join("receipt.json"),
+        serde_json::to_vec_pretty(&receipt).unwrap(),
+    )
+    .unwrap();
+    // Re-seal: the record binds receipt.json.
+    reseal(&pkg, producer, &close.id);
+    pkg
+}
+
+fn reseal(pkg: &Path, recorder: &Ed25519Signer, close: &str) {
+    use sha2::{Digest, Sha256};
+    use treeship_core::statements::{ReceiptStatement, SubjectRef};
+    let mut stmt = ReceiptStatement::new("system://treeship-session", "session.v1");
+    stmt.subject = Some(SubjectRef {
+        artifact_id: Some(close.to_string()),
+        ..Default::default()
+    });
+    stmt.payload = Some(serde_json::json!({
+        "receipt_digest": format!("sha256:{}", hex::encode(Sha256::digest(std::fs::read(pkg.join("receipt.json")).unwrap()))),
+        "session_id": "ssn_sigtest",
+    }));
+    let r = sign(&payload_type("receipt"), &stmt, recorder).unwrap();
+    std::fs::write(pkg.join("record.json"), r.envelope.to_json().unwrap()).unwrap();
+}
+
+#[test]
+fn an_unpinned_approver_warns_and_caps_the_verdict() {
+    use treeship_core::session::{package_verdict, PackageVerdict};
+    let tmp = tempfile::tempdir().unwrap();
+    let producer = Ed25519Signer::generate("key_producer").unwrap();
+    let approver = Ed25519Signer::generate("key_approver").unwrap();
+    let pkg = pack_with_approval(tmp.path(), &producer, &approver);
+
+    // Producer pinned, approver not: the package is not failed for mixing
+    // signers, but it cannot read `verified`.
+    let checks = verify_package_with_options(&pkg, &pinned_all(&[&producer]), false).unwrap();
+    assert!(fails(&checks).is_empty(), "{:?}", fails(&checks));
+    assert_eq!(
+        find(&checks, "signer_trust").unwrap().status,
+        VerifyStatus::Pass
+    );
+    let row = find(&checks, "approval_signer").unwrap();
+    assert_eq!(row.status, VerifyStatus::Warn, "{}", row.detail);
+    assert!(row.detail.contains("key_approver"), "{}", row.detail);
+    assert_eq!(
+        package_verdict(&checks, false),
+        PackageVerdict::SignaturesPass
+    );
+
+    // Approver pinned too: verified.
+    let checks =
+        verify_package_with_options(&pkg, &pinned_all(&[&producer, &approver]), false).unwrap();
+    assert_eq!(
+        find(&checks, "approval_signer").unwrap().status,
+        VerifyStatus::Pass
+    );
+    assert_eq!(package_verdict(&checks, false), PackageVerdict::Verified);
+}
+
+#[test]
+fn a_bad_approval_signature_fails_the_package() {
+    let tmp = tempfile::tempdir().unwrap();
+    let producer = Ed25519Signer::generate("key_producer").unwrap();
+    let approver = Ed25519Signer::generate("key_approver").unwrap();
+    let pkg = pack_with_approval(tmp.path(), &producer, &approver);
+    // Swap the approver's public key in keys.json: the approval no longer
+    // verifies under the key the package names.
+    let other = Ed25519Signer::generate("key_other").unwrap();
+    let mut keys: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(pkg.join("keys.json")).unwrap()).unwrap();
+    keys["keys"]["key_approver"] = format!(
+        "ed25519:{}",
+        URL_SAFE_NO_PAD.encode(other.public_key_bytes())
+    )
+    .into();
+    std::fs::write(pkg.join("keys.json"), serde_json::to_vec(&keys).unwrap()).unwrap();
+    let checks = verify_package_with_options(&pkg, &pinned_all(&[&producer]), false).unwrap();
+    assert!(
+        fails(&checks).iter().any(|f| f.starts_with("signature:")),
+        "{:?}",
+        fails(&checks)
+    );
+    assert!(matches!(
+        treeship_core::session::package_verdict(&checks, false),
+        treeship_core::session::PackageVerdict::Failed(_)
+    ));
+}

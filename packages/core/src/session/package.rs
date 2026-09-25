@@ -616,8 +616,11 @@ pub fn package_verdict(checks: &[VerifyCheck], structural_only: bool) -> Package
     if !missing.is_empty() {
         return PackageVerdict::Failed(format!("not verified: {}", missing.join("; ")));
     }
+    // An approval signed by an approver nobody pinned cannot make the
+    // actions it authorizes `verified`.
+    let approver_ok = status("approval_signer").is_none_or(|s| s == VerifyStatus::Pass);
     match trust {
-        Some(VerifyStatus::Pass) => PackageVerdict::Verified,
+        Some(VerifyStatus::Pass) if approver_ok => PackageVerdict::Verified,
         _ => PackageVerdict::SignaturesPass,
     }
 }
@@ -896,6 +899,7 @@ pub fn verify_package_with_options(
         trust,
         &mut checks,
     );
+    push_approval_signer(pkg_dir, &sealed.approval_signers, trust, &mut checks);
     if body_bound {
         checks.push(VerifyCheck::pass(
             "receipt_body_binding",
@@ -1557,6 +1561,58 @@ fn verify_stapled_anchors(
     checks.push(VerifyCheck::pass("anchoring", &detail));
 }
 
+/// `approval_signer`: the keys that signed sealed approvals. Pinned or this
+/// ship's own: PASS. Otherwise WARN naming the pin (`--strict` fails it, and
+/// [`package_verdict`] caps the verdict at `SignaturesPass`). A bad approval
+/// signature fails its own `signature:` row, as for any artifact.
+fn push_approval_signer(
+    pkg_dir: &Path,
+    approvers: &std::collections::BTreeSet<String>,
+    trust: &crate::trust::TrustRootStore,
+    checks: &mut Vec<VerifyCheck>,
+) {
+    if approvers.is_empty() {
+        return;
+    }
+    let keys = package_verifying_keys(pkg_dir);
+    let unpinned: Vec<&str> = approvers
+        .iter()
+        .map(String::as_str)
+        .filter(|k| {
+            keys.get(*k)
+                .is_none_or(|vk| !SIGNER_KINDS.iter().any(|kind| trust.contains(vk, *kind)))
+        })
+        .collect();
+    if unpinned.is_empty() {
+        checks.push(VerifyCheck::pass(
+            "approval_signer",
+            &format!(
+                "every approval is signed by a pinned key or this ship's own ({})",
+                approvers.iter().cloned().collect::<Vec<_>>().join(", ")
+            ),
+        ));
+        return;
+    }
+    let pins: Vec<String> = unpinned
+        .iter()
+        .filter_map(|k| {
+            let vk = keys.get(*k)?;
+            Some(format!(
+                "treeship trust add {k} {} --kind cert_issuer --yes",
+                crate::trust::encode_ed25519_pubkey(vk)
+            ))
+        })
+        .collect();
+    checks.push(VerifyCheck::warn(
+        "approval_signer",
+        &format!(
+            "approval(s) signed by {} verify, but the approver key is not pinned here: an action consuming the approval is no more authorized than the approver is trusted. Pin it if you trust the approver: {}",
+            unpinned.join(", "),
+            pins.join("; ")
+        ),
+    ));
+}
+
 /// `signer_trust`: are the keys whose signatures verified trusted here?
 ///
 /// A key is trusted when it is pinned (or this ship's own), and
@@ -1678,6 +1734,10 @@ fn push_signer_trust(
 #[derive(Default)]
 struct SealedSet {
     signers: std::collections::BTreeSet<String>,
+    /// Keys whose approval envelopes verified. Judged in their own
+    /// `approval_signer` row, not in the mixed-signer check: an approver is
+    /// often not the producer (a human's key on another ship).
+    approval_signers: std::collections::BTreeSet<String>,
     /// Verified `session.close` actions.
     closes: Vec<SealedClose>,
     /// Verified `session.start` actions.
@@ -1750,6 +1810,7 @@ fn verify_sealed_envelopes(
     let mut signers: BTreeSet<String> = BTreeSet::new();
     let mut closes: Vec<SealedClose> = Vec::new();
     let mut starts: Vec<SealedClose> = Vec::new();
+    let mut approval_signers: BTreeSet<String> = BTreeSet::new();
     for entry in &receipt.artifacts {
         let id = &entry.artifact_id;
         let name = format!("signature:{id}");
@@ -1814,7 +1875,11 @@ fn verify_sealed_envelopes(
                         ),
                     ));
                 } else {
-                    signers.insert(sig.keyid.clone());
+                    if envelope.payload_type == crate::statements::payload_type("approval") {
+                        approval_signers.insert(sig.keyid.clone());
+                    } else {
+                        signers.insert(sig.keyid.clone());
+                    }
                     if envelope.payload_type == crate::statements::payload_type("action") {
                         if let Some(v) = envelope
                             .payload_bytes()
@@ -1914,6 +1979,7 @@ fn verify_sealed_envelopes(
 
     SealedSet {
         signers,
+        approval_signers,
         closes,
         starts,
     }

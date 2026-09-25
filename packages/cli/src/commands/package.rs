@@ -1235,6 +1235,8 @@ pub fn verify(
                 // package without its close record, or an artifact signed
                 // outside the session window is a failure, not a note.
                 || c.name == "chain_completeness"
+                // An approval signed by an approver key nobody pinned.
+                || c.name == "approval_signer"
                 // CLI-1: an endorsement made by 0.31.9 or earlier signs no
                 // parent; chain_linkage warns, and strict cannot count it.
                 || c.name == "chain_linkage"
