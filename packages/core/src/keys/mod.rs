@@ -1971,6 +1971,9 @@ impl Store {
     /// Returns the list of (path, old_mode, new_mode) tuples for paths
     /// that were actually changed, so the caller can report what it did.
     pub fn fix_perms(&self) -> Result<Vec<(PathBuf, u32, u32)>, KeyError> {
+        // Only the unix block below pushes to it; elsewhere it is returned
+        // empty, and restructuring the block would change the no-op path.
+        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut changed: Vec<(PathBuf, u32, u32)> = Vec::new();
         #[cfg(unix)]
         {

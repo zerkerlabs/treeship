@@ -961,12 +961,6 @@ fn process_proof_queue(ts: &std::path::Path, ctx: &crate::ctx::Ctx) {
 // re-added. A future proof-augmented checkpoint, if needed, is a sibling object
 // signed independently, never an in-place mutation.
 
-/// Enqueue a proof job. Called by session close when zk.auto_prove is enabled.
-#[cfg(feature = "zk")]
-pub fn enqueue_proof_job(session_id: &str) -> Result<(), Box<dyn std::error::Error>> {
-    enqueue_proof_job_with_root(session_id, None, None)
-}
-
 /// Enqueue a proof job with the session's root_artifact_id and tip preserved.
 /// The root ID is needed by the daemon to know where the chain starts,
 /// and the tip ID captures the chain head at session close time, since

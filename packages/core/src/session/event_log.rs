@@ -460,6 +460,7 @@ fn open_lock_file(path: &Path) -> Result<std::fs::File, std::io::Error> {
 }
 
 /// Path of the counter sidecar for a given events.jsonl path.
+#[cfg(not(target_family = "wasm"))]
 fn counter_path(events_path: &Path) -> PathBuf {
     events_path.with_extension("jsonl.count")
 }
