@@ -107,6 +107,9 @@ export type VerifyTarget = string | URL | Record<string, unknown>;
  * `/v1/v1/receipt/<id>` and a 404. The rule is shared with the CLI
  * (`receipt_api_url` in verify_external.rs) through
  * `tests/vectors/receipt-urls.json`; change both or neither.
+ *
+ * @internal Exported for the shared-vector test; not part of the package's
+ * supported API.
  */
 export function receiptApiUrl(raw: string): string {
   const refuse = () =>
@@ -115,25 +118,28 @@ export function receiptApiUrl(raw: string): string {
     );
   const schemeEnd = raw.indexOf('://');
   if (schemeEnd < 0) throw refuse();
-  const scheme = raw.slice(0, schemeEnd);
+  const scheme = raw.slice(0, schemeEnd).toLowerCase();
   if (scheme !== 'http' && scheme !== 'https') throw refuse();
   const afterScheme = raw.slice(schemeEnd + 3);
   const slash = afterScheme.indexOf('/');
   const host = slash < 0 ? afterScheme : afterScheme.slice(0, slash);
   const pathAndQuery = slash < 0 ? '' : afterScheme.slice(slash);
-  if (host.length === 0) throw refuse();
+  // Userinfo (`treeship.dev@evil.example`) reads as one host and fetches
+  // another; a pasted receipt link never carries it.
+  if (host.length === 0 || host.includes('@')) throw refuse();
   const noFragment = pathAndQuery.split('#')[0];
   const q = noFragment.indexOf('?');
   const query = q < 0 ? null : noFragment.slice(q + 1);
   const path = (q < 0 ? noFragment : noFragment.slice(0, q)).replace(/\/+$/, '');
 
-  // The id is whatever follows the receipt segment; it must be exactly one
-  // path segment.
+  // The id is whatever follows the receipt segment: exactly one path
+  // segment of id characters, so `..`, `%2F` and friends never reach the
+  // request.
   const idAfter = (marker: string): [number, string] | null => {
     const i = path.indexOf(marker);
     if (i < 0) return null;
     const id = path.slice(i + marker.length);
-    return id.length > 0 && !id.includes('/') ? [i, id] : null;
+    return /^[A-Za-z0-9_-]+$/.test(id) ? [i, id] : null;
   };
 
   let apiPath: string;

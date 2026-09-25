@@ -34,6 +34,10 @@ pub enum ExternalExit {
     VerifyFailed,
     CrossVerifyFailed,
     IoError,
+    /// The target was refused before any request was made (not a receipt
+    /// URL). A usage error, not a network error: a retry loop keyed on 3
+    /// must not spin on it.
+    Refused,
 }
 
 impl ExternalExit {
@@ -43,6 +47,7 @@ impl ExternalExit {
             Self::VerifyFailed => 1,
             Self::CrossVerifyFailed => 2,
             Self::IoError => 3,
+            Self::Refused => 4,
         }
     }
 }
@@ -79,6 +84,10 @@ pub fn run(target: &str, certificate: Option<&str>, printer: &Printer) -> Extern
     let (receipt, package_checks, source_label, exit_for_load) = match target_kind {
         TargetKind::Url => match fetch_receipt_url(target) {
             Ok(receipt) => (Some(receipt), Vec::new(), format!("URL {target}"), None),
+            Err(LoadError::Refused(msg)) => {
+                printer.failure("not a receipt URL", &[("target", target), ("reason", &msg)]);
+                return ExternalExit::Refused;
+            }
             Err(LoadError::Io(msg)) => {
                 printer.failure(
                     "could not fetch receipt",
@@ -235,6 +244,13 @@ pub fn run(target: &str, certificate: Option<&str>, printer: &Printer) -> Extern
 
         let cert = match load_certificate(cert_target) {
             Ok(c) => c,
+            Err(LoadError::Refused(msg)) => {
+                printer.failure(
+                    "not a certificate URL",
+                    &[("certificate", cert_target), ("reason", &msg)],
+                );
+                return ExternalExit::Refused;
+            }
             Err(LoadError::Io(msg)) => {
                 printer.failure(
                     "could not load certificate",
@@ -405,6 +421,8 @@ fn classify_target(target: &str) -> TargetKind {
 enum LoadError {
     Io(String),
     Parse(String),
+    /// Refused before any request: the target names no receipt.
+    Refused(String),
 }
 
 /// The JSON API URL for a receipt URL a person pasted.
@@ -426,6 +444,7 @@ pub fn receipt_api_url(raw: &str) -> Result<String, String> {
     let Some((scheme, after_scheme)) = raw.split_once("://") else {
         return Err(refuse());
     };
+    let scheme = scheme.to_ascii_lowercase();
     if scheme != "http" && scheme != "https" {
         return Err(refuse());
     }
@@ -433,7 +452,9 @@ pub fn receipt_api_url(raw: &str) -> Result<String, String> {
         Some(i) => (&after_scheme[..i], &after_scheme[i..]),
         None => (after_scheme, ""),
     };
-    if host.is_empty() {
+    // Userinfo (`treeship.dev@evil.example`) reads as one host and fetches
+    // another; a pasted receipt link never carries it.
+    if host.is_empty() || host.contains('@') {
         return Err(refuse());
     }
     let path_and_query = path_and_query.split('#').next().unwrap_or("");
@@ -443,12 +464,17 @@ pub fn receipt_api_url(raw: &str) -> Result<String, String> {
     };
     let path = path.trim_end_matches('/');
 
-    // The id is whatever follows the receipt segment; it must be exactly one
-    // path segment.
+    // The id is whatever follows the receipt segment: exactly one path
+    // segment of id characters, so `..`, `%2F` and friends never reach the
+    // request.
     let id_after = |marker: &str| -> Option<(usize, &str)> {
         let i = path.find(marker)?;
         let id = &path[i + marker.len()..];
-        (!id.is_empty() && !id.contains('/')).then_some((i, id))
+        (!id.is_empty()
+            && id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-'))
+        .then_some((i, id))
     };
 
     let api_path = if id_after("/v1/receipt/").is_some() || id_after("/api/receipt/").is_some() {
@@ -469,7 +495,7 @@ pub fn receipt_api_url(raw: &str) -> Result<String, String> {
 
 /// Fetch a receipt JSON from a URL (see `receipt_api_url` for the mapping).
 fn fetch_receipt_url(url: &str) -> Result<SessionReceipt, LoadError> {
-    let api_url = receipt_api_url(url).map_err(LoadError::Io)?;
+    let api_url = receipt_api_url(url).map_err(LoadError::Refused)?;
     let resp = ureq::get(&api_url)
         .set("Accept", "application/json")
         .timeout(std::time::Duration::from_secs(15))
