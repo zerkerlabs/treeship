@@ -570,7 +570,9 @@ impl PackageVerdict {
     }
 }
 
-/// Reduce a package verify's rows to its verdict. Outside `--structural`,
+/// Reduce a package verify's rows to its verdict. `StructuralPass` needs a
+/// passing `merkle_root` row (a sealed set to be the structure of). Outside
+/// `--structural`,
 /// `Verified` and `SignaturesPass` require all of: at least one `signature:`
 /// row PASS, `receipt_binding` PASS, and a `signer_trust` row (PASS for
 /// `Verified`, WARN for `SignaturesPass`). Anything else is `Failed`.
@@ -583,15 +585,20 @@ pub fn package_verdict(checks: &[VerifyCheck], structural_only: bool) -> Package
     if !failed.is_empty() {
         return PackageVerdict::Failed(format!("failed: {}", failed.join(", ")));
     }
-    if structural_only {
-        return PackageVerdict::StructuralPass;
-    }
     let status = |name: &str| {
         checks
             .iter()
             .find(|c| c.name == name)
             .map(|c| c.status.clone())
     };
+    if structural_only {
+        // Structure needs a sealed set to be the structure of: an empty
+        // package proves nothing (the receipt-only verifier fails it too).
+        if status("merkle_root") != Some(VerifyStatus::Pass) {
+            return PackageVerdict::Failed("not verified: the package seals no artifacts".into());
+        }
+        return PackageVerdict::StructuralPass;
+    }
     let mut missing = Vec::new();
     if !checks
         .iter()

@@ -213,35 +213,66 @@ fn package_closed_by_own_key_agent_verifies_on_another_machine() {
         "keys.json does not carry the record signer {record_key}: {keys}"
     );
 
-    // A stranger pins the producer's ship key and verifies strictly.
+    // The agent's key signs the record and none of the sealed artifacts (the
+    // ship key signs start and close). A record like that is byte-for-byte
+    // what a forged record under a key added to keys.json looks like, so a
+    // stranger who pinned only the ship key must not get `verified`: the
+    // agent key has to be pinned too.
     let (ok, out) = producer.run(&["keys", "export", "--format", "json"]);
     assert!(ok, "{out}");
     let export = first_json(&out);
-    let stranger = Ws::new();
-    let roots = serde_json::json!({
-        "version": 1,
-        "roots": [{
-            "key_id": export["key_id"],
-            "public_key": export["public_key"],
-            "kind": "session_host",
-            "label": "producer",
-            "added_at": "2026-09-18T00:00:00Z"
-        }]
+    let ship_root = serde_json::json!({
+        "key_id": export["key_id"],
+        "public_key": export["public_key"],
+        "kind": "session_host",
+        "label": "producer",
+        "added_at": "2026-09-18T00:00:00Z"
     });
-    std::fs::write(
-        stranger.root.join("trust_roots.json"),
-        serde_json::to_vec_pretty(&roots).unwrap(),
-    )
-    .unwrap();
-    let (ok, out) = stranger.run(&[
-        "package",
-        "verify",
-        copy.to_str().unwrap(),
-        "--strict",
-        "--format",
-        "json",
-    ]);
-    assert!(ok, "{out}");
+    let agent_pub = keys["keys"][&record_key].as_str().unwrap().to_string();
+    let verify_with = |roots: Vec<Value>| {
+        let stranger = Ws::new();
+        std::fs::write(
+            stranger.root.join("trust_roots.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({"version": 1, "roots": roots})).unwrap(),
+        )
+        .unwrap();
+        stranger.run(&[
+            "package",
+            "verify",
+            copy.to_str().unwrap(),
+            "--strict",
+            "--format",
+            "json",
+        ])
+    };
+
+    // Only the ship key pinned: fails, and says which key to pin.
+    let (ok, out) = verify_with(vec![ship_root.clone()]);
+    assert!(!ok, "{out}");
     let verdict = first_json(&out);
-    assert_eq!(verdict["verdict"], "verified", "{out}");
+    assert_eq!(verdict["verdict"], "failed", "{out}");
+    let binding = verdict["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "receipt_binding")
+        .unwrap();
+    assert_eq!(binding["status"], "fail", "{out}");
+    let detail = binding["detail"].as_str().unwrap();
+    assert!(
+        detail.contains(&format!("treeship trust add {record_key} {agent_pub}")),
+        "{detail}"
+    );
+
+    // Ship key and agent key pinned: verified.
+    let agent_root = serde_json::json!({
+        "key_id": record_key,
+        "public_key": agent_pub,
+        "kind": "cert_issuer",
+        "label": "producer agent",
+        "added_at": "2026-09-18T00:00:00Z"
+    });
+    let (ok, out) = verify_with(vec![ship_root, agent_root]);
+    assert!(ok, "{out}");
+    assert_eq!(first_json(&out)["verdict"], "verified", "{out}");
 }

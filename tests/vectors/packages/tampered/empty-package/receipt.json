@@ -1,0 +1,130 @@
+{
+  "type": "treeship/session-receipt/v1",
+  "schema_version": "1",
+  "session": {
+    "id": "ssn_5135e2b990c2c583",
+    "name": "FORGED: wire $1M approved",
+    "mode": "auto_workspace",
+    "started_at": "2026-09-25T19:41:13Z",
+    "ended_at": "2026-09-25T19:41:13Z",
+    "status": "completed",
+    "duration_ms": 460,
+    "narrative": {
+      "headline": "basic",
+      "summary": "vector"
+    },
+    "total_tokens_in": 0,
+    "total_tokens_out": 0
+  },
+  "participants": {
+    "root_agent_instance_id": "operator",
+    "total_agents": 1,
+    "spawned_subagents": 0,
+    "handoffs": 0,
+    "max_depth": 0,
+    "hosts": 1,
+    "tool_runtimes": 0
+  },
+  "hosts": [
+    {
+      "host_id": "host_MacBook-Pro-12_local"
+    }
+  ],
+  "tools": [],
+  "agent_graph": {
+    "nodes": [
+      {
+        "agent_id": "agent://vector",
+        "agent_instance_id": "operator",
+        "agent_name": "treeship-cli",
+        "agent_role": "operator",
+        "host_id": "host_MacBook-Pro-12_local",
+        "depth": 0,
+        "tool_calls": 0,
+        "tokens_in": 0,
+        "tokens_out": 0
+      }
+    ],
+    "edges": []
+  },
+  "timeline": [
+    {
+      "sequence_no": 0,
+      "timestamp": "2026-09-25T19:41:13Z",
+      "event_id": "evt_aa34bbd8c39adf0b",
+      "event_type": "session.started",
+      "agent_instance_id": "operator",
+      "agent_name": "treeship-cli",
+      "host_id": "host_MacBook-Pro-12_local",
+      "summary": "Session started"
+    },
+    {
+      "sequence_no": 1,
+      "timestamp": "2026-09-25T19:41:13Z",
+      "event_id": "evt_7b280264a4549a36",
+      "event_type": "session.closed",
+      "agent_instance_id": "operator",
+      "agent_name": "treeship-cli",
+      "host_id": "host_MacBook-Pro-12_local",
+      "summary": "vector"
+    }
+  ],
+  "side_effects": {
+    "files_read": [],
+    "files_written": [],
+    "ports_opened": [],
+    "network_connections": [],
+    "processes": [],
+    "tool_invocations": []
+  },
+  "artifacts": [],
+  "proofs": {
+    "signature_count": 5,
+    "signatures_valid": false,
+    "merkle_root_valid": true,
+    "inclusion_proofs_count": 5,
+    "zk_proofs_present": false
+  },
+  "merkle": {
+    "leaf_count": 0,
+    "root": "mroot_3cce1d49880be4e30410138c569808316118162c9a44ba300f800b0247fb297b",
+    "inclusion_proofs": [],
+    "merkle_version": 2
+  },
+  "render": {
+    "title": "basic",
+    "sections": [
+      {
+        "id": "summary",
+        "label": "Session Summary",
+        "visible": true
+      },
+      {
+        "id": "participants",
+        "label": "Participant Strip",
+        "visible": true
+      },
+      {
+        "id": "agent_graph",
+        "label": "Delegation & Collaboration Graph",
+        "visible": true
+      },
+      {
+        "id": "timeline",
+        "label": "Mission Timeline",
+        "visible": true
+      },
+      {
+        "id": "side_effects",
+        "label": "Side-Effect Ledger",
+        "visible": true
+      },
+      {
+        "id": "proofs",
+        "label": "Proofs Panel",
+        "visible": true
+      }
+    ],
+    "generate_preview": true
+  }
+}

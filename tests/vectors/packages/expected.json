@@ -67,12 +67,27 @@
       "cli_structural": "structural-pass",
       "receipt_only": "structural-pass"
     },
+    "tampered/empty-package": {
+      "_note": "H2 (embargoed): a package that seals no artifacts and carries no close record. 0.31.9 rates it verified by default: nothing failed",
+      "cli": "failed",
+      "cli_strict": "failed",
+      "cli_structural": "failed",
+      "receipt_only": "fail"
+    },
     "tampered/endorsement-parent-edited": {
       "_note": "honest/endorse-non-latest with the endorsement's signed parentId pointed at its subject: a present parentId never falls back to the legacy path",
       "cli": "failed",
       "cli_strict": "failed",
       "cli_structural": "failed",
       "receipt_only": "structural-pass"
+    },
+    "tampered/forged-close-record": {
+      "_note": "H1 (embargoed): honest/basic with receipt.json rewritten, an attacker key added to keys.json, and a fresh session.v1 record signed by it over the new digest. 0.31.9 rates it verified under --strict with the producer pinned",
+      "cli": "failed",
+      "cli_strict": "failed",
+      "cli_structural": "structural-pass",
+      "receipt_only": "structural-pass",
+      "pin_keys_from": "honest/basic"
     },
     "tampered/narrative-edit": {
       "cli": "failed",

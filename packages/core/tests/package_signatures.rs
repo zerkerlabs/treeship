@@ -352,3 +352,148 @@ fn a_package_with_envelopes_but_no_close_record_fails_by_default() {
 fn verify_package_structural_with(pkg: &Path) -> Vec<VerifyCheck> {
     verify_package_with_options(pkg, &TrustRootStore::empty(), true).unwrap()
 }
+
+/// Sign `stmt` as a close record under `signer` and add its key to keys.json.
+fn write_record(
+    pkg: &Path,
+    signer: &Ed25519Signer,
+    stmt: &treeship_core::statements::ReceiptStatement,
+) {
+    let r = sign(&payload_type("receipt"), stmt, signer).unwrap();
+    std::fs::write(pkg.join("record.json"), r.envelope.to_json().unwrap()).unwrap();
+    let mut keys: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(pkg.join("keys.json")).unwrap()).unwrap();
+    keys["keys"][signer.key_id()] = serde_json::Value::String(format!(
+        "ed25519:{}",
+        URL_SAFE_NO_PAD.encode(signer.public_key_bytes())
+    ));
+    std::fs::write(pkg.join("keys.json"), serde_json::to_vec(&keys).unwrap()).unwrap();
+}
+
+fn pinned(signer: &Ed25519Signer) -> TrustRootStore {
+    TrustRootStore::with_roots(vec![TrustRoot {
+        key_id: signer.key_id().into(),
+        public_key: format!(
+            "ed25519:{}",
+            URL_SAFE_NO_PAD.encode(signer.public_key_bytes())
+        ),
+        kind: TrustRootKind::CertIssuer,
+        label: "producer".into(),
+        added_at: "2026-09-25T00:00:00Z".into(),
+    }])
+}
+
+#[test]
+fn a_close_record_forged_under_a_key_added_to_keys_json_fails() {
+    // H1: rewrite receipt.json, add a key to keys.json, sign a fresh record
+    // over the new digest. Every artifact still verifies under the pinned
+    // producer key; the record's key signed nothing and is pinned nowhere.
+    use sha2::{Digest, Sha256};
+    let tmp = tempfile::tempdir().unwrap();
+    let producer = Ed25519Signer::generate("key_t").unwrap();
+    let (pkg, _) = build(tmp.path(), &producer);
+    let mut receipt: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(pkg.join("receipt.json")).unwrap()).unwrap();
+    receipt["session"]["name"] = "EVIL".into();
+    std::fs::write(
+        pkg.join("receipt.json"),
+        serde_json::to_vec_pretty(&receipt).unwrap(),
+    )
+    .unwrap();
+    let attacker = Ed25519Signer::generate("key_attacker").unwrap();
+    let mut stmt =
+        treeship_core::statements::ReceiptStatement::new("system://treeship-session", "session.v1");
+    stmt.payload = Some(serde_json::json!({
+        "receipt_digest": format!("sha256:{}", hex::encode(Sha256::digest(std::fs::read(pkg.join("receipt.json")).unwrap()))),
+        "session_id": "ssn_sigtest",
+    }));
+    write_record(&pkg, &attacker, &stmt);
+    for (trust, strict_label) in [
+        (TrustRootStore::empty(), "unpinned"),
+        (pinned(&producer), "producer pinned"),
+    ] {
+        let checks = verify_package_with_options(&pkg, &trust, false).unwrap();
+        let row = find(&checks, "receipt_binding").unwrap();
+        assert_eq!(
+            row.status,
+            VerifyStatus::Fail,
+            "{strict_label}: {}",
+            row.detail
+        );
+        assert!(row.detail.contains("key_attacker"), "{}", row.detail);
+        assert!(matches!(
+            treeship_core::session::package_verdict(&checks, false),
+            treeship_core::session::PackageVerdict::Failed(_)
+        ));
+    }
+}
+
+#[test]
+fn a_record_that_is_not_a_session_v1_receipt_fails() {
+    use sha2::{Digest, Sha256};
+    let tmp = tempfile::tempdir().unwrap();
+    let producer = Ed25519Signer::generate("key_t").unwrap();
+    let (pkg, _) = build(tmp.path(), &producer);
+    let mut stmt =
+        treeship_core::statements::ReceiptStatement::new("system://treeship-session", "webhook");
+    stmt.payload = Some(serde_json::json!({
+        "receipt_digest": format!("sha256:{}", hex::encode(Sha256::digest(std::fs::read(pkg.join("receipt.json")).unwrap()))),
+        "session_id": "ssn_sigtest",
+    }));
+    write_record(&pkg, &producer, &stmt);
+    let checks = verify_package_with_options(&pkg, &pinned(&producer), false).unwrap();
+    let row = find(&checks, "receipt_binding").unwrap();
+    assert_eq!(row.status, VerifyStatus::Fail, "{}", row.detail);
+    assert!(row.detail.contains("session.v1"), "{}", row.detail);
+}
+
+#[test]
+fn verified_needs_rows_that_passed_not_just_none_that_failed() {
+    // H2: an empty package (no artifacts, no record) produced no FAIL row
+    // on a default verify, and read `verified`.
+    use treeship_core::session::{package_verdict, PackageVerdict};
+    let tmp = tempfile::tempdir().unwrap();
+    let events: Vec<SessionEvent> = vec![];
+    let receipt = ReceiptComposer::compose(&manifest(), &events, vec![]);
+    let pkg = build_package_with_approvals(&receipt, tmp.path(), None)
+        .unwrap()
+        .path;
+    let checks = verify_package_with_options(&pkg, &TrustRootStore::empty(), false).unwrap();
+    assert!(matches!(
+        package_verdict(&checks, false),
+        PackageVerdict::Failed(_)
+    ));
+    let checks = verify_package_with_options(&pkg, &TrustRootStore::empty(), true).unwrap();
+    assert!(matches!(
+        package_verdict(&checks, true),
+        PackageVerdict::Failed(_)
+    ));
+
+    // The rule itself: each positive row is required.
+    let full = vec![
+        VerifyCheck::pass("signature:art_a", "ok"),
+        VerifyCheck::pass("receipt_binding", "ok"),
+        VerifyCheck::pass("signer_trust", "ok"),
+    ];
+    assert_eq!(package_verdict(&full, false), PackageVerdict::Verified);
+    let mut warn_trust = full.clone();
+    warn_trust[2] = VerifyCheck::warn("signer_trust", "unpinned");
+    assert_eq!(
+        package_verdict(&warn_trust, false),
+        PackageVerdict::SignaturesPass
+    );
+    for drop in 0..3 {
+        let mut partial = full.clone();
+        partial.remove(drop);
+        assert!(
+            matches!(package_verdict(&partial, false), PackageVerdict::Failed(_)),
+            "missing row {drop} must not verify"
+        );
+    }
+    let mut unbound = full.clone();
+    unbound[1] = VerifyCheck::warn("receipt_binding", "no record");
+    assert!(matches!(
+        package_verdict(&unbound, false),
+        PackageVerdict::Failed(_)
+    ));
+}

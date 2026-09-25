@@ -73,6 +73,12 @@ for name, exp in sorted(expected.items()):
     keys = {}
     if os.path.exists(os.path.join(pkg, "keys.json")):
         keys = json.load(open(os.path.join(pkg, "keys.json"))).get("keys", {})
+    # cli_strict pins the producer's keys. By default that is every key the
+    # package names; a vector whose keys.json carries an attacker's key lists
+    # the keys a reader would actually have pinned in "pin_keys_from" (a
+    # vector whose keys.json is the producer's).
+    if "pin_keys_from" in exp:
+        keys = json.load(open(os.path.join(here, exp["pin_keys_from"], "keys.json")))["keys"]
     xf = exp.get("xfail", {})
     for mode, args in MODES.items():
         if mode not in exp:
