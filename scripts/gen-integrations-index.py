@@ -43,6 +43,7 @@ CATEGORIES: dict[str, tuple[str, str]] = {
     "rig": ("Frameworks", ""),
     "grok-bot": ("Skills", ""),
     "commerce-agents": ("Frameworks", ""),
+    "typesafe-jev": ("Frameworks", ""),
     "memory-proofs": ("Sibling products", "Other Zerker systems that emit or consume Treeship evidence."),
     "zerker-reason": ("Sibling products", ""),
     "buzz": ("Applied work", "Shipped elsewhere, verifiable here."),
