@@ -25,20 +25,27 @@ pub fn output_format(s: &str) -> Fallible {
     }
 }
 
-/// An actor URI: `scheme://name` (agent://, human://, system://, ship://)
-/// or a DID (`did:key:z6Mk…`), no whitespace, nothing empty.
+/// An actor URI. Any RFC 3986 URI form is fine: `agent://researcher`,
+/// `human://alice`, `agent:test-runner`, `did:key:z6Mk…`. What is refused
+/// is what cannot name anyone: an empty string, whitespace, a bare word
+/// with no scheme, or a scheme with nothing after it.
 pub fn actor_uri(flag: &str, s: &str) -> Fallible {
-    let no_ws = !s.trim().is_empty() && !s.chars().any(char::is_whitespace);
-    let scheme_form = s
-        .split_once("://")
-        .map(|(scheme, rest)| !scheme.is_empty() && !rest.is_empty())
-        .unwrap_or(false);
-    let did_form = s
-        .strip_prefix("did:")
-        .and_then(|r| r.split_once(':'))
-        .map(|(method, id)| !method.is_empty() && !id.is_empty())
-        .unwrap_or(false);
-    if no_ws && (scheme_form || did_form) {
+    let ok = !s.chars().any(char::is_whitespace)
+        && s.split_once(':')
+            .map(|(scheme, rest)| {
+                let rest = rest.strip_prefix("//").unwrap_or(rest);
+                !scheme.is_empty()
+                    && scheme
+                        .bytes()
+                        .next()
+                        .is_some_and(|b| b.is_ascii_alphabetic())
+                    && scheme
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'-' || b == b'.')
+                    && !rest.is_empty()
+            })
+            .unwrap_or(false);
+    if ok {
         Ok(())
     } else {
         Err(exit::usage(format!(
@@ -261,6 +268,15 @@ mod tests {
         assert!(actor_uri("--actor", "agent://a b").is_err());
         assert!(actor_uri("--actor", "alice").is_err());
         assert!(actor_uri("--actor", "did:key").is_err());
+    }
+
+    #[test]
+    fn actor_uri_accepts_any_scheme_form() {
+        // The sdk-ts round trip attests as `agent:test-runner`.
+        assert!(actor_uri("--actor", "agent:test-runner").is_ok());
+        assert!(actor_uri("--actor", "urn:agent:x").is_ok());
+        assert!(actor_uri("--actor", "agent:").is_err());
+        assert!(actor_uri("--actor", "1bad:scheme").is_err());
     }
 
     #[test]
