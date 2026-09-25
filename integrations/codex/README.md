@@ -30,7 +30,7 @@ Open a fresh Codex conversation after installing skills.
 From a project with `treeship init` already run:
 
 ```bash
-curl -fsSL treeship.dev/install | sh
+curl -fsSL https://www.treeship.dev/install | sh
 treeship init
 treeship add codex
 # or: treeship add   # configures every detected agent, including Codex

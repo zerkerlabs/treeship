@@ -95,10 +95,10 @@ For users who don't want to install the plugin but still want Claude Code to use
 ### Install Treeship CLI
 
 ```bash
-curl -fsSL treeship.dev/setup | sh
+curl -fsSL https://www.treeship.dev/setup | sh
 ```
 
-The `/setup` one-liner installs the CLI, runs `treeship init`, and instruments any AI agents it detects.
+The `/setup` one-liner installs the CLI, runs `treeship init`, and asks before instrumenting any AI agents it detects. With no interactive terminal, instrumentation is skipped unless `TREESHIP_SETUP_YES=1` is set.
 </Step>
 <Step>
 ### Drop CLAUDE.md into your project

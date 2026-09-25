@@ -13,7 +13,7 @@ npm install @treeship/a2a
 Requires the `treeship` CLI in PATH:
 
 ```bash
-curl -fsSL treeship.dev/install | sh
+curl -fsSL https://www.treeship.dev/install | sh
 treeship init
 ```
 

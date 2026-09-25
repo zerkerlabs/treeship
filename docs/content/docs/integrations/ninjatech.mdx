@@ -78,7 +78,7 @@ known gaps:
 ```
 
 <Callout type="warn">
-**The full remote attach flow is still not built.** You can register a SuperNinja card so it appears in your inventory, but `verified_captures` stays empty: as of v0.24 neither `treeship agent invite` nor `treeship join --invite` exists, so the harness cannot be enrolled inside the remote VM this way. This was slated for v0.9.9 and did not ship. Run `curl -fsSL treeship.dev/setup | sh` inside the VM and onboard there instead.
+**The full remote attach flow is still not built.** You can register a SuperNinja card so it appears in your inventory, but `verified_captures` stays empty: as of v0.24 neither `treeship agent invite` nor `treeship join --invite` exists, so the harness cannot be enrolled inside the remote VM this way. This was slated for v0.9.9 and did not ship. Run `curl -fsSL https://www.treeship.dev/setup | sh` inside the VM and onboard there instead.
 </Callout>
 
 ### What works today (v0.9.8)
@@ -112,7 +112,7 @@ If your SuperNinja deployment exposes an MCP endpoint, you can point a local `@t
 Neither `treeship agent invite` nor `treeship join` exists in v0.24 — both fail
 with `unrecognized subcommand`. This block was written against a v0.9.9 plan that
 did not ship. It is kept as the intended design; do not copy it. To enroll a
-remote agent today, run `curl -fsSL treeship.dev/setup | sh` inside the VM and
+remote agent today, run `curl -fsSL https://www.treeship.dev/setup | sh` inside the VM and
 onboard it there with [`treeship onboard`](/docs/cli/onboard).
 </Callout>
 
@@ -127,7 +127,7 @@ treeship agent invite \
 
 # Intended output:
 #   Run on the remote VM:
-#     curl -fsSL treeship.dev/setup | sh
+#     curl -fsSL https://www.treeship.dev/setup | sh
 #     treeship join --invite trj_8xK2...
 ```
 

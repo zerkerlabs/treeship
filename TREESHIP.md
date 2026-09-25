@@ -79,10 +79,10 @@ If neither of those runs, nothing leaves the machine. There is no automatic push
 ## Onboarding (humans)
 
 ```sh
-curl -fsSL treeship.dev/setup | sh
+curl -fsSL https://www.treeship.dev/setup | sh
 ```
 
-That installs the CLI, runs `treeship init`, and instruments any agents it detects.
+That installs the CLI, runs `treeship init`, and detects agents on this machine, asking before instrumenting any of them (`treeship add --all`). With no interactive terminal, that confirmation is skipped -- and instrumentation with it -- unless `TREESHIP_SETUP_YES=1` is set.
 
 **Platform support: macOS and Linux only.** The CLI ships for `darwin-arm64`, `darwin-x64`, and `linux-x64`. The setup script is POSIX shell and the `treeship add` command's project-file drops use POSIX path semantics (`std::fs::rename` overwrites on POSIX, which differs from Windows). A native Windows binary is not yet shipped. If you're on Windows today, use WSL.
 

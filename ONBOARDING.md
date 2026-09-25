@@ -27,8 +27,10 @@ The loop: `treeship wrap -- your-command` -> signed artifact -> `treeship hub pu
 ## Quick Start
 
 ```bash
-# Install (recommended): one-liner that installs CLI + runs init + instruments any AI agents it detects
-curl -fsSL treeship.dev/setup | sh
+# Install (recommended): one-liner that installs CLI + runs init, then asks
+# before instrumenting any AI agents it detects (no tty: skipped unless
+# TREESHIP_SETUP_YES=1)
+curl -fsSL https://www.treeship.dev/setup | sh
 
 # Or just the CLI binary:
 npm install -g treeship

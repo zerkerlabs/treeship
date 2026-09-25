@@ -102,6 +102,16 @@ jobs:
         run: python3 scripts/check-hub-openapi.py
       - name: Docs reference only real SDK methods
         run: python3 scripts/check-sdk-docs.py
+      # SUP-2: every advertised one-liner used to read `curl -fsSL
+      # treeship.dev/...`, so curl's first request -- before it ever reaches
+      # the redirect to https -- went out in plaintext. Fixed repo-wide; this
+      # keeps a bare, schemeless treeship.dev curl target from coming back.
+      - name: Advertised one-liners are https
+        run: |
+          if git grep -nE 'curl[^|]*treeship\.dev/(setup|install)\b' -- '*.md' '*.mdx' '*.ts' '*.tsx' '*.mjs' '*.sh' '*.py' | grep -v 'https://'; then
+            echo '::error::found a curl target on treeship.dev with no https:// scheme'
+            exit 1
+          fi
       - name: Feature inventory entries point at real code
         run: python3 scripts/check-feature-inventory.py --strict
 

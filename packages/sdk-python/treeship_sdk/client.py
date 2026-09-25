@@ -288,7 +288,7 @@ class Treeship:
         if line(cli) != line(sdk):
             warnings.warn(
                 f"treeship CLI {cli} at {self._binary!r} and treeship-sdk {sdk} are on different release lines; "
-                f"upgrade the CLI (curl -fsSL treeship.dev/install | sh, or python -m treeship_sdk.bootstrap_cli) "
+                f"upgrade the CLI (curl -fsSL https://www.treeship.dev/install | sh, or python -m treeship_sdk.bootstrap_cli) "
                 f"or pin the SDK to match.",
                 RuntimeWarning,
                 stacklevel=3,
@@ -326,7 +326,7 @@ class Treeship:
         except FileNotFoundError as exc:
             raise TreeshipError(
                 f"treeship CLI not found at {self._binary!r}. "
-                f"Install: curl -fsSL treeship.dev/install | sh\n"
+                f"Install: curl -fsSL https://www.treeship.dev/install | sh\n"
                 f"  Or in a Python program: ts = Treeship(bot_mode=True)  # auto-resolves the CLI\n"
                 f"  Or pass cli_path explicitly: Treeship(cli_path=...)",
                 args,

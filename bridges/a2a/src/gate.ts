@@ -221,7 +221,7 @@ export async function gateInbound(opts: GateInboundOptions): Promise<GateResult>
       return refuse(
         'gate_unavailable',
         'treeship CLI not found on PATH; refusing foreign work because the gate could not run. ' +
-          'Install it (curl -fsSL treeship.dev/install | sh) or set TREESHIP_A2A_UNVERIFIED=1 to accept unverified work.',
+          'Install it (curl -fsSL https://www.treeship.dev/install | sh) or set TREESHIP_A2A_UNVERIFIED=1 to accept unverified work.',
       );
     }
     const text = errText(err);
