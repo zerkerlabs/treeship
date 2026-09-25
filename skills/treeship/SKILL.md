@@ -21,7 +21,7 @@ treeship hub push last           # share verify URL
 
 ## When to Use Treeship
 
-- **Sign agent actions** — tamper-proof receipts of what an agent did
+- **Sign agent actions** — tamper-evident receipts of what an agent did
 - **Verify workflows** — cryptographically verify chains of actions
 - **Audit agent work** — evidence, not chat logs
 - **Gate sensitive actions** — human approval before execution
@@ -52,18 +52,19 @@ npm install @treeship/mcp
 ## Core CLI Commands
 
 ```bash
-treeship wrap -- <command>              # wrap with signed receipt
+treeship wrap -- <command>              # wrap with signed receipt (flags: --actor --action --parent --push)
 treeship verify <id>                    # verify chain
 treeship verify last                    # verify most recent
 treeship session start --name "..."     # start session
 treeship session close                  # close session
 treeship session report                 # upload receipt
 treeship hub push last                  # push to Hub
-treeship approve --approver human://... # create approval
-treeship wrap --approval-nonce <n> --   # use approval
+treeship attest approval --approver human://... --description "..." \
+  --max-uses 1 --expires 2027-01-01T00:00:00Z  # create a scoped approval
+treeship attest action --approval-nonce <n> --actor ... --action ...  # consume an approval
 treeship init                           # keypair generation
-treeship key show                       # show public key
-treeship inspect <id>                   # inspect artifact
+treeship keys list                      # list your signing keys
+treeship keys export                    # export a key's public half, pinnable form
 treeship doctor                         # check workspace
 treeship ui                             # TUI dashboard
 treeship setup                          # guided first-run
@@ -72,9 +73,14 @@ treeship harness list                   # list harnesses
 treeship harness inspect <id>           # inspect harness
 treeship harness smoke <id>             # smoke test
 treeship trust list                     # list pinned issuers (v0.10.3+)
-treeship trust add <key_id> <pubkey> --kind <hub_checkpoint|ship|agent_cert>
+treeship trust add <key_id> <pubkey> --kind <hub_checkpoint|hub_org|cert_issuer|revoker|agent_cert|session_host|transparency_log>
 treeship trust remove <key_id>
 ```
+
+> `approve [N]` / `deny [N]` act on a *pending* approval request by index; they
+> don't create one. To mint an approval, use `treeship attest approval`
+> (above). There is no `key show` or `inspect` command -- `keys list` /
+> `keys export` and `verify` cover those.
 
 > **Note (v0.10.3+):** Hub-checkpoint and agent-certificate verification
 > require the embedded public key to match a configured trust root. After
@@ -95,10 +101,10 @@ treeship trust remove <key_id>
 | Type | Purpose | Method |
 |------|---------|--------|
 | `treeship/action/v1` | Agent did something | `attest_action()` / `wrap` |
-| `treeship/approval/v1` | Someone approved | `attest_approval()` / `approve` |
+| `treeship/approval/v1` | Someone approved | `attest_approval()` |
 | `treeship/handoff/v1` | Work moved between agents | `attest_handoff()` |
 | `treeship/decision/v1` | LLM made a decision | `attest_decision()` |
-| `treeship/use/v1` | Approval consumed | auto (v0.9.9+) |
+| `treeship/approval-use/v1` | Approval consumed | auto, recorded alongside the consuming action |
 
 ## Python SDK
 
@@ -117,11 +123,14 @@ result = ts.attest_action(
 )
 print(result.artifact_id)  # art_...
 
-# Attest approval
+# Attest approval -- a scope is required (allowed_actions/allowed_actors/
+# allowed_subjects/max_uses), or pass unscoped=True to mint a bearer token
+# deliberately. expires_at is RFC 3339, not a duration.
 approval = ts.attest_approval(
     approver="human://alice",
     description="approve deployment",
-    expires_in=3600
+    max_uses=1,
+    expires_at="2027-01-01T00:00:00Z",
 )
 print(approval.artifact_id, approval.nonce)
 
@@ -131,11 +140,11 @@ verified = ts.verify(result.artifact_id)
 # verified.chain: number of linked artifacts
 
 # Push to Hub
-push = ts.dock_push(result.artifact_id)
+push = ts.hub_push(result.artifact_id)
 # push.hub_url: https://treeship.dev/verify/art_xxx
 
-# Wrap command
-result = ts.wrap("npm test", actor="agent://ci")
+# Wrap command (pass argv as a list; a string is split with shlex)
+result = ts.wrap(["npm", "test"], actor="agent://ci")
 
 # Session report
 report = ts.session_report()
@@ -144,29 +153,36 @@ report = ts.session_report()
 
 ## TypeScript SDK
 
+The SDK shells out to the `treeship` CLI binary on PATH; it has no `Ship.init()`,
+no `attestAction`/`attestHandoff` flat methods, and no `createCheckpoint` /
+`createBundle` / `save`. Get an instance with the `ship()` factory and call
+through its four modules (`attest`, `verify`, `hub`, `session`):
+
 ```typescript
-import { Ship } from "@treeship/sdk";
+import { ship } from "@treeship/sdk";
 
-const ship = await Ship.init("./.treeship", "agent://my-agent");
+const s = ship();
 
-const { receipt } = ship.attestAction({
-  actor: { type: "agent", id: "agent://my-agent" },
-  actionType: "tool.call",
-  actionName: "search.web",
-  inputs: JSON.stringify({ query: "AI safety" }),
-  outputs: JSON.stringify({ results: ["paper1"] }),
+const { artifactId } = await s.attest.action({
+  actor: "agent://my-agent",
+  action: "search.web",
+  meta: { query: "AI safety" },
 });
 
-ship.attestHandoff({
-  fromActor: { type: "agent", id: "agent://researcher" },
-  toActor: { type: "agent", id: "agent://writer" },
-  taskCommitment: "complete-report",
+await s.attest.handoff({
+  from: "agent://researcher",
+  to: "agent://writer",
+  artifacts: [artifactId],
 });
 
-ship.createCheckpoint();
-const bundle = ship.createBundle("Workflow");
-await ship.save();
+const verified = await s.verify.verify(artifactId);
+const push = await s.hub.push(artifactId);
 ```
+
+Note: the TypeScript SDK's `attest.approval()` does not yet accept a scope
+(`allowed_actions` / `allowed_actors` / `allowed_subjects` / `max_uses`), so a
+CLI that requires one will refuse it. Use the Python SDK or the CLI directly
+(`treeship attest approval`) for scoped approvals until that's added.
 
 ## Approval-Gated Actions
 
@@ -175,7 +191,8 @@ await ship.save();
 approval = ts.attest_approval(
     approver="human://alice",
     description="approve payment up to $500",
-    expires_in=3600
+    max_uses=1,
+    expires_at="2027-01-01T00:00:00Z",
 )
 
 # 2. Agent uses approval nonce
@@ -264,13 +281,14 @@ kimi mcp add --transport stdio treeship -- npx -y @treeship/mcp
 ## Hub API
 
 - Base: `https://api.treeship.dev/v1/`
-- Auth: DPoP (no API keys)
-- `POST /v1/artifacts` — push artifact
-- `GET /v1/verify/:id` — public verification (no auth)
-- `PUT /v1/receipt/{session_id}` — upload session receipt
-- `GET /v1/merkle/:id` — Merkle inclusion proof
+- Auth: DPoP for writes (no bearer API keys)
+- `GET /v1/verify/:id` is **retired** (returns `410`) -- there is no server-side
+  verdict. Verify locally with `treeship verify` / `package verify` instead.
+- Full, current route list: `docs/content/docs/api/overview.mdx` and the
+  individual pages under `docs/content/docs/api/` (one per route) -- don't
+  hand-copy a route table here, it drifts.
 
-Public URLs: `https://treeship.dev/verify/{artifact_id}`
+Public receipt pages: `https://treeship.dev/receipt/{session_id}`
 
 ## Result Types
 
@@ -288,9 +306,14 @@ All methods raise `TreeshipError` on failure.
 
 | Variable | Purpose |
 |----------|---------|
-| `TREESHIP_API_KEY` | Hub API key (optional) |
-| `TREESHIP_AGENT` | Default agent slug |
-| `TREESHIP_HUB_ID` | Hub workspace ID |
+| `TREESHIP_ACTOR` | Default actor URI, read by the MCP bridge only -- `attest action --actor` etc. are required flags on the CLI itself and exit 2 if omitted |
+| `TREESHIP_PARENT` | Default parent artifact ID when `--parent` is omitted |
+| `TREESHIP_MODEL`, `TREESHIP_TOKENS_IN`, `TREESHIP_TOKENS_OUT` | Model/token metadata attached to attestations |
+| `TREESHIP_APPROVAL_NONCE` | Approval nonce read by the MCP bridge |
+| `TREESHIP_DISABLE` | Disables the MCP bridge's capture |
+
+There is no `TREESHIP_API_KEY`, `TREESHIP_AGENT` or `TREESHIP_HUB_ID` -- nothing
+in the CLI, core, hub or SDKs reads them. Hub auth is DPoP, not an API key.
 
 ## Key Files
 

@@ -5,8 +5,8 @@ Create a Treeship action attestation.
 Usage:
     python attest_action.py --actor "agent://my-agent" --action "tool.call" [--meta '{"key": "val"}']
 
-Environment:
-    TREESHIP_API_KEY - API key for Hub operations (optional)
+Requires the `treeship` CLI on PATH, initialized once with `treeship init`
+(there is no API key -- Hub writes use DPoP, handled for you by hub_push).
 """
 
 import argparse
@@ -51,7 +51,7 @@ def main():
         print(f"artifact_id: {result.artifact_id}")
 
         if args.push:
-            push = ts.dock_push(result.artifact_id)
+            push = ts.hub_push(result.artifact_id)
             print(f"hub_url: {push.hub_url}")
 
     except Exception as e:

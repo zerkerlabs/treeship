@@ -14,13 +14,10 @@ This is the same architecture used by the official Treeship plugin for Claude Co
 
 ## Install
 
-```
-openclaw plugins install @treeship/openclaw-plugin
-```
-
-After install, every OpenClaw session in a project that has a `.treeship/` directory is automatically a Treeship session. New sessions attach the plugin automatically; existing sessions need a restart.
-
-**For local development** against a checked-out copy of this directory:
+`@treeship/openclaw-plugin` is not yet published to npm (`npm view
+@treeship/openclaw-plugin` returns `E404`), so `openclaw plugins install
+@treeship/openclaw-plugin` will fail. Build and install from this checked-out
+copy instead:
 
 ```
 cd integrations/openclaw-plugin
@@ -28,6 +25,14 @@ npm install
 npm run build
 openclaw plugins install --local ./
 ```
+
+Once published, the registry one-liner will be:
+
+```
+openclaw plugins install @treeship/openclaw-plugin
+```
+
+After install, every OpenClaw session in a project that has a `.treeship/` directory is automatically a Treeship session. New sessions attach the plugin automatically; existing sessions need a restart.
 
 The plugin requires the `treeship` CLI binary on your PATH and a `.treeship/` directory in your project (run `treeship init` once per project). Both are zero-noise: missing CLI or missing `.treeship/` makes the plugin a silent no-op so it never blocks OpenClaw from working.
 

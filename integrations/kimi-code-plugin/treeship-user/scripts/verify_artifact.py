@@ -6,8 +6,7 @@ Usage:
     python verify_artifact.py <artifact_id>
     python verify_artifact.py last          # verify most recent
 
-Environment:
-    TREESHIP_API_KEY - API key for Hub verification (optional, local works offline)
+Verification is fully offline; no Hub or network access is required.
 """
 
 import argparse
