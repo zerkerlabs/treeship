@@ -92,6 +92,11 @@ cmd_prepare() {
   echo "  unbuildable for JS."
 
   echo
+  echo "Folding changelog.d/ fragments into CHANGELOG.md..."
+  python3 "$(dirname "$0")/changelog.py" assemble "$VERSION" \
+    || { echo "changelog assemble failed" >&2; exit 1; }
+
+  echo
   echo "Running release version preflight..."
   if ! python3 "$(dirname "$0")/check-release-versions.py" "$VERSION"; then
     echo
@@ -108,7 +113,7 @@ cmd_prepare() {
   echo "Prepare complete. Tag is intentionally NOT created."
   echo
   echo "Next steps:"
-  echo "  1. Review the bump commit, optionally update CHANGELOG.md."
+  echo "  1. Review the bump commit, including the new CHANGELOG.md section folded from changelog.d/."
   echo "  2. Open a PR with this branch."
   echo "  3. After the PR merges and CI is green, ask for explicit tag approval."
   echo "  4. Tag with:"

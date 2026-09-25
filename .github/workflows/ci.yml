@@ -98,6 +98,20 @@ jobs:
       - name: Verdict vocabulary has no synonyms
         run: python3 scripts/check-verdict-vocabulary.py
 
+      # Parallel PRs all prepended to CHANGELOG.md's Unreleased section, so every
+      # merge forced every other open PR to rebase. Entries now go in
+      # changelog.d/ (one file per PR) and the release folds them in.
+      - name: Changelog entries are fragments
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ -n "$BASE_REF" ]; then
+            git fetch --no-tags --depth=1 origin "$BASE_REF"
+            python3 scripts/changelog.py check --base FETCH_HEAD
+          else
+            python3 scripts/changelog.py check
+          fi
+
       - name: Hub OpenAPI matches the router
         run: python3 scripts/check-hub-openapi.py
       - name: Docs reference only real SDK methods

@@ -12,7 +12,7 @@
 // and fenced code blocks, where MDX already treats content literally. `>` is left
 // alone so Markdown blockquotes survive.
 
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -51,7 +51,25 @@ function escapeLine(line) {
   return parts.map((seg, i) => (i % 2 === 1 ? seg : escapeProse(seg))).join("");
 }
 
-const src = await readFile(SRC, "utf8");
+const rawSrc = await readFile(SRC, "utf8");
+
+// Pending changes live in changelog.d/ (one file per PR) until a release folds
+// them into CHANGELOG.md; show them as the Unreleased section here.
+const FRAG_DIR = join(REPO_ROOT, "changelog.d");
+let fragments = [];
+try {
+  const names = (await readdir(FRAG_DIR))
+    .filter((n) => n.endsWith(".md") && n !== "README.md")
+    .sort();
+  fragments = await Promise.all(
+    names.map(async (n) => (await readFile(join(FRAG_DIR, n), "utf8")).replace(/\n+$/, "")),
+  );
+} catch {
+  fragments = [];
+}
+const src = fragments.length
+  ? rawSrc.replace(/^## Unreleased[ \t]*\n/m, (h) => `${h}\n${fragments.join("\n")}\n`)
+  : rawSrc;
 const out = [];
 let inFence = false;
 let droppedTitle = false;
