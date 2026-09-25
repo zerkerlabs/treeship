@@ -321,6 +321,12 @@ jobs:
       - name: Evaluator kit worked example
         run: examples/evaluator-kit/run.sh "$PWD/target/debug/treeship"
 
+      # Jev in the judge slot, against a mock of TypeSafe's documented API:
+      # the adapter's mapping of all three primitives, an unavailable judge
+      # as an error, and the judgements row naming the model.
+      - name: Jev judge adapter against the mock
+        run: examples/judge-adapters/jev/run.sh "$PWD/target/debug/treeship"
+
   clippy:
     name: Clippy (-D warnings)
     runs-on: ubuntu-latest

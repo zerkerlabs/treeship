@@ -1,0 +1,63 @@
+---
+title: "Any judge, one receipt"
+description: "Fast decision models now sit between agents and actions, and none of them leaves a record a stranger can check. Treeship 0.31.6 to 0.31.9 added the judge slot: a contract any judge can speak, a deterministic judge we own, a signed receipt for every answer, and TypeSafe's Jev as the first outside judge behind it."
+date: 2026-09-25
+tags: ["judge", "receipts", "gate", "jev", "reason"]
+readTime: "7 min read"
+category: integration
+systems: ["typesafe-jev", "cli", "claude-code-plugin", "zerker-reason"]
+---
+
+# Any judge, one receipt
+
+A new kind of model is moving into the path between an agent and its next action. It does not generate text. You give it a state and a typed question, and it answers in milliseconds with a probability, a choice from a list, or a level on a rubric. TypeSafe calls theirs Jev and the category System One. Others use a classifier, a small LLM prompted to judge, or a rules engine. The pattern is the same: something looks at what the agent is about to do and says yes, no, or how sure it is, and the agent acts on that.
+
+None of it leaves a record. The judge answers, the caller acts, and afterwards nobody can show what was asked, what came back, what bar it was held to, or that the caller looked at all. If you have read our earlier posts you know what we think of that: an action with no receipt is a claim.
+
+Over 0.31.6 to 0.31.9 we built the judge slot. Here is what shipped, what it proves, and where Jev fits.
+
+## The contract
+
+A judge, to Treeship, is anything that takes state plus typed questions and returns typed answers. Three question types, the same three Jev uses: a `noul` is a yes/no probability, a `choice` is one option from a fixed set, a `score` is a level on an ordered rubric. Each answer carries the typed value, the probability distribution when the judge has one, and the judge's own confidence.
+
+```bash
+treeship judge --tool Bash --input '{"command":"rm -rf /"}' \
+  --judge-url https://judge.internal/v1/judge --threshold 0.9 --attest
+```
+
+`treeship judge` sends that request to whatever is at the URL, holds every answer to the same checks (each question answered in its type, every probability in range), holds the answers to a threshold, and signs each one as a `judgement.v1` receipt chained onto the session. A judge that cannot answer is an error, not an allow. The [judge page](/cli/judge) has the contract in full.
+
+## The judge we own
+
+The first judge in the slot is not a model. `treeship-rules` is a set of deterministic pattern rules over the call: a path outside the workspace, a shell command that destroys or exfiltrates, a host outside the declared network scope, an amount above a bound. It answers 1 or 0, confidence 1, and refuses questions it has no rule for rather than guessing.
+
+We started there on purpose. A rules judge is replayable: a verifier holding the receipt's state can re-run it and get the receipt's answer, which no sampled model can offer. It also means no model is in the decision path unless the operator puts one there, which is the same line we hold in [Reason](/integrations/zerker-reason) and everywhere else.
+
+## The receipt
+
+Every answer becomes one `judgement.v1`, signed by the caller, with the judge's model and kind, whether it is replayable, digests of the state and the questions (committed to, not published), the question by key and type, the typed answer, the threshold and who set it, and the outcome: `acted`, `escalated`, `refused`, `ignored`.
+
+`package verify` reads them back in a `judgements` row: how many, by which judges, and whether any was acted on against its own bar. On 0.31.7 that row flagged the wrong thing. A rules judge answering no to "unsafe?" and the caller proceeding is what the bar asked for, and the row called it a violation. The publish smoke for the release caught it and 0.31.7 shipped with the fix: a yes/no bar cuts both ways, and the row now flags an effect that contradicts the side the answer fell on.
+
+## Where it plugs in
+
+The Claude Code gate asks the judge when `TREESHIP_JUDGE` is set: `1` for the rules judge, a URL for anything else. It runs after the agent's card has allowed a call and never instead of it. An answer over the bar denies with a signed `blocked.v1`; `ask` asks the operator; a judge that cannot answer fails open with a note in the timeline. The Gateway's classifier webhook speaks the same contract now, so one judge serves both.
+
+The answers also travel into Reason. `treeship judge --format json` prints them as Reason premises under a `model-judged` authority class, one per question, with the signed receipt as the fact id. A Reason program admits that class only for the predicates it names, so a judge can deny an action but can never stand in for a human approval or a tool report. That boundary is the whole point of having authority classes.
+
+## Jev in the slot
+
+Jev's API is the same three primitives with different field names and a required `model`. So the adapter is small: it listens on localhost, speaks Treeship's contract on one side and Jev's `POST /v1/systemone` on the other, pins the model version so the receipt names one, and marks every answer `replayable: false`, because that is what a sampled model is. It lives in `examples/judge-adapters/jev`, runs in CI against a mock of TypeSafe's documented request and response shapes, and the [integration page](/integrations/typesafe-jev) walks through it.
+
+Two things to be plain about. This is an independent implementation against TypeSafe's published documentation, not something built with them, and it has not been run against the live service. And a Jev receipt proves what the caller committed to before acting, not that Jev would answer the same way again. TypeSafe's own notes on jev-1.13 describe answers that move with phrasing and negation. The receipt carries that in the signed bytes so a reader cannot mistake it for a replayable check.
+
+## What we did not build
+
+We did not build a Jev of our own, and we did not make the CLI depend on anyone's API key. The public line is the title: any judge, one receipt. Jev is one row in the compatibility table, tested the way we test Mastercard's reference implementation, with a mock and with the claims scoped to what ran.
+
+## Where to go next
+
+- [`treeship judge`](/cli/judge): the contract, the rules, the threshold semantics
+- [TypeSafe Jev](/integrations/typesafe-jev): the adapter and what its receipts say
+- [`judgement.v1`](/reference/predicates#judgementv1): every field of the receipt
+- [Claude Code](/integrations/claude-code#the-gate): the gate's opt-in
