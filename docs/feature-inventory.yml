@@ -25,6 +25,10 @@
 #   docs      list of primary docs page paths (optional)
 #   tests     list of primary test file paths -- one or two, not exhaustive (optional)
 #   notes     one-liner context (optional)
+#   hidden    true if a listed `cli` command is `hide = true` in main.rs (not
+#             in `treeship --help`). "stable" + hidden means: implemented,
+#             tested, deliberately not advertised -- not a documentation gap.
+#             (optional; omit when nothing in `cli` is hidden)
 
 - id: receipts
   name: Receipts (signed artifacts)
@@ -85,6 +89,7 @@
   name: Network scope (declaration, card, gate, receipt judgement)
   section: sessions
   status: stable
+  hidden: true
   cli:
     - treeship declare --network
     - treeship agent register --network
@@ -110,7 +115,8 @@
     reports the `network_scope` row (PASS/WARN, only when declared). The
     Claude Code gate denies a WebFetch to a host outside a card's list with
     a signed blocked.v1. Bash egress is not inspected (wave 3, egress
-    accounting).
+    accounting). `declare` is hidden from `--help`; `agent register` and
+    `attest card`/`package verify` are not.
 
 - id: coverage-receipt
   name: Coverage receipt (coverage.v1 at session close)
@@ -348,6 +354,7 @@
   name: Session packages (.treeship bundles)
   section: core
   status: stable
+  hidden: true
   cli:
     - treeship package inspect
     - treeship package verify
@@ -361,7 +368,7 @@
   tests:
     - packages/core/src/bundle/mod.rs
     - packages/core/src/session/package.rs
-  notes: "Portable signed bundles; package verify authenticates artifacts + Merkle root and warns that narrative fields are unsigned."
+  notes: "Portable signed bundles; package verify authenticates artifacts + Merkle root and warns that narrative fields are unsigned. `package` (inspect/verify) is in --help; `bundle` (create/export/import) is hidden."
 
 - id: offline-verifier
   name: Offline verifier (Rust CLI)
@@ -400,6 +407,7 @@
   name: Merkle checkpoints
   section: core
   status: stable
+  hidden: true
   types:
     - MerkleTree
     - InclusionProof
@@ -422,12 +430,49 @@
   tests:
     - packages/core/src/merkle/checkpoint.rs
     - packages/core/src/merkle/proof.rs
-  notes: "RFC 9162 domain separation (v2). Canonical v3 signing as of v0.10.4 binds merkle_version + zk_proof_digest."
+  notes: "RFC 9162 domain separation (v2). Canonical v3 signing as of v0.10.4 binds merkle_version + zk_proof_digest. `checkpoint` and `merkle` are both hidden from --help; `package verify`'s anchoring row surfaces the same evidence without a hidden command."
+
+- id: rekor-artifact-anchoring
+  name: Per-artifact Rekor anchoring
+  section: core
+  status: stable
+  cli:
+    - treeship hub push
+    - treeship verify --max-unwitnessed
+    - treeship package verify
+  packages:
+    - treeship-core
+  docs:
+    - docs/security/TS-2026-003.md
+    - docs/specs/time-anchoring.md
+  tests:
+    - packages/core/src/verify/rekor.rs
+    - packages/hub/internal/rekor/rekor_test.go
+  notes: "Shipped 0.31.9 (TS-2026-003). The hub submits a dsse entry per pushed artifact to Sigstore's transparency log; verify checks the stapled entry offline (signed entry timestamp, RFC 6962 inclusion proof, signed checkpoint) before counting it as witnessed time. Anchors a single artifact's push time, not the checkpoint root -- see checkpoint-root-anchoring below for what this does not cover."
+
+- id: checkpoint-root-anchoring
+  name: Checkpoint-root anchoring
+  section: core
+  status: roadmap
+  notes: "Hub Merkle checkpoints are signed only by the publisher; the hub never countersigns and holds no independent witness. Anchoring the checkpoint root itself (not just per-artifact pushes) to an external log is designed, not implemented."
+
+- id: rfc3161-timestamps
+  name: RFC 3161 trusted timestamps
+  section: core
+  status: roadmap
+  notes: "Not implemented. Rekor anchoring records witnessed time via Rekor's own signed entry timestamp; a separate RFC 3161 timestamp authority path is designed, not built."
+
+- id: opentimestamps
+  name: OpenTimestamps anchoring
+  section: core
+  status: roadmap
+  notes: "Mentioned in design docs (room-sessions.mdx, threat-model.md) as a future external time anchor. No OpenTimestamps code exists in this repo outside of comments."
 
 - id: merkle-consistency
   name: Merkle consistency proofs (append-only evidence)
   section: core
   status: stable
+  hidden: true
   api:
     - POST /v1/merkle/consistency
   cli:
@@ -438,7 +483,7 @@
     - docs/content/docs/api/merkle-consistency.mdx
   tests:
     - packages/core/src/merkle/tree.rs
-  notes: "Client-computed proofs (verify_consistency) that the tree at to_size extends the tree at from_size; the audit chain walks them offline. Shipped v0.15."
+  notes: "Client-computed proofs (verify_consistency) that the tree at to_size extends the tree at from_size; the audit chain walks them offline. Shipped v0.15. `merkle` is hidden from --help."
 
 - id: hub-checkpoint-consumer-verifier
   name: Hub-checkpoint consumer verifier
@@ -499,6 +544,7 @@
   name: Approval Use Journal
   section: identity
   status: stable
+  hidden: true
   cli:
     - treeship approval uses
     - treeship approval status
@@ -510,7 +556,7 @@
     - docs/content/docs/concepts/approval-authority.mdx
   tests:
     - packages/core/src/statements/approval_use.rs
-  notes: "Workspace-local store of consumed approval grants. Enforces max_uses + idempotency-key replay safety. Approvals are scoped by default (--allowed-* / --max-uses, or explicit --unscoped)."
+  notes: "Workspace-local store of consumed approval grants. Enforces max_uses + idempotency-key replay safety. Approvals are scoped by default (--allowed-* / --max-uses, or explicit --unscoped). The `approval` inspection subcommand is hidden from --help; minting one (`attest approval`) is not."
 
 - id: verifiable-intent
   name: Verifiable Intent (treeship vi)
@@ -553,6 +599,7 @@
   name: Per-agent keys & onboarding
   section: identity
   status: stable
+  hidden: true
   cli:
     - treeship onboard
     - treeship agent register
@@ -563,7 +610,7 @@
     - docs/content/docs/guides/how-it-works.mdx
   tests:
     - packages/core/src/keys/mod.rs
-  notes: "Registered agents sign with their own Ed25519 key, bound by a ship-issued agent_cert.v1 -- the `proven (key-bound)` actor grade. MCP/A2A bridges auto-provision on startup. Shipped v0.13."
+  notes: "Registered agents sign with their own Ed25519 key, bound by a ship-issued agent_cert.v1 -- the `proven (key-bound)` actor grade. MCP/A2A bridges auto-provision on startup. Shipped v0.13. `onboard` is in --help; the `agent` subcommand group (register) is hidden."
 
 - id: agent-identity-certificates
   name: Agent Identity Certificates
@@ -615,6 +662,7 @@
   name: Harness Manager
   section: identity
   status: stable
+  hidden: true
   cli:
     - treeship harness list
     - treeship harness inspect
@@ -624,7 +672,7 @@
     - docs/content/docs/cli/harness.mdx
   tests:
     - packages/cli/src/commands/harnesses.rs
-  notes: "Describes how Treeship attaches to a given agent surface. Smoke promotes a harness to verified."
+  notes: "Describes how Treeship attaches to a given agent surface. Smoke promotes a harness to verified. `harness` is hidden from --help; `treeship setup` drives it internally."
 
 - id: multi-agent-invitations
   name: Multi-agent session invitations
