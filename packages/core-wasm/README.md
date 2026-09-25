@@ -14,28 +14,39 @@ This package powers the verification widget at [treeship.dev/verify](https://tre
 
 ## Installation
 
+The published package is `@treeship/core-wasm` -- there is no `treeship-core-wasm` package on npm.
+
 ```sh
-npm install treeship-core-wasm
+npm install @treeship/core-wasm
 ```
 
 ## Usage
 
+Every export takes and returns JSON *strings* (not typed objects, and not raw
+bytes), and there is no `init()` to await -- neither the bundler nor the
+Node.js build has one.
+
 ```js
-import init, { verify_envelope, verify_zk_proof } from "treeship-core-wasm";
+import { verify_envelope } from "@treeship/core-wasm";
 
-await init();
-
-const result = verify_envelope(envelopeBytes);
+const result = JSON.parse(verify_envelope(envelopeJson, trustedKeysJson));
 console.log(result.valid); // true | false
 ```
 
 ## Building from source
 
-Requires [wasm-pack](https://rustwasm.github.io/wasm-pack/):
+Requires [wasm-pack](https://rustwasm.github.io/wasm-pack/). The published
+package bundles two builds from one `wasm-pack` invocation each -- a bundler
+target for the browser/webpack consumer and a separate Node.js (CommonJS)
+target, not a single `--target web` build:
 
 ```sh
-wasm-pack build packages/core-wasm --target web
+wasm-pack build packages/core-wasm --target bundler --out-dir pkg --release
+wasm-pack build packages/core-wasm --target nodejs --out-dir pkg/node --release
 ```
+
+`build-npm.sh` in this directory does both and assembles the published
+package.json; that's the script the release workflow actually runs.
 
 ## Documentation
 

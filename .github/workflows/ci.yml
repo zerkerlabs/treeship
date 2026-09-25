@@ -367,6 +367,53 @@ jobs:
       - name: Jev judge adapter against the mock
         run: examples/judge-adapters/jev/run.sh "$PWD/target/debug/treeship"
 
+  # T6 of the 0.31.9 full test. `cargo check --features zk` had not compiled
+  # since a refactor dropped an import (CLI-7), and nothing noticed because
+  # CI built only the default feature set while the CLI's own message told
+  # users to rebuild with exactly that flag. Any feature the binary tells a
+  # user to build is checked here, warnings denied, so a feature that rots
+  # fails the PR that rotted it. The wasm32 leg runs the browser verifier's
+  # target with the same -D warnings clippy applies on the host (PKG-3).
+  #
+  # The zk features pull treeship-zk-risc0's host side only; the guest
+  # (riscv32im-risc0-zkvm-elf) is not built here, same as the clippy job.
+  feature-matrix:
+    name: Feature matrix (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: cli --no-default-features
+            run: cargo check -p treeship-cli --no-default-features --all-targets
+          # RISC0_SKIP_BUILD=1: risc0-build would compile the zkVM guest with
+          # the Risc Zero Rust toolchain (`rzup install rust`), which the
+          # runner does not have. A check does not need the guest ELF; the
+          # host-side code, which is where the ctx-import class of bug lives,
+          # is still type-checked with warnings denied.
+          - name: cli --features zk
+            run: cargo check -p treeship-cli --features zk --all-targets
+            skip_guest: "1"
+          - name: cli --features zk-bonsai
+            run: cargo check -p treeship-cli --features zk-bonsai --all-targets
+            skip_guest: "1"
+          - name: core-wasm wasm32-unknown-unknown
+            run: cargo check -p treeship-core-wasm --target wasm32-unknown-unknown
+            targets: wasm32-unknown-unknown
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable (moving branch; pinned to current tip)
+        with:
+          targets: ${{ matrix.targets }}
+      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2
+        with:
+          key: feature-matrix-${{ matrix.name }}
+      - name: ${{ matrix.name }}
+        run: ${{ matrix.run }}
+        env:
+          RUSTFLAGS: -D warnings
+          RISC0_SKIP_BUILD: ${{ matrix.skip_guest }}
+
   clippy:
     name: Clippy (-D warnings)
     runs-on: ubuntu-latest

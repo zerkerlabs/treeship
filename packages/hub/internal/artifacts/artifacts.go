@@ -13,6 +13,7 @@ import (
 	"github.com/zerkerlabs/treeship/packages/hub/internal/contentaddress"
 	"github.com/zerkerlabs/treeship/packages/hub/internal/db"
 	"github.com/zerkerlabs/treeship/packages/hub/internal/dpop"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/publicurl"
 	"github.com/zerkerlabs/treeship/packages/hub/internal/rekor"
 )
 
@@ -165,7 +166,12 @@ func (h *Handlers) Push(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hubURL := "https://treeship.dev/verify/" + derived.ArtifactID
+	// hub_url is computed from configuration at every read, never stored:
+	// a stored value goes stale when configuration changes, and since ids
+	// are content-addressed, whoever pushed a copy first would otherwise
+	// have chosen the URL the real owner gets back. The column stays for
+	// the schema; it holds "".
+	hubURL := publicurl.Artifact(derived.ArtifactID)
 
 	// Indexed fields come from the envelope, not the request. See
 	// contentaddress.DeriveIndexable: an index built from caller-supplied
@@ -181,7 +187,7 @@ func (h *Handlers) Push(w http.ResponseWriter, r *http.Request) {
 		Digest:       req.Digest,
 		SignedAt:     signedAt,
 		ParentID:     req.ParentID,
-		HubURL:       hubURL,
+		HubURL:       "",
 		DockID:       &dockID,
 	}
 
@@ -230,7 +236,7 @@ func (h *Handlers) Push(w http.ResponseWriter, r *http.Request) {
 		// is how an operator backfills.
 		resp := map[string]any{
 			"artifact_id": existing.ArtifactID,
-			"hub_url":     existing.HubURL,
+			"hub_url":     publicurl.Artifact(existing.ArtifactID),
 			"duplicate":   true,
 		}
 		if existing.RekorEntry != nil && *existing.RekorEntry != "" {
@@ -322,7 +328,7 @@ func (h *Handlers) Workspace(w http.ResponseWriter, r *http.Request) {
 			Digest:      a.Digest,
 			SignedAt:    a.SignedAt,
 			ParentID:    a.ParentID,
-			HubURL:      a.HubURL,
+			HubURL:      publicurl.Artifact(a.ArtifactID),
 			RekorIndex:  a.RekorIndex,
 		}
 	}
@@ -362,7 +368,7 @@ func (h *Handlers) Pull(w http.ResponseWriter, r *http.Request) {
 		"digest":        artifact.Digest,
 		"signed_at":     artifact.SignedAt,
 		"parent_id":     artifact.ParentID,
-		"hub_url":       artifact.HubURL,
+		"hub_url":       publicurl.Artifact(artifact.ArtifactID),
 		"rekor_index":   artifact.RekorIndex,
 		"dock_id":       artifact.DockID,
 	}

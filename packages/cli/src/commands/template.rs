@@ -338,7 +338,7 @@ pub fn save(name: Option<String>, printer: &Printer) -> Result<(), Box<dyn std::
             let _ = io::stdin().read_line(&mut line);
             let trimmed = line.trim().to_string();
             if trimmed.is_empty() {
-                return Err("template name is required".into());
+                return Err(crate::exit::usage("template name is required"));
             }
             trimmed
         }

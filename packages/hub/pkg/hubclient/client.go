@@ -148,14 +148,43 @@ func (c *Client) PutReceipt(ctx context.Context, sessionID string, receiptJSON [
 		return "", err
 	}
 	var out struct {
-		URL string `json:"url"`
+		ReceiptURL string `json:"receipt_url"`
+		URL        string `json:"url"`
 	}
-	if err := json.Unmarshal(body, &out); err == nil && out.URL != "" {
-		return out.URL, nil
+	if err := json.Unmarshal(body, &out); err == nil {
+		if out.ReceiptURL != "" {
+			return out.ReceiptURL, nil
+		}
+		if out.URL != "" {
+			return out.URL, nil
+		}
 	}
-	// The Hub's public receipt URL is derivable, so a response shape change
-	// degrades to a correct URL rather than an error.
-	return "https://treeship.dev/receipt/" + sessionID, nil
+	// A hub that returns no URL: the receipt is where we just put it. Only
+	// the public hub has a page site; anywhere else the API URL is the one
+	// that exists.
+	return ReceiptURLFor(c.endpoint, sessionID), nil
+}
+
+// ReceiptURLFor is the receipt URL a client can hand out when the hub at
+// `endpoint` returned none. The public hub's receipts render on
+// treeship.dev; a self-hosted hub's live at its own /v1/receipt path.
+func ReceiptURLFor(endpoint, sessionID string) string {
+	trimmed := strings.TrimRight(endpoint, "/")
+	host := trimmed
+	if i := strings.Index(host, "://"); i >= 0 {
+		host = host[i+3:]
+	}
+	if i := strings.IndexByte(host, '/'); i >= 0 {
+		host = host[:i]
+	}
+	if i := strings.IndexByte(host, ':'); i >= 0 {
+		host = host[:i]
+	}
+	host = strings.ToLower(host)
+	if host == "treeship.dev" || strings.HasSuffix(host, ".treeship.dev") {
+		return "https://treeship.dev/receipt/" + sessionID
+	}
+	return trimmed + "/v1/receipt/" + sessionID
 }
 
 // GetReceipt fetches a published receipt. Public: no authentication, and the

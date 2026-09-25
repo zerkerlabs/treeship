@@ -77,7 +77,7 @@ Structurally consistent.
 
 A fetched receipt earns **`structural-pass`, never `pass`**: this surface runs only keyless, self-referential checks and never opens the trust store, so it deliberately refuses to call the result "authentic". Signature verification against your trust roots requires the local artifact-ID form. An empty receipt (zero artifacts) is `fail`, not a vacuous pass.
 
-The human-readable mirror at `treeship.dev/receipt/...` is also accepted; the CLI rewrites `/receipt/` to `/v1/receipt/` automatically.
+The human-readable page at `treeship.dev/receipt/<id>` is also accepted: the CLI maps `/receipt/<id>` to `/v1/receipt/<id>`, keeps a URL that already names the API (`/v1/receipt/<id>`, or the site's `/api/receipt/<id>` mirror) as written, never rewrites the host, drops a trailing slash and keeps the query string. A URL that names no receipt is refused, not fetched.
 </Tab>
 <Tab value="File path">
 ```bash

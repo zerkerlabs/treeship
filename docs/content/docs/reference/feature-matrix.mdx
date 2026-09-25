@@ -44,6 +44,10 @@ Pick `stable` only when the code, docs, and tests all line up. If the docs page 
 | Offline verifier (Rust CLI) | `stable` | `treeship verify`, `treeship package verify`, `treeship merkle verify` | [verify](/docs/cli/verify), [Verification surfaces](/docs/concepts/verification-surfaces) |
 | WASM verifier (@treeship/verify) | `stable` | -- | [@treeship/verify](/docs/sdk/verify), [Verifying receipts on the edge](/docs/guides/edge-runtime) |
 | Merkle checkpoints | `stable` | `treeship checkpoint`, `treeship merkle proof`, `treeship merkle status`, `treeship merkle publish` | [Merkle proofs](/docs/guides/merkle-proofs), [merkle](/docs/cli/merkle) |
+| Per-artifact Rekor anchoring | `stable` | `treeship hub push`, `treeship verify --max-unwitnessed`, `treeship package verify` | [TS-2026-003 spec](https://github.com/zerkerlabs/treeship/blob/main/docs/security/TS-2026-003.md), [time-anchoring spec](https://github.com/zerkerlabs/treeship/blob/main/docs/specs/time-anchoring.md) |
+| Checkpoint-root anchoring | `roadmap` | -- | -- |
+| RFC 3161 trusted timestamps | `roadmap` | -- | -- |
+| OpenTimestamps anchoring | `roadmap` | -- | -- |
 | Merkle consistency proofs (append-only evidence) | `stable` | `treeship merkle publish` | [Merkle consistency proofs](/docs/api/merkle-consistency) |
 | Hub-checkpoint consumer verifier | `stable` | -- | [Merkle Checkpoints](/docs/api/merkle-checkpoint) |
 | Hub transport (attach, push, pull, DPoP) | `stable` | `treeship hub attach`, `treeship hub push`, `treeship hub pull`, `treeship hub status` | [Hub API Overview](/docs/api/overview), [hub](/docs/cli/hub) |
