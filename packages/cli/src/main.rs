@@ -3201,12 +3201,9 @@ fn main() {
     }
 }
 
-/// Print top-level help with every subcommand visible, including the
-/// extension and experimental commands hidden from default `--help`.
-/// The command tree as data, for the contract test (`tests/contract.rs`)
-/// and for anything else that must cover every command rather than the
-/// ones a hand-written list remembers. Hidden commands are included and
-/// marked.
+/// The command tree as data, for `tests/json_contract.rs` and anything
+/// else that must cover every command rather than the ones a hand-written
+/// list remembers. Hidden commands are included and marked.
 fn dump_command(cmd: &clap::Command) -> serde_json::Value {
     let args: Vec<String> = cmd
         .get_arguments()
@@ -3226,12 +3223,16 @@ fn dump_command(cmd: &clap::Command) -> serde_json::Value {
     })
 }
 
+/// Print top-level help with every subcommand visible, including the
+/// extension and experimental commands hidden from default `--help`.
 fn print_help_all() {
     use clap::CommandFactory;
     let mut cmd = Cli::command();
+    // Test-only commands (`__dump-cli`) stay hidden even here.
     let names: Vec<String> = cmd
         .get_subcommands()
         .map(|c| c.get_name().to_string())
+        .filter(|n| !n.starts_with("__"))
         .collect();
     for name in names {
         cmd = cmd.mut_subcommand(name, |sc| sc.hide(false));
