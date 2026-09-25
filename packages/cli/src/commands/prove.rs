@@ -261,6 +261,17 @@ pub fn verify_proof(proof_file: &str, printer: &Printer) -> Result<(), Box<dyn s
     Ok(())
 }
 
+/// The error every non-zk stub returns. Exits with the dedicated
+/// "not compiled into this build" code (5): a script that checks
+/// `verify-proof`'s exit status must not read "this binary cannot
+/// check proofs" as "the proof checked out".
+#[cfg(not(feature = "zk"))]
+fn zk_not_in_build(printer: &Printer) -> Box<dyn std::error::Error> {
+    printer.blank();
+    printer.hint("rebuild with: cargo build -p treeship-cli --features zk");
+    crate::exit::not_in_build("ZK features are not compiled into this build")
+}
+
 /// Stub for non-zk builds
 #[cfg(not(feature = "zk"))]
 pub fn prove_circuit(
