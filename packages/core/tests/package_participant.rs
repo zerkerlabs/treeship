@@ -301,3 +301,45 @@ fn an_edited_participant_payload_fails() {
     let pkg = build(tmp.path(), &host, &[&r, &inv, &p]);
     assert_eq!(row(&pkg, &p.id).status, VerifyStatus::Fail);
 }
+
+#[test]
+fn a_single_use_invitation_redeemed_twice_fails_the_second_join() {
+    // Two joiners, both countersigned by the host, one invitation with
+    // max_uses 1: the first row passes, the second fails.
+    let tmp = tempfile::tempdir().unwrap();
+    let (host, joiner, stranger) = keys();
+    let (r, inv) = (root(&host), invitation(&host, &b64(&host), SESSION));
+    let p1 = participant(&inv, &joiner, Some(&host), SESSION);
+    let p2 = participant(&inv, &stranger, Some(&host), SESSION);
+    let pkg = build(tmp.path(), &host, &[&r, &inv, &p1, &p2]);
+    assert_eq!(row(&pkg, &p1.id).status, VerifyStatus::Pass);
+    let second = row(&pkg, &p2.id);
+    assert_eq!(second.status, VerifyStatus::Fail, "{}", second.detail);
+    assert!(
+        second.detail.contains("redeemed 2 times") && second.detail.contains("max_uses 1"),
+        "{}",
+        second.detail
+    );
+}
+
+#[test]
+fn an_artifact_sealed_twice_fails() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (host, joiner, _) = keys();
+    let (r, inv) = (root(&host), invitation(&host, &b64(&host), SESSION));
+    let p = participant(&inv, &joiner, Some(&host), SESSION);
+    let pkg = build(tmp.path(), &host, &[&r, &inv, &p, &p]);
+    let checks = verify_package_with_options(&pkg, &TrustRootStore::empty(), false).unwrap();
+    let rows: Vec<_> = checks
+        .iter()
+        .filter(|c| c.name == format!("signature:{}", p.id))
+        .collect();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].status, VerifyStatus::Pass);
+    assert_eq!(rows[1].status, VerifyStatus::Fail, "{}", rows[1].detail);
+    assert!(
+        rows[1].detail.contains("more than once"),
+        "{}",
+        rows[1].detail
+    );
+}
