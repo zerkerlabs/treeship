@@ -149,5 +149,9 @@ treeship doctor                         # run 9 health checks
 |------|---------|
 | 0 | Success / chain verified clean |
 | 1 | Error / chain verification failed |
+| 2 | `judge --enforce`: the judge said deny (3: ask) |
 | 3 | Not initialized -- run `treeship init` first |
 | 4 | Usage error |
+| 5 | Not compiled into this build (`prove`, `prove-chain` and `verify-proof` without `--features zk`; `otel` without the `otel` feature) |
+
+Every failure exits nonzero. A command that cannot do what was asked never exits 0 with a warning: `verify-proof` on a build without ZK exits 5, `otel export` to an unreachable collector exits 1, `approval status` on an unknown grant exits 1, and `resolve` on an agent with no card exits 1. The contract test in `packages/cli/tests/contract.rs` pins these.

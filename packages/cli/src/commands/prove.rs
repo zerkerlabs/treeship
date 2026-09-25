@@ -333,6 +333,17 @@ pub fn zk_status(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// The error every non-zk stub returns. Exits with the dedicated
+/// "not compiled into this build" code (5): a script that checks
+/// `verify-proof`'s exit status must not read "this binary cannot
+/// check proofs" as "the proof checked out".
+#[cfg(not(feature = "zk"))]
+fn zk_not_in_build(printer: &Printer) -> Box<dyn std::error::Error> {
+    printer.blank();
+    printer.hint("rebuild with: cargo build -p treeship-cli --features zk");
+    "ZK features are not compiled into this build".into()
+}
+
 /// Stub for non-zk builds
 #[cfg(not(feature = "zk"))]
 pub fn prove_circuit(
@@ -342,11 +353,7 @@ pub fn prove_circuit(
     _config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    printer.blank();
-    printer.warn("ZK features not enabled in this build", &[]);
-    printer.hint("rebuild with: cargo build -p treeship-cli --features zk");
-    printer.blank();
-    Ok(())
+    Err(zk_not_in_build(printer))
 }
 
 /// Stub for non-zk builds
@@ -355,11 +362,7 @@ pub fn verify_proof(
     _proof_file: &str,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    printer.blank();
-    printer.warn("ZK features not enabled in this build", &[]);
-    printer.hint("rebuild with: cargo build -p treeship-cli --features zk");
-    printer.blank();
-    Ok(())
+    Err(zk_not_in_build(printer))
 }
 
 /// Prove an entire session chain using RISC Zero (background, slow).
@@ -568,11 +571,7 @@ pub fn prove_chain(
     _config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    printer.blank();
-    printer.warn("ZK features not enabled in this build", &[]);
-    printer.hint("rebuild with: cargo build -p treeship-cli --features zk");
-    printer.blank();
-    Ok(())
+    Err(zk_not_in_build(printer))
 }
 
 #[cfg(not(feature = "zk"))]

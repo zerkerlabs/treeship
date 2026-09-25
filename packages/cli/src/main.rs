@@ -3243,7 +3243,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             #[cfg(not(feature = "otel"))]
             {
                 let _ = sub; // suppress unused warning
-                commands::otel::not_available(printer);
+                commands::otel::not_available(printer)?;
             }
             Ok(())
         }
@@ -4130,8 +4130,19 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
     }
 }
 
+/// Map an error message to the exit code the docs promise (cli/overview,
+/// "Exit codes"). 5 is reserved for a command whose implementation is not
+/// compiled into this binary: the caller asked for something the build
+/// cannot do, which is neither a verdict (1) nor a usage error (4). The
+/// contract test (`tests/contract.rs`) pins every failure path to a
+/// nonzero code.
+pub const EXIT_NOT_IN_BUILD: i32 = 5;
+pub const NOT_IN_BUILD_MARKER: &str = "not compiled into this build";
+
 fn exit_code(msg: &str) -> i32 {
-    if msg.contains("not initialized") || msg.contains("treeship init") {
+    if msg.contains(NOT_IN_BUILD_MARKER) {
+        EXIT_NOT_IN_BUILD
+    } else if msg.contains("not initialized") || msg.contains("treeship init") {
         3
     } else if msg.contains("required") || msg.contains("no command given") {
         4
