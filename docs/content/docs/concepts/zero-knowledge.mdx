@@ -226,15 +226,19 @@ Every ZK layer in Treeship is designed to work locally without contacting a Tree
   logs "Bonsai integration is coming in v0.6.0" and runs the local prover
   instead. Track this as roadmap, not as an available opt-in.
 
-**Verify offline with no server trust (requires `--features zk` build and
-`snarkjs` on PATH):**
+**Verify offline -- not available today (Layer 3 is quarantined):**
 
 ```bash
 treeship verify-proof art_xxx.policy-checker.zkproof
 ```
 
-This works air-gapped today via the local `snarkjs` verifier. The browser
-verifier at `treeship.dev/verify` runs the equivalent Groth16 pairing check
-in pure Rust WASM with no shell-out and no network call -- Hub cannot forge a
-passing result. Once the in-repo `ark-circom` path lands, the CLI will offer
-the same pure-Rust verification with no toolchain dependency.
+This is the quarantined Circom/Groth16 path from the section above: with the
+non-default `zk` feature built, `verify-proof` runs but fails closed with a
+pointer to the rebuild, because the underlying proving keys were never
+generated under a real ceremony. Release binaries don't build the `zk`
+feature at all, so this command isn't present in what you install by
+default. The published `@treeship/core-wasm` build (what
+`treeship.dev/verify` runs) does not enable the `zk` feature either -- there
+is no browser-side Groth16 check today. Once the transparent, statement-first
+rebuild lands (RISC Zero, see Layer 4 above), offline and browser
+verification return under that path instead.
