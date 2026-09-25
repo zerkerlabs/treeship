@@ -46,14 +46,14 @@ Static method that checks whether the `treeship` CLI binary is installed and
 available on PATH. Throws a descriptive error if the binary is not found.
 
 It shells out to `treeship version` and returns that command's **whole output
-line**, not a bare semver — on 0.24 that is `"treeship 0.24.0 (rust)"`. Parse it
-if you need the number; do not compare it to `"0.24.0"`.
+line**, not a bare semver — e.g. `"treeship 0.31.9 (rust)"`. Parse it if you
+need the number; do not compare it to a fixed string.
 
 ```ts
 import { Ship } from '@treeship/sdk';
 
-const line = await Ship.checkCli();      // "treeship 0.24.0 (rust)"
-const version = line.split(' ')[1];      // "0.24.0"
+const line = await Ship.checkCli();      // "treeship 0.31.9 (rust)"
+const version = line.split(' ')[1];      // "0.31.9"
 console.log(`Treeship CLI version: ${version}`);
 ```
 
@@ -123,7 +123,7 @@ await s.attest.decision({
 | `confidence` | `number` | No | Confidence score between 0 and 1 |
 | `parentId` | `string` | No | Parent artifact ID for chain linking |
 
-Note: The `modelVersion` field exists in the TypeScript type but is not currently forwarded to the CLI. Use the `model` field to identify the model and version together (e.g., `"claude-opus-4-20260301"`).
+Note: The CLI's `attest decision` accepts `--model-version`, but the TypeScript SDK's `modelVersion` field is not yet wired to it -- setting it has no effect. Use the `model` field to identify the model and version together (e.g., `"claude-opus-4-20260301"`) until the SDK forwards it.
 
 **Returns: `ActionResult`** -- `{ artifactId: string }`
 
@@ -224,12 +224,9 @@ without shelling out to the CLI. They are the same entry points
 `VerifyTarget` is `string | URL | Record<string, unknown>` — an artifact id, a
 receipt URL, or an already-parsed receipt object.
 
-<Callout type="warn">
-These five load `@treeship/core-wasm`, which **fails to load under Node 22** —
-see the [`@treeship/verify` page](/docs/sdk/verify#runtime-support) for the
-tested detail. `s.verify.verify()` is unaffected because it shells out to the
-CLI.
-</Callout>
+These five load `@treeship/core-wasm`; `s.verify.verify()` shells out to the
+CLI instead. See the [`@treeship/verify` page](/docs/sdk/verify#runtime-support)
+for the WASM package's Node/browser support.
 
 ## Hub module
 
