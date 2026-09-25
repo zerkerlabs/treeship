@@ -10,7 +10,6 @@ audience: [developer, devops]
 session:
   actor: agent://hermes
   auto_start: true
-  auto_push: true
 
 attest:
   commands:
@@ -37,7 +36,6 @@ approvals:
     - label: credential access
 
 hub:
-  auto_push: true
   push_on: [session_close, approval_required]
 
 onboarding: |
