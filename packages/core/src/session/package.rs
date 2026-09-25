@@ -885,23 +885,17 @@ pub fn verify_package_with_options(
 
     // Signatures and chain linkage, from the package's own envelopes
     // (audit 2026-09, AUD-31 / AUD-32; QA TS-002b).
-    let mut signers = verify_sealed_envelopes(pkg_dir, &receipt, structural_only, &mut checks);
+    let sealed = verify_sealed_envelopes(pkg_dir, &receipt, structural_only, &mut checks);
     verify_stapled_anchors(pkg_dir, &receipt, trust, &mut checks);
-    let (body_bound, record_signer) = verify_receipt_binding(
+    let (body_bound, vouched) =
+        verify_receipt_binding(pkg_dir, &receipt, structural_only, &sealed, &mut checks);
+    push_signer_trust(
         pkg_dir,
-        &receipt,
-        structural_only,
-        &signers,
+        &sealed.signers,
+        vouched.as_ref(),
         trust,
         &mut checks,
     );
-    // The close record's key is judged with the artifact signers: a record
-    // signed by a key nobody pinned cannot make a package `verified`, however
-    // well the artifacts check out.
-    if let Some(k) = record_signer {
-        signers.insert(k);
-    }
-    push_signer_trust(pkg_dir, &signers, trust, &mut checks);
     if body_bound {
         checks.push(VerifyCheck::pass(
             "receipt_body_binding",
@@ -1062,10 +1056,9 @@ fn verify_receipt_binding(
     pkg_dir: &Path,
     receipt: &SessionReceipt,
     structural_only: bool,
-    artifact_signers: &std::collections::BTreeSet<String>,
-    trust: &crate::trust::TrustRootStore,
+    sealed: &SealedSet,
     checks: &mut Vec<VerifyCheck>,
-) -> (bool, Option<String>) {
+) -> (bool, Option<Vouched>) {
     use sha2::{Digest, Sha256};
     let fail = |checks: &mut Vec<VerifyCheck>, detail: String| {
         checks.push(VerifyCheck::fail("receipt_binding", &detail));
@@ -1194,39 +1187,88 @@ fn verify_receipt_binding(
             ),
         );
     }
-    // A record key that signed none of the sealed artifacts is honest for an
-    // agent with its own key (it signs the record; the ship signs start and
-    // close) and is also exactly a record forged under a key added to
-    // keys.json. The package cannot tell them apart, so such a key must be
-    // pinned here (or be this ship's own) for the record to bind anything.
-    // A record key that did sign sealed artifacts is judged with them in
-    // signer_trust.
-    let note = if artifact_signers.contains(&sig.keyid) {
-        String::new()
-    } else if SIGNER_KINDS.iter().any(|kind| trust.contains(vk, *kind)) {
-        format!(
-            "; {} signed none of the sealed artifacts and is pinned here",
-            sig.keyid
-        )
-    } else {
+    // The record is bound to the session, not to the reader's trust store:
+    // any key the reader pinned for some other reason must not be able to
+    // re-sign this session's receipt. The record names, as its signed
+    // subject, the sealed `session.close` action; that close must name this
+    // session; and the record's signer must be the close's signer or the key
+    // the signed close names as its record key (an agent with its own key).
+    let Some(subject) = statement
+        .get("subject")
+        .and_then(|s| s.get("artifactId"))
+        .and_then(|a| a.as_str())
+    else {
+        return fail(
+            checks,
+            "the close record names no subject: it must name the sealed session.close action"
+                .into(),
+        );
+    };
+    let Some(close) = sealed.closes.iter().find(|c| c.id == subject) else {
+        return fail(
+            checks,
+            format!("the close record names {subject}, which is not a sealed, verified session.close action in this package"),
+        );
+    };
+    let meta = close.statement.get("meta");
+    if meta
+        .and_then(|m| m.get("session_id"))
+        .and_then(|v| v.as_str())
+        != Some(receipt.session.id.as_str())
+    {
         return fail(
             checks,
             format!(
-                "record.json is signed by {}, which signed none of the sealed artifacts and is not pinned here, so the record, and the receipt it binds, could be anyone's. If it is the producer's agent key, pin it: treeship trust add {} {} --kind cert_issuer --yes",
-                sig.keyid,
-                sig.keyid,
-                crate::trust::encode_ed25519_pubkey(vk)
+                "the session.close {subject} the record names does not close session {}",
+                receipt.session.id
             ),
         );
+    }
+    let vouched = if sig.keyid == close.keyid {
+        None
+    } else {
+        let named = meta.and_then(|m| m.get("record_key"));
+        let named_id = named.and_then(|k| k.get("key_id")).and_then(|v| v.as_str());
+        let named_pub = named
+            .and_then(|k| k.get("public_key"))
+            .and_then(|v| v.as_str())
+            .and_then(|p| crate::trust::decode_ed25519_pubkey(p).ok());
+        if named_id != Some(sig.keyid.as_str()) || named_pub.as_ref() != Some(vk) {
+            return fail(
+                checks,
+                format!(
+                    "record.json is signed by {}, which is neither the signer of session.close {subject} ({}) nor the record key that signed session.close names. A package closed before 0.31.10 by an agent with its own key names none; read it with --structural",
+                    sig.keyid, close.keyid
+                ),
+            );
+        }
+        Some(Vouched {
+            key: sig.keyid.clone(),
+            by: close.keyid.clone(),
+        })
+    };
+    let how = match &vouched {
+        None => format!("the signer of session.close {subject}"),
+        Some(v) => format!(
+            "the record key session.close {subject} names, signed by {}",
+            v.by
+        ),
     };
     checks.push(VerifyCheck::pass(
         "receipt_binding",
         &format!(
-            "close record signed by {} binds receipt.json ({}) and names this session{note}",
+            "close record signed by {} ({how}) binds receipt.json ({}) and names this session",
             sig.keyid, actual
         ),
     ));
-    (true, Some(sig.keyid.clone()))
+    (true, vouched)
+}
+
+/// A key the package authenticates through its own signed structure: named
+/// as the record key inside a `session.close` signed by `by`.
+struct Vouched {
+    key: String,
+    by: String,
 }
 
 /// Every sealed artifact's signed timestamp should fall inside the session's
@@ -1451,12 +1493,20 @@ fn verify_stapled_anchors(
     checks.push(VerifyCheck::pass("anchoring", &detail));
 }
 
-/// `signer_trust`: are the keys whose signatures verified -- the sealed
-/// artifacts' signers and the close record's -- pinned here, or this ship's
-/// own? No signer, no row; [`package_verdict`] then cannot say `verified`.
+/// `signer_trust`: are the keys whose signatures verified trusted here?
+///
+/// A key is trusted when it is pinned (or this ship's own), and
+/// authenticated when it is trusted or is the record key a trusted signer
+/// named inside the sealed `session.close` ([`Vouched`]). All authenticated:
+/// PASS. None trusted: WARN (the reader has decided nothing; `--strict`
+/// fails). Some trusted and some not: FAIL -- a package the reader trusts
+/// must not carry an artifact signed by a key nobody vouched for, which is
+/// the shape of an injected artifact. No signer, no row; [`package_verdict`]
+/// then cannot say `verified`.
 fn push_signer_trust(
     pkg_dir: &Path,
     signers: &std::collections::BTreeSet<String>,
+    vouched: Option<&Vouched>,
     trust: &crate::trust::TrustRootStore,
     checks: &mut Vec<VerifyCheck>,
 ) {
@@ -1464,81 +1514,128 @@ fn push_signer_trust(
         return;
     }
     let keys = package_verifying_keys(pkg_dir);
-    {
-        let unpinned: Vec<String> = signers
-            .iter()
-            // A signer whose key cannot be looked up is not trusted.
-            .filter(|k| {
-                keys.get(*k)
-                    .is_none_or(|vk| !SIGNER_KINDS.iter().any(|kind| trust.contains(vk, *kind)))
+    // A signer whose key cannot be looked up is not trusted.
+    let trusted = |k: &str| {
+        keys.get(k)
+            .is_some_and(|vk| SIGNER_KINDS.iter().any(|kind| trust.contains(vk, *kind)))
+    };
+    let authenticated =
+        |k: &str| trusted(k) || vouched.is_some_and(|v| v.key == k && trusted(&v.by));
+    let unauthenticated: Vec<&str> = signers
+        .iter()
+        .map(String::as_str)
+        .filter(|k| !authenticated(k))
+        .collect();
+    let trusted_keys: Vec<&str> = signers
+        .iter()
+        .map(String::as_str)
+        .filter(|k| trusted(k))
+        .collect();
+    let pins = |ks: &[&str]| -> String {
+        ks.iter()
+            .filter_map(|k| {
+                let vk = keys.get(*k)?;
+                // `--yes`: the printed command is what gets pasted, and
+                // without it trust add refuses to run non-interactively.
+                Some(format!(
+                    "treeship trust add {k} {} --kind cert_issuer --yes",
+                    crate::trust::encode_ed25519_pubkey(vk)
+                ))
             })
-            .cloned()
+            .collect::<Vec<_>>()
+            .join("; ")
+    };
+    if unauthenticated.is_empty() {
+        // The CLI adds this ship's own keys as roots so a package verifies
+        // where it was produced; say so, because "pinned" reads as a third
+        // party's decision and this is not one.
+        let own: Vec<&str> = signers
+            .iter()
+            .filter(|k| {
+                trust
+                    .roots()
+                    .iter()
+                    .any(|r| &r.key_id == *k && r.label == OWN_KEY_LABEL)
+            })
+            .map(|k| k.as_str())
             .collect();
-        if unpinned.is_empty() {
-            // The CLI adds this ship's own keys as roots so a package
-            // verifies where it was produced; say so, because "pinned"
-            // reads as a third party's decision and this is not one.
-            let own: Vec<&str> = signers
-                .iter()
-                .filter(|k| {
-                    trust
-                        .roots()
-                        .iter()
-                        .any(|r| &r.key_id == *k && r.label == OWN_KEY_LABEL)
-                })
-                .map(|k| k.as_str())
-                .collect();
-            let detail = if own.len() == signers.len() {
-                format!(
-                    "all {} signing key(s) are this ship's own ({}); a stranger pins them before this row passes on their machine",
-                    signers.len(),
-                    own.join(", ")
-                )
-            } else if own.is_empty() {
-                format!(
-                    "all {} signing key(s) are pinned trust roots",
-                    signers.len()
-                )
-            } else {
-                format!(
-                    "{} signing key(s): {} pinned trust root(s), {} this ship's own ({})",
-                    signers.len(),
-                    signers.len() - own.len(),
-                    own.len(),
-                    own.join(", ")
-                )
-            };
-            checks.push(VerifyCheck::pass("signer_trust", &detail));
+        let mut detail = if own.len() == signers.len() {
+            format!(
+                "all {} signing key(s) are this ship's own ({}); a stranger pins them before this row passes on their machine",
+                signers.len(),
+                own.join(", ")
+            )
+        } else if own.is_empty() {
+            format!(
+                "all {} signing key(s) are pinned trust roots",
+                signers.len()
+            )
         } else {
-            let pins: Vec<String> = unpinned
-                .iter()
-                .filter_map(|k| {
-                    let vk = keys.get(k)?;
-                    // `--yes`: the printed command is what gets pasted, and
-                    // without it trust add refuses to run non-interactively.
-                    Some(format!(
-                        "treeship trust add {k} {} --kind cert_issuer --yes",
-                        crate::trust::encode_ed25519_pubkey(vk)
-                    ))
-                })
-                .collect();
-            checks.push(VerifyCheck::warn("signer_trust", &format!("signature(s) verify for the key(s) the package names, but {} of them are not pinned trust roots here: {}. Pin what you have decided to trust: {}", unpinned.len(), unpinned.join(", "), pins.join("; "))));
+            format!(
+                "{} signing key(s): {} pinned trust root(s), {} this ship's own ({})",
+                signers.len(),
+                signers.len() - own.len(),
+                own.len(),
+                own.join(", ")
+            )
+        };
+        if let Some(v) = vouched.filter(|v| !trusted(&v.key)) {
+            detail.push_str(&format!(
+                "; {} is not pinned but is the record key the session.close signed by {} names",
+                v.key, v.by
+            ));
         }
+        checks.push(VerifyCheck::pass("signer_trust", &detail));
+    } else if trusted_keys.is_empty() {
+        checks.push(VerifyCheck::warn(
+            "signer_trust",
+            &format!(
+                "signature(s) verify for the key(s) the package names, but none of them is a pinned trust root here: {}. Pin what you have decided to trust: {}",
+                unauthenticated.join(", "),
+                pins(&unauthenticated)
+            ),
+        ));
+    } else {
+        checks.push(VerifyCheck::fail(
+            "signer_trust",
+            &format!(
+                "{} is pinned here, but {} also signed sealed artifacts and is neither pinned nor the record key a trusted session.close names: an artifact signed by a key nobody vouched for sits in a package you trust. If you have decided to trust it: {}",
+                trusted_keys.join(", "),
+                unauthenticated.join(", "),
+                pins(&unauthenticated)
+            ),
+        ));
     }
 }
 
-/// Returns the key ids whose signatures verified; the `signer_trust` row over
-/// them (plus the close record's signer) is pushed by [`push_signer_trust`].
+/// What the per-artifact pass established: the keys whose signatures
+/// verified, and every verified `session.close` action (the statement the
+/// close record must name).
+#[derive(Default)]
+struct SealedSet {
+    signers: std::collections::BTreeSet<String>,
+    closes: Vec<SealedClose>,
+}
+
+/// A sealed `session.close` action whose signature, id and digest verified.
+struct SealedClose {
+    id: String,
+    keyid: String,
+    statement: serde_json::Value,
+}
+
+/// Returns the sealed set it verified; the `signer_trust` row is pushed by
+/// [`push_signer_trust`] once the close record has been bound.
 fn verify_sealed_envelopes(
     pkg_dir: &Path,
     receipt: &SessionReceipt,
     structural_only: bool,
     checks: &mut Vec<VerifyCheck>,
-) -> std::collections::BTreeSet<String> {
+) -> SealedSet {
     use std::collections::{BTreeMap, BTreeSet};
 
     if receipt.artifacts.is_empty() {
-        return BTreeSet::new();
+        return SealedSet::default();
     }
     let art_dir = pkg_dir.join(ARTIFACTS_DIR);
     let any_envelope = receipt.artifacts.iter().any(|a| {
@@ -1553,7 +1650,7 @@ fn verify_sealed_envelopes(
         } else {
             VerifyCheck::fail("envelopes", detail)
         });
-        return BTreeSet::new();
+        return SealedSet::default();
     }
 
     // Keys the package names. A key missing here fails the signature check
@@ -1582,6 +1679,7 @@ fn verify_sealed_envelopes(
     // None: the payload could not be read at all.
     let mut parents: Vec<(String, Option<SignedParent>)> = Vec::new();
     let mut signers: BTreeSet<String> = BTreeSet::new();
+    let mut closes: Vec<SealedClose> = Vec::new();
     for entry in &receipt.artifacts {
         let id = &entry.artifact_id;
         let name = format!("signature:{id}");
@@ -1647,6 +1745,22 @@ fn verify_sealed_envelopes(
                     ));
                 } else {
                     signers.insert(sig.keyid.clone());
+                    if envelope.payload_type == crate::statements::payload_type("action") {
+                        if let Some(v) = envelope
+                            .payload_bytes()
+                            .ok()
+                            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+                            .filter(|v| {
+                                v.get("action").and_then(|a| a.as_str()) == Some("session.close")
+                            })
+                        {
+                            closes.push(SealedClose {
+                                id: id.clone(),
+                                keyid: sig.keyid.clone(),
+                                statement: v,
+                            });
+                        }
+                    }
                     checks.push(VerifyCheck::pass(&name, &format!("Ed25519 signature by {} verifies; id and digest re-derived from the signed bytes", sig.keyid)));
                 }
             }
@@ -1723,7 +1837,7 @@ fn verify_sealed_envelopes(
         checks.push(VerifyCheck::warn("chain_completeness", &format!("{} sealed artifact(s) were signed during the session but never chained onto it ({}); signed and sealed, but their order relative to the chain is the signer's claim only", unchained.len(), unchained.join(", "))));
     }
 
-    signers
+    SealedSet { signers, closes }
 }
 
 fn finish_package_checks(

@@ -140,7 +140,22 @@ pub fn run(target: &str, certificate: Option<&str>, printer: &Printer) -> Extern
     let checks = if package_checks.is_empty() {
         json_checks
     } else {
-        package_checks
+        // A package's verdict needs rows that passed, not only none that
+        // failed (treeship_core::session::package_verdict). Surface a package
+        // that is not verified as a failed row, so this path -- and the
+        // --certificate cross-check below, which reads the receipt's tool
+        // usage -- never proceeds on a package `package verify` fails.
+        let mut checks = package_checks;
+        if let treeship_core::session::PackageVerdict::Failed(reason) =
+            treeship_core::session::package_verdict(&checks, false)
+        {
+            if !checks.iter().any(|c| c.status == VerifyStatus::Fail) {
+                checks.push(treeship_core::session::VerifyCheck::fail(
+                    "verdict", &reason,
+                ));
+            }
+        }
+        checks
     };
 
     let receipt = match receipt {

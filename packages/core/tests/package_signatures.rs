@@ -36,6 +36,29 @@ fn sign_action(signer: &Ed25519Signer, action: &str, parent: Option<&str>) -> Si
     }
 }
 
+/// The `session.close` action `session close` signs: chained, naming the
+/// session, and naming the record key when an agent's own key will sign
+/// the record.
+fn sign_close(signer: &Ed25519Signer, parent: &str, record_key: Option<&Ed25519Signer>) -> Signed {
+    let mut stmt = ActionStatement::new("agent://t", "session.close");
+    stmt.parent_id = Some(parent.to_string());
+    let mut meta = serde_json::json!({"session_close": true, "session_id": "ssn_sigtest"});
+    if let Some(k) = record_key {
+        meta["record_key"] = serde_json::json!({
+            "key_id": k.key_id(),
+            "public_key": format!("ed25519:{}", URL_SAFE_NO_PAD.encode(k.public_key_bytes())),
+        });
+    }
+    stmt.meta = Some(meta);
+    let r = sign(&payload_type("action"), &stmt, signer).unwrap();
+    Signed {
+        id: r.artifact_id.clone(),
+        digest: r.digest.clone(),
+        envelope: r.envelope.to_json().unwrap(),
+        signed_at: stmt.timestamp.clone(),
+    }
+}
+
 fn entry(s: &Signed, unchained: bool) -> ArtifactEntry {
     ArtifactEntry {
         artifact_id: s.id.clone(),
@@ -55,19 +78,54 @@ fn manifest() -> SessionManifest {
     )
 }
 
-/// A package from real signed envelopes: root <- a <- b, plus one unchained.
+/// A package from real signed envelopes: root <- a <- b <- close, plus one
+/// unchained (listed before the close; the close is always last).
 fn build(dir: &Path, signer: &Ed25519Signer) -> (PathBuf, Vec<Signed>) {
+    build_with(dir, signer, None, None)
+}
+
+/// `build`, with the close naming `record_key`, and an artifact signed by
+/// `extra` chained after b, before the close.
+fn build_with(
+    dir: &Path,
+    signer: &Ed25519Signer,
+    record_key: Option<&Ed25519Signer>,
+    extra: Option<&Ed25519Signer>,
+) -> (PathBuf, Vec<Signed>) {
     let root = sign_action(signer, "session.start", None);
     let a = sign_action(signer, "step.a", Some(&root.id));
     let b = sign_action(signer, "step.b", Some(&a.id));
     let loose = sign_action(signer, "step.loose", None);
-    let arts = vec![root, a, b, loose];
-    let entries = vec![
+    let mut arts = vec![root, a, b, loose];
+    let mut entries = vec![
         entry(&arts[0], false),
         entry(&arts[1], false),
         entry(&arts[2], false),
         entry(&arts[3], true),
     ];
+    let mut head = arts[2].id.clone();
+    if let Some(x) = extra {
+        let injected = sign_action(x, "step.injected", Some(&head));
+        head = injected.id.clone();
+        entries.push(entry(&injected, false));
+        arts.push(injected);
+    }
+    let close = sign_close(signer, &head, record_key);
+    entries.push(entry(&close, false));
+    arts.push(close);
+    let mut signer_keys = vec![(
+        signer.key_id().to_string(),
+        format!(
+            "ed25519:{}",
+            URL_SAFE_NO_PAD.encode(signer.public_key_bytes())
+        ),
+    )];
+    for k in [record_key, extra].into_iter().flatten() {
+        signer_keys.push((
+            k.key_id().to_string(),
+            format!("ed25519:{}", URL_SAFE_NO_PAD.encode(k.public_key_bytes())),
+        ));
+    }
     let events: Vec<SessionEvent> = vec![];
     let receipt = ReceiptComposer::compose(&manifest(), &events, entries);
     let bundle = ApprovalsBundle {
@@ -75,17 +133,21 @@ fn build(dir: &Path, signer: &Ed25519Signer) -> (PathBuf, Vec<Signed>) {
             .iter()
             .map(|s| (s.id.clone(), s.envelope.clone()))
             .collect(),
-        signer_keys: vec![(
-            signer.key_id().to_string(),
-            format!(
-                "ed25519:{}",
-                URL_SAFE_NO_PAD.encode(signer.public_key_bytes())
-            ),
-        )],
+        signer_keys,
         ..ApprovalsBundle::default()
     };
     let out = build_package_with_approvals(&receipt, dir, Some(&bundle)).unwrap();
     (out.path, arts)
+}
+
+/// The sealed session.close's id: the last artifact the receipt lists.
+fn close_id(pkg: &Path) -> String {
+    let receipt: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(pkg.join("receipt.json")).unwrap()).unwrap();
+    receipt["artifacts"].as_array().unwrap().last().unwrap()["artifact_id"]
+        .as_str()
+        .unwrap()
+        .to_string()
 }
 
 /// What `session close` does after building the package: sign a
@@ -96,6 +158,10 @@ fn seal_record(pkg: &Path, signer: &Ed25519Signer) {
     use treeship_core::statements::ReceiptStatement;
     let receipt = std::fs::read(pkg.join("receipt.json")).unwrap();
     let mut stmt = ReceiptStatement::new("system://treeship-session", "session.v1");
+    stmt.subject = Some(treeship_core::statements::SubjectRef {
+        artifact_id: Some(close_id(pkg)),
+        ..Default::default()
+    });
     stmt.payload = Some(serde_json::json!({
         "receipt_digest": format!("sha256:{}", hex::encode(Sha256::digest(&receipt))),
         "session_id": "ssn_sigtest",
@@ -403,6 +469,11 @@ fn a_close_record_forged_under_a_key_added_to_keys_json_fails() {
     let attacker = Ed25519Signer::generate("key_attacker").unwrap();
     let mut stmt =
         treeship_core::statements::ReceiptStatement::new("system://treeship-session", "session.v1");
+    // The attacker can copy the close's id into the subject.
+    stmt.subject = Some(treeship_core::statements::SubjectRef {
+        artifact_id: Some(close_id(&pkg)),
+        ..Default::default()
+    });
     stmt.payload = Some(serde_json::json!({
         "receipt_digest": format!("sha256:{}", hex::encode(Sha256::digest(std::fs::read(pkg.join("receipt.json")).unwrap()))),
         "session_id": "ssn_sigtest",
@@ -496,4 +567,135 @@ fn verified_needs_rows_that_passed_not_just_none_that_failed() {
         package_verdict(&unbound, false),
         PackageVerdict::Failed(_)
     ));
+}
+
+/// Sign a close record as `signer`, naming the sealed close, over the
+/// current receipt.json (what an attacker holding `signer` can do).
+fn record_by(pkg: &Path, signer: &Ed25519Signer) {
+    seal_record(pkg, signer);
+    let mut keys: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(pkg.join("keys.json")).unwrap()).unwrap();
+    keys["keys"][signer.key_id()] = serde_json::Value::String(format!(
+        "ed25519:{}",
+        URL_SAFE_NO_PAD.encode(signer.public_key_bytes())
+    ));
+    std::fs::write(pkg.join("keys.json"), serde_json::to_vec(&keys).unwrap()).unwrap();
+}
+
+fn pinned_all(signers: &[&Ed25519Signer]) -> TrustRootStore {
+    TrustRootStore::with_roots(
+        signers
+            .iter()
+            .map(|s| TrustRoot {
+                key_id: s.key_id().into(),
+                public_key: format!("ed25519:{}", URL_SAFE_NO_PAD.encode(s.public_key_bytes())),
+                kind: TrustRootKind::CertIssuer,
+                label: "pinned".into(),
+                added_at: "2026-09-26T00:00:00Z".into(),
+            })
+            .collect(),
+    )
+}
+
+#[test]
+fn a_record_signed_by_another_pinned_key_fails() {
+    // Bypass E: the reader pins the producer and, for unrelated reasons,
+    // Bob. Bob rewrites the receipt and signs a record naming the close.
+    // Being pinned does not let Bob vouch for someone else's session.
+    let tmp = tempfile::tempdir().unwrap();
+    let producer = Ed25519Signer::generate("key_producer").unwrap();
+    let bob = Ed25519Signer::generate("key_bob").unwrap();
+    let (pkg, _) = build(tmp.path(), &producer);
+    let mut receipt: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(pkg.join("receipt.json")).unwrap()).unwrap();
+    receipt["session"]["name"] = "EVIL".into();
+    std::fs::write(
+        pkg.join("receipt.json"),
+        serde_json::to_vec_pretty(&receipt).unwrap(),
+    )
+    .unwrap();
+    record_by(&pkg, &bob);
+    let checks = verify_package_with_options(&pkg, &pinned_all(&[&producer, &bob]), false).unwrap();
+    let row = find(&checks, "receipt_binding").unwrap();
+    assert_eq!(row.status, VerifyStatus::Fail, "{}", row.detail);
+    assert!(
+        row.detail.contains("key_bob") && row.detail.contains("neither the signer"),
+        "{}",
+        row.detail
+    );
+}
+
+#[test]
+fn an_agent_record_key_named_by_the_signed_close_verifies_with_the_ship_key_pinned() {
+    // The honest agent-own-key shape: the ship signs the close, which names
+    // the agent's record key; the agent signs the record. Pinning the ship
+    // key is enough.
+    let tmp = tempfile::tempdir().unwrap();
+    let ship = Ed25519Signer::generate("key_ship").unwrap();
+    let agent = Ed25519Signer::generate("key_agent").unwrap();
+    let (pkg, _) = build_with(tmp.path(), &ship, Some(&agent), None);
+    seal_record(&pkg, &agent);
+    let checks = verify_package_with_options(&pkg, &pinned_all(&[&ship]), false).unwrap();
+    assert!(fails(&checks).is_empty(), "{:?}", fails(&checks));
+    assert_eq!(
+        find(&checks, "signer_trust").unwrap().status,
+        VerifyStatus::Pass
+    );
+    assert_eq!(
+        treeship_core::session::package_verdict(&checks, false),
+        treeship_core::session::PackageVerdict::Verified
+    );
+    // A different key the close does not name cannot sign the record.
+    let other = Ed25519Signer::generate("key_other").unwrap();
+    record_by(&pkg, &other);
+    let checks = verify_package_with_options(&pkg, &pinned_all(&[&ship, &other]), false).unwrap();
+    assert_eq!(
+        find(&checks, "receipt_binding").unwrap().status,
+        VerifyStatus::Fail
+    );
+}
+
+#[test]
+fn a_record_naming_something_other_than_the_sealed_close_fails() {
+    use sha2::{Digest, Sha256};
+    use treeship_core::statements::{ReceiptStatement, SubjectRef};
+    let tmp = tempfile::tempdir().unwrap();
+    let producer = Ed25519Signer::generate("key_t").unwrap();
+    let (pkg, arts) = build(tmp.path(), &producer);
+    let mut stmt = ReceiptStatement::new("system://treeship-session", "session.v1");
+    stmt.subject = Some(SubjectRef {
+        artifact_id: Some(arts[2].id.clone()),
+        ..Default::default()
+    });
+    stmt.payload = Some(serde_json::json!({
+        "receipt_digest": format!("sha256:{}", hex::encode(Sha256::digest(std::fs::read(pkg.join("receipt.json")).unwrap()))),
+        "session_id": "ssn_sigtest",
+    }));
+    let r = sign(&payload_type("receipt"), &stmt, &producer).unwrap();
+    std::fs::write(pkg.join("record.json"), r.envelope.to_json().unwrap()).unwrap();
+    let checks = verify_package_with_options(&pkg, &pinned_all(&[&producer]), false).unwrap();
+    let row = find(&checks, "receipt_binding").unwrap();
+    assert_eq!(row.status, VerifyStatus::Fail, "{}", row.detail);
+    assert!(row.detail.contains("session.close"), "{}", row.detail);
+}
+
+#[test]
+fn an_artifact_by_an_unvouched_key_in_a_trusted_package_fails() {
+    // Bypass B: the producer is pinned; one chained artifact is signed by a
+    // key nobody pinned and the close does not name. Not a warning.
+    let tmp = tempfile::tempdir().unwrap();
+    let producer = Ed25519Signer::generate("key_producer").unwrap();
+    let intruder = Ed25519Signer::generate("key_intruder").unwrap();
+    let (pkg, _) = build_with(tmp.path(), &producer, None, Some(&intruder));
+    seal_record(&pkg, &producer);
+    let checks = verify_package_with_options(&pkg, &pinned_all(&[&producer]), false).unwrap();
+    let row = find(&checks, "signer_trust").unwrap();
+    assert_eq!(row.status, VerifyStatus::Fail, "{}", row.detail);
+    assert!(row.detail.contains("key_intruder"), "{}", row.detail);
+    // With nothing pinned the reader has decided nothing: a warning.
+    let checks = verify_package_with_options(&pkg, &TrustRootStore::empty(), false).unwrap();
+    assert_eq!(
+        find(&checks, "signer_trust").unwrap().status,
+        VerifyStatus::Warn
+    );
 }

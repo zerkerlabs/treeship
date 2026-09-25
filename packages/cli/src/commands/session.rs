@@ -1675,7 +1675,7 @@ pub fn close(
     let parent_id = session_chain_head(&ctx, manifest.root_artifact_id.as_deref())
         .or_else(|| resolve_last(&ctx.config.storage_dir));
 
-    let meta = serde_json::json!({
+    let mut meta = serde_json::json!({
         "session_close": true,
         "session_id": manifest.session_id,
         "summary": summary,
@@ -1683,11 +1683,25 @@ pub fn close(
         "duration_ms": elapsed_ms,
     });
 
+    let signer = ctx.keys.default_signer()?;
+    // The close record (session.v1) is signed by the actor's own key when it
+    // has one (`mint_session_record`). A verifier accepts a record only from
+    // this close's signer or from the key this signed close names, so name it
+    // here: otherwise any key a reader happens to trust could re-sign this
+    // session's receipt.
+    let record_signer = crate::commands::attest::resolve_actor_signer(&ctx, &manifest.actor)?;
+    if record_signer.key_id() != signer.key_id() {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+        meta["record_key"] = serde_json::json!({
+            "key_id": record_signer.key_id(),
+            "public_key": format!("ed25519:{}", URL_SAFE_NO_PAD.encode(record_signer.public_key_bytes())),
+        });
+    }
+
     let mut stmt = ActionStatement::new(&manifest.actor, "session.close");
     stmt.parent_id = parent_id.clone();
     stmt.meta = Some(meta);
 
-    let signer = ctx.keys.default_signer()?;
     let pt = payload_type("action");
     let result = sign(&pt, &stmt, signer.as_ref())?;
 

@@ -151,9 +151,10 @@ pub fn add(
     );
     if signer_kind && !looks_like_key_id(key_id) {
         return Err(format!(
-            "{key_id:?} is not a key id. Pins for --kind {} are matched against the signature's key id, \
-             so this pin would never match anything. Use the id the producer's `treeship keys export` \
-             prints (key_<16 hex> or key_agent_<16 hex>); pass a label with --label",
+            "{key_id:?} is not a key id. `treeship verify` looks a --kind {} pin up by the signature's \
+             key id, so this pin would never match there (`package verify` matches pins by public key). \
+             Use the id the producer's `treeship keys export` prints (key_<16 hex> or key_agent_<16 hex>); \
+             pass a label with --label",
             kind.as_str()
         )
         .into());

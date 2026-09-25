@@ -89,6 +89,21 @@
       "receipt_only": "structural-pass",
       "pin_keys_from": "honest/basic"
     },
+    "tampered/forged-record-pinned-other-key": {
+      "_note": "Bypass E (embargoed): honest/basic rewritten and re-bound by a record signed by a second key the reader has also pinned (cli_strict pins every key in keys.json, producer and the second key). A pinned key must not vouch for another session's receipt",
+      "cli": "failed",
+      "cli_strict": "failed",
+      "cli_structural": "structural-pass",
+      "receipt_only": "structural-pass"
+    },
+    "tampered/injected-signer-artifact": {
+      "_note": "Bypass B (embargoed): honest/basic with an attacker-signed action chained in (tree recomputed), receipt rewritten and a record by the attacker key; cli_strict pins only the producer; --structural runs after the strict pass has pinned the producer, so signer_trust fails there too (a pinned package carrying an unvouched signer)",
+      "cli": "failed",
+      "cli_strict": "failed",
+      "cli_structural": "failed",
+      "receipt_only": "structural-pass",
+      "pin_keys_from": "honest/basic"
+    },
     "tampered/narrative-edit": {
       "cli": "failed",
       "cli_strict": "failed",
