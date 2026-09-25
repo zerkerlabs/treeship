@@ -169,6 +169,22 @@ fn seal_checkpoint(
     // Save latest.json (copy, not symlink, for portability)
     fs::write(cp_dir.join("latest.json"), &cp_json)?;
 
+    if printer.format == crate::printer::Format::Json {
+        // Full-length root and real numbers: the text view shortens the
+        // root for the eye, but a script needs the whole hash.
+        printer.json(&serde_json::json!({
+            "status": "ok",
+            "index": cp.index,
+            "root": cp.root,
+            "tree_size": cp.tree_size,
+            "height": cp.height,
+            "signer": cp.signer,
+            "signed_at": cp.signed_at,
+            "file": cp_dir.join(&filename),
+        }));
+        return Ok(());
+    }
+
     let root_short = short_hash(&cp.root);
 
     printer.success(
@@ -298,6 +314,21 @@ pub fn proof(
     let proof_json = serde_json::to_vec_pretty(&proof_file)?;
     let out_path = format!("{}.proof.json", artifact_id);
     fs::write(&out_path, &proof_json)?;
+
+    if printer.format == crate::printer::Format::Json {
+        printer.json(&serde_json::json!({
+            "status": "ok",
+            "artifact_id": artifact_id,
+            "leaf_index": leaf_index,
+            "tree_size": checkpoint.tree_size,
+            "leaf_hash": inclusion_proof.leaf_hash,
+            "root": checkpoint.root,
+            "checkpoint_index": checkpoint.index,
+            "path_len": inclusion_proof.path.len(),
+            "file": out_path,
+        }));
+        return Ok(());
+    }
 
     let root_short = short_hash(&checkpoint.root);
 
@@ -590,6 +621,29 @@ pub fn status(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std
     let total_artifacts = tree.len();
     let num_checkpoints = count_checkpoints()?;
     let latest_cp = load_latest_checkpoint()?;
+
+    if printer.format == crate::printer::Format::Json {
+        let latest = latest_cp.as_ref().map(|cp| {
+            serde_json::json!({
+                "index": cp.index,
+                "root": cp.root,
+                "tree_size": cp.tree_size,
+                "height": cp.height,
+                "signed_at": cp.signed_at,
+                "signer": cp.signer,
+            })
+        });
+        printer.json(&serde_json::json!({
+            "total_artifacts": total_artifacts,
+            "checkpoints": num_checkpoints,
+            "latest": latest,
+            "uncheckpointed": latest_cp
+                .as_ref()
+                .map(|cp| total_artifacts.saturating_sub(cp.tree_size))
+                .unwrap_or(total_artifacts),
+        }));
+        return Ok(());
+    }
 
     printer.blank();
     printer.section("Local Merkle tree");

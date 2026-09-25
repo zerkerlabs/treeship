@@ -42,6 +42,11 @@ pub fn history(
     config: Option<&str>,
     printer: &Printer,
 ) -> CmdResult {
+    if let Some(cf) = class_filter {
+        crate::validate::attestation_class(cf)?;
+    }
+    let since: Option<String> = since.map(crate::validate::since).transpose()?;
+    let since = since.as_deref();
     let trust = TrustRootStore::open_default_or_empty()?;
     let agent = if agent.contains("://") {
         agent.to_string()

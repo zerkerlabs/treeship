@@ -34,6 +34,10 @@ pub fn create(
     valid_until: Option<String>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let valid_until = valid_until
+        .as_deref()
+        .map(|v| crate::validate::rfc3339("--valid-until", v))
+        .transpose()?;
     let path =
         declaration_path().ok_or("no .treeship directory found -- run treeship init first")?;
 
