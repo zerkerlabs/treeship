@@ -111,8 +111,21 @@ pinned trust roots.
 Records that custody of some artifacts passed to another agent. Pass the
 presentation file and nonce from a successful `treeship_verify_presentation`
 call to get `custody: live`; without them the handoff is `custody: asserted`.
-See `bridges/mcp/src/server.ts` for the full parameter list (`to`, `artifacts`,
-`custodyReason`, etc.).
+
+| Input | Type | Required |
+|-------|------|----------|
+| `to` | string | Yes -- receiving actor URI, e.g. `agent://claude-code` |
+| `artifacts` | string[] | Yes -- artifact ids being handed over (min 1) |
+| `from` | string | No -- defaults to this bridge's actor |
+| `verified` | string | No -- presentation file you verified; requires `challenge` |
+| `challenge` | string | No -- the nonce this host minted that the presentation answers |
+| `max_staple_age` | string | No -- freshness bound for the staple, e.g. `"1h"` |
+| `custody_reason` | string | No -- record `custody: asserted` with this reason, e.g. `same_computer` (conflicts with `verified`) |
+| `close_loop` | string | No -- a sealed local session id (`ssn_…`) to bind as close-loop evidence |
+
+Note these last four fields are snake_case, unlike the camelCase inputs on
+the other tools above -- match the server's actual schema, not the naming
+convention of the rest of this bridge.
 
 ## Runtime behavior
 

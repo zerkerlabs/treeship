@@ -21,7 +21,7 @@ treeship hub push last           # share verify URL
 
 ## When to Use Treeship
 
-- **Sign agent actions** — tamper-proof receipts of what an agent did
+- **Sign agent actions** — tamper-evident receipts of what an agent did
 - **Verify workflows** — cryptographically verify chains of actions
 - **Audit agent work** — evidence, not chat logs
 - **Gate sensitive actions** — human approval before execution
@@ -60,7 +60,7 @@ treeship session close                  # close session
 treeship session report                 # upload receipt
 treeship hub push last                  # push to Hub
 treeship attest approval --approver human://... --description "..." \
-  --max-uses 1 --expires 2026-03-26T11:00:00Z  # create a scoped approval
+  --max-uses 1 --expires 2027-01-01T00:00:00Z  # create a scoped approval
 treeship attest action --approval-nonce <n> --actor ... --action ...  # consume an approval
 treeship init                           # keypair generation
 treeship keys list                      # list your signing keys
@@ -104,7 +104,7 @@ treeship trust remove <key_id>
 | `treeship/approval/v1` | Someone approved | `attest_approval()` |
 | `treeship/handoff/v1` | Work moved between agents | `attest_handoff()` |
 | `treeship/decision/v1` | LLM made a decision | `attest_decision()` |
-| `treeship/use/v1` | Approval consumed | auto, recorded alongside the consuming action |
+| `treeship/approval-use/v1` | Approval consumed | auto, recorded alongside the consuming action |
 
 ## Python SDK
 
@@ -130,7 +130,7 @@ approval = ts.attest_approval(
     approver="human://alice",
     description="approve deployment",
     max_uses=1,
-    expires_at="2026-03-26T11:00:00Z",
+    expires_at="2027-01-01T00:00:00Z",
 )
 print(approval.artifact_id, approval.nonce)
 
@@ -192,7 +192,7 @@ approval = ts.attest_approval(
     approver="human://alice",
     description="approve payment up to $500",
     max_uses=1,
-    expires_at="2026-03-26T11:00:00Z",
+    expires_at="2027-01-01T00:00:00Z",
 )
 
 # 2. Agent uses approval nonce
@@ -306,7 +306,7 @@ All methods raise `TreeshipError` on failure.
 
 | Variable | Purpose |
 |----------|---------|
-| `TREESHIP_ACTOR` | Default actor URI when `--actor` is omitted |
+| `TREESHIP_ACTOR` | Default actor URI, read by the MCP bridge only -- `attest action --actor` etc. are required flags on the CLI itself and exit 2 if omitted |
 | `TREESHIP_PARENT` | Default parent artifact ID when `--parent` is omitted |
 | `TREESHIP_MODEL`, `TREESHIP_TOKENS_IN`, `TREESHIP_TOKENS_OUT` | Model/token metadata attached to attestations |
 | `TREESHIP_APPROVAL_NONCE` | Approval nonce read by the MCP bridge |

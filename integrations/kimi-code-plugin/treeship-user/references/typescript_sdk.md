@@ -61,7 +61,7 @@ directly when the CLI you're driving requires one (it does by default).
 const approval = await s.attest.approval({
     approver: "human://alice",
     description: "approve deployment to production",
-    expires: "2026-03-26T11:00:00Z",
+    expires: "2027-01-01T00:00:00Z",
 });
 console.log(approval.nonce);
 ```

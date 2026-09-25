@@ -148,8 +148,8 @@ treeship trust remove <key_id>
 
 # Merkle (both hidden from --help but present)
 treeship checkpoint
-treeship merkle proof <artifact-id> > proof.json
-treeship merkle verify proof.json       # takes a proof file, not an artifact id
+treeship merkle proof <artifact-id>     # writes <artifact-id>.proof.json directly, not stdout
+treeship merkle verify <artifact-id>.proof.json   # takes a proof file, not an artifact id
 
 # Setup
 treeship setup
@@ -361,10 +361,10 @@ These never change. Do not suggest modifications to them.
 
 | Variable | Purpose |
 |----------|---------|
-| `TREESHIP_ACTOR` | Default actor URI (e.g. `agent://my-agent`) |
+| `TREESHIP_ACTOR` | Default actor URI, read by the MCP bridge only -- the CLI's own `--actor` flags are required and exit 2 if omitted |
 | `TREESHIP_DISABLE` | Set to `1` to disable the MCP bridge's capture |
 | `TREESHIP_STRICT` | Set to `1` to fail the tool call (instead of proceeding with a note) on a signing failure or an active `treeship halt` |
-| `TREESHIP_APPROVAL_NONCE` | Pass approval nonce without flag |
+| `TREESHIP_APPROVAL_NONCE` | Approval nonce, read by the MCP bridge only -- the CLI's `--approval-nonce` flag has no env fallback |
 | `TREESHIP_PARENT` | Default parent artifact ID |
 | `TREESHIP_A2A_UNVERIFIED` | Set to `1` to skip the agent-to-agent liveness gate (recorded on the receipt) |
 

@@ -5,7 +5,7 @@ description: Create cryptographic attestations for AI agent actions using Treesh
 
 # Treeship.dev — Portable Trust Receipts for Agent Workflows
 
-Treeship is a local-first, portable proof system for AI agent workflows. Every action gets an Ed25519 cryptographic signature, creating tamper-proof receipts anyone can verify independently. No central authority required.
+Treeship is a local-first, portable proof system for AI agent workflows. Every action gets an Ed25519 cryptographic signature, creating tamper-evident receipts anyone can verify independently: any edit to the signed payload breaks the signature. No central authority required.
 
 ## Core Principles
 
@@ -24,10 +24,14 @@ Core loop:
 2. treeship verify last             # check the chain offline
 3. treeship hub push last           # share a verify URL
 
-Model attestation (signed-artifact path landed in v0.10.2 via #75):
+Model provenance, unsigned timeline entry (fast, no key touched):
 treeship session event --type agent.decision \
   --model "claude-sonnet-4-6" \
   --provider "anthropic"
+
+Model provenance, signed receipt (use attest decision, not session event):
+treeship attest decision --actor agent://my-agent \
+  --model "claude-sonnet-4-6" --tokens-in 512 --tokens-out 128
 ```
 
 ## Actor URIs
@@ -44,7 +48,7 @@ Every entity that performs work is identified by a URI:
 | `treeship/action/v1` | Agent did something | `attest_action()` |
 | `treeship/approval/v1` | Someone approved an action | `attest_approval()` |
 | `treeship/handoff/v1` | Work moved between agents | `attest_handoff()` |
-| `treeship/decision/v1` | LLM model/version captured | `attest_decision()` / `treeship session event --type agent.decision` |
+| `treeship/decision/v1` | LLM model/version captured, signed | `attest_decision()` |
 | `treeship/endorsement/v1` | Third-party compliance assertion | (advanced) |
 
 ## Installation
@@ -105,16 +109,17 @@ approval = ts.attest_approval(
     approver="human://alice",
     description="approve deployment to production",
     max_uses=1,
-    expires_at="2026-03-26T11:00:00Z",
+    expires_at="2027-01-01T00:00:00Z",
 )
 print(approval.artifact_id, approval.nonce)
 
-# Attest a handoff between agents
+# Attest a handoff between agents. approvals takes the approval artifacts'
+# own ids (e.g. from attest_approval().artifact_id), not their nonces.
 result = ts.attest_handoff(
     from_actor="agent://researcher",
     to_actor="agent://executor",
     artifacts=["art_abc123", "art_def456"],
-    approvals=["nonce_xyz"]
+    approvals=[approval.artifact_id],
 )
 
 # Attest an LLM decision (model provenance)
@@ -217,13 +222,16 @@ There is no top-level `attach` command -- that verb is `hub attach` (below).
 ### Verification and inspection
 ```bash
 treeship verify art_abc123                   # verify + inspect an artifact (no separate "inspect")
-treeship bundle create --artifacts art_a1b2,art_c3d4  # create a portable bundle
-treeship bundle export art_e5f6 --out release.treeship
-treeship bundle import release.treeship
+treeship bundle create --artifacts art_a1b2,art_c3d4  # create a portable bundle; prints its OWN id, e.g. art_e5f6
+treeship bundle export art_e5f6 --out release.treeship  # the bundle's own id, not one of --artifacts
+treeship bundle import release.treeship       # loads it back into local storage
+treeship verify art_e5f6                      # verify the imported bundle by its id
 ```
 
-There is no `bundle verify`. Verify an exported bundle/package with
-`treeship package verify <path>`.
+There is no `bundle verify`, and `package verify` is for **session** packages
+(`.treeship` files from `session close`), not bundle exports -- running it on
+a bundle export fails. To verify a bundle someone sent you: `bundle import`
+it, then `verify <bundle_id>`.
 
 ### Trust roots (v0.10.3+)
 ```bash
@@ -406,11 +414,6 @@ Base URL: `https://api.treeship.dev/v1/`
 
 **Authentication**: DPoP (Demonstration of Proof-of-Possession). No API keys.
 
-```
-Authorization: DPoP {hub_id}
-DPoP: {JWT signed by hub private key}
-```
-
 `GET /v1/verify/:id` is **retired** and returns `410` -- there is no
 server-side verdict; the hub is transport only. Verify locally
 (`treeship verify`, `treeship package verify`). For the full, current route
@@ -462,7 +465,7 @@ approval = ts.attest_approval(
     approver="human://alice",
     description="approve payment up to $500",
     max_uses=1,
-    expires_at="2026-03-26T11:00:00Z",
+    expires_at="2027-01-01T00:00:00Z",
 )
 
 # Agent uses the approval nonce
@@ -496,7 +499,7 @@ is DPoP via `treeship hub attach`, not an API key.
 
 | Variable | Purpose |
 |----------|---------|
-| `TREESHIP_ACTOR` | Default actor URI when `--actor` is omitted |
+| `TREESHIP_ACTOR` | Default actor URI, read by the MCP bridge only -- the CLI's own `--actor` flags are required and exit 2 if omitted |
 | `TREESHIP_PARENT` | Default parent artifact ID when `--parent` is omitted |
 | `TREESHIP_MODEL` | Model name for attestation |
 | `TREESHIP_TOKENS_IN` | Input tokens (user-provided or proxy) |

@@ -110,7 +110,7 @@ After changing Hermes MCP config, start a fresh Hermes session or run `/reload-m
    treeship attest handoff \
      --from agent://hermes \
      --to agent://claude-code \
-     --task "continue implementation" \
+     --artifacts art_a1b2c3d4 \
      --format json
    ```
    Completion criterion: multi-agent transitions are explicit rather than hidden in chat text.

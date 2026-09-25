@@ -47,7 +47,7 @@ approval = ts.attest_approval(
     approver="human://alice",
     description="approve deployment to production",
     max_uses=1,
-    expires_at="2026-03-26T11:00:00Z",
+    expires_at="2027-01-01T00:00:00Z",
 )
 
 # attest_handoff(from_actor, to_actor, artifacts, approvals=None)
@@ -76,7 +76,7 @@ result = ts.wrap(["npm", "test"], actor="agent://ci")
 report = ts.session_report()
 ```
 
-All methods raise `TreeshipError` (a `RuntimeError` subclass) on CLI failure.
+All methods raise `TreeshipError` (an `Exception` subclass) on CLI failure.
 
 ## TypeScript SDK (`@treeship/sdk`)
 
@@ -142,13 +142,15 @@ connection is `hub attach`/`hub detach`/`hub status` (below).
 
 ```bash
 treeship verify <artifact_id>   # no separate "inspect" command
-treeship bundle create --artifacts art_a1b2,art_c3d4
-treeship bundle export <artifact_id> --out release.treeship
+treeship bundle create --artifacts art_a1b2,art_c3d4   # prints its OWN id, e.g. art_e5f6
+treeship bundle export <bundle_id> --out release.treeship   # the bundle's own id, not one of --artifacts
 treeship bundle import release.treeship
-treeship package verify <path.treeship>
+treeship verify <bundle_id>     # verify an imported bundle -- package verify is for session packages, not bundles
 ```
 
-There is no `bundle verify` and no `chain show`/`chain verify`.
+There is no `bundle verify` and no `chain show`/`chain verify`. `package verify`
+only accepts a `.treeship` session package from `session close`; running it on
+a bundle export fails.
 
 ### Hub
 
@@ -174,7 +176,7 @@ treeship attest action --actor agent://name --action tool.call \
 
 | Variable | Purpose |
 |----------|---------|
-| `TREESHIP_ACTOR` | Default actor URI |
+| `TREESHIP_ACTOR` | Default actor URI, read by the MCP bridge only -- the CLI's own `--actor` flags are required and exit 2 if omitted |
 | `TREESHIP_PARENT` | Default parent artifact ID |
 | `TREESHIP_MODEL`, `TREESHIP_TOKENS_IN`, `TREESHIP_TOKENS_OUT`, `TREESHIP_PROVIDER` | Model/token metadata |
 | `TREESHIP_APPROVAL_NONCE` | Approval nonce read by the MCP bridge |
