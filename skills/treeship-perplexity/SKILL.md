@@ -62,7 +62,7 @@ Always use `api_credentials=["github"]` in bash tool calls when using `gh`.
 |------|------|
 | `packages/core/` | Rust core library — attestation, signing, Merkle, verifier |
 | `packages/cli/` | Rust CLI — 25+ commands |
-| `packages/hub/` | Go Hub server — 12 API endpoints |
+| `packages/hub/` | Go Hub server (see `packages/hub/main.go` for the current route list) |
 | `packages/sdk-ts/` | TypeScript SDK (`@treeship/sdk`) |
 | `packages/sdk-python/` | Python SDK (`treeship-sdk`) |
 | `bridges/mcp/` | MCP bridge (`@treeship/mcp`) |
@@ -111,10 +111,11 @@ treeship session close --headline "..."
 treeship session report
 
 # Wrapping and attesting
-treeship wrap -- <command>
+treeship wrap -- <command>                      # flags: --actor --action --parent --push
 treeship attest action --actor agent://name --action tool.call
-treeship attest approval --approver human://alice --expires 2026-12-31T00:00:00Z
-treeship attest handoff --from agent://a --to agent://b
+treeship attest approval --approver human://alice --description "..." \
+  --max-uses 1 --expires 2026-12-31T00:00:00Z   # a scope (--max-uses/--allowed-*) is required, or pass --unscoped
+treeship attest handoff --from agent://a --to agent://b --artifacts art_a1b2
 
 # Verification
 treeship verify <artifact-id>
@@ -130,25 +131,25 @@ treeship hub push <artifact-id>
 treeship hub pull <artifact-id>
 treeship hub status
 
-# Inspection
-treeship inspect <artifact-id>
+# Inspection -- there is no separate "inspect" command; `verify` doubles as
+# the artifact inspector, and `log` reads the local timeline
 treeship log [--tail N] [--follow]
-treeship status
+treeship status                 # ship state: keys, recent artifacts, hub status
 treeship doctor
 
-# Keys
+# Keys -- there is no "key show"; use "keys" (plural)
 treeship keys list
-treeship key show
+treeship keys export [--agent <uri>] [--key <key_id>]
 
 # Trust roots (v0.10.3+)
 treeship trust list
-treeship trust add <key_id> <pubkey> --kind <hub_checkpoint|ship|agent_cert>
+treeship trust add <key_id> <pubkey> --kind <hub_checkpoint|hub_org|cert_issuer|revoker|agent_cert|session_host|transparency_log>
 treeship trust remove <key_id>
 
-# Merkle
+# Merkle (both hidden from --help but present)
 treeship checkpoint
-treeship merkle proof <artifact-id>
-treeship merkle verify <artifact-id>
+treeship merkle proof <artifact-id> > proof.json
+treeship merkle verify proof.json       # takes a proof file, not an artifact id
 
 # Setup
 treeship setup
@@ -188,11 +189,14 @@ result = ts.attest_action(
 )
 print(result.artifact_id)  # art_...
 
-# Create approval (human-in-the-loop)
+# Create approval (human-in-the-loop) -- a scope is required
+# (allowed_actions/allowed_actors/allowed_subjects/max_uses), or pass
+# unscoped=True; expires_at is RFC 3339, not a duration
 approval = ts.attest_approval(
     approver="human://alice",
     description="approve deployment",
-    expires_in=3600          # seconds
+    max_uses=1,
+    expires_at="2026-12-31T00:00:00Z",
 )
 # approval.nonce → pass to action as approval_nonce
 
@@ -209,12 +213,12 @@ verified = ts.verify(result.artifact_id)
 # verified.outcome: "pass" | "fail" | "error"
 # verified.chain:   number of linked artifacts
 
-# Push to Hub
-push = ts.dock_push(result.artifact_id)
+# Push to Hub -- the method is hub_push, not dock_push
+push = ts.hub_push(result.artifact_id)
 print(push.hub_url)   # https://treeship.dev/verify/art_xxx
 
-# Wrap a shell command
-result = ts.wrap("npm test", actor="agent://ci")
+# Wrap a shell command (pass argv as a list; a string is split with shlex)
+result = ts.wrap(["npm", "test"], actor="agent://ci")
 
 # Session report (permanent shareable URL)
 report = ts.session_report()
@@ -223,29 +227,35 @@ print(report.receipt_url)
 
 ## TypeScript SDK
 
+The SDK shells out to the `treeship` CLI on PATH. There is no `Ship.init()`,
+no flat `attestAction`/`attestHandoff` methods, and no `createCheckpoint` /
+`createBundle` / `save`. Get an instance with `ship()` and call through its
+four modules (`attest`, `verify`, `hub`, `session`):
+
 ```typescript
-import { Ship } from "@treeship/sdk";
+import { ship } from "@treeship/sdk";
 
-const ship = await Ship.init("./.treeship", "agent://my-agent");
+const s = ship();
 
-const { receipt } = ship.attestAction({
-  actor:      { type: "agent", id: "agent://my-agent" },
-  actionType: "tool.call",
-  actionName: "search.web",
-  inputs:     JSON.stringify({ query: "AI safety" }),
-  outputs:    JSON.stringify({ results: ["paper1"] }),
+const { artifactId } = await s.attest.action({
+  actor: "agent://my-agent",
+  action: "search.web",
+  meta: { query: "AI safety" },
 });
 
-ship.attestHandoff({
-  fromActor: { type: "agent", id: "agent://researcher" },
-  toActor:   { type: "agent", id: "agent://writer" },
-  taskCommitment: "complete-report",
+await s.attest.handoff({
+  from: "agent://researcher",
+  to: "agent://writer",
+  artifacts: [artifactId],
 });
 
-ship.createCheckpoint();
-const bundle = ship.createBundle("Workflow");
-await ship.save();
+const verified = await s.verify.verify(artifactId);
+const push = await s.hub.push(artifactId);
 ```
+
+The TS SDK's `attest.approval()` doesn't yet accept a scope
+(`allowed_actions`/`allowed_actors`/`allowed_subjects`/`max_uses`); use the
+Python SDK or `treeship attest approval` directly for scoped approvals.
 
 ## MCP Bridge
 
@@ -265,22 +275,31 @@ claude mcp add --transport stdio treeship -- npx -y @treeship/mcp
 
 The bridge signs an **intent attestation** before each tool call and a **result receipt** after. Arguments and outputs are stored as SHA-256 digests only — never raw content.
 
-MCP tools exposed (v0.10.1+):
+MCP tools exposed (9 total, `bridges/mcp/src/server.ts`):
 - `treeship_session_status`
 - `treeship_session_event`
-- `treeship_attest_action`
-- `treeship_verify`
 - `treeship_session_report`
+- `treeship_attest_action`
+- `treeship_attest_handoff`
+- `treeship_verify`
+- `treeship_mint_challenge`
+- `treeship_present`
+- `treeship_verify_presentation`
+
+`TREESHIP_STRICT=1` makes a signing failure or an active `treeship halt`
+fail the underlying tool call instead of letting it proceed with a note
+(the default is fail-open).
 
 ## Approval-Gated Workflow (CLI)
 
 ```bash
-# 1. Create approval
+# 1. Create approval -- a scope is required (--max-uses / --allowed-*), or pass --unscoped
 approval=$(treeship attest approval \
   --approver human://alice \
   --description "deploy v2.1" \
+  --max-uses 1 \
   --expires 2026-12-31T00:00:00Z \
-  --format json | jq -r .approval_nonce)
+  --format json | jq -r .nonce)
 
 # 2. Use approval nonce in action
 treeship attest action \
@@ -298,18 +317,21 @@ Base URL: `https://api.treeship.dev/v1/`
 
 Auth: DPoP (no API keys or session tokens). Set up via `treeship hub attach`.
 
-| Endpoint | Description |
-|----------|-------------|
-| `POST /v1/artifacts` | Push artifact (auth required) |
-| `GET /v1/artifacts/:id` | Fetch artifact (public) |
-| `GET /v1/verify/:id` | Verify artifact (public) |
-| `GET /v1/workspace` | List your artifacts (auth required) |
-| `POST /v1/merkle/checkpoint` | Store Merkle checkpoint |
-| `GET /v1/merkle/proof/:artifact_id` | Fetch inclusion proof |
+`GET /v1/verify/:id` is **retired** and returns `410` -- there is no
+server-side verdict; the hub is transport only, and callers verify against
+their own pinned roots (`treeship verify`, `package verify`). For the current
+route list, read `docs/content/docs/api/overview.mdx` and the per-route pages
+under `docs/content/docs/api/`, or `packages/hub/main.go` directly -- don't
+hand-copy a route table here, it drifts.
 
-Public verify URL: `https://treeship.dev/verify/{artifact_id}`
+Public receipt pages: `https://treeship.dev/receipt/{session_id}` (from
+`session report`). Public artifact push URLs: `https://treeship.dev/verify/{artifact_id}`
+(from `hub push`).
 
 ## Statement Types
+
+These are `statement.type` values (a separate string from the DSSE
+`payloadType`, which is `application/vnd.treeship.<suffix>.v1+json`):
 
 | Type | Purpose |
 |------|---------|
@@ -317,8 +339,10 @@ Public verify URL: `https://treeship.dev/verify/{artifact_id}`
 | `treeship/approval/v1` | Human approved something |
 | `treeship/handoff/v1` | Work transferred between agents |
 | `treeship/decision/v1` | LLM made a decision |
-| `treeship/receipt/v1` | Session sealed receipt |
+| `treeship/endorsement/v1` | An actor vouches for another artifact |
+| `treeship/receipt/v1` | External system receipt (webhook, confirmation) |
 | `treeship/bundle/v1` | Bundled artifact package |
+| `session.v1`, `judgement.v1`, `judgement.resolution.v1` | Registered predicates carried inside a receipt/action payload, not top-level statement types |
 
 ## Cryptographic Invariants (read-only reference)
 
@@ -338,10 +362,13 @@ These never change. Do not suggest modifications to them.
 | Variable | Purpose |
 |----------|---------|
 | `TREESHIP_ACTOR` | Default actor URI (e.g. `agent://my-agent`) |
-| `TREESHIP_DISABLE` | Set to `1` to disable receipt capture |
-| `TREESHIP_DEBUG` | Set to `1` for verbose output |
+| `TREESHIP_DISABLE` | Set to `1` to disable the MCP bridge's capture |
+| `TREESHIP_STRICT` | Set to `1` to fail the tool call (instead of proceeding with a note) on a signing failure or an active `treeship halt` |
 | `TREESHIP_APPROVAL_NONCE` | Pass approval nonce without flag |
 | `TREESHIP_PARENT` | Default parent artifact ID |
+| `TREESHIP_A2A_UNVERIFIED` | Set to `1` to skip the agent-to-agent liveness gate (recorded on the receipt) |
+
+There is no `TREESHIP_DEBUG` -- nothing in the CLI or the MCP bridge reads it.
 
 ## Key Local Paths
 
@@ -359,4 +386,4 @@ These never change. Do not suggest modifications to them.
 - Hub: https://treeship.dev/verify/
 - npm: `treeship`, `@treeship/sdk`, `@treeship/mcp`, `@treeship/verify`, `@treeship/core-wasm`
 - PyPI: `treeship-sdk`
-- crates.io: `treeship-core`, `treeship-cli`, `treeship-core-wasm`
+- crates.io: `treeship-core`, `rig-treeship` -- `treeship-cli` is fully yanked (`cargo install treeship-cli` fails); there is no `treeship-core-wasm` crate

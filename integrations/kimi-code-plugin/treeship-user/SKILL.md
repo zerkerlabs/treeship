@@ -76,7 +76,8 @@ npm install @treeship/mcp
 **CLI via package managers:**
 ```bash
 npm install -g treeship
-npm install -g treeship   # (do NOT `cargo install treeship-cli` — that crate is an orphaned 0.4.0 stub)
+# (do NOT `cargo install treeship-cli` -- every version of that crate is
+#  yanked; the install fails outright)
 ```
 
 ## Python SDK API
@@ -96,11 +97,15 @@ result = ts.attest_action(
 )
 print(result.artifact_id)   # art_...
 
-# Attest an approval (returns single-use nonce)
+# Attest an approval (returns a nonce). A scope is required --
+# allowed_actions/allowed_actors/allowed_subjects/max_uses -- or pass
+# unscoped=True to mint a bearer approval deliberately. expires_at is an
+# RFC 3339 timestamp, not a duration.
 approval = ts.attest_approval(
     approver="human://alice",
     description="approve deployment to production",
-    expires_in=3600
+    max_uses=1,
+    expires_at="2026-03-26T11:00:00Z",
 )
 print(approval.artifact_id, approval.nonce)
 
@@ -127,12 +132,12 @@ verified = ts.verify("art_abc123")
 print(verified.outcome)   # "pass", "fail", or "error"
 print(verified.chain)     # chain length
 
-# Push to Hub for shareable URL
-push = ts.dock_push("art_abc123")
+# Push to Hub for shareable URL (the method is hub_push, not dock_push)
+push = ts.hub_push("art_abc123")
 print(push.hub_url)       # https://treeship.dev/verify/art_abc123
 
-# Wrap a shell command
-result = ts.wrap("npm test", actor="agent://ci")
+# Wrap a shell command (pass argv as a list; a string is split with shlex)
+result = ts.wrap(["npm", "test"], actor="agent://ci")
 
 # Upload session receipt
 report = ts.session_report(session_id="ssn_...")  # or omit for latest
@@ -141,13 +146,17 @@ print(report.receipt_url)  # permanent public URL
 
 ## TypeScript SDK API
 
-```typescript
-import { Treeship } from '@treeship/sdk';
+There is no `Treeship` class and no flat `attestAction`/`dockPush` methods.
+The SDK shells out to the `treeship` CLI; get an instance with the `ship()`
+factory and call through its `attest`/`verify`/`hub`/`session` modules:
 
-const ts = new Treeship();
+```typescript
+import { ship } from '@treeship/sdk';
+
+const s = ship();
 
 // Attest an action
-const result = await ts.attestAction({
+const result = await s.attest.action({
     actor: 'agent://my-agent',
     action: 'tool.call',
     parentId: 'art_abc123',
@@ -156,11 +165,11 @@ const result = await ts.attestAction({
 console.log(result.artifactId);  // art_...
 
 // Verify
-const verified = await ts.verify('art_abc123');
+const verified = await s.verify.verify('art_abc123');
 console.log(verified.outcome);  // "pass", "fail", or "error"
 
 // Push to Hub
-const push = await ts.dockPush('art_abc123');
+const push = await s.hub.push('art_abc123');
 console.log(push.hubUrl);
 ```
 
@@ -180,32 +189,41 @@ treeship hub push last                       # push most recent
 treeship session start --name "feature work" # start session
 treeship session close                       # close session
 treeship session report                      # upload session receipt
-treeship session list                        # list sessions
+treeship session status                      # is a session active
 treeship session event --type agent.decision \
   --model "claude-sonnet-4-6" \
   --provider "anthropic"                     # emit model attestation
 ```
 
+There is no `session list`.
+
 ### Key and identity
 ```bash
 treeship init                                # initialize keypair
-treeship key show                            # show public key
-treeship key rotate                          # rotate keys
+treeship keys list                           # list your signing keys
+treeship keys export                         # export a key's public half, pinnable form
+treeship keys rotate                         # rotate keys (keys, not key)
 ```
 
 ### Agent instrumentation
 ```bash
 treeship add                                 # auto-detect and configure
-treeship attach claude                       # attach to Claude
-treeship attach cursor                       # attach to Cursor
+treeship add claude-code                     # instrument Claude Code specifically
+treeship add cursor                          # instrument Cursor specifically
 ```
+
+There is no top-level `attach` command -- that verb is `hub attach` (below).
 
 ### Verification and inspection
 ```bash
-treeship inspect art_abc123                  # inspect artifact
-treeship bundle create                       # create portable bundle
-treeship bundle verify ./bundle.json         # verify bundle offline
+treeship verify art_abc123                   # verify + inspect an artifact (no separate "inspect")
+treeship bundle create --artifacts art_a1b2,art_c3d4  # create a portable bundle
+treeship bundle export art_e5f6 --out release.treeship
+treeship bundle import release.treeship
 ```
+
+There is no `bundle verify`. Verify an exported bundle/package with
+`treeship package verify <path>`.
 
 ### Trust roots (v0.10.3+)
 ```bash
@@ -214,6 +232,10 @@ treeship trust add <key_id> <pubkey> \
   --kind hub_checkpoint                      # pin a hub-checkpoint issuer
 treeship trust remove <key_id>               # un-pin
 ```
+
+Valid `--kind` values: `hub_checkpoint`, `hub_org`, `cert_issuer`, `revoker`,
+`agent_cert`, `session_host`, `transparency_log`. (`ship` is deprecated and
+rejected.)
 
 Since **v0.10.3**, verification of hub-checkpoint and agent-certificate
 artifacts requires the embedded public key to match a configured trust
@@ -342,7 +364,7 @@ Coverage levels:
 @dataclass class ApprovalResult:    artifact_id: str; nonce: str
 @dataclass class VerifyResult:      outcome: str; chain: int; target: str
 @dataclass class PushResult:        hub_url: str; rekor_index: Optional[int]
-@dataclass class SessionReportResult: session_id: str; receipt_url: str; agents: list; events: list
+@dataclass class SessionReportResult: session_id: str; receipt_url: str; agents: int = 0; events: int = 0
 ```
 
 All methods raise `TreeshipError` on CLI failure.
@@ -362,12 +384,21 @@ Treeship exposes an MCP server for Claude Code and other MCP-compatible agents:
 }
 ```
 
-Available tools via MCP (the five the `@treeship/mcp` server actually registers):
+Available tools via MCP (all 9 the `@treeship/mcp` server registers,
+`bridges/mcp/src/server.ts`):
 - `treeship_session_status` — Report the active session and its current state
 - `treeship_session_event` — Emit a structured event into the active session timeline
-- `treeship_attest_action` — Sign an agent action into a verifiable receipt
-- `treeship_verify` — Verify an artifact chain
 - `treeship_session_report` — Seal and upload the session receipt, returning a public verify URL
+- `treeship_attest_action` — Sign an agent action into a verifiable receipt
+- `treeship_attest_handoff` — Sign a work handoff between agents
+- `treeship_verify` — Verify an artifact chain
+- `treeship_mint_challenge` — Mint a nonce to challenge another agent's live key control
+- `treeship_present` — Answer a challenge, proving live control of this ship's key
+- `treeship_verify_presentation` — Verify another agent's answer to a challenge you minted
+
+`TREESHIP_STRICT=1` makes a signing failure, or an active `treeship halt`,
+fail the underlying tool call instead of letting it proceed with a note
+(the default is fail-open).
 
 ## Hub API
 
@@ -380,20 +411,17 @@ Authorization: DPoP {hub_id}
 DPoP: {JWT signed by hub private key}
 ```
 
-**Key endpoints:**
-- `POST /v1/artifacts` — Push artifact to Hub
-- `GET /v1/artifacts/:id` — Retrieve artifact
-- `GET /v1/verify/:id` — Public verification (no auth required)
-- `PUT /v1/receipt/{session_id}` — Upload session receipt
-- `GET /v1/receipt/{session_id}` — Fetch session receipt (public, no auth)
-- `GET /v1/ship/agents` — List agents
-- `GET /v1/ship/sessions` — List sessions
-- `GET /v1/merkle/:artifactId` — Get Merkle proof
+`GET /v1/verify/:id` is **retired** and returns `410` -- there is no
+server-side verdict; the hub is transport only. Verify locally
+(`treeship verify`, `treeship package verify`). For the full, current route
+list, read `docs/content/docs/api/overview.mdx` and the per-route pages
+under `docs/content/docs/api/`, or `packages/hub/main.go` directly --
+don't hand-copy a route table into a skill file, it drifts (that's exactly
+how this file went stale).
 
-**Public verification URLs:**
-- `https://treeship.dev/verify/{artifact_id}` — Verify single artifact
-- `https://treeship.dev/receipt/{session_id}` — View session receipt
-- `https://treeship.dev/api/badge/{agent}` — Embed attestation count SVG
+**Public URLs:**
+- `https://treeship.dev/verify/{artifact_id}` — result of `hub push` on a single artifact
+- `https://treeship.dev/receipt/{session_id}` — result of `session report`
 
 ## Chained Attestation Workflow
 
@@ -433,7 +461,8 @@ For sensitive operations requiring human approval:
 approval = ts.attest_approval(
     approver="human://alice",
     description="approve payment up to $500",
-    expires_in=3600
+    max_uses=1,
+    expires_at="2026-03-26T11:00:00Z",
 )
 
 # Agent uses the approval nonce
@@ -450,30 +479,35 @@ result = ts.attest_action(
 ```yaml
 # GitHub Actions
 - name: Attest deployment
-  env:
-    TREESHIP_API_KEY: ${{ secrets.TREESHIP_API_KEY }}
   run: |
-    treeship attest \
-      --agent "github-actions" \
-      --action "Deployed ${{ github.sha }} to production" \
-      --inputs-hash "${{ github.sha }}"
+    treeship attest action \
+      --actor "agent://github-actions" \
+      --action "deploy.production" \
+      --input-digest "sha256:${{ github.sha }}"
 ```
+
+There is no `TREESHIP_API_KEY` and no bare `treeship attest` command --
+`attest` is a subcommand group (`attest action`/`approval`/`handoff`/
+`decision`/`receipt`). Signing needs a keystore on the runner
+(`treeship init` once, or a restored `~/.treeship`); hub auth, if you push,
+is DPoP via `treeship hub attach`, not an API key.
 
 ## Environment Variables
 
-| Variable | Purpose | Since |
-|----------|---------|-------|
-| `TREESHIP_API_KEY` | Hub API key | v0.1 |
-| `TREESHIP_AGENT` | Default agent slug | v0.1 |
-| `TREESHIP_HUB_ID` | Hub workspace ID | v0.1 |
-| `TREESHIP_MODEL` | Model name for attestation | v0.7.2 |
-| `TREESHIP_TOKENS_IN` | Input tokens (user-provided or proxy) | v0.7.2 |
-| `TREESHIP_TOKENS_OUT` | Output tokens (user-provided or proxy) | v0.7.2 |
-| `TREESHIP_PROVIDER` | Model provider (anthropic, openai, etc.) | v0.8.0 |
+| Variable | Purpose |
+|----------|---------|
+| `TREESHIP_ACTOR` | Default actor URI when `--actor` is omitted |
+| `TREESHIP_PARENT` | Default parent artifact ID when `--parent` is omitted |
+| `TREESHIP_MODEL` | Model name for attestation |
+| `TREESHIP_TOKENS_IN` | Input tokens (user-provided or proxy) |
+| `TREESHIP_TOKENS_OUT` | Output tokens (user-provided or proxy) |
+| `TREESHIP_PROVIDER` | Model provider (anthropic, openai, etc.) |
+| `TREESHIP_DISABLE` | Disables the MCP bridge's capture |
+| `TREESHIP_STRICT` | MCP bridge: fail the tool call instead of proceeding with a note, on a signing failure or an active halt |
 
-The full signed-artifact path for model + provider on `agent.decision`
-landed in **v0.10.2** (#75); before that, `--provider` was rejected by
-`treeship attest decision` even when the env var was set.
+There is no `TREESHIP_API_KEY`, `TREESHIP_AGENT` or `TREESHIP_HUB_ID` --
+nothing in the CLI, core, hub or SDKs reads them. Hub auth is DPoP, not an
+API key.
 
 ## Key Files and Directories
 

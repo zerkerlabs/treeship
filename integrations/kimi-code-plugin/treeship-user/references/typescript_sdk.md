@@ -6,23 +6,25 @@
 npm install @treeship/sdk
 ```
 
-Requires Node.js 18+ and the `treeship` CLI binary in PATH, initialized with `treeship init`.
+Requires the `treeship` CLI binary on PATH, initialized once with
+`treeship init`. The SDK shells out to that binary for every call; it does
+not talk to any API directly.
 
-## Treeship Class
+## Getting an instance
+
+There is no `Treeship` class. Get an instance with the `ship()` factory:
 
 ```typescript
-import { Treeship } from '@treeship/sdk';
+import { ship } from "@treeship/sdk";
 
-const ts = new Treeship();
+const s = ship();
 ```
 
-### Methods
+`s` exposes four modules: `attest`, `verify`, `hub`, `session`. There are no
+top-level `attestAction`/`dockPush` methods -- always go through a module
+(`s.attest.action(...)`, `s.hub.push(...)`).
 
-#### `attestAction(params)`
-
-Create a signed action receipt.
-
-**Parameters:**
+### `s.attest.action(params): Promise<ActionResult>`
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -32,95 +34,88 @@ Create a signed action receipt.
 | `approvalNonce` | `string` | No | Nonce from an existing approval |
 | `meta` | `Record<string, unknown>` | No | Arbitrary metadata |
 
-**Returns:** `Promise<ActionResult>`
-
 ```typescript
-const result = await ts.attestAction({
-    actor: 'agent://coder',
-    action: 'tool.call',
-    parentId: 'art_abc123',
-    meta: { tool: 'read_file', path: 'src/main.rs' }
+const result = await s.attest.action({
+    actor: "agent://coder",
+    action: "tool.call",
+    parentId: "art_abc123",
+    meta: { tool: "read_file", path: "src/main.rs" },
 });
 console.log(result.artifactId);  // art_...
 ```
 
-#### `attestApproval(params)`
-
-Create a signed approval receipt with a single-use nonce.
-
-**Parameters:**
+### `s.attest.approval(params): Promise<ApprovalResult>`
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `approver` | `string` | Yes | Approver URI |
 | `description` | `string` | Yes | What is being approved |
-| `expiresIn` | `number` | No | Expiry in seconds |
+| `expires` | `string` | No | RFC 3339 expiry timestamp -- **not** `expiresIn`/seconds |
+| `subject` | `string` | No | URI this approval covers |
 
-**Returns:** `Promise<ApprovalResult>`
+This module does not yet accept a scope (`allowedActions`/`allowedActors`/
+`allowedSubjects`/`maxUses`); use the Python SDK or `treeship attest approval`
+directly when the CLI you're driving requires one (it does by default).
 
 ```typescript
-const approval = await ts.attestApproval({
-    approver: 'human://alice',
-    description: 'approve deployment to production',
-    expiresIn: 3600
+const approval = await s.attest.approval({
+    approver: "human://alice",
+    description: "approve deployment to production",
+    expires: "2026-03-26T11:00:00Z",
 });
-console.log(approval.nonce);  // Single-use nonce
+console.log(approval.nonce);
 ```
 
-#### `verify(artifactId)`
+### `s.attest.handoff(params): Promise<ActionResult>`
 
-Verify an artifact and walk its chain.
+`{ from, to, artifacts, approvals? }`.
 
-**Returns:** `Promise<VerifyResult>`
+### `s.verify.verify(artifactId): Promise<VerifyResult>`
 
 ```typescript
-const result = await ts.verify('art_abc123');
-console.log(result.outcome);  // "pass", "fail", or "error"
+const result = await s.verify.verify("art_abc123");
+console.log(result.outcome);  // "pass" | "fail" | "error"
 console.log(result.chain);    // chain length
 ```
 
-#### `dockPush(artifactId)`
+`s.verify` also exports `verifyReceipt`, `verifyCertificate`, `crossVerify`,
+`verifyResolution` and `verifyPresentation` -- see `packages/sdk-ts/src/verify.ts`.
 
-Push an artifact to the configured hub.
+### `s.hub.push(artifactId): Promise<PushResult>`
 
-**Returns:** `Promise<PushResult>`
+There is no `dockPush` -- the module is `hub`, the method is `push`.
 
 ```typescript
-const push = await ts.dockPush('art_abc123');
+const push = await s.hub.push("art_abc123");
 console.log(push.hubUrl);  // https://treeship.dev/verify/art_...
 ```
 
-### Result Types
+`s.hub` also has `pull(id)` and `status()` (returns `{ connected, endpoint?, hubId? }`).
+
+### `s.session.event(params): Promise<SessionEventResult>`
+
+Appends a structured event to the active session's timeline (mirrors
+`treeship session event`). See `packages/sdk-ts/src/session.ts`.
+
+## Result types
 
 ```typescript
-interface ActionResult {
-    artifactId: string;
-}
-
-interface ApprovalResult {
-    artifactId: string;
-    nonce: string;
-}
-
-interface VerifyResult {
-    outcome: 'pass' | 'fail' | 'error';
-    chain: number;
-    target: string;
-}
-
-interface PushResult {
-    hubUrl: string;
-    rekorIndex?: number;
-}
+interface ActionResult { artifactId: string }
+interface ApprovalResult { artifactId: string; nonce: string }
+interface VerifyResult { outcome: "pass" | "fail" | "error"; chain: number; target: string }
+interface PushResult { hubUrl: string; rekorIndex?: number }
 ```
 
-### Error Handling
+## Error handling
 
-All methods throw `TreeshipError` (extends `Error`) on CLI failure.
+All methods throw `TreeshipError` (exported from `@treeship/sdk`, extends
+`Error`) on CLI failure.
 
 ```typescript
+import { ship, TreeshipError } from "@treeship/sdk";
+
 try {
-    const result = await ts.attestAction({ actor: 'agent://test', action: 'test' });
+    const result = await ship().attest.action({ actor: "agent://test", action: "test" });
 } catch (e) {
     if (e instanceof TreeshipError) {
         console.error(`Attestation failed: ${e.message}`);

@@ -1,306 +1,196 @@
 # Treeship SDK & CLI Reference
 
-## Python SDK (`treeship-sdk`)
+This file is a quick reference. It is kept short on purpose: a hand-copied
+command or route table is exactly what let this file drift out of sync with
+the CLI before (fictional `dock_push`, `expires_in`, `treeship inspect`,
+`treeship attach <agent>`, `TREESHIP_API_KEY`, and more, none of which exist).
+For anything not covered here, read the source or the canonical docs instead
+of copying a new list into this file:
 
-### Installation
+- CLI surface: `treeship --help` / `treeship <command> --help` (or
+  `packages/cli/src/main.rs`)
+- Python SDK: `packages/sdk-python/treeship_sdk/client.py`
+- TypeScript SDK: `packages/sdk-ts/src/*.ts`
+- Full docs: <https://docs.treeship.dev>
+
+## Python SDK (`treeship-sdk`)
 
 ```bash
 pip install treeship-sdk
 ```
 
-Requires the `treeship` CLI binary in PATH, initialized with `treeship init`.
-
-### Treeship Class
-
-All methods raise `TreeshipError` on CLI failure.
-
-#### `attest_action(actor, action, parent_id=None, approval_nonce=None, meta=None)`
-
-Create a signed action receipt.
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `actor` | `str` | Yes | Actor URI, e.g. `"agent://my-agent"` |
-| `action` | `str` | Yes | Label for the action |
-| `parent_id` | `Optional[str]` | No | Parent artifact ID for chain linking |
-| `approval_nonce` | `Optional[str]` | No | Nonce from an existing approval |
-| `meta` | `Optional[Dict[str, Any]]` | No | Arbitrary metadata dictionary |
-
-**Returns:** `ActionResult(artifact_id: str)`
-
-**Example:**
-```python
-result = ts.attest_action(
-    actor="agent://coder",
-    action="tool.call",
-    parent_id="art_abc123",
-    meta={"tool": "read_file", "path": "src/main.rs"}
-)
-print(result.artifact_id)  # art_f7e6d5c4...
-```
-
-#### `attest_approval(approver, description, expires_in=None)`
-
-Create a signed approval receipt with a single-use nonce.
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `approver` | `str` | Yes | Approver URI, e.g. `"human://alice"` |
-| `description` | `str` | Yes | What is being approved |
-| `expires_in` | `Optional[int]` | No | Expiry in seconds |
-
-**Returns:** `ApprovalResult(artifact_id: str, nonce: str)`
-
-**Example:**
-```python
-approval = ts.attest_approval(
-    approver="human://alice",
-    description="approve deployment to production",
-    expires_in=3600
-)
-print(approval.nonce)  # Single-use nonce for binding to action
-```
-
-#### `attest_handoff(from_actor, to_actor, artifacts, approvals=None)`
-
-Create a signed handoff receipt between agents.
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `from_actor` | `str` | Yes | Source actor URI |
-| `to_actor` | `str` | Yes | Destination actor URI |
-| `artifacts` | `List[str]` | Yes | Artifact IDs being handed off |
-| `approvals` | `Optional[List[str]]` | No | Approval nonces to include |
-
-**Returns:** `ActionResult(artifact_id: str)`
-
-#### `attest_decision(actor, model=None, tokens_in=None, tokens_out=None, summary=None, confidence=None, meta=None)`
-
-Create a signed decision receipt capturing LLM reasoning context.
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `actor` | `str` | Yes | Actor URI |
-| `model` | `Optional[str]` | No | LLM model name |
-| `tokens_in` | `Optional[int]` | No | Input token count |
-| `tokens_out` | `Optional[int]` | No | Output token count |
-| `summary` | `Optional[str]` | No | Decision summary |
-| `confidence` | `Optional[float]` | No | Confidence score (0-1) |
-| `meta` | `Optional[Dict]` | No | Additional metadata |
-
-**Returns:** `ActionResult(artifact_id: str)`
-
-#### `verify(artifact_id)`
-
-Verify an artifact and walk its chain.
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `artifact_id` | `str` | Yes | Artifact ID to verify |
-
-**Returns:** `VerifyResult(outcome: str, chain: int, target: str)`
-
-- `outcome`: `"pass"`, `"fail"`, or `"error"`
-- `chain`: Number of linked artifacts in the chain
-- `target`: The artifact ID that was verified
-
-**Example:**
-```python
-result = ts.verify("art_abc123")
-if result.outcome == "pass":
-    print(f"Chain length: {result.chain}")
-```
-
-#### `dock_push(artifact_id)`
-
-Push an artifact to the configured hub.
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `artifact_id` | `str` | Yes | Artifact ID to push |
-
-**Returns:** `PushResult(hub_url: str, rekor_index: Optional[int])`
-
-#### `wrap(command, actor=None)`
-
-Wrap a shell command with a signed receipt.
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `command` | `str` | Yes | Shell command to execute |
-| `actor` | `Optional[str]` | No | Actor URI |
-
-**Returns:** `ActionResult(artifact_id: str)`
-
-**Example:**
-```python
-result = ts.wrap("npm test", actor="agent://ci")
-```
-
-#### `session_report(session_id=None)`
-
-Upload a closed session's receipt to the configured hub and return the permanent public URL.
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `session_id` | `Optional[str]` | No | Session ID. Defaults to most recently closed session. |
-
-**Returns:** `SessionReportResult(session_id, receipt_url, agents, events)`
-
-The returned `receipt_url` is permanent and public. No auth required to fetch it.
-
-### Result Types
-
-All results are dataclasses exported from `treeship_sdk`.
-
-```python
-@dataclass
-class ActionResult:
-    artifact_id: str
-
-@dataclass
-class ApprovalResult:
-    artifact_id: str
-    nonce: str
-
-@dataclass
-class VerifyResult:
-    outcome: str       # "pass", "fail", or "error"
-    chain: int
-    target: str
-
-@dataclass
-class PushResult:
-    hub_url: str
-    rekor_index: Optional[int] = None
-
-@dataclass
-class SessionReportResult:
-    session_id: str
-    receipt_url: str
-    agents: List[str]
-    events: int
-```
-
-### Error Handling
-
-All methods raise `TreeshipError` (subclass of `RuntimeError`) on CLI failure.
+Requires the `treeship` CLI binary on PATH, initialized once with
+`treeship init`.
 
 ```python
 from treeship_sdk import Treeship, TreeshipError
 
 ts = Treeship()
-try:
-    result = ts.attest_action(actor="agent://test", action="test")
-except TreeshipError as e:
-    print(f"Attestation failed: {e}")
+
+# attest_action(actor, action, parent_id=None, approval_nonce=None,
+#               meta=None, subject=None) -> ActionResult(artifact_id: str)
+result = ts.attest_action(
+    actor="agent://coder",
+    action="tool.call",
+    parent_id="art_abc123",
+    meta={"tool": "read_file", "path": "src/main.rs"},
+)
+
+# attest_approval(approver, description, allowed_actions=None,
+#                 allowed_actors=None, allowed_subjects=None, max_uses=None,
+#                 unscoped=False, expires_at=None) -> ApprovalResult
+# A scope is required: pass at least one of allowed_actions/allowed_actors/
+# allowed_subjects/max_uses, or unscoped=True to mint a bearer approval
+# deliberately. expires_at is an RFC 3339 timestamp, not a duration --
+# there is no expires_in.
+approval = ts.attest_approval(
+    approver="human://alice",
+    description="approve deployment to production",
+    max_uses=1,
+    expires_at="2026-03-26T11:00:00Z",
+)
+
+# attest_handoff(from_actor, to_actor, artifacts, approvals=None)
+#   -> ActionResult
+
+# attest_decision(actor, model=None, tokens_in=None, tokens_out=None,
+#                 summary=None, confidence=None, ...) -> ActionResult
+
+# verify(artifact_id) -> VerifyResult(outcome, chain, target)
+verified = ts.verify(result.artifact_id)
+
+# hub_push(artifact_id) -> PushResult(hub_url, rekor_index)
+# The method is hub_push. There is no dock_push -- it was renamed.
+push = ts.hub_push(result.artifact_id)
+
+# wrap(command, actor=None, *, timeout=None) -> ActionResult
+# command is a Sequence[str] (preferred) or a str split with shlex.
+result = ts.wrap(["npm", "test"], actor="agent://ci")
+
+# session_event(event_type, *, tool=None, file=None, destination=None,
+#               actor=None, agent_name=None, duration_ms=None,
+#               exit_code=None) -> SessionEventResult
+
+# session_report(session_id=None) -> SessionReportResult(session_id,
+#               receipt_url, agents=0, events=0)
+report = ts.session_report()
 ```
 
----
+All methods raise `TreeshipError` (a `RuntimeError` subclass) on CLI failure.
+
+## TypeScript SDK (`@treeship/sdk`)
+
+There is no `Treeship` class and no flat `attestAction`/`dockPush` methods.
+The SDK shells out to the CLI; get an instance with the `ship()` factory
+and call through its modules:
+
+```typescript
+import { ship } from "@treeship/sdk";
+
+const s = ship();
+const { artifactId } = await s.attest.action({ actor, action, meta });
+const verified = await s.verify.verify(artifactId);
+const push = await s.hub.push(artifactId);          // s.hub, not dockPush
+```
+
+`s.attest.approval()` does not yet accept a scope; use the Python SDK or
+the CLI directly (`treeship attest approval`) for scoped approvals.
 
 ## CLI Reference
 
-### Core Workflow Commands
+### Core workflow
 
 ```bash
-treeship wrap -- <command>              # Wrap command with attestation
-treeship verify <artifact_id>            # Verify artifact chain
-treeship verify last                     # Verify most recent artifact
-treeship hub push <artifact_id>          # Push artifact to Hub
-treeship hub push last                   # Push most recent artifact
+treeship wrap -- <command>      # flags: --actor --action --parent --push
+treeship verify <artifact_id>
+treeship verify last
+treeship hub push <artifact_id>
+treeship hub push last
 ```
 
-### Session Management
+### Session management
 
 ```bash
-treeship session start --name "..."      # Start a named session
-treeship session close                   # Close current session
-treeship session list                    # List sessions
-treeship session report                  # Upload session receipt
-treeship session report <session_id>     # Upload specific session
+treeship session start --name "..."
+treeship session close
+treeship session status
+treeship session report [<session_id>]
 ```
 
-### Key Management
+There is no `session list`.
+
+### Keys (the noun is `keys`, plural -- there is no `key show`/`key rotate`/`key import`)
 
 ```bash
-treeship init                            # Initialize ship with Ed25519 keypair
-treeship key show                        # Display public key
-treeship key rotate                      # Rotate to new keypair
-treeship key export                      # Export public key
-treeship key import <key_file>           # Import key
+treeship init                   # generate a keypair
+treeship keys list
+treeship keys export [--agent <uri>] [--key <key_id>]
+treeship keys rotate [--grace-hours N]
 ```
 
-### Agent Instrumentation
+### Agent instrumentation
 
 ```bash
-treeship add                             # Auto-detect and configure agents
-treeship attach claude                   # Attach to Claude Code
-treeship attach cursor                   # Attach to Cursor
-treeship attach hermes                   # Attach to Hermes
-treeship attach openclaw                 # Attach to OpenClaw
-treeship list                            # List attached agents
+treeship add                    # auto-detect and instrument
+treeship add claude-code hermes # instrument specific agents
 ```
 
-### Inspection and Verification
+There is no top-level `attach <agent>` and no top-level `list`. Hub
+connection is `hub attach`/`hub detach`/`hub status` (below).
+
+### Inspection, bundles, verification
 
 ```bash
-treeship inspect <artifact_id>           # Inspect artifact details
-treeship inspect last                    # Inspect most recent
-treeship bundle create                   # Create portable bundle
-treeship bundle verify <bundle.json>     # Verify bundle offline
-treeship chain show <artifact_id>        # Show chain from artifact
-treeship chain verify <artifact_id>      # Verify chain integrity
+treeship verify <artifact_id>   # no separate "inspect" command
+treeship bundle create --artifacts art_a1b2,art_c3d4
+treeship bundle export <artifact_id> --out release.treeship
+treeship bundle import release.treeship
+treeship package verify <path.treeship>
 ```
 
-### Hub Management
+There is no `bundle verify` and no `chain show`/`chain verify`.
+
+### Hub
 
 ```bash
-treeship hub attach                      # Connect to Treeship Hub
-treeship hub detach                      # Disconnect from Hub
-treeship hub status                      # Check hub connection
-treeship hub push <artifact_id>          # Push artifact to Hub
-treeship hub pull <artifact_id>          # Pull artifact from Hub
+treeship hub attach
+treeship hub detach
+treeship hub status
+treeship hub push <artifact_id>
+treeship hub pull <artifact_id>
 ```
 
-### Receipts and Attestation Direct
+### Attesting directly
 
 ```bash
-treeship attest \
-    --agent "my-agent" \
-    --action "description of action" \
-    --inputs-hash "sha256:..." \
-    [--metadata '{"key": "value"}']
+treeship attest action --actor agent://name --action tool.call \
+  --input-digest sha256:abc123 --parent art_xxx --approval-nonce nonce_xyz
 ```
 
-### Environment Variables
+`attest` is a subcommand group (`attest action`/`approval`/`handoff`/
+`decision`/`receipt`) -- there is no bare `treeship attest`.
 
-| Variable | Description |
-|----------|-------------|
-| `TREESHIP_API_KEY` | Hub API key for SDK direct API calls |
-| `TREESHIP_AGENT` | Default agent slug for CLI |
-| `TREESHIP_HUB_ID` | Hub workspace ID |
+### Environment variables
 
-### Flags (Global)
+| Variable | Purpose |
+|----------|---------|
+| `TREESHIP_ACTOR` | Default actor URI |
+| `TREESHIP_PARENT` | Default parent artifact ID |
+| `TREESHIP_MODEL`, `TREESHIP_TOKENS_IN`, `TREESHIP_TOKENS_OUT`, `TREESHIP_PROVIDER` | Model/token metadata |
+| `TREESHIP_APPROVAL_NONCE` | Approval nonce read by the MCP bridge |
+| `TREESHIP_DISABLE` | Disables the MCP bridge's capture |
+| `TREESHIP_STRICT` | MCP bridge: fail closed on a signing failure or active halt |
+
+There is no `TREESHIP_API_KEY`, `TREESHIP_AGENT` or `TREESHIP_HUB_ID`. Hub
+auth is DPoP, not an API key.
+
+### Global flags
 
 | Flag | Description |
 |------|-------------|
-| `--ship <path>` | Path to ship directory (default: `~/.treeship`) |
-| `--json` | Output JSON format |
-| `--quiet` | Suppress non-essential output |
-| `--verbose` | Detailed output |
+| `--config <PATH>` | Config file (default `~/.treeship/config.json`) |
+| `--format <text\|json>` | Output format (default `text`) |
+| `--quiet` | Suppress all output except errors |
+| `--no-color` | Disable color output |
+
+There is no `--ship`, `--json` or `--verbose` -- use `--format json`.
