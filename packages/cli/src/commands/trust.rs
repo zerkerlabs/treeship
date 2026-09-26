@@ -177,6 +177,27 @@ pub fn add(
         .find(|r| r.key_id == key_id && r.kind == kind)
         .cloned();
 
+    // This ship's own key ids are trusted in memory (package::
+    // trust_with_own_keys), not in trust_roots.json. Pinning one of them to a
+    // different public key would let a package that reuses our id read as
+    // ours, so refuse it outright -- --replace does not apply to own ids.
+    if let Ok(c) = crate::ctx::open(None) {
+        if let Ok(own) = c.keys.list() {
+            if let Some(k) = own.iter().find(|k| k.id == key_id) {
+                use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+                let own_pk = format!("ed25519:{}", URL_SAFE_NO_PAD.encode(&k.public_key));
+                if own_pk != canonical_pk {
+                    return Err(format!(
+                        "{key_id} is this ship's own key (fp {}); refusing to pin it to a different public key (fp {fingerprint}). \
+                         A package signed under your own key id by another key is not yours",
+                        pubkey_fingerprint(&own_pk),
+                    )
+                    .into());
+                }
+            }
+        }
+    }
+
     // A key id is only a label. Re-pointing an id already pinned (under any
     // kind) at a different public key needs --replace, and says what is
     // being replaced: pasting a pin line from a forged package must not

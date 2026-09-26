@@ -48,6 +48,13 @@
       "cli_structural": "structural-pass",
       "receipt_only": "structural-pass"
     },
+    "tampered/approval-max-uses-raised": {
+      "_note": "Round 4 (embargoed): honest/approval with a second use record for the single-use approval, and max_uses raised to 99 on the (unsigned) use records with their digests recomputed. replay-package-local trusts the record's max_uses and passes; approval-use-limit reads the approval's signed scope and fails; --structural fails it too (approval-use-chain-continuity: the added record is not anchored)",
+      "cli": "failed",
+      "cli_strict": "failed",
+      "cli_structural": "failed",
+      "receipt_only": "structural-pass"
+    },
     "tampered/artifact-payload-edit": {
       "cli": "failed",
       "cli_strict": "failed",

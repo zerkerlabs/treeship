@@ -1075,7 +1075,16 @@ pub fn trust_with_own_keys(
     use treeship_core::trust::{TrustRoot, TrustRootKind, TrustRootStore};
     let mut trust = TrustRootStore::open_default_or_empty()?;
     for key in ctx.keys.list()? {
-        if trust.roots().iter().any(|r| r.key_id == key.id) {
+        // Skip only a root that is this very key (same id AND same public
+        // key). A root that reuses an own key id for a different key is not
+        // this ship's key; adding ours alongside it lets key_id_collision
+        // catch the clash instead of our own key silently disappearing.
+        let own_pub = format!("ed25519:{}", URL_SAFE_NO_PAD.encode(&key.public_key));
+        if trust
+            .roots()
+            .iter()
+            .any(|r| r.key_id == key.id && r.public_key == own_pub)
+        {
             continue;
         }
         trust.add(TrustRoot {
@@ -1246,7 +1255,8 @@ pub fn verify(
                 || c.name == "approval-use-record-digest"
                 || c.name == "approval-use-nonce-binding"
                 || c.name == "approval-use-action-binding"
-                || c.name == "approval-use-chain-continuity";
+                || c.name == "approval-use-chain-continuity"
+                || c.name == "approval-use-limit";
             if approval_row && c.status == VerifyStatus::Warn {
                 c.status = VerifyStatus::Fail;
                 promoted += 1;

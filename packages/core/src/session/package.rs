@@ -1008,8 +1008,135 @@ pub fn verify_package_with_options(
     // reserved for PR 6 -- not claimed without a real Hub checkpoint.
     let bundle = read_approvals_bundle(pkg_dir).unwrap_or_default();
     add_approval_evidence_checks(&mut checks, &bundle, trust);
+    if !structural_only {
+        push_approval_use_limit(pkg_dir, &receipt, &bundle, &mut checks);
+    }
 
     Ok(checks)
+}
+
+/// `approval-use-limit`: an approval is used no more often than its SIGNED
+/// scope allows. `replay-package-local` reads max_uses from the use record,
+/// which is unsigned: raise it and recompute the record digest, and a
+/// second use of a single-use approval passed. Here the limit comes from
+/// the sealed approval whose signature row passed (`scope.maxActions`), and
+/// both the sealed consuming actions and the use records for its nonce are
+/// counted against it; each consuming action also needs its own use record.
+fn push_approval_use_limit(
+    pkg_dir: &Path,
+    receipt: &SessionReceipt,
+    bundle: &ApprovalsBundle,
+    checks: &mut Vec<VerifyCheck>,
+) {
+    use std::collections::{BTreeMap, BTreeSet};
+    let verified = |id: &str| {
+        checks
+            .iter()
+            .any(|c| c.name == format!("signature:{id}") && c.status == VerifyStatus::Pass)
+    };
+    // nonce digest -> (grant id, signed max), and -> consuming action ids
+    let mut grants: BTreeMap<String, (String, Option<u32>)> = BTreeMap::new();
+    let mut consumers: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for a in &receipt.artifacts {
+        let Some(env) = std::fs::read(
+            pkg_dir
+                .join(ARTIFACTS_DIR)
+                .join(format!("{}.json", sanitize_filename(&a.artifact_id))),
+        )
+        .ok()
+        .and_then(|raw| crate::attestation::Envelope::from_json(&raw).ok()) else {
+            continue;
+        };
+        let Some(v) = env
+            .payload_bytes()
+            .ok()
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        else {
+            continue;
+        };
+        if env.payload_type == crate::statements::payload_type("approval") {
+            if !verified(&a.artifact_id) {
+                continue;
+            }
+            if let Some(n) = v.get("nonce").and_then(|n| n.as_str()) {
+                let max = v
+                    .get("scope")
+                    .and_then(|s| s.get("maxActions"))
+                    .and_then(|m| m.as_u64())
+                    .map(|m| m as u32);
+                grants.insert(
+                    crate::statements::nonce_digest(n),
+                    (a.artifact_id.clone(), max),
+                );
+            }
+        } else if let Some(n) = v.get("approvalNonce").and_then(|n| n.as_str()) {
+            consumers
+                .entry(crate::statements::nonce_digest(n))
+                .or_default()
+                .push(a.artifact_id.clone());
+        }
+    }
+    if consumers.is_empty() && bundle.uses.is_empty() {
+        return;
+    }
+    let mut problems = Vec::new();
+    let mut unsigned = Vec::new();
+    let nonces: BTreeSet<&String> = consumers
+        .keys()
+        .chain(bundle.uses.iter().map(|u| &u.nonce_digest))
+        .collect();
+    for nd in nonces {
+        let acts = consumers.get(nd).map(Vec::len).unwrap_or(0);
+        let use_ids: BTreeSet<&str> = bundle
+            .uses
+            .iter()
+            .filter(|u| &u.nonce_digest == nd)
+            .map(|u| u.use_id.as_str())
+            .collect();
+        let uses = bundle.uses.iter().filter(|u| &u.nonce_digest == nd).count();
+        match grants.get(nd) {
+            Some((grant, Some(max))) => {
+                if acts as u32 > *max {
+                    problems.push(format!(
+                        "approval {grant} is signed for {max} use(s) but {acts} sealed action(s) consume it"
+                    ));
+                }
+                if uses as u32 > *max {
+                    problems.push(format!(
+                        "approval {grant} is signed for {max} use(s) but the package records {uses} use(s)"
+                    ));
+                }
+            }
+            Some((_, None)) => {}
+            None if acts > 0 => unsigned.push(consumers[nd].join(", ")),
+            None => {}
+        }
+        if acts > use_ids.len() {
+            problems.push(format!(
+                "{acts} sealed action(s) consume one approval but only {} distinct use record(s) cover them",
+                use_ids.len()
+            ));
+        }
+    }
+    if !problems.is_empty() {
+        checks.push(VerifyCheck::fail(
+            "approval-use-limit",
+            &problems.join("; "),
+        ));
+    } else if !unsigned.is_empty() {
+        checks.push(VerifyCheck::warn(
+            "approval-use-limit",
+            &format!(
+                "action(s) {} consume an approval that is not sealed (signed) in this package, so its use limit cannot be checked here",
+                unsigned.join("; ")
+            ),
+        ));
+    } else {
+        checks.push(VerifyCheck::pass(
+            "approval-use-limit",
+            "every approval is used within the limit its signed scope sets, each consuming action with its own use record",
+        ));
+    }
 }
 
 /// Tail of `verify_package`: emit leaf_count and timeline-order checks.
@@ -1603,6 +1730,28 @@ fn describe_trusted(
 /// forger who re-signs a victim's chain under their own key can reuse the
 /// victim's id, and the package then reads as the victim's. FAIL, naming
 /// both fingerprints.
+/// Package key ids that a pinned root names with a different public key.
+/// Trust hints never offer to pin one of these: pinning the package's key
+/// under that id is exactly the re-point a forger wants.
+fn colliding_key_ids(
+    pkg_dir: &Path,
+    trust: &crate::trust::TrustRootStore,
+) -> std::collections::BTreeSet<String> {
+    package_verifying_keys(pkg_dir)
+        .into_iter()
+        .filter(|(kid, vk)| {
+            trust.roots().iter().any(|r| {
+                &r.key_id == kid
+                    && SIGNER_KINDS.contains(&r.kind)
+                    && crate::trust::decode_ed25519_pubkey(&r.public_key)
+                        .map(|p| p.to_bytes() != vk.to_bytes())
+                        .unwrap_or(false)
+            })
+        })
+        .map(|(kid, _)| kid)
+        .collect()
+}
+
 fn push_key_id_collisions(
     pkg_dir: &Path,
     trust: &crate::trust::TrustRootStore,
@@ -1746,8 +1895,10 @@ fn push_approval_signer(
         ));
         return;
     }
+    let colliding = colliding_key_ids(pkg_dir, trust);
     let pins: Vec<String> = unpinned
         .iter()
+        .filter(|k| !colliding.contains(**k))
         .filter_map(|k| {
             let vk = keys.get(*k)?;
             Some(format!(
@@ -1805,8 +1956,10 @@ fn push_signer_trust(
         .map(String::as_str)
         .filter(|k| trusted(k))
         .collect();
+    let colliding = colliding_key_ids(pkg_dir, trust);
     let pins = |ks: &[&str]| -> String {
         ks.iter()
+            .filter(|k| !colliding.contains(**k))
             .filter_map(|k| {
                 let vk = keys.get(*k)?;
                 // No `--yes`: the key comes from the package itself, so
