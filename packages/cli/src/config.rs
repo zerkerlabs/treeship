@@ -488,6 +488,22 @@ fn apply_overrides(cfg: &mut Config, raw: &serde_json::Value) {
 }
 
 pub fn save(cfg: &Config, path: &Path) -> Result<(), ConfigError> {
+    // Never through a symlink, at the file or on the way to it:
+    // `.treeship -> ~/.docker` would put config.json, keys/ and artifacts/
+    // in ~/.docker, and a linked config.json would be replaced elsewhere.
+    crate::safe_fs::refuse_symlinks_under_treeship(path)?;
+    if fs::symlink_metadata(path)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return Err(ConfigError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "refusing to write the config through a symlink at {}",
+                path.display()
+            ),
+        )));
+    }
     let dir = path.parent().unwrap_or(path);
     fs::create_dir_all(dir)?;
     #[cfg(unix)]

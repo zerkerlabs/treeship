@@ -115,6 +115,11 @@ pub fn run(
 
     // ---- 1. Generate keypair (existing behavior) ----
 
+    // Before the first write: a repository's .treeship that is a symlink
+    // (or contains one on the way) is refused here, so the keystore, the
+    // seed and the config never land wherever it points.
+    crate::safe_fs::refuse_symlinks_under_treeship(&config_path)?;
+
     let keys_dir = config_path.parent().unwrap_or(&config_path).join("keys");
 
     let key_store = KeyStore::open(&keys_dir)?;
@@ -327,7 +332,9 @@ fn detect_language() -> String {
 fn write_project_config(project_config: &ProjectConfig) -> Result<(), Box<dyn std::error::Error>> {
     let cwd = std::env::current_dir()?;
     let ts_dir = cwd.join(".treeship");
-    std::fs::create_dir_all(&ts_dir)?;
+    // A repository's .treeship must not be a link into the user's home:
+    // nothing here follows one, from the directory down to each file.
+    crate::safe_fs::create_dir_all_nofollow(&ts_dir)?;
 
     // Set restrictive permissions on .treeship directory (0700 -- owner only)
     #[cfg(unix)]
@@ -338,14 +345,9 @@ fn write_project_config(project_config: &ProjectConfig) -> Result<(), Box<dyn st
 
     let yaml = serde_yaml::to_string(project_config)?;
     let config_path = ts_dir.join("config.yaml");
-    std::fs::write(&config_path, yaml)?;
+    crate::safe_fs::write_nofollow(&config_path, yaml.as_bytes(), 0o600)?;
 
     // Set restrictive permissions on config.yaml
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o600));
-    }
 
     // Write a config.json marker so the daemon trust check passes.
     // The daemon requires both config.yaml and config.json to exist in .treeship/.
@@ -388,12 +390,7 @@ fn write_project_config(project_config: &ProjectConfig) -> Result<(), Box<dyn st
         "extends": global_config,
         "project": true,
     });
-    std::fs::write(&marker_path, serde_json::to_vec_pretty(&marker)?)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&marker_path, std::fs::Permissions::from_mode(0o600));
-    }
+    crate::safe_fs::write_nofollow(&marker_path, &serde_json::to_vec_pretty(&marker)?, 0o600)?;
 
     Ok(())
 }

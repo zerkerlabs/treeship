@@ -6,6 +6,7 @@ mod exit;
 mod otel;
 mod printer;
 mod redact;
+mod safe_fs;
 mod templates;
 mod tui;
 mod validate;
