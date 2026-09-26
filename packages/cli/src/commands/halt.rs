@@ -238,7 +238,7 @@ pub fn halt(
     let parent = session_parent(&ctx);
     let (id, issued_at, key_id) = sign_order(&ctx, "halt", actor, reason, None, parent)?;
     let dir = halts_dir_for(&ctx.config_path);
-    std::fs::create_dir_all(&dir)?;
+    crate::safe_fs::create_dir_all_nofollow(&dir)?;
     let marker = Marker {
         actor: actor.to_string(),
         halt: id.clone(),
@@ -246,9 +246,10 @@ pub fn halt(
         reason: reason.map(str::to_string),
         key_id,
     };
-    std::fs::write(
-        dir.join(marker_name(actor)),
-        serde_json::to_string_pretty(&marker)?,
+    crate::safe_fs::write_under_treeship(
+        &dir.join(marker_name(actor)),
+        serde_json::to_string_pretty(&marker)?.as_bytes(),
+        0o600,
     )?;
 
     if printer.format == Format::Json {

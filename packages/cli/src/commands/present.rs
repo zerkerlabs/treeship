@@ -328,7 +328,10 @@ pub fn present(
 
     let default_name = format!("{}.presentation.json", agent.trim_start_matches("agent://"));
     let out_path = out.unwrap_or(&default_name);
-    std::fs::write(out_path, serde_json::to_vec_pretty(&presentation)?)?;
+    crate::safe_fs::write_user_path(
+        std::path::Path::new(out_path),
+        &serde_json::to_vec_pretty(&presentation)?,
+    )?;
 
     let disclosed_desc = disclosures_block
         .as_ref()

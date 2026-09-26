@@ -1176,7 +1176,7 @@ pub fn verify(
     // than failing -- offline / inbox verification of a bare package
     // must keep working.
     if let Some(ctx_opened) = ctx_opened {
-        let journal = treeship_core::journal::Journal::new(ctx_opened.journal_dir());
+        let journal = treeship_core::journal::Journal::new(ctx_opened.journal_dir()?);
         let bundle = treeship_core::session::read_approvals_bundle(&path).unwrap_or_default();
         // The journal is the producer's own control: only the ship whose
         // key signed this package's close record can hold it (W1-13). The
