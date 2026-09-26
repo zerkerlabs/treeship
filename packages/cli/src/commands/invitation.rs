@@ -529,7 +529,7 @@ pub fn join(
     if !trust.contains_bytes(&issuer_pk_bytes, TrustRootKind::SessionHost) {
         return Err(format!(
             "invitation issuer pubkey is not pinned under SessionHost trust roots.\n\
-             Add it with:  treeship trust add <key_id> ed25519:{} --kind session_host --yes",
+             Confirm this key with the host out of band first (a channel the invitation did not travel on), then: treeship trust add <key_id> ed25519:{} --kind session_host",
             URL_SAFE_NO_PAD.encode(issuer_pk_bytes),
         )
         .into());
