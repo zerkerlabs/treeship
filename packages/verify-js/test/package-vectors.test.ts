@@ -36,13 +36,16 @@ describe('T2 package vectors: verifyPackage', () => {
     it(`${name}: no pinned keys → ${want.verify_js}`, async () => {
       const r = await verifyPackage(readPackage(join(ROOT, name)));
       expect(r.verdict, JSON.stringify(r.checks, null, 1)).toBe(want.verify_js);
-      if (name.startsWith('tampered/')) expect(['verified', 'signatures-pass']).not.toContain(r.verdict);
+      if (name.startsWith('tampered/') && !want.verify_js_known_gap) expect(['verified', 'signatures-pass']).not.toContain(r.verdict);
     });
     it(`${name}: package keys pinned → ${want.verify_js_pinned}`, async () => {
       const files = readPackage(join(ROOT, name));
       const r = await verifyPackage(files, { pinnedKeys: packageKeys(files) });
       expect(r.verdict, JSON.stringify(r.checks, null, 1)).toBe(want.verify_js_pinned);
-      if (name.startsWith('tampered/')) expect(['verified', 'signatures-pass']).not.toContain(r.verdict);
+      // A vector may name a documented gap (`verify_js_known_gap`) that only a
+      // verifier holding its own trust store can close; the verdict is still
+      // pinned to what the library gives so a change is noticed.
+      if (name.startsWith('tampered/') && !want.verify_js_known_gap) expect(['verified', 'signatures-pass']).not.toContain(r.verdict);
     });
   }
 });

@@ -993,6 +993,13 @@ export async function verifyPackage(
   }
 
   if (failed()) return done('failed', 'signatures');
+  // Approval evidence travels beside the sealed set: use records and grants
+  // carried in approvals/ (an approval minted before the session is there,
+  // not sealed). Their rules live in the Rust verifier, so their presence
+  // caps the verdict like a sealed approval does.
+  if (Object.keys(files).some((k) => k.startsWith('approvals/'))) {
+    unevaluated.add('approvals/ (use records and carried grants)');
+  }
   if (unevaluated.size > 0) {
     checks.push({
       step: 'semantics',

@@ -59,28 +59,36 @@
       "cli": "signatures-pass",
       "cli_strict": "verified",
       "cli_structural": "structural-pass",
-      "receipt_only": "structural-pass"
+      "receipt_only": "structural-pass",
+      "verify_js": "structural-pass",
+      "verify_js_pinned": "structural-pass"
     },
     "tampered/approval-evidence-deleted": {
       "_note": "Round 3 (embargoed): honest/approval with approvals/ deleted; the close record still binds receipt.json, and approval_evidence fails because the consuming action has no use record",
       "cli": "failed",
       "cli_strict": "failed",
       "cli_structural": "structural-pass",
-      "receipt_only": "structural-pass"
+      "receipt_only": "structural-pass",
+      "verify_js": "structural-pass",
+      "verify_js_pinned": "structural-pass"
     },
     "tampered/approval-max-uses-raised": {
       "_note": "Round 4 (embargoed): honest/approval with a second use record for the single-use approval, and max_uses raised to 99 on the (unsigned) use records with their digests recomputed. replay-package-local trusts the record's max_uses and passes; approval-use-limit reads the approval's signed scope and fails; --structural fails it too (approval-use-chain-continuity: the added record is not anchored)",
       "cli": "failed",
       "cli_strict": "failed",
       "cli_structural": "failed",
-      "receipt_only": "structural-pass"
+      "receipt_only": "structural-pass",
+      "verify_js": "structural-pass",
+      "verify_js_pinned": "structural-pass"
     },
     "tampered/approvals-share-a-nonce": {
       "_note": "Round 5 (embargoed): two sealed approvals share one nonce (the approver's single-use one and an unbounded one signed by the producer); two actions consume it. approval-use-limit fails on the shared nonce approval-use-limit judges the signed scope under --structural too (a forged or over-used grant is a failure of the bytes, whatever the reader trusts).",
       "cli": "failed",
       "cli_strict": "failed",
       "cli_structural": "failed",
-      "receipt_only": "structural-pass"
+      "receipt_only": "structural-pass",
+      "verify_js": "structural-pass",
+      "verify_js_pinned": "structural-pass"
     },
     "tampered/artifact-payload-edit": {
       "cli": "failed",
@@ -95,7 +103,9 @@
       "cli": "failed",
       "cli_strict": "failed",
       "cli_structural": "failed",
-      "receipt_only": "structural-pass"
+      "receipt_only": "structural-pass",
+      "verify_js": "structural-pass",
+      "verify_js_pinned": "structural-pass"
     },
     "tampered/drop-artifact-envelope": {
       "cli": "failed",
@@ -128,7 +138,9 @@
       "cli": "failed",
       "cli_strict": "failed",
       "cli_structural": "failed",
-      "receipt_only": "fail"
+      "receipt_only": "fail",
+      "verify_js": "failed",
+      "verify_js_pinned": "failed"
     },
     "tampered/endorsement-parent-edited": {
       "_note": "honest/endorse-non-latest with the endorsement's signed parentId pointed at its subject: a present parentId never falls back to the legacy path",
@@ -145,14 +157,18 @@
       "cli_strict": "failed",
       "cli_structural": "structural-pass",
       "receipt_only": "structural-pass",
-      "pin_keys_from": "honest/basic"
+      "pin_keys_from": "honest/basic",
+      "verify_js": "failed",
+      "verify_js_pinned": "failed"
     },
     "tampered/forged-record-pinned-other-key": {
       "_note": "Bypass E (embargoed): honest/basic rewritten and re-bound by a record signed by a second key the reader has also pinned (cli_strict pins every key in keys.json, producer and the second key). A pinned key must not vouch for another session's receipt",
       "cli": "failed",
       "cli_strict": "failed",
       "cli_structural": "structural-pass",
-      "receipt_only": "structural-pass"
+      "receipt_only": "structural-pass",
+      "verify_js": "failed",
+      "verify_js_pinned": "failed"
     },
     "tampered/injected-signer-artifact": {
       "_note": "Bypass B (embargoed): honest/basic with an attacker-signed action chained in (tree recomputed), receipt rewritten and a record by the attacker key; cli_strict pins only the producer; --structural runs after the strict pass has pinned the producer, so signer_trust fails there too (a pinned package carrying an unvouched signer)",
@@ -160,7 +176,9 @@
       "cli_strict": "failed",
       "cli_structural": "failed",
       "receipt_only": "structural-pass",
-      "pin_keys_from": "honest/basic"
+      "pin_keys_from": "honest/basic",
+      "verify_js": "failed",
+      "verify_js_pinned": "failed"
     },
     "tampered/key-id-reused-by-forger": {
       "_note": "Round 3 (embargoed): honest/basic re-signed end to end by a forger's key under the victim's key id, narrative edited. The reader pinned the victim (cli_strict and cli_pinned pin honest/basic's key under that id): key_id_collision fails it. With nothing pinned it is indistinguishable from any unknown signer's package, so the unpinned cli column may accept",
@@ -170,14 +188,19 @@
       "cli_strict": "failed",
       "cli_pinned": "failed",
       "cli_structural": "failed",
-      "receipt_only": "structural-pass"
+      "receipt_only": "structural-pass",
+      "verify_js": "signatures-pass",
+      "verify_js_pinned": "verified",
+      "verify_js_known_gap": "the test pins the package's own keys, which here are the forger's; the reused id is only visible against a trust store that already pins the victim under it (the CLI's key_id_collision row), which verifyPackage does not hold"
     },
     "tampered/lone-attacker-close": {
       "_note": "a2 (embargoed, round-2 review): as E4 with the attacker key unpinned and nothing pinned; round 1 rated it signatures-pass",
       "cli": "failed",
       "cli_strict": "failed",
       "cli_structural": "structural-pass",
-      "receipt_only": "structural-pass"
+      "receipt_only": "structural-pass",
+      "verify_js": "failed",
+      "verify_js_pinned": "failed"
     },
     "tampered/narrative-edit": {
       "cli": "failed",
@@ -236,7 +259,9 @@
       "cli": "failed",
       "cli_strict": "failed",
       "cli_structural": "structural-pass",
-      "receipt_only": "structural-pass"
+      "receipt_only": "structural-pass",
+      "verify_js": "failed",
+      "verify_js_pinned": "failed"
     },
     "tampered/smuggled-approval": {
       "_note": "W1-13 condition 1a: honest/approval plus an unchained approval and a chained action consuming its nonce, both signed by a key nobody pinned (tree recomputed with splice.py, record kept). The attacker's own action cannot bind the smuggled approval; cli_strict pins only the producer; --structural runs after the strict pass pinned the producer, so the unvouched signer fails signer_trust there too",
@@ -244,28 +269,36 @@
       "cli_strict": "failed",
       "cli_structural": "failed",
       "receipt_only": "structural-pass",
-      "pin_keys_from": "honest/approval"
+      "pin_keys_from": "honest/approval",
+      "verify_js": "failed",
+      "verify_js_pinned": "failed"
     },
     "tampered/splice-action": {
       "_note": "CLI-4 (#474 security review): session 2's action, signed by the same key with parentId = session 1's last chained artifact, appended to session 1's package with the tree recomputed and record.json deleted. 0.31.9 rates it verified",
       "cli": "failed",
       "cli_strict": "failed",
       "cli_structural": "structural-pass",
-      "receipt_only": "structural-pass"
+      "receipt_only": "structural-pass",
+      "verify_js": "failed",
+      "verify_js_pinned": "failed"
     },
     "tampered/splice-action-record-kept": {
       "_note": "as splice-action with record.json kept: receipt_binding fails because the sealed set no longer digests to what the close record signed",
       "cli": "failed",
       "cli_strict": "failed",
       "cli_structural": "structural-pass",
-      "receipt_only": "structural-pass"
+      "receipt_only": "structural-pass",
+      "verify_js": "failed",
+      "verify_js_pinned": "failed"
     },
     "tampered/splice-handoff": {
       "_note": "as splice-action, with a handoff whose artifacts[0] names session 1's last chained artifact",
       "cli": "failed",
       "cli_strict": "failed",
       "cli_structural": "structural-pass",
-      "receipt_only": "structural-pass"
+      "receipt_only": "structural-pass",
+      "verify_js": "failed",
+      "verify_js_pinned": "failed"
     },
     "tampered/swap-package-key": {
       "cli": "failed",
