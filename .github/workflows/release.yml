@@ -181,8 +181,48 @@ jobs:
 
           echo \"  OK\""
 
+  # SBOM: the Rust dependency graph the binaries are built from, read from
+  # the workspace Cargo.lock (a superset of what the CLI links). Its own job
+  # with read-only permissions and no token, because sbom-action downloads
+  # and runs syft at run time: third-party code never runs in the job that
+  # holds contents/id-token/attestations write. `release` downloads the SBOM
+  # with the binaries, attests it with them, and attaches it.
+  sbom:
+    needs: preflight
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: SPDX document name
+        id: name
+        run: echo "name=treeship-${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate SBOM (SPDX)
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        env:
+          SYFT_SOURCE_NAME: ${{ steps.name.outputs.name }}
+        with:
+          file: Cargo.lock
+          format: spdx-json
+          output-file: treeship-sbom.spdx.json
+          syft-version: v1.52.0
+          github-token: ''
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: treeship-sbom
+          path: treeship-sbom.spdx.json
+          if-no-files-found: error
+
   release:
-    needs: smoke
+    needs: [smoke, sbom]
     runs-on: ubuntu-latest
 
     # Only `release` creates the GitHub Release and uploads assets to it.
@@ -235,24 +275,6 @@ jobs:
           echo "sha256_darwin_aarch64=$( awk '/treeship-darwin-aarch64/  {print $1}' SHA256SUMS)" >> "$GITHUB_OUTPUT"
           echo "sha256_darwin_x86_64=$(  awk '/treeship-darwin-x86_64/   {print $1}' SHA256SUMS)" >> "$GITHUB_OUTPUT"
 
-      # SBOM: the Rust dependency graph the binaries are built from, read
-      # from the workspace Cargo.lock (a superset of what the CLI links).
-      # Checked out into src/ so the downloaded artifact directories above
-      # are untouched. Attached to the release as an asset.
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-        with:
-          path: src
-          persist-credentials: false
-
-      - name: Generate SBOM (SPDX)
-        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
-        with:
-          file: src/Cargo.lock
-          format: spdx-json
-          output-file: treeship-sbom.spdx.json
-          upload-artifact: false
-          upload-release-assets: false
-
       # Build provenance (SLSA, signed through Sigstore) for every file the
       # release publishes. Runs before the release exists: if signing fails,
       # nothing is published. Users check it with
@@ -266,7 +288,7 @@ jobs:
             treeship-darwin-aarch64/treeship-darwin-aarch64
             treeship-darwin-x86_64/treeship-darwin-x86_64
             SHA256SUMS
-            treeship-sbom.spdx.json
+            treeship-sbom/treeship-sbom.spdx.json
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
@@ -277,7 +299,7 @@ jobs:
             treeship-darwin-aarch64/treeship-darwin-aarch64
             treeship-darwin-x86_64/treeship-darwin-x86_64
             SHA256SUMS
-            treeship-sbom.spdx.json
+            treeship-sbom/treeship-sbom.spdx.json
           generate_release_notes: true
 
   publish-npm:
