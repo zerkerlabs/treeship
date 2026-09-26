@@ -544,18 +544,23 @@ pub fn save(cfg: &Config, path: &Path) -> Result<(), ConfigError> {
         None => serde_json::to_vec_pretty(cfg)?,
     };
     // Atomic: a crash mid-write leaves the previous config, never a
-    // truncated one.
-    let tmp = path.with_extension(format!("json.tmp-{}", std::process::id()));
-    fs::write(&tmp, &json)?;
+    // truncated one. The temp file is created exclusively (O_EXCL) under a
+    // random name, so a planted symlink at a predictable name cannot turn
+    // the write into a write somewhere else.
+    let mut tmp = tempfile::Builder::new()
+        .prefix(".config.json.")
+        .tempfile_in(dir)?;
+    {
+        use std::io::Write as _;
+        tmp.write_all(&json)?;
+        tmp.flush()?;
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600))?;
+        fs::set_permissions(tmp.path(), fs::Permissions::from_mode(0o600))?;
     }
-    if let Err(e) = fs::rename(&tmp, path) {
-        let _ = fs::remove_file(&tmp);
-        return Err(e.into());
-    }
+    tmp.persist(path).map_err(|e| e.error)?;
     Ok(())
 }
 
@@ -855,6 +860,27 @@ mod tests {
         std::fs::write(&plain, b"{\"ship_id\":\"x\"}").unwrap();
         assert_eq!(hub_write_target(&plain).unwrap(), plain);
         std::env::remove_var("TREESHIP_CONFIG");
+    }
+
+    /// A symlink planted at the temp name an older version used must not
+    /// become the write target: the temp file is created exclusively under
+    /// a random name.
+    #[cfg(unix)]
+    #[test]
+    fn save_never_writes_through_a_planted_temp_symlink() {
+        let root = temp_dir();
+        let dir = root.join("ws").join(".treeship");
+        std::fs::create_dir_all(&dir).unwrap();
+        let victim = root.join("authorized_keys");
+        std::fs::write(&victim, b"ssh-ed25519 AAAA victim").unwrap();
+        let planted = dir.join(format!("config.json.tmp-{}", std::process::id()));
+        std::os::unix::fs::symlink(&victim, &planted).unwrap();
+        let cfg_path = dir.join("config.json");
+        let cfg = new_config(&cfg_path, "ship_x", "key_x", None);
+        save(&cfg, &cfg_path).unwrap();
+        assert_eq!(std::fs::read(&victim).unwrap(), b"ssh-ed25519 AAAA victim");
+        assert!(cfg_path.exists());
+        assert!(planted.is_symlink(), "the planted link was replaced");
     }
 
     #[test]
