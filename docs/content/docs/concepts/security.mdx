@@ -17,13 +17,15 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 ## Key management
 
+{/* claims:keystore-at-rest */}
 - One Ed25519 keypair per Treeship
-- Private key encrypted at rest
+- Private key encrypted at rest (AES-256-GCM) under a key derived from a secret seed file stored alongside the keystore -- not from a passphrase; nothing you type or remember protects it
 - Key never leaves the local machine unless explicitly exported
-- No key escrow, no key recovery service
+- No key escrow, no key recovery service -- losing the seed file makes the keystore unrecoverable
 
+{/* claims:keystore-at-rest */}
 <Callout type="warn">
-Root access to the machine breaks all guarantees. The trust boundary is the machine itself. If someone has your private key and passphrase, they can forge artifacts.
+Root access to the machine breaks all guarantees. The trust boundary is the machine itself: anyone who can read your `.treeship` directory (keys plus the seed file beside them) can copy it and sign as you. There is no passphrase to additionally compromise.
 </Callout>
 
 ## Hub connection model: enrollment and operation
@@ -65,7 +67,8 @@ The Hub identifies a **hub connection** by a **`dock_id`** (returned as `hub_id`
 
 ## What Treeship does not protect against
 
-- A compromised signing key (if someone steals your private key and passphrase, they can forge artifacts)
+{/* claims:keystore-at-rest */}
+- A compromised signing key (anyone who reads your `.treeship` directory -- the key plus the seed file that decrypts it -- can forge artifacts; there is no passphrase gating this)
 - Actions taken outside of Treeship (unwrapped commands leave no trace)
 - Content confidentiality (Treeship signs metadata and digests, not content, but metadata can still be sensitive)
 
@@ -111,7 +114,7 @@ To attest an action on sensitive data without revealing the data:
 treeship attest action \
   --actor agent://clinical-ai \
   --action clinical.note.summarize \
-  --input-digest sha256:e3b0c44298fc1c149afb4c8996fb924
+  --input-digest sha256:e3b0c44298fc1c149afb4c8996fb92427ae41e4649b934ca495991b7852b855
 ```
 
 The digest proves which document was processed. The content never enters the artifact.

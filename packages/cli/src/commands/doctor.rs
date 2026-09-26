@@ -470,6 +470,36 @@ pub fn run(
         }
     }
 
+    // 12b. checkpoint.every: say what runs, not what is configured. The
+    // daemon is what publishes; a setting with no daemon publishes nothing.
+    if let Some(ref ts_path) = ts {
+        if let Some(every) = super::cadence::checkpoint_every(&ts_path.join("config.yaml")) {
+            let label = super::cadence::label(every);
+            let attached = ctx_result
+                .as_ref()
+                .map(|c| c.config.is_attached())
+                .unwrap_or(false);
+            match (daemon_running, attached) {
+                (true, true) => checks.push(Check::pass(
+                    "checkpoint cadence",
+                    &format!("every {label}: the daemon seals and publishes to the attached hub"),
+                )),
+                (true, false) => checks.push(Check::warn(
+                    "checkpoint cadence",
+                    &format!("every {label} is set, but no hub is attached: nothing publishes"),
+                    "treeship hub attach",
+                )),
+                (false, _) => checks.push(Check::warn(
+                    "checkpoint cadence",
+                    &format!(
+                        "every {label} is set, but the daemon is not running: nothing publishes"
+                    ),
+                    "treeship daemon start",
+                )),
+            }
+        }
+    }
+
     // 13. Verify PID file has valid, running process (stale PID check)
     if !daemon_running {
         if let Some(ref ts_path) = ts {

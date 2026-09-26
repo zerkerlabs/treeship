@@ -22,6 +22,10 @@ pub const USAGE: i32 = 4;
 // on has no caller; the code is still part of the contract.
 #[allow(dead_code)]
 pub const NOT_IN_BUILD: i32 = 5;
+/// The signature verifies, but its signer is not a pinned trust root here:
+/// a trust decision for the reader, not a broken signature (`merkle verify`,
+/// CLI-5). An invalid signature is still 1.
+pub const NOT_PINNED: i32 = 6;
 
 /// An error that names its exit code.
 #[derive(Debug)]
@@ -56,6 +60,11 @@ pub fn not_in_build(message: impl Into<String>) -> Box<dyn std::error::Error> {
     boxed(NOT_IN_BUILD, message)
 }
 
+/// The signer is not pinned here (exit 6).
+pub fn not_pinned(message: impl Into<String>) -> Box<dyn std::error::Error> {
+    boxed(NOT_PINNED, message)
+}
+
 /// The exit code for an error that reached `main`.
 pub fn code_for(e: &(dyn std::error::Error + 'static)) -> i32 {
     if let Some(x) = e.downcast_ref::<ExitError>() {
@@ -82,6 +91,7 @@ mod tests {
     fn typed_errors_carry_their_code() {
         assert_eq!(code_for(usage("x").as_ref()), USAGE);
         assert_eq!(code_for(not_in_build("x").as_ref()), NOT_IN_BUILD);
+        assert_eq!(code_for(not_pinned("x").as_ref()), NOT_PINNED);
         let plain: Box<dyn std::error::Error> = "required-bot is not required".into();
         assert_eq!(code_for(plain.as_ref()), ERROR);
     }

@@ -166,7 +166,22 @@ pub fn rotate(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
     let grace = std::time::Duration::from_secs(grace_hours.saturating_mul(3600));
+
+    // One rotation at a time. Two `keys rotate` racing both rotated the
+    // same predecessor and minted two successors for it; the lock makes
+    // the second one rotate whatever the first left as default.
+    let _lock = rotation_lock(&ctx.config.keys_dir)?;
     let result = ctx.keys.rotate(key_id, grace, set_default)?;
+
+    // The keystore manifest is the one source of truth for the default
+    // signer: attest, hub attach, prove and the dashboard all read it from
+    // there. config.json's `default_key_id` is what `init` wrote and is
+    // not consulted, so nothing here writes config.json. (Through 0.31.9
+    // the readers disagreed: the keystore promoted the successor while
+    // hub attach read the predecessor from config.json; a first fix wrote
+    // config.json, which flattened a project stub onto itself and broke
+    // the ship. 0.31.9 full test, CLI-9.)
+    let default_now = ctx.keys.default_key_id()?;
 
     if printer.format == crate::printer::Format::Json {
         printer.json(&serde_json::json!({
@@ -181,6 +196,7 @@ pub fn rotate(
                 "is_default":  result.successor.is_default,
             },
             "grace_period_until": result.grace_period_until,
+            "default_key_id": default_now,
         }));
         return Ok(());
     }
@@ -218,4 +234,26 @@ pub fn rotate(
     );
     printer.hint("if the predecessor was compromised, treat every counterparty as trusting it until you hear back: the grace window above applies only here");
     Ok(())
+}
+
+/// An exclusive lock held for the duration of a rotation. The keystore
+/// lives under `keys_dir`; the lock file sits beside it.
+fn rotation_lock(keys_dir: &str) -> Result<std::fs::File, Box<dyn std::error::Error>> {
+    let path = std::path::Path::new(keys_dir).join(".rotate.lock");
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+        // Blocking: the second rotation waits for the first, then rotates
+        // whatever the first left as default.
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+    }
+    Ok(file)
 }

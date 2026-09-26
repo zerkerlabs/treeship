@@ -685,6 +685,18 @@ pub fn start(
 
     // Initial snapshot (regular tree + sensitive dotfiles)
     let initial_project = ProjectConfig::load(&config_yaml).ok();
+    // `checkpoint.every`: the last attempt, so a failing hub is retried
+    // once per interval, not every 2 seconds.
+    let mut last_checkpoint_attempt: u64 = 0;
+    if let Some(every) = super::cadence::checkpoint_every(&config_yaml) {
+        daemon_log(
+            &ts,
+            &format!(
+                "checkpoint cadence: every {} (seal + publish to the attached hub)",
+                super::cadence::label(every)
+            ),
+        );
+    }
     let mut file_snapshot = snapshot_files(&root, &ts);
     if let Some(ref proj) = initial_project {
         snapshot_sensitive_files(&root, proj, &mut file_snapshot);
@@ -770,6 +782,10 @@ pub fn start(
             auto_push_new_artifacts(&ctx, &ts);
         }
 
+        if let Some(every) = super::cadence::checkpoint_every(&config_yaml) {
+            publish_checkpoint_if_due(config, &ts, every, &mut last_checkpoint_attempt);
+        }
+
         // ZK: Process proof job queue (background, non-blocking)
         #[cfg(feature = "zk")]
         {
@@ -788,6 +804,44 @@ pub fn start(
 
 /// Start the daemon as a detached child (`daemon start --foreground` on
 /// this same binary) and return its pid once it has written the pid file.
+/// Seal and publish a checkpoint when `checkpoint.every` says one is due,
+/// judged by the newest local checkpoint's own signed time. Each publish
+/// and each failure goes to daemon.log.
+fn publish_checkpoint_if_due(
+    config: Option<&str>,
+    ts: &Path,
+    every: Duration,
+    last_attempt: &mut u64,
+) {
+    let now = epoch_secs();
+    let latest = super::merkle::load_latest_checkpoint()
+        .ok()
+        .flatten()
+        .map(|cp| cp.signed_at);
+    if !super::cadence::due(latest.as_deref(), every, now) {
+        return;
+    }
+    // After a failure, wait a full interval (capped at 10 minutes) before
+    // trying again.
+    let backoff = every.as_secs().min(600);
+    if now.saturating_sub(*last_attempt) < backoff {
+        return;
+    }
+    *last_attempt = now;
+    let quiet = Printer::new(crate::printer::Format::Text, true, true);
+    match super::merkle::checkpoint_with(config, true, &quiet) {
+        Ok(()) => {
+            let root = super::merkle::load_latest_checkpoint()
+                .ok()
+                .flatten()
+                .map(|cp| cp.root)
+                .unwrap_or_default();
+            daemon_log(ts, &format!("checkpoint sealed and published ({root})"));
+        }
+        Err(e) => daemon_log(ts, &format!("checkpoint cadence: not published: {e}")),
+    }
+}
+
 fn spawn_background(
     ts: &Path,
     config: Option<&str>,

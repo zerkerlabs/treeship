@@ -30,6 +30,7 @@ import (
 	"github.com/zerkerlabs/treeship/packages/hub/internal/ship"
 	"github.com/zerkerlabs/treeship/packages/hub/internal/stats"
 	"github.com/zerkerlabs/treeship/packages/hub/internal/verify"
+	"github.com/zerkerlabs/treeship/packages/hub/internal/version"
 )
 
 func main() {
@@ -178,10 +179,17 @@ func main() {
 	// during a deploy is false before the database is reachable and false
 	// again the moment shutdown begins -- that is what takes an instance out
 	// of rotation *before* its connections are cut, rather than after.
-	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+	healthz := func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
+	}
+	r.Get("/healthz", healthz)
+	r.Get("/health", healthz)
+
+	// Which build is this? /v1/version is the documented path; /version is
+	// the one people type.
+	r.Get("/v1/version", version.Handler)
+	r.Get("/version", version.Handler)
 	r.Get("/readyz", func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if !ready.Load() {

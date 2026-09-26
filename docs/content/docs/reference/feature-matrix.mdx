@@ -58,7 +58,7 @@ Pick `stable` only when the code, docs, and tests all line up. If the docs page 
 
 | Feature | Status | CLI | Docs |
 |---|---|---|---|
-| Approval Use Journal | `stable` | `treeship approval uses`, `treeship approval status`, `treeship approval journal verify` | [Approval Use Journal](/docs/concepts/approval-use-journal), [Approval Authority](/docs/concepts/approval-authority) |
+| Approval Use Journal | `stable` | `treeship approval uses`, `treeship approval status`, `treeship approval journal verify` | [Approval Use Journal](/docs/concepts/approval-use-journal), [Approval Authority](/docs/concepts/approval-authority), [approval](/docs/cli/approval) |
 | Capability grants + delegation chains | `beta` | `treeship grant issue`, `treeship grant list`, `treeship grant show` | [grant](/docs/cli/grant) |
 | Per-agent keys & onboarding | `stable` | `treeship onboard`, `treeship agent register` | [Trust model](/docs/concepts/trust-model), [How it works](/docs/guides/how-it-works) |
 | Agent Identity Certificates | `beta` | `treeship agent register` | [Agent Identity](/docs/concepts/agent-identity) |
@@ -114,11 +114,11 @@ Pick `stable` only when the code, docs, and tests all line up. If the docs page 
 
 | Feature | Status | CLI | Docs |
 |---|---|---|---|
-| ZK -- Circom Groth16 (snarkjs shell-out) | `quarantined` | `treeship prove`, `treeship verify-proof`, `treeship zk-setup` | [Zero-knowledge proofs](/docs/concepts/zero-knowledge) |
-| ZK -- RISC Zero local prover (prove-chain) | `experimental` | `treeship prove-chain` | [Zero-knowledge proofs](/docs/concepts/zero-knowledge) |
+| ZK -- Circom Groth16 (snarkjs shell-out) | `quarantined` | `treeship prove`, `treeship verify-proof`, `treeship zk-setup` | [Zero-knowledge proofs](/docs/concepts/zero-knowledge), [prove / verify-proof / zk-setup](/docs/cli/zk) |
+| ZK -- RISC Zero local prover (prove-chain) | `experimental` | `treeship prove-chain` | [Zero-knowledge proofs](/docs/concepts/zero-knowledge), [prove / verify-proof / zk-setup](/docs/cli/zk) |
 | ZK -- Circom native pure-Rust (ark-circom) | `roadmap` | -- | -- |
 | ZK -- RISC Zero Bonsai (hosted proving) | `roadmap` | -- | -- |
-| ZK -- TLSNotary (verifiable TLS evidence) | `roadmap` | `treeship zk-tls-setup` | -- |
+| ZK -- TLSNotary (verifiable TLS evidence) | `roadmap` | `treeship zk-tls-setup` | [prove / verify-proof / zk-setup](/docs/cli/zk) |
 
 Both `zk` CLI paths require the `--features zk` build flag; the `zk` feature is pre-release and nothing in the default trust path depends on it.
 

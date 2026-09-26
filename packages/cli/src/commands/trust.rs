@@ -394,9 +394,18 @@ fn canonical_transparency_log_key(input: &str) -> Result<String, Box<dyn std::er
     ))
 }
 
+/// The same fingerprint `keys list` prints: sha256 of the raw Ed25519 key,
+/// first 8 bytes, hex. Through 0.31.9 this hashed the base64 text of the
+/// key instead, so `keys export` and `trust add` showed two fingerprints
+/// for one key and a person comparing them out of band saw a mismatch. A
+/// key that is not Ed25519 (a transparency-log root) hashes its canonical
+/// text, as before.
 fn pubkey_fingerprint(canonical_pk: &str) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(canonical_pk.as_bytes());
+    match decode_ed25519_pubkey(canonical_pk) {
+        Ok(vk) => hasher.update(vk.as_bytes()),
+        Err(_) => hasher.update(canonical_pk.as_bytes()),
+    }
     let bytes = hasher.finalize();
     let hex_full = hex::encode(bytes);
     hex_full[..16].to_string()
@@ -421,7 +430,7 @@ fn now_rfc3339() -> String {
 }
 
 /// `key_<16 hex>` or `key_agent_<16 hex>`: the shapes the keystore mints.
-fn looks_like_key_id(s: &str) -> bool {
+pub(crate) fn looks_like_key_id(s: &str) -> bool {
     let hex = s
         .strip_prefix("key_agent_")
         .or_else(|| s.strip_prefix("key_"));

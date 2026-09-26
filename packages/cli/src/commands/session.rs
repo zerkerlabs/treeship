@@ -2334,6 +2334,11 @@ pub fn event(
         Some(m) => m,
         None => return Err("no active session -- run treeship session start first".into()),
     };
+    // `--meta '{bad'` used to be accepted and silently dropped; `attest`
+    // refuses the same input, and so does this now.
+    if let Some(m) = meta_json {
+        crate::validate::json_object("--meta", m)?;
+    }
 
     let ts_dir = session_dir().ok_or("no .treeship directory found")?;
     let evt_dir = ts_dir.join("sessions").join(&manifest.session_id);

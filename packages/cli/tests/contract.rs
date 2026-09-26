@@ -185,6 +185,7 @@ const EXIT_USAGE_COMMAND: i32 = 4;
 // Only the feature-gated rows use it; a build with every feature on has none.
 #[allow(dead_code)]
 const EXIT_NOT_IN_BUILD: i32 = 5;
+const EXIT_NOT_PINNED: i32 = 6;
 
 struct Case {
     name: &'static str,
@@ -318,6 +319,101 @@ const CASES: &[Case] = &[
         env: &[],
         expect: EXIT_ERROR,
     },
+    // --- input validation (CLI-14 / W4-1): refused as usage errors ---------
+    Case {
+        name: "--format xml",
+        args: &["status", "--format", "xml"],
+        env: &[],
+        expect: EXIT_USAGE_COMMAND,
+    },
+    Case {
+        name: "attest decision --confidence 7.5",
+        args: &[
+            "attest",
+            "decision",
+            "--actor",
+            "agent://a",
+            "--confidence",
+            "7.5",
+        ],
+        env: &[],
+        expect: EXIT_USAGE_COMMAND,
+    },
+    Case {
+        name: "attest endorsement --kind bogus",
+        args: &[
+            "attest",
+            "endorsement",
+            "--endorser",
+            "human://a",
+            "--subject",
+            "art_0000000000000000",
+            "--kind",
+            "bogus",
+        ],
+        env: &[],
+        expect: EXIT_USAGE_COMMAND,
+    },
+    Case {
+        name: "attest action --input-digest abc",
+        args: &[
+            "attest",
+            "action",
+            "--actor",
+            "agent://a",
+            "--action",
+            "x",
+            "--input-digest",
+            "abc",
+        ],
+        env: &[],
+        expect: EXIT_USAGE_COMMAND,
+    },
+    Case {
+        name: "attest action --actor \"\"",
+        args: &["attest", "action", "--actor", "", "--action", "x"],
+        env: &[],
+        expect: EXIT_USAGE_COMMAND,
+    },
+    Case {
+        name: "declare --valid-until notatime",
+        args: &[
+            "declare",
+            "--tools",
+            "read_file",
+            "--valid-until",
+            "notatime",
+        ],
+        env: &[],
+        expect: EXIT_USAGE_COMMAND,
+    },
+    Case {
+        name: "history --class bogus",
+        args: &["history", "bot", "--class", "bogus"],
+        env: &[],
+        expect: EXIT_USAGE_COMMAND,
+    },
+    Case {
+        name: "history --since yesterday",
+        args: &["history", "bot", "--since", "yesterday"],
+        env: &[],
+        expect: EXIT_USAGE_COMMAND,
+    },
+    Case {
+        name: "attest handoff of an artifact that does not exist",
+        args: &[
+            "attest",
+            "handoff",
+            "--from",
+            "agent://a",
+            "--to",
+            "agent://b",
+            "--artifacts",
+            "art_0000000000000000",
+        ],
+        env: &[],
+        expect: EXIT_USAGE_COMMAND,
+    },
     // --- codes that must not drift -----------------------------------------
     Case {
         name: "verify an artifact that does not exist",
@@ -447,10 +543,103 @@ fn every_failure_exits_with_its_documented_code() {
             EXIT_ERROR,
         );
     }
+    // session event --meta needs an open session; attest refuses the same
+    // input, and so must this.
+    {
+        let out = ship.run(&["session", "start", "--name", "contract"]);
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        check(
+            "session event --meta '{bad'",
+            &["session", "event", "--type", "note", "--meta", "{bad"],
+            &[],
+            EXIT_USAGE_COMMAND,
+        );
+        let _ = ship.run(&["session", "abandon"]);
+    }
     assert!(
         wrong.is_empty(),
         "exit-code contract broken:\n{}",
         wrong.join("\n")
+    );
+}
+
+/// `merkle verify` on a ship's own fresh proof: the signature and the
+/// inclusion proof hold, the checkpoint signer is not pinned (6); pinned, it
+/// verifies (0); a broken proof is still 1, pinned or not (CLI-5).
+#[test]
+fn merkle_verify_not_pinned_exits_6() {
+    let ship = Ship::init();
+    let out = ship.run(&[
+        "attest",
+        "action",
+        "--actor",
+        "agent://c",
+        "--action",
+        "x",
+        "--format",
+        "json",
+    ]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let id = serde_json::from_slice::<serde_json::Value>(&out.stdout).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(ship.run(&["checkpoint"]).status.success());
+    assert!(ship.run(&["merkle", "proof", &id]).status.success());
+    let proof = format!("{id}.proof.json");
+
+    let out = ship.run(&["merkle", "verify", &proof, "--format", "json"]);
+    assert_eq!(
+        code(&out),
+        EXIT_NOT_PINNED,
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["outcome"], "not_pinned", "{v}");
+    let (key_id, public_key) = (
+        v["key_id"].as_str().unwrap().to_string(),
+        v["public_key"].as_str().unwrap().to_string(),
+    );
+
+    // A proof whose path was tampered with is invalid, not "not pinned".
+    let mut bad: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(ship.work.path().join(&proof)).unwrap()).unwrap();
+    bad["inclusion_proof"]["leaf_hash"] = serde_json::Value::String("00".repeat(32));
+    std::fs::write(ship.work.path().join("bad.proof.json"), bad.to_string()).unwrap();
+    assert_eq!(
+        code(&ship.run(&["merkle", "verify", "bad.proof.json"])),
+        EXIT_ERROR
+    );
+
+    let pubkey = format!("ed25519:{public_key}");
+    let out = ship.run(&[
+        "trust",
+        "add",
+        &key_id,
+        &pubkey,
+        "--kind",
+        "hub_checkpoint",
+        "--yes",
+    ]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let out = ship.run(&["merkle", "verify", &proof]);
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        code(&ship.run(&["merkle", "verify", "bad.proof.json"])),
+        EXIT_ERROR
     );
 }
 

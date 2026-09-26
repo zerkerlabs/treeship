@@ -1,0 +1,56 @@
+---
+title: approval
+description: Inspect the local Approval Use Journal -- recorded uses, per-grant status, and integrity checks.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+<Callout type="info">
+**Hidden from `--help`.** `approval` is implemented, tested, and shipped
+(`stable` in the feature inventory) -- it's a read-only inspection surface
+over the Approval Use Journal, hidden from top-level `--help` as a UX
+choice. It is not the same command as [`approve` / `deny` /
+`pending`](/docs/cli/approve), which act on a pending approval *request* by
+index; `approval` inspects grants already minted with `attest approval` and
+consumed by `attest action --approval-nonce`.
+</Callout>
+
+The Approval Use Journal is what enforces replay safety today: `attest
+action` reserves a use in the journal *before* it signs, so a reused nonce
+is refused at attest time, on this device or workspace. See the [replay
+posture callout](/docs/cli/approve#treeship-deny) on the `approve` page for
+what this does and doesn't cover across machines.
+
+## treeship approval uses
+
+List every recorded use for an approval grant.
+
+```bash
+treeship approval uses art_grant_xyz
+```
+
+| Argument | Description |
+|---|---|
+| `<GRANT_ID>` | The approval artifact's id |
+
+## treeship approval status
+
+Summary for one grant: use count, max uses, and whether the next use would
+exceed the limit.
+
+```bash
+treeship approval status art_grant_xyz
+```
+
+| Argument | Description |
+|---|---|
+| `<GRANT_ID>` | The approval artifact's id |
+
+## treeship approval journal verify
+
+Walk every record in the local journal, recompute digests, and check the
+chain.
+
+```bash
+treeship approval journal verify
+```

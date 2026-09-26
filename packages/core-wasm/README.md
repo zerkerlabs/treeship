@@ -8,9 +8,14 @@ treeship-core-wasm compiles the core cryptographic engine to WebAssembly so brow
 
 - **Ed25519 signature verification**
 - **Merkle proof validation**
-- **Groth16 zero-knowledge proof verification**
 
-This package powers the verification widget at [treeship.dev/verify](https://treeship.dev/verify).
+Groth16 zero-knowledge proof verification exists in the crate behind the
+non-default `zk` feature, but that path is quarantined (see
+[the ZK verification spec](https://github.com/zerkerlabs/treeship/blob/main/docs/specs/private-verification.md))
+and the published `@treeship/core-wasm` package is built without it -- the
+browser never checks a ZK proof today.
+
+This package powers the verification widget at [treeship.dev/verify](https://treeship.dev/verify), which verifies signatures and Merkle proofs only.
 
 ## Installation
 

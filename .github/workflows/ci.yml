@@ -128,6 +128,14 @@ jobs:
           fi
       - name: Feature inventory entries point at real code
         run: python3 scripts/check-feature-inventory.py --strict
+      # WEB-1 and the verify-js blind spot both trace back to the same
+      # habit: security wording drifting ahead of, or behind, what the code
+      # actually does. This registers every security/crypto claim with a
+      # status and a proof, and fails a banned phrase (passphrase,
+      # machine-bound, tamper-proof, immutable, anchored, witnessed,
+      # air-gapped) in the docs it covers unless a claims.yml id backs it.
+      - name: Security claims have a status and a proof
+        run: python3 scripts/check-claims.py
 
       # The mechanical half of the capability index. feature-inventory.yml is
       # curated (what we ship and how stable); this is derived (what is

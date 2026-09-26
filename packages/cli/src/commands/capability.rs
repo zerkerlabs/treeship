@@ -31,7 +31,10 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
 
     // --- Load and parse the card ------------------------------------------
     let record = ctx.storage.read(card_id)?;
-    let card_stmt: ReceiptStatement = record.envelope.unmarshal_statement()?;
+    let card_stmt: ReceiptStatement = record
+        .envelope
+        .unmarshal_statement()
+        .map_err(|e| format!("{card_id} is not a capability card (agent_card.v1 receipt): {e}"))?;
     if card_stmt.kind != "agent_card.v1" {
         return Err(format!(
             "{card_id} is kind `{}`, not an agent_card.v1 receipt",
@@ -297,25 +300,29 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
         }
         return Ok(());
     }
-    printer.success(
-        "capability card",
-        &[
-            ("card", card_id),
-            ("agent", card_agent),
-            ("key-bound", key_bound_str),
-            ("declared tools", &tools_str),
-            ("declared network", &network_str),
-            ("provenance", &provenance_str),
-            ("in-scope actions", &in_scope_str),
-            ("out-of-scope", &oos_str),
-            ("status", status),
-        ],
-    );
-    if let Some((reason, who)) = &revocation {
-        printer.warn(
-            "capability card REVOKED — do not honor",
-            &[("by", who), ("reason", reason)],
-        );
+    let fields = [
+        ("card", card_id),
+        ("agent", card_agent),
+        ("key-bound", key_bound_str),
+        ("declared tools", &tools_str),
+        ("declared network", &network_str),
+        ("provenance", &provenance_str),
+        ("in-scope actions", &in_scope_str),
+        ("out-of-scope", &oos_str),
+        ("status", status),
+    ];
+    // The headline is the verdict. A revoked card used to open with a
+    // green "✓ capability card" and say REVOKED two lines down.
+    match &revocation {
+        Some((reason, who)) => {
+            printer.failure("capability card REVOKED — do not honor", &fields);
+            printer.failure(
+                "revoked",
+                &[("by", who.as_str()), ("reason", reason.as_str())],
+            );
+        }
+        None if hostile => printer.failure("capability card: NOT OK", &fields),
+        None => printer.success("capability card", &fields),
     }
     if let Some(note) = &anchor_note {
         printer.hint(note);
@@ -363,7 +370,10 @@ pub fn revoke_capability(
 
     // Read the card so the revocation records its keyid + actor.
     let record = ctx.storage.read(card_id)?;
-    let card_stmt: ReceiptStatement = record.envelope.unmarshal_statement()?;
+    let card_stmt: ReceiptStatement = record
+        .envelope
+        .unmarshal_statement()
+        .map_err(|e| format!("{card_id} is not a capability card (agent_card.v1 receipt): {e}"))?;
     if card_stmt.kind != "agent_card.v1" {
         return Err(format!(
             "{card_id} is kind `{}`, not an agent_card.v1 receipt",
@@ -376,6 +386,13 @@ pub fn revoke_capability(
         .ok_or("agent_card.v1 receipt has no payload")?;
     let card_keyid = card.get("keyid").and_then(|v| v.as_str()).unwrap_or("");
     let card_agent = card.get("agent").and_then(|v| v.as_str()).unwrap_or("");
+
+    if let Some(existing) = existing_card_revocation(&ctx, card_id) {
+        return Err(format!(
+            "card {card_id} is already revoked by {existing}; a second revocation receipt would add nothing"
+        )
+        .into());
+    }
 
     let revoked_at = crate::commands::verify::now_rfc3339();
     let mut payload = serde_json::Map::new();
@@ -639,4 +656,31 @@ fn actor_proven_by_cert(
         return true;
     }
     false
+}
+
+/// The id of an agent_card_revocation.v1 receipt this store already holds
+/// for `card_id`, if any.
+fn existing_card_revocation(ctx: &crate::ctx::Ctx, card_id: &str) -> Option<String> {
+    let pt = payload_type("receipt");
+    for entry in ctx.storage.list_by_type(&pt) {
+        let Ok(rec) = ctx.storage.read(&entry.id) else {
+            continue;
+        };
+        let Ok(stmt) = rec.envelope.unmarshal_statement::<ReceiptStatement>() else {
+            continue;
+        };
+        if stmt.kind != "agent_card_revocation.v1" {
+            continue;
+        }
+        let same = stmt
+            .payload
+            .as_ref()
+            .and_then(|p| p.get("card"))
+            .and_then(|v| v.as_str())
+            == Some(card_id);
+        if same {
+            return Some(entry.id.clone());
+        }
+    }
+    None
 }

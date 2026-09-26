@@ -51,6 +51,22 @@ pub enum RekorOutcome {
 // attach
 // ---------------------------------------------------------------------------
 
+/// Persist a change to the hub connections. The write goes to the config
+/// that holds them: the global config when this workspace is a project
+/// stub (never through the stub's `extends`), else the config that was
+/// loaded. That file is re-read from disk first, so a stub's overrides
+/// (its `name`) never land in the global file.
+fn save_hub_config(
+    ctx: &crate::ctx::Ctx,
+    mutate: impl FnOnce(&mut crate::config::Config),
+) -> Result<(), Box<dyn std::error::Error>> {
+    let target = config::hub_write_target(&ctx.config_path)?;
+    let mut cfg = config::load(&target)?;
+    mutate(&mut cfg);
+    config::save(&cfg, &target)?;
+    Ok(())
+}
+
 pub fn attach(
     name: Option<&str>,
     endpoint: Option<&str>,
@@ -88,9 +104,7 @@ pub fn attach(
                 .is_some();
 
             if probe_ok {
-                let mut cfg = ctx.config.clone();
-                cfg.active_hub = Some(hub_name.to_string());
-                config::save(&cfg, &ctx.config_path)?;
+                save_hub_config(&ctx, |cfg| cfg.active_hub = Some(hub_name.to_string()))?;
 
                 printer.success(
                     "reconnected",
@@ -198,7 +212,10 @@ pub fn attach(
     }
 
     // 5. POST authorize with keys
-    let ship_public_key = ctx.keys.public_key(&ctx.config.default_key_id)?;
+    // The keystore manifest is the source of truth for the default signer
+    // (a rotation moves it there; config.json's copy is what init wrote).
+    let ship_key_id = ctx.keys.default_key_id()?;
+    let ship_public_key = ctx.keys.public_key(&ship_key_id)?;
     let ship_public_hex = hex::encode(&ship_public_key);
 
     let authorize_url = format!("{}/v1/dock/authorize", endpoint);
@@ -223,25 +240,25 @@ pub fn attach(
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let created_at = format!("{}Z", now);
+    // RFC 3339, like every other timestamp in the config. This was
+    // `"<epoch>Z"` through 0.31.9.
+    let created_at = treeship_core::statements::unix_to_rfc3339(now);
 
-    // 7. Save to config
-    let mut cfg = ctx.config.clone();
-    cfg.hub_connections.insert(
-        hub_name.to_string(),
-        HubConnection {
-            hub_id: final_hub_id.clone(),
-            key_id: ctx.config.default_key_id.clone(),
-            endpoint: endpoint.clone(),
-            created_at,
-            last_push: None,
-            hub_public_key: Some(hub_public_hex),
-            // Sealed at rest under the machine key (AUD-02), not plaintext hex.
-            hub_secret_key: Some(seal_dpop_secret(&hub_secret_hex, &final_hub_id, &ctx.keys)?),
-        },
-    );
-    cfg.active_hub = Some(hub_name.to_string());
-    config::save(&cfg, &ctx.config_path)?;
+    // 7. Save to config (to the global config when this is a project stub)
+    let connection = HubConnection {
+        hub_id: final_hub_id.clone(),
+        key_id: ship_key_id.clone(),
+        endpoint: endpoint.clone(),
+        created_at,
+        last_push: None,
+        hub_public_key: Some(hub_public_hex),
+        // Sealed at rest under the machine key (AUD-02), not plaintext hex.
+        hub_secret_key: Some(seal_dpop_secret(&hub_secret_hex, &final_hub_id, &ctx.keys)?),
+    };
+    save_hub_config(&ctx, |cfg| {
+        cfg.hub_connections.insert(hub_name.to_string(), connection);
+        cfg.active_hub = Some(hub_name.to_string());
+    })?;
 
     // 8. Print success
     printer.success(
@@ -295,9 +312,7 @@ pub fn detach(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std
         .unwrap_or("(none)")
         .to_string();
 
-    let mut cfg = ctx.config.clone();
-    cfg.active_hub = None;
-    config::save(&cfg, &ctx.config_path)?;
+    save_hub_config(&ctx, |cfg| cfg.active_hub = None)?;
 
     printer.success("detached", &[("hub", hub_name.as_str())]);
     printer.info("keys preserved");
@@ -496,9 +511,7 @@ pub fn use_hub(
             })?
     };
 
-    let mut cfg = ctx.config.clone();
-    cfg.active_hub = Some(resolved_name.clone());
-    config::save(&cfg, &ctx.config_path)?;
+    save_hub_config(&ctx, |cfg| cfg.active_hub = Some(resolved_name.clone()))?;
 
     let entry = &ctx.config.hub_connections[&resolved_name];
     printer.success(
@@ -732,15 +745,13 @@ pub fn kill(
         }
     }
 
-    let mut cfg = ctx.config.clone();
-
-    // If removing the active hub, clear active_hub
-    if cfg.active_hub.as_deref() == Some(name) {
-        cfg.active_hub = None;
-    }
-
-    cfg.hub_connections.remove(name);
-    config::save(&cfg, &ctx.config_path)?;
+    save_hub_config(&ctx, |cfg| {
+        // If removing the active hub, clear active_hub
+        if cfg.active_hub.as_deref() == Some(name) {
+            cfg.active_hub = None;
+        }
+        cfg.hub_connections.remove(name);
+    })?;
 
     printer.success("removed", &[("hub", name)]);
     printer.blank();
@@ -1228,7 +1239,7 @@ mod tests {
             hub_id: hub_id.to_string(),
             key_id: String::new(),
             endpoint: "https://hub.example".to_string(),
-            created_at: "0Z".to_string(),
+            created_at: "1970-01-01T00:00:00Z".to_string(),
             last_push: None,
             hub_public_key: None,
             hub_secret_key: secret,

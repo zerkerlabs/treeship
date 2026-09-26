@@ -103,6 +103,7 @@
     - docs/content/docs/integrations/claude-code.mdx
     - docs/content/docs/concepts/capability-cards.mdx
     - docs/content/docs/cli/package.mdx
+    - docs/content/docs/cli/declare.mdx
   tests:
     - packages/core/src/session/receipt.rs
     - packages/cli/tests/network_scope_cli.rs
@@ -509,6 +510,7 @@
     - GET /v1/artifacts/{id}
     - POST /v1/session
     - GET /v1/stats
+    - GET /v1/version
     - GET /v1/workspace/{dockId}
   cli:
     - treeship hub attach
@@ -554,6 +556,7 @@
   docs:
     - docs/content/docs/concepts/approval-use-journal.mdx
     - docs/content/docs/concepts/approval-authority.mdx
+    - docs/content/docs/cli/approval.mdx
   tests:
     - packages/core/src/statements/approval_use.rs
   notes: "Workspace-local store of consumed approval grants. Enforces max_uses + idempotency-key replay safety. Approvals are scoped by default (--allowed-* / --max-uses, or explicit --unscoped). The `approval` inspection subcommand is hidden from --help; minting one (`attest approval`) is not."
@@ -1025,6 +1028,7 @@
     - treeship zk-setup
   docs:
     - docs/content/docs/concepts/zero-knowledge.mdx
+    - docs/content/docs/cli/zk.mdx
   notes: "Found unsound in the ZK audit (no trusted-setup ceremony; proofs not bound to the statement). Quarantined in v0.20: fails closed, non-authoritative, superseded by the statement-first private-verification design."
 
 - id: zk-risc0-local
@@ -1035,6 +1039,7 @@
     - treeship prove-chain
   docs:
     - docs/content/docs/concepts/zero-knowledge.mdx
+    - docs/content/docs/cli/zk.mdx
   notes: "Behind `--features zk`. Uses risc0_zkvm local prover. Bonsai hosted proving is roadmap. Pre-release and non-authoritative; nothing in the default trust path depends on it."
 
 - id: zk-circom-native
@@ -1055,4 +1060,6 @@
   status: roadmap
   cli:
     - treeship zk-tls-setup
+  docs:
+    - docs/content/docs/cli/zk.mdx
   notes: "Setup-instructions stub only. README explicitly: waiting on TLSNotary alpha to stabilize."

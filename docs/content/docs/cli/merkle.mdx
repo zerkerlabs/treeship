@@ -22,7 +22,21 @@ Seal a signed Merkle root over all current artifacts. The checkpoint is stored l
 
 ```bash
 treeship checkpoint
+treeship checkpoint --publish
 ```
+
+`--publish` pushes the sealed checkpoint to the attached hub in the same command; a failed push exits nonzero (the checkpoint itself is still on disk). A checkpoint is signed by the ship that seals it. The hub verifies and stores it and signs nothing of its own, so a published checkpoint is this ship's signed assertion about its log, not an outside witness to it.
+
+### On a schedule
+
+Off by default: nothing leaves the machine without an explicit setting. To keep the hub's latest checkpoint fresh, set an interval in `.treeship/config.yaml` and run the daemon:
+
+```yaml
+checkpoint:
+  every: 6h    # 30d, 12h, 45m; anything under 5m is treated as 5m
+```
+
+The daemon then seals a checkpoint and publishes it to the attached hub whenever the newest local checkpoint is older than the interval, and writes one line to `.treeship/daemon.log` per publish or failure. `treeship doctor` reports the cadence only as it actually runs: as set when the daemon is running and a hub is attached, and as a warning when either is missing, because then nothing publishes. The hub's `GET /v1/merkle/checkpoint/latest` returns `age_seconds` so a monitor can alert when the latest checkpoint is older than it should be.
 
 ```
 → sealing checkpoint over 47 artifacts...

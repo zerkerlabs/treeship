@@ -453,7 +453,7 @@ pub const HARNESSES: &[HarnessManifest] = &[
         known_gaps:            &[
             "SuperNinja runs on a remote VM and is not auto-discoverable locally.",
             "Coverage stays at basic until Treeship runs inside the VM or routes through MCP.",
-            "Use `treeship agent invite` to attach a remote host (deferred to v0.9.9).",
+            "Attaching a remote host is not available yet; record its work with `treeship wrap` on that host.",
         ],
         privacy_posture:       "Until invite/join lands, only post-hoc git-reconcile evidence is captured locally.",
         recommended_backstops: &[ConnectionMode::GitReconcile],
@@ -877,7 +877,10 @@ mod tests {
         assert_eq!(h.coverage, CoverageLevel::Basic);
         let gaps = h.known_gaps.join(" ");
         assert!(gaps.contains("remote VM"), "gaps must mention remote VM");
-        assert!(gaps.contains("invite"), "gaps must point at invite/join");
+        assert!(
+            gaps.contains("not available yet") || gaps.contains("cannot be attached"),
+            "gaps must say attaching is not available, not name a command that does not exist: {gaps}"
+        );
     }
 
     #[test]
