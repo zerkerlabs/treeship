@@ -1,0 +1,143 @@
+{
+  "leaf_count": 6,
+  "root": "mroot_44b553028bd84234a87842af10bf0dcc3d66c974b790e199281b7d16169dc90d",
+  "inclusion_proofs": [
+    {
+      "artifact_id": "art_677976447a103b6b8935816c150b2ffc",
+      "leaf_index": 0,
+      "proof": {
+        "leaf_index": 0,
+        "leaf_hash": "c985a84fd38544e5a255b69ac0aabfd65bc923940dd1a928a6c9fdc9fcc30454",
+        "path": [
+          {
+            "direction": "Right",
+            "hash": "89395c9616d44dea8916051ece90333744c6b204f68ed7513ed42026d9e92c01"
+          },
+          {
+            "direction": "Right",
+            "hash": "663a8299141bda6a992a65c052c06dd955275836d4d3b287cc43f7bf51b75825"
+          },
+          {
+            "direction": "Right",
+            "hash": "0b2fb990ea9b868988b5174865689e527493fd9d8cb3819c5c75a0cf750de885"
+          }
+        ],
+        "algorithm": "sha256-rfc9162",
+        "merkle_version": 2
+      }
+    },
+    {
+      "artifact_id": "art_3cea40c26b280def50c72134c7870bd8",
+      "leaf_index": 1,
+      "proof": {
+        "leaf_index": 1,
+        "leaf_hash": "89395c9616d44dea8916051ece90333744c6b204f68ed7513ed42026d9e92c01",
+        "path": [
+          {
+            "direction": "Left",
+            "hash": "c985a84fd38544e5a255b69ac0aabfd65bc923940dd1a928a6c9fdc9fcc30454"
+          },
+          {
+            "direction": "Right",
+            "hash": "663a8299141bda6a992a65c052c06dd955275836d4d3b287cc43f7bf51b75825"
+          },
+          {
+            "direction": "Right",
+            "hash": "0b2fb990ea9b868988b5174865689e527493fd9d8cb3819c5c75a0cf750de885"
+          }
+        ],
+        "algorithm": "sha256-rfc9162",
+        "merkle_version": 2
+      }
+    },
+    {
+      "artifact_id": "art_66c55e7305fd0c7afed2e80cd1cb6236",
+      "leaf_index": 2,
+      "proof": {
+        "leaf_index": 2,
+        "leaf_hash": "609a67336801c07a2115971201f4c7dfe323592154202eccd5dcd76fca859b85",
+        "path": [
+          {
+            "direction": "Right",
+            "hash": "5092b6bfa2742641847ba8cb5fe7673cea7574c047d53ab92853f42f8c45cbdb"
+          },
+          {
+            "direction": "Left",
+            "hash": "94ae4d8e394925437b937316d4253bdc453e6d45493f2c9a62c475b6cb2a07c6"
+          },
+          {
+            "direction": "Right",
+            "hash": "0b2fb990ea9b868988b5174865689e527493fd9d8cb3819c5c75a0cf750de885"
+          }
+        ],
+        "algorithm": "sha256-rfc9162",
+        "merkle_version": 2
+      }
+    },
+    {
+      "artifact_id": "art_d5ec115b2930c63e92ed10e34c0c4656",
+      "leaf_index": 3,
+      "proof": {
+        "leaf_index": 3,
+        "leaf_hash": "5092b6bfa2742641847ba8cb5fe7673cea7574c047d53ab92853f42f8c45cbdb",
+        "path": [
+          {
+            "direction": "Left",
+            "hash": "609a67336801c07a2115971201f4c7dfe323592154202eccd5dcd76fca859b85"
+          },
+          {
+            "direction": "Left",
+            "hash": "94ae4d8e394925437b937316d4253bdc453e6d45493f2c9a62c475b6cb2a07c6"
+          },
+          {
+            "direction": "Right",
+            "hash": "0b2fb990ea9b868988b5174865689e527493fd9d8cb3819c5c75a0cf750de885"
+          }
+        ],
+        "algorithm": "sha256-rfc9162",
+        "merkle_version": 2
+      }
+    },
+    {
+      "artifact_id": "art_1ff03ac9622b3a46e5ec62d7cc2c089f",
+      "leaf_index": 4,
+      "proof": {
+        "leaf_index": 4,
+        "leaf_hash": "66387e278ee309c4c1ea7972d0ad518a80b9505db8b12b8d174e5a101847c030",
+        "path": [
+          {
+            "direction": "Right",
+            "hash": "5574aff1b09d951ad857ba055f9c000736d10fd1ca41e330705f72919551a31c"
+          },
+          {
+            "direction": "Left",
+            "hash": "b1a9d1de7a800c9e035594a7e1ce3f95dba539db37bb83e8de9ada586bac3e07"
+          }
+        ],
+        "algorithm": "sha256-rfc9162",
+        "merkle_version": 2
+      }
+    },
+    {
+      "artifact_id": "art_e7cdea70d6c9e1b78ef77d3723f55de3",
+      "leaf_index": 5,
+      "proof": {
+        "leaf_index": 5,
+        "leaf_hash": "5574aff1b09d951ad857ba055f9c000736d10fd1ca41e330705f72919551a31c",
+        "path": [
+          {
+            "direction": "Left",
+            "hash": "66387e278ee309c4c1ea7972d0ad518a80b9505db8b12b8d174e5a101847c030"
+          },
+          {
+            "direction": "Left",
+            "hash": "b1a9d1de7a800c9e035594a7e1ce3f95dba539db37bb83e8de9ada586bac3e07"
+          }
+        ],
+        "algorithm": "sha256-rfc9162",
+        "merkle_version": 2
+      }
+    }
+  ],
+  "merkle_version": 2
+}
