@@ -123,6 +123,32 @@ claims:
     not: ["air-gapped"]
     notes: "The circuits are retained as design references for the statement-first rebuild (RISC Zero), not as a sound proving path."
 
+  - id: package-verify-binds-receipt
+    status: shipped
+    says: >
+      `session close` signs a `session.v1` close record over the SHA-256
+      digest of the just-built `receipt.json` and the session's own id;
+      the package carries that record as `record.json`. `package verify`'s
+      `receipt_binding` check re-verifies the record's signature, confirms
+      it names this session, and recomputes `receipt.json`'s digest to
+      confirm it matches what was signed at close -- so the sealed
+      artifact set cannot be edited or rewritten after close without that
+      row failing, even when every per-artifact signature still verifies
+      on its own. Whether that signing key is one this reader has decided
+      to trust is a separate question, answered by the `signer_trust` row:
+      it passes only when the key is a pinned trust root (matched by the
+      key's own bytes, not by a key-id string) or one of this ship's own
+      keys.
+    proof: packages/core/src/session/package.rs
+    not: []
+    notes: >
+      A package built before 0.31.4, or a 0.31.2/0.31.3 package (which
+      wrote artifact envelopes but no record.json), has nothing for this
+      row to check: WARN when the package carries no envelopes at all, or
+      under --structural; FAIL otherwise, since the record's absence
+      cannot be told apart from a removed record.json without a signed
+      statement either way (W1-4, CLI-4).
+
   - id: receipt-tamper-evidence
     status: shipped
     says: >

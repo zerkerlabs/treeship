@@ -91,6 +91,11 @@ The handoff verifies; the work it names is not here. `hub pull` the named artifa
 No shared infrastructure required. The signature is the trust. Company B does not need to trust the Hub or any third party -- only the public key of Company A.
 </Callout>
 
+<Callout type="info">
+{/* claims:package-verify-binds-receipt */}
+The key-id matching above is specific to this actor-proof flow (`treeship verify <artifact-id>`, which walks a signed `agent_cert.v1` against `cert_issuer` pins by key id). `treeship package verify` -- the check a `.treeship` package runs on its own signers, including `receipt_binding` -- matches every pin (`cert_issuer`, `agent_cert`, `session_host` alike) by the key's own bytes instead, never by id. Two different checks, two different matching rules; neither is a stand-in for the other.
+</Callout>
+
 ## Handoff flags
 
 | Flag | Required | Description |
