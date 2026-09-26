@@ -929,6 +929,87 @@ pub fn countersign(
         }
     }
 
+    // The challenge must be fresh and its answer must come after it. The
+    // joiner signs its own `signed_at`, so it is bounded on both sides: not
+    // before the host minted the challenge, not later than now (plus clock
+    // skew), and the challenge itself no older than the window. Across
+    // machines the issued-at instant is required: without it there is no
+    // window to judge. All of this runs before the use is reserved.
+    if cross_ship && args.challenge_issued_at.is_none() {
+        return Err(crate::exit::usage(
+            "--pending needs --challenge-issued-at (as `treeship session mint-challenge` printed it): the challenge must be shown to be fresh",
+        ));
+    }
+    let mut liveness: Option<treeship_core::statements::SessionLivenessStatement> = None;
+    if let (Some(nonce), Some(answered_at), Some(issued_at)) = (
+        args.challenge.as_deref(),
+        challenge_answered_at.as_deref(),
+        args.challenge_issued_at.as_deref(),
+    ) {
+        let parse = |t: &str, what: &str| {
+            treeship_core::statements::parse_rfc3339_to_unix(t)
+                .ok_or_else(|| format!("{what} {t:?} is not RFC 3339"))
+        };
+        let issued = parse(issued_at, "--challenge-issued-at")?;
+        let answered = parse(answered_at, "the challenge response's signed_at")?;
+        let now = now_unix_secs();
+        let window = challenge_window_secs();
+        if now > issued + window {
+            return Err(format!(
+                "the challenge was minted at {issued_at}, more than {window}s ago; mint a fresh one (`treeship session mint-challenge`). Countersign refused"
+            )
+            .into());
+        }
+        if issued > now + CHALLENGE_CLOCK_SKEW_SECS {
+            return Err(format!(
+                "--challenge-issued-at {issued_at} is in the future; countersign refused"
+            )
+            .into());
+        }
+        if answered < issued || answered > now + CHALLENGE_CLOCK_SKEW_SECS {
+            return Err(format!(
+                "the challenge response is signed at {answered_at}, outside the window from the challenge ({issued_at}) to now; countersign refused"
+            )
+            .into());
+        }
+        let stmt_l = treeship_core::statements::SessionLivenessStatement::new(
+            &stmt.session_ref,
+            &participant_id,
+            &stmt.joining_agent,
+            nonce,
+            issued_at,
+            answered_at,
+        );
+        if stmt_l.interval_seconds().is_none() {
+            return Err(format!(
+                "refusing to attest liveness: --challenge-issued-at {issued_at:?} is not before the response's signed_at {answered_at:?}"
+            )
+            .into());
+        }
+        liveness = Some(stmt_l);
+    }
+
+    // The invitation's session must be the one open here: an unexpired
+    // invitation from a session this host already closed must not admit
+    // anyone into it after the fact.
+    match crate::commands::session::load_session() {
+        Some(m) if m.session_id == invitation.session_ref => {}
+        Some(m) => {
+            return Err(format!(
+                "the invitation is for session {}, but the open session here is {}; countersign refused",
+                invitation.session_ref, m.session_id
+            )
+            .into())
+        }
+        None => {
+            return Err(format!(
+                "the invitation's session {} is not open on this ship (closed, or never started here); countersign refused",
+                invitation.session_ref
+            )
+            .into())
+        }
+    }
+
     // Single use, enforced by the host: countersign reserves the use in THIS
     // ship's journal before it signs, and never releases it (a countersign
     // that fails after this point is recovered with a new invitation, never
@@ -972,11 +1053,14 @@ pub fn countersign(
         },
         Some(invitation.max_uses),
     )
-    .map_err(|e| {
-        format!(
+    .map_err(|e| match e {
+        journal::JournalError::MaxUsesExceeded { .. } => format!(
             "invitation {} has already been countersigned (max_uses {}), countersign refused: {e}",
             stmt.invitation_ref, invitation.max_uses
-        )
+        ),
+        other => {
+            format!("the journal is busy or unreadable ({other}); nothing was countersigned, retry")
+        }
     })?;
 
     let finalized =
@@ -1053,30 +1137,8 @@ pub fn countersign(
     // cannot answer "how long was the window" is the checkmark again with
     // extra steps.
     let mut liveness_interval: Option<i64> = None;
-    if let (Some(nonce), Some(answered_at), Some(issued_at)) = (
-        args.challenge.as_deref(),
-        challenge_answered_at.as_deref(),
-        args.challenge_issued_at.as_deref(),
-    ) {
-        let liveness = treeship_core::statements::SessionLivenessStatement::new(
-            &stmt.session_ref,
-            &participant_id,
-            &stmt.joining_agent,
-            nonce,
-            issued_at,
-            answered_at,
-        );
+    if let Some(liveness) = liveness {
         liveness_interval = liveness.interval_seconds();
-        if liveness_interval.is_none() {
-            // Refuse rather than sign a window that does not make sense: an
-            // answer predating its challenge means a wrong clock or a
-            // fabricated timestamp, and sealing it would launder that.
-            return Err(format!(
-                "refusing to attest liveness: --challenge-issued-at {issued_at:?} is not before \
-                 the response's signed_at {answered_at:?}"
-            )
-            .into());
-        }
         let signed = treeship_core::attestation::sign(
             &payload_type("session-liveness"),
             &liveness,
@@ -1346,6 +1408,18 @@ fn write_new_file(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::rename(&tmp, path).inspect_err(|_| {
         let _ = std::fs::remove_file(&tmp);
     })
+}
+
+/// Clock skew allowed between host and joiner when judging a challenge.
+const CHALLENGE_CLOCK_SKEW_SECS: u64 = 60;
+
+/// How old a join challenge may be at countersign time. Ten minutes unless
+/// `TREESHIP_JOIN_CHALLENGE_WINDOW_SECS` says otherwise.
+fn challenge_window_secs() -> u64 {
+    std::env::var("TREESHIP_JOIN_CHALLENGE_WINDOW_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(600)
 }
 
 fn digest_of_envelope(env: &Envelope) -> String {
