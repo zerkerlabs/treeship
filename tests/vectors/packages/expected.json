@@ -56,10 +56,10 @@
       "receipt_only": "structural-pass"
     },
     "tampered/approvals-share-a-nonce": {
-      "_note": "Round 5 (embargoed): two sealed approvals share one nonce (the approver's single-use one and an unbounded one signed by the producer); two actions consume it. approval-use-limit fails on the shared nonce",
+      "_note": "Round 5 (embargoed): two sealed approvals share one nonce (the approver's single-use one and an unbounded one signed by the producer); two actions consume it. approval-use-limit fails on the shared nonce approval-use-limit judges the signed scope under --structural too (a forged or over-used grant is a failure of the bytes, whatever the reader trusts).",
       "cli": "failed",
       "cli_strict": "failed",
-      "cli_structural": "structural-pass",
+      "cli_structural": "failed",
       "receipt_only": "structural-pass"
     },
     "tampered/artifact-payload-edit": {
@@ -69,10 +69,10 @@
       "receipt_only": "structural-pass"
     },
     "tampered/carried-grant-overused": {
-      "_note": "Round 5 (embargoed): a single-use approval minted before the session is carried only in approvals/grants, and two sealed actions consume it; its signed limit applies exactly as for a sealed approval",
+      "_note": "Round 5 (embargoed): a single-use approval minted before the session is carried only in approvals/grants, and two sealed actions consume it; its signed limit applies exactly as for a sealed approval approval-use-limit judges the signed scope under --structural too (a forged or over-used grant is a failure of the bytes, whatever the reader trusts).",
       "cli": "failed",
       "cli_strict": "failed",
-      "cli_structural": "structural-pass",
+      "cli_structural": "failed",
       "receipt_only": "structural-pass"
     },
     "tampered/drop-artifact-envelope": {

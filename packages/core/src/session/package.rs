@@ -1017,9 +1017,12 @@ pub fn verify_package_with_options(
     // reserved for PR 6 -- not claimed without a real Hub checkpoint.
     let bundle = read_approvals_bundle(pkg_dir).unwrap_or_default();
     add_approval_evidence_checks(&mut checks, &bundle, trust);
-    if !structural_only {
-        push_approval_use_limit(pkg_dir, &receipt, &bundle, &mut checks);
-    }
+    // Under --structural too: the per-artifact signature rows are still
+    // checked in that mode, and a carried grant whose signature fails, or
+    // an approval used past its signed limit, is a failure of the bytes
+    // themselves, not of trust. Without this a package read as structure
+    // passed on a forged grant.
+    push_approval_use_limit(pkg_dir, &receipt, &bundle, structural_only, &mut checks);
 
     Ok(checks)
 }
@@ -1084,6 +1087,13 @@ fn bundle_grants(pkg_dir: &Path, bundle: &ApprovalsBundle) -> (Vec<BundleGrant>,
             .payload_bytes()
             .ok()
             .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok());
+        let max = match signed_max_actions(v.as_ref()) {
+            Ok(m) => m,
+            Err(detail) => {
+                bad.push(format!("{grant_id}: {detail}"));
+                continue;
+            }
+        };
         ok.push(BundleGrant {
             id: grant_id.clone(),
             keyid: sig.keyid.clone(),
@@ -1092,21 +1102,35 @@ fn bundle_grants(pkg_dir: &Path, bundle: &ApprovalsBundle) -> (Vec<BundleGrant>,
                 .and_then(|v| v.get("nonce"))
                 .and_then(|n| n.as_str())
                 .map(crate::statements::nonce_digest),
-            max: v
-                .as_ref()
-                .and_then(|v| v.get("scope"))
-                .and_then(|s| s.get("maxActions"))
-                .and_then(|m| m.as_u64())
-                .map(|m| m as u32),
+            max,
         });
     }
     (ok, bad)
+}
+
+/// `scope.maxActions` from a signed approval payload: absent means
+/// unbounded; a value the use counter cannot hold is an error, never a
+/// truncated (smaller) limit.
+fn signed_max_actions(payload: Option<&serde_json::Value>) -> Result<Option<u32>, String> {
+    let Some(m) = payload
+        .and_then(|v| v.get("scope"))
+        .and_then(|s| s.get("maxActions"))
+    else {
+        return Ok(None);
+    };
+    let Some(n) = m.as_u64() else {
+        return Err(format!("scope.maxActions is {m}, not a whole number"));
+    };
+    u32::try_from(n)
+        .map(Some)
+        .map_err(|_| format!("scope.maxActions {n} is beyond the supported range"))
 }
 
 fn push_approval_use_limit(
     pkg_dir: &Path,
     receipt: &SessionReceipt,
     bundle: &ApprovalsBundle,
+    structural_only: bool,
     checks: &mut Vec<VerifyCheck>,
 ) {
     use std::collections::{BTreeMap, BTreeSet};
@@ -1121,6 +1145,8 @@ fn push_approval_use_limit(
     // Two different approvals with one nonce: which limit applies would be
     // the verifier's guess (the last one read won).
     let mut shared: Vec<String> = Vec::new();
+    // Sealed approvals whose signed scope cannot be counted against.
+    let mut bad_scopes: Vec<String> = Vec::new();
     for a in &receipt.artifacts {
         let Some(env) = std::fs::read(
             pkg_dir
@@ -1143,11 +1169,13 @@ fn push_approval_use_limit(
                 continue;
             }
             if let Some(n) = v.get("nonce").and_then(|n| n.as_str()) {
-                let max = v
-                    .get("scope")
-                    .and_then(|s| s.get("maxActions"))
-                    .and_then(|m| m.as_u64())
-                    .map(|m| m as u32);
+                let max = match signed_max_actions(Some(&v)) {
+                    Ok(m) => m,
+                    Err(detail) => {
+                        bad_scopes.push(format!("approval {}: {detail}", a.artifact_id));
+                        continue;
+                    }
+                };
                 let nd = crate::statements::nonce_digest(n);
                 if let Some((other, _)) = grants.get(&nd) {
                     if other != &a.artifact_id {
@@ -1177,7 +1205,11 @@ fn push_approval_use_limit(
         }
         grants.insert(nd, (g.id, g.max));
     }
-    if consumers.is_empty() && bundle.uses.is_empty() && bad_grants.is_empty() && shared.is_empty()
+    if consumers.is_empty()
+        && bundle.uses.is_empty()
+        && bad_grants.is_empty()
+        && shared.is_empty()
+        && bad_scopes.is_empty()
     {
         return;
     }
@@ -1188,7 +1220,11 @@ fn push_approval_use_limit(
     for b in &bad_grants {
         problems.push(format!("carried grant {b}"));
     }
+    problems.extend(bad_scopes);
     let mut unsigned = Vec::new();
+    // Approvals whose signed scope sets no maxActions: nothing to count
+    // against, and the pass text must not claim a limit was checked.
+    let mut unbounded: Vec<String> = Vec::new();
     let nonces: BTreeSet<&String> = consumers
         .keys()
         .chain(bundle.uses.iter().map(|u| &u.nonce_digest))
@@ -1215,11 +1251,19 @@ fn push_approval_use_limit(
                     ));
                 }
             }
-            Some((_, None)) => {}
+            Some((grant, None)) => {
+                if acts > 0 || uses > 0 {
+                    unbounded.push(grant.clone());
+                }
+            }
             None if acts > 0 => unsigned.push(consumers[nd].join(", ")),
             None => {}
         }
-        if acts > use_ids.len() {
+        // A consuming action without its own use record is missing
+        // evidence, not a broken signature or an exceeded limit; the
+        // `approval_evidence` row already reports it, as a warning under
+        // --structural, so it is not counted as a failure of the bytes here.
+        if acts > use_ids.len() && !structural_only {
             problems.push(format!(
                 "{acts} sealed action(s) consume one approval but only {} distinct use record(s) cover them",
                 use_ids.len()
@@ -1237,6 +1281,14 @@ fn push_approval_use_limit(
             &format!(
                 "action(s) {} consume an approval that is not sealed (signed) in this package, so its use limit cannot be checked here",
                 unsigned.join("; ")
+            ),
+        ));
+    } else if !unbounded.is_empty() {
+        checks.push(VerifyCheck::pass(
+            "approval-use-limit",
+            &format!(
+                "approval(s) {} are unbounded (no maxActions in the signed scope), so no use limit applies to them; every other approval is used within the limit its signed scope sets, each consuming action with its own use record",
+                unbounded.join(", ")
             ),
         ));
     } else {
@@ -3782,6 +3834,34 @@ fn judgements_check(pkg_dir: &Path, receipt: &SessionReceipt) -> Option<VerifyCh
                 flagged.join("; ")
             ),
         ))
+    }
+}
+
+#[cfg(test)]
+mod signed_scope_tests {
+    use super::signed_max_actions;
+
+    #[test]
+    fn max_actions_is_read_exactly_or_refused_never_truncated() {
+        let scope = |m: serde_json::Value| serde_json::json!({"scope": {"maxActions": m}});
+        assert_eq!(signed_max_actions(None), Ok(None));
+        assert_eq!(signed_max_actions(Some(&serde_json::json!({}))), Ok(None));
+        assert_eq!(
+            signed_max_actions(Some(&scope(serde_json::json!(1)))),
+            Ok(Some(1))
+        );
+        assert_eq!(
+            signed_max_actions(Some(&scope(serde_json::json!(u32::MAX)))),
+            Ok(Some(u32::MAX))
+        );
+        // 2^32 + 1 used to truncate to 1.
+        let big = u64::from(u32::MAX) + 2;
+        let err = signed_max_actions(Some(&scope(serde_json::json!(big)))).unwrap_err();
+        assert!(err.contains("beyond the supported range"), "{err}");
+        let err = signed_max_actions(Some(&scope(serde_json::json!("3")))).unwrap_err();
+        assert!(err.contains("not a whole number"), "{err}");
+        let err = signed_max_actions(Some(&scope(serde_json::json!(-1)))).unwrap_err();
+        assert!(err.contains("not a whole number"), "{err}");
     }
 }
 
