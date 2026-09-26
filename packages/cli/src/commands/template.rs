@@ -360,7 +360,7 @@ pub fn save(name: Option<String>, printer: &Printer) -> Result<(), Box<dyn std::
     // Build output path: ~/.treeship/templates/<slug>.yaml
     let home = home::home_dir().ok_or("cannot determine home directory")?;
     let templates_dir = home.join(".treeship").join("templates");
-    crate::safe_fs::create_dir_all_nofollow(&templates_dir)?;
+    std::fs::create_dir_all(crate::safe_fs::resolve_home_link(&templates_dir)?)?;
 
     let out_path = templates_dir.join(format!("{slug}.yaml"));
 
@@ -387,7 +387,7 @@ pub fn save(name: Option<String>, printer: &Printer) -> Result<(), Box<dyn std::
         .join("\n");
 
     let output = format!("{header}{cleaned}\n");
-    crate::safe_fs::write_user_path(std::path::Path::new(&out_path), output.as_bytes())?;
+    crate::safe_fs::write_home_path(std::path::Path::new(&out_path), output.as_bytes(), 0o644)?;
 
     printer.blank();
     printer.success(

@@ -9,9 +9,13 @@
 //! * under `.treeship` (config, keys, sessions, queues, `.last`):
 //!   [`write_under_treeship`], [`create_dir_all_nofollow`],
 //!   [`open_lock_under_treeship`], [`open_event_log`];
-//! * a path the user chose (`--out`, a package directory, a shell rc file,
-//!   a home-directory dotfile): [`write_user_path`], which refuses only an
+//! * a path the user chose (`--out`, a package directory, a proof in the
+//!   working directory): [`write_user_path`], which refuses only an
 //!   existing link at the file itself;
+//! * a file in the user's own home (a shell rc file, trust roots, saved
+//!   templates): [`write_home_path`], which follows the user's own links
+//!   (dotfiles are routinely symlinked) and writes the target atomically;
+//!   the same path outside the home is treated as a user-chosen path;
 //! * a mode change: [`set_mode_nofollow`], through a handle, never chmod on
 //!   a path that might be a link.
 
@@ -72,6 +76,66 @@ pub fn write_user_path(path: &Path, bytes: &[u8]) -> io::Result<()> {
     write_atomic(path, bytes, mode)
 }
 
+/// Where a home-directory file really lives. Under the user's home a link
+/// is the user's own (dotfiles) and is followed to its target; anywhere
+/// else a link at the file is refused, as for any user-chosen path.
+/// Missing trailing components are kept, so a file that does not exist
+/// yet resolves to its future place.
+pub fn resolve_home_link(path: &Path) -> io::Result<std::path::PathBuf> {
+    if !is_under_home(path) {
+        refuse_symlink(path)?;
+        return Ok(path.to_path_buf());
+    }
+    let mut prefix = path.to_path_buf();
+    let mut rest: Vec<std::ffi::OsString> = Vec::new();
+    loop {
+        if let Ok(canonical) = prefix.canonicalize() {
+            let mut out = canonical;
+            for r in rest.iter().rev() {
+                out.push(r);
+            }
+            return Ok(out);
+        }
+        match prefix.file_name() {
+            Some(name) => rest.push(name.to_os_string()),
+            None => return Ok(path.to_path_buf()),
+        }
+        if !prefix.pop() {
+            return Ok(path.to_path_buf());
+        }
+    }
+}
+
+/// A file in the user's own home: the link at it (if any) is followed to
+/// its target, which is then written fresh and renamed into place. An
+/// existing target keeps its mode; a new file gets `default_mode`.
+pub fn write_home_path(path: &Path, bytes: &[u8], default_mode: u32) -> io::Result<()> {
+    let target = resolve_home_link(path)?;
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mode = existing_mode(&target).unwrap_or(default_mode);
+    write_atomic(&target, bytes, mode)
+}
+
+/// Judged by where the file's directory is, never by where a link at the
+/// file points: a repository link into the home must not count as home.
+fn is_under_home(path: &Path) -> bool {
+    let Some(home) = home::home_dir() else {
+        return false;
+    };
+    if path.starts_with(&home) {
+        return true;
+    }
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    match (home.canonicalize(), parent.canonicalize()) {
+        (Ok(h), Ok(p)) => p.starts_with(h),
+        _ => false,
+    }
+}
+
 #[cfg(unix)]
 fn existing_mode(path: &Path) -> Option<u32> {
     use std::os::unix::fs::PermissionsExt;
@@ -127,6 +191,60 @@ mod tests {
         assert!(create_dir_all_nofollow(&ts.join("sessions").join("ssn_1.treeship")).is_err());
         assert!(write_under_treeship(&ts.join("sessions").join("x"), b"x", 0o600).is_err());
         assert!(std::fs::read_dir(&elsewhere).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn a_home_file_follows_the_users_own_link_but_a_repo_file_does_not() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        let dotfiles = home.join("dotfiles");
+        std::fs::create_dir_all(&dotfiles).unwrap();
+        std::fs::write(dotfiles.join("zshrc"), b"# mine\n").unwrap();
+        std::fs::set_permissions(
+            dotfiles.join("zshrc"),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(dotfiles.join("zshrc"), home.join(".zshrc")).unwrap();
+        // `home` is what the process treats as $HOME for this test.
+        let saved = std::env::var_os("HOME");
+        std::env::set_var("HOME", &home);
+        let result = write_home_path(&home.join(".zshrc"), b"# mine\n# hook\n", 0o644);
+        let missing = resolve_home_link(&home.join(".config").join("new.toml"));
+        let repo_link = root.path().join("repo").join("out.json");
+        std::fs::create_dir_all(repo_link.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(dotfiles.join("zshrc"), &repo_link).unwrap();
+        let outside = write_home_path(&repo_link, b"x", 0o644);
+        match saved {
+            Some(h) => std::env::set_var("HOME", h),
+            None => std::env::remove_var("HOME"),
+        }
+        result.unwrap();
+        assert_eq!(
+            std::fs::read(dotfiles.join("zshrc")).unwrap(),
+            b"# mine\n# hook\n"
+        );
+        assert!(
+            home.join(".zshrc").is_symlink(),
+            "the user's link was replaced"
+        );
+        assert_eq!(
+            std::fs::metadata(dotfiles.join("zshrc"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        assert!(missing
+            .unwrap()
+            .ends_with(std::path::Path::new(".config/new.toml")));
+        assert!(outside.is_err(), "a link outside the home was followed");
+        assert_eq!(
+            std::fs::read(dotfiles.join("zshrc")).unwrap(),
+            b"# mine\n# hook\n"
+        );
     }
 
     #[test]

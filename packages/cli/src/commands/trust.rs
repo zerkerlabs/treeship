@@ -230,7 +230,7 @@ pub fn add(
         added_at: now_rfc3339(),
     };
     store.add(root);
-    store.save(&path)?;
+    store.save(&crate::safe_fs::resolve_home_link(&path)?)?;
 
     if printer.format == Format::Json {
         printer.json(&serde_json::json!({
@@ -351,7 +351,7 @@ pub fn remove(
     }
 
     let removed = store.remove(key_id);
-    store.save(&path)?;
+    store.save(&crate::safe_fs::resolve_home_link(&path)?)?;
 
     if printer.format == Format::Json {
         printer.json(&serde_json::json!({

@@ -330,3 +330,87 @@ fn a_project_stub_keeps_the_global_stores() {
     let out = repo.run(&["status"]);
     assert!(out.status.success(), "{}", text(&out));
 }
+
+#[cfg(unix)]
+#[test]
+fn install_follows_the_users_own_dotfiles_link() {
+    let repo = Repo::new();
+    let dotfiles = repo.home.path().join("dotfiles");
+    std::fs::create_dir_all(&dotfiles).unwrap();
+    std::fs::write(dotfiles.join("zshrc"), b"# mine\n").unwrap();
+    std::os::unix::fs::symlink(dotfiles.join("zshrc"), repo.home.path().join(".zshrc")).unwrap();
+    let out = Command::new(cli_path())
+        .current_dir(repo.work.path())
+        .env("HOME", repo.home.path())
+        .env("SHELL", "/bin/zsh")
+        .env_remove("TREESHIP_CONFIG")
+        .args(["install"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", text(&out));
+    let rc = std::fs::read_to_string(dotfiles.join("zshrc")).unwrap();
+    assert!(
+        rc.starts_with("# mine\n") && rc.contains("treeship"),
+        "{rc}"
+    );
+    assert!(
+        repo.home.path().join(".zshrc").is_symlink(),
+        "the user's link was replaced"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn trust_roots_follow_a_dotfiles_link_under_the_home() {
+    let repo = Repo::new();
+    let out = repo.run(&["init", "--name", "x"]);
+    assert!(out.status.success(), "{}", text(&out));
+    let dotfiles = repo.home.path().join("dotfiles");
+    std::fs::create_dir_all(&dotfiles).unwrap();
+    std::fs::write(
+        dotfiles.join("trust_roots.json"),
+        b"{\"version\":1,\"roots\":[]}",
+    )
+    .unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            dotfiles.join("trust_roots.json"),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .unwrap();
+    }
+    let link = repo.home.path().join(".treeship").join("trust_roots.json");
+    std::os::unix::fs::symlink(dotfiles.join("trust_roots.json"), &link).unwrap();
+    // `keys export` prints the exact `trust add` line a counterparty runs.
+    let out = repo.run(&["keys", "export"]);
+    assert!(out.status.success(), "{}", text(&out));
+    let export = text(&out);
+    let line = export
+        .lines()
+        .find(|l| l.contains("trust add") && l.contains("--kind cert_issuer"))
+        .unwrap_or_else(|| panic!("no cert_issuer pin line in:\n{export}"));
+    let key_id = line
+        .split_whitespace()
+        .find(|w| w.starts_with("key_"))
+        .unwrap()
+        .to_string();
+    let pubkey = line
+        .split_whitespace()
+        .find(|w| w.starts_with("ed25519:"))
+        .unwrap()
+        .to_string();
+    let out = repo.run(&[
+        "trust",
+        "add",
+        &key_id,
+        &pubkey,
+        "--kind",
+        "cert_issuer",
+        "--yes",
+    ]);
+    assert!(out.status.success(), "{}", text(&out));
+    assert!(link.is_symlink(), "the user's link was replaced");
+    let roots = std::fs::read_to_string(dotfiles.join("trust_roots.json")).unwrap();
+    assert!(roots.contains(&key_id), "{roots}");
+}

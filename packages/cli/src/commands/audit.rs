@@ -33,7 +33,7 @@ struct WitnessRecord {
 fn witnessed_dir() -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
     let home = home::home_dir().ok_or("cannot determine home directory")?;
     let dir = home.join(".treeship").join("merkle").join("witnessed");
-    crate::safe_fs::create_dir_all_nofollow(&dir)?;
+    std::fs::create_dir_all(crate::safe_fs::resolve_home_link(&dir)?)?;
     Ok(dir)
 }
 
@@ -59,11 +59,7 @@ fn load_witness(path: &std::path::Path) -> Option<WitnessRecord> {
 }
 
 fn save_witness(path: &std::path::Path, rec: &WitnessRecord) -> CmdResult {
-    crate::safe_fs::write_under_treeship(
-        path,
-        serde_json::to_string_pretty(rec)?.as_bytes(),
-        0o600,
-    )?;
+    crate::safe_fs::write_home_path(path, serde_json::to_string_pretty(rec)?.as_bytes(), 0o600)?;
     Ok(())
 }
 

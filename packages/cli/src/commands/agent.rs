@@ -407,7 +407,9 @@ pub fn register(
                 label: name.to_string(),
                 added_at: now.clone(),
             });
-            trust.save(&TrustRootStore::default_path())?;
+            trust.save(&crate::safe_fs::resolve_home_link(
+                &TrustRootStore::default_path(),
+            )?)?;
         }
     }
 

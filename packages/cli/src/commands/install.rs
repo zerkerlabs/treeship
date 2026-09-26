@@ -148,7 +148,7 @@ fn remove_hook(path: &PathBuf) -> Result<bool, Box<dyn std::error::Error>> {
 
     // Trim trailing blank lines that we may have added
     let trimmed = result.trim_end().to_string() + "\n";
-    crate::safe_fs::write_user_path(path, trimmed.as_bytes())?;
+    crate::safe_fs::write_home_path(path, trimmed.as_bytes(), 0o644)?;
 
     Ok(true)
 }
@@ -193,7 +193,7 @@ pub fn install(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     contents.push_str(&shell.hook_text(&bin_path));
     contents.push('\n');
 
-    crate::safe_fs::write_user_path(&config_path, contents.as_bytes())?;
+    crate::safe_fs::write_home_path(&config_path, contents.as_bytes(), 0o644)?;
 
     printer.blank();
     printer.success(
