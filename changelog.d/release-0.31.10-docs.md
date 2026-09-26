@@ -1,1 +1,0 @@
-- **The judge docs no longer mark `--contract`, `--state-out` and `--resolve` as "next release".** They ship in 0.31.10.

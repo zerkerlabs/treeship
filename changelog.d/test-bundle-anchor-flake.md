@@ -1,1 +1,0 @@
-- **A flaky core test no longer fails CI at second boundaries.** `bundle::tests::anchor_proofs_travel_and_merge_on_import` built the same action statement twice and asserted both signings gave one id; the statement carries a timestamp, so the ids differed whenever the two constructions straddled a second. It now signs one statement in both stores. Test-only; no behaviour change.
