@@ -668,3 +668,66 @@ fn treeship_session_join_no_countersign_appears_pending() {
 // pinning the HOME inside the tempdir means the developer's real
 // `~/.treeship` is never touched even on a panicking test.
 fn _assertion_state_isolation_documented(_root: &Path) {}
+
+/// An unpinned host is refused, and the hint never hands the user a
+/// copy-paste that silently trusts the key taken from the invitation
+/// itself: no `--yes`, and an out-of-band confirmation first (the same
+/// rule `merkle verify` follows for checkpoint signers).
+#[test]
+fn join_hint_for_an_unpinned_host_never_says_yes() {
+    let ws = Workspace::new();
+    ws.init();
+    let session_id = ws.session_start();
+    // The host pins itself only to mint; the pin is then removed so the
+    // join sees an unpinned issuer.
+    let pubkey = ws.default_pubkey_b64();
+    ws.add_trust("host_default", &pubkey, "session_host");
+    let invite_out = ws
+        .cmd()
+        .args(["session", "invite", &session_id, "--format", "json"])
+        .args(["--open", "--config"])
+        .arg(ws.config())
+        .output()
+        .expect("session invite");
+    assert!(invite_out.status.success());
+    let mint: serde_json::Value =
+        serde_json::from_slice(&invite_out.stdout).expect("invite stdout is JSON");
+    let blob_path = ws.root.join("invite.blob");
+    std::fs::write(&blob_path, mint["bootstrap_blob"].as_str().unwrap()).unwrap();
+    let roots = std::path::PathBuf::from(std::env::var("TREESHIP_TRUST_ROOTS").unwrap_or_default());
+    let roots = if roots.as_os_str().is_empty() {
+        ws.root.join(".treeship").join("trust_roots.json")
+    } else {
+        roots
+    };
+    let _ = std::fs::remove_file(&roots);
+    let _ = std::fs::remove_file(ws.root.join(".treeship").join("trust_roots.json"));
+
+    let join_out = ws
+        .cmd()
+        .args(["session", "join", "--invite-file"])
+        .arg(&blob_path)
+        .args(["--actor", "agent://joiner", "--config"])
+        .arg(ws.config())
+        .output()
+        .expect("session join");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&join_out.stdout),
+        String::from_utf8_lossy(&join_out.stderr)
+    );
+    assert!(
+        !join_out.status.success(),
+        "join with an unpinned host succeeded:\n{text}"
+    );
+    assert!(text.contains("not pinned"), "{text}");
+    assert!(text.contains("treeship trust add"), "{text}");
+    assert!(
+        text.contains("out of band"),
+        "the hint must ask for an out-of-band check:\n{text}"
+    );
+    assert!(
+        !text.contains("--yes"),
+        "the hint hands out a silent-trust command:\n{text}"
+    );
+}
