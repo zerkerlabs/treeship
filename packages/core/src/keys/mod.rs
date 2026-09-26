@@ -186,7 +186,14 @@ impl Store {
         // A keystore directory that is a symlink would put secret material
         // wherever the link points (a world-readable /tmp, another user's
         // directory). Refused before anything is created.
-        crate::fs_safe::refuse_symlink(&dir)?;
+        crate::fs_safe::refuse_symlink(&dir).map_err(|e| {
+            KeyError::Io(io::Error::new(
+                e.kind(),
+                format!(
+                    "{e}. If this link is deliberate (dotfiles), point --config at a config whose keys_dir is the real directory"
+                ),
+            ))
+        })?;
         fs::create_dir_all(&dir)?;
 
         // Canonicalize the keystore path before deriving the machine key. The

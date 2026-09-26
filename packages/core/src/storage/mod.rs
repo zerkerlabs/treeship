@@ -161,7 +161,14 @@ impl Store {
         let dir = dir.as_ref().to_path_buf();
         // A store directory that is a symlink would put every artifact
         // wherever the link points. Refused before anything is created.
-        crate::fs_safe::refuse_symlink(&dir)?;
+        crate::fs_safe::refuse_symlink(&dir).map_err(|e| {
+            io::Error::new(
+                e.kind(),
+                format!(
+                    "{e}. If this link is deliberate (dotfiles), point --config at a config whose storage_dir is the real directory"
+                ),
+            )
+        })?;
         fs::create_dir_all(&dir)?;
 
         let index = read_index(&dir)?;
@@ -404,7 +411,10 @@ mod tests {
         let store = Store::open(&real).unwrap();
         let victim = dir.path().join("victim");
         fs::write(&victim, b"keep").unwrap();
-        let rec = make_record("art_0123456789abcdef0123456789abcdef", "application/vnd.treeship.action.v1+json");
+        let rec = make_record(
+            "art_0123456789abcdef0123456789abcdef",
+            "application/vnd.treeship.action.v1+json",
+        );
         let target = store.artifact_path(&rec.artifact_id).unwrap();
         std::os::unix::fs::symlink(&victim, &target).unwrap();
         assert!(
