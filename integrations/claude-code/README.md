@@ -1,6 +1,6 @@
 # Treeship + Claude Code Integration
 
-Two integration methods:
+The recommended path is the official plugin -- see [the docs](https://docs.treeship.dev/integrations/claude-code) or run `treeship add claude-code`. The two methods below are for when you don't want the plugin.
 
 ## Method 1: CLAUDE.md (instruction-based)
 
@@ -12,14 +12,14 @@ curl -o CLAUDE.md https://raw.githubusercontent.com/zerkerlabs/treeship/main/int
 
 ## Method 2: MCP server (tool-call interception)
 
-Merge the MCP config into your Claude Code settings:
+Claude Code reads MCP servers from a project's `.mcp.json` (project-scoped) or `~/.claude.json` (user-scoped, under a top-level `mcpServers` key) -- not from `~/.claude/mcp.json`, which Claude Code never reads.
 
 ```bash
-# Copy the config template
-cp mcp.json ~/.claude/mcp.json
+# Copy the config template into your project root
+cp mcp.json .mcp.json
 ```
 
-Or manually add to your existing `~/.claude/mcp.json`:
+Or manually add to your existing `.mcp.json` (or `~/.claude.json`'s `mcpServers` key):
 
 ```json
 {
