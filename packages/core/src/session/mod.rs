@@ -25,7 +25,7 @@ pub use git::{
 pub use graph::{AgentEdge, AgentEdgeType, AgentGraph, AgentNode};
 pub use manifest::*;
 pub use package::{
-    build_package, build_package_with_approvals, package_signed_by_any, package_verdict,
+    build_package, build_package_with_approvals, package_close_signed_by, package_verdict,
     read_approvals_bundle, read_package, render_preview_html, verify_package,
     verify_package_structural, verify_package_with_options, verify_package_with_trust,
     ApprovalsBundle, ApprovalsIndex, PackageKeys, PackageVerdict, VerifyCheck, VerifyStatus,

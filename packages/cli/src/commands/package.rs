@@ -1158,10 +1158,12 @@ pub fn verify(
     if let Some(ctx_opened) = ctx_opened {
         let journal = treeship_core::journal::Journal::new(ctx_opened.journal_dir());
         let bundle = treeship_core::session::read_approvals_bundle(&path).unwrap_or_default();
-        // The journal is the producer's own control: only a verifier whose
-        // keys actually signed this package can hold it (W1-13). Anywhere
-        // else the row is not applicable, and says what was checked instead;
-        // it is not a replay-* row, so --strict does not promote it.
+        // The journal is the producer's own control: only the ship whose
+        // key signed this package's close record can hold it (W1-13). The
+        // approver's ship signed an approval inside the package, not the
+        // session, and has no journal for it; anywhere but the producer the
+        // row is not applicable, and says what was checked instead. It is
+        // not a replay-* row, so --strict does not promote it.
         let own_keys: Vec<ed25519_dalek::VerifyingKey> = ctx_opened
             .keys
             .list()
@@ -1173,7 +1175,7 @@ pub fn verify(
             })
             .collect();
         let produced_here =
-            !structural_only && treeship_core::session::package_signed_by_any(&path, &own_keys);
+            !structural_only && treeship_core::session::package_close_signed_by(&path, &own_keys);
         if !bundle.uses.is_empty() && !produced_here {
             checks.push(treeship_core::session::VerifyCheck::warn(
                 "local_journal",

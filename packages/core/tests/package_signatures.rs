@@ -857,8 +857,14 @@ fn an_unchained_close_fails() {
 }
 
 fn sign_approval(approver: &Ed25519Signer) -> Signed {
-    let stmt =
+    let mut stmt =
         treeship_core::statements::ApprovalStatement::new("human://reviewer", "0011223344556677");
+    // Signed for one use, as `attest approval --max-uses 1` mints it; the
+    // use record `pack_approval_chain` writes says max_uses 1 to match.
+    stmt.scope = Some(treeship_core::statements::ApprovalScope {
+        max_actions: Some(1),
+        ..Default::default()
+    });
     let r = sign(&payload_type("approval"), &stmt, approver).unwrap();
     Signed {
         id: r.artifact_id.clone(),
@@ -1178,5 +1184,126 @@ fn an_attackers_own_action_cannot_vouch_for_a_smuggled_approval() {
     assert!(matches!(
         treeship_core::session::package_verdict(&checks, false),
         treeship_core::session::PackageVerdict::Failed(_)
+    ));
+}
+
+// ---------------------------------------------------------------------------
+// Round 7: unsigned use-record fields are held to the signed action and the
+// signed scope; "produced here" is the close record's signer alone.
+// ---------------------------------------------------------------------------
+
+/// Edit the one use record `pack_approval_chain` wrote, recomputing its
+/// digest the way an attacker who controls the package would.
+fn edit_use_record(pkg: &Path, edit: impl FnOnce(&mut treeship_core::statements::ApprovalUse)) {
+    let path = pkg
+        .join("approvals")
+        .join("uses")
+        .join("use_0000000000000001.json");
+    let mut rec: treeship_core::statements::ApprovalUse =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    edit(&mut rec);
+    rec.record_digest = treeship_core::statements::approval_use_record_digest(&rec);
+    std::fs::write(&path, serde_json::to_vec_pretty(&rec).unwrap()).unwrap();
+}
+
+#[test]
+fn a_use_record_renamed_to_another_actor_fails_action_binding_even_with_its_digest_recomputed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let producer = Ed25519Signer::generate("key_producer").unwrap();
+    let (pkg, _) = pack_approval_chain(tmp.path(), &producer, &producer, &producer);
+    let trust = pinned_all(&[&producer]);
+    let before = verify_package_with_options(&pkg, &trust, false).unwrap();
+    assert_eq!(
+        find(&before, "approval-use-action-binding").unwrap().status,
+        VerifyStatus::Pass
+    );
+    edit_use_record(&pkg, |u| u.actor = "agent://evil".into());
+    for structural in [false, true] {
+        let checks = verify_package_with_options(&pkg, &trust, structural).unwrap();
+        assert_eq!(
+            find(&checks, "approval-use-record-digest").unwrap().status,
+            VerifyStatus::Pass,
+            "the recomputed digest is consistent; the binding row must catch it"
+        );
+        let row = find(&checks, "approval-use-action-binding").unwrap();
+        assert_eq!(row.status, VerifyStatus::Fail, "{}", row.detail);
+        assert!(
+            row.detail.contains("agent://evil") && row.detail.contains("agent://t"),
+            "{}",
+            row.detail
+        );
+    }
+    // The same for the action name.
+    let tmp = tempfile::tempdir().unwrap();
+    let (pkg, _) = pack_approval_chain(tmp.path(), &producer, &producer, &producer);
+    edit_use_record(&pkg, |u| u.action = "delete".into());
+    let checks = verify_package_with_options(&pkg, &trust, false).unwrap();
+    assert_eq!(
+        find(&checks, "approval-use-action-binding").unwrap().status,
+        VerifyStatus::Fail
+    );
+}
+
+#[test]
+fn a_use_record_whose_max_uses_disagrees_with_the_signed_scope_fails_the_limit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let producer = Ed25519Signer::generate("key_producer").unwrap();
+    let (pkg, appr) = pack_approval_chain(tmp.path(), &producer, &producer, &producer);
+    let trust = pinned_all(&[&producer]);
+    let before = verify_package_with_options(&pkg, &trust, false).unwrap();
+    assert_eq!(
+        find(&before, "approval-use-limit").unwrap().status,
+        VerifyStatus::Pass,
+        "{}",
+        find(&before, "approval-use-limit").unwrap().detail
+    );
+    edit_use_record(&pkg, |u| u.max_uses = Some(99));
+    for structural in [false, true] {
+        let checks = verify_package_with_options(&pkg, &trust, structural).unwrap();
+        let row = find(&checks, "approval-use-limit").unwrap();
+        assert_eq!(row.status, VerifyStatus::Fail, "{}", row.detail);
+        assert!(
+            row.detail.contains("max_uses 99") && row.detail.contains("signed scope says 1"),
+            "{}",
+            row.detail
+        );
+        assert!(!row
+            .detail
+            .contains(&format!("approval {appr} is signed for")));
+    }
+}
+
+#[test]
+fn produced_here_is_decided_by_the_close_records_signer_alone() {
+    let tmp = tempfile::tempdir().unwrap();
+    let producer = Ed25519Signer::generate("key_producer").unwrap();
+    let approver = Ed25519Signer::generate("key_approver").unwrap();
+    let stranger = Ed25519Signer::generate("key_stranger").unwrap();
+    let (pkg, _) = pack_approval_chain(tmp.path(), &producer, &approver, &producer);
+    let vk = |s: &Ed25519Signer| {
+        ed25519_dalek::VerifyingKey::from_bytes(&s.public_key_bytes().try_into().unwrap()).unwrap()
+    };
+    assert!(treeship_core::session::package_close_signed_by(
+        &pkg,
+        &[vk(&producer)]
+    ));
+    // The approver signed a sealed approval, not the session: not the producer.
+    assert!(!treeship_core::session::package_close_signed_by(
+        &pkg,
+        &[vk(&approver)]
+    ));
+    assert!(!treeship_core::session::package_close_signed_by(
+        &pkg,
+        &[vk(&stranger)]
+    ));
+    assert!(treeship_core::session::package_close_signed_by(
+        &pkg,
+        &[vk(&stranger), vk(&producer)]
+    ));
+    // A record.json that is not a close record does not count either.
+    std::fs::write(pkg.join("record.json"), b"{}").unwrap();
+    assert!(!treeship_core::session::package_close_signed_by(
+        &pkg,
+        &[vk(&producer)]
     ));
 }

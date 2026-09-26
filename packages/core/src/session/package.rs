@@ -625,29 +625,27 @@ pub fn package_verdict(checks: &[VerifyCheck], structural_only: bool) -> Package
     }
 }
 
-/// Whether any sealed artifact's envelope verifies under one of `keys` --
-/// a signature that holds, not a key-id match. The CLI uses it to tell the
-/// producer's own machine (its keys signed the package) from a foreign
-/// verifier, for checks only the producer can run, such as its Approval Use
-/// Journal (W1-13).
-pub fn package_signed_by_any(pkg_dir: &Path, keys: &[ed25519_dalek::VerifyingKey]) -> bool {
-    let Ok(receipt) = read_package(pkg_dir) else {
+/// Whether the package's close record (`record.json`, the signature that
+/// seals the receipt) verifies under one of `keys` -- a signature that
+/// holds, not a key-id match. The CLI uses it to tell the producer's own
+/// machine from a foreign verifier, for checks only the producer can run,
+/// such as its Approval Use Journal (W1-13). Only the close signer counts:
+/// an approver whose key signed one sealed approval did not produce the
+/// session, holds no journal for it, and must not be failed for lacking
+/// one.
+pub fn package_close_signed_by(pkg_dir: &Path, keys: &[ed25519_dalek::VerifyingKey]) -> bool {
+    let Some(env) = std::fs::read(pkg_dir.join(RECORD_FILE))
+        .ok()
+        .and_then(|raw| crate::attestation::Envelope::from_json(&raw).ok())
+    else {
         return false;
     };
-    receipt.artifacts.iter().any(|a| {
-        let path = pkg_dir
-            .join(ARTIFACTS_DIR)
-            .join(format!("{}.json", sanitize_filename(&a.artifact_id)));
-        let Some(env) = std::fs::read(path)
-            .ok()
-            .and_then(|raw| crate::attestation::Envelope::from_json(&raw).ok())
-        else {
-            return false;
-        };
-        env.signatures.iter().any(|sig| {
-            keys.iter()
-                .any(|vk| crate::attestation::verify_with_key(&env, &sig.keyid, *vk).is_ok())
-        })
+    if env.payload_type != crate::statements::payload_type("receipt") {
+        return false;
+    }
+    env.signatures.iter().any(|sig| {
+        keys.iter()
+            .any(|vk| crate::attestation::verify_with_key(&env, &sig.keyid, *vk).is_ok())
     })
 }
 
@@ -1265,6 +1263,27 @@ fn push_approval_use_limit(
             .map(|u| u.use_id.as_str())
             .collect();
         let uses = bundle.uses.iter().filter(|u| &u.nonce_digest == nd).count();
+        // A use record's own max_uses is unsigned; where the approval's
+        // signed scope sets a limit, the record must say the same, or it
+        // was edited (raised to hide a replay). An unbounded scope has
+        // nothing for the record to agree with and is not held to it.
+        if let Some((_, Some(signed))) = grants.get(nd) {
+            let disagreeing: Vec<String> = bundle
+                .uses
+                .iter()
+                .filter(|u| &u.nonce_digest == nd && u.max_uses != Some(*signed))
+                .map(|u| {
+                    format!(
+                        "use {} records max_uses {} but the signed scope says {signed}",
+                        u.use_id,
+                        u.max_uses
+                            .map(|m| m.to_string())
+                            .unwrap_or_else(|| "none".into()),
+                    )
+                })
+                .collect();
+            problems.extend(disagreeing);
+        }
         match grants.get(nd) {
             Some((grant, Some(max))) => {
                 if acts as u32 > *max {
@@ -3182,6 +3201,17 @@ pub(crate) fn add_approval_evidence_checks(
                         violations.push(format!(
                             "action {artifact_id} approval_nonce hashes to {} but use {} stores nonce_digest {}",
                             expected, claimed_use_id, u.nonce_digest,
+                        ));
+                        continue;
+                    }
+                    // The use record's actor and action are unsigned; the
+                    // consuming action's are signed. A record edited to
+                    // name another actor or action (digest recomputed)
+                    // no longer describes the action that consumed it.
+                    if u.actor != action.actor || u.action != action.action {
+                        violations.push(format!(
+                            "use {} records {} doing {} but the signed action {artifact_id} is {} doing {}",
+                            claimed_use_id, u.actor, u.action, action.actor, action.action,
                         ));
                         continue;
                     }
