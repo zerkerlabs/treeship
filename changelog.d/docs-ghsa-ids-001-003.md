@@ -1,0 +1,1 @@
+- **TS-2026-001..003 now carry their GHSA ids.** The three earlier advisories were published as GitHub Security Advisories (GHSA-pmp9-x698-fh4v, GHSA-29hj-wmwv-7hx8, GHSA-qhv9-h5vq-hw6r); their header tables now name them, plus CVE (pending) and CWE, matching TS-2026-004's format.
