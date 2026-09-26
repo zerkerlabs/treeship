@@ -11,7 +11,7 @@ Your trust-root store is the policy half of every verification: nothing is trust
 
 ```bash
 treeship trust list
-treeship trust add <key-id> <public-key> --kind <kind> [--label <text>] [--yes]
+treeship trust add <key-id> <public-key> --kind <kind> [--label <text>] [--yes] [--replace]
 treeship trust remove <key-id> [--yes]
 ```
 
@@ -48,7 +48,18 @@ Trust roots are machine-wide: `~/.treeship/trust_roots.json` (or `TREESHIP_TRUST
 treeship trust add key_9f8e7d6c ed25519:K8V6… --kind cert_issuer --yes
 ```
 
-Without `--yes` the CLI shows the key's SHA-256 fingerprint and asks for confirmation; non-interactive use (including `--format json`) **requires** `--yes`. Adding replaces any existing pin for the same `(key_id, kind)` pair.
+Without `--yes` the CLI shows the key's SHA-256 fingerprint and asks for confirmation; non-interactive use (including `--format json`) **requires** `--yes`. Adding a pin for a `(key_id, kind)` pair that's already pinned to the *same* public key just re-confirms it.
+
+{/* claims:package-verify-binds-receipt */}
+A key id is a label, not a secret, so re-pointing one at a *different* public key needs `--replace`: `trust add` refuses otherwise, naming both fingerprints (the one pinned, the one you're trying to add) so you can tell a legitimate key rotation from a forged package quietly reusing a familiar id. This check runs across every kind the id appears under, not just the one you're pinning now. With `--replace`, it proceeds and prints `replacing <key_id>: fp <old> -> fp <new>`.
+
+```
+✗ key_9f8e7d6c is already pinned (cert_issuer, label "acme-corp") with a different public key: pinned fp a1b2c3d4e5f6a7b8, this key fp 1122334455667788. Key ids are labels; this is either a rotated key or a different signer reusing the id. If you have confirmed the new key out of band, re-run with --replace
+```
+
+This ship's own key ids (the ones `treeship keys export` lists) are a separate case: `trust add` refuses to re-point one of them to a different public key even with `--replace`. A package signed under your own key id by a key that isn't yours is not yours, whatever flag you pass.
+
+`package verify`'s `signer_trust` row and `session join`'s SessionHost hint both print a ready-to-paste `trust add` command for an unpinned key, and neither appends `--yes` anymore: pasting the line stops at the fingerprint prompt instead of skipping straight past it. The `session join` hint also says explicitly to confirm the key with the host out of band -- over a channel the invitation itself didn't travel on -- before running it.
 
 `remove` deletes **all** pins for the key ID, across every kind.
 
