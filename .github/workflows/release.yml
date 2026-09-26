@@ -243,7 +243,37 @@ jobs:
       sha256_darwin_x86_64:   ${{ steps.checksums.outputs.sha256_darwin_x86_64 }}
 
     steps:
+      # Sparse: this job only ever reads CHANGELOG.md, and contents:write is
+      # scoped to this job (see above), so the checkout stays minimal and
+      # never persists credentials for a step below to abuse.
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+          sparse-checkout: CHANGELOG.md
+          sparse-checkout-cone-mode: false
+
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+
+      # `scripts/release.sh prepare` runs `changelog.py assemble` and commits
+      # "Release vX.Y.Z" before `scripts/release.sh tag` ever runs, so the
+      # tagged commit always has a "## X.Y.Z (date)" CHANGELOG.md section by
+      # the time this job runs. Extract it for the release body instead of
+      # relying only on GitHub's auto-generated notes (a compare-commits diff
+      # with no editorial content, and useless for a squash-merge history).
+      - name: Extract CHANGELOG section for this version
+        run: |
+          set -e
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v ver="$VERSION" '
+            $0 ~ ("^## " ver " \\(") { found=1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::error::No CHANGELOG.md section found for version $VERSION (expected a \"## $VERSION (...)\" heading). Did scripts/release.sh prepare run before tagging?"
+            exit 1
+          fi
+          cat release-notes.md
 
       # Compute SHA-256 of every binary that's about to be published.
       # The hashes are:
@@ -300,6 +330,10 @@ jobs:
             treeship-darwin-x86_64/treeship-darwin-x86_64
             SHA256SUMS
             treeship-sbom/treeship-sbom.spdx.json
+          # body_path is the version's own CHANGELOG.md section;
+          # generate_release_notes still runs and GitHub appends its
+          # auto-generated contributors/compare-link section after it.
+          body_path: release-notes.md
           generate_release_notes: true
 
   publish-npm:
