@@ -6,15 +6,9 @@
       "cli_strict": "verified",
       "cli_structural": "structural-pass",
       "receipt_only": "structural-pass",
+      "_note": "CLI-18 / W1-13: on a second ship that pinned the producer, --strict verifies: the unchained approval is bound by the chained action's signed approvalNonce, and the producer's journal row is not applicable there",
       "verify_js": "structural-pass",
-      "verify_js_pinned": "structural-pass",
-      "_note": "CLI-18: under --strict on a second ship two rows fail: chain_completeness (approval statements carry no parent, so the approval is never chained) and replay-local-journal (a stranger has no Approval Use Journal, and --strict promotes that)",
-      "xfail": {
-        "cli_strict": {
-          "task": "W1-13",
-          "got": "failed"
-        }
-      }
+      "verify_js_pinned": "structural-pass"
     },
     "honest/basic": {
       "cli": "signatures-pass",
@@ -58,13 +52,7 @@
       "cli_structural": "structural-pass",
       "receipt_only": "structural-pass",
       "verify_js": "structural-pass",
-      "verify_js_pinned": "structural-pass",
-      "xfail": {
-        "cli_strict": {
-          "task": "W1-13",
-          "got": "failed"
-        }
-      }
+      "verify_js_pinned": "structural-pass"
     },
     "honest/room-two-ships": {
       "_note": "W1-3b + W1-13: a room across two machines, written by main at d9221569 (#499): the joiner on its own ship sent its pending envelope as a file (join --out), the host challenged it and countersigned from the file (countersign --pending). A second ship that pins the host verifies it under --strict: the invitation, participant and liveness record are bound by signed references",
@@ -124,13 +112,7 @@
       "cli_structural": "structural-pass",
       "receipt_only": "structural-pass",
       "verify_js": "failed",
-      "verify_js_pinned": "failed",
-      "xfail": {
-        "cli": {
-          "task": "W1-4",
-          "got": "signatures-pass"
-        }
-      }
+      "verify_js_pinned": "failed"
     },
     "tampered/drop-record-json+rename": {
       "_note": "CLI-4: close record deleted, then session.name edited",
@@ -139,13 +121,7 @@
       "cli_structural": "structural-pass",
       "receipt_only": "structural-pass",
       "verify_js": "failed",
-      "verify_js_pinned": "failed",
-      "xfail": {
-        "cli": {
-          "task": "W1-4",
-          "got": "signatures-pass"
-        }
-      }
+      "verify_js_pinned": "failed"
     },
     "tampered/empty-package": {
       "_note": "H2 (embargoed): a package that seals no artifacts and carries no close record. 0.31.9 rates it verified by default: nothing failed",
