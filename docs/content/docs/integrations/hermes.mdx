@@ -30,7 +30,7 @@ That writes the Hermes skill to:
 and adds a project-local `TREESHIP.md` so Hermes can see what Treeship captures when it works inside the repo.
 
 <Callout type="info">
-If you are testing with a temporary `HOME` on macOS, prefer a canonical path such as `/private/tmp/...`; `/tmp` is a symlink to `/private/tmp`, and Treeship intentionally refuses to write integration files through symlinked config paths.
+A config path under your home that is a symlink (a dotfiles checkout, or `/tmp` on macOS, which is `/private/tmp`) is followed: the Treeship entry lands where the link points and the link itself is kept.
 </Callout>
 
 ## Full provable setup

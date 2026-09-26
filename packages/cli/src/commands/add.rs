@@ -48,12 +48,43 @@ fn install_candidates(env: &Env) -> Vec<InstallCandidate> {
 }
 
 // ---------------------------------------------------------------------------
-// Symlink guard
+// Symlink handling
 // ---------------------------------------------------------------------------
 
-/// Reject paths whose parent chain contains a symlink. Stops a malicious
-/// or surprising symlink from redirecting our atomic write to an unrelated
-/// file. Identical to the pre-PR-4 behavior.
+/// Where a harness config file under the user's home really lives. A
+/// dotfiles setup routinely keeps `~/.cursor` or `~/.codex/config.toml`
+/// as a link into a checked-in directory, and the user wants the Treeship
+/// entry to land there, not to be refused. The link (and any link on the
+/// way) is followed to its target; components that do not exist yet are
+/// kept, so a file `add` is about to create resolves to its future place.
+/// Only paths under `home` are followed; anything else is returned as is.
+fn resolve_under_home(path: &Path, home: &Path) -> std::path::PathBuf {
+    if !path.starts_with(home) {
+        return path.to_path_buf();
+    }
+    let mut prefix = path.to_path_buf();
+    let mut rest: Vec<std::ffi::OsString> = Vec::new();
+    loop {
+        if let Ok(canonical) = prefix.canonicalize() {
+            let mut out = canonical;
+            for r in rest.iter().rev() {
+                out.push(r);
+            }
+            return out;
+        }
+        match prefix.file_name() {
+            Some(name) => rest.push(name.to_os_string()),
+            None => return path.to_path_buf(),
+        }
+        if !prefix.pop() {
+            return path.to_path_buf();
+        }
+    }
+}
+
+/// Reject a working-directory path whose chain contains a symlink: the
+/// project `TREESHIP.md` is written where the user is standing, and a link
+/// there is not necessarily theirs.
 fn is_safe_path(path: &Path) -> bool {
     let mut check = path.to_path_buf();
     loop {
@@ -98,18 +129,9 @@ pub fn install_via_manifest(
             .into());
         }
     };
-    let path = (install.config_path)(home);
-
-    if !is_safe_path(&path) {
-        printer.warn(
-            &format!(
-                "  {} config path contains a symlink, skipping for safety",
-                manifest.display_name
-            ),
-            &[],
-        );
-        return Ok(false);
-    }
+    // The user's own link (dotfiles) is followed: the entry lands where
+    // the link points, and the link stays.
+    let path = resolve_under_home(&(install.config_path)(home), home);
 
     if (install.idempotency)(&path) {
         printer.dim_info(&format!(
@@ -299,8 +321,8 @@ fn remove_stale_claude_mcp_entry(
     home: &Path,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let path = harnesses::legacy_claude_mcp_path(home);
-    if !path.exists() || !is_safe_path(&path) {
+    let path = resolve_under_home(&harnesses::legacy_claude_mcp_path(home), home);
+    if !path.exists() {
         return Ok(());
     }
     // A file that is not UTF-8 or not JSON is not ours to touch.
@@ -902,31 +924,60 @@ mod tests {
         assert_eq!(v, custom);
     }
 
+    #[cfg(unix)]
     #[test]
-    fn symlink_in_path_is_rejected() {
+    fn a_dotfiles_link_under_home_is_followed_and_kept() {
         let home_dir = tempfile::tempdir().unwrap();
-        // macOS' /var/folders tempdir lives under /var, which is a symlink to
-        // /private/var. is_safe_path rejects symlinked ancestors (correct in
-        // production), so canonicalize for tests.
         let home = home_dir.path().canonicalize().unwrap();
         let home = home.as_path();
-        // Make ~/.claude a symlink to /tmp; install must refuse rather
-        // than write through it.
-        let target = tempfile::tempdir().unwrap();
-        let link = home.join(".claude");
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(target.path(), &link).unwrap();
-        #[cfg(not(unix))]
-        return;
+        // ~/.cursor is a link into the user's dotfiles checkout; the entry
+        // must land there and the link must survive.
+        let dotfiles = home.join("dotfiles").join("cursor");
+        std::fs::create_dir_all(&dotfiles).unwrap();
+        std::os::unix::fs::symlink(&dotfiles, home.join(".cursor")).unwrap();
 
         let printer = Printer::new(Format::Text, true, true);
-        let profile = harnesses::for_surface(AgentSurface::ClaudeCode).unwrap();
+        let profile = harnesses::for_surface(AgentSurface::CursorAgent).unwrap();
         let did = install_via_manifest(profile, home, false, false, &printer).unwrap();
-        assert!(!did, "symlinked path must be refused");
-        // Nothing should have been written through the symlink.
-        assert!(!target.path().join("mcp.json").exists());
-        // Also nothing at the original target path.
-        let _ = link; // keep `target` alive
+        assert!(did, "a linked ~/.cursor must be configured");
+        let written = dotfiles.join("mcp.json");
+        assert!(
+            written.is_file(),
+            "the entry did not land in the dotfiles checkout"
+        );
+        assert!(
+            home.join(".cursor").is_symlink(),
+            "the user's link was replaced"
+        );
+        let json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&written).unwrap()).unwrap();
+        assert!(json["mcpServers"]["treeship"].is_object());
+
+        // A file that is itself a link (not only its directory) is followed too.
+        let toml_target = home.join("dotfiles").join("codex.toml");
+        std::fs::write(&toml_target, "# mine\n").unwrap();
+        std::fs::create_dir_all(home.join(".codex")).unwrap();
+        std::os::unix::fs::symlink(&toml_target, home.join(".codex").join("config.toml")).unwrap();
+        let profile = harnesses::for_surface(AgentSurface::Codex).unwrap();
+        let did = install_via_manifest(profile, home, false, false, &printer).unwrap();
+        assert!(did);
+        let toml = std::fs::read_to_string(&toml_target).unwrap();
+        assert!(
+            toml.starts_with("# mine\n") && toml.contains("treeship"),
+            "{toml}"
+        );
+        assert!(home.join(".codex").join("config.toml").is_symlink());
+    }
+
+    #[test]
+    fn a_missing_config_path_resolves_to_its_future_place() {
+        let home_dir = tempfile::tempdir().unwrap();
+        let home = home_dir.path().canonicalize().unwrap();
+        let wanted = home.join(".cursor").join("mcp.json");
+        assert_eq!(resolve_under_home(&wanted, &home), wanted);
+        // Outside the home nothing is resolved.
+        let elsewhere = std::path::Path::new("/nowhere/at/all");
+        assert_eq!(resolve_under_home(elsewhere, &home), elsewhere);
     }
 
     #[test]
