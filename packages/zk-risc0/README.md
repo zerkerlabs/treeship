@@ -27,8 +27,10 @@ cargo build -p treeship-zk-risc0
 ## Usage
 
 ```sh
-treeship prove --engine risc0 --chain ./chain.json
+treeship prove-chain <session_id>
 ```
+
+Requires the CLI built with `--features zk` (`prove --circuit ... --artifact ...` is the separate, per-artifact Circom path; RISC Zero only proves a whole session chain, in the background).
 
 ## Documentation
 

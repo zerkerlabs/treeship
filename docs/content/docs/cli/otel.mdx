@@ -5,6 +5,10 @@ description: Export Treeship artifacts as OpenTelemetry spans.
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
+<Callout type="info">
+**Hidden from `--help`.** `otel` is implemented and shipped -- `otel` is a *default* Cargo feature (on unless built with `--no-default-features`), and the command is additionally hidden from the top-level list as a UX choice.
+</Callout>
+
 Treeship can export every artifact as an OpenTelemetry (OTLP) span, letting you visualize agent workflows in any observability tool that speaks OTLP.
 
 ## In the default build
