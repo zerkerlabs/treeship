@@ -13,6 +13,19 @@ from pathlib import Path
 
 TS = sys.argv[1]
 ROOT = Path(sys.argv[2])
+# Docs re-test (2026-09-27): skills/, integrations/ and the root *.md carry
+# runnable fences too. `--warn-root PATH` (a directory, or a file, repeatable)
+# scans them and reports findings without failing, until the drift they
+# surface is fixed and the roots move to the failing set.
+_rest = sys.argv[3:]
+WARN_ROOTS = [Path(_rest[i + 1]) for i, a in enumerate(_rest) if a == "--warn-root" and i + 1 < len(_rest)]
+
+
+def doc_files(root: Path):
+    """*.mdx and *.md under a directory (node_modules skipped), or the file itself."""
+    if root.is_file():
+        return [root]
+    return sorted(p for p in root.rglob("*") if p.suffix in (".mdx", ".md") and "node_modules" not in p.parts)
 
 UNKNOWN = re.compile(r"unrecognized subcommand|invalid subcommand|unexpected argument")
 RUNNABLE_LANG = {"bash", "sh", "shell", "console", "zsh", ""}
@@ -52,7 +65,7 @@ def blocks(lines):
             buf.append((i, line))
 
 results = []
-for f in sorted(ROOT.rglob("*.mdx")):
+for f, warn_only in [(p, False) for p in doc_files(ROOT)] + [(p, True) for r in WARN_ROOTS for p in doc_files(r)]:
     lines = f.read_text(errors="replace").splitlines()
     for lang, start, body in blocks(lines):
         if lang not in RUNNABLE_LANG:
@@ -78,7 +91,8 @@ for f in sorted(ROOT.rglob("*.mdx")):
             if ok:
                 continue
             results.append({
-                "file": str(f.relative_to(ROOT.parent)),
+                "warn_only": warn_only,
+                "file": (str(f.relative_to(ROOT.parent)) if str(f).startswith(str(ROOT.parent)) else str(f)),
                 "line": i,
                 "cmd": " ".join(["treeship"] + cmdtoks),
                 "unknown_token": bad,
@@ -86,6 +100,12 @@ for f in sorted(ROOT.rglob("*.mdx")):
                 "raw": line.strip(),
             })
 
+_files = [(p, False) for p in doc_files(ROOT)] + [(p, True) for r in WARN_ROOTS for p in doc_files(r)]
+print(f"scanned {len(_files)} file(s), {sum(1 for _, w in _files if w)} under --warn-root", file=sys.stderr)
+hard = [r for r in results if not r.get("warn_only")]
+soft = [r for r in results if r.get("warn_only")]
 print(json.dumps(results, indent=2))
-print(f"{len(results)} runnable invocations name a nonexistent command", file=sys.stderr)
-sys.exit(1 if results else 0)
+if soft:
+    print(f"{len(soft)} finding(s) under --warn-root paths (reported, not failing)", file=sys.stderr)
+print(f"{len(hard)} runnable invocations name a nonexistent command", file=sys.stderr)
+sys.exit(1 if hard else 0)

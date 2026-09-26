@@ -17,11 +17,16 @@ Checks (errors):
   - SECURITY.md's supported-versions table names the same minor as
     CHANGELOG.md's latest released version heading
 
-Exit 0 with no errors, 1 otherwise. This is deliberately narrow: it only
-scans the files claims.yml lists (the ones DSEC-1/DSEC-2/DSEC-3/DOC-8 named),
-not every doc in the repo -- the same English words are used correctly
-elsewhere (HTTP cache headers, workflow-declaration immutability) for
-properties that have nothing to do with the keystore or the verifier.
+Exit 0 with no errors, 1 otherwise.
+
+Scope (docs re-test, 2026-09-27): the files claims.yml lists are checked as
+before, and every page under docs/content, every root *.md and everything
+under skills/ is scanned too. A marker covers only the line it sits on (or,
+when it sits alone on a line, the next non-empty line); a banned phrase
+elsewhere in the same paragraph is unbacked. Findings from the wider scan
+and the finer marker rule are WARNINGS until `--strict` (the drift they
+surface is being fixed separately); findings under the original rule on the
+registered files stay errors either way.
 """
 
 from __future__ import annotations
@@ -51,6 +56,63 @@ BANNED_PHRASES = [
 MARKER = re.compile(r"(?:<!--\s*claims:([a-z0-9-]+)\s*-->|\{/\*\s*claims:([a-z0-9-]+)\s*\*/\})")
 
 
+SCAN_ROOTS = [ROOT / "docs" / "content", ROOT / "skills"]
+ROOT_MD = sorted(ROOT.glob("*.md"))
+
+
+def wider_files() -> list[str]:
+    """Every doc the finer rule scans, as repo-relative paths."""
+    out = []
+    for root in SCAN_ROOTS:
+        for p in sorted(root.rglob("*")):
+            if p.suffix in (".md", ".mdx") and "node_modules" not in p.parts:
+                out.append(str(p.relative_to(ROOT)))
+    out.extend(str(p.relative_to(ROOT)) for p in ROOT_MD)
+    return out
+
+
+def covered_lines(lines: list[str]) -> dict[int, set[str]]:
+    """Line index -> the marker ids that cover it. A marker covers its own
+    line; a marker alone on its line also covers the next non-empty line
+    (the way `<!-- claims:x -->` is written above a paragraph)."""
+    cover: dict[int, set[str]] = {}
+    for i, line in enumerate(lines):
+        ids = {a or b for (a, b) in MARKER.findall(line)}
+        if not ids:
+            continue
+        cover.setdefault(i, set()).update(ids)
+        if MARKER.sub("", line).strip() == "":
+            j = i + 1
+            while j < len(lines) and lines[j].strip() == "":
+                j += 1
+            if j < len(lines):
+                cover.setdefault(j, set()).update(ids)
+    return cover
+
+
+def line_findings(rel: str, text: str, valid_ids: set[str]) -> list[str]:
+    """The finer rule: each banned phrase must sit on a covered line."""
+    out = []
+    lines = text.splitlines()
+    cover = covered_lines(lines)
+    for i, line in enumerate(lines):
+        low = line.lower()
+        hits = [p for p in BANNED_PHRASES if p in low]
+        if not hits:
+            continue
+        ids = cover.get(i, set())
+        unknown = ids - valid_ids
+        for u in sorted(unknown):
+            out.append(f"{rel}:{i + 1}: claims marker '{u}' is not a known claims.yml id")
+        if not ids:
+            out.append(
+                f"{rel}:{i + 1}: banned phrase(s) {hits} with no claims marker on this "
+                f"line (or alone on the line above). Add `<!-- claims:id -->` for the "
+                f"claims.yml entry that backs this sentence, or rewrite it."
+            )
+    return out
+
+
 def paragraphs(text: str) -> list[tuple[int, str]]:
     """Split into (start_offset, paragraph_text) on blank lines."""
     out = []
@@ -61,7 +123,9 @@ def paragraphs(text: str) -> list[tuple[int, str]]:
     return out
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    strict = "--strict" in argv
     errors: list[str] = []
     warnings: list[str] = []
 
@@ -133,6 +197,17 @@ def main() -> int:
                     f"wording, or rewrite the paragraph."
                 )
 
+    # The finer rule over the wider scope: warnings until --strict.
+    finer: list[str] = []
+    for rel in wider_files():
+        path = ROOT / rel
+        try:
+            finer.extend(line_findings(rel, path.read_text(encoding="utf-8"), valid_ids))
+        except OSError:
+            continue
+    if finer:
+        (errors if strict else warnings).extend(finer)
+
     # SECURITY.md supported-versions vs. CHANGELOG.md's latest release.
     if CHANGELOG_PATH.exists() and SECURITY_PATH.exists():
         changelog = CHANGELOG_PATH.read_text()
@@ -158,7 +233,11 @@ def main() -> int:
         print(f"\n{len(errors)} error(s), {len(warnings)} warning(s)", file=sys.stderr)
         return 1
 
-    print(f"claims: {len(claims)} entries, {len(scanned_files)} files scanned, 0 errors, {len(warnings)} warning(s)")
+    print(
+        f"claims: {len(claims)} entries, {len(scanned_files)} registered file(s) plus "
+        f"{len(wider_files())} scanned under the line rule"
+        f"{'' if strict else ' (warn-only)'}, 0 errors, {len(warnings)} warning(s)"
+    )
     return 0
 
 
