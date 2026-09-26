@@ -8,6 +8,14 @@ category: engineering
 systems: ["typescript-sdk", "wasm-verifier"]
 ---
 
+> **Editor's note (2026-09-27).** This post describes a design that was
+> never built, and its `treeship sign` command was never real. The
+> TypeScript SDK still shells out to the `treeship` CLI binary for signing
+> (`packages/sdk-ts/src/ship.ts`, `exec.ts`); `@treeship/core-wasm` ships
+> only `verify_envelope` (verification, not signing) -- there is no `sign`
+> export and no `init({ verifyHash, expectedHash })` API. Read what follows
+> as the proposal it was, not as what shipped.
+
 When your TypeScript SDK spawns a Rust binary, you've introduced a $PATH dependency, a binary substitution attack surface, and an IPC channel. All three go away when you compile to WASM.
 
 The obvious way to give a TypeScript SDK access to Rust cryptography is to shell out to a Rust binary. Call `child_process.exec`, pass JSON over stdin, read JSON from stdout. Lots of tools work this way. It's simple to implement and easy to understand.
