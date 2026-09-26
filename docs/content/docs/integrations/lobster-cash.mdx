@@ -21,10 +21,10 @@ npm install -g treeship @crossmint/lobster-cli
 ### Initialize Treeship
 
 ```bash
-treeship init
+treeship init --template packages/skills/lobster-cash/template.yaml
 ```
 
-There is no `lobster-cash-commerce` template (`treeship templates` lists what's real). Add the skill by hand: copy `packages/skills/lobster-cash/SKILL.md` into your agent's skills directory.
+Run from a `treeship` checkout. There is no built-in `lobster-cash-commerce` template in the catalog (`treeship templates` lists what's real) -- `--template` also takes a file path, which is what this skill ships instead. Add the skill itself by hand: copy `packages/skills/lobster-cash/SKILL.md` into your agent's skills directory.
 </Step>
 <Step>
 ### Verify the installation

@@ -27,7 +27,7 @@
     "audit-trail",
     "commerce"
   ],
-  "install": "npm install -g treeship @crossmint/lobster-cli && treeship init",
+  "install": "npm install -g treeship @crossmint/lobster-cli && treeship init --template packages/skills/lobster-cash/template.yaml",
   "wording_compliance": {
     "delegates_to_lobster": true,
     "no_private_key_requests": true,

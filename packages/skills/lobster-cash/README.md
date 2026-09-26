@@ -40,10 +40,10 @@ The verification URL works in any browser via WebAssembly. No account, no instal
 
 ```bash
 npm install -g treeship @crossmint/lobster-cli
-treeship init
+treeship init --template packages/skills/lobster-cash/template.yaml
 ```
 
-There is no `lobster-cash-commerce` template. `treeship templates` lists what's real; none of them is lobster-specific yet.
+Run from a `treeship` checkout. There is no built-in `lobster-cash-commerce` template in the catalog (`treeship templates` lists what's real) -- `--template` also takes a file path, which is what this skill ships instead.
 
 ## Demo
 
