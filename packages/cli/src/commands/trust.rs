@@ -98,6 +98,8 @@ pub fn add(
     kind: &str,
     label: Option<&str>,
     yes: bool,
+    replace: bool,
+    config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let kind = TrustRootKind::parse(kind).ok_or_else(|| {
@@ -151,9 +153,10 @@ pub fn add(
     );
     if signer_kind && !looks_like_key_id(key_id) {
         return Err(format!(
-            "{key_id:?} is not a key id. Pins for --kind {} are matched against the signature's key id, \
-             so this pin would never match anything. Use the id the producer's `treeship keys export` \
-             prints (key_<16 hex> or key_agent_<16 hex>); pass a label with --label",
+            "{key_id:?} is not a key id. `treeship verify` looks a --kind {} pin up by the signature's \
+             key id, so this pin would never match there (`package verify` matches pins by public key). \
+             Use the id the producer's `treeship keys export` prints (key_<16 hex> or key_agent_<16 hex>); \
+             pass a label with --label",
             kind.as_str()
         )
         .into());
@@ -174,6 +177,53 @@ pub fn add(
         .iter()
         .find(|r| r.key_id == key_id && r.kind == kind)
         .cloned();
+
+    // This ship's own key ids are trusted in memory (package::
+    // trust_with_own_keys), not in trust_roots.json. Pinning one of them to a
+    // different public key would let a package that reuses our id read as
+    // ours, so refuse it outright -- --replace does not apply to own ids.
+    if let Ok(c) = crate::ctx::open(config) {
+        if let Ok(own) = c.keys.list() {
+            if let Some(k) = own.iter().find(|k| k.id == key_id) {
+                use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+                let own_pk = format!("ed25519:{}", URL_SAFE_NO_PAD.encode(&k.public_key));
+                if own_pk != canonical_pk {
+                    return Err(format!(
+                        "{key_id} is this ship's own key (fp {}); refusing to pin it to a different public key (fp {fingerprint}). \
+                         A package signed under your own key id by another key is not yours",
+                        pubkey_fingerprint(&own_pk),
+                    )
+                    .into());
+                }
+            }
+        }
+    }
+
+    // A key id is only a label. Re-pointing an id already pinned (under any
+    // kind) at a different public key needs --replace, and says what is
+    // being replaced: pasting a pin line from a forged package must not
+    // silently swap out the real key (and drop every package it signed).
+    if let Some(prev) = store
+        .roots()
+        .iter()
+        .find(|r| r.key_id == key_id && r.public_key != canonical_pk)
+    {
+        let prev_fp = pubkey_fingerprint(&prev.public_key);
+        if !replace {
+            return Err(format!(
+                "{key_id} is already pinned ({}, label {:?}) with a different public key: pinned fp {prev_fp}, this key fp {fingerprint}. \
+                 Key ids are labels; this is either a rotated key or a different signer reusing the id. \
+                 If you have confirmed the new key out of band, re-run with --replace",
+                prev.kind.as_str(),
+                prev.label,
+            )
+            .into());
+        }
+        printer.warn(
+            &format!("replacing {key_id}: fp {prev_fp} -> fp {fingerprint}"),
+            &[],
+        );
+    }
 
     // Confirmation gate. JSON callers MUST pass --yes; an interactive
     // y/N prompt on stdout/stdin doesn't compose with --output json

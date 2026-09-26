@@ -17,7 +17,10 @@ expect_pass ts package verify --strict "$P"
 # signer_trust warning, --strict fails until the key is pinned.
 expect_pass as_ship stranger package verify "$P"
 expect_fail as_ship stranger package verify --strict "$P"
-pin=$(as_ship stranger package verify "$P" 2>&1 | grep -Eo 'treeship trust add [^;]*--yes' | head -1)
+# The hint names the key and its fingerprint, without --yes: the reader
+# confirms it first. The flow stands in for a reader who did.
+pin=$(as_ship stranger package verify "$P" 2>&1 | grep -Eo 'treeship trust add [^ ]+ [^ ]+ --kind [a-z_]+' | head -1)
 [ -n "$pin" ] || fail "signer_trust warning printed no pin command"
-eval "as_ship stranger ${pin#treeship }" >/dev/null 2>&1 || fail "pin: $pin"
+as_ship stranger package verify "$P" 2>&1 | grep -q 'kind cert_issuer --yes' && fail "pin hint must not carry --yes"
+eval "as_ship stranger ${pin#treeship } --yes" >/dev/null 2>&1 || fail "pin: $pin"
 expect_pass as_ship stranger package verify --strict "$P"
