@@ -167,6 +167,14 @@ pub enum ConfigError {
         stub: PathBuf,
         target: PathBuf,
     },
+    /// A discovered project stub extends a config outside this HOME: with
+    /// a different HOME (a test harness, a container) it would sign with
+    /// another account's key into another account's store.
+    ForeignExtends {
+        stub: PathBuf,
+        target: PathBuf,
+        home: PathBuf,
+    },
     /// A save through a project stub whose `extends` does not point at this
     /// user's global config. A repository can ship any stub it likes; it
     /// must not be able to choose which file a command writes.
@@ -200,6 +208,13 @@ impl std::fmt::Display for ConfigError {
                 stub.display(),
                 target.display(),
                 target.display()
+            ),
+            Self::ForeignExtends { stub, target, home } => write!(
+                f,
+                "{} extends {}, which is outside this HOME ({}); refusing to use another account's keystore. Pass --config or set TREESHIP_CONFIG to say which workspace to use, or re-run `treeship init` here",
+                stub.display(),
+                target.display(),
+                home.display()
             ),
             Self::NoHome => write!(f, "cannot determine home directory"),
         }
@@ -307,12 +322,48 @@ pub fn resolve_config_path() -> Result<(PathBuf, ConfigSource), ConfigError> {
     let global_path = home.join(".treeship").join("config.json");
 
     if let Ok(cwd) = std::env::current_dir() {
-        if let Some(found) = walk_up_for_project_config(&cwd, &global_path, |p| p.is_file()) {
+        if let Some(found) = walk_up_for_project_config(&cwd, &global_path, &home, |p| p.is_file())
+        {
+            refuse_foreign_extends(&found, &global_path, &home)?;
             return Ok((found, ConfigSource::ProjectLocal));
         }
     }
 
     Ok((global_path, ConfigSource::Global))
+}
+
+/// A discovered stub may extend only this HOME's global config or a file
+/// under this HOME. `init` records the global config by absolute path, so
+/// a stub written under one HOME still names that account's keystore when
+/// the CLI runs under another (a test harness with HOME=$(mktemp -d)
+/// signed a fixture with the real key into the real store). An explicit
+/// --config or TREESHIP_CONFIG never gets here.
+fn refuse_foreign_extends(stub: &Path, global: &Path, home: &Path) -> Result<(), ConfigError> {
+    let Ok(bytes) = fs::read(stub) else {
+        return Ok(());
+    };
+    let Ok(raw) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return Ok(());
+    };
+    let Some(extends) = raw.get("extends").and_then(|v| v.as_str()) else {
+        return Ok(());
+    };
+    let target = resolve_extends(stub, extends);
+    // A target that does not exist is the loader's DanglingExtends, a more
+    // useful message than this one.
+    if !target.exists() {
+        return Ok(());
+    }
+    let canon = |p: &Path| fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let (t, g, h) = (canon(&target), canon(global), canon(home));
+    if t == g || t.starts_with(&h) {
+        return Ok(());
+    }
+    Err(ConfigError::ForeignExtends {
+        stub: stub.to_path_buf(),
+        target,
+        home: home.to_path_buf(),
+    })
 }
 
 /// Walk up from `start`, returning the first `.treeship/config.json` that
@@ -326,13 +377,23 @@ pub fn resolve_config_path() -> Result<(PathBuf, ConfigSource), ConfigError> {
 fn walk_up_for_project_config<F: Fn(&Path) -> bool>(
     start: &Path,
     global_path: &Path,
+    home: &Path,
     exists: F,
 ) -> Option<PathBuf> {
-    let mut dir = start;
+    // Canonical on both sides so `/var/...` and `/private/var/...` (macOS)
+    // compare as the same directory; fake paths in unit tests stay as given.
+    let home = fs::canonicalize(home).unwrap_or_else(|_| home.to_path_buf());
+    let start = fs::canonicalize(start).unwrap_or_else(|_| start.to_path_buf());
+    let mut dir = start.as_path();
     loop {
         let candidate = dir.join(".treeship").join("config.json");
         if exists(&candidate) && candidate != global_path {
             return Some(candidate);
+        }
+        // Discovery never climbs above HOME: a workspace in a parent of the
+        // home directory is not this user's project.
+        if dir == home {
+            return None;
         }
         match dir.parent() {
             Some(parent) => dir = parent,
@@ -693,6 +754,7 @@ mod tests {
         let found = walk_up_for_project_config(
             Path::new("/home/u/work/proj/sub"),
             &global,
+            Path::new("/home/u"),
             fake_exists(&["/home/u/work/proj/.treeship/config.json"]),
         );
         assert_eq!(
@@ -710,6 +772,7 @@ mod tests {
         let found = walk_up_for_project_config(
             Path::new("/home/u/Documents"),
             &global,
+            Path::new("/home/u"),
             fake_exists(&["/home/u/.treeship/config.json"]),
         );
         assert_eq!(found, None);
@@ -718,8 +781,12 @@ mod tests {
     #[test]
     fn walk_up_returns_none_when_nothing_matches() {
         let global = PathBuf::from("/home/u/.treeship/config.json");
-        let found =
-            walk_up_for_project_config(Path::new("/home/u/work/proj"), &global, fake_exists(&[]));
+        let found = walk_up_for_project_config(
+            Path::new("/home/u/work/proj"),
+            &global,
+            Path::new("/home/u"),
+            fake_exists(&[]),
+        );
         assert_eq!(found, None);
     }
 
@@ -731,6 +798,7 @@ mod tests {
         let found = walk_up_for_project_config(
             Path::new("/a/b/c"),
             &global,
+            Path::new("/home/u"),
             fake_exists(&["/a/b/.treeship/config.json", "/a/.treeship/config.json"]),
         );
         assert_eq!(found, Some(PathBuf::from("/a/b/.treeship/config.json")));
