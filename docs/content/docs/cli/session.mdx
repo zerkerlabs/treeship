@@ -91,6 +91,7 @@ Redeem an invitation and emit a pending participant event. This is the joiner si
 ```bash
 treeship session join --invite-file ./invite.blob --actor agent://researcher
 cat ./invite.blob | treeship session join --invite - --actor agent://qa
+treeship session join --invite-file ./invite.blob --actor agent://researcher --out ./pending.json
 ```
 
 ### Options
@@ -100,16 +101,36 @@ cat ./invite.blob | treeship session join --invite - --actor agent://qa
 | `--invite <blob>` | Paste the bootstrap blob inline. Use `-` to read from stdin. |
 | `--invite-file <path>` | Read the bootstrap blob from a file. |
 | `--actor <uri>` | Joining agent's actor URI, such as `agent://researcher` (required). |
+| `--out <path>` | Also write the pending participant envelope to this file, to hand to a host on another machine (see [Joining from another machine](/docs/concepts/multi-agent-sessions#joining-from-another-machine) below). |
 | `--format <text\|json>` | Output format. |
 
 The command pins the issuer against the local `SessionHost` trust roots, verifies the invitation signature, checks expiry and restriction, records the nonce in the Approval Use Journal with `max_uses=1`, and emits a single-signature participant envelope that is pending the host countersign. It prints the participant artifact id to pass to `session countersign`. A second join against the same invitation fails through the journal's single-use path.
 
-## treeship session countersign
+Without `--out`, the pending envelope only exists in the local artifact store, which only works when the host countersigns on the same machine. With `--out`, the same envelope is also written to a file you can copy to the host's machine, which the host then countersigns with `--pending` (see below). Whichever machine you're on, `session join` always prints a same-machine `countersign <participant_id>` hint -- ignore it and use `--pending <file>` on the host side when the join happened elsewhere.
 
-Host countersigns a pending participant event. After this runs, the participant envelope carries two signatures (joining agent plus host) and verifies as a finalized join.
+## treeship session mint-challenge
+
+Mint a 128-bit challenge nonce for a room-join liveness check. Run by the host, before countersigning.
 
 ```bash
-treeship session countersign art_part_abc123
+treeship session mint-challenge
+treeship session mint-challenge --format json
+```
+
+Prints a nonce and the RFC 3339 instant it was minted (`issued_at`). Both `answer-challenge` and `countersign` refuse a nonce shorter than 32 characters or drawn from too small an alphabet -- a guessable nonce could be pre-signed, which would make the liveness proof show only that a document exists, not that the joining agent is live right now.
+
+```
+✓ challenge nonce minted
+  nonce:      098cd1bfa62728a03c4ce1f53c59795b
+  issued_at:  2026-09-26T17:42:54Z
+```
+
+## treeship session answer-challenge
+
+Sign the host's room-join liveness nonce with the joining agent's own key. Run by the joining agent after `session join`, in response to a nonce the host sends out of band (chat, a copied string, whatever channel you're already using).
+
+```bash
+treeship session answer-challenge art_part_abc123 --challenge 098cd1bfa62728a03c4ce1f53c59795b --actor agent://researcher
 ```
 
 ### Arguments
@@ -118,7 +139,72 @@ treeship session countersign art_part_abc123
 |----------|-------------|
 | `participant_id` | Participant artifact id produced by `session join`. |
 
-The command confirms the running default key matches the invitation's issuer, attaches the host countersign over the same canonical bytes, self-verifies, and overwrites the storage record with the finalized two-signature envelope. A participant envelope is invalid until both signatures are present.
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--challenge <nonce>` | The nonce the host issued out of band for this join (required). |
+| `--actor <uri>` | Joining agent's actor URI. Must resolve to the same key that ran `session join` (required). |
+| `--out <path>` | Output path for the signed response. Defaults to `<participant_id>.challenge-response.json`. |
+
+The response file (`{nonce, signature, signed_at}`) is what you hand back to the host for `session countersign --challenge-response`.
+
+## treeship session countersign
+
+Host countersigns a pending participant event. After this runs, the participant envelope carries two signatures (joining agent plus host) and verifies as a finalized join.
+
+```bash
+# Same machine
+treeship session countersign art_part_abc123
+
+# Same machine, with a liveness challenge
+treeship session countersign art_part_abc123 \
+  --challenge 098cd1bfa62728a03c4ce1f53c59795b \
+  --challenge-issued-at 2026-09-26T17:42:54Z \
+  --challenge-response ./art_part_abc123.challenge-response.json
+
+# Across machines: the join happened elsewhere and its pending envelope
+# arrived as a file. The challenge is mandatory here, not optional.
+treeship session countersign --pending ./pending.json \
+  --challenge 098cd1bfa62728a03c4ce1f53c59795b \
+  --challenge-issued-at 2026-09-26T17:42:54Z \
+  --challenge-response ./response.json
+```
+
+### Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `[participant_id]` | Participant artifact id, for a join on this machine. Omit it and pass `--pending` for a join on another machine. |
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--pending <path>` | A pending participant envelope a joiner on another machine sent (the file `session join --out` wrote). Requires `--challenge` and `--challenge-response`. |
+| `--challenge <nonce>` | The nonce you (the host) issued for the liveness check, from `session mint-challenge`. Must be supplied together with `--challenge-response`. |
+| `--challenge-response <path>` | Path to the joining agent's signed response to `--challenge`, from `session answer-challenge`. `-` reads stdin. |
+| `--challenge-issued-at <rfc3339>` | The `issued_at` instant `session mint-challenge` printed. With it, countersign writes a signed `session-liveness/v1` artifact recording the challenge-to-answer window, so a third party can later see how long that window was. Required whenever `--pending` is used; optional (but recommended) on the same machine. |
+
+The command confirms the running default key matches the invitation's issuer, re-validates the participant's session, capabilities, and restriction against the trust-pinned invitation (never the bytes in the pending envelope alone), attaches the host countersign over the same canonical bytes, self-verifies, and overwrites the storage record with the finalized two-signature envelope. A participant envelope is invalid until both signatures are present.
+
+<Callout type="warn">
+**The liveness challenge is mandatory across machines, optional on the same machine -- for now.** Passing `--pending` without `--challenge`/`--challenge-response` is refused outright: across machines, the joiner's signed answer to a challenge you just minted is the only evidence it holds its key right now. On the same machine, omitting the challenge still countersigns, but prints a warning that the join was not liveness-checked. **The challenge becomes mandatory for every countersign, same machine or not, in 0.32.**
+</Callout>
+
+A minted challenge is only valid for a window from `--challenge-issued-at`: 10 minutes (600 seconds) by default, or `TREESHIP_JOIN_CHALLENGE_WINDOW_SECS` if set. Countersign also enforces that the challenge wasn't issued in the future and the joiner's signed response falls inside that window (allowing 60 seconds of clock skew either way); outside the window, it refuses with a message telling you to mint a fresh challenge.
+
+Countersign is single-use, enforced by the host: it reserves the invitation's one use in the local Approval Use Journal before it signs, and never releases it even if a later step fails. A second countersign attempt against the same invitation -- with or without `--pending` -- is refused:
+
+```
+✗ invitation art_74d95cbc1defb54e0c7a921f14ab1623 has already been countersigned (max_uses 1), countersign refused: ...
+```
+
+Countersign also refuses to finalize a join into a session that isn't open on this host right now -- closed after the invitation was minted, or never started here:
+
+```
+✗ the invitation's session ssn_4bfda2e970618c3b is not open on this ship (closed, or never started here); countersign refused
+```
 
 ## treeship session close
 

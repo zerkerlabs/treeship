@@ -243,6 +243,13 @@ runs through the session commands you already know: `treeship session invite` /
 `join` / `countersign` for participants, `treeship session close` to finalize,
 `treeship session report` to publish.
 
+Participants no longer have to be on the same machine: `session join --out`
+writes the pending join to a file a joiner can send to the host, and
+`session countersign --pending` finalizes it there, gated on a mandatory
+liveness challenge (`session mint-challenge` / `answer-challenge`). See
+[Joining from another machine](/docs/concepts/multi-agent-sessions#joining-from-another-machine)
+for the full flow.
+
 ### Proposed surface
 
 <Callout type="warn">

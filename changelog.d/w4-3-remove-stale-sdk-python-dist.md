@@ -1,0 +1,1 @@
+- **Removed stale tracked sdk-python build artifacts (W4-3).** `packages/sdk-python/dist/treeship_sdk-0.2.0-py3-none-any.whl` and `.tar.gz` were committed to the repo even though `.gitignore` already excludes `packages/sdk-python/dist/` -- ignore rules don't untrack a file already committed. Removed both; nothing else under a `dist/` path is tracked.
