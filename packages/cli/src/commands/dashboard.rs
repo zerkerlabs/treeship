@@ -213,7 +213,14 @@ pub fn run(opts: DashboardOptions, printer: &Printer) -> Result<(), Box<dyn std:
     printer.info(&format!("  url:      {target}"));
     printer.info(&format!("  sessions: {}", state.sessions_root.display()));
     printer.info(&format!("  treeships: {}", state.treeships.len()));
-    printer.info("  mode:     local-only, read-only");
+    if matches!(opts.host.as_str(), "127.0.0.1" | "localhost" | "::1") {
+        printer.info("  mode:     local-only, read-only");
+    } else {
+        printer.info(&format!(
+            "  mode:     read-only, listening on {} (reachable from other machines)",
+            opts.host
+        ));
+    }
     printer.blank();
     printer.hint("Press Ctrl+C to stop");
 

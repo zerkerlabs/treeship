@@ -3250,7 +3250,16 @@ fn print_help_all() {
 
 fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     match &cli.command {
-        Command::Ui => tui::run(cli.config.as_deref()),
+        Command::Ui => {
+            use std::io::IsTerminal;
+            if !std::io::stdout().is_terminal() {
+                return Err(
+                    "treeship ui needs a terminal (stdout is not a TTY); use `treeship status` or `treeship status --format json` instead"
+                        .into(),
+                );
+            }
+            tui::run(cli.config.as_deref())
+        }
 
         Command::Dashboard(args) => commands::dashboard::run(
             commands::dashboard::DashboardOptions {

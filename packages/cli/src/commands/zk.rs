@@ -75,7 +75,7 @@ pub fn setup(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
         printer.info(&format!("    notary: {} (configured)", notary));
     } else {
         printer.dim_info("    notary: not configured");
-        printer.hint("treeship zk-tls notary setup");
+        printer.hint("treeship zk-tls-setup");
     }
 
     printer.blank();
