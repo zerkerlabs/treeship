@@ -43,6 +43,11 @@ def findings_in(text: str) -> list[tuple[int, str]]:
     return out
 
 
+# The checker's own source and its test carry the bad form on purpose (the
+# pattern, and the fixture lines); nothing a reader could copy lives there.
+SELF = {"scripts/check-https-oneliners.py", "scripts/tests/test_check_https_oneliners.py"}
+
+
 def tracked_files() -> list[Path]:
     r = subprocess.run(
         ["git", "-C", str(ROOT), "ls-files", "--", *GLOBS],
@@ -50,7 +55,7 @@ def tracked_files() -> list[Path]:
         text=True,
         check=True,
     )
-    return [ROOT / p for p in r.stdout.split()]
+    return [ROOT / p for p in r.stdout.split() if p not in SELF]
 
 
 def main(argv: list[str]) -> int:
