@@ -625,6 +625,32 @@ pub fn package_verdict(checks: &[VerifyCheck], structural_only: bool) -> Package
     }
 }
 
+/// Whether any sealed artifact's envelope verifies under one of `keys` --
+/// a signature that holds, not a key-id match. The CLI uses it to tell the
+/// producer's own machine (its keys signed the package) from a foreign
+/// verifier, for checks only the producer can run, such as its Approval Use
+/// Journal (W1-13).
+pub fn package_signed_by_any(pkg_dir: &Path, keys: &[ed25519_dalek::VerifyingKey]) -> bool {
+    let Ok(receipt) = read_package(pkg_dir) else {
+        return false;
+    };
+    receipt.artifacts.iter().any(|a| {
+        let path = pkg_dir
+            .join(ARTIFACTS_DIR)
+            .join(format!("{}.json", sanitize_filename(&a.artifact_id)));
+        let Some(env) = std::fs::read(path)
+            .ok()
+            .and_then(|raw| crate::attestation::Envelope::from_json(&raw).ok())
+        else {
+            return false;
+        };
+        env.signatures.iter().any(|sig| {
+            keys.iter()
+                .any(|vk| crate::attestation::verify_with_key(&env, &sig.keyid, *vk).is_ok())
+        })
+    })
+}
+
 /// Verify a `.treeship` package locally.
 ///
 /// Returns a list of check results. All must pass for the package to be valid.
@@ -892,7 +918,7 @@ pub fn verify_package_with_options(
     verify_stapled_anchors(pkg_dir, &receipt, trust, &mut checks);
     let (body_bound, vouched) =
         verify_receipt_binding(pkg_dir, &receipt, structural_only, &sealed, &mut checks);
-    push_signer_trust(
+    let authenticated = push_signer_trust(
         pkg_dir,
         &sealed.signers,
         vouched.as_ref(),
@@ -908,6 +934,7 @@ pub fn verify_package_with_options(
             .into_iter()
             .map(|g| g.keyid),
     );
+    push_chain_completeness(&receipt, &sealed, &authenticated, &mut checks);
     push_approval_signer(pkg_dir, &approvers, trust, &mut checks);
     push_key_id_collisions(pkg_dir, trust, &mut checks);
     push_approval_evidence(pkg_dir, &receipt, structural_only, &mut checks);
@@ -2023,6 +2050,111 @@ fn push_approval_evidence(
     }
 }
 
+/// `chain_completeness`: sealed artifacts that are not on the chain. One
+/// that a signed reference inside the sealed set accounts for is bound (W1-13,
+/// CLI-18): an approval whose nonce a chained action consumes in its signed
+/// `approvalNonce`; a participant whose row passed (bound to a sealed
+/// invitation and countersigned by its issuer); the invitation such a
+/// participant redeems. The referencing signer must be authenticated here
+/// (pinned, own, or vouched by the session.close), so an attacker's own
+/// signed action cannot vouch for a smuggled approval. Package order stays
+/// unproven either way, and the row says so. Unbound ones WARN (`--strict`
+/// fails them).
+fn push_chain_completeness(
+    receipt: &SessionReceipt,
+    sealed: &SealedSet,
+    authenticated: &std::collections::BTreeSet<String>,
+    checks: &mut Vec<VerifyCheck>,
+) {
+    let unchained: Vec<&str> = receipt
+        .artifacts
+        .iter()
+        .filter(|a| a.unchained)
+        .map(|a| a.artifact_id.as_str())
+        .collect();
+    if unchained.is_empty() {
+        return;
+    }
+    let consumed_by_trusted = |nonce: &str| {
+        sealed
+            .consumers
+            .iter()
+            .any(|(n, k)| n == nonce && authenticated.contains(k))
+    };
+    let bound = |id: &str| -> Option<&'static str> {
+        if sealed
+            .approvals
+            .iter()
+            .any(|(a, n)| a == id && consumed_by_trusted(n))
+        {
+            return Some("approval nonce");
+        }
+        if sealed
+            .participants
+            .iter()
+            .any(|(p, _, host)| p == id && authenticated.contains(host))
+        {
+            return Some("countersigned participant");
+        }
+        if sealed
+            .participants
+            .iter()
+            .any(|(_, inv, host)| inv == id && authenticated.contains(host))
+        {
+            return Some("redeemed invitation");
+        }
+        // The host's signed record that a bound participant answered its
+        // live challenge, for this session.
+        if sealed.liveness.iter().any(|(l, part, sess, k)| {
+            l == id
+                && sess == &receipt.session.id
+                && authenticated.contains(k)
+                && sealed
+                    .participants
+                    .iter()
+                    .any(|(p, _, host)| p == part && authenticated.contains(host))
+        }) {
+            return Some("participant liveness");
+        }
+        None
+    };
+    let (bound_ids, loose): (Vec<&str>, Vec<&str>) =
+        unchained.iter().partition(|id| bound(id).is_some());
+    let order =
+        "their position relative to the chain is the signer's claim only (package order unproven)";
+    if loose.is_empty() {
+        let how: std::collections::BTreeSet<&str> =
+            bound_ids.iter().filter_map(|id| bound(id)).collect();
+        checks.push(VerifyCheck::pass(
+            "chain_completeness",
+            &format!(
+                "{} sealed artifact(s) are not chained but are bound by signed references from authenticated signers ({}): {}; {order}",
+                bound_ids.len(),
+                how.into_iter().collect::<Vec<_>>().join(", "),
+                bound_ids.join(", ")
+            ),
+        ));
+    } else {
+        let also = if bound_ids.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "; {} more are bound by signed references ({})",
+                bound_ids.len(),
+                bound_ids.join(", ")
+            )
+        };
+        checks.push(VerifyCheck::warn(
+            "chain_completeness",
+            &format!(
+                "{} sealed artifact(s) were signed during the session but never chained onto it, and nothing an authenticated signer signed accounts for them ({}); signed and sealed, but {order}{also}",
+                loose.len(),
+                loose.join(", ")
+            ),
+        ));
+    }
+}
+
 /// `approval_signer`: the keys that signed sealed approvals. Pinned or this
 /// ship's own: PASS. Otherwise WARN naming the pin (`--strict` fails it, and
 /// [`package_verdict`] caps the verdict at `SignaturesPass`). A bad approval
@@ -2094,9 +2226,9 @@ fn push_signer_trust(
     vouched: Option<&Vouched>,
     trust: &crate::trust::TrustRootStore,
     checks: &mut Vec<VerifyCheck>,
-) {
+) -> std::collections::BTreeSet<String> {
     if signers.is_empty() {
-        return;
+        return Default::default();
     }
     let keys = package_verifying_keys(pkg_dir);
     // A signer whose key cannot be looked up is not trusted.
@@ -2202,6 +2334,11 @@ fn push_signer_trust(
             ),
         ));
     }
+    signers
+        .iter()
+        .filter(|k| authenticated(k))
+        .cloned()
+        .collect()
 }
 
 /// What the per-artifact pass established: the keys whose signatures
@@ -2218,6 +2355,17 @@ struct SealedSet {
     closes: Vec<SealedClose>,
     /// Verified `session.start` actions.
     starts: Vec<SealedClose>,
+    /// Verified approval envelopes: (artifact id, signed nonce).
+    approvals: Vec<(String, String)>,
+    /// Verified, chained actions that consume an approval: (signed
+    /// approvalNonce, signer key id).
+    consumers: Vec<(String, String)>,
+    /// Participants whose row passed: (artifact id, invitation_ref, host key
+    /// id).
+    participants: Vec<(String, String, String)>,
+    /// Verified `session-liveness` records: (artifact id, participant_ref,
+    /// session_ref, signer key id).
+    liveness: Vec<(String, String, String, String)>,
 }
 
 /// A sealed `session.start` / `session.close` action whose signature, id and
@@ -2367,6 +2515,12 @@ fn verify_sealed_envelopes(
     let mut closes: Vec<SealedClose> = Vec::new();
     let mut starts: Vec<SealedClose> = Vec::new();
     let mut approval_signers: BTreeSet<String> = BTreeSet::new();
+    let mut approvals: Vec<(String, String)> = Vec::new();
+    let mut consumers: Vec<(String, String)> = Vec::new();
+    // (row index, artifact id, invitation_ref, host): kept only if the row
+    // still passes after the redemption count.
+    let mut participant_rows: Vec<(usize, String, String, String)> = Vec::new();
+    let mut liveness: Vec<(String, String, String, String)> = Vec::new();
     // Each sealed id once: the same artifact sealed twice would otherwise
     // pass twice (and, for a participant, count as two joins).
     let mut seen_ids: BTreeSet<&str> = BTreeSet::new();
@@ -2413,7 +2567,13 @@ fn verify_sealed_envelopes(
         if envelope.payload_type == crate::statements::payload_type("session-participant") {
             match verify_sealed_participant(&art_dir, receipt, entry, &envelope, &keys) {
                 Ok(p) => {
-                    signers.insert(p.host_keyid);
+                    signers.insert(p.host_keyid.clone());
+                    participant_rows.push((
+                        checks.len(),
+                        id.clone(),
+                        p.invitation_ref.clone(),
+                        p.host_keyid,
+                    ));
                     let slot = redemptions
                         .entry(p.invitation_ref)
                         .or_insert((p.max_uses, Vec::new()));
@@ -2463,10 +2623,47 @@ fn verify_sealed_envelopes(
                         ),
                     ));
                 } else {
+                    let body = envelope
+                        .payload_bytes()
+                        .ok()
+                        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok());
                     if envelope.payload_type == crate::statements::payload_type("approval") {
                         approval_signers.insert(sig.keyid.clone());
+                        if let Some(n) = body
+                            .as_ref()
+                            .and_then(|v| v.get("nonce"))
+                            .and_then(|n| n.as_str())
+                        {
+                            approvals.push((id.clone(), n.to_string()));
+                        }
                     } else {
                         signers.insert(sig.keyid.clone());
+                        if envelope.payload_type
+                            == crate::statements::payload_type("session-liveness")
+                        {
+                            let field = |k: &str| {
+                                body.as_ref()
+                                    .and_then(|v| v.get(k))
+                                    .and_then(|x| x.as_str())
+                                    .unwrap_or("")
+                                    .to_string()
+                            };
+                            liveness.push((
+                                id.clone(),
+                                field("participant_ref"),
+                                field("session_ref"),
+                                sig.keyid.clone(),
+                            ));
+                        }
+                        if !entry.unchained {
+                            if let Some(n) = body
+                                .as_ref()
+                                .and_then(|v| v.get("approvalNonce"))
+                                .and_then(|n| n.as_str())
+                            {
+                                consumers.push((n.to_string(), sig.keyid.clone()));
+                            }
+                        }
                     }
                     if envelope.payload_type == crate::statements::payload_type("action") {
                         if let Some(v) = envelope
@@ -2570,21 +2767,21 @@ fn verify_sealed_envelopes(
             checks.push(VerifyCheck::pass("chain_linkage", &format!("{} chained artifacts each name the previous one as parent, inside the signature", chained.len())));
         }
     }
-    let unchained: Vec<&str> = receipt
-        .artifacts
-        .iter()
-        .filter(|a| a.unchained)
-        .map(|a| a.artifact_id.as_str())
+    let participants = participant_rows
+        .into_iter()
+        .filter(|(i, ..)| checks[*i].status == VerifyStatus::Pass)
+        .map(|(_, id, inv, host)| (id, inv, host))
         .collect();
-    if !unchained.is_empty() {
-        checks.push(VerifyCheck::warn("chain_completeness", &format!("{} sealed artifact(s) were signed during the session but never chained onto it ({}); signed and sealed, but their order relative to the chain is the signer's claim only", unchained.len(), unchained.join(", "))));
-    }
 
     SealedSet {
         signers,
         approval_signers,
         closes,
         starts,
+        approvals,
+        consumers,
+        participants,
+        liveness,
     }
 }
 

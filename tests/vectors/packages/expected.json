@@ -6,13 +6,7 @@
       "cli_strict": "verified",
       "cli_structural": "structural-pass",
       "receipt_only": "structural-pass",
-      "_note": "CLI-18: under --strict on a second ship two rows fail: chain_completeness (approval statements carry no parent, so the approval is never chained) and replay-local-journal (a stranger has no Approval Use Journal, and --strict promotes that)",
-      "xfail": {
-        "cli_strict": {
-          "task": "W1-13",
-          "got": "failed"
-        }
-      }
+      "_note": "CLI-18 / W1-13: on a second ship that pinned the producer, --strict verifies: the unchained approval is bound by the chained action's signed approvalNonce, and the producer's journal row is not applicable there"
     },
     "honest/basic": {
       "cli": "signatures-pass",
@@ -42,17 +36,11 @@
       "receipt_only": "structural-pass"
     },
     "honest/room-countersigned": {
-      "_note": "CLI-3: invite, join, host-minted challenge, countersign, close on one ship. Under --strict chain_completeness fails: the invitation and the participant are sealed unchained, the same shape as W1-13's approval",
+      "_note": "CLI-3 + W1-13: invite, join, host-minted challenge, countersign, close on one ship. The invitation, participant and liveness record are unchained but bound by signed references, so --strict verifies with the host pinned",
       "cli": "signatures-pass",
       "cli_strict": "verified",
       "cli_structural": "structural-pass",
-      "receipt_only": "structural-pass",
-      "xfail": {
-        "cli_strict": {
-          "task": "W1-13",
-          "got": "failed"
-        }
-      }
+      "receipt_only": "structural-pass"
     },
     "tampered/approval-evidence-deleted": {
       "_note": "Round 3 (embargoed): honest/approval with approvals/ deleted; the close record still binds receipt.json, and approval_evidence fails because the consuming action has no use record",
@@ -208,6 +196,14 @@
       "cli_strict": "failed",
       "cli_structural": "structural-pass",
       "receipt_only": "structural-pass"
+    },
+    "tampered/smuggled-approval": {
+      "_note": "W1-13 condition 1a: honest/approval plus an unchained approval and a chained action consuming its nonce, both signed by a key nobody pinned (tree recomputed with splice.py, record kept). The attacker's own action cannot bind the smuggled approval; cli_strict pins only the producer; --structural runs after the strict pass pinned the producer, so the unvouched signer fails signer_trust there too",
+      "cli": "failed",
+      "cli_strict": "failed",
+      "cli_structural": "failed",
+      "receipt_only": "structural-pass",
+      "pin_keys_from": "honest/approval"
     },
     "tampered/splice-action": {
       "_note": "CLI-4 (#474 security review): session 2's action, signed by the same key with parentId = session 1's last chained artifact, appended to session 1's package with the tree recomputed and record.json deleted. 0.31.9 rates it verified",

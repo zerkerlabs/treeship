@@ -2,8 +2,6 @@
 # CLI-18: the approval-bound package from approval_bound_action, verified by a
 # second ship that has pinned the producer's key. --strict passes: a pinned
 # stranger is exactly who strict mode is for.
-# xfail: W1-13 the approval is never chained, and a stranger has no approval-use journal
-# xfail-match: FAIL (chain_completeness|replay-local-journal)
 . "$(dirname "$0")/lib.sh"
 
 ts init --name flow >/dev/null 2>&1 || fail "init"

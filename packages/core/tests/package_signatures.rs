@@ -724,6 +724,20 @@ fn pack(
     recorder: &Ed25519Signer,
     close: &str,
 ) -> PathBuf {
+    pack_with_uses(dir, arts, keys, recorder, close, vec![], vec![])
+}
+
+/// `pack`, with approval use records and grant envelopes in approvals/, as
+/// `session close` writes them for an approval-bound action.
+fn pack_with_uses(
+    dir: &Path,
+    arts: &[(&Signed, bool)],
+    keys: &[&Ed25519Signer],
+    recorder: &Ed25519Signer,
+    close: &str,
+    uses: Vec<treeship_core::statements::ApprovalUse>,
+    grants: Vec<(String, Vec<u8>)>,
+) -> PathBuf {
     use sha2::{Digest, Sha256};
     use treeship_core::statements::{ReceiptStatement, SubjectRef};
     let entries: Vec<ArtifactEntry> = arts.iter().map(|(s, u)| entry(s, *u)).collect();
@@ -743,6 +757,8 @@ fn pack(
                 )
             })
             .collect(),
+        uses,
+        grants,
         ..ApprovalsBundle::default()
     };
     let pkg = build_package_with_approvals(&receipt, dir, Some(&bundle))
@@ -1027,4 +1043,140 @@ fn an_approval_consuming_action_without_its_use_record_fails() {
     let row = find(&checks, "approval_evidence").expect("approval_evidence row");
     assert_eq!(row.status, VerifyStatus::Fail, "{}", row.detail);
     assert!(row.detail.contains(&consumer.id), "{}", row.detail);
+}
+
+fn sign_consumer(signer: &Ed25519Signer, parent: &str, nonce: &str) -> Signed {
+    let mut stmt = ActionStatement::new("agent://t", "deploy");
+    stmt.parent_id = Some(parent.to_string());
+    stmt.approval_nonce = Some(nonce.to_string());
+    // As `attest action --approval-nonce` writes it: the use record it took.
+    stmt.meta = Some(serde_json::json!({"approval_use_id": "use_0000000000000001"}));
+    let r = sign(&payload_type("action"), &stmt, signer).unwrap();
+    Signed {
+        id: r.artifact_id.clone(),
+        digest: r.digest.clone(),
+        envelope: r.envelope.to_json().unwrap(),
+        signed_at: stmt.timestamp.clone(),
+    }
+}
+
+/// start <- consumer(nonce) <- close by the producer's key, unless
+/// `consumer_key` is given; plus an unchained approval by `approver`.
+fn pack_approval_chain(
+    dir: &Path,
+    producer: &Ed25519Signer,
+    approver: &Ed25519Signer,
+    consumer_key: &Ed25519Signer,
+) -> (PathBuf, String) {
+    let start = sign_start(producer);
+    let appr = sign_approval(approver);
+    let consumer = sign_consumer(consumer_key, &start.id, "0011223344556677");
+    let close = sign_close(producer, &consumer.id, None);
+    let mut keys = vec![producer, approver, consumer_key];
+    keys.dedup_by_key(|k| k.key_id().to_string());
+    // The use record session close writes for the consuming action.
+    let mut rec = treeship_core::statements::ApprovalUse {
+        type_: treeship_core::statements::TYPE_APPROVAL_USE.into(),
+        use_id: "use_0000000000000001".into(),
+        grant_id: appr.id.clone(),
+        grant_digest: appr.digest.clone(),
+        nonce_digest: treeship_core::statements::nonce_digest("0011223344556677"),
+        actor: "agent://t".into(),
+        action: "deploy".into(),
+        subject: String::new(),
+        session_id: Some("ssn_sigtest".into()),
+        action_artifact_id: Some(consumer.id.clone()),
+        receipt_digest: None,
+        use_number: 1,
+        max_uses: Some(1),
+        idempotency_key: None,
+        created_at: "2026-09-26T00:00:00Z".into(),
+        expires_at: None,
+        previous_record_digest: String::new(),
+        record_digest: String::new(),
+        signature: None,
+        signature_alg: None,
+        signing_key_id: None,
+    };
+    rec.record_digest = treeship_core::statements::approval_use_record_digest(&rec);
+    let pkg = pack_with_uses(
+        dir,
+        &[
+            (&start, false),
+            (&appr, true),
+            (&consumer, false),
+            (&close, false),
+        ],
+        &keys,
+        producer,
+        &close.id,
+        vec![rec],
+        vec![(appr.id.clone(), appr.envelope.clone())],
+    );
+    let mut receipt: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(pkg.join("receipt.json")).unwrap()).unwrap();
+    for e in receipt["artifacts"].as_array_mut().unwrap() {
+        if e["artifact_id"] == appr.id.as_str() {
+            e["payload_type"] = payload_type("approval").into();
+        }
+    }
+    std::fs::write(
+        pkg.join("receipt.json"),
+        serde_json::to_vec_pretty(&receipt).unwrap(),
+    )
+    .unwrap();
+    reseal(&pkg, producer, &close.id);
+    (pkg, appr.id)
+}
+
+#[test]
+fn an_approval_consumed_by_the_producer_is_bound_for_chain_completeness() {
+    let tmp = tempfile::tempdir().unwrap();
+    let producer = Ed25519Signer::generate("key_producer").unwrap();
+    let (pkg, appr) = pack_approval_chain(tmp.path(), &producer, &producer, &producer);
+    let checks = verify_package_with_options(&pkg, &pinned_all(&[&producer]), false).unwrap();
+    let row = find(&checks, "chain_completeness").unwrap();
+    assert_eq!(row.status, VerifyStatus::Pass, "{}", row.detail);
+    assert!(
+        row.detail.contains(&appr) && row.detail.contains("approval nonce"),
+        "{}",
+        row.detail
+    );
+    assert!(
+        row.detail.contains("package order unproven"),
+        "{}",
+        row.detail
+    );
+    assert_eq!(
+        treeship_core::session::package_verdict(&checks, false),
+        treeship_core::session::PackageVerdict::Verified
+    );
+    // Nothing pinned: no signer is authenticated, so nothing binds it.
+    let checks = verify_package_with_options(&pkg, &TrustRootStore::empty(), false).unwrap();
+    assert_eq!(
+        find(&checks, "chain_completeness").unwrap().status,
+        VerifyStatus::Warn
+    );
+}
+
+#[test]
+fn an_attackers_own_action_cannot_vouch_for_a_smuggled_approval() {
+    // W1-13 condition 1a: the approval and the action consuming it are both
+    // signed by a key nobody pinned; the producer is pinned.
+    let tmp = tempfile::tempdir().unwrap();
+    let producer = Ed25519Signer::generate("key_producer").unwrap();
+    let mallory = Ed25519Signer::generate("key_mallory").unwrap();
+    let (pkg, appr) = pack_approval_chain(tmp.path(), &producer, &mallory, &mallory);
+    let checks = verify_package_with_options(&pkg, &pinned_all(&[&producer]), false).unwrap();
+    let row = find(&checks, "chain_completeness").unwrap();
+    assert_eq!(row.status, VerifyStatus::Warn, "{}", row.detail);
+    assert!(row.detail.contains(&appr), "{}", row.detail);
+    assert_eq!(
+        find(&checks, "signer_trust").unwrap().status,
+        VerifyStatus::Fail
+    );
+    assert!(matches!(
+        treeship_core::session::package_verdict(&checks, false),
+        treeship_core::session::PackageVerdict::Failed(_)
+    ));
 }
