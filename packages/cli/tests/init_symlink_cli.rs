@@ -108,3 +108,23 @@ fn a_plain_repository_still_initialises() {
     assert!(out.status.success(), "{}", text(&out));
     assert!(repo.work.path().join(".treeship/config.yaml").exists());
 }
+
+#[cfg(unix)]
+#[test]
+fn template_apply_never_writes_through_a_linked_config_yaml() {
+    let repo = Repo::new();
+    let out = repo.run(&["init", "--name", "x"]);
+    assert!(out.status.success(), "{}", text(&out));
+    let victim = repo.home.path().join("authorized_keys");
+    std::fs::write(&victim, b"ssh-ed25519 AAAA victim").unwrap();
+    let yaml = repo.work.path().join(".treeship").join("config.yaml");
+    std::fs::remove_file(&yaml).unwrap();
+    std::os::unix::fs::symlink(&victim, &yaml).unwrap();
+    let out = repo.run(&["template", "apply", "github-contributor"]);
+    assert!(
+        !out.status.success(),
+        "template apply wrote through the link:\n{}",
+        text(&out)
+    );
+    assert_eq!(std::fs::read(&victim).unwrap(), b"ssh-ed25519 AAAA victim");
+}
