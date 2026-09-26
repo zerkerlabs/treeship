@@ -180,10 +180,10 @@ fn finding_8_body_binding_row_agrees_with_the_close_record() {
 }
 
 // ---------------------------------------------------------------------------
-// #13: the pin command a stranger is told to paste runs non-interactively.
+// #13: the pin command a stranger is shown runs once they confirm the key.
 // ---------------------------------------------------------------------------
 #[test]
-fn finding_13_pin_hint_carries_yes() {
+fn finding_13_pin_hint_runs_once_confirmed() {
     let producer = Ws::new();
     let (ok, out) = producer.run(&["session", "start", "--name", "s", "--actor", "agent://a"]);
     assert!(ok, "{out}");
@@ -196,14 +196,20 @@ fn finding_13_pin_hint_carries_yes() {
     let st = row(&v, "signer_trust").unwrap();
     assert_eq!(st["status"], "warn", "{st}");
     let detail = st["detail"].as_str().unwrap();
-    assert!(detail.contains("--kind cert_issuer --yes"), "{detail}");
-    // And the pasted command works.
-    let cmd: Vec<&str> = detail
-        .split("treeship ")
-        .last()
+    // The key comes from the package itself, so the hint names its
+    // fingerprint and leaves out --yes: the reader confirms before pinning
+    // (round-3 review; finding 13 asked for a line that pastes and runs).
+    assert!(detail.contains("--kind cert_issuer  (fp "), "{detail}");
+    assert!(!detail.contains("--yes"), "{detail}");
+    // The pasted command runs once the reader adds its confirmation.
+    let line = detail.split("treeship ").last().unwrap();
+    let mut cmd: Vec<&str> = line
+        .split("  (fp")
+        .next()
         .unwrap()
         .split_whitespace()
         .collect();
+    cmd.push("--yes");
     let (ok, out) = stranger.run(&cmd);
     assert!(ok, "pasted pin command must run: {out}");
 }

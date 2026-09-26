@@ -211,7 +211,9 @@ fn unchained_and_forked_artifacts_are_sealed_and_marked() {
     // stranger's machine. The release smoke on 0.31.2 caught the inverse.
     assert!(stdout.contains("PASS signer_trust"), "{stdout}");
     let report = ws.json(&["session", "report", "--no-upload"]);
-    assert_eq!(report["verification_status"], "warn", "{report}");
+    // The status is package verify's verdict word (verified here, where the
+    // key is this ship's own); the loose artifacts stay listed below.
+    assert_eq!(report["verification_status"], "pass", "{report}");
     let kinds: Vec<&str> = report["warnings"]
         .as_array()
         .unwrap()

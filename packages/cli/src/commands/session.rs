@@ -12,7 +12,7 @@ use treeship_core::{
     session::{
         self, build_package_with_approvals,
         event::{generate_event_id, generate_span_id, generate_trace_id},
-        ApprovalsBundle, EventLog, EventType, ReceiptComposer, SessionEvent,
+        ApprovalsBundle, EventType, ReceiptComposer, SessionEvent,
     },
     statements::{payload_type, ActionStatement, ApprovalStatement, ReceiptStatement, SubjectRef},
     storage::Record,
@@ -22,18 +22,6 @@ use treeship_core::{
 pub use treeship_core::session::SessionManifest;
 
 use crate::{ctx, printer::Printer};
-
-/// Set file permissions to 0600 (owner read/write only) on Unix.
-#[cfg(unix)]
-fn set_restrictive_permissions(path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
-}
-
-#[cfg(not(unix))]
-fn set_restrictive_permissions(_path: &Path) {
-    // No-op on non-unix platforms
-}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -92,14 +80,9 @@ struct CloseLock {
 impl CloseLock {
     fn acquire(ts_dir: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         let lock_path = ts_dir.join("session.close.lock");
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            // Lock file: contents are never read, so never truncate it out
-            // from under a concurrent holder.
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(&lock_path)?;
+        // Lock file: contents are never read, so never truncated out from
+        // under a concurrent holder; never opened through a link either.
+        let file = crate::safe_fs::open_lock_under_treeship(&lock_path)?;
         file.try_lock_exclusive().map_err(|_| {
             "another `treeship session close` is already running\n\n  \
              Wait for it to finish, then run `treeship session status` or `treeship session report`."
@@ -185,15 +168,13 @@ pub fn load_session() -> Option<SessionManifest> {
 pub(crate) fn save_session(manifest: &SessionManifest) -> Result<(), Box<dyn std::error::Error>> {
     let path = session_path().ok_or("no .treeship directory found -- run treeship init first")?;
     let json = serde_json::to_string_pretty(manifest)?;
-    std::fs::write(&path, &json)?;
-    set_restrictive_permissions(&path);
+    crate::safe_fs::write_under_treeship(&path, json.as_bytes(), 0o600)?;
     Ok(())
 }
 
 fn write_last(storage_dir: &str, artifact_id: &str) {
     let last_path = Path::new(storage_dir).join(".last");
-    let _ = std::fs::write(&last_path, artifact_id);
-    set_restrictive_permissions(&last_path);
+    let _ = crate::safe_fs::write_under_treeship(&last_path, artifact_id.as_bytes(), 0o600);
 }
 
 fn read_manifest_at(path: &Path) -> Option<SessionManifest> {
@@ -609,12 +590,11 @@ pub fn start(
 
     let session_path = ts_dir.join("session.json");
     let json = serde_json::to_string_pretty(&manifest)?;
-    std::fs::write(&session_path, &json)?;
-    set_restrictive_permissions(&session_path);
+    crate::safe_fs::write_under_treeship(&session_path, json.as_bytes(), 0o600)?;
 
     // Initialize event log and write session.started event
     let evt_dir = ts_dir.join("sessions").join(&session_id);
-    let event_log = EventLog::open(&evt_dir)?;
+    let event_log = crate::safe_fs::open_event_log(&evt_dir)?;
     let mut evt = base_event(
         &session_id,
         &actor_uri,
@@ -701,7 +681,7 @@ pub fn abandon(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
         now_rfc3339().replace(':', ""),
         session_id
     ));
-    std::fs::create_dir_all(&quarantine)?;
+    crate::safe_fs::create_dir_all_nofollow(&quarantine)?;
 
     let target = quarantine.join(manifest_path.file_name().unwrap_or_default());
     std::fs::rename(&manifest_path, target)?;
@@ -774,7 +754,7 @@ pub fn status(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std
         let elapsed_ms = epoch_ms().saturating_sub(manifest.started_at_ms);
         let evt_dir = session_dir().map(|d| d.join("sessions").join(&manifest.session_id));
         let event_count = evt_dir
-            .and_then(|d| EventLog::open(&d).ok())
+            .and_then(|d| crate::safe_fs::open_event_log(&d).ok())
             .map(|log| log.event_count())
             .unwrap_or(0);
 
@@ -842,7 +822,7 @@ pub fn status(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std
     // Check event log
     let evt_dir = session_dir().map(|d| d.join("sessions").join(&manifest.session_id));
     let event_count = evt_dir
-        .and_then(|d| EventLog::open(&d).ok())
+        .and_then(|d| crate::safe_fs::open_event_log(&d).ok())
         .map(|log| log.event_count())
         .unwrap_or(0);
 
@@ -927,7 +907,7 @@ pub fn watch(_config: Option<&str>, _printer: &Printer) -> Result<(), Box<dyn st
 
     loop {
         // Read events
-        let log = match EventLog::open(&evt_dir) {
+        let log = match crate::safe_fs::open_event_log(&evt_dir) {
             Ok(l) => l,
             Err(_) => {
                 std::thread::sleep(std::time::Duration::from_secs(2));
@@ -1578,9 +1558,10 @@ fn ensure_package_key(
             keys["keys"] = serde_json::json!({ key_id: encoded });
         }
     }
-    std::fs::write(
+    crate::safe_fs::write_under_treeship(
         &path,
-        serde_json::to_vec_pretty(&keys).map_err(|e| e.to_string())?,
+        &serde_json::to_vec_pretty(&keys).map_err(|e| e.to_string())?,
+        0o600,
     )
     .map_err(|e| e.to_string())
 }
@@ -1589,6 +1570,7 @@ fn ensure_package_key(
 /// are copied byte for byte so the receipt digest is unchanged; nothing
 /// is followed through symlinks.
 fn copy_dir_all(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    crate::safe_fs::refuse_symlink(to)?;
     std::fs::create_dir_all(to)?;
     for entry in std::fs::read_dir(from)? {
         let entry = entry?;
@@ -1597,7 +1579,7 @@ fn copy_dir_all(from: &std::path::Path, to: &std::path::Path) -> std::io::Result
         if ty.is_dir() {
             copy_dir_all(&entry.path(), &dest)?;
         } else if ty.is_file() {
-            std::fs::copy(entry.path(), &dest)?;
+            crate::safe_fs::copy_nofollow(&entry.path(), &dest, 0o644)?;
         }
     }
     Ok(())
@@ -1650,7 +1632,7 @@ pub fn close(
 
     // Write session.closed event to the event log
     let evt_dir = ts_dir.join("sessions").join(&manifest.session_id);
-    let event_log = EventLog::open(&evt_dir)?;
+    let event_log = crate::safe_fs::open_event_log(&evt_dir)?;
 
     let mut close_evt = base_event(
         &manifest.session_id,
@@ -1675,7 +1657,7 @@ pub fn close(
     let parent_id = session_chain_head(&ctx, manifest.root_artifact_id.as_deref())
         .or_else(|| resolve_last(&ctx.config.storage_dir));
 
-    let meta = serde_json::json!({
+    let mut meta = serde_json::json!({
         "session_close": true,
         "session_id": manifest.session_id,
         "summary": summary,
@@ -1683,11 +1665,25 @@ pub fn close(
         "duration_ms": elapsed_ms,
     });
 
+    let signer = ctx.keys.default_signer()?;
+    // The close record (session.v1) is signed by the actor's own key when it
+    // has one (`mint_session_record`). A verifier accepts a record only from
+    // this close's signer or from the key this signed close names, so name it
+    // here: otherwise any key a reader happens to trust could re-sign this
+    // session's receipt.
+    let record_signer = crate::commands::attest::resolve_actor_signer(&ctx, &manifest.actor)?;
+    if record_signer.key_id() != signer.key_id() {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+        meta["record_key"] = serde_json::json!({
+            "key_id": record_signer.key_id(),
+            "public_key": format!("ed25519:{}", URL_SAFE_NO_PAD.encode(record_signer.public_key_bytes())),
+        });
+    }
+
     let mut stmt = ActionStatement::new(&manifest.actor, "session.close");
     stmt.parent_id = parent_id.clone();
     stmt.meta = Some(meta);
 
-    let signer = ctx.keys.default_signer()?;
     let pt = payload_type("action");
     let result = sign(&pt, &stmt, signer.as_ref())?;
 
@@ -1968,7 +1964,7 @@ pub fn close(
     // composition failed; the hint logic below skips local-verify in
     // that case rather than printing a path that doesn't exist.
     let pkg_dir = ts_dir.join("sessions");
-    std::fs::create_dir_all(&pkg_dir)?;
+    crate::safe_fs::create_dir_all_nofollow(&pkg_dir)?;
     let mut sealed_pkg_path: Option<std::path::PathBuf> = None;
     let mut sealed_receipt_digest: Option<String> = None;
 
@@ -1979,7 +1975,7 @@ pub fn close(
     // journal, and any covering checkpoint. Quiet on missing journal
     // -- a session without consumed approvals produces an empty bundle
     // and the resulting package omits the `approvals/` dir entirely.
-    let mut approvals = collect_approval_evidence(&ctx, &receipt);
+    let mut approvals = collect_approval_evidence(&ctx, &receipt)?;
     let (sealed_envelopes, signer_keys) = collect_sealed_envelopes(&ctx, &receipt, printer);
     approvals.sealed_envelopes = sealed_envelopes;
     approvals.signer_keys = signer_keys;
@@ -2061,8 +2057,12 @@ pub fn close(
                         .map_err(|e| e.to_string())
                         .and_then(|r| {
                             let bytes = r.envelope.to_json().map_err(|e| e.to_string())?;
-                            std::fs::write(pkg_output.path.join(session::RECORD_FILE), bytes)
-                                .map_err(|e| e.to_string())?;
+                            crate::safe_fs::write_under_treeship(
+                                &pkg_output.path.join(session::RECORD_FILE),
+                                &bytes,
+                                0o644,
+                            )
+                            .map_err(|e| e.to_string())?;
                             // The record is signed with the actor's own key
                             // when it has one, and keys.json was written
                             // before the record existed. A package that
@@ -2277,7 +2277,7 @@ pub fn append_active_session_event(
         None => return Ok(false),
     };
     let evt_dir = ts_dir.join("sessions").join(&manifest.session_id);
-    let event_log = EventLog::open(&evt_dir)?;
+    let event_log = crate::safe_fs::open_event_log(&evt_dir)?;
 
     let actor_uri = actor.unwrap_or(&manifest.actor);
     let a_name = agent_name.unwrap_or("external");
@@ -2342,7 +2342,7 @@ pub fn event(
 
     let ts_dir = session_dir().ok_or("no .treeship directory found")?;
     let evt_dir = ts_dir.join("sessions").join(&manifest.session_id);
-    let event_log = EventLog::open(&evt_dir)?;
+    let event_log = crate::safe_fs::open_event_log(&evt_dir)?;
 
     let actor_uri = actor.unwrap_or(&manifest.actor);
     let host_id = local_host_id();
@@ -3209,18 +3209,10 @@ fn compute_package_manifest_digest(pkg_dir: &Path) -> std::io::Result<String> {
 /// one of "pass" / "warn" / "fail"; warnings is the list of failed
 /// or warning row names + details.
 fn local_verify_summary(pkg_dir: &Path, config: Option<&str>) -> (String, Vec<serde_json::Value>) {
-    use treeship_core::session::{verify_package, verify_package_with_options};
-    // This ship's own keys are trusted here (see package::trust_with_own_keys);
-    // without a workspace, fall back to the pinned roots alone.
-    let verified = match ctx::open(config)
-        .ok()
-        .and_then(|c| super::package::trust_with_own_keys(&c).ok())
-    {
-        Some(trust) => verify_package_with_options(pkg_dir, &trust, false),
-        None => verify_package(pkg_dir),
-    };
-    let checks = match verified {
-        Ok(c) => c,
+    // The same verifier, trust and verdict as `package verify`
+    // (package::default_verdict): this ship's own keys and the pinned roots.
+    let checks = match super::package::default_verdict(pkg_dir, config) {
+        Ok((c, _)) => c,
         Err(_) => {
             return (
                 "fail".into(),
@@ -3234,19 +3226,11 @@ fn local_verify_summary(pkg_dir: &Path, config: Option<&str>) -> (String, Vec<se
     summarize_verify_checks(&checks)
 }
 
-/// Always-on INFORMATIONAL scope caveats: not session-specific problems, so
-/// they are surfaced in `warnings` but must NOT flip a cryptographically-clean
-/// session's top-line verdict to "warn". `receipt_body_binding` states the
-/// (universal) fact that a package binds the artifacts + Merkle root but not
-/// the unsigned narrative — true of every package, so letting it downgrade the
-/// status makes "pass" unreachable and drains the field of meaning.
-const INFORMATIONAL_CHECKS: &[&str] = &["receipt_body_binding"];
-
 /// Reduce a package verify's check list to `(verification_status, warnings)`.
-/// Pure so the status policy is unit-testable. `fail` if any check failed;
-/// `warn` if there is an ACTIONABLE warning (anything not in
-/// `INFORMATIONAL_CHECKS`); else `pass`. Every warn/fail is still listed in
-/// `warnings`, informational or not, so nothing is hidden.
+/// Pure so the status policy is unit-testable. The status is package
+/// verify's verdict (`package_verdict`): verified -> `pass`, signatures-pass
+/// -> `warn`, failed -> `fail`, the same word the dashboard shows. Every
+/// warn/fail row is still listed in `warnings`, so nothing is hidden.
 fn summarize_verify_checks(
     checks: &[treeship_core::session::VerifyCheck],
 ) -> (String, Vec<serde_json::Value>) {
@@ -3267,18 +3251,21 @@ fn summarize_verify_checks(
             }
         }
     }
-    let has_actionable_warn = warnings.iter().any(|w| {
-        w.get("kind")
-            .and_then(|k| k.as_str())
-            .map(|k| !INFORMATIONAL_CHECKS.contains(&k))
-            .unwrap_or(true)
-    });
-    let status = if any_fail {
-        "fail"
-    } else if has_actionable_warn {
-        "warn"
-    } else {
-        "pass"
+    // The status is package verify's verdict, the same word the dashboard
+    // shows: verified -> pass, signatures-pass -> warn, failed -> fail.
+    // Every warn/fail row is still listed in `warnings`; none of them flips
+    // the status on its own.
+    let status = match treeship_core::session::package_verdict(checks, false) {
+        treeship_core::session::PackageVerdict::Verified => "pass",
+        treeship_core::session::PackageVerdict::Failed(reason) => {
+            if !any_fail {
+                warnings.push(serde_json::json!({
+                    "kind": "verdict", "headline": reason, "status": "fail",
+                }));
+            }
+            "fail"
+        }
+        _ => "warn",
     };
     (status.into(), warnings)
 }
@@ -3388,12 +3375,14 @@ fn emit_report_output(
 fn collect_approval_evidence(
     ctx: &ctx::Ctx,
     receipt: &treeship_core::session::SessionReceipt,
-) -> ApprovalsBundle {
+) -> std::io::Result<ApprovalsBundle> {
     let mut bundle = ApprovalsBundle::default();
 
     // Resolve the workspace journal directory; same precedence rule as
-    // attest.rs uses (config_path.parent / journals / approval-use).
-    let journal = Journal::new(ctx.journal_dir());
+    // attest.rs uses (config_path.parent / journals / approval-use). A
+    // linked journal directory is refused here rather than read from
+    // wherever it points.
+    let journal = Journal::new(ctx.journal_dir()?);
 
     // Walk the chain: every action artifact may carry an
     // approval_nonce, and PR 3 stamps approval_use_id into the
@@ -3522,7 +3511,7 @@ fn collect_approval_evidence(
         }
     }
 
-    bundle
+    Ok(bundle)
 }
 
 #[cfg(test)]
@@ -3534,13 +3523,24 @@ mod verify_summary_tests {
     // scope caveat as a WARN check, but its top-line verification_status must
     // still be "pass" — otherwise "pass" is unreachable for every session
     // (0.19.0 shipped it as "warn", which the publish smoke test caught).
+    /// The rows a verified package cannot do without: a signature that
+    /// verified, the close record binding receipt.json, and a trust row.
+    fn verified_rows() -> Vec<VerifyCheck> {
+        vec![
+            VerifyCheck::pass("signature:art_a", "ok"),
+            VerifyCheck::pass("receipt_binding", "ok"),
+            VerifyCheck::pass("signer_trust", "ok"),
+        ]
+    }
+
     #[test]
     fn informational_caveat_alone_stays_pass() {
-        let checks = vec![
+        let mut checks = verified_rows();
+        checks.extend([
             VerifyCheck::pass("merkle_root", "ok"),
             VerifyCheck::pass("determinism", "ok"),
             VerifyCheck::warn("receipt_body_binding", "narrative not signature-bound"),
-        ];
+        ]);
         let (status, warnings) = summarize_verify_checks(&checks);
         assert_eq!(
             status, "pass",
@@ -3551,13 +3551,25 @@ mod verify_summary_tests {
     }
 
     #[test]
-    fn actionable_warn_downgrades_to_warn() {
-        let checks = vec![
+    fn a_non_trust_warning_is_listed_but_the_status_is_the_verdict() {
+        let mut checks = verified_rows();
+        checks.extend([
             VerifyCheck::pass("merkle_root", "ok"),
             VerifyCheck::warn("receipt_body_binding", "caveat"),
             VerifyCheck::warn("reconcile_degraded", "git backstop disabled mid-session"),
-        ];
-        assert_eq!(summarize_verify_checks(&checks).0, "warn");
+        ]);
+        // Same word as the dashboard and package verify: verified.
+        let (status, warnings) = summarize_verify_checks(&checks);
+        assert_eq!(status, "pass");
+        assert!(warnings.iter().any(|w| w["kind"] == "reconcile_degraded"));
+        // An unpinned signer is the verdict's warn.
+        let mut unpinned = checks.clone();
+        for c in unpinned.iter_mut() {
+            if c.name == "signer_trust" {
+                *c = VerifyCheck::warn("signer_trust", "unpinned");
+            }
+        }
+        assert_eq!(summarize_verify_checks(&unpinned).0, "warn");
     }
 
     #[test]
@@ -3567,6 +3579,19 @@ mod verify_summary_tests {
             VerifyCheck::fail("merkle_root", "root mismatch"),
         ];
         assert_eq!(summarize_verify_checks(&checks).0, "fail");
+    }
+
+    #[test]
+    fn nothing_failed_is_not_the_same_as_verified() {
+        // No signature, no close record, no trust row: nothing FAILed, and
+        // this used to read "pass".
+        let checks = vec![
+            VerifyCheck::pass("merkle_root", "ok"),
+            VerifyCheck::warn("receipt_body_binding", "caveat"),
+        ];
+        let (status, warnings) = summarize_verify_checks(&checks);
+        assert_eq!(status, "fail");
+        assert!(warnings.iter().any(|w| w["kind"] == "verdict"));
     }
 }
 

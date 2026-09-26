@@ -1,6 +1,5 @@
 use std::{
-    fs,
-    io::{self, Write},
+    fs, io,
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
 };
@@ -160,6 +159,16 @@ impl Store {
     /// Opens or creates an artifact store at `dir`.
     pub fn open(dir: impl AsRef<Path>) -> Result<Self, StorageError> {
         let dir = dir.as_ref().to_path_buf();
+        // A store directory that is a symlink would put every artifact
+        // wherever the link points. Refused before anything is created.
+        crate::fs_safe::refuse_symlink(&dir).map_err(|e| {
+            io::Error::new(
+                e.kind(),
+                format!(
+                    "{e}. If this link is deliberate (dotfiles), point --config at a config whose storage_dir is the real directory"
+                ),
+            )
+        })?;
         fs::create_dir_all(&dir)?;
 
         let index = read_index(&dir)?;
@@ -336,17 +345,8 @@ fn add_to_index(idx: &mut Index, entry: IndexEntry) {
 }
 
 fn write_600(path: &Path, data: &[u8]) -> Result<(), StorageError> {
-    let mut f = fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(path)?;
-    f.write_all(data)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-    }
+    // Mode 0600 at creation, and never through a link at the file.
+    crate::fs_safe::write_atomic(path, data, 0o600)?;
     Ok(())
 }
 
@@ -393,6 +393,35 @@ mod tests {
 
     fn rm(p: PathBuf) {
         let _ = fs::remove_dir_all(p);
+    }
+
+    /// A store directory that is a link, or an artifact path that is a
+    /// link, is refused; the link target is never written.
+    #[cfg(unix)]
+    #[test]
+    fn linked_store_dir_and_linked_artifact_are_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let shared = dir.path().join("shared");
+        fs::create_dir_all(&shared).unwrap();
+        let link = dir.path().join("store-link");
+        std::os::unix::fs::symlink(&shared, &link).unwrap();
+        assert!(Store::open(&link).is_err());
+
+        let real = dir.path().join("store");
+        let store = Store::open(&real).unwrap();
+        let victim = dir.path().join("victim");
+        fs::write(&victim, b"keep").unwrap();
+        let rec = make_record(
+            "art_0123456789abcdef0123456789abcdef",
+            "application/vnd.treeship.action.v1+json",
+        );
+        let target = store.artifact_path(&rec.artifact_id).unwrap();
+        std::os::unix::fs::symlink(&victim, &target).unwrap();
+        assert!(
+            store.write(&rec).is_err(),
+            "wrote through a linked artifact path"
+        );
+        assert_eq!(fs::read(&victim).unwrap(), b"keep");
     }
 
     #[test]

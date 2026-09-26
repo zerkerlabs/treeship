@@ -6,6 +6,7 @@ mod exit;
 mod otel;
 mod printer;
 mod redact;
+mod safe_fs;
 mod templates;
 mod tui;
 mod validate;
@@ -2983,6 +2984,13 @@ struct TrustAddArgs {
     /// non-interactive use (CI, scripts, JSON output mode).
     #[arg(long)]
     yes: bool,
+
+    /// Replace a root already pinned under this key id with a different
+    /// public key. Without it, trust add refuses: a key id is only a label,
+    /// and silently re-pointing it at another key would make every package
+    /// signed under that id read as the new key's.
+    #[arg(long)]
+    replace: bool,
 }
 
 #[derive(clap::Args)]
@@ -4107,8 +4115,12 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 || commands::verify_external::is_local_path(&a.target)
                 || a.certificate.is_some()
             {
-                let exit =
-                    commands::verify_external::run(&a.target, a.certificate.as_deref(), printer);
+                let exit = commands::verify_external::run(
+                    &a.target,
+                    a.certificate.as_deref(),
+                    cli.config.as_deref(),
+                    printer,
+                );
                 if exit != commands::verify_external::ExternalExit::Ok {
                     std::process::exit(exit.code());
                 }
@@ -4152,6 +4164,8 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 &a.kind,
                 a.label.as_deref(),
                 a.yes,
+                a.replace,
+                cli.config.as_deref(),
                 printer,
             ),
             TrustCommand::Remove(a) => commands::trust::remove(&a.key_id, a.yes, printer),

@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     fs,
-    io::{self, Read, Write},
+    io::{self, Read},
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
 };
@@ -183,6 +183,17 @@ impl Store {
     /// Opens or creates a keystore at `dir`.
     pub fn open(dir: impl AsRef<Path>) -> Result<Self, KeyError> {
         let dir = dir.as_ref().to_path_buf();
+        // A keystore directory that is a symlink would put secret material
+        // wherever the link points (a world-readable /tmp, another user's
+        // directory). Refused before anything is created.
+        crate::fs_safe::refuse_symlink(&dir).map_err(|e| {
+            KeyError::Io(io::Error::new(
+                e.kind(),
+                format!(
+                    "{e}. If this link is deliberate (dotfiles), point --config at a config whose keys_dir is the real directory"
+                ),
+            ))
+        })?;
         fs::create_dir_all(&dir)?;
 
         // Canonicalize the keystore path before deriving the machine key. The
@@ -301,12 +312,7 @@ impl Store {
         {
             return;
         }
-        let _ = fs::write(&path, format!("{current}\n"));
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
-        }
+        let _ = crate::fs_safe::write_atomic(&path, format!("{current}\n").as_bytes(), 0o600);
     }
 
     /// Generates a new Ed25519 keypair, encrypts and stores it.
@@ -1570,21 +1576,16 @@ fn read_or_create_machine_seed(store_dir: &Path) -> Result<String, KeyError> {
     // global path only when the keystore has no usable parent (store_dir is
     // "/" or similar pathological input).
     let target = match local_seed_path.as_ref() {
-        Some(p) => {
-            let _ = fs::create_dir_all(p.parent().unwrap_or(Path::new(".")));
-            p.clone()
-        }
-        None => {
-            let _ = fs::create_dir_all(global_seed_path.parent().unwrap_or(Path::new(".")));
-            global_seed_path.clone()
-        }
+        Some(p) => p.clone(),
+        None => global_seed_path.clone(),
     };
-    fs::write(&target, &seed_hex).map_err(KeyError::Io)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&target, fs::Permissions::from_mode(0o600));
+    // The seed is secret material: never written through a link, and its
+    // directory must not be one either (checked before it is created).
+    if let Some(parent) = target.parent() {
+        crate::fs_safe::refuse_symlink(parent)?;
+        let _ = fs::create_dir_all(parent);
     }
+    crate::fs_safe::write_atomic(&target, seed_hex.as_bytes(), 0o600).map_err(KeyError::Io)?;
     Ok(seed_hex)
 }
 
@@ -1827,12 +1828,9 @@ pub fn derive_machine_key_stable(store_dir: &Path) -> Result<[u8; 32], KeyError>
         .map(std::path::PathBuf::from)
         .map_err(|_| KeyError::Crypto("HOME not set".to_string()))?;
     let seed_dir = home.join(".treeship").join(".internal");
+    crate::fs_safe::refuse_symlink(&seed_dir)?;
     let _ = fs::create_dir_all(&seed_dir);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&seed_dir, fs::Permissions::from_mode(0o700));
-    }
+    let _ = crate::fs_safe::set_mode_nofollow(&seed_dir, 0o700);
 
     let seed_path = seed_dir.join("machine_seed_v2");
     let seed = if seed_path.exists() {
@@ -1843,12 +1841,8 @@ pub fn derive_machine_key_stable(store_dir: &Path) -> Result<[u8; 32], KeyError>
         // fallback. Same OsRng rationale as the v1 seed above.
         OsRng.fill_bytes(&mut bytes);
         let seed_hex = hex_encode(&bytes);
-        fs::write(&seed_path, &seed_hex).map_err(KeyError::Io)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(&seed_path, fs::Permissions::from_mode(0o600));
-        }
+        crate::fs_safe::write_atomic(&seed_path, seed_hex.as_bytes(), 0o600)
+            .map_err(KeyError::Io)?;
         seed_hex
     };
 
@@ -1982,7 +1976,7 @@ impl Store {
             let dir_meta = fs::metadata(&self.dir)?;
             let dir_mode = dir_meta.permissions().mode() & 0o777;
             if dir_mode != 0o700 {
-                fs::set_permissions(&self.dir, fs::Permissions::from_mode(0o700))?;
+                crate::fs_safe::set_mode_nofollow(&self.dir, 0o700)?;
                 changed.push((self.dir.clone(), dir_mode, 0o700));
             }
 
@@ -1994,7 +1988,7 @@ impl Store {
                 }
                 let mode = entry.metadata()?.permissions().mode() & 0o777;
                 if mode != 0o600 {
-                    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+                    crate::fs_safe::set_mode_nofollow(&path, 0o600)?;
                     changed.push((path, mode, 0o600));
                 }
             }
@@ -2012,26 +2006,8 @@ impl Store {
 /// On Unix the mode is set at creation via `OpenOptionsExt::mode` so the
 /// sentinel never has a moment of looser perms. On non-Unix platforms the
 /// file inherits parent ACLs (the keystore dir is owner-scoped already).
-#[cfg(unix)]
 fn open_migration_lock_file(path: &Path) -> Result<fs::File, io::Error> {
-    use std::os::unix::fs::OpenOptionsExt;
-    fs::OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .truncate(false)
-        .mode(0o600)
-        .open(path)
-}
-
-#[cfg(not(unix))]
-fn open_migration_lock_file(path: &Path) -> Result<fs::File, io::Error> {
-    fs::OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .truncate(false)
-        .open(path)
+    crate::fs_safe::open_rw_nofollow(path, 0o600)
 }
 
 /// Atomically write `data` to `path` with owner-only (0o600) permissions on
@@ -2052,97 +2028,10 @@ fn open_migration_lock_file(path: &Path) -> Result<fs::File, io::Error> {
 /// The prior `set_permissions` post-write call is dropped because it was
 /// redundant and gave the appearance (but not the substance) of safety.
 fn write_file_600(path: &Path, data: &[u8]) -> Result<(), KeyError> {
-    // Place the tmp file in the same directory as the final path so the
-    // rename stays on the same filesystem (cross-FS renames are not atomic
-    // and degrade to copy+unlink, defeating the whole point).
-    let tmp_path = path.with_extension("tmp");
-
-    // Best-effort cleanup of any stale tmp from a prior crash before we
-    // start writing. Ignored on error -- if it doesn't exist that's fine,
-    // and if it can't be removed the OpenOptions call below will surface
-    // the underlying error.
-    let _ = fs::remove_file(&tmp_path);
-
-    let write_result: Result<(), KeyError> = (|| {
-        #[cfg(unix)]
-        let open = {
-            use std::os::unix::fs::OpenOptionsExt;
-            fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .mode(0o600)
-                .open(&tmp_path)
-        };
-        #[cfg(not(unix))]
-        let open = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&tmp_path);
-
-        let mut f = open?;
-        f.write_all(data)?;
-        // sync_all flushes both data AND metadata, so on a crash after
-        // the rename, fsck/journal recovery sees the new bytes -- not a
-        // ghost inode with stale content.
-        f.sync_all()?;
-        Ok(())
-    })();
-
-    if let Err(e) = write_result {
-        // Best-effort cleanup so the next write isn't surprised by a
-        // half-written tmp. Errors here are not surfaced: the original
-        // write error is what the caller needs to see.
-        let _ = fs::remove_file(&tmp_path);
-        return Err(e);
-    }
-
-    // Atomic same-filesystem rename. On Unix this is a single
-    // rename(2) syscall guaranteed by POSIX to be atomic with respect
-    // to other observers. On Windows std::fs::rename is implemented
-    // via MoveFileEx with MOVEFILE_REPLACE_EXISTING (atomic on NTFS,
-    // best-effort elsewhere). After this returns Ok, the new bytes are
-    // visible at `path` and the tmp file no longer exists.
-    if let Err(e) = fs::rename(&tmp_path, path) {
-        let _ = fs::remove_file(&tmp_path);
-        return Err(KeyError::Io(e));
-    }
-
-    // fsync the parent directory so the rename's directory-entry update
-    // is itself persisted. The previous code only fsynced the tmp
-    // file's contents (via sync_all on the file handle) -- on ext4/xfs
-    // with default mount options, the rename can return to userspace
-    // before the dirent metadata has been written to the journal. A
-    // power loss in that window leaves the directory entry pointing at
-    // the OLD inode (or, worse, missing entirely if both old and new
-    // were unlinked from the parent), even though both the data bytes
-    // and the rename syscall ostensibly completed. The H1 doc-comment
-    // above promised stronger durability than the code delivered;
-    // fsyncing the parent dir closes that gap.
-    //
-    // Best-effort on Unix: a directory open + sync_all is the standard
-    // pattern (see e.g. SQLite's atomic-commit, leveldb, lmdb). On
-    // platforms where opening a directory for sync isn't supported, we
-    // silently skip -- the rename is still atomic-with-respect-to-
-    // observers, we just don't guarantee crash-durability of the
-    // dirent update.
-    #[cfg(unix)]
-    {
-        if let Some(parent) = path.parent() {
-            // Errors here are non-fatal: the rename succeeded and the
-            // common case (no power loss before the next fs flush) is
-            // correct. We surface a failure to open/sync the dir only
-            // if the rename itself succeeded, since otherwise the
-            // caller would mistake a durability hint for a write
-            // failure. swallow silently rather than return.
-            if let Ok(dir) = fs::File::open(parent) {
-                let _ = dir.sync_all();
-            }
-        }
-    }
-
-    Ok(())
+    // Exclusive random-named temp file in the keystore, mode 0600 at
+    // creation, rename into place; a link at `path` or at any predictable
+    // temp name is never followed.
+    crate::fs_safe::write_atomic(path, data, 0o600).map_err(KeyError::Io)
 }
 
 fn unix_now() -> u64 {
@@ -2297,13 +2186,56 @@ mod tests {
     /// "MAC verification failed -- wrong machine" error on a perfectly good
     /// keystore on the same machine.
     #[cfg(unix)]
+    /// A keystore directory that is a symlink (here, into a shared temp
+    /// directory) is refused before any secret material is written.
     #[test]
-    fn machine_key_stable_across_symlinked_path() {
-        let real = temp_dir_path();
-        fs::create_dir_all(&real).unwrap();
+    #[cfg(unix)]
+    fn a_symlinked_keystore_dir_is_refused() {
+        let shared = temp_dir_path();
+        fs::create_dir_all(&shared).unwrap();
         let link = temp_dir_path();
         fs::create_dir_all(link.parent().unwrap()).unwrap();
-        std::os::unix::fs::symlink(&real, &link).unwrap();
+        std::os::unix::fs::symlink(&shared, &link).unwrap();
+        let err = match Store::open(&link) {
+            Ok(_) => panic!("a linked keystore directory was accepted"),
+            Err(e) => e,
+        };
+        assert!(err.to_string().contains("symlink"), "{err}");
+        assert!(
+            fs::read_dir(&shared).unwrap().next().is_none(),
+            "something was written through the linked keystore"
+        );
+    }
+
+    /// The machine seed path linked elsewhere: refused, target untouched.
+    #[test]
+    #[cfg(unix)]
+    fn a_symlinked_seed_path_is_refused() {
+        let base = temp_dir_path();
+        let keys = base.join(".treeship").join("keys");
+        fs::create_dir_all(&keys).unwrap();
+        let victim = base.join("victim");
+        fs::write(&victim, b"keep").unwrap();
+        // The local seed lives beside the keystore at <store>/../machine_seed.
+        std::os::unix::fs::symlink(&victim, base.join(".treeship").join("machine_seed")).unwrap();
+        let result = Store::open(&keys).and_then(|s| s.generate(true).map(|_| ()));
+        assert!(result.is_err(), "a linked seed path was accepted");
+        assert_eq!(fs::read(&victim).unwrap(), b"keep");
+    }
+
+    #[test]
+    fn machine_key_stable_across_symlinked_path() {
+        // The link is one level above the keystore: a keystore directory
+        // that is itself a symlink is refused (secret material must not
+        // land wherever a link points), but a linked ancestor (a dotfiles
+        // home) is the user's own business and must keep working.
+        let real_parent = temp_dir_path();
+        let real = real_parent.join("keys");
+        fs::create_dir_all(&real).unwrap();
+        let link_parent = temp_dir_path();
+        fs::create_dir_all(link_parent.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&real_parent, &link_parent).unwrap();
+        let link = link_parent.join("keys");
 
         // Mint a default key via the SYMLINK path.
         {
@@ -2335,11 +2267,13 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn legacy_raw_path_key_still_decrypts() {
-        let real = temp_dir_path();
+        let real_parent = temp_dir_path();
+        let real = real_parent.join("keys");
         fs::create_dir_all(&real).unwrap();
-        let link = temp_dir_path();
-        fs::create_dir_all(link.parent().unwrap()).unwrap();
-        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let link_parent = temp_dir_path();
+        fs::create_dir_all(link_parent.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&real_parent, &link_parent).unwrap();
+        let link = link_parent.join("keys");
 
         // Simulate a pre-fix keystore: encrypt a key under the machine key
         // derived from the RAW (symlink) path, bypassing canonicalization.

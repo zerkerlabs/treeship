@@ -365,12 +365,11 @@ pub fn load(agents_dir: &Path, agent_id: &str) -> Result<AgentCard, CardError> {
 /// card itself contains no secrets, only public attribution. The signing
 /// keys behind any registered cert are still in `.treeship/keys/` at 0600.
 pub fn save(agents_dir: &Path, card: &AgentCard) -> Result<(), CardError> {
-    std::fs::create_dir_all(agents_dir)?;
+    crate::safe_fs::create_dir_all_nofollow(agents_dir)?;
     let path = card_path(agents_dir, &card.agent_id);
-    let tmp = path.with_extension("json.tmp");
     let json = serde_json::to_vec_pretty(card)?;
-    std::fs::write(&tmp, json)?;
-    std::fs::rename(&tmp, &path)?;
+    crate::safe_fs::refuse_symlinks_under_treeship(&path)?;
+    crate::safe_fs::write_atomic(&path, &json, 0o600)?;
     Ok(())
 }
 

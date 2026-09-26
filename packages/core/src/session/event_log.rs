@@ -98,6 +98,7 @@ impl EventLog {
     /// count (and rewrites the sidecar) when the sidecar is missing,
     /// short-read, or stale from a crashed previous appender.
     pub fn open(session_dir: &Path) -> Result<Self, EventLogError> {
+        crate::fs_safe::refuse_symlink(session_dir)?;
         std::fs::create_dir_all(session_dir)?;
         let path = session_dir.join("events.jsonl");
         // Read-only. `open` used to call `read_counter_or_recount`, which
@@ -200,10 +201,7 @@ impl EventLog {
             let mut line = serde_json::to_vec(event)?;
             line.push(b'\n');
 
-            let mut file = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&self.path)?;
+            let mut file = crate::fs_safe::open_append_nofollow(&self.path, 0o600)?;
             file.write_all(&line)?;
             file.flush()?;
 
@@ -237,10 +235,7 @@ impl EventLog {
         let mut line = serde_json::to_vec(event)?;
         line.push(b'\n');
 
-        let mut file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)?;
+        let mut file = crate::fs_safe::open_append_nofollow(&self.path, 0o600)?;
         file.write_all(&line)?;
         file.flush()?;
 
@@ -374,18 +369,13 @@ impl EventLog {
 /// should already be scoped to the owning user.
 #[cfg(all(not(target_family = "wasm"), unix))]
 fn open_lock_file(path: &Path) -> Result<std::fs::File, std::io::Error> {
-    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
     use std::os::unix::io::AsRawFd;
 
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        // Explicitly NOT truncating: this is a flock target, and its contents
-        // are irrelevant, but truncating would race a concurrent holder.
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .mode(0o600)
-        .open(path)?;
+    // Explicitly NOT truncating: this is a flock target, and its contents
+    // are irrelevant, but truncating would race a concurrent holder. Never
+    // through a link at the path.
+    let file = crate::fs_safe::open_rw_nofollow(path, 0o600)?;
 
     // Re-tighten if a pre-existing file has loose perms. Use `fchmod` on the
     // open file descriptor rather than `set_permissions(path, ...)` to
@@ -452,11 +442,7 @@ fn nix_uid() -> u32 {
 
 #[cfg(all(not(target_family = "wasm"), not(unix)))]
 fn open_lock_file(path: &Path) -> Result<std::fs::File, std::io::Error> {
-    std::fs::OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .open(path)
+    crate::fs_safe::open_rw_nofollow(path, 0o600)
 }
 
 /// Path of the counter sidecar for a given events.jsonl path.
@@ -549,7 +535,6 @@ fn read_counter_or_recount(events_path: &Path) -> Result<u64, EventLogError> {
 /// secrets but its existence is a session signal worth scoping to the owner.
 #[cfg(not(target_family = "wasm"))]
 fn write_counter(events_path: &Path, count: u64, byte_size: u64) -> Result<(), std::io::Error> {
-    use std::io::Write as _;
     let counter = counter_path(events_path);
     let dir = counter.parent().ok_or_else(|| {
         std::io::Error::new(
@@ -557,40 +542,16 @@ fn write_counter(events_path: &Path, count: u64, byte_size: u64) -> Result<(), s
             "counter path has no parent",
         )
     })?;
+    crate::fs_safe::refuse_symlink(dir)?;
     std::fs::create_dir_all(dir)?;
 
     let mut buf = [0u8; 16];
     buf[0..8].copy_from_slice(&count.to_le_bytes());
     buf[8..16].copy_from_slice(&byte_size.to_le_bytes());
 
-    let tmp = counter.with_extension("count.tmp");
-    {
-        let mut f = open_counter_tmp(&tmp)?;
-        f.write_all(&buf)?;
-        f.sync_all()?;
-    }
-    std::fs::rename(&tmp, &counter)?;
+    // Exclusive random-named temp file, then rename; never through a link.
+    crate::fs_safe::write_atomic(&counter, &buf, 0o600)?;
     Ok(())
-}
-
-#[cfg(all(not(target_family = "wasm"), unix))]
-fn open_counter_tmp(path: &Path) -> Result<std::fs::File, std::io::Error> {
-    use std::os::unix::fs::OpenOptionsExt;
-    std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(path)
-}
-
-#[cfg(all(not(target_family = "wasm"), not(unix)))]
-fn open_counter_tmp(path: &Path) -> Result<std::fs::File, std::io::Error> {
-    std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(path)
 }
 
 #[cfg(test)]
@@ -617,6 +578,25 @@ mod tests {
             artifact_ref: None,
             meta: None,
         }
+    }
+
+    /// A linked events.jsonl is refused; the link target is never appended to.
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_event_log_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let victim = dir.path().join("victim");
+        std::fs::write(&victim, b"keep").unwrap();
+        let session_dir = dir.path().join("ssn_x");
+        std::fs::create_dir_all(&session_dir).unwrap();
+        std::os::unix::fs::symlink(&victim, session_dir.join("events.jsonl")).unwrap();
+        let log = EventLog::open(&session_dir).unwrap();
+        let mut ev = make_event("ssn_x", EventType::SessionStarted);
+        assert!(
+            log.append(&mut ev).is_err(),
+            "appended through a linked events.jsonl"
+        );
+        assert_eq!(std::fs::read(&victim).unwrap(), b"keep");
     }
 
     #[test]

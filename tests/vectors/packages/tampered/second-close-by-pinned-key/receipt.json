@@ -1,0 +1,304 @@
+{
+  "type": "treeship/session-receipt/v1",
+  "schema_version": "1",
+  "session": {
+    "id": "ssn_5135e2b990c2c583",
+    "name": "FORGED",
+    "mode": "auto_workspace",
+    "started_at": "2026-09-25T19:41:13Z",
+    "ended_at": "2026-09-25T19:41:13Z",
+    "status": "completed",
+    "duration_ms": 460,
+    "narrative": {
+      "headline": "FORGED",
+      "summary": "attacker rewrote this after close"
+    },
+    "total_tokens_in": 0,
+    "total_tokens_out": 0
+  },
+  "participants": {
+    "root_agent_instance_id": "operator",
+    "total_agents": 1,
+    "spawned_subagents": 0,
+    "handoffs": 0,
+    "max_depth": 0,
+    "hosts": 1,
+    "tool_runtimes": 0
+  },
+  "hosts": [
+    {
+      "host_id": "host_MacBook-Pro-12_local"
+    }
+  ],
+  "tools": [],
+  "agent_graph": {
+    "nodes": [
+      {
+        "agent_id": "agent://vector",
+        "agent_instance_id": "operator",
+        "agent_name": "treeship-cli",
+        "agent_role": "operator",
+        "host_id": "host_MacBook-Pro-12_local",
+        "depth": 0,
+        "tool_calls": 0,
+        "tokens_in": 0,
+        "tokens_out": 0
+      }
+    ],
+    "edges": []
+  },
+  "timeline": [
+    {
+      "sequence_no": 0,
+      "timestamp": "2026-09-25T19:41:13Z",
+      "event_id": "evt_aa34bbd8c39adf0b",
+      "event_type": "session.started",
+      "agent_instance_id": "operator",
+      "agent_name": "treeship-cli",
+      "host_id": "host_MacBook-Pro-12_local",
+      "summary": "Session started"
+    },
+    {
+      "sequence_no": 1,
+      "timestamp": "2026-09-25T19:41:13Z",
+      "event_id": "evt_7b280264a4549a36",
+      "event_type": "session.closed",
+      "agent_instance_id": "operator",
+      "agent_name": "treeship-cli",
+      "host_id": "host_MacBook-Pro-12_local",
+      "summary": "vector"
+    }
+  ],
+  "side_effects": {
+    "files_read": [],
+    "files_written": [],
+    "ports_opened": [],
+    "network_connections": [],
+    "processes": [],
+    "tool_invocations": []
+  },
+  "artifacts": [
+    {
+      "artifact_id": "art_05fdb25e2e2528cdb4df9842d16849a0",
+      "payload_type": "application/vnd.treeship.action.v1+json",
+      "digest": "sha256:05fdb25e2e2528cdb4df9842d16849a09a6f95ecaa2e83a021f29f9acc1235d4",
+      "signed_at": "2026-09-25T19:41:13Z"
+    },
+    {
+      "artifact_id": "art_999a83ba5bc38bfad0f262ec78d48ab4",
+      "payload_type": "application/vnd.treeship.action.v1+json",
+      "digest": "sha256:999a83ba5bc38bfad0f262ec78d48ab4f793daf046813e2eaef1e58e7812c62e",
+      "signed_at": "2026-09-25T19:41:13Z"
+    },
+    {
+      "artifact_id": "art_cb4c7f1cc3118df105f3786ab1c287a8",
+      "payload_type": "application/vnd.treeship.action.v1+json",
+      "digest": "sha256:cb4c7f1cc3118df105f3786ab1c287a8bcd69762069b6288351c8893517e0668",
+      "signed_at": "2026-09-25T19:41:13Z"
+    },
+    {
+      "artifact_id": "art_ac54e1b854cd7229ddc69303d86bbf20",
+      "payload_type": "application/vnd.treeship.action.v1+json",
+      "digest": "sha256:ac54e1b854cd7229ddc69303d86bbf20e3e91f5c3f8e78b6aa7cfe653efd4604",
+      "signed_at": "2026-09-25T19:41:13Z"
+    },
+    {
+      "artifact_id": "art_1f6b035c93f49679632bcb4807fb15d6",
+      "payload_type": "application/vnd.treeship.receipt.v1+json",
+      "digest": "sha256:1f6b035c93f49679632bcb4807fb15d6c0408349fb5e86fd9552ebf41e0e7976",
+      "signed_at": "2026-09-25T19:41:13Z"
+    },
+    {
+      "artifact_id": "art_6a810616cfc4cd1dc801170ea795fb26",
+      "payload_type": "application/vnd.treeship.action.v1+json",
+      "digest": "sha256:6a810616cfc4cd1dc801170ea795fb26ba0d000cdb9571544a972ea2fd05de51",
+      "signed_at": "2026-09-25T19:41:13Z"
+    }
+  ],
+  "proofs": {
+    "signature_count": 6,
+    "signatures_valid": false,
+    "merkle_root_valid": true,
+    "inclusion_proofs_count": 6,
+    "zk_proofs_present": false
+  },
+  "merkle": {
+    "leaf_count": 6,
+    "root": "mroot_ce16a93da6406c386b25b1b10697d287399e8b33970e26fc0c92a39afb3ec093",
+    "inclusion_proofs": [
+      {
+        "artifact_id": "art_05fdb25e2e2528cdb4df9842d16849a0",
+        "leaf_index": 0,
+        "proof": {
+          "leaf_index": 0,
+          "leaf_hash": "9c536811e02b648530cb5d26d02d2769cf5e6e753ddbb63981f200aeb5ad6c03",
+          "path": [
+            {
+              "direction": "Right",
+              "hash": "9a8e6e5debf22c57c27444dd8fc3fd837bd81752189aa87d9162540dbe4c606e"
+            },
+            {
+              "direction": "Right",
+              "hash": "28ad93384b83051e651acc12ea2d5ee0317c7047b8ace7f708594917bbdf28d3"
+            },
+            {
+              "direction": "Right",
+              "hash": "b4b8c879790e2b960db549c6bec5b3e22ab09fbf4b42f19866d6ea970deea1c3"
+            }
+          ],
+          "algorithm": "sha256-rfc9162",
+          "merkle_version": 2
+        }
+      },
+      {
+        "artifact_id": "art_999a83ba5bc38bfad0f262ec78d48ab4",
+        "leaf_index": 1,
+        "proof": {
+          "leaf_index": 1,
+          "leaf_hash": "9a8e6e5debf22c57c27444dd8fc3fd837bd81752189aa87d9162540dbe4c606e",
+          "path": [
+            {
+              "direction": "Left",
+              "hash": "9c536811e02b648530cb5d26d02d2769cf5e6e753ddbb63981f200aeb5ad6c03"
+            },
+            {
+              "direction": "Right",
+              "hash": "28ad93384b83051e651acc12ea2d5ee0317c7047b8ace7f708594917bbdf28d3"
+            },
+            {
+              "direction": "Right",
+              "hash": "b4b8c879790e2b960db549c6bec5b3e22ab09fbf4b42f19866d6ea970deea1c3"
+            }
+          ],
+          "algorithm": "sha256-rfc9162",
+          "merkle_version": 2
+        }
+      },
+      {
+        "artifact_id": "art_cb4c7f1cc3118df105f3786ab1c287a8",
+        "leaf_index": 2,
+        "proof": {
+          "leaf_index": 2,
+          "leaf_hash": "6377d62e406041da4a60fbb0aac5d14094af788a46345bfffe877870d2d8aa71",
+          "path": [
+            {
+              "direction": "Right",
+              "hash": "b3117f820c4e250f8188f5bec040bd20def1dd42498ea1c402cffe5094d0483d"
+            },
+            {
+              "direction": "Left",
+              "hash": "135326f7731ba98aff60849467338bd4b79547c811681286e82de4029d10a299"
+            },
+            {
+              "direction": "Right",
+              "hash": "b4b8c879790e2b960db549c6bec5b3e22ab09fbf4b42f19866d6ea970deea1c3"
+            }
+          ],
+          "algorithm": "sha256-rfc9162",
+          "merkle_version": 2
+        }
+      },
+      {
+        "artifact_id": "art_ac54e1b854cd7229ddc69303d86bbf20",
+        "leaf_index": 3,
+        "proof": {
+          "leaf_index": 3,
+          "leaf_hash": "b3117f820c4e250f8188f5bec040bd20def1dd42498ea1c402cffe5094d0483d",
+          "path": [
+            {
+              "direction": "Left",
+              "hash": "6377d62e406041da4a60fbb0aac5d14094af788a46345bfffe877870d2d8aa71"
+            },
+            {
+              "direction": "Left",
+              "hash": "135326f7731ba98aff60849467338bd4b79547c811681286e82de4029d10a299"
+            },
+            {
+              "direction": "Right",
+              "hash": "b4b8c879790e2b960db549c6bec5b3e22ab09fbf4b42f19866d6ea970deea1c3"
+            }
+          ],
+          "algorithm": "sha256-rfc9162",
+          "merkle_version": 2
+        }
+      },
+      {
+        "artifact_id": "art_1f6b035c93f49679632bcb4807fb15d6",
+        "leaf_index": 4,
+        "proof": {
+          "leaf_index": 4,
+          "leaf_hash": "b7b412b222ecdfd2f89a204e9c8960e382dc507ca9629b523fb1beb47689f0cc",
+          "path": [
+            {
+              "direction": "Right",
+              "hash": "1e7a947da8600be11a1e488964a4b43e6fd2a863ff25ede75acdae68208d1562"
+            },
+            {
+              "direction": "Left",
+              "hash": "208f351c74a74ac862b3242fac739696499e967c021970521ea6122cd4da1060"
+            }
+          ],
+          "algorithm": "sha256-rfc9162",
+          "merkle_version": 2
+        }
+      },
+      {
+        "artifact_id": "art_6a810616cfc4cd1dc801170ea795fb26",
+        "leaf_index": 5,
+        "proof": {
+          "leaf_index": 5,
+          "leaf_hash": "1e7a947da8600be11a1e488964a4b43e6fd2a863ff25ede75acdae68208d1562",
+          "path": [
+            {
+              "direction": "Left",
+              "hash": "b7b412b222ecdfd2f89a204e9c8960e382dc507ca9629b523fb1beb47689f0cc"
+            },
+            {
+              "direction": "Left",
+              "hash": "208f351c74a74ac862b3242fac739696499e967c021970521ea6122cd4da1060"
+            }
+          ],
+          "algorithm": "sha256-rfc9162",
+          "merkle_version": 2
+        }
+      }
+    ],
+    "merkle_version": 2
+  },
+  "render": {
+    "title": "basic",
+    "sections": [
+      {
+        "id": "summary",
+        "label": "Session Summary",
+        "visible": true
+      },
+      {
+        "id": "participants",
+        "label": "Participant Strip",
+        "visible": true
+      },
+      {
+        "id": "agent_graph",
+        "label": "Delegation & Collaboration Graph",
+        "visible": true
+      },
+      {
+        "id": "timeline",
+        "label": "Mission Timeline",
+        "visible": true
+      },
+      {
+        "id": "side_effects",
+        "label": "Side-Effect Ledger",
+        "visible": true
+      },
+      {
+        "id": "proofs",
+        "label": "Proofs Panel",
+        "visible": true
+      }
+    ],
+    "generate_preview": true
+  }
+}

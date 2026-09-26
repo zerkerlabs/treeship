@@ -19,14 +19,14 @@ use crate::{ctx, printer::Printer};
 fn merkle_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
     let home = home::home_dir().ok_or("cannot determine home directory")?;
     let dir = home.join(".treeship").join("merkle");
-    fs::create_dir_all(&dir)?;
+    crate::safe_fs::create_dir_all_nofollow(&dir)?;
     Ok(dir)
 }
 
 /// Returns the checkpoints directory: ~/.treeship/merkle/checkpoints/
 fn checkpoints_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
     let dir = merkle_dir()?.join("checkpoints");
-    fs::create_dir_all(&dir)?;
+    crate::safe_fs::create_dir_all_nofollow(&dir)?;
     Ok(dir)
 }
 
@@ -164,10 +164,10 @@ fn seal_checkpoint(
     let cp_dir = checkpoints_dir()?;
     let filename = format!("{:04}.json", index);
     let cp_json = serde_json::to_vec_pretty(&cp)?;
-    fs::write(cp_dir.join(&filename), &cp_json)?;
+    crate::safe_fs::write_under_treeship(&cp_dir.join(&filename), &cp_json, 0o600)?;
 
     // Save latest.json (copy, not symlink, for portability)
-    fs::write(cp_dir.join("latest.json"), &cp_json)?;
+    crate::safe_fs::write_under_treeship(&cp_dir.join("latest.json"), &cp_json, 0o600)?;
 
     if printer.format == crate::printer::Format::Json {
         // Full-length root and real numbers: the text view shortens the
@@ -313,7 +313,7 @@ pub fn proof(
     // Save proof file
     let proof_json = serde_json::to_vec_pretty(&proof_file)?;
     let out_path = format!("{}.proof.json", artifact_id);
-    fs::write(&out_path, &proof_json)?;
+    crate::safe_fs::write_user_path(std::path::Path::new(&out_path), &proof_json)?;
 
     if printer.format == crate::printer::Format::Json {
         printer.json(&serde_json::json!({

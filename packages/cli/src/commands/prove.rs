@@ -192,7 +192,7 @@ pub fn prove_circuit(
     // Save proof file
     let proof_filename = format!("{}.{}.zkproof", artifact_id, circuit);
     let proof_json = serde_json::to_vec_pretty(&zk_proof)?;
-    std::fs::write(&proof_filename, &proof_json)?;
+    crate::safe_fs::write_user_path(std::path::Path::new(&proof_filename), &proof_json)?;
 
     printer.success(
         "proof generated",

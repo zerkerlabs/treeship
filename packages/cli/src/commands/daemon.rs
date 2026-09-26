@@ -38,12 +38,7 @@ struct FileTimes {
 /// so the loser wiped the winner's pid and left a live daemon nobody
 /// could stop. The pid is written through the locked handle.
 fn acquire_pid_lock(pid_path: &Path) -> Result<std::fs::File, Box<dyn std::error::Error>> {
-    let file = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(pid_path)?;
+    let file = crate::safe_fs::open_rw_nofollow(pid_path, 0o600)?;
 
     #[cfg(unix)]
     {
@@ -56,7 +51,12 @@ fn acquire_pid_lock(pid_path: &Path) -> Result<std::fs::File, Box<dyn std::error
     }
 
     // Set restrictive permissions on PID file
-    set_restrictive_permissions(pid_path);
+    // Mode on the handle we hold, never chmod on a path that could be a link.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = file.set_permissions(std::fs::Permissions::from_mode(0o600));
+    }
 
     Ok(file)
 }
@@ -88,18 +88,6 @@ fn pid_file_locked(pid_path: &Path) -> bool {
         .and_then(|t| parse_pid_line(&t))
         .map(process_alive)
         .unwrap_or(false)
-}
-
-/// Set file permissions to 0600 (owner read/write only) on Unix.
-#[cfg(unix)]
-fn set_restrictive_permissions(path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
-}
-
-#[cfg(not(unix))]
-fn set_restrictive_permissions(_path: &Path) {
-    // No-op on non-unix platforms
 }
 
 // ---------------------------------------------------------------------------
@@ -210,11 +198,7 @@ fn read_start_time(ts: &Path) -> Option<u64> {
 
 fn daemon_log(ts: &Path, msg: &str) {
     let path = log_path(ts);
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    {
+    if let Ok(mut f) = crate::safe_fs::open_append_nofollow(&path, 0o600) {
         let now = epoch_secs();
         let _ = writeln!(f, "[{}] {}", now, msg);
     }
@@ -394,7 +378,7 @@ fn load_active_session(ts: &Path) -> Option<SessionManifest> {
 fn open_active_event_log(ts: &Path) -> Option<(SessionManifest, EventLog)> {
     let manifest = load_active_session(ts)?;
     let evt_dir = ts.join("sessions").join(&manifest.session_id);
-    let log = EventLog::open(&evt_dir).ok()?;
+    let log = crate::safe_fs::open_event_log(&evt_dir).ok()?;
     Some((manifest, log))
 }
 
@@ -574,8 +558,7 @@ fn resolve_last(storage_dir: &str) -> Option<String> {
 
 fn write_last(storage_dir: &str, artifact_id: &str) {
     let last_path = Path::new(storage_dir).join(".last");
-    let _ = std::fs::write(&last_path, artifact_id);
-    set_restrictive_permissions(&last_path);
+    let _ = crate::safe_fs::write_under_treeship(&last_path, artifact_id.as_bytes(), 0o600);
 }
 
 fn epoch_secs() -> u64 {
@@ -848,10 +831,7 @@ fn spawn_background(
     no_push: bool,
 ) -> Result<u32, Box<dyn std::error::Error>> {
     let exe = std::env::current_exe()?;
-    let log = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_path(ts))?;
+    let log = crate::safe_fs::open_append_nofollow(&log_path(ts), 0o600)?;
     let mut cmd = std::process::Command::new(exe);
     cmd.arg("daemon").arg("start").arg("--foreground");
     if no_push {
@@ -1121,7 +1101,13 @@ fn process_proof_queue(ts: &std::path::Path, ctx: &crate::ctx::Ctx) {
         }
 
         // Create lock file before processing
-        if std::fs::write(&lock_path, format!("{}", std::process::id())).is_err() {
+        if crate::safe_fs::write_under_treeship(
+            &lock_path,
+            std::process::id().to_string().as_bytes(),
+            0o600,
+        )
+        .is_err()
+        {
             continue;
         }
 
@@ -1189,7 +1175,7 @@ fn process_proof_queue(ts: &std::path::Path, ctx: &crate::ctx::Ctx) {
                         ),
                     );
                     let dead_dir = ts.join("proof_queue").join("dead");
-                    let _ = std::fs::create_dir_all(&dead_dir);
+                    let _ = crate::safe_fs::create_dir_all_nofollow(&dead_dir);
                     let _ =
                         std::fs::rename(&path, dead_dir.join(path.file_name().unwrap_or_default()));
                 } else {
@@ -1197,9 +1183,10 @@ fn process_proof_queue(ts: &std::path::Path, ctx: &crate::ctx::Ctx) {
                     let mut updated = job.clone();
                     updated["attempts"] = serde_json::json!(attempts);
                     updated["last_error"] = serde_json::json!(e.to_string());
-                    let _ = std::fs::write(
+                    let _ = crate::safe_fs::write_under_treeship(
                         &path,
-                        serde_json::to_vec_pretty(&updated).unwrap_or_default(),
+                        &serde_json::to_vec_pretty(&updated).unwrap_or_default(),
+                        0o600,
                     );
                 }
             }
@@ -1231,7 +1218,7 @@ pub fn enqueue_proof_job_with_root(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ts = ts_dir().ok_or("no .treeship directory found")?;
     let queue_dir = ts.join("proof_queue");
-    std::fs::create_dir_all(&queue_dir)?;
+    crate::safe_fs::create_dir_all_nofollow(&queue_dir)?;
 
     let job = serde_json::json!({
         "session_id": session_id,
@@ -1241,7 +1228,7 @@ pub fn enqueue_proof_job_with_root(
     });
 
     let job_path = queue_dir.join(format!("{}.json", session_id));
-    std::fs::write(&job_path, serde_json::to_vec_pretty(&job)?)?;
+    crate::safe_fs::write_under_treeship(&job_path, &serde_json::to_vec_pretty(&job)?, 0o600)?;
 
     Ok(())
 }

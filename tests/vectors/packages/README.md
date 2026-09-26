@@ -14,11 +14,12 @@ Run:
 ```bash
 bash tests/vectors/packages/run.sh target/debug/treeship     # cli, cli_strict, cli_structural
 cargo test -p treeship-core --test package_vectors            # receipt_only (core-wasm / verify-js)
+(cd packages/verify-js && npx vitest run test/package-vectors.test.ts)  # verify_js, verify_js_pinned
 ```
 
 ## Rules
 
-1. A tampered vector is never `verified` or `signatures-pass`, in any mode.
+1. A tampered vector is never `verified` or `signatures-pass`, in any mode. The one exception is explicit: a vector marked `unpinned_indistinguishable` (a forger's own, self-consistent package) may accept in the unpinned `cli` column only, because with nothing pinned it is byte-for-byte an honest package under an unknown key; its pinned columns (`cli_strict`, `cli_pinned`) must fail.
 2. The receipt-only verifier never says more than `structural-pass`.
 3. `failed` exits nonzero; every other verdict exits 0.
 4. An `xfail` column passes only while it gives exactly its pinned wrong
@@ -42,6 +43,7 @@ input the verifiers have to handle in the field:
 | `honest/legacy-0.24` | treeship 0.24.0 release build | a local 0.24.0 build; packages before 0.31.2 carry no envelopes |
 | `honest/endorse-non-latest`, `tampered/endorsement-parent-edited` | treeship 0.31.9 + W1-1 debug build | branch `fix/W1-1` (endorsements sign `parentId`) |
 | `honest/legacy-endorsement-0.31.9` | treeship 0.31.9 release binary (installed CLI) | the published 0.31.9 release; its endorsement signs no parent |
+| `honest/room-two-ships` | treeship main at `d9221569` (after #499) | the T1 flow `room_two_ships`: host and joiner on separate ships, pending envelope sent as a file |
 
 Each vector is signed by a throwaway key generated in a temp `HOME` by
 `generate.sh`. The keys were discarded; nothing here is a production key.
@@ -55,5 +57,9 @@ the committed vectors alone. Pass vector names to rebuild only those.
 `preview.html` is removed from every vector (optional, ~150 KB, unread by any
 verifier).
 
-The site verifier (Lane C, W0-1/W2-5) and verify-js package mode (W2-6) add
-their own columns to `expected.json` when they land.
+`verify_js` and `verify_js_pinned` are `@treeship/verify`'s `verifyPackage`
+(W2-6), with no key pinned and with the package's own keys pinned:
+`cd packages/verify-js && npx vitest run test/package-vectors.test.ts`. It
+caps a package holding kinds whose rules it does not evaluate (approvals,
+endorsements, rooms) at `structural-pass`, so the room vectors the CLI fails
+read `structural-pass` there, never `signatures-pass`.

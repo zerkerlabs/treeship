@@ -204,7 +204,7 @@ pub fn issue(args: IssueArgs, printer: &Printer) -> Result<(), Box<dyn std::erro
     let ctx = ctx::open(args.config.as_deref())?;
     let signer = ctx.keys.default_signer()?;
     let dir = grants_dir_for(&ctx.config_path);
-    std::fs::create_dir_all(&dir)?;
+    crate::safe_fs::create_dir_all_nofollow(&dir)?;
 
     let parent = match &args.parent {
         // Checked: we are about to delegate from this grant, so an
@@ -296,9 +296,15 @@ pub fn issue(args: IssueArgs, printer: &Printer) -> Result<(), Box<dyn std::erro
     // artifact while claiming to have issued a new one is the "success that did
     // not happen" this verifier exists to refuse.
     let path = grant_path(&dir, &g.grant_id);
+    // `exists()` follows a link, so a dangling link would pass it; the
+    // write itself never follows one.
     let already_existed = path.exists();
     if !already_existed {
-        std::fs::write(&path, serde_json::to_string_pretty(&g)?)?;
+        crate::safe_fs::write_under_treeship(
+            &path,
+            serde_json::to_string_pretty(&g)?.as_bytes(),
+            0o600,
+        )?;
     }
 
     if printer.format == Format::Json {

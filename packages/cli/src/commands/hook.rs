@@ -29,17 +29,6 @@ fn find_project_config() -> Option<PathBuf> {
 }
 
 /// Set file permissions to 0600 (owner read/write only) on Unix.
-#[cfg(unix)]
-fn set_restrictive_permissions(path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
-}
-
-#[cfg(not(unix))]
-fn set_restrictive_permissions(_path: &Path) {
-    // No-op on non-unix platforms
-}
-
 /// Pre-hook: called before a command runs.
 ///
 /// - If no project config, exit silently.
@@ -96,8 +85,11 @@ pub fn pre(command: &str, printer: &Printer) -> Result<(), Box<dyn std::error::E
     });
 
     let pending_path = ts_dir.join(".pending_hook");
-    std::fs::write(&pending_path, serde_json::to_string(&pending_hook)?)?;
-    set_restrictive_permissions(&pending_path);
+    crate::safe_fs::write_under_treeship(
+        &pending_path,
+        serde_json::to_string(&pending_hook)?.as_bytes(),
+        0o600,
+    )?;
 
     Ok(())
 }
@@ -236,8 +228,7 @@ fn resolve_last(storage_dir: &str) -> Option<String> {
 
 fn write_last(storage_dir: &str, artifact_id: &str) {
     let last_path = Path::new(storage_dir).join(".last");
-    let _ = std::fs::write(&last_path, artifact_id);
-    set_restrictive_permissions(&last_path);
+    let _ = crate::safe_fs::write_under_treeship(&last_path, artifact_id.as_bytes(), 0o600);
 }
 
 fn git_head_sha() -> Option<String> {

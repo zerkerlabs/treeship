@@ -1,0 +1,14 @@
+{
+  "type": "treeship/approval-use/v1",
+  "use_id": "use_00000000000000000000000000000002",
+  "grant_id": "art_c8a1f693398ba399ac348ea1df3d7acf",
+  "grant_digest": "art_c8a1f693398ba399ac348ea1df3d7acf",
+  "nonce_digest": "sha256:676b8bb84ce7267dd520deca4811c8f10a53e636352f06987f42fe425acedd80",
+  "actor": "agent://vector",
+  "action": "deploy",
+  "subject": "",
+  "use_number": 2,
+  "created_at": "2026-09-25T19:41:14Z",
+  "previous_record_digest": "sha256:e9e3e6d5b2cc91bb4d21335c1a9658dd3a1d9f6036eacab9c8cd80c4a0c4b997",
+  "record_digest": "sha256:59f695dcfcc89dc56d538f23d8131ff326c8528f2fb22c737ed4976ee2349c38"
+}

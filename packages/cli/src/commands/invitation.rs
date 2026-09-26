@@ -306,7 +306,7 @@ fn parse_restriction(args: &InviteArgs) -> Result<InviteeRestriction, String> {
     unreachable!("count > 0 above");
 }
 
-fn journal_dir_for_ctx(c: &ctx::Ctx) -> PathBuf {
+fn journal_dir_for_ctx(c: &ctx::Ctx) -> std::io::Result<PathBuf> {
     c.journal_dir()
 }
 
@@ -612,7 +612,7 @@ pub fn join(
     // Consume-before-join: write the invitation's nonce into the
     // Approval Use Journal with max_uses=1. A second join attempt with
     // the same invitation fails here via JournalError::MaxUsesExceeded.
-    let j_dir = journal_dir_for_ctx(&c);
+    let j_dir = journal_dir_for_ctx(&c)?;
     let j = Journal::new(&j_dir);
     let use_id = {
         // AUD-24: OS CSPRNG (policy §5), 16 bytes = 128 bits (was 64).
@@ -1017,7 +1017,7 @@ pub fn countersign(
     // consumed the nonce here, which a joiner on another machine never does,
     // and which then let the host countersign any further pending envelope
     // for the same invitation. max_uses is the pinned invitation's.
-    let j = Journal::new(journal_dir_for_ctx(&c));
+    let j = Journal::new(journal_dir_for_ctx(&c)?);
     let nonce_d = nonce_digest(&invitation.nonce);
     let countersign_grant = format!("{}#countersign", stmt.invitation_ref);
     let use_id = {
@@ -1285,7 +1285,10 @@ pub fn answer_challenge(
 
     let default_name = format!("{}.challenge-response.json", args.participant_id);
     let out_path = args.out.as_deref().unwrap_or(&default_name);
-    std::fs::write(out_path, serde_json::to_vec_pretty(&response)?)?;
+    crate::safe_fs::write_user_path(
+        std::path::Path::new(out_path),
+        &serde_json::to_vec_pretty(&response)?,
+    )?;
 
     let format = Format::from_str(&args.format);
     if format == Format::Json {

@@ -326,19 +326,26 @@ pub fn register(
         Some(std::env::current_dir()?.join(format!("{}.agent", safe_name)))
     };
     if let Some(pkg_dir) = &pkg_dir {
+        crate::safe_fs::refuse_symlink(pkg_dir)?;
         std::fs::create_dir_all(pkg_dir)?;
 
         // identity.json
         let identity_json = serde_json::to_string_pretty(&identity)?;
-        std::fs::write(pkg_dir.join("identity.json"), &identity_json)?;
+        crate::safe_fs::write_user_path(&pkg_dir.join("identity.json"), identity_json.as_bytes())?;
 
         // capabilities.json
         let capabilities_json = serde_json::to_string_pretty(&capabilities)?;
-        std::fs::write(pkg_dir.join("capabilities.json"), &capabilities_json)?;
+        crate::safe_fs::write_user_path(
+            &pkg_dir.join("capabilities.json"),
+            capabilities_json.as_bytes(),
+        )?;
 
         // declaration.json
         let declaration_json = serde_json::to_string_pretty(&declaration)?;
-        std::fs::write(pkg_dir.join("declaration.json"), &declaration_json)?;
+        crate::safe_fs::write_user_path(
+            &pkg_dir.join("declaration.json"),
+            declaration_json.as_bytes(),
+        )?;
 
         // certificate.html
         let cert_json = serde_json::to_string_pretty(&certificate)?;
@@ -346,10 +353,10 @@ pub fn register(
         let html = CERTIFICATE_TEMPLATE
             .replace("__CERTIFICATE_JSON__", &safe_json)
             .replace("__FONT_FRAUNCES__", &fraunces_data_uri());
-        std::fs::write(pkg_dir.join("certificate.html"), html.as_bytes())?;
+        crate::safe_fs::write_user_path(&pkg_dir.join("certificate.html"), html.as_bytes())?;
 
         // Also write the full certificate.json
-        std::fs::write(pkg_dir.join("certificate.json"), &full_json)?;
+        crate::safe_fs::write_user_path(&pkg_dir.join("certificate.json"), full_json.as_bytes())?;
     }
 
     // v0.9.8: also write an Agent Card into the workspace card store.
@@ -400,7 +407,9 @@ pub fn register(
                 label: name.to_string(),
                 added_at: now.clone(),
             });
-            trust.save(&TrustRootStore::default_path())?;
+            trust.save(&crate::safe_fs::resolve_home_link(
+                &TrustRootStore::default_path(),
+            )?)?;
         }
     }
 

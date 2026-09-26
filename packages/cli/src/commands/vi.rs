@@ -112,8 +112,8 @@ fn parse_items(items: &[String]) -> Result<Vec<LineItem>, Box<dyn std::error::Er
     Ok(out)
 }
 
-fn journal_for(ctx: &crate::ctx::Ctx) -> Journal {
-    Journal::new(ctx.journal_dir())
+fn journal_for(ctx: &crate::ctx::Ctx) -> std::io::Result<Journal> {
+    Ok(Journal::new(ctx.journal_dir()?))
 }
 
 fn read_last(storage_dir: &str) -> Option<String> {
@@ -124,12 +124,7 @@ fn read_last(storage_dir: &str) -> Option<String> {
 
 fn write_last(storage_dir: &str, artifact_id: &str) {
     let last_path = Path::new(storage_dir).join(".last");
-    let _ = std::fs::write(&last_path, artifact_id);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&last_path, std::fs::Permissions::from_mode(0o600));
-    }
+    let _ = crate::safe_fs::write_under_treeship(&last_path, artifact_id.as_bytes(), 0o600);
 }
 
 fn envelope_payload(env: &Envelope) -> Option<Value> {
@@ -180,7 +175,7 @@ fn merkle_root(ids: &[String]) -> String {
 
 /// The most recent approval use the chain consumed, as its record digest.
 fn latest_approval_use(ctx: &ctx::Ctx, chain: &[Record]) -> Option<(String, String)> {
-    let j = journal_for(ctx);
+    let j = journal_for(ctx).ok()?;
     for rec in chain.iter().rev() {
         let Some(payload) = envelope_payload(&rec.envelope) else {
             continue;
@@ -533,20 +528,23 @@ pub fn attest(a: &AttestArgs<'_>, config: Option<&str>, printer: &Printer) -> Cm
     let bundle = build_l3(&l2, &key, &req)?;
 
     let out = PathBuf::from(a.out);
+    // Credentials land in a directory the caller named; neither it nor any
+    // file in it may be a link elsewhere.
+    crate::safe_fs::refuse_symlink(&out)?;
     std::fs::create_dir_all(&out)?;
-    std::fs::write(out.join("l3a.sdjwt"), bundle.l3a.serialize())?;
-    std::fs::write(out.join("l3b.sdjwt"), bundle.l3b.serialize())?;
-    std::fs::write(
-        out.join("l2-payment.sdjwt"),
-        &bundle.l2_payment_presentation,
+    crate::safe_fs::write_user_path(&out.join("l3a.sdjwt"), bundle.l3a.serialize().as_bytes())?;
+    crate::safe_fs::write_user_path(&out.join("l3b.sdjwt"), bundle.l3b.serialize().as_bytes())?;
+    crate::safe_fs::write_user_path(
+        &out.join("l2-payment.sdjwt"),
+        bundle.l2_payment_presentation.as_bytes(),
     )?;
-    std::fs::write(
-        out.join("l2-checkout.sdjwt"),
-        &bundle.l2_checkout_presentation,
+    crate::safe_fs::write_user_path(
+        &out.join("l2-checkout.sdjwt"),
+        bundle.l2_checkout_presentation.as_bytes(),
     )?;
-    std::fs::write(
-        out.join("attestation.json"),
-        serde_json::to_string_pretty(&claim_v)?,
+    crate::safe_fs::write_user_path(
+        &out.join("attestation.json"),
+        serde_json::to_string_pretty(&claim_v)?.as_bytes(),
     )?;
     let summary = serde_json::json!({
         "status": "ok",
@@ -569,9 +567,9 @@ pub fn attest(a: &AttestArgs<'_>, config: Option<&str>, printer: &Printer) -> Cm
         "constraints": {"checked": cr.checked, "skipped": cr.skipped},
         "files": ["l3a.sdjwt", "l3b.sdjwt", "l2-payment.sdjwt", "l2-checkout.sdjwt", "attestation.json"],
     });
-    std::fs::write(
-        out.join("summary.json"),
-        serde_json::to_string_pretty(&summary)?,
+    crate::safe_fs::write_user_path(
+        &out.join("summary.json"),
+        serde_json::to_string_pretty(&summary)?.as_bytes(),
     )?;
 
     if printer.format == Format::Json {

@@ -9,7 +9,7 @@ use std::{
 
 use serde::Serialize;
 use treeship_core::session::{
-    read_package, render_preview_html, verify_package, SessionReceipt, VerifyStatus,
+    read_package, render_preview_html, SessionReceipt, VerifyCheck, VerifyStatus,
 };
 
 use crate::printer::Printer;
@@ -483,7 +483,8 @@ fn load_sessions(state: &DashboardState) -> Vec<SessionRow> {
             if !path.is_dir() || !path.join("receipt.json").is_file() {
                 continue;
             }
-            if let Some(row) = session_row(&path, &treeship_id, &treeship_name) {
+            let config = root.treeship_dir.join("config.json");
+            if let Some(row) = session_row(&path, &config, &treeship_id, &treeship_name) {
                 rows.push(row);
             }
         }
@@ -498,9 +499,21 @@ fn load_sessions(state: &DashboardState) -> Vec<SessionRow> {
     rows
 }
 
-fn session_row(pkg_dir: &Path, treeship_id: &str, treeship_name: &str) -> Option<SessionRow> {
+fn session_row(
+    pkg_dir: &Path,
+    config: &Path,
+    treeship_id: &str,
+    treeship_name: &str,
+) -> Option<SessionRow> {
     let receipt = read_package(pkg_dir).ok()?;
-    let checks = verify_package(pkg_dir).unwrap_or_default();
+    // The same verifier, trust and verdict word as `package verify`.
+    let (checks, pv) =
+        super::package::default_verdict(pkg_dir, config.to_str()).unwrap_or_else(|e| {
+            (
+                vec![VerifyCheck::fail("package", &e.to_string())],
+                treeship_core::session::PackageVerdict::Failed(e.to_string()),
+            )
+        });
     let pass = checks
         .iter()
         .filter(|c| c.status == VerifyStatus::Pass)
@@ -513,13 +526,7 @@ fn session_row(pkg_dir: &Path, treeship_id: &str, treeship_name: &str) -> Option
         .iter()
         .filter(|c| c.status == VerifyStatus::Fail)
         .count();
-    let verdict = if fail > 0 {
-        "failed"
-    } else if warn > 0 {
-        "verified-with-warnings"
-    } else {
-        "verified"
-    };
+    let verdict = pv.as_str();
 
     let se = &receipt.side_effects;
     let sensitive_reads = sensitive_file_count(se);
@@ -1215,20 +1222,29 @@ fn render_priority_panel(
 }
 
 fn verdict_badge(v: &VerificationSummary) -> String {
-    if v.fail > 0 {
-        format!("<span class=\"badge risk\">{} fail</span>", v.fail)
-    } else if v.warn > 0 {
-        format!("<span class=\"badge warn\">{} warn</span>", v.warn)
-    } else {
-        "<span class=\"badge ok\">verified</span>".into()
+    // The badge is the package verdict word, never a count of rows: a
+    // package with no failed row is not thereby verified.
+    match v.verdict.as_str() {
+        "verified" => "<span class=\"badge ok\">verified</span>".into(),
+        "signatures-pass" => "<span class=\"badge warn\">signatures-pass</span>".into(),
+        _ => "<span class=\"badge risk\">failed</span>".into(),
     }
 }
 
 fn build_status_summary(state: &DashboardState) -> StatusSummary {
     let rows = load_sessions(state);
-    let verified = rows.iter().filter(|r| r.verification.fail == 0).count();
-    let warnings = rows.iter().filter(|r| r.verification.warn > 0).count();
-    let failures = rows.iter().filter(|r| r.verification.fail > 0).count();
+    let verified = rows
+        .iter()
+        .filter(|r| r.verification.verdict == "verified")
+        .count();
+    let warnings = rows
+        .iter()
+        .filter(|r| r.verification.verdict == "signatures-pass")
+        .count();
+    let failures = rows
+        .iter()
+        .filter(|r| r.verification.verdict == "failed")
+        .count();
     let review_items = build_review_items(&rows);
     let capabilities = build_coverage_items(state, &rows);
     let agents = build_agent_work(state, &rows);

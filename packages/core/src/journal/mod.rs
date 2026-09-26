@@ -27,7 +27,7 @@
 //!     many times?" -- everything else stays in the signed grant +
 //!     receipt where it already is.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -216,12 +216,10 @@ fn read_head(j: &Journal) -> Result<Head, JournalError> {
 }
 
 fn write_head(j: &Journal, head: &Head) -> Result<(), JournalError> {
-    fs::create_dir_all(j.heads_dir())?;
+    crate::fs_safe::create_dir_all_below(&j.dir, &j.heads_dir())?;
     let path = j.current_head_path();
-    let tmp = path.with_extension("json.tmp");
     let json = serde_json::to_vec_pretty(head)?;
-    fs::write(&tmp, json)?;
-    fs::rename(&tmp, &path)?;
+    crate::fs_safe::write_atomic(&path, &json, 0o600)?;
     Ok(())
 }
 
@@ -238,13 +236,8 @@ fn with_lock<F, T>(j: &Journal, body: F) -> Result<T, JournalError>
 where
     F: FnOnce() -> Result<T, JournalError>,
 {
-    fs::create_dir_all(j.locks_dir())?;
-    let lock = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(j.lock_path())?;
+    crate::fs_safe::create_dir_all_below(&j.dir, &j.locks_dir())?;
+    let lock = crate::fs_safe::open_rw_nofollow(&j.lock_path(), 0o600)?;
     if lock.try_lock_exclusive().is_err() {
         return Err(JournalError::LockBusy);
     }
@@ -399,14 +392,10 @@ fn record_filename(index: u64, type_: &str, digest: &str) -> String {
 }
 
 fn write_record_use(j: &Journal, index: u64, rec: &ApprovalUse) -> Result<(), JournalError> {
-    fs::create_dir_all(j.records_dir())?;
+    crate::fs_safe::create_dir_all_below(&j.dir, &j.records_dir())?;
     let name = record_filename(index, "approval-use", &rec.record_digest);
     let path = j.records_dir().join(&name);
-    let tmp = path.with_extension("json.tmp");
-    let mut f = File::create(&tmp)?;
-    f.write_all(&serde_json::to_vec_pretty(rec)?)?;
-    f.sync_all()?;
-    fs::rename(&tmp, &path)?;
+    crate::fs_safe::write_atomic(&path, &serde_json::to_vec_pretty(rec)?, 0o600)?;
     Ok(())
 }
 
@@ -415,14 +404,10 @@ fn write_record_revocation(
     index: u64,
     rec: &ApprovalRevocation,
 ) -> Result<(), JournalError> {
-    fs::create_dir_all(j.records_dir())?;
+    crate::fs_safe::create_dir_all_below(&j.dir, &j.records_dir())?;
     let name = record_filename(index, "approval-revocation", &rec.record_digest);
     let path = j.records_dir().join(&name);
-    let tmp = path.with_extension("json.tmp");
-    let mut f = File::create(&tmp)?;
-    f.write_all(&serde_json::to_vec_pretty(rec)?)?;
-    f.sync_all()?;
-    fs::rename(&tmp, &path)?;
+    crate::fs_safe::write_atomic(&path, &serde_json::to_vec_pretty(rec)?, 0o600)?;
     Ok(())
 }
 
@@ -431,14 +416,10 @@ fn write_record_checkpoint(
     index: u64,
     rec: &JournalCheckpoint,
 ) -> Result<(), JournalError> {
-    fs::create_dir_all(j.records_dir())?;
+    crate::fs_safe::create_dir_all_below(&j.dir, &j.records_dir())?;
     let name = record_filename(index, "journal-checkpoint", &rec.record_digest);
     let path = j.records_dir().join(&name);
-    let tmp = path.with_extension("json.tmp");
-    let mut f = File::create(&tmp)?;
-    f.write_all(&serde_json::to_vec_pretty(rec)?)?;
-    f.sync_all()?;
-    fs::rename(&tmp, &path)?;
+    crate::fs_safe::write_atomic(&path, &serde_json::to_vec_pretty(rec)?, 0o600)?;
     Ok(())
 }
 
@@ -459,7 +440,8 @@ fn ensure_meta(j: &Journal) -> Result<(), JournalError> {
         format: "json-records",
     };
     let bytes = serde_json::to_vec_pretty(&meta)?;
-    fs::write(&path, bytes)?;
+    crate::fs_safe::refuse_symlinks_below(&j.dir, &path)?;
+    crate::fs_safe::write_atomic(&path, &bytes, 0o600)?;
     Ok(())
 }
 
@@ -467,21 +449,21 @@ fn ensure_meta(j: &Journal) -> Result<(), JournalError> {
 // Indexes (rebuildable cache)
 // ---------------------------------------------------------------------------
 
-fn append_index(path: &Path, line: &str) -> Result<(), JournalError> {
+fn append_index(j: &Journal, path: &Path, line: &str) -> Result<(), JournalError> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+        crate::fs_safe::create_dir_all_below(&j.dir, parent)?;
     }
-    let mut f = OpenOptions::new().append(true).create(true).open(path)?;
+    let mut f = crate::fs_safe::open_append_nofollow(path, 0o600)?;
     writeln!(f, "{line}")?;
     Ok(())
 }
 
 fn index_grant(j: &Journal, index: u64, grant_id: &str) -> Result<(), JournalError> {
-    append_index(&j.by_grant_path(grant_id), &index.to_string())
+    append_index(j, &j.by_grant_path(grant_id), &index.to_string())
 }
 
 fn index_nonce(j: &Journal, index: u64, nonce_digest: &str) -> Result<(), JournalError> {
-    append_index(&j.by_nonce_path(nonce_digest), &index.to_string())
+    append_index(j, &j.by_nonce_path(nonce_digest), &index.to_string())
 }
 
 fn update_indexes_for_use(j: &Journal, index: u64, rec: &ApprovalUse) -> Result<(), JournalError> {
@@ -947,6 +929,28 @@ mod tests {
         }
     }
 
+    /// A link planted at the temp name an older version used is never
+    /// written through: temp files are random-named and exclusive.
+    #[cfg(unix)]
+    #[test]
+    fn a_planted_temp_link_in_the_journal_is_never_followed() {
+        let dir = tempdir().unwrap();
+        let victim = dir.path().join("victim");
+        fs::write(&victim, b"keep").unwrap();
+        let j = Journal::new(dir.path().join("journal"));
+        fs::create_dir_all(j.heads_dir()).unwrap();
+        let planted = j.current_head_path().with_extension("json.tmp");
+        std::os::unix::fs::symlink(&victim, &planted).unwrap();
+        append_use(&j, sample_use("u1", "g1", "n1", 1)).unwrap();
+        assert_eq!(fs::read(&victim).unwrap(), b"keep");
+        assert!(j.current_head_path().exists());
+        // And a linked head file itself is refused.
+        fs::remove_file(j.current_head_path()).unwrap();
+        std::os::unix::fs::symlink(&victim, j.current_head_path()).unwrap();
+        assert!(append_use(&j, sample_use("u2", "g1", "n2", 2)).is_err());
+        assert_eq!(fs::read(&victim).unwrap(), b"keep");
+    }
+
     #[test]
     fn first_append_creates_layout_and_head() {
         let dir = tempdir().unwrap();
@@ -1119,7 +1123,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let j = Journal::new(dir.path());
         fs::create_dir_all(j.locks_dir()).unwrap();
-        let held = OpenOptions::new()
+        let held = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)

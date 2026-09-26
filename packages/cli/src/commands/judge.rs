@@ -228,9 +228,10 @@ fn resolve(
         hub_url: None,
         anchors: Vec::new(),
     })?;
-    let _ = std::fs::write(
-        Path::new(&ctx.config.storage_dir).join(".last"),
-        &result.artifact_id,
+    let _ = crate::safe_fs::write_under_treeship(
+        &Path::new(&ctx.config.storage_dir).join(".last"),
+        result.artifact_id.as_bytes(),
+        0o600,
     );
 
     if printer.format == crate::printer::Format::Json {
@@ -447,8 +448,11 @@ pub fn judge(args: JudgeArgs, printer: &Printer) -> Result<(), Box<dyn std::erro
         // The receipt carries only the digest; the caller holds the state.
         // This is the file a verifier needs to re-run the rules judge, or
         // to check that an outside judge was shown what the receipt says.
-        std::fs::write(path, treeship_core::judge::canonical_bytes(&request.state))
-            .map_err(|e| format!("could not write --state-out {path}: {e}"))?;
+        crate::safe_fs::write_user_path(
+            Path::new(path),
+            &treeship_core::judge::canonical_bytes(&request.state),
+        )
+        .map_err(|e| format!("could not write --state-out {path}: {e}"))?;
     }
     let questions_digest = questions_digest(&request.questions);
     let set_by = args.set_by.clone().unwrap_or_else(|| "default".to_string());
@@ -553,7 +557,11 @@ pub fn judge(args: JudgeArgs, printer: &Printer) -> Result<(), Box<dyn std::erro
             receipts.push(result.artifact_id);
         }
         if let Some(last) = receipts.last() {
-            let _ = std::fs::write(Path::new(&ctx.config.storage_dir).join(".last"), last);
+            let _ = crate::safe_fs::write_under_treeship(
+                &Path::new(&ctx.config.storage_dir).join(".last"),
+                last.as_bytes(),
+                0o600,
+            );
         }
     }
 

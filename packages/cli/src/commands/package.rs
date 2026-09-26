@@ -1095,7 +1095,16 @@ pub fn trust_with_own_keys(
     use treeship_core::trust::{TrustRoot, TrustRootKind, TrustRootStore};
     let mut trust = TrustRootStore::open_default_or_empty()?;
     for key in ctx.keys.list()? {
-        if trust.roots().iter().any(|r| r.key_id == key.id) {
+        // Skip only a root that is this very key (same id AND same public
+        // key). A root that reuses an own key id for a different key is not
+        // this ship's key; adding ours alongside it lets key_id_collision
+        // catch the clash instead of our own key silently disappearing.
+        let own_pub = format!("ed25519:{}", URL_SAFE_NO_PAD.encode(&key.public_key));
+        if trust
+            .roots()
+            .iter()
+            .any(|r| r.key_id == key.id && r.public_key == own_pub)
+        {
             continue;
         }
         trust.add(TrustRoot {
@@ -1109,6 +1118,32 @@ pub fn trust_with_own_keys(
     Ok(trust)
 }
 
+/// Verify a package the way `package verify` does by default (no --strict,
+/// no --structural): this ship's own keys and the pinned roots are trusted.
+/// Every other surface that shows a package verdict -- `treeship verify
+/// <package>`, the dashboard, `session report` -- goes through this, so the
+/// four never disagree about a package.
+pub fn default_verdict(
+    path: &Path,
+    config: Option<&str>,
+) -> Result<
+    (
+        Vec<treeship_core::session::VerifyCheck>,
+        treeship_core::session::PackageVerdict,
+    ),
+    Box<dyn std::error::Error>,
+> {
+    let checks = match ctx::open(config)
+        .ok()
+        .and_then(|c| trust_with_own_keys(&c).ok())
+    {
+        Some(trust) => treeship_core::session::verify_package_with_options(path, &trust, false)?,
+        None => verify_package(path)?,
+    };
+    let verdict = treeship_core::session::package_verdict(&checks, false);
+    Ok((checks, verdict))
+}
+
 pub fn verify(
     path: PathBuf,
     config: Option<&str>,
@@ -1117,7 +1152,13 @@ pub fn verify(
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx_opened = ctx::open(config).ok();
-    let mut checks = if structural_only {
+    let mut checks = if let (true, Some(ctx)) = (structural_only, ctx_opened.as_ref()) {
+        // --structural judges trust with the same roots as a full verify,
+        // this ship's own keys included, so a package reusing one of our key
+        // ids is caught (key_id_collision) here too.
+        let trust = trust_with_own_keys(ctx)?;
+        treeship_core::session::verify_package_with_options(&path, &trust, true)?
+    } else if structural_only {
         treeship_core::session::verify_package_structural(&path)?
     } else if let Some(ctx) = ctx_opened.as_ref() {
         // On the producer's own machine, its own signing keys are trusted by
@@ -1135,9 +1176,32 @@ pub fn verify(
     // than failing -- offline / inbox verification of a bare package
     // must keep working.
     if let Some(ctx_opened) = ctx_opened {
-        let journal = treeship_core::journal::Journal::new(ctx_opened.journal_dir());
+        let journal = treeship_core::journal::Journal::new(ctx_opened.journal_dir()?);
         let bundle = treeship_core::session::read_approvals_bundle(&path).unwrap_or_default();
-        if !bundle.uses.is_empty() {
+        // The journal is the producer's own control: only the ship whose
+        // key signed this package's close record can hold it (W1-13). The
+        // approver's ship signed an approval inside the package, not the
+        // session, and has no journal for it; anywhere but the producer the
+        // row is not applicable, and says what was checked instead. It is
+        // not a replay-* row, so --strict does not promote it.
+        let own_keys: Vec<ed25519_dalek::VerifyingKey> = ctx_opened
+            .keys
+            .list()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|k| {
+                let bytes: [u8; 32] = k.public_key.as_slice().try_into().ok()?;
+                ed25519_dalek::VerifyingKey::from_bytes(&bytes).ok()
+            })
+            .collect();
+        let produced_here =
+            !structural_only && treeship_core::session::package_close_signed_by(&path, &own_keys);
+        if !bundle.uses.is_empty() && !produced_here {
+            checks.push(treeship_core::session::VerifyCheck::warn(
+                "local_journal",
+                "not applicable here: the Approval Use Journal is the producer's, on the machine that signed this package. Checked instead: duplicate uses inside the package (replay-package-local), use-record digests, nonce and action binding, chain continuity, and any included checkpoint or hub-org evidence",
+            ));
+        } else if !bundle.uses.is_empty() {
             if !journal.exists() {
                 checks.push(treeship_core::session::VerifyCheck::warn(
                     "replay-local-journal",
@@ -1229,6 +1293,8 @@ pub fn verify(
                 // package without its close record, or an artifact signed
                 // outside the session window is a failure, not a note.
                 || c.name == "chain_completeness"
+                // An approval signed by an approver key nobody pinned.
+                || c.name == "approval_signer"
                 // CLI-1: an endorsement made by 0.31.9 or earlier signs no
                 // parent; chain_linkage warns, and strict cannot count it.
                 || c.name == "chain_linkage"
@@ -1238,7 +1304,8 @@ pub fn verify(
                 || c.name == "approval-use-record-digest"
                 || c.name == "approval-use-nonce-binding"
                 || c.name == "approval-use-action-binding"
-                || c.name == "approval-use-chain-continuity";
+                || c.name == "approval-use-chain-continuity"
+                || c.name == "approval-use-limit";
             if approval_row && c.status == VerifyStatus::Warn {
                 c.status = VerifyStatus::Fail;
                 promoted += 1;
@@ -1282,25 +1349,32 @@ pub fn verify(
     // is `signatures-pass` (audit follow-up AUD-35: the previous line said
     // "package verified" for an unknown signer, exit 0, and the JSON carried
     // no rows at all).
-    let signer_unpinned = checks
+    //
+    // The word comes from treeship_core::session::package_verdict, which
+    // needs rows that PASSED (a signature, receipt_binding, a signer_trust
+    // row), not merely no row that failed: an empty package used to read
+    // `verified` because nothing had failed.
+    let signer_unpinned = !checks
         .iter()
-        .any(|c| c.name == "signer_trust" && c.status == VerifyStatus::Warn);
-    let (verdict, status, message) = if fail_count > 0 {
-        ("failed", "error", "package verification failed")
-    } else if structural_only {
-        (
+        .any(|c| c.name == "signer_trust" && c.status == VerifyStatus::Pass);
+    let pv = treeship_core::session::package_verdict(&checks, structural_only);
+    let failed_message;
+    let (verdict, status, message) = match &pv {
+        treeship_core::session::PackageVerdict::Failed(reason) => {
+            failed_message = format!("package verification failed ({reason})");
+            ("failed", "error", failed_message.as_str())
+        }
+        treeship_core::session::PackageVerdict::StructuralPass => (
             "structural-pass",
             "warning",
             "structural-pass: structure and approvals verified, signatures not checked",
-        )
-    } else if signer_unpinned {
-        (
+        ),
+        treeship_core::session::PackageVerdict::SignaturesPass => (
             "signatures-pass",
             "warning",
             "signatures-pass: every signature verifies, but no signing key is pinned here; pin the producer's key for `verified`",
-        )
-    } else {
-        ("verified", "ok", "package verified")
+        ),
+        treeship_core::session::PackageVerdict::Verified => ("verified", "ok", "package verified"),
     };
 
     if printer.format == crate::printer::Format::Json {
@@ -1329,14 +1403,14 @@ pub fn verify(
             "signer_pinned": !signer_unpinned,
             "checks": rows,
         }));
-        if fail_count > 0 {
+        if verdict == "failed" {
             return Err("package verification failed".into());
         }
         return Ok(());
     }
 
     printer.blank();
-    if fail_count > 0 {
+    if verdict == "failed" {
         printer.warn(message, &[]);
         return Err("package verification failed".into());
     }

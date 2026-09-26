@@ -42,7 +42,10 @@ pub fn save_agent_key(
     created_at: &str,
 ) -> Result<PathBuf, ViError> {
     let dir = vi_keys_dir(keys_dir);
-    std::fs::create_dir_all(&dir)
+    // Sealed secret material: neither the directory nor the file may be a
+    // link elsewhere, and `exists()` follows links, so the write itself
+    // never does.
+    crate::fs_safe::create_dir_all_below(keys_dir, &dir)
         .map_err(|e| ViError::Key(format!("create {}: {e}", dir.display())))?;
     let path = key_path(keys_dir, &key.kid);
     if path.exists() {
@@ -64,13 +67,8 @@ pub fn save_agent_key(
         label: label.map(str::to_string),
     };
     let json = serde_json::to_string_pretty(&rec).map_err(|e| ViError::Key(e.to_string()))?;
-    std::fs::write(&path, json)
+    crate::fs_safe::write_atomic(&path, json.as_bytes(), 0o600)
         .map_err(|e| ViError::Key(format!("write {}: {e}", path.display())))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-    }
     Ok(path)
 }
 

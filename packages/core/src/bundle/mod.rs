@@ -225,7 +225,9 @@ pub fn export(bundle_id: &str, out_path: &Path, storage: &Store) -> Result<(), B
     };
 
     let json = serde_json::to_vec_pretty(&export)?;
-    std::fs::write(out_path, &json)?;
+    // A user-chosen output: never through a link at the path, and a hard
+    // link there is replaced rather than written through.
+    crate::fs_safe::write_atomic(out_path, &json, 0o644)?;
 
     Ok(())
 }

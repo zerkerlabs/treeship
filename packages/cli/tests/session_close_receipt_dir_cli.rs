@@ -213,7 +213,37 @@ fn package_closed_by_own_key_agent_verifies_on_another_machine() {
         "keys.json does not carry the record signer {record_key}: {keys}"
     );
 
-    // A stranger pins the producer's ship key and verifies strictly.
+    // The agent's key signs the record; the ship key signs session.close,
+    // which names the agent's record key inside its signature. A stranger
+    // who pinned only the ship key verifies strictly: the ship vouches for
+    // the record key, and no other pinned key could stand in for it.
+    let close = std::fs::read_dir(copy.join("artifacts"))
+        .unwrap()
+        .filter_map(|e| {
+            let v: Value =
+                serde_json::from_slice(&std::fs::read(e.unwrap().path()).unwrap()).ok()?;
+            let raw = v["payload"].as_str()?.to_string();
+            use base64::Engine;
+            let body: Value = serde_json::from_slice(
+                &base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(raw)
+                    .ok()?,
+            )
+            .ok()?;
+            (body["action"] == "session.close").then_some(body)
+        })
+        .next()
+        .expect("sealed session.close");
+    assert_eq!(
+        close["meta"]["record_key"]["key_id"],
+        record_key.as_str(),
+        "{close}"
+    );
+    assert_eq!(
+        close["meta"]["record_key"]["public_key"], keys["keys"][&record_key],
+        "{close}"
+    );
+
     let (ok, out) = producer.run(&["keys", "export", "--format", "json"]);
     assert!(ok, "{out}");
     let export = first_json(&out);
@@ -242,6 +272,5 @@ fn package_closed_by_own_key_agent_verifies_on_another_machine() {
         "json",
     ]);
     assert!(ok, "{out}");
-    let verdict = first_json(&out);
-    assert_eq!(verdict["verdict"], "verified", "{out}");
+    assert_eq!(first_json(&out)["verdict"], "verified", "{out}");
 }
