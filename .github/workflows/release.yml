@@ -181,16 +181,60 @@ jobs:
 
           echo \"  OK\""
 
+  # SBOM: the Rust dependency graph the binaries are built from, read from
+  # the workspace Cargo.lock (a superset of what the CLI links). Its own job
+  # with read-only permissions and no token, because sbom-action downloads
+  # and runs syft at run time: third-party code never runs in the job that
+  # holds contents/id-token/attestations write. `release` downloads the SBOM
+  # with the binaries, attests it with them, and attaches it.
+  sbom:
+    needs: preflight
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: SPDX document name
+        id: name
+        run: echo "name=treeship-${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate SBOM (SPDX)
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        env:
+          SYFT_SOURCE_NAME: ${{ steps.name.outputs.name }}
+        with:
+          file: Cargo.lock
+          format: spdx-json
+          output-file: treeship-sbom.spdx.json
+          syft-version: v1.52.0
+          github-token: ''
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: treeship-sbom
+          path: treeship-sbom.spdx.json
+          if-no-files-found: error
+
   release:
-    needs: smoke
+    needs: [smoke, sbom]
     runs-on: ubuntu-latest
 
     # Only `release` creates the GitHub Release and uploads assets to it.
     # `contents: write` is scoped here instead of workflow-wide so a
     # compromised step in preflight/build/smoke/publish-* cannot push
     # commits, move tags, or rewrite the release.
+    # id-token + attestations: write let this job sign build-provenance
+    # attestations (Sigstore, via GitHub's OIDC token) for what it publishes.
     permissions:
       contents: write
+      id-token: write
+      attestations: write
 
     outputs:
       sha256_linux_x86_64:    ${{ steps.checksums.outputs.sha256_linux_x86_64 }}
@@ -231,6 +275,21 @@ jobs:
           echo "sha256_darwin_aarch64=$( awk '/treeship-darwin-aarch64/  {print $1}' SHA256SUMS)" >> "$GITHUB_OUTPUT"
           echo "sha256_darwin_x86_64=$(  awk '/treeship-darwin-x86_64/   {print $1}' SHA256SUMS)" >> "$GITHUB_OUTPUT"
 
+      # Build provenance (SLSA, signed through Sigstore) for every file the
+      # release publishes. Runs before the release exists: if signing fails,
+      # nothing is published. Users check it with
+      #   gh attestation verify <file> --repo zerkerlabs/treeship
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            treeship-linux-x86_64/treeship-linux-x86_64
+            treeship-linux-aarch64/treeship-linux-aarch64
+            treeship-darwin-aarch64/treeship-darwin-aarch64
+            treeship-darwin-x86_64/treeship-darwin-x86_64
+            SHA256SUMS
+            treeship-sbom/treeship-sbom.spdx.json
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
@@ -240,6 +299,7 @@ jobs:
             treeship-darwin-aarch64/treeship-darwin-aarch64
             treeship-darwin-x86_64/treeship-darwin-x86_64
             SHA256SUMS
+            treeship-sbom/treeship-sbom.spdx.json
           generate_release_notes: true
 
   publish-npm:
