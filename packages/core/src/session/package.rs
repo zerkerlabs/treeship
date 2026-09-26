@@ -899,7 +899,16 @@ pub fn verify_package_with_options(
         trust,
         &mut checks,
     );
-    push_approval_signer(pkg_dir, &sealed.approval_signers, trust, &mut checks);
+    // Approvers include the signers of grants carried in approvals/ (an
+    // approval minted before the session is not sealed).
+    let mut approvers = sealed.approval_signers.clone();
+    approvers.extend(
+        bundle_grants(pkg_dir, &read_approvals_bundle(pkg_dir).unwrap_or_default())
+            .0
+            .into_iter()
+            .map(|g| g.keyid),
+    );
+    push_approval_signer(pkg_dir, &approvers, trust, &mut checks);
     push_key_id_collisions(pkg_dir, trust, &mut checks);
     push_approval_evidence(pkg_dir, &receipt, structural_only, &mut checks);
     if body_bound {
@@ -1022,6 +1031,78 @@ pub fn verify_package_with_options(
 /// the sealed approval whose signature row passed (`scope.maxActions`), and
 /// both the sealed consuming actions and the use records for its nonce are
 /// counted against it; each consuming action also needs its own use record.
+/// A grant envelope carried in `approvals/grants` (an approval minted before
+/// the session started is there, not in the sealed set), checked like a
+/// sealed artifact: its signature verifies under the key the package names
+/// and its id re-derives from the signed bytes.
+struct BundleGrant {
+    id: String,
+    keyid: String,
+    nonce_digest: Option<String>,
+    max: Option<u32>,
+}
+
+/// The package's grant envelopes: (verified, failed-with-reason).
+fn bundle_grants(pkg_dir: &Path, bundle: &ApprovalsBundle) -> (Vec<BundleGrant>, Vec<String>) {
+    let keys = package_verifying_keys(pkg_dir);
+    let mut ok = Vec::new();
+    let mut bad = Vec::new();
+    for (grant_id, raw) in &bundle.grants {
+        let env = match crate::attestation::Envelope::from_json(raw) {
+            Ok(e) => e,
+            Err(e) => {
+                bad.push(format!("{grant_id}: envelope does not parse ({e})"));
+                continue;
+            }
+        };
+        let Some(sig) = env.signatures.first() else {
+            bad.push(format!("{grant_id}: no signature"));
+            continue;
+        };
+        let Some(vk) = keys.get(&sig.keyid) else {
+            bad.push(format!(
+                "{grant_id}: signed by {}, a key the package does not carry",
+                sig.keyid
+            ));
+            continue;
+        };
+        match crate::attestation::verify_with_key(&env, &sig.keyid, *vk) {
+            Ok(res) if res.artifact_id == *grant_id => {}
+            Ok(res) => {
+                bad.push(format!(
+                    "{grant_id}: the signed bytes re-derive to {}",
+                    res.artifact_id
+                ));
+                continue;
+            }
+            Err(e) => {
+                bad.push(format!("{grant_id}: invalid signature ({e})"));
+                continue;
+            }
+        }
+        let v = env
+            .payload_bytes()
+            .ok()
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok());
+        ok.push(BundleGrant {
+            id: grant_id.clone(),
+            keyid: sig.keyid.clone(),
+            nonce_digest: v
+                .as_ref()
+                .and_then(|v| v.get("nonce"))
+                .and_then(|n| n.as_str())
+                .map(crate::statements::nonce_digest),
+            max: v
+                .as_ref()
+                .and_then(|v| v.get("scope"))
+                .and_then(|s| s.get("maxActions"))
+                .and_then(|m| m.as_u64())
+                .map(|m| m as u32),
+        });
+    }
+    (ok, bad)
+}
+
 fn push_approval_use_limit(
     pkg_dir: &Path,
     receipt: &SessionReceipt,
@@ -1037,6 +1118,9 @@ fn push_approval_use_limit(
     // nonce digest -> (grant id, signed max), and -> consuming action ids
     let mut grants: BTreeMap<String, (String, Option<u32>)> = BTreeMap::new();
     let mut consumers: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    // Two different approvals with one nonce: which limit applies would be
+    // the verifier's guess (the last one read won).
+    let mut shared: Vec<String> = Vec::new();
     for a in &receipt.artifacts {
         let Some(env) = std::fs::read(
             pkg_dir
@@ -1064,10 +1148,13 @@ fn push_approval_use_limit(
                     .and_then(|s| s.get("maxActions"))
                     .and_then(|m| m.as_u64())
                     .map(|m| m as u32);
-                grants.insert(
-                    crate::statements::nonce_digest(n),
-                    (a.artifact_id.clone(), max),
-                );
+                let nd = crate::statements::nonce_digest(n);
+                if let Some((other, _)) = grants.get(&nd) {
+                    if other != &a.artifact_id {
+                        shared.push(format!("{other} and {}", a.artifact_id));
+                    }
+                }
+                grants.insert(nd, (a.artifact_id.clone(), max));
             }
         } else if let Some(n) = v.get("approvalNonce").and_then(|n| n.as_str()) {
             consumers
@@ -1076,10 +1163,31 @@ fn push_approval_use_limit(
                 .push(a.artifact_id.clone());
         }
     }
-    if consumers.is_empty() && bundle.uses.is_empty() {
+    // Grants carried in approvals/ (minted before the session) count exactly
+    // like sealed approvals, by their signed scope; a grant that fails its
+    // signature is a failure, not a warning.
+    let (carried, bad_grants) = bundle_grants(pkg_dir, bundle);
+    for g in carried {
+        let Some(nd) = g.nonce_digest else { continue };
+        if let Some((other, _)) = grants.get(&nd) {
+            if other != &g.id {
+                shared.push(format!("{other} and {}", g.id));
+            }
+            continue;
+        }
+        grants.insert(nd, (g.id, g.max));
+    }
+    if consumers.is_empty() && bundle.uses.is_empty() && bad_grants.is_empty() && shared.is_empty()
+    {
         return;
     }
     let mut problems = Vec::new();
+    for pair in &shared {
+        problems.push(format!("approvals {pair} share one nonce"));
+    }
+    for b in &bad_grants {
+        problems.push(format!("carried grant {b}"));
+    }
     let mut unsigned = Vec::new();
     let nonces: BTreeSet<&String> = consumers
         .keys()

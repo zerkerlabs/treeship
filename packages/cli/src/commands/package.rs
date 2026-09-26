@@ -1132,7 +1132,13 @@ pub fn verify(
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx_opened = ctx::open(config).ok();
-    let mut checks = if structural_only {
+    let mut checks = if let (true, Some(ctx)) = (structural_only, ctx_opened.as_ref()) {
+        // --structural judges trust with the same roots as a full verify,
+        // this ship's own keys included, so a package reusing one of our key
+        // ids is caught (key_id_collision) here too.
+        let trust = trust_with_own_keys(ctx)?;
+        treeship_core::session::verify_package_with_options(&path, &trust, true)?
+    } else if structural_only {
         treeship_core::session::verify_package_structural(&path)?
     } else if let Some(ctx) = ctx_opened.as_ref() {
         // On the producer's own machine, its own signing keys are trusted by

@@ -1,0 +1,13 @@
+{
+  "type": "treeship/approvals-index/v1",
+  "schema_version": 1,
+  "grants": [
+    "art_c8a1f693398ba399ac348ea1df3d7acf"
+  ],
+  "uses": [
+    "use_00000000000000000000000000000001",
+    "use_00000000000000000000000000000002"
+  ],
+  "checkpoints": [],
+  "revocations": []
+}

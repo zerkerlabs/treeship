@@ -179,6 +179,60 @@ fn a_package_reusing_this_ships_own_key_id_cannot_be_pinned_into_trust() {
         "no row may offer to pin the colliding id: {v}"
     );
 
+    // --structural judges trust with this ship's own keys too (round 5, A1).
+    let out = run(
+        verifier.path(),
+        &[
+            "package",
+            "verify",
+            pkg.to_str().unwrap(),
+            "--structural",
+            "--format",
+            "json",
+        ],
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let rows = v["checks"].as_array().unwrap();
+    assert!(
+        rows.iter()
+            .any(|c| c["name"] == "key_id_collision" && c["status"] == "fail"),
+        "{v}"
+    );
+    assert!(
+        !rows.iter().any(|c| c["detail"]
+            .as_str()
+            .unwrap_or("")
+            .contains(&format!("trust add {own_id}"))),
+        "{v}"
+    );
+
+    // The own-key check follows --config, not only the default config (A2):
+    // same ship, reached only through --config with an unrelated HOME.
+    let elsewhere = tempfile::tempdir().unwrap();
+    let cfg = verifier.path().join(".treeship/config.json");
+    let out = Command::new(env!("CARGO_BIN_EXE_treeship"))
+        .env("HOME", elsewhere.path())
+        .env_remove("TREESHIP_CONFIG")
+        .current_dir(elsewhere.path())
+        .args([
+            "trust",
+            "add",
+            own_id.as_str(),
+            fpub.as_str(),
+            "--kind",
+            "cert_issuer",
+            "--yes",
+            "--config",
+        ])
+        .arg(&cfg)
+        .output()
+        .unwrap();
+    assert!(
+        !out.status.success(),
+        "trust add --config must see the ship's own keys"
+    );
+    assert!(String::from_utf8_lossy(&out.stderr).contains("this ship's own key"));
+
     // trust add refuses to re-point the own id, with or without --replace.
     for extra in [&[][..], &["--replace"][..]] {
         let mut args = vec![

@@ -99,6 +99,7 @@ pub fn add(
     label: Option<&str>,
     yes: bool,
     replace: bool,
+    config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let kind = TrustRootKind::parse(kind).ok_or_else(|| {
@@ -181,7 +182,7 @@ pub fn add(
     // trust_with_own_keys), not in trust_roots.json. Pinning one of them to a
     // different public key would let a package that reuses our id read as
     // ours, so refuse it outright -- --replace does not apply to own ids.
-    if let Ok(c) = crate::ctx::open(None) {
+    if let Ok(c) = crate::ctx::open(config) {
         if let Ok(own) = c.keys.list() {
             if let Some(k) = own.iter().find(|k| k.id == key_id) {
                 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};

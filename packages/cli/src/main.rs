@@ -4084,6 +4084,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 a.label.as_deref(),
                 a.yes,
                 a.replace,
+                cli.config.as_deref(),
                 printer,
             ),
             TrustCommand::Remove(a) => commands::trust::remove(&a.key_id, a.yes, printer),
