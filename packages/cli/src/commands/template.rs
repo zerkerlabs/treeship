@@ -387,7 +387,7 @@ pub fn save(name: Option<String>, printer: &Printer) -> Result<(), Box<dyn std::
         .join("\n");
 
     let output = format!("{header}{cleaned}\n");
-    std::fs::write(&out_path, output)?;
+    crate::safe_fs::write_in_cwd(std::path::Path::new(&out_path), output.as_bytes())?;
 
     printer.blank();
     printer.success(
@@ -666,7 +666,9 @@ fn write_project_config(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let cwd = std::env::current_dir()?;
     let ts_dir = cwd.join(".treeship");
-    std::fs::create_dir_all(&ts_dir)?;
+    // Never through a link: a repository's .treeship, or its config.yaml,
+    // may point anywhere.
+    crate::safe_fs::create_dir_all_nofollow(&ts_dir)?;
 
     #[cfg(unix)]
     {
@@ -676,13 +678,7 @@ fn write_project_config(
 
     let yaml = serde_yaml::to_string(project_config)?;
     let config_path = ts_dir.join("config.yaml");
-    std::fs::write(&config_path, yaml)?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o600));
-    }
+    crate::safe_fs::write_nofollow(&config_path, yaml.as_bytes(), 0o600)?;
 
     Ok(())
 }
