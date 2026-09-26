@@ -77,10 +77,10 @@ A minted challenge is valid for 10 minutes from `--challenge-issued-at` by defau
 
 The invitation issuer's public key is embedded in every invitation. Before `treeship session join` honors an invitation, that key must be pinned locally as a `session_host` trust root. Without the pin, a self-signed forgery would verify cryptographically but be quarantined by trust-root enforcement.
 
-Pin a host with:
+Confirm the key with the host out of band first -- a channel the invitation itself didn't travel on -- then pin it:
 
 ```bash
-treeship trust add <key_id> ed25519:<pubkey> --kind session_host --yes
+treeship trust add <key_id> ed25519:<pubkey> --kind session_host
 ```
 
 <Callout type="info">

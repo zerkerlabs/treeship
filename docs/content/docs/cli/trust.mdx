@@ -59,7 +59,7 @@ A key id is a label, not a secret, so re-pointing one at a *different* public ke
 
 This ship's own key ids (the ones `treeship keys export` lists) are a separate case: `trust add` refuses to re-point one of them to a different public key even with `--replace`. A package signed under your own key id by a key that isn't yours is not yours, whatever flag you pass.
 
-`package verify`'s `signer_trust` row prints a ready-to-paste hint for each unpinned key, and that hint no longer appends `--yes`: pasting it now stops at the fingerprint prompt instead of skipping straight past it. (Not every `trust add` hint in the CLI has been updated the same way yet -- `session join`'s SessionHost hint, for one, still prints `--yes`.)
+`package verify`'s `signer_trust` row and `session join`'s SessionHost hint both print a ready-to-paste `trust add` command for an unpinned key, and neither appends `--yes` anymore: pasting the line stops at the fingerprint prompt instead of skipping straight past it. The `session join` hint also says explicitly to confirm the key with the host out of band -- over a channel the invitation itself didn't travel on -- before running it.
 
 `remove` deletes **all** pins for the key ID, across every kind.
 
