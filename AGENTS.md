@@ -137,14 +137,10 @@ treeship/                           # monorepo root
 ├── bridges/
 │   └── mcp/                        # @treeship/mcp (3 tests)
 │
-├── docs/                           # Fumadocs site (45 pages)
-│
-└── web/                            # Next.js -- hub.treeship.dev
-    └── app/
-        ├── verify/[id]/            # public artifact verification page
-        ├── dock/activate/          # device flow auth page
-        └── workspace/              # logged-in artifact browser
+└── docs/                           # Fumadocs site (45 pages)
 ```
+
+There is no `web/` directory in this monorepo. `hub.treeship.dev`'s API is `packages/hub/` (Go, JSON routes under `/v1/...` -- `/v1/artifacts/{id}`, `/v1/workspace/{dockId}`, `/v1/verify/{id}`, `/v1/merkle/...`); if hub.treeship.dev has a browser frontend, it is not part of this repo.
 
 ### Separate repos
 
@@ -164,7 +160,7 @@ treeship-dev/
 | Domain | What | Hosting |
 |--------|------|---------|
 | `treeship.dev` | Marketing site + public /verify/:id | Vercel --treeship-site repo |
-| `hub.treeship.dev` | Next.js workspace app | Server --web/ in monorepo |
+| `hub.treeship.dev` | Workspace app (if it has a frontend, not in this repo) | Not this monorepo |
 | `api.treeship.dev` | Go Hub API | Server --packages/hub/ in monorepo |
 
 The `/verify/:id` public page lives at `treeship.dev/verify/:id` and calls `api.treeship.dev` for artifact data. The WASM verifier runs client-side in the browser --Hub cannot forge a passing result.

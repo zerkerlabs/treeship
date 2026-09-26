@@ -217,7 +217,8 @@ treeship hub status              # Check hub connection state
 treeship bundle create|export    # Create portable bundles
 treeship checkpoint              # Create Merkle checkpoint
 treeship merkle proof|verify     # Merkle operations
-treeship trust-template <name>   # Apply trust template
+treeship init --template <name>  # Start a project from a template
+treeship template apply <name>   # Apply a template to the current project
 treeship ui                      # Interactive TUI dashboard
 treeship otel enable|test        # OpenTelemetry export
 treeship doctor                  # Run diagnostic checks
@@ -284,19 +285,20 @@ pip install -e .
 
 Style: `cargo fmt`, `cargo clippy`, `go fmt`. No em dashes in copy. Direct language, real CLI examples.
 
-## Trust Templates
+## Templates
 
-Built-in templates for common workflows:
+Built-in templates for common workflows. Start a new project with `treeship init --template <name>`, or apply one to the current project with `treeship template apply <name>`; `treeship templates` lists them and `treeship template preview <name>` shows what applying one would change:
 
-| Template | Command | Use Case |
-|----------|---------|----------|
-| github-contributor | `treeship trust-template github-contributor` | OSS commit provenance |
-| ci-cd-pipeline | `treeship trust-template ci-cd-pipeline` | Build/deploy chains |
-| openclaw-agent | `treeship trust-template openclaw-agent` | OpenClaw legal workflows |
-| hermes-agent | `treeship trust-template hermes-agent` | Hermes autonomous agent |
-| claude-code-session | `treeship trust-template claude-code-session` | AI coding audit trail |
-| mcp-agent | `treeship trust-template mcp-agent` | MCP tool attestation |
-| research-agent | `treeship trust-template research-agent` | Multi-step research provenance |
+| Template | Use Case |
+|----------|----------|
+| github-contributor | OSS commit provenance |
+| ci-cd-pipeline | Build/deploy chains |
+| openclaw-agent | OpenClaw legal workflows |
+| hermes-agent | Hermes autonomous agent |
+| claude-code-session | AI coding audit trail |
+| mcp-agent | MCP tool attestation |
+| research-agent | Multi-step research provenance |
+| robinhood-agentic-trading | Receipts and approvals for Robinhood Trading MCP agents |
 
 ## Architecture Principles
 
