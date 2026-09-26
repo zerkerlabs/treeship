@@ -65,8 +65,15 @@ impl Ctx {
 /// 2026-09-22, #11). A workspace with its own keystore under its own
 /// `.treeship/` is unchanged, because there the two locations coincide.
 ///
-/// A journal written at the old location beside a stub is moved once, so
-/// uses recorded before this rule keep counting against the grant.
+/// A journal written at the old location beside the user's own global
+/// config is moved once, so uses recorded before this rule keep counting
+/// against the grant. Nothing is ever moved out of a repository: a
+/// `journals/approval-use` beside a discovered stub could be a link (the
+/// move would plant it inside `~/.treeship`) or a directory of records
+/// somebody else wrote (the move would merge them into the user's own
+/// journal), so migration is gated on the source lying under the global
+/// `.treeship` itself, being a real directory, and passing the anchor
+/// check before the rename.
 ///
 /// Nothing from `.treeship` down to the journal may be a link
 /// (`.treeship/journals -> elsewhere` would put every record, index and
@@ -86,16 +93,42 @@ pub fn journal_dir_for(cfg: &Config, config_path: &std::path::Path) -> std::io::
         }
     };
     let primary = owner.join("journals").join("approval-use");
-    if primary != beside_config && beside_config.is_dir() && !primary.is_dir() {
+    if primary != beside_config
+        && legacy_journal_is_movable(&beside_config)
+        && !primary.is_dir()
+        && crate::safe_fs::refuse_symlinks_under_treeship(&primary).is_ok()
+    {
         if let Some(parent) = primary.parent() {
             let _ = crate::safe_fs::create_dir_all_nofollow(parent);
         }
-        if crate::safe_fs::refuse_symlinks_under_treeship(&primary).is_ok() {
-            let _ = std::fs::rename(&beside_config, &primary);
-        }
+        let _ = std::fs::rename(&beside_config, &primary);
     }
     crate::safe_fs::refuse_symlinks_under_treeship(&primary)?;
     Ok(primary)
+}
+
+/// May the journal at `source` be moved to its owner's location? Only when
+/// it is the user's own legacy layout: a real directory (not a link) under
+/// the global `.treeship`, with nothing linked from that anchor down.
+fn legacy_journal_is_movable(source: &std::path::Path) -> bool {
+    let Some(global) = home::home_dir().map(|h| h.join(".treeship")) else {
+        return false;
+    };
+    let under_global = source.starts_with(&global)
+        || match (
+            global.canonicalize(),
+            source.parent().and_then(|p| p.canonicalize().ok()),
+        ) {
+            (Ok(g), Some(p)) => p.starts_with(g),
+            _ => false,
+        };
+    if !under_global {
+        return false;
+    }
+    let is_real_dir = std::fs::symlink_metadata(source)
+        .map(|m| m.file_type().is_dir())
+        .unwrap_or(false);
+    is_real_dir && crate::safe_fs::refuse_symlinks_under_treeship(source).is_ok()
 }
 
 /// The keystore and the artifact store are judged from the `.treeship`

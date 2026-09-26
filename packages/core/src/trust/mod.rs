@@ -275,6 +275,19 @@ impl TrustRootStore {
     /// a one-time warning is emitted on stderr (deduplicated per
     /// process via `std::sync::Once`) so CI logs show that the trust
     /// boundary moved.
+    /// Is `dir` the user's own `~/.treeship` (by either spelling)?
+    fn is_global_treeship_dir(dir: &Path) -> bool {
+        let Ok(home) = std::env::var("HOME") else {
+            return false;
+        };
+        let global = PathBuf::from(home).join(".treeship");
+        dir == global
+            || matches!(
+                (global.canonicalize(), dir.canonicalize()),
+                (Ok(g), Ok(d)) if g == d
+            )
+    }
+
     pub fn default_path() -> PathBuf {
         warn_trust_path_override_if_set();
         std::env::var_os("TREESHIP_TRUST_ROOTS")
@@ -385,7 +398,12 @@ impl TrustRootStore {
     pub fn save(&self, path: &Path) -> Result<(), TrustRootError> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
-            let _ = crate::fs_safe::set_mode_nofollow(parent, 0o700);
+            // 0700 belongs to ~/.treeship; a parent elsewhere (the target
+            // of the user's own dotfiles link, or TREESHIP_TRUST_ROOTS)
+            // keeps whatever mode the user gave it.
+            if Self::is_global_treeship_dir(parent) {
+                let _ = crate::fs_safe::set_mode_nofollow(parent, 0o700);
+            }
         }
         let file = TrustRootFile {
             version: SCHEMA_VERSION,

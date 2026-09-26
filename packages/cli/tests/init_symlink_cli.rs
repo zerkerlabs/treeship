@@ -520,3 +520,105 @@ fn a_discovered_treeship_that_is_itself_a_link_is_refused() {
     assert!(!out.status.success(), "{}", text(&out));
     assert!(!outside.join("keys2").exists() && !outside.join("art2").exists());
 }
+
+/// A global ship in `home` plus a project stub in `work` that extends it.
+fn stubbed() -> Repo {
+    let repo = Repo::new();
+    let out = repo.run(&["init", "--name", "g"]);
+    assert!(out.status.success(), "{}", text(&out));
+    let ts = repo.work.path().join(".treeship");
+    assert!(
+        ts.join("config.json").exists(),
+        "init did not leave a project stub"
+    );
+    repo
+}
+
+#[cfg(unix)]
+#[test]
+fn a_linked_journal_beside_a_stub_is_never_moved_into_the_global_workspace() {
+    let repo = stubbed();
+    let victim = repo.home.path().join("victimdir");
+    std::fs::create_dir_all(&victim).unwrap();
+    std::fs::write(victim.join("x"), b"keep").unwrap();
+    let journals = repo.work.path().join(".treeship").join("journals");
+    std::fs::create_dir_all(&journals).unwrap();
+    std::os::unix::fs::symlink(&victim, journals.join("approval-use")).unwrap();
+    let _ = repo.run(&["session", "start", "--name", "s"]);
+    let _ = repo.run(&["session", "close"]);
+    let global = repo
+        .home
+        .path()
+        .join(".treeship")
+        .join("journals")
+        .join("approval-use");
+    assert!(
+        !global.is_symlink(),
+        "the repository's link was moved into the global workspace"
+    );
+    assert!(
+        journals.join("approval-use").is_symlink(),
+        "the repository's link went away"
+    );
+    // The user's own workspace still closes sessions afterwards.
+    let out = Command::new(cli_path())
+        .current_dir(repo.home.path())
+        .env("HOME", repo.home.path())
+        .env_remove("TREESHIP_CONFIG")
+        .args(["session", "start", "--name", "s2", "--allow-dangerous-root"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", text(&out));
+    let out = Command::new(cli_path())
+        .current_dir(repo.home.path())
+        .env("HOME", repo.home.path())
+        .env_remove("TREESHIP_CONFIG")
+        .args(["session", "close"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", text(&out));
+}
+
+#[test]
+fn repository_journal_records_are_never_merged_into_the_global_journal() {
+    let repo = stubbed();
+    let records = repo
+        .work
+        .path()
+        .join(".treeship")
+        .join("journals")
+        .join("approval-use")
+        .join("records");
+    std::fs::create_dir_all(&records).unwrap();
+    std::fs::write(records.join("evil.json"), b"FORGED").unwrap();
+    let _ = repo.run(&["session", "start", "--name", "s"]);
+    let _ = repo.run(&["session", "close"]);
+    let global = repo.home.path().join(".treeship").join("journals");
+    let forged: Vec<_> = walkdir(&global)
+        .into_iter()
+        .filter(|p| p.file_name().map(|n| n == "evil.json").unwrap_or(false))
+        .collect();
+    assert!(
+        forged.is_empty(),
+        "repository records merged into the global journal: {forged:?}"
+    );
+    assert!(
+        records.join("evil.json").exists(),
+        "the repository's records were moved away"
+    );
+}
+
+fn walkdir(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                out.extend(walkdir(&p));
+            } else {
+                out.push(p);
+            }
+        }
+    }
+    out
+}

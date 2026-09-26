@@ -76,15 +76,41 @@ pub fn write_user_path(path: &Path, bytes: &[u8]) -> io::Result<()> {
     write_atomic(path, bytes, mode)
 }
 
-/// Where a home-directory file really lives. Under the user's home a link
-/// is the user's own (dotfiles) and is followed to its target; anywhere
-/// else a link at the file is refused, as for any user-chosen path.
-/// Missing trailing components are kept, so a file that does not exist
-/// yet resolves to its future place.
+/// Where a home-directory file really lives. For the fixed set of files
+/// Treeship keeps in the user's home (shell rc files, `~/.treeship`'s
+/// trust roots, templates and merkle records) a link is the user's own
+/// (dotfiles) and is followed to its target, a link whose target does not
+/// exist yet included (the target is created); anywhere else, a
+/// repository cloned under the home included, a link at the file is
+/// refused, as for any user-chosen path. Missing trailing components are
+/// kept, so a file that does not exist yet resolves to its future place.
 pub fn resolve_home_link(path: &Path) -> io::Result<std::path::PathBuf> {
-    if !is_under_home(path) {
+    if !is_user_home_file(path) {
         refuse_symlink(path)?;
         return Ok(path.to_path_buf());
+    }
+    resolve_following(path, 0)
+}
+
+fn resolve_following(path: &Path, depth: u8) -> io::Result<std::path::PathBuf> {
+    // A dangling link at the file: follow what it names (relative to its
+    // own directory) so the target gets created, up to a small depth.
+    if depth < 8
+        && path
+            .symlink_metadata()
+            .map(|m| m.is_symlink())
+            .unwrap_or(false)
+    {
+        if let Ok(target) = std::fs::read_link(path) {
+            let target = if target.is_absolute() {
+                target
+            } else {
+                path.parent().unwrap_or(Path::new(".")).join(target)
+            };
+            if !target.exists() {
+                return resolve_following(&target, depth + 1);
+            }
+        }
     }
     let mut prefix = path.to_path_buf();
     let mut rest: Vec<std::ffi::OsString> = Vec::new();
@@ -118,20 +144,44 @@ pub fn write_home_path(path: &Path, bytes: &[u8], default_mode: u32) -> io::Resu
     write_atomic(&target, bytes, mode)
 }
 
-/// Judged by where the file's directory is, never by where a link at the
-/// file points: a repository link into the home must not count as home.
-fn is_under_home(path: &Path) -> bool {
+/// The files Treeship keeps in the user's own home, by fixed path: the
+/// shell rc files `install` edits, and `~/.treeship`'s trust roots,
+/// templates and merkle records. Judged by the path as given (and its
+/// canonical directory), never by where a link at the file points, so a
+/// link inside a repository, cloned under the home or not, never counts.
+fn is_user_home_file(path: &Path) -> bool {
     let Some(home) = home::home_dir() else {
         return false;
     };
-    if path.starts_with(&home) {
+    let in_home = |p: &Path| -> bool {
+        let files = [
+            home.join(".zshrc"),
+            home.join(".bashrc"),
+            home.join(".config").join("fish").join("config.fish"),
+            home.join(".treeship").join("trust_roots.json"),
+        ];
+        let dirs = [
+            home.join(".treeship").join("templates"),
+            home.join(".treeship").join("merkle"),
+        ];
+        files.iter().any(|f| f == p) || dirs.iter().any(|d| p.starts_with(d))
+    };
+    if in_home(path) {
         return true;
     }
-    let Some(parent) = path.parent() else {
-        return false;
-    };
-    match (home.canonicalize(), parent.canonicalize()) {
-        (Ok(h), Ok(p)) => p.starts_with(h),
+    // The same place spelled through a canonical home (/private/var on
+    // macOS, a linked home directory): compare the file's directory.
+    match (
+        home.canonicalize(),
+        path.parent().and_then(|p| p.canonicalize().ok()),
+    ) {
+        (Ok(h), Some(p)) if h != home => {
+            let Ok(rel) = p.strip_prefix(&h) else {
+                return false;
+            };
+            let respelled = home.join(rel).join(path.file_name().unwrap_or_default());
+            in_home(&respelled)
+        }
         _ => false,
     }
 }
@@ -153,6 +203,28 @@ fn existing_mode(_path: &Path) -> Option<u32> {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    /// Tests that point $HOME at a temp dir must not overlap.
+    static HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn set_home(
+        home: &Path,
+    ) -> (
+        std::sync::MutexGuard<'static, ()>,
+        Option<std::ffi::OsString>,
+    ) {
+        let guard = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved = std::env::var_os("HOME");
+        std::env::set_var("HOME", home);
+        (guard, saved)
+    }
+
+    fn restore_home(saved: Option<std::ffi::OsString>) {
+        match saved {
+            Some(h) => std::env::set_var("HOME", h),
+            None => std::env::remove_var("HOME"),
+        }
+    }
 
     #[test]
     fn a_linked_treeship_dir_is_refused_and_its_target_untouched() {
@@ -208,18 +280,14 @@ mod tests {
         .unwrap();
         std::os::unix::fs::symlink(dotfiles.join("zshrc"), home.join(".zshrc")).unwrap();
         // `home` is what the process treats as $HOME for this test.
-        let saved = std::env::var_os("HOME");
-        std::env::set_var("HOME", &home);
+        let (_guard, saved) = set_home(&home);
         let result = write_home_path(&home.join(".zshrc"), b"# mine\n# hook\n", 0o644);
-        let missing = resolve_home_link(&home.join(".config").join("new.toml"));
+        let missing = resolve_home_link(&home.join(".config").join("fish").join("config.fish"));
         let repo_link = root.path().join("repo").join("out.json");
         std::fs::create_dir_all(repo_link.parent().unwrap()).unwrap();
         std::os::unix::fs::symlink(dotfiles.join("zshrc"), &repo_link).unwrap();
         let outside = write_home_path(&repo_link, b"x", 0o644);
-        match saved {
-            Some(h) => std::env::set_var("HOME", h),
-            None => std::env::remove_var("HOME"),
-        }
+        restore_home(saved);
         result.unwrap();
         assert_eq!(
             std::fs::read(dotfiles.join("zshrc")).unwrap(),
@@ -239,12 +307,57 @@ mod tests {
         );
         assert!(missing
             .unwrap()
-            .ends_with(std::path::Path::new(".config/new.toml")));
+            .ends_with(std::path::Path::new(".config/fish/config.fish")));
         assert!(outside.is_err(), "a link outside the home was followed");
         assert_eq!(
             std::fs::read(dotfiles.join("zshrc")).unwrap(),
             b"# mine\n# hook\n"
         );
+    }
+
+    #[test]
+    fn only_fixed_home_files_follow_links_and_a_dangling_one_is_created() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        std::fs::create_dir_all(home.join(".treeship")).unwrap();
+        let (_guard, saved) = set_home(&home);
+        // A repository cloned under the home is not a home file.
+        let repo_file = home
+            .join("src")
+            .join("repo")
+            .join(".treeship")
+            .join("trust_roots.json");
+        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
+        let victim = home.join("victim");
+        std::fs::write(&victim, b"keep").unwrap();
+        std::os::unix::fs::symlink(&victim, &repo_file).unwrap();
+        let repo_write = write_home_path(&repo_file, b"x", 0o600);
+        // ~/.treeship/trust_roots.json is, and a dangling link there is
+        // followed and its target created.
+        let roots = home.join(".treeship").join("trust_roots.json");
+        let target = home
+            .join("dotfiles")
+            .join("treeship")
+            .join("trust_roots.json");
+        std::os::unix::fs::symlink(&target, &roots).unwrap();
+        let roots_write = write_home_path(&roots, b"{}", 0o600);
+        // A random file under the home is not a home file either.
+        let other = home.join("notes.txt");
+        std::os::unix::fs::symlink(&victim, &other).unwrap();
+        let other_write = write_home_path(&other, b"x", 0o644);
+        restore_home(saved);
+        assert!(
+            repo_write.is_err(),
+            "a repository link under the home was followed"
+        );
+        assert!(
+            other_write.is_err(),
+            "an arbitrary home file followed its link"
+        );
+        assert_eq!(std::fs::read(&victim).unwrap(), b"keep");
+        roots_write.unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"{}");
+        assert!(roots.is_symlink());
     }
 
     #[test]
