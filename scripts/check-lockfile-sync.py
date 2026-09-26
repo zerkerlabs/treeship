@@ -30,9 +30,12 @@ check written to prevent it. A gate that verifies a strict subset of what the
 real tool verifies will eventually pass something the real tool rejects.
 """
 
+from __future__ import annotations
+
 import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -60,6 +63,51 @@ ROOT = Path(__file__).resolve().parents[1]
 # main.
 _ref = os.environ.get("GITHUB_HEAD_REF") or os.environ.get("GITHUB_REF_NAME") or ""
 RELEASE_WINDOW = _ref.startswith("release/v")
+
+# After the release PR merges, main carries the bump but the packages are not
+# on the registry yet, so the installed entries still lag until publish and
+# `release.sh refresh-lockfiles` (T11). That state used to fail this check on
+# main, and the tag landed on a red commit: exactly what branch protection is
+# for. So an installed-entry mismatch is a WARN, not a FAIL, when the declared
+# version is the release in flight (the version in packages/core/Cargo.toml)
+# and that exact version is not yet on npm. The moment it is published the
+# same mismatch fails again, which is what forces the refresh. A registry
+# lookup that cannot answer (no network) keeps the old behaviour and fails.
+CORE_CARGO = Path("packages/core/Cargo.toml")
+
+
+def in_flight_version(root: Path) -> str | None:
+    """The version being released: the `[package]` version of the core crate."""
+    try:
+        text = (root / CORE_CARGO).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    pkg = re.search(r"^\[package\](.*?)(?=^\[|\Z)", text, re.M | re.S)
+    if not pkg:
+        return None
+    m = re.search(r'^version\s*=\s*"([^"]+)"', pkg.group(1), re.M)
+    return m.group(1) if m else None
+
+
+def npm_published(name: str, version: str) -> bool | None:
+    """Is `name@version` on the npm registry? True / False, or None when the
+    registry could not be asked (network failure, npm missing)."""
+    try:
+        r = subprocess.run(
+            ["npm", "view", f"{name}@{version}", "version", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    err = (r.stderr or "").lower()
+    if r.returncode == 0:
+        out = (r.stdout or "").strip()
+        return out not in ("", "[]", "{}")
+    if "e404" in err or "no match found" in err or "version not found" in err:
+        return False
+    return None
 
 SKIP_DIRS = {"node_modules", ".git", "target", "dist", "pkg"}
 
@@ -116,11 +164,13 @@ def installed(pkg: Path) -> dict:
     return out
 
 
-def main() -> int:
+def main(root: Path = ROOT, lookup=npm_published) -> int:
     checked = 0
     bad = []
-    for rel in discover(ROOT):
-        pkg = ROOT / rel
+    warn = []
+    in_flight = in_flight_version(root)
+    for rel in discover(root):
+        pkg = root / rel
         if not (pkg / "package.json").is_file() or not (pkg / "package-lock.json").is_file():
             continue
         checked += 1
@@ -136,7 +186,10 @@ def main() -> int:
             if re.fullmatch(r"\d+\.\d+\.\d+", want) and not RELEASE_WINDOW:
                 res = inst.get(name)
                 if res is not None and res != want:
-                    bad.append((rel, name, want, res, "installed entry"))
+                    if want == in_flight and lookup(name, want) is False:
+                        warn.append((rel, name, want, res))
+                    else:
+                        bad.append((rel, name, want, res, "installed entry"))
 
     if not checked:
         # A check that examined nothing passes vacuously and reads as a pass.
@@ -153,6 +206,19 @@ def main() -> int:
         )
         return 1
 
+    if warn:
+        for rel, name, want, res in warn:
+            print(
+                f"  warn  {rel}: {name} is {want!r} in package.json but {res!r} in the "
+                f"installed entry; {want} is the release in flight and is not on npm yet"
+            )
+        print()
+        print(
+            f"  ✓ declared ranges agree in {checked} package(s); {len(warn)} installed "
+            f"{'entry lags' if len(warn) == 1 else 'entries lag'} the unpublished release {in_flight}"
+        )
+        print("        This fails once the version is published. Run `scripts/release.sh refresh-lockfiles` after publish.")
+        return 0
     if RELEASE_WINDOW:
         print(
             f"  ✓ declared ranges agree in {checked} package(s); installed-entry "

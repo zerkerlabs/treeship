@@ -156,6 +156,10 @@ jobs:
       # being unbuildable for JS.
       - name: package.json and lockfiles agree
         run: python3 scripts/check-lockfile-sync.py
+      # The gate's own tests (stdlib unittest, registry lookups stubbed):
+      # the release-in-flight rule must warn, then fail again once published.
+      - name: Lockfile gate tests
+        run: python3 -m unittest discover -s scripts/tests -t .
       - name: No committed conflict markers
         run: python3 scripts/check-conflict-markers.py
       # v0.24.0 published a bundler-only wasm build that would not load in
