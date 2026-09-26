@@ -1088,6 +1088,11 @@ struct SessionJoinArgs {
     #[arg(long, value_name = "URI")]
     actor: String,
 
+    /// Also write the pending participant envelope to this file, to send to
+    /// a host on another machine (`treeship session countersign --pending`).
+    #[arg(long, value_name = "PATH")]
+    out: Option<String>,
+
     /// Output format: text (default) or json.
     #[arg(long, value_name = "FORMAT", default_value = "text")]
     format: String,
@@ -1095,8 +1100,16 @@ struct SessionJoinArgs {
 
 #[derive(Args)]
 struct SessionCountersignArgs {
-    /// Participant artifact id (output of `treeship session join`).
-    participant_id: String,
+    /// Participant artifact id (output of `treeship session join`), for a
+    /// join on this machine. Omit it and pass --pending for a join on
+    /// another machine.
+    participant_id: Option<String>,
+
+    /// A pending participant envelope a joiner on another machine sent
+    /// (`treeship session join --out`). Requires --challenge and
+    /// --challenge-response.
+    #[arg(long, value_name = "PATH")]
+    pending: Option<String>,
 
     /// The nonce YOU (the host) issue for the room-join liveness
     /// challenge, right before finalizing. Any string; pick something
@@ -3467,6 +3480,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                     invite_file: a.invite_file.clone(),
                     actor: a.actor.clone(),
                     format: a.format.clone(),
+                    out: a.out.clone(),
                 },
                 printer,
             ),
@@ -3474,6 +3488,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 cli.config.as_deref(),
                 commands::invitation::CountersignArgs {
                     participant_id: a.participant_id.clone(),
+                    pending: a.pending.clone(),
                     format: a.format.clone(),
                     challenge: a.challenge.clone(),
                     challenge_response: a.challenge_response.clone(),

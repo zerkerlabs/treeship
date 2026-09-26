@@ -425,21 +425,23 @@ treeship session join [OPTIONS] --actor <URI>
 | `--invite <BLOB>` | Paste the bootstrap blob inline (use `-` to read from stdin) |
 | `--invite-file <PATH>` | Read the bootstrap blob from a file |
 | `--actor <URI>` | Joining agent's actor URI (e.g. agent://researcher) |
+| `--out <PATH>` | Also write the pending participant envelope to this file, to send to a host on another machine (`treeship session countersign --pending`) |
 
 ### `treeship session countersign`
 
 Host countersigns a pending participant event. After this runs, the participant envelope carries two signatures (joining agent + host) and verifies as a finalized join
 
 ```
-treeship session countersign [OPTIONS] <PARTICIPANT_ID>
+treeship session countersign [OPTIONS] [PARTICIPANT_ID]
 ```
 
 | Argument | Description |
 |---|---|
-| `<PARTICIPANT_ID>` | Participant artifact id (output of `treeship session join`) |
+| `[PARTICIPANT_ID]` | Participant artifact id (output of `treeship session join`), for a join on this machine. Omit it and pass --pending for a join on another machine |
 
 | Option | Description |
 |---|---|
+| `--pending <PATH>` | A pending participant envelope a joiner on another machine sent (`treeship session join --out`). Requires --challenge and --challenge-response |
 | `--challenge <NONCE>` | The nonce YOU (the host) issue for the room-join liveness challenge, right before finalizing. Any string; pick something unpredictable. Must be supplied together with --challenge-response |
 | `--challenge-issued-at <RFC3339>` | RFC 3339 instant you minted --challenge, as printed by `treeship session mint-challenge` |
 | `--challenge-response <PATH>` | Path to the joining agent's signed response to --challenge (output of `treeship session answer-challenge`). Use `-` for stdin |
