@@ -174,15 +174,8 @@ fn install_claude_plugin(
     assume_yes: bool,
     printer: &Printer,
 ) -> Result<bool, Box<dyn std::error::Error>> {
-    remove_stale_claude_mcp_entry(home, printer)?;
-
-    let claude_on_path = std::process::Command::new("claude")
-        .arg("--version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
+    // Looked up, not run: nothing executes before the person says yes.
+    let claude_on_path = on_path("claude");
 
     let print_commands = |printer: &Printer| {
         for c in harnesses::CLAUDE_PLUGIN_COMMANDS {
@@ -196,7 +189,7 @@ fn install_claude_plugin(
             &[],
         );
         print_commands(printer);
-        printer.dim_info("  Nothing else was changed.");
+        printer.dim_info("  Nothing was changed.");
         return Ok(false);
     }
 
@@ -204,17 +197,21 @@ fn install_claude_plugin(
         if !crossterm::tty::IsTty::is_tty(&io::stdin()) {
             printer.info("  To install the Claude Code plugin, run:");
             print_commands(printer);
-            printer.dim_info("  (pass --all to run them from here) Nothing else was changed.");
+            printer.dim_info("  (pass --all to run them from here) Nothing was changed.");
             return Ok(false);
         }
         printer.info("  The Claude Code plugin is installed by:");
         print_commands(printer);
         let answer = prompt("  Run these two commands now? (y/N): ");
         if !(answer.eq_ignore_ascii_case("y") || answer.eq_ignore_ascii_case("yes")) {
-            printer.dim_info("  Skipped. Nothing else was changed.");
+            printer.dim_info("  Skipped. Nothing was changed.");
             return Ok(false);
         }
     }
+
+    // Consent given: the stale entry an earlier version wrote goes now,
+    // not before the question.
+    remove_stale_claude_mcp_entry(home, printer)?;
 
     for c in harnesses::CLAUDE_PLUGIN_COMMANDS {
         let mut parts = c.split_whitespace();
@@ -240,15 +237,59 @@ fn install_claude_plugin(
     Ok(true)
 }
 
-/// The exact `mcpServers.treeship` entry earlier versions wrote?
+/// Is `name` an executable on PATH? A lookup only; nothing runs.
+fn on_path(name: &str) -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path).any(|dir| {
+        let candidate = dir.join(name);
+        std::fs::metadata(&candidate)
+            .map(|m| m.is_file() && is_executable(&m))
+            .unwrap_or(false)
+    })
+}
+
+#[cfg(unix)]
+fn is_executable(m: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    m.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn is_executable(_m: &std::fs::Metadata) -> bool {
+    true
+}
+
+/// The exact `mcpServers.treeship` entry earlier versions wrote: `npx -y
+/// @treeship/mcp`, an `env` with nothing but TREESHIP_ACTOR and the default
+/// TREESHIP_HUB_ENDPOINT, and no other keys. Anything a person changed
+/// (another command, an extra env var, a different endpoint) is theirs.
 fn is_our_legacy_mcp_entry(entry: &serde_json::Value) -> bool {
-    entry.get("command").and_then(|v| v.as_str()) == Some("npx")
-        && entry
-            .get("args")
-            .and_then(|v| v.as_array())
-            .is_some_and(|a| {
-                a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>() == ["-y", "@treeship/mcp"]
+    let Some(obj) = entry.as_object() else {
+        return false;
+    };
+    if obj
+        .keys()
+        .any(|k| !matches!(k.as_str(), "command" | "args" | "env"))
+    {
+        return false;
+    }
+    let command_ok = obj.get("command").and_then(|v| v.as_str()) == Some("npx");
+    let args_ok = obj.get("args").and_then(|v| v.as_array()).is_some_and(|a| {
+        a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>() == ["-y", "@treeship/mcp"]
+    });
+    let env_ok = match obj.get("env") {
+        None => true,
+        Some(env) => env.as_object().is_some_and(|e| {
+            e.iter().all(|(k, v)| match k.as_str() {
+                "TREESHIP_ACTOR" => v.is_string(),
+                "TREESHIP_HUB_ENDPOINT" => v.as_str() == Some("https://api.treeship.dev"),
+                _ => false,
             })
+        }),
+    };
+    command_ok && args_ok && env_ok
 }
 
 /// Remove the `mcpServers.treeship` entry an earlier `treeship add` wrote
@@ -262,9 +303,11 @@ fn remove_stale_claude_mcp_entry(
     if !path.exists() || !is_safe_path(&path) {
         return Ok(());
     }
-    let Ok(mut config) =
-        serde_json::from_str::<serde_json::Value>(&std::fs::read_to_string(&path)?)
-    else {
+    // A file that is not UTF-8 or not JSON is not ours to touch.
+    let Ok(bytes) = std::fs::read(&path) else {
+        return Ok(());
+    };
+    let Ok(mut config) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
         return Ok(());
     };
     let ours = config
@@ -284,9 +327,20 @@ fn remove_stale_claude_mcp_entry(
     if only_servers && servers_empty {
         std::fs::remove_file(&path)?;
     } else {
-        let tmp = path.with_extension("tmp");
-        std::fs::write(&tmp, serde_json::to_string_pretty(&config)?)?;
-        std::fs::rename(&tmp, &path)?;
+        // Same mode as the file had (a 0600 file holds other servers'
+        // tokens), written through an exclusive random-named temp file.
+        let mode = std::fs::metadata(&path)?.permissions();
+        let dir = path.parent().unwrap_or(Path::new("."));
+        let mut tmp = tempfile::Builder::new()
+            .prefix(".mcp.json.")
+            .tempfile_in(dir)?;
+        {
+            use std::io::Write as _;
+            tmp.write_all(serde_json::to_string_pretty(&config)?.as_bytes())?;
+            tmp.flush()?;
+        }
+        std::fs::set_permissions(tmp.path(), mode)?;
+        tmp.persist(&path).map_err(|e| e.error)?;
     }
     printer.dim_info(&format!(
         "  Removed the mcpServers.treeship entry an earlier `treeship add` wrote to {} (Claude Code never read that file).",
@@ -805,6 +859,37 @@ mod tests {
         .unwrap();
         remove_stale_claude_mcp_entry(&home, &printer).unwrap();
         assert!(!path.exists());
+
+        // Ours plus a neighbour, on a 0600 file: the mode survives the rewrite.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::write(&path, serde_json::to_string(&serde_json::json!({
+                "mcpServers": {
+                    "treeship": {"command": "npx", "args": ["-y", "@treeship/mcp"], "env": {"TREESHIP_ACTOR": "agent://claude-code", "TREESHIP_HUB_ENDPOINT": "https://api.treeship.dev"}},
+                    "other": {"command": "other-server", "env": {"TOKEN": "secret"}}
+                }
+            })).unwrap()).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+            remove_stale_claude_mcp_entry(&home, &printer).unwrap();
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "rewrite changed the file mode");
+        }
+
+        // Our command with an env var a person added: theirs, untouched.
+        let customised_env = serde_json::json!({
+            "mcpServers": {"treeship": {"command": "npx", "args": ["-y", "@treeship/mcp"], "env": {"TREESHIP_ACTOR": "agent://x", "OPENAI_API_KEY": "sk-keep"}}}
+        });
+        std::fs::write(&path, serde_json::to_string(&customised_env).unwrap()).unwrap();
+        remove_stale_claude_mcp_entry(&home, &printer).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v, customised_env, "an entry with extra env was deleted");
+
+        // Not UTF-8: left alone, no error.
+        std::fs::write(&path, [0xff, 0xfe, b'{']).unwrap();
+        remove_stale_claude_mcp_entry(&home, &printer).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), [0xff, 0xfe, b'{']);
 
         // A customised treeship entry is not ours: untouched.
         let custom = serde_json::json!({
