@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use treeship_core::{
     attestation::sign,
@@ -9,17 +9,6 @@ use treeship_core::{
 use crate::{ctx, printer::Printer};
 
 /// Set file permissions to 0600 (owner read/write only) on Unix.
-#[cfg(unix)]
-fn set_restrictive_permissions(path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
-}
-
-#[cfg(not(unix))]
-fn set_restrictive_permissions(_path: &Path) {
-    // No-op on non-unix platforms
-}
-
 // ---------------------------------------------------------------------------
 // Pending approval file format
 // ---------------------------------------------------------------------------
@@ -62,7 +51,7 @@ fn pending_dir() -> Option<PathBuf> {
 
 fn ensure_pending_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
     let dir = pending_dir().ok_or("no .treeship directory found")?;
-    std::fs::create_dir_all(&dir)?;
+    crate::safe_fs::create_dir_all_nofollow(&dir)?;
     Ok(dir)
 }
 
@@ -169,8 +158,7 @@ pub fn write_pending(
     };
 
     let json = serde_json::to_string_pretty(&pending)?;
-    std::fs::write(&path, &json)?;
-    set_restrictive_permissions(&path);
+    crate::safe_fs::write_nofollow(&path, json.as_bytes(), 0o600)?;
     Ok(path)
 }
 
@@ -370,8 +358,7 @@ pub fn approve(
     pa.approved = true;
     pa.nonce = Some(nonce.clone());
     let json = serde_json::to_string_pretty(&pa)?;
-    std::fs::write(&path, &json)?;
-    set_restrictive_permissions(&path);
+    crate::safe_fs::write_nofollow(&path, json.as_bytes(), 0o600)?;
 
     // Print
     printer.blank();

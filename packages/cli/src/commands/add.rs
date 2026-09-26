@@ -175,9 +175,7 @@ fn install_json_mcp(
         .insert("treeship".into(), entry);
 
     let json = serde_json::to_string_pretty(&config)?;
-    let tmp_path = path.with_extension("tmp");
-    std::fs::write(&tmp_path, &json)?;
-    std::fs::rename(&tmp_path, path)?;
+    crate::safe_fs::write_atomic(path, json.as_bytes(), 0o600)?;
     Ok(())
 }
 
@@ -194,18 +192,14 @@ fn install_toml_mcp(snippet: &str, path: &Path) -> Result<(), Box<dyn std::error
         new_content.push('\n');
     }
     new_content.push_str(snippet);
-    let tmp_path = path.with_extension("toml.tmp");
-    std::fs::write(&tmp_path, &new_content)?;
-    std::fs::rename(&tmp_path, path)?;
+    crate::safe_fs::write_atomic(path, new_content.as_bytes(), 0o600)?;
     Ok(())
 }
 
 /// Skill file: write the snippet (Markdown) to a fixed path. Idempotency
 /// already short-circuited if the file exists.
 fn install_skill_file(snippet: &str, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let tmp_path = path.with_extension("tmp");
-    std::fs::write(&tmp_path, snippet)?;
-    std::fs::rename(&tmp_path, path)?;
+    crate::safe_fs::write_atomic(path, snippet.as_bytes(), 0o644)?;
     Ok(())
 }
 
@@ -251,9 +245,7 @@ fn install_treeship_md_in_cwd(
         printer.info(&format!("  Would write {}", treeship_md.display()));
         return Ok(true);
     }
-    let tmp_path = treeship_md.with_extension("tmp");
-    std::fs::write(&tmp_path, TREESHIP_MD_TEMPLATE)?;
-    std::fs::rename(&tmp_path, &treeship_md)?;
+    crate::safe_fs::write_atomic(&treeship_md, TREESHIP_MD_TEMPLATE.as_bytes(), 0o644)?;
     printer.success("./TREESHIP.md written", &[]);
     printer.dim_info(
         "  Any agent reading the project will see what Treeship captures and trust the MCP server.",

@@ -23,18 +23,6 @@ pub use treeship_core::session::SessionManifest;
 
 use crate::{ctx, printer::Printer};
 
-/// Set file permissions to 0600 (owner read/write only) on Unix.
-#[cfg(unix)]
-fn set_restrictive_permissions(path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
-}
-
-#[cfg(not(unix))]
-fn set_restrictive_permissions(_path: &Path) {
-    // No-op on non-unix platforms
-}
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -185,15 +173,13 @@ pub fn load_session() -> Option<SessionManifest> {
 pub(crate) fn save_session(manifest: &SessionManifest) -> Result<(), Box<dyn std::error::Error>> {
     let path = session_path().ok_or("no .treeship directory found -- run treeship init first")?;
     let json = serde_json::to_string_pretty(manifest)?;
-    std::fs::write(&path, &json)?;
-    set_restrictive_permissions(&path);
+    crate::safe_fs::write_nofollow(&path, json.as_bytes(), 0o600)?;
     Ok(())
 }
 
 fn write_last(storage_dir: &str, artifact_id: &str) {
     let last_path = Path::new(storage_dir).join(".last");
-    let _ = std::fs::write(&last_path, artifact_id);
-    set_restrictive_permissions(&last_path);
+    let _ = crate::safe_fs::write_nofollow(&last_path, artifact_id.as_bytes(), 0o600);
 }
 
 fn read_manifest_at(path: &Path) -> Option<SessionManifest> {
@@ -609,8 +595,7 @@ pub fn start(
 
     let session_path = ts_dir.join("session.json");
     let json = serde_json::to_string_pretty(&manifest)?;
-    std::fs::write(&session_path, &json)?;
-    set_restrictive_permissions(&session_path);
+    crate::safe_fs::write_nofollow(&session_path, json.as_bytes(), 0o600)?;
 
     // Initialize event log and write session.started event
     let evt_dir = ts_dir.join("sessions").join(&session_id);
@@ -1578,9 +1563,10 @@ fn ensure_package_key(
             keys["keys"] = serde_json::json!({ key_id: encoded });
         }
     }
-    std::fs::write(
+    crate::safe_fs::write_nofollow(
         &path,
-        serde_json::to_vec_pretty(&keys).map_err(|e| e.to_string())?,
+        &serde_json::to_vec_pretty(&keys).map_err(|e| e.to_string())?,
+        0o600,
     )
     .map_err(|e| e.to_string())
 }

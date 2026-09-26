@@ -38,12 +38,7 @@ struct FileTimes {
 /// so the loser wiped the winner's pid and left a live daemon nobody
 /// could stop. The pid is written through the locked handle.
 fn acquire_pid_lock(pid_path: &Path) -> Result<std::fs::File, Box<dyn std::error::Error>> {
-    let file = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(pid_path)?;
+    let file = crate::safe_fs::open_rw_nofollow(pid_path, 0o600)?;
 
     #[cfg(unix)]
     {
@@ -210,11 +205,7 @@ fn read_start_time(ts: &Path) -> Option<u64> {
 
 fn daemon_log(ts: &Path, msg: &str) {
     let path = log_path(ts);
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    {
+    if let Ok(mut f) = crate::safe_fs::open_append_nofollow(&path, 0o600) {
         let now = epoch_secs();
         let _ = writeln!(f, "[{}] {}", now, msg);
     }
@@ -574,8 +565,7 @@ fn resolve_last(storage_dir: &str) -> Option<String> {
 
 fn write_last(storage_dir: &str, artifact_id: &str) {
     let last_path = Path::new(storage_dir).join(".last");
-    let _ = std::fs::write(&last_path, artifact_id);
-    set_restrictive_permissions(&last_path);
+    let _ = crate::safe_fs::write_nofollow(&last_path, artifact_id.as_bytes(), 0o600);
 }
 
 fn epoch_secs() -> u64 {
@@ -794,10 +784,7 @@ fn spawn_background(
     no_push: bool,
 ) -> Result<u32, Box<dyn std::error::Error>> {
     let exe = std::env::current_exe()?;
-    let log = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_path(ts))?;
+    let log = crate::safe_fs::open_append_nofollow(&log_path(ts), 0o600)?;
     let mut cmd = std::process::Command::new(exe);
     cmd.arg("daemon").arg("start").arg("--foreground");
     if no_push {
@@ -1067,7 +1054,13 @@ fn process_proof_queue(ts: &std::path::Path, ctx: &crate::ctx::Ctx) {
         }
 
         // Create lock file before processing
-        if std::fs::write(&lock_path, format!("{}", std::process::id())).is_err() {
+        if crate::safe_fs::write_nofollow(
+            &lock_path,
+            std::process::id().to_string().as_bytes(),
+            0o600,
+        )
+        .is_err()
+        {
             continue;
         }
 
@@ -1143,9 +1136,10 @@ fn process_proof_queue(ts: &std::path::Path, ctx: &crate::ctx::Ctx) {
                     let mut updated = job.clone();
                     updated["attempts"] = serde_json::json!(attempts);
                     updated["last_error"] = serde_json::json!(e.to_string());
-                    let _ = std::fs::write(
+                    let _ = crate::safe_fs::write_nofollow(
                         &path,
-                        serde_json::to_vec_pretty(&updated).unwrap_or_default(),
+                        &serde_json::to_vec_pretty(&updated).unwrap_or_default(),
+                        0o600,
                     );
                 }
             }

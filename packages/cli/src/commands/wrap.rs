@@ -576,12 +576,7 @@ fn resolve_parent(ctx: &ctx::Ctx, explicit: Option<String>) -> Option<String> {
 /// Write the artifact_id to {storage_dir}/.last for auto-chaining.
 fn write_last(storage_dir: &str, artifact_id: &str) {
     let last_path = std::path::Path::new(storage_dir).join(".last");
-    let _ = std::fs::write(&last_path, artifact_id);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&last_path, std::fs::Permissions::from_mode(0o600));
-    }
+    let _ = crate::safe_fs::write_nofollow(&last_path, artifact_id.as_bytes(), 0o600);
 }
 
 /// Get the current git HEAD sha (short), if in a git repo.
