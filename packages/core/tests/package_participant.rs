@@ -50,7 +50,8 @@ fn caps() -> GrantedCapabilities {
 }
 
 fn root(host: &Ed25519Signer) -> Art {
-    let stmt = ActionStatement::new("agent://host", "session.start");
+    let mut stmt = ActionStatement::new("agent://host", "session.start");
+    stmt.meta = Some(serde_json::json!({"session_start": true, "session_id": SESSION}));
     let r = sign(&payload_type("action"), &stmt, host).unwrap();
     Art {
         id: r.artifact_id,
@@ -116,6 +117,29 @@ fn participant(
 }
 
 fn build(dir: &Path, host: &Ed25519Signer, arts: &[&Art]) -> PathBuf {
+    // The host closes the session on the chain after its root, as `session
+    // close` does; the close record names that close.
+    let root_id = arts
+        .iter()
+        .find(|a| !a.unchained)
+        .map(|a| a.id.clone())
+        .expect("a chained root");
+    let mut stmt = ActionStatement::new("agent://host", "session.close");
+    stmt.parent_id = Some(root_id);
+    stmt.meta = Some(serde_json::json!({"session_close": true, "session_id": SESSION}));
+    let r = sign(&payload_type("action"), &stmt, host).unwrap();
+    let close = Art {
+        id: r.artifact_id,
+        kind: "action",
+        envelope: r.envelope,
+        digest: r.digest,
+        unchained: false,
+    };
+    let arts: Vec<&Art> = arts
+        .iter()
+        .copied()
+        .chain(std::iter::once(&close))
+        .collect();
     let entries: Vec<ArtifactEntry> = arts
         .iter()
         .map(|a| ArtifactEntry {
@@ -146,16 +170,20 @@ fn build(dir: &Path, host: &Ed25519Signer, arts: &[&Art]) -> PathBuf {
     let pkg = build_package_with_approvals(&receipt, dir, Some(&bundle))
         .unwrap()
         .path;
-    seal_record(&pkg, host);
+    seal_record(&pkg, host, &close.id);
     pkg
 }
 
 /// The close record `session close` writes (0.31.4+): a `session.v1` record
 /// signed by the host over the SHA-256 of receipt.json and the session id.
-fn seal_record(pkg: &Path, host: &Ed25519Signer) {
-    use treeship_core::statements::ReceiptStatement;
+fn seal_record(pkg: &Path, host: &Ed25519Signer, close: &str) {
+    use treeship_core::statements::{ReceiptStatement, SubjectRef};
     let receipt = std::fs::read(pkg.join("receipt.json")).unwrap();
     let mut stmt = ReceiptStatement::new("system://treeship-session", "session.v1");
+    stmt.subject = Some(SubjectRef {
+        artifact_id: Some(close.to_string()),
+        ..Default::default()
+    });
     stmt.payload = Some(serde_json::json!({
         "receipt_digest": format!("sha256:{}", hex::encode(Sha256::digest(&receipt))),
         "session_id": SESSION,
@@ -342,4 +370,36 @@ fn an_artifact_sealed_twice_fails() {
         "{}",
         rows[1].detail
     );
+}
+
+#[test]
+fn a_cross_ship_room_verifies_with_only_the_host_pinned() {
+    // The joining agent's key is never pinned and never in keys.json: the
+    // host's countersign authenticates it. A reader who pinned the host gets
+    // `verified`, not a mixed-signer failure.
+    use treeship_core::session::{package_verdict, PackageVerdict};
+    use treeship_core::trust::{TrustRoot, TrustRootKind};
+    let tmp = tempfile::tempdir().unwrap();
+    let (host, joiner, _) = keys();
+    let (r, inv) = (root(&host), invitation(&host, &b64(&host), SESSION));
+    let p = participant(&inv, &joiner, Some(&host), SESSION);
+    let pkg = build(tmp.path(), &host, &[&r, &inv, &p]);
+    let trust = TrustRootStore::with_roots(vec![TrustRoot {
+        key_id: host.key_id().into(),
+        public_key: format!("ed25519:{}", b64(&host)),
+        kind: TrustRootKind::CertIssuer,
+        label: "host".into(),
+        added_at: "2026-09-26T00:00:00Z".into(),
+    }]);
+    let checks = verify_package_with_options(&pkg, &trust, false).unwrap();
+    let fails: Vec<_> = checks
+        .iter()
+        .filter(|c| c.status == VerifyStatus::Fail)
+        .map(|c| format!("{}: {}", c.name, c.detail))
+        .collect();
+    assert!(fails.is_empty(), "{fails:?}");
+    let st = checks.iter().find(|c| c.name == "signer_trust").unwrap();
+    assert_eq!(st.status, VerifyStatus::Pass, "{}", st.detail);
+    assert!(!st.detail.contains("key_joiner"), "{}", st.detail);
+    assert_eq!(package_verdict(&checks, false), PackageVerdict::Verified);
 }

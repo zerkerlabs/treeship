@@ -42,6 +42,7 @@ input the verifiers have to handle in the field:
 | `honest/legacy-0.24` | treeship 0.24.0 release build | a local 0.24.0 build; packages before 0.31.2 carry no envelopes |
 | `honest/endorse-non-latest`, `tampered/endorsement-parent-edited` | treeship 0.31.9 + W1-1 debug build | branch `fix/W1-1` (endorsements sign `parentId`) |
 | `honest/legacy-endorsement-0.31.9` | treeship 0.31.9 release binary (installed CLI) | the published 0.31.9 release; its endorsement signs no parent |
+| `honest/room-two-ships` | treeship main at `d9221569` (after #499) | the T1 flow `room_two_ships`: host and joiner on separate ships, pending envelope sent as a file |
 
 Each vector is signed by a throwaway key generated in a temp `HOME` by
 `generate.sh`. The keys were discarded; nothing here is a production key.
